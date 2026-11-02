@@ -232,7 +232,7 @@
 
     - name: Say the warnings
       ansible.builtin.debug:
-        msg: "{{ _warnings | map('regex_replace', '^', 'WARNING - ') | join(_nl) }}"
+        msg: "{{ _warnings | map('regex_replace', '^', 'WARNING  ') | join(_nl) }}"
       run_once: "{{ _batch }}"
       when: _warnings | length > 0
       vars:

@@ -70,21 +70,21 @@ def test_operator_messages_marked_for_the_ops_callback():
     refuse = task("Refuse a plan that can't be done")
     assert refuse["vars"]["cassandra_output"] is True
     msg = render(refuse["ansible.builtin.assert"]["fail_msg"], _tp_cluster="my_cluster", _tp_problems=["a", "b"], _nl="\n",
-                 ansible_play_hosts_all=["n1"], hostvars={"n1": {"_cassandra_notes": ["WARNING - cassandra_sedes is not known"]}})
+                 ansible_play_hosts_all=["n1"], hostvars={"n1": {"_cassandra_notes": ["WARNING  cassandra_sedes is not known"]}})
     # the checks' notes kept for the plan come with the refusal (they often say why)
-    assert msg == "REFUSED  topology  my_cluster  nothing was changed\n  a\n  b\nWARNING - cassandra_sedes is not known"
+    assert msg == "REFUSED  topology  my_cluster  nothing was changed\n  a\n  b\nWARNING  cassandra_sedes is not known"
     nothing = task("Say there is nothing to do")
     assert nothing["vars"]["cassandra_output"] is True
     plan = {"gone": ["n5", "n6", "n7"], "silent": [], "unknown": ["10.0.0.9 (dc1 / r1, UN)"]}
-    hostvars = {"n1": {"_cassandra_notes": ["WARNING - seeds: dc1 has one seed"]}}
+    hostvars = {"n1": {"_cassandra_notes": ["WARNING  seeds: dc1 has one seed"]}}
     msg = render(nothing["ansible.builtin.debug"]["msg"], _tp_cluster="my_cluster", cassandra_topology_plan=plan,
                  ansible_play_hosts_all=["n1", "n2", "n3"], hostvars=hostvars, _nl="\n").split("\n")
     assert msg == ["NOTHING TO DO  topology  my_cluster  the ring has the 3 nodes of the inventory, they run with the"
                    " seeds of cassandra_seeds",
                    "  already removed: n5..n7 (marked absent, out of the ring, Cassandra stopped): delete them from the"
                    " inventory, or leave them",
-                   "WARNING - 10.0.0.9 (dc1 / r1, UN) is in the ring but in no host of the inventory: never touched",
-                   "WARNING - seeds: dc1 has one seed"]  # the checks' notes kept for the plan
+                   "WARNING  10.0.0.9 (dc1 / r1, UN) is in the ring but in no host of the inventory: never touched",
+                   "WARNING  seeds: dc1 has one seed"]  # the checks' notes kept for the plan
     done = next(p for p in PLAYS if p.get("name") == "Say what is left to do")["tasks"][1]
     assert done["vars"]["cassandra_output"] is True
     plan = {"add": ["n4"], "remove": ["n2"], "gone": [], "silent": [], "seeds": {"step": True, "new": "n1,n4"}}
@@ -231,11 +231,12 @@ def test_notes_kept_for_the_plan_not_printed_on_their_own():
     # a check's notes: kept when deferred, printed (one string, marked) otherwise
     with open(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "note.yml"), encoding="utf-8") as f:
         keep, say = yaml.safe_load(f)
-    kept = render(keep["ansible.builtin.set_fact"]["_cassandra_notes"], _note="WARNING - a\nNOTE b\nWARNING - a",
-                  _cassandra_notes=["WARNING - a"])
-    assert kept == ["WARNING - a", "NOTE b"]
-    assert keep["when"] == "_cassandra_notes_deferred | default(false) | bool"
-    assert say["when"] == "not _cassandra_notes_deferred | default(false) | bool"
+    kept = render(keep["ansible.builtin.set_fact"]["_cassandra_notes"], _note="WARNING  a\nNOTE b\nWARNING  a",
+                  _cassandra_notes=["WARNING  a"])
+    assert kept == ["WARNING  a", "NOTE b"]
+    assert keep["when"] == "_kept | bool" and say["when"] == "not _kept | bool"
+    kept_when = "_cassandra_notes_deferred | default(false) | bool or _cassandra_notes_in_plan | default(false) | bool"
+    assert keep["vars"]["_kept"] == "{{ %s }}" % kept_when and say["vars"]["_kept"] == keep["vars"]["_kept"]
     assert say["vars"]["cassandra_output"] is True and say["ansible.builtin.debug"]["msg"] == "{{ _note }}"
     # the per-host dumps of the checks: not printed under topology
     with open(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "new_node_checks.yml"), encoding="utf-8") as f:
@@ -287,43 +288,41 @@ def test_preflight_notes_render_one_line_each():
         for t in play.get("tasks") or []:
             if (t.get("ansible.builtin.include_role") or {}).get("tasks_from") == "note.yml":
                 found[t["name"]] = t
+    # (the cluster's posture, the suspicious settings, is health_check's: not a note of preflight)
     assert sorted(found) == ["Going on without the nodes that did not answer", "Seed layout",
-                             "Warn about sensitive or suspicious settings", "Warn about the JVM options", "Warn about them"]
-    t = found["Warn about sensitive or suspicious settings"]
-    note = render(t["vars"]["_note"], ansible_play_hosts=["n1", "n2"], _nl="\n", _found=trust_as_template(t["vars"]["_found"]),
-                  _ring=trust_as_template(t["vars"]["_ring"]), _members=trust_as_template(t["vars"]["_members"]),
-                  hostvars={"n1": {"cassandra_auto_bootstrap": False}, "n2": {}})
-    assert note.split("\n") == [
-        u"WARNING - n1: auto_bootstrap: false \u2014 a node that loses its data restarts empty without streaming it back;"
-        u" remove the setting (default true) unless you know why it is there (kept on purpose? add auto_bootstrap_false"
-        u" to cassandra_suspicious_ack)"]
+                             "Warn about the JVM options", "Warn about them"]
     hostvars = {"n1": {"_cassandra_preflight_unknown": {"cassandra_sedes": "cassandra_seeds", "cassandra_x": ""}},
                 "n2": {"_cassandra_preflight_unknown": {"cassandra_sedes": "cassandra_seeds"}}}
     t = found["Warn about them"]
     note = render(t["vars"]["_note"], ansible_play_hosts=["n1", "n2"], hostvars=hostvars, _nl="\n")
     assert note.split("\n") == [
-        "WARNING - cassandra_sedes (set for n1, n2) is not known to this collection: its roles and playbooks do not read it"
+        "WARNING  cassandra_sedes (set for n1, n2) is not known to this collection: its roles and playbooks do not read it"
         " (did you mean cassandra_seeds?)",
-        "WARNING - cassandra_x (set for n1) is not known to this collection: its roles and playbooks do not read it"]
+        "WARNING  cassandra_x (set for n1) is not known to this collection: its roles and playbooks do not read it"]
     t = found["Seed layout"]
-    layout = {"lines": ["Seeds  dc1  n1 (r1), n2 (r2)  ok", "WARNING - Seeds  dc2  b1 (r1)  1 seed: 2 to 3 per datacenter"],
+    layout = {"lines": ["Seeds  dc1  n1 (r1), n2 (r2)  ok", "WARNING  Seeds  dc2  b1 (r1)  1 seed: 2 to 3 per datacenter"],
               "problems": ["dc2: 1 seed: 2 to 3 per datacenter"], "notes": [], "suggested": ["n1", "n2", "b1", "b2"]}
     cmd = "ansible-playbook community.cassandra.change_seeds -e cassandra_hosts=prod"
-    for deferred, lines in ((True, ['WARNING - Seeds  dc2  b1 (r1)  1 seed: 2 to 3 per datacenter',
+    for deferred, lines in ((True, ['WARNING  Seeds  dc2  b1 (r1)  1 seed: 2 to 3 per datacenter',
                                     '  suggested in the group_vars of prod: cassandra_seeds: ["n1", "n2", "b1", "b2"]'
                                     ' (update the inventory: topology then applies it live)']),
                             (False, ['Seeds  dc1  n1 (r1), n2 (r2)  ok',
-                                     'WARNING - Seeds  dc2  b1 (r1)  1 seed: 2 to 3 per datacenter',
+                                     'WARNING  Seeds  dc2  b1 (r1)  1 seed: 2 to 3 per datacenter',
                                      '  suggested in the group_vars of prod: cassandra_seeds: ["n1", "n2", "b1", "b2"]',
                                      '  then apply it live: ' + cmd])):
         note = render(t["vars"]["_note"], _layout=layout, _cluster="prod", _nl="\n", _change_seeds=cmd,
-                      _deferred=deferred)
+                      _deferred=deferred, _in_plan=deferred)
         assert note.split("\n") == lines
+    # kept for an operation's plan (not topology's): the WARNING lines, the way out change_seeds
+    note = render(t["vars"]["_note"], _layout=layout, _cluster="prod", _nl="\n", _change_seeds=cmd, _deferred=False, _in_plan=True)
+    assert note.split("\n") == ['WARNING  Seeds  dc2  b1 (r1)  1 seed: 2 to 3 per datacenter',
+                                '  suggested in the group_vars of prod: cassandra_seeds: ["n1", "n2", "b1", "b2"]',
+                                '  then apply it live: ' + cmd]
     # a note only (more than 3 seeds): the lines, no suggestion
     layout = {"lines": ["Seeds  dc1  n1 (r1), n2 (r1), n3 (r1), n4 (r1)  note: 4 seeds: 2 to 3 are enough"],
               "problems": [], "notes": ["dc1: 4 seeds: 2 to 3 are enough"], "suggested": []}
     assert render(t["vars"]["_note"], _layout=layout, _cluster="prod", _nl="\n", _change_seeds=cmd,
-                  _deferred=False) == layout["lines"][0]
+                  _deferred=False, _in_plan=False) == layout["lines"][0]
     for problems, notes in (([], []), (["x"], []), ([], ["y"])):
         shown = render("{{ %s }}" % t["when"], _layout={"problems": problems, "notes": notes})
         assert shown is bool(problems or notes)  # a boolean (ansible-core 2.19+ refuses a list)
@@ -337,7 +336,7 @@ def test_a_step_of_topology_prints_only_its_token_tables():
     assert step["vars"]["cassandra_output"] is True
     screen = {"intro": ["prose", {"pre": ["node5  token 42"]}],
               "warnings": [{"label": "tokens", "each": ["node5: 42 is taken"]}, {"label": "replication", "text": "x"}]}
-    assert render(step["vars"]["_step"], cassandra_screen=screen) == ["node5  token 42", "WARNING - tokens: node5: 42 is taken"]
+    assert render(step["vars"]["_step"], cassandra_screen=screen) == ["node5  token 42", "WARNING  tokens: node5: 42 is taken"]
     assert render(step["vars"]["_step"], cassandra_screen={"intro": ["prose"], "warnings": []}) == []
     # conditionals with a boolean result (ansible-core 2.19+ refuses a string)
     for when in [plan["when"]] + step["when"]:

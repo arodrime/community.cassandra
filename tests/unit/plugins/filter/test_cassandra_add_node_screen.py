@@ -21,5 +21,7 @@ def test_a_block_per_new_node():
                        "cassandra_medusa_fqdn_domain": "int.example", "ansible_facts": {"hostname": "node4"},
                        "_cassandra_node_reset_plan": {"line": "reset: nothing to delete"}}}
     estimate = [{"host": "n4", "bytes": 2 * 1024 ** 3, "basis": "the ring's load"}, {"host": "n5", "bytes": 1, "basis": "x"}]
+    # its lines, and the same as one row of the plan's node table
     assert cassandra_add_node_blocks(["n4"], hostvars, estimate) == [{"title": "n4  10.0.0.4", "lines": [
-        "about 2.0 GiB to stream (the ring's load)", "Medusa fqdn node4.int.example", "reset: nothing to delete"]}]
+        "about 2.0 GiB to stream", "Medusa fqdn node4.int.example", "reset: nothing to delete"],
+        "row": "about 2.0 GiB to stream; Medusa fqdn node4.int.example; reset: nothing to delete"}]

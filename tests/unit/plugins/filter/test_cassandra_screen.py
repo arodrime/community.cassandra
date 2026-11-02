@@ -3,10 +3,9 @@ __metaclass__ = type
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import (
     cassandra_decommission_screen, cassandra_reset_warnings, cassandra_screen)
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import PARAGRAPH
 
 SPEC = {
-    "operation": "stop_rack", "cluster": "Orders", "version": "4.1.5", "summary": "stop dc1 / rack2",
+    "operation": "stop_rack", "summary": "dc1 / rack2 of Orders",
     "intro": ["Stops Cassandra on every node of the rack at once.", ""],
     "blocks": [{"title": "node2  10.0.0.2", "lines": ["drained, then stopped", {"pre": ["  a   b", "  c   d"]}]},
                {"title": "node5  10.0.0.5"}],
@@ -19,34 +18,29 @@ SPEC = {
         {"label": "data loss", "text": "everything is deleted.", "real_run": True},
     ],
 }
-SESSION = "this run is not inside tmux or screen: if the SSH session to this machine drops, the run stops."
+SESSION = ("not inside tmux or screen: if this SSH session drops, the run stops (the operation itself goes on,"
+           " unwatched; run it inside tmux or screen)")
 
-# "" between two blocks (a rule under the ops callback), PARAGRAPH (shown as ~ here) between two
-# paragraphs of a block: each warning one
+# the title (the operation in capitals, what it does to whom, where), how, a blank line, the node table and the
+# notes, the warnings together (one under the other, a longer one's next line under its text), the question's place
 REAL = """\
-stop_rack on cluster 'Orders' (Cassandra 4.1.5): stop dc1 / rack2
-
-Stops Cassandra on every node of the rack at once.
+STOP RACK  dc1 / rack2 of Orders
+  Stops Cassandra on every node of the rack at once.
 
   node2  10.0.0.2
     drained, then stopped
       a   b
       c   d
-
   node5  10.0.0.5
+  They stay down until start_rack.
 
-They stay down until start_rack.
-
-WARNING - replication: orders has 2 replicas in dc1: with one down, (LOCAL_)QUORUM fails
-~
-WARNING - replicas: forced although:
-  - orders loses 2 replicas
-  - events loses 2 replicas
-~
-WARNING - data loss: everything is deleted.
-~
-WARNING - session: this run is not inside tmux or screen: if the SSH session to this machine drops,
-  the run stops.""".replace("\n~\n", "\n" + PARAGRAPH + "\n")
+WARNING  replication: orders has 2 replicas in dc1: with one down, (LOCAL_)QUORUM fails
+WARNING  replicas: forced although:
+         - orders loses 2 replicas
+         - events loses 2 replicas
+WARNING  data loss: everything is deleted.
+WARNING  not inside tmux or screen: if this SSH session drops, the run stops (the operation itself
+         goes on, unwatched; run it inside tmux or screen)"""
 
 
 def test_layout():
@@ -55,15 +49,16 @@ def test_layout():
 
 def test_check_names_the_real_run_warnings_on_one_line():
     # the warnings together, then in the question's place what --check means, one blank line apart
-    expected = REAL.split("\nWARNING - data loss:", maxsplit=1)[0] + "\n(A real run would also warn about: data loss, session.)" + \
-        "\n\n--check: nothing will be changed (the plan only, no question)."
+    expected = REAL.split("\nWARNING  data loss:", maxsplit=1)[0] + \
+        "\n(A real run would also warn about: data loss, not inside tmux or screen.)" + \
+        "\n\n--check: nothing will be changed"
     assert cassandra_screen(SPEC, check=True, session=SESSION) == expected
 
 
 def test_no_question():
     lines = cassandra_screen(SPEC, asks=False).split("\n")
     assert lines[-2:] == ["", "cassandra_operation_confirm is false: no question, the run goes on."]
-    assert "WARNING - session" not in "\n".join(lines)  # no session given: short operation
+    assert "tmux" not in "\n".join(lines)  # no session given: short operation
 
 
 def test_wrapping_keeps_words_and_paths_whole():
@@ -71,25 +66,29 @@ def test_wrapping_keeps_words_and_paths_whole():
     text = cassandra_screen({"operation": "op", "intro": ["word " * 30 + path]})
     lines = text.split("\n")
     assert all(len(line) <= 100 for line in lines if path not in line)
-    assert lines[-1] == path
-    assert lines[2].startswith("word word")
+    assert lines[-1].strip() == path
+    assert lines[1].startswith("  word word")
 
 
-def test_paragraphs_a_blank_line_apart():
-    # the intro, the sections and what comes after: each item a paragraph; a node's lines stay together
-    text = cassandra_screen({"operation": "op", "intro": ["one", "two"], "blocks": [{"title": "node1", "lines": ["a", "b"]}],
-                             "after": ["three", "", "four"]})
-    assert text.split("\n") == ["op", "", "one", PARAGRAPH, "two", "", "  node1", "    a", "    b", "", "three",
-                                PARAGRAPH, "four"]
+def test_rows_and_blocks_notes_and_the_checks_notes():
+    # a block with a row is a row of the node table (its title's fields, then the row); one without keeps its
+    # lines under its title; the notes (after, the checks' NOTE lines) under the table; the checks' WARNING lines
+    # with the warnings
+    text = cassandra_screen({"operation": "op", "intro": ["one", "two"],
+                             "blocks": [{"title": "node1", "lines": ["a", "b"]},
+                                        {"title": "node2  10.0.0.2  dc1 / r1", "row": "about 1 GiB to stream"}],
+                             "after": ["three", "", "four"]}, notes=["WARNING  x is set", "NOTE  y"])
+    assert text.split("\n") == ["OP", "  one", "  two", "", "  node2  10.0.0.2  dc1 / r1  about 1 GiB to stream",
+                                "  node1", "    a", "    b", "  three", "  four", "  NOTE  y", "", "WARNING  x is set"]
 
 
-def test_a_lead_in_keeps_what_it_introduces():
+def test_a_lead_in_and_its_table_stay_together():
     text = cassandra_screen({"operation": "op", "intro": ["Check that:", {"pre": []}, {"pre": ["  - a", "  - b"]}, "next"]})
-    assert text.split("\n") == ["op", "", "Check that:", "  - a", "  - b", PARAGRAPH, "next"]
+    assert text.split("\n") == ["OP", "  Check that:", "    - a", "    - b", "  next"]
 
 
 def test_minimal_spec():
-    assert cassandra_screen({"operation": "apply_config"}) == "apply_config"
+    assert cassandra_screen({"operation": "apply_config"}) == "APPLY CONFIG"
     assert cassandra_screen({}) == ""
 
 
@@ -119,7 +118,8 @@ def test_decommission_two_racks_rf2_goes_to_the_rack():
         "data goes to the other nodes of rack2 (2 racks in dc1, its replication factor): node1, node5",
         "runs on node3 (nodetool decommission), the ring checked from node1 before and after",
         "end state: out of the ring, Cassandra stopped and disabled, its data left on disk"],
-        "step": {"node": "node3", "dc": "dc1", "rack": "rack2", "text": "load 1 GiB -> node1, node5 (the other nodes of rack2)"}}]
+        "step": {"node": "node3", "dc": "dc1", "rack": "rack2", "text": "load 1 GiB -> node1, node5 (the other nodes of rack2)"},
+        "row": "load 1 GiB -> node1, node5 (the other nodes of rack2)"}]
     assert spec["after"] == ["Afterwards dc1 keeps 5 nodes: node1, node2, node4, node5, node6.",
                              "Then empty node3 (reset_node) before reusing the host, and re-import the cluster to drop it"
                              " from the inventory: the commands are printed at the end."]
@@ -188,16 +188,16 @@ def test_reset_warnings_one_per_node_with_something_to_do():
         {"label": "reset", "real_run": True, "text": "node9: kept from starting at boot first (nothing to delete)"},
     ]
     text = cassandra_screen({"operation": "add_node", "warnings": warnings})
-    assert "WARNING - data loss: node7: Cassandra stopped, kept from starting at boot, then 2 entries DELETED" in text
-    assert "    /d/data (data; from the inventory): 1 entries: system" in text
+    assert "WARNING  data loss: node7: Cassandra stopped, kept from starting at boot, then 2 entries DELETED" in text
+    assert "         /d/data (data; from the inventory): 1 entries: system" in text  # under the warning's text
     assert "(A real run would also warn about: data loss, reset.)" in cassandra_screen(
         {"operation": "add_node", "warnings": warnings}, check=True)
     assert cassandra_reset_warnings([]) == []
 
 
 def test_a_step_of_another_playbook_asks_nothing():
-    text = cassandra_screen({"operation": "add_node", "summary": "add node7"}, asked_by="topology")
-    assert text == "add_node: add node7\n\nA step of topology, confirmed on its screen: no question here."
+    text = cassandra_screen({"operation": "add_node", "summary": "node7 into dc1 of c"}, asked_by="topology")
+    assert text == "ADD NODE  node7 into dc1 of c\n\nA step of topology, confirmed on its screen: no question here."
     # --check says so in its place: nothing changes
     assert cassandra_screen({"operation": "add_node"}, check=True, asked_by="topology").endswith(
-        "--check: nothing will be changed (the plan only, no question).")
+        "--check: nothing will be changed")

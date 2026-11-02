@@ -162,22 +162,15 @@ def test_each_step_of_the_prepare_says_its_line():
     hostvars = dict((h, roles_ran(h, firewall=True, medusa=True)) for h in hosts)
     for h in hosts:
         hostvars[h]["_cassandra_prepare_done"] = kept(hostvars[h], hosts)
+    # one line for the nodes with the same outcome, the steps in short words (the disk's change on the disks word)
     assert said(SAY, hostvars, hosts) == [
-        "node4, node5  repository  ok (already set)",
-        "node4, node5  install     cassandra 5.0.9 (installed now)",
-        "node4, node5  java        17.0.12 (already installed)",
-        "node4, node5  os tuning   2 changes",  # the disk's change on the data disks line
-        "node4, node5  data disks  read-ahead 4 KB set now",
-        "node4, node5  config      2 files written",
-        "node4, node5  firewall    1 change",  # (opened its ports)
-        "node4, node5  medusa      Medusa 0.24.1 installed now",
-        "node4, node5  seeds       joins with 10.0.0.1, 10.0.0.2"]
+        "node4, node5  prepared  repository, cassandra 5.0.9, java 17.0.12, os tuning (2 changes), disks read-ahead 4 KB,"
+        " config (2 files), firewall (1 change), medusa 0.24.1, seeds 10.0.0.1, 10.0.0.2"]
     assert SAY["run_once"] is True and SAY["vars"]["cassandra_output"] is True
     assert SAY["vars"]["cassandra_output_info"] is True  # the progress colour (ops callback)
     # --check: what a real run would do
     check = said(SAY, hostvars, hosts, check=True)
-    assert "node4, node5  config      would write 2 files" in check
-    assert "node4, node5  data disks  read-ahead 4 KB would be set" in check
+    assert check[0].startswith("node4, node5  would prepare  repository, cassandra 5.0.9")
 
 
 def test_firewall_and_medusa_off_and_a_step_not_run():
@@ -186,9 +179,9 @@ def test_firewall_and_medusa_off_and_a_step_not_run():
     done = kept(facts, ["node4"])
     assert "cassandra_linux" not in done["ran"] and done["firewall"] == "off" and done["medusa"] == "off"
     lines = said(SAY, {"node4": {"_cassandra_prepare_done": done}}, ["node4"])
-    assert "node4  os tuning   not managed (cassandra_linux_manage: false)" in lines
-    assert "node4  firewall    off (cassandra_manage_firewall: false)" in lines
-    assert "node4  medusa      off (cassandra_medusa_enabled: false)" in lines
+    # a step off or not managed is not a word of the line
+    assert lines == ["node4  prepared  repository, cassandra 5.0.9, java 17.0.12, disks read-ahead 4 KB, config (2 files),"
+                     " seeds 10.0.0.1, 10.0.0.2"]
     # cassandra_manage_firewall on, the role's own switch off: no report of it
     done = kept(dict(roles_ran("node4"), cassandra_manage_firewall=True), ["node4"])
     assert done["firewall"] == "not managed"
@@ -199,7 +192,7 @@ def test_only_the_nodes_prepared():
     hostvars["node4"]["_cassandra_prepare_done"] = kept(hostvars["node4"], ["node4"])
     variables = dict(KEEP["vars"], **dict(roles_ran("node5"), _cassandra_prepare_hosts=["node4"]))
     assert not render("{{ %s }}" % KEEP["when"], **variables)
-    assert said(SAY, hostvars, ["node4", "node5"])[0] == "node4  repository  ok (already set)"
+    assert said(SAY, hostvars, ["node4", "node5"])[0].startswith("node4  prepared  repository, ")
     assert said(SAY, {"node5": {}}, ["node5"]) is None  # nobody prepared: nothing said
 
 
@@ -210,7 +203,7 @@ def test_the_disk_summary_after_the_lines_only_when_there_is_something_to_see():
     assert said(DISKS, hostvars(), ["node4"]) is None  # already set: its step line says it
     assert said(DISKS, hostvars(), ["node4"], verbosity=1)[0].startswith("Data disks: ")  # -v: as before
     assert said(DISKS, hostvars(changed=True), ["node4"])[0] == "Data disks: read-ahead 4 KB, set now on 1 node"
-    assert said(DISKS, hostvars(warnings=["sdb: no scheduler"]), ["node4"])[-1] == "WARNING - sdb: no scheduler (node4)"
+    assert said(DISKS, hostvars(warnings=["sdb: no scheduler"]), ["node4"])[-1] == "WARNING  sdb: no scheduler (node4)"
     assert said(DISKS, hostvars(info=["sdc not tuned yet"]), ["node4"]) is not None
     assert said(DISKS, hostvars(changed="False"), ["node4"]) is None  # a string from an older Ansible
 
@@ -223,7 +216,7 @@ def test_the_old_system_keyspace_warning_once_for_its_nodes():
         hostvars[h]["_cassandra_prepare_done"] = kept(hostvars[h], hosts)
     lines = said(WARN, hostvars, hosts)
     assert [line for line in lines if line.startswith("WARNING")] == [
-        "WARNING - node4, node5: an old system keyspace in /var/lib/cassandra/data, not one of the data directories the"
+        "WARNING  node4, node5: an old system keyspace in /var/lib/cassandra/data, not one of the data directories the"
         " config uses (/data/cassandra)"]
     hostvars["node4"]["_cassandra_prepare_done"]["left"] = hostvars["node5"]["_cassandra_prepare_done"]["left"] = []
     assert said(WARN, hostvars, hosts) is None
@@ -237,7 +230,7 @@ def test_the_roles_hold_back_what_the_lines_say():
     # outside a prepare: the same WARNING, for its node
     msg = render(config["ansible.builtin.debug"]["msg"], inventory_hostname="node4",
                  _cassandra_config_left=["/var/lib/cassandra/data"], _cassandra_config_own_dirs=["/data/cassandra"])
-    assert msg[0].startswith("WARNING - node4: an old system keyspace in /var/lib/cassandra/data")
+    assert msg[0].startswith("WARNING  node4: an old system keyspace in /var/lib/cassandra/data")
 
 
 def test_every_prepare_says_its_lines():

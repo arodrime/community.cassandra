@@ -105,8 +105,9 @@ RING = [
 ]
 
 
-# the run's first line and its last (the ops callback)
-CLUSTER = "CLUSTER my_cluster (3 nodes, dc1) | chosen by: the only cluster in the inventory"
+# the run's first line (no version: these playbooks read none); its last too until the ops callback stops
+# repeating it (the output redesign's part B)
+CLUSTER = "my_cluster  3 nodes  1 DC (dc1)"
 
 
 def test_status_with_a_node_down(tmp_path):

@@ -231,9 +231,7 @@ def test_more_dirs_are_read_created_and_checked():
 # --- preflight ------------------------------------------------------------------
 
 PREFLIGHT = next(p for p in load("playbooks", "preflight.yml") if p.get("name") == "Cassandra preflight checks")
-SUSPICIOUS = task("Warn about sensitive or suspicious settings", PREFLIGHT["tasks"])
-WHY = ("a node that loses its data restarts empty without streaming it back; remove the setting (default true) unless"
-       " you know why it is there")
+HEALTH = next(p for p in load("playbooks", "health_check.yml") if p.get("name") == "Cluster health")
 
 
 @pytest.mark.parametrize("hostvars, warned", [
@@ -241,14 +239,15 @@ WHY = ("a node that loses its data restarts empty without streaming it back; rem
     ({"n1": {"cassandra_auto_bootstrap": True}, "n2": {"cassandra_auto_bootstrap": None}}, ""),
     ({"n1": {"cassandra_auto_bootstrap": False}, "n2": {"cassandra_auto_bootstrap": "false"}, "n3": {}}, "n1, n2"),
 ])
-def test_preflight_warns_about_auto_bootstrap_false(hostvars, warned):
-    # a WARNING (note.yml), never a refusal
-    assert SUSPICIOUS["ansible.builtin.include_role"]["tasks_from"] == "note.yml"
-    variables = dict(SUSPICIOUS["vars"], ansible_play_hosts=list(hostvars), hostvars=hostvars)
-    found = render(SUSPICIOUS["vars"]["_found"], **variables)
-    assert found == (["WARNING - %s: auto_bootstrap: false \u2014 %s (kept on purpose? add auto_bootstrap_false to"
-                      " cassandra_suspicious_ack)" % (warned, WHY)] if warned else [])
-    assert render("{{ %s }}" % SUSPICIOUS["when"], **variables) is bool(warned)
+def test_health_check_says_auto_bootstrap_false_in_its_settings(hostvars, warned):
+    # the cluster's posture: health_check's SETTINGS block (two lines), not preflight's, never a refusal
+    report = task("Report", HEALTH["tasks"])
+    variables = dict(report["vars"], ansible_play_hosts=list(hostvars), hostvars=hostvars, _checked=list(hostvars))
+    found = render(report["vars"]["_settings"], **variables)
+    assert found == (["auto_bootstrap false on %s: a node that loses its data would restart empty, without streaming it"
+                      " back" % warned, "  remove cassandra_auto_bootstrap (the default is true); kept on purpose: list"
+                      " auto_bootstrap_false in cassandra_settings_kept_on_purpose"] if warned else [])
+    assert not [t for t in PREFLIGHT["tasks"] if "suspicious" in str(t)]
     assert not [t for t in PREFLIGHT["tasks"] if "auto_bootstrap" in str(t.get("ansible.builtin.assert", ""))]
 
 
@@ -336,17 +335,12 @@ def test_auto_bootstrap_written_false_whatever_its_spelling():
     ([("10.0.0.1", "U"), ("10.0.0.2", "U")], "n1"),  # n2 holds the flag but is not in the ring yet (replace_node's own)
     ([("10.0.0.1", "U"), ("10.0.0.3", "D")], "n1"),  # n2 down at its address: maybe a replacement of it
 ])
-def test_preflight_judges_a_replace_flag_on_the_ring_members(ring, members_warned):
-    hostvars = {"n1": {"_cassandra_preflight": {"ring_address": "10.0.0.1"}, "inventory_hostname": "n1",
-                       "cassandra_jvm_extra_options": ["-Dcassandra.replace_address=10.0.0.7"]},
-                "n2": {"_cassandra_preflight": {"ring_address": "10.0.0.3"}, "inventory_hostname": "n2",
-                       "cassandra_jvm_extra_options": ["-Dcassandra.replace_address=10.0.0.7"]}}
-    variables = dict(SUSPICIOUS["vars"], ansible_play_hosts=["n1", "n2"], hostvars=hostvars)
-    if ring is not None:
-        variables["cassandra_preflight_status"] = {"cluster_status": {"dc1": {"nodes": [
-            {"address": a, "status": st} for a, st in ring]}}}
-    found = render(SUSPICIOUS["vars"]["_found"], **variables)
-    assert [line.split(":")[0] for line in found] == (["WARNING - " + members_warned] if members_warned else [])
-    # after the ring is read
-    names = [t.get("name") for t in PREFLIGHT["tasks"]]
-    assert names.index("Warn about sensitive or suspicious settings") > names.index("Check the running cluster")
+def test_health_check_judges_a_replace_flag_on_the_nodes_that_answered(ring, members_warned):
+    # a node whose check ran answers nodetool: a member of the ring (health_check reads no preflight facts)
+    hostvars = {"n1": {"inventory_hostname": "n1", "cassandra_jvm_extra_options": ["-Dcassandra.replace_address=10.0.0.7"]},
+                "n2": {"inventory_hostname": "n2", "cassandra_jvm_extra_options": ["-Dcassandra.replace_address=10.0.0.7"]}}
+    report = task("Report", HEALTH["tasks"])
+    checked = [] if ring is None else ["n1"] if members_warned == "n1" else ["n1", "n2"]
+    variables = dict(report["vars"], ansible_play_hosts=["n1", "n2"], hostvars=hostvars, _checked=checked)
+    found = render(report["vars"]["_settings"], **variables)
+    assert [line.split(" on ")[1].split(":")[0] for line in found[::2]] == ([members_warned] if members_warned else [])

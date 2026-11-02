@@ -6,17 +6,17 @@
 # one, else refused), else the inventory's only cluster (lookup
 # community.cassandra.cassandra_hosts); several clusters and none named:
 # refused. A name close to a playbook variable (-e cassandra_host=...) is
-# pointed out. Then the run's first line names the cluster and how it was
-# picked (cluster_banner.yml). A run with --limit skips localhost, so this
-# check too: the lookup in the plays' hosts refuses the same, and the first
-# play on the nodes says the cluster.
+# pointed out. The run's first line, naming the cluster (cluster_banner.yml),
+# comes from the nodes' play, once the cluster is read. A run with --limit
+# skips localhost, so this check too: the lookup in the plays' hosts refuses
+# the same.
 - name: Check cassandra_target_nodes
   ansible.builtin.include_tasks: target_nodes_check.yml
   tags: [always]  # its variables check under --tags too
 
 - name: Variables close to the playbooks' own
   ansible.builtin.debug:
-    msg: "WARNING - {{ item.key }} is set: did you mean {{ item.value }}?"
+    msg: "WARNING  {{ item.key }} is set: did you mean {{ item.value }}?"
   loop: "{{ query('ansible.builtin.varnames', '^cas+andra_') | community.cassandra.cassandra_close_names(_known) | dict2items }}"
   loop_control:
     label: "{{ item.key }}"
@@ -37,6 +37,3 @@
   vars:
     cassandra_output: true  # a verdict: its msg as is (ops callback)
     _refusal: "{{ lookup('community.cassandra.cassandra_hosts', refusal=true) }}"
-
-- name: Say which cluster the run is on
-  ansible.builtin.import_tasks: cluster_banner.yml

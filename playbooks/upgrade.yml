@@ -14,6 +14,7 @@
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
   vars:
+    _cassandra_notes_in_plan: true  # the checks' WARNING lines in the plan, before the question
     # the cluster is mixed from the canary's restart to the end of the rolling phase (the canary phase starts on
     # one version: checked strictly)
     cassandra_allow_mixed_versions: "{{ cassandra_upgrade_phase | default('') in ['rolling', 'sstables', 'cleanup'] }}"
@@ -281,7 +282,7 @@
     - name: Free space on the data disk
       ansible.builtin.debug:
         msg: >-
-          WARNING - {{ _mount.mount }} has {{ (100 * _mount.size_available / _mount.size_total) | round | int }}% free:
+          WARNING  {{ _mount.mount }} has {{ (100 * _mount.size_available / _mount.size_total) | round | int }}% free:
           the snapshot shares files at first, but sstables rewritten after the upgrade need room.
       vars:
         cassandra_output: true
@@ -348,10 +349,11 @@
         name: community.cassandra.cassandra_operation
         tasks_from: screen.yml
       vars:
+        _cluster: "{{ (_cassandra_preflight | default({})).cassandra_cluster_name | default('') }}"
         cassandra_screen_question: "Backups, repairs and schema changes paused: go on with the snapshots?"
         cassandra_screen:
           operation: upgrade
-          summary: "phase prepare, {{ cassandra_upgrade_from }} -> {{ cassandra_package_version }}"
+          summary: "{{ _cluster }} {{ cassandra_upgrade_from }} -> {{ cassandra_package_version }}, phase prepare"
           intro:
             - "Before the upgrade, check that:"
             - pre:

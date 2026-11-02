@@ -130,9 +130,9 @@ def test_the_plan_says_a_failed_unit_left_stopped_is_not_stopped_on_purpose():
     nodes = render(t["vars"]["_nodes"], dict(hostvars=hostvars, ansible_play_hosts=sorted(hostvars)))
     assert [n["unit_failed"] for n in nodes] == [False, False, False, False, True]
     assert cassandra_apply_config_outcomes(nodes, plan=True)[1:] == [
-        "node5  will apply, left stopped (its Cassandra is stopped: left stopped, reads its config when it starts)",
-        "node7  will apply, left stopped (its cassandra unit failed: left as it is)",
-        "node3  nothing to apply"]
+        "node5  write, left stopped (Cassandra stopped: left stopped, reads its config when it starts)",
+        "node7  write, left stopped (its cassandra unit failed: left as it is)",
+        "node3  up to date"]
 
 
 def test_a_real_run_refuses_before_any_change_check_goes_on():
@@ -168,7 +168,7 @@ def test_the_check_recap_ends_with_the_refusal():
     # no plan shown (a later play stopped first): the recap says it, last
     lines = render(t["ansible.builtin.debug"]["msg"], variables)
     assert lines[0] == "CHECK  apply_config  c  3 would apply, 1 nothing to apply"
-    assert lines[-3:] == ["", "WARNING - a real run is refused, before changing anything: " + REASON, "  " + WAY]
+    assert lines[-3:] == ["", "WARNING  a real run is refused, before changing anything: " + REASON, "  " + WAY]
     # the nodes' outcomes are all there, before it
     assert "node1, node2  would apply, then restart" in lines
     # the plan said it: said once, the recap points at it

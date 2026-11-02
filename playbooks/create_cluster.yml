@@ -15,6 +15,7 @@
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
   vars:
+    _cassandra_notes_in_plan: true  # the checks' WARNING lines in the plan, before the question
     # the cluster there now is wiped: its ring does not count for the seeds and racks
     _cassandra_preflight_cluster_reset: "{{ cassandra_create_cluster_reset | default(false) }}"
 
@@ -202,7 +203,7 @@
         - name: Refuse a ring that can't be worked out
           ansible.builtin.assert:
             that: _plan.problems | length == 0
-            fail_msg: "{{ _plan.lines + _plan.warnings | map('regex_replace', '^', 'WARNING - tokens: ') | list + _plan.problems }}"
+            fail_msg: "{{ _plan.lines + _plan.warnings | map('regex_replace', '^', 'WARNING  tokens: ') | list + _plan.problems }}"
             quiet: true
           run_once: true
 

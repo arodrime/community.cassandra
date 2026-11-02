@@ -219,7 +219,7 @@
     # ring differ (a ring node that is another host of the inventory is named),
     # and last the verdict (ALL 5 NODES UP, 1 NODE DOWN: node1 (dc1/rack1),
     # 1 NODE NOT REACHED: node3 (by Ansible: never ALL UP then), the nodes
-    # joining, leaving or moving; under it "WARNING - ring and inventory
+    # joining, leaving or moving; under it "WARNING  ring and inventory
     # differ" when they do)
     - name: Show the ring
       ansible.builtin.debug:

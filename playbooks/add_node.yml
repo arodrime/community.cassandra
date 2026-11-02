@@ -11,6 +11,7 @@
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
   vars:
+    _cassandra_notes_in_plan: true  # the checks' WARNING lines in the plan, before the question
     _cassandra_preflight_target: add  # what cassandra_target_nodes are
     _cassandra_preflight_node_views: true  # where the nodes stand (node_standing.yml)
 
@@ -368,33 +369,36 @@
              | map(attribute='cassandra_medusa_enabled') | map('bool') | select | list | length > 0 }}
         _blocks: "{{ _new | community.cassandra.cassandra_add_node_blocks(hostvars, cassandra_add_node_plan.estimate) }}"
         cassandra_screen_session_warning: true
+        # the datacenters the new nodes join, the cluster: the title and the question say the same thing
+        _where: >-
+          {{ (_new or _joining) | map('extract', hostvars, ['_cassandra_preflight', 'cassandra_dc']) | unique | sort | join(', ')
+             ~ ' of ' ~ _p.cassandra_cluster_name }}
         cassandra_screen_question: >-
-          {{ ('Add ' ~ _new | join(', ') ~ '?') if _new else ('Wait for ' ~ _joining | join(', ') ~ '?') if _joining
-             else 'Run the cleanup?' }}
+          {{ ('Add ' ~ _new | join(', ') ~ ' into ' ~ _where ~ '?') if _new
+             else ('Wait for ' ~ _joining | join(', ') ~ ' of ' ~ _p.cassandra_cluster_name ~ '?') if _joining
+             else 'Run the cleanup of ' ~ _p.cassandra_cluster_name ~ '?' }}
         cassandra_screen:
           operation: add_node
-          cluster: "{{ _p.cassandra_cluster_name }}"
-          version: "{{ _running }}"
           summary: >-
-            {{ ('add ' ~ _new | join(', ')) if _new else ('wait for ' ~ _joining | join(', ')) if _joining
-               else 'cleanup only' }}
+            {{ (_new | join(', ') ~ ' into ' ~ _where) if _new else ('wait for ' ~ _joining | join(', ') ~ ' of ' ~ _p.cassandra_cluster_name)
+               if _joining else 'cleanup only, ' ~ _p.cassandra_cluster_name }}
           intro:
             - >-
-              New nodes get Cassandra {{ cassandra_package_version | default('', true) or ('series ' ~ _p.cassandra_version) }},
+              {{ ('one node at a time; each streams its share of the data, progress every '
+                  ~ cassandra_stream_check_interval ~ 's, stop after '
+                  ~ cassandra_stream_stall_time | int | community.cassandra.cassandra_duration(true) ~ ' without progress') if _new or _joining
+                 else ('No node to add (' ~ ansible_play_hosts_all | join(', ') ~ ' already in the ring).') }}
+            - "{{ ('still bootstrapping, waited for first: ' ~ _joining | join(', ')) if _joining else '' }}"
+            - "{{ ('already in the ring (an earlier run), only checked: ' ~ _joined | join(', ')) if _joined and (_new or _joining) else '' }}"
+          blocks: "{{ _blocks }}"
+          after:
+            - >-
+              afterwards: Cassandra {{ cassandra_package_version | default('', true) or ('series ' ~ _p.cassandra_version) }},
               Java {{ cassandra_java_version | default('of the series') }} ({{ ('tarball ' ~ cassandra_java_tarball)
               if cassandra_java_tarball | default('', true) else ('in ' ~ cassandra_java_home) if cassandra_java_home | default('', true)
               else 'package' if cassandra_install_java | default(true) | bool else 'set up by other means' }}),
               Medusa {{ ('on (' ~ cassandra_medusa_version | default('0.30.1') ~ ' in ' ~ (cassandra_medusa_venv | default('/opt/cassandra-medusa')
-              or 'the system Python') ~ ')') if _medusa else 'off' }}.
-            - >-
-              {{ ('One node at a time; each one streams its share of the data (hours on big nodes), its progress printed every '
-                  ~ cassandra_stream_check_interval ~ 's (sooner at first); the run stops after '
-                  ~ cassandra_stream_stall_time | int | community.cassandra.cassandra_duration(true) ~ ' without progress.') if _new or _joining
-                 else ('No node to add (' ~ ansible_play_hosts_all | join(', ') ~ ' already in the ring).') }}
-            - "{{ ('Still bootstrapping, waited for first: ' ~ _joining | join(', ')) if _joining else '' }}"
-            - "{{ ('Already in the ring (an earlier run), only checked: ' ~ _joined | join(', ') ~ '.') if _joined and (_new or _joining) else '' }}"
-          blocks: "{{ _blocks }}"
-          after:
+              or 'the system Python') ~ ')') if _medusa else 'off' }}
             - >-
               {{ ('Once the adds are done, cassandra_seeds (' ~ (cassandra_seeds if cassandra_seeds is string else cassandra_seeds | join(','))
                   ~ ') is applied live on every node (no restart): ' ~ _seeds_added | join(', ') ~ ' then a seed'
@@ -781,7 +785,7 @@
                   ~ ('fix cassandra_seeds, then run change_seeds:' if _cassandra_add_seeds.problems
                      else 'run change_seeds, its plan (the seeds it picks too) comes before its question:')])
               if _cassandra_add_seeds_hold | bool else _cassandra_add_seeds.warnings)
-             | map('regex_replace', '^', 'WARNING - ') | list
+             | map('regex_replace', '^', 'WARNING  ') | list
              + (['     ' ~ 'change_seeds' | community.cassandra.cassandra_command(
                     inventory=ansible_inventory_sources,
                     default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),

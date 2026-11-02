@@ -22,7 +22,7 @@ from ansible_collections.community.cassandra.plugins.module_utils.nodetool_statu
 
 _STATES = [("U", "up"), ("D", "down"), ("J", "joining"), ("L", "leaving"), ("M", "moving")]
 _IP = re.compile(r"^[0-9.]+$|:")
-_DIFFER = "WARNING - ring and inventory differ"  # the verdict's second line, when they do
+_DIFFER = "WARNING  ring and inventory differ"  # the verdict's second line, when they do
 
 
 def _resolved(name):

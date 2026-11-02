@@ -54,7 +54,7 @@ _raw:
       C(CASSANDRA_CLUSTER) picked (empty when it is not set, or C(cassandra_hosts) is);
       C(default_sources) the inventory of the configuration (C(ansible.cfg), C(ANSIBLE_INVENTORY)), used without C(-i);
       C(default_sources_origin) where it comes from (C(cfg), C(env), C(default));
-      C(banner) the line naming the cluster and how it was picked ('CLUSTER prod (5 nodes, dc1) | chosen by ...');
+      C(banner) the line naming the cluster, its nodes and datacenters ('prod  5 nodes  1 DC (dc1)');
       C(all_hosts) every host of the inventory (import_cluster reads them all without C(-e cassandra_hosts)).
   type: list
   elements: dict

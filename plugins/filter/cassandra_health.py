@@ -295,7 +295,7 @@ def _report_todo(rows, names, unreachable, absent, counted, topology_command):
 
 
 def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=None, names=None, members=None,
-                            topology_command="", ring=None):
+                            topology_command="", ring=None, settings=None):
     """The health_check report. findings: {host: its
     cassandra_health_findings} for the hosts checked; hosts: every host of
     the run; unreachable: the ones Ansible did not reach (or whose check
@@ -304,12 +304,14 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
     saw it; topology_command: the command that removes the absent nodes;
     ring: the cluster_status a node saw (an unreachable host known by no
     address is taken for the one node of that ring no host has, when it is
-    down: "node3?").
+    down: "node3?"); settings: the lines of cassandra_suspicious_settings
+    (the settings that weaken the cluster, two lines each), a SETTINGS
+    block of their own after the nodes' state, no problem.
     Each problem once, with every node that saw it. Returns {healthy,
     problems (count), lines}: "HEALTHY  my_cluster  6 nodes  6 UN, schema
     agreed, no streams, ports open" or "NOT HEALTHY  my_cluster  6 nodes
     checked, 2 problems", a line per problem, then a TO DO (a node down
-    and not reached: one item).
+    and not reached: one item), then SETTINGS.
     e.g. ({node1: [<10.0.0.4 DN>]}, "my_cluster", ["node1", "node4"], unreachable=["node4"]) -> {healthy: False,
     problems: 2, lines: ["NOT HEALTHY  my_cluster  1 node checked, 2 problems", "  ring:  node4 10.0.0.4 (r1) DN   seen
     from node1", "  ssh:   not reached by Ansible: node4", "TO DO", "  1. bring node4 back (not reached over SSH, down
@@ -340,14 +342,15 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
     absent = list(absent or [])
     if absent and counted:
         lines.append("  not counted, marked cassandra_node_state: absent: %s" % out.nodes(absent))
+    block = ["", "SETTINGS"] + ["  " + line for line in settings] if settings else []
     if not rows:
         size = members if members is not None else len(hosts)
         return {"healthy": True, "problems": 0, "lines": [
             "HEALTHY  %s  %s  %d UN, schema agreed, no streams, ports open" % (
-                cluster, out.plural(len(hosts), "node"), size)]}
+                cluster, out.plural(len(hosts), "node"), size)] + block}
     todo = _report_todo(rows, names, unreachable, absent, counted, topology_command)
     head = "NOT HEALTHY  %s  %s checked, %s" % (cluster, out.plural(len(checked), "node"), out.plural(len(rows), "problem"))
-    return {"healthy": False, "problems": len(rows), "lines": [head] + lines + out.todo(todo)}
+    return {"healthy": False, "problems": len(rows), "lines": [head] + lines + out.todo(todo) + block}
 
 
 def _ring_node(cluster_status, address):

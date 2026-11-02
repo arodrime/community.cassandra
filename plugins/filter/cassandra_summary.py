@@ -7,6 +7,9 @@ cassandra_op_recap: [{node, result}] (each node's cassandra_op_result) ->
 cassandra_reset_recap: [{node, delete, stop, disable}] (reset_node's plan of
     each node) -> "DONE  reset_node  my_cluster  node4 emptied ..." and what
     is left to do.
+cassandra_stop_block: the end of a run that stopped at a node: "STOPPED at
+    node2: <the cause>" (FAILED when a task failed, not one of our stops), the
+    nodes' table, then "WAY OUT  ..." with the command to copy, each said once.
 cassandra_differs: {node: value} of a setting that must be the same on every
     node -> why the run stops, and where to fix it.
 """
@@ -14,9 +17,13 @@ cassandra_differs: {node: value} of a setting that must be the same on every
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import os
 import re
 
+from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_command
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+
+WAY_OUT = "WAY OUT  "  # the mark of the way out of a stop, once, last
 
 # cassandra_service_node_action (the first word of a result) -> its playbook
 PLAYBOOKS = {"add": "add_node", "decommission": "decommission_node", "restart": "rolling_restart",
@@ -72,16 +79,8 @@ def outcome(node, result):
     return {"node": node, "status": "skipped", "reason": reason}, ""
 
 
-def cassandra_op_recap(results, check=False, cluster="", operation="", action=""):
-    """results: [{node, result}] in the order of the run, result each node's
-    cassandra_op_result. The recap of plugin_utils cassandra_output: the verdict (DONE,
-    FAILED, CHECK), then the nodes grouped by outcome, their times.
-    operation: the playbook's name, else from action (the
-    cassandra_service_node_action of the run), else from the actions
-    recorded.
-    -> lines: "rolling_restart done in 100s" on
-    node4, 110s on node5 -> ["DONE  rolling_restart  my_cluster  2 restarted", "  node4, node5  restarted  (1m40s..1m50s
-    each)"]."""
+def _outcomes(results, operation, action):
+    """(the recap's outcomes, the playbook's name) of the results."""
     outcomes, actions = [], []
     for item in results or []:
         said, done = outcome(item.get("node"), item.get("result"))
@@ -89,8 +88,69 @@ def cassandra_op_recap(results, check=False, cluster="", operation="", action=""
         if done:
             actions.append(done)
     actions = ([action] if action else []) + actions
-    operation = operation or (PLAYBOOKS.get(actions[0], actions[0]) if actions else "")
-    return out.recap(operation, str(cluster or ""), outcomes, check=check)
+    return outcomes, operation or (PLAYBOOKS.get(actions[0], actions[0]) if actions else "")
+
+
+def cassandra_op_recap(results, check=False, cluster="", operation="", action="", seconds=None):
+    """results: [{node, result}] in the order of the run, result each node's
+    cassandra_op_result. The recap of plugin_utils cassandra_output: the verdict (DONE,
+    FAILED, CHECK), then the nodes grouped by outcome, their times.
+    operation: the playbook's name, else from action (the
+    cassandra_service_node_action of the run), else from the actions
+    recorded; seconds: the run's, on the verdict line.
+    -> lines: "rolling_restart done in 100s" on
+    node4, 110s on node5 -> ["DONE  rolling_restart  my_cluster  2 restarted", "  node4, node5  restarted  1m40s..1m50s
+    each"]."""
+    outcomes, operation = _outcomes(results, operation, action)
+    return out.recap(operation, str(cluster or ""), outcomes, check=check, seconds=seconds)
+
+
+def _cause_and_way_out(failure):
+    """A failed task's msg (a string or lines) -> (the cause's lines, the way out's lines: from its WAY OUT line
+    on, the mark removed from the first; none: [])."""
+    lines = []
+    for item in failure if isinstance(failure, (list, tuple)) else [failure]:
+        lines += [line.rstrip() for line in str(item or "").split("\n") if line.strip()]
+    for i, line in enumerate(lines):
+        if line.startswith(WAY_OUT.strip()):
+            return lines[:i], [line[len(WAY_OUT.strip()):].strip()] + lines[i + 1:]
+    return lines, []
+
+
+def cassandra_stop_block(results, node, failure, operation="", action="", cluster="", check=False, hint="",
+                         resume=True, progress_file="", inventory=None, default_inventory=None, hosts="", cwd=None,
+                         batch=False):
+    """The end of a run that stopped at node: results, the nodes' results (cassandra_op_result, as cassandra_op_recap);
+    failure, the failed task's msg: its cause, and its way out from its WAY OUT line on when it has one (one of our
+    stops: the block says STOPPED), else FAILED, and the way out is hint (cassandra_service_resume_hint) or, with
+    resume, the run's command plus -e cassandra_rolling_resume=true (inventory, default_inventory, hosts, cwd: see
+    cassandra_command), the progress file's path under it; batch: the nodes done at the same time.
+    -> lines: ["STOPPED at node2: node4 (10.0.0.4, r1) is DN, seen from node1 and node2, 10m29s waited
+    (cassandra_service_health_timeout 600s). No other node was touched.", "", "  node1  restarted  1m50s", "  node2
+    not done  cluster unhealthy", "  node3..node5  not touched", "", "WAY OUT  start node4 (the server, then
+    Cassandra), then resume:", "  ansible-playbook community.cassandra.rolling_restart -e cassandra_rolling_resume=true"]."""
+    outcomes, operation = _outcomes(results, operation, action)
+    cause, way_out = _cause_and_way_out(failure)
+    verdict = "STOPPED" if way_out else "FAILED"
+    touched = ("The nodes done at the same time: as in the table." if batch else "No other node was touched.")
+    head = ["%s at %s: %s" % (verdict, node, cause[0] if cause else "a task failed (see above)")]
+    head += ["  " + line for line in cause[1:]]
+    head[-1] += ("" if head[-1].endswith((".", "!", "?")) else ".") + " " + touched
+    table = out.recap(operation, str(cluster or ""), outcomes, check=check, head=False, causes=False)
+    command = ""
+    if resume and not hint:
+        command = cassandra_command(operation, inventory=inventory, hosts=hosts, cwd=cwd, default_inventory=default_inventory,
+                                    extra=["-e cassandra_rolling_resume=true"])
+    if not way_out:
+        way_out = [hint.strip() if hint else ("fix it, then resume:" if command else
+                   "fix it, then check where the cluster stands (the status playbook) before running it again")]
+    first = way_out[0]
+    if command and not first.endswith(":"):
+        first += ":"
+    lines = [WAY_OUT + first] + (["  " + command] if command else []) + ["  " + line for line in way_out[1:]]
+    if command and progress_file:
+        lines.append("  progress: %s" % (out.path_from(str(progress_file), cwd) if cwd else progress_file))
+    return head + ([""] + table if table else []) + [""] + lines
 
 
 def cassandra_reset_recap(nodes, check=False, cluster="", add_command=""):
@@ -163,6 +223,7 @@ class FilterModule(object):
     def filters(self):
         return {
             "cassandra_op_recap": cassandra_op_recap,
+            "cassandra_stop_block": cassandra_stop_block,
             "cassandra_reset_recap": cassandra_reset_recap,
             "cassandra_differs": cassandra_differs,
         }

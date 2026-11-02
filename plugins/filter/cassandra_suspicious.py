@@ -1,9 +1,10 @@
 # Copyright: Contributors to the community.cassandra collection
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
-"""cassandra_suspicious_settings: {node: its variables} -> a WARNING line per
-setting of SUSPICIOUS some nodes have (the preflight playbook and the
-import_cluster report say them; nothing is refused): the nodes, the setting,
-why it is risky, and how to keep it on purpose (cassandra_suspicious_ack)."""
+"""cassandra_suspicious_settings: {node: its variables} -> the findings of
+SUSPICIOUS on some nodes (the health_check playbook's SETTINGS block and the
+import_cluster report say them; nothing is refused), two lines each: the
+setting, its value, the nodes and why it matters; what to do, and how to keep
+it on purpose (cassandra_settings_kept_on_purpose)."""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -14,8 +15,7 @@ from ansible.module_utils.parsing.convert_bool import boolean
 
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
-DASH = u"—"
-ACK = "cassandra_suspicious_ack"
+KEPT = "cassandra_settings_kept_on_purpose"
 # lines a node has that no variable covers (the import's hand edits), checked as its extra JVM options are
 LINES = "_cassandra_suspicious_lines"
 GIB = 1024 ** 3
@@ -35,8 +35,8 @@ def _false(value):
 
 def _auto_bootstrap(values, node):
     if _false(values.get("cassandra_auto_bootstrap")):
-        return [("auto_bootstrap: false", "a node that loses its data restarts empty without streaming it back;"
-                                          " remove the setting (default true) unless you know why it is there")]
+        return [("auto_bootstrap false on {nodes}: a node that loses its data would restart empty, without streaming"
+                 " it back", "remove cassandra_auto_bootstrap (the default is true)")]
     return []
 
 
@@ -55,11 +55,12 @@ def _replace(values, node):
                 continue  # commented out: set nothing
             for m in REPLACE.finditer(str(line)):
                 flag = "-Dcassandra.replace_address%s=%s" % (m.group(1) or "", m.group(3))
-                why = ("this node is already bootstrapped: Cassandra refuses its next start with it"
+                why = ("the node is bootstrapped already: Cassandra refuses its next start with this flag"
                        if not m.group(1) else
-                       "a member of the ring: ignored now, it would replace a node again after its data is wiped")
+                       "the node is a member of the ring: ignored now, it would replace a node again once its data is"
+                       " wiped")
                 remove = ("remove the line %s" % str(line).strip()) if whole else ("remove %s from %s" % (flag, where))
-                found.append(("%s in %s" % (flag, where), "%s; %s" % (why, remove)))
+                found.append(("replace flag %s in %s on {nodes}: %s" % (flag, where, why), remove))
     return found
 
 
@@ -80,8 +81,8 @@ def _xmx(values):
     for where, lines in places:
         for line in lines if isinstance(lines, (list, tuple)) else []:
             if str(line).lstrip().startswith("#"):
-                continue
-            for m in re.finditer(r"(?:^|[\s\"'])-Xmx([0-9]+[kKmMgGtT]?)", str(line)):
+                continue  # commented out: sets nothing
+            for m in re.finditer(r"-Xmx([^\s'\"]+)", str(line)):
                 found = (where, m.group(1))
     return found
 
@@ -97,35 +98,38 @@ def _heap(values, node):
     environment = values.get("cassandra_service_environment")
     where, heap = _xmx(values)
     if heap:
-        setting, change = "-Xmx%s in %s" % (heap, where), "change -Xmx in %s" % where
+        setting, change = "heap -Xmx%s in %s" % (heap, where), "change -Xmx in %s" % where
     elif values.get("cassandra_heap_size"):
         heap = values["cassandra_heap_size"]
-        setting, change = "cassandra_heap_size: %s" % heap, "set cassandra_heap_size"
+        setting, change = "heap %s (cassandra_heap_size)" % heap, "set cassandra_heap_size"
     elif isinstance(environment, dict) and environment.get("MAX_HEAP_SIZE"):
         heap = environment["MAX_HEAP_SIZE"]
-        setting, change = "cassandra_service_environment.MAX_HEAP_SIZE: %s" % heap, "set cassandra_heap_size"
+        setting, change = "heap %s (cassandra_service_environment.MAX_HEAP_SIZE)" % heap, "set cassandra_heap_size"
     else:
         setting, change = "heap not set", "set cassandra_heap_size"
     ram = _ram(values)
     top = min(31, ram // 2) if ram else 31
     if ram and top < 2:
-        return [(setting, "the host has %dG of RAM, too little for Cassandra (8G or more)" % ram)]
-    advice = "%s between 2G and %dG (%snever 32G or more)" % (change, top, "at most half the RAM, " if ram else "")
+        return [("%s on {nodes}: the host has %dG of RAM, too little for Cassandra (8G or more)" % (setting, ram),
+                 "give the host more RAM")]
+    room = "Cassandra needs 2G to %dG (%sunder 32G)" % (top, "at most half the RAM, " if ram else "")
     if not heap:
         # 4.x's cassandra-env.sh stops its auto-sizing at 8G (5.0's at half the RAM, 31G at most); 60G: a 64G host
         if ram and ram >= 60 and str(values.get("cassandra_version") or "50x") in ("40x", "41x"):
-            return [(setting, "Cassandra 4.x sizes it to 8G at most, with %dG of RAM; %s" % (ram, advice))]
+            return [("%s on {nodes}: Cassandra 4.x sizes it to 8G at most, with %dG of RAM; %s" % (setting, ram, room),
+                     change)]
         return []
     size = _size(heap)
     if size is None:
         return []
     if size < 2 * GIB:
-        return [(setting, "too small for Cassandra; %s" % advice)]
+        return [("%s on {nodes}: too small, %s" % (setting, room), change)]
     if size >= 32 * GIB:
-        return [(setting, "32G or more loses the JVM's compressed pointers (31G holds more); %s" % advice)]
+        return [("%s on {nodes}: 32G or more loses the JVM's compressed pointers, 31G holds more; %s" % (setting, room),
+                 change)]
     if ram and size > ram * GIB // 2:
-        return [(setting, "more than half of the %dG of RAM, which the page cache and off-heap memory need; %s"
-                 % (ram, advice))]
+        return [("%s on {nodes}: more than half of the %dG of RAM, which the page cache and off-heap memory need; %s"
+                 % (setting, ram, room), change)]
     return []
 
 
@@ -138,25 +142,25 @@ def _authenticator(values, node):
     reached = bool(isinstance(extra, dict) and extra.get("rpc_interface")) or not LOCAL.match(
         str(rpc if rpc is not None else "localhost").strip())
     if authenticator.rsplit(".", maxsplit=1)[-1] == "AllowAllAuthenticator" and reached:
-        return [("authenticator: AllowAllAuthenticator", "any client that reaches the node's rpc address gets in; set"
-                                                         " cassandra_authenticator: PasswordAuthenticator")]
+        return [("no authentication (AllowAllAuthenticator) on {nodes}, and their RPC address is reachable from other"
+                 " hosts: any client that reaches it gets in",
+                 "set an authenticator (cassandra_authenticator: PasswordAuthenticator)")]
     return []
 
 
 FAILURE_POLICY = {
-    "cassandra_disk_failure_policy": "the node stays up with a failed data disk, its reads and writes there failing;"
-                                     " use stop (the default) or die",
-    "cassandra_commit_failure_policy": "the node acknowledges writes its commit log could not keep; use stop (the"
-                                       " default) or die",
+    "cassandra_disk_failure_policy": "the node stays up with a failed data disk, its reads and writes there failing",
+    "cassandra_commit_failure_policy": "the node acknowledges writes its commit log could not keep",
 }
 
 
 def _failure_policy(values, node):
-    return [("%s: ignore" % key[len("cassandra_"):], why) for key, why in sorted(FAILURE_POLICY.items())
-            if str(values.get(key) or "").strip().lower() == "ignore"]
+    return [("%s ignore on {nodes}: %s" % (key[len("cassandra_"):], why), "set %s: stop (the default) or die" % key)
+            for key, why in sorted(FAILURE_POLICY.items()) if str(values.get(key) or "").strip().lower() == "ignore"]
 
 
-# (id, the check: (the node's variables, {name, member}) -> [(the setting, why)]); add a row for another one
+# (id, the check: (the node's variables, {name, member}) -> [(the finding, "{nodes}" where the nodes go, what to
+# do)]); add a row for another one
 SUSPICIOUS = [
     ("auto_bootstrap_false", _auto_bootstrap),
     ("replace_address", _replace),
@@ -166,56 +170,70 @@ SUSPICIOUS = [
 ]
 
 
-def _acked(values):
-    """The ids of cassandra_suspicious_ack: a list, or a comma-separated string (anything else: none)."""
-    ack = values.get(ACK)
-    if isinstance(ack, str):
-        ack = ack.split(",")
-    return set(str(a).strip() for a in ack) if isinstance(ack, (list, tuple, set)) else set()
+def _kept(values):
+    """The ids of cassandra_settings_kept_on_purpose: a list, or a comma-separated string (anything else: none)."""
+    kept = values.get(KEPT)
+    if isinstance(kept, str):
+        kept = kept.split(",")
+    return set(str(a).strip() for a in kept) if isinstance(kept, (list, tuple, set)) else set()
 
 
 def suspicious(nodes, members=None):
     """nodes: {name: {variable: value}} (a node's hostvars will do); members: the names in the ring (None: not
-    known, the rows that need it say nothing) -> [(row id, the names, the setting, why)], in the order of
-    SUSPICIOUS, without the nodes that acknowledge a row (cassandra_suspicious_ack)."""
+    known, the rows that need it say nothing) -> [(row id, the names, the finding with "{nodes}" where the nodes
+    go, what to do)], in the order of SUSPICIOUS, without the nodes that keep a row on purpose
+    (cassandra_settings_kept_on_purpose)."""
     members = None if members is None else set(str(m) for m in members)
     found = []
     for row, check in SUSPICIOUS:
         texts = {}
         for name, values in (nodes or {}).items():
             values = values or {}
-            if row in _acked(values):
+            if row in _kept(values):
                 continue
             node = {"name": str(name), "member": members is not None and str(name) in members}
-            for setting, why in check(values, node):
-                texts.setdefault((setting, why), []).append(str(name))
-        found += [(row, names, setting, why) for (setting, why), names in texts.items()]
+            for text, fix in check(values, node):
+                texts.setdefault((text, fix), []).append(str(name))
+        found += [(row, names, text, fix) for (text, fix), names in texts.items()]
     return found
 
 
 def how_to_keep(row):
     """What silences a row on a node that keeps the setting on purpose."""
-    return "kept on purpose? add %s to %s" % (row, ACK)
+    return "kept on purpose: list %s in %s" % (row, KEPT)
 
 
-def unknown_acks(nodes):
-    """[(an id of cassandra_suspicious_ack no row has, the nodes)]: a typo silences nothing."""
+def finding_lines(row, names, text, fix, who=None):
+    """A finding as two lines: the setting, its value, the nodes and why it matters; then what to do and how to
+    accept it. who: the nodes' text (default: cassandra_output's nodes())."""
+    return [text.format(nodes=who or out.nodes(names)), "  %s; %s" % (fix, how_to_keep(row))]
+
+
+def unknown_kept(nodes):
+    """[(an id of cassandra_settings_kept_on_purpose no row has, the nodes)]: a typo silences nothing."""
     ids = set(row for row, dummy in SUSPICIOUS)
     found = {}
     for name, values in (nodes or {}).items():
-        for a in sorted(_acked(values or {}) - ids - set([""])):
+        for a in sorted(_kept(values or {}) - ids - set([""])):
             found.setdefault(a, []).append(str(name))
     return sorted(found.items())
 
 
+def unknown_lines(nodes, who=None):
+    """A line per id of cassandra_settings_kept_on_purpose no check has: "cassandra_settings_kept_on_purpose: no
+    check is called X (node4); the ids are ..."."""
+    return ["%s: no check is called %s (%s); the ids are %s" % (
+        KEPT, a, (who or out.nodes)(names), ", ".join(row for row, dummy in SUSPICIOUS)) for a, names in unknown_kept(nodes)]
+
+
 def cassandra_suspicious_settings(nodes, members=None):
-    """Filter: a "WARNING - node4: auto_bootstrap: false - ..." line per row of suspicious(nodes, members), then
-    one per id of cassandra_suspicious_ack no row has.
+    """Filter: the findings of suspicious(nodes, members), two lines each (finding_lines), then a line per id of
+    cassandra_settings_kept_on_purpose no check has (health_check's SETTINGS block).
     -> lines; none: []."""
-    return (["WARNING - %s: %s %s %s (%s)" % (out.nodes(names), setting, DASH, why, how_to_keep(row))
-             for row, names, setting, why in suspicious(nodes, members)]
-            + ["WARNING - %s: %s has %s, which no check has (%s): it silences nothing" % (
-                out.nodes(names), ACK, a, ", ".join(row for row, dummy in SUSPICIOUS)) for a, names in unknown_acks(nodes)])
+    lines = []
+    for row, names, text, fix in suspicious(nodes, members):
+        lines += finding_lines(row, names, text, fix)
+    return lines + unknown_lines(nodes)
 
 
 class FilterModule(object):

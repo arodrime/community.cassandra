@@ -227,39 +227,40 @@ def test_by_nodes():
 # --- plan ---
 
 def test_plan_order_warnings_above_the_question():
-    lines = out.plan("decommission_node", "my_cluster", "2 nodes, one at a time",
+    # the title: the operation in capitals, what it does to whom, where (the version is the banner's)
+    lines = out.plan("decommission_node", "my_cluster", "node7, node8 from dc1 of my_cluster, one at a time",
                      steps=[{"node": "node7", "dc": "dc1", "rack": "rack_a", "text": "load 47.1 GiB -> node1,node4"},
                             {"node": "node8", "dc": "dc1", "rack": "rack_b", "text": "load 48.1 GiB"}],
                      facts=[["dc1 after", "6 nodes"], ["ring now", "8 UN"], "a plain fact"],
-                     warnings=["not inside tmux/screen"], question="Decommission node7, node8? (yes/no)",
-                     version="4.1.5")
+                     warnings=["not inside tmux/screen"], question="Decommission node7, node8? (yes/no)")
     assert lines == [
-        "PLAN  decommission_node  my_cluster (Cassandra 4.1.5)  2 nodes, one at a time",
+        "DECOMMISSION NODE  node7, node8 from dc1 of my_cluster, one at a time",
         "  1.  node7  dc1/rack_a  load 47.1 GiB -> node1,node4",
         "  2.  node8  dc1/rack_b  load 48.1 GiB",
-        "",  # a rule under the ops callback, PARAGRAPH a blank line (each fact a paragraph)
+        "",  # a blank line between two blocks, PARAGRAPH (each fact a paragraph)
         "dc1 after:  6 nodes",
         P,
         "ring now:   8 UN",
         P,
         "a plain fact",
         "",
-        "WARNING - not inside tmux/screen",
+        "WARNING  not inside tmux/screen",
         "",
         "Decommission node7, node8? (yes/no)",
     ]
+    assert out.title("add_node", "node4, node5 into dc1 of prod") == "ADD NODE  node4, node5 into dc1 of prod"
 
 
 def test_plan_check_and_refused():
     lines = out.plan("cleanup", "c1", steps=["node1"], question="Go?", check=True)
-    assert lines == ["PLAN  cleanup  c1", "  1.  node1", "", "--check: nothing will be changed"]
+    assert lines == ["CLEANUP  c1", "  1.  node1", "", "--check: nothing will be changed"]
     assert out.plan("decommission_node", "c1", verdict="REFUSED", facts=["dc1 after: 2 nodes"]) == \
         ["REFUSED  decommission_node  c1", "", "dc1 after: 2 nodes"]
-    # an empty block: no blank line for it, never two in a row
-    assert out.plan("cleanup", "c1", steps=["node1"], warnings=["w", " "], question="Go?") == \
-        ["PLAN  cleanup  c1", "  1.  node1", "", "WARNING - w", "", "Go?"]
+    # an empty block: no blank line for it, never two in a row; the warnings one under the other
+    assert out.plan("cleanup", "c1", steps=["node1"], warnings=["w", " ", "w2"], question="Go?") == \
+        ["CLEANUP  c1", "  1.  node1", "", "WARNING  w", "WARNING  w2", "", "Go?"]
     assert out.plan("cleanup", "c1", facts=["f"], warnings=["w"], check=True) == \
-        ["PLAN  cleanup  c1", "", "f", "", "WARNING - w", "", "--check: nothing will be changed"]
+        ["CLEANUP  c1", "", "f", "", "WARNING  w", "", "--check: nothing will be changed"]
 
 
 # --- the prepare of new nodes ---
@@ -281,19 +282,15 @@ def prepared(name, **kw):
     return node
 
 
-def test_prepare_lines_one_line_per_step_nodes_grouped():
+def test_prepare_lines_one_line_per_group_of_nodes():
+    # the steps in short words; a step off or not managed (firewall, medusa) is not said; the data disks only when
+    # set, a warning or a line to act on
     assert out.prepare_lines([prepared("node4"), prepared("node5", packages=[], os=0)]) == [
-        "node4, node5  repository  ok (already set)",
-        "node4         install     cassandra 5.0.9 (installed now)",
-        "node5         install     cassandra 5.0.9 (already installed)",
-        "node4, node5  java        17.0.12 (already installed)",
-        "node4         os tuning   2 changes",
-        "node5         os tuning   ok (already set)",
-        "node4, node5  data disks  read-ahead 4 KB already set",
-        "node4, node5  config      3 files written",
-        "node4, node5  firewall    off (cassandra_manage_firewall: false)",
-        "node4, node5  medusa      off (cassandra_medusa_enabled: false)",
-        "node4, node5  seeds       joins with 10.0.0.1, 10.0.0.2"]
+        "node4  prepared  repository, cassandra 5.0.9, java 17.0.12, os tuning (2 changes), config (3 files), seeds 10.0.0.1, 10.0.0.2",
+        "node5  prepared  repository, cassandra 5.0.9, java 17.0.12, os tuning, config (3 files), seeds 10.0.0.1, 10.0.0.2"]
+    assert out.prepare_lines([prepared("node4"), prepared("node5")]) == [
+        "node4, node5  prepared  repository, cassandra 5.0.9, java 17.0.12, os tuning (2 changes), config (3 files),"
+        " seeds 10.0.0.1, 10.0.0.2"]
 
 
 def test_prepare_lines_check_mode_says_would():
@@ -306,16 +303,8 @@ def test_prepare_lines_check_mode_says_would():
                                         medusa=[{"item": "Medusa", "before": "absent", "after": "0.24.1"}])],
                               check=True)
     assert lines == [
-        "node4  repository  would be set",
-        "node4  install     cassandra 5.0.9 (would be installed)",
-        "node4  java        17.0.13 (would be installed)",
-        "node4  os tuning   would make 2 changes",
-        "node4  data disks  read-ahead 4 KB would be set",
-        "node4  config      would write 3 files",
-        "node4  firewall    would make 1 change",
-        "node4  medusa      would install Medusa 0.24.1",
-        "node4  seeds       would join with 10.0.0.1, 10.0.0.2"]
-    assert not [line for line in lines if "now" in line or "written" in line]
+        "node4  would prepare  repository, cassandra 5.0.9, java 17.0.13, os tuning (2 changes), disks read-ahead 4 KB,"
+        " config (3 files), firewall (1 change), medusa 0.24.1, seeds 10.0.0.1, 10.0.0.2"]
 
 
 def test_prepare_lines_steps_off_or_not_managed():
@@ -326,13 +315,7 @@ def test_prepare_lines_steps_off_or_not_managed():
                     seeds="", packages=[{"item": "package cassandra", "before": "absent", "after": "5.0.9"},
                                         {"item": "package libjemalloc2", "before": "absent", "after": "5.3.0-1"}])
     assert out.prepare_lines([node]) == [
-        "node7  repository  not managed (cassandra_repository_manage: false)",
-        "node7  install     cassandra 5.0.9 (installed now; also libjemalloc2)",
-        "node7  java        not managed (cassandra_install_java: false)",
-        "node7  os tuning   not managed (cassandra_linux_manage: false)",  # no data disks line then
-        "node7  config      ok (unchanged)",
-        "node7  firewall    not managed (cassandra_firewall_manage: false)",
-        "node7  medusa      Medusa 0.24.1 installed now (+1 change)"]  # no seeds: create_cluster's
+        "node7  prepared  cassandra 5.0.9, libjemalloc2, config, medusa 0.24.1 (+1 change)"]  # no seeds: create_cluster's
 
 
 def test_prepare_lines_other_outcomes():
@@ -342,17 +325,12 @@ def test_prepare_lines_other_outcomes():
                     cassandra="", packages=[{"item": "package cassandra", "before": "absent",
                                              "after": "not in configured repos yet"},
                                             {"item": "package libjemalloc2", "before": "absent", "after": "5.3.0-1"}])
-    assert out.prepare_lines([node], check=True)[:6] == [
-        "node8  repository  none (cassandra_install_method: packages)",
-        "node8  install     cassandra (would be installed: not in configured repos yet; also libjemalloc2)",
-        "node8  java        17.0.12 from /opt/java/jdk-17.0.12",
-        "node8  os tuning   would make 2 changes",
-        "node8  data disks  nothing to tune (1 warning below)",
-        "node8  config      would write the files (cassandra not installed yet)"]
+    assert out.prepare_lines([node], check=True) == [
+        "node8  would prepare  cassandra (not in configured repos yet), libjemalloc2, java 17.0.12 (/opt/java/jdk-17.0.12),"
+        " os tuning (2 changes), disks (1 warning below), config (8 files templated), seeds 10.0.0.1, 10.0.0.2"]
     perms = [{"item": "/etc/cassandra/cassandra.yaml owner", "before": "root", "after": "cassandra"}]
-    assert "node8  config      2 files written, 1 other change" in out.prepare_lines(
-        [prepared("node8", config=CONFIG[:2] + perms)])
-    assert "node8  config      1 other change" in out.prepare_lines([prepared("node8", config=perms)])
+    assert "config (2 files, 1 other change)" in out.prepare_lines([prepared("node8", config=CONFIG[:2] + perms)])[0]
+    assert "config (1 other change)" in out.prepare_lines([prepared("node8", config=perms)])[0]
 
 
 def test_prepare_lines_a_pinned_java_installed_now():
@@ -360,20 +338,19 @@ def test_prepare_lines_a_pinned_java_installed_now():
                                        {"item": "package openjdk-17-jre-headless=17.0.12*", "before": "absent",
                                         "after": "not in configured repos yet"}])  # what the role looks up as is
     lines = out.prepare_lines([node])
-    assert "node4  install     cassandra 5.0.9 (installed now)" in lines  # not "also openjdk-..."
-    assert "node4  java        17.0.12 (installed now)" in lines
+    assert "cassandra 5.0.9, java 17.0.12," in lines[0] and "openjdk" not in lines[0]  # not "also openjdk-..."
 
 
 def test_prepare_lines_disks_not_tuned_yet_point_below():
     node = prepared("node4", disks=dict(prepared("node4")["disks"], info=["sdc: not tuned yet (LVM deferred)"]))
-    assert "node4  data disks  read-ahead 4 KB already set (see below)" in out.prepare_lines([node])
+    assert ", disks (see below), " in out.prepare_lines([node])[0]
     node = prepared("node4", disks=dict(prepared("node4")["disks"], changed="on"))  # a flag as Ansible may give it
-    assert "node4  data disks  read-ahead 4 KB set now" in out.prepare_lines([node])
+    assert ", disks read-ahead 4 KB, " in out.prepare_lines([node])[0]
 
 
 def test_prepare_lines_many_nodes_ranges_and_nothing():
     lines = out.prepare_lines([prepared("node%d" % i) for i in range(1, 8)])
-    assert lines[0] == "node1..node7  repository  ok (already set)"  # no "7 nodes: " on every line
+    assert lines[0].startswith("node1..node7  prepared  repository, ")  # no "7 nodes: " first
     assert out.prepare_lines([]) == [] and out.prepare_lines(None) == []
     assert out.prepare_lines([{"name": "node1"}]) == []  # a node that ran no step
 
@@ -384,7 +361,7 @@ def test_left_system_warning_once_with_its_nodes():
     assert max(len(line) for line in lines[1:]) <= 110  # wrapped, under the WARNING line (its colour)
     assert all(line.startswith("  ") for line in lines[1:])
     text = " ".join(line.strip() for line in lines[1:])
-    assert lines[0] == ("WARNING - node4, node5: an old system keyspace in /var/lib/cassandra/data, not one of the data"
+    assert lines[0] == ("WARNING  node4, node5: an old system keyspace in /var/lib/cassandra/data, not one of the data"
                         " directories the config uses (/data/cassandra)")
     assert text.startswith("Cassandra does not read it: the node starts empty")  # why: ignored for the run
     # the way out: its keyspace directories, not the whole directory; never another instance's
@@ -632,13 +609,13 @@ def restarts(times):
 
 def test_recap_grouped_with_the_slow_node_apart():
     lines = out.recap("rolling_restart", "my_cluster", restarts([109, 112, 400, 115, 118, 110]), seconds=690)
-    assert lines == ["DONE  rolling_restart  my_cluster  6 restarted (11m30s)",
-                     "  node1, node2, node4..node6  restarted  (1m49s..1m58s each)",
+    assert lines == ["DONE  rolling_restart  my_cluster  6 restarted  11m30s",
+                     "  node1, node2, node4..node6  restarted  1m49s..1m58s each",
                      "  node3                       restarted  6m40s  %s slow (median 1m53s)" % ARROW]
 
 
 def test_recap_no_outlier_under_the_factor_and_one_node():
-    assert out.recap("rolling_restart", "c", restarts([100, 140]))[1:] == ["  node1, node2  restarted  (1m40s..2m20s each)"]
+    assert out.recap("rolling_restart", "c", restarts([100, 140]))[1:] == ["  node1, node2  restarted  1m40s..2m20s each"]
     assert out.recap("rolling_restart", "c", restarts([100]))[1:] == ["  node1  restarted  1m40s"]
 
 

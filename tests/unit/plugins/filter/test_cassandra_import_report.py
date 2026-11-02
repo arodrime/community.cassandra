@@ -754,10 +754,11 @@ def test_auto_bootstrap_false_kept_on_its_nodes_with_a_warning():
     layout = cassandra_inventory_layout(nodes, "My Cluster")
     assert [h for h, v in layout["host_vars"].items() if v.get("cassandra_auto_bootstrap") is False] == ["node1", "node2"]
     assert not [g for g, v in layout["group_vars"].items() if "cassandra_auto_bootstrap" in v]
-    lines = report(nodes)
-    assert any(u"WARNING - node1, node2: auto_bootstrap: false, kept as found \u2014 a node that loses its data restarts"
-               u" empty without streaming it back; remove the setting (default true) unless you know why it is there"
-               u" (kept on purpose? add auto_bootstrap_false to cassandra_suspicious_ack)" in line for line in lines)
+    text = "\n".join(report(nodes))
+    # a TO DO item of two lines: the finding, then what to do and how to keep it
+    assert ("auto_bootstrap false on node1, node2: a node that loses its data would restart empty, without streaming it"
+            " back (kept as found)\n     remove cassandra_auto_bootstrap (the default is true); kept on purpose: list"
+            " auto_bootstrap_false in cassandra_settings_kept_on_purpose") in text
     every = [node(i) for i in range(1, 4)]
     for n in every:
         n["vars"]["cassandra_auto_bootstrap"] = False
@@ -768,11 +769,11 @@ def test_replace_flag_in_a_hand_edit_warned_with_its_line():
     # a node read is a member of the ring: a replace flag left in cassandra-env.sh, the exact line to remove
     nodes = [node(1, hand=["cassandra-env.sh, line 290:", '  + JVM_OPTS="$JVM_OPTS -Dcassandra.replace_address=10.0.0.9"']),
              node(2)]
-    lines = report(nodes)
-    assert any(u"WARNING - node1: -Dcassandra.replace_address=10.0.0.9 in the node's config, kept as found \u2014 this"
-               u" node is already bootstrapped: Cassandra refuses its next start with it; remove the line"
-               u' JVM_OPTS="$JVM_OPTS -Dcassandra.replace_address=10.0.0.9" (kept on purpose? add replace_address to'
-               u" cassandra_suspicious_ack)" in line for line in lines)
+    text = "\n".join(report(nodes))
+    assert ("replace flag -Dcassandra.replace_address=10.0.0.9 in the node's config on node1: the node is bootstrapped"
+            " already: Cassandra refuses its next start with this flag (kept as found)\n     remove the line"
+            ' JVM_OPTS="$JVM_OPTS -Dcassandra.replace_address=10.0.0.9"; kept on purpose: list replace_address in'
+            " cassandra_settings_kept_on_purpose") in text
 
 
 def test_a_suspicious_setting_does_not_change_whom_the_other_settings_are_for():

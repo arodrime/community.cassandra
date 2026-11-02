@@ -85,13 +85,13 @@ def screen_text(playbook, check=False, confirm=True, resume=False, mode="node"):
 
 def test_rolling_restart_screen_and_question():
     text, question = screen_text("rolling_restart.yml")
-    assert text.startswith("rolling_restart on cluster 'Orders': restart node1..node3, one node at a time\n\n"
-                           "Drains and restarts each node in turn, the cluster checked healthy before and after each;")
-    assert "WARNING - session: " + SESSION in text
-    assert question == "Restart node1..node3, one node at a time?"
+    assert text.startswith("ROLLING RESTART  node1..node3 of Orders, one node at a time\n"
+                           "  Drains and restarts each node in turn, the cluster checked healthy before and after each;")
+    assert "WARNING  " + SESSION in text
+    assert question == "Restart node1..node3 of Orders, one node at a time?"
     assert "skipped (cassandra_rolling_resume)" in " ".join(screen_text("rolling_restart.yml", resume=True)[0].split())
     rack, question = screen_text("rolling_restart.yml", mode="rack")
-    assert "rack by rack" in rack and question == "Restart node1..node3, rack by rack?"
+    assert "rack by rack" in rack and question == "Restart node1..node3 of Orders, rack by rack?"
     assert "Refused before any restart if a rack down would take down more than one replica" in " ".join(rack.split())
     assert "skipped (cassandra_rolling_resume)" in " ".join(screen_text("rolling_restart.yml", resume=True, mode="rack")[0].split())
     # --check and cassandra_operation_confirm false: the screen, no question (said on the screen)
@@ -104,14 +104,15 @@ def test_the_screens_say_it_with_single_spaces():
     for playbook, modes in (("rolling_restart.yml", ("node", "rack")), ("rolling_reboot.yml", ("node",))):
         for mode in modes:
             for resume in (False, True):
-                intro = screen_text(playbook, resume=resume, mode=mode)[0].split("\n\n")[1]
+                head = screen_text(playbook, resume=resume, mode=mode)[0].split("\n\n")[0]
+                intro = " ".join(line.strip() for line in head.split("\n")[1:])  # the how lines, under the title
                 assert "  " not in intro and intro == intro.strip(), (playbook, mode, resume, intro)
 
 
 def test_rolling_reboot_screen_and_question():
     text, question = screen_text("rolling_reboot.yml")
-    assert text.startswith("rolling_reboot on cluster 'Orders': reboot node1..node3, one host at a time")
-    assert question == "Reboot node1..node3, one host at a time?"
+    assert text.startswith("ROLLING REBOOT  node1..node3 of Orders, one host at a time")
+    assert question == "Reboot node1..node3 of Orders, one host at a time?"
 
 
 def node(address, status="U", state="N"):
@@ -264,7 +265,8 @@ def test_each_read_is_one_read_the_wait_reads_again_with_a_progress_line():
                     "Note whether it still waits"]
     # the stop says how long it waited
     stop = next(t for t in HEALTH if t["name"] == "Stop on an unhealthy cluster")
-    assert "for them to come back (cassandra_service_health_timeout" in stop["ansible.builtin.fail"]["msg"]
+    assert "waited (cassandra_service_health_timeout" in stop["ansible.builtin.fail"]["msg"]
+    assert "WAY OUT  start " in stop["ansible.builtin.fail"]["msg"]  # the way out, from its WAY OUT line on
 
 
 def check_task(name):

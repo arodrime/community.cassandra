@@ -1,14 +1,16 @@
 ---
 # The run's first line, once per run and cluster (a playbook that imports
-# another says it once): the cluster, its nodes and datacenters, and how it
-# was picked
-#   CLUSTER prod (5 nodes, dc1) | chosen by: -e cassandra_hosts
-# (CASSANDRA_CLUSTER (environment), the only cluster in the inventory). On
-# localhost (hosts_check.yml), or on the nodes' first play when --limit left
-# localhost out. The ops callback says it again as the run's last line.
+# another says it once): the cluster, its nodes and datacenters, then the
+# running Cassandra version when the caller read it (_cassandra_banner_version)
+#   prod  5 nodes  2 DCs (dc1, dc2)  Cassandra 4.1.12
+# In preflight, right after the cluster is read from a running node; on the
+# nodes' first play of the read-only playbooks (status, health_check), before
+# any read: the line stops after the datacenters.
 - name: Say which cluster the run is on
   ansible.builtin.debug:
-    msg: "{{ lookup('community.cassandra.cassandra_hosts', banner=true) }}"
+    msg: >-
+      {{ lookup('community.cassandra.cassandra_hosts', banner=true)
+         ~ (('  Cassandra ' ~ _cassandra_banner_version) if _cassandra_banner_version | default('') else '') }}
   run_once: true
   when: hostvars['localhost']['_cassandra_cluster_shown'] | default('') != _group
   tags: [always]  # under --tags too

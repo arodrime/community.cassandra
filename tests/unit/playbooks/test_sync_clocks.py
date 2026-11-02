@@ -21,7 +21,7 @@ def play(name):
 
 
 def test_preflight_lets_a_member_left_down_through():
-    assert play("Preflight")["vars"] == {"_cassandra_preflight_members_down_ok": True}
+    assert play("Preflight")["vars"] == {"_cassandra_preflight_members_down_ok": True, "_cassandra_notes_in_plan": True}
     with open(os.path.join(TOP, "playbooks", "preflight.yml"), encoding="utf-8") as f:
         text = f.read()
     assert "or (_cassandra_preflight_members_down_ok | default(false) | bool and _addr in _all)" in text

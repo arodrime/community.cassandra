@@ -71,20 +71,17 @@
       delegate_facts: true
       loop: "{{ _todo }}"
 
-    - name: Print the summary
-      ansible.builtin.include_tasks: summary.yml
-
+    # the cause once (the stop block), the nodes' table, the way out: no later batch was started
     - name: Stop here
       vars:
         cassandra_output: true  # a verdict: its msg as is
+        cassandra_output_gap: true  # a block of its own
       ansible.builtin.fail:
         msg: >-
-          Stopped at the batch {{ _todo | join(', ') }}: no later batch was started.
-          {% if cassandra_service_resume_hint is defined %}
-          {{ cassandra_service_resume_hint }}
-          {% elif cassandra_progress_file is defined %}
-          Once fixed, resume with the same command plus -e cassandra_rolling_resume=true
-          (progress: {{ cassandra_progress_file }})
-          {% else %}
-          Once fixed, clean up this batch and the ones after it with the cleanup playbook (--limit those nodes).
-          {% endif %}
+          {{ _cassandra_op_results | community.cassandra.cassandra_stop_block(
+               'the batch ' ~ _todo | join(', '), ansible_failed_result.msg | default(''), check=ansible_check_mode,
+               cluster=cassandra_cluster_name | default(''), operation=cassandra_service_summary_operation | default(''),
+               action='cleanup', resume=cassandra_progress_file is defined, progress_file=cassandra_progress_file | default(''),
+               hint=cassandra_service_resume_hint | default('' if cassandra_progress_file is defined
+                                                            else 'clean up this batch and the ones after it with the cleanup playbook (--limit those nodes)'),
+               batch=true, **_cassandra_run_command_args) }}

@@ -220,6 +220,6 @@ def test_a_stopped_add_says_how_to_go_on():
     assert "rolling_resume" not in hint and "run {{ _cassandra_screen_asked_by | default('') or 'add_node' }} again" in hint
     with open(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "node_operation.yml"), encoding="utf-8") as f:
         text = f.read()
-    # the progress file named only when there is one
-    assert "(progress: ' ~ cassandra_progress_file ~ ')') if cassandra_progress_file is defined else ''" in text
+    # the progress file named only when there is one (the stop block's resume)
+    assert "resume=cassandra_progress_file is defined, progress_file=cassandra_progress_file | default('')" in text
     assert "cassandra_progress_file | default('none')" not in text

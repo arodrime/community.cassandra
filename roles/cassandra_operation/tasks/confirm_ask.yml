@@ -6,11 +6,10 @@
     _cassandra_confirm_tries: "{{ _cassandra_confirm_tries | int + 1 }}"
   run_once: true
 
+# (pause ends the prompt line with ':', the mark of a question)
 - name: Confirm the operation
   ansible.builtin.pause:
-    prompt: |-
-      {% if _cassandra_confirm_tries | int == 1 %}{{ cassandra_confirm_prompt }}
-      Answer yes to go on, no to stop{% else %}Please answer yes or no{% endif %}
+    prompt: "{{ (cassandra_confirm_prompt ~ ' Answer yes or no') if _cassandra_confirm_tries | int == 1 else 'Please answer yes or no' }}"
   register: _cassandra_confirm_reply
   run_once: true
   vars:

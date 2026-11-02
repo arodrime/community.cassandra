@@ -75,5 +75,5 @@ def test_the_screen_says_a_node_already_in_the_ring_is_only_checked():
     assert joined == ["node4"]
     line = [i for i in screen["vars"]["cassandra_screen"]["intro"] if "_joined" in i][0]
     assert render(line, _joined=joined, _new=["node5"], _joining=[]) == \
-        "Already in the ring (an earlier run), only checked: node4."
+        "already in the ring (an earlier run), only checked: node4"
     assert render(line, _joined=joined, _new=[], _joining=[]) == ""  # said by "No node to add" then

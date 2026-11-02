@@ -201,7 +201,7 @@ def test_a_deleted_config_file_is_shown_and_written_back(tmp_path, series, delet
     facts = set_facts(find(FIND["tasks"], "Note what this node needs"), note)
     assert facts["cassandra_apply_config_todo"] in (True, "True")
     # kept by hand but gone: written from the template, said (its hand edits are lost)
-    warning = ("WARNING - %s kept by hand (cassandra_config_keep_files) is missing: written back from the template, the hand"
+    warning = ("WARNING  %s kept by hand (cassandra_config_keep_files) is missing: written back from the template, the hand"
                " edits are lost. Restore your copy first to keep them." % deleted)
     assert role["_cassandra_config_keep_missing"] == ([deleted] if keep else [])
     assert facts["cassandra_apply_config_then"] == "restart"
@@ -210,13 +210,13 @@ def test_a_deleted_config_file_is_shown_and_written_back(tmp_path, series, delet
              {"name": "n2", "todo": True, "then": facts["cassandra_apply_config_then"], "result": "nothing to apply",
               "notes": facts["cassandra_apply_config_notes"]}]
     assert cassandra_apply_config_outcomes(nodes, plan=True) == (
-        ["n2  will apply, then restart", "n1  nothing to apply"])
+        ["n2  write + restart", "n1  up to date"])
     # (its WARNING in the plan's warnings, not under the node)
-    assert cassandra_apply_config_warnings(nodes) == ([{"label": "n2", "text": warning[len("WARNING - "):]}] if keep else [])
+    assert cassandra_apply_config_warnings(nodes) == ([{"label": "n2", "text": warning[len("WARNING  "):]}] if keep else [])
     if keep:  # the role run alone says it too
         said = find(ROLE, "Warn that a file kept by hand is missing")
         assert " ".join(render(said["ansible.builtin.debug"]["msg"], dict(role, inventory_hostname="n2")).split()) == (
-            "WARNING - n2: " + warning[len("WARNING - "):])
+            "WARNING  n2: " + warning[len("WARNING  "):])
 
     # the view of what differs: the file, absent on n2, written whole
     view = cassandra_apply_config_diff([
@@ -313,15 +313,15 @@ def test_a_deleted_jmx_file_is_shown_and_written_back(tmp_path, deleted, initial
     # the password file is read at each login: no restart; the access file at start: the rights the running
     # Cassandra has are not known to be these
     assert facts["cassandra_apply_config_then"] == {"password": "none", "access": "restart"}[deleted]
-    said = {"password": "no restart (jmxremote.password: read at each JMX login)",
-            "access": "then restart (jmxremote.access: read at start)"}[deleted]
-    assert plan == ["n2  will apply, %s" % said, "n1  nothing to apply"]
+    said = {"password": "write, no restart (jmxremote.password: read at each JMX login)",
+            "access": "write + restart (jmxremote.access: read at start)"}[deleted]
+    assert plan == ["n2  %s" % said, "n1  up to date"]
     # the view: the file, absent on n2, written whole (never its content)
-    assert view == ["jmxremote." + deleted, "  file: absent   n2   %s differs (written whole)" % "←"]
+    assert view == ["jmxremote.%s  file  missing -> written whole  n2" % deleted]
     if deleted == "access":  # local JMX logs in no one: its rights change nothing
         facts, plan, dummy = jmx_apply(dict(role, cassandra_local_jmx=True))
         assert facts["cassandra_apply_config_then"] == "none"
-        assert plan[0] == "n2  will apply, no restart (jmxremote.access: local JMX checks no login)"
+        assert plan[0] == "n2  write, no restart (jmxremote.access: local JMX checks no login)"
 
 
 def test_the_password_file_is_written_first_once_the_run_is_confirmed():
@@ -397,7 +397,7 @@ def test_other_jmx_rights_restart_the_node(tmp_path):
     assert role["written"] == ["password", "access"]
     facts, plan, view = jmx_apply(role)
     assert facts["cassandra_apply_config_then"] == "restart"
-    assert plan == ["n2  will apply, then restart (jmxremote.access: read at start)", "n1  nothing to apply"]
+    assert plan == ["n2  write + restart (jmxremote.access: read at start)", "n1  up to date"]
     assert view == ["jmxremote.password", "  file: other users or rights   n2   %s differs (written whole)" % "←",
                     "jmxremote.access", "  file: other users or rights   n2   %s differs (written whole)" % "←"]
     assert not [line for line in view if "s3cret" in line or "ops " in line]  # no content shown
@@ -407,7 +407,7 @@ def test_other_jmx_passwords_alone_need_no_restart(tmp_path):
     role = jmx_compare(tmp_path, {"password": "ops other\nmon m0n\n", "access": JMX_FILES["access"]})
     facts, plan, dummy = jmx_apply(role)
     assert facts["cassandra_apply_config_then"] == "none"
-    assert plan == ["n2  will apply, no restart (jmxremote.password: read at each JMX login)", "n1  nothing to apply"]
+    assert plan == ["n2  write, no restart (jmxremote.password: read at each JMX login)", "n1  up to date"]
 
 
 def test_jmx_files_as_the_role_writes_them_change_nothing(tmp_path):

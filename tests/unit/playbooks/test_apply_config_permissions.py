@@ -467,8 +467,12 @@ def test_a_batch_node_stopped_by_another_says_so():
     tasks = load("roles", "cassandra_operation", "tasks", "node_operation.yml")
     op = [t for t in tasks if "block" in t][0]
     note = [t for t in op["block"] if t.get("name") == "Note a node of a batch as not finished"][0]
-    record, dummy, stop = op["rescue"]
-    base = {"cassandra_service_node_action": "apply_config", "cassandra_service_node_batch": True, "inventory_hostname": "n4"}
+    record, stop = op["rescue"]
+    base = {"cassandra_service_node_action": "apply_config", "cassandra_service_node_batch": True, "inventory_hostname": "n4",
+            "_cassandra_op_results": [{"node": "n4", "result": "apply_config FAILED after 3s: check gossip on this node"},
+                                      {"node": "n5", "result": "apply_config not finished: the run stopped at another node"}],
+            "_cassandra_run_command_args": {"inventory": [], "default_inventory": [], "hosts": "", "cwd": "/x"},
+            "ansible_failed_result": {"msg": "gossip is not running"}, "ansible_check_mode": False}
     assert render("{{ %s }}" % note["when"], base) is True
     assert render(note["ansible.builtin.set_fact"]["cassandra_op_result"], base) == (
         "apply_config not finished: the run stopped at another node done at the same time")
@@ -476,13 +480,18 @@ def test_a_batch_node_stopped_by_another_says_so():
     assert render(stop["ansible.builtin.fail"]["msg"], base) == "Stopped with the node that failed."
     failed = dict(base, ansible_failed_task={"name": "Check gossip on this node"}, cassandra_progress_file="/p")
     assert render("{{ %s }}" % record["when"], failed) is True
+    # the table carries a word for the node that failed: the task's name (the cause is in the stop block)
+    assert render(record["ansible.builtin.set_fact"]["cassandra_op_result"], dict(record["vars"], **failed)).endswith(
+        "s: check gossip on this node")
     # (ansible-core 2.16 finishes the others first: they say done)
-    assert render(stop["ansible.builtin.fail"]["msg"], failed).startswith(
-        "Stopped at n4 (Check gossip on this node): no node was restarted; the nodes done at the same time: as said above.")
-    # one node at a time: as before
+    block = render(stop["ansible.builtin.fail"]["msg"], failed)
+    assert block[0] == "FAILED at n4: gossip is not running. The nodes done at the same time: as in the table."
+    assert block[-3:] == ["WAY OUT  fix it, then resume:",
+                          "  ansible-playbook community.cassandra.apply_config -e cassandra_rolling_resume=true", "  progress: /p"]
+    # one node at a time: the same block, no other node touched
     alone = dict(base, cassandra_service_node_batch=False, ansible_failed_task={"name": "x"})
     assert render("{{ %s }}" % note["when"], alone) is False and render("{{ %s }}" % record["when"], alone) is True
-    assert render(stop["ansible.builtin.fail"]["msg"], alone).startswith("Stopped at n4 (x): no other node was touched after it.")
+    assert render(stop["ansible.builtin.fail"]["msg"], alone)[0] == "FAILED at n4: gossip is not running. No other node was touched."
 
 
 def test_the_nodes_to_do_are_not_reached_until_their_play():

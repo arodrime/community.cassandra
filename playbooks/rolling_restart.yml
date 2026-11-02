@@ -11,6 +11,8 @@
 # Options and defaults: ansible-playbook community.cassandra.help -e help_topic=rolling_restart
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
+  vars:
+    _cassandra_notes_in_plan: true  # the checks' WARNING lines in the plan, before the question
 
 - name: Set up the progress file
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
@@ -46,11 +48,12 @@
       vars:
         _rack: "{{ cassandra_rolling_mode | default('node') == 'rack' }}"
         _nodes: "{{ ansible_play_hosts | community.cassandra.cassandra_node_list }}"
-        cassandra_screen_question: "Restart {{ _nodes }}, {{ 'rack by rack' if _rack | bool else 'one node at a time' }}?"
+        _cluster: "{{ (_cassandra_preflight | default({})).cassandra_cluster_name | default('') }}"
+        cassandra_screen_question: "Restart {{ _nodes }} of {{ _cluster }}, {{ 'rack by rack' if _rack | bool else 'one node at a time' }}?"
         cassandra_screen_session_warning: true
         cassandra_screen:
           operation: rolling_restart
-          summary: "restart {{ _nodes }}, {{ 'rack by rack' if _rack | bool else 'one node at a time' }}"
+          summary: "{{ _nodes }} of {{ _cluster }}, {{ 'rack by rack' if _rack | bool else 'one node at a time' }}"
           intro:
             - >-
               {{ 'Drains and restarts every node of a rack together, rack by rack' if _rack | bool

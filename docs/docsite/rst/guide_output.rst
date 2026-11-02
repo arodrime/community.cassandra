@@ -10,23 +10,24 @@ written once there, a playbook only fills it.
 Conventions
 -----------
 
-- **Verdict first.** Line 1 says what happens or happened: ``PLAN``, ``READY``, ``REFUSED``, ``DONE``,
-  ``FAILED``, ``CHECK``, ``HEALTHY``, ``NOT HEALTHY``, then the operation and the cluster.
+- **The first line says where we are.** A run starts with the cluster, its nodes, its datacenters and the running
+  version (``prod  5 nodes  1 DC (dc1)  Cassandra 5.0.9``, the version once a node was read; more than 3
+  datacenters: their count), once. A plan starts with the operation in capitals and what it does to whom, where
+  (``ADD NODE  node4, node5 into dc1 of prod``); the end of a run with its verdict: ``DONE``, ``STOPPED`` (the run
+  stopped on purpose), ``FAILED`` (a task failed), ``REFUSED``, ``CHECK``, ``HEALTHY``, ``NOT HEALTHY``, then the
+  operation and the cluster. One meaning per word, everywhere.
 - **One fact per line**, no prose: the documentation explains, the output states.
 - **Setting-centric**, grouped: ``setting: value   nodes``, ``all`` when every node agrees, a line per other
   value, ``← differs`` on the minority ones. Secrets are always shown as ``****``. Several settings share one
-  column each for the names, the values and the nodes (``settings_lines``): the import report and
-  ``apply_config``'s settings that differ, where the inventory's value comes first with the nodes already on it::
+  column each for the names, the values and the nodes (``settings_lines``): the import report::
 
     cassandra.yaml
-      max_hint_window:  3h                            node1..node3, node5   (inventory)
+      max_hint_window:  3h                            node1..node3, node5
                         6h                            node4                 ← differs
-    jvm-server.options
-      -Ddemo.drift=1:   present                       node2                 ← differs (not in the inventory)
 - **Node lists** are short: ``node1..node5, node7`` (a range from 3 consecutive names, 2 names listed, a gap breaks
   the range), ``6 nodes:`` first when there are more than 5. Files and ``-v`` give every name; ``--limit`` in a
-  command always lists every host. From 12 nodes on, the import screen and report and ``apply_config``'s settings
-  that differ define ``NODE GROUPS`` first (the nodes that are always in the same lists, 3 or more:
+  command always lists every host. From 12 nodes on, the import screen and report and ``apply_config``'s
+  differences define ``NODE GROUPS`` first (the nodes that are always in the same lists, 3 or more:
   ``G1 = db11..db16, db21..db26 (12 nodes)``), then a row says ``all``, ``G1``, ``G1 + db074`` or
   ``all except db111``; report.txt's DETAILS name every node. A dict value is a row per sub-key
   (``cassandra_extra_settings.sstable.selected_format``). A long value or node list goes on under its column (a
@@ -34,29 +35,42 @@ Conventions
 - **Sizes, rates, durations** in one format: ``41.2 GiB``, ``89 MiB/s``, ``9m20s`` (never ``0.0 GiB`` for a
   non-zero size). A done/total pair says the unit once, the one the total reads in: ``305.1/329.8 MiB``,
   ``<0.1/100.0 GiB``; done is never shown above the total.
-- **Plans**: the header, the numbered steps (node and dc/rack), the facts, then the ``WARNING`` lines just above
-  the question.
-- **Warnings**: one style, ``WARNING - what``, the lines of a longer one indented under it; two warnings a blank
-  line apart; each one said once per run, where it is decided (a plan's warnings not again in its recap, which
-  says how many are above: ``3 warnings in the plan above (node2, node3).``).
+- **Plans** (``cassandra_screen``, the ``plan`` of topology): the title, one or two lines saying how, the node table
+  (two-space columns) and its notes, then the ``WARNING`` lines together, just above the question, which says the
+  same thing as the title and ends the prompt line with ``:``::
+
+    ADD NODE  node4, node5 into dc1 of prod
+      one node at a time; each streams its share of the data, progress every 30s, stop after 30m without progress
+
+      node4  10.0.0.4  dc1 / rack1  about 404.5 KiB to stream
+      node5  10.0.0.5  dc1 / rack1  about 404.5 KiB to stream
+      afterwards: Cassandra 5.0.9, Java 17 (package), Medusa off
+
+    WARNING  node4: -XX:-UseBiasedLocking is not known to Java 17: the JVM would not start
+    WARNING  not inside tmux or screen: if this SSH session drops, the run stops (the operation itself goes on,
+             unwatched; run it inside tmux or screen)
+
+    Add node4, node5 into dc1 of prod? Answer yes or no:
+
+  The cluster's posture (no authentication on a reachable address, the heap, a failure policy ``ignore``...) is not
+  the operation's business: ``health_check`` says it, in its ``SETTINGS`` block.
+- **Warnings**: one style, ``WARNING  what`` (the keyword first, two spaces, as the verdict words), two lines at
+  most, the second under the text with the way out; each one said once per run, where it is decided (a plan's
+  warnings not again in its recap, which says how many are above: ``3 warnings in the plan above (node2, node3).``).
 - **Phases**: one line per major phase, ending with ``...`` (cyan under the ops callback: its option
   ``progress_color``), e.g. ``Checking the cluster (3 nodes; adding node4, node5)...`` (the members: not the nodes
   being added or reset, nor those marked absent), ``Preparing the new nodes (node5, node6)...``, ``Starting node5 and waiting for its
-  bootstrap...``, ``Decommissioning node3...``, ``Waiting for every node to be UN...``, ``Restarting node2...``. Their
+  bootstrap...``, ``Decommissioning node3...``, ``Waiting for every node to be UN...``. Their
   words are in one place (``PHASES`` in ``plugins/plugin_utils/cassandra_output.py``, filter
-  ``community.cassandra.cassandra_phase``); ``--check`` says the reading phases only.
+  ``community.cassandra.cassandra_phase``); ``--check`` says the reading phases only. A restart or a reboot has no
+  phase line: its wait line says it.
 - **Prepare of new nodes** (add_node, replace_node, add_datacenter, create_cluster): after its phase line, one line
-  per step, the nodes with the same outcome together, in the progress colour::
+  per group of nodes with the same outcome, the steps in short words, in the progress colour::
 
-    node4, node5  repository  ok (already set)
-    node4         install     cassandra 5.0.9 (installed now)
-    node5         install     cassandra 5.0.9 (already installed)
-    node4, node5  os tuning   2 changes
-    node4, node5  data disks  read-ahead 4 KB already set
-    node4, node5  config      3 files written
-    node4, node5  firewall    off (cassandra_manage_firewall: false)
+    node4  prepared  repository, cassandra 5.0.9, java 17.0.12, os tuning (2 changes), config (3 files), seeds 10.0.0.1, 10.0.0.2
+    node5  prepared  repository, cassandra 5.0.9, java 17.0.12, os tuning, config (3 files), seeds 10.0.0.1, 10.0.0.2
 
-  ``would ...`` under ``--check`` (``prepare_lines``, filter ``community.cassandra.cassandra_prepare_lines``,
+  ``would prepare`` under ``--check`` (``prepare_lines``, filter ``community.cassandra.cassandra_prepare_lines``,
   from each role's change report: the lists per role and node with ``-v`` or in ``cassandra_change_report_dir``).
   The data disks' summary follows only when something was set, a line to act on (not tuned yet, a restart to take it), a warning, or with ``-v``.
 - **Progress**: one line per check, then always the nodes at the other end, in aligned columns (as many as fit
@@ -82,9 +96,37 @@ Conventions
   receives (bootstrap, replace, rebuild), the growth of its used disk space counts as progress
   (``receiving (disk +3.2 GiB in 5m)``: a whole SSTable is counted in netstats once sent).
 
-- **Recap**: the verdict with the counts and the duration, the nodes grouped by identical outcome, a line of its
-  own for a node more than 50% slower than the median, a failed or a skipped one, with the reason. ``--check``
-  says ``would ...`` and ends the verdict with ``nothing was changed``.
+- **Recap**: the verdict with the counts and the duration (``DONE  rolling_restart  prod  5 restarted  11m30s``),
+  the nodes grouped by identical outcome (``node1..node5  restarted  1m49s..1m58s each``), a line of its own for a
+  node more than 50% slower than the median, a failed or a skipped one, with the reason. ``--check`` says
+  ``would ...`` and ends the verdict with ``nothing was changed``. No cluster line at the end.
+- **Stop**: a run that stops at a node ends with one block (``cassandra_stop_block``): the cause once, the nodes'
+  table with one word per node, the way out once, last, with the command to copy::
+
+    STOPPED at node2: node4 (10.0.0.4, r1) is DN, seen from node1 and node2, 10m29s waited
+      (cassandra_service_health_timeout 600s). No other node was touched.
+
+      node1         restarted    1m50s
+      node2         not done     cluster unhealthy
+      node3..node5  not touched
+
+    WAY OUT  start node4 (the server, then Cassandra), then resume:
+      ansible-playbook community.cassandra.rolling_restart -e cassandra_rolling_resume=true
+      if the server is lost: replace_node; remove_dead_node only as a last resort
+
+  ``STOPPED`` when the run stopped on purpose (one of its checks, whose message carries its ``WAY OUT`` line),
+  ``FAILED`` when a task failed (the way out is then the resume). The progress file's path goes under the command
+  only when it matters (a resume).
+- **apply_config differences**: one table, per file, the setting, its change ``from -> to``, the nodes that change
+  last; the owner and the mode of a file are two settings::
+
+    cassandra.yaml      auto_bootstrap  false (not in the inventory)  node2
+                        mode            0644 -> 0640                  node3
+    cassandra-env.sh    owner           root:root -> root:cassandra   node4
+    jvm-server.options  CICompilerCount 3 -> 2                        node1
+
+  then what each node gets: ``node1  write, no restart  (owner or mode only, read at start)``, ``node2  write +
+  restart``, ``node5  up to date``.
 - **TO DO**: numbered, each with its full command, ready to paste (``-i`` and ``-e cassandra_hosts`` only when the
   run needed them). An inventory change is followed by its commit only when the inventory is in a git work tree.
 - The marker ``←`` points at what needs a look (``← down``, ``← differs``, ``← slow``).
@@ -111,7 +153,7 @@ Conventions
 
   The verdict: ``ALL 5 NODES UP`` (green under the ops callback), or ``1 NODE DOWN: ...`` (red); then, after
   ``—``, the nodes joining, leaving or moving (``ALL 6 NODES UP — 1 JOINING: node6``, yellow). Under it, a second
-  line ``WARNING - ring and inventory differ`` (the warning colour) when a host of the run is missing from the ring,
+  line ``WARNING  ring and inventory differ`` (the warning colour) when a host of the run is missing from the ring,
   or a ring node is unknown to the inventory or marked absent (not a ring node that is another host of the inventory, as under
   ``--limit``); the lines above it say which. The ops callback puts the report under a heavy rule and the verdict
   (both lines) between two, and colours the table rows by the node's state: down red, joining, leaving or moving yellow.
@@ -289,8 +331,8 @@ each progress wait, the recaps, the TO DO lists and the questions set it. A blan
 shown again (``pause`` clears it), and each phase line. A rule has a blank line above and under it, so text never
 touches it.
 
-Inside a plan, a screen or a recap, an empty line ``""`` between two blocks is printed as a light rule; the
-paragraphs of one block (the intro's sentences, each fact, each warning, the items of a TO DO that span several
+Inside a plan, a screen or a recap, an empty line ``""`` separates two blocks; the
+paragraphs of one block (each fact, the items of a TO DO that span several
 lines) are separated by ``PARAGRAPH`` (``plugins/plugin_utils/cassandra_output.py``, a line with only a space),
 printed as a blank line. Under the default callback (``callback_result_format = yaml``) both show as blank lines in
 a text message.

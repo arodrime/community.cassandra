@@ -196,7 +196,7 @@ def test_the_disk_warnings_said_under_the_node():
                  "_then": "none", "_os": [],
                  "_cassandra_config_dir_notes": [], "_cassandra_disk_summary": {"warnings": ["tuned: not switched"]},
                  "_stopped": False, "_timesync": False, "_no_unit": [], "_keep_missing": [], "_unit_failed": False, "_todo": False}
-    assert render(notes, variables) == ["WARNING - data disks: tuned: not switched"]
+    assert render(notes, variables) == ["WARNING  data disks: tuned: not switched"]
 
 
 # the role, run again and again by apply_config on running nodes: what it reports must be what it does
@@ -252,7 +252,7 @@ def test_swap_left_on_said_under_the_node_once(live, swapoff, said):
                  "_stopped": False, "_timesync": False, "_no_unit": [], "_keep_missing": [], "_unit_failed": False, "_todo": False}
     if live is not None:  # (not set on a node with cassandra_linux_manage false)
         variables.update({"_cassandra_linux_live": live, "_cassandra_linux_swapoff": swapoff})
-    warned = [n for n in render(notes, variables) if n.startswith("WARNING - swap left on")]
+    warned = [n for n in render(notes, variables) if n.startswith("WARNING  swap left on")]
     assert bool(warned) is said
     tasks = load("roles", "cassandra_linux", "tasks", "os.yml")
     role_says = [t for t in tasks if t.get("name") == "Say swap is left on"][0]
@@ -293,7 +293,7 @@ def test_time_sync_under_a_running_cassandra_is_a_restart():
     assert facts["cassandra_apply_config_notes"] == ["clock 0.250 s behind its time source (chronyd -Q)"]
     # its clock ahead: writes with future timestamps
     notes = note([TIMESYNC], clock=["ahead=1.5", "source=chrony"])[3]
-    assert notes[0] == "clock 1.500 s ahead of its time source (chrony)" and notes[1].startswith("WARNING - clock ahead")
+    assert notes[0] == "clock 1.500 s ahead of its time source (chrony)" and notes[1].startswith("WARNING  clock ahead")
     # a normal skew: no warning
     assert note([TIMESYNC], clock=["ahead=0.004", "source=chrony"])[3] == ["clock 0.004 s ahead of its time source (chrony)"]
     assert note([TIMESYNC])[3] == ["clock offset to its time source not readable"]
@@ -315,7 +315,7 @@ def test_a_node_stopped_for_its_time_sync_is_started_by_the_resumed_run():
     assert note([], running=False, clock=["mark=yes"])[:2] == (False, "write")
     # ... but said, with the way to start it
     assert note([], running=False, clock=["mark=yes"])[3] == [
-        "WARNING - stopped by an interrupted run in its restart window: left stopped; to start it, run again with"
+        "WARNING  stopped by an interrupted run in its restart window: left stopped; to start it, run again with"
         " -e cassandra_rolling_resume=true"]
     assert note([], clock=["mark=yes"], resume=True)[:2] == (False, "none")
 
@@ -469,7 +469,7 @@ def test_the_reason_of_the_restart_is_said():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import cassandra_apply_config_outcomes
     nodes = [{"name": "n1", "todo": True, "then": "restart", "why": "time sync"}, {"name": "n2", "todo": True, "then": "restart"}]
     assert cassandra_apply_config_outcomes(nodes, plan=True) == [
-        "n1  will apply, then restart (time sync)", "n2  will apply, then restart"]
+        "n1  write + restart (time sync)", "n2  write + restart"]
     # under --check: would
     assert cassandra_apply_config_outcomes(nodes, plan=True, check=True)[0] == "n1  would apply, then restart (time sync)"
 
@@ -560,8 +560,8 @@ def test_the_window_runs_the_disk_tuning_again_with_cassandra_stopped():
     # (the plan said the others)
     assert refused == summary["warnings"][:2]
     assert render(say["ansible.builtin.debug"]["msg"], {"inventory_hostname": "n1", "_refused": refused}) == [
-        "WARNING - n1: data disks: lvchange failed on vg/data: its read-ahead is set now, kept by the udev rule",
-        "WARNING - n1: data disks: tuned-adm profile virtual-guest cassandra-disks failed: no such profile"]
+        "WARNING  n1: data disks: lvchange failed on vg/data: its read-ahead is set now, kept by the udev rule",
+        "WARNING  n1: data disks: tuned-adm profile virtual-guest cassandra-disks failed: no such profile"]
     # a window for the time sync alone: nothing said of the disks (the summary left by the OS play is not this one's)
     assert say["when"] == ["_disks | bool", "_refused | length > 0"]
     # what it refuses noted, not restarted for again this boot
@@ -611,7 +611,7 @@ def test_the_restart_reasons_named_in_the_plan_and_the_recap():
         cassandra_apply_config_outcomes, cassandra_apply_config_recap)
     nodes = [{"name": "n1", "todo": True, "then": "restart", "why": "LVM read-ahead, tuned profile"},
              {"name": "n2", "todo": False, "os": True, "then": "none"}]
-    assert cassandra_apply_config_outcomes(nodes, plan=True)[0] == "n1  will apply, then restart (LVM read-ahead, tuned profile)"
+    assert cassandra_apply_config_outcomes(nodes, plan=True)[0] == "n1  write + restart (LVM read-ahead, tuned profile)"
     done = [dict(nodes[0], done=True), dict(nodes[1], os_done=True)]
     assert "n1  applied, restarted (LVM read-ahead, tuned profile)" in "\n".join(cassandra_apply_config_recap(done))
     for play in ("Find what each node needs", "Summary"):

@@ -12,6 +12,8 @@
 # Options and defaults: ansible-playbook community.cassandra.help -e help_topic=stop_rack
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
+  vars:
+    _cassandra_notes_in_plan: true  # the checks' WARNING lines in the plan, before the question
 
 # With at least as many racks as replicas in the datacenter, one rack down is
 # one replica down. Refused when a keyspace would lose more than that (more
@@ -168,7 +170,7 @@
               ~ ') would take down more than one replica of some data:'] + _problems
              + ['Fix that first, or set cassandra_rack_force: true: reads and writes needing those replicas then fail,'
                 ~ ' and data only on them is unavailable until the rack is back.']
-             + _warnings | map('regex_replace', '^', 'WARNING - ') | list }}
+             + _warnings | map('regex_replace', '^', 'WARNING  ') | list }}
         quiet: true
       run_once: true
 
@@ -247,7 +249,7 @@
     - name: Say the drain did not work
       ansible.builtin.debug:
         msg: >-
-          WARNING - {{ inventory_hostname }} was not drained ({{ cassandra_rack_drain.error | default('', true)
+          WARNING  {{ inventory_hostname }} was not drained ({{ cassandra_rack_drain.error | default('', true)
                                                                  or cassandra_rack_drain.msg | default('no answer', true) }}): stopped all the same.
       vars:
         cassandra_output: true

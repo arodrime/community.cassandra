@@ -69,7 +69,7 @@
     # (tuned-adm or lvchange refused: not a failure, the role keeps the devices set as it can; the plan said the rest)
     - name: Say what the disk settings left undone
       ansible.builtin.debug:
-        msg: "{{ _refused | map('regex_replace', '^', 'WARNING - ' ~ inventory_hostname ~ ': data disks: ') | list }}"
+        msg: "{{ _refused | map('regex_replace', '^', 'WARNING  ' ~ inventory_hostname ~ ': data disks: ') | list }}"
       when:
         - _disks | bool
         - _refused | length > 0
@@ -112,7 +112,7 @@
     - name: Say the clock is not synced yet
       ansible.builtin.debug:
         msg: >-
-          WARNING - {{ inventory_hostname }}: its clock not synced after 2 minutes: Cassandra started all the same; its
+          WARNING  {{ inventory_hostname }}: its clock not synced after 2 minutes: Cassandra started all the same; its
           clock may still be stepped when its time source answers. Check it (chronyc sources, timedatectl
           timesync-status).
       when: cassandra_service_clock_sync.rc | default(0) != 0

@@ -928,7 +928,7 @@ def _where(step):
     return ""
 
 
-def _table(rows, indent=""):
+def table(rows, indent=""):
     """Rows of cells, each column as wide as its widest cell, 2 spaces between."""
     rows = [[str(c) for c in row] for row in rows]
     if not rows:
@@ -938,26 +938,29 @@ def _table(rows, indent=""):
             for r in rows]
 
 
+_table = table
+
+
 # --- warnings --------------------------------------------------------------------------------
 
-# The one mark of a warning, everywhere: "WARNING - what"; the lines of a
-# longer one under it, indented
-WARNING = "WARNING - "
+# The one mark of a warning, everywhere: "WARNING  what" (the keyword first,
+# two spaces, as the verdict words); the lines of a longer one under it
+WARNING = "WARNING  "
 _MARKED = re.compile(r"^\s*WARNING(?:\s+-\s+|:\s*|\s+)")
 
 
 def is_warning(line):
-    """Whether line is a warning (WARNING - ..., its older spellings too)."""
+    """Whether line is a warning (WARNING  ..., its older spellings too)."""
     return bool(_MARKED.match(str(line)))
 
 
 def warning_text(line):
-    """A warning without its mark ("WARNING - x" -> "x"); another line as is."""
+    """A warning without its mark ("WARNING  x" -> "x"); another line as is."""
     return _MARKED.sub("", str(line), count=1) if is_warning(line) else str(line)
 
 
 def warning(text, indent="  ", under=False):
-    """A warning's lines: "WARNING - text", its next lines (text a list, or
+    """A warning's lines: "WARNING  text", its next lines (text a list, or
     lines in it) indented; under: every next line under its text (a plan's,
     their own indent kept after it)."""
     lines = [str(t) for t in text] if isinstance(text, (list, tuple)) else str(text).split("\n")
@@ -973,16 +976,16 @@ def warning(text, indent="  ", under=False):
 
 def warning_lines(texts, seen=None, under=False):
     """Several warnings: each one once (seen: the texts already shown, kept
-    up to date), a blank line (PARAGRAPH) between two; under: see warning()."""
+    up to date), one under the other; under: see warning()."""
     seen = set() if seen is None else seen
-    blocks = []
+    out = []
     for text in texts or []:
         lines = warning(text, under=under)
         key = "\n".join(lines)
         if lines and key not in seen:
             seen.add(key)
-            blocks.append(lines)
-    return spaced(blocks)
+            out += lines
+    return out
 
 
 def warnings_above(count, where="the plan", names=None, also=""):
@@ -1005,18 +1008,26 @@ def spaced(paragraphs):
     return lines
 
 
-def plan(operation, cluster="", summary="", steps=None, facts=None, warnings=None, question="", version="",
-         check=False, verdict="PLAN"):
-    """The screen before a change, the same order everywhere:
-    "PLAN  operation  cluster (Cassandra x)  summary", the numbered steps
-    (each {node, dc, rack, text} or a string), then the facts ([label, text]
-    or a string, NOTE lines among them), the WARNING lines, and the question
+def title(operation, summary=""):
+    """The first line of a plan: the operation in capitals, then what it does
+    to whom, where: "ADD NODE  node4, node5 into dc1 of my_cluster"."""
+    return "  ".join(x for x in (str(operation).replace("_", " ").upper(), str(summary or "")) if x)
+
+
+def plan(operation, cluster="", summary="", steps=None, facts=None, warnings=None, question="", check=False,
+         verdict="PLAN"):
+    """The screen before a change, the same order everywhere: the title
+    ("TOPOLOGY  3 steps of my_cluster, one node at a time": the cluster and
+    version are the banner's, not said again), the numbered steps (each
+    {node, dc, rack, text} or a string), then the facts ([label, text] or a
+    string, NOTE lines among them), the WARNING lines, and the question
     (none under check: a line says nothing will be changed), each block
     after one blank line, an empty block left out. verdict: REFUSED, READY...
-    for the same layout."""
-    head = [verdict, operation, ("%s (Cassandra %s)" % (cluster, version)) if version and cluster else cluster,
-            summary]
-    lines = ["  ".join(str(x) for x in head if x)]
+    first instead of the operation's capitals ("REFUSED  topology  cluster  summary")."""
+    if verdict == "PLAN":
+        lines = [title(operation, summary or cluster)]
+    else:
+        lines = ["  ".join(str(x) for x in (verdict, operation, cluster, summary) if x)]
     rows, numbered = [], 0
     for step in steps or []:
         numbered += 1
@@ -1154,12 +1165,6 @@ def _version(text):
     return found.group(1) if found else str(text or "")
 
 
-def _changes(count, check):
-    if not count:
-        return "ok (already set)"
-    return ("would make %s" if check else "%s") % plural(count, "change")
-
-
 def _grouped(pairs):
     """[(key, name)] -> [(key, [names])], the keys in the order first seen."""
     groups = []
@@ -1178,143 +1183,102 @@ def _package(item):
     return re.sub(r"[=<>].*$", "", text[len("package "):]) if text.startswith("package ") else ""
 
 
-def _package_step(name, version, items, check, also=(), label=None):
-    """A package's text: "cassandra 5.0.9 (installed now)", "(already installed)", "(would be
-    installed)"; label: what names it ("" for its version alone), also: other packages installed with it."""
+def _package_text(name, version, items, label=None):
+    """A package's words: "cassandra 5.0.9"; the version the role installed when it has one (a pinned name
+    looked up as is reads "not in configured repos yet": the version read is better), "cassandra (not in
+    configured repos yet)" for a candidate not found; label: what names it ("" for its version alone)."""
     new = next((i for i in items if _package(i) == name), None)
-    if new is None:
-        state = "already installed"
-    else:
-        state = "would be installed" if check else "installed now"
-        after = new.get("after") or ""
-        # (a pinned name the role looked up as is: "not in configured repos yet", the version read is better)
-        version = after if _VERSION.match(str(after)) or not _VERSION.match(str(version or "")) else version
-    extra = "; also " + ", ".join(also) if also else ""
+    after = (new or {}).get("after") or ""
+    if _VERSION.match(str(after)) or not _VERSION.match(str(version or "")):
+        version = after or version
     label = name if label is None else label
     shown = _version(version)
-    if shown and not _VERSION.match(str(version or "")):  # a candidate not found ("not in configured repos yet")
-        return ("%s (%s: %s%s)" % (label, state, version, extra)).strip()
-    return ("%s %s (%s%s)" % (label, shown, state, extra) if shown else "%s (%s%s)" % (label, state, extra)).strip()
+    if shown and not _VERSION.match(str(version or "")):
+        return ("%s (%s)" % (label, version)).strip()
+    return ("%s %s" % (label, shown)).strip()
 
 
-def _prepare_texts(node, check):
-    """{step: text} for one node of prepare_lines (a step it has nothing for: left out)."""
+def _prepare_texts(node):
+    """{step: words} for one node of prepare_lines: a step it has nothing for, or that is off or not managed, left
+    out; the words say what the node got, in short ("cassandra 5.0.9", "config (3 files)")."""
     texts = {}
     items = list(node.get("packages") or [])
-    repository = node.get("repository")
-    if repository:
-        texts["repository"] = {
-            "off": "not managed (cassandra_repository_manage: false)",
-            "packages": "none (cassandra_install_method: packages)",
-            "set": "would be set" if check else "set now",
-        }.get(repository, "ok (already set)")
+    if node.get("repository") in ("set", "ok"):
+        texts["repository"] = "repository"
     ran = list(node.get("ran") or [])
     if "cassandra_install" in ran:
-        texts.update(_install_texts(node, items, check))
-    if ran:  # no report from cassandra_linux: it left the OS as it is
-        if "cassandra_linux" in ran:
-            texts["os tuning"] = _changes(int(node.get("os") or 0), check)
-        else:
-            texts["os tuning"] = "not managed (cassandra_linux_manage: false)"
+        java = node.get("java") or {}
+        others = [_package(i) for i in items if _package(i) not in ("", "cassandra", str(java.get("package", "")))]
+        texts["install"] = ", ".join([_package_text("cassandra", node.get("cassandra"), items)] + others)
+        if _on(java.get("managed", True)) and java.get("home"):
+            texts["java"] = "java %s (%s)" % (java.get("version") or java.get("series", ""), java["home"])
+        elif _on(java.get("managed", True)) and java.get("package"):
+            texts["java"] = _package_text(java["package"], java.get("version"), items, label="java")
+    if "cassandra_linux" in ran:
+        changes = int(node.get("os") or 0)
+        texts["os tuning"] = "os tuning" + (" (%s)" % plural(changes, "change") if changes else "")
     disks = node.get("disks") or {}
-    if disks:
-        texts["data disks"] = _disks_text(disks, check)
+    if disks and (_on(disks.get("changed")) or disks.get("warnings") or disks.get("info")):
+        kb = "read-ahead %s KB" % disks["kb"] if str(disks.get("kb", "")) not in ("", "none") else ""
+        said = ("disks " + kb).strip() if _on(disks.get("changed")) else "disks"
+        if disks.get("warnings"):
+            said += " (%s below)" % plural(len(disks["warnings"]), "warning")
+        elif disks.get("info"):
+            said += " (see below)"
+        texts["data disks"] = said
     if "cassandra_config" in ran:
-        texts["config"] = _config_text(list(node.get("config") or []), check)
-    for step, switch in (("firewall", "cassandra_manage_firewall"), ("medusa", "cassandra_medusa_enabled")):
-        value = node.get(step)
-        if value is None or not ran:
-            continue
-        text = _switched_text(step, value, switch, check)
-        if text is not None:
-            texts[step] = text
+        texts["config"] = _config_text(list(node.get("config") or []))
+    for step, value in (("firewall", node.get("firewall")), ("medusa", node.get("medusa"))):
+        if isinstance(value, (list, tuple)) and ran:
+            texts[step] = _switched_text(step, list(value))
     seeds = node.get("seeds")
     if seeds:
-        seeds = [s.strip() for s in seeds.split(",")] if isinstance(seeds, str) else list(seeds)
-        texts["seeds"] = ("would join with " if check else "joins with ") + ", ".join(seeds)
+        seeds = [x.strip() for x in seeds.split(",")] if isinstance(seeds, str) else list(seeds)
+        texts["seeds"] = "seeds " + ", ".join(seeds)
     return texts
 
 
-def _install_texts(node, items, check):
-    """The install and java steps of a node cassandra_install ran on."""
-    texts = {}
-    java = node.get("java") or {}
-    others = [_package(i) for i in items if _package(i) not in ("", "cassandra", str(java.get("package", "")))]
-    texts["install"] = _package_step("cassandra", node.get("cassandra"), items, check, also=others)
-    if not _on(java.get("managed", True)):
-        texts["java"] = "not managed (cassandra_install_java: false)"
-    elif java.get("home"):
-        texts["java"] = "%s from %s" % (java.get("version") or java.get("series", ""), java["home"])
-    elif java.get("package"):
-        texts["java"] = _package_step(java["package"], java.get("version"), items, check, label="")
-    return texts
-
-
-def _disks_text(disks, check):
-    """The data disks step: cassandra_linux's disk summary."""
-    kb = "read-ahead %s KB " % disks["kb"] if str(disks.get("kb", "")) not in ("", "none") else ""
-    if _on(disks.get("changed")):
-        text = kb + ("would be set" if check else "set now")
-    elif disks.get("brief"):
-        text = kb + "already set"
-    else:
-        text = "nothing to tune"
-    if disks.get("warnings"):
-        text += " (%s below)" % plural(len(disks["warnings"]), "warning")
-    elif disks.get("info"):
-        text += " (see below)"
-    return text.strip()
-
-
-def _config_text(config, check):
-    """The config step: cassandra_config's change items."""
+def _config_text(config):
+    """The config step: cassandra_config's change items, "config (3 files)"."""
     templated = next((i for i in config if i.get("item") == "config files"), None)
     files = [i for i in config if _FILE_CHANGED.search(str(i.get("after", "")))]
     other = [i for i in config if i is not templated and i not in files]
+    parts = []
     if templated is not None:
-        text = "would write the files (%s)" % str(templated.get("before", "")).lower()
+        parts.append(str(templated.get("after", "")).lower() or "files templated")
     elif files:
-        text = ("would write %s" if check else "%s written") % plural(len(files), "file")
-    else:
-        text = "" if other else "ok (unchanged)"
+        parts.append(plural(len(files), "file"))
     if other:  # owners, modes, the RedHat conf link
-        text += (", " if text else "") + ("would make %s" if check else "%s") % plural(len(other), "other change")
-    return text
+        parts.append(plural(len(other), "other change"))
+    return "config" + (" (%s)" % ", ".join(parts) if parts else "")
 
 
-def _switched_text(step, value, switch, check):
-    """The firewall or medusa step: off, not managed, or its change items; None for another text."""
-    if value == "off":
-        return "off (%s: false)" % switch
-    if value == "not managed":  # turned on, the role's own switch off (the firewall's)
-        return "not managed" + (" (cassandra_firewall_manage: false)" if step == "firewall" else "")
-    if isinstance(value, str):
-        return None
-    changes = list(value)
+def _switched_text(step, changes):
+    """The firewall or medusa step from its change items: "medusa 0.24.1", "firewall (2 changes)"."""
     medusa = next((i for i in changes if i.get("item") == "Medusa"), None)
     if medusa is not None:
-        text = ("would install Medusa %s" if check else "Medusa %s installed now") % medusa.get("after")
-        return text + ("" if len(changes) == 1 else " (+%s)" % plural(len(changes) - 1, "change"))
-    return _changes(len(changes), check)
+        more = len(changes) - 1
+        return "medusa %s" % medusa.get("after") + (" (+%s)" % plural(more, "change") if more else "")
+    return step + (" (%s)" % plural(len(changes), "change") if changes else "")
 
 
 def prepare_lines(hosts, check=False):
-    """What the prepare of new nodes did (check: would do), a line per step
-    and per group of nodes with the same outcome, the steps in their order:
-    "node4, node5  repository  ok (already set)", "node4  install  cassandra
-    5.0.9 (installed now)". hosts: [{name, ran (the roles whose change
-    report ran), repository (off, packages, set or ok), packages
-    (cassandra_install's change items), cassandra (its version installed),
-    java ({managed, package, version, home, series}), os (the count of OS
-    changes), disks (cassandra_linux's _cassandra_disk_summary), config
-    (cassandra_config's change items), firewall (its change items, off or
-    not managed), medusa (its change items or off), seeds (the seeds it joins
-    with)}]."""
-    texts = [(h["name"], _prepare_texts(h, check)) for h in hosts or [] if isinstance(h, dict) and h.get("name")]
-    rows = []
-    for step in PREPARE_STEPS:
-        groups = _grouped((said[step], name) for name, said in texts if step in said)
-        rows += [[who(names, counted=False), step, text] for text, names in groups]
+    """What the prepare of new nodes did (check: would do), one line per group
+    of nodes with the same outcome, the steps in their order in short words:
+    "node4, node5  prepared  repository, cassandra 5.0.9, java 17.0.12, os
+    tuning (2 changes), config (3 files), seeds 10.0.0.1, 10.0.0.2" ("would
+    prepare" under check); a step off or not managed is left out. hosts:
+    [{name, ran (the roles whose change report ran), repository (off,
+    packages, set or ok), packages (cassandra_install's change items),
+    cassandra (its version installed), java ({managed, package, version, home,
+    series}), os (the count of OS changes), disks (cassandra_linux's
+    _cassandra_disk_summary), config (cassandra_config's change items),
+    firewall (its change items, off or not managed), medusa (its change items
+    or off), seeds (the seeds it joins with)}]."""
+    texts = [(h["name"], _prepare_texts(h)) for h in hosts or [] if isinstance(h, dict) and h.get("name")]
+    said = [(", ".join(words[step] for step in PREPARE_STEPS if step in words), name) for name, words in texts]
+    rows = [[who(names, counted=False), "would prepare" if check else "prepared", text]
+            for text, names in _grouped(said) if text]
     return _table(rows)
 
 
@@ -1558,19 +1522,23 @@ def _median(numbers):
     return numbers[middle] if len(numbers) % 2 else (numbers[middle - 1] + numbers[middle]) / 2.0
 
 
-def recap(operation, cluster, outcomes, check=False, seconds=None, extra=None, full=False, slow_factor=1.5):
+def recap(operation, cluster, outcomes, check=False, seconds=None, extra=None, full=False, slow_factor=1.5,
+          head=True, causes=True):
     """The end of a run (Q4). outcomes: [{node, outcome ('restarted',
     'applied, restarted'...), status ('ok', 'failed', 'skipped'; default
     ok), seconds (how long its part took), reason (failed or skipped),
     said (the outcome as shown, when would() can't say it), dc, rack}] in
-    the order of the run. Line 1, the verdict: "DONE  op cluster  6
-    restarted (11m30s)", "FAILED  op  cluster  ..." when a node failed
+    the order of the run. Line 1, the verdict: "DONE  op  cluster  6
+    restarted  11m30s", "FAILED  op  cluster  ..." when a node failed
     (under check too), "CHECK  op  cluster  would restart 6 nodes  nothing
     was changed" under check, "NOTHING TO DO" when no node did anything. Then the nodes grouped by identical outcome ("node1..node6
-    restarted  (1m49s..1m58s each)"), and a line of its own for a node more
+    restarted  1m49s..1m58s each"), and a line of its own for a node more
     than slow_factor times the median of its group (slow), a failed node (its
     reason on the line under it) and the skipped ones, with the reason. extra: lines added after (the ring
-    after, versions...). full: every name (-v)."""
+    after, versions...). full: every name (-v). head: False for the table
+    alone (the STOPPED block says the verdict); causes: False when the cause
+    of a failure is said elsewhere (that block): its row reads "not done"
+    and the reason as a word on it, no line under."""
     outcomes = list(outcomes or [])
     for item in outcomes:
         item.setdefault("status", "ok")
@@ -1584,13 +1552,16 @@ def recap(operation, cluster, outcomes, check=False, seconds=None, extra=None, f
     groups = {}
     for o in done:
         groups.setdefault(said(o), []).append(o)
-    lines = [_recap_verdict(operation, cluster, groups, failed, skipped, check, seconds)]
+    lines = [_recap_verdict(operation, cluster, groups, failed, skipped, check, seconds)] if head else []
     rows = []
     for word, members in groups.items():
         rows += _recap_done_rows(word, members, check, full, slow_factor)
     # a failure's reason on its own line under its row: the columns are not sized on it
     under = {}
     for o in failed:
+        if not causes:
+            rows.append([o["node"], "not done", o.get("reason") or ""])
+            continue
         if o.get("reason"):
             under[len(rows)] = "    %s" % o["reason"]
         rows.append([o["node"], "FAILED", ""])
@@ -1619,7 +1590,7 @@ def _recap_verdict(operation, cluster, groups, failed, skipped, check, seconds):
     verdict = "FAILED" if failed else ("CHECK" if check else ("DONE" if groups else "NOTHING TO DO"))
     head = "  ".join(x for x in [verdict, operation, cluster, ", ".join(counts) or "nothing to do"] if x)
     if seconds is not None and not check:
-        head += " (%s)" % duration(seconds)
+        head += "  %s" % duration(seconds)
     if check:
         head += "   nothing was changed"
     return head
@@ -1638,8 +1609,8 @@ def _recap_done_rows(word, members, check, full, slow_factor):
         spread = sorted(o["seconds"] for o in usual if o.get("seconds") is not None)
         note = ""
         if spread and not check:
-            note = "(%s each)" % duration(spread[0]) if spread[0] == spread[-1] or len(usual) == 1 \
-                else "(%s..%s each)" % (duration(spread[0]), duration(spread[-1]))
+            note = "%s each" % duration(spread[0]) if spread[0] == spread[-1] or len(usual) == 1 \
+                else "%s..%s each" % (duration(spread[0]), duration(spread[-1]))
             if len(usual) == 1:
                 note = duration(spread[0])
         rows.append([nodes([o["node"] for o in usual], keep_order=True, full=full), word, note])
@@ -1915,7 +1886,7 @@ def seed_layout(nodes):
     datacenter of more than one node) or none is a warning, more than 3 a
     note. nodes: [{name, address, dc, rack, seed}] in inventory order.
     Returns {lines: one per datacenter ("Seeds  dc1  node1 (rack_a), node3
-    (rack_b)  ok", a warning's "WARNING - Seeds  dc2  ..."), dcs: [{dc, level
+    (rack_b)  ok", a warning's "WARNING  Seeds  dc2  ..."), dcs: [{dc, level
     ok|note|warning, text}], problems: the warnings' texts, notes, suggested: a seed list that follows the rule
     (addresses, every datacenter; empty without a warning)}."""
     dcs = {}

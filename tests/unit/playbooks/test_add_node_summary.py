@@ -75,7 +75,7 @@ def flat(text):
 @pytest.mark.parametrize("enabled", [None, False, "false", "no"])
 def test_medusa_off(enabled):
     text = summary() if enabled is None else summary(cassandra_medusa_enabled=enabled)
-    assert ", Medusa off." in flat(text)
+    assert ", Medusa off" in flat(text)
     assert "Medusa fqdn" not in text
 
 
@@ -92,7 +92,7 @@ def test_medusa_off(enabled):
 def test_medusa_on(inventory, line, fqdn):
     text = summary(cassandra_medusa_enabled=True, **inventory)
     assert line in flat(text)
-    assert "\n  node7  10.0.0.7  dc1 / r1\n    Medusa fqdn %s\n" % fqdn in text
+    assert "\n  node7  10.0.0.7  dc1 / r1  Medusa fqdn %s\n" % fqdn in text  # the node's row
 
 
 @pytest.mark.parametrize("new, joining, cleanup, shown", [
@@ -119,13 +119,14 @@ def test_cleanup_choice_in_the_cleanup_playbook_words(cleanup, said):
 
 def test_medusa_on_when_only_the_new_node_has_it():
     text = summary(node7={"cassandra_medusa_enabled": True})
-    assert "Medusa on (" in flat(text) and "    Medusa fqdn " in text
+    assert "Medusa on (" in flat(text) and "  Medusa fqdn " in text
 
 
 def test_a_run_again_for_a_joining_node_says_it_waits():
     text = summary(new_nodes=(), joining=("node7",))
-    assert "Still bootstrapping, waited for first: node7" in flat(text)
-    assert "its progress printed every 30s (sooner at first); the run stops after 15m without progress" in flat(text) and "No node to add" not in text
+    assert text.startswith("ADD NODE  wait for node7 of Orders\n")
+    assert "still bootstrapping, waited for first: node7" in flat(text)
+    assert "progress every 30s, stop after 15m without progress" in flat(text) and "No node to add" not in text
     assert "No node to add (node7 already in the ring)" in flat(summary(new_nodes=()))
 
 
@@ -133,7 +134,7 @@ def test_the_copied_medusa_defaults_are_the_role_defaults():
     with open(os.path.join(os.path.dirname(PLAYBOOK), "..", "roles", "cassandra_medusa", "defaults", "main.yml"),
               encoding="utf-8") as f:
         defaults = yaml.safe_load(f)
-    template = " ".join(TASK["vars"]["cassandra_screen"]["intro"][0].split())
+    template = " ".join(TASK["vars"]["cassandra_screen"]["after"][0].split())  # the "afterwards:" note
     assert "cassandra_medusa_version | default('%s')" % defaults["cassandra_medusa_version"] in template
     assert "cassandra_medusa_venv | default('%s')" % defaults["cassandra_medusa_venv"] in template
 
@@ -150,8 +151,8 @@ TOKENS = {"lines": ["dc1 now: 3 node(s)", "dc1 bisect (no move): 4 node(s)"], "w
 ])
 def test_single_token_plan_shown(auto, said):
     text = summary(_single=True, _auto=auto, cassandra_add_node_tokens=TOKENS)
-    assert "dc1 now: 3 node(s)\ndc1 bisect (no move): 4 node(s)\n" in text
-    assert "\n\nWARNING - tokens: dc1: bisect leaves it uneven" in text
+    assert "  dc1 now: 3 node(s)\n  dc1 bisect (no move): 4 node(s)\n" in text  # under the node table
+    assert "\n\nWARNING  tokens: dc1: bisect leaves it uneven" in text
     assert said in text
     assert "One token per node" not in summary(_single=False, _auto=auto, cassandra_add_node_tokens=TOKENS)
 
@@ -187,7 +188,7 @@ def test_token_choice_checked(auto, confirm, no_token, ok, says):
     ({"cassandra_java_version": "17", "cassandra_install_java": False}, "Java 17 (set up by other means)"),
 ])
 def test_java_line(inventory, java):
-    assert ", %s, Medusa" % java in flat(summary(**inventory))
+    assert "afterwards: Cassandra series 50x, %s, Medusa" % java in flat(summary(**inventory))
 
 
 def test_check_mode_follows_bisect_without_asking():
@@ -211,5 +212,5 @@ def test_reset_line_on_the_node_block():
     # cassandra_add_node_reset (on by default): the plan line of a node that will be reset, before the question
     line = "node7 (dc1/r1): has data (12.0 GiB, cluster 'Test Cluster', not in any ring, down) — will be reset"
     text = summary(node7={"_cassandra_node_reset_plan": {"line": line, "delete": [], "stop": False, "disable": False}})
-    assert "node7 10.0.0.7 dc1 / r1 %s" % line in flat(text)
+    assert "node7 10.0.0.7 dc1 / r1 about" not in flat(text) and "node7 10.0.0.7 dc1 / r1 %s" % line in flat(text)
     assert "will be reset" not in summary()

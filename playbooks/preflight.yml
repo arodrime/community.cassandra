@@ -73,13 +73,6 @@
         tasks_from: target_nodes_check.yml
       tags: [always]  # its variables check under --tags too
 
-    # the run's first line, here when --limit left the first play (localhost) out
-    - name: Say which cluster the run is on
-      ansible.builtin.include_role:
-        name: community.cassandra.cassandra_operation
-        tasks_from: cluster_banner.yml
-      tags: [always]  # under --tags too
-
     # the cluster's members (not the hosts being added or reset, nor those marked absent) and the change
     - name: Say what the run does
       ansible.builtin.debug:
@@ -126,7 +119,7 @@
         tasks_from: note.yml
       vars:
         _note: >-
-          WARNING - {{ ansible_play_hosts_all | difference(ansible_play_hosts) | community.cassandra.cassandra_node_list }}
+          WARNING  {{ ansible_play_hosts_all | difference(ansible_play_hosts) | community.cassandra.cassandra_node_list }}
           did not answer, going on without them (cassandra_allow_down_nodes). Fewer replicas are up: QUORUM reads and
           writes may fail.
       when: ansible_play_hosts_all | difference(ansible_play_hosts) | length > 0
@@ -222,6 +215,18 @@
         cassandra_service_cluster_candidates: >-
           {{ [] if _cassandra_preflight_running_nodes | length > 0 else _cassandra_preflight_peers }}
 
+    # the run's first line: the cluster, its nodes and datacenters, the running version just read
+    - name: Say which cluster the run is on
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: cluster_banner.yml
+      tags: [always]  # under --tags too
+      vars:
+        _cassandra_banner_version: >-
+          {{ ((cassandra_preflight_describe.stdout | default('') ~ '\n').split('Database versions:')[1:]
+              | first | default('') | regex_findall('(?m)^\s+([0-9][^:]*): \[') | join(', '))
+             if _cassandra_preflight_running_nodes | length > 0 else '' }}
+
     # Where a node stands (cassandra_operation node_standing.yml) is worked out from the rings the cluster's nodes
     # see: each running node reads its own, all at once (collected at the end of this play). The playbooks
     # that add, reset or replace nodes ask for it (_cassandra_preflight_node_views)
@@ -302,7 +307,7 @@
           {%-   set hosts = [] -%}
           {%-   for h in ansible_play_hosts if v in hostvars[h]._cassandra_preflight_unknown -%}{%- set _ = hosts.append(h) -%}{%- endfor -%}
           {%-   set close = hostvars[hosts | first]._cassandra_preflight_unknown[v] -%}
-          {%-   set _ = out.append('WARNING - ' ~ v ~ ' (set for ' ~ hosts | community.cassandra.cassandra_node_list ~ ') is not known to this'
+          {%-   set _ = out.append('WARNING  ' ~ v ~ ' (set for ' ~ hosts | community.cassandra.cassandra_node_list ~ ') is not known to this'
                                    ~ ' collection: its roles and playbooks do not read it' ~ ((' (did you mean ' ~ close ~ '?)') if close else '')) -%}
           {%- endfor -%}
           {{ out | join(_nl) }}
@@ -337,7 +342,7 @@
           {%- for w in ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight_jvm') | flatten | unique -%}
           {%-   set hosts = [] -%}
           {%-   for h in ansible_play_hosts if w in hostvars[h]._cassandra_preflight_jvm -%}{%- set _ = hosts.append(h) -%}{%- endfor -%}
-          {%-   set _ = out.append('WARNING - ' ~ hosts | community.cassandra.cassandra_node_list ~ ': ' ~ w) -%}
+          {%-   set _ = out.append('WARNING  ' ~ hosts | community.cassandra.cassandra_node_list ~ ': ' ~ w) -%}
           {%- endfor -%}
           {{ out | join(_nl) }}
       when: ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight_jvm') | flatten | length > 0
@@ -376,11 +381,13 @@
         tasks_from: note.yml
       vars:
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        # in a plan (topology's, an operation's): the WARNING lines only; topology applies the seeds itself
         _deferred: "{{ _cassandra_notes_deferred | default(false) | bool }}"
+        _in_plan: "{{ _deferred | bool or _cassandra_notes_in_plan | default(false) | bool }}"
         _note: >-
-          {{ (_layout.lines | reject('search', '  ok$') | list if _deferred else _layout.lines) | join(_nl)
+          {{ (_layout.lines | reject('search', '  ok$') | list if _in_plan | bool else _layout.lines) | join(_nl)
              ~ ((_nl ~ '  suggested in the group_vars of ' ~ _cluster ~ ': cassandra_seeds: ' ~ _layout.suggested | to_json
-                 ~ (' (update the inventory: topology then applies it live)' if _deferred
+                 ~ (' (update the inventory: topology then applies it live)' if _deferred | bool
                     else (_nl ~ '  then apply it live: ' ~ _change_seeds))) if _layout.problems else '') }}
         _change_seeds: >-
           {{ 'change_seeds' | community.cassandra.cassandra_command(
@@ -512,29 +519,6 @@
         _un: >-
           {{ cassandra_preflight_status.cluster_status.values() | map(attribute='nodes') | flatten
              | selectattr('status', 'equalto', 'U') | selectattr('state', 'equalto', 'N') | map(attribute='address') | list }}
-
-    # Settings that are risky or likely a leftover (cassandra_suspicious_settings' table: auto_bootstrap false, a
-    # replace flag left on a member of the ring, the heap, ...): a WARNING, nothing refused; a row a node keeps on
-    # purpose is silenced by cassandra_suspicious_ack. After the ring is read: who is a member
-    - name: Warn about sensitive or suspicious settings
-      ansible.builtin.include_role:
-        name: community.cassandra.cassandra_operation
-        tasks_from: note.yml
-      vars:
-        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
-        # the up nodes of the ring (a node down at its address may be a replacement of the same address)
-        _ring: >-
-          {{ cassandra_preflight_status.cluster_status.values() | map(attribute='nodes') | flatten
-             | selectattr('status', 'equalto', 'U') | map(attribute='address') | list
-             if (cassandra_preflight_status | default({})).cluster_status is defined else [] }}
-        _members: >-
-          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_preflight', 'defined')
-             | selectattr('_cassandra_preflight.ring_address', 'in', _ring) | map(attribute='inventory_hostname') | list }}
-        _found: >-
-          {{ dict(ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars)))
-             | community.cassandra.cassandra_suspicious_settings(_members) }}
-        _note: "{{ _found | join(_nl) }}"
-      when: _found | length > 0
 
     # The token allocator refuses a node that joins a rack already in the ring
     # when the datacenter's ring has more than 1 rack but fewer than its

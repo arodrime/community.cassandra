@@ -40,9 +40,10 @@ def test_operation_summary_is_a_recap():
     hostvars = {"n1": {"cassandra_op_result": "add done in 5s"}, "n2": {}, "n3": {}}
     variables = dict(cassandra_service_summary_hosts=["n1", "n2", "n3"], hostvars=hostvars, groups={"prod": ["n1", "n2", "n3"]}, cassandra_hosts="prod",
                      ansible_play_hosts_all=["n1", "n2"], ansible_check_mode=False, cassandra_cluster_name="my_cluster")
-    variables["_results"] = render(task["vars"]["_results"], **variables)
-    assert variables["_results"] == [{"node": "n1", "result": "add done in 5s"}, {"node": "n2", "result": "not reached"},
-                                     {"node": "n3", "result": "not in this run (--limit)"}]
+    defaults = load("roles", "cassandra_operation", "defaults", "main.yml")  # the results list: a role default (lazy)
+    variables["_cassandra_op_results"] = render(defaults["_cassandra_op_results"], **variables)
+    assert variables["_cassandra_op_results"] == [{"node": "n1", "result": "add done in 5s"}, {"node": "n2", "result": "not reached"},
+                                                  {"node": "n3", "result": "not in this run (--limit)"}]
     # a verdict, the nodes grouped (a list: a line each under any callback)
     lines = [" ".join(line.split()) for line in render(task["ansible.builtin.debug"]["msg"], **variables)]
     assert lines == ["DONE add_node my_cluster 1 added, 2 not touched", "n1 added 5s", "n2 not touched (not reached)",

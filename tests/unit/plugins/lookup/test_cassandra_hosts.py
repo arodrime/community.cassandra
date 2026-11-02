@@ -383,10 +383,13 @@ def test_lookup_refusal(monkeypatch):
 
 
 def test_banner():
-    assert banner("prod", BY_GIVEN, 5, ["dc1"] * 5) == "CLUSTER prod (5 nodes, dc1) | chosen by: -e cassandra_hosts"
-    assert banner("prod", BY_ONLY, 1, ["dc2", "dc1"], absent=1) == \
-        "CLUSTER prod (1 node + 1 marked absent, dc1, dc2) | chosen by: the only cluster in the inventory"
-    assert banner("prod", BY_ENV, 3, []) == "CLUSTER prod (3 nodes) | chosen by: CASSANDRA_CLUSTER (environment)"
+    """The cluster, its nodes, its datacenters (named up to 3, counted beyond), two spaces apart; not how the group
+    was picked (a disagreement is refused before)."""
+    assert banner("prod", BY_GIVEN, 5, ["dc1"] * 5) == "prod  5 nodes  1 DC (dc1)"
+    assert banner("prod", BY_ONLY, 1, ["dc2", "dc1"], absent=1) == "prod  1 node + 1 marked absent  2 DCs (dc1, dc2)"
+    assert banner("prod", BY_ENV, 3, []) == "prod  3 nodes"
+    assert banner("big", BY_ENV, 60, ["dc%d" % i for i in range(6)]) == "big  60 nodes  6 DCs"
+    assert banner("big", BY_ENV, 6, ["dc1", "dc2", "dc3"]) == "big  6 nodes  3 DCs (dc1, dc2, dc3)"
 
 
 def test_lookup_banner(monkeypatch):
@@ -396,15 +399,12 @@ def test_lookup_banner(monkeypatch):
                 "n3": {"cassandra_dc": "dc2", "cassandra_node_state": "absent"}}
     groups = {"all": ["n1", "n2", "n3"], "prod": ["n1", "n2", "n3"], "prod_dc1": ["n1", "n2"], "prod_dc2": ["n3"]}
     lookup = "{{ lookup('community.cassandra.cassandra_hosts', banner=true) }}"
-    assert render(lookup, groups=groups, hostvars=hostvars, the_dc="eu") == \
-        "CLUSTER prod (2 nodes + 1 marked absent, dc1, eu) | chosen by: the only cluster in the inventory"
-    assert render(lookup, groups=groups, hostvars={}, cassandra_hosts="prod_dc1") == \
-        "CLUSTER prod_dc1 (2 nodes, dc1) | chosen by: -e cassandra_hosts"
+    assert render(lookup, groups=groups, hostvars=hostvars, the_dc="eu") == "prod  2 nodes + 1 marked absent  2 DCs (dc1, eu)"
+    assert render(lookup, groups=groups, hostvars={}, cassandra_hosts="prod_dc1") == "prod_dc1  2 nodes  1 DC (dc1)"
     hostvars["n2"]["cassandra_dc"] = trust_as_template("{{ ansible_facts.nope }}")  # only the node knows it
-    assert render(lookup, groups=groups, hostvars=hostvars, ansible_facts={}) == \
-        "CLUSTER prod (2 nodes + 1 marked absent, dc1, dc?) | chosen by: the only cluster in the inventory"
+    assert render(lookup, groups=groups, hostvars=hostvars, ansible_facts={}) == "prod  2 nodes + 1 marked absent  2 DCs (dc1, dc?)"
     monkeypatch.setenv(ENV, "prod")
-    assert render(lookup, groups=groups, hostvars={}).endswith("| chosen by: CASSANDRA_CLUSTER (environment)")
+    assert render(lookup, groups=groups, hostvars={}) == "prod  3 nodes  1 DC (dc1)"  # (no inventory dc: the role's default)
 
 
 def test_env_cluster_name_only_the_nodes_know():

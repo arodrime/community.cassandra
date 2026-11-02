@@ -165,15 +165,12 @@ group or its cluster name), else the run stops, naming both: a shell left with a
 ``host_vars``) stops the run (the plays' hosts do not see it: give it with ``-e``), so does an empty ``-e`` one. The same rule holds for every playbook, the read-only ones
 (``help``, ``status``, ``health_check``, ``preflight``) included.
 
-The first line of each run names the cluster, its nodes and datacenters, and how it was picked; under the
-``community.cassandra.ops`` callback it is the run's last line too:
+The first line of each run names the cluster, its nodes and datacenters, and the Cassandra version read from a
+running node (more than 3 datacenters: their count; the version left out before any read):
 
 .. code-block:: text
 
-    CLUSTER orders (6 nodes, dc1, dc2) | chosen by: CASSANDRA_CLUSTER (environment)
-
-``chosen by`` is ``-e cassandra_hosts``, ``CASSANDRA_CLUSTER (environment)`` or ``the only cluster in the
-inventory``.
+    orders  6 nodes  2 DCs (dc1, dc2)  Cassandra 4.1.12
 
 .. code-block:: console
 
@@ -286,10 +283,12 @@ its own, changing nothing, and fails when there is a problem, so it can be sched
 datacenter with the nodes up, down, joining, leaving and moving, the total load, and the hosts the inventory and the
 ring do not share; a down node is shown, not an error. ``cassandra_status_raw: true`` adds nodetool's own output.
 
-Risky operations show one screen first, the same layout for each: a header (the operation, the cluster and its running
-version), one block per node concerned (when the operation works node by node), then the warnings, each one labelled
-(``WARNING - replication: ...``), together; one blank line between two blocks. Then they ask for confirmation: ``yes`` (or ``y``) goes on, ``no`` (or ``n``) stops, any other answer
-asks again, three times at most. ``cassandra_operation_confirm: false`` skips the question, for runs without a
+Risky operations show one plan first, the same layout for each: the title (the operation in capitals, then what it
+does to whom, where: ``ADD NODE  node4, node5 into dc1 of orders``), how it does it, a table of the nodes concerned
+(when the operation works node by node) and the notes under it, then the warnings together, each one labelled
+(``WARNING  replication: ...``, two lines at most), just before the question, which says the same thing as the title
+(``Add node4, node5 into dc1 of orders? Answer yes or no:``); one blank line between two blocks. ``yes`` (or ``y``)
+goes on, ``no`` (or ``n``) stops, any other answer asks again, three times at most. ``cassandra_operation_confirm: false`` skips the question, for runs without a
 terminal; without one, a run that would ask fails at once. ``--check`` shows the screen, says that nothing will be
 changed and asks nothing (``add_node`` with ``cassandra_token_auto: true`` follows bisect instead of asking); the
 warnings that only concern a real run (the SSH session, data deleted for good) are named on one line instead. A
@@ -554,7 +553,7 @@ example (replacing the seed ``node2`` by ``node5``):
 
 .. code-block:: text
 
-    PLAN  topology  my_cluster (Cassandra 5.0.4)  3 steps, one node at a time
+    TOPOLOGY  3 steps of my_cluster, one node at a time
       1.  add node5           dc1/rack1  bootstrap, ~32.1 GiB to stream (the load of dc1 / 5 nodes); joins as a regular node, a seed at the seed step
       2.  seeds                          10.0.0.1,10.0.0.2 -> 10.0.0.1,10.0.0.5  written and reloaded live on every node, no restart
       3.  decommission node2  dc1/rack1  load 40.1 GiB, owns 25.0% -> node1, node3..node5
@@ -563,12 +562,12 @@ example (replacing the seed ``node2`` by ``node5``):
     then:       empty node2 (reset_node) before reusing the host, re-import the cluster to drop it from the inventory: the commands at the end
     cleanup:    of the nodes that hand data over: its command is printed after the adds (topology runs none, the removals move data again)
 
-    WARNING - the seeds will change on every node: 10.0.0.1,10.0.0.2 -> 10.0.0.1,10.0.0.5 (from cassandra_seeds in the inventory)
-    Run these 3 steps?
+    WARNING  the seeds will change on every node: 10.0.0.1,10.0.0.2 -> 10.0.0.1,10.0.0.5 (from cassandra_seeds in the inventory)
+    Run these 3 steps? Answer yes or no:
 
 It asks once; each step then shows its own screen as it starts, without a question. ``--check`` shows the same plan,
 the same warnings, and asks nothing. The warnings: the seeds changing on every node (the seed step, with or without
-nodes added or removed), more than half of a datacenter removed (``WARNING - 3 of 5 nodes of dc1 removed``), racks
+nodes added or removed), more than half of a datacenter removed (``WARNING  3 of 5 nodes of dc1 removed``), racks
 of different sizes once done, ring nodes no host has, a node down, the data a reset deletes. No cap on the number
 of removals: the guards are the replicas and the seeds. Refused before anything changes: a ``--limit`` that leaves
 out a host of the group (the plan needs them all), a datacenter that still has nodes after the run left with no seed
@@ -1170,29 +1169,38 @@ whole in it (``209715200B/s`` as ``200MiB/s``, ``2s`` as ``2000ms``), so that no
 one value; ``cassandra_config`` takes the same amount in another unit as the same setting and leaves such a file as
 it is. ``auto_bootstrap: true``, Cassandra's default, is left out; ``auto_bootstrap: false`` is imported as
 ``cassandra_auto_bootstrap: false`` in that node's ``host_vars`` (never in a group: a node added later must not get
-it), and the report, then the ``preflight`` playbook, warn about it among the sensitive or suspicious settings: a
+it), and the report, then the ``health_check`` playbook, say it among the settings that weaken the cluster: a
 node that loses its data would restart empty without streaming it back. Remove it unless you know why it is there
 (a node that has joined reads it at its first start only; the next run drops the line). The
 heap dump directory has one variable, ``cassandra_heap_dump_dir``, taken from ``cassandra-env.sh``, where the JVM's
 ``-XX:HeapDumpPath`` comes from; Cassandra 5.0 uses that before ``heap_dump_path`` in ``cassandra.yaml``, which is
 not compared (a node's other value there is noted, and stays until the file is rewritten).
 
-The report's TO DO, then every ``preflight`` run, warn about sensitive or suspicious settings, one WARNING per setting
-with its nodes and what to do; nothing is refused:
+The report's TO DO, then every ``health_check`` run (its SETTINGS block, after the nodes' state), say the settings
+that weaken the cluster, two lines per finding: the setting, its value, the nodes and why it matters, then what to
+do and how to keep it on purpose; nothing is refused, and the operation playbooks' plans do not repeat them (a
+setting ``apply_config`` writes shows in its differences table, as any other change):
+
+.. code-block:: text
+
+    SETTINGS
+      heap 256M (cassandra_heap_size) on node1..node5: too small, Cassandra needs 2G to 4G (at most half the RAM, under 32G)
+        set cassandra_heap_size; kept on purpose: list heap_size in cassandra_settings_kept_on_purpose
+
 
 - ``auto_bootstrap`` false (``auto_bootstrap_false``);
 - a ``-Dcassandra.replace_address`` or ``replace_address_first_boot`` flag left on a member of the ring, in the JVM
   options, ``cassandra_service_environment`` or a line of its config, not a commented one (``replace_address``): the
-  first makes its next start fail, the second would replace a node again after a wipe; the WARNING says what to remove;
+  first makes its next start fail, the second would replace a node again after a wipe; the finding says what to remove;
 - the heap (``heap_size``, ``cassandra_heap_size``, a ``-Xmx`` of the extra JVM options or the unit's
   ``MAX_HEAP_SIZE``): not set on a 4.x host with 64G of RAM or more (4.x's auto-sizing stops at 8G), under 2G, 32G or
   more (the JVM's compressed pointers are lost: 31G at most), or over half the RAM; with the range to set. The RAM
-  comes from the host's facts: ``preflight`` only;
+  comes from the host's facts: ``health_check`` only;
 - ``AllowAllAuthenticator`` with an rpc address other hosts reach (``allow_all_authenticator``);
 - ``disk_failure_policy`` or ``commit_failure_policy`` ``ignore`` (``failure_policy_ignore``).
 
-A node that keeps one on purpose lists its id in ``cassandra_suspicious_ack`` (``host_vars`` or a group), e.g.
-``cassandra_suspicious_ack: [heap_size]``; each WARNING says so, and an id no check has gets a WARNING.
+A node that keeps one on purpose lists its id in ``cassandra_settings_kept_on_purpose`` (``host_vars`` or a group), e.g.
+``cassandra_settings_kept_on_purpose: [heap_size]``; each finding says so, and an id no check has gets a line of its own.
 
 Medusa's ``fqdn`` is the node's folder in the backups: a new one means full backups. When every node has
 ``<short hostname>.<domain>``, the same domain everywhere, the import keeps ``cassandra_medusa_fqdn_domain`` (new

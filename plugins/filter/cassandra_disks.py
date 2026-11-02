@@ -373,7 +373,7 @@ def cassandra_disk_tuned_conflict(lines, kb, devices=None, state=None, udev_info
     care of it (managed: cassandra_linux_tuned_manage; live: the role applies
     settings live, cassandra_linux_apply_live).
     Output: str. e.g. (virtual-guest active, its throughput-performance [disk] readahead=>4096; 4, [sdb], ...) ->
-    "WARNING - the active tuned profile (virtual-guest: [disk] readahead=>4096) sets sdb, and the other devices its [disk]
+    "WARNING  the active tuned profile (virtual-guest: [disk] readahead=>4096) sets sdb, and the other devices its [disk]
     section takes, to a read-ahead of 4096 KB when tuned starts (at boot) or sees a new device, instead of the 4 KB set
     here. cassandra_linux_tuned_manage: true keeps them off the Cassandra devices."; kb=8192 -> ""."""
     if devices is None:
@@ -390,7 +390,7 @@ def cassandra_disk_tuned_conflict(lines, kb, devices=None, state=None, udev_info
     else:
         hint = t["why"] + ": the role can't keep them off."
     instead = "the %d KB set here" % int(kb) if what.startswith("a read-ahead") else "none"
-    return ("WARNING - the active tuned profile (%s: [%s] %s) sets %s, and the other devices its [%s] section"
+    return ("WARNING  the active tuned profile (%s: [%s] %s) sets %s, and the other devices its [%s] section"
             " takes, to %s when tuned starts (at boot) or sees a new device, instead of %s. %s"
             % (" ".join(t["active"]), section, value, device, section, what, instead, hint))
 
@@ -455,7 +455,7 @@ def cassandra_disk_summary(nodes, check=False, verbose=False, said=None):
     with the same lines are grouped; verbose (-v): the stacks in full (dm-N,
     what is worth knowing about each) and the notes. Then the lines to act
     on, each once with its nodes: what is not tuned yet (indented), and the
-    problems (WARNING - ..., a blank line apart). said: {node: [warnings
+    problems (WARNING  ..., a blank line apart). said: {node: [warnings
     said already]}, left out (apply_config's plan said them).
     Output: [str]. e.g. two nodes already set, the same stack -> ["Data disks: read-ahead 4 KB, already set (nothing
     changed)", "  node1, node2:", "    /data/c/dev/{data,commitlog} \u2192 datavg-lv_data \u2192 sdb"]."""

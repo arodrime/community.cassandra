@@ -126,7 +126,7 @@ Data disks: read-ahead 4 KB, set now on 2 nodes
   optional: restart Cassandra to read the files it has open with the new read-ahead (node1, node2)
 ```
 
-then a `WARNING - ...` line for what should be looked at (a filesystem on
+then a `WARNING  ...` line for what should be looked at (a filesystem on
 NFS, ZFS or btrfs, `lvchange` or `tuned-adm` failing, a tuned profile setting
 another read-ahead). Under `--check` it says `would be set`. With `-v`: the
 kernel names (`dm-2`), and why something is left alone or how a device is

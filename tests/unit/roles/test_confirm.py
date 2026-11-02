@@ -32,7 +32,7 @@ PLAYBOOK = """
       ansible.builtin.debug:
         msg: went on
 """
-PROMPTS = (b"Answer yes to go on, no to stop", b"Please answer yes or no")
+PROMPTS = (b"Answer yes or no", b"Please answer yes or no")
 
 
 def command(tmp_path, *extra):
@@ -107,7 +107,7 @@ def test_yes_goes_on(tmp_path):
     assert rc == 0, output
     assert went_on(output) == 2
     assert seen == 1
-    assert re.search(r"Remove node7 from the ring\?\r?\nAnswer yes to go on, no to stop", output)
+    assert re.search(r"Remove node7 from the ring\? Answer yes or no:", output)  # the question's line ends with ':'
     # controller bookkeeping: one line per step, the facts on both hosts (both went on)
     for name in ("Start the count of answers", "Count the answers", "Confirm the operation", "Read the answer"):
         assert task_hosts(output, name) == [["node1"]], (name, output)
@@ -211,7 +211,7 @@ def test_screen_under_check_is_printed_once_without_question(tmp_path):
     assert '"msg": "decommission_node: remove node7\\n' in run.stdout
     assert run.stdout.count('decommission_node: remove node7\\n') == 1
     assert '--check: nothing will be changed (the plan only, no question).' in run.stdout
-    assert 'WARNING - replication: orders keeps 2 replicas' in run.stdout
+    assert 'WARNING  replication: orders keeps 2 replicas' in run.stdout
     assert '(A real run would also warn about: session.)' in run.stdout
     assert "No terminal" not in run.stdout
 
@@ -221,7 +221,7 @@ def test_screen_with_confirm_false_is_printed_and_goes_on(tmp_path):
     assert run.returncode == 0, run.stdout
     assert 'cassandra_operation_confirm is false: no question, the run goes on.' in run.stdout
     assert run.stdout.count('decommission_node: remove node7\\n') == 1 and "Answer yes" not in run.stdout
-    assert 'WARNING - session: this run is not inside tmux or screen' in run.stdout
+    assert 'WARNING  session: this run is not inside tmux or screen' in run.stdout
 
 
 def test_screen_then_the_question(tmp_path):
@@ -237,8 +237,8 @@ def test_screen_then_the_question(tmp_path):
     os.waitpid(pid, 0)
     # the screen printed once (in the logs too), then the question alone
     assert output.count('decommission_node: remove node7\\n') == 1
-    assert 'WARNING - replication: orders keeps 2 replicas' in output
-    assert re.search(r"Confirm the operation\]\r?\nRemove node7\?\r?\nAnswer yes to go on, no to stop", output)
+    assert 'WARNING  replication: orders keeps 2 replicas' in output
+    assert re.search(r"Confirm the operation\]\r?\nRemove node7\? Answer yes or no:", output)
     assert "Stopped at your request, nothing changed." in output
 
 
@@ -313,9 +313,9 @@ def test_ops_callback_blocks_one_blank_line_apart(tmp_path):
         "",
         "----",
         "",
-        "WARNING - replication: orders keeps 2 replicas",
+        "WARNING  replication: orders keeps 2 replicas",
         "",  # a blank line between two warnings
-        "WARNING - session: this run is not inside tmux or screen: if the SSH session to this machine drops,",
+        "WARNING  session: this run is not inside tmux or screen: if the SSH session to this machine drops,",
         "  the run stops (the operation itself goes on, unwatched). Run it inside tmux or screen.",
         "",
         "----",  # above the question

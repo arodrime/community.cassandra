@@ -96,9 +96,27 @@ def test_the_refusal_and_the_cluster_line_are_operator_messages():
     assert "always" in CHECK["tags"] and "always" in SAY["tags"]
     tasks = load("roles", "cassandra_operation", "tasks", "hosts_check.yml")
     names = [t["name"] for t in tasks]
-    # the variables checked first (a -e cassandra_host=... typo is pointed out before the refusal it leads to)
+    # the variables checked first (a -e cassandra_host=... typo is pointed out before the refusal it leads to);
+    # the cluster line is not localhost's: preflight says it once the cluster is read (with its version)
     assert names.index("Check cassandra_target_nodes") < names.index("Variables close to the playbooks' own") \
-        < names.index(CHECK["name"]) < names.index("Say which cluster the run is on")
+        < names.index(CHECK["name"])
+    assert "Say which cluster the run is on" not in names
+
+
+def test_preflight_says_the_cluster_once_it_is_read():
+    plays = load("playbooks", "preflight.yml")
+    tasks = next(p for p in plays if p.get("name") == "Cassandra preflight checks")["tasks"]
+    names = [t.get("name") for t in tasks]
+    say = tasks[names.index("Say which cluster the run is on")]
+    assert names.index("Read the cluster from a running node") < names.index("Say which cluster the run is on")
+    assert say["ansible.builtin.include_role"]["tasks_from"] == "cluster_banner.yml" and "always" in say["tags"]
+    version = say["vars"]["_cassandra_banner_version"]
+    describe = {"stdout": "Cluster Information:\n\tName: prod\n\tDatabase versions:\n\t\t5.0.9: [10.0.0.1:7000]\n"}
+    assert render(version, cassandra_preflight_describe=describe, _cassandra_preflight_running_nodes=["n1"]) == "5.0.9"
+    assert render(version, cassandra_preflight_describe=describe, _cassandra_preflight_running_nodes=[]) == ""
+    # the banner's line: the lookup's, then the version when it is known
+    line = render(SAY["ansible.builtin.debug"]["msg"], groups=GROUPS, _cassandra_banner_version="5.0.9")
+    assert line == "prod  2 nodes  1 DC (dc1)  Cassandra 5.0.9"
 
 
 def test_default_is_the_cluster_group():
@@ -127,12 +145,12 @@ def test_shows_the_cluster_and_how_it_was_picked(monkeypatch):
     def shown(**variables):
         return render(SAY["ansible.builtin.debug"]["msg"], **variables)
 
-    assert shown(groups=GROUPS) == "CLUSTER prod (2 nodes, dc1) | chosen by: the only cluster in the inventory"
-    assert shown(groups=GROUPS, cassandra_hosts="prod") == "CLUSTER prod (2 nodes, dc1) | chosen by: -e cassandra_hosts"
+    assert shown(groups=GROUPS) == "prod  2 nodes  1 DC (dc1)"
+    assert shown(groups=GROUPS, cassandra_hosts="prod") == "prod  2 nodes  1 DC (dc1)"
     monkeypatch.setenv("CASSANDRA_CLUSTER", "Prod")
     hostvars = {"n1": {"cassandra_cluster_name": "Prod"}, "n2": {"cassandra_cluster_name": "Prod"}}
     groups = dict(GROUPS, prod_dc1=["n1", "n2"])
-    assert shown(groups=groups, hostvars=hostvars) == "CLUSTER prod (2 nodes, dc1) | chosen by: CASSANDRA_CLUSTER (environment)"
+    assert shown(groups=groups, hostvars=hostvars) == "prod  2 nodes  1 DC (dc1)"  # however the group was picked
 
 
 def test_the_cluster_line_once_per_run():
@@ -204,13 +222,17 @@ def test_the_checking_playbooks():
 
 
 @pytest.mark.parametrize("playbook", _checking())
-def test_the_nodes_first_play_says_the_cluster_under_limit(playbook):
-    """--limit skips the localhost play: the first play on the nodes says the cluster (once per run)."""
+def test_the_nodes_first_play_says_the_cluster(playbook):
+    """The first play on the nodes says the cluster (once per run): the read-only playbooks before anything is read
+    (no version), preflight once the cluster is read from a running node (with its version)."""
     second = load("playbooks", playbook)[1]
     includes = [t.get("ansible.builtin.include_role", {}).get("tasks_from") for t in second["tasks"]]
     assert "cluster_banner.yml" in includes
-    # after the variables checks, before anything is read on the nodes
-    assert includes.index("cluster_banner.yml") <= 3
+    if playbook == "preflight.yml":
+        names = [t.get("name") for t in second["tasks"]]
+        assert names.index("Say which cluster the run is on") > names.index("Read the cluster from a running node")
+    else:  # after the variables checks, before anything is read on the nodes
+        assert includes.index("cluster_banner.yml") <= 3
 
 
 def test_help_picks_the_cluster_by_the_same_rule():

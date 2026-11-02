@@ -2,15 +2,21 @@
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 """The screen an operation playbook shows before it changes anything.
 
-cassandra_screen: spec -> the text, the same layout for every operation:
-    a header line (operation, cluster, Cassandra version, what it does), the
-    intro, one block per node, what comes after, the warnings together, each
-    one labelled ("WARNING - replication: ..."), then, in the question's
-    place, what --check or cassandra_operation_confirm false means for this
-    run. One blank line between two blocks, none for an empty one.
-    spec: {operation, cluster, version, summary: str,
-           intro: [item], blocks: [{title, lines: [item]}], sections: [[item]]
-           (each one a block of its own, not indented), after: [item],
+cassandra_screen: spec -> the text, the same layout for every operation (the
+    plan block of docs/docsite/rst/guide_output.rst): the title, the operation
+    in capitals then what it does to whom, where ("ADD NODE  node4, node5
+    into dc1 of my_cluster"); the "how" lines under it (the intro); a blank
+    line, then the node table (one row per node, two-space columns) and the
+    notes under it (after); the warnings together, last, "WARNING  label:
+    text", two lines at most each; then, in the question's place, what
+    --check or cassandra_operation_confirm false means for this run. The
+    cluster and its version are the banner's, not said again.
+    spec: {operation, summary: str, intro: [item],
+           blocks: [{title, row: str, lines: [item]}] (a block with a row is
+           a row of the table: its title's fields then the row; without one,
+           its title then its lines indented under it),
+           sections: [[item]] (each one a block of its own, indented 2),
+           after: [item] (the notes under the table),
            warnings: [{label, text: str or [str, item...], real_run: bool}
                       or {label, each: [str], real_run}: one warning per str]}
     An item is a string (wrapped) or {'pre': [lines]} (kept as is: tables,
@@ -27,8 +33,8 @@ cassandra_reset_warnings: the warnings of the resets an operation runs
 cassandra_decommission_screen: the blocks of decommission_node: each node
     to remove with its dc/rack, load and share, where its data goes, where
     it runs and is checked from, and how it ends; its "step": the same on
-    one line ({node, dc, rack, text}, the plan of topology).
-cassandra_add_node_blocks: the lines of each new node on add_node's screen.
+    one line ({node, dc, rack, text}, the plan of topology), its row.
+cassandra_add_node_blocks: the row of each new node on add_node's screen.
 """
 
 from __future__ import absolute_import, division, print_function
@@ -55,91 +61,96 @@ def _wrap(text, indent="", subsequent=None):
     return out
 
 
-def _items(items, indent="", hang="", paragraphs=False):
-    """paragraphs: each item a paragraph (a blank line between two), the
-    item after one ending with ":" (what it introduces) in the same one."""
-    parts, leads = [], False
+def _items(items, indent="", hang="  "):
+    """The items as lines: a string wrapped (its next lines hang columns further in), a {'pre': [lines]} as it
+    is, indented; an empty one left out."""
+    lines = []
     for item in items or []:
         if isinstance(item, Mapping):
-            lines = [indent + str(line) for line in item.get("pre") or []]
+            lines += [indent + str(line) for line in item.get("pre") or []]
         elif str(item).strip():
-            lines = _wrap(item, indent, indent + hang)
-        else:
-            continue
-        if not lines:
-            continue  # an empty table: the lead-in keeps what comes next
-        if parts and (leads or not paragraphs):
-            parts[-1] = parts[-1] + lines
-        else:
-            parts.append(lines)
-        leads = lines[-1].rstrip().endswith(":")
-    return out.spaced(parts)
+            lines += _wrap(item, indent, indent + hang)
+    return lines
 
 
 def _warning(warning):
+    """A warning's lines: "WARNING  label: text", the text wrapped under itself (two lines when it fits), the
+    items of a text given as a list under it, each on its own line; no label: "WARNING  text"."""
     text = warning.get("text") or ""
     first, rest = (text[0], text[1:]) if isinstance(text, list) else (text, [])
-    out = _wrap("WARNING - %s: %s" % (warning["label"], first), "", "  ")
+    label = str(warning.get("label") or "").strip()
+    under = " " * len(out.WARNING)
+    lines = _wrap(out.WARNING + ("%s: %s" % (label, first) if label else str(first)), "", under)
     for item in rest:
         if isinstance(item, Mapping):
-            out.extend(_items([item], "    "))
+            lines.extend(_items([item], under))
         elif str(item).strip():
-            out.extend(_wrap(item, "  - ", "    "))
-    return out
+            lines.extend(_wrap(item, under + "- ", under + "  "))
+    return lines
 
 
-def cassandra_screen(spec, check=False, asks=True, session="", asked_by=""):
-    """check: --check; asks: false when a question would be asked but
-    cassandra_operation_confirm is false (said at the end); session: the
-    tmux/screen warning, if any; asked_by: the playbook that showed the
-    whole plan and asked already (topology), said at the end.
-    Input: spec (see the module's doc); output: the text, one string. e.g. ({operation: reset_node, cluster:
-    my_cluster, summary: "empty node7", blocks: [{title: "node7  10.0.0.7", lines: ["Cassandra stopped"]}], warnings:
-    [{label: "data loss", text: "node7: 12 entries DELETED", real_run: True}]}) -> the lines "reset_node on cluster
-    'my_cluster': empty node7", "", "  node7  10.0.0.7", "    Cassandra stopped", "", "WARNING - data loss: node7: 12
-    entries DELETED", joined; under check, "(A real run would also warn about: data loss.)" and the --check line
-    instead of the warning."""
-    spec = spec or {}
-    header = str(spec.get("operation") or "")
-    if spec.get("cluster"):
-        header += " on cluster '%s'" % spec["cluster"]
-    if spec.get("version"):
-        header += " (Cassandra %s)" % spec["version"]
-    if spec.get("summary"):
-        header += ": %s" % spec["summary"]
-    sections = [_wrap(header, "", "  ")]
-    sections.append(_items(spec.get("intro"), paragraphs=True))
-    for block in spec.get("blocks") or []:
-        sections.append(_wrap(block.get("title") or "", "  ", "    ") + _items(block.get("lines"), "    ", "  "))
-    for section in spec.get("sections") or []:
-        sections.append(_items(section, paragraphs=True))
-    sections.append(_items(spec.get("after"), paragraphs=True))
+def _table_block(blocks, after):
+    """The node table and the notes under it: a block with a row is a row (its title's fields, then the row);
+    one without is its title, then its lines indented under it."""
+    rows, lines = [], []
+    for block in blocks:
+        if "row" in block:
+            rows.append([f for f in str(block.get("title") or "").split("  ") if f] + [str(block.get("row") or "")])
+        else:
+            lines += _wrap(block.get("title") or "", "  ", "    ") + _items(block.get("lines"), "    ")
+    return out.table(rows, "  ") + lines + _items(after, "  ")
 
-    warnings, seen = [], set()
+
+def _warnings(spec, session, notes, check):
+    """The warnings of the spec, the session's and the checks' notes (WARNING lines kept for the plan), each once;
+    under check, the ones that only concern a real run named on one line instead."""
     given = []
     for warning in spec.get("warnings") or []:  # each: one warning per text, under the same label
         given.extend([dict(warning, text=t) for t in warning["each"]] if "each" in warning else [warning])
+    given += [{"label": "", "text": out.warning_text(n)} for n in notes or [] if out.is_warning(n)]
     if str(session or "").strip():
-        given.append({"label": "session", "text": session, "real_run": True})
+        given.append({"label": "", "text": session, "real_run": True})
+    seen, kept = set(), []
     for warning in given:
         key = (warning.get("label"), repr(warning.get("text")))
-        if not warning.get("text") or key in seen:
-            continue
-        seen.add(key)
-        warnings.append(warning)
-    skipped, warned = [], []
-    for warning in warnings:
+        if warning.get("text") and key not in seen:
+            seen.add(key)
+            kept.append(warning)
+    skipped, lines = [], []
+    for warning in kept:
         if check and warning.get("real_run"):
-            if warning.get("label") not in skipped:
-                skipped.append(warning.get("label"))
+            name = warning.get("label") or str(warning["text"]).split(":")[0]
+            if name not in skipped:
+                skipped.append(name)
             continue
-        warned.append(_warning(warning))
+        lines += _warning(warning)
     if skipped:
-        warned.append(["(A real run would also warn about: %s.)" % ", ".join(str(s) for s in skipped)])
-    sections.append(out.spaced(warned))  # the warnings together, a blank line apart, just above the question
+        lines += ["(A real run would also warn about: %s.)" % ", ".join(str(s) for s in skipped)]
+    return lines
+
+
+def cassandra_screen(spec, check=False, asks=True, session="", asked_by="", notes=None):
+    """check: --check; asks: false when a question would be asked but
+    cassandra_operation_confirm is false (said at the end); session: the
+    tmux/screen warning, if any; asked_by: the playbook that showed the
+    whole plan and asked already (topology), said at the end; notes: the
+    lines the checks kept for the plan (note.yml: WARNING lines, said with
+    the warnings; the others under the table).
+    Input: spec (see the module's doc); output: the text, one string. e.g. ({operation: reset_node, summary: "node7
+    of my_cluster", blocks: [{title: "node7  10.0.0.7", lines: ["Cassandra stopped"]}], warnings: [{label: "data
+    loss", text: "node7: 12 entries DELETED", real_run: True}]}) -> the lines "RESET NODE  node7 of my_cluster", "",
+    "  node7  10.0.0.7", "    Cassandra stopped", "", "WARNING  data loss: node7: 12 entries DELETED", joined;
+    under check, "(A real run would also warn about: data loss.)" and the --check line instead of the warning."""
+    spec = spec or {}
+    plain = [out.warning_text(n) for n in notes or [] if str(n).strip() and not out.is_warning(n)]
+    sections = [[out.title(spec.get("operation") or "", spec.get("summary") or "")] + _items(spec.get("intro"), "  ")]
+    sections.append(_table_block(spec.get("blocks") or [], list(spec.get("after") or []) + plain))
+    for section in spec.get("sections") or []:
+        sections.append(_items(section, "  "))
+    sections.append(_warnings(spec, session, notes, check))  # the warnings together, last, just above the question
     # in the question's place (screen.yml asks it right below)
     if check:
-        sections.append(["--check: nothing will be changed (the plan only, no question)."])
+        sections.append(["--check: nothing will be changed"])
     elif asked_by:
         sections.append(["A step of %s, confirmed on its screen: no question here." % asked_by])
     elif not asks:
@@ -257,7 +268,7 @@ def _leaving_block(index, item, order, by_name, members, ring, keyspaces, simple
     if state == "decommissioned":
         lines.append("already out of the ring (an earlier run): Cassandra only stopped and disabled on it")
         step["text"] = "already out of the ring (an earlier run): Cassandra stopped and disabled only"
-        return {"title": title, "lines": lines, "step": step}
+        return {"title": title, "lines": lines, "step": step, "row": step["text"]}
     short = []
     if state == "leaving":
         lines.append("still leaving (a decommission an earlier run started): waited for")
@@ -280,7 +291,8 @@ def _leaving_block(index, item, order, by_name, members, ring, keyspaces, simple
     run = ("followed on %s" if state == "leaving" else "runs on %s (nodetool decommission)") % name
     lines.append("%s, the ring checked from %s before and after" % (run, peer or "another node"))
     lines.append("end state: out of the ring, Cassandra stopped and disabled, its data left on disk")
-    return {"title": title, "lines": lines, "step": step}
+    row = step["text"] + ("; a seed until now, dropped from the seed lists first" if node.get("seed") else "")
+    return {"title": title, "lines": lines, "step": step, "row": row}
 
 
 def _decommission_after(order, by_name, members):
@@ -337,8 +349,7 @@ def cassandra_decommission_screen(leaving, nodes, ring=None, keyspaces=None, pee
             "after": _decommission_after(order, by_name, members), "warnings": warnings}
 
 
-_SEED = ("in cassandra_seeds: joins as a regular node (a seed does not bootstrap), made a seed once it is up"
-         " (cassandra_seeds applied live on every node, unless a datacenter would need seeds picked: then change_seeds)")
+_SEED = "in cassandra_seeds: joins as a regular node, made a seed once up"
 
 
 def _medusa_fqdn(name, v):
@@ -353,12 +364,12 @@ def _medusa_fqdn(name, v):
 
 def cassandra_add_node_blocks(new, hostvars, estimate):
     """new: the hosts to add; hostvars; estimate: cassandra_add_node_plan's ({host, bytes, basis}). -> [{title,
-    lines}]: each new node's title and what the screen says of it (the data to stream, a seed made one once up,
-    its Medusa fqdn, its reset)."""
+    lines, row}]: each new node's title and what the screen says of it, as a row of the node table (the data to
+    stream, a seed made one once up, its Medusa fqdn, its reset)."""
     blocks = []
     for name in new:
         v = hostvars[name]
-        lines = ["about %s to stream (%s)" % (out.size(e["bytes"]), e["basis"]) for e in estimate if e["host"] == name]
+        lines = ["about %s to stream" % out.size(e["bytes"]) for e in estimate if e["host"] == name]
         if boolean(v.get("_cassandra_service_is_seed", False), strict=False):
             lines.append(_SEED)
         if boolean(v.get("cassandra_medusa_enabled", False), strict=False):
@@ -366,7 +377,8 @@ def cassandra_add_node_blocks(new, hostvars, estimate):
         reset = (v.get("_cassandra_node_reset_plan") or {}).get("line", "")
         if reset:
             lines.append(reset)
-        blocks.append({"title": cassandra_screen_title(name, v["_cassandra_preflight"]), "lines": lines})
+        blocks.append({"title": cassandra_screen_title(name, v["_cassandra_preflight"]), "lines": lines,
+                       "row": "; ".join(lines)})
     return blocks
 
 

@@ -607,8 +607,8 @@ def _real_run(hosts, plan, session):
 
 def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replication_problems=None, force=False,
                               names=None, cluster="", version="", check=False, session="", confirm=True, notes=None):
-    """The plan screen (OUTPUT_UX Q5): "PLAN  topology  cluster (Cassandra x)
-    N steps, one node at a time", the steps in order, the facts (each
+    """The plan screen (OUTPUT_UX Q5): "TOPOLOGY  N steps of cluster, one node
+    at a time", the steps in order, the facts (each
     datacenter once done, what is left to do by hand), the WARNING lines,
     then the question line (none when confirm: confirm.yml's prompt comes
     right after; --check: nothing will be changed). Returns the lines.
@@ -617,11 +617,11 @@ def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replicatio
     datacenters left with fewer nodes than replicas (shown when force:
     cassandra_decommission_force); names: {address: host} of the ring's
     nodes; session: the tmux/screen warning (a real run only); notes: the
-    lines the checks kept for the plan (note.yml, "WARNING - ..." or a note).
+    lines the checks kept for the plan (note.yml, "WARNING  ..." or a note).
     The checks of the hosts to add (hosts' info, checks: new_node_checks.yml)
     are NOTE and WARNING lines too, one per text, with the hosts it is about.
     Every note is on one line, said once.
-    e.g. (that plan) -> ["PLAN  topology  my_cluster  2 steps, one node at a time", "  1.  add node4           dc1/r1
+    e.g. (that plan) -> ["TOPOLOGY  2 steps of my_cluster, one node at a time", "  1.  add node4           dc1/r1
     bootstrap, ~768.0 MiB to stream (the load of dc1 / 4 nodes)", "  2.  decommission node3  dc1/r1  load 1 GiB -> node1,
     node2, node4", "", "dc1 after:  3 nodes: node1, node2, node4", ...]."""
     by_name = dict((h["name"], h) for h in hosts)
@@ -667,8 +667,10 @@ def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replicatio
             said.append(w)
     warnings = said
     question = "" if confirm else "cassandra_operation_confirm is false: no question, the run goes on."
-    lines = out.plan("topology", cluster=cluster, version=version,
-                     summary="%s, one node at a time" % out.plural(len(steps), "step"),
+    del version  # the banner says the cluster's version
+    lines = out.plan("topology", cluster=cluster,
+                     summary="%s of %s, one node at a time" % (out.plural(len(steps), "step"), cluster) if cluster
+                     else "%s, one node at a time" % out.plural(len(steps), "step"),
                      steps=steps, facts=facts, warnings=warnings, question=question, check=check)
     return lines  # (a warning on several lines: plan() puts the next ones under its text)
 

@@ -41,8 +41,8 @@ options:
   banner:
     description:
       - "Returns the line the playbooks start with, the group, its nodes (without the hosts marked
-        C(cassandra_node_state=absent)), its datacenters and how it was picked
-        ('CLUSTER prod (5 nodes, dc1) | chosen by: -e cassandra_hosts')."
+        C(cassandra_node_state=absent)) and its datacenters ('prod  5 nodes  1 DC (dc1)'; more than 3
+        datacenters: their count)."
     type: bool
     default: false
   refusal:
@@ -267,19 +267,29 @@ def cluster_line(group, why, hosts, state, dc):
     return banner(group, why, len(hosts) - len(gone), dcs, len(gone))
 
 
+# a banner names the datacenters up to this many; more: their count alone (the status playbook lists them)
+DCS_NAMED = 3
+
+
 def summary(group, nodes, dcs, absent=0):
-    """"prod (5 nodes, dc1)": nodes, how many hosts of the group are part of the cluster; dcs: their datacenters;
-    absent: the hosts marked cassandra_node_state=absent."""
-    parts = ["%d node%s" % (nodes, "" if nodes == 1 else "s")]
+    """"prod  5 nodes  2 DCs (dc1, dc2)": the fields two spaces apart; nodes, how many hosts of the group are part
+    of the cluster; dcs: their datacenters (named up to DCS_NAMED, counted beyond); absent: the hosts marked
+    cassandra_node_state=absent ("4 nodes + 1 marked absent")."""
+    parts = [group, "%d node%s" % (nodes, "" if nodes == 1 else "s")]
     if absent:
-        parts[0] += " + %d marked absent" % absent
-    parts += sorted(set(str(dc) for dc in dcs))
-    return "%s (%s)" % (group, ", ".join(parts))
+        parts[-1] += " + %d marked absent" % absent
+    names = sorted(set(str(dc) for dc in dcs))
+    if names:
+        count = "%d DC%s" % (len(names), "" if len(names) == 1 else "s")
+        parts.append(count if len(names) > DCS_NAMED else "%s (%s)" % (count, ", ".join(names)))
+    return "  ".join(parts)
 
 
 def banner(group, why, nodes, dcs, absent=0):
-    """The line the playbooks start with: "CLUSTER prod (5 nodes, dc1) | chosen by: -e cassandra_hosts"."""
-    return "CLUSTER %s | chosen by: %s" % (summary(group, nodes, dcs, absent), why)
+    """The line the playbooks start with, summary(): the cluster, its nodes, its datacenters. why (how the group
+    was picked) is not said any more: -e cassandra_hosts and CASSANDRA_CLUSTER disagreeing is refused before."""
+    del why
+    return summary(group, nodes, dcs, absent)
 
 
 def not_given(given, loader, inventory=False):

@@ -28,7 +28,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import HEAP_FILE
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import CONFIG_FILE
 from ansible_collections.community.cassandra.plugins.filter.cassandra_suspicious import (
-    LINES as SUSPICIOUS_LINES, how_to_keep, suspicious)
+    LINES as SUSPICIOUS_LINES, finding_lines, suspicious)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import terminal_width
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
@@ -807,11 +807,11 @@ def _todo_found(report, allow_unread, moves):
     # (every node read is a member of the ring; its hand edits are checked too: a replace flag in cassandra-env.sh)
     found = suspicious(dict((n["name"], dict(n.get("vars") or {}, **{SUSPICIOUS_LINES: [
         e[4:] for e in n.get("hand_edits") or [] if e.startswith("  + ")]})) for n in read), [n["name"] for n in read])
-    for row, names, setting, why in found:
-        todo.append("WARNING - %s: %s, kept as found %s %s (%s)"
-                    % (_who(report, names), setting, DASH, why, how_to_keep(row)))
+    for row, names, text, fix in found:  # kept as found: two lines, the finding, then what to do
+        lines = finding_lines(row, names, text, fix, who=_who(report, names))
+        todo.append("%s (kept as found)\n     %s" % (lines[0], lines[1].strip()))
     for text, members in _jvm_warnings(read):
-        todo.append("WARNING - %s: %s" % (_who(report, members), text))
+        todo.append("WARNING  %s: %s" % (_who(report, members), text))
     if moves:
         todo.append("cassandra-env.sh hand edits moved to variables (see MOVED%s): apply_config rewrites %s and"
                     " restarts %s (same JVM arguments)" % (" in the report" if screen else "", ", ".join(moves),

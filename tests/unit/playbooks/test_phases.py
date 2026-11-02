@@ -100,7 +100,6 @@ def test_marked_phase_lines(path, at_least):
     ("decommission", {"cassandra_leaving_node": {"state": "leaving"}},
      "Waiting for the decommission of node5 (started by an earlier run)..."),
     ("decommission", {"cassandra_leaving_node": {"state": "decommissioned"}}, ""),
-    ("restart", {}, "Restarting node5..."),
     ("apply_config", {}, "Writing the config (node5)..."),
     ("replace", {"cassandra_replace_address": "10.0.0.9"}, "Starting node5 and waiting while it replaces 10.0.0.9..."),
     ("update_java", {}, "Updating Java on node5..."),
@@ -112,6 +111,8 @@ def test_each_node_says_what_is_done_to_it(action, extra, line):
     variables["_phase"] = render(say["vars"]["_phase"], **variables)
     assert render(say["ansible.builtin.debug"]["msg"], **variables).strip() == line
     assert "not ansible_check_mode" in say["when"]  # --check does none of it
+    # a restart or a reboot: no phase line, its wait line says it
+    assert "cassandra_service_node_action not in ['restart', 'reboot']" in say["when"]
 
 
 # preflight's check line: the cluster's members (a 3-node ring adding 2 used to print "5 nodes"), and the change

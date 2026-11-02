@@ -116,16 +116,15 @@ def test_several_clusters(tmp_path):
     model = read([source])
     assert "refusal" not in model and model["clusters"] == [] and model["banner"] == ""
     assert model["unnamed"] == "No cluster named: the inventory is not the cluster orders alone (other groups: billing)."
-    assert model["found"] == ["orders (2 nodes, dc1)"] and model["others"] == ["billing"]
+    assert model["found"] == ["orders  2 nodes  1 DC (dc1)"] and model["others"] == ["billing"]
     assert model["options"] == [] and model["sources"] == [source]
     # named, or refused when the name is wrong: as the playbooks
     assert read([source], given="nope")["refusal"].startswith("REFUSED  cassandra_hosts=nope: no group of that name")
     model = read([source], given="billing")
     assert model["auto"] == ""
     assert [c["name"] for c in model["clusters"]] == ["billing"]
-    assert model["banner"] == "CLUSTER billing (1 node, dc1) | chosen by: -e cassandra_hosts"
-    assert read([source], env="orders")["banner"].endswith(
-        "| chosen by: CASSANDRA_CLUSTER (environment)")
+    assert model["banner"] == "billing  1 node  1 DC (dc1)"
+    assert read([source], env="orders")["banner"].startswith("orders  ")
 
 
 def test_cluster_from_the_environment(tmp_path):

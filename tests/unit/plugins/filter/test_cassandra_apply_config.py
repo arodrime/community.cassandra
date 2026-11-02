@@ -9,7 +9,6 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_conf
 from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import cassandra_screen
 from ansible_collections.community.cassandra.tests.unit.roles.config_reader import preview
 
-ARROW = u"←"
 
 
 def role_diff(tmp_path, live, new, name="cassandra.yaml"):
@@ -69,7 +68,7 @@ def view(*nodes):
     return cassandra_apply_config_diff([n.data() for n in nodes])
 
 
-def test_the_four_drifts_setting_centric_target_first(tmp_path):
+def test_the_four_drifts_per_file_from_to_the_nodes_last(tmp_path):
     env_perms = [{"item": "/etc/cassandra/conf/cassandra-env.sh (owner:group mode)", "before": "root:root 0640",
                   "after": "cassandra:cassandraops 0640"}]
     data_dir = [{"item": "data dir /var/lib/cassandra/data (owner:group mode)", "path": "/var/lib/cassandra/data",
@@ -79,18 +78,13 @@ def test_the_four_drifts_setting_centric_target_first(tmp_path):
              Node(tmp_path, "node3", dirs=data_dir, data_owner="root"),
              Node(tmp_path, "node4", files={"cassandra.yaml": YAML.replace("3h", "6h")}, perms=env_perms, env_owner="root"),
              Node(tmp_path, "node5")]
+    # one table: the file on its first row, the setting, its change, the nodes that change (not the ones on the
+    # inventory's value); the owner alone when the mode is the same
     assert view(*nodes) == [
-        "cassandra.yaml",
-        "  max_hint_window:  3h                            node1..node3, node5          (inventory)",
-        "                    6h                            node4                        %s differs" % ARROW,
-        "cassandra-env.sh",
-        "  owner/group/mode: cassandra:cassandraops 0640   node1..node3, node5          (inventory)",
-        "                    root:root 0640                node4                        %s differs" % ARROW,
-        "jvm-server.options",
-        "  -Ddemo.drift=1:   present                       node2                        %s differs (not in the inventory)" % ARROW,
-        "data dir /var/lib/cassandra/data",
-        "  owner/group/mode: cassandra:cassandra 0750      node1, node2, node4, node5   (inventory)",
-        "                    root:root 0750                node3                        %s differs" % ARROW]
+        "cassandra.yaml                    max_hint_window  6h -> 3h                             node4",
+        "cassandra-env.sh                  owner            root:root -> cassandra:cassandraops  node4",
+        "jvm-server.options                -Ddemo.drift=1   removed (not in the inventory)       node2",
+        "data dir /var/lib/cassandra/data  owner            root:root -> cassandra:cassandra     node3"]
 
 
 def test_every_other_value_with_its_nodes_and_a_value_the_inventory_adds(tmp_path):
@@ -100,17 +94,13 @@ def test_every_other_value_with_its_nodes_and_a_value_the_inventory_adds(tmp_pat
               Node(tmp_path, "node5", files={"cassandra.yaml": YAML.replace("reads: 32", "reads: 48")})]
     lines = view(*nodes)
     assert lines == [
-        "cassandra.yaml",
-        "  concurrent_reads: 32   node1, node2   (inventory)",
-        "                    64   node3          %s differs" % ARROW,
-        "                    48   node4, node5   %s differs" % ARROW]
-    # an option the inventory adds: there (inventory), not there on the nodes (differs)
+        "cassandra.yaml  concurrent_reads  64 -> 32  node3",
+        "                                  48 -> 32  node4, node5"]
+    # an option the inventory adds: added on the nodes without it
     added = JVM + "-Dcassandra.ring_delay_ms=30000\n"
     lines = view(Node(tmp_path, "node1", files={"jvm-server.options": added}, targets={"jvm-server.options": added}),
                  Node(tmp_path, "node2", targets={"jvm-server.options": added}))
-    assert lines == ["jvm-server.options",
-                     "  -Dcassandra.ring_delay_ms=30000: present   node1   (inventory)",
-                     "                                   absent    node2   %s differs" % ARROW]
+    assert lines == ["jvm-server.options  -Dcassandra.ring_delay_ms=30000  added  node2"]
 
 
 def test_jvm_options_and_env_lines_as_settings(tmp_path):
@@ -118,12 +108,8 @@ def test_jvm_options_and_env_lines_as_settings(tmp_path):
                  Node(tmp_path, "node2", files={"jvm-server.options": JVM.replace("256k", "512k"),
                                                 "cassandra-env.sh": ENV.replace("8G", "16G")}))
     assert lines == [
-        "cassandra-env.sh",
-        "  MAX_HEAP_SIZE: \"8G\"    node1   (inventory)",
-        "                 \"16G\"   node2   %s differs" % ARROW,
-        "jvm-server.options",
-        "  -Xss:          256k    node1   (inventory)",
-        "                 512k    node2   %s differs" % ARROW]
+        "cassandra-env.sh    MAX_HEAP_SIZE  \"16G\" -> \"8G\"  node2",
+        "jvm-server.options  -Xss           512k -> 256k   node2"]
 
 
 def test_a_value_set_per_node_lists_no_node_on_it(tmp_path):
@@ -133,9 +119,7 @@ def test_a_value_set_per_node_lists_no_node_on_it(tmp_path):
     nodes = [Node(tmp_path, "node%d" % i, files={"cassandra.yaml": yml("10.0.0.%d" % i)},
                   targets={"cassandra.yaml": yml("10.0.0.%d" % i)}) for i in (1, 2)]
     nodes.append(Node(tmp_path, "node3", files={"cassandra.yaml": yml("10.0.0.9")}, targets={"cassandra.yaml": yml("10.0.0.3")}))
-    assert view(*nodes) == ["cassandra.yaml",
-                            "  listen_address: 10.0.0.3           (inventory, node3)",
-                            "                  10.0.0.9   node3   %s differs" % ARROW]
+    assert view(*nodes) == ["cassandra.yaml  listen_address  10.0.0.9 -> 10.0.0.3  node3"]
 
 
 def test_secrets_masked_a_changed_password_still_said(tmp_path):
@@ -149,17 +133,11 @@ def test_secrets_masked_a_changed_password_still_said(tmp_path):
     text = "\n".join(lines)
     for secret in ("s3cret", "0ldpass", "jvmpass", "newjvm", "abc", "def"):
         assert secret not in text
-    # a long name on a line of its own; a changed secret said, its values masked on both sides
+    # a changed secret said, its values masked on both sides
     assert lines == [
-        "cassandra.yaml",
-        "  client_encryption_options.keystore_password:",
-        "                                         ****      node1, node3   (inventory)",
-        "                                         ****      node2          %s differs (masked)" % ARROW,
-        "  ssl_private_key:                       ****                     (inventory, node3)",
-        "                                         ****      node3          %s differs (masked)" % ARROW,
-        "jvm-server.options",
-        "  -Djavax.net.ssl.keyStorePassword=****: present   node1, node3   (inventory)",
-        "                                         present   node2          %s differs (masked)" % ARROW]
+        "cassandra.yaml      client_encryption_options.keystore_password  **** -> **** (masked)  node2",
+        "                    ssl_private_key                              **** -> **** (masked)  node3",
+        "jvm-server.options  -Djavax.net.ssl.keyStorePassword=****        changed (masked)       node2"]
 
 
 def test_nested_keys_lists_and_layout_only(tmp_path):
@@ -168,14 +146,10 @@ def test_nested_keys_lists_and_layout_only(tmp_path):
     nodes = [Node(tmp_path, "node1", targets={"cassandra.yaml": target}),
              Node(tmp_path, "node2", targets={"cassandra.yaml": YAML.replace("# reads", "# the reads")})]
     assert view(*nodes) == [
-        "cassandra.yaml",
-        "  client_encryption_options.enabled: true                                   (inventory, node1)",
-        "                                     false                          node1   %s differs" % ARROW,
-        "  seed_provider.parameters.seeds:    10.0.0.1:7000,10.0.0.2:7000            (inventory, node1)",
-        "                                     10.0.0.1:7000                  node1   %s differs" % ARROW,
-        "  data_file_directories:             /var/lib/cassandra/data, /data2          (inventory, node1)",
-        "                                     /var/lib/cassandra/data        node1   %s differs" % ARROW,
-        "  comments or layout:                differ                         node2   (no setting changes)"]
+        "cassandra.yaml  client_encryption_options.enabled  false -> true                                               node1",
+        "                seed_provider.parameters.seeds     10.0.0.1:7000 -> 10.0.0.1:7000,10.0.0.2:7000                node1",
+        "                data_file_directories              /var/lib/cassandra/data -> /var/lib/cassandra/data, /data2  node1",
+        "                comments or layout                 differ (no setting changes)                                 node2"]
 
 
 def test_a_new_file_a_line_ending_and_a_file_changed_since_compared(tmp_path):
@@ -186,21 +160,18 @@ def test_a_new_file_a_line_ending_and_a_file_changed_since_compared(tmp_path):
     stale = Node(tmp_path, "node4", files={"cassandra.yaml": YAML.replace("3h", "6h")})
     stale.live[0]["content"] = b64("short: 1\n")  # rewritten since the compare: the diff does not fit
     lines = view(*(nodes + [stale]))
+    # a node not read: a line of its own, not a row of the table
     assert lines == [
-        "cassandra.yaml",
-        "  node4: not read, or changed since it was compared: run apply_config again",
-        "cassandra-env.sh",
-        "  MAX_HEAP_SIZE: \"8G\"     node1, node3, node4   (inventory)",
-        "                 \"8G\"\\r   node2                 %s differs" % ARROW,
-        "jvm17-server.options",
-        "  file:          absent   node3                 %s differs (written whole)" % ARROW]
+        "cassandra.yaml  node4: not read, or changed since it was compared: run apply_config again",
+        "cassandra-env.sh      MAX_HEAP_SIZE  \"8G\"\\r -> \"8G\"            node2",
+        "jvm17-server.options  file           missing -> written whole  node3"]
 
 
 def test_a_live_file_not_read_is_not_said_new(tmp_path):
     unread = Node(tmp_path, "node2", files={"cassandra.yaml": YAML.replace("3h", "6h")})
     unread.live = [r for r in unread.live if r["cassandra_apply_config_file"] != "cassandra.yaml"]
     assert view(Node(tmp_path, "node1"), unread) == [
-        "cassandra.yaml", "  node2: not read, or changed since it was compared: run apply_config again"]
+        "cassandra.yaml  node2: not read, or changed since it was compared: run apply_config again"]
 
 
 def test_nothing_differs():
@@ -211,9 +182,7 @@ def test_nothing_differs():
 def test_the_conf_dir_alternative():
     items = [{"item": "/etc/cassandra/conf", "before": "/etc/cassandra/default.conf", "after": "/etc/cassandra/site"}]
     assert cassandra_apply_config_diff([{"name": "node1", "items": items}]) == [
-        "/etc/cassandra/conf",
-        "  points to: /etc/cassandra/site                   (inventory, node1)",
-        "             /etc/cassandra/default.conf   node1   %s differs" % ARROW]
+        "/etc/cassandra/conf  points to  /etc/cassandra/default.conf -> /etc/cassandra/site  node1"]
 
 
 def test_a_change_next_to_a_secret_on_several_lines_is_read(tmp_path):
@@ -221,8 +190,7 @@ def test_a_change_next_to_a_secret_on_several_lines_is_read(tmp_path):
     def yml(tokens):
         return YAML + "sse_c_key: abc\nldap_password: |\n  LINE1\n  LINE2\nnum_tokens: %d\n" % tokens
     lines = view(Node(tmp_path, "node1", files={"cassandra.yaml": yml(16)}, targets={"cassandra.yaml": yml(8)}))
-    assert [line.split()[:2] for line in lines[1:3]] == [["num_tokens:", "8"], ["16", "node1"]]
-    assert lines[2].endswith(ARROW + " differs")
+    assert lines == ["cassandra.yaml  num_tokens  16 -> 8  node1"]
     assert not [line for line in lines if "abc" in line or "LINE" in line]
 
 
@@ -240,10 +208,10 @@ def test_a_masked_change_is_said_on_its_own_key(tmp_path):
         new = live.replace(old, old[:-1] + "2" if old[-1] != "d" else "# other")
         (tmp_path / str(n)).mkdir()
         lines = view(Node(tmp_path / str(n), "node1", files={name: live}, targets={name: new}))
-        said = [line for line in lines if "differs (masked)" in line]
+        said = [line for line in lines if "(masked)" in line]
         assert bool(said) == (key is not None), (live, lines)
         if key:
-            assert [line for line in lines if line.lstrip().startswith(key)], lines
+            assert [line for line in lines if line.split()[1].startswith(key)], lines
             assert "(empty)" not in "\n".join(lines)  # (the value under the key: ****)
 
 
@@ -260,13 +228,12 @@ def test_a_block_value_is_its_key_s_value(tmp_path):
                   targets={"cassandra.yaml": yml("MIIEnew: SECRET", "CERT2")})]
     lines = view(*nodes)
     assert not [line for line in lines if "MIIE" in line or "SECRET" in line]
-    assert lines[:2] == ["cassandra.yaml", "  server_encryption_options.ssl_context_factory.parameters.private_key:"]
-    assert lines[2].split() == ["****", "node2", "(inventory)"]
-    assert lines[3].split() == ["****", "node1", ARROW, "differs", "(masked)"]
-    assert lines[4] == "  server_encryption_options.ssl_context_factory.parameters.trusted_certificates:"
-    assert lines[5].split()[:4] == ["-----BEGIN", "CERTIFICATE-----", "...", "(2"] and lines[5].endswith("node2   (inventory)")
-    assert lines[6].split()[:4] == ["-----BEGIN", "CERTIFICATE-----", "...", "(2"] and lines[6].endswith(ARROW + " differs")
-    assert lines[5].split()[5] != lines[6].split()[5]  # their digests
+    assert lines[0].split() == ["cassandra.yaml", "server_encryption_options.ssl_context_factory.parameters.private_key",
+                                "****", "->", "****", "(masked)", "node1"]
+    words = lines[1].split()
+    assert words[0] == "server_encryption_options.ssl_context_factory.parameters.trusted_certificates"
+    assert words[1:4] == ["-----BEGIN", "CERTIFICATE-----", "..."] and words[-1] == "node1" and "->" in words
+    assert words[6] != words[13]  # their digests (the value before, the value after)
 
 
 def test_the_parsers():
@@ -305,7 +272,7 @@ def outcome_nodes():
     return [{"name": "node1", "todo": False, "result": "nothing to apply"},
             {"name": "node2", "todo": True, "then": "restart", "done": True},
             {"name": "node3", "todo": True, "then": "none", "done": True,
-             "notes": ["WARNING - data dir /srv/data: not owned by cassandra: /srv/data/ks1 (left as they are)"]},
+             "notes": ["WARNING  data dir /srv/data: not owned by cassandra: /srv/data/ks1 (left as they are)"]},
             {"name": "node4", "todo": True, "then": "restart", "done": True},
             {"name": "node5", "todo": False, "result": "nothing to apply"}]
 
@@ -313,32 +280,30 @@ def outcome_nodes():
 def test_the_outcomes_grouped_in_the_plan():
     # the nodes changed first, in inventory order of their first node
     assert cassandra_apply_config_outcomes(outcome_nodes(), plan=True) == [
-        "node2, node4  will apply, then restart",
-        "node3  will apply, no restart (an owner, group or mode only: Cassandra reads them when it starts)",
-        "node1, node5  nothing to apply"]
+        "node2, node4  write + restart",
+        "node3  write, no restart (owner or mode only, read at start)",
+        "node1, node5  up to date"]
     nodes = [{"name": "node1", "todo": True, "then": "start"}, {"name": "node2", "todo": True, "then": "write"}]
     assert cassandra_apply_config_outcomes(nodes, plan=True) == [
-        "node1  will apply, then start (its Cassandra is not running: started once written (down over"
-        " max_hint_window? repair it))",
-        "node2  will apply, left stopped (its Cassandra is stopped: left stopped, reads its config when it starts)"]
+        "node1  write + start (Cassandra not running: started once written (down over max_hint_window? repair it))",
+        "node2  write, left stopped (Cassandra stopped: left stopped, reads its config when it starts)"]
     # left stopped because its unit failed (nothing written that would start it): not "stopped on purpose"
     nodes = [{"name": "node3", "todo": True, "then": "write", "unit_failed": True}]
     assert cassandra_apply_config_outcomes(nodes, plan=True) == [
-        "node3  will apply, left stopped (its cassandra unit failed: left as it is)"]
+        "node3  write, left stopped (its cassandra unit failed: left as it is)"]
     # a file written back as the running Cassandra started with it: its note says why (not "an owner... only")
     note = "jvm-server.options written back as the running Cassandra started with it: no restart for it"
     nodes = [{"name": "node1", "todo": True, "then": "none", "notes": [note]}]
-    assert cassandra_apply_config_outcomes(nodes, plan=True) == ["node1  will apply, no restart", "  " + note]
+    assert cassandra_apply_config_outcomes(nodes, plan=True) == ["node1  write, no restart", "  " + note]
 
 
 def test_the_check_recap_shows_the_settings_then_the_outcomes():
-    diff = ["cassandra.yaml", "  max_hint_window:  3h   node1   (inventory)"]
+    diff = ["cassandra.yaml  max_hint_window  6h -> 3h  node2"]
     assert cassandra_apply_config_recap(outcome_nodes(), check=True, cluster="my_cluster", seconds=75, diff=diff,
                                         planned=["node1", "node2", "node3", "node4", "node5"]) == [
         "CHECK  apply_config  my_cluster  3 would apply, 2 nothing to apply (1m15s)",
         "",
-        "cassandra.yaml",
-        "  max_hint_window:  3h   node1   (inventory)",
+        "cassandra.yaml  max_hint_window  6h -> 3h  node2",
         "",
         "node2, node4  would apply, then restart",
         "node3  would apply, no restart",
@@ -375,7 +340,7 @@ def test_nothing_to_apply_recap():
 def test_the_screen_sections_are_blocks_of_their_own():
     text = cassandra_screen({"operation": "apply_config", "summary": "apply the config on node2",
                              "sections": [[{"pre": ["cassandra.yaml", "  x: 1"]}], [], [{"pre": ["node2  would apply"]}]]})
-    assert text == "apply_config: apply the config on node2\n\ncassandra.yaml\n  x: 1\n\nnode2  would apply"
+    assert text == "APPLY CONFIG  apply the config on node2\n\n  cassandra.yaml\n    x: 1\n\n  node2  would apply"
 
 
 def test_the_settings_lines_of_several_values():
@@ -397,11 +362,8 @@ def test_a_large_cluster_by_node_groups(tmp_path):
         "  G1 = db11..db16, db21..db26 (12 nodes)",
         "  G2 = db071..db073, db075, db076 (5 nodes)",
         "",
-        "cassandra.yaml",
-        "  concurrent_reads: 32   G2           (inventory)",
-        "                    64   G1 + db074   %s differs" % ARROW,
-        "  max_hint_window:  3h   G1           (inventory)",
-        "                    6h   G2 + db074   %s differs" % ARROW]
+        "cassandra.yaml  concurrent_reads  64 -> 32  G1 + db074",
+        "                max_hint_window   6h -> 3h  G2 + db074"]
     # under 12 nodes: their names, as before
     assert "NODE GROUPS" not in view(*nodes[:11])
 
@@ -416,16 +378,10 @@ def test_the_os_settings_that_differ_after_the_config(tmp_path):
     node2["os"] = [{"item": "read_ahead_kb vg_data/cassandra", "before": "256", "after": "4"}]
     node3 = Node(tmp_path, "node3").data()
     assert cassandra_apply_config_diff([node1, node2, node3]) == [
-        "cassandra.yaml",
-        "  max_hint_window:                 3h    node2, node3   (inventory)",
-        "                                   6h    node1          %s differs" % ARROW,
-        "OS settings",
-        "  read_ahead_kb vg_data/cassandra: 4                    (inventory)",
-        "                                   128   node1          %s differs" % ARROW,
-        "                                   256   node2          %s differs" % ARROW,
-        "  sysctl vm.swappiness (/etc/sysctl.d/60-cassandra.conf):",
-        "                                   1                    (inventory)",
-        "                                   60    node1          %s differs" % ARROW]
+        "cassandra.yaml  max_hint_window                                         6h -> 3h  node1",
+        "OS settings     read_ahead_kb vg_data/cassandra                         128 -> 4  node1",
+        "                                                                        256 -> 4  node2",
+        "                sysctl vm.swappiness (/etc/sysctl.d/60-cassandra.conf)  60 -> 1   node1"]
 
 
 def test_the_os_settings_alone_no_restart():
@@ -434,10 +390,10 @@ def test_the_os_settings_alone_no_restart():
              {"name": "node2", "todo": True, "os": True, "then": "restart", "done": True},
              {"name": "node3", "todo": False, "result": "nothing to apply"}]
     assert cassandra_apply_config_outcomes(nodes, plan=True) == [
-        "node1  will apply, no restart (OS settings only: applied live)",
+        "node1  OS settings, live (OS settings only, applied live)",
         "  read-ahead set live: the files Cassandra has open keep the old one until it restarts",
-        "node2  will apply, then restart",
-        "node3  nothing to apply"]
+        "node2  write + restart",
+        "node3  up to date"]
     nodes[0]["os_done"] = True
     assert cassandra_apply_config_recap(nodes, check=True)[0] == "CHECK  apply_config  2 would apply, 1 nothing to apply"
     assert cassandra_apply_config_recap(nodes)[:2] == ["DONE  apply_config  2 applied, 1 nothing to apply",
@@ -453,7 +409,7 @@ def test_the_os_settings_alone_no_restart():
 def test_an_os_value_unknown_before():
     change = {"item": "LVM read-ahead vg/lv (sectors)", "before": None, "after": "8"}
     lines = cassandra_apply_config_diff([{"name": "node1", "os": [change]}])
-    assert lines[-1].split() == ["(none)", "node1", ARROW, "differs"]
+    assert lines == ["OS settings  LVM read-ahead vg/lv (sectors)  (none) -> 8  node1"]
 
 
 def test_a_key_added_by_hand_alone_is_a_difference_and_not_kept(tmp_path):
@@ -463,8 +419,7 @@ def test_a_key_added_by_hand_alone_is_a_difference_and_not_kept(tmp_path):
     live = YAML + "fake_option: 42\n"
     assert not cassandra_same_settings(live, YAML, "cassandra.yaml")
     assert view(Node(tmp_path, "node1", files={"cassandra.yaml": live}), Node(tmp_path, "node2")) == [
-        "cassandra.yaml",
-        "  fake_option: 42   node1   %s differs (not in the inventory)" % ARROW]
+        "cassandra.yaml  fake_option  42 (not in the inventory)  node1"]
 
 
 def os_nodes():
@@ -480,31 +435,24 @@ def os_nodes():
 
 
 def test_os_settings_by_the_stable_device_name_at_the_terminal_width():
-    # the inventory value alone on its line, the nodes on the line of their own value, wrapped between two nodes,
-    # the marker after them; an LVM volume one setting whatever its dm-N on each node
-    lines = cassandra_apply_config_diff(os_nodes(), width=100)
+    # a row too long for the width goes on under its text (fit), cut between words; an LVM volume one setting
+    # whatever its dm-N on each node
+    lines = cassandra_apply_config_diff(os_nodes(), width=200)
+    nodes = "db-node-1.example.net..db-node-3.example.net, db-node-5.example.net"
+    udev = "/etc/udev/rules.d/64-cassandra-data-disk.rules"
     assert lines == [
-        "OS settings",
-        "  read_ahead_kb sdb:           4                                                      (inventory)",
-        "                               4096                  db-node-1.example.net..db-node-3.example.net,",
-        "                                                     db-node-5.example.net            %s differs" % ARROW,
-        "  read_ahead_kb vgdata-lvdata: 4                                                      (inventory)",
-        "                               4096                  db-node-1.example.net..db-node-3.example.net,",
-        "                                                     db-node-5.example.net            %s differs" % ARROW,
-        "  /etc/udev/rules.d/64-cassandra-data-disk.rules:",
-        "                               present                                                (inventory)",
-        "                               absent or different   db-node-1.example.net..db-node-3.example.net,",
-        "                                                     db-node-5.example.net            %s differs" % ARROW]
+        "OS settings  %s  %s  %s" % ("read_ahead_kb sdb".ljust(len(udev)), "4096 -> 4".ljust(30), nodes),
+        "             %s  %s  %s" % ("read_ahead_kb vgdata-lvdata".ljust(len(udev)), "4096 -> 4".ljust(30), nodes),
+        "             %s  absent or different -> present  %s" % (udev, nodes)]
     for width in (80, 100, 118):
         lines = cassandra_apply_config_diff(os_nodes(), width=width)
         assert all(len(line) <= width for line in lines), width
-        assert "%s differs" % ARROW in "\n".join(lines) and "(inventory)" in "\n".join(lines)
-        assert not [line for line in lines if line.strip() in ("differs", "(in", "ventory)")]
+        assert "4096 -> 4" in "\n".join(lines) and "db-node-5.example.net" in "\n".join(lines)
 
 
 def test_os_settings_with_the_dm_kernel_name_when_verbose():
     lines = cassandra_apply_config_diff(os_nodes(), verbose=True)
-    assert [line.split(":")[0].strip() for line in lines if "vgdata" in line] == [
+    assert [line.split("  4096")[0].strip() for line in lines if "vgdata" in line] == [
         "read_ahead_kb vgdata-lvdata (dm-3)", "read_ahead_kb vgdata-lvdata (dm-4)", "read_ahead_kb vgdata-lvdata (dm-5)",
         "read_ahead_kb vgdata-lvdata (dm-7)"]
 
@@ -526,8 +474,7 @@ def test_auto_bootstrap_true_on_the_node_is_the_default_the_role_leaves_out(tmp_
     # rewritten for another key: auto_bootstrap: true not shown as a difference, false is
     live = YAML + "auto_bootstrap: true\nfake_option: 42\n"
     assert view(Node(tmp_path, "node1", files={"cassandra.yaml": live})) == [
-        "cassandra.yaml",
-        "  fake_option: 42   node1   %s differs (not in the inventory)" % ARROW]
+        "cassandra.yaml  fake_option  42 (not in the inventory)  node1"]
     live = YAML + "auto_bootstrap: false\n"
     assert "auto_bootstrap" in "\n".join(view(Node(tmp_path, "node2", files={"cassandra.yaml": live})))
 
@@ -544,7 +491,7 @@ def test_the_recap_drops_the_restart_pending_of_a_node_this_run_restarted():
     assert lines[1:] == ["node4  applied, restarted", "node5  applied, started", "node6  not reached", "  " + PENDING]
     # under --check nothing was restarted: still pending; the plan says it too
     assert "  " + PENDING in cassandra_apply_config_recap(nodes, check=True)
-    assert cassandra_apply_config_outcomes(nodes[:1], plan=True) == ["node4  will apply, then restart", "  " + PENDING]
+    assert cassandra_apply_config_outcomes(nodes[:1], plan=True) == ["node4  write + restart", "  " + PENDING]
     assert nodes[0]["notes"] == [PENDING]  # (the nodes given are left as they are)
 
 

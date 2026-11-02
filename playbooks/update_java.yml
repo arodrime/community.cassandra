@@ -12,6 +12,8 @@
 # Options and defaults: ansible-playbook community.cassandra.help -e help_topic=update_java
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
+  vars:
+    _cassandra_notes_in_plan: true  # the checks' WARNING lines in the plan, before the question
 
 - name: Check the Java change
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
@@ -94,7 +96,7 @@
     - name: Settings that only apply to another Java
       ansible.builtin.debug:
         msg: >-
-          {{ ['WARNING - ' ~ inventory_hostname ~ ' sets ' ~ _other | join(', ') ~ ', which only apply to another Java.'
+          {{ ['WARNING  ' ~ inventory_hostname ~ ' sets ' ~ _other | join(', ') ~ ', which only apply to another Java.'
               ~ ' Java ' ~ cassandra_java_version ~ ' reads the cassandra_jvm' ~ cassandra_java_version ~ '_* ones'
               ~ ' (e.g. in group_vars):']
              + (_other | map('regex_replace', '^cassandra_jvm[0-9]+_', 'cassandra_jvm' ~ cassandra_java_version ~ '_')
@@ -110,7 +112,7 @@
     - name: No CMS on Java 17
       ansible.builtin.debug:
         msg: >-
-          WARNING - cassandra_jvm_gc is CMS, which Java 17 does not have: on Java 17 the node runs G1
+          WARNING  cassandra_jvm_gc is CMS, which Java 17 does not have: on Java 17 the node runs G1
           (jvm17-server.options). Check the heap settings for G1.
       vars:
         cassandra_output: true
@@ -141,10 +143,11 @@
           {%-   set _ = l.append({'title': h | community.cassandra.cassandra_screen_title(hostvars[h]._cassandra_preflight | default({})), 'lines': ['runs ' ~ hostvars[h].cassandra_update_java_running]}) -%}
           {%- endfor -%}
           {{ l }}
-        cassandra_screen_question: "Move {{ _todo | join(', ') }} to Java {{ cassandra_java_version }}?"
+        _cluster: "{{ (_cassandra_preflight | default({})).cassandra_cluster_name | default('') }}"
+        cassandra_screen_question: "Move {{ _todo | join(', ') }} of {{ _cluster }} to Java {{ cassandra_java_version }}?"
         cassandra_screen:
           operation: update_java
-          summary: "move {{ _todo | join(', ') }} to Java {{ cassandra_java_version }}"
+          summary: "{{ _todo | join(', ') }} of {{ _cluster }} to Java {{ cassandra_java_version }}"
           intro:
             - Moves these nodes to the new Java, one at a time (install, config, drain, restart).
           blocks: "{{ _blocks }}"

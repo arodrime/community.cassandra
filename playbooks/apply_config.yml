@@ -14,6 +14,7 @@
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
   vars:
+    _cassandra_notes_in_plan: true  # the checks' WARNING lines in the plan, before the question
     _cassandra_preflight_seeds_down_ok: true  # a seed of this run not running: written, maybe started
 
 # (a node that fails here would be left out of the plan: nothing done then)
@@ -229,7 +230,7 @@
                  ~ ('it' if _same_newer | default([]) | length == 1 else 'them')]
                 if _same_newer | default([]) and _running | bool else [])
              + (['stopped by an interrupted run in its restart window: started once written'] if _stopped | bool else [])
-             + (['WARNING - stopped by an interrupted run in its restart window: left stopped; to start it, run again with'
+             + (['WARNING  stopped by an interrupted run in its restart window: left stopped; to start it, run again with'
                  ' -e cassandra_rolling_resume=true']
                 if not _running | bool and _clock.mark is defined and not _stopped | bool
                 else [])
@@ -242,7 +243,7 @@
                   ~ ('ahead of' if _ahead | float > 0 else 'behind' if _ahead | float < 0 else 'in step with')
                   ~ ' its time source (' ~ _clock.source ~ ')'] if _clock.ahead is defined
                  else ['clock offset to its time source not readable'])
-                + (['WARNING - clock ahead of its time source: writes made with future timestamps can mask later writes'
+                + (['WARNING  clock ahead of its time source: writes made with future timestamps can mask later writes'
                     ' until real time passes them'] if _ahead | float > 0.01 else [])
                 if _timesync | bool else [])
              + (['read-ahead set live: the files Cassandra has open keep the old one until it restarts']
@@ -250,11 +251,11 @@
                    and _os | map(attribute='item') | select('match', '(read_ahead_kb|LVM read-ahead) ') | list | length > 0
                 else [])
              + _cassandra_config_dir_notes | default([])
-             + _cassandra_disk_summary.warnings | default([]) | map('regex_replace', '^', 'WARNING - data disks: ') | list
-             + (['WARNING - swap left on: what it holds would not fit easily in the memory available']
+             + _cassandra_disk_summary.warnings | default([]) | map('regex_replace', '^', 'WARNING  data disks: ') | list
+             + (['WARNING  swap left on: what it holds would not fit easily in the memory available']
                 if _cassandra_linux_live | default(false) | bool and _cassandra_linux_before['swap|active'] | default(0) | int > 0
                    and not _cassandra_linux_swapoff | default(true) | bool else [])
-             + (['WARNING - ' ~ _keep_missing | join(', ') ~ ' kept by hand (cassandra_config_keep_files) '
+             + (['WARNING  ' ~ _keep_missing | join(', ') ~ ' kept by hand (cassandra_config_keep_files) '
                  ~ ('is' if _keep_missing | length == 1 else 'are') ~ ' missing: written back from the template, the hand'
                  ~ ' edits are lost. Restore your copy first to keep them.'] if _keep_missing else []) }}
         # why a node written while it runs is not restarted, said in the plan (the outcomes' own reason otherwise)
@@ -523,10 +524,14 @@
                                     'unit_failed': v.cassandra_apply_config_unit_failed | default(false) | bool}) -%}
           {%- endfor -%}
           {{ out }}
-        cassandra_screen_question: "Apply the {{ _what }} on {{ _todo | community.cassandra.cassandra_node_list }}?"
+        _cluster: "{{ (_cassandra_preflight | default({})).cassandra_cluster_name | default('') }}"
+        _up_to_date: "{{ ansible_play_hosts | reject('in', _todo) | list }}"
+        cassandra_screen_question: "Apply the {{ _what }} on {{ _todo | community.cassandra.cassandra_node_list }} of {{ _cluster }}?"
         cassandra_screen:
           operation: apply_config
-          summary: "{{ 'would apply' if ansible_check_mode else 'apply' }} the {{ _what }} on {{ _todo | community.cassandra.cassandra_node_list }}"
+          summary: >-
+            {{ _todo | length }} {{ 'node' if _todo | length == 1 else 'nodes' }} of {{ _cluster }} {{ 'would apply' if ansible_check_mode else 'to apply' }}
+            the {{ _what }}{{ (', ' ~ _up_to_date | length ~ ' up to date') if _up_to_date else '' }}
           intro:
             - >-
               {{ '' if _config_nodes | length == 0
@@ -669,8 +674,8 @@
               {%- set said = {} -%}
               {%- for h in ansible_play_hosts -%}
               {%-   set _ = said.update({h: hostvars[h].cassandra_apply_config_notes | default([])
-                                            | select('match', 'WARNING - data disks: ')
-                                            | map('regex_replace', '^WARNING - data disks: ', '') | list}) -%}
+                                            | select('match', 'WARNING  data disks: ')
+                                            | map('regex_replace', '^WARNING  data disks: ', '') | list}) -%}
               {%- endfor -%}
               {{ said }}
             # in its restart window, or not at all (a unit that cannot run here)

@@ -36,18 +36,19 @@ argument_specs:
         description:
           - Written by C(import_cluster) in the host_vars of a node next to the C(*_manage) switches it sets
             there. The new host checks use it to tell those switches from the operator's own.
-      cassandra_suspicious_ack:
+      cassandra_settings_kept_on_purpose:
         type: list
         elements: str
         default: []
         description:
-          - The sensitive or suspicious settings a node keeps on purpose, by the id of their row, whose WARNING the
-            C(preflight) playbook and the C(import_cluster) report leave out for it (per host or group).
+          - The settings that weaken the cluster a node keeps on purpose, by the id of their check, whose finding the
+            C(health_check) playbook (its SETTINGS block) and the C(import_cluster) report leave out for it (per host
+            or group).
           - V(auto_bootstrap_false), V(replace_address) (a replace flag left on a member of the ring), V(heap_size)
             (not set on a 4.x host with 64G of RAM, whose auto-sizing stops at 8G; under 2G, 32G or more, over half
             the RAM), V(allow_all_authenticator) (with an rpc address other hosts reach), V(failure_policy_ignore).
-          - Each WARNING names the id that silences it; an id no check has gets a WARNING of its own.
-          - The RAM-based heap checks need the host's facts, read by C(preflight), not by C(import_cluster).
+          - Each finding says how to keep it on purpose; an id no check has gets a line of its own.
+          - The RAM-based heap checks need the host's facts, read by C(health_check), not by C(import_cluster).
       cassandra_add_node_cleanup:
         type: str
         default: none

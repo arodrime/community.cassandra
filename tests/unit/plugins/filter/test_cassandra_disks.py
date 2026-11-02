@@ -109,7 +109,7 @@ def warn(lines, kb=4, devices=None, state=None, udev=None, managed=False, live=T
 
 def test_tuned_conflict():
     assert warn(RHEL_TUNED).startswith(
-        "WARNING - the active tuned profile (virtual-guest: [disk] readahead=>4096) sets vg1-cassandra (dm-2), and the"
+        "WARNING  the active tuned profile (virtual-guest: [disk] readahead=>4096) sets vg1-cassandra (dm-2), and the"
         " other devices its [disk] section takes, to a read-ahead of 4096 KB when tuned starts (at boot)")
     assert warn(RHEL_TUNED).endswith("cassandra_linux_tuned_manage: true keeps them off the Cassandra devices.")
     assert warn(RHEL_TUNED, kb=8192) == ""  # only raises, to less than what is set here
@@ -368,7 +368,7 @@ def test_summary_problems_and_what_to_do_once_with_their_nodes():
     assert lines == ["Data disks: read-ahead 4 KB, set now on 3 nodes",
                      "  node1..node3:", "    " + STACK,
                      "  " + restart + " (node1..node3)",
-                     "WARNING - " + lvm + " (node1, node2)"]
+                     "WARNING  " + lvm + " (node1, node2)"]
 
 
 def test_summary_explanations_and_device_names_with_v_only():
@@ -390,7 +390,7 @@ def test_summary_of_no_node():
 def test_summary_of_nodes_with_nothing_to_tune():
     nfs = "/data: not tuned, nfs4 on filer:/vol/cass, not a block device"
     assert cassandra_disk_summary([node("node1", brief=[], warnings=[nfs])]) == [
-        "Data disks: nothing to tune", "  node1: nothing to tune", "WARNING - " + nfs + " (node1)"]
+        "Data disks: nothing to tune", "  node1: nothing to tune", "WARNING  " + nfs + " (node1)"]
     # not counted as already set
     assert cassandra_disk_summary([node("node1", True), node("node2", brief=[])])[0] == \
         "Data disks: read-ahead 4 KB, set now on 1 node"

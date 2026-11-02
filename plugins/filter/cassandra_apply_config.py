@@ -3,11 +3,11 @@
 """What apply_config shows: the settings that differ, then what each node gets.
 
 cassandra_apply_config_diff: the nodes' compare data -> the settings that
-    differ, setting-centric, per file: the inventory's value with the nodes
-    already on it, then the live value of each node to change, with its nodes ("<- differs").
-    The JVM options and cassandra-env.sh lines are settings too, the owner,
-    group and mode of a file or of a directory one setting. Secrets masked.
-    Then the OS settings (cassandra_linux's) the same way.
+    differ, a table per file: the setting, its change "from -> to", the nodes
+    that change last (one row per live value). The JVM options and
+    cassandra-env.sh lines are settings too, the owner and the mode of a file
+    or of a directory two settings. Secrets masked. Then the OS settings
+    (cassandra_linux's) the same way.
 cassandra_apply_config_outcomes: the nodes -> what each one gets, grouped
     ("node2, node4  would apply, then restart"), their notes under them but
     the warnings.
@@ -49,21 +49,24 @@ _YAML_ITEM = re.compile(r"^( *)- +(.*?)[ \t]*$")
 _ASSIGN = re.compile(r"^(?:export[ \t]+)?([A-Za-z_][\w.\-]*)[ \t]*=(.*)$")
 _HEAP = re.compile(r"^(-X(?:mx|ms|mn|ss))(.+)$")
 _PERMS = " (owner:group mode)"
-PERM_LABEL = "owner/group/mode"
-ABSENT = "absent"
+ABSENT = "not set"
+PRESENT = "present"  # a line of one form (a JVM option): there or not
 # a device-mapper device's kernel name after its stable one in an OS item ("read_ahead_kb vg-lv (dm-3)"): dm-N
 # differs from node to node, the item is the same setting (said with -v)
 _DM_KNAME = re.compile(r" \(dm-\d+\)$")
 
-# what follows the write, by cassandra_apply_config_then: (--check or the plan, real run)
+# what follows the write, by cassandra_apply_config_then: (--check, real run)
 THEN = {"restart": ("then restart", "restarted"), "start": ("then start", "started"),
         "write": ("left stopped", "left stopped"), "none": ("no restart", "no restart"),
         "os": ("no restart", "no restart")}
+# what a node gets, in the plan before the question (a real run)
+PLANNED = {"restart": "write + restart", "start": "write + start", "write": "write, left stopped",
+           "none": "write, no restart", "os": "OS settings, live"}
 # said in the plan only, before the question
-_WHY = {"start": "its Cassandra is not running: started once written (down over max_hint_window? repair it)",
-        "write": "its Cassandra is stopped: left stopped, reads its config when it starts",
-        "none": "an owner, group or mode only: Cassandra reads them when it starts",
-        "os": "OS settings only: applied live"}
+_WHY = {"start": "Cassandra not running: started once written (down over max_hint_window? repair it)",
+        "write": "Cassandra stopped: left stopped, reads its config when it starts",
+        "none": "owner or mode only, read at start",
+        "os": "OS settings only, applied live"}
 _WRITTEN_BACK = " written back as the running Cassandra started with "  # (apply_config's note)
 # apply_config's notes: a restart pending (said before the run: not after a restart or start of this run), the
 # read-ahead set live with no restart (the recap's TO DO says how to take it)
@@ -295,10 +298,26 @@ def _one_line(text):
     return "%s ... (%d lines, %s)" % (text.split("\n", 1)[0], text.count("\n") + 1, digest)
 
 
+def _change(live, target):
+    """A node's live value and the inventory's -> the change as the table says it: "3h -> 6h", "not set -> 6h", a
+    key the inventory drops "6h (not in the inventory)"; a line of one form there or not: "added", "removed (not in
+    the inventory)"; a masked value the diff writes: "**** -> **** (masked)", "changed (masked)" for a line."""
+    if live == PRESENT and target == PRESENT:
+        return "changed (masked)"  # the same masked line on both sides: a secret in it changed
+    if live == PRESENT or target == PRESENT:
+        return "added" if live == ABSENT else "removed (not in the inventory)"
+    if target == ABSENT:
+        return "%s (not in the inventory)" % live
+    if live == ABSENT:
+        return "not set -> %s" % target
+    if live == target:
+        return "%s -> %s (masked)" % (live, target)
+    return "%s -> %s" % (live, target)
+
+
 def _rows(records, shown_of, all_nodes):
-    """records: {node: (live, target, changing)} of one setting -> its rows:
-    each inventory value (its nodes already on it), then the live values of
-    the nodes to change to it ("<- differs")."""
+    """records: {node: (live, target, changing)} of one setting -> its rows (the change, the nodes, ""): for each
+    inventory value, each live value of the nodes to change to it, "live -> target" (_change)."""
     order = [n for n in all_nodes if n in records]
     changing = [n for n in order if records[n][2]]
     targets = []
@@ -308,10 +327,6 @@ def _rows(records, shown_of, all_nodes):
             targets.append(t)
     rows = []
     for target in targets:
-        on_it = [n for n in order if not records[n][2] and shown_of(records[n][0]) == target]
-        if target != ABSENT:  # with none on it: whose value it is (a node's own, e.g. listen_address)
-            mine = [n for n in changing if shown_of(records[n][1]) == target]
-            rows.append((target, on_it, "(inventory)" if on_it else ("(inventory, %s)", mine)))
         lives = []
         for n in changing:
             if shown_of(records[n][1]) != target:
@@ -322,10 +337,7 @@ def _rows(records, shown_of, all_nodes):
                 lives.append((live, [n]))
             else:
                 group[1].append(n)
-        for live, names in lives:
-            why = "not in the inventory" if target == ABSENT else "masked" if live == target else ""
-            note = out.ARROW + " differs" + (" (%s)" % why if why else "")
-            rows.append((live, names, note))
+        rows += [(_change(live, target), names, "") for live, names in lives]
     return rows
 
 
@@ -398,8 +410,8 @@ def _changed_keys(name, nodes, per_node, all_nodes):
 
 
 def _presence(v):
-    """A setting of one form of line -> whether it is there: "present" or ABSENT."""
-    return ABSENT if v is None else "present"
+    """A setting of one form of line -> whether it is there: PRESENT or ABSENT."""
+    return ABSENT if v is None else PRESENT
 
 
 def _shown_value(key, v):
@@ -428,18 +440,17 @@ def _whole_rows(name, nodes, new_file, all_nodes):
     """One file, the nodes, the ones it is new on -> the rows of the nodes it is written whole on with no diff
     shown: missing, or other content (said, not shown)."""
     wholes = [(node["name"], node["wholes"][name]) for node in nodes if name in node["wholes"]]
-    absent = [n for n, d in new_file] + [n for n, before in wholes if before == ABSENT]
-    rows = [(before, [n for n, b in wholes if b == before], out.ARROW + " differs (written whole)")
-            for before in sorted(set(b for n, b in wholes if b != ABSENT))]
+    absent = [n for n, d in new_file] + [n for n, before in wholes if before in (ABSENT, "absent")]
+    rows = [("%s -> written whole" % before, [n for n, b in wholes if b == before], "")
+            for before in sorted(set(b for n, b in wholes if b not in (ABSENT, "absent")))]
     if absent:
-        rows.insert(0, (ABSENT, [n for n in all_nodes if n in absent], out.ARROW + " differs (written whole)"))
+        rows.insert(0, ("missing -> written whole", [n for n in all_nodes if n in absent], ""))
     return rows
 
 
 def _file_entries(name, nodes, all_nodes):
-    """The settings of one file that differ on a node -> (its settings_lines
-    entries, the lines of the nodes whose live file no longer fits their
-    diff). A key written twice in a file is by its lines (see _line_settings):
+    """The settings of one file that differ on a node -> (its entries, (setting,
+    rows), the lines of the nodes whose live file no longer fits their diff). A key written twice in a file is by its lines (see _line_settings):
     one written twice on a node and once in the inventory shows as lines there
     or not."""
     per_node, new_file, unread = _node_settings(name, nodes)
@@ -447,7 +458,7 @@ def _file_entries(name, nodes, all_nodes):
     yaml = name.endswith((".yaml", ".yml"))
     entries = [_setting_entry(key, per_node, changed, all_nodes, yaml) for key in keys]
     if layout_only:
-        entries.append(("comments or layout", [("differ", layout_only, "(no setting changes)")]))
+        entries.append(("comments or layout", [("differ (no setting changes)", layout_only, "")]))
     rows = _whole_rows(name, nodes, new_file, all_nodes)
     if rows:
         entries.append(("file", rows))
@@ -458,23 +469,21 @@ def _file_entries(name, nodes, all_nodes):
 
 
 def _os_rows(changes):
-    """[(node, before, after)] of one OS setting -> its rows: each value the
-    role sets ("(inventory)": only the nodes that differ are known), then the
-    values of the nodes it changes ("<- differs")."""
+    """[(node, before, after)] of one OS setting -> its rows: each value the role sets, from each value of the
+    nodes it changes ("128 -> 4"), with those nodes (only the nodes that differ are known)."""
     rows = []
     for after in OrderedDict.fromkeys(c[2] for c in changes):
-        rows.append((after, [], "(inventory)"))
         befores = OrderedDict()
         for node, before, value in changes:
             if value == after:
                 befores.setdefault(before, []).append(node)
-        rows.extend((before, nodes, out.ARROW + " differs") for before, nodes in befores.items())
+        rows.extend(("%s -> %s" % (before, after), nodes, "") for before, nodes in befores.items())
     return rows
 
 
-def _perm_entry(key, nodes, all_nodes, field):
-    """The owner, group and mode of a file or directory: what the role sets
-    on the nodes it changes, the nodes already so, the ones to change."""
+def _perm_entries(key, nodes, all_nodes, field):
+    """The owner (owner:group) and the mode of a file or directory, two settings: what the role sets on the nodes
+    it changes, from what they have; a part no node changes is left out."""
     records = {}
     for node in nodes:
         change = node[field].get(key)
@@ -483,7 +492,15 @@ def _perm_entry(key, nodes, all_nodes, field):
         elif key in node["stats" if field == "perms" else "dir_stats"]:
             live = node["stats" if field == "perms" else "dir_stats"][key]
             records[node["name"]] = (live, live, False)
-    return (PERM_LABEL, _rows(records, lambda v: ABSENT if v is None else str(v), all_nodes))
+    entries = []
+    for index, label in ((0, "owner"), (1, "mode")):
+        def part(value, index=index):  # "owner:group mode" -> one of its parts
+            words = str(value).split()
+            return ABSENT if value is None else (words[index] if len(words) > index else str(value))
+        rows = _rows(dict((n, (a, b, c and part(a) != part(b))) for n, (a, b, c) in records.items()), part, all_nodes)
+        if rows:
+            entries.append((label, rows))
+    return entries
 
 
 def _prepare(node, verbose=False):
@@ -523,16 +540,14 @@ def cassandra_apply_config_diff(nodes, width=None, verbose=False):
     of the live files that differ on some node ({item: file name, content});
     stats, its cassandra_config_live_stat results; dir_stats, its
     cassandra_config_dir_stat results; os, cassandra_linux's items (the OS
-    settings that differ: {item, before, after}). -> the lines: per file, each setting
-    that differs on a node, the inventory's value and the nodes already on
-    it ("(inventory)"), then each other live value with its nodes ("<-
-    differs"); the owner, group and mode as one setting; the directories
-    after the files, then the OS settings. [] when nothing differs. From GROUPS_FROM nodes on
-    (cassandra_output), the node lists by NODE GROUPS defined first. width:
-    the lines fit in it (None: as long as they are; "terminal": the terminal's). verbose: a device-mapper
+    settings that differ: {item, before, after}). -> the lines of one table: per file (named on its first row),
+    each setting that differs on a node, its change "from -> to" (one row per live value), the nodes that change
+    last; the owner and the mode as two settings; the directories after the files, then the OS settings. [] when
+    nothing differs. From GROUPS_FROM nodes on (cassandra_output), the node lists by NODE GROUPS defined first.
+    width: the lines fit in it (None: as long as they are; "terminal": the terminal's). verbose: a device-mapper
     device's OS items with its kernel name (dm-N) too, which differs from node to node.
-    e.g. node1 on the inventory's cassandra.yaml, node2 live with max_hint_window: 6h -> ["cassandra.yaml",
-    "  max_hint_window: 3h   node1   (inventory)", "                   6h   node2   \u2190 differs"]."""
+    e.g. node1 on the inventory's cassandra.yaml, node2 live with max_hint_window: 6h ->
+    ["cassandra.yaml  max_hint_window  6h -> 3h  node2"]."""
     width = _width(width)
     prepared = [_prepare(n, verbose) for n in nodes or []]
     all_nodes = [n["name"] for n in prepared]
@@ -545,7 +560,7 @@ def cassandra_apply_config_diff(nodes, width=None, verbose=False):
     for name in sorted(files, key=_order):
         settings, unread = _file_entries(name, prepared, all_nodes)
         if any(name in n["perms"] for n in prepared):
-            settings.append(_perm_entry(name, prepared, all_nodes, "perms"))
+            settings += _perm_entries(name, prepared, all_nodes, "perms")
         settings = [s for s in settings if s[1]]
         if settings or unread:
             entries.append(name)
@@ -556,7 +571,7 @@ def cassandra_apply_config_diff(nodes, width=None, verbose=False):
         dirs.extend(d for d in node["dirs"] if d not in dirs)
     for name in dirs:
         entries.append(name)
-        entries.append(_perm_entry(name, prepared, all_nodes, "dirs"))
+        entries += _perm_entries(name, prepared, all_nodes, "dirs")
     others = []
     for node in prepared:
         others.extend((o[0], o[1], o[2], node["name"]) for o in node["other"])
@@ -575,19 +590,31 @@ def cassandra_apply_config_diff(nodes, width=None, verbose=False):
 
 
 def _named(entries, all_nodes, width=None):
-    """The entries' node lists as text: on a large cluster by node groups (defined first, "NODE GROUPS"), "all"
-    for every node; else as cassandra_output's nodes() names them. -> the lines."""
+    """The entries (a file's name, then its (setting, rows); a line of its own starts with a space) as one table:
+    the file on its first row, the setting on the first row of its rows, the change, the nodes. The node lists as
+    text: on a large cluster by node groups (defined first, "NODE GROUPS"), "all" for every node; else as
+    cassandra_output's nodes() names them. -> the lines, fitting in width."""
     rows = [row for e in entries if not isinstance(e, str) for row in e[1]]
-    groups = out.node_groups([r[1] for r in rows] + [r[2][1] for r in rows if isinstance(r[2], tuple)], all_nodes)
+    groups = out.node_groups([r[1] for r in rows], all_nodes)
 
     def named(names):
         return out.who(names, all_nodes, groups) if groups else out.nodes(names)
 
-    def note(text):
-        return text[0] % named(text[1]) if isinstance(text, tuple) else text
-
-    entries = [e if isinstance(e, str) else (e[0], [(v, named(n), note(t)) for v, n, t in e[1]]) for e in entries]
-    lines = out.settings_lines(entries, width=width)
+    shown, cells, heading = [], [], ""  # shown: a row of cells, or a line of its own (a node not read)
+    for entry in entries:
+        if isinstance(entry, str) and entry.startswith(" "):
+            shown.append(("%s  %s" % (heading, entry.strip())) if heading else entry.strip())
+            heading = ""
+        elif isinstance(entry, str):
+            heading = entry
+        else:
+            label, found = entry
+            for change, names, dummy in found:
+                cells.append([heading, label, change, named(names)])
+                shown.append(cells[-1])
+                heading, label = "", ""
+    rows = iter(out.table(cells))
+    lines = out.fit([line if isinstance(line, str) else next(rows) for line in shown], width)
     return (out.group_lines(groups, width=width) + [""] + lines) if groups and lines else lines
 
 
@@ -599,9 +626,10 @@ def _outcome(node, check, plan):
     if todo_done:
         then = "os" if os_only else node.get("then")
         word = "would apply" if check else "will apply" if plan else "applied"  # (plan: before a real run's question)
-        text = word
-        said = THEN.get(then, ("", ""))[0 if check or plan else 1]
-        text += (", " + said if said else "")
+        said = THEN.get(then, ("", ""))[0 if check else 1]
+        text = word + (", " + said if said else "")
+        if plan and not check:  # the plan's own words: "write + restart", "write, no restart"
+            text = PLANNED.get(then, word)
         if then == "restart" and node.get("why"):  # not for new settings alone: a restart for this too
             text += " (%s)" % node["why"]
         # a file written back as the running Cassandra started with it: its note says why, not "an owner... only"
@@ -621,7 +649,7 @@ def _outcome(node, check, plan):
         return result, "failed"
     for word in ("nothing to apply", "not reached", "not in this run", "skipped"):
         if word in result:
-            return result, word
+            return ("up to date" if plan and not check and word == "nothing to apply" else result), word
     return result, "not touched"
 
 
@@ -669,7 +697,7 @@ def cassandra_apply_config_warnings(nodes):
     """The WARNING notes of the nodes, for the plan's warnings (said there
     only, not under each node): [{label: the nodes, text}], one per text,
     the nodes with it together, in the order they come.
-    e.g. [{name: node2, notes: ["WARNING - node2's data dirs belong to root"]}, ...] -> [{label: "node2", text:
+    e.g. [{name: node2, notes: ["WARNING  node2's data dirs belong to root"]}, ...] -> [{label: "node2", text:
     "node2's data dirs belong to root"}]."""
     by_text, order = {}, []
     for node in nodes or []:
@@ -759,7 +787,7 @@ def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, d
     whose read-ahead was set live.
     e.g. (those nodes, check=True, cluster="my_cluster", seconds=12, diff=<the diff's lines>) ->
     ["CHECK  apply_config  my_cluster  1 would apply, 1 nothing to apply (12s)", "", <the diff's lines>, "",
-    "node2  would apply, then restart", "node1  nothing to apply", "", "WARNING - node2: node2's data dirs belong to root"]."""
+    "node2  would apply, then restart", "node1  nothing to apply", "", "WARNING  node2: node2's data dirs belong to root"]."""
     nodes = list(nodes or []) if check else [_after_run(n) for n in nodes or []]
     lines, counts = _grouped(nodes, check, width=width)
     shown = [_recap_verdict(counts, check, cluster, seconds)]

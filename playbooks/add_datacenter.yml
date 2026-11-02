@@ -13,6 +13,7 @@
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
   vars:
+    _cassandra_notes_in_plan: true  # the checks' WARNING lines in the plan, before the question
     _cassandra_preflight_target: add  # what cassandra_target_nodes are
 
 - name: Check the new datacenter

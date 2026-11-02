@@ -7,7 +7,7 @@ __metaclass__ = type
 import pytest
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_summary import (
-    cassandra_differs, cassandra_op_recap, cassandra_reset_recap)
+    cassandra_differs, cassandra_op_recap, cassandra_reset_recap, cassandra_stop_block)
 
 
 def recap(pairs, **kwargs):
@@ -31,7 +31,7 @@ def recap(pairs, **kwargs):
 def test_each_operation_ends_with_done(result, operation, outcome):
     assert recap([("node4", result), ("node5", result.replace("100s", "110s"))], cluster="my_cluster") == [
         "DONE  %s  my_cluster  2 %s" % (operation, outcome),
-        "  node4, node5  %s  (1m40s..1m50s each)" % outcome]
+        "  node4, node5  %s  1m40s..1m50s each" % outcome]
 
 
 @pytest.mark.parametrize("result, operation, said", [
@@ -90,6 +90,52 @@ def test_refusals_and_failures(result, reason):
 def test_the_operation_given_wins():
     assert recap([("n1", "decommission done in 5s")], operation="remove_datacenter")[0] == \
         "DONE  remove_datacenter  1 decommissioned"
+    assert recap([("n1", "decommission done in 5s")], operation="remove_datacenter", seconds=65)[0] == \
+        "DONE  remove_datacenter  1 decommissioned  1m05s"
+
+
+RESULTS = [("node1", "restart done in 110s"), ("node2", "restart FAILED after 629s: cluster unhealthy"), ("node3", None),
+           ("node4", "not reached"), ("node5", "not in this run (--limit)")]
+HEALTH = ["node4 (10.0.0.4, r1) is DN, seen from node1 and node2, 10m29s waited (cassandra_service_health_timeout 600s).",
+          "WAY OUT  start node4 (the server, then Cassandra), then resume",
+          "if the server is lost: replace_node; remove_dead_node only as a last resort"]
+
+
+def stop(failure, **kwargs):
+    return cassandra_stop_block([{"node": n, "result": r} for n, r in RESULTS], "node2", failure, cluster="prod",
+                                action="restart", **kwargs)
+
+
+def test_a_stop_on_purpose_says_the_cause_the_table_and_the_way_out_once():
+    # the failing task's message: its cause, then its WAY OUT lines; the table one word per node; the resume command
+    assert stop(HEALTH, resume=True, progress_file="/inv/.cassandra_progress/x", inventory=["/inv/hosts.yml"], hosts="prod",
+                cwd="/inv") == [
+        "STOPPED at node2: node4 (10.0.0.4, r1) is DN, seen from node1 and node2, 10m29s waited"
+        " (cassandra_service_health_timeout 600s). No other node was touched.",
+        "",
+        "  node1         restarted                          1m50s",
+        "  node2         not done                           cluster unhealthy",
+        "  node3, node4  not touched (not reached)",
+        "  node5         not touched (left out by --limit)",
+        "",
+        "WAY OUT  start node4 (the server, then Cassandra), then resume:",
+        "  ansible-playbook -i hosts.yml community.cassandra.rolling_restart -e cassandra_hosts=prod -e cassandra_rolling_resume=true",
+        "  if the server is lost: replace_node; remove_dead_node only as a last resort",
+        "  progress: .cassandra_progress/x"]
+
+
+def test_a_task_that_failed_is_failed_with_the_hint_or_the_resume():
+    # not one of our stops (no WAY OUT line): FAILED, the way out is the hint given, else the resume, else the status
+    lines = stop("Timeout waiting for NORMAL", resume=False, hint="Once fixed, run move_node again.")
+    assert lines[0] == "FAILED at node2: Timeout waiting for NORMAL. No other node was touched."
+    assert lines[-1] == "WAY OUT  Once fixed, run move_node again."
+    lines = stop("boom", resume=True)
+    assert lines[-2:] == ["WAY OUT  fix it, then resume:",
+                          "  ansible-playbook community.cassandra.rolling_restart -e cassandra_rolling_resume=true"]
+    assert stop("boom", resume=False)[-1] == ("WAY OUT  fix it, then check where the cluster stands (the status playbook)"
+                                               " before running it again")
+    # the nodes done at the same time (a batch)
+    assert stop("boom", resume=False, batch=True)[0] == "FAILED at node2: boom. The nodes done at the same time: as in the table."
 
 
 NODES = [{"node": "node4", "delete": ["a", "b"], "stop": True, "disable": True},

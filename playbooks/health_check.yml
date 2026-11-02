@@ -5,7 +5,11 @@
 #
 # Each node checks the ring, gossip, the native transport, streams, schema
 # agreement and the ports. The report starts with the verdict, HEALTHY or NOT
-# HEALTHY, then each problem once and what to do.
+# HEALTHY, then each problem once and what to do; then SETTINGS, the settings
+# of the inventory that weaken the cluster (no authentication on a reachable
+# address, a heap too small, a failure policy ignore, a replace flag left on a
+# member, auto_bootstrap false), two lines each: why it matters, what to do and
+# how to keep it on purpose (cassandra_settings_kept_on_purpose).
 #
 # Fails on a problem (non-zero exit), so it can be scheduled.
 #
@@ -26,7 +30,7 @@
 - name: Cluster health
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: true
-  gather_subset: [network]
+  gather_subset: [network, hardware]  # hardware: the RAM, for the heap finding of SETTINGS
   # root (sudo) only to read the JMX password file when cassandra_jmx_password_file
   # is set (the service account's, 0400): the play asks for it itself, no -b
   # needed; nodetool needs no root otherwise
@@ -91,8 +95,8 @@
         cassandra_service_health_timeout: 5  # (its ports asked for 5s)
 
     # the verdict first (HEALTHY or NOT HEALTHY), each problem once with the
-    # nodes that saw it, then what to do; fails the run (non-zero exit) when
-    # there is one
+    # nodes that saw it, then what to do, then the SETTINGS block; fails the
+    # run (non-zero exit) on a problem (not on a setting)
     - name: Report
       ansible.builtin.assert:
         that: _report.healthy
@@ -115,10 +119,14 @@
         _first_ring: >-
           {{ (hostvars[_checked | first].cassandra_health_self | default({})).cluster_status | default({}, true)
              if _checked else {} }}
+        # (a node whose check ran answers nodetool: a member of the ring, where a replace flag left is a finding)
+        _settings: >-
+          {{ dict(ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars)))
+             | community.cassandra.cassandra_suspicious_settings(_checked) }}
         _report: >-
           {{ _findings | community.cassandra.cassandra_health_report(
                lookup('community.cassandra.cassandra_hosts'), ansible_play_hosts_all,
-               unreachable=ansible_play_hosts_all | reject('in', _checked) | list,
+               unreachable=ansible_play_hosts_all | reject('in', _checked) | list, settings=_settings,
                absent=query('community.cassandra.cassandra_nodes', state='absent'),
                names=(ansible_play_hosts_all + query('community.cassandra.cassandra_nodes', state='absent'))
                      | community.cassandra.cassandra_host_addresses(hostvars), ring=_first_ring,
