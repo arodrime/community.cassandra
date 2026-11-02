@@ -105,8 +105,7 @@ RING = [
 ]
 
 
-# the run's first line (no version: these playbooks read none); its last too until the ops callback stops
-# repeating it (the output redesign's part B)
+# the run's first line (no version: these playbooks read none); not repeated at the end
 CLUSTER = "my_cluster  3 nodes  1 DC (dc1)"
 
 
@@ -133,7 +132,6 @@ def test_status_with_a_node_down(tmp_path):
         "",
         "====",
         "",
-        CLUSTER,
     ]
 
 
@@ -142,8 +140,7 @@ def test_status_all_up(tmp_path):
     assert rc == 0, output
     lines = ruled(output)
     assert lines[:5] == [CLUSTER, "", "====", "", "my_cluster  (seen from node1, ring = inventory, 3 nodes)"]
-    assert lines[-9:] == ["  dc1      3 nodes   3 up   load 260.6 MiB", "", "====", "", "ALL 3 NODES UP", "", "====", "",
-                          CLUSTER]
+    assert lines[-8:] == ["  dc1      3 nodes   3 up   load 260.6 MiB", "", "====", "", "ALL 3 NODES UP", "", "====", ""]
 
 
 def ruled(output):
@@ -167,7 +164,6 @@ def test_health_check_a_node_down(tmp_path, port):
         "",
         "====",
         "",
-        CLUSTER,
     ]
 
 
@@ -176,4 +172,4 @@ def test_health_check_healthy(tmp_path, port):
                      "-e", "cassandra_native_transport_port=%d" % port)
     assert rc == 0, output
     assert ruled(output) == [CLUSTER, "", "====", "", "HEALTHY  my_cluster  3 nodes  3 UN, schema agreed, no streams, ports open",
-                             "", "====", "", CLUSTER]
+                             "", "====", ""]

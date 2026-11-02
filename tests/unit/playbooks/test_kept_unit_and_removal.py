@@ -195,7 +195,9 @@ RESTART_LOOP = {"failed": True, "msg": "One or more items failed", "results": [
 @pytest.mark.parametrize("node, failure, said", [
     ("n2", RESTART_LOOP, "restart FAILED: Unable to restart service cassandra"),
     ("n1", RESTART_LOOP, "restart not finished: the rack stopped at n2"),  # not counted as failed by the recap
-    ("n1", {"failed": True, "msg": "cluster not healthy"}, "restart FAILED: cluster not healthy"),
+    # one of our stops (its WAY OUT line): a word for the table, the cause is in the stop block
+    ("n1", {"failed": True, "msg": ["n4 (10.0.0.4, r1) is DN, seen from n1.", "WAY OUT  start n4"]}, "restart FAILED: cluster unhealthy"),
+    ("n1", {"failed": True, "msg": "boom"}, "restart FAILED: a task failed"),
     # the wait for Mode NORMAL out of retries: netstats' own result, no msg
     ("n3", {"failed": True, "msg": "One or more items failed",
             "results": [{"item": "n3", "failed": True, "attempts": 30, "mode": "JOINING"}]},
@@ -203,7 +205,8 @@ RESTART_LOOP = {"failed": True, "msg": "One or more items failed", "results": [
 ])
 def test_rack_failure_names_the_node_that_failed(node, failure, said):
     record = next(t for t in RACK["rescue"] if t["name"] == "Record the failure")
-    assert render(record["ansible.builtin.set_fact"]["cassandra_op_result"], item=node, ansible_failed_result=failure) == said
+    assert render(record["ansible.builtin.set_fact"]["cassandra_op_result"], item=node, ansible_failed_result=failure,
+                  **record["vars"]) == said
 
 
 @pytest.mark.parametrize("file, then", [("action_restart.yml", "restarted"), ("action_reboot.yml", "rebooted"),

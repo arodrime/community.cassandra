@@ -132,11 +132,14 @@
                         | list -%}
           {%- if own -%} restart FAILED: {{ own | first }}
           {%- elif failed -%} restart not finished: the rack stopped at {{ failed | map(attribute='item') | join(', ') }}
-          {%- else -%} restart FAILED: {{ ansible_failed_task.name | default('a task failed') | lower }}
+          {%- else -%} restart FAILED: {{ 'cluster unhealthy' if 'WAY OUT' in _failure and 'seen from' in _failure
+                                          else ansible_failed_task.name | default('a task failed') | lower }}
           {%- endif %}
       delegate_to: "{{ item }}"
       delegate_facts: true
       loop: "{{ _todo }}"
+      vars:
+        _failure: "{{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}"
 
     # the cause once (the stop block), the nodes' table, the way out: no later rack was restarted
     - name: Stop here

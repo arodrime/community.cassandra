@@ -216,7 +216,7 @@ def test_a_deleted_config_file_is_shown_and_written_back(tmp_path, series, delet
     if keep:  # the role run alone says it too
         said = find(ROLE, "Warn that a file kept by hand is missing")
         assert " ".join(render(said["ansible.builtin.debug"]["msg"], dict(role, inventory_hostname="n2")).split()) == (
-            "WARNING  n2: " + warning[len("WARNING  "):])
+            "WARNING n2: " + warning[len("WARNING  "):])  # (the spaces normalised)
 
     # the view of what differs: the file, absent on n2, written whole
     view = cassandra_apply_config_diff([
@@ -224,7 +224,7 @@ def test_a_deleted_config_file_is_shown_and_written_back(tmp_path, series, delet
         {"name": "n2", "items": role["_cassandra_config_items"],
          "live": [{"cassandra_apply_config_file": deleted}],  # read by apply_config: not there, no content
          "stats": role["cassandra_config_live_stat"]["results"], "dir_stats": []}])
-    assert view == [deleted, "  file: absent   n2   %s differs (written whole)" % "\u2190"]
+    assert view == ["%s  file  missing -> written whole  n2" % deleted]
 
 
 def test_the_role_reads_a_missing_live_cassandra_yaml_as_none():
@@ -398,8 +398,8 @@ def test_other_jmx_rights_restart_the_node(tmp_path):
     facts, plan, view = jmx_apply(role)
     assert facts["cassandra_apply_config_then"] == "restart"
     assert plan == ["n2  write + restart (jmxremote.access: read at start)", "n1  up to date"]
-    assert view == ["jmxremote.password", "  file: other users or rights   n2   %s differs (written whole)" % "←",
-                    "jmxremote.access", "  file: other users or rights   n2   %s differs (written whole)" % "←"]
+    assert view == ["jmxremote.password  file  other users or rights -> written whole  n2",
+                    "jmxremote.access    file  other users or rights -> written whole  n2"]
     assert not [line for line in view if "s3cret" in line or "ops " in line]  # no content shown
 
 
