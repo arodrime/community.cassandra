@@ -325,9 +325,7 @@ def test_ops_callback_blocks_one_blank_line_apart(tmp_path):
         "Answer yes to go on, no to stop:",
         "yes",  # pause clears it once read: shown again
         "",
-        "---- [1/1] node7 decommission ----",  # each node's progress: its own block
-        "",
-        "[1/1] node7 decommission  LEAVING",
+        "[1/1] node7 decommission  LEAVING",  # each node's progress: its own block
         "[1/1] node7 decommission  DECOMMISSIONED",
         "",
         "====",  # the recap: heavy rules around it

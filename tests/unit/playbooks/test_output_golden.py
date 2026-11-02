@@ -105,7 +105,7 @@ RING = [
 ]
 
 
-# the run's first line and its last (the ops callback)
+# the run's first line (the ops callback)
 CLUSTER = "CLUSTER my_cluster (3 nodes, dc1) | chosen by: the only cluster in the inventory"
 
 
@@ -131,8 +131,6 @@ def test_status_with_a_node_down(tmp_path):
         "1 NODE DOWN: node2 (dc1/rack_b)",
         "",
         "====",
-        "",
-        CLUSTER,
     ]
 
 
@@ -141,13 +139,12 @@ def test_status_all_up(tmp_path):
     assert rc == 0, output
     lines = ruled(output)
     assert lines[:5] == [CLUSTER, "", "====", "", "my_cluster  (seen from node1, ring = inventory, 3 nodes)"]
-    assert lines[-9:] == ["  dc1      3 nodes   3 up   load 260.6 MiB", "", "====", "", "ALL 3 NODES UP", "", "====", "",
-                          CLUSTER]
+    assert lines[-7:] == ["  dc1      3 nodes   3 up   load 260.6 MiB", "", "====", "", "ALL 3 NODES UP", "", "===="]
 
 
 def ruled(output):
-    """The lines, each rule (as wide as the terminal) as 4 of its characters."""
-    return [re.sub(r"^([-=])\1{3,}$", lambda m: m.group(1) * 4, line) for line in output.splitlines()]
+    """The lines (the blank ones at the end left out), each rule (as wide as the terminal) as 4 of its characters."""
+    return [re.sub(r"^([-=])\1{3,}$", lambda m: m.group(1) * 4, line) for line in output.rstrip("\n").splitlines()]
 
 
 def test_health_check_a_node_down(tmp_path, port):
@@ -165,8 +162,6 @@ def test_health_check_a_node_down(tmp_path, port):
         "  1. start Cassandra on node2 (its server first if it is down); a node that can't be recovered: replace_node",
         "",
         "====",
-        "",
-        CLUSTER,
     ]
 
 
@@ -175,4 +170,4 @@ def test_health_check_healthy(tmp_path, port):
                      "-e", "cassandra_native_transport_port=%d" % port)
     assert rc == 0, output
     assert ruled(output) == [CLUSTER, "", "====", "", "HEALTHY  my_cluster  3 nodes  3 UN, schema agreed, no streams, ports open",
-                             "", "====", "", CLUSTER]
+                             "", "===="]

@@ -535,23 +535,145 @@ def test_a_stalled_peer_line_red_the_others_as_the_progress_line():
     assert colour("      to do: something STALLED", above="cyan") == "cyan"
     assert colour("      31 peers: 31 ok (avg 44%); slowest: node30 30%, node13 31%", above="cyan") == "cyan"
 
-    class Display(object):
-        columns = 100
-
-        def __init__(self):
-            self.shown = []
-
-        def display(self, line, color=None):
-            self.shown.append((line, color))
-
-    callback = CallbackModule.__new__(CallbackModule)
-    callback._display, callback._progress, callback._warning = Display(), "cyan", None
-    callback._gap, callback._blank, callback._ruled = False, True, ""
+    callback = quiet_callback(tty=False)
     callback._print("\n".join([
-        "[1/2] node5 bootstrap  JOINING  [#####-----]  52%  52.2/100.0 GiB  89 MiB/s  ETA 13:33 (9m)  10m",
+        "[1/2] node5  bootstrap  JOINING  [#####-----]  52%  52.2/100.0 GiB  89 MiB/s  ETA 13:33 (9m)  10m",
+        "",
         "      from node1  18.0/34.0 GiB  52%           from node3  4.2/17.0 GiB  24% STALLED",
         "      from node4   3.0/3.0 GiB  100%"]))
-    assert [color for line, color in callback._display.shown if line.strip()] == ["cyan", C.COLOR_ERROR, "cyan"]
+    assert [color for line, color, dummy in callback._display.shown if line.strip()] == ["cyan", C.COLOR_ERROR, "cyan"]
+    # a stalled line, the peer in cause under it: red as the line it is under
+    callback = quiet_callback(tty=False)
+    callback._print(["[1/2] node5  bootstrap  JOINING  STALLED 6m/30m  41%  41.2/100.0 GiB  15m", "",
+                     "      from node3  13.4/33.0 GiB  41%  nothing for 6m    (node1, node2 done)"])
+    assert [color for line, color, dummy in callback._display.shown if line.strip()] == [C.COLOR_ERROR, C.COLOR_ERROR]
+
+
+class FakeDisplay(object):
+    """What the callback gives Ansible's display: (line, colour, log_only)."""
+    columns = 100
+
+    def __init__(self):
+        self.shown = []
+
+    def display(self, line, color=None, log_only=False, screen_only=False):
+        self.shown.append((line, color, log_only))
+
+
+def quiet_callback(tty, now=1000.0):
+    """A callback without a run: a fake display, a clock set by hand (callback.now), a terminal 100 wide or not."""
+    from ansible_collections.community.cassandra.plugins.callback.ops import CallbackModule
+    callback = CallbackModule.__new__(CallbackModule)
+    callback._display, callback._progress, callback._warning = FakeDisplay(), "cyan", None
+    callback._gap, callback._blank, callback._ruled, callback._live, callback._said = False, True, "", None, (None, None, 0)
+    callback._tty, callback.now, callback._clock = tty, [now], lambda: callback.now[0]
+    callback._columns = lambda: 100
+    return callback
+
+
+def going(node, pct, step=1):
+    return ["[%d/2] %s  bootstrap  JOINING  [#####-----]  %d%%  %d.0/100.0 GiB  89 MiB/s  ETA 13:33 (9m)  10m"
+            % (step, node, pct, pct), "", "      from node1  18.0/34.0 GiB  52%"]
+
+
+STALLED = ["[1/2] node5  bootstrap  JOINING  STALLED 6m/30m  55%  55.0/100.0 GiB  15m", "",
+           "      from node1  18.0/34.0 GiB  52%  nothing for 6m"]
+DONE = ["[1/2] node5  bootstrapped  NORMAL  100.0 GiB in 19m02s  avg 90 MiB/s"]
+
+
+def test_progress_lines_are_recognised():
+    from ansible_collections.community.cassandra.plugins.callback.ops import is_progress, progress_state
+    assert is_progress(going("node5", 50)) and is_progress(DONE) and is_progress(["[2/5] node2  restart  waiting  node4 is DN  9m/10m"])
+    assert is_progress(["node2  restart  waiting  node4 is DN, waiting for it to come back  9m52s/10m"])
+    assert is_progress(["node2  restarted  NORMAL after 30s"]) and is_progress(["node2  restart  all back after 1m40s"])
+    assert not is_progress(["DONE  add_node  2 added", "  node2  bootstrapped"])
+    assert not is_progress(["[1/2] node5  bootstrap  JOINING  52%", "a line not indented"])
+    assert not is_progress(["node4: chronyd converging (\u00b162.04 s), waiting up to 3m"])
+    # the state of a line: its figures left out, so the bar, the sizes, the speed, the times do not count
+    assert progress_state(going("node5", 50)[0]) == progress_state(going("node5", 51)[0])
+    assert progress_state("[1/2] node5  bootstrap  JOINING  [######----]  60%  60.2/100.0 GiB  1.1 GiB/s  ETA 13:33 (9m)  1h02m") \
+        == progress_state(going("node5", 50)[0])
+    assert progress_state(going("node5", 50)[0]) != progress_state(STALLED[0]) != progress_state(DONE[0])
+    assert progress_state("[2/5] node2  restart  waiting  node4 is DN, waiting for it to come back  9m52s/10m") == \
+        progress_state("[2/5] node2  restart  waiting  node4 is DN, waiting for it to come back  10s/10m")
+
+
+def test_progress_on_a_terminal_rewritten_in_place_until_frozen():
+    """A node's block rewritten in place (cursor up, cleared to the end of the screen) while it goes on; the frozen
+    line (done, STALLED) replaces the going block and stays; a going line after a frozen one goes under it;
+    another node's block starts under what is there."""
+    import io
+    callback = quiet_callback(tty=True)
+    callback._gap = True
+    out = io.StringIO()
+    real, sys.stdout = sys.stdout, out
+    try:
+        callback._print(going("node5", 50))
+        callback._print(going("node5", 51))
+        callback._print(STALLED)
+        callback._print(STALLED)
+        callback._print(going("node5", 56))
+        callback._print(DONE)
+        callback._gap = True
+        callback._print(going("node6", 0, step=2))
+    finally:
+        sys.stdout = real
+    up = "\x1b[3A\r\x1b[J"  # the 3 rows of the block above (the line, the blank line, the other ends)
+    assert out.getvalue() == (
+        "\n".join(going("node5", 50)) + "\n"
+        + up + "\n".join(going("node5", 51)) + "\n"
+        + up + "\n".join(STALLED) + "\n"  # frozen: the next one goes under it
+        + "\n".join(STALLED) + "\n"
+        + "\n".join(going("node5", 56)) + "\n"
+        + up + DONE[0] + "\n"
+        + "\n" + "\n".join(going("node6", 0, step=2)) + "\n")  # another node: a blank line (the gap), under
+    # the log file: as a pipe gets it (the first line, each change of state)
+    assert [line for line, color, log_only in callback._display.shown if line.strip()] == [
+        going("node5", 50)[0], going("node5", 50)[2], STALLED[0], STALLED[2], going("node5", 56)[0], going("node5", 56)[2],
+        DONE[0], going("node6", 0, step=2)[0], going("node6", 0, step=2)[2]]
+    assert all(log_only for line, color, log_only in callback._display.shown)
+
+
+def test_progress_on_a_terminal_counts_the_rows_of_long_lines_and_stops_at_other_output():
+    import io
+    callback = quiet_callback(tty=True)
+    callback._columns = lambda: 40
+    out = io.StringIO()
+    real, sys.stdout = sys.stdout, out
+    try:
+        callback._print(going("node5", 50))  # 97 columns: 3 rows, the blank line 1, the other ends 1
+        callback._print(going("node5", 51))
+        callback._line("WARNING - something else")  # the block above is left as it is
+        callback._print(going("node5", 52))
+    finally:
+        sys.stdout = real
+    assert out.getvalue().count("\x1b[5A\r\x1b[J") == 1 and out.getvalue().count("\x1b[") == 2  # that one only
+    assert out.getvalue().endswith("\n".join(going("node5", 52)) + "\n")
+
+
+def test_progress_without_a_terminal_the_first_line_every_five_minutes_and_every_change():
+    """A log or a pipe: a node's first line, then one every LOG_EVERY seconds, and every change of state at once."""
+    from ansible import constants as C
+    from ansible_collections.community.cassandra.plugins.callback.ops import LOG_EVERY
+    callback = quiet_callback(tty=False)
+    callback._gap = True
+    callback._print(going("node5", 50))
+    callback.now[0] += 30
+    callback._print(going("node5", 51))  # the same state, too soon: not printed
+    callback.now[0] += LOG_EVERY - 30
+    callback._print(going("node5", 55))  # five minutes: printed
+    callback.now[0] += 30
+    callback._print(STALLED)  # a change of state: at once
+    callback.now[0] += 30
+    callback._print(going("node5", 56))  # moving again: a change too
+    callback._print(DONE)
+    callback._gap = True
+    callback._print(going("node6", 0, step=2))  # another node: its first line, after the gap's blank line
+    shown = [line for line, color, log_only in callback._display.shown]
+    assert shown == going("node5", 50) + going("node5", 55) + STALLED + going("node5", 56) + DONE + [""] + going("node6", 0, step=2)
+    assert [color for line, color, log_only in callback._display.shown if line.startswith("[")] == \
+        ["cyan", "cyan", C.COLOR_ERROR, "cyan", "cyan", "cyan"]
+    assert not any(log_only for line, color, log_only in callback._display.shown)
 
 
 def test_status_verdict_and_table_rows_coloured():
@@ -910,8 +1032,7 @@ def test_a_phase_line_is_a_block_of_its_own_without_a_gap(tmp_path):
     assert rc == 0, output
     assert shown(output) == ["a message", "", "its second paragraph", "", "Waiting for every node to be UN...", "",
                              "two lines, the first ending...", "so not a phase line", "under", "",
-                             "Starting node5 and waiting for its bootstrap...", "", "---- [1/2] node5 bootstrap ----",
-                             "", "[1/2] node5 bootstrap  JOINING"]
+                             "Starting node5 and waiting for its bootstrap...", "", "[1/2] node5 bootstrap  JOINING"]
 
 
 def test_the_status_report_of_a_cluster_named_like_a_recap(tmp_path):
@@ -1228,10 +1349,10 @@ def test_the_help_playbook_under_the_ops_callback(tmp_path):
     assert not [line for line in plain.splitlines() if len(line) > 78 and not line.startswith("CLUSTER ")]
     rc, output = help_run(tmp_path)  # ANSIBLE_NOCOLOR: the same text, plain
     assert rc == 0 and output == plain, output
-    # its first line and its last: the cluster, and how it was picked
+    # its first line: the cluster, once
     said = [line for line in plain.splitlines() if line.strip()]
     banner = "CLUSTER cassandra (3 nodes, dc1) | chosen by: the only cluster in the inventory"
-    assert said[0] == banner and said[-1] == banner, plain
+    assert said[0] == banner and said.count(banner) == 1, plain
 
 
 def test_the_help_playbook_of_several_clusters_none_named(tmp_path):
@@ -1346,7 +1467,7 @@ def test_a_task_with_diff_false_shows_no_diff():
     assert shown == []
 
 
-CLUSTER_LINE = "CLUSTER prod (2 nodes, dc1) | chosen by: -e cassandra_hosts"
+CLUSTER_LINE = "prod  2 nodes  1 DC (dc1)  Cassandra 5.0.9"
 CLUSTER_PLAYBOOK = """
 - hosts: localhost
   gather_facts: false
@@ -1373,18 +1494,21 @@ CLUSTER_PLAYBOOK = """
 
 
 @pytest.mark.parametrize("stop", ["false", "true"])
-def test_the_cluster_line_first_and_last(tmp_path, stop):
-    """The run's first line names its cluster: said again as its last, whether the run ended well or not."""
+def test_the_cluster_line_first_and_once(tmp_path, stop):
+    """The run's first line names its cluster, once: nothing after the recap, whether the run ended well or not."""
     rc, output = run(tmp_path, CLUSTER_PLAYBOOK, "-e", "stop=" + stop)
     assert (rc == 0) == (stop == "false"), output
     said = [line for line in output.splitlines() if line.strip()]
-    assert said[0] == CLUSTER_LINE and said[-1] == CLUSTER_LINE, output
-    assert output.count(CLUSTER_LINE) == 2
+    assert said[0] == CLUSTER_LINE and output.count(CLUSTER_LINE) == 1, output
+    assert said[-1] == ("localhost: FAILED  op  prod  1 failed" if stop == "true" else "=" * len(said[-1])), output
 
 
-def test_no_cluster_line_no_last_line(tmp_path):
-    rc, output = run(tmp_path, CLUSTER_PLAYBOOK.replace(CLUSTER_LINE, "NOTE  something else"))
-    assert rc == 0 and "CLUSTER" not in output and output.rstrip().endswith("====")
+def test_the_cluster_line_is_recognised_in_the_progress_colour():
+    from ansible_collections.community.cassandra.plugins.callback.ops import colour
+    for line in (CLUSTER_LINE, "hostile_cluster  5 nodes  1 DC (dc1)  Cassandra 5.0.9", "prod_eu  12 nodes  2 DCs (dc1, dc2)",
+                 "big  60 nodes  6 DCs  Cassandra 4.0.20", "one  1 node  1 DC (dc1)"):
+        assert colour(line) == "cyan", line
+    assert colour("prod  2 nodes  1 DC (dc1)  something else") is None
 
 
 def test_the_cluster_line_with_a_datacenter_only_the_node_knows(tmp_path):
@@ -1398,7 +1522,7 @@ def test_the_cluster_line_with_a_datacenter_only_the_node_knows(tmp_path):
                      "        tasks_from: cluster_banner.yml\n", INVENTORY=str(tmp_path / "hosts.yml"))
     assert rc == 0, output
     banner = "CLUSTER prod (2 nodes + 1 marked absent, dc1, dc?) | chosen by: the only cluster in the inventory"
-    assert [line for line in output.splitlines() if line.strip()] == [banner, banner], output
+    assert [line for line in output.splitlines() if line.strip()] == [banner], output
 
 
 TWO_CLUSTERS = """

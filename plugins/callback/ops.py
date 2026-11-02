@@ -53,8 +53,7 @@ description:
     C(REFUSED  ...), C(READY  ...), C(IMPORT <cluster> ...), or an operation's screen header) and around a recap (C(DONE  ...),
     C(FAILED  ...), C(CHECK  ...), C(NOTHING TO DO  ...), C(HEALTHY  ...), C(NOT HEALTHY  ...)), above the C(status) playbook's report and around its
     verdict, its last line (and the warning under it). A light one (C(-----)) for each empty line inside them (the blank lines of the status
-    report stay blank), under a plan's first line and above a question, and one naming the node above the first
-    progress line of each node (C(---- [1/2] node5 bootstrap ----)). As wide as the terminal, 100 columns at most, a
+    report stay blank), under a plan's first line and above a question. As wide as the terminal, 100 columns at most, a
     blank line above and under each one. A line with only a space inside them separates two paragraphs of a block,
     printed blank (not as a rule). Two warnings in a row (a C(WARNING - ...) line right under another one or its
     indented lines) are a blank line apart, but for the rows of a table (columns two spaces apart).
@@ -67,8 +66,12 @@ description:
     next operator message after a task with the task variable C(cassandra_output_gap) set to C(true) (a literal,
     like C(cassandra_output); on an operator message itself, before its own lines; on a question, a
     M(ansible.builtin.pause), above it), and after the answer to a question (the answer stays shown).
-  - "The line naming the cluster a run is on ('CLUSTER prod (5 nodes, dc1) | chosen by: -e cassandra_hosts'), its
-    first, is printed again as its last line, after its recap, whether it ended well or not."
+  - A progress line (C([2/5] node2  restart  waiting  node4 is DN, waiting for it to come back  9m52s/10m), the line of
+    a check of a stream with the other ends under it) is rewritten in place on a terminal while the node's step goes
+    on, and left as it is once the step is over (C([2/5] node2  restarted  NORMAL after 30s), C(STALLED), C(FAILED))
+    or another node's line starts. In a log file or a pipe (a CI), the first line of a node, then one every 5 minutes,
+    and every change of state.
+  - The run's first line, the cluster it is on (C(prod  5 nodes  1 DC (dc1)  Cassandra 5.0.9)), in O(progress_color).
   - With C(-v) or more, everything is printed as the default callback does.
   - Set it in C(ansible.cfg) (C([defaults]) C(stdout_callback = community.cassandra.ops)) or with
     C(ANSIBLE_STDOUT_CALLBACK=community.cassandra.ops).
@@ -111,6 +114,7 @@ requirements:
 import os
 import re
 import sys
+import time
 
 try:
     import termios
@@ -154,6 +158,10 @@ def _result(result):
 
 # a phase line: what the run does now, a block of its own
 _PHASE = re.compile(r"\S.*[^,]\.\.\.$")  # "Checking the cluster (3 nodes)..."
+# the run's first line, the cluster it is on: "prod  5 nodes  1 DC (dc1)  Cassandra 5.0.9" (the version once known)
+_BANNER = re.compile(r"\S+  \d+ nodes?  \d+ DCs?( \(.*\))?(  Cassandra \S+)?$")
+# a wait outside a rolling operation (no [i/n]): for nodes down, for a node to be NORMAL
+_WAIT = re.compile(r"\S+  \S.*  (waiting  .*  \d+[smhd]\S*/\d+[smhd]\S*|(all back|NORMAL) after \d\S*)$")
 # the first line of a plan or a screen ("PLAN  ...", "add_node on cluster ..."): as the progress lines
 PLAN_COLOUR = "PROGRESS"
 _WARNING = re.compile(r"WARNING\b")  # wherever it is indented
@@ -168,9 +176,8 @@ _COLOURS = (
     (re.compile(r"ALL \d+ NODES? UP$"), "COLOR_OK"),
     (re.compile(r"CHECK\b.*\bwould\b"), "COLOR_CHANGED"),  # something left to do
     (re.compile(r"(DONE|HEALTHY|NOTHING TO DO|READY|CHECK)\b|IMPORT \S+ .*\bPASSED\b"), "COLOR_OK"),
-    (re.compile(r"NOTE\b|\[\d+/\d+\] |%s" % _PHASE.pattern), "PROGRESS"),
-    # the waits for nodes down, for a node to be NORMAL, outside a rolling operation (no [i/n])
-    (re.compile(r"\S.*  (waiting for .*  \d+[smhd]\S*/\d+[smhd]\S*|(all back|NORMAL) after \d\S*)$"), "PROGRESS"),
+    (re.compile(r"NOTE\b|\[\d+/\d+\] |%s|%s" % (_PHASE.pattern, _BANNER.pattern)), "PROGRESS"),
+    (_WAIT, "PROGRESS"),
 )
 # a mark anywhere in a line, its own colour over the one of the line it is indented under (that line only):
 # a node down, a stalled peer, a setting that differs, what a node would get or got, what a reset deletes
@@ -192,9 +199,15 @@ _HEADED = re.compile(r"(PLAN|REFUSED|READY|NOTHING TO DO)  |IMPORT \S+ |(add_nod
 _RECAP = re.compile(r"(DONE|FAILED|CHECK|HEALTHY|NOT HEALTHY|NOTHING TO DO)  ")
 # a verdict block without rules, coloured by its lines (its blank lines blank): import_cluster's failed self-check
 _BLOCK = re.compile(r"SELF-CHECK FAILED  ")
-_STEP = re.compile(r"(\[\d+/\d+\] \S+ \S+)")
-# the run's first line, the cluster it is on: said again as its last line
-_CLUSTER = re.compile(r"CLUSTER \S+ \(.*\) \| chosen by: ")
+# a progress line: a step of a rolling operation ("[2/5] node2  restart  ..."), or a wait outside one (_WAIT); the
+# other lines of its message, indented, are the other ends of its streams
+_STEP = re.compile(r"\[\d+/\d+\] \S+  ")
+# a progress line still going, rewritten in place on a terminal: a bar, a wait, a pause; any other is frozen (the
+# step over, STALLED, FAILED...)
+_GOING = re.compile(r"  (\[[#-]+\]|waiting\b|no progress\b|all sent, finishing)")
+# the figures of a progress line (a bar, a duration, a size, a speed, a percent, a time): without them, its state
+_FIGURES = re.compile(r"\[[#-]+\]|(?:\d+[smhd])+\b|[\d.:,]+(?:\s*(?:[KMGT]iB(?:/s)?|%))?")
+LOG_EVERY = 300  # seconds between two lines of a step going on, in a log or a pipe (a change of state: at once)
 # the status playbook's verdict, its last line or the one above a ring that differs: heavy rules around them
 _RING_VERDICT = re.compile(r"ALL \d+ NODES? UP\b|\d+ NODES? (DOWN|NOT REACHED): ")
 _RING_DIFFER = re.compile(r"WARNING - ring and inventory differ$")
@@ -397,6 +410,32 @@ def drop_typeahead():
         pass  # no terminal (or not ours): nothing typed to drop
 
 
+def on_terminal():
+    """True when the run's output is a terminal (a line can be rewritten in place), not a file or a pipe."""
+    try:
+        return os.isatty(sys.stdout.fileno())
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def rows(texts, columns):
+    """The rows of the terminal (columns wide) the lines take, a long one wrapped by the terminal."""
+    return sum(max(1, (len(text) + columns - 1) // columns) for text in texts)
+
+
+def progress_state(line):
+    """A progress line without its figures (bars, sizes, speeds, durations, percents and times as "#"): what is
+    left changes when its state does (the streams start, STALLED, the step over)."""
+    return " ".join(_FIGURES.sub("#", line).split())
+
+
+def is_progress(texts):
+    """True when the lines are a progress message: its first a progress line, the others blank or indented under
+    it (the other ends of the streams)."""
+    said = [t for t in texts if t.strip()]
+    return bool(said) and bool(_STEP.match(said[0]) or _WAIT.match(said[0])) and all(t[:1] == " " for t in said[1:])
+
+
 def lines(msg):
     """A msg as the lines to print: a list one item per line, a string split
     on its newlines, anything else as text."""
@@ -423,7 +462,10 @@ class CallbackModule(DefaultCallback):
         self._looping = False  # the items of a loop with a gap: one blank line, before the first
         self._verdicts = set()  # the run_once verdicts printed: (task, lines)
         self._ruled = ""  # the rule just printed, if any
-        self._cluster = ""  # the line naming the run's cluster, said again at the end
+        self._tty = on_terminal()  # a progress line is rewritten in place
+        self._clock = time.time
+        self._live = None  # (the node of the progress block printed last, its rows): rewritten by its next one
+        self._said = (None, None, 0)  # (node, state, when) of the progress line last given to the log or the pipe
         self._progress = PROGRESS_COLOR
         self._warning = C.COLOR_WARN
 
@@ -452,7 +494,7 @@ class CallbackModule(DefaultCallback):
             self._display.display(plain, log_only=True)
         else:
             self._display.display(line, color=color)
-        self._blank, self._ruled = not line, ""
+        self._blank, self._ruled, self._live = not line, "", None
 
     def _width(self):
         """The width of the rules and the help text: rule_width of the
@@ -474,7 +516,7 @@ class CallbackModule(DefaultCallback):
                 self._display.display("")  # text never touches a rule: a blank line above it, one under it
             self._display.display(line)
             self._display.display("")
-        self._ruled, self._blank = line, True
+        self._ruled, self._blank, self._live = line, True, None
 
     def _print_help(self, msg):
         """The help playbook's text: its rules drawn as the other rules, its
@@ -497,18 +539,16 @@ class CallbackModule(DefaultCallback):
 
     def _print(self, msg, color=None, info=False):
         texts = lines(msg)
+        if color is None and is_progress(texts):
+            return self._progress_block(texts)
         first = next((t for t in texts if t.strip()), "")
-        headed, recap, step = _HEADED.match(first), _RECAP.match(first), _STEP.match(first)
-        if _CLUSTER.match(first):
-            self._cluster = first
+        headed, recap = _HEADED.match(first), _RECAP.match(first)
         phase = sum(1 for t in texts if t.strip()) == 1 and _PHASE.match(first)  # a blank line above and under it
         texts, ring = _ring_verdict(apart(texts))  # the status report: a screen, its verdict last, printed between rules
         if ring:
-            headed = recap = step = phase = None  # its first line is the cluster's name, whatever that name is
+            headed = recap = phase = None  # its first line is the cluster's name, whatever that name is
         if headed or recap or ring:
             self._rule(heavy=True)
-        elif self._gap and step:
-            self._rule(text=step.group(1))
         elif self._gap or phase:
             self._line("")
         self._gap = False
@@ -521,6 +561,51 @@ class CallbackModule(DefaultCallback):
             self._rule(heavy=True)
         elif phase:
             self._gap = True
+        return None
+
+    def _progress_block(self, texts):
+        """A node's progress line, the other ends of its streams under it. On a terminal, rewritten in place
+        while the step goes on (the previous block of the same node cleared first); a frozen line (the step over,
+        STALLED, FAILED: not _GOING) replaces the going block and stays; the block of another node starts under
+        what is there. In a log or a pipe: the first line of a node, then one every LOG_EVERY seconds and every
+        change of state (a terminal's log file gets those too)."""
+        texts = [t if t.strip() else "" for t in texts]
+        while texts and not texts[-1]:
+            texts.pop()
+        node, state, now = texts[0].split("  ", 1)[0], progress_state(texts[0]), self._clock()
+        logged = (node, state) != self._said[:2] or now - self._said[2] >= LOG_EVERY
+        if logged:
+            self._said = (node, state, now)
+        hue = colour(texts[0], None, self._progress, self._warning)
+        shaded = [(t, colour(t, hue, self._progress, self._warning) if t[:1] == " " else hue) for t in texts]
+        if not self._tty:
+            if logged:
+                if self._gap:
+                    self._line("")
+                for text, tint in shaded:
+                    self._line(text, color=tint)
+            self._gap = False
+            return None
+        if self._live and self._live[0] == node:
+            sys.stdout.write("\x1b[%dA\r\x1b[J" % self._live[1])  # up to the block's first row, cleared to the end
+        elif self._gap and not self._blank:
+            sys.stdout.write("\n")
+        for text, tint in shaded:
+            sys.stdout.write((stringc(text, tint) if tint and text else text) + "\n")
+        sys.stdout.flush()
+        if logged:
+            for text, dummy in shaded:
+                self._display.display(text, log_only=True)
+        self._blank, self._ruled, self._gap = False, "", False
+        self._live = (node, rows(texts, self._columns())) if _GOING.search(texts[0]) else None
+        return None
+
+    def _columns(self):
+        """The terminal's columns (80 when it does not say), to count the rows a progress block takes."""
+        try:
+            return os.get_terminal_size(1).columns or 80
+        except (AttributeError, OSError, ValueError):
+            return 80
 
     def _print_lines(self, texts, first, headed, recap, color, info):
         """A message's lines, each in its colour (its own mark, else the one of the less indented line above it);
@@ -547,8 +632,8 @@ class CallbackModule(DefaultCallback):
                 shades = []
 
     def _shown(self):
-        """Something else printed a line: a blank line may follow."""
-        self._blank, self._ruled = False, ""
+        """Something else printed a line: a blank line may follow, a progress block above is left as it is."""
+        self._blank, self._ruled, self._live = False, "", None
 
     def _default(self, name, *args):
         """The default callback's output (its task header without a second blank line above)."""
@@ -756,7 +841,4 @@ class CallbackModule(DefaultCallback):
         drop_typeahead()  # the run is over: the shell reads the terminal next
         if self._verbose():
             return super(CallbackModule, self).v2_playbook_on_stats(stats)
-        if self._cluster:  # the last line: the cluster the run was on
-            self._line("")
-            self._line(self._cluster, color=self._progress)
         return None
