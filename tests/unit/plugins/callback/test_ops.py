@@ -502,8 +502,8 @@ def test_never_two_blank_lines_around_pauses_diffs_loops_and_failures(tmp_path):
 def test_colours_by_line_start():
     from ansible import constants as C
     from ansible_collections.community.cassandra.plugins.callback.ops import colour
-    assert colour("WARNING - seeds: dc1 has one seed") == C.COLOR_WARN  # Ansible's own (option warning_color)
-    assert colour("WARNING - x", warning="bright yellow") == "bright yellow"
+    assert colour("WARNING  seeds: dc1 has one seed") == C.COLOR_WARN  # Ansible's own (option warning_color)
+    assert colour("WARNING  x", warning="bright yellow") == "bright yellow"
     assert colour("         its next line", above=C.COLOR_CHANGED) == C.COLOR_CHANGED  # indented: as the line above
     assert colour("DONE  topology  my_cluster") == colour("HEALTHY  my_cluster") == C.COLOR_OK
     assert colour("NOT HEALTHY  my_cluster") == colour("REFUSED  topology") == C.COLOR_ERROR
@@ -520,6 +520,48 @@ def test_colours_by_line_start():
     assert colour("NOTE  x", progress="bright blue") == "bright blue"
     assert colour(u"READY \u2014 nothing to change") == C.COLOR_OK
     assert colour("dc1 after:  6 nodes") is None and colour("  1.  add node5") is None
+
+
+def test_the_plan_title_and_the_stop_block_are_blocks_of_their_own():
+    """A plan's title (the operation in capitals, two spaces) heads a screen: a heavy rule above it, the title in the
+    progress colour, its WARNING lines together; a stop block (STOPPED at ..., the nodes' table, WAY OUT  ...) is a
+    recap: heavy rules around it, red on its verdict line only; the health report's headings stay plain."""
+    from ansible import constants as C
+    from ansible_collections.community.cassandra.plugins.callback.ops import _HEADED, _RECAP, colour
+    for title in ("ADD NODE  node4 into dc1 of prod", "ROLLING RESTART  node1..node5 of prod, one node at a time",
+                  "TOPOLOGY  3 steps of prod", "APPLY CONFIG  2 nodes of prod", "UPGRADE  prod to 5.0.9",
+                  "DECOMMISSION NODE  remove node7", "REFUSED  import_cluster  nothing was written"):
+        assert _HEADED.match(title) and not _RECAP.match(title), title
+    for head in ("STOPPED at node2: node4 is DN", "FAILED at node2: a task failed", "WAY OUT  fix it, then resume:",
+                 "DONE  rolling_restart  prod  5 restarted  11m30s", "NOT HEALTHY  prod  3 nodes checked, 1 problem"):
+        assert _RECAP.match(head) and not _HEADED.match(head), head
+    assert colour("STOPPED at node2: node4 is DN") == C.COLOR_ERROR and colour("WAY OUT  start node4") is None
+    for heading in ("TO DO", "SETTINGS TO REVIEW", "CLOCKS  in sync: offset within 50 ms"):
+        assert colour(heading) is None and not _HEADED.match(heading) and not _RECAP.match(heading), heading
+
+    def printed(callback):
+        return [(line, color) for line, color, dummy in callback._display.shown if line.strip()]
+
+    def rule(line):
+        return re.match(r"^[-=]{4,}$", line)
+
+    plan = ["DECOMMISSION NODE  remove node7", "", "WARNING  replication: orders keeps 2 replicas",
+            "WARNING  not inside tmux or screen: if this SSH session drops, the run stops", "         (run it inside tmux)"]
+    callback = quiet_callback(tty=False)
+    callback._print(plan)
+    shown = printed(callback)
+    assert [line[0] for line, dummy in shown if rule(line)] == ["=", "-"]  # above the title, for its blank line
+    assert [x for x in shown if not rule(x[0])] == [(plan[0], "cyan"), (plan[2], C.COLOR_WARN), (plan[3], C.COLOR_WARN),
+                                                    (plan[4], C.COLOR_WARN)]
+    stop = ["STOPPED at node2: node4 is DN, seen from node1. No other node was touched.", "",
+            "  node1  restarted  1m50s", "  node2  not done  cluster unhealthy", "  node3..node5  not touched", "",
+            "WAY OUT  start node4 (the server, then Cassandra), then resume:",
+            "  ansible-playbook community.cassandra.rolling_restart -e cassandra_rolling_resume=true"]
+    callback = quiet_callback(tty=False)
+    callback._print(stop)
+    shown = printed(callback)
+    assert [line[0] for line, dummy in shown if rule(line)] == ["=", "-", "-", "="]
+    assert [x for x in shown if not rule(x[0])] == [(stop[0], C.COLOR_ERROR)] + [(line, None) for line in stop[2:5] + stop[6:]]
 
 
 def test_a_stalled_peer_line_red_the_others_as_the_progress_line():
@@ -643,7 +685,7 @@ def test_progress_on_a_terminal_counts_the_rows_of_long_lines_and_stops_at_other
     try:
         callback._print(going("node5", 50))  # 97 columns: 3 rows, the blank line 1, the other ends 1
         callback._print(going("node5", 51))
-        callback._line("WARNING - something else")  # the block above is left as it is
+        callback._line("WARNING  something else")  # the block above is left as it is
         callback._print(going("node5", 52))
     finally:
         sys.stdout = real
@@ -685,14 +727,14 @@ def test_status_verdict_and_table_rows_coloured():
         == colour(u"1 NODE DOWN: node1 (dc1/r1) \u2014 1 LEAVING: node3") == C.COLOR_ERROR
     assert colour("1 NODE NOT REACHED: node3") == colour("2 NODES NOT REACHED: node3, node4") == C.COLOR_ERROR
     # a ring that differs: a warning line of its own, under the nodes' line (coloured by the nodes alone)
-    assert colour("WARNING - ring and inventory differ") == C.COLOR_WARN  # Ansible's own (option warning_color)
+    assert colour("WARNING  ring and inventory differ") == C.COLOR_WARN  # Ansible's own (option warning_color)
     from ansible_collections.community.cassandra.plugins.callback.ops import _RING_DIFFER, _ring_verdict
     from ansible_collections.community.cassandra.plugins.filter.cassandra_ring import _DIFFER
     assert _RING_DIFFER.match(_DIFFER)  # the filter's line, the one the callback frames
-    verdict = ["ALL 5 NODES UP", "WARNING - ring and inventory differ"]
+    verdict = ["ALL 5 NODES UP", "WARNING  ring and inventory differ"]
     assert _ring_verdict(["c", "", "1 NODE NOT REACHED: node3", ""]) == (["c"], ["1 NODE NOT REACHED: node3"])
     assert _ring_verdict(["c", "", "notes", ""] + verdict + [""]) == (["c", "", "notes"], verdict)
-    texts = ["c", "", "WARNING - ring and inventory differ"]  # no verdict above it: not the status report
+    texts = ["c", "", "WARNING  ring and inventory differ"]  # no verdict above it: not the status report
     assert _ring_verdict(texts) == (texts, [])
     # the table rows by their state, never by the line above (a UN row under a DN one stays plain)
     assert colour(u" DN  10.0.0.5  5.25 GiB  16  22.5%  1e96  r1  node1  \u2190 down") == C.COLOR_ERROR
@@ -714,13 +756,13 @@ def test_colours_on_a_terminal_only(tmp_path):
   tasks:
     - name: Lines
       ansible.builtin.debug:
-        msg: ["WARNING - w", "plain"]
+        msg: ["WARNING  w", "plain"]
       vars:
         cassandra_output: true
 """
     rc, output = run(tmp_path, playbook, ANSIBLE_NOCOLOR="0", ANSIBLE_FORCE_COLOR="1")
     assert rc == 0, output
-    assert re.search("\x1b\\[[0-9;]+mWARNING - w\x1b\\[0m", output) and "\nplain" in output, repr(output)
+    assert re.search("\x1b\\[[0-9;]+mWARNING  w\x1b\\[0m", output) and "\nplain" in output, repr(output)
     rc, output = run(tmp_path, playbook)  # ANSIBLE_NOCOLOR
     assert rc == 0 and "\x1b" not in output, repr(output)
 
@@ -732,7 +774,7 @@ def test_an_informative_summary_in_the_progress_colour(tmp_path):
   tasks:
     - name: Summary
       ansible.builtin.debug:
-        msg: ["Data disks: set now on 1 node", "  node1:", "    /data -> sdb", "WARNING - lvchange failed (node1)"]
+        msg: ["Data disks: set now on 1 node", "  node1:", "    /data -> sdb", "WARNING  lvchange failed (node1)"]
       vars:
         cassandra_output: true
         cassandra_output_info: true
@@ -747,7 +789,7 @@ def test_an_informative_summary_in_the_progress_colour(tmp_path):
     assert rc == 0, output
     for line in ("Data disks: set now on 1 node", "  node1:", "    /data -> sdb"):
         assert "\x1b[0;36m%s\x1b[0m" % line in output, repr(output)
-    assert re.search("\x1b\\[1;35mWARNING - lvchange failed \\(node1\\)\x1b\\[0m", output), repr(output)
+    assert re.search("\x1b\\[1;35mWARNING  lvchange failed \\(node1\\)\x1b\\[0m", output), repr(output)
     assert "\nplain" in output, repr(output)
 
 
@@ -904,18 +946,18 @@ def test_the_status_verdict_and_its_warning_between_rules(tmp_path):
       ansible.builtin.debug:
         msg: ["my_cluster  (ring and inventory differ, 4 nodes)", "", "Datacenter: dc1", "",
               "In the ring, not in the inventory: 10.0.0.9 (dc1, UN)", "",
-              "ALL 4 NODES UP", "WARNING - ring and inventory differ"]
+              "ALL 4 NODES UP", "WARNING  ring and inventory differ"]
       vars:
         cassandra_output: true
 """
     rc, output = run(tmp_path, playbook)
     assert rc == 0 and "\x1b" not in output, repr(output)
     assert shown(output)[-9:] == ["In the ring, not in the inventory: 10.0.0.9 (dc1, UN)", "",
-                                  "====", "", "ALL 4 NODES UP", "WARNING - ring and inventory differ", "", "====", ""]
+                                  "====", "", "ALL 4 NODES UP", "WARNING  ring and inventory differ", "", "====", ""]
     rc, output = run(tmp_path, playbook, ANSIBLE_NOCOLOR="0", ANSIBLE_FORCE_COLOR="1")
     assert rc == 0, output
     # the nodes' line green, the warning in the warning colour
-    assert "\x1b[0;32mALL 4 NODES UP\x1b[0m\n\x1b[1;35mWARNING - ring and inventory differ\x1b[0m" in output, \
+    assert "\x1b[0;32mALL 4 NODES UP\x1b[0m\n\x1b[1;35mWARNING  ring and inventory differ\x1b[0m" in output, \
         repr(output)
 
 
@@ -974,7 +1016,7 @@ def test_air_around_rules_phases_and_paragraphs(tmp_path):
         cassandra_output_gap: true
     - name: A screen
       ansible.builtin.debug:
-        msg: ["add_node on cluster 'c': add node4", "", "one", " ", "two", "", "  node4", "    its line"]
+        msg: ["ADD NODE  node4 into dc1 of c", "", "one", " ", "two", "", "  node4", "    its line"]
       vars:
         cassandra_output: true
         cassandra_output_gap: true
@@ -987,7 +1029,7 @@ def test_air_around_rules_phases_and_paragraphs(tmp_path):
     rc, output = run(tmp_path, playbook)
     assert rc == 0, output
     assert shown(output) == ["Checking the cluster (3 nodes)...", "", "Checking the new nodes (node4)...", "", "====", "",
-                             "add_node on cluster 'c': add node4", "", "----", "", "one", "", "two", "", "----", "",
+                             "ADD NODE  node4 into dc1 of c", "", "----", "", "one", "", "two", "", "----", "",
                              "  node4", "    its line", "after"]
 
 
@@ -1362,7 +1404,7 @@ def test_the_help_playbook_of_several_clusters_none_named(tmp_path):
     rc, output = run(tmp_path, "- import_playbook: community.cassandra.help\n", INVENTORY=str(tmp_path / "hosts.yml"))
     assert rc == 0, output
     plain = " ".join(output.replace(" \\\n", " ").split())  # (a command cut between its arguments: joined)
-    assert "Clusters found: cassandra (3 nodes, dc1), other (1 node, dc1)" in plain, output
+    assert "Clusters found: cassandra 3 nodes 1 DC (dc1), other 1 node 1 DC (dc1)" in plain, output
     assert "The help of one cluster: -e cassandra_hosts=CLUSTER_GROUP, or CASSANDRA_CLUSTER=<group or cluster name>" in plain
     assert "$ ansible-playbook -i hosts.yml community.cassandra.rolling_restart -e cassandra_hosts=CLUSTER_GROUP" in plain, output
     assert "Name the cluster for the advice of its inventory." in plain
@@ -1544,7 +1586,7 @@ def test_cassandra_hosts_of_a_playbook_taken_of_the_inventory_refused(tmp_path):
     (tmp_path / "hosts.yml").write_text(TWO_CLUSTERS)
     wrapper = "- import_playbook: community.cassandra.help\n  vars:\n    cassandra_hosts: dev\n"
     rc, output = run(tmp_path, wrapper, INVENTORY=str(tmp_path / "hosts.yml"))
-    assert rc == 0 and output.split("\n")[0] == "CLUSTER dev (1 node, dc1) | chosen by: -e cassandra_hosts", output
+    assert rc == 0 and output.split("\n")[0] == "dev  1 node  1 DC (dc1)", output
     (tmp_path / "group_vars").mkdir()
     (tmp_path / "group_vars" / "all.yml").write_text("cassandra_hosts: dev\n")
     rc, output = run(tmp_path, "- import_playbook: community.cassandra.help\n", INVENTORY=str(tmp_path / "hosts.yml"))
@@ -1553,4 +1595,4 @@ def test_cassandra_hosts_of_a_playbook_taken_of_the_inventory_refused(tmp_path):
         " Give it on the command line, -e cassandra_hosts=dev, or CASSANDRA_CLUSTER=dev in your shell."), output
     rc, output = run(tmp_path, "- import_playbook: community.cassandra.help\n", "-e", "cassandra_hosts=prod",
                      INVENTORY=str(tmp_path / "hosts.yml"))
-    assert rc == 0 and output.split("\n")[0].startswith("CLUSTER prod (1 node, dc1)"), output
+    assert rc == 0 and output.split("\n")[0].startswith("prod  1 node  1 DC (dc1)"), output

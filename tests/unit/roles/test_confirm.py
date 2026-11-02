@@ -304,11 +304,14 @@ def test_ops_callback_blocks_one_blank_line_apart(tmp_path):
     # the screen, the question, the answer, the progress and the recap: one blank line between two blocks
     rules = [re.sub(r"^([-=])\1{3,}$", lambda m: m.group(1) * 4, re.sub(r" -{4,}$", " ----", line))
              for line in on_screen(output.strip())]
-    # (the rules around the plan: the ops callback's own pass of the redesign, part B)
     assert rules == [
         "Reset of node5:",
         "",
+        "====",  # the plan: a heavy rule above its title, a light one for each blank line inside
+        "",
         "DECOMMISSION NODE  remove node7",
+        "",
+        "----",
         "",
         "WARNING  replication: orders keeps 2 replicas",  # the warnings together, one under the other
         "WARNING  not inside tmux or screen: if this SSH session drops, the run stops (the operation itself",

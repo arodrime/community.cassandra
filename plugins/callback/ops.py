@@ -30,11 +30,11 @@ description:
   - The operator messages are coloured by the start of their lines (Ansible's colours, so C(ANSIBLE_NOCOLOR),
     C(ANSIBLE_FORCE_COLOR) and a non-terminal output apply). C(WARNING) in O(warning_color), indented or not; C(DONE), C(HEALTHY),
     C(NOTHING TO DO), C(READY), C(IMPORT ... PASSED) and a C(CHECK) with nothing left to do as ok; a C(CHECK) that
-    says what a real run C(would) do as a change; C(REFUSED), C(FAILED), C(NOT HEALTHY), C(IMPORT ... FAILED),
-    C(SELF-CHECK FAILED), a
+    says what a real run C(would) do as a change; C(REFUSED), C(FAILED), C(STOPPED), C(NOT HEALTHY),
+    C(IMPORT ... FAILED), C(SELF-CHECK FAILED), a
     C(CHECK) with a node that C(failed) and a progress line that stalled or failed as an error; C(NOTE), the
     progress lines (C([1/2] node5 ...), and the waits for nodes down or a node to be NORMAL, C(... waiting for ...  1m30s/10m)),
-    the phase lines (ending with C(...)) and the first line of a plan or a screen (C(PLAN  ...), C(add_node on cluster ...))
+    the phase lines (ending with C(...)) and the first line of a plan or a screen (C(PLAN  ...), C(ADD NODE  ...))
     in O(progress_color). The lines of an informative summary
     (a task that also sets the task variable C(cassandra_output_info) to C(true), a literal like C(cassandra_output))
     in O(progress_color) too, but for its C(WARNING) lines and its lines with a mark of their own. The lines
@@ -44,19 +44,19 @@ description:
     (C(← differs)), a reset (C(will be reset)) and what it
     deletes (C(DELETED)) as a change, wherever they are; what a node would get or got as a change too, on a line
     of its own, not indented (apply_config's C(node1  would apply, then restart), C(node1  will apply), C(node1  applied))). The rows of
-    a C(FAILED) recap do not keep its colour (the nodes done stay plain). The C(status)
+    a C(FAILED) or C(STOPPED) recap do not keep its colour (the nodes done stay plain). The C(status)
     playbook's verdict, C(ALL 5 NODES UP), as ok, followed by nodes joining, leaving or moving (C(1 JOINING))
     as a change, C(1 NODE DOWN), C(1 NODE NOT REACHED) as an error; a ring that differs from the inventory, a
-    C(WARNING - ...) line under the verdict, as a warning; the rows of its table (C( DN  10.0.0.5 ...)) by the
+    C(WARNING  ...) line under the verdict, as a warning; the rows of its table (C( DN  10.0.0.5 ...)) by the
     node's state, down as an error, joining, leaving or moving as a change. The messages themselves stay plain text.
   - Rules mark the blocks out. A heavy one (C(=====)) above a plan or a screen (its first line C(PLAN  ...),
-    C(REFUSED  ...), C(READY  ...), C(IMPORT <cluster> ...), or an operation's screen header) and around a recap (C(DONE  ...),
-    C(FAILED  ...), C(CHECK  ...), C(NOTHING TO DO  ...), C(HEALTHY  ...), C(NOT HEALTHY  ...)), above the C(status) playbook's report and around its
+    C(REFUSED  ...), C(READY  ...), C(IMPORT <cluster> ...), or a plan's title, the operation in capitals (C(ADD NODE  ...)))
+    and around a recap (C(DONE  ...), C(FAILED  ...), C(STOPPED at ...), C(WAY OUT  ...), C(CHECK  ...), C(NOTHING TO DO  ...),
+    C(HEALTHY  ...), C(NOT HEALTHY  ...)), above the C(status) playbook's report and around its
     verdict, its last line (and the warning under it). A light one (C(-----)) for each empty line inside them (the blank lines of the status
     report stay blank), under a plan's first line and above a question. As wide as the terminal, 100 columns at most, a
     blank line above and under each one. A line with only a space inside them separates two paragraphs of a block,
-    printed blank (not as a rule). Two warnings in a row (a C(WARNING - ...) line right under another one or its
-    indented lines) are a blank line apart, but for the rows of a table (columns two spaces apart).
+    printed blank (not as a rule).
   - The text of the C(help) playbook (a message with the task variable C(cassandra_output_help) set to C(true) too)
     is laid out at the terminal's width (100 columns at most), its sections between rules, each operation's
     name as ok, its commands (C($ ansible-playbook ...)) and the options of its commands in O(progress_color), what
@@ -127,7 +127,7 @@ from ansible import constants as C
 from ansible.utils.color import parsecolor, stringc
 
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import (
-    BULLET, FLOW, PARAGRAPH, is_command, laid_out)
+    BULLET, FLOW, is_command, laid_out)
 
 MARKER = "cassandra_output"
 GAP = "cassandra_output_gap"  # a blank line before the next operator message
@@ -167,7 +167,7 @@ PLAN_COLOUR = "PROGRESS"
 _WARNING = re.compile(r"WARNING\b")  # wherever it is indented
 # the colour of a message line by its start, the lines indented under it the same
 _COLOURS = (
-    (re.compile(r"(REFUSED|FAILED|NOT HEALTHY|UNREACHABLE|SELF-CHECK FAILED)\b"), "COLOR_ERROR"),
+    (re.compile(r"(REFUSED|FAILED|STOPPED|NOT HEALTHY|UNREACHABLE|SELF-CHECK FAILED)\b"), "COLOR_ERROR"),
     (re.compile(r"\[\d+/\d+\] .*\b(STALLED|FAILED|TOO LONG|STOPPED|REFUSED)\b"), "COLOR_ERROR"),
     (re.compile(r"\d+ NODES? (DOWN|NOT REACHED): "), "COLOR_ERROR"),  # the status verdict
     (re.compile(r"IMPORT \S+ .*\bFAILED\b|CHECK\b.*\bfailed\b"), "COLOR_ERROR"),
@@ -192,11 +192,14 @@ _MARKS = (
 PROGRESS_COLOR = "cyan"  # the progress, phase and NOTE lines (option progress_color)
 
 
-# a plan or a screen (its first line), a recap, a progress line
-_HEADED = re.compile(r"(PLAN|REFUSED|READY|NOTHING TO DO)  |IMPORT \S+ |(add_node|replace_node|decommission_node|remove_dead_node|"
-                     r"reset_node|move_node|stop_rack|start_rack|change_seeds|apply_config|update_java|sync_clocks|add_datacenter|"
-                     r"remove_datacenter|create_cluster|upgrade|cleanup|topology|rolling_restart|rolling_reboot)( on cluster |: |$)")
-_RECAP = re.compile(r"(DONE|FAILED|CHECK|HEALTHY|NOT HEALTHY|NOTHING TO DO)  ")
+# the operations with a plan: its title is the operation in capitals ("ADD NODE  node4 into dc1 of my_cluster")
+_OPERATIONS = ("add_node", "replace_node", "decommission_node", "remove_dead_node", "reset_node", "move_node", "stop_rack",
+               "start_rack", "change_seeds", "apply_config", "update_java", "sync_clocks", "add_datacenter",
+               "remove_datacenter", "create_cluster", "upgrade", "cleanup", "topology", "rolling_restart", "rolling_reboot")
+# a plan or a screen (its first line), a recap (a stop block: "STOPPED at node2: ...", "WAY OUT  ..." too)
+_HEADED = re.compile(r"(PLAN|REFUSED|READY|NOTHING TO DO|%s)  |IMPORT \S+ " % "|".join(
+    operation.replace("_", " ").upper() for operation in _OPERATIONS))
+_RECAP = re.compile(r"(DONE|FAILED|CHECK|HEALTHY|NOT HEALTHY|NOTHING TO DO|WAY OUT)  |(STOPPED|FAILED) at ")
 # a verdict block without rules, coloured by its lines (its blank lines blank): import_cluster's failed self-check
 _BLOCK = re.compile(r"SELF-CHECK FAILED  ")
 # a progress line: a step of a rolling operation ("[2/5] node2  restart  ..."), or a wait outside one (_WAIT); the
@@ -210,7 +213,7 @@ _FIGURES = re.compile(r"\[[#-]+\]|(?:\d+[smhd])+\b|[\d.:,]+(?:\s*(?:[KMGT]iB(?:/
 LOG_EVERY = 300  # seconds between two lines of a step going on, in a log or a pipe (a change of state: at once)
 # the status playbook's verdict, its last line or the one above a ring that differs: heavy rules around them
 _RING_VERDICT = re.compile(r"ALL \d+ NODES? UP\b|\d+ NODES? (DOWN|NOT REACHED): ")
-_RING_DIFFER = re.compile(r"WARNING - ring and inventory differ$")
+_RING_DIFFER = re.compile(r"WARNING  ring and inventory differ$")
 # a row of the status playbook's nodetool table: its colour by the node's state
 _RING_ROW = re.compile(r" ([UD])([NJLM])  \S")
 # the help playbook's text: a rule naming a section, an operation (its key), a command
@@ -272,30 +275,6 @@ def _under(shades, line):
     last line less indented than it)."""
     indent = _indent(line)
     return [s for s in shades if s[0] < indent] if line[:1] in (" ", "\t") and line.strip() else []
-
-
-_OUR_WARNING = re.compile(r"\s*WARNING - ")
-_ROW = re.compile(r"\s*WARNING - \S.*\S  +\S")  # a table's row (its columns two spaces apart): "WARNING - Seeds  dc2  ..."
-
-
-def apart(texts):
-    """The lines of a message, two warnings in a row a blank line (PARAGRAPH)
-    apart: a WARNING - line right under another one, or under its indented
-    lines (its continuation); not two rows of a table."""
-    shown, warned, row = [], None, False  # the indent of the warning the line above is part of; that line a row
-    for line in texts:
-        indent = _indent(line)
-        if _OUR_WARNING.match(line):
-            is_row = bool(_ROW.match(line))
-            if warned is not None and not (row and is_row):
-                shown.append(PARAGRAPH)
-            warned, row = indent, is_row
-        elif not line.strip() or warned is None or indent <= warned:
-            warned, row = None, False
-        else:
-            row = False  # a continuation: the warning above is not a row
-        shown.append(line)
-    return shown
 
 
 def _known(given):
@@ -544,7 +523,7 @@ class CallbackModule(DefaultCallback):
         first = next((t for t in texts if t.strip()), "")
         headed, recap = _HEADED.match(first), _RECAP.match(first)
         phase = sum(1 for t in texts if t.strip()) == 1 and _PHASE.match(first)  # a blank line above and under it
-        texts, ring = _ring_verdict(apart(texts))  # the status report: a screen, its verdict last, printed between rules
+        texts, ring = _ring_verdict(texts)  # the status report: a screen, its verdict last, printed between rules
         if ring:
             headed = recap = phase = None  # its first line is the cluster's name, whatever that name is
         if headed or recap or ring:
@@ -623,8 +602,8 @@ class CallbackModule(DefaultCallback):
                 hue = self._progress
             if hue is None and headed and not recap and i == texts.index(first):  # a plan's or a screen's first line
                 hue = shade(PLAN_COLOUR, self._progress, self._warning)
-            # an indented line's own mark: that line only; a FAILED recap: its rows by their own marks
-            failed = recap and i == texts.index(first) and first.startswith("FAILED")
+            # an indented line's own mark: that line only; a FAILED or STOPPED recap: its rows by their own marks
+            failed = recap and i == texts.index(first) and first.startswith(("FAILED", "STOPPED"))
             shades.append((_indent(line), None if failed else (above if _indent(line) and not color else hue)))
             self._line(line, color=hue)
             if headed and first.startswith("PLAN") and i == texts.index(first) and i + 1 < len(texts) and texts[i + 1].strip():

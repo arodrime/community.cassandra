@@ -225,10 +225,10 @@ def test_the_progress_lines_are_coloured_as_progress():
     assert colour("node2  cluster check  all back after 40s") == PROGRESS_COLOR
     assert colour("[2/5] node2  restart  waiting  node2 is DN, waiting for it to come back; nodetool status on node2 does"
                   " not answer (JMX: Connection refused)  10s/10m") == PROGRESS_COLOR
-    # the screens' first lines: a block of their own
+    # the plans' titles: a block of their own
     from ansible_collections.community.cassandra.plugins.callback.ops import _HEADED
-    assert _HEADED.match("rolling_reboot on cluster 'Orders': reboot node1..node3, one host at a time")
-    assert _HEADED.match("rolling_restart on cluster 'Orders': restart node1..node3, one node at a time")
+    assert _HEADED.match("ROLLING REBOOT  node1..node3 of Orders, one host at a time")
+    assert _HEADED.match("ROLLING RESTART  node1..node3 of Orders, one node at a time")
 
 
 HEALTH = load("roles", "cassandra_operation", "tasks", "cluster_health.yml")

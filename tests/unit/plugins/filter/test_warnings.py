@@ -140,8 +140,6 @@ def _files():
             rel_root = os.path.relpath(root, TOP)
             if rel_root.startswith(os.path.join("tests", "output")):
                 continue  # ansible-test's own (its virtualenvs)
-            if rel_root in (os.path.join("plugins", "callback"), os.path.join("tests", "unit", "plugins", "callback")):
-                continue  # the ops callback: its own pass of the output redesign (part B)
             for name in files:
                 rel = os.path.relpath(os.path.join(root, name), TOP)
                 # Cassandra's own words (its cassandra.yaml templates)
