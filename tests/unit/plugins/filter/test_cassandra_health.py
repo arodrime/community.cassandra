@@ -456,6 +456,28 @@ def test_report_each_problem_once_with_who_saw_it():
     ]
 
 
+def test_report_a_clock_not_in_sync_once_with_the_way_out():
+    # the clocks finding (cassandra_clock_health) set on every node: one row, its command in the TO DO
+    ring = [node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.3")]
+    clocks = {"kind": "clocks", "text": "n2 OFF, n3 NO TIME SYNC (CLOCKS above says why)",
+              "command": "ansible-playbook -i inv.yml community.cassandra.sync_clocks --check"}
+    per_host = dict((h, findings(h, [view(h, *ring)]) + [clocks]) for h in ("n1", "n2", "n3"))
+    report = cassandra_health_report(per_host, "my_cluster", ["n1", "n2", "n3"], names=NAMES, members=3)
+    assert report["healthy"] is False and report["problems"] == 1
+    assert report["lines"] == [
+        "NOT HEALTHY  my_cluster  3 nodes checked, 1 problem",
+        "  clocks:  n2 OFF, n3 NO TIME SYNC (CLOCKS above says why)",
+        "TO DO",
+        "  1. bring the clocks in sync (sync_clocks; --check first shows what it would do and changes nothing):",
+        "     ansible-playbook -i inv.yml community.cassandra.sync_clocks --check",
+    ]
+    # with a node down too: the clocks after the ring, their item last
+    per_host["n1"] = findings("n1", [view("n1", node("10.0.0.1"), node("10.0.0.2", status="D"), node("10.0.0.3"))]) + [clocks]
+    lines = cassandra_health_report(per_host, "my_cluster", ["n1", "n2", "n3"], names=NAMES, members=3)["lines"]
+    assert lines[1].startswith("  ring:    n2 10.0.0.2 (r1) DN") and lines[2].startswith("  clocks:  n2 OFF")
+    assert lines[-2].startswith("  2. bring the clocks in sync")
+
+
 def test_report_an_unreachable_host_known_by_no_address_taken_for_the_one_node_down():
     # no ansible_host, no facts (Ansible reached it by name): its ring entry is the one no host has
     ring = [node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.4", status="D")]

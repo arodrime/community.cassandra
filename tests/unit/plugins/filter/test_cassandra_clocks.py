@@ -10,9 +10,9 @@ import pytest
 from ansible.errors import AnsibleFilterError
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_clocks import (
-    cassandra_clock_in_sync, cassandra_clock_lines, cassandra_clock_probe, cassandra_clock_refusal,
-    cassandra_clock_settled, cassandra_clock_verdicts, cassandra_clock_wait_line, parse_chrony_sources,
-    parse_chrony_tracking, parse_ntpq, parse_timesync)
+    cassandra_clock_health, cassandra_clock_in_sync, cassandra_clock_lines, cassandra_clock_probe,
+    cassandra_clock_refusal, cassandra_clock_settled, cassandra_clock_verdicts, cassandra_clock_wait_line,
+    parse_chrony_sources, parse_chrony_tracking, parse_ntpq, parse_timesync)
 
 TRACKING_SYNCED = """\
 Reference ID    : C0000201 (192.0.2.1)
@@ -510,6 +510,42 @@ def test_refusal_under_check():
     assert cassandra_clock_refusal(v)[0] == "REFUSED  clocks  nothing was started"
     off = cassandra_clock_verdicts([node("node1", probe_text(tracking_text=tracking(1.0)))])
     assert cassandra_clock_refusal(off, check=True)[0] == "NOTE  clocks  a real run would refuse to start the nodes"
+
+
+def test_health_block_every_clock_in_sync():
+    # health_check's CLOCKS block: what in sync means, sync_clocks' table without its actions, no finding
+    v = cassandra_clock_verdicts([node("node1", probe_text()), node("node2", probe_text(tracking_text=tracking(0.004)))])
+    health = cassandra_clock_health(v, command="ansible-playbook -i inv.yml community.cassandra.sync_clocks")
+    assert health["finding"] is None
+    assert health["lines"] == [
+        "CLOCKS  in sync: synchronised to a source, offset plus the daemon's error bound within 50 ms"
+        " (cassandra_clock_max_offset_ms)",
+        "  node1  ok  chronyd, synchronised to 192.0.2.1, -0.0 ms (\u00b10.7 ms)",
+        "  node2  ok  chronyd, synchronised to 192.0.2.1, -4.0 ms (\u00b10.7 ms)"]
+    assert cassandra_clock_health(cassandra_clock_verdicts([node("node1", probe_text())], max_ms=120))["lines"][0].endswith(
+        "within 120 ms (cassandra_clock_max_offset_ms)")
+
+
+def test_health_block_a_clock_off_or_not_read_is_a_finding():
+    # the same verdict words as sync_clocks and the start refusal; the nodes not read listed last; the finding
+    # names them with sync_clocks --check as the way out
+    v = cassandra_clock_verdicts([node("node1", probe_text()), node("node2", probe_text(tracking_text=tracking(0.2, "fast"))),
+                                  node("node3", probe_text(active="", installed=("chronyd",), tracking_text=None))])
+    health = cassandra_clock_health(v, unread={"node4": "MODULE FAILURE"},
+                                    command="ansible-playbook -i inv.yml community.cassandra.sync_clocks")
+    lines = health["lines"]
+    assert lines[1] == "  node1  ok            chronyd, synchronised to 192.0.2.1, -0.0 ms (\u00b10.7 ms)"
+    assert lines[2] == ("  node2  OFF           chronyd, synchronised to 192.0.2.1, +200.0 ms (\u00b10.7 ms): ahead of its"
+                        " source by 200.0 ms, more than 50.0 ms")
+    assert lines[3].startswith("  node3  NO TIME SYNC  chronyd installed, not running")
+    assert lines[4] == "  node4  NOT READ      its clock could not be read: MODULE FAILURE"
+    assert lines[5].startswith("WARNING - node2's clock is AHEAD by about 200.0 ms")  # Cassandra runs there
+    assert "\u2192" not in "\n".join(lines)  # no action: health_check does nothing
+    assert health["finding"] == {
+        "kind": "clocks", "text": "node2 OFF, node3 NO TIME SYNC, node4 NOT READ (CLOCKS above says why)",
+        "command": "ansible-playbook -i inv.yml community.cassandra.sync_clocks --check"}
+    assert cassandra_clock_health({}, unread={"node1": ""})["finding"]["command"] == (
+        "ansible-playbook community.cassandra.sync_clocks --check")
 
 
 # --- found by the audit -------------------------------------------------------------------------------------------

@@ -251,6 +251,8 @@ def _finding_row(f, names):
                 f["on"])
     if kind == "schema":
         return "schema", ("schema", f["msg"]), "disagreement: %s" % f["msg"], None
+    if kind == "clocks":  # health_check's CLOCKS block (cassandra_clock_health): its key carries the way out
+        return "clocks", ("clocks", f["text"], f.get("command", "")), f["text"], None
     return "other", ("other", f.get("text")), f.get("text", ""), None
 
 
@@ -291,13 +293,18 @@ def _report_todo(rows, names, unreachable, absent, counted, topology_command):
         todo.append("reach %s over SSH, then run this again" % out.nodes(others))
     if any(k[0] == "streams" for k in rows):
         todo.append("wait for the streams to end (nodetool netstats), then run this again")
+    clocks = [k for k in rows if k[0] == "clocks"]
+    if clocks:
+        todo.append({"text": "bring the clocks in sync (sync_clocks; --check first shows what it would do and changes"
+                             " nothing)", "command": clocks[0][2]})
     return todo
 
 
 def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=None, names=None, members=None,
                             topology_command="", ring=None):
     """The health_check report. findings: {host: its
-    cassandra_health_findings} for the hosts checked; hosts: every host of
+    cassandra_health_findings, the clocks finding of cassandra_clock_health
+    among them} for the hosts checked; hosts: every host of
     the run; unreachable: the ones Ansible did not reach (or whose check
     did not run); absent: the hosts marked cassandra_node_state: absent;
     names: {address: inventory name}; members: the ring's size as a node
