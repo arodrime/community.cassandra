@@ -60,8 +60,25 @@
         cassandra_op_result: "{{ cassandra_service_node_action }} not finished: the run stopped at another node done at the same time"
       when: cassandra_service_node_batch | default(false) | bool
 
+    # a restart or a reboot: its step line at once ("[1/5] node1  restart  draining"), rewritten by its wait lines,
+    # replaced by its frozen done line (the ops callback)
+    - name: Say the step of {{ inventory_hostname }}
+      ansible.builtin.debug:
+        msg: >-
+          {{ '' | community.cassandra.cassandra_normal_wait_line(
+               what='draining', index=ansible_play_hosts_all.index(inventory_hostname) + 1 if _rolling else 0,
+               steps=ansible_play_hosts_all | length if _rolling else 0, node=inventory_hostname,
+               operation=cassandra_service_node_action) }}
+      when:
+        - not ansible_check_mode
+        - cassandra_service_node_action in ['restart', 'reboot']
+      vars:
+        cassandra_output: true  # a progress line (ops callback)
+        cassandra_output_gap: true  # a block of its own
+        _rolling: "{{ not cassandra_service_node_batch | default(false) | bool }}"
+
     # a phase line (ops callback): what is done to this node (a batch: to its nodes), none for a node already done;
-    # none for a restart or a reboot: their wait line says it
+    # none for a restart or a reboot: their step line says it
     - name: Say what is done to {{ inventory_hostname }}
       ansible.builtin.debug:
         msg: >-

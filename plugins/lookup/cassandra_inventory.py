@@ -227,7 +227,7 @@ def read(sources, given=None, basedir=None, env=None):
             value = by_name[host].get("cassandra_dc")
             return UNKNOWN if value == VAULTED or "{{" in str(value or "") else value
 
-        return cluster_line(group, why, [h["name"] for h in hosts], lambda h: by_name[h].get("cassandra_node_state"), dc)
+        return cluster_line(group, [h["name"] for h in hosts], lambda h: by_name[h].get("cassandra_node_state"), dc)
 
     model = {"sources": list(sources), "auto": auto, "env_cluster": "", "default_sources": [str(s) for s in C.DEFAULT_HOST_LIST or []],
              "default_sources_origin": _origin("DEFAULT_HOST_LIST"), "all_hosts": sorted(groups.get("all", []))}

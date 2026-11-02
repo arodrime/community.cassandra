@@ -255,39 +255,29 @@ def other_groups(groups, found):
     return sorted(n for n in _candidates(groups) if n not in found and not any(n.startswith(c + "_") for c in found))
 
 
-def cluster_line(group, why, hosts, state, dc):
-    """banner() for these hosts of the group (summary() alone when why is None): state(host) its
-    cassandra_node_state, dc(host) its cassandra_dc (UNKNOWN when only the node knows it: dc?; none: the
-    role's default, dc1)."""
+def cluster_line(group, hosts, state, dc):
+    """summary() for these hosts of the group: state(host) its cassandra_node_state, dc(host) its cassandra_dc
+    (UNKNOWN when only the node knows it: dc?; none: the role's default, dc1)."""
     gone = [h for h in hosts if str(state(h) or "").strip().lower() == "absent"]
     dcs = [dc(h) for h in hosts if h not in gone]
     dcs = ["dc?" if d is UNKNOWN else (d if d not in (None, "") else "dc1") for d in dcs]
-    if why is None:
-        return summary(group, len(hosts) - len(gone), dcs, len(gone))
-    return banner(group, why, len(hosts) - len(gone), dcs, len(gone))
+    return summary(group, len(hosts) - len(gone), dcs)
 
 
 # a banner names the datacenters up to this many; more: their count alone (the status playbook lists them)
 DCS_NAMED = 3
 
 
-def summary(group, nodes, dcs, absent=0):
-    """"prod  5 nodes  2 DCs (dc1, dc2)": the fields two spaces apart, as the ops callback reads the line; nodes,
-    how many hosts of the group are part of the cluster (the hosts marked cassandra_node_state=absent, absent,
-    are not counted nor said: the status playbook lists them); dcs: their datacenters (named up to DCS_NAMED,
-    counted beyond)."""
-    del absent
+def summary(group, nodes, dcs):
+    """The line the playbooks start with, "prod  5 nodes  2 DCs (dc1, dc2)": the fields two spaces apart, as the ops
+    callback reads the line; nodes, how many hosts of the group are part of the cluster (the hosts marked
+    cassandra_node_state=absent are not counted nor said: the status playbook lists them); dcs: their datacenters
+    (named up to DCS_NAMED, counted beyond)."""
     names = sorted(set(str(dc) for dc in dcs))
     count = "%d DC%s" % (len(names), "" if len(names) == 1 else "s")
     return "  ".join([group, "%d node%s" % (nodes, "" if nodes == 1 else "s"),
                       count if len(names) > DCS_NAMED or not names else "%s (%s)" % (count, ", ".join(names))])
 
-
-def banner(group, why, nodes, dcs, absent=0):
-    """The line the playbooks start with, summary(): the cluster, its nodes, its datacenters. why (how the group
-    was picked) is not said any more: -e cassandra_hosts and CASSANDRA_CLUSTER disagreeing is refused before."""
-    del why
-    return summary(group, nodes, dcs, absent)
 
 
 def not_given(given, loader, inventory=False):
@@ -357,6 +347,6 @@ class LookupModule(LookupBase):
         if refusal:
             return [""]
         if self.get_option("banner"):
-            return [cluster_line(group, why, list(groups.get(group) or []), lambda h: read(h, "cassandra_node_state"),
+            return [cluster_line(group, list(groups.get(group) or []), lambda h: read(h, "cassandra_node_state"),
                                  lambda h: read(h, "cassandra_dc"))]
         return ["%s (%s)" % (group, why) if self.get_option("explain") else group]

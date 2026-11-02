@@ -207,7 +207,7 @@ _BLOCK = re.compile(r"SELF-CHECK FAILED  ")
 _STEP = re.compile(r"\[\d+/\d+\] \S+  ")
 # a progress line still going, rewritten in place on a terminal: a bar, a wait, a pause; any other is frozen (the
 # step over, STALLED, FAILED...)
-_GOING = re.compile(r"  (\[[#-]+\]|waiting\b|no progress\b|all sent, finishing|STALLED \d)")
+_GOING = re.compile(r"  (\[[#-]+\]|waiting\b|no progress\b|all sent, finishing|STALLED \d|draining$)")
 # the figures of a progress line (a bar, a duration, a size, a speed, a percent, a time): without them, its state
 _FIGURES = re.compile(r"\[[#-]+\]|(?:\d+[smhd])+\b|[\d.:,]+(?:\s*(?:[KMGT]iB(?:/s)?|%))?")
 LOG_EVERY = 300  # seconds between two lines of a step going on, in a log or a pipe (a change of state: at once)

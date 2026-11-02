@@ -116,7 +116,7 @@ Conventions
   table with one word per node, the way out once, last, with the command to copy::
 
     STOPPED at node2: node4 (10.0.0.4, r1) is DN, seen from node1 and node2, 10m29s waited
-      (cassandra_service_health_timeout 600s). No other node was touched.
+      (cassandra_service_health_timeout 600s). No node after it was touched.
 
       node1         restarted    1m50s
       node2         not done     cluster unhealthy

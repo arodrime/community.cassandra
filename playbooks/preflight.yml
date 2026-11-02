@@ -67,6 +67,13 @@
           {{ out }}
 
     # also run by the first play, which --limit skips
+    # the run's first line, before any check or refusal: the cluster, its nodes and datacenters
+    - name: Say which cluster the run is on
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: cluster_banner.yml
+      tags: [always]  # under --tags too
+
     - name: Check cassandra_target_nodes
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation
@@ -214,18 +221,6 @@
              if _cassandra_preflight_running_nodes | length > 0 else {} }}
         cassandra_service_cluster_candidates: >-
           {{ [] if _cassandra_preflight_running_nodes | length > 0 else _cassandra_preflight_peers }}
-
-    # the run's first line: the cluster, its nodes and datacenters, the running version just read
-    - name: Say which cluster the run is on
-      ansible.builtin.include_role:
-        name: community.cassandra.cassandra_operation
-        tasks_from: cluster_banner.yml
-      tags: [always]  # under --tags too
-      vars:
-        _cassandra_banner_version: >-
-          {{ ((cassandra_preflight_describe.stdout | default('') ~ '\n').split('Database versions:')[1:]
-              | first | default('') | regex_findall('(?m)^\s+([0-9][^:]*): \[') | join(', '))
-             if _cassandra_preflight_running_nodes | length > 0 else '' }}
 
     # Where a node stands (cassandra_operation node_standing.yml) is worked out from the rings the cluster's nodes
     # see: each running node reads its own, all at once (collected at the end of this play). The playbooks

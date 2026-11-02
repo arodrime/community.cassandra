@@ -438,6 +438,21 @@
           {%- endfor -%}
           {{ l }}
 
+
+    # no plan to show: the checks' notes (a typo in a variable, the JVM options...) are still said
+    - name: Say the checks' notes
+      ansible.builtin.debug:
+        msg: "{{ _notes | join(_nl) }}"
+      run_once: true
+      when:
+        - not (_new | length > 0 or _joining | length > 0 or cassandra_add_node_cleanup | default('none') != 'none')
+        - _notes | length > 0
+      vars:
+        cassandra_output: true  # operator messages (ops callback)
+        cassandra_output_gap: true  # a block of their own
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _notes: "{{ hostvars[ansible_play_hosts_all | first]._cassandra_notes | default([]) }}"
+
     - name: Choose where the new nodes go
       ansible.builtin.pause:
         prompt: "bisect (no node moves) or balanced (an even ring, move_node moves other nodes afterwards)? Answer bisect or balanced"

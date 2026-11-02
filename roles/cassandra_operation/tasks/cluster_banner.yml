@@ -1,11 +1,10 @@
 ---
 # The run's first line, once per run and cluster (a playbook that imports
-# another says it once): the cluster, its nodes and datacenters, then the
-# running Cassandra version when the caller read it (_cassandra_banner_version)
+# another says it once), before any read or refusal: the cluster, its nodes
+# and datacenters; a caller that knows the running Cassandra version adds it
+# (_cassandra_banner_version):
+#   prod  5 nodes  2 DCs (dc1, dc2)
 #   prod  5 nodes  2 DCs (dc1, dc2)  Cassandra 4.1.12
-# In preflight, right after the cluster is read from a running node; on the
-# nodes' first play of the read-only playbooks (status, health_check), before
-# any read: the line stops after the datacenters.
 - name: Say which cluster the run is on
   ansible.builtin.debug:
     msg: >-
@@ -23,6 +22,7 @@
 - name: Say it once per run
   ansible.builtin.set_fact:
     _cassandra_cluster_shown: "{{ _group }}"
+    _cassandra_run_start: "{{ hostvars['localhost']['_cassandra_run_start'] | default(now().timestamp() | int) }}"
   run_once: true
   delegate_to: localhost
   delegate_facts: true

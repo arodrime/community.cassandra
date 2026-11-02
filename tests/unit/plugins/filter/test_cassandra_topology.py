@@ -186,8 +186,7 @@ def test_screen():
     r = ring(entry(1), entry(2), entry(3, rack="r2"), entry(4, rack="r2"))
     plan = cassandra_topology_plan(hosts, r)
     names = dict(("10.0.0.%d" % i, "node%d" % i) for i in range(1, 7))
-    lines = cassandra_topology_screen(plan, hosts, ring=r, keyspaces=KEYSPACES, names=names, cluster="Orders",
-                                      version="5.0.4")
+    lines = cassandra_topology_screen(plan, hosts, ring=r, keyspaces=KEYSPACES, names=names, cluster="Orders")
     assert lines == [
         "TOPOLOGY  2 steps of Orders, one node at a time",
         "  1.  add node5           dc1/r2  bootstrap, ~32.1 GiB to stream (the load of dc1 / 5 nodes)",

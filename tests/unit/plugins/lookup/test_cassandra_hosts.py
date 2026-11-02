@@ -15,7 +15,7 @@ from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
 
 from ansible_collections.community.cassandra.plugins.lookup.cassandra_hosts import (
-    BY_ENV, BY_GIVEN, BY_ONLY, ENV, RUNTIME, UNKNOWN, banner, cluster_group, picked)
+    BY_ENV, BY_GIVEN, BY_ONLY, ENV, RUNTIME, UNKNOWN, summary, cluster_group, picked)
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -385,16 +385,16 @@ def test_lookup_refusal(monkeypatch):
 def test_banner():
     """The cluster, its nodes, its datacenters (named up to 3, counted beyond), two spaces apart; not how the group
     was picked (a disagreement is refused before)."""
-    assert banner("prod", BY_GIVEN, 5, ["dc1"] * 5) == "prod  5 nodes  1 DC (dc1)"
-    assert banner("prod", BY_ONLY, 1, ["dc2", "dc1"], absent=1) == "prod  1 node  2 DCs (dc1, dc2)"  # (absent: not said)
-    assert banner("prod", BY_ENV, 3, []) == "prod  3 nodes  0 DCs"
+    assert summary("prod", 5, ["dc1"] * 5) == "prod  5 nodes  1 DC (dc1)"
+    assert summary("prod", 1, ["dc2", "dc1"]) == "prod  1 node  2 DCs (dc1, dc2)"
+    assert summary("prod", 3, []) == "prod  3 nodes  0 DCs"
     # the ops callback's regex for the line
     import re
-    for line in (banner("prod", BY_GIVEN, 5, ["dc1"] * 5), banner("big", BY_ENV, 60, ["dc%d" % i for i in range(6)]),
-                 banner("prod", BY_GIVEN, 5, ["dc1"] * 5) + "  Cassandra 5.0.9"):
-        assert re.match(r"\S+  \d+ nodes?  \d+ DCs?( \(.*\))?(  Cassandra \S+)?$", line), line
-    assert banner("big", BY_ENV, 60, ["dc%d" % i for i in range(6)]) == "big  60 nodes  6 DCs"
-    assert banner("big", BY_ENV, 6, ["dc1", "dc2", "dc3"]) == "big  6 nodes  3 DCs (dc1, dc2, dc3)"
+    for line in (summary("prod", 5, ["dc1"] * 5), summary("big", 60, ["dc%d" % i for i in range(6)]),
+                 summary("prod", 5, ["dc1"] * 5) + "  Cassandra 5.0.9", summary("Orders EU", 5, ["dc1"]) + "  Cassandra 4.1.12, 5.0.9"):
+        assert re.match(r".+?  \d+ nodes?  \d+ DCs?( \(.*\))?(  Cassandra .+)?$", line), line
+    assert summary("big", 60, ["dc%d" % i for i in range(6)]) == "big  60 nodes  6 DCs"
+    assert summary("big", 6, ["dc1", "dc2", "dc3"]) == "big  6 nodes  3 DCs (dc1, dc2, dc3)"
 
 
 def test_lookup_banner(monkeypatch):

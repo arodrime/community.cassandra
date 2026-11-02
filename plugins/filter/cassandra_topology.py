@@ -606,7 +606,7 @@ def _real_run(hosts, plan, session):
 
 
 def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replication_problems=None, force=False,
-                              names=None, cluster="", version="", check=False, session="", confirm=True, notes=None):
+                              names=None, cluster="", check=False, session="", confirm=True, notes=None):
     """The plan screen (OUTPUT_UX Q5): "TOPOLOGY  N steps of cluster, one node
     at a time", the steps in order, the facts (each
     datacenter once done, what is left to do by hand), the WARNING lines,
@@ -667,7 +667,6 @@ def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replicatio
             said.append(w)
     warnings = said
     question = "" if confirm else "cassandra_operation_confirm is false: no question, the run goes on."
-    del version  # the banner says the cluster's version
     lines = out.plan("topology", cluster=cluster,
                      summary="%s of %s, one node at a time" % (out.plural(len(steps), "step"), cluster) if cluster
                      else "%s, one node at a time" % out.plural(len(steps), "step"),

@@ -418,7 +418,7 @@ def test_a_key_added_by_hand_alone_is_a_difference_and_not_kept(tmp_path):
     live = YAML + "fake_option: 42\n"
     assert not cassandra_same_settings(live, YAML, "cassandra.yaml")
     assert view(Node(tmp_path, "node1", files={"cassandra.yaml": live}), Node(tmp_path, "node2")) == [
-        "cassandra.yaml  fake_option  42 (not in the inventory)  node1"]
+        "cassandra.yaml  fake_option  42 -> removed (not in the inventory)  node1"]
 
 
 def os_nodes():
@@ -473,7 +473,7 @@ def test_auto_bootstrap_true_on_the_node_is_the_default_the_role_leaves_out(tmp_
     # rewritten for another key: auto_bootstrap: true not shown as a difference, false is
     live = YAML + "auto_bootstrap: true\nfake_option: 42\n"
     assert view(Node(tmp_path, "node1", files={"cassandra.yaml": live})) == [
-        "cassandra.yaml  fake_option  42 (not in the inventory)  node1"]
+        "cassandra.yaml  fake_option  42 -> removed (not in the inventory)  node1"]
     live = YAML + "auto_bootstrap: false\n"
     assert "auto_bootstrap" in "\n".join(view(Node(tmp_path, "node2", files={"cassandra.yaml": live})))
 

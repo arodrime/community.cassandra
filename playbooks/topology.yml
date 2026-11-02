@@ -363,7 +363,7 @@
                keyspaces=cassandra_keyspaces | default(none), names=_tp_names,
                replication_problems=_tp_replication,
                force=cassandra_decommission_force | default(false) | bool,
-               cluster=_tp_cluster, version=_tp_version, check=ansible_check_mode,
+               cluster=_tp_cluster, check=ansible_check_mode,
                session=_cassandra_session_warning, confirm=cassandra_operation_confirm | bool,
                notes=hostvars[ansible_play_hosts_all[0]]._cassandra_notes | default([])) | join(_nl) }}
       run_once: true
@@ -374,9 +374,6 @@
         cassandra_output_gap: true  # a block of its own (ops callback)
         _tp_names: >-
           {{ dict(cassandra_topology_hosts | map(attribute='address') | zip(cassandra_topology_hosts | map(attribute='name'))) }}
-        _tp_version: >-
-          {{ ((cassandra_preflight_describe | default({})).stdout | default('') ~ '\n').split('Database versions:')[1:]
-             | first | default('') | regex_findall('(?m)^\s+([0-9][^:]*): \[') | join(', ') }}
 
     # its question one blank line under the plan (ops callback)
     - name: Confirm the plan

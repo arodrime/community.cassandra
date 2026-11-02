@@ -300,14 +300,14 @@ def _one_line(text):
 
 def _change(live, target):
     """A node's live value and the inventory's -> the change as the table says it: "3h -> 6h", "not set -> 6h", a
-    key the inventory drops "6h (not in the inventory)"; a line of one form there or not: "added", "removed (not in
+    key the inventory drops "6h -> removed (not in the inventory)"; a line of one form there or not: "added", "removed (not in
     the inventory)"; a masked value the diff writes: "**** -> **** (masked)", "changed (masked)" for a line."""
     if live == PRESENT and target == PRESENT:
         return "changed (masked)"  # the same masked line on both sides: a secret in it changed
     if live == PRESENT or target == PRESENT:
         return "added" if live == ABSENT else "removed (not in the inventory)"
     if target == ABSENT:
-        return "%s (not in the inventory)" % live
+        return "%s -> removed (not in the inventory)" % live
     if live == ABSENT:
         return "not set -> %s" % target
     if live == target:
@@ -740,7 +740,7 @@ def _recap_verdict(counts, check, cluster, seconds):
     verdict = "CHECK" if check else ("FAILED" if counts.get("failed") else "DONE")
     said = ", ".join("%d %s" % (n, word) for word, n in counts.items()) or "no node"
     if seconds is not None:
-        said += " (%s)" % out.duration(seconds)
+        said += "  %s" % out.duration(seconds)
     return "  ".join(x for x in (verdict, "apply_config", str(cluster or ""), said) if x)
 
 

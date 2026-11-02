@@ -131,13 +131,13 @@ def cassandra_stop_block(results, node, failure, operation="", action="", cluste
     failed task's name and stderr, said in a FAILED head when the cause is Ansible's generic one ("non-zero return
     code"); a hint stays under the failure's own WAY OUT (add_node has no resume: "run add_node again").
     -> lines: ["STOPPED at node2: node4 (10.0.0.4, r1) is DN, seen from node1 and node2, 10m29s waited
-    (cassandra_service_health_timeout 600s). No other node was touched.", "", "  node1  restarted  1m50s", "  node2
+    (cassandra_service_health_timeout 600s). No node after it was touched.", "", "  node1  restarted  1m50s", "  node2
     not done  cluster unhealthy", "  node3..node5  not touched", "", "WAY OUT  start node4 (the server, then
     Cassandra), then resume:", "  ansible-playbook community.cassandra.rolling_restart -e cassandra_rolling_resume=true"]."""
     outcomes, operation = _outcomes(results, operation, action)
     cause, way_out = _cause_and_way_out(failure)
     verdict = "STOPPED" if way_out else "FAILED"
-    touched = ("The nodes done at the same time: as in the table." if batch else "No other node was touched.")
+    touched = ("The nodes done at the same time: as in the table." if batch else "No node after it was touched.")
     first_cause = cause[0] if cause else "a task failed (see above)"
     if not way_out and task:
         detail = [line.strip() for line in str(stderr or "").split("\n") if line.strip()]

@@ -111,7 +111,7 @@ def test_a_stop_on_purpose_says_the_cause_the_table_and_the_way_out_once():
     assert stop(HEALTH, resume=True, progress_file="/inv/.cassandra_progress/x", inventory=["/inv/hosts.yml"], hosts="prod",
                 cwd="/inv") == [
         "STOPPED at node2: node4 (10.0.0.4, r1) is DN, seen from node1 and node2, 10m29s waited"
-        " (cassandra_service_health_timeout 600s). No other node was touched.",
+        " (cassandra_service_health_timeout 600s). No node after it was touched.",
         "",
         "  node1         restarted                          1m50s",
         "  node2         not done                           cluster unhealthy",
@@ -137,16 +137,16 @@ def test_a_failed_command_is_named_with_the_last_line_of_its_stderr():
     lines = stop("non-zero return code", resume=True, task="Find the running Cassandra JVM",
                  stderr="pgrep: no such option\nusage: pgrep [options]")
     assert lines[0] == ("FAILED at node2: Find the running Cassandra JVM: non-zero return code (usage: pgrep [options])."
-                        " No other node was touched.")
+                        " No node after it was touched.")
     # a message of its own: the task's name only
     assert stop("Timeout waiting for NORMAL", resume=False, task="Wait")[0] == (
-        "FAILED at node2: Wait: Timeout waiting for NORMAL. No other node was touched.")
+        "FAILED at node2: Wait: Timeout waiting for NORMAL. No node after it was touched.")
 
 
 def test_a_task_that_failed_is_failed_with_the_hint_or_the_resume():
     # not one of our stops (no WAY OUT line): FAILED, the way out is the hint given, else the resume, else the status
     lines = stop("Timeout waiting for NORMAL", resume=False, hint="Once fixed, run move_node again.")
-    assert lines[0] == "FAILED at node2: Timeout waiting for NORMAL. No other node was touched."
+    assert lines[0] == "FAILED at node2: Timeout waiting for NORMAL. No node after it was touched."
     assert lines[-1] == "WAY OUT  Once fixed, run move_node again."
     lines = stop("boom", resume=True)
     assert lines[-2:] == ["WAY OUT  fix it, then resume:",

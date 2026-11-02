@@ -82,7 +82,7 @@ def _xmx(values):
         for line in lines if isinstance(lines, (list, tuple)) else []:
             if str(line).lstrip().startswith("#"):
                 continue  # commented out: sets nothing
-            for m in re.finditer(r"-Xmx([^\s'\"]+)", str(line)):
+            for m in re.finditer(r"(?:^|[\s\"'])-Xmx([0-9]+[kKmMgGtT]?)", str(line)):
                 found = (where, m.group(1))
     return found
 

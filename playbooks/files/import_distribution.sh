@@ -9,11 +9,14 @@ for p in $(pgrep -x java); do
   tr '\0' '\n' < /proc/$p/cmdline | grep -qx org.apache.cassandra.service.CassandraDaemon && { dist=cassandra; break; }
   tr '\0' '\n' < /proc/$p/cmdline | grep -qE '^(com\.datastax\.bdp\.DseModule|-Ddse\.)' && { dist=dse; break; }
 done
+# no process: the distribution is what is installed (its package or its unit), not a directory or a command
+# left by a migration (a stopped Apache node keeps its usual handling)
+installed() { rpm -q "$1" >/dev/null 2>&1 || dpkg -s "$1" >/dev/null 2>&1 || systemctl cat "$2" >/dev/null 2>&1; }
 if [ "$dist" != cassandra ]; then
-  if [ "$dist" = dse ] || command -v dse >/dev/null 2>&1 || [ -d /etc/dse ]; then
+  if [ "$dist" = dse ] || installed dse-full dse.service || installed dse dse.service; then
     dist=dse
     dver=$(dse -v 2>/dev/null | head -1)
-  elif pgrep -x scylla >/dev/null 2>&1 || [ -e /etc/scylla/scylla.yaml ] || command -v scylla >/dev/null 2>&1; then
+  elif pgrep -x scylla >/dev/null 2>&1 || installed scylla-server scylla-server.service; then
     dist=scylla
     dver=$(scylla --version 2>/dev/null | head -1)
   fi

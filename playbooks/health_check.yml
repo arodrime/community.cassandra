@@ -125,10 +125,17 @@
         _first_ring: >-
           {{ (hostvars[_checked | first].cassandra_health_self | default({})).cluster_status | default({}, true)
              if _checked else {} }}
-        # (a node whose check ran answers nodetool: a member of the ring, where a replace flag left is a finding)
+        # the members of the ring (up at their address): where a replace flag left is a finding, not on a
+        # replacement staged in the inventory and not started yet
+        _up: >-
+          {{ _first_ring.values() | map(attribute='nodes') | flatten | selectattr('status', 'equalto', 'U')
+             | map(attribute='address') | list if _first_ring else [] }}
+        _members: >-
+          {{ _checked | community.cassandra.cassandra_host_addresses(hostvars) | dict2items
+             | selectattr('key', 'in', _up) | map(attribute='value') | list }}
         _settings: >-
           {{ dict(ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars)))
-             | community.cassandra.cassandra_suspicious_settings(_checked) }}
+             | community.cassandra.cassandra_suspicious_settings(_members) }}
         _report: >-
           {{ _findings | community.cassandra.cassandra_health_report(
                lookup('community.cassandra.cassandra_hosts'), ansible_play_hosts_all,

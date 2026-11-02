@@ -107,7 +107,9 @@ def _warnings(spec, session, notes, check):
     given = []
     for warning in spec.get("warnings") or []:  # each: one warning per text, under the same label
         given.extend([dict(warning, text=t) for t in warning["each"]] if "each" in warning else [warning])
-    given += [{"label": "", "text": out.warning_text(n)} for n in notes or [] if out.is_warning(n)]
+    # a note of several lines: its first as the warning, the others as items under it
+    given += [{"label": "", "text": out.warning_text(n).split("\n") if "\n" in out.warning_text(n) else out.warning_text(n)}
+              for n in notes or [] if out.is_warning(n)]
     if str(session or "").strip():
         given.append({"label": "", "text": session, "real_run": True})
     seen, kept = set(), []
@@ -142,7 +144,7 @@ def cassandra_screen(spec, check=False, asks=True, session="", asked_by="", note
     "  node7  10.0.0.7", "    Cassandra stopped", "", "WARNING  data loss: node7: 12 entries DELETED", joined;
     under check, "(A real run would also warn about: data loss.)" and the --check line instead of the warning."""
     spec = spec or {}
-    plain = [out.warning_text(n) for n in notes or [] if str(n).strip() and not out.is_warning(n)]
+    plain = [line for n in notes or [] if str(n).strip() and not out.is_warning(n) for line in out.warning_text(n).split("\n")]
     sections = [[out.title(spec.get("operation") or "", spec.get("summary") or "")] + _items(spec.get("intro"), "  ")]
     sections.append(_table_block(spec.get("blocks") or [], list(spec.get("after") or []) + plain))
     for section in spec.get("sections") or []:

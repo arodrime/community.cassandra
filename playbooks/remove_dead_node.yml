@@ -326,6 +326,21 @@
                 {{ (['cassandra_decommission_force is true: the removal goes on although too few nodes are left for'
                      ' some keyspaces:'] + _replication_problems) if _replication_problems and cassandra_decommission_force | default(false) | bool else '' }}
 
+
+    # no plan to show: the checks' notes (a typo in a variable, the JVM options...) are still said
+    - name: Say the checks' notes
+      ansible.builtin.debug:
+        msg: "{{ _notes | join(_nl) }}"
+      run_once: true
+      when:
+        - _nothing_to_do | bool
+        - _notes | length > 0
+      vars:
+        cassandra_output: true  # operator messages (ops callback)
+        cassandra_output_gap: true  # a block of their own
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _notes: "{{ hostvars[ansible_play_hosts_all | first]._cassandra_notes | default([]) }}"
+
     - name: Remove it (removenode, from {{ ansible_play_hosts[0] }})
       community.cassandra.cassandra_removenode:
         host_id: "{{ _dead.host_id }}"

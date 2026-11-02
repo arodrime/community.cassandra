@@ -108,15 +108,18 @@ _MODE_STATE = {"JOINING": "UJ", "MOVING": "UM", "LEAVING": "UL"}
 
 
 def cassandra_normal_wait_line(mode, waited=0, timeout=0, index=0, steps=0, node="", operation="", done=False,
-                               elapsed=None):
+                               elapsed=None, what=""):
     """The progress line of the wait for a node to be NORMAL (wait_normal.yml): "[2/5] node2  restart  waiting
     UJ, waiting for UN  1m10s/10m"; mode: netstats' (JOINING, MOVING, LEAVING as their status letters, another one
     as itself: "mode STARTING, waiting for NORMAL", empty: "no JMX answer yet, waiting for NORMAL"); done: the
     step's frozen line, "[2/5] node2  restarted  NORMAL after 1m20s", then the step's whole time when elapsed
-    (seconds) is given: "[2/5] node2  restarted  NORMAL after 1m20s  1m50s".
+    (seconds) is given: "[2/5] node2  restarted  NORMAL after 1m20s  1m50s"; what: the step's first line, before
+    any wait ("draining": "[2/5] node2  restart  draining"), rewritten by the wait lines.
     e.g. ("JOINING", waited=70, timeout=600, index=2, steps=5, node="node2", operation="restart") -> "[2/5] node2
     restart  waiting  UJ, waiting for UN  1m10s/10m"."""
     mode = str(mode or "").upper()
+    if what:
+        return "  ".join([out.step_head(index, steps, node, operation), str(what)])
     if done:
         head = out.step_head(index, steps, node, out.done_word(operation))
         took = out.duration(elapsed) if elapsed else ""  # none or 0: not in a rolling operation

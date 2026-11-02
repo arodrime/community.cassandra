@@ -553,7 +553,7 @@ def test_the_plan_title_and_the_stop_block_are_blocks_of_their_own():
     assert [line[0] for line, dummy in shown if rule(line)] == ["=", "-"]  # above the title, for its blank line
     assert [x for x in shown if not rule(x[0])] == [(plan[0], "cyan"), (plan[2], C.COLOR_WARN), (plan[3], C.COLOR_WARN),
                                                     (plan[4], C.COLOR_WARN)]
-    stop = ["STOPPED at node2: node4 is DN, seen from node1. No other node was touched.", "",
+    stop = ["STOPPED at node2: node4 is DN, seen from node1. No node after it was touched.", "",
             "  node1  restarted  1m50s", "  node2  not done  cluster unhealthy", "  node3..node5  not touched", "",
             "WAY OUT  start node4 (the server, then Cassandra), then resume:",
             "  ansible-playbook community.cassandra.rolling_restart -e cassandra_rolling_resume=true"]

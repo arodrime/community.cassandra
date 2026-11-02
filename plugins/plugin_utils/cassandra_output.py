@@ -938,7 +938,6 @@ def table(rows, indent=""):
             for r in rows]
 
 
-_table = table
 
 
 # --- warnings --------------------------------------------------------------------------------
@@ -1035,7 +1034,7 @@ def plan(operation, cluster="", summary="", steps=None, facts=None, warnings=Non
             rows.append(["%d." % numbered, step.get("node", ""), _where(step), step.get("text", "")])
         else:
             rows.append(["%d." % numbered, str(step)])
-    lines += _table(rows, "  ")
+    lines += table(rows, "  ")
     block = []
     labelled = [f for f in facts or [] if isinstance(f, (list, tuple))]
     width = max([len(str(f[0])) + 1 for f in labelled] or [0])
@@ -1279,7 +1278,7 @@ def prepare_lines(hosts, check=False):
     said = [(", ".join(words[step] for step in PREPARE_STEPS if step in words), name) for name, words in texts]
     rows = [[who(names, counted=False), "would prepare" if check else "prepared", text]
             for text, names in _grouped(said) if text]
-    return _table(rows)
+    return table(rows)
 
 
 def _wrapped(text, width=110, indent="  "):
@@ -1644,7 +1643,7 @@ def recap(operation, cluster, outcomes, check=False, seconds=None, extra=None, f
         reasons.setdefault(o.get("reason") or "", []).append(o["node"])
     for reason, names in reasons.items():
         rows.append([nodes(names, keep_order=True, full=full), "not touched" + (" (%s)" % reason if reason else ""), ""])
-    for i, line in enumerate(_table(rows, "  ")):
+    for i, line in enumerate(table(rows, "  ")):
         lines += [line] + ([under[i]] if i in under else [])
     if extra:
         lines += [""] + list(extra)
@@ -1701,7 +1700,7 @@ def perm_lines(changes, indent="  "):
         return "%s/%s %s" % (p.get("owner", "?"), p.get("group", "?"), p.get("mode", "?"))
     rows = [[c.get("file", ""), "owner/group/mode", "%s -> %s" % (text(c.get("before")), text(c.get("after")))]
             for c in changes or [] if text(c.get("before")) != text(c.get("after"))]
-    return _table(rows, indent)
+    return table(rows, indent)
 
 
 def _flat(value, path=()):

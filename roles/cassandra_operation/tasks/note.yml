@@ -9,7 +9,14 @@
 #   vars: _note: "WARNING  ..."
 - name: Keep the note for the plan
   ansible.builtin.set_fact:
-    _cassandra_notes: "{{ (_cassandra_notes | default([]) + _note.split('\n') | map('trim') | select | list) | unique }}"
+    # one item per line; a line indented under the one before (a seed list, a command) stays with it
+    _cassandra_notes: >-
+      {%- set items = _cassandra_notes | default([]) | list -%}
+      {%- for line in _note.split('\n') if line.strip() -%}
+      {%-   if line.startswith(' ') and items -%}{%- set _ = items.append(items.pop() ~ '\n' ~ line.strip()) -%}
+      {%-   else -%}{%- set _ = items.append(line.strip()) -%}{%- endif -%}
+      {%- endfor -%}
+      {{ items | unique }}
   run_once: true
   when: _kept | bool
   vars:

@@ -490,7 +490,7 @@ def test_a_batch_node_stopped_by_another_says_so():
     # one node at a time: the same block, no other node touched
     alone = dict(base, cassandra_service_node_batch=False, ansible_failed_task={"name": "x"})
     assert render("{{ %s }}" % note["when"], alone) is False and render("{{ %s }}" % record["when"], alone) is True
-    assert render(stop["ansible.builtin.fail"]["msg"], alone)[0] == "FAILED at n4: gossip is not running. No other node was touched."
+    assert render(stop["ansible.builtin.fail"]["msg"], alone)[0] == "FAILED at n4: gossip is not running. No node after it was touched."
 
 
 def test_the_nodes_to_do_are_not_reached_until_their_play():
