@@ -332,15 +332,18 @@ def test_auto_bootstrap_written_false_whatever_its_spelling():
 
 @pytest.mark.parametrize("ring, members_warned", [
     (None, ""),  # the ring not read: a replace flag is not judged
-    ([("10.0.0.1", "U"), ("10.0.0.2", "U")], "n1"),  # n2 holds the flag but is not in the ring yet (replace_node's own)
-    ([("10.0.0.1", "U"), ("10.0.0.3", "D")], "n1"),  # n2 down at its address: maybe a replacement of it
+    ([("10.0.0.1", "U")], "n1"),  # n2 holds the flag but is not in the ring yet (a replacement staged: replace_node's own)
+    ([("10.0.0.1", "U"), ("10.0.0.2", "D")], "n1"),  # n2 down at its address: maybe a replacement of it
+    ([("10.0.0.1", "U"), ("10.0.0.2", "U")], "n1, n2"),  # both up in the ring: both judged
 ])
-def test_health_check_judges_a_replace_flag_on_the_nodes_that_answered(ring, members_warned):
-    # a node whose check ran answers nodetool: a member of the ring (health_check reads no preflight facts)
-    hostvars = {"n1": {"inventory_hostname": "n1", "cassandra_jvm_extra_options": ["-Dcassandra.replace_address=10.0.0.7"]},
-                "n2": {"inventory_hostname": "n2", "cassandra_jvm_extra_options": ["-Dcassandra.replace_address=10.0.0.7"]}}
+def test_health_check_judges_a_replace_flag_on_the_members_of_the_ring(ring, members_warned):
+    # a member: up in the ring at its address (not a node whose check merely ran)
+    hostvars = {"n1": {"inventory_hostname": "n1", "ansible_host": "10.0.0.1", "cassandra_jvm_extra_options": ["-Dcassandra.replace_address=10.0.0.7"]},
+                "n2": {"inventory_hostname": "n2", "ansible_host": "10.0.0.2", "cassandra_jvm_extra_options": ["-Dcassandra.replace_address=10.0.0.7"]}}
+    if ring is not None:
+        hostvars["n1"]["cassandra_health_self"] = {"cluster_status": {"dc1": {"nodes": [{"address": a, "status": s} for a, s in ring]}}}
     report = task("Report", HEALTH["tasks"])
-    checked = [] if ring is None else ["n1"] if members_warned == "n1" else ["n1", "n2"]
+    checked = [] if ring is None else ["n1", "n2"]
     variables = dict(report["vars"], ansible_play_hosts=["n1", "n2"], hostvars=hostvars, _checked=checked)
     found = render(report["vars"]["_settings"], **variables)
     assert [line.split(" on ")[1].split(":")[0] for line in found[::2]] == ([members_warned] if members_warned else [])

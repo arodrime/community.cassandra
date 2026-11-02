@@ -97,18 +97,19 @@ def test_the_refusal_and_the_cluster_line_are_operator_messages():
     tasks = load("roles", "cassandra_operation", "tasks", "hosts_check.yml")
     names = [t["name"] for t in tasks]
     # the variables checked first (a -e cassandra_host=... typo is pointed out before the refusal it leads to);
-    # the cluster line is not localhost's: preflight says it once the cluster is read (with its version)
+    # the cluster line is not localhost's: preflight says it first, before any check
     assert names.index("Check cassandra_target_nodes") < names.index("Variables close to the playbooks' own") \
         < names.index(CHECK["name"])
     assert "Say which cluster the run is on" not in names
 
 
-def test_preflight_says_the_cluster_once_it_is_read():
+def test_preflight_says_the_cluster_first():
     plays = load("playbooks", "preflight.yml")
     tasks = next(p for p in plays if p.get("name") == "Cassandra preflight checks")["tasks"]
     names = [t.get("name") for t in tasks]
     say = tasks[names.index("Say which cluster the run is on")]
-    assert names.index("Read the cluster from a running node") < names.index("Say which cluster the run is on")
+    assert names.index("Say which cluster the run is on") < names.index("Check cassandra_target_nodes")  # before any refusal
+    assert "_cassandra_banner_version" not in str(say)  # no version on the line: nothing is read yet
     assert say["ansible.builtin.include_role"]["tasks_from"] == "cluster_banner.yml" and "always" in say["tags"]
     version = say["vars"]["_cassandra_banner_version"]
     describe = {"stdout": "Cluster Information:\n\tName: prod\n\tDatabase versions:\n\t\t5.0.9: [10.0.0.1:7000]\n"}
@@ -160,7 +161,8 @@ def test_the_cluster_line_once_per_run():
     assert render("{{ %s }}" % when, _group="prod", hostvars={"localhost": {"_cassandra_cluster_shown": "prod"}}) is False
     assert render("{{ %s }}" % when, _group="dev", hostvars={"localhost": {"_cassandra_cluster_shown": "prod"}}) is True
     mark = next(t for t in load("roles", "cassandra_operation", "tasks", "cluster_banner.yml") if t["name"] == "Say it once per run")
-    assert mark["ansible.builtin.set_fact"] == {"_cassandra_cluster_shown": "{{ _group }}"}
+    assert mark["ansible.builtin.set_fact"]["_cassandra_cluster_shown"] == "{{ _group }}"
+    assert "_cassandra_run_start" in mark["ansible.builtin.set_fact"]  # the run's start, for the recap's time
     assert mark["vars"]["_group"] == SAY["vars"]["_group"]
     assert mark["delegate_to"] == "localhost" and mark["delegate_facts"] is True and mark["run_once"] is True
 
@@ -223,14 +225,13 @@ def test_the_checking_playbooks():
 
 @pytest.mark.parametrize("playbook", _checking())
 def test_the_nodes_first_play_says_the_cluster(playbook):
-    """The first play on the nodes says the cluster (once per run): the read-only playbooks before anything is read
-    (no version), preflight once the cluster is read from a running node (with its version)."""
+    """The first play on the nodes says the cluster (once per run), before anything is read or refused."""
     second = load("playbooks", playbook)[1]
     includes = [t.get("ansible.builtin.include_role", {}).get("tasks_from") for t in second["tasks"]]
     assert "cluster_banner.yml" in includes
     if playbook == "preflight.yml":
         names = [t.get("name") for t in second["tasks"]]
-        assert names.index("Say which cluster the run is on") > names.index("Read the cluster from a running node")
+        assert names.index("Say which cluster the run is on") < names.index("Read the cluster from a running node")
     else:  # after the variables checks, before anything is read on the nodes
         assert includes.index("cluster_banner.yml") <= 3
 

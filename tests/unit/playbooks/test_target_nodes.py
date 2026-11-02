@@ -123,8 +123,8 @@ def test_former_names_used_nowhere():
 def test_former_names_refused_first():
     hosts_check = load("roles", "cassandra_operation", "tasks", "hosts_check.yml")
     assert hosts_check[0]["ansible.builtin.include_tasks"] == "target_nodes_check.yml"
-    # (after the task that gives each node its own facts, and its check)
-    first = play("preflight.yml", "Cassandra preflight checks")["tasks"][2]
+    # (after the task that gives each node its own facts, its check, and the run's first line)
+    first = play("preflight.yml", "Cassandra preflight checks")["tasks"][3]
     assert first["ansible.builtin.include_role"]["tasks_from"] == "target_nodes_check.yml"
 
 

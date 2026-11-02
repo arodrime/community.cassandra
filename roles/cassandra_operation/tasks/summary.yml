@@ -17,5 +17,6 @@
     cassandra_output_gap: true  # a block of its own (ops callback)
     # the run's time, from its first line (cluster_banner.yml)
     _seconds: >-
-      {{ (now().timestamp() | int - hostvars['localhost']['_cassandra_run_start'] | int)
-         if hostvars['localhost']['_cassandra_run_start'] | default('') else none }}
+      {{ (now().timestamp() | int - _localhost['_cassandra_run_start'] | int)
+         if _localhost['_cassandra_run_start'] | default('') else none }}
+    _localhost: "{{ hostvars['localhost'] | default({}) }}"

@@ -480,7 +480,7 @@ def test_a_batch_node_stopped_by_another_says_so():
     failed = dict(base, ansible_failed_task={"name": "Check gossip on this node"}, cassandra_progress_file="/p")
     assert render("{{ %s }}" % record["when"], failed) is True
     # the table carries a word for the node that failed: the task's name (the cause is in the stop block)
-    assert render(record["ansible.builtin.set_fact"]["cassandra_op_result"], dict(record["vars"], **failed)).endswith(
+    assert render(record["ansible.builtin.set_fact"]["cassandra_op_result"], dict(record.get("vars", {}), **failed)).endswith(
         "s: check gossip on this node")
     # (ansible-core 2.16 finishes the others first: they say done)
     block = render(stop["ansible.builtin.fail"]["msg"], failed)

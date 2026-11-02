@@ -300,7 +300,7 @@ def test_the_check_recap_shows_the_settings_then_the_outcomes():
     diff = ["cassandra.yaml  max_hint_window  6h -> 3h  node2"]
     assert cassandra_apply_config_recap(outcome_nodes(), check=True, cluster="my_cluster", seconds=75, diff=diff,
                                         planned=["node1", "node2", "node3", "node4", "node5"]) == [
-        "CHECK  apply_config  my_cluster  3 would apply, 2 nothing to apply (1m15s)",
+        "CHECK  apply_config  my_cluster  3 would apply, 2 nothing to apply  1m15s",
         "",
         "cassandra.yaml  max_hint_window  6h -> 3h  node2",
         "",

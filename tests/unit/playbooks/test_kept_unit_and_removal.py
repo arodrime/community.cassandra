@@ -205,8 +205,9 @@ RESTART_LOOP = {"failed": True, "msg": "One or more items failed", "results": [
 ])
 def test_rack_failure_names_the_node_that_failed(node, failure, said):
     record = next(t for t in RACK["rescue"] if t["name"] == "Record the failure")
+    word = "cluster unhealthy" if "WAY OUT" in str(failure) else ""  # the health check's stop names itself (cluster_health.yml)
     assert render(record["ansible.builtin.set_fact"]["cassandra_op_result"], item=node, ansible_failed_result=failure,
-                  **record["vars"]) == said
+                  _cassandra_stop_word=word, **record.get("vars", {})) == said
 
 
 @pytest.mark.parametrize("file, then", [("action_restart.yml", "restarted"), ("action_reboot.yml", "rebooted"),
