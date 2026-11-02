@@ -1274,6 +1274,12 @@ an update since it started: restart it first) makes it fail: the roles would
 give it the group variables unchecked, and start it if it is down. ``-e import_cluster_allow_unread=true`` accepts it;
 then keep it out of the runs (``--limit``) until an import reads it.
 
+A node that runs DataStax Enterprise or ScyllaDB (its process, its ``dse`` or ``scylla`` command and configuration
+directory, or a four-number ``ReleaseVersion`` such as ``4.0.0.6816``) is refused before anything is written, with
+one ``REFUSED`` block naming the node, the distribution and its version: the collection drives Apache Cassandra only
+(DSE and ScyllaDB have their own packages, services and configuration files). The given nodes are checked before
+the ring is read, the nodes found in the ring as they are read; ``--check`` refuses the same.
+
 The Cassandra repository files of a node (``cassandra-<series>`` in ``/etc/yum.repos.d`` or
 ``/etc/apt/sources.list.d``, and ``/etc/apt/auth.conf.d/cassandra.conf``) are taken over only when
 ``cassandra_repository`` would write them as they are: then their mirror URL, credentials (``secrets.yml``) and key
