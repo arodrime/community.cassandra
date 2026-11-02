@@ -108,6 +108,11 @@ Conventions
   receives (bootstrap, replace, rebuild), the growth of its used disk space counts as progress
   (``receiving (disk +3.2 GiB in 5m)``: a whole SSTable is counted in netstats once sent).
 
+  The rewrite needs a terminal: through a pipe (``ansible-playbook ... | tee run.log``), in a log file or under
+  cron, a node gets one line at its first check, one at each change of state (streams starting, STALLED, done, FAILED)
+  and one every 5 minutes, so the log stays readable and greppable. A warning Ansible prints from a worker while a
+  node's block is live on a terminal can be overwritten by the next rewrite; the log file keeps it.
+
 - **Recap**: the verdict with the counts and the duration (``DONE  rolling_restart  prod  5 restarted  11m30s``),
   the nodes grouped by identical outcome (``node1..node5  restarted  1m49s..1m58s each``), a line of its own for a
   node more than 50% slower than the median, a failed or a skipped one, with the reason. ``--check`` says
