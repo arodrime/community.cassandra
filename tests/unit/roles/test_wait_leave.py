@@ -126,10 +126,11 @@ def test_the_ops_callback_prints_the_progress_lines_only(tmp_path):
     rc, out, calls = run(tmp_path, "community.cassandra.ops", checks=3)
     assert rc == 0, out
     lines = [line for line in out.splitlines() if line.strip() and not line.startswith(("----", "===="))]
-    progress = [line for line in lines if line.startswith("[1/1] node1 decommission")]
-    expected = [["LEAVING", "[----------]"], ["LEAVING", "[#---------]"], ["DECOMMISSIONED", "done"]]
-    assert [line.split("  ")[1:3] for line in progress] == expected, out
-    assert lines[-3].startswith("[1/1] node1 decommission  DECOMMISSIONED  done  100.0/100.0 MiB"), out
-    assert lines[-2] == "      to 127.0.0.2  100.0/100.0 MiB  100%"
+    progress = [line for line in lines if line.startswith("[1/1] node1  decommission")]
+    # a pipe: the node's first line, then its changes of state (the second check says a speed and an ETA for the
+    # first time; a later one with the same words would not be printed), then the frozen line
+    expected = [["decommission", "LEAVING", "[----------]"], ["decommission", "LEAVING", "[#---------]"]]
+    assert [line.split("  ")[1:4] for line in progress[:2]] == expected, out
+    assert progress[2:] == [lines[-2]] and lines[-2].startswith("[1/1] node1  decommissioned  100.0 MiB in "), out  # frozen, alone
     assert lines[-1] == "AFTER THE WAIT"
     assert "skipping" not in out and "TASK" not in out

@@ -165,8 +165,8 @@ def test_a_nodetool_failure_is_waited_for_only_while_another_node_sees_that_node
         waiting = cassandra_health_waiting(found, NAMES)
         assert [f["kind"] for f in waiting] == ["nodetool", "state"]
         assert cassandra_health_wait_line(waiting, NAMES, waited=10, timeout=600, node="node2", operation="restart") == (
-            "node2 restart  waiting for node2 (10.0.0.2) DN to come back; nodetool status on node2 to answer (JMX: %s)"
-            "  10s/10m" % cause)
+            "node2  restart  waiting  node2 is DN, waiting for it to come back; nodetool status on node2 does not answer"
+            " (JMX: %s)  10s/10m" % cause)
         # node1 sees node2 up (a wrong JMX port for node2): never goes away, no wait
         up = cassandra_health_findings([failed_on("node2", error), view("node1", node("10.0.0.1"), node("10.0.0.2"))], 2, "node2")
         assert cassandra_health_waiting(up, NAMES) == []
@@ -204,23 +204,27 @@ def test_the_progress_line():
     ring = [node("10.0.0.1"), node("10.0.0.4", "D"), node("10.0.0.5", "D")]
     waiting = cassandra_health_waiting(cassandra_health_findings([view("node2", *ring)], 3, "node2"))
     names = {"10.0.0.4": "node4"}
+    # a node by its inventory name when known, else its address; several: "are", "them"
     assert cassandra_health_wait_line(waiting, names, waited=90, timeout=600, index=2, steps=5, node="node2",
                                       operation="restart") == (
-        "[2/5] node2 restart  waiting for node4 (10.0.0.4) DN, 10.0.0.5 DN to come back  1m30s/10m")
+        "[2/5] node2  restart  waiting  node4 is DN, 10.0.0.5 is DN, waiting for them to come back  1m30s/10m")
+    assert cassandra_health_wait_line(waiting[:1], names, waited=592, timeout=600, index=2, steps=5, node="node2",
+                                      operation="restart") == (
+        "[2/5] node2  restart  waiting  node4 is DN, waiting for it to come back  9m52s/10m")
     ports = [{"kind": "port", "name": "CQL", "port": 9042, "on": "node2", "host": "10.0.0.2"}]
     assert cassandra_health_wait_line(ports, waited=0, timeout=600, node="node2", operation="cluster check") == (
-        "node2 cluster check  waiting for the CQL port 9042 on node2 (10.0.0.2) to answer  0s/10m")
+        "node2  cluster check  waiting  the CQL port 9042 on node2 does not answer yet  0s/10m")
     assert cassandra_health_wait_line([], done=True, waited=100, index=2, steps=5, node="node2", operation="restart") == (
-        "[2/5] node2 restart  all back after 1m40s")
+        "[2/5] node2  restart  all back after 1m40s")
 
 
 def test_the_progress_lines_are_coloured_as_progress():
     from ansible_collections.community.cassandra.plugins.callback.ops import PROGRESS_COLOR, colour
-    assert colour("[2/5] node2 restart  waiting for node4 (10.0.0.4) DN to come back  1m30s/10m") == PROGRESS_COLOR
-    assert colour("node2 cluster check  waiting for 10.0.0.5 DN to come back  10s/10m") == PROGRESS_COLOR
-    assert colour("node2 cluster check  all back after 40s") == PROGRESS_COLOR
-    assert colour("[2/5] node2 restart  waiting for node2 (10.0.0.2) DN to come back; nodetool status on node2 to answer"
-                  " (JMX: Connection refused)  10s/10m") == PROGRESS_COLOR
+    assert colour("[2/5] node2  restart  waiting  node4 is DN, waiting for it to come back  1m30s/10m") == PROGRESS_COLOR
+    assert colour("node2  cluster check  waiting  10.0.0.5 is DN, waiting for it to come back  10s/10m") == PROGRESS_COLOR
+    assert colour("node2  cluster check  all back after 40s") == PROGRESS_COLOR
+    assert colour("[2/5] node2  restart  waiting  node2 is DN, waiting for it to come back; nodetool status on node2 does"
+                  " not answer (JMX: Connection refused)  10s/10m") == PROGRESS_COLOR
     # the screens' first lines: a block of their own
     from ansible_collections.community.cassandra.plugins.callback.ops import _HEADED
     assert _HEADED.match("rolling_reboot on cluster 'Orders': reboot node1..node3, one host at a time")
@@ -348,4 +352,5 @@ def test_this_nodes_services_just_restarted_are_waited_for():
     waiting = cassandra_health_waiting(found)
     assert [f["kind"] for f in waiting] == ["gossip", "cql"]
     assert cassandra_health_wait_line(waiting, waited=5, timeout=600, node="node2", operation="restart") == (
-        "node2 restart  waiting for gossip on node2 to run; the native transport (CQL) on node2 to run  5s/10m")
+        "node2  restart  waiting  gossip on node2 is not running yet; the native transport (CQL) on node2 is not running yet"
+        "  5s/10m")

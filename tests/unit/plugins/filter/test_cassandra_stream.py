@@ -746,20 +746,24 @@ def test_peer_lines_stalled_only_from_the_warning_threshold(monkeypatch):
     s = cassandra_stream_progress(views, None, now=0)
     s = cassandra_stream_progress(views, s, now=60)
     assert cassandra_progress_line(s, 1, 1, "n4", "bootstrap", names=names) == [
-        "[1/1] n4 bootstrap  [###-------]  33%  2.0/6.0 GiB  no progress for 1m  1m",
+        "[1/1] n4  bootstrap  [###-------]  33%  2.0/6.0 GiB  no progress for 1m  1m",
+        "",
         "      from node1  1.0/3.0 GiB  33% no progress for 1m   from node2  1.0/3.0 GiB  33% no progress for 1m"]
     s = cassandra_stream_progress(views, s, now=299)
     assert "STALLED" not in cassandra_progress_line(s, names=names)[0]
-    assert "STALLED" not in cassandra_progress_line(s, names=names)[1]
+    assert "STALLED" not in cassandra_progress_line(s, names=names)[2]
     s = cassandra_stream_progress(views, s, now=300)
+    # STALLED: the peers in cause only, one a line, how long each moved nothing
     assert cassandra_progress_line(s, 1, 1, "n4", "bootstrap", names=names) == [
-        "[1/1] n4 bootstrap  STALLED 5m/30m  33%  2.0/6.0 GiB  5m",
-        "      from node1  1.0/3.0 GiB  33% STALLED   from node2  1.0/3.0 GiB  33% STALLED"]
-    # one peer moves: the other one alone stalled, the line moves on
+        "[1/1] n4  bootstrap  STALLED 5m/30m  33%  2.0/6.0 GiB  5m",
+        "",
+        "      from node1  1.0/3.0 GiB  33%  nothing for 5m",
+        "      from node2  1.0/3.0 GiB  33%  nothing for 5m"]
+    # one peer moves: the other one alone stalled, the line moves on, the columns again
     moved = [read("n4", session("10.0.0.1", 2 * GIB, 3 * GIB), session("10.0.0.2", GIB, 3 * GIB, plan="p2"))]
     s = cassandra_stream_progress(moved, s, now=330)
-    assert cassandra_progress_line(s, names=names)[1] == \
-        "      from node1  2.0/3.0 GiB  66%           from node2  1.0/3.0 GiB  33% STALLED"
+    assert cassandra_progress_line(s, names=names)[1:] == \
+        ["", "      from node1  2.0/3.0 GiB  66%           from node2  1.0/3.0 GiB  33% STALLED"]
     # the warning threshold set: STALLED from it
     s = cassandra_stream_progress(views, None, now=0, warn_time=900, stall_time=3600)
     s = cassandra_stream_progress(views, s, now=899, warn_time=900, stall_time=3600)
@@ -780,7 +784,8 @@ def test_decommission_of_a_few_hundred_mib_golden_lines():
     s = cassandra_stream_progress(views(100 * MIB, 50 * MIB), None, now=0, operations=["Unbootstrap"])
     s = cassandra_stream_progress(views(190 * MIB, int(115.1 * MIB)), s, now=60, operations=["Unbootstrap"])
     assert cassandra_progress_line(s, 2, 3, "node4", "decommission", "LEAVING", names=names) == [
-        "[2/3] node4 decommission  LEAVING  [#########-]  92%  305.1/329.8 MiB  2.6 MiB/s  ETA 00:01 (9s)  1m",
+        "[2/3] node4  decommission  LEAVING  [#########-]  92%  305.1/329.8 MiB  2.6 MiB/s  ETA 00:01 (9s)  1m",
+        "",
         "      to node1  190.0/200.0 MiB  95%   to node2  115.1/129.8 MiB  88%"]
     assert report(s, node="node4", what="decommission", names=names, clocks=False) == """\
 node4  decommission  [##################--]  92%   2.6 MiB/s
