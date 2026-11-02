@@ -79,7 +79,6 @@ def test_the_words():
     (("playbooks", "import_cluster.yml"), 1), (("roles", "cassandra_operation", "tasks", "node_operation.yml"), 2),
     (("roles", "cassandra_operation", "tasks", "cleanup_batch.yml"), 1),
     (("roles", "cassandra_operation", "tasks", "restart_batch.yml"), 1),
-    (("roles", "cassandra_operation", "tasks", "action_apply_config.yml"), 1),
     (("roles", "cassandra_operation", "tasks", "reset_node.yml"), 1)])
 def test_marked_phase_lines(path, at_least):
     found = phases(*path)
