@@ -24,7 +24,7 @@ _cassandra_service_jmx: >-
      | combine({'password_file': cassandra_jmx_password_file} if cassandra_jmx_password_file
                else ({'password': cassandra_jmx_password} if cassandra_jmx_password else {})) }}
 
-# The settings that weaken the cluster (health_check's SETTINGS, the import
+# The settings that weaken the cluster (health_check's SETTINGS TO REVIEW, the import
 # report) a node keeps on purpose, by the id of their check, e.g. [heap_size]:
 # auto_bootstrap_false, replace_address, heap_size, allow_all_authenticator,
 # failure_policy_ignore

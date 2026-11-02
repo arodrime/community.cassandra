@@ -1,7 +1,7 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-# The settings that weaken the cluster, said by health_check (SETTINGS) and the import report (a table: one row per
+# The settings that weaken the cluster, said by health_check (SETTINGS TO REVIEW) and the import report (a table: one row per
 # setting), two lines per finding, each silenced on a node by cassandra_settings_kept_on_purpose.
 
 import os

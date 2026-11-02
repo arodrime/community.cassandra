@@ -5,7 +5,7 @@
 #
 # Each node checks the ring, gossip, the native transport, streams, schema
 # agreement and the ports. The report starts with the verdict, HEALTHY or NOT
-# HEALTHY, then each problem once and what to do; then SETTINGS, the settings
+# HEALTHY, then each problem once and what to do; then SETTINGS TO REVIEW, the settings
 # of the inventory that weaken the cluster (no authentication on a reachable
 # address, a heap too small, a failure policy ignore, a replace flag left on a
 # member, auto_bootstrap false), two lines each: why it matters, what to do and
@@ -30,7 +30,7 @@
 - name: Cluster health
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: true
-  gather_subset: [network, hardware]  # hardware: the RAM, for the heap finding of SETTINGS
+  gather_subset: [network, hardware]  # hardware: the RAM, for the heap finding of SETTINGS TO REVIEW
   # root (sudo) only to read the JMX password file when cassandra_jmx_password_file
   # is set (the service account's, 0400): the play asks for it itself, no -b
   # needed; nodetool needs no root otherwise
@@ -95,7 +95,7 @@
         cassandra_service_health_timeout: 5  # (its ports asked for 5s)
 
     # the verdict first (HEALTHY or NOT HEALTHY), each problem once with the
-    # nodes that saw it, then what to do, then the SETTINGS block; fails the
+    # nodes that saw it, then what to do, then the SETTINGS TO REVIEW block; fails the
     # run (non-zero exit) on a problem (not on a setting)
     - name: Report
       ansible.builtin.assert:

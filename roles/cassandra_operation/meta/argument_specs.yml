@@ -42,7 +42,7 @@ argument_specs:
         default: []
         description:
           - The settings that weaken the cluster a node keeps on purpose, by the id of their check, whose finding the
-            C(health_check) playbook (its SETTINGS block) and the C(import_cluster) report leave out for it (per host
+            C(health_check) playbook (its SETTINGS TO REVIEW block) and the C(import_cluster) report leave out for it (per host
             or group).
           - V(auto_bootstrap_false), V(replace_address) (a replace flag left on a member of the ring), V(heap_size)
             (not set on a 4.x host with 64G of RAM, whose auto-sizing stops at 8G; under 2G, 32G or more, over half

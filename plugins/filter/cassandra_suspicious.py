@@ -1,7 +1,7 @@
 # Copyright: Contributors to the community.cassandra collection
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 """cassandra_suspicious_settings: {node: its variables} -> the findings of
-SUSPICIOUS on some nodes (the health_check playbook's SETTINGS block and the
+SUSPICIOUS on some nodes (the health_check playbook's SETTINGS TO REVIEW block and the
 import_cluster report say them; nothing is refused), two lines each: the
 setting, its value, the nodes and why it matters; what to do, and how to keep
 it on purpose (cassandra_settings_kept_on_purpose)."""
@@ -228,7 +228,7 @@ def unknown_lines(nodes, who=None):
 
 def cassandra_suspicious_settings(nodes, members=None):
     """Filter: the findings of suspicious(nodes, members), two lines each (finding_lines), then a line per id of
-    cassandra_settings_kept_on_purpose no check has (health_check's SETTINGS block).
+    cassandra_settings_kept_on_purpose no check has (health_check's SETTINGS TO REVIEW block).
     -> lines; none: []."""
     lines = []
     for row, names, text, fix in suspicious(nodes, members):

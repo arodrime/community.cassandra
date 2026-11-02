@@ -1176,14 +1176,14 @@ heap dump directory has one variable, ``cassandra_heap_dump_dir``, taken from ``
 ``-XX:HeapDumpPath`` comes from; Cassandra 5.0 uses that before ``heap_dump_path`` in ``cassandra.yaml``, which is
 not compared (a node's other value there is noted, and stays until the file is rewritten).
 
-The report's TO DO, then every ``health_check`` run (its SETTINGS block, after the nodes' state), say the settings
+The report's TO DO, then every ``health_check`` run (its SETTINGS TO REVIEW block, after the nodes' state), say the settings
 that weaken the cluster, two lines per finding: the setting, its value, the nodes and why it matters, then what to
 do and how to keep it on purpose; nothing is refused, and the operation playbooks' plans do not repeat them (a
 setting ``apply_config`` writes shows in its differences table, as any other change):
 
 .. code-block:: text
 
-    SETTINGS
+    SETTINGS TO REVIEW
       heap 256M (cassandra_heap_size) on node1..node5: too small, Cassandra needs 2G to 4G (at most half the RAM, under 32G)
         set cassandra_heap_size; kept on purpose: list heap_size in cassandra_settings_kept_on_purpose
 

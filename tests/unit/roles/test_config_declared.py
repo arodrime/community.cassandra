@@ -240,7 +240,7 @@ HEALTH = next(p for p in load("playbooks", "health_check.yml") if p.get("name") 
     ({"n1": {"cassandra_auto_bootstrap": False}, "n2": {"cassandra_auto_bootstrap": "false"}, "n3": {}}, "n1, n2"),
 ])
 def test_health_check_says_auto_bootstrap_false_in_its_settings(hostvars, warned):
-    # the cluster's posture: health_check's SETTINGS block (two lines), not preflight's, never a refusal
+    # the cluster's posture: health_check's SETTINGS TO REVIEW block (two lines), not preflight's, never a refusal
     report = task("Report", HEALTH["tasks"])
     variables = dict(report["vars"], ansible_play_hosts=list(hostvars), hostvars=hostvars, _checked=list(hostvars))
     found = render(report["vars"]["_settings"], **variables)

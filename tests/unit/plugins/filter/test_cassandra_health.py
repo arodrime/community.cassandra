@@ -549,3 +549,14 @@ def test_schema_disagreement_is_a_warning_while_an_upgrade_mixes_versions():
     assert cassandra_health_report({"n1": found}, "c", ["n1"])["healthy"] is True
     assert problems([view("n1", *ring)], expected=1, schema={"failed": True, "msg": "nodetool error: boom"}, mixed_versions=True) == [
         "schema disagreement: nodetool error: boom"]
+
+
+def test_report_settings_to_review_after_the_nodes_state():
+    # the findings of cassandra_suspicious_settings (two lines each): their own block, last, no problem
+    settings = ["heap 256M (cassandra_heap_size) on n1: too small, Cassandra needs 2G to 31G (under 32G)",
+                "  set cassandra_heap_size; kept on purpose: list heap_size in cassandra_settings_kept_on_purpose"]
+    report = cassandra_health_report({"n1": []}, "c", ["n1"], settings=settings)
+    assert report["healthy"] and report["lines"] == [
+        "HEALTHY  c  1 node  1 UN, schema agreed, no streams, ports open", "", "SETTINGS TO REVIEW",
+        "  " + settings[0], "  " + settings[1]]
+    assert cassandra_health_report({"n1": []}, "c", ["n1"], settings=[])["lines"][1:] == []

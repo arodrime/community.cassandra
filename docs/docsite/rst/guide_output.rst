@@ -53,7 +53,7 @@ Conventions
     Add node4, node5 into dc1 of prod? Answer yes or no:
 
   The cluster's posture (no authentication on a reachable address, the heap, a failure policy ``ignore``...) is not
-  the operation's business: ``health_check`` says it, in its ``SETTINGS`` block.
+  the operation's business: ``health_check`` says it, in its ``SETTINGS TO REVIEW`` block.
 - **Warnings**: one style, ``WARNING  what`` (the keyword first, two spaces, as the verdict words), two lines at
   most, the second under the text with the way out; each one said once per run, where it is decided (a plan's
   warnings not again in its recap, which says how many are above: ``3 warnings in the plan above (node2, node3).``).
