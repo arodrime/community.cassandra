@@ -332,7 +332,8 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
   ● import_cluster     Reads a running cluster into an inventory, changing nothing on the nodes. A
                        new cluster: give one of its nodes (-i <node>,), the others are found in the
                        ring. A re-import reads the cluster from the inventory (its logins too),
-                       keeps the files it did not write, --check --diff shows its changes first.
+                       keeps the files it did not write, --check --diff shows its changes first. A
+                       DataStax Enterprise or ScyllaDB node is refused: Apache Cassandra only.
       $ ansible-playbook -i 192.0.2.11, community.cassandra.import_cluster \\
           -e import_cluster_dir=NEW_DIR
         -e import_cluster_dir=<dir>           the inventory dir (default: inventories)

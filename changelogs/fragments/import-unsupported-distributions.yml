@@ -1,0 +1,7 @@
+minor_changes:
+  - >-
+    import_cluster - a node that runs DataStax Enterprise or ScyllaDB (found by its process, its ``dse`` or ``scylla``
+    command and configuration directory, or a four-number ``ReleaseVersion`` such as ``4.0.0.6816``) is refused with a
+    ``REFUSED  import_cluster  nothing was written`` block naming the node, the distribution and its version, on the given
+    nodes before the ring is read and on every node found in the ring, under ``--check`` too; it was reported as "no
+    running Cassandra" before.
