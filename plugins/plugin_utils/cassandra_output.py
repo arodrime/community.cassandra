@@ -1369,31 +1369,65 @@ def _bar(done, total):
 # check or two without a byte is no news)
 IDLE_SHOWN = 60
 
+# what a progress line says of its operation once it is over
+DONE_WORDS = {"bootstrap": "bootstrapped", "decommission": "decommissioned", "move": "moved", "rebuild": "rebuilt",
+              "replace": "replaced", "cleanup": "cleaned up", "restart": "restarted", "start": "started",
+              "stop": "stopped", "reboot": "rebooted", "upgrade": "upgraded", "write_config": "config written",
+              "update_java": "java updated"}
+
+
+def step_head(index, total_steps, node, operation):
+    """The head of a progress line: the node's position in the run, the node,
+    two spaces, what is done to it: "[2/5] node2  restart"; "node2  restart"
+    outside a rolling operation (total_steps 0)."""
+    where = ("[%d/%d] %s" % (int(index), int(total_steps), node)) if int(total_steps or 0) else str(node)
+    return "  ".join(x for x in [where, str(operation or "")] if x)
+
+
+def wait_line(head, what, waited, timeout):
+    """The progress line of a wait without streams: the head (step_head), "waiting", what is waited for, the
+    time waited out of the timeout: "[2/5] node2  restart  waiting  node4 is DN, waiting for it to come back
+    9m52s/10m"."""
+    return "  ".join(x for x in [head, "waiting", what, "%s/%s" % (duration(waited), duration(timeout, short=True))] if x)
+
+
+def done_word(operation):
+    """What the frozen line of a step says of its operation: "bootstrap" ->
+    "bootstrapped", "move to 42" -> "moved to 42" (DONE_WORDS, the first
+    word); an operation it does not know: "<operation> done"."""
+    first, rest = (str(operation).split(" ", 1) + [""])[:2]
+    if first in DONE_WORDS:
+        return (DONE_WORDS[first] + " " + rest).strip()
+    return (str(operation) + " done").strip()
+
 
 def progress_line(index, total_steps, node, operation, mode="", done=0, total=0, speed=None, now=0, start=None,
                   idle=0, limit=0, peers=None, status="going", warn=None, disk=0, frozen=0, width=None):
     """One check of a long operation (Q2), as its line:
-    "[1/2] node5 bootstrap  JOINING  [#####-----]  52%  52.2/100.0 GiB  89 MiB/s  ETA 13:33 (9m)  10m"
-    then always the other ends, in columns under it (peer_lines, in width):
+    "[1/2] node5  bootstrap  JOINING  [#####-----]  52%  52.2/100.0 GiB  89 MiB/s  ETA 13:33 (9m)  10m"
+    then, after a blank line, the other ends in columns under it (peer_lines, in width):
     "      from node1  18.0/34.0 GiB  52%   from node3   4.2/17.0 GiB  24%".
     index/total_steps: the position in the run (no [i/n] when total_steps
     is 0); mode: netstats Mode; done/total: bytes; speed: bytes/s (None:
     not known yet); now/start: epoch seconds; idle/limit: the seconds
     without progress and the stall limit (said from IDLE_SHOWN seconds:
     while data is left "no progress for 1m", from warn seconds (the warning
-    threshold; None: limit) "STALLED 6m/30m"; "no progress 6m/30m" before
-    the streams or once all is sent); disk, frozen: the bytes the receiving
+    threshold; None: limit) "STALLED 6m/30m", then only the other ends in
+    cause under it (peers_in_cause); "no progress 6m/30m" before the
+    streams or once all is sent); disk, frozen: the bytes the receiving
     node's disk grew by since netstats last showed progress, frozen seconds
     ago (a file sent whole counts its bytes once it is over; that growth is
     progress): "receiving (disk +3.2 GiB in 5m)" once frozen for IDLE_SHOWN
     seconds; peers:
     [{name, way ('from'/'to'), done, total, stalled, idle (the seconds it
     moved nothing)}]: in columns (peer_lines) fitting in width (the
-    terminal's); status: going, or stalled / failed / done (said in the line).
-    Before any data flows: "waiting for streams" and the elapsed time."""
+    terminal's); status: going, or stalled / failed (said in the line), or
+    done: one frozen line, no other ends: "[1/2] node5  bootstrapped  NORMAL
+    100.0 GiB in 19m02s  avg 90 MiB/s" (the mode when NORMAL, the average
+    speed when bytes moved). Before any data flows: "waiting for streams"
+    and the elapsed time."""
     start = now if start is None else start
-    head = "  ".join(x for x in [("[%d/%d] %s %s" % (index, total_steps, node, operation)) if total_steps
-                                 else "%s %s" % (node, operation), mode] if x)
+    head = "  ".join(x for x in [step_head(index, total_steps, node, operation), mode] if x)
     elapsed = duration(now - start, short=True)
     pct = "%d%%" % int(100 * min(done, total) / total) if total else ""
     done_total = amount(done, total) if total else ""
@@ -1403,13 +1437,15 @@ def progress_line(index, total_steps, node, operation, mode="", done=0, total=0,
     warn = limit if warn is None else min(int(warn), int(limit or 0))
     pause = ("no progress for " + duration(idle, short=True)) if idle_text and idle < warn else ""
     if status == "done":
-        line = "  ".join(x for x in [head, "done", done_total, elapsed] if x)
-    elif status != "going" or (idle_text and not pause and total and done < total):  # before any stream: waiting
+        return [_done_line(index, total_steps, node, operation, mode, done, total, now - start)]
+    if status != "going" or (idle_text and not pause and total and done < total):  # before any stream: waiting
         word = _STATUS_WORDS.get(status, "STALLED" if status == "going" else status.upper())
         count_text = ("%s %s" % (word, idle_text)) if idle_text and word == "STALLED" else word
         line = "  ".join(x for x in [head, count_text, pct, done_total, elapsed] if x)
+        others = peers_in_cause(peers, width) or peer_lines(peers, width)
     elif not total:
         line = "  ".join(x for x in [head, "waiting for streams", quiet, elapsed] if x)
+        others = peer_lines(peers, width)
     else:
         # a file sent whole shows on the receiving disk before netstats counts it
         on_disk = ("receiving (disk +%s in %s)" % (size(disk), duration(frozen, short=True))
@@ -1417,7 +1453,18 @@ def progress_line(index, total_steps, node, operation, mode="", done=0, total=0,
         line = "  ".join(x for x in [head, _bar(done, total), pct, done_total, rate(speed) if speed else "",
                                      _eta(done, total, speed, now), on_disk, quiet if total <= done else pause,
                                      elapsed] if x)
-    return [line] + peer_lines(peers, width)
+        others = peer_lines(peers, width)
+    return [line] + ([""] + others if others else [])
+
+
+def _done_line(index, total_steps, node, operation, mode, done, total, seconds):
+    """The frozen line of a step over: "[1/2] node5  bootstrapped  NORMAL  100.0 GiB in 19m02s  avg 90 MiB/s";
+    without bytes streamed: "[1/2] node5  bootstrapped  NORMAL  2m10s"."""
+    moved = size(max(done, total)) if done or total else ""
+    took = duration(seconds)
+    average = ("avg " + rate(done / float(seconds))) if done and seconds > 0 else ""
+    return "  ".join(x for x in [step_head(index, total_steps, node, done_word(operation)), mode if mode == "NORMAL" else "",
+                                 ("%s in %s" % (moved, took)) if moved else took, average] if x)
 
 
 # progress_line's word for a status other than going
@@ -1489,6 +1536,33 @@ def peer_lines(peers, width=None):
                                                                   if len(left) > stalled else [])
         out.append(_PEER_INDENT + "+%d more: %s" % (len(left), ", ".join(counts)))
     return out
+
+
+def peers_in_cause(peers, width=None):
+    """Under a STALLED progress line, only the other ends in cause, one a line: the stalled ones, else the ones
+    that moved nothing for IDLE_SHOWN seconds with data left; the others summed up after the first, the done
+    ones together, a moving one with its percent:
+    "      from node3  13.4/33.0 GiB  41%  nothing for 6m    (node1, node2 done, node4 52%)".
+    [] when no other end is in cause (peer_lines then)."""
+    peers = sorted(peers or [], key=lambda p: (_natural(p.get("name")), p.get("way") or "with"))
+    cause = [p for p in peers if p.get("stalled")]
+    cause = cause or [p for p in peers if p.get("idle", 0) >= IDLE_SHOWN and _percent(p) < 100]
+    if not cause:
+        return []
+    others = [p for p in peers if p not in cause]
+    done = [str(p.get("name")) for p in others if _percent(p) >= 100]
+    rest = ([nodes(done) + " done"] if done else []) + ["%s %d%%" % (p.get("name"), _percent(p)) for p in others
+                                                        if _percent(p) < 100]
+    lines = []
+    for peer in cause:
+        text = "%s %s  %s  %d%%" % (peer.get("way") or "with", peer.get("name"),
+                                    amount(peer.get("done", 0), peer.get("total", 0)), _percent(peer))
+        if peer.get("idle", 0) >= IDLE_SHOWN:
+            text += "  nothing for " + duration(peer["idle"], short=True)
+        if rest and not lines:
+            text += "    (%s)" % ", ".join(rest)
+        lines.append(_PEER_INDENT + text)
+    return fit(lines, width or PEER_WIDTH)
 
 
 def _peers_summed(peers, width):

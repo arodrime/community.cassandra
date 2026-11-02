@@ -403,7 +403,22 @@ def test_left_system_warning_once_with_its_nodes():
 NOW = time.mktime((2026, 10, 8, 13, 24, 0, 0, 0, -1))
 
 
+def test_step_head_and_done_word():
+    assert out.step_head(2, 5, "node2", "restart") == "[2/5] node2  restart"
+    assert out.step_head(0, 0, "node2", "restart") == "node2  restart"  # outside a rolling operation
+    assert out.step_head("2", "5", "node2", "") == "[2/5] node2"
+    assert out.done_word("bootstrap") == "bootstrapped" and out.done_word("restart") == "restarted"
+    assert out.done_word("move to 42") == "moved to 42" and out.done_word("cleanup") == "cleaned up"
+    assert out.done_word("removenode of 10.0.0.9") == "removenode of 10.0.0.9 done"  # a word it does not know
+
+
+def test_wait_line():
+    assert out.wait_line("[2/5] node2  restart", "node4 is DN, waiting for it to come back", 592, 600) == \
+        "[2/5] node2  restart  waiting  node4 is DN, waiting for it to come back  9m52s/10m"
+
+
 def test_progress_line_going_with_peers_always():
+    """The node's line, then the other ends in columns after one blank line (a stalled one in place)."""
     lines = out.progress_line(1, 2, "node5", "bootstrap", "JOINING", done=52.2 * GIB, total=100 * GIB,
                               speed=89 * MIB, now=NOW, start=NOW - 600,
                               peers=[{"name": "node1", "way": "from", "done": 18 * GIB, "total": 34 * GIB},
@@ -412,9 +427,61 @@ def test_progress_line_going_with_peers_always():
                                      {"name": "node2", "way": "from", "done": 3 * GIB, "total": 3 * GIB}])
     eta = time.strftime("%H:%M", time.localtime(NOW + 47.8 * GIB / (89 * MIB)))
     assert lines == [
-        "[1/2] node5 bootstrap  JOINING  [#####-----]  52%%  52.2/100.0 GiB  89 MiB/s  ETA %s (9m)  10m" % eta,
+        "[1/2] node5  bootstrap  JOINING  [#####-----]  52%%  52.2/100.0 GiB  89 MiB/s  ETA %s (9m)  10m" % eta,
+        "",
         "      from node1  18.0/34.0 GiB   52%           from node2    3.0/3.0 GiB  100%",
         "      from node3   4.2/17.0 GiB   24% STALLED"]
+
+
+def test_progress_line_stalled_details_the_peers_in_cause_only():
+    """STALLED on the node's line: under it, only the other ends in cause (the stalled ones), how long they moved
+    nothing, the others summed up after the first; when none is in cause (the streams all quiet, none flagged),
+    the usual columns."""
+    peers = [{"name": "node1", "way": "from", "done": 34 * GIB, "total": 34 * GIB},
+             {"name": "node2", "way": "from", "done": 3 * GIB, "total": 3 * GIB},
+             {"name": "node3", "way": "from", "done": 13.4 * GIB, "total": 33 * GIB, "stalled": True, "idle": 360},
+             {"name": "node4", "way": "from", "done": 13 * GIB, "total": 26 * GIB, "idle": 20}]
+
+    def lines(peers, **kwargs):
+        return out.progress_line(1, 2, "node5", "bootstrap", "JOINING", done=63.4 * GIB, total=96 * GIB, now=NOW,
+                                 start=NOW - 900, idle=360, limit=1800, warn=300, peers=peers, **kwargs)
+    assert lines(peers) == [
+        "[1/2] node5  bootstrap  JOINING  STALLED 6m/30m  66%  63.4/96.0 GiB  15m",
+        "",
+        "      from node3  13.4/33.0 GiB  40%  nothing for 6m    (node1, node2 done, node4 50%)"]
+    # two in cause: the others once, after the first
+    two = peers[:3] + [dict(peers[3], stalled=True, idle=300)]
+    assert lines(two)[2:] == ["      from node3  13.4/33.0 GiB  40%  nothing for 6m    (node1, node2 done)",
+                              "      from node4  13.0/26.0 GiB  50%  nothing for 5m"]
+    # none flagged: the ones that moved nothing for a minute with data left are the cause
+    idle = [dict(p, stalled=False) for p in two]
+    assert lines(idle)[2:] == lines(two)[2:]
+    # none in cause at all: the columns
+    assert lines([dict(p, stalled=False, idle=0) for p in peers])[2].startswith(
+        "      from node1  34.0/34.0 GiB  100%   from node2    3.0/3.0 GiB  100%")
+    assert out.peers_in_cause([]) == out.peers_in_cause(None) == []
+    # a failure says the peers the same way
+    failed = lines(peers, status="failed")
+    assert failed[0] == "[1/2] node5  bootstrap  JOINING  FAILED  66%  63.4/96.0 GiB  15m" and failed[2].startswith("      from node3")
+
+
+def test_progress_line_done_is_one_frozen_line():
+    """The step over: what was done to the node, NORMAL when it is, the bytes and the time, the average speed; no
+    other ends; the mode only when NORMAL; without bytes, the time only."""
+    assert out.progress_line(1, 2, "node2", "bootstrap", "NORMAL", done=100 * GIB, total=100 * GIB, now=NOW,
+                             start=NOW - 1142, status="done",
+                             peers=[{"name": "node1", "way": "from", "done": 34 * GIB, "total": 34 * GIB}]) == \
+        ["[1/2] node2  bootstrapped  NORMAL  100.0 GiB in 19m02s  avg 89 MiB/s"]
+    assert out.progress_line(1, 2, "node4", "decommission", "DECOMMISSIONED", done=53.2 * GIB, total=53.2 * GIB,
+                             now=NOW, start=NOW - 760, status="done") == \
+        ["[1/2] node4  decommissioned  53.2 GiB in 12m40s  avg 71 MiB/s"]
+    assert out.progress_line(1, 2, "node2", "bootstrap", "NORMAL", now=NOW, start=NOW - 130, status="done") == \
+        ["[1/2] node2  bootstrapped  NORMAL  2m10s"]
+    assert out.progress_line(0, 0, "node3", "move to 42", "NORMAL", done=GIB, total=GIB, now=NOW, start=NOW - 60,
+                             status="done") == ["node3  moved to 42  NORMAL  1.0 GiB in 1m00s  avg 17 MiB/s"]
+    # netstats counted a little more than the total: the larger figure, no speed from a zero time
+    assert out.progress_line(1, 1, "node3", "rebuild", "", done=1.1 * GIB, total=GIB, now=NOW, start=NOW,
+                             status="done") == ["[1/1] node3  rebuilt  1.1 GiB in 0s"]
 
 
 def _peers(count, way="to", stalled=(), slow=()):
@@ -554,13 +621,14 @@ def test_progress_line_stalled_only_from_the_warning_threshold():
     def line(idle, **kwargs):
         return out.progress_line(1, 1, "node4", "bootstrap", "JOINING", done=0.2 * GIB, total=2.3 * GIB, now=NOW,
                                  start=NOW - 120, idle=idle, limit=1800, warn=300, peers=kwargs.get("peers", peers))
-    assert line(60) == ["[1/1] node4 bootstrap  JOINING  [----------]  8%  0.2/2.3 GiB  no progress for 1m  2m",
+    assert line(60) == ["[1/1] node4  bootstrap  JOINING  [----------]  8%  0.2/2.3 GiB  no progress for 1m  2m",
+                        "",
                         "      from node1  0.2/2.3 GiB  8% no progress for 1m"]
     assert "no progress for 4m  " in line(299)[0] and "STALLED" not in line(299)[0]
     assert "STALLED 5m/30m" in line(300)[0]
     stalled = [dict(peers[0], idle=300, stalled=True)]
-    assert line(300, peers=stalled)[1] == "      from node1  0.2/2.3 GiB  8% STALLED"
-    assert line(0, peers=[dict(peers[0], idle=30)])[1] == "      from node1  0.2/2.3 GiB  8%"
+    assert line(300, peers=stalled)[2] == "      from node1  0.2/2.3 GiB  8%  nothing for 5m"  # the peer in cause
+    assert line(0, peers=[dict(peers[0], idle=30)])[2] == "      from node1  0.2/2.3 GiB  8%"
 
 
 def test_progress_line_says_the_disk_growing_while_netstats_is_still():
@@ -569,7 +637,7 @@ def test_progress_line_says_the_disk_growing_while_netstats_is_still():
                                  start=NOW - 600, limit=1800, warn=300, **kwargs)[0]
     # netstats still for 5 minutes, the disk growing (idle: since its last growth)
     assert line(idle=0, disk=3.2 * GIB, frozen=300) == \
-        "[1/1] node4 bootstrap  JOINING  [----------]  8%  0.2/2.3 GiB  receiving (disk +3.2 GiB in 5m)  10m"
+        "[1/1] node4  bootstrap  JOINING  [----------]  8%  0.2/2.3 GiB  receiving (disk +3.2 GiB in 5m)  10m"
     # netstats still for less than a minute: nothing to say; the disk quiet too for a minute: no progress
     assert "receiving" not in line(idle=0, disk=GIB, frozen=30)
     assert "receiving" not in line(idle=90, disk=GIB, frozen=400) and "no progress for 1m" in line(idle=90, disk=GIB, frozen=400)
@@ -583,43 +651,44 @@ def test_progress_line_small_totals_one_unit():
                                      {"name": "node2", "way": "to", "done": 115.1 * MIB, "total": 129.8 * MIB},
                                      {"name": "node3", "way": "to", "done": 40 * 1024, "total": 900 * 1024}])
     assert lines == [
-        "[2/3] node4 decommission  LEAVING  [#########-]  92%  305.1/329.8 MiB  1m",
+        "[2/3] node4  decommission  LEAVING  [#########-]  92%  305.1/329.8 MiB  1m",
+        "",
         "      to node1  190.0/200.0 MiB  95%   to node2  115.1/129.8 MiB  88%",
         "      to node3   40.0/900.0 KiB   4%"]
 
 
 def test_progress_line_waiting_stalled_done():
     assert out.progress_line(1, 2, "node5", "bootstrap", "JOINING", now=NOW, start=NOW - 32) == \
-        ["[1/2] node5 bootstrap  JOINING  waiting for streams  32s"]
+        ["[1/2] node5  bootstrap  JOINING  waiting for streams  32s"]
     # no stream yet (a bootstrap's ring delay): not called stalled, the time without progress shown after a minute
     assert out.progress_line(1, 2, "node5", "bootstrap", mode="JOINING", now=33, start=0, idle=33, limit=3600) == \
-        ["[1/2] node5 bootstrap  JOINING  waiting for streams  33s"]
+        ["[1/2] node5  bootstrap  JOINING  waiting for streams  33s"]
     assert out.progress_line(1, 2, "node5", "bootstrap", mode="JOINING", now=120, start=0, idle=120, limit=3600) == \
-        ["[1/2] node5 bootstrap  JOINING  waiting for streams  no progress 2m/1h00m  2m"]
+        ["[1/2] node5  bootstrap  JOINING  waiting for streams  no progress 2m/1h00m  2m"]
     # data left, a check or two without a byte: no news; a minute: said as progress; from the warning
     # threshold: STALLED and the limit
     assert "progress" not in out.progress_line(1, 2, "node5", "bootstrap", "JOINING", done=37.5 * GIB, total=100 * GIB,
                                                now=NOW, start=NOW - 900, idle=50, limit=1800, warn=300)[0]
     assert out.progress_line(1, 2, "node5", "bootstrap", "JOINING", done=37.5 * GIB, total=100 * GIB, now=NOW,
                              start=NOW - 900, idle=240, limit=1800, warn=300) == \
-        ["[1/2] node5 bootstrap  JOINING  [###-------]  37%  37.5/100.0 GiB  no progress for 4m  15m"]
+        ["[1/2] node5  bootstrap  JOINING  [###-------]  37%  37.5/100.0 GiB  no progress for 4m  15m"]
     assert out.progress_line(1, 2, "node5", "bootstrap", "JOINING", done=37.5 * GIB, total=100 * GIB, now=NOW,
                              start=NOW - 900, idle=360, limit=1800, warn=300) == \
-        ["[1/2] node5 bootstrap  JOINING  STALLED 6m/30m  37%  37.5/100.0 GiB  15m"]
+        ["[1/2] node5  bootstrap  JOINING  STALLED 6m/30m  37%  37.5/100.0 GiB  15m"]
     assert out.progress_line(1, 2, "node5", "bootstrap", "JOINING", done=37.5 * GIB, total=100 * GIB, now=NOW,
                              start=NOW - 1800, idle=1800, limit=1800, warn=300, status="stalled") == \
-        ["[1/2] node5 bootstrap  JOINING  STALLED 30m/30m  37%  37.5/100.0 GiB  30m"]
+        ["[1/2] node5  bootstrap  JOINING  STALLED 30m/30m  37%  37.5/100.0 GiB  30m"]
     # no warning threshold given: STALLED only at the limit
     assert "STALLED" not in out.progress_line(1, 2, "node5", "bootstrap", "JOINING", done=GIB, total=2 * GIB,
                                               now=NOW, start=NOW - 900, idle=899, limit=900)[0]
     assert out.progress_line(1, 2, "node5", "bootstrap", "JOINING", done=37.5 * GIB, total=100 * GIB, now=NOW,
                              start=NOW - 900, status="jmx_refused") == \
-        ["[1/2] node5 bootstrap  JOINING  JMX LOGIN REFUSED  37%  37.5/100.0 GiB  15m"]
+        ["[1/2] node5  bootstrap  JOINING  JMX LOGIN REFUSED  37%  37.5/100.0 GiB  15m"]
     # all sent, the end not there yet (index builds): finishing, quiet for a while
     assert out.progress_line(2, 3, "node4", "decommission", "LEAVING", done=GIB, total=GIB, now=NOW, start=NOW - 600,
                              idle=300, limit=3600)[0].endswith("all sent, finishing  no progress 5m/1h00m  10m")
     assert out.progress_line(0, 0, "node5", "bootstrap", done=10 * GIB, total=10 * GIB, now=NOW, start=NOW - 60,
-                             status="done") == ["node5 bootstrap  done  10.0/10.0 GiB  1m"]
+                             status="done") == ["node5  bootstrapped  10.0 GiB in 1m00s  avg 170 MiB/s"]
     assert out.progress_line(2, 3, "node4", "decommission", "LEAVING", done=1 * GIB, total=1 * GIB, speed=MIB,
                              now=NOW, start=NOW)[0].endswith("all sent, finishing  0s")
 

@@ -107,20 +107,25 @@ def cassandra_progress_line(state, index=0, steps=0, node="", operation="", mode
 _MODE_STATE = {"JOINING": "UJ", "MOVING": "UM", "LEAVING": "UL"}
 
 
-def cassandra_normal_wait_line(mode, waited=0, timeout=0, index=0, steps=0, node="", operation="", done=False):
-    """The progress line of the wait for a node to be NORMAL (wait_normal.yml): "[2/5] node2 restart  waiting for
-    NORMAL (UJ\u2192UN)  1m10s/10m"; mode: netstats' (JOINING, MOVING, LEAVING as their status letters, another one
-    as itself: "(mode STARTING)", empty: "(no JMX answer yet)"); done: "[2/5] node2 restart  NORMAL after 1m20s".
+def cassandra_normal_wait_line(mode, waited=0, timeout=0, index=0, steps=0, node="", operation="", done=False,
+                               elapsed=None):
+    """The progress line of the wait for a node to be NORMAL (wait_normal.yml): "[2/5] node2  restart  waiting
+    UJ, waiting for UN  1m10s/10m"; mode: netstats' (JOINING, MOVING, LEAVING as their status letters, another one
+    as itself: "mode STARTING, waiting for NORMAL", empty: "no JMX answer yet, waiting for NORMAL"); done: the
+    step's frozen line, "[2/5] node2  restarted  NORMAL after 1m20s", then the step's whole time when elapsed
+    (seconds) is given: "[2/5] node2  restarted  NORMAL after 1m20s  1m50s".
     e.g. ("JOINING", waited=70, timeout=600, index=2, steps=5, node="node2", operation="restart") -> "[2/5] node2
-    restart  waiting for NORMAL (UJ\u2192UN)  1m10s/10m"."""
+    restart  waiting  UJ, waiting for UN  1m10s/10m"."""
     mode = str(mode or "").upper()
-    head = ("[%d/%d] %s %s" % (int(index), int(steps), node, operation) if int(steps or 0)
-            else ("%s %s" % (node, operation)).strip())
     if done:
-        return "  ".join(x for x in [head, "NORMAL after %s" % out.duration(waited)] if x)
-    state = (u"%s\u2192UN" % _MODE_STATE[mode]) if mode in _MODE_STATE else ("mode %s" % mode) if mode else "no JMX answer yet"
-    return "  ".join(x for x in [head, "waiting for NORMAL (%s)" % state,
-                                 "%s/%s" % (out.duration(waited), out.duration(timeout, short=True))] if x)
+        head = out.step_head(index, steps, node, out.done_word(operation))
+        took = out.duration(elapsed) if elapsed is not None else ""
+        return "  ".join(x for x in [head, "NORMAL after %s" % out.duration(waited), took] if x)
+    if mode in _MODE_STATE:
+        what = "%s, waiting for UN" % _MODE_STATE[mode]
+    else:
+        what = ("mode %s" % mode if mode else "no JMX answer yet") + ", waiting for NORMAL"
+    return out.wait_line(out.step_head(index, steps, node, operation), what, waited, timeout)
 
 
 def _same_sources(a, b):

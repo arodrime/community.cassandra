@@ -158,36 +158,30 @@ def cassandra_health_waiting(findings, names=None):
 
 def cassandra_health_wait_line(waiting, names=None, waited=0, timeout=0, index=0, steps=0, node="", operation="",
                                done=False):
-    """The progress line of the wait for waiting (cassandra_health_waiting's): "[2/5] node2 restart  waiting for
-    node4 (10.0.0.4) DN to come back  1m30s/10m"; names: {address: inventory name}; waited, timeout: seconds; done:
-    the line once nothing is waited for any more ("[2/5] node2 restart  all back after 1m40s").
+    """The progress line of the wait for waiting (cassandra_health_waiting's): "[2/5] node2  restart  waiting
+    node4 is DN, waiting for it to come back  1m30s/10m"; names: {address: inventory name} (a node without one is
+    its address); waited, timeout: seconds; done: the line once nothing is waited for any more ("[2/5] node2
+    restart  all back after 1m40s").
     e.g. ([<10.0.0.4 DN>], names={"10.0.0.4": "node4"}, waited=90, timeout=600, index=2, steps=5, node="node2",
-    operation="restart") -> "[2/5] node2 restart  waiting for node4 (10.0.0.4) DN to come back  1m30s/10m"."""
-    if int(steps or 0):
-        head = "[%d/%d] %s %s" % (int(index), int(steps), node, operation)
-    else:
-        head = ("%s %s" % (node, operation)).strip()
+    operation="restart") -> "[2/5] node2  restart  waiting  node4 is DN, waiting for it to come back  1m30s/10m"."""
+    head = out.step_head(index, steps, node, operation)
     if done:
         return "  ".join(x for x in [head, "all back after %s" % out.duration(waited)] if x)
-
-    def down(f):
-        name = (names or {}).get(f["address"], f["address"])
-        return "%s %s" % (f["address"], f["state"]) if name == f["address"] else "%s (%s) %s" % (name, f["address"], f["state"])
-
+    waiting = waiting or []
     parts = []
-    downs = [down(f) for f in waiting or [] if f.get("kind") == "state"]
+    downs = ["%s is %s" % ((names or {}).get(f["address"], f["address"]), f["state"]) for f in waiting
+             if f.get("kind") == "state"]
     if downs:
-        parts.append("%s to come back" % ", ".join(downs))
-    parts += ["the %s port %s on %s (%s) to answer" % (f["name"], f["port"], f["on"], f["host"])
-              for f in waiting or [] if f.get("kind") == "port"]
-    parts += ["%s on %s to run" % ("gossip" if f["kind"] == "gossip" else "the native transport (CQL)", f["on"])
-              for f in waiting or [] if f.get("kind") in ("gossip", "cql")]
-    for f in waiting or []:
+        parts.append("%s, waiting for %s to come back" % (", ".join(downs), "it" if len(downs) == 1 else "them"))
+    parts += ["the %s port %s on %s does not answer yet" % (f["name"], f["port"], f["on"])
+              for f in waiting if f.get("kind") == "port"]
+    parts += ["%s on %s is not running yet" % ("gossip" if f["kind"] == "gossip" else "the native transport (CQL)", f["on"])
+              for f in waiting if f.get("kind") in ("gossip", "cql")]
+    for f in waiting:
         if f.get("kind") == "nodetool":
             cause = _PASSING.search(str(f.get("error", "")))
-            parts.append("nodetool status on %s to answer%s" % (f["on"], " (JMX: %s)" % cause.group(1) if cause else ""))
-    return "  ".join(x for x in [head, "waiting for " + "; ".join(parts) if parts else "",
-                                 "%s/%s" % (out.duration(waited), out.duration(timeout, short=True))] if x)
+            parts.append("nodetool status on %s does not answer%s" % (f["on"], " (JMX: %s)" % cause.group(1) if cause else ""))
+    return out.wait_line(head, "; ".join(parts), waited, timeout)
 
 
 def cassandra_health_problems(views, expected, node, gossip=None, binary=None, netstats=None, schema=None, ports=None,

@@ -50,23 +50,26 @@ def render(template, **variables):
 
 def test_the_progress_line():
     assert cassandra_normal_wait_line("JOINING", waited=70, timeout=600, node="node2", operation="restart") == \
-        u"node2 restart  waiting for NORMAL (UJ→UN)  1m10s/10m"
+        "node2  restart  waiting  UJ, waiting for UN  1m10s/10m"
     # a rolling operation: [i/n], as its other progress lines
     assert cassandra_normal_wait_line("STARTING", waited=5, timeout=600, index=2, steps=5, node="node2",
                                       operation="restart") == \
-        "[2/5] node2 restart  waiting for NORMAL (mode STARTING)  5s/10m"
+        "[2/5] node2  restart  waiting  mode STARTING, waiting for NORMAL  5s/10m"
     # JMX not answering yet
     assert cassandra_normal_wait_line("", waited=10, timeout=600, node="node2", operation="start") == \
-        "node2 start  waiting for NORMAL (no JMX answer yet)  10s/10m"
+        "node2  start  waiting  no JMX answer yet, waiting for NORMAL  10s/10m"
+    # the step over: its frozen line (the step's whole time after it when the task gives elapsed)
     assert cassandra_normal_wait_line("NORMAL", done=True, waited=80, node="node2", operation="restart") == \
-        "node2 restart  NORMAL after 1m20s"
+        "node2  restarted  NORMAL after 1m20s"
+    assert cassandra_normal_wait_line("NORMAL", done=True, waited=30, index=1, steps=5, node="node1", operation="restart",
+                                      elapsed=110) == "[1/5] node1  restarted  NORMAL after 30s  1m50s"
 
 
 def test_the_progress_lines_in_the_progress_colour():
-    for line in (u"node2 restart  waiting for NORMAL (UJ→UN)  1m10s/10m", "node2 restart  NORMAL after 1m20s",
-                 u"[2/5] node2 restart  waiting for NORMAL (UJ→UN)  1m10s/10m"):
+    for line in ("node2  restart  waiting  UJ, waiting for UN  1m10s/10m", "node2  restarted  NORMAL after 1m20s",
+                 "[2/5] node2  restart  waiting  UJ, waiting for UN  1m10s/10m", "[1/5] node1  restarted  NORMAL after 30s  1m50s"):
         assert colour(line) == PROGRESS_COLOR, line
-    assert colour("node2 restart  NORMAL after 1m20s") != C.COLOR_WARN
+    assert colour("node2  restarted  NORMAL after 1m20s") != C.COLOR_WARN
 
 
 def test_reads_through_the_wait_loop_with_a_line_and_a_wait_each():
