@@ -42,12 +42,14 @@
       (cassandra_java_tarballs: {} for a Java package).
     quiet: true
 
-# Its name makes its temporary file and its directory: without one, the role
-# would remove /var/tmp and cassandra_java_tarball_dir
+# Its name makes its temporary file and its directory: without one (or with
+# "." or ".."), the role would remove /var/tmp, /var or cassandra_java_tarball_dir
 - name: The tarball has a file name
   ansible.builtin.assert:
-    that: cassandra_java_tarball == '' or _cassandra_java_tarball_name != ''
-    fail_msg: "cassandra_java_tarball is {{ cassandra_java_tarball }}: a directory, give the tarball file in it."
+    that: >-
+      cassandra_java_tarball == ''
+      or _cassandra_java_tarball_name | regex_replace('[.](tar[.]gz|tgz|tar)$', '') not in ['', '.', '..']
+    fail_msg: "cassandra_java_tarball is {{ cassandra_java_tarball }}: give a tarball file with a name of its own."
     quiet: true
 
 # A Java already there (cassandra_java_home, e.g. imported, or a tarball

@@ -110,6 +110,8 @@ def test_tarball_url_without_a_file_name_is_refused():
     with open(os.path.join(os.path.dirname(DEFAULTS), "..", "tasks", "java_check.yml")) as f:
         check = next(t for t in yaml.safe_load(f) if t["name"] == "The tarball has a file name")
     that = trust_as_template("{{ %s }}" % check["ansible.builtin.assert"]["that"])
-    assert templar_with(cassandra_java_tarball="https://mirror.example.com/java/").template(that) is False
+    for url in ("https://mirror.example.com/java/", "https://mirror.example.com/java/..", "https://mirror.example.com/.",
+                "https://mirror.example.com/java/.tar.gz", "https://mirror.example.com/java/..tgz", "/tmp/.tar"):
+        assert templar_with(cassandra_java_tarball=url).template(that) is False, url
     assert templar_with(cassandra_java_tarball="https://mirror.example.com/java/jdk-17.tar.gz").template(that) is True
     assert templar_with(cassandra_java_tarball="").template(that) is True
