@@ -28,6 +28,7 @@
       register: cassandra_health_gossip_job
       async: "{{ _async }}"
       poll: 0
+      changed_when: false  # a read (a job started reports changed)
       check_mode: false
       when: _node_checks
 
@@ -36,6 +37,7 @@
       register: cassandra_health_binary_job
       async: "{{ _async }}"
       poll: 0
+      changed_when: false  # a read (a job started reports changed)
       check_mode: false
       when: _node_checks
 
@@ -45,6 +47,7 @@
       register: cassandra_health_netstats_job
       async: "{{ _async }}"
       poll: 0
+      changed_when: false  # a read (a job started reports changed)
       check_mode: false
       when: _node_checks
 
@@ -73,6 +76,7 @@
       async: "{{ _async if _batch else 0 }}"
       poll: 0
       failed_when: false
+      changed_when: false
       check_mode: false  # read-only; --check needs it too
 
     # Native transport listens on rpc_address (all interfaces for 0.0.0.0); --check waits for nothing, nor a
