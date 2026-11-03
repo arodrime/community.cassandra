@@ -33,9 +33,10 @@
           {{ _cassandra_clock_verdicts | community.cassandra.cassandra_clock_refusal(
                operation=_cassandra_clock_operation | default(''), check=ansible_check_mode,
                later_ok=_cassandra_clock_later_ok | default(false) | bool, unread=_unread,
-               cluster=(_cassandra_preflight | default({})).cassandra_cluster_name | default(''), command=_command) }}
+               cluster=_cluster, command=_command) }}
       run_once: true
       vars:
+        _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default((_cassandra_preflight | default({})).cassandra_cluster_name | default('')) }}"
         # answered, but the read failed (not a wait that ran out: that one is judged)
         _unread: >-
           {%- set d = {} -%}

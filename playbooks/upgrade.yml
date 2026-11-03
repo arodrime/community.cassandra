@@ -349,7 +349,7 @@
         name: community.cassandra.cassandra_operation
         tasks_from: screen.yml
       vars:
-        _cluster: "{{ (_cassandra_preflight | default({})).cassandra_cluster_name | default('') }}"
+        _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default((_cassandra_preflight | default({})).cassandra_cluster_name | default('')) }}"
         cassandra_screen_question: "Backups, repairs and schema changes paused: go on with the snapshots?"
         cassandra_screen:
           operation: upgrade

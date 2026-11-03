@@ -19,6 +19,7 @@
     cassandra_output_gap: true  # a line of its own
     _group: &group "{{ lookup('community.cassandra.cassandra_hosts') }}"
 
+# _cassandra_cluster_shown (on localhost): the group, the cluster's name in the titles, questions and recaps
 - name: Say it once per run
   ansible.builtin.set_fact:
     _cassandra_cluster_shown: "{{ _group }}"

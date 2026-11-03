@@ -188,12 +188,13 @@
         - name: Stop here
           ansible.builtin.fail:
             msg: >-
-              {{ (['REFUSED  decommission_node  ' ~ cassandra_cluster_name | default('') ~ '  nothing was changed']
+              {{ (['REFUSED  decommission_node  ' ~ _cluster_name ~ '  nothing was changed']
                   + _refusals | flatten | map('regex_replace', '^', '  ') | list) | join(_nl) }}
           run_once: true
           vars:
             cassandra_output: true  # a verdict: its msg as is
             _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+            _cluster_name: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
             _refusals: >-
               {%- set out = [] -%}
               {%- for h in ansible_play_hosts_all if hostvars[h]._cassandra_decommission_refusal is defined -%}
@@ -221,7 +222,7 @@
         cassandra_screen_session_warning: true
         # the datacenters the nodes leave, the cluster: the title and the question say the same thing
         _where: "{{ _nodes | selectattr('name', 'in', _leaving) | map(attribute='dc') | unique | sort | join(', ') ~ ' of ' ~ _cluster_name }}"
-        _cluster_name: "{{ (_cassandra_preflight | default({})).cassandra_cluster_name | default('') }}"
+        _cluster_name: "{{ hostvars['localhost']._cassandra_cluster_shown | default((_cassandra_preflight | default({})).cassandra_cluster_name | default('')) }}"
         cassandra_screen_question: "Remove {{ _leaving | join(', ') }} from {{ _where }}?"
         cassandra_screen: >-
           {{ _dn_screen | combine({'summary': _leaving | join(', ') ~ ' from ' ~ _where,

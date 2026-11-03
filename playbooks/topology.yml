@@ -98,7 +98,7 @@
   vars:
     _cassandra_notes_deferred: true  # the checks' notes in the plan
     _tp_group: "{{ lookup('community.cassandra.cassandra_hosts') }}"
-    _tp_cluster: "{{ (_cassandra_preflight | default({})).cassandra_cluster_name | default(_tp_group, true) }}"
+    _tp_cluster: "{{ _tp_group }}"
     _tp_absent: "{{ query('community.cassandra.cassandra_nodes', state='absent') }}"
     _tp_ring: "{{ (cassandra_preflight_status | default({})).cluster_status | default({}, true) }}"
     _tp_ring_addresses: >-
@@ -527,7 +527,7 @@
         cassandra_output: true
         cassandra_output_gap: true  # a block of its own (ops callback)
         _plan: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_topology_plan }}"
-        _plan_cluster: "{{ (hostvars[ansible_play_hosts_all[0]]._cassandra_preflight | default({})).cassandra_cluster_name | default('') }}"
+        _plan_cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default((hostvars[ansible_play_hosts_all[0]]._cassandra_preflight | default({})).cassandra_cluster_name | default('')) }}"
         _done: "{{ _plan.remove + _plan.gone + _plan.silent }}"
         # the nodes whose seed list is written but not reloaded (seeds_apply.yml)
         _reload_failed: "{{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('_cassandra_seeds_reload_failed', 'defined') | selectattr('_cassandra_seeds_reload_failed') | map(attribute='inventory_hostname') | list }}"

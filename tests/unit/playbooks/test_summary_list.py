@@ -45,6 +45,7 @@ def test_operation_summary_is_a_recap():
     variables["_cassandra_op_results"] = render(defaults["_cassandra_op_results"], **variables)
     assert variables["_cassandra_op_results"] == [{"node": "n1", "result": "add done in 5s"}, {"node": "n2", "result": "not reached"},
                                                   {"node": "n3", "result": "not in this run (--limit)"}]
+    variables["_cluster"] = render(task["vars"]["_cluster"], **variables)
     # a verdict, the nodes grouped (a list: a line each under any callback)
     lines = [" ".join(line.split()) for line in render(task["ansible.builtin.debug"]["msg"], **variables)]
     assert lines == ["DONE add_node my_cluster 1 added, 2 not touched", "n1 added 5s", "n2 not touched (not reached)",
@@ -53,6 +54,11 @@ def test_operation_summary_is_a_recap():
     assert render(task["ansible.builtin.debug"]["msg"], **variables)[0].startswith("DONE  remove_datacenter  my_cluster")
     variables.update(ansible_check_mode=True)
     assert render(task["ansible.builtin.debug"]["msg"], **variables)[0].startswith("CHECK  remove_datacenter  my_cluster")
+    # the cluster as the run's first line names it (its inventory group, cluster_banner.yml)
+    shown = dict(variables)
+    shown["hostvars"] = dict(hostvars, localhost={"_cassandra_cluster_shown": "prod"})
+    shown["_cluster"] = render(task["vars"]["_cluster"], **shown)
+    assert render(task["ansible.builtin.debug"]["msg"], **shown)[0].startswith("CHECK  remove_datacenter  prod  ")
 
 
 def test_health_check_report_inputs_are_a_list_and_a_dict():

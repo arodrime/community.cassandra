@@ -149,7 +149,7 @@
       ansible.builtin.assert:
         that: _refused | length == 0
         fail_msg: >-
-          {{ _refused | community.cassandra.cassandra_add_node_refusal(cluster=_p0.cassandra_cluster_name | default(''), **_cmd)
+          {{ _refused | community.cassandra.cassandra_add_node_refusal(cluster=_cluster, **_cmd)
              | join(_nl) }}
         quiet: true
       run_once: true
@@ -166,6 +166,7 @@
                                   'holds': '', 'why': hostvars[h]._cassandra_new_node_refusal | default(''), 'former': false}) -%}
           {%- endfor -%}
           {{ l }}
+        _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(_p0.cassandra_cluster_name | default('')) }}"
         _cmd:
           targets: "{{ query('ansible.builtin.inventory_hostnames', cassandra_target_nodes) }}"
           asked_by: "{{ _cassandra_screen_asked_by | default('') }}"
@@ -320,7 +321,7 @@
       ansible.builtin.assert:
         that: _refused | length == 0
         fail_msg: >-
-          {{ _refused | community.cassandra.cassandra_add_node_refusal(cluster=_p0.cassandra_cluster_name | default(''), **_cmd)
+          {{ _refused | community.cassandra.cassandra_add_node_refusal(cluster=_cluster, **_cmd)
              | join(_nl) }}
         quiet: true
       run_once: true
@@ -328,6 +329,7 @@
         cassandra_output: true  # a verdict: its msg as is (ops callback)
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         _refused: "{{ _new | community.cassandra.cassandra_add_node_reset_refusals(hostvars) }}"
+        _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(_p0.cassandra_cluster_name | default('')) }}"
         _cmd:
           targets: "{{ query('ansible.builtin.inventory_hostnames', cassandra_target_nodes) }}"
           asked_by: "{{ _cassandra_screen_asked_by | default('') }}"
@@ -369,19 +371,20 @@
              | map(attribute='cassandra_medusa_enabled') | map('bool') | select | list | length > 0 }}
         _blocks: "{{ _new | community.cassandra.cassandra_add_node_blocks(hostvars, cassandra_add_node_plan.estimate) }}"
         cassandra_screen_session_warning: true
+        _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(_p.cassandra_cluster_name) }}"
         # the datacenters the new nodes join, the cluster: the title and the question say the same thing
         _where: >-
           {{ (_new or _joining) | map('extract', hostvars, ['_cassandra_preflight', 'cassandra_dc']) | unique | sort | join(', ')
-             ~ ' of ' ~ _p.cassandra_cluster_name }}
+             ~ ' of ' ~ _cluster }}
         cassandra_screen_question: >-
           {{ ('Add ' ~ _new | join(', ') ~ ' into ' ~ _where ~ '?') if _new
-             else ('Wait for ' ~ _joining | join(', ') ~ ' of ' ~ _p.cassandra_cluster_name ~ '?') if _joining
-             else 'Run the cleanup of ' ~ _p.cassandra_cluster_name ~ '?' }}
+             else ('Wait for ' ~ _joining | join(', ') ~ ' of ' ~ _cluster ~ '?') if _joining
+             else 'Run the cleanup of ' ~ _cluster ~ '?' }}
         cassandra_screen:
           operation: add_node
           summary: >-
-            {{ (_new | join(', ') ~ ' into ' ~ _where) if _new else ('wait for ' ~ _joining | join(', ') ~ ' of ' ~ _p.cassandra_cluster_name)
-               if _joining else 'cleanup only, ' ~ _p.cassandra_cluster_name }}
+            {{ (_new | join(', ') ~ ' into ' ~ _where) if _new else ('wait for ' ~ _joining | join(', ') ~ ' of ' ~ _cluster)
+               if _joining else 'cleanup only, ' ~ _cluster }}
           intro:
             - >-
               {{ ('one node at a time; each streams its share of the data, progress every '
@@ -612,7 +615,7 @@
             _failures: >-
               {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('_cassandra_add_prepare_failure', 'defined')
                  | map(attribute='_cassandra_add_prepare_failure') | select | list }}
-            _cluster: "{{ (_cassandra_preflight | default({})).cassandra_cluster_name | default('') }}"
+            _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default((_cassandra_preflight | default({})).cassandra_cluster_name | default('')) }}"
             _rerun: >-
               {{ (_cassandra_screen_asked_by | default('') or 'add_node') | community.cassandra.cassandra_command(
                    inventory=ansible_inventory_sources,

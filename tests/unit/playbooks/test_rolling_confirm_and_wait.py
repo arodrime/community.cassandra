@@ -70,7 +70,7 @@ def test_every_rolling_operation_asks_before_its_progress_file():
 SESSION = "this run is not inside tmux or screen"
 
 
-def screen_text(playbook, check=False, confirm=True, resume=False, mode="node"):
+def screen_text(playbook, check=False, confirm=True, resume=False, mode="node", **more):
     play = next(p for p in load("playbooks", playbook) if p["name"] == "Set up the progress file")
     t = next(t for dummy, t in includes(play["tasks"]) if t["name"] == "Show the plan and confirm the run")
     screen = load("roles", "cassandra_operation", "tasks", "screen.yml")[0]
@@ -78,6 +78,7 @@ def screen_text(playbook, check=False, confirm=True, resume=False, mode="node"):
     variables = {"ansible_check_mode": check, "cassandra_operation_confirm": confirm, "_cassandra_session_warning": SESSION,
                  "ansible_play_hosts": hosts, "cassandra_rolling_resume": resume, "cassandra_rolling_mode": mode,
                  "_cassandra_preflight": {"cassandra_cluster_name": "Orders"}}
+    variables.update(more)
     variables.update(trust(t["vars"]))
     variables.update(trust(screen["vars"]))
     return render("{{ _cassandra_screen_text }}", variables), render(t["vars"]["cassandra_screen_question"], variables)
@@ -98,6 +99,14 @@ def test_rolling_restart_screen_and_question():
     assert "--check: nothing will be changed" in screen_text("rolling_restart.yml", check=True)[0]
     said = "cassandra_operation_confirm is false: no question, the run goes on."
     assert said in screen_text("rolling_restart.yml", confirm=False)[0] and said not in text
+
+
+def test_the_title_and_the_question_name_the_group_of_the_first_line():
+    # the run's first line names the inventory group (cluster_banner.yml): the title and the question too
+    shown = {"hostvars": {"localhost": {"_cassandra_cluster_shown": "orders_eu"}}}
+    for playbook in ("rolling_restart.yml", "rolling_reboot.yml"):
+        text, question = screen_text(playbook, **shown)
+        assert " of orders_eu, " in text.split("\n")[0] and " of orders_eu, " in question, (playbook, text, question)
 
 
 def test_the_screens_say_it_with_single_spaces():

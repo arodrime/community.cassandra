@@ -7,7 +7,7 @@
   ansible.builtin.debug:
     msg: >-
       {{ _cassandra_op_results | community.cassandra.cassandra_op_recap(check=ansible_check_mode,
-                                                                        cluster=cassandra_cluster_name | default(''),
+                                                                        cluster=_cluster,
                                                                         operation=cassandra_service_summary_operation | default(''),
                                                                         action=cassandra_service_node_action | default(''),
                                                                         seconds=_seconds) }}
@@ -15,6 +15,7 @@
   vars:
     cassandra_output: true
     cassandra_output_gap: true  # a block of its own (ops callback)
+    _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
     # the run's time, from its first line (cluster_banner.yml)
     _seconds: >-
       {{ (now().timestamp() | int - _localhost['_cassandra_run_start'] | int)

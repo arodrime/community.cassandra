@@ -143,7 +143,7 @@
           {%-   set _ = l.append({'title': h | community.cassandra.cassandra_screen_title(hostvars[h]._cassandra_preflight | default({})), 'lines': ['runs ' ~ hostvars[h].cassandra_update_java_running]}) -%}
           {%- endfor -%}
           {{ l }}
-        _cluster: "{{ (_cassandra_preflight | default({})).cassandra_cluster_name | default('') }}"
+        _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default((_cassandra_preflight | default({})).cassandra_cluster_name | default('')) }}"
         cassandra_screen_question: "Move {{ _todo | join(', ') }} of {{ _cluster }} to Java {{ cassandra_java_version }}?"
         cassandra_screen:
           operation: update_java

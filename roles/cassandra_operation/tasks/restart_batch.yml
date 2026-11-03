@@ -143,11 +143,12 @@
       vars:
         cassandra_output: true  # a verdict: its msg as is
         cassandra_output_gap: true  # a block of its own
+        _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
       ansible.builtin.fail:
         msg: >-
           {{ _cassandra_op_results | community.cassandra.cassandra_stop_block(
                'the rack ' ~ _todo | join(', '), ansible_failed_result.msg | default(''), check=ansible_check_mode,
-               cluster=cassandra_cluster_name | default(''), operation=cassandra_service_summary_operation | default(''),
+               cluster=_cluster, operation=cassandra_service_summary_operation | default(''),
                action='restart', resume=cassandra_progress_file is defined, progress_file=cassandra_progress_file | default(''),
                task=ansible_failed_task.name | default(''), stderr=ansible_failed_result.stderr | default(''),
                batch=true, **_cassandra_run_command_args) }}

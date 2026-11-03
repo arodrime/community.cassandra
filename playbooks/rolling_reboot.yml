@@ -37,7 +37,7 @@
         tasks_from: screen.yml
       vars:
         _nodes: "{{ ansible_play_hosts | community.cassandra.cassandra_node_list }}"
-        _cluster: "{{ (_cassandra_preflight | default({})).cassandra_cluster_name | default('') }}"
+        _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default((_cassandra_preflight | default({})).cassandra_cluster_name | default('')) }}"
         cassandra_screen_question: "Reboot {{ _nodes }} of {{ _cluster }}, one host at a time?"
         cassandra_screen_session_warning: true
         cassandra_screen:

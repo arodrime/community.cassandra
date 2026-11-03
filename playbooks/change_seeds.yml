@@ -86,7 +86,7 @@
       vars:
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         cassandra_output: true
-        _cluster: "{{ (_cassandra_preflight | default({})).cassandra_cluster_name | default(lookup('community.cassandra.cassandra_hosts'), true) }}"
+        _cluster: "{{ lookup('community.cassandra.cassandra_hosts') }}"
 
     - name: Show the new seed list and confirm
       ansible.builtin.include_role:

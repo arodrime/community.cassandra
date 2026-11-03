@@ -538,7 +538,7 @@
                                     'unit_failed': v.cassandra_apply_config_unit_failed | default(false) | bool}) -%}
           {%- endfor -%}
           {{ out }}
-        _cluster: "{{ (_cassandra_preflight | default({})).cassandra_cluster_name | default('') }}"
+        _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default((_cassandra_preflight | default({})).cassandra_cluster_name | default('')) }}"
         _up_to_date: "{{ ansible_play_hosts | reject('in', _todo) | list }}"
         cassandra_screen_question: "Apply the {{ _what }} on {{ _todo | community.cassandra.cassandra_node_list }} of {{ _cluster }}?"
         cassandra_screen:
@@ -837,7 +837,7 @@
     - name: Print the changes
       ansible.builtin.debug:
         msg: >-
-          {{ _nodes | community.cassandra.cassandra_apply_config_recap(check=ansible_check_mode, cluster=cassandra_cluster_name | default(''),
+          {{ _nodes | community.cassandra.cassandra_apply_config_recap(check=ansible_check_mode, cluster=_cluster,
                                                                         seconds=(now().timestamp() | int - _start | int) if _start else none,
                                                                         diff=_diff, refused=_refused, planned=_planned, width='terminal',
                                                                         restart_command=_restart_command) }}
@@ -848,6 +848,7 @@
         _start: >-
           {{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('_cassandra_apply_config_start', 'defined')
              | map(attribute='_cassandra_apply_config_start') | first | default('') }}
+        _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
         # the nodes the plan showed the warnings of (none: no plan)
         _planned: >-
           {{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('_cassandra_apply_config_planned', 'defined')

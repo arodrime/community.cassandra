@@ -62,7 +62,7 @@
       ansible.builtin.debug:
         msg: >-
           {{ _nodes | community.cassandra.cassandra_reset_recap(
-               check=ansible_check_mode, cluster=cassandra_cluster_name | default(''),
+               check=ansible_check_mode, cluster=(hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default(''))),
                add_command='add_node' | community.cassandra.cassandra_command(
                  inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
                  hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD'),
