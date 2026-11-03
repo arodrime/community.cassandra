@@ -407,9 +407,10 @@
                   ~ ') is applied live on every node (no restart): ' ~ _seeds_added | join(', ') ~ ' then a seed'
                   ~ ' (unless a datacenter would need seeds picked: then change_seeds).')
                  if _seeds_added and not _cassandra_screen_asked_by | default('') else '' }}
-            # one sentence (a single expression: no line break of the YAML in it)
+            # one sentence (a single expression: no line break of the YAML in it); none when no node hands data over
             - >-
-              {{ 'cleanup afterwards, ' ~ cassandra_add_node_plan.cleanup | dict2items | map(attribute='value') | flatten | length
+              {{ '' if not cassandra_add_node_plan.cleanup | dict2items | map(attribute='value') | flatten
+                 else 'cleanup afterwards, ' ~ cassandra_add_node_plan.cleanup | dict2items | map(attribute='value') | flatten | length
                  ~ ' nodes (' ~ cassandra_add_node_plan.scope | dict2items | map(attribute='key') | zip(cassandra_add_node_plan.scope
                    | dict2items | map(attribute='value') | map('replace', 'rack', "the new nodes' racks")
                    | map('replace', 'dc', 'whole datacenter')) | map('join', ' ') | join(', ')

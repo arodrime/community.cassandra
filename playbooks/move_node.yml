@@ -208,6 +208,7 @@
         tasks_from: screen.yml
       vars:
         cassandra_screen_session_warning: "{{ _plan.steps | length > 0 }}"
+        _mode: "{{ {'one': 'sequential'}.get(cassandra_move_cleanup | default('none'), cassandra_move_cleanup | default('none')) }}"
         cassandra_screen_question: >-
           {{ ('Move ' ~ _plan.steps | map(attribute='name') | join(', ') ~ ' as shown, one at a time?') if _plan.steps else '' }}
         cassandra_screen:
@@ -220,9 +221,9 @@
           after:
             - pre: "{{ _plan.lines }}"
             - >-
-              {{ ('cleanup afterwards (cassandra_move_cleanup='
-                  ~ {'one': 'sequential'}.get(cassandra_move_cleanup | default('none'), cassandra_move_cleanup | default('none')) ~ ')')
-                 if _plan.steps else 'Nothing to move.' }}
+              {{ ('cleanup afterwards: ' ~ {'none': 'by hand', 'sequential': 'one node at a time', 'rack': 'a rack at a time',
+                                            'dc': 'a datacenter at a time', 'all': 'every node at once: heavy I/O'}[_mode]
+                  ~ ' (cassandra_move_cleanup=' ~ _mode ~ ')') if _plan.steps else 'Nothing to move.' }}
           warnings:
             - label: tokens
               each: "{{ _plan.warnings }}"

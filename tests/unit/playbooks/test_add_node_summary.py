@@ -124,6 +124,8 @@ def test_the_cleanup_note_is_one_sentence():
     # lower case like the other notes, on one line (no break of the YAML in the middle of it)
     text = summary(cassandra_add_node_cleanup="none", cassandra_add_node_plan=CLEANUP_PLAN)
     assert "  cleanup afterwards, 2 nodes (dc1 whole datacenter): by hand (cassandra_add_node_cleanup=none)" in text.split("\n")
+    # no node hands data over: no note (not "0 nodes ()")
+    assert "cleanup afterwards" not in summary(cassandra_add_node_cleanup="none")
 
 
 def test_medusa_on_when_only_the_new_node_has_it():
