@@ -62,12 +62,10 @@ def vars_of(node):
         if isinstance(node.get("vars"), dict):
             yield node["vars"]
         for value in node.values():
-            for found in vars_of(value):
-                yield found
+            yield from vars_of(value)
     elif isinstance(node, list):
         for item in node:
-            for found in vars_of(item):
-                yield found
+            yield from vars_of(item)
 
 
 def sites():

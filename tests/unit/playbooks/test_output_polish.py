@@ -82,6 +82,7 @@ def test_reset_node_ends_with_a_verdict_and_the_add_node_command():
     variables = dict(hostvars=hostvars, ansible_play_hosts_all=["node4", "node5"], cassandra_cluster_name="my_cluster",
                      ansible_inventory_sources=[], cassandra_hosts="my_cluster", ansible_check_mode=False)
     variables["_nodes"] = render(t["vars"]["_nodes"], **variables)
+    variables["_cluster"] = render(t["vars"]["_cluster"], **variables)
     lines = render(t["ansible.builtin.debug"]["msg"], **variables)
     assert lines[0] == "DONE  reset_node  my_cluster  node4 emptied (2 entries deleted), Cassandra stopped and disabled on node4"
     assert lines[1] == "  node5  nothing to do (empty, Cassandra stopped and disabled)"

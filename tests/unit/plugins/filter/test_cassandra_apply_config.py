@@ -488,8 +488,8 @@ def test_the_plan_indents_the_tables_inside_the_terminal_width():
     diff = cassandra_apply_config_diff(nodes, width=width, margin=2)
     outcomes = cassandra_apply_config_outcomes([{"name": "h-n1", "os": True}, {"name": "h-n2", "os": True}], plan=True,
                                                width=width, margin=2)
-    text = cassandra_screen({"operation": "apply_config", "summary": "2 nodes of prod", "sections": [[{"pre": diff}],
-                                                                                                       [{"pre": outcomes}]]})
+    sections = [[{"pre": diff}], [{"pre": outcomes}]]
+    text = cassandra_screen({"operation": "apply_config", "summary": "2 nodes of prod", "sections": sections})
     assert "  OS settings  " in text and all(len(line) <= width for line in text.split("\n")), text
 
 
