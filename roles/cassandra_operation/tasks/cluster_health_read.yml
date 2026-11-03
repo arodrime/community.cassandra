@@ -228,7 +228,7 @@
     # the same as sentences (cassandra_health_findings: as data, for the health_check report)
     - name: Word the problems
       ansible.builtin.set_fact:
-        cassandra_health_problems: "{{ cassandra_health_findings | rejectattr('kind', 'equalto', 'warning') | map(attribute='text') | list }}"
+        cassandra_health_problems: "{{ cassandra_health_findings | community.cassandra.cassandra_health_sentences }}"
 
     - name: Say the warnings
       ansible.builtin.debug:

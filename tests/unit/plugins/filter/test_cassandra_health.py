@@ -57,6 +57,20 @@ def test_a_node_of_the_inventory_named_by_its_host_and_address():
     assert [f["address"] for f in findings if f["kind"] == "state"] == ["10.0.0.5", "10.0.0.9"]
 
 
+def test_a_node_down_seen_from_several_nodes_said_once():
+    # one sentence per node and state, the viewers together (the stop block's cause)
+    ring = [node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.5", status="D")]
+    names = {"10.0.0.5": "n4"}
+    out = problems([view("n2", *ring), view("n1", *ring)], names=names)
+    assert out == ["n4 (10.0.0.5, r1) is DN, seen from n1 and n2"]
+    out = problems([view("n3", *ring), view("n1", *ring), view("n2", *ring)], names=names)
+    assert out == ["n4 (10.0.0.5, r1) is DN, seen from n1..n3"]
+    # another state of the same node: its own sentence
+    other = [node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.5", status="D", state="L")]
+    assert problems([view("n1", *ring), view("n2", *other)], names=names) == [
+        "n4 (10.0.0.5, r1) is DN, seen from n1", "n4 (10.0.0.5, r1) is DL, seen from n2"]
+
+
 def test_the_health_checks_pass_the_inventory_names():
     import os
     import yaml

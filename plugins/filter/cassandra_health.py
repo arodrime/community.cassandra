@@ -5,6 +5,7 @@
 cassandra_health_findings: the same as data, for cassandra_health_report:
 the health_check playbook's report, a line per problem (each one once,
 whatever node saw it), the verdict first.
+cassandra_health_sentences: the findings as cassandra_health_problems' sentences.
 cassandra_health_wait_line: the progress line of the wait for nodes down to
 come back.
 cassandra_leaving_state: where a node given to decommission_node stands.
@@ -196,10 +197,33 @@ def cassandra_health_problems(views, expected, node, gossip=None, binary=None, n
     list of problems (the warnings left out).
     e.g. ([{from: node1, result: <a ring where 10.0.0.4 is DN>}], 2, "node1", names={"10.0.0.4": "node4"}) ->
     ["node4 (10.0.0.4, r1) is DN, seen from node1"]."""
-    return [f["text"] for f in cassandra_health_findings(
+    return cassandra_health_sentences(cassandra_health_findings(
         views, expected, node, gossip=gossip, binary=binary, netstats=netstats, schema=schema, ports=ports,
         down_ok=down_ok, joining_ok=joining_ok, leaving_ok=leaving_ok, names=names, mixed_versions=mixed_versions,
-        target=target) if f["kind"] != "warning"]
+        target=target))
+
+
+def cassandra_health_sentences(findings):
+    """cassandra_health_findings' result -> the problems as sentences (the warnings left out), a node seen in
+    the same state from several nodes said once.
+    e.g. [<node4 DN seen from node2>, <node4 DN seen from node1>] -> ["node4 (10.0.0.4, r1) is DN, seen from
+    node1 and node2"]."""
+    said, seen = [], {}  # seen: (address, state) -> (its place in said, its sentence before "seen from", viewers)
+    for f in findings or []:
+        if f.get("kind") == "warning":
+            continue
+        if f.get("kind") != "state":
+            said.append(f["text"])
+            continue
+        key = (f["address"], f["state"])
+        if key not in seen:
+            seen[key] = (len(said), f["text"].rsplit(", seen from ", 1)[0], set())
+            said.append(None)
+        seen[key][2].add(f["seen_from"])
+    for at, text, who in seen.values():
+        names = out.nodes(who)
+        said[at] = "%s, seen from %s" % (text, names.replace(", ", " and ") if len(who) == 2 else names)
+    return said
 
 
 def _lost_guess(names, found, unreachable, ring):
@@ -535,6 +559,7 @@ def cassandra_removal_force_target(rings, address, removal):
 class FilterModule(object):
     def filters(self):
         return {"cassandra_health_problems": cassandra_health_problems,
+                "cassandra_health_sentences": cassandra_health_sentences,
                 "cassandra_health_findings": cassandra_health_findings,
                 "cassandra_health_waiting": cassandra_health_waiting,
                 "cassandra_health_wait_line": cassandra_health_wait_line,
