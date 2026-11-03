@@ -446,9 +446,10 @@
     # setting-centric, the nodes grouped: in the plan of a real run (before its question), in the recap under --check
     - name: Put the settings that differ side by side
       ansible.builtin.set_fact:
-        # laid out at the terminal's width; with -v, a device-mapper device's dm-N too
+        # laid out at the terminal's width less the plan's indent (2); with -v, a device-mapper device's dm-N too
         cassandra_apply_config_diff: >-
-          {{ _nodes | community.cassandra.cassandra_apply_config_diff(width='terminal', verbose=ansible_verbosity | int > 0) }}
+          {{ _nodes | community.cassandra.cassandra_apply_config_diff(width='terminal', margin=2,
+                                                                    verbose=ansible_verbosity | int > 0) }}
       run_once: true
       vars:
         _nodes: >-
@@ -565,7 +566,8 @@
           # a real run: the settings that differ before its question (--check: in the recap, no question)
           sections:
             - "{{ [] if ansible_check_mode else [{'pre': cassandra_apply_config_diff | default([])}] }}"
-            - - pre: "{{ _nodes | community.cassandra.cassandra_apply_config_outcomes(plan=true, check=ansible_check_mode, width='terminal') }}"
+            - - pre: "{{ _nodes | community.cassandra.cassandra_apply_config_outcomes(plan=true, check=ansible_check_mode,
+                                                                                  width='terminal', margin=2) }}"
           # the nodes' warnings, each one once, then (--check) why a real run is refused; the recap says how many
           warnings: >-
             {{ _nodes | community.cassandra.cassandra_apply_config_warnings

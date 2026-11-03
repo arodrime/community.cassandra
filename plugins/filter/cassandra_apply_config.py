@@ -532,7 +532,7 @@ def _os_item(item, verbose=False):
     return item if verbose else _DM_KNAME.sub("", item)
 
 
-def cassandra_apply_config_diff(nodes, width=None, verbose=False):
+def cassandra_apply_config_diff(nodes, width=None, verbose=False, margin=0):
     """nodes: [{name, items, live, stats, dir_stats}] in inventory order, the
     nodes compared: items, cassandra_config's _cassandra_config_items (diffs
     masked, owner/mode changes, directory changes, the JMX files written
@@ -544,11 +544,12 @@ def cassandra_apply_config_diff(nodes, width=None, verbose=False):
     each setting that differs on a node, its change "from -> to" (one row per live value), the nodes that change
     last; the owner and the mode as two settings; the directories after the files, then the OS settings. [] when
     nothing differs. From GROUPS_FROM nodes on (cassandra_output), the node lists by NODE GROUPS defined first.
-    width: the lines fit in it (None: as long as they are; "terminal": the terminal's). verbose: a device-mapper
+    width: the lines fit in it (None: as long as they are; "terminal": the terminal's), margin columns kept for the
+    caller's indent (the plan's: 2). verbose: a device-mapper
     device's OS items with its kernel name (dm-N) too, which differs from node to node.
     e.g. node1 on the inventory's cassandra.yaml, node2 live with max_hint_window: 6h ->
     ["cassandra.yaml  max_hint_window  6h -> 3h  node2"]."""
-    width = _width(width)
+    width = _width(width, margin)
     prepared = [_prepare(n, verbose) for n in nodes or []]
     all_nodes = [n["name"] for n in prepared]
     files = set()
@@ -676,10 +677,11 @@ def _outcome(node, check, plan):
 _RANK = {"would apply": 0, "will apply": 0, "applied": 0, "failed": 1}
 
 
-def _width(width):
+def _width(width, margin=0):
+    """The width the lines fit in, margin columns less (None: no limit)."""
     if str(width) == "terminal":
-        return terminal_width()
-    return int(width) if width else None
+        return terminal_width() - margin
+    return int(width) - margin if width else None
 
 
 def _grouped(nodes, check=False, plan=False, width=None):
@@ -701,16 +703,17 @@ def _grouped(nodes, check=False, plan=False, width=None):
     return lines, dict(sorted(counts.items(), key=lambda c: _RANK.get(c[0], len(_RANK))))
 
 
-def cassandra_apply_config_outcomes(nodes, check=False, plan=False, width=None):
+def cassandra_apply_config_outcomes(nodes, check=False, plan=False, width=None, margin=0):
     """nodes: [{name, todo, done, os, os_done, then, result, notes, kept_running, unit_failed}] in inventory order ->
     what each one gets, the nodes with the same outcome on one line
     ("node2, node4  would apply, then restart"), its notes under it. plan:
     before the run (every node to do "will apply", "would apply" under check,
     with why it is not restarted: kept_running, its reasons, else the usual one; a node left stopped whose unit
-    failed, unit_failed, is not "stopped on purpose"). width: the lines fit in it ("terminal": the terminal's).
+    failed, unit_failed, is not "stopped on purpose"). width: the lines fit in it ("terminal": the terminal's), margin
+    columns kept for the caller's indent (the plan's: 2).
     e.g. ([{name: node1, todo: False}, {name: node2, todo: True, done: True, then: restart}], check=True) ->
     ["node2  would apply, then restart", "node1  nothing to apply"]."""
-    return _grouped(nodes, check, plan, width)[0]
+    return _grouped(nodes, check, plan, _width(width, margin))[0]
 
 
 def cassandra_apply_config_warnings(nodes):

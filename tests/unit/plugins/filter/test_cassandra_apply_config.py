@@ -463,6 +463,36 @@ def test_rows_too_wide_have_their_nodes_under_the_change_every_row_the_same():
     assert cassandra_apply_config_diff(nodes, width=120)[0].endswith("128 -> 4  h-n1")
 
 
+def test_the_nodes_under_the_setting_when_they_do_not_fit_under_the_change():
+    # a list of nodes wider than the room right of the changes: every row's nodes under the settings' column
+    many = ["cassandra-db-node-%d.example.net" % i for i in (1, 3, 5, 7)]  # 31 columns, 28 right of the changes
+    nodes = [{"name": n, "items": [], "os": [{"item": "read_ahead_kb sdb", "before": "4096", "after": "4"}]}
+             for n in many]
+    lines = cassandra_apply_config_diff(nodes, width=60)
+    assert lines[0] == "OS settings  read_ahead_kb sdb  4096 -> 4"
+    assert lines[1:] and all(line.startswith(" " * len("OS settings  ") + "cassandra-db-node-") for line in lines[1:]), lines
+    assert all(len(line) <= 60 for line in lines)
+
+
+def test_the_plan_indents_the_tables_inside_the_terminal_width():
+    # a real run's plan shows the differences and the outcomes 2 columns in (cassandra_screen): built with margin=2,
+    # a row fitted to the width stays inside it
+    swappiness = "sysctl vm.swappiness (/etc/sysctl.d/60-cassandra.conf)"
+    nodes = [{"name": "h-n1", "items": [], "os": [{"item": "read_ahead_kb sdz", "before": "128", "after": "4"}]},
+             {"name": "h-n2", "items": [], "os": [{"item": swappiness, "before": "60", "after": "1"}]}]
+    width = max(len(line) for line in cassandra_apply_config_diff(nodes))  # one line per row, exactly
+    assert cassandra_apply_config_diff(nodes, width=width) == cassandra_apply_config_diff(nodes)
+    unfitted = cassandra_screen({"operation": "apply_config", "summary": "2 nodes of prod",
+                                 "sections": [[{"pre": cassandra_apply_config_diff(nodes, width=width)}]]})
+    assert max(len(line) for line in unfitted.split("\n")) == width + 2  # what the margin is for
+    diff = cassandra_apply_config_diff(nodes, width=width, margin=2)
+    outcomes = cassandra_apply_config_outcomes([{"name": "h-n1", "os": True}, {"name": "h-n2", "os": True}], plan=True,
+                                               width=width, margin=2)
+    text = cassandra_screen({"operation": "apply_config", "summary": "2 nodes of prod", "sections": [[{"pre": diff}],
+                                                                                                       [{"pre": outcomes}]]})
+    assert "  OS settings  " in text and all(len(line) <= width for line in text.split("\n")), text
+
+
 def test_os_settings_with_the_dm_kernel_name_when_verbose():
     lines = cassandra_apply_config_diff(os_nodes(), verbose=True)
     assert [line.split("  4096", maxsplit=1)[0].strip() for line in lines if "vgdata" in line] == [
