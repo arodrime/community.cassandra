@@ -83,3 +83,10 @@ def test_accounts_named_like_cassandra_user(role):
     options = spec_options(role)
     assert sorted(k for k in options if k.endswith(("_owner", "_uid", "_gid"))
                   and "deprecated" not in " ".join(options[k].get("description", []))) == []
+
+
+def test_install_credentials_are_no_log():
+    # cassandra_java_tarballs: its entries may hold a password
+    options = spec_options("cassandra_install")
+    secret = [k for k in options if k.endswith("_password")] + ["cassandra_java_tarballs"]
+    assert sorted(k for k in secret if options[k].get("no_log") is not True) == []

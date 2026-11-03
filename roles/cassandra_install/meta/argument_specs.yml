@@ -109,6 +109,7 @@ argument_specs:
       cassandra_java_tarballs:
         type: dict
         default: {}
+        no_log: true  # its entries may hold a password
         description:
           - Java tarballs on offer, by major version (C("17")), each a dict with C(url) (a URL or a file
             on the controller) and optionally C(checksum) (for example C(sha256:0123...), recommended),
