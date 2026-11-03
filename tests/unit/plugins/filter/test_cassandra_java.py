@@ -34,8 +34,11 @@ def test_unsupported_java_refused(version, series):
     assert cassandra_java_check(version, series, True) == ""
 
 
-def test_unknown_series_refused_even_when_allowed():
-    assert "Unknown Cassandra series 60x" in cassandra_java_check("17", "60x", True)
+def test_unknown_series_refused_unless_allowed():
+    why = cassandra_java_check("17", "60x")
+    assert why == ("Unknown Cassandra series 60x. Use one of 40x, 41x, 50x; for a newer series, "
+                   "set cassandra_java_allow_unsupported: true at your own risk.")
+    assert cassandra_java_check("17", "60x", True) == ""
 
 
 def test_tarball_entry_by_major():

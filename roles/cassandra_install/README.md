@@ -81,7 +81,8 @@ Role Variables
   on its next run: `cassandra_java_tarballs: {}` keeps a cluster on packages.
 * `cassandra_java_allow_unsupported` (default `false`): install a
   `cassandra_java_version` the series does not support (e.g. 21 with 5.0),
-  which is refused otherwise.
+  or a `cassandra_version` the role does not know yet (a series newer than
+  5.0), which are refused otherwise.
 * `cassandra_java_home` (default `""`): Java already unpacked in this
   directory by other means, not a package: made the system `java`, and the
   Cassandra packages installed without a Java package, as with a tarball.

@@ -42,11 +42,14 @@ def cassandra_java_supported(series):
 
 def cassandra_java_check(version, series, allow_unsupported=False):
     """'' when Cassandra series runs on Java version, else why not. "17", "50x" -> ''; "8", "50x" -> "Cassandra 50x runs on
-    Java 11 or 17, not 8 (cassandra_java_version). ..."."""
+    Java 11 or 17, not 8 (cassandra_java_version). ...". allow_unsupported lets any Java and any series through."""
+    if allow_unsupported:
+        return ""
     supported = cassandra_java_supported(series)
     if not supported:
-        return "Unknown Cassandra series %s (one of %s)." % (series, ", ".join(sorted(SUPPORTED)))
-    if cassandra_java_major(version) in supported or allow_unsupported:
+        return ("Unknown Cassandra series %s. Use one of %s; for a newer series, set "
+                "cassandra_java_allow_unsupported: true at your own risk." % (series, ", ".join(sorted(SUPPORTED))))
+    if cassandra_java_major(version) in supported:
         return ""
     return ("Cassandra %s runs on Java %s, not %s (cassandra_java_version). "
             "To run it anyway, at your own risk, set cassandra_java_allow_unsupported: true."

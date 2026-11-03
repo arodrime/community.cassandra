@@ -105,7 +105,7 @@ argument_specs:
         default: false
         description:
           - Install a O(cassandra_java_version) the series does not support (for example 21 with 5.0),
-            at your own risk.
+            or a O(cassandra_version) the role does not know yet (a series newer than 5.0), at your own risk.
       cassandra_java_tarballs:
         type: dict
         default: {}
