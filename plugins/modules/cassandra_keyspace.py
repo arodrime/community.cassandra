@@ -13,9 +13,16 @@ description:
    - Manage keyspaces on your Cassandra Cluster.
    - Keyspace can be created to use SimpleStrategy or NetworkTopologyStrategy.
    - "Keyspace modifications are supported, for example durable \
-      writes, replication factor or data centre changes but it is not \
-      supported to migrate between replication strategies \
-      i.e. NetworkTopologyStrategy -> SimpleStrategy."
+      writes, replication factor or data centre changes."
+   - "A SimpleStrategy keyspace is moved to NetworkTopologyStrategy \
+      when data_centres is set."
+   - "A task that sets data_centres on a SimpleStrategy keyspace, which \
+      changed nothing in earlier versions, alters it on its next run."
+   - "After a replication change, run a full repair of the keyspace on \
+      every node (nodetool repair -full <keyspace>), for example for system_auth."
+   - "Moving a NetworkTopologyStrategy keyspace to SimpleStrategy is \
+      not supported. The module fails when data_centres is not set \
+      for such a keyspace."
 author: Rhys Campbell (@rhysmeister)
 options:
   login_user:
@@ -82,6 +89,9 @@ options:
     description:
       - The keyspace will be created with NetworkTopologyStrategy.
       - Specify your data centres, along with replication_factor, as key-value pairs.
+      - An existing SimpleStrategy keyspace is altered to NetworkTopologyStrategy.
+      - After a replication change, run a full repair of the keyspace on every node
+        (nodetool repair -full <keyspace>).
     type: dict
     aliases:
       - data_centers
@@ -144,7 +154,7 @@ changed:
   returned: on success
   type: bool
 cql:
-  description: The cql used to change the keyspace.
+  description: The CQL run, or in check mode the CQL that would run.
   returned: changed
   type: str
   sample: "ALTER KEYSPACE multidc_keyspace WITH REPLICATION = { 'class' :/
@@ -237,12 +247,12 @@ def get_keyspace(cluster, keyspace):
     return cluster.metadata.keyspaces[keyspace].export_as_string()
 
 
-def create_alter_keyspace(module, session, keyspace, replication_factor, durable_writes, data_centres, is_alter):
+def keyspace_cql(keyspace, replication_factor, durable_writes, data_centres, is_alter):
     if is_alter is False:
         cql = "CREATE KEYSPACE {0} ".format(keyspace)
     else:
         cql = "ALTER KEYSPACE {0} ".format(keyspace)
-    if data_centres is not None:
+    if data_centres:
         cql += "WITH REPLICATION = { 'class' : 'NetworkTopologyStrategy', "
         for dc in data_centres:
             cql += " '{0}' : {1},".format(str(dc), data_centres[dc])
@@ -250,6 +260,11 @@ def create_alter_keyspace(module, session, keyspace, replication_factor, durable
     else:
         cql += "WITH REPLICATION = {{ 'class' : 'SimpleStrategy', 'replication_factor': {0} }}".format(replication_factor)
     cql += " AND DURABLE_WRITES = {0}".format(durable_writes)
+    return cql
+
+
+def create_alter_keyspace(module, session, keyspace, replication_factor, durable_writes, data_centres, is_alter):
+    cql = keyspace_cql(keyspace, replication_factor, durable_writes, data_centres, is_alter)
     session.execute(cql)
     return cql
 
@@ -279,12 +294,16 @@ def keyspace_is_changed(module, cluster, keyspace, replication_factor,
     cfg = get_keyspace_config(module, cluster, keyspace)
     keyspace_definition_changed = False
     if cfg['class'] == "SimpleStrategy":
-        if int(cfg['replication_factor']) != replication_factor or\
+        if data_centres:  # SimpleStrategy -> NetworkTopologyStrategy
+            keyspace_definition_changed = True
+        elif int(cfg['replication_factor']) != replication_factor or\
                 cfg['durable_writes'] != durable_writes:
             keyspace_definition_changed = True
     elif cfg['class'] == "NetworkTopologyStrategy":
-        # ls = [cfg, keyspace, replication_factor, durable_writes, data_centres]
-        # module.fail_json(msg=str(ls))
+        if not data_centres:
+            module.fail_json(msg="Keyspace {0} uses NetworkTopologyStrategy and moving it "
+                                 "to SimpleStrategy is not supported. Set data_centres "
+                                 "to manage its replication.".format(keyspace))
         if cfg['durable_writes'] != durable_writes:
             keyspace_definition_changed = True
         else:  # check each dc here
@@ -416,8 +435,8 @@ def main():
         keyspace=name,
     )
 
-    # For now we won't change the replication strategy & options if the keyspace already exists
-    # If and when we do we might only support updating the options rather than the replication class itself
+    # An existing keyspace is altered when its options differ. SimpleStrategy can move
+    # to NetworkTopologyStrategy, the reverse is refused (see keyspace_is_changed).
 
     try:
         auth_provider = None
@@ -460,6 +479,11 @@ def main():
                                            data_centres):
 
                         result['changed'] = True
+                        result['cql'] = keyspace_cql(keyspace,
+                                                     replication_factor,
+                                                     durable_writes,
+                                                     data_centres,
+                                                     True)
                     else:
                         result['changed'] = False
                 elif state == "absent":
@@ -491,6 +515,7 @@ def main():
             if module.check_mode:
                 if state == "present":
                     result['changed'] = True
+                    result['cql'] = keyspace_cql(keyspace, replication_factor, durable_writes, data_centres, False)
                 if state == "absent":
                     result['changed'] = False
             else:

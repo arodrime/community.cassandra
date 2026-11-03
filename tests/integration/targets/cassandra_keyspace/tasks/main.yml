@@ -224,6 +224,7 @@
     that:
       - "'new_keyspace_check' not in mykeyspace.stdout"
       - " new_keyspace_check.changed == True"
+      - "new_keyspace_check.cql.startswith('CREATE KEYSPACE new_keyspace_check WITH REPLICATION')"
 
 - name: Create another multi-dc keyspace
   community.cassandra.cassandra_keyspace:
@@ -349,6 +350,115 @@
     that:
       - "'rhys2' not in mykeyspace.stdout"
       - "drop_rhys2.changed == True"
+
+# SimpleStrategy -> NetworkTopologyStrategy tests
+- name: Create a class_change keyspace with SimpleStrategy RF 1
+  community.cassandra.cassandra_keyspace:
+    name: class_change
+    state: present
+
+- name: Move class_change to NetworkTopologyStrategy with the same RF in check mode
+  community.cassandra.cassandra_keyspace:
+    name: class_change
+    state: present
+    data_centres:
+      london: 1
+  check_mode: yes
+  register: class_change
+
+- name: Get output of DESC KEYSPACE class_change
+  ansible.builtin.shell: cqlsh --execute "DESC KEYSPACE class_change"
+  register: mykeyspace
+
+- name: Assert check mode reports the change and changes nothing
+  assert:
+    that:
+      - "class_change.changed == True"
+      - "'ALTER KEYSPACE class_change WITH REPLICATION = { \\'class\\' : \\'NetworkTopologyStrategy\\'' in class_change.cql"
+      - "'\\'class\\': \\'SimpleStrategy\\', \\'replication_factor\\': \\'1\\'' in mykeyspace.stdout"
+
+- name: Move class_change to NetworkTopologyStrategy with the same RF
+  community.cassandra.cassandra_keyspace:
+    name: class_change
+    state: present
+    data_centres:
+      london: 1
+  register: class_change
+
+- name: Get output of DESC KEYSPACE class_change
+  ansible.builtin.shell: cqlsh --execute "DESC KEYSPACE class_change"
+  register: mykeyspace
+
+- name: Assert class_change uses NetworkTopologyStrategy
+  assert:
+    that:
+      - "class_change.changed == True"
+      - "'{\\'class\\': \\'NetworkTopologyStrategy\\', \\'london\\': \\'1\\'}' in mykeyspace.stdout"
+
+- name: Run the NetworkTopologyStrategy task again
+  community.cassandra.cassandra_keyspace:
+    name: class_change
+    state: present
+    data_centres:
+      london: 1
+  register: class_change
+
+- name: Assert not changed
+  assert:
+    that:
+      - "class_change.changed == False"
+
+- name: Try to move class_change back to SimpleStrategy
+  community.cassandra.cassandra_keyspace:
+    name: class_change
+    state: present
+    replication_factor: 3
+  register: class_change
+  ignore_errors: yes
+
+- name: Get output of DESC KEYSPACE class_change
+  ansible.builtin.shell: cqlsh --execute "DESC KEYSPACE class_change"
+  register: mykeyspace
+
+- name: Assert the move to SimpleStrategy is refused
+  assert:
+    that:
+      - "class_change.failed == True"
+      - "'moving it to SimpleStrategy is not supported' in class_change.msg"
+      - "'{\\'class\\': \\'NetworkTopologyStrategy\\', \\'london\\': \\'1\\'}' in mykeyspace.stdout"
+
+- name: Drop keyspace class_change
+  community.cassandra.cassandra_keyspace:
+    name: class_change
+    state: absent
+
+- name: Create class_change again with SimpleStrategy RF 1
+  community.cassandra.cassandra_keyspace:
+    name: class_change
+    state: present
+
+- name: Move class_change to NetworkTopologyStrategy with RF 3
+  community.cassandra.cassandra_keyspace:
+    name: class_change
+    state: present
+    data_centres:
+      london: 3
+  register: class_change
+
+- name: Get output of DESC KEYSPACE class_change
+  ansible.builtin.shell: cqlsh --execute "DESC KEYSPACE class_change"
+  register: mykeyspace
+
+- name: Assert class_change uses NetworkTopologyStrategy with RF 3
+  assert:
+    that:
+      - "class_change.changed == True"
+      - "'{\\'class\\': \\'NetworkTopologyStrategy\\', \\'london\\': \\'3\\'}' in mykeyspace.stdout"
+
+- name: Drop keyspace class_change
+  community.cassandra.cassandra_keyspace:
+    name: class_change
+    state: absent
 
 - name: Test cassandra_keyspace module regex
   block:
