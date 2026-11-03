@@ -10,18 +10,20 @@ try:
 except ImportError:
     from mock import patch
 
+# as the driver's export_as_string() writes them
 SIMPLE = ("CREATE KEYSPACE myks WITH replication = "
-          "{{'class': 'SimpleStrategy', 'replication_factor': '{0}'}}  AND durable_writes = true;")
+          "{{'class': 'SimpleStrategy', 'replication_factor': '{0}'}}  AND durable_writes = {1};")
 NTS = ("CREATE KEYSPACE myks WITH replication = "
-       "{{'class': 'NetworkTopologyStrategy', {0}}}  AND durable_writes = true;")
+       "{{'class': 'NetworkTopologyStrategy', {0}}}  AND durable_writes = {1};")
 
 
-def simple(rf):
-    return SIMPLE.format(rf)
+def simple(rf, durable_writes='true'):
+    return SIMPLE.format(rf, durable_writes)
 
 
-def nts(**dcs):
-    return NTS.format(", ".join("'{0}': '{1}'".format(dc, rf) for dc, rf in sorted(dcs.items())))
+def nts(durable_writes='true', **dcs):
+    return NTS.format(", ".join("'{0}': '{1}'".format(dc, rf) for dc, rf in sorted(dcs.items())),
+                      durable_writes)
 
 
 # exit_json and fail_json raise SystemExit, which main() does not catch
@@ -128,6 +130,19 @@ class TestKeyspaceIsChanged:
         with pytest.raises(FailJson):
             is_changed(nts(dc1=3), data_centres={})
 
+    @pytest.mark.parametrize("existing", ['true', 'false'])
+    @pytest.mark.parametrize("wanted", [True, False])
+    def test_simple_durable_writes(self, existing, wanted):
+        changed = is_changed(simple(1, durable_writes=existing), durable_writes=wanted)
+        assert changed is (existing != str(wanted).lower())
+
+    @pytest.mark.parametrize("existing", ['true', 'false'])
+    @pytest.mark.parametrize("wanted", [True, False])
+    def test_nts_durable_writes(self, existing, wanted):
+        changed = is_changed(nts(durable_writes=existing, dc1=3), durable_writes=wanted,
+                             data_centres={'dc1': 3})
+        assert changed is (existing != str(wanted).lower())
+
 
 def test_keyspace_cql_empty_data_centres():
     assert cassandra_keyspace.keyspace_cql('myks', 3, True, {}, True) == (
@@ -156,6 +171,8 @@ class TestMain:
     @pytest.mark.parametrize("existing, params", [
         (simple(1), {}),
         (nts(dc1=3), {'data_centres': {'dc1': 3}}),
+        (simple(1, durable_writes='false'), {'durable_writes': False}),
+        (nts(durable_writes='false', dc1=3), {'durable_writes': False, 'data_centres': {'dc1': 3}}),
     ])
     def test_unchanged(self, existing, params):
         res, executed = run_main(existing, **params)

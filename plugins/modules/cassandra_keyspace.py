@@ -278,14 +278,12 @@ def drop_keyspace(session, keyspace):
 def get_keyspace_config(module, cluster, keyspace):
     cql = get_keyspace(cluster, keyspace)
     dict_regexp = re.compile(r'{(.*)}')
-    durable_writes_regexp = re.compile('DURABLE_WRITES = (True|False);')
+    durable_writes_regexp = re.compile('durable_writes = (true|false);', re.IGNORECASE)
     repl_settings = re.search(dict_regexp, cql).group(0)
-    try:
-        dw = re.search(durable_writes_regexp, cql).group(0)
-    except AttributeError as excep:
-        dw = "true"  # default to true
+    dw = re.search(durable_writes_regexp, cql)
     keyspace_config = eval(repl_settings)
-    keyspace_config['durable_writes'] = bool(dw.lower())
+    # default to true
+    keyspace_config['durable_writes'] = dw is None or dw.group(1).lower() == "true"
     return keyspace_config
 
 

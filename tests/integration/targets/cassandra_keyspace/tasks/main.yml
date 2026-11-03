@@ -455,6 +455,35 @@
       - "class_change.changed == True"
       - "'{\\'class\\': \\'NetworkTopologyStrategy\\', \\'london\\': \\'3\\'}' in mykeyspace.stdout"
 
+- name: Disable durable_writes on class_change
+  community.cassandra.cassandra_keyspace:
+    name: class_change
+    state: present
+    durable_writes: false
+    data_centres:
+      london: 3
+  register: class_change
+
+- name: Run the durable_writes task again
+  community.cassandra.cassandra_keyspace:
+    name: class_change
+    state: present
+    durable_writes: false
+    data_centres:
+      london: 3
+  register: class_change_rerun
+
+- name: Get output of DESC KEYSPACE class_change
+  ansible.builtin.shell: cqlsh --execute "DESC KEYSPACE class_change"
+  register: mykeyspace
+
+- name: Assert durable_writes is false and the rerun is not changed
+  assert:
+    that:
+      - "class_change.changed == True"
+      - "class_change_rerun.changed == False"
+      - "'AND durable_writes = false;' in mykeyspace.stdout"
+
 - name: Drop keyspace class_change
   community.cassandra.cassandra_keyspace:
     name: class_change

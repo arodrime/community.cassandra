@@ -1,0 +1,2 @@
+bugfixes:
+  - cassandra_keyspace - the existing ``durable_writes`` of a keyspace was always read as ``true``, so a keyspace with ``durable_writes`` false was reported changed and altered on every run. A task that leaves ``durable_writes`` at its default now sets it back to ``true`` on a keyspace that has it false.
