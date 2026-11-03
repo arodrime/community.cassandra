@@ -56,7 +56,7 @@ def hint(playbook, **variables):
 
 def test_add_node_prints_both_options_at_their_defaults():
     assert hint("add_node.yml", _scope="dc1: the new nodes' racks only") == [
-        "Once the cluster is fine, clean up the nodes that handed data over (dc1: the new nodes' racks only):",
+        "NEXT  once the cluster is fine, clean up the nodes that handed data over (dc1: the new nodes' racks only):",
         "  ansible-playbook -i inventory/prod.yml community.cassandra.cleanup --limit node1,node4"
         " -e cassandra_cleanup_mode=sequential -e cassandra_cleanup_jobs=2",
     ] + OPTIONS
@@ -64,7 +64,7 @@ def test_add_node_prints_both_options_at_their_defaults():
 
 def test_move_node_prints_both_options_and_the_group_given():
     assert hint("move_node.yml", _move_record="/tmp/moves.txt", cassandra_hosts="orders") == [
-        "Once the cluster is fine, clean up the nodes that lost ranges (listed in /tmp/moves.txt until a move_node"
+        "NEXT  once the cluster is fine, clean up the nodes that lost ranges (listed in /tmp/moves.txt until a move_node"
         " run with cassandra_move_cleanup cleans them up):",
         "  ansible-playbook -i inventory/prod.yml community.cassandra.cleanup -e cassandra_hosts=orders"
         " --limit node1,node4 -e cassandra_cleanup_mode=sequential -e cassandra_cleanup_jobs=2",
@@ -74,7 +74,7 @@ def test_move_node_prints_both_options_and_the_group_given():
 def test_add_node_under_check_says_after_the_real_run_and_the_group_given():
     lines = hint("add_node.yml", _scope="dc1: the whole datacenter", ansible_check_mode=True, cassandra_hosts="orders")
     assert lines[:2] == [
-        "After the real run, once the cluster is fine, clean up the nodes that handed data over (dc1: the whole"
+        "NEXT  after the real run, once the cluster is fine, clean up the nodes that handed data over (dc1: the whole"
         " datacenter):",
         "  ansible-playbook -i inventory/prod.yml community.cassandra.cleanup -e cassandra_hosts=orders"
         " --limit node1,node4 -e cassandra_cleanup_mode=sequential -e cassandra_cleanup_jobs=2"]

@@ -220,8 +220,8 @@
           after:
             - pre: "{{ _plan.lines }}"
             - >-
-              {{ ('Cleanup afterwards (cassandra_move_cleanup='
-                  ~ {'one': 'sequential'}.get(cassandra_move_cleanup | default('none'), cassandra_move_cleanup | default('none')) ~ ').')
+              {{ ('cleanup afterwards (cassandra_move_cleanup='
+                  ~ {'one': 'sequential'}.get(cassandra_move_cleanup | default('none'), cassandra_move_cleanup | default('none')) ~ ')')
                  if _plan.steps else 'Nothing to move.' }}
           warnings:
             - label: tokens
@@ -387,7 +387,7 @@
     - name: Say which cleanups to run
       ansible.builtin.debug:
         msg:
-          - "Once the cluster is fine, clean up the nodes that lost ranges (listed in {{ _move_record }} until a move_node
+          - "NEXT  once the cluster is fine, clean up the nodes that lost ranges (listed in {{ _move_record }} until a move_node
             run with cassandra_move_cleanup cleans them up):"
           - "  {{ 'cleanup' | community.cassandra.cassandra_command(
                     inventory=ansible_inventory_sources,

@@ -404,14 +404,15 @@
                   ~ ') is applied live on every node (no restart): ' ~ _seeds_added | join(', ') ~ ' then a seed'
                   ~ ' (unless a datacenter would need seeds picked: then change_seeds).')
                  if _seeds_added and not _cassandra_screen_asked_by | default('') else '' }}
+            # one sentence (a single expression: no line break of the YAML in it)
             - >-
-              Cleanup afterwards (cassandra_add_node_cleanup={{ _cleanup }}): {{ {'none': 'none, the commands are printed at the end',
-                'sequential': 'one node at a time', 'rack': 'a rack at a time', 'dc': 'a datacenter at a time',
-                'all': 'every node at once: heavy I/O'}[_cleanup] }}
-              ({{ cassandra_add_node_plan.cleanup | dict2items | map(attribute='value') | flatten | length }} nodes: {{
-              cassandra_add_node_plan.scope | dict2items | map(attribute='key') | zip(cassandra_add_node_plan.scope | dict2items
-              | map(attribute='value') | map('replace', 'rack', "the new nodes' racks") | map('replace', 'dc', 'whole datacenter'))
-              | map('join', ' ') | join(', ') }}).
+              {{ 'cleanup afterwards, ' ~ cassandra_add_node_plan.cleanup | dict2items | map(attribute='value') | flatten | length
+                 ~ ' nodes (' ~ cassandra_add_node_plan.scope | dict2items | map(attribute='key') | zip(cassandra_add_node_plan.scope
+                   | dict2items | map(attribute='value') | map('replace', 'rack', "the new nodes' racks")
+                   | map('replace', 'dc', 'whole datacenter')) | map('join', ' ') | join(', ')
+                 ~ '): ' ~ {'none': 'by hand', 'sequential': 'one node at a time',
+                            'rack': 'a rack at a time', 'dc': 'a datacenter at a time', 'all': 'every node at once: heavy I/O'}[_cleanup]
+                 ~ ' (cassandra_add_node_cleanup=' ~ _cleanup ~ ')' }}
             - >-
               {{ 'One token per node (shares with the largest replication factor of each datacenter, else cassandra_token_rf):'
                  if _single | bool and _new else '' }}
@@ -918,8 +919,8 @@
     - name: Say which cleanups to run
       ansible.builtin.debug:
         msg: >-
-          {{ [('After the real run, once' if ansible_check_mode else 'Once') ~ ' the cluster is fine, clean up the nodes that'
-              ~ ' handed data over (' ~ _scope ~ '):',
+          {{ ['NEXT  ' ~ ('after the real run, once' if ansible_check_mode else 'once') ~ ' the cluster is fine, clean up the'
+              ~ ' nodes that handed data over (' ~ _scope ~ '):',
               '  ' ~ 'cleanup' | community.cassandra.cassandra_command(
                        inventory=ansible_inventory_sources,
                        default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),

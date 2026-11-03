@@ -408,7 +408,7 @@ def test_move_node_and_create_cluster_screens():
     plan = {"steps": [{"name": "node2"}], "lines": ["dc1 ring"], "warnings": ["dc1: loads not all known"]}
     text = screen({"_plan": plan, "_cassandra_preflight": preflight(1), "cassandra_move_cleanup": "none"}, t["vars"])
     assert text.split("\n", 1)[0] == "MOVE NODE  move node2"
-    assert text.split("\n\n")[1:] == ["  dc1 ring\n  Cleanup afterwards (cassandra_move_cleanup=none).",
+    assert text.split("\n\n")[1:] == ["  dc1 ring\n  cleanup afterwards (cassandra_move_cleanup=none)",
                                       "WARNING  tokens: dc1: loads not all known\nWARNING  this run is not inside"
                                       " tmux or screen: if the SSH session to this machine drops, the run\n         stops (the operation"
                                       " itself goes on, unwatched). Run it inside tmux or screen."]
