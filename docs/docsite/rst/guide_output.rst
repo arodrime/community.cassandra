@@ -89,7 +89,8 @@ Conventions
   A problem replaces the speed on the main line (``STALLED 6m/30m``) and only the peer in cause is detailed under
   it (``from node3  13.4/33.0 GiB  41%  nothing for 6m    (node1, node2 done)``). The waits without streams (a
   restart, a config written) are the same single line: ``[2/5] node2  restart  waiting  node4 is DN, waiting for
-  it to come back  9m52s/10m``, then ``[1/5] node1  restarted  NORMAL after 30s  1m50s``.
+  it to come back  9m52s/10m``, then ``[1/5] node1  restarted  NORMAL after 30s  1m50s``: the step took 1m50s from
+  its start to NORMAL, the time the recap and a stop's table give that node too.
 
   Above 30 of them (a node streaming both ways counts twice), one line sums them up: the ones done, the ones
   keeping up and their average, the stalled ones, the ones behind (below half the average of all the ones not
@@ -116,9 +117,17 @@ Conventions
 - **Recap**: the verdict with the counts and the duration (``DONE  rolling_restart  prod  5 restarted  11m30s``),
   the nodes grouped by identical outcome (``node1..node5  restarted  1m49s..1m58s each``), a line of its own for a
   node more than 50% slower than the median, a failed or a skipped one, with the reason. ``--check`` says
-  ``would ...`` and ends the verdict with ``nothing was changed``. No cluster line at the end.
+  ``would ...`` and ends the verdict with ``nothing was changed``. No cluster line at the end. The titles, the
+  questions and the recaps name the cluster by its inventory group (``prod``), as the run's first line and
+  ``-e cassandra_hosts`` do.
+- **Next**: what is left to do after a run that went well, under ``NEXT``, with its command::
+
+    NEXT  once the cluster is fine, clean up the nodes that handed data over (dc1: the whole datacenter):
+      ansible-playbook community.cassandra.cleanup --limit node1,node2,node3,node4 -e cassandra_cleanup_mode=sequential -e cassandra_cleanup_jobs=2
+
 - **Stop**: a run that stops at a node ends with one block (``cassandra_stop_block``): the cause once, the nodes'
-  table with one word per node, the way out once, last, with the command to copy::
+  table with one word per node, the way out once, last, with the command to copy. A node down that several nodes
+  see is said once, with all of them; the block names its node, so no host name goes before it::
 
     STOPPED at node2: node4 (10.0.0.4, r1) is DN, seen from node1 and node2, 10m29s waited
       (cassandra_service_health_timeout 600s). No node after it was touched.
@@ -142,7 +151,9 @@ Conventions
     cassandra-env.sh    owner           root:root -> root:cassandra   node4
     jvm-server.options  CICompilerCount 3 -> 2                        node1
 
-  then what each node gets: ``node1  write, no restart  (owner or mode only, read at start)``, ``node2  write +
+  When a row does not fit in the terminal, every row puts its nodes on the next line, under the changes' column
+  (under the settings' when they do not fit there either). Then what each node gets: ``node1  write, no restart
+  (owner or mode only, read at start)``, ``node2  write +
   restart``, ``node5  up to date``.
 - **TO DO**: numbered, each with its full command, ready to paste (``-i`` and ``-e cassandra_hosts`` only when the
   run needed them). An inventory change is followed by its commit only when the inventory is in a git work tree.
