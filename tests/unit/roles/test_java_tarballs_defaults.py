@@ -5,6 +5,7 @@ __metaclass__ = type
 # in cassandra_java_tarballs; an explicit cassandra_java_tarball wins.
 
 import os
+import re
 
 import yaml
 
@@ -115,3 +116,38 @@ def test_tarball_url_without_a_file_name_is_refused():
         assert templar_with(cassandra_java_tarball=url).template(that) is False, url
     assert templar_with(cassandra_java_tarball="https://mirror.example.com/java/jdk-17.tar.gz").template(that) is True
     assert templar_with(cassandra_java_tarball="").template(that) is True
+
+
+def test_an_existing_java_directory_is_emptied_only_when_this_role_made_it():
+    # in java_check.yml: install, update_java, upgrade and the new node checks refuse before anything changes
+    with open(os.path.join(os.path.dirname(DEFAULTS), "..", "tasks", "java_check.yml")) as f:
+        tasks = yaml.safe_load(f)
+    check = next(t for t in tasks if t["name"] == "The Java directory is new, empty or this role's")
+    # for any Java directory, cassandra_java_home or one under cassandra_java_tarball_dir
+    assert check["when"] == "cassandra_java_tarball != ''"
+    for name in ("Look for the Java directory", "Look for the unpacked Java", "Look for files in the Java directory",
+                 "Look for an unpack left half done"):
+        assert not re.search(r"\bcassandra_java_home !=", str(next(t for t in tasks if t["name"] == name).get("when"))), name
+    that = trust_as_template("{{ %s }}" % check["ansible.builtin.assert"]["that"])
+
+    def allowed(exists=True, isdir=True, java=None, started=False, done=False, files=None):
+        variables = dict(cassandra_java_check_dir={"stat": {"exists": exists, "isdir": isdir} if exists else {"exists": False}},
+                         cassandra_java_check_unpacking={"stat": {"exists": started}},
+                         cassandra_java_check_unpacked={"stat": {"exists": done}})
+        if java is not None:  # stat only with cassandra_java_home
+            variables["cassandra_java_check_java"] = {"stat": {"exists": java}}
+        if files is not None:  # find only on a directory
+            variables["cassandra_java_check_files"] = {"matched": files}
+        return templar_with(**variables).template(that)
+    assert allowed(exists=False) is True  # a new directory
+    assert allowed(files=0) is True  # empty: a run stopped right after making it
+    assert allowed(files=3) is False  # e.g. /opt, or someone else's Java under cassandra_java_tarball_dir
+    assert allowed(java=False, files=3) is False  # cassandra_java_home without bin/java
+    assert allowed(java=True, files=3) is True  # cassandra_java_home with a Java: kept, not unpacked over
+    assert allowed(started=True, files=3) is True  # this role's half-done unpack: redone
+    assert allowed(done=True, files=3) is True  # unpacked: nothing to do
+    assert allowed(isdir=False) is False  # a file in its place
+    assert allowed(isdir=False, java=True) is True  # cassandra_java_home a link to a Java (stat does not follow it)
+    look = next(t for t in tasks if t["name"] == "Look for files in the Java directory")
+    assert look["ansible.builtin.find"]["hidden"] is True  # a directory of dotfiles is not empty
+    assert look["check_mode"] is False  # read under --check too, else the guard passes

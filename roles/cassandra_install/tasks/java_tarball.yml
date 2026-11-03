@@ -71,6 +71,7 @@
         mode: "0644"
       when: not _from_url
 
+    # one this role made, new or empty (java_check.yml refuses any other)
     - name: Start from an empty Java directory
       ansible.builtin.file:
         path: "{{ _cassandra_java_home }}"

@@ -69,3 +69,56 @@
   when:
     - _cassandra_java_home != ''
     - not cassandra_java_check_unpacking.stat.exists
+
+# The unpack empties the Java directory first: one that exists already (e.g.
+# cassandra_java_home or cassandra_java_tarball_dir pointing at /opt or
+# /usr/lib/jvm, or a directory of the same name there) is emptied only when
+# this role made it: its marks (.unpacking, .unpacked), or empty (a run
+# stopped right after making it). A cassandra_java_home with a Java is kept
+# as it is (java_tarball.yml).
+- name: Look for the Java directory
+  ansible.builtin.stat:
+    path: "{{ _cassandra_java_home }}"
+  register: cassandra_java_check_dir
+  when: cassandra_java_tarball != ''
+
+# stat does not follow the last link: a cassandra_java_home linked to a Java is found here
+- name: Look for a Java already in cassandra_java_home
+  ansible.builtin.stat:
+    path: "{{ _cassandra_java_home }}/bin/java"
+  register: cassandra_java_check_java
+  when:
+    - cassandra_java_tarball != ''
+    - cassandra_java_home != ''
+
+- name: Look for the unpacked Java
+  ansible.builtin.stat:
+    path: "{{ _cassandra_java_home }}/.unpacked"
+  register: cassandra_java_check_unpacked
+  when: cassandra_java_tarball != ''
+
+- name: Look for files in the Java directory
+  ansible.builtin.find:
+    paths: "{{ _cassandra_java_home }}"
+    file_type: any
+    hidden: true
+  register: cassandra_java_check_files
+  check_mode: false  # read-only
+  when:
+    - cassandra_java_tarball != ''
+    - cassandra_java_check_dir.stat.isdir | default(false)
+
+- name: The Java directory is new, empty or this role's
+  ansible.builtin.assert:
+    that: >-
+      not cassandra_java_check_dir.stat.exists
+      or cassandra_java_check_java.stat.exists | default(false)
+      or (cassandra_java_check_dir.stat.isdir
+          and (cassandra_java_check_unpacking.stat.exists or cassandra_java_check_unpacked.stat.exists
+               or cassandra_java_check_files.matched | default(1) == 0))
+    fail_msg: >-
+      {{ _cassandra_java_home }} exists on {{ inventory_hostname }} and holds something else than a Java this role
+      unpacked: the tarball is unpacked only into a new or empty directory, which it empties first. Set
+      cassandra_java_home (or cassandra_java_tarball_dir) to another directory, or move that one away.
+    quiet: true
+  when: cassandra_java_tarball != ''
