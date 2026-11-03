@@ -111,6 +111,16 @@ def test_mirror_credentials_not_sent_to_another_host():
                   cassandra_install_username="", cassandra_install_url="https://mirror.example.com/") is False
 
 
+def test_apt_credentials_name_the_protocol_of_a_mirror_over_http():
+    keys = load_tasks(os.path.join(ROLES, "cassandra_repository", "tasks", "repository.yml"))
+    content = task(keys, "Credentials of the Cassandra apt repository (Debian & Ubuntu)")["ansible.builtin.copy"]["content"]
+    creds = dict(cassandra_install_username="reader", cassandra_install_password="secret")
+    assert "machine mirror.example.com:8443 login reader password secret" in render(
+        content, cassandra_install_url="https://mirror.example.com:8443/cassandra", **creds)
+    assert "machine http://mirror.example.com login reader password secret" in render(
+        content, cassandra_install_url="http://mirror.example.com/cassandra", **creds)
+
+
 def test_dsbulk_gets_the_mirror_credentials_on_the_mirror_only():
     dsbulk = load_tasks(os.path.join(ROLES, "cassandra_install", "tasks", "dsbulk.yml"))
     on_mirror = task(dsbulk, "Install dsbulk")["vars"]["_on_mirror"]

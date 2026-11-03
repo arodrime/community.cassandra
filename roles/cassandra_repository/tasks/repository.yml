@@ -64,13 +64,14 @@
     - _results | length > 0
     - 200 not in _codes and _codes | reject('equalto', 404) | list | length > 0
 
-# apt reads repository credentials from auth.conf.d, not from the sources.
+# apt reads repository credentials from auth.conf.d, not from the sources; a
+# machine without a protocol only matches https (apt_auth.conf(5)).
 # First: the apt refresh below needs them (and a new token replaces an expired one)
 - name: Credentials of the Cassandra apt repository (Debian & Ubuntu)
   ansible.builtin.copy:
     content: |
       # Managed by Ansible (community.cassandra.cassandra_repository)
-      machine {{ cassandra_install_url | urlsplit('netloc') }} login {{ cassandra_install_username }} password {{ cassandra_install_password }}
+      machine {{ 'http://' if cassandra_install_url | urlsplit('scheme') == 'http' else '' }}{{ cassandra_install_url | urlsplit('netloc') }} login {{ cassandra_install_username }} password {{ cassandra_install_password }}
     dest: /etc/apt/auth.conf.d/cassandra.conf
     owner: root
     group: root
