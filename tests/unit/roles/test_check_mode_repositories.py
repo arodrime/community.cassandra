@@ -11,6 +11,7 @@ import yaml
 
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
+from ansible_collections.community.cassandra.plugins.filter.cassandra_repository_import import _apt_machine
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
@@ -111,14 +112,43 @@ def test_mirror_credentials_not_sent_to_another_host():
                   cassandra_install_username="", cassandra_install_url="https://mirror.example.com/") is False
 
 
-def test_apt_credentials_name_the_protocol_of_a_mirror_over_http():
+def apt_machine(url):
     keys = load_tasks(os.path.join(ROLES, "cassandra_repository", "tasks", "repository.yml"))
-    content = task(keys, "Credentials of the Cassandra apt repository (Debian & Ubuntu)")["ansible.builtin.copy"]["content"]
-    creds = dict(cassandra_install_username="reader", cassandra_install_password="secret")
-    assert "machine mirror.example.com:8443 login reader password secret" in render(
-        content, cassandra_install_url="https://mirror.example.com:8443/cassandra", **creds)
-    assert "machine http://mirror.example.com login reader password secret" in render(
-        content, cassandra_install_url="http://mirror.example.com/cassandra", **creds)
+    copy = task(keys, "Credentials of the Cassandra apt repository (Debian & Ubuntu)")
+    variables = dict(cassandra_install_url=url, cassandra_install_username="reader", cassandra_install_password="secret")
+    for name in ("_url", "_hostport", "_host"):
+        variables[name] = render(copy["vars"][name], **variables)
+    return render(copy["ansible.builtin.copy"]["content"], **variables).splitlines()[1]
+
+
+def test_apt_credentials_machine_is_the_host_and_port_only():
+    assert apt_machine("https://mirror.example.com:8443/cassandra") == "machine mirror.example.com:8443 login reader password secret"
+    # without a protocol, apt only matches https
+    assert apt_machine("http://mirror.example.com/cassandra") == "machine http://mirror.example.com login reader password secret"
+    assert apt_machine("https://olduser@mirror.example.com/cassandra") == \
+        "machine mirror.example.com login reader password secret"
+    # as written: apt compares the host case-sensitively, IPv6 without brackets
+    assert apt_machine("http://u:p@Mirror.example.com:8080/c") == "machine http://Mirror.example.com:8080 login reader password secret"
+    assert apt_machine("https://[fd00::1]:8443/c") == "machine fd00::1:8443 login reader password secret"
+    assert apt_machine("https://[fd00::1]/c") == "machine fd00::1 login reader password secret"
+
+
+def test_import_cluster_takes_over_the_machine_the_role_writes():
+    for url in ("https://mirror.example.com/c", "http://mirror.example.com:8080/c", "https://u:p@Mirror.example.com/c",
+                "https://[fd00::1]:8443/c", "http://[fd00::1]/c"):
+        assert apt_machine(url) == "machine %s login reader password secret" % _apt_machine(url), url
+
+
+def test_apt_credentials_refused_with_spaces():
+    keys = load_tasks(os.path.join(ROLES, "cassandra_repository", "tasks", "repository.yml"))
+    check = task(keys, "Apt credentials without whitespace (Debian & Ubuntu)")["ansible.builtin.assert"]["that"]
+
+    def ok(user, password):
+        return all(render("{{ %s }}" % c, cassandra_install_username=user, cassandra_install_password=password) for c in check)
+    assert ok("reader", "s3cr#t")
+    assert not ok("reader", "two words")
+    assert not ok("the reader", "secret")
+    assert not ok("reader", "tab\there")
 
 
 def test_dsbulk_gets_the_mirror_credentials_on_the_mirror_only():

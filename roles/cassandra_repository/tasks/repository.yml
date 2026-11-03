@@ -64,18 +64,38 @@
     - _results | length > 0
     - 200 not in _codes and _codes | reject('equalto', 404) | list | length > 0
 
+# auth.conf separates its tokens with whitespace: one inside a value would break the line
+- name: Apt credentials without whitespace (Debian & Ubuntu)
+  ansible.builtin.assert:
+    that:
+      - cassandra_install_username is not search('\s')
+      - cassandra_install_password is not search('\s')
+    fail_msg: >-
+      cassandra_install_username and cassandra_install_password can't hold whitespace on Debian and Ubuntu
+      (apt auth.conf): use credentials (or a token) without it.
+    quiet: true
+  when:
+    - ansible_facts['os_family'] == "Debian"
+    - cassandra_install_username != ""
+
 # apt reads repository credentials from auth.conf.d, not from the sources; a
-# machine without a protocol only matches https (apt_auth.conf(5)).
+# machine without a protocol only matches https (apt_auth.conf(5)). The host
+# as written in the URL (apt compares it case-sensitively; IPv6 without its
+# brackets) and the port: a user@ in the URL is not part of the machine.
 # First: the apt refresh below needs them (and a new token replaces an expired one)
 - name: Credentials of the Cassandra apt repository (Debian & Ubuntu)
   ansible.builtin.copy:
     content: |
       # Managed by Ansible (community.cassandra.cassandra_repository)
-      machine {{ 'http://' if cassandra_install_url | urlsplit('scheme') == 'http' else '' }}{{ cassandra_install_url | urlsplit('netloc') }} login {{ cassandra_install_username }} password {{ cassandra_install_password }}
+      machine {{ 'http://' if _url.scheme == 'http' else '' }}{{ _host }}{{ (':' ~ _url.port) if _url.port else '' }} login {{ cassandra_install_username }} password {{ cassandra_install_password }}
     dest: /etc/apt/auth.conf.d/cassandra.conf
     owner: root
     group: root
     mode: "0600"
+  vars:
+    _url: "{{ cassandra_install_url | urlsplit }}"
+    _hostport: "{{ _url.netloc.split('@') | last }}"
+    _host: "{{ _hostport[1:].split(']') | first if _hostport.startswith('[') else _hostport.split(':') | first }}"
   no_log: true
   diff: false
   register: _cassandra_repository_credentials

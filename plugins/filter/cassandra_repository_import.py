@@ -99,6 +99,20 @@ def _deb822(text):
     return out
 
 
+def _apt_machine(url):
+    """The machine cassandra_repository writes in auth.conf for url: http:// for http (apt matches a
+    machine without one on https only), the host as written (IPv6 without brackets), the port; no user@.
+    "http://u@Mirror.example:8080/deb" -> "http://Mirror.example:8080"."""
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return None
+    hostport = parts.netloc.rpartition("@")[2]
+    host = hostport[1:].split("]")[0] if hostport.startswith("[") else hostport.split(":")[0]
+    return ("http://" if parts.scheme == "http" else "") + host + (":%d" % port if port else "")
+
+
 def _apt(files, stats, series, shipped, packages, debian_packages):
     path = "/etc/apt/sources.list.d/cassandra-%s.sources" % series
     auth = "/etc/apt/auth.conf.d/cassandra.conf"
@@ -128,7 +142,7 @@ def _apt(files, stats, series, shipped, packages, debian_packages):
         if MARK not in files[auth] or len(lines) != 2 or not m or stats.get(auth, {}).get("mode") != "0600" \
                 or (stats.get(auth, {}).get("uid"), stats.get(auth, {}).get("gid")) != (0, 0):
             return None, "%s: not written by the role (it would rewrite or remove it)" % auth
-        if m.group(1) != urlsplit(src["URIs"]).netloc:
+        if m.group(1) != _apt_machine(src["URIs"]):
             return None, "%s: for %s, not the repository's host (the role would rewrite it)" % (auth, m.group(1))
         if files[auth] != "# %s\nmachine %s login %s password %s\n" % (MARK, m.group(1), m.group(2), m.group(3)):
             return None, "%s: not written as the role writes it" % auth

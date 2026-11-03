@@ -113,6 +113,21 @@ def test_apt_credentials_for_another_host():
     assert out["manage"] is False and "other.example" in out["why"]
 
 
+def test_apt_credentials_of_the_role_for_any_mirror_url():
+    # the machine as the role writes it: http:// for http, the host as written, the port, no user@
+    for uri, machine in (("http://mirror.example/deb", "http://mirror.example"),
+                         ("https://mirror.example:8443/deb", "mirror.example:8443"),
+                         ("https://olduser@Mirror.example/deb", "Mirror.example"),
+                         ("https://[fd00::1]:8443/deb", "fd00::1:8443")):
+        out = apt({SRC: DEB.replace("https://mirror.example/deb", uri), AUTH: MARKED.replace("mirror.example", machine)})
+        assert out["manage"] is True, uri
+        assert out["vars"]["cassandra_install_username"] == "svc", uri
+    # the role would rewrite one for the whole netloc
+    out = apt({SRC: DEB.replace("https://mirror.example/deb", "https://u@mirror.example/deb"),
+               AUTH: MARKED.replace("mirror.example", "u@mirror.example")})
+    assert out["manage"] is False
+
+
 def test_apt_others():
     assert apt({SRC: DEB, "/etc/apt/sources.list.d/cassandra-50x.list": "deb x 50x main\n"})["manage"] is False
     assert apt({SRC: DEB}, packages=["curl"])["manage"] is False  # the role would install the others
