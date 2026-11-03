@@ -90,7 +90,8 @@ Conventions
   it (``from node3  13.4/33.0 GiB  41%  nothing for 6m    (node1, node2 done)``). The waits without streams (a
   restart, a config written) are the same single line: ``[2/5] node2  restart  waiting  node4 is DN, waiting for
   it to come back  9m52s/10m``, then ``[1/5] node1  restarted  NORMAL after 30s  1m50s``: the step took 1m50s from
-  its start to NORMAL, the time the recap and a stop's table give that node too.
+  its start to NORMAL, the time the recap and a stop's table give that node too (a node that reached NORMAL and
+  then failed, a check after it, shows its whole step's time in the table).
 
   Above 30 of them (a node streaming both ways counts twice), one line sums them up: the ones done, the ones
   keeping up and their average, the stalled ones, the ones behind (below half the average of all the ones not
