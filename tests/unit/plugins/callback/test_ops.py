@@ -1194,6 +1194,10 @@ def test_the_same_run_once_verdict_is_printed_once():
     each = _Task(run_once=False)
     assert verdicts(_Result(each, "node1", ["REFUSED  x"]), _Result(each, "node2", ["REFUSED  x"])) == [
         "node1: REFUSED  x", "node2: REFUSED  x"]
+    # a verdict that names its host: no prefix ("node2: STOPPED at node2" said it twice); node1 is not node10
+    stop = ["STOPPED at node2: node4 (10.0.0.4, r1) is DN, seen from node1 and node2. No node after it was touched."]
+    assert verdicts(_Result(each, "node2", stop)) == stop
+    assert verdicts(_Result(each, "node1", ["FAILED at node10: x"])) == ["node1: FAILED at node10: x"]
 
 
 def test_a_refusal_block_is_red_on_its_verdict_line_only():

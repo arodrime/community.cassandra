@@ -700,21 +700,23 @@ class CallbackModule(DefaultCallback):
         return marked(task) and task.action in _VERDICTS and bool(said) and not said[0].startswith(_CORE_ERRORS)
 
     def _verdict(self, result):
-        """The verdict lines; the host first when the task runs on each host. A run_once
-        verdict the same task gave already is not printed again (ansible-core 2.15 and 2.16
-        run a run_once task of a rescue again for the hosts any_errors_fatal sends there later)."""
+        """The verdict lines; the host first when the task runs on each host, unless the verdict names
+        it already ("STOPPED at node2: ..."). A run_once verdict the same task gave already is not printed
+        again (ansible-core 2.15 and 2.16 run a run_once task of a rescue again for the hosts
+        any_errors_fatal sends there later)."""
         msg = lines(_result(result)["msg"])
+        head = next((line for line in msg if line.strip()), "")
         if _task(result).run_once:
             key = (_task(result).get_path() or _task(result).get_name(), tuple(msg))
             if key in self._verdicts:
                 return None
             self._verdicts.add(key)
         else:
-            host = getattr(result, "host", None) or result._host
-            first = next(i for i, line in enumerate(msg) if line.strip())
-            msg[first] = "%s: %s" % (host.get_name(), msg[first])
+            host = (getattr(result, "host", None) or result._host).get_name()
+            if not re.search(r"(?<![\w.-])%s(?![\w.-])" % re.escape(host), head):
+                first = msg.index(head)
+                msg[first] = head = "%s: %s" % (host, head)
         # a block of its own (REFUSED  add_node ..., FAILED  ...): coloured by its lines, its verdict line red
-        head = next((line for line in msg if line.strip()), "")
         self._print(msg, color=None if _HEADED.match(head) or _RECAP.match(head) or _BLOCK.match(head) else C.COLOR_ERROR)
 
     def v2_runner_on_failed(self, result, ignore_errors=False):
