@@ -613,9 +613,29 @@ def _named(entries, all_nodes, width=None):
                 cells.append([heading, label, change, named(names)])
                 shown.append(cells[-1])
                 heading, label = "", ""
-    rows = iter(out.table(cells))
-    lines = out.fit([line if isinstance(line, str) else next(rows) for line in shown], width)
+    rows = iter(_rows_in(cells, width))
+    lines = []
+    for line in shown:
+        lines += out.fit([line], width) if isinstance(line, str) else next(rows)
     return (out.group_lines(groups, width=width) + [""] + lines) if groups and lines else lines
+
+
+def _rows_in(cells, width=None):
+    """The table's rows (file, setting, change, nodes), each as its lines in width: on one line when every row
+    fits; else every row the same way, its nodes on the next lines under the change's column (under the
+    setting's when they do not fit there)."""
+    table = out.table(cells)
+    if not width or all(len(line) <= width for line in table):
+        return [[line] for line in table]
+    setting = max(len(c[0]) for c in cells) + 2
+    change = setting + max(len(c[1]) for c in cells) + 2
+
+    def fits(at):
+        return all(len(part) <= width - at for c in cells for part in out.wrap_list(c[3], width - at))
+
+    at = change if width > change and fits(change) else setting
+    return [out.fit([line], width) + [" " * at + part for part in out.wrap_list(cell[3], max(1, width - at)) if part]
+            for line, cell in zip(out.table([c[:3] for c in cells]), cells)]
 
 
 def _outcome(node, check, plan):

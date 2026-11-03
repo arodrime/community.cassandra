@@ -449,9 +449,23 @@ def test_os_settings_by_the_stable_device_name_at_the_terminal_width():
         assert "4096 -> 4" in "\n".join(lines) and "db-node-5.example.net" in "\n".join(lines)
 
 
+def test_rows_too_wide_have_their_nodes_under_the_change_every_row_the_same():
+    # a narrow terminal: not "  h-n1" under one row and "               h-n2" under the next (the fit of each line
+    # from its own indent), every row's nodes on the next line, at the column of the changes
+    swappiness = "sysctl vm.swappiness (/etc/sysctl.d/60-cassandra.conf)"
+    nodes = [{"name": "h-n1", "items": [], "os": [{"item": "read_ahead_kb sdz", "before": "128", "after": "4"}]},
+             {"name": "h-n2", "items": [], "os": [{"item": swappiness, "before": "60", "after": "1"}]}]
+    lines = cassandra_apply_config_diff(nodes, width=80)
+    at = len("OS settings  ") + len(swappiness) + 2
+    assert lines == ["OS settings  %s  128 -> 4" % "read_ahead_kb sdz".ljust(len(swappiness)), " " * at + "h-n1",
+                     "             %s  60 -> 1" % swappiness, " " * at + "h-n2"]
+    # wide enough: each row on its line
+    assert cassandra_apply_config_diff(nodes, width=120)[0].endswith("128 -> 4  h-n1")
+
+
 def test_os_settings_with_the_dm_kernel_name_when_verbose():
     lines = cassandra_apply_config_diff(os_nodes(), verbose=True)
-    assert [line.split("  4096")[0].strip() for line in lines if "vgdata" in line] == [
+    assert [line.split("  4096", maxsplit=1)[0].strip() for line in lines if "vgdata" in line] == [
         "read_ahead_kb vgdata-lvdata (dm-3)", "read_ahead_kb vgdata-lvdata (dm-4)", "read_ahead_kb vgdata-lvdata (dm-5)",
         "read_ahead_kb vgdata-lvdata (dm-7)"]
 
