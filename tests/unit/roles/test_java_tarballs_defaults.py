@@ -30,7 +30,7 @@ MIRROR = {
 }
 
 
-def resolve(**inventory):
+def templar_with(**inventory):
     with open(DEFAULTS) as f:
         variables = yaml.safe_load(f)
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
@@ -40,7 +40,11 @@ def resolve(**inventory):
         "cassandra_install_url": "https://mirror.example.com/cassandra/",
     })
     variables.update(inventory)
-    templar = Templar(loader=DataLoader(), variables=variables)
+    return Templar(loader=DataLoader(), variables=variables)
+
+
+def resolve(**inventory):
+    templar = templar_with(**inventory)
     names = ["cassandra_java_tarball", "cassandra_java_tarball_checksum",
              "cassandra_java_tarball_username", "cassandra_java_tarball_password"]
     return dict((n, templar.template(trust_as_template("{{ %s }}" % n))) for n in names)
@@ -100,3 +104,12 @@ def test_tarball_over_http_or_another_port_gets_no_mirror_credentials():
     for url in ("http://mirror.example.com/java/jdk-17.tar.gz", "https://mirror.example.com:8443/java/jdk-17.tar.gz"):
         resolved = resolve(cassandra_java_tarball=url)
         assert (resolved["cassandra_java_tarball_username"], resolved["cassandra_java_tarball_password"]) == ("", ""), url
+
+
+def test_tarball_url_without_a_file_name_is_refused():
+    with open(os.path.join(os.path.dirname(DEFAULTS), "..", "tasks", "java_check.yml")) as f:
+        check = next(t for t in yaml.safe_load(f) if t["name"] == "The tarball has a file name")
+    that = trust_as_template("{{ %s }}" % check["ansible.builtin.assert"]["that"])
+    assert templar_with(cassandra_java_tarball="https://mirror.example.com/java/").template(that) is False
+    assert templar_with(cassandra_java_tarball="https://mirror.example.com/java/jdk-17.tar.gz").template(that) is True
+    assert templar_with(cassandra_java_tarball="").template(that) is True
