@@ -122,3 +122,20 @@ class _Now(object):
 
     def timestamp(self):
         return self.epoch
+
+
+def test_the_frozen_line_and_the_recap_say_one_time():
+    # the step from its start to NORMAL, noted once: the frozen line's time and the recap's "done in"
+    note = task(load("wait_normal.yml"), "Note the step's time to NORMAL")
+    assert render(note["ansible.builtin.set_fact"]["_cassandra_op_to_normal"], _cassandra_op_start=0) not in ("", "0")
+    said = task(load("wait_normal.yml"), "Say it is NORMAL")["ansible.builtin.debug"]["msg"]
+    assert "elapsed=_cassandra_op_to_normal " in said
+    operation = os.path.join(TASKS, "..", "..", "cassandra_operation", "tasks", "node_operation.yml")
+    with open(operation, encoding="utf-8") as f:
+        record = task(yaml.safe_load(f), "Record the result")["ansible.builtin.set_fact"]["cassandra_op_result"]
+    variables = dict(cassandra_service_node_action="restart", ansible_check_mode=False, _cassandra_service_would={},
+                     _cassandra_op_start=0)
+    assert render(record, _cassandra_op_to_normal=95, **variables).strip() == "restart done in 95s"
+    # not NORMAL again in this step (no wait for NORMAL): its whole time
+    whole = render(record, _cassandra_op_to_normal="", **variables).strip()
+    assert whole.startswith("restart done in ") and int(whole[len("restart done in "):-1]) > 95

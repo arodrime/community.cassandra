@@ -40,13 +40,21 @@
     _cassandra_wait_check: wait_normal_check.yml
     _cassandra_wait_going: "{{ _cassandra_normal_going | bool }}"
 
+# a node operation's step, from its start to NORMAL: its frozen line and the recap's table say this one time
+- name: Note the step's time to NORMAL
+  ansible.builtin.set_fact:
+    _cassandra_op_to_normal: "{{ now().timestamp() | int - _cassandra_op_start | int }}"
+  when:
+    - _cassandra_op_start is defined
+    - cassandra_service_netstats.mode | default('') == 'NORMAL'
+
 - name: Say it is NORMAL
   ansible.builtin.debug:
     msg: >-
       {{ 'NORMAL' | community.cassandra.cassandra_normal_wait_line(
            done=true, waited=now().timestamp() | int - _cassandra_normal_start | int,
            index=_head.index, steps=_head.steps, node=_head.node, operation=_head.operation,
-           elapsed=(now().timestamp() | int - _cassandra_op_start | int) if _cassandra_op_start is defined else none) }}
+           elapsed=_cassandra_op_to_normal if _cassandra_op_start is defined else none) }}
   when: cassandra_service_netstats.mode | default('') == 'NORMAL'  # a node NORMAL at once too: one line per node
   vars:
     cassandra_output: true  # a progress line (ops callback)

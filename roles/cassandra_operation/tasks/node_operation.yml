@@ -52,6 +52,7 @@
     - name: Note the start time
       ansible.builtin.set_fact:
         _cassandra_op_start: "{{ now().timestamp() | int }}"
+        _cassandra_op_to_normal: ""  # set once the node is NORMAL again (wait_normal.yml): the step's time
         _cassandra_stop_word: ""  # set by a stop that names itself (cluster_health.yml)
 
     # what it says if another one fails first, stopping the run
@@ -175,7 +176,8 @@
              if cassandra_service_node_action == 'add' and cassandra_new_node_state | default('new') == 'joined'
              else ('would ' ~ _cassandra_service_would.get(cassandra_service_node_action, cassandra_service_node_action)
                    ~ ' (--check: nothing was changed)') if ansible_check_mode
-             else (cassandra_service_node_action ~ ' done in ' ~ (now().timestamp() | int - _cassandra_op_start | int) ~ 's') }}
+             else (cassandra_service_node_action ~ ' done in '
+                   ~ (_cassandra_op_to_normal | default('') or now().timestamp() | int - _cassandra_op_start | int) ~ 's') }}
         cassandra_op_done: true
   # (a node of a batch stopped because another one failed: no failure of its own, ansible-core 2.17+ rescues it too)
   rescue:
