@@ -17,6 +17,9 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     _load_role,
     _mask,
     _render,
+    _same,
+    _show,
+    _without_same_logger,
     cassandra_config_import,
     cassandra_import_error,
     cassandra_inventory_files,
@@ -30,6 +33,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import_che
     cassandra_inventory_host_vars,
 )
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import cassandra_permissions_import
+from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import same_settings
 
 STOCK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_config", "molecule",
                      "default", "files", "stock-%s")
@@ -1009,6 +1013,195 @@ def test_audit_extra_sub_keys_written_in_the_section():
     assert text.endswith("# Settings no variable covers (cassandra_extra_settings)\nx: 1\n")
     ctx["cassandra_extra_settings"] = {"audit_logging_options": {"included_categories": "DDL"}}
     assert "Settings no variable covers" not in "\n".join(_render(env, "50x", "cassandra.yaml", ctx)[1])
+
+
+# --- the audit logger: its class and parameters read into their variables -------
+
+CLASS = {"cassandra_audit_logger_class_name": "FileAuditLogger"}
+# (id, the node's logger entry in place of the stock one, each line at the entry's indent ("- class_name" at it),
+#  the variables the import reads, the node's entry written as the role writes it)
+AUDIT_LOGGER = [
+    ("as the role writes it", ["- class_name: FileAuditLogger", "  parameters:", '    - key1: "value1"', '      key2: "7"'],
+     dict(CLASS, cassandra_audit_logger_parameters={"key1": "value1", "key2": "7"}), True),
+    ("written plain", ["- class_name: FileAuditLogger", "  parameters:", "    - key1: value1", "      key2: value2"],
+     dict(CLASS, cassandra_audit_logger_parameters={"key1": "value1", "key2": "value2"}), False),
+    # Cassandra reads them as text: so does the import, whatever YAML 1.1 would make of them
+    ("values as text", ["- class_name: FileAuditLogger", "  parameters:", "    - log_dir: '/srv/audit/node'",
+                        "      max_files: 7", '      count: "12"', "      tag: yes", "      code: 0123",
+                        "      big: 1_000", "      day: 2026-11-04", "      mask: 0x1F", "      note: café"],
+     dict(CLASS, cassandra_audit_logger_parameters={
+         "log_dir": "/srv/audit/node", "max_files": "7", "count": "12", "tag": "yes", "code": "0123", "big": "1_000",
+         "day": "2026-11-04", "mask": "0x1F", "note": "café"}), False),
+    ("flow style", ["- class_name: FileAuditLogger", "  parameters: [{b: 2, a: x}]"],
+     dict(CLASS, cassandra_audit_logger_parameters={"b": "2", "a": "x"}), False),
+    ("a class alone", ["- class_name: FileAuditLogger"], CLASS, True),
+]
+
+
+def audit_node(series, entry, extra=""):
+    """A node whose audit logger entry is entry (its lines at the entry's indent), extra lines after it."""
+    files = seeded(stock(series))
+    m = re.search(r"(?m)^(\s*)- class_name: BinAuditLogger$", files["cassandra.yaml"])
+    files["cassandra.yaml"] = edit(files["cassandra.yaml"], m.group(0),
+                                   "\n".join(m.group(1) + line for line in entry) + extra)
+    return files
+
+
+def audit_section(text):
+    """The audit_logging_options block of a cassandra.yaml: its lines down to the first blank one."""
+    lines = text.split("\n")
+    start = lines.index("audit_logging_options:")
+    return "\n".join(lines[start:lines.index("", start)]) + "\n"
+
+
+def rendered_yaml(series, variables):
+    env, ctx, dummy = _load_role(series, FACTS)
+    ctx.update(variables)
+    return "\n".join(_render(env, series, "cassandra.yaml", ctx)[1])
+
+
+@pytest.mark.parametrize("series", sorted(VERSIONS))
+@pytest.mark.parametrize("case, entry, imported, same_text", AUDIT_LOGGER, ids=[c[0] for c in AUDIT_LOGGER])
+def test_audit_logger_imported(series, case, entry, imported, same_text):
+    """The node's audit logger in its variables, its parameters' keys in their order, their values as text; no hand
+    edit; the self-check passes and the role, rendering them, would leave the file as it is (the same settings;
+    written as the role writes it, the same text)."""
+    files = audit_node(series, entry)
+    result = cassandra_config_import(files, series, FACTS, "", "/var/lib/cassandra")
+    got = dict((k, v) for k, v in result["vars"].items() if k.startswith("cassandra_audit_"))
+    assert got == imported
+    assert list(got.get("cassandra_audit_logger_parameters", {})) == \
+        list(imported.get("cassandra_audit_logger_parameters", {}))  # in the node's order
+    assert result["hand_edits"] == [] and "cassandra_extra_settings" not in result["vars"]
+    assert ("cassandra.yaml: audit_logging_options.logger, the same written another way" in result["normalized"]) \
+        is not same_text
+    assert check(files, series)["differences"] == []
+    node, role = audit_section(files["cassandra.yaml"]), audit_section(rendered_yaml(series, imported))
+    assert same_settings("cassandra.yaml", node, role)
+    assert (node == role) is same_text
+    # a value changed after the import: the self-check catches it
+    if "cassandra_audit_logger_parameters" in imported:
+        changed = dict(imported["cassandra_audit_logger_parameters"], zz="1")
+        assert check(files, series, tamper={"cassandra_audit_logger_parameters": changed})["differences"]
+
+
+@pytest.mark.parametrize("series", sorted(VERSIONS))
+def test_audit_logger_with_the_sections_other_sub_keys(series):
+    files = audit_node(series, ["- class_name: FileAuditLogger", "  parameters:", '    - key1: "value1"'])
+    files["cassandra.yaml"] = re.sub(r"(?m)^(\s*)# included_categories:$", r"\1included_categories: DDL",
+                                     files["cassandra.yaml"], count=1)
+    result = cassandra_config_import(files, series, FACTS, "", "/var/lib/cassandra")
+    assert result["vars"]["cassandra_audit_logger_parameters"] == {"key1": "value1"}
+    assert result["vars"]["cassandra_extra_settings"] == {"audit_logging_options": {"included_categories": "DDL"}}
+    assert result["hand_edits"] == [] and check(files, series)["differences"] == []
+
+
+@pytest.mark.parametrize("series", sorted(VERSIONS))
+@pytest.mark.parametrize("parameters", [
+    ["  parameters:", "    - key1: value1", "    - key2: value2"],  # several mappings: Cassandra reads the first only
+    ["  parameters: []"],
+    ["  parameters: {key1: value1}"],  # not a list
+    ["  parameters: value1"],
+    ["  parameters:", "    - value1"],  # an item that is not a mapping
+    ["  parameters:", "    - {}"],  # an empty one (Cassandra: an empty map, not none)
+    ["  parameters:", "    - key1: [a, b]"],  # a value that is a list
+    ["  parameters:", "    - key1:", "        sub: x"],  # a mapping
+    ["  parameters:", "    - key1: |", "        line one", "        line two"],  # on several lines
+    ["  parameters:", '    - key1: "a\\nb"'],
+    ["  parameters:", '    - key1: "a\\rb"'],
+    ["  parameters:", '    - key1: "a\\x85b"'],  # YAML 1.1's next line
+    ["  parameters:", '    - key1: "a\\x7fb"'],  # a control character
+    ["  parameters:", "    - 7: x"],  # keys YAML would not read back as written plain
+    ["  parameters:", "    - on: x"],
+    ["  parameters:", "    - yes: x"],
+    ["  parameters:", "    - null: x"],
+    ["  parameters:", "    - '*x': y"],
+    ["  parameters:", "    - 'a:b': y"],
+], ids=["several", "empty", "mapping not list", "text", "scalar item", "empty mapping", "list", "mapping", "block", "newline", "return",
+        "next line", "control", "number key", "on", "yes", "null key", "star key", "colon key"])
+def test_audit_logger_parameters_the_role_cannot_write_are_a_hand_edit(series, parameters):
+    """Dead or unwritable config: not imported, a hand edit in the report, the self-check says what differs."""
+    files = audit_node(series, ["- class_name: FileAuditLogger"] + parameters)
+    result = cassandra_config_import(files, series, FACTS, "", "/var/lib/cassandra")
+    assert "cassandra_audit_logger_parameters" not in result["vars"]
+    assert result["vars"]["cassandra_audit_logger_class_name"] == "FileAuditLogger"
+    assert any("parameters" in line for line in result["hand_edits"])
+    assert check(files, series)["differences"]
+
+
+@pytest.mark.parametrize("series", sorted(VERSIONS))
+@pytest.mark.parametrize("parameters, imported", [
+    (["    - key1:"], {}),  # null: for Cassandra as if not there
+    (["    - key1: ~", "      key2: x"], {"key2": "x"}),
+], ids=["null", "null and a value"])
+def test_audit_logger_null_parameters_are_left_out(series, parameters, imported):
+    files = audit_node(series, ["- class_name: FileAuditLogger", "  parameters:"] + parameters)
+    result = cassandra_config_import(files, series, FACTS, "", "/var/lib/cassandra")
+    assert result["vars"].get("cassandra_audit_logger_parameters", {}) == imported
+    assert result["hand_edits"] == []
+    assert "cassandra.yaml: audit_logging_options.logger, the same written another way" in result["normalized"]
+    assert check(files, series)["differences"] == []
+
+
+def test_audit_loggers_that_differ_stay_compared():
+    role = ["audit_logging_options:", "  enabled: false", "  logger:", "    - class_name: BinAuditLogger",
+            "      parameters:", '        - key1: "7"', ""]
+    node = role[:5] + ["        - key1: 8", ""]
+    assert _without_same_logger(role, node) == (role, node, [])
+    # the same once read as text: left out on both sides, said once
+    same = role[:5] + ["        - key1: 7", "          key2:", ""]
+    assert _without_same_logger(role, same) == (role[:2] + [""], same[:2] + [""], [
+        "cassandra.yaml: audit_logging_options.logger, the same written another way"])
+
+
+def test_audit_logger_parameters_with_a_secret_go_to_secrets():
+    files = audit_node("50x", ["- class_name: FileAuditLogger", "  parameters:", "    - user: auditor",
+                               "      password: n0t-a-real-one"])
+    inventory, layout = import_node(files, "50x")
+    holding = [f for f in inventory if "cassandra_audit_logger_parameters" in f["content"]]
+    assert holding and all(f["secret"] for f in holding)
+    assert check(files, "50x")["differences"] == []
+
+
+def audit_layout(parameters):
+    """The layout of two nodes, each with its audit logger parameters ([(key, value as written)])."""
+    nodes = []
+    for name, params in zip(("n1", "n2"), parameters):
+        files = audit_node("50x", ["- class_name: FileAuditLogger", "  parameters:"]
+                           + ["    %s %s: %s" % ("-" if i == 0 else " ", k, v) for i, (k, v) in enumerate(params)])
+        imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
+        nodes.append({"name": name, "address": "10.0.0.%s" % name[1], "hostname": name, "dc": "dc1", "rack": "r1",
+                      "read": True, "vars": dict(imported["vars"], cassandra_version="50x"),
+                      "hand_edits": imported["hand_edits"], "normalized": [], "comments": [], "notes": [],
+                      "keep": {"cassandra_service_unit_manage": False}})
+    return cassandra_inventory_layout(nodes, "c")
+
+
+def test_audit_logger_parameters_in_the_group_when_every_node_agrees():
+    layout = audit_layout([[("key2", "value2"), ("key1", 7)]] * 2)
+    assert layout["group_vars"]["c"]["cassandra_audit_logger_parameters"] == {"key2": "value2", "key1": "7"}
+    assert all("cassandra_audit_logger_parameters" not in v for v in layout["host_vars"].values())
+    # written in the node's order
+    assert "cassandra_audit_logger_parameters:\n  key2: value2\n  key1: '7'\n" in "".join(
+        f["content"] for f in cassandra_inventory_files(layout) if f["path"] == "group_vars/c/main.yml")
+
+
+@pytest.mark.parametrize("second", [[("key1", "other"), ("key2", 2)],
+                                    [("key2", 2), ("key1", "value1")]])  # the same, in another order
+def test_audit_logger_parameters_per_node_when_they_differ(second):
+    layout = audit_layout([[("key1", "value1"), ("key2", 2)], second])
+    assert "cassandra_audit_logger_parameters" not in layout["group_vars"]["c"]
+    assert [list(layout["host_vars"][n]["cassandra_audit_logger_parameters"]) for n in ("n1", "n2")] == \
+        [["key1", "key2"], [k for k, v in second]]
+
+
+def test_values_kept_in_their_order_compare_their_types_too():
+    """KEEP_ORDER values: the same only in the same order, and true is not 1; shown in their order."""
+    key = "cassandra_audit_logger_parameters"
+    assert not _same(key, [{"a": True}], [{"a": 1}]) and _same("cassandra_other", [{"a": True}], [{"a": 1}])
+    assert not _same(key, {"a": "1", "b": "2"}, {"b": "2", "a": "1"}) and _same(key, {"a": "1"}, {"a": "1"})
+    assert _show(key, {"b": "1", "a": "2"}) == '{"b": "1", "a": "2"}'
+    assert _show("cassandra_other", {"b": "1", "a": "2"}) == '{"a": "2", "b": "1"}'
 
 
 def test_a_value_following_the_node_names_renders_each_nodes_own():

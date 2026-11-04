@@ -51,6 +51,7 @@ import os
 import re
 import shlex
 import sys
+import textwrap
 import traceback
 import xml.etree.ElementTree as ET
 from collections import namedtuple
@@ -95,7 +96,10 @@ IDENTITY_OPTIONAL = {"cassandra_seed_provider_class_name": ("seed_provider", 0, 
                          "allocate_tokens_for_local_replication_factor",),
                      "cassandra_storage_compatibility_mode": ("storage_compatibility_mode",)}
 # Read the same way, whatever the layout of their section (moved, indented otherwise, flow style)
-BY_PATH = {"cassandra_sstable_format": ("sstable", "selected_format")}
+BY_PATH = {"cassandra_sstable_format": ("sstable", "selected_format"),
+           "cassandra_audit_logger_class_name": ("audit_logging_options", "logger", 0, "class_name")}
+# The audit logger's parameters: the one mapping of its list (Cassandra reads the first, as text), read as text
+AUDIT_PARAMETERS = ("cassandra_audit_logger_parameters", ("audit_logging_options", "logger", 0, "parameters"))
 INTEGERS = ("cassandra_num_tokens", "cassandra_allocate_tokens_for_local_replication_factor")
 # Same masking as cassandra_config's diff preview (plugin_utils cassandra_output)
 SECRET, SECRET_VALUE, _mask, _secret = out.SECRET, out.SECRET_VALUE, out.mask, out.secret
@@ -181,6 +185,8 @@ def _load_role(series, facts):
     env.filters["bool"] = lambda value: boolean(value, strict=False)
     env.tests["match"] = lambda value, pattern: re.match(pattern, str(value)) is not None
     env.filters["to_nice_yaml"] = lambda data, indent=2: yaml.safe_dump(data, default_flow_style=False, indent=indent)
+    env.filters["to_json"] = json.dumps
+    env.filters["zip"] = lambda *lists: list(zip(*lists))
     for dummy in range(5):  # defaults referencing other defaults
         for k, v in ctx.items():
             if isinstance(v, str) and "{{" in v:
@@ -1065,6 +1071,61 @@ def _properties_leftovers(name, rendered, live_text):
     return hand, normalized
 
 
+@functools.lru_cache(maxsize=None)
+def _parameter_patterns():
+    """(a key the role writes plain, a character no value may hold) of cassandra_audit_logger_parameters: the role's
+    own (_cassandra_config_plain_key, _cassandra_config_unwritable_text), which its checks refuse."""
+    role_vars = role_file("cassandra_config", "vars")
+    return re.compile(role_vars["_cassandra_config_plain_key"]), re.compile(role_vars["_cassandra_config_unwritable_text"])
+
+
+def _set_parameters(item):
+    """A mapping of the logger's parameters without its null values (for Cassandra, as if not there)."""
+    return dict((k, v) for k, v in item.items() if v is not None) if isinstance(item, dict) else item
+
+
+def _without_null_parameters(logger):
+    """The logger's entries, the null values of their parameters left out, and their parameters when only null
+    values were there."""
+    if not isinstance(logger, list):
+        return logger
+    out = []
+    for entry in logger:
+        if isinstance(entry, dict) and isinstance(entry.get("parameters"), list):
+            parameters = [_set_parameters(p) for p in entry["parameters"]]
+            gone = parameters == [{}] and entry["parameters"] != [{}]  # (an empty mapping written as such stays)
+            entry = dict((k, v) for k, v in entry.items() if k != "parameters")
+            if not gone:
+                entry["parameters"] = parameters
+        out.append(entry)
+    return out
+
+
+def _logger_lines(lines):
+    """The indexes of the lines of audit_logging_options' logger, and its value, its scalars as text (Cassandra
+    reads its parameters as text: 7 and "7" are the same), the null values of its parameters left out (None: none,
+    or not YAML)."""
+    block = next((indexes for key, indexes in _top_blocks(lines) if key == "audit_logging_options"), None)
+    at = _sub_key_lines(lines, block, ["logger"]) if block else []
+    try:
+        data = _as_text(yaml.compose(textwrap.dedent("\n".join(lines[i] for i in at)))) if at else None
+    except yaml.YAMLError:
+        data = None
+    return at, _without_null_parameters(data.get("logger")) if isinstance(data, dict) else None
+
+
+def _without_same_logger(rendered, live):
+    """Both sides minus the audit logger's lines when they set the same, however the node writes them (flow style,
+    quotes) -> (rendered, live, normalized: a note when written another way)."""
+    (at_r, role), (at_n, node) = _logger_lines(rendered), _logger_lines(live)
+    if role is None or role != node:
+        return rendered, live, []
+    note = [] if [rendered[i] for i in at_r] == [live[i] for i in at_n] else [
+        "cassandra.yaml: audit_logging_options.logger, the same written another way"]
+    return ([r for i, r in enumerate(rendered) if i not in at_r], [n for i, n in enumerate(live) if i not in at_n],
+            note)
+
+
 def _yaml_compared(series, rendered, live, extras, rejected):
     """cassandra.yaml's lines to compare: without the settings the stock file has no line for, the keys under their
     former names, the extra settings and the keys rejected (masked first) -> (rendered, live, normalized: notes)."""
@@ -1072,6 +1133,8 @@ def _yaml_compared(series, rendered, live, extras, rejected):
     rendered, live, notes = _without_declared(series, rendered, live)
     normalized += notes
     rendered, live, notes = _without_former_names(rendered, live)
+    normalized += notes
+    rendered, live, notes = _without_same_logger(rendered, live)
     normalized += notes
     if extras or rejected:
         # masked before the lines of those keys go: a secret's value may go on past the lines dropped
@@ -1961,9 +2024,29 @@ def _as_text(node):
     return node.value
 
 
+def _logger_parameters(conf):
+    """The audit logger's parameters (AUDIT_PARAMETERS) of cassandra.yaml read as text (_as_text), their null values
+    left out -> {variable: the mapping} when its list holds one mapping of keys the role writes plain and values it
+    can write (_parameter_patterns), else {} (left to the comparison: a hand edit; nothing when none is left)."""
+    value = conf
+    for step in AUDIT_PARAMETERS[1]:
+        try:
+            value = value[step]
+        except (KeyError, IndexError, TypeError):
+            return {}
+    if not isinstance(value, list) or len(value) != 1 or not isinstance(value[0], dict):
+        return {}  # several (Cassandra reads the first), none, or not a mapping
+    plain_key, unwritable = _parameter_patterns()
+    parameters = _set_parameters(value[0])
+    if not all(isinstance(k, str) and plain_key.match(k) and isinstance(v, str) and not unwritable.search(v)
+               for k, v in parameters.items()):
+        return {}  # a key read otherwise written plain, a value that is a list, a mapping or on several lines
+    return {AUDIT_PARAMETERS[0]: parameters} if parameters else {}
+
+
 def _identity(text, series):
-    """The settings a node keeps for life, from cassandra.yaml parsed as YAML.
-    Fails, naming them, when a mandatory one isn't there."""
+    """The settings a node keeps for life, from cassandra.yaml parsed as YAML, and the ones read by their path
+    (BY_PATH, the audit logger's parameters). Fails, naming them, when a mandatory one isn't there."""
     try:
         conf = _as_text(yaml.compose(text))
     except yaml.YAMLError as exc:
@@ -1994,6 +2077,7 @@ def _identity(text, series):
                                  " set them by hand in the inventory)" % ", ".join(missing))
     if series == "50x" and "cassandra_storage_compatibility_mode" not in found and isinstance(conf, dict):
         found["cassandra_storage_compatibility_mode"] = "CASSANDRA_4"  # 5.0's own default, not the role's
+    found.update(_logger_parameters(conf))
     return found
 
 
@@ -2003,9 +2087,9 @@ def _slug(text):
 
 
 def _same(key, a, b):
-    """Equal values; for a dict written in its order (KEEP_ORDER), in the same order too."""
-    if key in KEEP_ORDER and isinstance(a, dict) and isinstance(b, dict):
-        return list(a.items()) == list(b.items())
+    """Equal values; for a value written in its order (KEEP_ORDER), its mappings in the same order too."""
+    if key in KEEP_ORDER:
+        return json.dumps(a, default=str) == json.dumps(b, default=str)
     return a == b
 
 
@@ -2037,7 +2121,7 @@ def _show(key, value):
     if _secret(key, value):
         return "****"
     # json, not yaml.safe_dump: Ansible hands filters dict/str subclasses
-    return json.dumps(value, sort_keys=True, default=str)
+    return json.dumps(value, sort_keys=key not in KEEP_ORDER, default=str)
 
 
 def values_hidden(func):
@@ -2895,8 +2979,8 @@ BLOCK_PATTERNS = [
     (re.compile(r"^cassandra_\w+_(?:dir|directory|directories)$"), "Directories"),
     (re.compile(r"^cassandra_\w+_(?:address|port)$"), "Network & ports"),
 ]
-# Dicts a role writes in their order (a file written whole): not sorted
-KEEP_ORDER = ("cassandra_linux_limits",)
+# Values a role writes in their order (a file written whole, the audit logger's parameters): their mappings not sorted
+KEEP_ORDER = ("cassandra_linux_limits", "cassandra_audit_logger_parameters")
 TEMPLATE_BLOCKS = [("cassandra.yaml", "Other cassandra.yaml settings"), ("logback.xml", "Logging (logback.xml)")]
 
 
