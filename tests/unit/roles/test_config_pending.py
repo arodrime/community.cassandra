@@ -225,7 +225,9 @@ def test_jvm_whose_java_was_removed(tmp_path):
     jdk.mkdir(parents=True)
     java = jdk / "java"
     shutil.copy(os.path.realpath(sys.executable), str(java))
-    proc = subprocess.Popen([str(java), "-c", "import time; time.sleep(30)", "org.apache.cassandra.service.CassandraDaemon"])
+    # (a copied interpreter finds its standard library through PYTHONHOME: a relocatable build does not otherwise)
+    proc = subprocess.Popen([str(java), "-c", "import time; time.sleep(30)", "org.apache.cassandra.service.CassandraDaemon"],
+                            env=dict(os.environ, PYTHONHOME=sys.base_prefix))
     try:
         for dummy in range(100):
             with open("/proc/%d/cmdline" % proc.pid, "rb") as f:
