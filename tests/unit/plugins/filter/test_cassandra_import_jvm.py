@@ -14,6 +14,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     _load_role, _render, cassandra_config_import, cassandra_inventory_layout)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import _compare_files
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import cassandra_import_report
+from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_jvm_options import STACK_1G
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from import_nodes import node as import_node  # noqa: E402 pylint: disable=wrong-import-position
@@ -128,10 +129,26 @@ def test_a_stack_of_1024m_is_imported_with_a_warning():
     out = cassandra_config_import(files, "50x", FACTS, java="17")
     assert out["vars"]["cassandra_jvm_extra_options"] == ["-Xss1024M"]  # never fixed silently
     assert out["jvm_warnings"] == [
-        "-Xss1024M (cassandra_jvm_extra_options, from jvm-server.options, Java 17): 1 GiB of stack for every thread,"
-        " far above the usual 256k to 1m (stock -Xss256k; M typed for k?): each of Cassandra's hundreds to thousands"
-        " of threads reserves that much, new threads may fail (unable to create native thread). Fix or remove it in"
-        " cassandra_jvm_extra_options: it is kept as it is until then."]
+        "-Xss1024M (cassandra_jvm_extra_options, from jvm-server.options, Java 17): " + STACK_1G + ". Fix or remove"
+        " it in cassandra_jvm_extra_options: it is kept as it is until then."]
+
+
+def test_a_stack_set_twice_is_flagged_with_the_one_the_jvm_takes():
+    # (2026-11-02) -Xss1024M in jvm-server.options, -Xss256k in jvm17-server.options: the 256k wins, the 1024M is dead
+    files = node_files("50x", cassandra_jvm_extra_options=["-Xss1024M"], cassandra_jvm17_extra_options=["-Xss256k"])
+    out = cassandra_config_import(files, "50x", FACTS, java="17")
+    assert out["jvm_warnings"] == [
+        "-Xss1024M (cassandra_jvm_extra_options, from jvm-server.options, Java 17): set again by -Xss256k"
+        " (cassandra_jvm17_extra_options, from jvm17-server.options), which the JVM takes: this one is never used;"
+        " if it ever applied, " + STACK_1G + ". Remove it from cassandra_jvm_extra_options."]
+    # a password option set twice: neither value shown
+    files = node_files("50x", cassandra_jvm_extra_options=["-Djavax.net.ssl.keyStorePassword=FirstS3cret"],
+                       cassandra_jvm17_extra_options=["-Djavax.net.ssl.keyStorePassword=OtherS3cret"])
+    warnings = cassandra_config_import(files, "50x", FACTS, java="17")["jvm_warnings"]
+    assert len(warnings) == 1 and "S3cret" not in warnings[0] and "keyStorePassword=****" in warnings[0]
+    # the same option twice with the same value: nothing to say
+    files = node_files("50x", cassandra_jvm_extra_options=["-Xss512k"], cassandra_jvm17_extra_options=["-Xss512k"])
+    assert cassandra_config_import(files, "50x", FACTS, java="17")["jvm_warnings"] == []
 
 
 def test_biased_locking_on_java_17_is_a_warning():

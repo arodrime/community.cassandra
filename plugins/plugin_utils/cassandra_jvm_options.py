@@ -21,6 +21,8 @@ __metaclass__ = type
 
 import re
 
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import mask
+
 UNITS = {"": 1, "k": 1024, "m": 1024 ** 2, "g": 1024 ** 3, "t": 1024 ** 4}
 # the -XX spellings of the -X options, and the unit of their value (ThreadStackSize: KiB, a suffix too)
 ALIASES = {"ThreadStackSize": ("-Xss", 1024), "MaxHeapSize": ("-Xmx", 1), "InitialHeapSize": ("-Xms", 1),
@@ -61,9 +63,9 @@ def shown_size(value):
 def _stack_why(option, dummy):
     stack = size(option)
     if stack > 8 * MIB:
-        return ("%s of stack for every thread, far above the usual 256k to 1m (stock -Xss256k; M typed for k?):"
-                " each of Cassandra's hundreds to thousands of threads reserves that much, new threads may fail"
-                " (unable to create native thread)" % shown_size(stack))
+        return ("this gives each thread %s of stack, where 256k to 1m is usual (stock -Xss256k; perhaps M was typed"
+                " for k): Cassandra runs hundreds to thousands of threads, each reserving that much, so new threads"
+                " may fail to start (unable to create native thread)" % shown_size(stack))
     return ("%s of stack per thread, below the usual 256k to 1m (stock -Xss256k): the JVM may refuse to start, or"
             " threads fail with StackOverflowError" % shown_size(stack))
 
@@ -162,6 +164,29 @@ def check(options, java, refusals=False):
                 out.append("%s (%s) refused for Java %d: %s. %s" % (option, where, major, why, way_out))
             else:
                 out.append("%s (%s, Java %d): %s. %s" % (option, where, major, why, way_out))
+    return out
+
+
+def set_twice(options, java):
+    """options: [(option, where, way out)] in the order the JVM gets them -> [message] on each option set again
+    further on with another value (-Xss1024M, then -Xss256k): the JVM takes the last one, the earlier is never
+    used, and what it would do if it ever applied (a check's why)."""
+    major = java_major(java)
+    if major is None:
+        return []
+    last = dict((option_name(o), (o, where)) for o, where, dummy in options)
+    out = []
+    for option, where, dummy in options:
+        name = option_name(option)
+        if name is None or name in LISTS or last[name][0] == option:
+            continue
+        # (a password option set twice: neither value shown)
+        why = ["set again by %s (%s), which the JVM takes: this one is never used" % (mask(last[name][0]),
+                                                                                      last[name][1])]
+        why += ["if it ever applied, %s" % entry["why"](option, major) for entry in CHECKS
+                if entry["option"] == name and entry["warn"] is not None and entry["warn"](option, major)]
+        out.append("%s (%s, Java %d): %s. Remove it from %s." % (
+            mask(option), where, major, "; ".join(why), where.split(",", maxsplit=1)[0]))
     return out
 
 

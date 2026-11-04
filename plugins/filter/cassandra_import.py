@@ -1312,7 +1312,7 @@ def _jvm_options(env, series, ctx, files, found, java, keep_unread, cmdline):
                               (" (%s)" % running) if running else "", _heap_source(found, read, java)))
     options = [(o, "%s, from %s" % (var, f), jvm.fix_it(var)) for f, var in [(f, jvm.options_variable(f)) for f in read]
                for o in jvm.words(found.get(var))]
-    return notes, jvm.check(options, java), keep
+    return notes, jvm.set_twice(options, java) + jvm.check(options, java), keep
 
 
 def _same_xml(live, rendered):
