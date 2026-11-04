@@ -1245,15 +1245,34 @@ the OS settings (kernel, limits, THP, swap, time sync, disks), cqlsh's Python, t
 Cassandra is started by, the system java and the firewall. A part that has no mark of the roles (their repository file or ``Managed by Ansible`` header), and every node that could not be read, gets the matching switch set to false in its
 ``host_vars`` (``cassandra_repository_manage``, ``cassandra_linux_manage``, ``cassandra_cqlsh_python_manage``,
 ``cassandra_service_unit_manage``, with ``cassandra_imported_host: true`` for the last three), never in
-``group_vars``: nodes added later get the roles' full setup. The same goes for a ``/usr/bin/java`` that is not the
-Java Cassandra runs (``cassandra_java_set_default: false``), the firewall (``cassandra_firewall_manage: false`` on
+``group_vars``: nodes added later get the roles' full setup. The same goes for the firewall (``cassandra_firewall_manage: false`` on
 every imported node), the tuning of the data devices of a node the roles set up when ``cassandra_linux`` would change
 it now (read-ahead, scheduler, its udev rule, tuned's profiles: its earlier versions did not tune LVM, md or dm-crypt,
 and named their udev rule otherwise; ``cassandra_data_disk_tuning: false``) and the packages a node lacks: ``cassandra-tools``, jemalloc, dsbulk and, on Debian and Ubuntu,
 the hold (``cassandra_install_tools``, ``cassandra_install_jemalloc``, ``cassandra_dsbulk_install``,
 ``cassandra_package_hold``); a dsbulk the role's way keeps its ``cassandra_dsbulk_version``. Remove a line to let the role take that part over,
 after a ``--check --diff``; a host rebuilt under the same name must lose them and ``cassandra_imported_host``
-(``add_node`` and ``replace_node`` refuse such a host with no Cassandra installed). The upgrade playbook stops before
+(``add_node`` and ``replace_node`` refuse such a host with no Cassandra installed). The system java
+(``/usr/bin/java``, the one ``cassandra_install`` sets, resolved through its links) is compared with the binary the
+running Cassandra uses, by their Java homes (RHEL's Java 8 ``jre/bin/java`` and ``bin/java`` are one JDK): a node
+where it is another Java gets ``cassandra_java_set_default: false``, in ``group_vars`` of the cluster when every node
+was read and does, else in that node's ``host_vars``. ``cassandra_install`` then leaves the alternatives and
+``/usr/bin/java`` as they are, so ``site.yml`` after the import does not switch the java of the other programs; the
+report says so in a ``SYSTEM JAVA`` line, with what ``true`` would do. Where it is the same Java, or there is none,
+nothing is written. ``false`` never leaves a node without a java: a missing ``/usr/bin/java``, or one leading
+nowhere, is still made (nodetool and the scripts need one), so a node added later under that ``group_vars`` gets the
+running Java's; one that has another needs ``JAVA_HOME`` (e.g. in ``cassandra_service_environment``), and
+``update_java`` refuses such nodes before any restart until their ``JAVA_HOME``, resolved, is the new Java's home:
+the one in ``cassandra_service_environment``, or, when the unit is kept (``cassandra_service_unit_manage: false``),
+the one in the unit itself, edited by hand (``systemctl edit cassandra``); with a package Java, that package
+installed first. With ``false`` and ``/usr/bin/java`` missing while its
+alternative still leads to a java, only the link is made again. A Java updated while Cassandra runs (its directory
+gone, e.g. a RHEL JDK update) cannot be run any more: its major is read from the name of its directory, and its new
+build of that major (its package installed again, the build ``/usr/bin/java`` leads to first; else a
+``/usr/bin/java`` of no package, a tarball's next one) is read as the Java it runs, the node's notes saying a restart
+is pending on the new JDK. When there is none (or only another vendor's package), or when the unit's ``JAVA_HOME`` is
+the Java gone, the node is not imported: the error says the way out (point the unit's ``JAVA_HOME`` at the new build with
+``systemctl edit cassandra``, restart Cassandra), then import again. The upgrade playbook stops before
 touching a node whose repositories are not managed and lack the target version. On RPM nodes the config stays where the node reads it (``cassandra_rpm_conf_alternative: ""`` unless it
 already is the role's conf dir), a heap set in a kept unit stays there, a readwrite JMX user without the create and
 unregister rights keeps them that way, and ``cassandra_config`` leaves the content of a file (the JMX users' files
