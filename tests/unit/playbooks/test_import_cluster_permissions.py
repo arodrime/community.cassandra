@@ -8,6 +8,7 @@ import json
 import os
 import warnings
 
+import pytest
 import yaml
 
 from ansible.parsing.dataloader import DataLoader
@@ -54,6 +55,19 @@ def test_one_stat_per_file_then_the_dirs():
                                   "/var/log/cassandra"]
     # followed (the owner and mode of what a link leads to), each by its path
     assert "[['perms', 'stat', _paths | zip(_paths) | list]]" in STAT["ansible.builtin.command"]["stdin"]
+
+
+@pytest.mark.parametrize("cfg, cdc_raw", [
+    ({}, []),
+    ({"cassandra_cdc_enabled": False, "cassandra_cdc_raw_dir": ""}, []),
+    ({"cassandra_cdc_raw_dir": "/srv/cdc"}, ["/srv/cdc"]),
+    ({"cassandra_cdc_enabled": True}, ["/var/lib/cassandra/cdc_raw"]),
+    ({"cassandra_cdc_enabled": True, "cassandra_config_storage_dir": "/opt/c/data/"}, ["/opt/c/data/cdc_raw"]),
+])
+def test_the_cdc_raw_dir_read_as_the_role_creates_it(cfg, cdc_raw):
+    variables = dict(STAT["vars"], _files=FILES, import_cluster_conf_dir="/etc/cassandra",
+                     import_cluster_config={"vars": cfg}, import_cluster_log_dir="")
+    assert render(STAT["vars"]["_paths"], variables)[len(FILES) + 7:] == cdc_raw
 
 
 def test_stats_matched_to_their_file_and_dir():

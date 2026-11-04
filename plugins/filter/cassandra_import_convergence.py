@@ -35,7 +35,7 @@ PERMS = ("cassandra_config_user", "cassandra_config_group", "cassandra_config_mo
          "cassandra_config_file_permissions")
 # where the node keeps its data (or its config): another value is a move by hand, not a config change
 MOVES = ("cassandra_conf_dir", "cassandra_data_dir", "cassandra_data_file_directories",
-         "cassandra_commitlog_dir", "cassandra_hints_dir", "cassandra_saved_caches_dir")
+         "cassandra_commitlog_dir", "cassandra_hints_dir", "cassandra_saved_caches_dir", "cassandra_cdc_raw_dir")
 # the logins the playbooks use (nodetool, cqlsh), not written to the nodes: the nodes' own first
 LOGINS = ("cassandra_jmx_username", "cassandra_jmx_password", "cassandra_jmx_password_file", "cassandra_cql_username",
           "cassandra_cql_password")

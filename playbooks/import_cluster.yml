@@ -955,7 +955,15 @@
               | flatten) + [_cfg.cassandra_commitlog_dir | default('/var/lib/cassandra/commitlog'),
                 _cfg.cassandra_hints_dir | default('/var/lib/cassandra/hints'),
                 _cfg.cassandra_saved_caches_dir | default('/var/lib/cassandra/saved_caches'),
-                import_cluster_log_dir | default('', true) or _cfg.cassandra_log_dir | default('/var/log/cassandra')] }}
+                import_cluster_log_dir | default('', true) or _cfg.cassandra_log_dir | default('/var/log/cassandra')]
+             + _cdc_raw }}
+        # the cdc_raw dir, as cassandra_config creates it: when set, or with CDC on (under the storage dir)
+        _cdc_raw: >-
+          {{ [_cfg.cassandra_cdc_raw_dir | default('', true)
+              or (_cfg.cassandra_config_storage_dir | default('', true) or '/var/lib/cassandra')
+                 | regex_replace('(?<=.)/+$', '') ~ '/cdc_raw']
+             if _cfg.cassandra_cdc_raw_dir | default('', true) or _cfg.cassandra_cdc_enabled | default(false) | bool
+             else [] }}
 
     - name: Turn them into variables
       ansible.builtin.set_fact:

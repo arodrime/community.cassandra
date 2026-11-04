@@ -178,6 +178,7 @@ def test_the_restart_kinds():
     assert _kind("cassandra_config_file_permissions") == "none"
     assert _kind("cassandra_seeds") == "seeds"
     assert _kind("cassandra_data_file_directories") == "move"
+    assert _kind("cassandra_cdc_raw_dir") == "move"
     assert _kind("cassandra_linux_limits") == "os"
     assert _kind("cassandra_jmx_password") == "login" and _kind("cassandra_cql_password") == "login"
     assert _kind("cassandra_server_keystore_password") == "keystore"
