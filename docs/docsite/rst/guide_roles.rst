@@ -1191,6 +1191,16 @@ heap dump directory has one variable, ``cassandra_heap_dump_dir``, taken from ``
 ``-XX:HeapDumpPath`` comes from; Cassandra 5.0 uses that before ``heap_dump_path`` in ``cassandra.yaml``, which is
 not compared (a node's other value there is noted, and stays until the file is rewritten).
 
+The audit logger, ``audit_logging_options.logger``, is read into ``cassandra_audit_logger_class_name`` and
+``cassandra_audit_logger_parameters`` (a mapping, its keys in the node's order), the section's other sub-keys into
+``cassandra_extra_settings.audit_logging_options``. Cassandra reads the first item of ``parameters`` only, and
+the stock loggers ignore it: it is for a custom logger. The import takes its values as text, also the ones written
+plain (``yes``, ``0123``, ``1_000``, a date, ``0x1F`` stay as written), and the role writes them quoted, so the
+logger gets text. A null value is left out (for Cassandra, as if not there). Several items, an empty list, an item
+that is not a mapping or an empty one, a value that is itself a list or a mapping or on several lines, or a key the role could not
+write plain (``on``, ``yes``, ``null``, a number, a key with ``:`` or ``#``) are not imported: a hand edit in the
+report.
+
 The report's TO DO, then every ``health_check`` run (its SETTINGS TO REVIEW block, after the nodes' state), say the settings
 that weaken the cluster, two lines per finding: the setting, its value, the nodes and why it matters, then what to
 do and how to keep it on purpose; nothing is refused, and the operation playbooks' plans do not repeat them (a
