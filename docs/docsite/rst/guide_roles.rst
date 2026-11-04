@@ -1164,9 +1164,9 @@ hosts`` there) when the controller can reach that name (it resolves it, or the s
 port, key, ssh arguments, become), at their ring address when the given node has an ``ansible_host`` of its own. A node that could not be reached keeps the name it was given, or its address, and is listed in
 TO DO. In the ``group_vars`` and
 ``host_vars`` files, the variables are grouped by subject (cluster and topology, versions, directories, network,
-JMX, JVM, ``cassandra.yaml`` settings, logging, service, Medusa), one commented block each. The report, and the end
-of the run, start with the differences between nodes: each setting that differs, with its values and the nodes, DC or
-rack that have them. A node's own address or hostname is written as the fact that gives it, not as a difference.
+JMX, JVM, ``cassandra.yaml`` settings, logging, service, Medusa), one commented block each. The report's
+``TO REVIEW`` lists the settings that differ between nodes, each with its values and the nodes, DC or rack that
+have them. A node's own address or hostname is written as the fact that gives it, not as a difference.
 
 Each node's ``cassandra_dc`` and ``cassandra_rack`` are the ring's. Of Cassandra's snitches, only
 ``GossipingPropertyFileSnitch`` reads them from ``cassandra-rackdc.properties``: under another snitch (e.g.
@@ -1201,7 +1201,7 @@ that is not a mapping or an empty one, a value that is itself a list or a mappin
 write plain (``on``, ``yes``, ``null``, a number, a key with ``:`` or ``#``) are not imported: a hand edit in the
 report.
 
-The report's TO DO, then every ``health_check`` run (its SETTINGS TO REVIEW block, after the nodes' state), say the settings
+The report's TO REVIEW, then every ``health_check`` run (its SETTINGS TO REVIEW block, after the nodes' state), say the settings
 that weaken the cluster, two lines per finding: the setting, its value, the nodes and why it matters, then what to
 do and how to keep it on purpose; nothing is refused, and the operation playbooks' plans do not repeat them (a
 setting ``apply_config`` writes shows in its differences table, as any other change):
@@ -1383,8 +1383,9 @@ one ``jvm<N>-server.options`` (4.x: ``jvm8`` on Java 8, else ``jvm11``; 5.0: ``j
 The extra options of another one (a heap in ``jvm11-server.options`` on Java 17) are not imported: the report says so,
 and where the heap the JVM runs with comes from; that file is left as it is on its node (``cassandra_config_keep_files``),
 and ``-e import_cluster_keep_unread_jvm_options=true`` imports them all the same. An option worth a look (``-Xss``
-far from the usual 256k to 1m, ``-XX:-UseBiasedLocking`` on Java 17) is imported as it is, with a WARNING
-in the report's TO DO saying why and which variable to change; ``preflight`` warns the same way, and a Java change
+far from the usual 256k to 1m, ``-XX:-UseBiasedLocking`` on Java 17, an option set twice with another value: the
+JVM takes the last one, the other is never used) is imported as it is, under the report's TO REVIEW saying why and
+which variable to change; ``preflight`` warns the same way, and a Java change
 (``update_java``, ``upgrade``) is refused while the options that Java reads hold one it does not start with;
 ``update_java`` and an ``upgrade`` to another series also while the options file the node then reads is in
 ``cassandra_config_keep_files`` (it would be read as it is). Options given another way
@@ -1469,31 +1470,67 @@ settings in files of your own (``group_vars/all/local.yml``, ``group_vars/<clust
 
 Your own variables files in the inventory directory (``group_vars/all/*.yml``, and those of this cluster's groups
 and hosts) apply to the hosts too: the import takes them into account, for the variables it reads from the nodes
-(not the ones it cannot read, listed under ``NOT READ``, nor confirmations and restart switches). Each node gets
+(not the ones it cannot read, listed under ``FOR INFO``, nor confirmations and restart switches). Each node gets
 its live value: written where yours would change it, not written again where yours already gives it; the self-check
-reads them too. Every node whose live value differs from yours is listed under ``DIFFERS FROM YOUR group_vars/all``
-(kept as found: delete the line the import wrote to apply your standard), with a ``TO DO`` entry. What it can't
-compare (a template or a vaulted value of yours, a vaulted file without the vault password, a default made of facts)
-is listed under ``TO DO``. Not read: the groups your own hosts files give these hosts, and the variables written in
+reads them too. Every node whose live value differs from yours is listed under ``TO REVIEW``
+(kept as found: delete the line the import wrote to apply your standard). A template of yours is compared node by
+node when the import can work it out (the address and host name facts the import writes itself, a template of the
+node's name); what it can't compare (another template, a vaulted value of yours, a vaulted file without the vault
+password, a default made of facts) is listed under ``TO REVIEW``. Not read: the groups your own hosts files give these hosts, and the variables written in
 hosts files; keep your settings in ``group_vars/all``. Then ``apply_config --check --diff`` changes nothing.
 
-``report.txt`` starts with the verdict (``IMPORT <cluster> — 5 nodes read / 5 — SELF-CHECK PASSED``, the files
-written) and what is left to do (``TO DO``: nodes not read, hand edits the roles would revert, values that differ
-from yours, passwords written in clear, files of unknown origin, then review and commit, the git step only when the
-inventory directory is in a git work tree; ``READY — nothing to do`` when there is none), then one line per setting
-that is not the collection's default, with every node that has each value (``all`` when every node does;
-``← differs`` and where the inventory keeps it for the others), the values that differ from yours, the hand edits
-the same way, what the roles leave as it is, the OS tuning (live value, the collection's in parentheses), the files
-removed or replaced, the next commands (without ``-i`` on the inventory of ``ansible.cfg``, without
-``-e cassandra_hosts`` when it holds this cluster alone), and the details line by line at the end. The run ends with
-its header, ``TO DO``, ``SETTINGS``, ``DIFFERS FROM YOUR group_vars/all`` (node lists shortened, ``node1..node5``),
-the ``CONVERGENCE`` score with its first five actions, and where the full report is; nothing else is printed under the
-``community.cassandra.ops`` callback.
+``report.txt`` is written for a reader who may be new to Cassandra and to the collection, by urgency, always in
+the same order. Its head is the verdict with its counts (``IMPORT orders  12 nodes  4 to act on: 1 TO DO, 2 hand
+edits, 1 file left as is``; ``3 to review: ...`` when there is nothing to do; ``nothing to act on``), the self-check
+(``passed``, or ``not passed yet: TO DO step 2``), the files written and where the report is; then ``WHAT THIS REPORT
+IS`` in three lines, ``WORDS`` (inventory, data center and rack, self-check, ``apply_config``, ``-e``), and:
 
-The report's ``CONVERGENCE`` section is the way from an imported cluster, with values kept per DC, rack or node, to one
+- ``TO DO``: what to do before using the inventory, one numbered step each, with why, the command to copy (paths
+  from the current directory; the import command again with ``-e import_cluster_force=true``) and what to check
+  after: nodes not read (what importing without them means), settings their Cassandra rejects, a self-check that failed (its ``SELF-CHECK``
+  and ``HOW TO MAKE IT PASS`` right under it), your files that still win over the import, passwords written in clear,
+  files of an earlier import of unknown origin, the CQL login;
+- ``TO REVIEW``: what deserves a look, by kind (hand edits, files left as is, hand edits moved to variables,
+  settings to review, settings that differ between nodes), one entry in two lines: what, where and on which nodes,
+  then what to do: a hand edit kept with ``-e import_cluster_keep_hand_edits=<its file>``, a value set in the file
+  named (``host_vars/<node>/main.yml``, ``group_vars/<group>/secrets.yml``...), a data directory moved by an
+  experienced operator. The settings to review are the ones that weaken the cluster, the Java options worth a look,
+  your values the nodes do not have, what could not be compared;
+- ``FOR INFO``: nothing to do. The settings that are not the collection's default (the same on every node, or one
+  per node by nature such as an address: one row, ``(a value per node)``), the versions (Cassandra, Java, the OS),
+  the convergence, what the roles leave as it is, the OS tuning (live value, the collection's in parentheses), the
+  Java options the running Java does not use, the files removed or replaced, what is not read from the nodes;
+- ``WHAT TO DO NEXT``: the next steps, numbered (review and commit, the git step only when the inventory directory
+  is in a git work tree; the read-only checks, without ``-i`` on the inventory of ``ansible.cfg``, without
+  ``-e cassandra_hosts`` when it holds this cluster alone), then the ``DETAILS``, node by node.
+
+A setting or a file is said in plain words the first time it is named (``cassandra_num_tokens (how many slices of
+the data each node owns)``). A node list is in its shortest exact form, with its count, by the inventory's DCs and
+racks, ``all`` every node of the cluster (a node not read shows: ``all - n4``): ``all (12 nodes)``, ``all - n4 (11 nodes)``, ``dc1 + n7 (7 nodes)``, ``dc1 - n3 + n9 (6 nodes)``, else the
+names. A long value is summarised (``20 lines (first: # BEGIN agent)``), whole in the files written; an empty one
+is ``''``, a null ``(empty)``, a series as its version (``4.1.x``); a file's mode is never taken for a secret
+because of the file's name (``jmxremote.password: 0400``). The run ends with the head, ``TO DO``, ``TO REVIEW``, ``WHAT TO DO NEXT`` and where the
+full report is; nothing else is printed under the ``community.cassandra.ops`` callback.
+
+``-e import_cluster_report_shareable=true`` also writes ``report.shareable.txt`` next to the report, a copy to
+send to someone who helps (a colleague, a forum, an issue): the same sections, hand edits and their lines,
+versions and the import's own notes, with the node names as ``n1``, ``n2``... (in the order of their names, whatever
+their case, a node named by its address too), the clusters as ``c1`` (its name with spaces, ``-`` or ``_``), a data
+center or rack named after the site as ``dc1``, ``r1``... (after the ``dc1`` already in use), every address as
+``IP``, the host names and domains that are not a node's as ``domain1``..., URLs as ``url1``..., the absolute paths
+outside the stock Cassandra and OS directories (``/etc/cassandra``, ``/var/lib/cassandra``, ``/var/log/cassandra``,
+``/usr/bin``...) as ``/path1``..., the names of the inventory and report directories and of your own groups and
+hosts, Medusa's bucket, prefix and fqdn values and the user names (``bucket1``, ``user1``); a name inside a file
+name, a stock path or a compound word too (``/etc/cassandra/ssl/n1.jks``, ``n1-old``); secrets stay masked, every
+line masked again. Common words (``cassandra``, ``data``, a rack ``a``, a cluster named ``cassandra``) are kept; a short host name that is not a
+node's may remain: read the copy before sharing it. Its key (``n1 = db-paris-01``...) is ``report.shareable.map``,
+mode ``0600`` before anything is written in it, for you only, never in the copy; under ``--check`` only the copy is
+written.
+
+The report's convergence (under ``FOR INFO``) is the way from an imported cluster, with values kept per DC, rack or node, to one
 group with every setting in ``group_vars/<cluster group>/``; it is worked out from what the import found and changes
-nothing it writes. Its first line counts the settings every node shares (``41/47 settings common to all nodes, 6
-differ, 3 files kept by hand``): one per ``SETTINGS`` row, the addresses and what a node keeps for life
+nothing it writes. Its first line counts the settings every node shares (``41 of 47 settings have the same value
+on every node, 6 differ, 3 files kept by hand``): one per settings row, the addresses and what a node keeps for life
 (``cassandra_num_tokens``...) not counted. Then each setting that differs, the safest change first: its values with
 their nodes (an inventory group named when they are exactly its nodes), the value most nodes have and where to write
 it (in ``group_vars/<cluster group>/``, removed from the ``group_vars`` and ``host_vars`` below it, never from a shared file
@@ -1509,7 +1546,7 @@ before it is done (``apply_config --check --diff``, with ``--limit`` to the node
 most, the whole cluster when a file of yours is named: it reaches other nodes too). Last, the files the nodes keep as edited by hand (``import_cluster_keep_hand_edits``): each edit with the
 variable and the value that would carry it (or none), and how to give the file back to the roles (the variable in
 ``group_vars/<cluster group>/`` when every node has the same edits, else in the host_vars of these nodes, taken out of ``cassandra_config_keep_files``: ``apply_config`` then writes the file and
-restarts the node). While the self-check fails, the end of the run shows the score only. Once the nodes have the new
+restarts the node). Once the nodes have the new
 values, import again: the import keeps what every node has in ``group_vars/<cluster group>/``.
 
 A re-import reads the cluster from the inventory (``-e cassandra_hosts=<cluster group>``, or ``CASSANDRA_CLUSTER``,
@@ -1518,8 +1555,9 @@ ones too, come with it, which ``-i <node>,`` does not give. Review it before it 
 it shows the changes of every file it would
 write or remove (the ``secrets.yml`` files hidden) and the summary, and writes nothing in the inventory: only its
 report, as ``report.check.txt`` next to ``report.txt`` (left as it is). Its
-``TO DO`` says what the run without ``--check`` would write (``Write it: ... (2 new files; changed: ...; removed:
-...)``); a re-import that would change no file says ``READY — nothing to change``:
+``WHAT TO DO NEXT`` says what the run without ``--check`` would write (``Write the inventory: the same command
+without --check (2 new files; changed: ...; removed: ...)``); a re-import that would change no file says
+``unchanged:`` in its head:
 
 .. code-block:: console
 
