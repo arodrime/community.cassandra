@@ -217,6 +217,8 @@ OPERATIONS = [
                  ("-e import_cluster_allow_unread=true", "accepts unread ring nodes", "false"),
                  ("-e import_cluster_keep_hand_edits=true", "keeps hand-edited files (=<names>)", "false"),
                  ("-e import_cluster_keep_unread_jvm_options=true", "imports unread jvm<N> options",
+                  "false"),
+                 ("-e import_cluster_carry_exporter_config=true", "carries the exporter's config file",
                   "false")]},
 ]
 # an option's text and its default on one line from column 46 at 98 columns (a terminal of 100)

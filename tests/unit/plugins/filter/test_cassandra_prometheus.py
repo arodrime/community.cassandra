@@ -7,11 +7,14 @@ __metaclass__ = type
 # exporter's config compared (a restart for its httpServer part only), and health_check's finding.
 
 import pytest
+import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_prometheus import cassandra_prometheus_config_change
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_prometheus import (
     agent, block_as_line, config_change, without_agent)
 
+from .test_cassandra_import_check import check, import_node, seeded, stock
+from .test_cassandra_jvm_args import imported, launch, role_files, settings
 
 JAR = "/etc/cassandra-monitoring/lib/jmx_prometheus_javaagent-1.7.0.jar"
 CONF = "/etc/cassandra-monitoring/conf/jmx/oss.yml"
@@ -24,6 +27,10 @@ OWNERS_BLOCK = (
 # the same with guards that pass where the tests run (bash runs the files)
 PASSING_BLOCK = ('if [ -n "$CASSANDRA_CONF" ]; then\n  JVM_OPTS="$JVM_OPTS %s"\nelse\n  echo "exporter NOT loaded" >&2\nfi'
                  % OPTION)
+VARS = {"cassandra_prometheus_exporter_enabled": True, "cassandra_prometheus_exporter_dir": "/etc/cassandra-monitoring/lib",
+        "cassandra_prometheus_exporter_config_file": CONF}
+
+
 # --- the agent's option ------------------------------------------------------
 
 @pytest.mark.parametrize("text, wanted", [
@@ -147,3 +154,203 @@ def test_the_record_of_the_parts_read_at_start():
     assert a.startswith("# Managed by Ansible") and "x: 1" not in a  # a digest, no secret
     assert cassandra_prometheus_at_start("rules: [y]\nhttpServer: {x: 1}\n") == a  # the rules: not in it
     assert cassandra_prometheus_at_start("rules: []\nhttpServer: {x: 2}\n") != a
+
+
+# --- import_cluster ---------------------------------------------------------
+
+def before_extra(files, lines):
+    files["cassandra-env.sh"] = files["cassandra-env.sh"].replace(
+        'JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"', lines + '\nJVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"')
+    return files
+
+
+def at_the_end(files):
+    return dict(files, **{"jvm-server.options": files["jvm-server.options"].rstrip("\n") + "\n" + OPTION + "\n"})
+
+
+FORMS = [  # (id, the edit, where it was)
+    ("a line of jvm-server.options", at_the_end, "jvm-server.options"),
+    ("a JVM_OPTS line of cassandra-env.sh", lambda f: before_extra(dict(f), 'JVM_OPTS="$JVM_OPTS %s"' % OPTION),
+     "cassandra-env.sh"),
+    ("a block of cassandra-env.sh", lambda f: before_extra(dict(f), PASSING_BLOCK), "cassandra-env.sh"),
+]
+
+
+@pytest.mark.parametrize("case, edit, where", FORMS, ids=[c[0] for c in FORMS])
+def test_the_agent_is_imported_into_the_variables(tmp_path, case, edit, where):
+    files = edit(seeded(stock("50x")))
+    cmdline = launch(files, "17", tmp_path)
+    assert OPTION in cmdline.split("\0")  # bash gives it the JVM
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    rendered, variables = role_files(inventory, layout, files)
+    assert dict((k, variables.get(k)) for k in VARS) == VARS
+    for name in ("cassandra_prometheus_exporter_version", "cassandra_prometheus_exporter_port",
+                 "cassandra_prometheus_exporter_checksum", "cassandra_prometheus_exporter_address",
+                 "cassandra_jvm_extra_options", "cassandra_jvm17_extra_options", "cassandra_env_extra_lines"):
+        assert name not in variables, name  # the role's (1.7.0, 9404, its checksum, every address), nothing else
+    assert node["hand_edits"] == []
+    assert [m for m in node["moved"] if m.startswith(where) and "-> cassandra_prometheus_exporter_*" in m]
+    # the role writes the agent at the end of jvm-server.options, none in cassandra-env.sh: the JVM gets the same
+    assert rendered["jvm-server.options"].rstrip("\n").endswith("\n" + OPTION)
+    assert OPTION not in rendered["cassandra-env.sh"]
+    after = launch(rendered, "17", tmp_path)
+    assert settings(after) == settings(cmdline)
+    # the self-check: nothing else changes; the files rewritten in the role's layout said so
+    out = check(files, "50x", java="17", cmdline=cmdline)
+    assert out["differences"] == []
+    if where == "cassandra-env.sh":
+        assert node["rewritten"] == ["cassandra-env.sh", "jvm-server.options"]
+        assert [n for n in out["notes"] if "the JVM gets the same arguments" in n]
+
+
+def test_the_block_moved_is_said_with_what_to_drop(tmp_path):
+    files = before_extra(seeded(stock("50x")), PASSING_BLOCK)
+    inventory, layout, node = imported(files, "50x", "17", launch(files, "17", tmp_path))
+    assert any("(an if ... fi block) -> cassandra_prometheus_exporter_* (the role writes it in jvm-server.options; drop"
+               " it from your own copies of cassandra-env.sh: its guards are not kept" in m for m in node["moved"])
+
+
+def test_the_owners_block_whose_guards_failed(tmp_path):
+    # its jar and config not there where the tests run: the JVM was started without the agent
+    files = before_extra(seeded(stock("50x")), OWNERS_BLOCK)
+    cmdline = launch(files, "17", tmp_path)
+    assert OPTION not in cmdline.split("\0")
+    imported_vars = import_node(files, "50x", jvm={"cmdline": cmdline, "java": "17", "environment": {}, "newer": []})
+    variables = imported_vars[1]["nodes"][0]["vars"]
+    assert dict((k, variables.get(k)) for k in VARS) == VARS
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_config_import
+    out = cassandra_config_import(files, "50x", {"os_family": "Debian"}, jvm={"cmdline": cmdline, "java": "17"})
+    assert [n for n in out["jvm_notes"] if "the running JVM does not have the Prometheus exporter's agent" in n]
+    assert [m for m in out["moved"] if "its guards are not kept" in m and "checks its port before each restart" in m]
+    # the role would load the agent the JVM does not have now: the self-check says it
+    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] != []
+
+
+def exporter_import(files, cmdline, **read):
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_config_import
+    return cassandra_config_import(files, "50x", {"os_family": "Debian"},
+                                   jvm={"cmdline": cmdline, "java": "17", "exporter": read})
+
+
+def test_the_jar_is_imported_with_its_sha256(tmp_path):
+    files = before_extra(seeded(stock("50x")), 'JVM_OPTS="$JVM_OPTS %s"' % OPTION.replace("1.7.0", "1.5.0"))
+    out = exporter_import(files, launch(files, "17", tmp_path), sha256="ab" * 32)
+    assert out["vars"]["cassandra_prometheus_exporter_version"] == "1.5.0"  # from the jar's name
+    assert out["vars"]["cassandra_prometheus_exporter_checksum"] == "sha256:" + "ab" * 32  # never empty
+    # not read: said, with the way out
+    out = exporter_import(files, launch(files, "17", tmp_path))
+    assert "cassandra_prometheus_exporter_checksum" not in out["vars"]
+    assert [n for n in out["jvm_notes"] if "its checksum is not imported. Set cassandra_prometheus_exporter_checksum" in n]
+
+
+def test_the_config_file_path_is_said_a_new_node_has_none(tmp_path):
+    files = before_extra(seeded(stock("50x")), PASSING_BLOCK)
+    out = exporter_import(files, launch(files, "17", tmp_path), sha256="ab" * 32, config="rules: []\n")
+    assert out["vars"]["cassandra_prometheus_exporter_config_file"] == CONF
+    assert [n for n in out["jvm_notes"] if "a node added later has none" in n
+            and "-e import_cluster_carry_exporter_config=true" in n]
+
+
+def test_its_config_carried_into_the_inventory(tmp_path):
+    files = before_extra(seeded(stock("50x")), PASSING_BLOCK)
+    config = ("rules:\n  - pattern: '.*'\nhttpServer:\n  authentication:\n    basic:\n      username: prometheus\n"
+              "      password: s3cret\n")
+    out = exporter_import(files, launch(files, "17", tmp_path), sha256="ab" * 32, config=config, carry=True)
+    assert "cassandra_prometheus_exporter_config_file" not in out["vars"]
+    assert yaml.safe_load(out["vars"]["cassandra_prometheus_exporter_config"]) == {"rules": [{"pattern": ".*"}]}
+    assert out["vars"]["cassandra_prometheus_exporter_username"] == "prometheus"
+    assert out["vars"]["cassandra_prometheus_exporter_password"] == "s3cret"  # (a secret: secrets.yml, by its name)
+    assert [m for m in out["moved"] if "carried into cassandra_prometheus_exporter_config" in m]
+    # the role writes it in the conf dir: the agent's option changes, jvm-server.options rewritten
+    assert "jvm-server.options" in out["rewritten"]
+    # what no variable covers: its path imported instead, said
+    out = exporter_import(files, "", config="httpServer:\n  threads: {minimum: 2}\n", carry=True)
+    assert out["vars"]["cassandra_prometheus_exporter_config_file"] == CONF
+    assert [n for n in out["jvm_notes"] if "NOT carried" in n and "httpServer.threads.minimum" in n]
+
+
+def test_carried_open_telemetry_headers_go_to_secrets_yml(tmp_path):
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _split_secrets
+    files = before_extra(seeded(stock("50x")), PASSING_BLOCK)
+    config = "rules: []\nopenTelemetry:\n  endpoint: http://otel:4317\n  headers:\n    Authorization: Bearer t0ken\n"
+    out = exporter_import(files, "", sha256="ab" * 32, config=config, carry=True)
+    public, secrets = _split_secrets(out["vars"])
+    assert "t0ken" in secrets["cassandra_prometheus_exporter_config"] and "t0ken" not in str(public)
+    plain = exporter_import(files, "", sha256="ab" * 32, config="rules: []\n", carry=True)
+    assert "cassandra_prometheus_exporter_config" in _split_secrets(plain["vars"])[0]
+
+
+def test_carry_asked_for_a_config_not_read(tmp_path):
+    files = before_extra(seeded(stock("50x")), PASSING_BLOCK)
+    out = exporter_import(files, "", sha256="ab" * 32, carry=True)  # (its config not readable on the node)
+    assert out["vars"]["cassandra_prometheus_exporter_config_file"] == CONF
+    assert [n for n in out["jvm_notes"] if "NOT carried" in n and "could not be read on the node" in n
+            and "import again" in n]
+    assert not [n for n in out["jvm_notes"] if "-e import_cluster_carry_exporter_config=true" in n]  # (asked already)
+
+
+def test_a_reimport_of_the_roles_own_config():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_config_import
+    own = OPTION.replace(CONF, "/etc/cassandra/jmx_prometheus.yml")
+    files = seeded(stock("50x"))
+    files["jvm-server.options"] = files["jvm-server.options"].rstrip("\n") + "\n" + own + "\n"
+
+    def imported_with(config):
+        return cassandra_config_import(files, "50x", {"os_family": "Debian"},
+                                       jvm={"cmdline": "", "java": "17", "exporter": {"sha256": "ab" * 32, "config": config}})
+    import os
+    with open(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_config", "files",
+                           "jmx_prometheus.yml")) as f:
+        rules = f.read()
+    header = "# Managed by Ansible (community.cassandra.cassandra_config): change the role variables, not this file.\n"
+    # the role's rules: its defaults, nothing to set
+    out = imported_with(header + rules)
+    assert "cassandra_prometheus_exporter_config_file" not in out["vars"] and "cassandra_prometheus_exporter_config" not in out["vars"]
+    assert not [n for n in out["jvm_notes"] if "a node added later has none" in n]
+    # other rules, an httpServer of the variables: carried back into them
+    out = imported_with(header + "rules: [{pattern: x}]\nhttpServer:\n  authentication:\n    basic: {username: u, password: p}\n")
+    assert yaml.safe_load(out["vars"]["cassandra_prometheus_exporter_config"]) == {"rules": [{"pattern": "x"}]}
+    assert out["vars"]["cassandra_prometheus_exporter_username"] == "u" and "Managed by" not in str(out["vars"])
+    # not read: the role writes its own, said
+    out = imported_with(None)
+    assert "cassandra_prometheus_exporter_config_file" not in out["vars"]
+    assert [n for n in out["jvm_notes"] if "the role writes its own rules there" in n]
+
+
+def test_a_version_the_role_refuses_is_not_imported(tmp_path):
+    files = before_extra(seeded(stock("50x")), 'JVM_OPTS="$JVM_OPTS %s"' % OPTION.replace("1.7.0", "1.0.1-rc"))
+    out = exporter_import(files, "", sha256="ab" * 32)
+    assert not [k for k in out["vars"] if k.startswith("cassandra_prometheus_exporter_")]
+    assert [n for n in out["jvm_notes"] if "NOT imported (its version 1.0.1-rc is not a release number" in n]
+    assert not [n for n in out["jvm_notes"] if "from none of the config files" in n]
+
+
+def test_a_guard_on_one_line_is_said_dropped(tmp_path):
+    files = before_extra(seeded(stock("50x")), '[ -r %s ] && JVM_OPTS="$JVM_OPTS %s"' % (JAR, OPTION))
+    out = exporter_import(files, "")
+    assert [m for m in out["moved"] if "its guards are not kept" in m]
+    plain = before_extra(seeded(stock("50x")), 'JVM_OPTS="$JVM_OPTS %s"' % OPTION)
+    assert not [m for m in exporter_import(plain, "")["moved"] if "guards" in m]
+
+
+def test_the_moved_header_names_the_files(tmp_path):
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import _moved_lines
+
+    class Report(object):
+        names, full, groups, width = {}, False, None, None
+        read = [{"name": "n1", "moved": ["jvm-server.options line 212: -javaagent:x -> cassandra_prometheus_exporter_*"]}]
+    assert _moved_lines(Report())[0].startswith("MOVED ") and "jvm-server.options hand edits" in _moved_lines(Report())[0]
+    Report.read[0]["moved"].append("cassandra-env.sh line 3: -Dx=1 -> cassandra_jvm17_extra_options")
+    assert "cassandra-env.sh, jvm-server.options hand edits" in _moved_lines(Report())[0]
+
+
+def test_the_import_reads_the_jar_and_config_of_the_agent():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_prometheus import cassandra_prometheus_agent_paths
+    assert cassandra_prometheus_agent_paths({"cassandra-env.sh": "A=1\n%s\n" % OWNERS_BLOCK}) == {"jar": JAR, "config": CONF}
+    assert cassandra_prometheus_agent_paths({"jvm-server.options": "-ea\n"}) == {}
+
+
+def test_a_node_without_the_exporter_imports_none():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_config_import
+    out = cassandra_config_import(seeded(stock("50x")), "50x", {"os_family": "Debian"})
+    assert not [k for k in out["vars"] if k.startswith("cassandra_prometheus_exporter_")]

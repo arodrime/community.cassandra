@@ -345,6 +345,8 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
                                               keeps hand-edited files (=<names>) (default: false)
         -e import_cluster_keep_unread_jvm_options=true
                                               imports unread jvm<N> options (default: false)
+        -e import_cluster_carry_exporter_config=true
+                                              carries the exporter's config file (default: false)
 
 ==== Advice ========================================================================================
 

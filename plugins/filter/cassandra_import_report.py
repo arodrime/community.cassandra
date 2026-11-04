@@ -955,7 +955,8 @@ def _moved_lines(report):
                        if " -> " in line])
     if not moved:
         return []
-    lines = ["MOVED %s cassandra-env.sh hand edits now set by variables, the JVM gets the same arguments" % DASH]
+    files = sorted(set(m[0].split(" line", 1)[0] for m in moved), key=lambda f: (f != "cassandra-env.sh", f))
+    lines = ["MOVED %s %s hand edits now set by variables, the JVM gets the same arguments" % (DASH, ", ".join(files))]
     lines += _rows(moved, names, full=report.full, groups=report.groups, width=report.width)
     rewrites = {}
     for n in read:
