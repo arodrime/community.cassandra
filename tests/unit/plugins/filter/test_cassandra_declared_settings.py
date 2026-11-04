@@ -5,11 +5,13 @@ __metaclass__ = type
 # read back by import_cluster (in one unit whatever the node writes it in), and the self-check passing on a node
 # that sets all of them.
 
+import re
+
 import pytest
 import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    _load_role, _render, cassandra_config_import)
+    _load_role, _read_line, _render, cassandra_config_import)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import canonical_quantity, same_settings
 from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_import_check import (
     check, edit, seeded, stock)
@@ -395,3 +397,115 @@ def test_cdc_raw_dir_of_a_tarball_node():
     out = cassandra_config_import(files, "41x", FACTS, "", "/opt/c/data")
     assert out["vars"]["cassandra_config_storage_dir"] == "/opt/c/data"
     assert "cassandra_cdc_raw_dir" not in out["vars"]
+
+
+# --- the two switch forms of the 5.0 template, line by line ----------------------
+# (an import before these variables carried every one of them in cassandra_extra_settings)
+
+def template_lines(series):
+    env, ctx, dummy = _load_role(series, FACTS)
+    return _render(env, series, "cassandra.yaml", ctx)[0]
+
+
+# {{ '' if x else '# ' }}key: {{ x or 'default' }}
+OR_FORM = re.compile(r"^\{\{ '' if (\w+) else '# ' \}\}(\w+): \{\{ \1 or '([^']*)' \}\}$")
+# {{ '# ' if x | string in ['', 'None'] else '' }}key...
+STRING_FORM = re.compile(r"^\{\{ '# ' if (\w+) \| string in \['', 'None'\] else '' \}\}(\w+):")
+# a value other than the default, as a node writes it by hand: (the line's text, the value read)
+HAND_WRITTEN = {
+    "cassandra_cdc_raw_dir": ("/srv/cdc", "/srv/cdc"), "cassandra_disk_access_mode": ("standard", "standard"),
+    "cassandra_allocate_tokens_for_local_replication_factor": ("5", 5),
+    "cassandra_initial_token": ("-9223372036854775808",) * 2,  # text: a list of tokens too
+    "cassandra_memtable_flush_writers": ("4", 4), "cassandra_concurrent_compactors": ("6", 6),
+    "cassandra_stream_entire_sstables": ("false", False), "cassandra_streaming_connections_per_host": ("2", 2),
+    "cassandra_partition_size_warn_threshold": ("100MiB", "100MiB"),
+    "cassandra_partition_size_fail_threshold": ("500MiB", "500MiB"),
+}
+
+
+def hand_written(var, default):
+    """var's (line text, value read): twice the default amount (1024MiB for 512MiB), else HAND_WRITTEN's."""
+    m = re.match(r"^(\d+)(\D+)$", default or "")
+    if m and var not in HAND_WRITTEN:
+        return (str(2 * int(m.group(1))) + m.group(2),) * 2
+    return HAND_WRITTEN[var]
+
+
+SWITCHED_50 = [(OR_FORM.match(t) or STRING_FORM.match(t)).group(1, 2) + (t,) for t in template_lines("50x")
+               if OR_FORM.match(t) or STRING_FORM.match(t)]
+
+
+def test_switched_lines_found():
+    assert len([c for c in SWITCHED_50 if OR_FORM.match(c[2])]) >= 16
+    assert len([c for c in SWITCHED_50 if STRING_FORM.match(c[2])]) >= 8
+
+
+@pytest.mark.parametrize("var, key, tpl", SWITCHED_50, ids=[c[1] for c in SWITCHED_50])
+def test_switched_line_read_and_rendered_back(var, key, tpl):
+    env, ctx, dummy = _load_role("50x", FACTS)
+    default = OR_FORM.match(tpl).group(3) if OR_FORM.match(tpl) else None
+    text, value = hand_written(var, default)
+    line = "%s: %s" % (key, text)
+    assert _read_line(tpl, line, ctx) == {var: value}
+    assert env.from_string(tpl).render(**dict(ctx, **{var: value})) == line  # the imported value renders the line
+    stock_line = env.from_string(tpl).render(**dict(ctx, **{var: ""}))  # commented out: unset
+    assert stock_line.startswith("# ") and _read_line(tpl, stock_line, ctx) == {var: ""}
+
+
+# a 5.0 node's settings: (the line, where the import puts it: its variable, else None for cassandra_extra_settings)
+NODE_50 = [
+    ("# cdc_raw_directory: /var/lib/cassandra/cdc_raw", "cdc_raw_directory: /srv/cdc", "cassandra_cdc_raw_dir"),
+    ("# column_index_size: 4KiB", "column_index_size: 16KiB", "cassandra_column_index_size"),
+    ("# concurrent_compactors: 1", "concurrent_compactors: 6", "cassandra_concurrent_compactors"),
+    ("# disk_access_mode: mmap_index_only", "disk_access_mode: standard", "cassandra_disk_access_mode"),
+    ("# file_cache_size: 512MiB", "file_cache_size: 1024MiB", "cassandra_file_cache_size"),
+    ("# gc_log_threshold: 200ms", "gc_log_threshold: 300ms", "cassandra_gc_log_threshold"),
+    ("# gc_warn_threshold: 1000ms", "gc_warn_threshold: 3000ms", "cassandra_gc_warn_threshold"),
+    ("# inter_dc_stream_throughput_outbound: 24MiB/s", "inter_dc_stream_throughput_outbound: 48MiB/s",
+     "cassandra_inter_dc_stream_throughput_outbound"),
+    ("# entire_sstable_stream_throughput_outbound: 24MiB/s", "entire_sstable_stream_throughput_outbound: 96MiB/s",
+     "cassandra_entire_sstable_stream_throughput_outbound"),
+    ("# entire_sstable_inter_dc_stream_throughput_outbound: 24MiB/s",
+     "entire_sstable_inter_dc_stream_throughput_outbound: 64MiB/s",
+     "cassandra_entire_sstable_inter_dc_stream_throughput_outbound"),
+    ("# internode_streaming_tcp_user_timeout: 300000ms", "internode_streaming_tcp_user_timeout: 600000ms",
+     "cassandra_internode_streaming_tcp_user_timeout"),
+    ("# memtable_flush_writers: 2", "memtable_flush_writers: 4", "cassandra_memtable_flush_writers"),
+    ("# memtable_offheap_space: 2048MiB", "memtable_offheap_space: 4096MiB", "cassandra_memtable_offheap_space"),
+    ("# partition_size_warn_threshold:", "partition_size_warn_threshold: 100MiB",
+     "cassandra_partition_size_warn_threshold"),
+    ("# partition_size_fail_threshold:", "partition_size_fail_threshold: 500MiB",
+     "cassandra_partition_size_fail_threshold"),
+    ("# roles_update_interval: 2000ms", "roles_update_interval: 5000ms", "cassandra_roles_update_interval"),
+    ("#sstable:\n#  selected_format: big", "sstable:\n  selected_format: bti", "cassandra_sstable_format"),
+    ("# stream_entire_sstables: true", "stream_entire_sstables: false", "cassandra_stream_entire_sstables"),
+    ("# streaming_connections_per_host: 1", "streaming_connections_per_host: 2",
+     "cassandra_streaming_connections_per_host"),
+    ("# stream_throughput_outbound: 24MiB/s", "stream_throughput_outbound: 48MiB/s",
+     "cassandra_stream_throughput_outbound"),
+    ("hinted_handoff_enabled: true", "auto_bootstrap: false\nhinted_handoff_enabled: true", "cassandra_auto_bootstrap"),
+    # no variable
+    ("# streaming_stats_enabled: true", "streaming_stats_enabled: false", None),
+    ("# internode_application_send_queue_capacity: 4MiB", "internode_application_send_queue_capacity: 8MiB", None),
+    ("# internode_application_receive_queue_capacity: 4MiB", "internode_application_receive_queue_capacity: 8MiB",
+     None),
+    ("  # included_categories:", "  included_categories: DDL,DCL", None),
+]
+
+
+def test_settings_with_a_variable_never_in_extra_settings_50():
+    files = seeded(stock("50x"))
+    for old, new, dummy in NODE_50:
+        files["cassandra.yaml"] = edit(files["cassandra.yaml"], old, new)
+    # 4.x names a 5.0 node still reads, no variable either
+    files["cassandra.yaml"] += ("native_transport_max_frame_size_in_mb: 32\n"
+                                "internode_application_send_queue_reserve_endpoint_capacity_in_bytes: 268435456\n")
+    out = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
+    read = [var for dummy, dummy2, var in NODE_50 if var]
+    assert [var for var in read if var not in out["vars"]] == []
+    assert sorted(out["vars"]["cassandra_extra_settings"]) == [
+        "audit_logging_options", "internode_application_receive_queue_capacity",
+        "internode_application_send_queue_capacity",
+        "internode_application_send_queue_reserve_endpoint_capacity_in_bytes",
+        "native_transport_max_frame_size_in_mb", "streaming_stats_enabled"]
+    assert check(files, "50x")["differences"] == []
