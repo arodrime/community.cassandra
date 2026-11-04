@@ -9,6 +9,7 @@ __metaclass__ = type
 import pytest
 import yaml
 
+from ansible_collections.community.cassandra.plugins.filter.cassandra_health import cassandra_health_report
 from ansible_collections.community.cassandra.plugins.filter.cassandra_prometheus import cassandra_prometheus_config_change
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_prometheus import (
     agent, block_as_line, config_change, without_agent)
@@ -354,3 +355,12 @@ def test_a_node_without_the_exporter_imports_none():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_config_import
     out = cassandra_config_import(seeded(stock("50x")), "50x", {"os_family": "Debian"})
     assert not [k for k in out["vars"] if k.startswith("cassandra_prometheus_exporter_")]
+
+
+# --- health_check -----------------------------------------------------------
+
+def test_an_exporter_not_answering_is_only_a_warning():
+    finding = {"kind": "warning", "what": "exporter", "host": "n2", "port": 9404,
+               "text": "Prometheus exporter not answering on port 9404 of n2"}
+    report = cassandra_health_report({"n1": [], "n2": [finding]}, "c", ["n1", "n2"])
+    assert report["healthy"]  # rc 0: the cluster's health does not hang on it (health_check says the warning)

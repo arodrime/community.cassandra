@@ -4,9 +4,10 @@
 #   ansible-playbook community.cassandra.health_check
 #
 # Each node checks the ring, gossip, the native transport, streams, schema
-# agreement and the ports, and reads its clock (CLOCKS, as sync_clocks shows
-# it). The report starts with the verdict, HEALTHY or NOT HEALTHY, then each
-# problem once and what to do; then SETTINGS TO REVIEW, the inventory settings
+# agreement and the ports (the Prometheus exporter's too, where it is on), and
+# reads its clock (CLOCKS, as sync_clocks shows it). The report starts with
+# the verdict, HEALTHY or NOT HEALTHY, then each problem once and what to do;
+# then SETTINGS TO REVIEW, the inventory settings
 # that weaken the cluster (no authentication on a reachable address, a heap too
 # small, a failure policy ignore, a replace flag left, auto_bootstrap false).
 #
@@ -92,6 +93,82 @@
         cassandra_service_health_report_only: true
         _cassandra_health_no_wait: true  # a report: one read, no waiting for down nodes
         cassandra_service_health_timeout: 5  # (its ports asked for 5s)
+
+    # the Prometheus exporter, on the nodes it is on: a GET from the node itself (any HTTP answer, a 401 too, is
+    # an answer), over https once when plain http gets none (its keystore set another way); none is a WARNING of
+    # the report (the cluster's health does not hang on it)
+    - name: Check the Prometheus exporter answers
+      ansible.builtin.uri:
+        url: "{{ _scheme }}://{{ _host }}:{{ cassandra_prometheus_exporter_port }}/-/healthy"
+        url_username: "{{ cassandra_prometheus_exporter_username or omit }}"
+        url_password: "{{ cassandra_prometheus_exporter_password or omit }}"
+        force_basic_auth: "{{ cassandra_prometheus_exporter_username != '' }}"
+        validate_certs: false  # its own certificate, asked from the node itself
+        timeout: 5
+      register: cassandra_health_exporter
+      failed_when: false
+      changed_when: false
+      check_mode: false  # reads only
+      no_log: "{{ cassandra_prometheus_exporter_password != '' }}"
+      vars:
+        _scheme: "{{ 'https' if cassandra_prometheus_exporter_tls_keystore else 'http' }}"
+        _address: "{{ cassandra_prometheus_exporter_address }}"
+        _host: >-
+          {{ '127.0.0.1' if _address in ['', '0.0.0.0'] else '[::1]' if _address == '::'
+             else ('[' ~ _address ~ ']') if ':' in _address else _address }}
+      when:
+        - cassandra_prometheus_exporter_enabled | bool
+        - cassandra_health_findings is defined
+
+    # (a keystore given another way than the variables: its own config)
+    - name: Check it answers over the other scheme
+      ansible.builtin.uri:
+        url: "{{ 'http' if _scheme == 'https' else 'https' }}://{{ _host }}:{{ cassandra_prometheus_exporter_port }}/-/healthy"
+        url_username: "{{ cassandra_prometheus_exporter_username or omit }}"
+        url_password: "{{ cassandra_prometheus_exporter_password or omit }}"
+        force_basic_auth: "{{ cassandra_prometheus_exporter_username != '' }}"
+        validate_certs: false
+        timeout: 5
+      register: cassandra_health_exporter_other
+      failed_when: false
+      changed_when: false
+      check_mode: false
+      no_log: "{{ cassandra_prometheus_exporter_password != '' }}"
+      vars:
+        _scheme: "{{ 'https' if cassandra_prometheus_exporter_tls_keystore else 'http' }}"
+        _address: "{{ cassandra_prometheus_exporter_address }}"
+        _host: >-
+          {{ '127.0.0.1' if _address in ['', '0.0.0.0'] else '[::1]' if _address == '::'
+             else ('[' ~ _address ~ ']') if ':' in _address else _address }}
+      when:
+        - cassandra_health_exporter is not skipped
+        - cassandra_health_exporter.status | default(-1) | int <= 0
+
+    - name: Note an exporter not answering
+      ansible.builtin.set_fact:
+        cassandra_health_findings: >-
+          {{ cassandra_health_findings + [{'kind': 'warning', 'what': 'exporter', 'host': inventory_hostname,
+                                           'port': cassandra_prometheus_exporter_port,
+                                           'text': 'Prometheus exporter not answering on port '
+                                                   ~ cassandra_prometheus_exporter_port ~ ' of ' ~ inventory_hostname}] }}
+      when:
+        - cassandra_health_exporter is not skipped
+        - cassandra_health_exporter.status | default(-1) | int <= 0
+        - cassandra_health_exporter_other.status | default(-1) | int <= 0
+
+    - name: Say the exporters not answering
+      ansible.builtin.debug:
+        msg: >-
+          WARNING  Prometheus exporter not answering on {{ _silent | community.cassandra.cassandra_node_list }}
+          (asked from each node itself, http and https): its metrics are not scraped. Look at journalctl -u cassandra
+          there (the agent's errors), or set cassandra_prometheus_exporter_enabled to false.
+      run_once: true
+      when: _silent | length > 0
+      vars:
+        cassandra_output: true  # a warning of the report (ops callback)
+        _silent: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | map(attribute='cassandra_health_findings', default=[]) | flatten
+             | selectattr('what', 'defined') | selectattr('what', 'equalto', 'exporter') | map(attribute='host') | list }}
 
     # each node's clock as its time sync daemon reports it (the CLOCKS block); a
     # clock not in sync is a problem of the report. -e cassandra_clock_check=false skips it

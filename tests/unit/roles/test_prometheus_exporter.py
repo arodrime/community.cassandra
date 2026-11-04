@@ -795,6 +795,44 @@ def test_a_port_open_to_no_one_is_said():
     assert said() is False
 
 
+# --- health_check -------------------------------------------------------------
+
+def test_health_check_asks_the_exporter_from_the_node():
+    play = [p for p in load("playbooks", "health_check.yml") if p.get("name") == "Cluster health"][0]
+    ask = find(play["tasks"], "Check the Prometheus exporter answers")
+    other = find(play["tasks"], "Check it answers over the other scheme")
+    note = find(play["tasks"], "Note an exporter not answering")
+    said = find(play["tasks"], "Say the exporters not answering")
+    names = [t.get("name") for t in play["tasks"]]
+    assert names.index("Check the cluster from this node") < names.index("Check the Prometheus exporter answers") \
+        < names.index("Check it answers over the other scheme") < names.index("Note an exporter not answering") \
+        < names.index("Say the exporters not answering") < names.index("Report")
+    assert ask["failed_when"] is False and ask["check_mode"] is False
+
+    def url(task, address="", keystore=""):
+        variables = role_vars(cassandra_prometheus_exporter_address=address, cassandra_prometheus_exporter_tls_keystore=keystore)
+        variables.update((k, render(v, variables)) for k, v in task["vars"].items())
+        return render(task["ansible.builtin.uri"]["url"], variables)
+    assert url(ask) == "http://127.0.0.1:9404/-/healthy" and url(other) == "https://127.0.0.1:9404/-/healthy"
+    assert url(ask, keystore="/k.p12") == "https://127.0.0.1:9404/-/healthy"
+    assert url(ask, "10.0.0.5") == "http://10.0.0.5:9404/-/healthy"
+    assert url(ask, "fd00::5") == "http://[fd00::5]:9404/-/healthy"
+    # the other scheme once, when the first got no answer (the uri module's -1)
+    assert when(other, {"cassandra_health_exporter": {"status": -1}}) is True
+    assert when(other, {"cassandra_health_exporter": {"status": 401}}) is False
+    # no answer over either: a warning (text and host), never a problem of the report
+    for first, second, noted in ((-1, -1, True), (-1, 200, False), (200, None, False)):
+        variables = {"cassandra_health_exporter": {"status": first},
+                     "cassandra_health_exporter_other": {"status": second} if second else {"skipped": True}}
+        assert when(note, variables) is noted
+    variables = role_vars(inventory_hostname="n2", cassandra_health_findings=[])
+    finding = render(note["ansible.builtin.set_fact"]["cassandra_health_findings"], variables)[0]
+    assert (finding["kind"], finding["host"], finding["text"]) == (
+        "warning", "n2", "Prometheus exporter not answering on port 9404 of n2")
+    assert said["ansible.builtin.debug"]["msg"].startswith("WARNING  Prometheus exporter not answering on")
+    assert said["run_once"] is True
+
+
 def test_its_config_is_not_readable_by_others():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import cassandra_file_permissions
     settings = {"owner": "root", "group": "cassandra", "mode": "0640", "public_mode": "0644", "files": {},
