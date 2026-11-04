@@ -972,8 +972,8 @@ Restricted networks (air-gapped)
 --------------------------------
 
 The roles download nothing themselves, apart from the signing keys when ``cassandra_repository_key_url`` is set,
-a Java tarball given as a URL (``cassandra_java_tarball``) and the package files of ``cassandra_install_method:
-packages``: packages come through the hosts' package manager, from the sources below.
+a Java tarball given as a URL (``cassandra_java_tarball``), the package files of ``cassandra_install_method:
+packages``, dsbulk and the Prometheus exporter's jar (`Monitoring with Prometheus`_): packages come through the hosts' package manager, from the sources below.
 Three setups are covered.
 
 **Internal mirror** (a repository manager, reposync...): the hosts reach a mirror of the Cassandra repositories and of
@@ -988,8 +988,8 @@ their OS repositories. Point the roles at it:
    cassandra_cqlsh_python_repo_uri: https://mirror.example.com/deadsnakes
 
 A mirror that needs credentials to read (an account, or a service account and its token) takes them in
-``cassandra_install_username`` and ``cassandra_install_password`` (keep the password in a vault). A Java tarball, dsbulk
-or the signing keys on the same server (scheme, host and port: ``cassandra_java_tarball``, see Java above) use them too (the tarball: unless
+``cassandra_install_username`` and ``cassandra_install_password`` (keep the password in a vault). A Java tarball, dsbulk,
+the Prometheus exporter's jar or the signing keys on the same server (scheme, host and port: ``cassandra_java_tarball``, see Java above) use them too (the tarball: unless
 ``cassandra_java_tarball_username``/``_password`` are set); elsewhere, none of them gets credentials.
 ``cassandra_repository`` checks the URL is a repository before adding it (``repodata/repomd.xml``, or the suite's
 ``InRelease``/``Release``): a plain directory of package files is refused, rather than left as a repository that
@@ -1105,6 +1105,81 @@ their names (the running JVM's arguments, else ``cassandra-env.sh``, else the JV
 ``jmx_server_options`` in ``cassandra.yaml``) is not imported: the report says so. For cqlsh on the nodes, ``cassandra_cqlsh_credentials`` writes a ``cqlshrc`` that points at the node, with the
 CQL credentials, for the OS users you list. Playbooks that read the schema over CQL take ``cassandra_cql_username``
 and ``cassandra_cql_password``.
+
+
+Monitoring with Prometheus
+--------------------------
+
+:ansplugin:`community.cassandra.cassandra_config#role` can run the `Prometheus JMX exporter
+<https://github.com/prometheus/jmx_exporter>`_ as a Java agent in Cassandra's JVM. It is off by default:
+
+.. code-block:: yaml
+
+    # group_vars/orders.yml
+    cassandra_prometheus_exporter_enabled: true
+    cassandra_prometheus_exporter_sources: ["10.0.20.0/24"]   # the Prometheus servers (cassandra_firewall)
+
+    # optional
+    cassandra_prometheus_exporter_port: 9404
+    cassandra_prometheus_exporter_address: ""                 # every address
+    cassandra_prometheus_exporter_config: "{{ lookup('file', 'jmx_prometheus.yml') }}"  # your rules
+    cassandra_prometheus_exporter_username: prometheus        # basic authentication, read at start
+    cassandra_prometheus_exporter_tls_keystore: /etc/cassandra/exporter.p12               # HTTPS, read at start
+    cassandra_prometheus_exporter_tls_certificate_alias: node
+
+    # group_vars/orders/secrets.yml (vault)
+    cassandra_prometheus_exporter_password: ...
+    cassandra_prometheus_exporter_tls_keystore_password: ...
+
+The role downloads ``jmx_prometheus_javaagent-<version>.jar`` (``cassandra_prometheus_exporter_version``, 1.7.0) into
+``cassandra_prometheus_exporter_dir`` (``/opt/prometheus-jmx-exporter``), checked against
+``cassandra_prometheus_exporter_checksum`` (its sha256), from the exporter's GitHub release (Maven Central for the
+releases before 1.1.0), a mirror (``cassandra_prometheus_exporter_url``, with the mirror's credentials when on the
+same server) or a ``file://`` copy on the node, the way offline. A jar already there and checked is left as it is.
+It writes the exporter's config to ``<conf dir>/jmx_prometheus.yml``: your ``cassandra_prometheus_exporter_config``,
+else a small set of Cassandra metrics (client requests, compaction, storage, thread pools, dropped messages, keyspace
+latencies), with an ``httpServer`` part for HTTPS and basic authentication from the variables. Then
+``jvm-server.options`` ends with ``-javaagent:<jar>=[<address>:]<port>:<config>``. The jar and the config are in place
+before that line is written: one that cannot be downloaded or is missing stops the run there, nothing else written.
+An IPv6 address needs ``-Djava.net.preferIPv4Stack=false`` in ``cassandra_jvm_extra_options`` (the stock file prefers
+IPv4: the JVM could not listen there).
+
+Turning the exporter on or off, or a new port, address, version or path, changes ``jvm-server.options``:
+``apply_config`` shows the line and restarts the nodes, one at a time. The exporter reloads its rules at its next
+scrape: new rules alone are written without a restart, their diff shown with the other settings, secrets masked
+(``write, no restart (the exporter rules: reloaded at its next scrape)``). Its ``httpServer`` and ``openTelemetry``
+parts are read at start: a change there restarts the node (``write + restart (the exporter HTTPS, authentication or
+openTelemetry: read at start)``). Written another way (``site.yml``, a run that stopped before the restart), it is a
+restart pending, which the next ``apply_config`` does: ``jmx_prometheus.at_start``, next to the config, keeps the
+digest of these parts for the record of the config Cassandra started with. The jars of other versions the role
+downloaded are removed once the new one is written; turned off, the role removes its jars, its config and that record
+(none while a JVM options file kept by hand, ``cassandra_config_keep_files``, still loads the agent: a WARNING says so).
+A running Cassandra keeps the jar it opened until its restart.
+
+The agent makes the JVM exit when it cannot start: a port already in use, a jar or a config missing. Cassandra then
+does not start (``journalctl -u cassandra`` says ``Failed to start Prometheus JMX Exporter``). So before each
+restart or start of a node, the operation playbooks check the agent its JVM options give (those of the Java it
+starts with): its jar and config readable by the account Cassandra runs as, its port with no listener but Cassandra
+itself; else they stop, the node left running as it is, and say what to free or set. ``apply_config`` and
+``update_java`` check the port already in their plan, before anything is written; ``upgrade`` puts the jar in place
+and checks it before it drains a node. The jar it downloads is ``0644`` whatever the umask. The exporter's port
+cannot be the storage, CQL (``native_transport_port_ssl`` too) or JMX port. ``health_check`` asks each node's exporter
+(``/-/healthy``, from the node itself, http then https): one that does not answer is a WARNING of the report, not a
+problem (the cluster's health does not hang on it).
+
+``import_cluster`` reads an exporter a node already runs: the agent's option in a JVM options file, in a ``JVM_OPTS``
+line of ``cassandra-env.sh``, or in a block of ``cassandra-env.sh`` (``if ... fi``) that only adds it (e.g. when its
+jar and config are readable and its port free). Its version (from the jar's name), directory, port, address and
+config file go to the variables, and the jar's sha256, read on the node, to ``cassandra_prometheus_exporter_checksum``.
+The config stays a file of the node (``cassandra_prometheus_exporter_config_file``, the role writes none): a node
+added later has none, and the report says so. ``-e import_cluster_carry_exporter_config=true`` carries its content
+into ``cassandra_prometheus_exporter_config`` instead (its HTTPS and login settings into their variables, the
+passwords and an ``openTelemetry`` part with ``headers`` into ``secrets.yml``). The role's own
+``<conf dir>/jmx_prometheus.yml`` is read back into its variables. An agent whose version the role does not take
+(``1.0.1-rc``) is left as a hand edit, said. The line or block is listed under MOVED: ``apply_config`` then writes the option in
+``jvm-server.options``, drops it from ``cassandra-env.sh`` and restarts the node (the JVM gets the same arguments);
+drop it from your own copies of ``cassandra-env.sh``. Its guards are not kept: the role puts the jar and the config in
+place, and the playbooks check the port before each restart.
 
 
 Backups

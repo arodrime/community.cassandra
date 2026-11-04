@@ -1,0 +1,138 @@
+---
+# The Prometheus JMX exporter (cassandra_prometheus_exporter_enabled): its jar and its config, in place before
+# the JVM options file that loads them is written (apply.yml): the JVM exits when its agent cannot start, so a
+# jar or a config that cannot be put in place stops the run here, before anything else is written.
+# The config: the role's (cassandra_prometheus_exporter_config, else files/jmx_prometheus.yml, and the HTTPS and
+# authentication variables) at <conf dir>/jmx_prometheus.yml, left as it is when it has the same YAML; or one
+# managed by other means (cassandra_prometheus_exporter_config_file), which must be there. Next to the config
+# files, jmx_prometheus.at_start keeps the digest of its parts read at start (httpServer, openTelemetry): the
+# record of the config Cassandra started with covers it, a change there is a restart pending.
+# What changes is noted for the report and apply_config (_cassandra_config_exporter_changes, each with its kind
+# and whether it needs a restart: the parts read at start; the exporter reloads the rest at its next scrape).
+- name: The exporter's jar
+  ansible.builtin.import_tasks: prometheus_exporter_jar.yml
+
+- name: The role's exporter config
+  when: cassandra_prometheus_exporter_config_file == ''
+  vars:
+    _new: "{{ lookup('ansible.builtin.template', 'jmx_prometheus.yml.j2') }}"
+    # (its passwords; the headers of openTelemetry, an authorization or a token)
+    _secrets: "{{ (_new | from_yaml).httpServer is defined or (_new | from_yaml).openTelemetry is defined }}"
+  block:
+    - name: Read the exporter's config on the node
+      ansible.builtin.slurp:
+        path: "{{ _cassandra_config_exporter_config }}"
+      register: cassandra_config_exporter_live
+      when: cassandra_config_exporter_stat.results[1].stat.exists
+      no_log: true  # its passwords
+
+    # (the diff masked as the other config files')
+    - name: Compare it with the role's
+      ansible.builtin.set_fact:
+        _cassandra_config_exporter_compared: >-
+          {{ (cassandra_config_exporter_live.content | b64decode if cassandra_config_exporter_live.content is defined else '')
+             | community.cassandra.cassandra_prometheus_config_change(_new, _cassandra_config_exporter_config) }}
+      no_log: true
+
+    # (the same YAML, comments or layout aside: left as it is, unless cassandra_config_normalize). Never Ansible's
+    # own diff: the diff above, masked, is the one shown
+    - name: Write the exporter's config
+      ansible.builtin.copy:
+        content: "{{ _new }}"
+        dest: "{{ _cassandra_config_exporter_config }}"
+        owner: "{{ _cassandra_config_perm.owner }}"
+        group: "{{ _cassandra_config_perm.group }}"
+        mode: "{{ _cassandra_config_perm.mode }}"
+        backup: "{{ cassandra_config_backup }}"
+      diff: false
+      no_log: "{{ _secrets | bool }}"
+      register: cassandra_config_exporter_written
+      when: not _cassandra_config_exporter_compared.same or cassandra_config_normalize | bool
+
+    # its content stays, not its owner, group and mode
+    - name: Set the owner and mode of the exporter's config
+      ansible.builtin.file:
+        path: "{{ _cassandra_config_exporter_config }}"
+        owner: "{{ _cassandra_config_perm.owner }}"
+        group: "{{ _cassandra_config_perm.group }}"
+        mode: "{{ _cassandra_config_perm.mode }}"
+      when: cassandra_config_exporter_written is skipped
+
+- name: Read the exporter config managed by other means
+  ansible.builtin.slurp:
+    path: "{{ _cassandra_config_exporter_config }}"
+  register: cassandra_config_exporter_theirs
+  when:
+    - cassandra_prometheus_exporter_config_file != ''
+    - cassandra_config_exporter_stat.results[1].stat.exists
+  no_log: true  # its passwords
+
+- name: Read the record of its parts read at start
+  ansible.builtin.slurp:
+    path: "{{ _cassandra_config_exporter_at_start }}"
+  register: cassandra_config_exporter_at_start_live
+  when: cassandra_config_exporter_stat.results[2].stat.exists
+
+# its first write (a node imported, the exporter set up): no change (no record of what the running agent read)
+- name: Keep the record of its parts read at start
+  ansible.builtin.copy:
+    content: "{{ _new_record }}"
+    dest: "{{ _cassandra_config_exporter_at_start }}"
+    owner: "{{ _cassandra_config_perm.owner }}"
+    group: "{{ _cassandra_config_perm.group }}"
+    mode: "{{ _cassandra_config_perm.mode }}"
+  diff: false
+  register: cassandra_config_exporter_at_start_written
+  changed_when: cassandra_config_exporter_at_start_written is changed and cassandra_config_exporter_stat.results[2].stat.exists
+  when: _new_record != cassandra_config_exporter_at_start_live.content | default('') | b64decode
+  vars:
+    _text: >-
+      {{ lookup('ansible.builtin.template', 'jmx_prometheus.yml.j2') if cassandra_prometheus_exporter_config_file == ''
+         else cassandra_config_exporter_theirs.content | default('') | b64decode }}
+    _new_record: "{{ _text | community.cassandra.cassandra_prometheus_at_start }}"
+
+- name: Note the exporter's changes
+  ansible.builtin.set_fact:
+    _cassandra_config_exporter_changes: "{{ _changes }}"
+    _cassandra_config_items: "{{ _cassandra_config_items | default([]) + _changes }}"
+  vars:
+    _conf_stat: "{{ cassandra_config_exporter_stat.results[1].stat }}"
+    _compared: "{{ _cassandra_config_exporter_compared | default({}) }}"
+    _perm: "{{ _cassandra_config_perm }}"
+    _perm_before: "{{ _conf_stat.pw_name | default('?') ~ ':' ~ _conf_stat.gr_name | default('?') ~ ' ' ~ _conf_stat.mode | default('?') }}"
+    _perm_after: "{{ _perm.owner ~ ':' ~ _perm.group ~ ' ' ~ _perm.mode }}"
+    _download: "{{ cassandra_config_exporter_download | default({'skipped': true}) }}"
+    _changes: >-
+      {{ ([{'item': _cassandra_config_exporter_jar | basename, 'kind': 'jar', 'restart': false,
+            'before': 'absent' if _cassandra_config_exporter_jar_state == 'missing' else 'another jar',
+            'after': 'downloaded'}]
+          if _download is changed
+             or (_cassandra_config_exporter_jar_state in ['missing', 'other'] and _download is skipped)
+          else [])
+         + ([{'item': _cassandra_config_exporter_config, 'kind': 'config', 'restart': _compared.restart | default(false),
+              'before': 'current' if _conf_stat.exists else 'absent',
+              'after': '%d line(s) changed' % (_compared.diff | default('') | regex_findall('(?m)^[-+](?![-+]{2} )') | length),
+              'diff': _compared.diff | default('')}]
+            if cassandra_config_exporter_written | default({}) is changed else [])
+         + ([{'item': _cassandra_config_exporter_config ~ ' (owner:group mode)', 'kind': 'perms', 'restart': false,
+              'before': _perm_before, 'after': _perm_after}]
+            if cassandra_prometheus_exporter_config_file == '' and _conf_stat.exists
+               and cassandra_config_exporter_written | default({}) is skipped and _perm_before != _perm_after else [])
+         + ([{'item': _cassandra_config_exporter_config | basename, 'kind': 'at_start', 'restart': true,
+              'before': 'other HTTPS, authentication or openTelemetry', 'after': 'read at the next start'}]
+            if cassandra_prometheus_exporter_config_file != '' and cassandra_config_exporter_stat.results[2].stat.exists
+               and cassandra_config_exporter_at_start_written is changed else []) }}
+
+# A restart for the parts read at start (cassandra_config does not restart; apply_config does, and says why)
+- name: Say the exporter's HTTPS, authentication or openTelemetry apply at the next restart
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ _cassandra_config_exporter_config }}: its httpServer or openTelemetry part changed;
+      the exporter reads them at start: they apply at the next restart of Cassandra (not done by this role; the next
+      apply_config does it, a restart pending).
+  vars:
+    cassandra_output: true
+  when:
+    - _cassandra_config_exporter_changes | selectattr('restart') | list | length > 0
+    - _cassandra_config_unit_state | default('') == 'running'
+    - not _cassandra_config_no_restart_warning | default(false)  # apply_config restarts itself

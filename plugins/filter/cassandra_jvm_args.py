@@ -37,6 +37,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_settings i
     JVM_LISTS, JVM_UNLOCK, shell_words)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_prometheus as prometheus
 
 MAIN_CLASS = "org.apache.cassandra.service.CassandraDaemon"
 ENV = "cassandra-env.sh"
@@ -295,10 +296,13 @@ def stock_options(greps, heap):
 
 
 def _kind(option):
-    """The order of the options without a name counts among the ones of a kind: -ea/-da, -javaagent:..., -Xlog
+    """The order of the options without a name counts among the ones of a kind: -ea/-da, -javaagent:... (the
+    Prometheus exporter's apart), -Xlog
     by output (-Xlog:<what>:<output>: a later one for an output reconfigures it, other outputs are apart)."""
     if re.match(r"^-[ed]s?a\b", option):
         return "(assertions)"
+    if prometheus.AGENT.match(option):  # it transforms no class: its place among the other agents does not count
+        return "(the Prometheus exporter's agent)"
     if re.match(r"^-(javaagent|agentlib|agentpath)[:=]", option):
         return "(agents)"
     xlog = re.match(r"^-Xlog:[^:]+:([^:]+)", option)

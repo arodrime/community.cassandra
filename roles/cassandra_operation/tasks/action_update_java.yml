@@ -15,6 +15,9 @@
 
 - name: Drain and restart the node
   ansible.builtin.include_tasks: action_restart.yml
+  vars:
+    _cassandra_exporter_check_left: >-
+      not stopped (left running as it is); the Java and the config put in place apply at its next start
 
 # --check restarts nothing: the running Java is the one found before
 - name: Find the restarted Cassandra and its java

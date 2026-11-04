@@ -124,6 +124,10 @@ def append_list(var):
     return "{{ ('\\n' ~ (%s | join('\\n'))) if %s else '' }}" % (var, var)
 
 
+# The Prometheus exporter's Java agent (cassandra_config's vars), after the extra options of jvm-server.options
+JVM_AGENT = "{{ ('\\n' ~ _cassandra_config_jvm_agent) if _cassandra_config_jvm_agent else '' }}"
+
+
 def last_line(var):
     line = "# The newline in the end of file is intentional"
     return (line, line + append_list(var))
@@ -132,7 +136,7 @@ def last_line(var):
 COMMON = {
     "jvm-server.options": [
         ("#-Dcassandra.expiration_date_overflow_policy=REJECT",
-         "#-Dcassandra.expiration_date_overflow_policy=REJECT" + append_list("cassandra_jvm_extra_options")),
+         "#-Dcassandra.expiration_date_overflow_policy=REJECT" + append_list("cassandra_jvm_extra_options") + JVM_AGENT),
     ],
     "cassandra-rackdc.properties": [
         ("dc=dc1", "dc={{ cassandra_rackdc_dc }}"),

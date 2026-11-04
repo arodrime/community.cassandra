@@ -1,4 +1,9 @@
 ---
+# The Prometheus exporter's agent able to start first (its jar, its config, its port): else Cassandra would not
+# come up; the node not stopped when it cannot (the caller says what it wrote: _cassandra_exporter_check_left)
+- name: Check the Prometheus exporter's agent can start
+  ansible.builtin.include_tasks: exporter_check.yml
+
 # The unit written first: a run that can't write it (no root) stops with the
 # node still running, not drained
 - name: Install the cassandra systemd unit

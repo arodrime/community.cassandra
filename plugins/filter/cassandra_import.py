@@ -70,6 +70,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_settings i
     jvm_options_settings, quantity, same_settings, shell_words, xml_settings, yaml_rejected)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_prometheus as prometheus
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file, roles_with_defaults
 
 ROLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "cassandra_config")
@@ -1751,6 +1752,12 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     running = dict(running or {})
     java, cmdline = java or running.get("java") or "", cmdline or running.get("cmdline") or ""
     env, ctx, files = _load_role(cassandra_version, facts)
+    # the Prometheus exporter's agent: its variables; the node read as without it from here on
+    where[0] = "the Prometheus exporter's agent"
+    live_as_found = live_files
+    live_files, cmdline, exporter = _exporter_import(live_files, cmdline, ctx, running.get("exporter"),
+                                                     [ctx.get("cassandra_conf_dir"), conf_target])
+    running["cmdline"] = cmdline
     release, rejected = str(release or SERIES[cassandra_version]), []
     found, from_shell = {}, set()
     for name in files:  # (in _config_import itself: an error raised below it, outside these files, names this function)
@@ -1807,6 +1814,9 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     where[0] = "comparing the files with the role's"
     hand, normalized, comments = _leftovers(env, cassandra_version, files, render, live_files, rejected,
                                             moved["shown"])
+    changed.update(exporter["vars"])
+    rewritten = moved["rewritten"] + [f for f in _exporter_rewritten(env, cassandra_version, render, exporter,
+                                                                     live_as_found) if f not in moved["rewritten"]]
     hand += jmx_note
     carried = ["%s: %d line(s) at its end kept with %s" % (name, len(changed[key]), key)
                for key, name in (("cassandra_env_extra_lines", "cassandra-env.sh"),
@@ -1816,8 +1826,8 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     return {"vars": out, "hand_edits": hand, "normalized": normalized, "comments": comments,
             "not_settings": {"keys": rejected, "release": release} if rejected else {}, "release": release,
             "trusted": trusted, "carried": carried + secrets,
-            "jvm_notes": jvm_notes, "jvm_warnings": jvm_warnings, "keep_files": keep_files,
-            "moved": moved["moved"], "rewritten": moved["rewritten"], "cleanup": moved["cleanup"],
+            "jvm_notes": jvm_notes + exporter["notes"], "jvm_warnings": jvm_warnings, "keep_files": keep_files,
+            "moved": moved["moved"] + exporter["moved"], "rewritten": rewritten, "cleanup": moved["cleanup"],
             "not_moved": moved["not_moved"]}
 
 
@@ -1988,6 +1998,115 @@ def keep_files_option(value):
                                  " false, or among cassandra.yaml, cassandra-env.sh, jvm*-server.options,"
                                  " cassandra-rackdc.properties, logback.xml, jmxremote.password, jmxremote.access)" % ", ".join(wrong))
     return names
+
+
+def _exporter_import(live_files, cmdline, ctx, read=None, conf_dirs=()):
+    """The Prometheus exporter's agent a node's files give its JVM: a line of a JVM options file, a JVM_OPTS line of
+    cassandra-env.sh or a block of it (if ... fi) that only adds it -> (the files without it, the JVM's arguments
+    without it, {vars: cassandra_prometheus_exporter_*, moved: report lines, notes, found: the agent and its
+    file}). The rest of the import reads the node as without it: the role writes it from these variables (at the
+    end of jvm-server.options). read: what the import read of it on the node, {sha256: of its jar, config: its
+    config's text (None: not read), carry: its content into cassandra_prometheus_exporter_config (else the path,
+    which a node added later has not)}; conf_dirs: the node's conf dir (the role's config there is its own: its
+    content, the role's variables again)."""
+    read = dict(read or {})
+    files, found, notes, moved = dict(live_files), None, [], []
+    names = sorted(f for f in files if re.match(r"^jvm\d*-server\.options$", f)) + [jvm_args.ENV]
+    for name in [n for n in names if isinstance(files.get(n), str)]:
+        text, got = prometheus.without_agent(name, files[name])
+        if got is None:
+            continue
+        # (a version cassandra_config refuses, e.g. 1.0.1-rc: left as it is)
+        why = got["why"] if got["kind"] == "kept" else "the JVM gets it already from %s" % found["file"] if found \
+            else "its version %s is not a release number cassandra_config takes, like 1.7.0" % got["version"] \
+            if not re.match(r"^[0-9]+(\.[0-9]+)*$", got["version"]) else ""
+        if why:
+            notes.append("%s line %d: the Prometheus exporter's agent (%s): NOT imported (%s), left as a hand edit" % (
+                name, got["line"], out.mask(got["option"]), why))
+            continue
+        files[name], found = text, dict(got, file=name)
+    args = str(cmdline or "").split("\0")
+    if found is None:
+        running = prometheus.agent(" ".join(args))
+        if running and not notes:
+            notes.append("the running JVM has the Prometheus exporter's agent (%s) from none of the config files (the"
+                         " unit's environment?): NOT imported" % out.mask(running["option"]))
+        return live_files, cmdline, {"vars": {}, "moved": [], "notes": notes, "found": None}
+    if found["option"] in args:
+        args.remove(found["option"])
+    variables = {"cassandra_prometheus_exporter_enabled": True, "cassandra_prometheus_exporter_version": found["version"],
+                 "cassandra_prometheus_exporter_dir": found["dir"], "cassandra_prometheus_exporter_port": found["port"],
+                 "cassandra_prometheus_exporter_address": found["address"],
+                 "cassandra_prometheus_exporter_config_file": found["config"]}
+    # the jar the node has (its version from its name), checked by its sha256: never left unchecked
+    if read.get("sha256"):
+        variables["cassandra_prometheus_exporter_checksum"] = "sha256:" + read["sha256"]
+    else:
+        notes.append("%s: the Prometheus exporter's jar could not be read: its checksum is not imported. Set"
+                     " cassandra_prometheus_exporter_checksum to its sha256 (sha256sum %s), or the role takes it"
+                     " for another jar and downloads %s's" % (found["jar"], found["jar"], found["version"]))
+    carried = ""
+    with open(os.path.join(ROLE, "files", "jmx_prometheus.yml"), encoding="utf-8") as f:
+        default_rules = f.read()
+    own = found["config"] in ["%s/jmx_prometheus.yml" % str(d).rstrip("/") for d in conf_dirs if d]
+    if own:  # the role's own config (a node the roles set up): written again from the role's variables
+        variables.pop("cassandra_prometheus_exporter_config_file")
+        taken, why = prometheus.carried_config(read["config"], default_rules) if read.get("config") is not None \
+            else (None, "it could not be read on the node")
+        if taken is None:
+            notes.append("%s, the role's exporter config: its content NOT carried into cassandra_prometheus_exporter_config"
+                         " (%s): the role writes its own rules there. Set cassandra_prometheus_exporter_config (and its"
+                         " HTTPS and authentication variables) to keep the node's" % (found["config"], why))
+        else:
+            variables.update(taken)
+    elif read.get("carry"):
+        taken, why = prometheus.carried_config(read["config"], default_rules) if read.get("config") is not None \
+            else (None, "it could not be read on the node (make it readable there, then import again)")
+        if taken is None:
+            notes.append("%s: its content NOT carried into cassandra_prometheus_exporter_config: %s; its path is"
+                         " imported instead" % (found["config"], why))
+        else:
+            variables.pop("cassandra_prometheus_exporter_config_file")
+            variables.update(taken)
+            carried = "; its config %s carried into cassandra_prometheus_exporter_config, written to the conf dir" \
+                      % found["config"]
+    if "cassandra_prometheus_exporter_config_file" in variables and not read.get("carry"):
+        notes.append("cassandra_prometheus_exporter_config_file: %s, a file of the node, not copied: a node added later"
+                     " has none (cassandra_config stops there). To carry its content into"
+                     " cassandra_prometheus_exporter_config (its passwords to secrets.yml), import again with"
+                     " -e import_cluster_carry_exporter_config=true" % found["config"])
+    variables = dict((k, v) for k, v in variables.items() if not _same_value(v, _default(ctx, k)))
+    where = "%s line %d" % (found["file"], found["line"]) if found["lines"] == 1 else "%s lines %d-%d" % (
+        found["file"], found["line"], found["line"] + found["lines"] - 1)
+    moved.append("%s: %s%s -> cassandra_prometheus_exporter_* (the role writes it in jvm-server.options%s%s)" % (
+        where, out.mask(found["option"]), " (an if ... fi block)" if found["kind"] == "block" else "", carried,
+        "; drop it from your own copies of %s: its guards are not kept, the role puts the jar and the config in place"
+        " and checks its port before each restart" % found["file"] if found["guarded"] else ""))
+    if found["option"] not in str(cmdline or "").split("\0") and cmdline:
+        notes.append("%s: the running JVM does not have the Prometheus exporter's agent its config gives (%s; %s):"
+                     " with the role it loads at the next restart" % (
+                         where, out.mask(found["option"]), "its guards failed at its start?" if found["guarded"]
+                         else "a file its Java does not read, or written since it started?"))
+    return files, "\0".join(args), {"vars": variables, "moved": moved, "notes": notes, "found": found}
+
+
+def _exporter_rewritten(env, series, render, exporter, live):
+    """The JVM's files cassandra_config rewrites for the exporter's agent imported (where it was, and
+    jvm-server.options, which ends with it): the ones whose settings differ from the node's."""
+    found = exporter.get("found")
+    if not found:
+        return []
+    option = found["option"]
+    if "cassandra_prometheus_exporter_config_file" not in exporter["vars"]:  # the role's config, in the conf dir
+        option = option[:len(option) - len(found["config"])] + "%s/jmx_prometheus.yml" % str(
+            render.get("cassandra_conf_dir") or "/etc/cassandra").rstrip("/")
+    variables = dict(render, _cassandra_config_jvm_agent=option, **exporter["vars"])
+    out_files = []
+    for name in [found["file"], jvm_args.COMMON]:
+        if name in live and name not in out_files \
+                and not same_settings(name, live[name], "\n".join(_render(env, series, name, variables)[1])):
+            out_files.append(name)
+    return out_files
 
 
 def _jvm_moves(env, series, files, ctx, render, live_files, running):
@@ -2994,6 +3113,10 @@ BLOCKS = [
         "cassandra_jvm_max_tenuring_threshold", "cassandra_jvm_parallel_gc_threads", "cassandra_jvm_conc_gc_threads",
         "cassandra_jvm_extra_options", "cassandra_jvm8_extra_options", "cassandra_jvm11_extra_options",
         "cassandra_jvm17_extra_options", "cassandra_env_extra_lines"]),
+    ("Prometheus exporter (its Java agent)", [
+        "cassandra_prometheus_exporter_enabled", "cassandra_prometheus_exporter_version",
+        "cassandra_prometheus_exporter_checksum", "cassandra_prometheus_exporter_dir", "cassandra_prometheus_exporter_port",
+        "cassandra_prometheus_exporter_address", "cassandra_prometheus_exporter_config_file"]),
     ("Other cassandra.yaml settings", []),
     ("cassandra.yaml settings no variable covers", ["cassandra_extra_settings"]),
     ("Logging (logback.xml)", [
@@ -3018,6 +3141,7 @@ BLOCKS = [
 BLOCK_PATTERNS = [
     (re.compile(r"^%s" % SECRET_VAR), "Secrets of the lines above (hand edits the import carried)"),
     (re.compile(r"^cassandra_medusa_"), "Medusa"),
+    (re.compile(r"^cassandra_prometheus_exporter_"), "Prometheus exporter (its Java agent)"),
     (re.compile(r"^cassandra_service_"), "systemd unit & service"),
     (re.compile(r"^cassandra_jmx_"), "JMX"),
     (re.compile(r"^cassandra_java_"), "Versions & packages"),

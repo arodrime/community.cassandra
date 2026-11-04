@@ -1,0 +1,49 @@
+# The role's rules for the Prometheus JMX exporter (cassandra_prometheus_exporter_config
+# empty), after jmx_exporter's examples/cassandra.yml (Apache License 2.0). Kept
+# small: reading every MBean of Cassandra costs CPU at each scrape and can pass
+# the scrape timeout. The JVM's own metrics (memory, GC, threads) come too.
+lowercaseOutputName: true
+lowercaseOutputLabelNames: true
+includeObjectNames:
+  - "org.apache.cassandra.metrics:type=ClientRequest,*"
+  - "org.apache.cassandra.metrics:type=Client,*"
+  - "org.apache.cassandra.metrics:type=Compaction,*"
+  - "org.apache.cassandra.metrics:type=CommitLog,*"
+  - "org.apache.cassandra.metrics:type=Connection,name=Timeouts,*"
+  - "org.apache.cassandra.metrics:type=DroppedMessage,name=Dropped,*"
+  - "org.apache.cassandra.metrics:type=Storage,*"
+  - "org.apache.cassandra.metrics:type=ThreadPools,*"
+  - "org.apache.cassandra.metrics:type=Keyspace,name=ReadLatency,*"
+  - "org.apache.cassandra.metrics:type=Keyspace,name=WriteLatency,*"
+  - "org.apache.cassandra.metrics:type=Keyspace,name=PendingCompactions,*"
+  - "org.apache.cassandra.metrics:type=Table,name=LiveSSTableCount,*"
+rules:
+  # gauges, with up to two labels (the keyspace, the table, the pool...)
+  - pattern: org.apache.cassandra.metrics<type=(\S*)(?:, ((?!scope)\S*)=(\S*))?(?:, scope=(\S*))?, name=(\S*)><>Value
+    name: cassandra_$1_$5
+    type: GAUGE
+    labels:
+      "$1": "$4"
+      "$2": "$3"
+  # latencies (microseconds) as seconds: their count and percentiles
+  - pattern: org.apache.cassandra.metrics<type=(\S*)(?:, ((?!scope)\S*)=(\S*))?(?:, scope=(\S*))?, name=((?:.+)?(?:Latency))><>Count
+    name: cassandra_$1_$5_seconds_count
+    type: UNTYPED
+    labels:
+      "$1": "$4"
+      "$2": "$3"
+  - pattern: org.apache.cassandra.metrics<type=(\S*)(?:, ((?!scope)\S*)=(\S*))?(?:, scope=(\S*))?, name=((?:.+)?(?:Latency))><>(\d+)thPercentile
+    name: cassandra_$1_$5_seconds
+    type: GAUGE
+    labels:
+      "$1": "$4"
+      "$2": "$3"
+      quantile: "0.$6"
+    valueFactor: 0.000001
+  # the other counters
+  - pattern: org.apache.cassandra.metrics<type=(\S*)(?:, ((?!scope)\S*)=(\S*))?(?:, scope=(\S*))?, name=(.+)><>Count
+    name: cassandra_$1_$5_count
+    type: UNTYPED
+    labels:
+      "$1": "$4"
+      "$2": "$3"

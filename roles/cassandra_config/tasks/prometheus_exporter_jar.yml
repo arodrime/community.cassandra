@@ -1,0 +1,119 @@
+---
+# The Prometheus exporter's jar in place (prometheus_exporter.yml; and action_upgrade.yml, before the node is
+# drained): downloaded when it is not there, or when the one there is not the one the checksum names (its name
+# has its version), from a mirror with cassandra_install_url's credentials when on the same server;
+# cassandra_offline: a URL on the network is not tried, a copy on the node (file://) is. The jars the role
+# downloaded are listed in <dir>/.cassandra_config (prometheus_exporter_cleanup.yml removes the old ones). A config
+# managed by other means (cassandra_prometheus_exporter_config_file) must be there. One that cannot be: the run
+# stops here, before anything else is written.
+- name: Look at the exporter's jar, its config and the record of its parts read at start
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    get_checksum: "{{ item == _cassandra_config_exporter_jar }}"
+    checksum_algorithm: sha256
+  loop:
+    - "{{ _cassandra_config_exporter_jar }}"
+    - "{{ _cassandra_config_exporter_config }}"
+    - "{{ _cassandra_config_exporter_at_start }}"
+  register: cassandra_config_exporter_stat
+
+# ok, missing, other (not the jar the checksum names), unchecked (a checksum of another algorithm: get_url checks it)
+- name: Tell whether the jar there is the one wanted
+  ansible.builtin.set_fact:
+    _cassandra_config_exporter_jar_state: >-
+      {{ 'missing' if not _stat.exists
+         else 'ok' if cassandra_prometheus_exporter_checksum == ''
+         else 'unchecked' if _algorithm != 'sha256'
+         else 'ok' if _stat.checksum | default('') == _sum | lower
+         else 'other' }}
+  vars:
+    _stat: "{{ cassandra_config_exporter_stat.results[0].stat }}"
+    _algorithm: "{{ cassandra_prometheus_exporter_checksum.split(':', 1)[0] | lower }}"
+    _sum: "{{ cassandra_prometheus_exporter_checksum.split(':', 1)[-1] }}"
+
+- name: Stop when the jar is not the one wanted and nothing is downloaded
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }}: {{ _cassandra_config_exporter_jar }} is
+      {{ 'missing' if _cassandra_config_exporter_jar_state == 'missing'
+         else 'not the jar cassandra_prometheus_exporter_checksum names' }}, and cassandra_offline downloads nothing:
+      Cassandra would not start with the exporter's agent missing. Put the jar there, set
+      cassandra_prometheus_exporter_url to a copy on the node (file:///path/to/jmx_prometheus_javaagent-{{
+      cassandra_prometheus_exporter_version }}.jar), or set cassandra_prometheus_exporter_enabled to false.
+      Nothing is changed.
+  when:
+    - _cassandra_config_exporter_jar_state in ['missing', 'other']
+    - cassandra_offline | default(false) | bool
+    - cassandra_prometheus_exporter_url is not match('file://')
+
+- name: Stop when the exporter config managed by other means is not there
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }} has no {{ cassandra_prometheus_exporter_config_file }}
+      (cassandra_prometheus_exporter_config_file): Cassandra would not start with the exporter's agent reading it.
+      Put it there, or leave cassandra_prometheus_exporter_config_file empty for the role's config
+      (cassandra_prometheus_exporter_config). Nothing is changed.
+  when:
+    - cassandra_prometheus_exporter_config_file != ''
+    - not cassandra_config_exporter_stat.results[1].stat.exists
+
+- name: Create the exporter's directory
+  ansible.builtin.file:
+    path: "{{ cassandra_prometheus_exporter_dir }}"
+    state: directory
+    mode: "0755"  # root's, as the play's become makes it
+  when: _cassandra_config_exporter_jar_state == 'missing'
+
+# (check mode, --check or applied to the role as apply_config's compare does: not created)
+- name: Look for the exporter's directory
+  ansible.builtin.stat:
+    path: "{{ cassandra_prometheus_exporter_dir }}"
+  register: cassandra_config_exporter_dir
+  when: _cassandra_config_exporter_jar_state == 'missing'
+
+# Not in check mode while its directory is still to create (get_url needs it). A new jar 0644 (root's, whatever
+# the play's umask: Cassandra's account reads it); a jar there keeps its own mode
+- name: Download the exporter's jar
+  when:
+    - _cassandra_config_exporter_jar_state != 'ok'
+    - _cassandra_config_exporter_jar_state != 'missing' or cassandra_config_exporter_dir.stat.isdir | default(false)
+  block:
+    - name: Download the exporter's jar
+      ansible.builtin.get_url:
+        url: "{{ cassandra_prometheus_exporter_url }}"
+        dest: "{{ _cassandra_config_exporter_jar }}"
+        checksum: "{{ cassandra_prometheus_exporter_checksum }}"
+        force: "{{ _cassandra_config_exporter_jar_state == 'other' }}"
+        mode: "{{ '0644' if _cassandra_config_exporter_jar_state == 'missing' else omit }}"
+        url_username: "{{ cassandra_install_username | default('') if _on_mirror | bool else omit }}"
+        url_password: "{{ cassandra_install_password | default('') if _on_mirror | bool else omit }}"
+        force_basic_auth: "{{ _on_mirror | bool }}"
+      retries: 3
+      register: cassandra_config_exporter_download
+      # a wrong checksum is final
+      until: >-
+        cassandra_config_exporter_download is succeeded
+        or 'did not match' in cassandra_config_exporter_download.msg | default('')
+      vars:
+        # the mirror's credentials, when the jar is on the mirror (same scheme, host and port)
+        _on_mirror: >-
+          {{ cassandra_install_username | default('') != ''
+             and cassandra_prometheus_exporter_url | community.cassandra.cassandra_same_origin(cassandra_install_url | default('')) }}
+
+    - name: List the jar among the ones the role downloaded
+      ansible.builtin.lineinfile:
+        path: "{{ cassandra_prometheus_exporter_dir | regex_replace('(?<=.)/+$', '') }}/.cassandra_config"
+        line: "{{ _cassandra_config_exporter_jar | basename }}"
+        create: true
+        mode: "0644"
+      when: cassandra_config_exporter_download is changed
+  rescue:
+    - name: Stop where the jar could not be downloaded
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }}: the Prometheus exporter's jar could not be downloaded to
+          {{ _cassandra_config_exporter_jar }} from {{ cassandra_prometheus_exporter_url | urlsplit('hostname') or 'the node' }}
+          ({{ ansible_failed_result.msg | default('?') }}). The JVM options that load it are not written, and this
+          run neither stops nor starts Cassandra there: it is left as it is. Fix cassandra_prometheus_exporter_url or
+          cassandra_prometheus_exporter_checksum (set both with cassandra_prometheus_exporter_version), or put the jar
+          there, then run again.

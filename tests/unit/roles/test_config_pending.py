@@ -146,6 +146,27 @@ def test_a_record_of_another_jvm_is_not_trusted(recorded):
     assert "when" not in read
 
 
+AT_START = "/etc/cassandra/conf/jmx_prometheus.at_start"
+
+
+@pytest.mark.parametrize("recorded", [("41", 100.5), None])
+def test_the_exporter_record_changed_under_a_record_of_another_jvm(recorded):
+    # httpServer or openTelemetry changed (by site.yml) since the JVM started, the record not this JVM's: what its
+    # agent read is not known, listed as the other files are
+    files = [(YAML, "y1", 90.0), (AT_START, "a2", 100.7)]
+    assert pending({YAML: "y1", AT_START: "a1"}, files, recorded=recorded) == ([], ["jmx_prometheus.at_start"])
+    # not changed since the start: nothing
+    assert pending({YAML: "y1", AT_START: "a1"}, [(YAML, "y1", 90.0), (AT_START, "a1", 99.0)], recorded=recorded) \
+        == ([], [])
+
+
+def test_the_exporter_record_first_written_is_not_listed():
+    # no earlier record has it (a node imported, the exporter set up since): its first write, nothing to say
+    files = [(YAML, "y1", 90.0), (AT_START, "a1", 100.7)]
+    assert pending(None, files) == ([], [])
+    assert pending({YAML: "y1"}, files, recorded=("41", 100.5)) == ([], [])
+
+
 def test_seed_leaves_out_the_files_written_since_the_start():
     rec = task("config_seed.yml", "Record the ones not written since it started")
     variables = {

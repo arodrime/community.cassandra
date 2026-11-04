@@ -98,6 +98,48 @@ role stops first when one of them is on a mount point of `/etc/fstab` that
 is not mounted: it would be on the filesystem below, and a joined node would
 look new.
 
+Prometheus JMX exporter
+-----------------------
+
+Off by default. With `cassandra_prometheus_exporter_enabled: true` the role
+runs the [Prometheus JMX exporter](https://github.com/prometheus/jmx_exporter)
+as a Java agent in Cassandra's JVM:
+
+* its jar, `jmx_prometheus_javaagent-<version>.jar`, is downloaded into
+  `cassandra_prometheus_exporter_dir` (`/opt/prometheus-jmx-exporter`), owned
+  by root, `0644`, checked against `cassandra_prometheus_exporter_checksum` (1.7.0's
+  by default). The URL can be a mirror (`cassandra_install_url`'s credentials
+  when on the same server) or a `file://` copy on the node; with
+  `cassandra_offline` a jar not on the node stops the run. The jars of other
+  versions it downloaded are removed once the new one is written, and its
+  jars, config and record when the exporter is turned off (not while a JVM
+  options file kept by hand still loads the agent).
+* its config is written to `<conf dir>/jmx_prometheus.yml`, like the other
+  config files (root, group `cassandra_config_group`, `0640`): the YAML of
+  `cassandra_prometheus_exporter_config`, else the role's small set of
+  Cassandra metrics (`files/jmx_prometheus.yml`), with an `httpServer` part
+  for HTTPS (`cassandra_prometheus_exporter_tls_keystore`, its password and
+  certificate alias) and basic authentication
+  (`cassandra_prometheus_exporter_username`, `_password`). A file managed by
+  other means is named by `cassandra_prometheus_exporter_config_file`
+  instead; the role then writes none, and stops when it is missing.
+* `-javaagent:<jar>=[<address>:]<port>:<config>` ends `jvm-server.options`
+  (port `cassandra_prometheus_exporter_port`, 9404; every address unless
+  `cassandra_prometheus_exporter_address`).
+
+The jar and the config are in place before the JVM options file is written.
+Turning the exporter on or off, or changing its port, address, version or
+paths changes `jvm-server.options`: a restart, which `apply_config` does one
+node at a time. The exporter reloads its rules at its next scrape: a change
+of them alone restarts nothing (their diff is shown, secrets masked); its
+`httpServer` and `openTelemetry` parts are read at start, a change there
+restarts the node, a restart pending when written outside `apply_config`
+(`jmx_prometheus.at_start` keeps their digest for the record of the config
+Cassandra started with). The agent makes the JVM exit when it cannot
+start (its port in use, its config missing or not valid): Cassandra then does
+not start. `cassandra_firewall` opens the port to
+`cassandra_prometheus_exporter_sources` only.
+
 Taking over an existing node
 ----------------------------
 

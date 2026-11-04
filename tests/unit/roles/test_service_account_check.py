@@ -159,9 +159,10 @@ def test_checked_before_the_unit_is_written_and_before_a_drain():
     assert "ansible.builtin.template" in unit[1]
     operation = os.path.join(ROLE, "..", "cassandra_operation")
     restart = tasks("action_restart.yml", operation)
-    assert restart[0].get("ansible.builtin.include_role") == {"name": "community.cassandra.cassandra_service",
+    assert restart[0].get("ansible.builtin.include_tasks") == "exporter_check.yml"  # (reads only)
+    assert restart[1].get("ansible.builtin.include_role") == {"name": "community.cassandra.cassandra_service",
                                                               "tasks_from": "unit.yml"}
-    assert restart[1].get("ansible.builtin.import_tasks") == "drain.yml"
+    assert restart[2].get("ansible.builtin.import_tasks") == "drain.yml"
     assert "community.cassandra.cassandra_drain" in tasks("drain.yml", operation)[0]
     main = tasks("main.yml")
     assert not any(t.get("ansible.builtin.include_tasks") == "account_check.yml" for t in main)

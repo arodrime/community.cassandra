@@ -1,0 +1,109 @@
+---
+# Before Cassandra is stopped to restart, or started: the Prometheus exporter's agent its JVM options files give
+# (what the start reads, whatever the inventory says: jvm-server.options and the one of the Java it starts with)
+# must be able to start, or the JVM exits and Cassandra does not come up: its jar and its config readable by the
+# account Cassandra runs as, its port with no listener but Cassandra's own (the running JVM's agent). The node is
+# left as it is when one fails.
+# Before anything is written (the plan of apply_config or update_java, an upgrade before its drain):
+# _cassandra_exporter_check_option, the agent's option the inventory gives (cassandra_config's
+# _cassandra_config_jvm_agent, '' when off: nothing checked), checked instead of the files, for
+# _cassandra_exporter_check_kinds only (its port; its jar once in place). _cassandra_exporter_check_left: what a
+# refusal leaves done on the node.
+- name: Load the cassandra_service defaults (the conf dir, Cassandra's account)
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_service
+    tasks_from: defaults.yml
+    public: true
+
+- name: Check the exporter's jar, config and port
+  ansible.builtin.command:
+    argv:
+      - sh
+      - -c
+      - |
+        conf=$1 user=$2 given=$3
+        pids=" $(pgrep -f org.apache.cassandra.service.CassandraDaemon | tr '\n' ' ') "
+        # read as Cassandra's account reads them (runuser; without it, or without the account, as the run's)
+        r=$(PATH=$PATH:/usr/sbin:/sbin command -v runuser) && id -u "$user" >/dev/null 2>&1 || r=
+        readable() { if [ -n "$r" ]; then "$r" -u "$user" -- test -r "$1"; else test -r "$1"; fi; }
+        # the options files of the Java the start runs (bin/cassandra: $JAVA_HOME/bin/java, else the java in the
+        # PATH): jvm-server.options and jvm8-, jvm11- or jvm17-server.options; every one when its version is unknown
+        jh=$(systemctl show cassandra -p Environment --value 2>/dev/null | tr ' ' '\n' | sed -n 's/^JAVA_HOME=//p' | head -1)
+        major=$("${jh:+$jh/bin/}java" -version 2>&1 | sed -n 's/^[^"]*version "\(1[.]\)\{0,1\}\([0-9][0-9]*\).*/\2/p' | head -1)
+        case $major in
+          '') files=$(ls "$conf"/jvm*-server.options 2>/dev/null) ;;
+          8) files="$conf/jvm-server.options $conf/jvm8-server.options" ;;
+          *) own=jvm11
+             [ "$major" -ge 17 ] && [ -f "$conf/jvm17-server.options" ] && own=jvm17
+             files="$conf/jvm-server.options $conf/$own-server.options" ;;
+        esac
+        if [ -n "$given" ]; then
+          echo "$given"
+        else
+          for f in $files; do
+            [ -f "$f" ] && grep -h '^-javaagent:[^ ]*jmx_prometheus_javaagent' "$f"
+          done
+        fi | while read -r opt _; do
+          spec=${opt#-javaagent:} && jar=${spec%%=*} && args=${spec#*=}
+          config=${args##*:} && port=${args%:*} && port=${port##*:}
+          readable "$jar" || echo "jar|$jar"
+          readable "$config" || echo "config|$config"
+          command -v ss >/dev/null 2>&1 || continue
+          ss -Hltnp "( sport = :$port )" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u | while read -r p; do
+            case "$pids" in *" $p "*) ;; *) echo "port|$port|$p|$(cat "/proc/$p/comm" 2>/dev/null)" ;; esac
+          done
+        done
+        exit 0
+      - sh
+      - "{{ _cassandra_service_conf_dir }}"
+      - "{{ cassandra_service_user }}"
+      - "{{ _cassandra_exporter_check_option | default('') }}"
+  register: cassandra_exporter_check
+  changed_when: false
+  check_mode: false  # reads only
+  when: _cassandra_exporter_check_option | default('-') != ''
+
+- name: Note what stops the agent
+  ansible.builtin.set_fact:
+    _cassandra_exporter_check_found: >-
+      {{ cassandra_exporter_check.stdout_lines | default([])
+         | select('match', '(' ~ _cassandra_exporter_check_kinds | default(['jar', 'config', 'port']) | join('|') ~ ')[|]')
+         | list }}
+
+- name: Stop before Cassandra is stopped or started
+  ansible.builtin.fail:
+    msg: "{{ _why }}"
+  when:
+    - _cassandra_exporter_check_found | length > 0
+    - not ansible_check_mode
+  vars:
+    cassandra_output: true  # a verdict: its msg as is (ops callback)
+    _why: >-
+      {%- set out = [] -%}
+      {%- for line in _cassandra_exporter_check_found -%}
+      {%-   set f = line.split('|') -%}
+      {%-   if f[0] == 'port' -%}
+      {%-     set _ = out.append('port ' ~ f[1] ~ ' is in use by pid ' ~ f[2] ~ ' (' ~ (f[3] or '?') ~ ')') -%}
+      {%-   else -%}
+      {%-     set _ = out.append(f[1] ~ ' (its ' ~ f[0] ~ ') is missing or not readable by ' ~ cassandra_service_user) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ inventory_hostname }}: the Prometheus exporter's agent
+      {{ 'the inventory gives' if _cassandra_exporter_check_option | default('') else 'in its JVM options' }} could not
+      start: {{ out | join('; ') }}. Cassandra would not start:
+      {{ _cassandra_exporter_check_left | default('nothing was done on this node (left as it is)') }}. Free the port
+      or set cassandra_prometheus_exporter_port; for a jar or a config, run apply_config (it puts them in place,
+      readable by Cassandra) or put them there by hand; or turn the exporter off
+      (cassandra_prometheus_exporter_enabled: false). Then run again.
+
+- name: Say what a real run would refuse
+  ansible.builtin.debug:
+    msg: >-
+      WARNING  {{ inventory_hostname }}: the Prometheus exporter's agent could not start
+      ({{ _cassandra_exporter_check_found | map('regex_replace', '[|]', ' ') | join('; ') }}): a real run stops
+      before restarting it.
+  vars:
+    cassandra_output: true
+  when:
+    - _cassandra_exporter_check_found | length > 0
+    - ansible_check_mode

@@ -158,6 +158,7 @@
   vars:
     _cassandra_restart_timesync: "{{ cassandra_apply_config_timesync | default(false) }}"
     _cassandra_restart_disks: "{{ cassandra_apply_config_disks_window | default([]) | length > 0 }}"
+    _cassandra_exporter_check_left: not stopped (left running as it is); the config written applies at its next start
   when: cassandra_apply_config_then | default('restart') == 'restart'
 
 # its time sync before Cassandra starts (os_window.yml)
@@ -170,6 +171,12 @@
     - cassandra_apply_config_then | default('restart') == 'start'
     - cassandra_apply_config_timesync | default(false) | bool or cassandra_apply_config_resumed_stop | default(false) | bool
     - not ansible_check_mode
+
+- name: Check the Prometheus exporter's agent can start
+  ansible.builtin.include_tasks: exporter_check.yml
+  vars:
+    _cassandra_exporter_check_left: not started (left as it is), its config written
+  when: cassandra_apply_config_then | default('restart') == 'start'
 
 - name: Start the node and wait until it has joined
   ansible.builtin.include_role:

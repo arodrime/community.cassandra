@@ -241,8 +241,11 @@ def universal(value):
 # values of secret keys never reach the output: all of the line after the key, and the lines the value goes on
 # to (a port of the collection's cassandra_output.mask: a YAML block key: |, a plain value on more indented lines, the
 # value under key:, a quote or a flow [ { left open, a line ending with a backslash)
+# (authorization, headers, token: those names only, not inside a longer one: the Prometheus exporter's
+# openTelemetry headers, not num_tokens)
+OWN_NAME = r"(?<![\w.-])(?:authorization|headers|token)(?![\w.-])"
 SECRET_NAME = (r"(?<![\w.-])[\w.-]*(?:password|passwd|secret|private_key|sse_c_key|access_key|key_material"
-               r"|auth_token|ca_key|_kspw|_tspw|_pw|_pass)[\w.-]*(?<![._-]file)(?<![._-]path)")
+               r"|auth_token|ca_key|_kspw|_tspw|_pw|_pass|" + OWN_NAME + r")[\w.-]*(?<![._-]file)(?<![._-]path)")
 SECRET = re.compile(r"(?i)(" + SECRET_NAME + r"[\"']?[ \t]*[:=][ \t]*)\S[^\r\n]*")
 SECRET_KEY = re.compile(r"(?i)(" + SECRET_NAME + r"[\"']?\s*[:=]\s*)")
 # the text of an XML element of a secret's name (logback.xml: <password>...</password>)
@@ -252,7 +255,7 @@ SECRET_ELEMENT = re.compile(r"(?i)(<(?P<name>" + SECRET_NAME + r")(?:\s[^<>]*)?>
                             r"(?:" + ELEMENT_TEXT + r"|(?!</(?P=name)\s*>).)*)")
 
 SECRET_WORD = re.compile(r"(?i)password|passwd|secret|private_key|sse_c_key|access_key|key_material|auth_token"
-                         r"|ca_key|_kspw|_tspw|_pw|_pass")
+                         r"|ca_key|_kspw|_tspw|_pw|_pass|" + OWN_NAME + r"[\"']?\s*[:=]")
 
 
 def scan(text, depth=0, quote=None, brackets="[{"):
@@ -387,7 +390,12 @@ def diff(live, new_text):
     # UTF-8 whatever the locale; newline="": a CRLF line differs from the LF one (bash reads X=8G\r as "8G\r")
     a = io.open(fs(live), encoding="utf-8", errors="replace", newline="").read().splitlines(True) \
         if os.path.exists(fs(live)) else []
-    b = new_text.splitlines(True)
+    return diff_lines(live, a, new_text.splitlines(True))
+
+
+def diff_lines(live, a, b):
+    """diff's, of the lines a of the file live and the new lines b (the Prometheus exporter's config, compared on
+    the controller, too)."""
     # unified_diff's hunks of the files, their lines shown masked as in the whole file (a secret's value spans lines)
     shown_a, shown_b = masked(a), masked(b)
     d = []

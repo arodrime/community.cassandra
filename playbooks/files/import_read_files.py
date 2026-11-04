@@ -8,6 +8,7 @@ gives it (with its item), by how:
   content: slurp (its content, else its error)
   stat: stat following links (its stat, else its error)
   checksum: stat not following links, with the sha1 checksum
+  sha256: the sha256 of the file (following links), else its error
   find: find of the files (lstat) in the dir item whose name matches one of the patterns path, not hidden
     ({files: [{path, ctime}]})"""
 
@@ -93,6 +94,18 @@ def status(item, path, follow, checksum):
     return {"item": item, "stat": out}
 
 
+def sha256(item, path):
+    path = expand(path)
+    digest = hashlib.sha256()
+    try:
+        with open(to_bytes(path), "rb") as f:
+            for block in iter(lambda: f.read(65536), b""):
+                digest.update(block)
+    except (IOError, OSError) as e:
+        return {"item": item, "failed": True, "msg": "cannot read %s: %s" % (path, e.strerror)}
+    return {"item": item, "sha256": digest.hexdigest()}
+
+
 def find(top, patterns):
     top = expand(top)
     files = []
@@ -119,6 +132,7 @@ HOW = {
     "stat": lambda item, path: status(item, path, True, False),
     "checksum": lambda item, path: status(item, path, False, True),
     "find": find,
+    "sha256": sha256,
 }
 
 

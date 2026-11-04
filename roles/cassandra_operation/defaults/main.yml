@@ -173,9 +173,11 @@ _cassandra_clock_window_mark: /var/lib/cassandra/.ansible_clock_window
 _cassandra_service_bootstrap_mark_days: 7
 # The files of the conf dir cassandra_config writes: the config a restart picks up
 # (and the JMX access file, in the conf dir on Debian and Ubuntu; not the password
-# file, read at each login: a new one needs no restart)
+# file, read at each login: a new one needs no restart; the record of the parts of
+# the Prometheus exporter's config read at start, not its config, whose rules it
+# reloads itself)
 _cassandra_service_config_files: [cassandra.yaml, cassandra-env.sh, jvm*-server.options, cassandra-rackdc.properties, logback.xml,
-                                  jmxremote.access]
+                                  jmxremote.access, jmx_prometheus.at_start]
 _cassandra_service_nodetool: >-
   nodetool -p {{ _cassandra_service_jmx.port }}{{ (' -u ' ~ cassandra_jmx_username | quote) if cassandra_jmx_username else '' }}{{
   (' -pwf ' ~ cassandra_jmx_password_file | quote) if cassandra_jmx_password_file
@@ -222,6 +224,6 @@ _cassandra_playbook_variables: [cassandra_hosts, cassandra_target_nodes, cassand
                                 import_cluster_dir, import_cluster_report_dir, import_cluster_force, import_cluster_host_names,
                                 import_cluster_set_ansible_host, import_cluster_vault_password_file, import_cluster_vault_id,
                                 import_cluster_medusa_path, import_cluster_keep_hand_edits, import_cluster_allow_unread,
-                                import_cluster_keep_unread_jvm_options,
+                                import_cluster_keep_unread_jvm_options, import_cluster_carry_exporter_config,
                                 import_cluster_adopt, import_cluster_strict, import_cluster_debug,
                                 help_topic, help_write, help_runbook_dir, help_inventory]

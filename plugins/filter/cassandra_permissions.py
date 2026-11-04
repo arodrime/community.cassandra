@@ -32,6 +32,8 @@ from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_role
 ROLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "cassandra_config")
 SERIES = {"40x": "4.0", "41x": "4.1", "50x": "5.0"}
 JMX_FILES = ("jmxremote.password", "jmxremote.access")
+# the Prometheus exporter's config, when cassandra_config writes it (its HTTPS and authentication passwords)
+EXPORTER_FILE = "jmx_prometheus.yml"
 # cassandra_config's defaults
 DEFAULTS = {"user": "cassandra", "group": "cassandra", "owner": "root", "mode": "0640", "public_mode": "0644",
             "jmx_mode": "0400"}
@@ -48,9 +50,10 @@ def _files_of(series):
 
 def restricted(name):
     """cassandra.yaml (keystore passwords), the JVM options files (their extra
-    options, e.g. -Djavax.net.ssl.keyStorePassword=) and cassandra-env.sh (its
-    extra lines, e.g. a JVM_OPTS with a password): cassandra_config_mode."""
-    return name in ("cassandra.yaml", "cassandra-env.sh") or bool(re.match(r"^jvm\d*-server\.options$", name))
+    options, e.g. -Djavax.net.ssl.keyStorePassword=), cassandra-env.sh (its
+    extra lines, e.g. a JVM_OPTS with a password) and the Prometheus
+    exporter's config (its passwords): cassandra_config_mode."""
+    return name in ("cassandra.yaml", "cassandra-env.sh", EXPORTER_FILE) or bool(re.match(r"^jvm\d*-server\.options$", name))
 
 
 def mode_text(mode):
@@ -76,7 +79,7 @@ def cassandra_file_permissions(name, settings):
     per_files = settings.get("files") or {}
     if not isinstance(per_files, dict):
         raise AnsibleFilterError("cassandra_config_file_permissions must be a dict {file name: {owner, group, mode}}")
-    known = set(JMX_FILES).union(*[set(v) for v in _all_files().values()])
+    known = set(JMX_FILES + (EXPORTER_FILE,)).union(*[set(v) for v in _all_files().values()])
     unknown = sorted(set(per_files) - known)
     if unknown:
         raise AnsibleFilterError("cassandra_config_file_permissions: %s not a file cassandra_config writes (%s)"

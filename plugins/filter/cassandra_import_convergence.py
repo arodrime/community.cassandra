@@ -33,6 +33,12 @@ TEMPLATES = tuple(f for f in FILES if not f.startswith("jmxremote."))
 # an owner, group or mode only: apply_config writes them without a restart (Cassandra reads them when it starts)
 PERMS = ("cassandra_config_user", "cassandra_config_group", "cassandra_config_mode", "cassandra_config_public_mode",
          "cassandra_config_file_permissions")
+# the Prometheus exporter's: the ones of its agent's option and of what it reads at start (a restart), the others
+EXPORTER_RESTART = tuple("cassandra_prometheus_exporter_" + k for k in (
+    "enabled", "version", "dir", "port", "address", "config_file", "tls_keystore", "tls_keystore_password",
+    "tls_certificate_alias", "username", "password"))
+EXPORTER_LIVE = ("cassandra_prometheus_exporter_config", "cassandra_prometheus_exporter_url",
+                 "cassandra_prometheus_exporter_checksum")
 # where the node keeps its data (or its config): another value is a move by hand, not a config change
 MOVES = ("cassandra_conf_dir", "cassandra_data_dir", "cassandra_data_file_directories",
          "cassandra_commitlog_dir", "cassandra_hints_dir", "cassandra_saved_caches_dir", "cassandra_cdc_raw_dir")
@@ -100,6 +106,10 @@ def _kind(key):
         return "os"
     if key == "cassandra_jmx_users":  # (jmxremote.password and .access, whose templates are not a series')
         return "jmx"
+    if key in EXPORTER_RESTART:  # (the agent's option ends jvm-server.options; its HTTPS and login: read at start)
+        return "restart"
+    if key in EXPORTER_LIVE:  # its rules reloaded at its next scrape; the same jar
+        return "none"
     if any(key in template_vars(name) for name in TEMPLATES):
         return "keystore" if re.search(r"keystore|truststore", key) else "restart"
     return "unknown"

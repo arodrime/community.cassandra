@@ -61,6 +61,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_settings i
     yaml_rejected)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as _out
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_prometheus as prometheus
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 
 ROLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles")
@@ -453,6 +454,9 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
     """running: {cmdline, newer, series} (cassandra_import_self_check's jvm); series: cassandra_version, else running's."""
     differences, notes, heap, by_file = [], [], [], {}
     series = series or (running or {}).get("series", "")
+    if "cassandra-env.sh" in live:  # the Prometheus exporter's block: the line it runs (the role writes the agent)
+        live = dict(live, **{"cassandra-env.sh": prometheus.block_as_line(live["cassandra-env.sh"],
+                                                                          (running or {}).get("cmdline"))})
     if "cassandra-env.sh" in rendered and "cassandra-env.sh" in live:
         node_heap = _heap(live["cassandra-env.sh"], node_environment)
         role_heap = _heap(rendered["cassandra-env.sh"], role_environment)

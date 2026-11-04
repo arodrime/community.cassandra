@@ -93,19 +93,24 @@
     _started: "{{ _record if _record_current | bool else {} }}"
     _files: "{{ cassandra_pending_files.files + ([cassandra_pending_unit_file.stat] if cassandra_pending_unit_file.stat.exists else []) }}"
     _newer: "{{ _files | selectattr('ctime', '>', cassandra_jvm.start | float) | map(attribute='path') | list if cassandra_jvm.start is defined else [] }}"
+    # The exporter's record (jmx_prometheus.at_start) not in the one of the start (none, e.g. a node imported: the
+    # record first written since): what that JVM's exporter read is not known, and Cassandra reads no such file
     _changed: >-
       {%- set out = [] -%}
       {%- for f in _files if _record_current | bool -%}
-      {%-   if f.path in _started or f.path != cassandra_pending_unit_file.stat.path | default('') -%}
+      {%-   if f.path | basename == 'jmx_prometheus.at_start' and f.path not in _started -%}
+      {%-   elif f.path in _started or f.path != cassandra_pending_unit_file.stat.path | default('') -%}
       {%-     if _started.get(f.path) != f.checksum -%}{%- set _ = out.append(f.path | basename) -%}{%- endif -%}
       {%-   elif f.path in _newer -%}
       {%-     set _ = out.append(f.path | basename) -%}
       {%-   endif -%}
       {%- endfor -%}
       {{ out | sort }}
+    # (the exporter's record: when an earlier record has it, i.e. not its first write, as for a node imported)
     _unknown: >-
       {%- set out = [] -%}
-      {%- for f in _files if not _record_current | bool and f.path in _newer -%}
+      {%- for f in _files if not _record_current | bool and f.path in _newer
+                             and (f.path | basename != 'jmx_prometheus.at_start' or f.path in _record) -%}
       {%-   set _ = out.append(f.path | basename) -%}
       {%- endfor -%}
       {{ out | sort }}

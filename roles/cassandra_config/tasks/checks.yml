@@ -205,3 +205,85 @@
     fail_msg: >-
       Without G1 (cassandra_jvm_gc, cassandra_jvm<N>_gc), set cassandra_heap_size and cassandra_heap_newsize
       together on 4.x, and neither on 5.0 (its cassandra-env.sh has no HEAP_NEWSIZE)
+
+# The exporter's agent makes the JVM exit when it cannot start (a jar, a config or an address it cannot use);
+# bin/cassandra splits the options file's lines on blanks
+- name: Refuse Prometheus exporter settings the agent would not start with
+  ansible.builtin.assert:
+    that: _wrong | length == 0
+    fail_msg: "{{ _wrong | join('; ') }}. Nothing is changed."
+    quiet: true
+  vars:
+    _config: "{{ cassandra_prometheus_exporter_config | trim }}"
+    _tls: >-
+      {{ [cassandra_prometheus_exporter_tls_keystore, cassandra_prometheus_exporter_tls_keystore_password,
+          cassandra_prometheus_exporter_tls_certificate_alias] | select | list | length }}
+    _auth: "{{ [cassandra_prometheus_exporter_username, cassandra_prometheus_exporter_password] | select | list | length }}"
+    # the JVM options and cassandra-env.sh lines the inventory adds
+    _options: >-
+      {{ (cassandra_jvm_extra_options + cassandra_jvm8_extra_options + cassandra_jvm11_extra_options
+          + cassandra_jvm17_extra_options + cassandra_env_extra_lines) | map('string') | join(' ') }}
+    _wrong: >-
+      {%- set out = [] -%}
+      {%- if cassandra_prometheus_exporter_version is not string
+             or cassandra_prometheus_exporter_version is not match('^[0-9]+([.][0-9]+)*$') -%}
+      {%-   set _ = out.append('cassandra_prometheus_exporter_version must be a release number like "1.7.0" (quoted)') -%}
+      {%- endif -%}
+      {%- if cassandra_prometheus_exporter_port | string is not match('^[0-9]{1,5}$')
+             or cassandra_prometheus_exporter_port | int < 1 or cassandra_prometheus_exporter_port | int > 65535 -%}
+      {%-   set _ = out.append('cassandra_prometheus_exporter_port must be a port number (1 to 65535)') -%}
+      {%- endif -%}
+      {%- if cassandra_prometheus_exporter_address | string is not match('^([A-Za-z0-9_.-]+|[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*)?$') -%}
+      {%-   set _ = out.append('cassandra_prometheus_exporter_address must be a host name or an address (IPv6 without brackets), or empty for every address') -%}
+      {%- elif ':' in cassandra_prometheus_exporter_address | string and '-Djava.net.preferIPv4Stack=false' not in _options -%}
+      {%-   set _ = out.append('cassandra_prometheus_exporter_address ' ~ cassandra_prometheus_exporter_address ~ ' is an IPv6'
+                               ~ ' address: jvm-server.options sets -Djava.net.preferIPv4Stack=true, the JVM could not listen'
+                               ~ ' there and Cassandra would not start (add -Djava.net.preferIPv4Stack=false to'
+                               ~ ' cassandra_jvm_extra_options, or give an IPv4 address or none)') -%}
+      {%- endif -%}
+      {%- set taken = {'cassandra_storage_port': cassandra_storage_port, 'cassandra_ssl_storage_port': cassandra_ssl_storage_port,
+                       'cassandra_native_transport_port': cassandra_native_transport_port,
+                       'cassandra_jmx_port': cassandra_jmx_port,
+                       'native_transport_port_ssl (cassandra_extra_settings)':
+                         cassandra_extra_settings.native_transport_port_ssl | default('')} -%}
+      {%- for var, port in taken.items() if port | string == cassandra_prometheus_exporter_port | string -%}
+      {%-   set _ = out.append('cassandra_prometheus_exporter_port ' ~ port ~ ' is also ' ~ var ~ ': give the exporter another port') -%}
+      {%- endfor -%}
+      {%- if 'jvm-server.options' in cassandra_config_keep_files -%}
+      {%-   set _ = out.append('jvm-server.options is in cassandra_config_keep_files: the role could not write the agent there'
+                               ~ ' (remove it from the list, or keep the exporter set up by hand and this variable off)') -%}
+      {%- endif -%}
+      {%- if _options is search('jmx_prometheus_javaagent') -%}
+      {%-   set _ = out.append('a jmx_prometheus_javaagent agent is already in cassandra_jvm*_extra_options or'
+                               ~ ' cassandra_env_extra_lines: the JVM would load two (the second exits on its port);'
+                               ~ ' remove it there, the role writes it') -%}
+      {%- endif -%}
+      {%- for var in ['cassandra_prometheus_exporter_dir', 'cassandra_prometheus_exporter_config_file']
+              if lookup('ansible.builtin.vars', var) | string not in ['', 'None']
+                 and lookup('ansible.builtin.vars', var) | string is not match(_cassandra_config_exporter_path) -%}
+      {%-   set _ = out.append(var ~ ' must be an absolute path without blanks, quotes or =') -%}
+      {%- endfor -%}
+      {%- if cassandra_prometheus_exporter_dir | string in ['', 'None'] -%}
+      {%-   set _ = out.append('cassandra_prometheus_exporter_dir must not be empty') -%}
+      {%- endif -%}
+      {%- if cassandra_prometheus_exporter_config_file and (_config or _tls | int or _auth | int) -%}
+      {%-   set _ = out.append('cassandra_prometheus_exporter_config_file names a config managed by other means: the role'
+                               ~ ' writes none, so cassandra_prometheus_exporter_config, _tls_* and _username/_password'
+                               ~ ' would be ignored (set them in that file, or leave cassandra_prometheus_exporter_config_file empty)') -%}
+      {%- endif -%}
+      {%- if _tls | int not in [0, 3] -%}
+      {%-   set _ = out.append('HTTPS needs cassandra_prometheus_exporter_tls_keystore, _tls_keystore_password and'
+                               ~ ' _tls_certificate_alias together') -%}
+      {%- endif -%}
+      {%- if _auth | int == 1 -%}
+      {%-   set _ = out.append('basic authentication needs cassandra_prometheus_exporter_username and _password together') -%}
+      {%- endif -%}
+      {%- set error = _config | community.cassandra.cassandra_prometheus_config_error -%}
+      {%- if error -%}
+      {%-   set _ = out.append(error) -%}
+      {%- elif _config and 'httpServer' in _config | from_yaml and (_tls | int or _auth | int) -%}
+      {%-   set _ = out.append('cassandra_prometheus_exporter_config has its own httpServer: set HTTPS and authentication there,'
+                               ~ ' or with the variables, not both') -%}
+      {%- endif -%}
+      {{ out }}
+  when: cassandra_prometheus_exporter_enabled | bool
