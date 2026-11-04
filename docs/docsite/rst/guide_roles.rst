@@ -1178,8 +1178,11 @@ apart: they set nothing.
 
 A ``cassandra.yaml`` setting with a variable is read into it wherever the node has its line, also the ones
 commented out in stock (``disk_access_mode``, the memtable, streaming, auth cache, guardrail and GC log settings,
-``cdc_raw_directory``, 5.0's ``heap_dump_path`` and ``sstable.selected_format``); only the others go to
-``cassandra_extra_settings``. A size, rate or duration of these settings is written in one unit, the stock comment's when the amount is
+``native_transport_max_frame_size``, ``auto_snapshot_ttl``, ``streaming_stats_enabled``, ``cdc_raw_directory``, 5.0's
+``heap_dump_path`` and ``sstable.selected_format``); only the others go to ``cassandra_extra_settings``. A 4.1 or 5.0
+node may still write a key under its 4.0 name (``native_transport_max_frame_size_in_mb: 32``): it is read into the
+variable of the new name, converted (``32MiB``). ``auto_snapshot_ttl`` and ``streaming_stats_enabled`` are 4.1 keys
+(``streaming_stats_enabled`` from 4.1.1), unknown to 4.0. A size, rate or duration of these settings is written in one unit, the stock comment's when the amount is
 whole in it (``209715200B/s`` as ``200MiB/s``, ``2s`` as ``2000ms``), so that nodes that write it differently share
 one value; ``cassandra_config`` takes the same amount in another unit as the same setting and leaves such a file as
 it is. ``auto_bootstrap: true``, Cassandra's default, is left out; ``auto_bootstrap: false`` is imported as
@@ -1192,8 +1195,10 @@ heap dump directory has one variable, ``cassandra_heap_dump_dir``, taken from ``
 not compared (a node's other value there is noted, and stays until the file is rewritten).
 
 The audit logger, ``audit_logging_options.logger``, is read into ``cassandra_audit_logger_class_name`` and
-``cassandra_audit_logger_parameters`` (a mapping, its keys in the node's order), the section's other sub-keys into
-``cassandra_extra_settings.audit_logging_options``. Cassandra reads the first item of ``parameters`` only, and
+``cassandra_audit_logger_parameters`` (a mapping, its keys in the node's order); ``audit_logs_dir``,
+``included_categories``, ``excluded_keyspaces``, ``excluded_users``, ``max_queue_weight`` and ``max_log_size`` into
+their variables (``cassandra_audit_logs_dir``...), wherever the node has them in the section; the section's other
+sub-keys into ``cassandra_extra_settings.audit_logging_options``. Cassandra reads the first item of ``parameters`` only, and
 the stock loggers ignore it: it is for a custom logger. The import takes its values as text, also the ones written
 plain (``yes``, ``0123``, ``1_000``, a date, ``0x1F`` stay as written), and the role writes them quoted, so the
 logger gets text. A null value is left out (for Cassandra, as if not there). Several items, an empty list, an item
