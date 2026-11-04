@@ -1945,3 +1945,22 @@ def test_a_secret_in_a_properties_hand_edit_is_masked():
     out = cassandra_config_import(files, "50x", FACTS)
     assert "  + ks_password=****" in out["hand_edits"] and "s3cret" not in "\n".join(out["hand_edits"])
     assert "tail" not in "\n".join(out["hand_edits"])
+
+
+def test_layout_over_a_template_compared_node_by_node():
+    """(2026-11-02) A re-import: the address template the first import wrote is compared with each node, never
+    left for the operator to check by hand; a template of the node's name rendered for each node; one of other
+    variables still not compared."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import IPV4
+    nodes = _owner_nodes()[:3]
+    for n in nodes:
+        n["vars"].update(cassandra_listen_address=IPV4, cassandra_medusa_nodetool_host="%s.db.example" % n["name"])
+    nodes[2]["vars"]["cassandra_listen_address"] = "10.9.9.9"  # not its default address: differs
+    layout = _over(nodes, [("group_vars/orders/mine.yml", "cassandra_listen_address: \"%s\"\n"
+                            "cassandra_medusa_nodetool_host: \"{{ inventory_hostname }}.db.example\"\n" % IPV4)])
+    assert layout["not_compared"] == []
+    assert [(y["node"], y["key"], y["value"]) for y in layout["yours"]] == [
+        ("n3", "cassandra_listen_address", "10.9.9.9")]
+    assert sorted(layout["from_yours"]["n1"]) == ["cassandra_listen_address", "cassandra_medusa_nodetool_host"]
+    layout = _over(_owner_nodes()[:1], [("group_vars/all/x.yml", "cassandra_config_user: \"{{ my_user }}\"\n")])
+    assert layout["not_compared"] == ["cassandra_config_user"]

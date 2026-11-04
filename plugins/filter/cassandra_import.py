@@ -2753,15 +2753,35 @@ def _read_on(found, n, key):
             or key in _OS_READ and bool(n.get("os")))
 
 
-def _comparable(found, key, value):
-    """A value of the user's that can be compared with a node's (not a template, nothing vaulted in it); key added
-    to found.not_compared when not -> bool."""
-    if _templated(value) or isinstance(value, _Vaulted) or (isinstance(value, (dict, list)) and _Vaulted in [
+def _for_node(value, name):
+    """A template of the user's as it is for the node name, MISSING when the import cannot tell: the import's own
+    address and host name templates as they are (a node's value equal to its fact is read as that same template),
+    one of the node's name only rendered (in a sandbox), any other not."""
+    if not _templated(value) or value in (IPV4, HOSTNAME):
+        return value
+    env = jinja2.sandbox.SandboxedEnvironment(undefined=jinja2.StrictUndefined)
+    try:
+        text = env.from_string(value).render(inventory_hostname=name, inventory_hostname_short=name.split(".")[0])
+    except Exception:  # pylint: disable=broad-except  # (facts, other variables, filters of Ansible's)
+        return MISSING
+    try:
+        return ast.literal_eval(text)  # "16" -> 16, as Ansible's templating
+    except (ValueError, SyntaxError):
+        return text
+
+
+def _comparable(found, key, value, name):
+    """A value of the user's as it can be compared with the node name's (a template as it is for that node), key
+    added to found.not_compared when it cannot (a template the import cannot render, something vaulted) ->
+    the value, MISSING."""
+    if isinstance(value, _Vaulted) or (isinstance(value, (dict, list)) and _Vaulted in [
             type(v) for v in (value.values() if isinstance(value, dict) else value)]):
-        if key not in found.not_compared:
-            found.not_compared.append(key)
-        return False
-    return True
+        value = MISSING
+    elif _templated(value):
+        value = _for_node(value, name)
+    if value is MISSING and key not in found.not_compared:
+        found.not_compared.append(key)
+    return value
 
 
 def _left_to_theirs(nodes, layout, user, inventory_dir, found):
@@ -2775,16 +2795,16 @@ def _left_to_theirs(nodes, layout, user, inventory_dir, found):
         theirs = _effective(name, chains.get(name, []), layout, user, mine=False)
         _yours_rendered(n, theirs, inventory_dir)
         for key in [k for k in n["vars"] if k in theirs and k not in ALWAYS and k not in ("cassandra_dc", "cassandra_rack")]:
-            if _comparable(found, key, theirs[key][0]) and _same(key, theirs[key][0], n["vars"][key]):
+            value = _comparable(found, key, theirs[key][0], name)
+            if value is not MISSING and _same(key, value, n["vars"][key]):
                 from_yours.setdefault(name, {})[key] = {"value": n["vars"].pop(key), "path": theirs[key][1]}
         # a value of theirs the node does not have: kept as found (written by the import), listed
         if boolean(n.get("read", False), strict=False):
             for key, (value, path) in sorted(theirs.items()):
-                if key in ALWAYS or key in ("cassandra_dc", "cassandra_rack") or not _read_on(found, n, key) \
-                        or not _comparable(found, key, value):
+                if key in ALWAYS or key in ("cassandra_dc", "cassandra_rack") or not _read_on(found, n, key):
                     continue
-                live = _live_of(found, n, key)
-                if live is not MISSING and not _same(key, value, live):
+                compared, live = _comparable(found, key, value, name), _live_of(found, n, key)
+                if MISSING not in (compared, live) and not _same(key, compared, live):
                     differ.append({"node": name, "key": key, "value": live, "yours": value, "path": path})
     return from_yours, differ
 
@@ -2801,14 +2821,14 @@ def _write_over_theirs(nodes, layout, user, found, yours):
         name = layout["names"].get(n.get("address"), n["name"])
         own = ["group_vars/%s/main.yml" % g for g in chains.get(name, [])] + ["host_vars/%s/main.yml" % name]
         for key, (value, path) in sorted(_effective(name, chains.get(name, []), layout, user).items()):
-            if path in own or not _read_on(found, n, key) or not _comparable(found, key, value):
+            if path in own or not _read_on(found, n, key):
                 continue
+            compared = _comparable(found, key, value, name)
             live = _live_of(found, n, key)
-            if live is MISSING:
+            if live is MISSING and compared is not MISSING:
                 if key not in found.not_compared:
                     found.not_compared.append(key)
-                continue
-            if _same(key, value, live):
+            if MISSING in (compared, live) or _same(key, compared, live):
                 continue
             if _same(key, n["vars"].get(key, MISSING), live):  # written, theirs wins (a host file of theirs)
                 pins.append((name, key, live))
