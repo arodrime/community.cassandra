@@ -754,6 +754,47 @@ def test_an_upgrade_gets_the_jar_and_checks_the_agent_before_the_drain():
     assert [t.get("name") for t in walk(EXPORTER)][:len(jar_tasks)] == jar_tasks
 
 
+# --- cassandra_firewall -------------------------------------------------------
+
+FIREWALL = load("roles", "cassandra_firewall", "vars", "main.yml")
+FIREWALL_TASKS = load_tasks(os.path.join(TOP, "roles", "cassandra_firewall", "tasks", "firewall.yml"))
+
+
+def port_sources(**variables):
+    defaults = load("roles", "cassandra_firewall", "defaults", "main.yml")
+    variables = dict(defaults, **variables)
+    return render(FIREWALL["_cassandra_firewall_port_sources"], variables)
+
+
+def test_the_exporters_port_is_open_to_its_sources_only():
+    assert port_sources() == {}
+    assert port_sources(cassandra_prometheus_exporter_enabled=True) == {}  # no source: closed
+    assert port_sources(cassandra_prometheus_exporter_enabled=True, cassandra_prometheus_exporter_sources=["10.0.20.0/24"],
+                        cassandra_firewall_port_sources={"7199/tcp": ["10.0.9.5"]}) == {
+        "7199/tcp": ["10.0.9.5"], "9404/tcp": ["10.0.20.0/24"]}
+    assert port_sources(cassandra_prometheus_exporter_enabled=True, cassandra_prometheus_exporter_port=9500,
+                        cassandra_prometheus_exporter_sources=["10.0.20.7"]) == {"9500/tcp": ["10.0.20.7"]}
+    assert port_sources(cassandra_prometheus_exporter_sources=["10.0.20.7"]) == {}  # exporter off
+    # every rule of the role reads them so
+    text = open(os.path.join(TOP, "roles", "cassandra_firewall", "tasks", "firewall.yml")).read()
+    assert "cassandra_firewall_port_sources" not in text.replace("_cassandra_firewall_port_sources", "")
+
+
+def test_a_port_open_to_no_one_is_said():
+    task = find(FIREWALL_TASKS, "Say the exporter's port is not opened")
+    defaults = load("roles", "cassandra_firewall", "defaults", "main.yml")
+
+    def said(**variables):
+        variables = dict(defaults, **variables)
+        variables["_cassandra_firewall_port_sources"] = port_sources(**variables)
+        variables.update((k, render(v, variables)) for k, v in task["vars"].items() if k.startswith("_"))
+        return when(task, variables)
+    assert said(cassandra_prometheus_exporter_enabled=True) is True
+    assert said(cassandra_prometheus_exporter_enabled=True, cassandra_prometheus_exporter_sources=["10.0.20.7"]) is False
+    assert said(cassandra_prometheus_exporter_enabled=True, open_ports=["9404/tcp"]) is False  # open to all by hand
+    assert said() is False
+
+
 def test_its_config_is_not_readable_by_others():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import cassandra_file_permissions
     settings = {"owner": "root", "group": "cassandra", "mode": "0640", "public_mode": "0644", "files": {},

@@ -15,5 +15,10 @@ open_ports:
 # here is closed to the others even when it is in open_ports.
 cassandra_firewall_port_sources: {}
 
+# The Prometheus exporter's port (cassandra_config's cassandra_prometheus_exporter_port,
+# with cassandra_prometheus_exporter_enabled) open to these sources only, e.g.
+# ["10.0.20.0/24"] for the Prometheus servers; [] leaves it closed (a warning says so).
+cassandra_prometheus_exporter_sources: []
+
 # Download nothing (air-gapped hosts): the firewall package is checked, not installed
 cassandra_offline: false

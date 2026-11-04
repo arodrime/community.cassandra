@@ -22,6 +22,10 @@ Role Variables
   e.g. JMX for a remote repair scheduler:
   `{"7199/tcp": ["10.0.9.0/24", "10.0.10.5"]}`. A port listed here is closed to
   the others even when it is in `open_ports`.
+* `cassandra_prometheus_exporter_sources`: with the Prometheus exporter on
+  (`cassandra_prometheus_exporter_enabled`, see cassandra_config), its port
+  open to these sources only, e.g. `["10.0.20.0/24"]` for the Prometheus
+  servers. Default `[]`: the port stays closed, and a warning says so.
 
 Dependencies
 ------------

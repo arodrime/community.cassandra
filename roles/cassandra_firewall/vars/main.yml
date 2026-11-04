@@ -1,2 +1,8 @@
 ---
 _cassandra_firewall_service: "{{ (ansible_facts['os_family'] == 'RedHat') | ternary('firewalld', 'ufw') }}"
+# cassandra_firewall_port_sources, and the Prometheus exporter's port open to its sources
+_cassandra_firewall_port_sources: >-
+  {{ cassandra_firewall_port_sources
+     | combine({(cassandra_prometheus_exporter_port | default(9404) | string) ~ '/tcp': cassandra_prometheus_exporter_sources}
+               if cassandra_prometheus_exporter_enabled | default(false) | bool and cassandra_prometheus_exporter_sources | length > 0
+               else {}) }}

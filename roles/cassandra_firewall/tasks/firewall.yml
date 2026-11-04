@@ -74,7 +74,7 @@
     immediate: yes
     state: enabled
   with_items:
-    - "{{ open_ports | reject('in', cassandra_firewall_port_sources) | list }}"
+    - "{{ open_ports | reject('in', _cassandra_firewall_port_sources) | list }}"
   when:
     - ansible_facts['os_family'] == "RedHat"
     - not (ansible_check_mode and _cassandra_firewall_before.active != 'active')
@@ -85,14 +85,14 @@
     proto: "{{ item | split('/') | last }}"
     rule: "allow"
   with_items:
-    - "{{ open_ports | reject('in', cassandra_firewall_port_sources) | list }}"
+    - "{{ open_ports | reject('in', _cassandra_firewall_port_sources) | list }}"
   when:
     - ansible_facts['os_family'] == "Debian"
     - not (ansible_check_mode and cassandra_firewall_install is changed)
 
 - name: Ports open to some sources only
   when:
-    - cassandra_firewall_port_sources | length > 0
+    - _cassandra_firewall_port_sources | length > 0
     - not (ansible_check_mode and cassandra_firewall_install is changed)
   block:
     - name: Close them to everyone (RedHat)
@@ -101,7 +101,7 @@
         permanent: true
         immediate: true
         state: disabled
-      loop: "{{ cassandra_firewall_port_sources | list }}"
+      loop: "{{ _cassandra_firewall_port_sources | list }}"
       when: ansible_facts['os_family'] == "RedHat"
 
     - name: Open them to their sources (RedHat)
@@ -112,7 +112,7 @@
         permanent: true
         immediate: true
         state: enabled
-      loop: "{{ cassandra_firewall_port_sources | dict2items | subelements('value') }}"
+      loop: "{{ _cassandra_firewall_port_sources | dict2items | subelements('value') }}"
       loop_control:
         label: "{{ item.0.key }} from {{ item.1 }}"
       when: ansible_facts['os_family'] == "RedHat"
@@ -123,7 +123,7 @@
         proto: "{{ item | split('/') | last }}"
         rule: allow
         delete: true
-      loop: "{{ cassandra_firewall_port_sources | list }}"
+      loop: "{{ _cassandra_firewall_port_sources | list }}"
       when: ansible_facts['os_family'] == "Debian"
 
     - name: Open them to their sources (Debian)
@@ -132,10 +132,24 @@
         from_ip: "{{ item.1 }}"
         to_port: "{{ item.0.key | split('/') | first }}"
         proto: "{{ item.0.key | split('/') | last }}"
-      loop: "{{ cassandra_firewall_port_sources | dict2items | subelements('value') }}"
+      loop: "{{ _cassandra_firewall_port_sources | dict2items | subelements('value') }}"
       loop_control:
         label: "{{ item.0.key }} from {{ item.1 }}"
       when: ansible_facts['os_family'] == "Debian"
+
+# open to no one by default: Prometheus scrapes it from other hosts
+- name: Say the exporter's port is not opened
+  ansible.builtin.debug:
+    msg: >-
+      WARNING  {{ inventory_hostname }}: the Prometheus exporter's port {{ _port }} is not opened in the firewall
+      (cassandra_prometheus_exporter_sources is empty): list the Prometheus servers' addresses there.
+  vars:
+    cassandra_output: true
+    _port: "{{ cassandra_prometheus_exporter_port | default(9404) | string ~ '/tcp' }}"
+  when:
+    - cassandra_prometheus_exporter_enabled | default(false) | bool
+    - _port not in _cassandra_firewall_port_sources
+    - _port not in open_ports
 
 - name: Build the change list
   ansible.builtin.set_fact:
@@ -150,7 +164,7 @@
 - name: Add the ports to open
   ansible.builtin.set_fact:
     _cassandra_firewall_items: "{{ _cassandra_firewall_items + [{'item': 'port ' ~ item, 'before': 'closed', 'after': 'open'}] }}"
-  loop: "{{ open_ports | reject('in', cassandra_firewall_port_sources) | reject('in', _cassandra_firewall_before.ports.split()) | list }}"
+  loop: "{{ open_ports | reject('in', _cassandra_firewall_port_sources) | reject('in', _cassandra_firewall_before.ports.split()) | list }}"
 
 - name: Report
   ansible.builtin.include_role:
