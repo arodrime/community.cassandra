@@ -55,7 +55,7 @@ _cassandra_config_pkg_conf_dir: "{{ '/etc/cassandra/default.conf' if ansible_fac
 # in the conf dir on Debian and Ubuntu; not the password file, read at each login: a new one needs no restart)
 _cassandra_config_snapshot: /var/lib/cassandra/.ansible_config_at_start.json
 _cassandra_config_snapshot_files: [cassandra.yaml, cassandra-env.sh, jvm*-server.options, cassandra-rackdc.properties,
-                                   logback.xml, jmxremote.access]
+                                   logback.xml, jmxremote.access, jmx_prometheus.at_start]
 # A duration above zero Cassandra 4.1+ reads in milliseconds (DurationSpec.IntMillisecondsBound)
 _cassandra_config_duration_ms: '^0*[1-9][0-9]*(ms|s|m|h|d)$'
 # Installed Cassandra release ('' if not from a package), read with the node (rpm, else dpkg)
@@ -115,3 +115,23 @@ _cassandra_config_old_names_of:
   "5.0":
     compaction_large_partition_warning_threshold_mb: cassandra_partition_size_warn_threshold
     compaction_large_partition_warning_threshold: cassandra_partition_size_warn_threshold
+# The Prometheus exporter's jar, its config file and the option the JVM gets ('' when off), written at the end of
+# jvm-server.options (an IPv6 address in brackets, as the agent reads it)
+_cassandra_config_exporter_jar: >-
+  {{ cassandra_prometheus_exporter_dir | regex_replace('(?<=.)/+$', '') }}/jmx_prometheus_javaagent-{{
+  cassandra_prometheus_exporter_version }}.jar
+_cassandra_config_exporter_config: >-
+  {{ cassandra_prometheus_exporter_config_file
+     or (cassandra_conf_dir | regex_replace('(?<=.)/+$', '')) ~ '/jmx_prometheus.yml' }}
+# the digest of its parts read at start (httpServer, openTelemetry), next to the config files: the record of the
+# config Cassandra started with covers it (_cassandra_config_snapshot_files)
+_cassandra_config_exporter_at_start: "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}/jmx_prometheus.at_start"
+_cassandra_config_jvm_agent: >-
+  {{ ('-javaagent:' ~ _cassandra_config_exporter_jar ~ '='
+      ~ ((('[' ~ cassandra_prometheus_exporter_address ~ ']') if ':' in cassandra_prometheus_exporter_address
+          else cassandra_prometheus_exporter_address) ~ ':' if cassandra_prometheus_exporter_address else '')
+      ~ cassandra_prometheus_exporter_port ~ ':' ~ _cassandra_config_exporter_config)
+     if cassandra_prometheus_exporter_enabled | bool else '' }}
+# A path the agent's option can name: absolute, and none of what bin/cassandra splits an options line on, nor the
+# agent its arguments on (=)
+_cassandra_config_exporter_path: '^/[^\s"''=]*$'
