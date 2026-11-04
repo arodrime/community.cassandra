@@ -1,8 +1,8 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-# The import of a large cluster (88 nodes, made up): its screen and report stay readable, node lists by groups,
-# a dict value one row per sub-key, the hand edits counted per file, a value that follows the node names one
+# The import of a large cluster (88 nodes, made up): its screen and report stay readable, node lists by the DCs, a
+# dict value one row per sub-key, the hand edits counted per file, a value that follows the node names one
 # template; and the inventory still gives each node its own values.
 
 import os
@@ -112,10 +112,13 @@ def test_screen_of_88_nodes_fits_the_terminal(width):
 
 def test_report_of_88_nodes():
     report = big_report(width=160)
-    details = report.index("DETAILS")
+    details = report.index("DETAILS: what the import read on each node")
     assert report[:details] == golden("import_88_report.txt", report[:details])
     text = "\n".join(report)
     assert "s3cret" not in text and "k-a" not in text and "k-b" not in text
+    # a secret is set in secrets.yml, never in main.yml
+    at = [i for i, line in enumerate(report) if line.startswith("    cassandra_jmx_password ")][0]
+    assert "set in group_vars/big_cluster_dc1/secrets.yml" in " ".join(report[at:at + 4])
     # DETAILS: every node by its name, its hand edits line by line
     assert all("  == %s" % n in report[details:] for n in PART_A + PART_B + PART_C)
     at = report.index("  == db111")
@@ -173,12 +176,10 @@ def test_one_node_off_the_rule_keeps_every_value_per_node():
     assert layout["host_vars"]["db11"]["cassandra_medusa_nodetool_host"] == "db11.example.net"
     for name, (written, read) in effective(nodes).items():
         assert written == read, name
-    # the screen: one line for the setting, not 88
-    screen = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, screen=True, width=160)
-    at = [i for i, line in enumerate(screen) if line.startswith("  cassandra_medusa_nodetool_host:")]
-    assert len(at) == 1 and screen[at[0]].split(None, 1)[1].split("  ")[0] == "(a value per node)"
-    assert " all " in screen[at[0]] and screen[at[0]].rstrip(")").split("(")[-1].startswith("host_vars")
-    assert screen[at[0] + 1].startswith("  cassandra_")
+    # the report: one entry for the setting, not 88 lines
+    report = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, width=400)
+    found = [line for line in report if "cassandra_medusa_nodetool_host" in line]
+    assert len(found) == 1 and found[0].endswith(": 88 values, one per node, on all (88 nodes)"), found
 
 
 def test_a_default_is_never_folded_into_the_value_per_node_row():
@@ -187,13 +188,13 @@ def test_a_default_is_never_folded_into_the_value_per_node_row():
         n["vars"]["cassandra_concurrent_writes"] = 32 + i
     del nodes[3]["vars"]["cassandra_concurrent_writes"]
     layout = cassandra_inventory_layout(nodes, "Big Cluster")
-    screen = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, screen=True, width=160)
-    assert "(collection's default)" in "\n".join(screen)
+    report = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, width=400)
+    assert "(collection's default) on db14 (1 node)" in "\n".join(report)
     del nodes[3]
     layout = cassandra_inventory_layout(nodes, "Big Cluster")
-    screen = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, screen=True, width=160)
-    assert [line for line in screen if line.startswith("  cassandra_concurrent_writes:")][0].split()[1:5] == [
-        "(a", "value", "per", "node)"]
+    report = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, width=400)
+    row = [line for line in report if line.startswith("    cassandra_concurrent_writes")][0]
+    assert "(collection's default)" not in row and "87 values" in row
 
 
 def test_jvm_moves_of_88_nodes_named_by_groups():
@@ -210,11 +211,11 @@ def test_jvm_moves_of_88_nodes_named_by_groups():
                               " the JVM reads, -Xmx and -Xms; in cassandra-env.sh, MAX_HEAP_SIZE and HEAP_NEWSIZE)")
     layout = cassandra_inventory_layout(nodes, "Big Cluster")
     report = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, width=160)
-    report = report[:report.index("DETAILS")]
+    report = report[:report.index("DETAILS: what the import read on each node")]
     moved = [line for line in report if "UseNUMA" in line or "UseParNewGC" in line or "rewrites cassandra-env.sh" in line
              or "not moved to variables" in line]
-    assert len(moved) == 5  # the TO DO, MOVED's row, the rewrite, CLEANUP's row, the reason (wrapped)
-    assert "  cassandra_jvm11_extra_options: read by that Java only; after update_java, move them to the new Java's" \
+    assert len(moved) == 4  # the moved row, its rewrite, the unused option, the reason (wrapped)
+    assert "    cassandra_jvm11_extra_options: read by that Java only; after update_java, move them to the new Java's" \
         in report
     for line in moved:
         assert len(line) <= 160 and "db071, db072" not in line and "db101, db102" not in line, line

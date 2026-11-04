@@ -44,16 +44,20 @@ def test_option_names(option, name):
     assert jvm.option_name(option) == name
 
 
+# (a gentle first sentence: what it does, then why it matters)
+STACK_1G = ("this gives each thread 1 GiB of stack, where 256k to 1m is usual (stock -Xss256k; perhaps M was typed for"
+            " k): Cassandra runs hundreds to thousands of threads, each reserving that much, so new threads may fail to"
+            " start (unable to create native thread)")
+
+
 def warnings(option, java, variable="cassandra_jvm_extra_options"):
     return jvm.check([(option, variable, jvm.fix_it(variable))], java)
 
 
 def test_a_stack_of_1024m_is_a_warning_with_the_usual_range_and_the_way_out():
     found = warnings("-Xss1024M", "17")
-    assert found == ["-Xss1024M (cassandra_jvm_extra_options, Java 17): 1 GiB of stack for every thread, far above the"
-                     " usual 256k to 1m (stock -Xss256k; M typed for k?): each of Cassandra's hundreds to thousands of"
-                     " threads reserves that much, new threads may fail (unable to create native thread). Fix or remove"
-                     " it in cassandra_jvm_extra_options: it is kept as it is until then."]
+    assert found == ["-Xss1024M (cassandra_jvm_extra_options, Java 17): " + STACK_1G + ". Fix or remove it in"
+                     " cassandra_jvm_extra_options: it is kept as it is until then."]
 
 
 def test_only_the_option_that_counts_is_checked():

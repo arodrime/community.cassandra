@@ -111,7 +111,7 @@ def test_report_names_the_edits_left_and_the_others():
     report = cassandra_inventory_layout([base], "c")["report"].split("\n")
     kept = report.index("  HAND EDITS no variable covers, in files LEFT AS THEY ARE on this node"
                         " (cassandra_config_keep_files; nodes added later get the role's):")
-    other = report.index("  HAND EDITS no variable covers (cassandra_config would revert them):")
+    other = report.index("  Hand edits no variable carries (apply_config would put the file back as the collection writes it):")
     assert report[kept + 1:kept + 4] == ["    logback.xml, line 12:", "      - <x/>", "      + <y/>"]
     assert report[other + 1:other + 3] == ["    cassandra-env.sh: JMX_PORT", "    " + NOT_IMPORTED]
 
@@ -137,10 +137,10 @@ def test_the_stop_reads_the_self_checks_own_differences():
     heap = [d for d in check_heap() if d.startswith("heap")]
     lines = cassandra_import_self_check_advice(layout, {"n1": {"differences": out["differences"] + heap}}, width=160)
     at = lines.index("  Hand edits no variable covers (cassandra_config would revert them):")
-    assert lines[at + 1] == "    - logback.xml, on n1:" and lines[at + 2].startswith("        /configuration")
-    at = lines.index("    - heap MAX_HEAP_SIZE, on n1:")
+    assert lines[at + 1] == "    - logback.xml, on all (1 node):" and lines[at + 2].startswith("        /configuration")
+    at = lines.index("    - heap MAX_HEAP_SIZE, on all (1 node):")
     assert lines[at + 1] == "        node 4G, inventory 8G"
-    assert lines[lines.index("    - heap HEAP_NEWSIZE, on n1:") + 1] == "        800M (not in the inventory)"
+    assert lines[lines.index("    - heap HEAP_NEWSIZE, on all (1 node):") + 1] == "        800M (not in the inventory)"
     assert lines[0].startswith("SELF-CHECK FAILED  c  the inventory would change 3 settings on 1 node")
 
 
@@ -268,7 +268,7 @@ def test_jmx_entry_no_variable_expresses_is_a_hand_edit_kept_on_request():
     assert out["differences"] == ["jmxremote.access: auditRole=readonly: node has '', import would write nothing"]
     lines = cassandra_import_self_check_advice(layout, {"n1": out}, width=160)
     at = lines.index("  Hand edits no variable covers (cassandra_config would revert them):")
-    assert lines[at + 1] == "    - jmxremote.access auditRole=readonly, on n1:"
+    assert lines[at + 1] == "    - jmxremote.access auditRole=readonly, on all (1 node):"
     assert "Other differences:" not in "\n".join(lines)
     keep = node({"import_cluster_config": imported}, keep_hand_edits=True)["keep"]
     assert keep["cassandra_config_keep_files"] == ["jmxremote.access"]
@@ -305,7 +305,7 @@ def test_hashed_passwords_a_hand_edit_of_the_password_file_kept_on_request():
     assert out["differences"] == ["jmxremote.password: cassandra: node has ****, import would write nothing"]
     lines = cassandra_import_self_check_advice(layout, {"n1": out}, width=160)
     assert lines[lines.index("  Hand edits no variable covers (cassandra_config would revert them):") + 1] == \
-        "    - jmxremote.password cassandra, on n1:"
+        "    - jmxremote.password cassandra, on all (1 node):"
     assert "aGFzaGVk" not in "\n".join(lines) + layout["report"]
     keep = node({"import_cluster_config": imported}, keep_hand_edits=True)["keep"]
     assert keep["cassandra_config_keep_files"] == ["jmxremote.password"]

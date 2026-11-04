@@ -29,7 +29,7 @@ description:
   - The warnings of the tasks are printed too.
   - The operator messages are coloured by the start of their lines (Ansible's colours, so C(ANSIBLE_NOCOLOR),
     C(ANSIBLE_FORCE_COLOR) and a non-terminal output apply). C(WARNING) in O(warning_color), indented or not; C(DONE), C(HEALTHY),
-    C(NOTHING TO DO), C(READY), C(IMPORT ... PASSED) and a C(CHECK) with nothing left to do as ok; a C(CHECK) that
+    C(NOTHING TO DO), C(READY), C(IMPORT ... nothing to act on) and a C(CHECK) with nothing left to do as ok; a C(CHECK) that
     says what a real run C(would) do as a change; C(REFUSED), C(FAILED), C(STOPPED), C(NOT HEALTHY),
     C(IMPORT ... FAILED), C(SELF-CHECK FAILED), a
     C(CHECK) with a node that C(failed) and a progress line that stalled or failed as an error; C(NOTE), the
@@ -175,7 +175,7 @@ _COLOURS = (
     (re.compile(r"ALL \d+ NODES? UP \u2014 "), "COLOR_CHANGED"),
     (re.compile(r"ALL \d+ NODES? UP$"), "COLOR_OK"),
     (re.compile(r"CHECK\b.*\bwould\b"), "COLOR_CHANGED"),  # something left to do
-    (re.compile(r"(DONE|HEALTHY|NOTHING TO DO|READY|CHECK)\b|IMPORT \S+ .*\bPASSED\b"), "COLOR_OK"),
+    (re.compile(r"(DONE|HEALTHY|NOTHING TO DO|READY|CHECK)\b|IMPORT \S+ .*\b(PASSED|nothing to act on)\b"), "COLOR_OK"),
     (re.compile(r"NOTE\b|\[\d+/\d+\] |%s|%s" % (_PHASE.pattern, _BANNER.pattern)), "PROGRESS"),
     (_WAIT, "PROGRESS"),
 )

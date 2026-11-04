@@ -14,6 +14,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     _load_role, _render, cassandra_config_import, cassandra_inventory_layout)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import _compare_files
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import cassandra_import_report
+from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_jvm_options import STACK_1G
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from import_nodes import node as import_node  # noqa: E402 pylint: disable=wrong-import-position
@@ -128,10 +129,26 @@ def test_a_stack_of_1024m_is_imported_with_a_warning():
     out = cassandra_config_import(files, "50x", FACTS, java="17")
     assert out["vars"]["cassandra_jvm_extra_options"] == ["-Xss1024M"]  # never fixed silently
     assert out["jvm_warnings"] == [
-        "-Xss1024M (cassandra_jvm_extra_options, from jvm-server.options, Java 17): 1 GiB of stack for every thread,"
-        " far above the usual 256k to 1m (stock -Xss256k; M typed for k?): each of Cassandra's hundreds to thousands"
-        " of threads reserves that much, new threads may fail (unable to create native thread). Fix or remove it in"
-        " cassandra_jvm_extra_options: it is kept as it is until then."]
+        "-Xss1024M (cassandra_jvm_extra_options, from jvm-server.options, Java 17): " + STACK_1G + ". Fix or remove"
+        " it in cassandra_jvm_extra_options: it is kept as it is until then."]
+
+
+def test_a_stack_set_twice_is_flagged_with_the_one_the_jvm_takes():
+    # (2026-11-02) -Xss1024M in jvm-server.options, -Xss256k in jvm17-server.options: the 256k wins, the 1024M is dead
+    files = node_files("50x", cassandra_jvm_extra_options=["-Xss1024M"], cassandra_jvm17_extra_options=["-Xss256k"])
+    out = cassandra_config_import(files, "50x", FACTS, java="17")
+    assert out["jvm_warnings"] == [
+        "-Xss1024M (cassandra_jvm_extra_options, from jvm-server.options, Java 17): set again by -Xss256k"
+        " (cassandra_jvm17_extra_options, from jvm17-server.options), which the JVM takes: this one is never used;"
+        " if it ever applied, " + STACK_1G + ". Remove it from cassandra_jvm_extra_options."]
+    # a password option set twice: neither value shown
+    files = node_files("50x", cassandra_jvm_extra_options=["-Djavax.net.ssl.keyStorePassword=FirstS3cret"],
+                       cassandra_jvm17_extra_options=["-Djavax.net.ssl.keyStorePassword=OtherS3cret"])
+    warnings = cassandra_config_import(files, "50x", FACTS, java="17")["jvm_warnings"]
+    assert len(warnings) == 1 and "S3cret" not in warnings[0] and "keyStorePassword=****" in warnings[0]
+    # the same option twice with the same value: nothing to say
+    files = node_files("50x", cassandra_jvm_extra_options=["-Xss512k"], cassandra_jvm17_extra_options=["-Xss512k"])
+    assert cassandra_config_import(files, "50x", FACTS, java="17")["jvm_warnings"] == []
 
 
 def test_biased_locking_on_java_17_is_a_warning():
@@ -201,7 +218,7 @@ def test_the_node_keeps_the_file_and_the_report_says_why():
     assert entry["keep"]["cassandra_config_keep_files"] == ["cassandra.yaml", "jvm11-server.options"]
 
 
-def test_the_warnings_go_to_the_todo_once_for_all_the_nodes():
+def test_the_warnings_to_review_once_for_all_the_nodes():
     config = cassandra_config_import(node_files("50x", cassandra_jvm_extra_options=["-Xss1024M"]), "50x", FACTS,
                                      java="17")
     nodes = []
@@ -212,8 +229,9 @@ def test_the_warnings_go_to_the_todo_once_for_all_the_nodes():
     assert not [n for n in nodes[0]["notes"] if "WARNING" in n]  # in the TO DO only, as the rejected keys
     layout = cassandra_inventory_layout(nodes, "c")
     lines = cassandra_import_report(layout, ["c.yml", "."], "report.txt", {}, True, width=400, in_git=False)
-    todo = [line for line in lines if ". WARNING" in line]
-    assert todo == ["  1. WARNING  node1, node2: " + config["jvm_warnings"][0]]
+    option, dummy, why = config["jvm_warnings"][0].partition("): ")
+    at = lines.index("    %s)   all (2 nodes)" % option)  # (under TO REVIEW, once for both)
+    assert lines[at + 1] == "      " + why and lines.index("TO REVIEW") < at
 
 
 def test_self_check_names_the_file_a_41_on_java_17_reads():

@@ -1,7 +1,7 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-# The CONVERGENCE section of an import (90 nodes, made up): how many settings every node shares, the others with
+# The CONVERGENCE section of an import's report (90 nodes, made up, under FOR INFO): how many settings every node shares, the others with
 # their values and nodes, what to change where to give every node the value most have, how many nodes change and
 # whether apply_config restarts them, the command to check it; the files kept as edited by hand, what differs from
 # the template and which variable would carry it. Output only, secrets never shown.
@@ -92,22 +92,7 @@ def golden(name, lines):
 
 
 def section(**kwargs):
-    return cassandra_import_convergence(layout(), {}, report_file=REPORT, cwd="/p", **kwargs)
-
-
-def test_the_screen_of_90_nodes():
-    screen = section(screen=True, width=120)
-    assert screen == golden("convergence_90_screen.txt", screen)
-    assert screen[0] == ("CONVERGENCE  4/11 settings common to all nodes, 7 differ, 3 files kept by hand"
-                         " (1 node not read: not counted)")
-    assert screen[1] == "  Next (5 of 7, the safest first, then the fewest nodes):"  # the top 5 actions
-    assert len([line for line in screen if line.startswith("    cassandra_")]) == 5
-
-
-@pytest.mark.parametrize("width", [80, 100, 200])
-def test_the_screen_fits_the_terminal(width):
-    for line in section(screen=True, width=width):
-        assert len(line) <= width, line
+    return cassandra_import_convergence(layout(), {}, cwd="/p", **kwargs)
 
 
 def test_the_report_of_90_nodes():
@@ -115,20 +100,18 @@ def test_the_report_of_90_nodes():
     assert report == golden("convergence_90_report.txt", report)
 
 
-@pytest.mark.parametrize("screen", [True, False])
-def test_no_secret_shown(screen):
-    text = "\n".join(section(screen=screen))
+def test_no_secret_shown():
+    text = "\n".join(section())
     for secret in SECRETS:
         assert secret not in text
-    if not screen:
-        assert "secret 1 (59 nodes)" in text and "KEYSTORE_PASSWORD=****" in text
+    assert "(in secrets.yml) on dc1 + dc2 - cass045 (59 nodes)" in text and "KEYSTORE_PASSWORD=****" in text
 
 
 def test_the_score():
     report = section()
     score = report[1].strip()
     # counted: every SETTINGS row but the addresses and what a node keeps for life (num_tokens)
-    assert score.startswith("4/11 settings common to all nodes, 7 differ, 3 files kept by hand"), score
+    assert score.startswith("4 of 11 settings have the same value on every node, 7 differ, 3 files kept by hand"), score
     assert "(1 node not read: not counted)" in score
     assert any("cassandra_broadcast_rpc_address" in line and "cassandra_num_tokens" in line for line in report)
 
@@ -138,7 +121,9 @@ def test_each_setting_its_values_action_and_check():
     text = "\n".join(report)
     # the values, most nodes first, the others with their nodes
     assert any(line.startswith("  cassandra_extra_settings.streaming_connections_per_host")
-               and "2 (83 nodes)   1 (5: G6)   6 (1: cass090)" in line for line in report)
+               and "2 on all - cass011 - cass012 - cass013 - cass014 - cass015 - cass045 - cass090 (83 nodes)" in line
+               for line in report)
+    assert "1 on cass011, cass012, cass013, cass014, cass015 (5 nodes); 6 on cass090 (1 node)" in _flat(report)
     # a node or two: --limit to them; many: the whole cluster
     assert "ansible-playbook community.cassandra.apply_config --limit cass007 --check --diff" in text
     assert "apply_config --limit cass011,cass012,cass013,cass014,cass015,cass090 --check --diff" in text
@@ -157,7 +142,7 @@ def test_each_setting_its_values_action_and_check():
     # a sub-key: set in the files that keep another value of it only
     assert "streaming_connections_per_host: 2 in cassandra_extra_settings in host_vars of 6 nodes" in flat
     # a secret: by its number, the value most nodes have
-    assert "cassandra_jmx_password: secret 1 (its value in group_vars/big_dc1/) in group_vars/big/secrets.yml" in flat
+    assert "cassandra_jmx_password: (in secrets.yml) (its value in group_vars/big_dc1/) in group_vars/big/secrets.yml" in flat
 
 
 def test_the_files_kept_by_hand():
@@ -220,9 +205,10 @@ def test_one_group_already():
         n["vars"].update(cassandra_extra_settings={"streaming_connections_per_host": 2},
                          cassandra_config_file_permissions={"cassandra.yaml": "0640"}, cassandra_num_tokens=16)
         n["vars"]["cassandra_linux_limits"] = {"nofile": 100000}
-    lines = cassandra_import_convergence(cassandra_inventory_layout(nodes, "Small"), {}, screen=True, width=200)
-    assert lines == ["CONVERGENCE  10/10 settings common to all nodes — one group, every setting in"
-                     " group_vars/small/"]
+    lines = cassandra_import_convergence(cassandra_inventory_layout(nodes, "Small"), {}, width=200)
+    # (2026-11-04: a re-import showed it in green, as a verdict; it is information, said as such)
+    assert lines[1] == ("  10 of 10 settings have the same value on every node: every setting is in group_vars/small/,"
+                        " nothing to converge")
 
 
 def test_no_node_read():
@@ -244,9 +230,6 @@ def test_the_seeds_by_change_seeds():
     text = "\n".join(cassandra_import_convergence(small, {}, width=200))
     assert "1 node changes, no restart (change_seeds applies it live); check:" \
         " ansible-playbook community.cassandra.change_seeds --check" in text
-    screen = cassandra_import_convergence(small, {}, screen=True, width=200)
-    assert ("  Check each one before it is applied: ansible-playbook community.cassandra.apply_config --check --diff,"
-            " or ansible-playbook community.cassandra.change_seeds --check (the seeds)") in screen
 
 
 def _small(nodes):
@@ -348,11 +331,9 @@ def test_a_failed_self_check_first():
                          cassandra_config_file_permissions={"cassandra.yaml": "0640"}, cassandra_num_tokens=16)
         n["vars"]["cassandra_linux_limits"] = {"nofile": 100000}
     small = _small(nodes)
-    screen = cassandra_import_convergence(small, {}, screen=True, width=200, self_check_ok=False)
-    assert screen == ["CONVERGENCE  10/10 settings common to all nodes",
-                      "  The self-check first: the inventory does not reproduce the nodes yet"]
     report = cassandra_import_convergence(small, {}, width=200, self_check_ok=False)
-    assert "one group" not in report[1] and report[2].startswith("  The self-check first (SELF-CHECK above)")
+    assert report[1] == "  10 of 10 settings have the same value on every node"
+    assert report[2].startswith("  The self-check first (SELF-CHECK above)")
 
 
 def test_a_rack_kept_by_hand_stays_the_node_s():
@@ -410,24 +391,22 @@ def test_an_error_of_its_own_is_a_line(monkeypatch):
     def broken(*args):
         raise KeyError("hunter2")
     monkeypatch.setattr(convergence, "report_sections", broken)
-    lines = section(screen=True)
+    lines = section()
     assert lines == ["CONVERGENCE  not worked out (KeyError in cassandra_import_convergence; the inventory and the"
                      " rest of the report are not affected)"]
 
 
-def test_in_the_report_and_on_the_screen():
+def test_in_the_report_for_info():
     big = layout()
     files = [f["path"] for f in cassandra_inventory_files(big)]
     changes = {"changed": ["big.yml"] + files, "removed": [], "existed": []}
     common = dict(cwd="/p", in_git=True, changes=changes)
-    screen = cassandra_import_report(big, ["/p/inventories/big.yml", "/p/inventories"], REPORT, {}, True, screen=True,
-                                     width=120, convergence=section(screen=True, width=120), **common)
-    at = next(i for i, line in enumerate(screen) if line.startswith("CONVERGENCE  "))
-    assert screen[at - 1] == "" and screen[-1] == "full report: reports/big/report.txt" and screen[-2] == ""
     report = cassandra_import_report(big, ["/p/inventories/big.yml", "/p/inventories"], REPORT, {}, True,
                                      convergence=section(), **common)
-    at = report.index("CONVERGENCE — towards one group, every setting in group_vars/big/")
-    assert report.index("NOT READ — set in group_vars/all if they apply") > at
+    at = report.index("  Convergence: how close the nodes are to sharing every setting")
+    assert report[at + 1].startswith("    4 of 11 settings have the same value on every node")
+    assert report.index("FOR INFO") < at < report.index(
+        "  Not read from the nodes, so not in the inventory (your group_vars/all may set them)")
     # without it: as before
     assert not [line for line in cassandra_import_report(big, ["/p/inventories/big.yml", "/p/inventories"], REPORT,
                                                          {}, True, **common) if "CONVERGENCE" in line]

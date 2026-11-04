@@ -290,7 +290,8 @@ def test_layout_drift_goes_down_and_is_reported():
     assert out["differences"].split("\n")[1:] == [
         '  cassandra_heap_size: "16G" on n3, n4; "8G" on DC dc1; (role default) on n5',
         '  cassandra_concurrent_reads: (role default) on 4 nodes; 64 on n4']
-    assert out["report"].split("\n")[3:6] == out["differences"].split("\n")  # at the top
+    # (in the report's TO REVIEW, each value summarised: not again in the details)
+    assert "DIFFERENCES BETWEEN NODES" not in out["report"]
 
 
 def test_layout_unread_node_listed():
@@ -323,16 +324,17 @@ def test_layout_drift_of_a_dict_value():
     nodes = [node("n1", "dc1", "r1", cassandra_extra_settings=Tagged(commitlog_total_space="8192MiB")),
              node("n2", "dc1", "r1")]
     out = cassandra_inventory_layout(nodes, "c")
-    assert '{"commitlog_total_space": "8192MiB"}' in out["report"]
+    assert '{"commitlog_total_space": "8192MiB"}' in out["differences"]
 
 
 def test_report_masks_passwords():
     nodes = [{"name": "n%d" % i, "dc": "dc1", "rack": "r1", "read": True, "notes": [], "normalized": [],
               "vars": {"cassandra_server_keystore_password": "pw%d" % i},
               "hand_edits": ["cassandra.yaml, line 3:", "  + keystore_password: hand%d" % i]} for i in (1, 2)]
-    report = cassandra_inventory_layout(nodes, "Prod")["report"]
-    assert "pw1" not in report and "hand1" not in report
-    assert "cassandra_server_keystore_password: **** on n1; **** on n2" in report
+    layout = cassandra_inventory_layout(nodes, "Prod")
+    report = layout["report"]
+    assert "pw1" not in report + layout["differences"] and "hand1" not in report
+    assert "cassandra_server_keystore_password: **** on n1; **** on n2" in layout["differences"]
     assert "keystore_password: ****" in report
 
 
@@ -1945,3 +1947,22 @@ def test_a_secret_in_a_properties_hand_edit_is_masked():
     out = cassandra_config_import(files, "50x", FACTS)
     assert "  + ks_password=****" in out["hand_edits"] and "s3cret" not in "\n".join(out["hand_edits"])
     assert "tail" not in "\n".join(out["hand_edits"])
+
+
+def test_layout_over_a_template_compared_node_by_node():
+    """(2026-11-02) A re-import: the address template the first import wrote is compared with each node, never
+    left for the operator to check by hand; a template of the node's name rendered for each node; one of other
+    variables still not compared."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import IPV4
+    nodes = _owner_nodes()[:3]
+    for n in nodes:
+        n["vars"].update(cassandra_listen_address=IPV4, cassandra_medusa_nodetool_host="%s.db.example" % n["name"])
+    nodes[2]["vars"]["cassandra_listen_address"] = "10.9.9.9"  # not its default address: differs
+    layout = _over(nodes, [("group_vars/orders/mine.yml", "cassandra_listen_address: \"%s\"\n"
+                            "cassandra_medusa_nodetool_host: \"{{ inventory_hostname }}.db.example\"\n" % IPV4)])
+    assert layout["not_compared"] == []
+    assert [(y["node"], y["key"], y["value"]) for y in layout["yours"]] == [
+        ("n3", "cassandra_listen_address", "10.9.9.9")]
+    assert sorted(layout["from_yours"]["n1"]) == ["cassandra_listen_address", "cassandra_medusa_nodetool_host"]
+    layout = _over(_owner_nodes()[:1], [("group_vars/all/x.yml", "cassandra_config_user: \"{{ my_user }}\"\n")])
+    assert layout["not_compared"] == ["cassandra_config_user"]

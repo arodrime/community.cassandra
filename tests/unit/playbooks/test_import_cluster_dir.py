@@ -341,15 +341,16 @@ def test_report_of_another_kept(tmp_path):
 
 def test_check_diff_writes_nothing():
     """--check --diff reviews a re-import: the tasks that write or remove run in check mode (their diff shown, the
-    secrets hidden); only the report is written, as report.check.txt (on the controller, report.txt left)."""
+    secrets hidden); only the report is written, as report.check.txt (on the controller, report.txt left), and its
+    shareable copy when asked."""
     write = next(p for p in PLAYS if p.get("name") == "Write the inventory")["tasks"]
-    report_tasks = ("Write report.txt", "Create the report dir")
+    report_tasks = ("Write report.txt", "Create the report dir", "Write the shareable copy of the report")
     for task in write:
         if any(k in task for k in ("ansible.builtin.copy", "ansible.builtin.file")) and task["name"] not in report_tasks:
             assert "check_mode" not in task, task["name"]
             # --diff: the changes to the files there, not a new file whole (test_output_polish.py)
             assert task.get("diff", "{{ ansible_diff_mode | bool and ").startswith("{{ ansible_diff_mode | bool and "), task["name"]
-    assert [TASKS[name]["check_mode"] for name in report_tasks] == [False, False]
+    assert [TASKS[name]["check_mode"] for name in report_tasks] == [False, False, False]
     assert TASKS["Write report.txt"]["diff"] is False
     assert TASKS["Write report.txt"]["ansible.builtin.copy"]["dest"] == "{{ _report_args.report_file }}"
     assert report_vars()["_report_args"]["report_file"] == "/reports/cluster_a/report.txt"

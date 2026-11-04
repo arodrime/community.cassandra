@@ -19,17 +19,18 @@ Conventions
 - **One fact per line**, no prose: the documentation explains, the output states.
 - **Setting-centric**, grouped: ``setting: value   nodes``, ``all`` when every node agrees, a line per other
   value, ``← differs`` on the minority ones. Secrets are always shown as ``****``. Several settings share one
-  column each for the names, the values and the nodes (``settings_lines``): the import report::
+  column each for the names, the values and the nodes (``settings_lines``): ``apply_config``'s differences::
 
     cassandra.yaml
       max_hint_window:  3h                            node1..node3, node5
                         6h                            node4                 ← differs
 - **Node lists** are short: ``node1..node5, node7`` (a range from 3 consecutive names, 2 names listed, a gap breaks
   the range), ``6 nodes:`` first when there are more than 5. Files and ``-v`` give every name; ``--limit`` in a
-  command always lists every host. From 12 nodes on, the import screen and report and ``apply_config``'s
-  differences define ``NODE GROUPS`` first (the nodes that are always in the same lists, 3 or more:
-  ``G1 = db11..db16, db21..db26 (12 nodes)``), then a row says ``all``, ``G1``, ``G1 + db074`` or
-  ``all except db111``; report.txt's DETAILS name every node. A dict value is a row per sub-key
+  command always lists every host. From 12 nodes on, ``apply_config``'s differences define ``NODE GROUPS`` first
+  (the nodes that are always in the same lists, 3 or more: ``G1 = db11..db16, db21..db26 (12 nodes)``), then a
+  row says ``all``, ``G1``, ``G1 + db074`` or ``all except db111``. The import's report says a node list in its
+  shortest exact form by the DCs and racks, with its count: ``all (12 nodes)``, ``dc1 - n3 + n9 (6 nodes)``;
+  its DETAILS name every node. A dict value is a row per sub-key
   (``cassandra_extra_settings.sstable.selected_format``). A long value or node list goes on under its column (a
   name is never cut), the import screen fits the terminal.
 - **Sizes, rates, durations** in one format: ``41.2 GiB``, ``89 MiB/s``, ``9m20s`` (never ``0.0 GiB`` for a
