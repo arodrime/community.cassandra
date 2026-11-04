@@ -90,6 +90,26 @@
     - not cassandra_offline | bool
     - "[cassandra_java_package] | flatten | reject('in', _cassandra_install_before) | list | length > 0"
 
+# cassandra_java_set_default false leaves a /usr/bin/java there as it is; a
+# missing one, or a link leading nowhere, is still made (nodetool and the
+# scripts need a java)
+- name: Look for the system java
+  ansible.builtin.stat:
+    path: /usr/bin/java
+    follow: true  # a link leading nowhere: not there
+    get_checksum: false
+  register: cassandra_java_link
+
+# false, /usr/bin/java missing while its alternative leads to a java: that link
+# alone is made again (below), the alternative left as it is
+- name: Look for the java alternative
+  ansible.builtin.stat:
+    path: /etc/alternatives/java
+    follow: true
+    get_checksum: false
+  register: cassandra_java_alternative_link
+  when: not cassandra_java_link.stat.exists
+
 - name: Java from a tarball, or already unpacked (cassandra_java_home)
   ansible.builtin.include_tasks: java_tarball.yml
   when: _cassandra_java_home != ''
@@ -100,7 +120,8 @@
   when:
     - cassandra_install_java | bool
     - _cassandra_java_home == ''
-    - cassandra_java_set_default | bool
+    - cassandra_java_set_default | bool or not cassandra_java_link.stat.exists
+      and not cassandra_java_alternative_link.stat.exists | default(false)
   vars:
     # the package's own java among the alternatives (a temurin or zulu path does not name java-<N>), else one that does
     _path: >-
@@ -146,3 +167,16 @@
         name: java
         path: "{{ _path }}"
       when: _path != ''
+
+# Missing, or leading nowhere, while its alternative is already the one
+# selected: the alternatives module, which reads /etc/alternatives, has
+# nothing to change and leaves it so
+- name: Link the system java to its alternative
+  ansible.builtin.file:
+    src: /etc/alternatives/java
+    dest: /usr/bin/java
+    state: link
+    force: true  # over a link leading nowhere; under --check the alternative may not be there yet
+  when:
+    - not cassandra_java_link.stat.exists
+    - cassandra_install_java | bool or _cassandra_java_home != ''

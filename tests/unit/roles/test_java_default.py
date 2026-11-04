@@ -8,6 +8,8 @@ __metaclass__ = type
 import os
 import warnings
 
+import pytest
+
 from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar
@@ -24,7 +26,8 @@ with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
     init_plugin_loader()
 
-TASKS = load_tasks(os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_install", "tasks", "java.yml"))
+ROLE_TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_install", "tasks")
+TASKS = load_tasks(os.path.join(ROLE_TASKS, "java.yml"))
 BLOCK = next(t for t in TASKS if t["name"] == "Make the Java package's java the default java")
 INNER = dict((t["name"], t) for t in BLOCK["block"])
 
@@ -84,3 +87,60 @@ def test_none_found_stops_with_the_way_out():
     variables.update(cassandra_java_alternatives={}, ansible_facts={"os_family": "Debian"})
     text = " ".join(render(stop["ansible.builtin.assert"]["fail_msg"], **variables).split())
     assert "(no alternative)" in text and "update-alternatives --install /usr/bin/java java" in text
+
+
+# cassandra_java_set_default false: a /usr/bin/java there is left as it is (the Java of other programs), a missing
+# one is still made (nodetool and the scripts need a java): a node added later under group_vars gets one
+@pytest.mark.parametrize("set_default, exists, alternative, made", [
+    (True, True, None, True), (True, False, None, True), (False, True, None, False), (False, False, False, True),
+    (True, False, True, True),
+    # false, /usr/bin/java missing while its alternative leads to a java: its link alone made again (below)
+    (False, False, True, False),
+])
+def test_a_missing_system_java_is_made_either_way(set_default, exists, alternative, made):
+    tarball = next(t for t in load_tasks(os.path.join(ROLE_TASKS, "java_tarball.yml"))
+                   if t["name"] == "Make it the system java")
+    variables = {"cassandra_java_set_default": set_default, "cassandra_java_link": {"stat": {"exists": exists}},
+                 # skipped when /usr/bin/java is there: no stat
+                 "cassandra_java_alternative_link": {"skipped": True} if alternative is None
+                 else {"stat": {"exists": alternative}}}
+    for when in (BLOCK["when"], tarball["when"]):
+        condition = next(c for c in when if "cassandra_java_set_default" in c)
+        assert render("{{ %s }}" % condition, **variables) is made
+
+
+def test_the_alternative_is_looked_for_when_the_link_is_missing():
+    names = [t["name"] for t in TASKS]
+    look = TASKS[names.index("Look for the java alternative")]
+    assert look["ansible.builtin.stat"]["path"] == "/etc/alternatives/java" and look["ansible.builtin.stat"]["follow"]
+    assert look["when"] == "not cassandra_java_link.stat.exists"
+    assert names.index("Look for the system java") < names.index(look["name"]) < names.index(
+        "Java from a tarball, or already unpacked (cassandra_java_home)")
+
+
+def test_the_system_java_is_looked_for_before_both():
+    names = [t["name"] for t in TASKS]
+    look = TASKS[names.index("Look for the system java")]
+    assert look["ansible.builtin.stat"]["path"] == "/usr/bin/java"
+    assert look["ansible.builtin.stat"]["follow"] is True  # a link leading nowhere is missing: made again
+    assert look["register"] == "cassandra_java_link" and "when" not in look
+    assert names.index("Look for the system java") < names.index(
+        "Java from a tarball, or already unpacked (cassandra_java_home)") < names.index(BLOCK["name"])
+    assert names.index("Install Java") < names.index("Look for the system java")  # the package's own counts
+
+
+@pytest.mark.parametrize("exists, install_java, home, linked", [
+    (False, True, "", True),  # a package Java whose alternative is selected already: its link made again
+    (False, False, "/opt/java/jdk-17", True),  # a Java home
+    (False, False, "", False),  # Java installed by other means: not the role's
+    (True, True, "", False),
+])
+def test_a_missing_link_is_made_to_its_alternative(exists, install_java, home, linked):
+    names = [t["name"] for t in TASKS]
+    link = TASKS[names.index("Link the system java to its alternative")]
+    assert names.index(BLOCK["name"]) < names.index(link["name"])  # after the alternative is selected
+    assert link["ansible.builtin.file"] == {"src": "/etc/alternatives/java", "dest": "/usr/bin/java", "state": "link",
+                                            "force": True}
+    variables = {"cassandra_java_link": {"stat": {"exists": exists}}, "cassandra_install_java": install_java,
+                 "_cassandra_java_home": home}
+    assert all(render("{{ %s }}" % c, **variables) for c in link["when"]) is linked
