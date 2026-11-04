@@ -211,6 +211,18 @@
         cassandra_op_result: "already on Java {{ cassandra_java_version }}"
       when: not cassandra_update_java_todo | bool
 
+    # The Prometheus exporter's port free before anything is done (the agent would make the JVM exit; its jar and
+    # config are put in place with the config, checked again before the restart)
+    - name: Check the Prometheus exporter's port is free
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: exporter_check.yml
+      vars:
+        _cassandra_exporter_check_option: "{{ _cassandra_config_jvm_agent }}"
+        _cassandra_exporter_check_kinds: [port]
+        _cassandra_exporter_check_left: nothing was done
+      when: cassandra_update_java_todo | bool
+
     - name: Show the plan and confirm the run
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation

@@ -194,12 +194,15 @@ def test_the_action_restarts_starts_or_only_writes():
     assert names == ["Clear the unit's failed starts", "Check the JVM a file is written back for still runs", "Write the config",
                      "Check the files written back", "Report what would be written",
                      "Drain and restart the node", "Start the time sync before Cassandra starts",
+                     "Check the Prometheus exporter's agent can start",
                      "Start the node and wait until it has joined", "Forget the restart in progress"]
     # (a file written back with no restart: test_apply_config_written_back.py)
     tasks = [t for t in tasks if t["name"] not in ("Check the JVM a file is written back for still runs", "Check the files written back")]
     tasks.pop()  # the mark of a stop in its restart window (os_window.yml), removed once up again
     # (no "Restarting node..." phase line before the restart: its wait line says it)
     tasks.pop(4)  # its time sync before a start (test_apply_config_os.py)
+    exporter = tasks.pop(4)  # the exporter's agent able to start, before a start (test_prometheus_exporter.py)
+    assert render("{{ %s }}" % exporter["when"], {"cassandra_apply_config_then": "start"}) in (True, "True")
     clear, write, report, restart, start = tasks
     # --check: the plan's comparison (the same role run in check mode, just before) reported, nothing rendered again
     assert write["ansible.builtin.include_role"]["name"] == "community.cassandra.cassandra_config"

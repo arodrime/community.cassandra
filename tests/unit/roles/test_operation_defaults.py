@@ -25,8 +25,9 @@ except ImportError:
         return template
 
 ROLES = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles")
-# defined once, in cassandra_service's defaults, loaded by the task files that read them
-LOADED = ("_cassandra_service_conf_dir", "_cassandra_service_config_snapshot")
+# defined once, in cassandra_service's defaults, loaded by the task files that read them (Cassandra's account:
+# exporter_check.yml)
+LOADED = ("_cassandra_service_conf_dir", "_cassandra_service_config_snapshot", "cassandra_service_user")
 
 
 def load(role, kind="defaults"):

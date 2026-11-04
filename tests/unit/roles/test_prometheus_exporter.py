@@ -7,6 +7,7 @@ __metaclass__ = type
 # plan (a restart for the httpServer part only), and cassandra_firewall's rule for its sources.
 
 import os
+import shutil
 import subprocess
 import sys
 
@@ -469,6 +470,53 @@ def test_the_removed_files_are_noted_without_a_restart():
     assert "when" not in find(main, "Remove what the Prometheus exporter's agent no longer needs")  # off too
 
 
+# --- apply_config -------------------------------------------------------------
+
+FIND = [p for p in load("playbooks", "apply_config.yml") if p.get("name") == "Find what each node needs"][0]
+NOTE = find(FIND["tasks"], "Note what this node needs")
+
+
+def note(exporter=(), files=()):
+    variables = {"_cassandra_config_changes": list(files), "_cassandra_config_perm_changes": [],
+                 "_cassandra_config_exporter_changes": list(exporter), "cassandra_config_restart_pending": False,
+                 "cassandra_config_newer_files": [], "_cassandra_preflight_running": True, "cassandra_jvm": {},
+                 "_cassandra_config_dir_notes": [], "cassandra_apply_config_unit": {"skipped": True}}
+    for name, value in (NOTE.get("vars") or {}).items():
+        variables[name] = render(value, variables) if isinstance(value, str) else value
+    facts = NOTE["ansible.builtin.set_fact"]
+    return dict((k, render(facts[k], variables)) for k in (
+        "cassandra_apply_config_todo", "cassandra_apply_config_then", "cassandra_apply_config_restart_why",
+        "cassandra_apply_config_kept_running"))
+
+
+RULES = {"item": "/etc/cassandra/jmx_prometheus.yml", "kind": "config", "before": "current", "after": "1 line(s) changed",
+         "diff": "-a\n+b", "restart": False}
+
+
+def test_new_rules_are_written_without_a_restart():
+    out = note([RULES])
+    assert (out["cassandra_apply_config_todo"], out["cassandra_apply_config_then"]) in [(True, "none"), ("True", "none")]
+    assert out["cassandra_apply_config_kept_running"] == ["the exporter rules: reloaded at its next scrape"]
+    old = {"item": "jmx_prometheus_javaagent-1.6.0.jar", "kind": "removed", "restart": False}
+    # (a jar removed may be the one the running JVM opened: a version changed or the exporter turned off)
+    assert note([old])["cassandra_apply_config_kept_running"] == [
+        "the exporter files removed: the running Cassandra keeps the ones it opened until its next restart"]
+
+
+def test_its_https_authentication_or_open_telemetry_restart_the_node():
+    out = note([dict(RULES, restart=True)])
+    assert out["cassandra_apply_config_then"] == "restart"
+    assert out["cassandra_apply_config_restart_why"] == "the exporter HTTPS, authentication or openTelemetry: read at start"
+    # with the JVM options file (the agent itself): a restart for the files, no other reason given
+    out = note([dict(RULES, restart=True)], files=["jvm-server.options"])
+    assert (out["cassandra_apply_config_then"], out["cassandra_apply_config_restart_why"]) == ("restart", "")
+
+
+def test_nothing_of_the_exporter_nothing_to_do():
+    out = note()
+    assert out["cassandra_apply_config_todo"] in (False, "False") and out["cassandra_apply_config_kept_running"] == []
+
+
 def test_the_exporter_record_is_in_the_record_of_the_config_cassandra_started_with():
     variables = load("roles", "cassandra_config", "vars", "main.yml")
     assert "jmx_prometheus.at_start" in variables["_cassandra_config_snapshot_files"]
@@ -518,6 +566,192 @@ def test_after_an_import_the_exporter_record_changes_nothing():
         assert true(write["changed_when"], variables) is changed
     assert true(write["changed_when"], {"cassandra_config_exporter_stat": {"results": [{}, {}, {"stat": {"exists": True}}]},
                                         "cassandra_config_exporter_at_start_written": {"changed": False}}) is False
+
+
+# --- before a restart or a start ----------------------------------------------
+
+CHECK_START = load_tasks(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "exporter_check.yml"))
+
+# stand-ins on the PATH: runuser as an account that reads only what others may read; the java the start runs
+RUNUSER = """#!/bin/sh
+[ "$1" = -u ] && [ "$3" = -- ] && [ "$4 $5" = "test -r" ] || exit 9
+echo "$2" >> "$0.log"
+[ -n "$(find "$6" -maxdepth 0 -perm -o=r 2>/dev/null)" ]
+"""
+
+
+def free_port():
+    import socket
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))  # a port no other test of the run takes (pytest -n auto)
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+def agent_check(where, jar=True, config=True, port=None, java="17", options=None, given="", jar_mode=0o644):
+    """What the check finds with a jvm-server.options (or options: {file: text}) giving an agent whose jar and
+    config are there or not, the start's java of that version ("": none), or the option given."""
+    import getpass
+    where.mkdir()
+    conf, bin_dir = where / "conf", where / "bin"
+    conf.mkdir()
+    bin_dir.mkdir()
+    for name, text in (("runuser", RUNUSER), ("systemctl", "#!/bin/sh\n"),
+                       ("java", "#!/bin/sh\necho 'openjdk version \"%s.0.2\" 2024-01-16' >&2\n" % java if java else "#!/bin/sh\n")):
+        (bin_dir / name).write_text(text)
+        (bin_dir / name).chmod(0o755)
+    if jar:
+        (where / "jmx_prometheus_javaagent-1.7.0.jar").write_text("x")
+        (where / "jmx_prometheus_javaagent-1.7.0.jar").chmod(jar_mode)
+    if config:
+        (where / "e.yml").write_text("rules: []\n")
+        (where / "e.yml").chmod(0o644)
+    option = "-javaagent:%s/jmx_prometheus_javaagent-1.7.0.jar=127.0.0.1:%d:%s/e.yml" % (where, port or free_port(), where)
+    for name, text in (options or {"jvm-server.options": "-ea\n%s\n" % option}).items():
+        (conf / name).write_text(text.replace("{option}", option))
+    argv = find(CHECK_START, "Check the exporter's jar, config and port")["ansible.builtin.command"]["argv"]
+    env = dict(os.environ, PATH="%s:%s" % (bin_dir, os.environ["PATH"]))
+    run = subprocess.run(argv[:4] + [str(conf), getpass.getuser(), given.replace("{option}", option)],
+                         stdout=subprocess.PIPE, check=True, env=env)
+    return [line.replace(str(where), "") for line in run.stdout.decode().split("\n") if line]
+
+
+def test_a_restart_onto_a_missing_jar_or_config_is_refused(tmp_path):
+    assert agent_check(tmp_path / "a") == []
+    assert agent_check(tmp_path / "b", jar=False) == ["jar|/jmx_prometheus_javaagent-1.7.0.jar"]
+    assert agent_check(tmp_path / "c", config=False) == ["config|/e.yml"]
+
+
+def test_the_jar_is_read_as_cassandras_account(tmp_path):
+    # a jar the run's account reads but Cassandra's does not (root's, downloaded under umask 027): refused
+    assert agent_check(tmp_path / "a", jar_mode=0o640) == ["jar|/jmx_prometheus_javaagent-1.7.0.jar"]
+    assert os.access(str(tmp_path / "a" / "jmx_prometheus_javaagent-1.7.0.jar"), os.R_OK)
+    import getpass
+    with open(str(tmp_path / "a" / "bin" / "runuser.log")) as f:
+        assert getpass.getuser() in f.read().split()  # (runuser -u <Cassandra's account> -- test -r)
+
+
+@pytest.mark.parametrize("java, found", [
+    ("17", ["jvm17"]),
+    ("11", ["jvm11"]),
+    ("1.8", ["jvm8"]),
+    ("", ["jvm11", "jvm17", "jvm8"]),  # its version unknown: every file
+])
+def test_only_the_options_files_of_the_java_the_start_runs(tmp_path, java, found):
+    options = dict(("jvm%s-server.options" % v, "-javaagent:/nowhere/jvm%s/jmx_prometheus_javaagent-1.7.0.jar=%d:/etc/hosts\n"
+                    % (v, free_port())) for v in ("8", "11", "17"))
+    options["jvm-server.options"] = "-ea\n"
+    out = agent_check(tmp_path / "a", java=java, options=options)
+    assert sorted(line.split("/")[2] for line in out if line.startswith("jar|")) == found
+
+
+def test_a_port_in_use_by_another_process_is_refused(tmp_path):
+    import socket
+    if not shutil.which("ss"):
+        pytest.skip("ss not here")
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))  # its own port (pytest -n auto runs the tests side by side)
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    try:
+        found = agent_check(tmp_path / "a", port=port)
+        # the inventory's option, before anything is written (the plan): the same check
+        given = agent_check(tmp_path / "b", port=port, options={}, given="{option}")
+    finally:
+        listener.close()
+    assert len(found) == 1 and found[0].startswith("port|%d|%d|" % (port, os.getpid()))
+    assert len(given) == 1 and given[0].startswith("port|%d|%d|" % (port, os.getpid()))
+
+
+def check_found(lines, kinds=None):
+    task = find(CHECK_START, "Note what stops the agent")
+    variables = {"cassandra_exporter_check": {"stdout_lines": lines}}
+    if kinds is not None:
+        variables["_cassandra_exporter_check_kinds"] = kinds
+    return render(task["ansible.builtin.set_fact"]["_cassandra_exporter_check_found"], variables)
+
+
+def test_the_check_runs_before_each_restart_and_start():
+    restart = load_tasks(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "action_restart.yml"))
+    names = [t.get("name") for t in restart]
+    assert names.index("Check the Prometheus exporter's agent can start") < names.index("Drain the node")
+    apply = load("roles", "cassandra_operation", "tasks", "action_apply_config.yml")
+    names = [t["name"] for t in apply]
+    assert names.index("Check the Prometheus exporter's agent can start") == names.index("Start the node and wait until it has joined") - 1
+    stop = find(CHECK_START, "Stop before Cassandra is stopped or started")
+    lines = ["port|9404|812|nginx", "jar|/opt/e/jmx_prometheus_javaagent-1.7.0.jar"]
+    variables = {"inventory_hostname": "n1", "cassandra_service_user": "cassandra", "_cassandra_exporter_check_found": lines}
+    why = render(stop["vars"]["_why"], variables)
+    assert "port 9404 is in use by pid 812 (nginx)" in why
+    assert "/opt/e/jmx_prometheus_javaagent-1.7.0.jar (its jar) is missing or not readable by cassandra" in why
+    assert "nothing was done on this node" in why and "Then run again" in why
+    # after a write (apply_config, update_java): said so, the node not stopped
+    restart_vars = find(apply, "Drain and restart the node")["vars"]
+    why = render(stop["vars"]["_why"], dict(variables, _cassandra_exporter_check_left=restart_vars["_cassandra_exporter_check_left"]))
+    assert "nothing was done" not in why and "not stopped (left running as it is); the config written applies" in why
+    java = load("roles", "cassandra_operation", "tasks", "action_update_java.yml")
+    assert "the Java and the config put in place" in find(java, "Drain and restart the node")["vars"]["_cassandra_exporter_check_left"]
+    assert "its config written" in find(apply, "Check the Prometheus exporter's agent can start")["vars"]["_cassandra_exporter_check_left"]
+    # what is checked: everything by default, the kinds asked for else
+    assert check_found(lines) == lines
+    assert check_found(lines, ["port"]) == lines[:1]
+    assert check_found([], ["port"]) == []
+
+
+def preflight(tasks, name="Check the Prometheus exporter's port is free"):
+    task = find(tasks, name)
+    assert task["ansible.builtin.include_role"]["tasks_from"] == "exporter_check.yml"
+    assert task["vars"]["_cassandra_exporter_check_kinds"] == ["port"]
+    assert "_cassandra_config_jvm_agent" in task["vars"]["_cassandra_exporter_check_option"]
+    return task
+
+
+def test_the_port_is_checked_before_anything_is_written():
+    # apply_config: in the plan, for a node to restart or start, before the question (the play stops at one)
+    play = FIND
+    names = [t.get("name") for t in play["tasks"]]
+    task = preflight(play["tasks"])
+    assert names.index("Compare the config") < names.index("Note what this node needs") \
+        < names.index("Check the Prometheus exporter's port is free") < names.index("Refuse restarts while a node is not running")
+    assert play["any_errors_fatal"] is True and task["vars"]["_cassandra_exporter_check_left"] == "nothing was changed"
+    assert "cassandra_apply_config_then in ['restart', 'start']" in task["when"]
+    # update_java: before the plan is shown
+    play = [p for p in load("playbooks", "update_java.yml") if p.get("name") == "Check the Java change"][0]
+    names = [t.get("name") for t in play["tasks"]]
+    preflight(play["tasks"])
+    assert names.index("Load the role defaults") < names.index("Check the Prometheus exporter's port is free") \
+        < names.index("Show the plan and confirm the run")
+    assert play["any_errors_fatal"] is True
+
+
+def test_an_upgrade_gets_the_jar_and_checks_the_agent_before_the_drain():
+    upgrade = load("roles", "cassandra_operation", "tasks", "action_upgrade.yml")
+    names = [t["name"] for t in upgrade]
+    assert names.index("Put the Prometheus exporter's jar in place") < names.index("Check the Prometheus exporter's agent can start") \
+        < names.index("Drain the node") < names.index("Stop Cassandra") < names.index("Write the target series' config")
+    jar = find(upgrade, "Put the Prometheus exporter's jar in place")["ansible.builtin.include_role"]
+    assert (jar["tasks_from"], jar["public"]) == ("prometheus_exporter_jar.yml", True)
+    check = find(upgrade, "Check the Prometheus exporter's agent can start")["vars"]
+    for check_mode, state, kinds in [(False, "missing", ["jar", "port"]), (False, "ok", ["jar", "port"]),
+                                     (True, "ok", ["jar", "port"]), (True, "other", ["jar", "port"]),
+                                     (True, "missing", ["port"])]:  # --check downloads nothing: no jar to read
+        assert render(check["_cassandra_exporter_check_kinds"], {
+            "ansible_check_mode": check_mode, "_cassandra_config_exporter_jar_state": state}) == kinds
+    # what a refusal leaves: never drained; the jar, when this run put it there
+    left_alone = "not drained (still running its former version)"
+    for download, left in [({"changed": True}, left_alone + "; the exporter's jar put in place"),
+                           ({"changed": False}, left_alone), ({"skipped": True, "changed": False}, left_alone)]:
+        assert render(check["_cassandra_exporter_check_left"], {"cassandra_config_exporter_download": download}) == left
+    stop = find(CHECK_START, "Stop before Cassandra is stopped or started")
+    why = render(stop["vars"]["_why"], {"inventory_hostname": "n1", "cassandra_service_user": "cassandra",
+                                        "_cassandra_exporter_check_found": ["port|9404|812|nginx"],
+                                        "_cassandra_exporter_check_left": left})
+    assert "nothing was done" not in why and "Cassandra would not start: not drained (still running" in why
+    # the jar's tasks are cassandra_config's own (the same download, the same stops)
+    jar_tasks = [t.get("name") for t in walk(load_tasks(os.path.join(ROLE, "tasks", "prometheus_exporter_jar.yml")))]
+    assert "Download the exporter's jar" in jar_tasks and "Stop where the jar could not be downloaded" in jar_tasks
+    assert [t.get("name") for t in walk(EXPORTER)][:len(jar_tasks)] == jar_tasks
 
 
 def test_its_config_is_not_readable_by_others():
