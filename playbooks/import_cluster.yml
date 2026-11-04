@@ -503,20 +503,63 @@
         # (a java replaced since it started, e.g. a JDK update: "<path> (deleted)", still run from /proc unless its
         # directory went too)
         bin=$(readlink /proc/$pid/exe | sed 's/ (deleted)$//')
-        # its Java version: the release file of its Java (11.0.20 -> 11, 1.8.0_382 -> 1.8), else the Java run
-        # once (a JVM to start)
-        jv=$(sed -n 's/^JAVA_VERSION="\(.*\)"$/\1/p' "${bin%/bin/java}/release" "${bin%/jre/bin/java}/release" 2>/dev/null | head -1)
-        case $jv in
-          1.*) jv=$(echo "$jv" | cut -d. -f1,2) ;;
-          ?*) jv=${jv%%[._+-]*} ;;
-          *) jv=$(/proc/$pid/exe -XshowSettings:properties -version 2>&1 | sed -n 's/.*java.specification.version = //p') ;;
-        esac
+        # the Java version in the release file of a java (11.0.20 -> 11, 1.8.0_382 -> 1.8), empty when none
+        release() {
+          v=$(sed -n 's/^JAVA_VERSION="\(.*\)"$/\1/p' "${1%/bin/java}/release" "${1%/jre/bin/java}/release" 2>/dev/null | head -1)
+          case $v in 1.*) echo "$v" | cut -d. -f1,2 ;; ?*) echo "${v%%[._+-]*}" ;; esac
+        }
+        # a Java major as one number (1.8 -> 8), to compare
+        major() { case $1 in 1.*) echo "$1" | cut -d. -f2 ;; *) echo "$1" ;; esac; }
+        # the package a file comes from, empty when none (a tarball)
+        package() {
+          p=$(rpm -qf --qf '%{NAME}\n' "$1" 2>/dev/null) && echo "$p" | head -1 || dpkg -S "$1" 2>/dev/null | cut -d: -f1
+        }
+        # /usr/bin/java resolved (the one cassandra_install sets), empty when none
+        sys=$([ -e /usr/bin/java ] && readlink -f /usr/bin/java)
+        # the Java major of a java: its release file, else the java run once
+        jmajor() {
+          r=$(release "$1")
+          [ -n "$r" ] || r=$("$1" -XshowSettings:properties -version 2>&1 | sed -n 's/.*java.specification.version = //p')
+          major "$r"
+        }
+        # its Java updated since it started, its directory gone (e.g. a RHEL JDK update): it cannot be run (its
+        # libraries went too), its major is in the name of its directory (java-11-openjdk-11.0.20.0.8-1.el8.x86_64,
+        # java-1.8.0-openjdk-..., jdk-17.0.9+9); read as its new build, the Java it runs once restarted, when of
+        # that major: its package installed again (RHEL: the name without -<version>-<release>.<arch>; several
+        # builds: the one /usr/bin/java is first), else /usr/bin/java when not a package (a tarball replaced by
+        # its next one; a package of another vendor is not its build); none: not read (restart it, then import again)
+        if [ ! -e "$bin" ]; then
+          home=${bin%/bin/java}; home=${home%/jre}; name=${home##*/}
+          old=$(major "$(echo "$name" | sed -nE 's/^[^0-9]*(1[.][0-9]+|[0-9]+).*/\1/p')"); new=
+          if [ -n "$old" ] && command -v rpm >/dev/null 2>&1; then
+            base=${name%-*}; base=${base%-*}
+            for n in "$base-headless" "$base"; do
+              for j in $(rpm -ql "$n" 2>/dev/null | grep '/bin/java$'); do
+                j=$(readlink -f "$j")
+                [ -n "$j" ] && [ -e "$j" ] && [ "$(jmajor "$j")" = "$old" ] || continue
+                [ -z "$new" ] || [ "$j" = "$sys" ] && new=$j
+              done
+              [ -n "$new" ] && break
+            done
+          fi
+          [ -z "$new" ] && [ -n "$old" ] && [ -n "$sys" ] && [ -z "$(package "$sys")" ] \
+            && [ "$(jmajor "$sys")" = "$old" ] && new=$sys
+          if [ -n "$new" ]; then
+            echo "javaupdated=$bin"
+            bin=$new
+            # JAVA_HOME of the unit the Java gone: the next start fails until it is changed
+            uh=$(systemctl show cassandra -p Environment --value 2>/dev/null | tr ' ' '\n' | sed -n 's/^JAVA_HOME=//p' | head -1)
+            uh=${uh%/}; uh=${uh%/jre}
+            [ -n "$uh" ] && [ "$uh" = "$home" ] && echo "javahomegone=$uh"
+          fi
+        fi
+        jv=$(release "$bin")
+        # else the Java run once (a JVM to start; not one whose directory is gone: it cannot run)
+        [ -n "$jv" ] || [ ! -e "$bin" ] || jv=$(/proc/$pid/exe -XshowSettings:properties -version 2>&1 | sed -n 's/.*java.specification.version = //p')
         echo "java=$jv"
         echo "javabin=$bin"
-        # the package the running java comes from, empty when none (a tarball)
-        pkg=$(rpm -qf --qf '%{NAME}\n' "$bin" 2>/dev/null) && pkg=$(echo "$pkg" | head -1) || pkg=$(dpkg -S "$bin" 2>/dev/null | cut -d: -f1) || pkg=
-        echo "javapkg=$pkg"
-        echo "sysjava=$([ -e /usr/bin/java ] && readlink -f /usr/bin/java)"
+        echo "javapkg=$(package "$bin")"
+        echo "sysjava=$sys"
         # where the config really is (/etc/cassandra/conf of the RPM is an alternatives link)
         case $cfg in /*) d=${cfg%/*} ;; *) d=/etc/cassandra/conf ;; esac
         echo "conftarget=$(readlink -f "$d" 2>/dev/null)"
@@ -612,6 +655,10 @@
         import_cluster_java_home: "{{ _kv.javabin | dirname | dirname if _kv.javapkg | default('') == '' else '' }}"
         import_cluster_system_java: "{{ _kv.sysjava | default('') }}"
         import_cluster_java_bin: "{{ _kv.javabin | default('') }}"
+        # updated since Cassandra started: the java it runs, gone (the java read is its new build)
+        import_cluster_java_updated: "{{ _kv.javaupdated | default('') }}"
+        # its unit's JAVA_HOME, that Java gone
+        import_cluster_java_home_gone: "{{ _kv.javahomegone | default('') }}"
         import_cluster_held: "{{ _kv.held | default('') | split }}"
         import_cluster_dsbulk: "{{ _kv.dsbulk | default('') }}"
         import_cluster_repo_files: "{{ _kv.repo_files | default('') | split }}"
@@ -806,6 +853,19 @@
       when:
         - import_cluster_series is defined
         - import_cluster_java | default('') == ''
+
+    # its new build read, but the unit points JAVA_HOME at the Java gone: Cassandra would not start again
+    - name: Note a JAVA_HOME of a Java gone
+      ansible.builtin.set_fact:
+        import_cluster_error: >-
+          its unit sets JAVA_HOME={{ import_cluster_java_home_gone }}, the Java removed by an update since Cassandra
+          started: the next start would fail. Point JAVA_HOME at its new build
+          ({{ import_cluster_java_bin | regex_replace('/bin/java$', '') | regex_replace('/jre$', '') }}) in the unit
+          (systemctl edit cassandra), restart Cassandra, then import again
+      when:
+        - import_cluster_series is defined
+        - import_cluster_error is not defined
+        - import_cluster_java_home_gone | default('') != ''
 
     # no_log hides the error too: the rescue says what failed, without the values
     # the series says it was read

@@ -30,6 +30,7 @@ from ansible_collections.community.cassandra.plugins.filter import cassandra_nod
 KEYS = ("ansible_facts", "ansible_host", "import_cluster_address", "import_cluster_config",
         "import_cluster_conf_dir", "import_cluster_dsbulk", "import_cluster_error", "import_cluster_held",
         "import_cluster_java", "import_cluster_java_bin", "import_cluster_java_home", "import_cluster_java_package",
+        "import_cluster_java_updated",
         "import_cluster_jmx_slurp", "import_cluster_jvm_cmdline",
         "import_cluster_keep", "import_cluster_log_dir", "import_cluster_medusa",
         "import_cluster_medusa_ini", "import_cluster_newer_files", "import_cluster_os", "import_cluster_package",
@@ -206,12 +207,19 @@ def _env_log_dir(read, keep, env, conf, config_vars):
             and conf.get("cassandra_log_dir", "") not in ("", log_dir) else {})
 
 
+def _java_home(java):
+    """A java's home: the path without /bin/java, then without /jre (Java 8's jre/bin/java is its JDK's) -> path."""
+    home = java[:-len("/bin/java")] if java.endswith("/bin/java") else java
+    return home[:-len("/jre")] if home.endswith("/jre") else home
+
+
 def _java_link(hv, read):
-    """/usr/bin/java left as it is when it is another Java than the running one -> {"cassandra_java_set_default":
-    False}, {} when not."""
+    """/usr/bin/java (resolved) another Java than the running one (their homes; the new build of the running one
+    when updated since Cassandra started): the roles leave it as it is -> {"cassandra_java_set_default": False}; {}
+    when it is the running one, or when there is none (the roles make it: nodetool and the scripts need a java)."""
     java_bin, system_java = hv.get("import_cluster_java_bin", ""), hv.get("import_cluster_system_java", "")
     return ({"cassandra_java_set_default": False}
-            if read and java_bin != "" and system_java != "" and system_java != java_bin else {})
+            if read and java_bin != "" and system_java != "" and _java_home(system_java) != _java_home(java_bin) else {})
 
 
 def _merged(first, *more):
@@ -223,15 +231,18 @@ def _merged(first, *more):
 
 
 def _versions_note(hv, java_link):
-    """The note on the versions: Cassandra's, Java's (its home when not a package, its /usr/bin/java) -> text."""
+    """The note on the versions: Cassandra's, Java's (its home when not a package, /usr/bin/java when another one
+    or none, a restart pending on a new build of it) -> text."""
     java_bin, system_java = hv.get("import_cluster_java_bin", ""), hv.get("import_cluster_system_java", "")
     return "Cassandra %s, Java %s%s%s" % (
         hv.get("import_cluster_version", "?"), hv.get("import_cluster_java", "?"),
         (" (not a package: %s)" % hv["import_cluster_java_home"]) if hv.get("import_cluster_java_home", "") else "",
-        (", /usr/bin/java is %s: left as it is on this node (new nodes get the running Java as their system java)"
-         % hv.get("import_cluster_system_java")) if java_link
+        (", /usr/bin/java is %s" % system_java) if java_link
         else ", /usr/bin/java is missing: the roles will point it at the running Java"
-        if java_bin != "" and system_java == "" else "")
+        if java_bin != "" and system_java == "" else "") + (
+        "; restart pending on a new JDK: Cassandra still runs %s, removed by an update since it started, and runs"
+        " its new build %s once restarted" % (hv["import_cluster_java_updated"], java_bin)
+        if hv.get("import_cluster_java_updated", "") else "")
 
 
 def _started_note(unit, keep, unit_env):

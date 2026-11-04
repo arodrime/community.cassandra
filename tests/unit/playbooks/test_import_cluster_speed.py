@@ -61,10 +61,13 @@ def test_version_from_the_jar(tmp_path, classpath, version):
 ])
 def test_java_version_from_its_release_file(tmp_path, layout, release, java):
     (tmp_path / os.path.dirname(layout)).mkdir(parents=True)
+    (tmp_path / layout).write_text("")  # there: a java whose directory is gone is not run (it cannot)
     if release:
         (tmp_path / "jdk" / "release").write_text("IMPLEMENTOR=x\n" + release + "\n")
-    script = "bin=%s/%s\n" % (tmp_path, layout) + snippet("jv=$(", "echo \"java=$jv\"").replace(
-        "/proc/$pid/exe -XshowSettings:properties -version 2>&1", "echo '    java.specification.version = 21'")
+    # (no /usr/bin/java: the running Java alone)
+    script = "bin=%s/%s\n" % (tmp_path, layout) + snippet("release() {", "echo \"java=$jv\"").replace(
+        "/proc/$pid/exe -XshowSettings:properties -version 2>&1", "echo '    java.specification.version = 21'").replace(
+        "/usr/bin/java", "%s/no/java" % tmp_path)
     assert run(script, tmp_path) == "java=" + java
 
 

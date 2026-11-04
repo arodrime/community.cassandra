@@ -137,6 +137,9 @@ KEEP = {
     "cassandra_data_disk_tuning": ("the tuning of its data devices (read-ahead, scheduler, udev rule, tuned profiles),"
                                    " which cassandra_linux would change"),
 }
+# The KEEP switch put in the cluster's group_vars when every node was read and has it (a node added later gets it
+# too)
+JAVA_DEFAULT = "cassandra_java_set_default"
 # KEEP switches of nodes the roles set up (not another way)
 SET_UP_BY_THE_ROLES = ("cassandra_data_disk_tuning",)
 IPV4 = "{{ ansible_facts['default_ipv4']['address'] }}"
@@ -2272,12 +2275,28 @@ def _layout_notes(cluster_name, cluster, nodes, read, differences, host_vars, me
     return report
 
 
-def _node_report(n):
-    """A node read in the report: its notes, what the roles leave as it is on it, its hand edits (in files kept or
-    not), its comment lines, its lines the role writes another way -> [line]."""
+def _java_default_line(read, cluster, grouped):
+    """The report's line on the system java the roles leave as it is (cassandra_java_set_default: false): on
+    which nodes, why, where it is set, what true would do -> [line], [] when on no node."""
+    names = [n["name"] for n in read if JAVA_DEFAULT in (n.get("keep") or {})]
+    if not names:
+        return []
+    return ["SYSTEM JAVA: /usr/bin/java is another Java than the one Cassandra runs on %s; the roles leave it as it is"
+            " (cassandra_java_set_default: false in %s). true would make the running Java the system java"
+            " (alternatives), for every program that runs java"
+            % (("every node", "group_vars/%s/main.yml, for nodes added later too: one without a /usr/bin/java gets"
+                " the running Java's, one with another needs JAVA_HOME, e.g. in cassandra_service_environment"
+                % cluster) if grouped else (", ".join(names), "their host_vars")), ""]
+
+
+def _node_report(n, grouped=()):
+    """A node read in the report: its notes, what the roles leave as it is on it (grouped: those in the cluster's
+    group_vars left out), its hand edits (in files kept or not), its comment lines, its lines the role writes
+    another way -> [line]."""
     report = ["== %s" % n["name"]]
     report += ["  " + note for note in n.get("notes", [])]
-    other_way = dict((k, v) for k, v in (n.get("keep") or {}).items() if k not in SET_UP_BY_THE_ROLES)
+    other_way = dict((k, v) for k, v in (n.get("keep") or {}).items()
+                     if k not in SET_UP_BY_THE_ROLES and k not in grouped)
     if other_way:
         report.append("  Set up another way, LEFT AS IT IS by the roles on this node (host_vars/%s/main.yml;"
                       " remove a line to let the role take it over, after --check --diff; a host"
@@ -2336,15 +2355,22 @@ def cassandra_inventory_layout(nodes, cluster_name):
              and k not in PER_NODE]
     differences = ["DIFFERENCES BETWEEN NODES (kept per group or node, check they are wanted):"]
     differences += _differences(drift, read, dcg, rackg) or ["  none"]
+    # the system java left as it is on every node, all read: in the cluster's group (the nodes keep it in "keep")
+    grouped = ((JAVA_DEFAULT,) if read and len(read) == len(nodes)
+               and all(JAVA_DEFAULT in (n.get("keep") or {}) for n in read) else ())
+    if grouped:
+        group_vars[cluster][JAVA_DEFAULT] = False
     report = _layout_notes(cluster_name, cluster, nodes, read, differences, host_vars, medusa, domain, templates,
                            shared)
+    report += _java_default_line(read, cluster, bool(grouped))
     for n in nodes:
-        if n.get("keep"):
-            host_vars.setdefault(n["name"], {}).update(n["keep"])
-        if any(k in IMPORTED_FOR for k in n.get("keep") or {}):
+        keep = dict((k, v) for k, v in (n.get("keep") or {}).items() if k not in grouped)
+        if keep:
+            host_vars.setdefault(n["name"], {}).update(keep)
+        if any(k in IMPORTED_FOR for k in keep):
             host_vars[n["name"]][IMPORTED] = True
     for n in read:
-        report += _node_report(n)
+        report += _node_report(n, grouped)
     report += _os_section(read)
     return {"cluster_group": cluster, "cluster_name": cluster_name, "hosts": hosts, "group_vars": group_vars,
             "host_vars": host_vars, "differences": "\n".join(differences), "report": "\n".join(report),

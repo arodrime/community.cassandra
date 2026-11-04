@@ -59,9 +59,10 @@
       when: cassandra_jvm.pid is defined
 
     # The running java is a resolved path: resolve the wanted home the same way
+    # (-m: a tarball not unpacked yet, its directories missing)
     - name: Resolve the wanted Java home
       ansible.builtin.command:
-        argv: [readlink, -f, "{{ _cassandra_java_home }}"]
+        argv: [readlink, -m, "{{ _cassandra_java_home }}"]
       register: cassandra_update_java_home
       changed_when: false
       failed_when: false
@@ -83,6 +84,85 @@
           {{ cassandra_update_java_spec.stderr | default('') | regex_findall('java[.]specification[.]version = (\S+)')
              | first | default('') }}
         _major: "{{ _spec.split('.')[1] if _spec.startswith('1.') else _spec }}"
+
+    # cassandra_java_set_default false leaves /usr/bin/java as it is (e.g. set so by import_cluster): Cassandra
+    # restarts on the new Java only through a JAVA_HOME that is its home. That JAVA_HOME: cassandra_service_environment,
+    # or the unit itself when it is kept (cassandra_service_environment does not reach it); then resolved, as the
+    # wanted home is (-m: a tarball not unpacked yet), and the Java version of its release file (a Java 8 jre: the
+    # one above it)
+    - name: Read the JAVA_HOME Cassandra is given
+      ansible.builtin.shell: |
+        if [ "$UNIT_KEPT" = yes ]; then
+          jh=$(systemctl show cassandra -p Environment --value 2>/dev/null | tr ' ' '\n' | sed -n 's/^JAVA_HOME=//p' | head -1)
+        else
+          jh=$GIVEN
+        fi
+        echo "$jh"
+        [ -n "$jh" ] || exit 0
+        h=$(readlink -m "$jh")
+        echo "$h"
+        sed -n 's/^JAVA_VERSION="\(.*\)"$/\1/p' "$h/release" "$h/../release" 2>/dev/null | head -1
+        exit 0
+      environment:
+        GIVEN: "{{ cassandra_service_environment.JAVA_HOME | default('') }}"
+        UNIT_KEPT: "{{ 'no' if cassandra_service_unit_manage | default(true) | bool else 'yes' }}"
+      register: cassandra_update_java_given
+      changed_when: false
+      failed_when: false
+      check_mode: false  # read-only
+      when:
+        - cassandra_update_java_todo | bool
+        - not cassandra_java_set_default | bool
+
+    # why Cassandra would restart on another Java than the new one, "" when it would not
+    - name: Note what JAVA_HOME Cassandra restarts with
+      ansible.builtin.set_fact:
+        cassandra_update_java_kept: "{{ _why }}"
+      vars:
+        _given: "{{ cassandra_update_java_given.stdout_lines | default([]) }}"
+        _set: "JAVA_HOME={{ _given[0] | default('') }}"
+        _home: "{{ _given[1] | default('') }}"
+        _given_major: "{{ _given[2] | default('') | regex_replace('^1[.]', '') | regex_replace('[._+-].*$', '') }}"
+        _wanted: "{{ cassandra_update_java_home.stdout | default('', true) or _cassandra_java_home }}"
+        _kept_unit: "{{ not cassandra_service_unit_manage | default(true) | bool }}"
+        _where: >-
+          {{ 'its unit (kept: cassandra_service_unit_manage false; edit it by hand, systemctl edit cassandra)'
+             if _kept_unit | bool else 'cassandra_service_environment' }}
+        _why: >-
+          {{ '' if cassandra_java_set_default | bool or not cassandra_update_java_todo | bool
+             else ('no JAVA_HOME in ' ~ _where) if _given[0] | default('') == ''
+             else (_set ~ ' in ' ~ _where ~ ' is not the new Java (' ~ _wanted ~ ')')
+             if _cassandra_java_home != '' and _home != _wanted
+             else (_set ~ ' in ' ~ _where ~ ' is not a Java ' ~ cassandra_java_version ~ ' installed here: install '
+                   ~ [cassandra_java_package] | flatten | join(' ') ~ ' first (update_java installs it only after this'
+                   ~ ' check)')
+             if _cassandra_java_home == '' and _given_major != cassandra_java_version | string
+             else '' }}
+
+    - name: Cassandra restarts on the new Java
+      ansible.builtin.assert:
+        that: _kept | length == 0
+        fail_msg: >-
+          {{ (['Cassandra would not restart on Java ' ~ cassandra_java_version ~ ': '
+               ~ ('this node keeps its' if _kept | length == 1 else 'these nodes keep their')
+               ~ ' /usr/bin/java (cassandra_java_set_default: false), and '
+               ~ ('its' if _kept | length == 1 else 'their') ~ ' JAVA_HOME does not lead to it:']
+              + _kept | map('regex_replace', '^', '  ') | list
+              + ['Set JAVA_HOME to the home of the new Java (cassandra_java_home, a tarball one, or the package one,'
+                 ' installed) in cassandra_service_environment, or in the unit itself when it is kept (systemctl edit'
+                 ' cassandra), or remove cassandra_java_set_default: false to make it the system java. Nothing was'
+                 ' done.']) | join(_nl) }}
+        quiet: true
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"
+        _kept: >-
+          {%- set out = [] -%}
+          {%- for host in ansible_play_hosts_all if hostvars[host].cassandra_update_java_kept | default('') != '' -%}
+          {%-   set _ = out.append(host ~ ': ' ~ hostvars[host].cassandra_update_java_kept) -%}
+          {%- endfor -%}
+          {{ out }}
+      run_once: true
 
     - name: The new Java reads an options file the role writes
       ansible.builtin.include_role:

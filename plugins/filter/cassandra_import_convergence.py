@@ -21,7 +21,7 @@ from ansible.module_utils.parsing.convert_bool import boolean
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import FILES, THEN
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    IDENTITY, KEEP, PER_NODE, ROLE, SERIES, group_chains, hand_edits_kept, template_vars, undefined_name)
+    IDENTITY, JAVA_DEFAULT, KEEP, PER_NODE, ROLE, SERIES, group_chains, hand_edits_kept, template_vars, undefined_name)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import terminal_width
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
     ARROW_RIGHT, DASH, REPORT_WIDTH, SCREEN_VALUE, aligned_rows, name_column, cut_text, fill_text, report_sections, who_text, unbreakable)
@@ -596,7 +596,10 @@ def _report_head(score, items, layout, data, read, width, self_check_ok):
     if left:
         lines += fill_text("Not counted, per node by nature or kept by each node for life: %s" % ", ".join(left),
                            width, "  ", "  ")
-    switches = sorted(set(k for n in nodes for k in n.get("keep") or {} if k in KEEP))
+    # (the system java kept in the cluster's group_vars is not in host_vars)
+    grouped = JAVA_DEFAULT in ((layout.get("group_vars") or {}).get(cluster) or {})
+    switches = sorted(set(k for n in nodes for k in n.get("keep") or {}
+                          if k in KEEP and not (grouped and k == JAVA_DEFAULT)))
     if switches:
         lines += fill_text("Also in host_vars: %s (LEFT AS IT IS above)" % ", ".join("%s: false" % k for k in switches),
                            width, "  ", "  ")
