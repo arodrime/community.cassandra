@@ -234,7 +234,14 @@ Role Variables
   releases took here, e.g. `disk_access_mode`, `auto_bootstrap`,
   `heap_dump_path`, the streaming and memtable settings above);
   but `audit_logging_options` takes the sub-keys no variable covers (e.g.
-  `{audit_logging_options: {included_categories: DDL}}`), written in that section.
+  `{audit_logging_options: {included_categories: DDL}}`), written in that section;
+  its logger is `cassandra_audit_logger_class_name` and
+  `cassandra_audit_logger_parameters` (default `{}`: a mapping, written under
+  the logger entry as the one item of its `parameters` list, in its order, each
+  value written quoted, so the logger gets text; the stock loggers ignore them,
+  so this is for a custom logger, e.g. `{log_dir: /srv/audit, max_files: "7"}`;
+  a key is a plain word, not `on`, `yes` or `null`, and a value a text, a
+  number or a boolean on one line, else the role refuses it).
   Cassandra refuses unknown keys at startup: so does the role, before
   writing anything, for a key the installed release (else the series) does
   not accept.

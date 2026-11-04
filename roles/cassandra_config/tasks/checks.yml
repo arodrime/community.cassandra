@@ -70,6 +70,30 @@
       {%- endif -%}
       {{ out }}
 
+- name: Refuse audit logger parameters the template cannot write
+  ansible.builtin.assert:
+    that: cassandra_audit_logger_parameters is mapping and _wrong | length == 0
+    fail_msg: >-
+      cassandra_audit_logger_parameters: {{ _wrong | join(', ') if _wrong else 'a mapping is expected' }}. A key is
+      written plain: a letter or _ first, then letters, digits, _ . or -, not a word YAML reads as a boolean or
+      null (on, yes, null...); a value is a text, a number or a boolean, on one line, without control characters
+  vars:
+    # each key that cannot be written plain (shown as JSON), and the key of each value that cannot be written (the
+    # value not shown: it may be a secret)
+    _wrong: >-
+      {%- set out = [] -%}
+      {%- for key, value in (cassandra_audit_logger_parameters.items() if cassandra_audit_logger_parameters is mapping
+                             else []) -%}
+      {%-   if not (key is string and key is match(_cassandra_config_plain_key)) -%}
+      {%-     set _ = out.append('key ' ~ (key | string | to_json)) -%}
+      {%-   elif not (value is string or value is number or value is boolean)
+                 or value | string is search(_cassandra_config_unwritable_text) -%}
+      {%-     set _ = out.append('the value of ' ~ key) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+  when: cassandra_audit_logger_parameters | length > 0
+
 - name: Refuse extra settings the template already has
   ansible.builtin.assert:
     that: _taken | length == 0
@@ -98,19 +122,23 @@
       {%- for section, own in _cassandra_config_extra_sections.items() if section in cassandra_extra_settings -%}
       {%- set value = cassandra_extra_settings[section] -%}
       {%- set _ = out.extend([section] if value is not mapping
-                             else value | list | intersect(own) | map('regex_replace', '^', section ~ '.')) -%}
+                             else value | list | intersect(own | list) | map('regex_replace', '^', section ~ '.')) -%}
       {%- endfor -%}
       {{ out }}
     # 4.1+: a key's former name -> its variable
     _old: >-
       {{ {} if cassandra_version == '40x'
          else _cassandra_config_old_names | combine(_cassandra_config_old_names_of[_cassandra_config_series] | default({})) }}
-    # each with its variable: the one of its template line, or the one its former name goes with
+    # each with its variable: the one of its template line, a section's sub-key's (_cassandra_config_extra_sections),
+    # or the one its former name goes with
     _named: >-
       {%- set out = [] -%}
       {%- for key in _taken -%}
       {%-   set line = _template | regex_findall('(?m)^(?:\{\{[^}]*\}\})?' ~ key.split('.') | first ~ ':.*$') | first | default('') -%}
+      {%-   set part = key.split('.') -%}
       {%-   set var = _old[key] if key in _old and key not in _keys
+                      else _cassandra_config_extra_sections[part[0]][part[1]]
+                           if part | length == 2 and part[1] in _cassandra_config_extra_sections.get(part[0], {})
                       else line | regex_findall('cassandra_\w+') | first | default('') -%}
       {%-   set _ = out.append(key ~ ((' (' ~ var ~ ')') if var else '')) -%}
       {%- endfor -%}

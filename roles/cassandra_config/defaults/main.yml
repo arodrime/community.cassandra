@@ -184,6 +184,11 @@ cassandra_batch_size_fail_threshold: "50KiB"
 cassandra_unlogged_batch_across_partitions_warn_threshold: 10
 cassandra_audit_logging_enabled: false
 cassandra_audit_logger_class_name: "BinAuditLogger"
+# The logger's parameters: a mapping, written under the logger entry as the one
+# item of its parameters list, each value written quoted, so the logger gets text.
+# The stock loggers ignore them: for a custom logger, e.g.
+# {log_dir: /srv/audit, max_files: "7"}
+cassandra_audit_logger_parameters: {}
 cassandra_diagnostic_events_enabled: false
 cassandra_repaired_data_tracking_for_range_reads_enabled: false
 cassandra_repaired_data_tracking_for_partition_reads_enabled: false
@@ -313,7 +318,8 @@ cassandra_gc_warn_threshold_in_ms: ""
 # e.g. {commitlog_total_space: 8192MiB}. Keys the template already has are
 # refused (use their variable), but audit_logging_options takes the sub-keys no
 # variable covers ({audit_logging_options: {included_categories: DDL}}),
-# written in that section; Cassandra refuses unknown keys at startup.
+# written in that section (its logger: cassandra_audit_logger_class_name and
+# _parameters); Cassandra refuses unknown keys at startup.
 cassandra_extra_settings: {}
 
 # ---- cassandra-env.sh ----

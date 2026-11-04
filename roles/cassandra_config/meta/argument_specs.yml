@@ -673,6 +673,16 @@ argument_specs:
         default: BinAuditLogger
         description:
         - C(audit_logging_options.logger) class.
+      cassandra_audit_logger_parameters:
+        type: dict
+        default: {}
+        description:
+        - >-
+          C(audit_logging_options.logger) parameters, written under the logger entry as the one item of its
+          C(parameters) list, in their order, each value written quoted, so the logger gets text (quote a number
+          or a boolean: C(true) would be written C("True")). The stock loggers ignore them: for a custom logger,
+          e.g. C({log_dir: /srv/audit, max_files: "7"}). A key is a plain word (a letter or C(_) first, not
+          C(on), C(yes) or C(null)), a value a text, a number or a boolean on one line: the role refuses others.
       cassandra_diagnostic_events_enabled:
         type: bool
         default: false

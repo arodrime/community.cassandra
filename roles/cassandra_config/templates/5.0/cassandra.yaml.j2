@@ -1894,7 +1894,7 @@ unlogged_batch_across_partitions_warn_threshold: {{ cassandra_unlogged_batch_acr
 audit_logging_options:
   enabled: {{ cassandra_audit_logging_enabled | lower }}
   logger:
-    - class_name: {{ cassandra_audit_logger_class_name }}{{ ('\n' ~ cassandra_extra_settings.audit_logging_options | to_nice_yaml(indent=2) | trim | indent(2, true)) if cassandra_extra_settings.audit_logging_options | default(none) is mapping and cassandra_extra_settings.audit_logging_options else '' }}
+    - class_name: {{ cassandra_audit_logger_class_name }}{{ ('\n      parameters:\n        - ' ~ cassandra_audit_logger_parameters | list | zip(cassandra_audit_logger_parameters.values() | map('string') | map('to_json', ensure_ascii=False)) | map('join', ': ') | join('\n          ')) if cassandra_audit_logger_parameters else '' }}{{ ('\n' ~ cassandra_extra_settings.audit_logging_options | to_nice_yaml(indent=2) | trim | indent(2, true)) if cassandra_extra_settings.audit_logging_options | default(none) is mapping and cassandra_extra_settings.audit_logging_options else '' }}
   # audit_logs_dir:
   # included_keyspaces:
   # excluded_keyspaces: system, system_schema, system_virtual_schema

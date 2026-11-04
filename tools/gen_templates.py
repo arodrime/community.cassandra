@@ -52,9 +52,10 @@ EXTRA = """{% set _extra = {} %}
 
 # Settings no variable covers (cassandra_extra_settings)
 {{ _extra | to_nice_yaml(indent=2) }}{% endif %}"""
-# The sub-keys cassandra_extra_settings adds to audit_logging_options (_cassandra_config_extra_sections), after
-# its logger: indented as the section's other sub-keys (fixed for each series by section_indent)
-AUDIT_LINE = "- class_name: {{ cassandra_audit_logger_class_name }}{{ ('\\n' ~ cassandra_extra_settings.audit_logging_options"
+# The audit logger's line: its parameters (cassandra_audit_logger_parameters) under its entry, then the sub-keys
+# cassandra_extra_settings adds to audit_logging_options (_cassandra_config_extra_sections), indented as the
+# section's other sub-keys (both fixed for each series by section_indent)
+AUDIT_LINE = "- class_name: {{ cassandra_audit_logger_class_name }}{{ ('\\n"
 REF_TEMPLATE = os.path.join(HERE, "..", "roles", "cassandra_config", "templates", REF_SERIES, "cassandra.yaml.j2")
 
 
@@ -360,13 +361,20 @@ def derive_yaml(ref_stock, ref_tpl, stock):
 
 
 def section_indent(lines):
-    """The audit_logging_options extra sub-keys indented as the section's own (2 spaces from 4.1 on, 4 in 4.0)."""
+    """The audit logger's parameters under its entry ("parameters:" as its class_name, its one item 2 spaces in), the
+    audit_logging_options extra sub-keys indented as the section's own (2 spaces from 4.1 on, 4 in 4.0)."""
     at = [i for i, line in enumerate(lines) if AUDIT_LINE in line]
     assert len(at) == 1, "audit_logging_options: its logger line found %d times" % len(at)
     start = max(i for i in range(at[0]) if lines[i].startswith("audit_logging_options:"))
     child = next(line for line in lines[start + 1:] if line.strip() and not line.lstrip().startswith("#"))
-    lines[at[0]] = re.sub(r"indent\(\d+, true\)", "indent(%d, true)" % (len(child) - len(child.lstrip())),
-                          lines[at[0]])
+    line = lines[at[0]]
+    entry = len(line) - len(line.lstrip()) + 2  # the logger entry's keys, after its "- "
+    line = re.sub(r"\\n *parameters:\\n *- ", lambda m: "\\n%sparameters:\\n%s- " % (" " * entry, " " * (entry + 2)),
+                  line)
+    line = re.sub(r"join\('\\n *'\)(\) if cassandra_audit_logger_parameters)",
+                  lambda m: "join('\\n%s')%s" % (" " * (entry + 4), m.group(1)), line)
+    lines[at[0]] = re.sub(r"indent\(\d+, true\)(\) if cassandra_extra_settings)",
+                          lambda m: "indent(%d, true)%s" % (len(child) - len(child.lstrip()), m.group(1)), line)
 
 
 def main(series, stock_dir, out_dir):
