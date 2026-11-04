@@ -37,8 +37,19 @@
     - name: Show the changes and confirm them
       ansible.builtin.import_tasks: confirm.yml
 
+    # before the JVM options file that loads them
+    - name: The Prometheus exporter's jar and config
+      ansible.builtin.include_tasks: prometheus_exporter.yml
+      vars:
+        _cassandra_config_perm_file: jmx_prometheus.yml  # their owner and group, the config's mode
+      when: cassandra_prometheus_exporter_enabled | bool
+
     - name: Write the files and directories
       ansible.builtin.import_tasks: apply.yml
+
+    # after the JVM options file: the old jars, everything when it is turned off
+    - name: Remove what the Prometheus exporter's agent no longer needs
+      ansible.builtin.include_tasks: prometheus_exporter_cleanup.yml
 
 - name: JMX users and cqlsh credentials
   ansible.builtin.include_tasks: access.yml

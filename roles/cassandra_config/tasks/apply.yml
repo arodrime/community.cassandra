@@ -5,7 +5,7 @@
   ansible.builtin.include_tasks: config_seed.yml
   when:
     - not ansible_check_mode
-    - (_cassandra_config_changes + _cassandra_config_perm_changes) | length > 0
+    - (_cassandra_config_changes + _cassandra_config_perm_changes + _cassandra_config_exporter_changes | default([])) | length > 0
 
 # Once the changes are confirmed, so that nothing changes on a refusal
 - name: Set up the RPM conf dir alternative

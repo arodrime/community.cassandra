@@ -1,0 +1,16 @@
+# Managed by Ansible (community.cassandra.cassandra_config): change the role variables, not this file.
+{{ (cassandra_prometheus_exporter_config if cassandra_prometheus_exporter_config | trim
+    else lookup('ansible.builtin.file', role_path ~ '/files/jmx_prometheus.yml')) | trim }}
+{% set http = {} %}
+{% if cassandra_prometheus_exporter_tls_keystore %}
+{%   set _ = http.update({'ssl': {'keyStore': {'filename': cassandra_prometheus_exporter_tls_keystore,
+                                              'password': cassandra_prometheus_exporter_tls_keystore_password},
+                                 'certificate': {'alias': cassandra_prometheus_exporter_tls_certificate_alias}}}) %}
+{% endif %}
+{% if cassandra_prometheus_exporter_username %}
+{%   set _ = http.update({'authentication': {'basic': {'username': cassandra_prometheus_exporter_username,
+                                                       'password': cassandra_prometheus_exporter_password}}}) %}
+{% endif %}
+{% if http %}
+# HTTPS and basic authentication (cassandra_prometheus_exporter_tls_*, _username, _password): read at start
+{{ {'httpServer': http} | to_nice_yaml(indent=2) }}{% endif %}
