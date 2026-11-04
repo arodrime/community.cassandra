@@ -290,7 +290,8 @@ def test_layout_drift_goes_down_and_is_reported():
     assert out["differences"].split("\n")[1:] == [
         '  cassandra_heap_size: "16G" on n3, n4; "8G" on DC dc1; (role default) on n5',
         '  cassandra_concurrent_reads: (role default) on 4 nodes; 64 on n4']
-    assert out["report"].split("\n")[3:6] == out["differences"].split("\n")  # at the top
+    # (in the report's TO REVIEW, each value summarised: not again in the details)
+    assert "DIFFERENCES BETWEEN NODES" not in out["report"]
 
 
 def test_layout_unread_node_listed():
@@ -323,16 +324,17 @@ def test_layout_drift_of_a_dict_value():
     nodes = [node("n1", "dc1", "r1", cassandra_extra_settings=Tagged(commitlog_total_space="8192MiB")),
              node("n2", "dc1", "r1")]
     out = cassandra_inventory_layout(nodes, "c")
-    assert '{"commitlog_total_space": "8192MiB"}' in out["report"]
+    assert '{"commitlog_total_space": "8192MiB"}' in out["differences"]
 
 
 def test_report_masks_passwords():
     nodes = [{"name": "n%d" % i, "dc": "dc1", "rack": "r1", "read": True, "notes": [], "normalized": [],
               "vars": {"cassandra_server_keystore_password": "pw%d" % i},
               "hand_edits": ["cassandra.yaml, line 3:", "  + keystore_password: hand%d" % i]} for i in (1, 2)]
-    report = cassandra_inventory_layout(nodes, "Prod")["report"]
-    assert "pw1" not in report and "hand1" not in report
-    assert "cassandra_server_keystore_password: **** on n1; **** on n2" in report
+    layout = cassandra_inventory_layout(nodes, "Prod")
+    report = layout["report"]
+    assert "pw1" not in report + layout["differences"] and "hand1" not in report
+    assert "cassandra_server_keystore_password: **** on n1; **** on n2" in layout["differences"]
     assert "keystore_password: ****" in report
 
 

@@ -2315,14 +2315,14 @@ def _name_templates(keys, read):
     return templates
 
 
-def _layout_notes(cluster_name, cluster, nodes, read, differences, host_vars, medusa, domain, templates, shared):
-    """The report's head: the cluster, its group, the differences between nodes, the secrets set per node, rackdc's
+def _layout_notes(cluster_name, cluster, nodes, read, host_vars, medusa, domain, templates, shared):
+    """The report's head: the cluster, its group, the secrets set per node, rackdc's
     dc= and rack= kept, Medusa's fqdn, the values from each node's name, the names shared, the nodes not read ->
     [line]."""
-    report = ["Cluster %s: %d node(s), %d read" % (cluster_name, len(nodes), len(read)),
+    report = ["Cluster %s: %s, %d read" % (cluster_name, out.plural(len(nodes), "node"), len(read)),
               "Inventory group: %s (the playbooks find it in an inventory of this cluster alone; with other clusters:"
               " -e cassandra_hosts=%s, or CASSANDRA_CLUSTER=%s)" % (cluster, cluster, cluster), ""]
-    report += differences + [""]
+    # (the differences between nodes: in the report's TO REVIEW, each value summarised)
     per_node = sorted({k for v in host_vars.values() for k in v if k.startswith(SECRET_VAR)})
     if per_node:
         report += ["SECRETS OF HAND EDITS PER NODE: %s are set per node (host_vars/<node>/secrets.yml): a node"
@@ -2398,7 +2398,7 @@ def _node_report(n, grouped=()):
                       " (cassandra_config_keep_files; nodes added later get the role's):")
         report += ["    " + line for line in out.mask_hunks(kept)]
     if edits:
-        report.append("  HAND EDITS no variable covers (cassandra_config would revert them):")
+        report.append("  Hand edits no variable carries (apply_config would put the file back as the collection writes it):")
         report += ["    " + line for line in out.mask_hunks(edits)]
     if not n["hand_edits"]:
         report.append("  No hand edit left: cassandra_config would not change the config.")
@@ -2444,7 +2444,7 @@ def cassandra_inventory_layout(nodes, cluster_name):
                and all(JAVA_DEFAULT in (n.get("keep") or {}) for n in read) else ())
     if grouped:
         group_vars[cluster][JAVA_DEFAULT] = False
-    report = _layout_notes(cluster_name, cluster, nodes, read, differences, host_vars, medusa, domain, templates,
+    report = _layout_notes(cluster_name, cluster, nodes, read, host_vars, medusa, domain, templates,
                            shared)
     report += _java_default_line(read, cluster, bool(grouped))
     for n in nodes:

@@ -437,12 +437,24 @@ def mask_hunks(lines):
     return shown
 
 
+# a dict key that is a file's name with a file mode as its value (cassandra_config_file_permissions'
+# jmxremote.password: "0400"): not a secret's name; ssl.password: "x" still is
+FILE_NAME = re.compile(r"^[\w-]+(\.[\w-]+)*\.[A-Za-z]{2,12}$")
+MODE = re.compile(r"^0?[0-7]{3,4}$")
+
+
+def file_mode(key, value):
+    """True when key is a file's name and value a file mode (0400, 640): never a secret."""
+    return bool(FILE_NAME.match(str(key))) and not isinstance(value, bool) and bool(MODE.match(str(value)))
+
+
 def hidden(key, value):
     """True when value of key is (or holds) a secret: the output shows it as ****, import_cluster writes it to
-    secrets.yml. A name of SECRET (not a path: cassandra_jmx_password_file), or a secret inside the value (a
-    key: value, key=value, -pw value in a string, a dict or list that holds one); never an empty value."""
+    secrets.yml. A name of SECRET (not a path: cassandra_jmx_password_file; not a file's name with a mode as its
+    value, file_mode), or a secret inside the value (a key: value, key=value, -pw value in a string, a dict or
+    list that holds one); never an empty value."""
     if isinstance(value, dict):
-        return any(hidden(str(k), v) for k, v in value.items())
+        return any(hidden("" if file_mode(k, v) else str(k), v) for k, v in value.items())
     if isinstance(value, (list, tuple)):
         return bool(_HIDDEN.search(key)) or any(hidden(key, v) for v in value)
     if value == "" or value is None:

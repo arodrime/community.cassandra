@@ -361,6 +361,10 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
         "vars": node_vars,
         # the OS tuning found on it, for the report
         "os": hv.get("import_cluster_os", {}) if read else {},
+        # what it runs, for the report
+        "versions": {"cassandra": hv.get("import_cluster_version", ""), "java": hv.get("import_cluster_java", ""),
+                     "os": " ".join(str(facts.get(k, "")) for k in ("distribution", "distribution_version")).strip()}
+        if read else {},
         # what of Medusa was read: its medusa.ini (imported), its install (its version)
         "medusa": {
             "ini": read and "content" in _d(hv.get("import_cluster_medusa_ini"))

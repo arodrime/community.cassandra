@@ -333,21 +333,20 @@ def test_report_moved_cleanup_and_next(tmp_path):
     nodes = [dict(layout["nodes"][0], name="n%d" % i, address="10.0.0.%d" % i) for i in (1, 2)]
     lines = cassandra_import_report(cassandra_inventory_layout(nodes, "c"), ["/p/c.yml", "/p"], "/p/r.txt", {}, True,
                                     cwd="/p", in_git=True)
-    at = lines.index(u"MOVED — cassandra-env.sh hand edits now set by variables, the JVM gets the same arguments")
-    assert re.match(r"^  cassandra-env.sh line \d+: -Xms8G -Xmx8G -XX:\+AlwaysPreTouch:$", lines[at + 1])
-    assert re.match(r"^ +cassandra_heap_size: 8G; cassandra_jvm17_extra_options +all$", lines[at + 2])
-    assert lines[at + 3] == ("  cassandra_jvm17_extra_options: read by that Java only; after update_java, move them to"
+    at = next(i for i, line in enumerate(lines) if line.startswith("  Hand edits moved to variables: "))
+    assert re.match(r"^    cassandra-env.sh line \d+: -Xms8G -Xmx8G -XX:\+AlwaysPreTouch -> cassandra_heap_size: 8G;"
+                    r" cassandra_jvm17_extra_options   all \(2 nodes\)$", lines[at + 2])
+    assert " ".join(x.strip() for x in lines[at + 3:at + 5]) == (
+        "nothing to do now; the next apply_config rewrites cassandra-env.sh, jvm17-server.options in the collection's"
+        " layout and restarts these nodes (same Java options)")
+    assert lines[at + 5] == ("    cassandra_jvm17_extra_options: read by that Java only; after update_java, move them to"
                              " the new Java's")
-    assert lines[at + 4] == ("  apply_config rewrites cassandra-env.sh, jvm17-server.options on all nodes in the"
-                             " collection's layout (same JVM arguments; it restarts the nodes it writes)")
-    at = lines.index(u"CLEANUP — options the running JVM does not use: left out of the lines moved, else left as"
-                     u" they are")
-    assert re.match(r"^  jvm11-server.options line \d+: -Xmx4G: +not read, Java 17 reads jvm17-server.options +all$",
-                    lines[at + 1])
-    assert u"  1. cassandra-env.sh hand edits moved to variables (see MOVED): apply_config rewrites cassandra-env.sh," \
-        u" jvm17-server.options and restarts all nodes (same JVM arguments)" in lines
-    assert [line for line in lines if "apply_config --check --diff" in line][0].endswith(
-        "expect: cassandra-env.sh, jvm17-server.options rewritten (same JVM arguments, see MOVED), nothing else")
+    at = lines.index("  Java options the running Java does not use (left out of the lines moved, else left as they are)")
+    assert re.match(r"^    jvm11-server.options line \d+: -Xmx4G   all \(2 nodes\)$", lines[at + 1])
+    assert lines[at + 2] == "      not read, Java 17 reads jvm17-server.options"
+    assert "1 hand edit moved" in lines[0]
+    assert u"\u2192 expect cassandra-env.sh, jvm17-server.options rewritten (same Java options, see TO REVIEW), nothing" \
+        u" else" in " ".join(x.strip() for x in lines[lines.index("WHAT TO DO NEXT"):])
 
 
 # --- what the JVM gets from its arguments ----------------------------------------
@@ -511,8 +510,8 @@ def test_why_not_moved_said_in_the_report(tmp_path):
     inventory, layout, node = imported(files, "50x", "17", launch(files, "17", tmp_path))
     assert node["not_moved"] == "the JVM would get other values of ConcGCThreads"
     lines = cassandra_import_report(layout, ["/p/c.yml", "/p"], "/p/r.txt", {}, False, cwd="/p", in_git=True)
-    assert ("  cassandra-env.sh JVM_OPTS lines, heap: not moved to variables, the JVM would get other values of"
-            " ConcGCThreads (all)") in lines
+    at = lines.index("    cassandra-env.sh JVM_OPTS lines and heap, not moved to variables   all (1 node)")
+    assert lines[at + 1] == "      the JVM would get other values of ConcGCThreads"
 
 
 def test_why_not_moved_holds_names_only(tmp_path):

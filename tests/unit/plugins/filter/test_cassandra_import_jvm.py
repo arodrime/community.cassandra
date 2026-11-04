@@ -218,7 +218,7 @@ def test_the_node_keeps_the_file_and_the_report_says_why():
     assert entry["keep"]["cassandra_config_keep_files"] == ["cassandra.yaml", "jvm11-server.options"]
 
 
-def test_the_warnings_go_to_the_todo_once_for_all_the_nodes():
+def test_the_warnings_to_review_once_for_all_the_nodes():
     config = cassandra_config_import(node_files("50x", cassandra_jvm_extra_options=["-Xss1024M"]), "50x", FACTS,
                                      java="17")
     nodes = []
@@ -229,8 +229,9 @@ def test_the_warnings_go_to_the_todo_once_for_all_the_nodes():
     assert not [n for n in nodes[0]["notes"] if "WARNING" in n]  # in the TO DO only, as the rejected keys
     layout = cassandra_inventory_layout(nodes, "c")
     lines = cassandra_import_report(layout, ["c.yml", "."], "report.txt", {}, True, width=400, in_git=False)
-    todo = [line for line in lines if ". WARNING" in line]
-    assert todo == ["  1. WARNING  node1, node2: " + config["jvm_warnings"][0]]
+    option, dummy, why = config["jvm_warnings"][0].partition("): ")
+    at = lines.index("    %s)   all (2 nodes)" % option)  # (under TO REVIEW, once for both)
+    assert lines[at + 1] == "      " + why and lines.index("TO REVIEW") < at
 
 
 def test_self_check_names_the_file_a_41_on_java_17_reads():

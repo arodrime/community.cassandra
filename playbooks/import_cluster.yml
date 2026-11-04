@@ -1475,7 +1475,7 @@
       {%- set out = [] -%}
       {%- for n in _nodes | default([]) if not n.read | bool -%}{%- set _ = out.append(_layout.names[n.address]) -%}{%- endfor -%}
       {{ out }}
-    # report.txt: setting by setting, each value with the nodes that have it (cassandra_import_report);
+    # report.txt: by urgency, TO DO, TO REVIEW, FOR INFO, then the details (cassandra_import_report);
     # report.check.txt under --check (the real one left as it is)
     _report_args:
       written: ["{{ _dir ~ '/' ~ _hosts_file }}", "{{ _dir }}"]
@@ -1495,16 +1495,12 @@
            allow_unread=_report_args.allow_unread | bool,
            self_check_error=_self_check_error | default(''), changes=_changes, todo=_report_args.todo,
            convergence=_convergence) | join(_newline) }}
-    # CONVERGENCE: how far the cluster is from one group, every setting in group_vars (what to change, and how);
-    # output only: the inventory is written as it is
+    # CONVERGENCE (report.txt, FOR INFO): how far the cluster is from one group, every setting in group_vars (what to
+    # change, and how); output only: the inventory is written as it is
     _convergence: >-
       {{ _layout | community.cassandra.cassandra_import_convergence(_self_check | default({}),
-           report_file=_report_args.report_file, inventory=_report_args.inventory, hosts=_report_args.hosts,
-           cwd=_report_args.cwd, self_check_ok=_self_check_ok | bool) }}
-    _convergence_screen: >-
-      {{ _layout | community.cassandra.cassandra_import_convergence(_self_check | default({}), screen=true,
-           report_file=_report_args.report_file, inventory=_report_args.inventory, hosts=_report_args.hosts,
-           cwd=_report_args.cwd, self_check_ok=_self_check_ok | bool) }}
+           inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
+           self_check_ok=_self_check_ok | bool) }}
     # the files the run wrote or removed (would, under --check) and the ones there before: a re-import that
     # changes nothing says so
     _changes:
@@ -2025,7 +2021,44 @@
       # (--check with the report in an inventory dir not there yet: not created)
       when: not ansible_check_mode or _report_args.report_file | dirname is directory
 
-    # the end of the run: its header, TO DO, SETTINGS and the CONVERGENCE score; the rest is in report.txt
+    # import_cluster_report_shareable: true (default false) also writes a copy of the report to share, next to it
+    # (report.shareable.txt; report.check.shareable.txt under --check): node names n1.., clusters c1.., addresses
+    # IP, the site's host names, domains, URLs, paths, buckets and user names replaced, secrets masked; and its key
+    # (the real names), for the operator only: report.shareable.map, mode 0600 before anything is in it, never in
+    # the copy, not written under --check
+    - name: Make the key of the shareable copy readable by its owner only
+      ansible.builtin.file:
+        path: "{{ _report_args.report_file | regex_replace('[.]txt$', '') ~ '.shareable.map' }}"
+        state: touch
+        mode: "0600"
+        access_time: preserve
+        modification_time: preserve
+      when:
+        - import_cluster_report_shareable | default(false) | bool
+        - not ansible_check_mode
+
+    - name: Write the shareable copy of the report
+      ansible.builtin.copy:
+        content: "{{ _shareable[item.part] | join(_newline) ~ _newline }}"
+        dest: "{{ _report_args.report_file | regex_replace('[.]txt$', '') ~ '.shareable.' ~ item.extension }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - {part: text, extension: txt, mode: "0644"}
+        - {part: map, extension: map, mode: "0600"}
+      loop_control:
+        label: "{{ item.extension }}"
+      check_mode: false
+      diff: false
+      when:
+        - import_cluster_report_shareable | default(false) | bool
+        - not ansible_check_mode or _report_args.report_file | dirname is directory
+        - item.part == 'text' or not ansible_check_mode
+      vars:
+        _shareable: >-
+          {{ _report | community.cassandra.cassandra_import_shareable(_layout, _report_args.written,
+               _report_args.report_file, _report_args.cwd) }}
+
+    # the end of the run: its head, TO DO, TO REVIEW and what to do next; FOR INFO and the details in report.txt
     - name: Show the summary
       ansible.builtin.debug:
         msg: >-
@@ -2035,7 +2068,8 @@
                inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
                allow_unread=_report_args.allow_unread | bool,
                self_check_error=_self_check_error | default(''), changes=_changes, todo=_report_args.todo,
-               screen=true, strict=import_cluster_strict | default(true) | bool, convergence=_convergence_screen) }}
+               screen=true, strict=import_cluster_strict | default(true) | bool,
+               shareable=import_cluster_report_shareable | default(false) | bool) }}
       vars:
         cassandra_output: true  # printed as is by the ops callback
         cassandra_output_gap: true  # a block of its own (ops callback)

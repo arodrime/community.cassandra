@@ -1,12 +1,13 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-# import_cluster's CONVERGENCE section, its tasks run for real by ansible-playbook on what the import found (90
-# nodes): its score and first actions at the end of the run, before where the full report is; the whole section in
-# report.txt (report.check.txt under --check), before NOT READ; no secret shown.
+# import_cluster's report, its tasks run for real by ansible-playbook on what the import found (90 nodes): the end of
+# the run, the CONVERGENCE section under FOR INFO in report.txt (report.check.txt under --check), the shareable copy
+# and its key when asked; no secret shown.
 
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -21,7 +22,9 @@ TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 COLLECTIONS = os.path.abspath(os.path.join(TOP, "..", "..", ".."))
 with open(os.path.join(TOP, "playbooks", "import_cluster.yml"), encoding="utf-8") as f:
     WRITE = next(p for p in yaml.safe_load(f) if p["name"] == "Write the inventory")
-TASKS = [t for t in WRITE["tasks"] if t["name"] in ("Write report.txt", "Show the summary")]
+TASKS = [t for t in WRITE["tasks"] if t["name"] in (
+    "Write report.txt", "Make the key of the shareable copy readable by its owner only",
+    "Write the shareable copy of the report", "Show the summary")]
 
 
 def playbook(tmp_path, self_check_ok=True):
@@ -31,7 +34,7 @@ def playbook(tmp_path, self_check_ok=True):
     (tmp_path / "layout.json").write_text(json.dumps(layout))
     (tmp_path / "reports" / "big").mkdir(parents=True)
     report_dir = str(tmp_path / "reports" / "big")
-    variables = dict((k, WRITE["vars"][k]) for k in ("_report", "_convergence", "_convergence_screen", "_newline"))
+    variables = dict((k, WRITE["vars"][k]) for k in ("_report", "_convergence", "_newline"))
     variables.update(_self_check_ok=self_check_ok, _changes={"changed": [], "removed": [], "existed": []})
     plays = [{"name": "Write the inventory", "hosts": "localhost", "connection": "local", "gather_facts": False,
               "vars": variables,
@@ -60,40 +63,63 @@ def run(tmp_path, *extra, **kwargs):
 
 
 @pytest.mark.parametrize("check", [False, True])
-def test_the_section_on_the_screen_and_in_the_report(tmp_path, check):
+def test_the_report_and_the_end_of_the_run(tmp_path, check):
     rc, out = run(tmp_path, *(["--check"] if check else []))
     assert rc == 0, out
     lines = out.split("\n")
-    at = next(i for i, line in enumerate(lines) if line.startswith("CONVERGENCE  "))
-    assert lines[at].startswith("CONVERGENCE  4/11 settings common to all nodes, 7 differ, 3 files kept by hand"), out
-    assert "  Next (5 of 7, the safest first, then the fewest nodes):" in lines[at + 1:at + 3]
-    assert max(len(line) for line in lines[at:]) <= 79  # (a log's width)
-    end = next(i for i, line in enumerate(lines) if line.startswith("full report"))
-    assert end > at and "section CONVERGENCE" in " ".join(lines[at:end])
+    head = next(i for i, line in enumerate(lines) if line.startswith("IMPORT big"))
+    assert lines[head].startswith("IMPORT big%s  90 nodes (89 read)  " % (" (--check, nothing written)" if check else ""))
+    assert max(len(line) for line in lines[head:]) <= 79  # (a log's width)
     name = "report.check.txt" if check else "report.txt"
+    end = next(i for i, line in enumerate(lines) if line.startswith("full report"))
     assert lines[end] == "full report%s: reports/big/%s" % (" (--check)" if check else "", name)
+    assert "Convergence" not in " ".join(lines[head:end])  # (FOR INFO: in the report only)
     report = (tmp_path / "reports" / "big" / name).read_text()
-    assert "\nCONVERGENCE — towards one group, every setting in group_vars/big/\n" in report
-    assert report.index("\nCONVERGENCE ") < report.index("\nNOT READ ")
-    assert "  SETTINGS THAT DIFFER — the safest change first, then the fewest nodes" in report and "  KEPT BY HAND " in report
+    convergence = report.index("\n  Convergence: how close the nodes are to sharing every setting\n")
+    assert report.index("\nFOR INFO\n") < convergence < report.index("\n  Not read from the nodes")
+    assert "    SETTINGS THAT DIFFER — the safest change first, then the fewest nodes" in report
+    assert "    KEPT BY HAND " in report
     assert not (tmp_path / "reports" / "big" / ("report.txt" if check else "report.check.txt")).exists()
+    assert not list((tmp_path / "reports" / "big").glob("*shareable*"))  # (only when asked)
     for secret in SECRETS:
         assert secret not in out and secret not in report
     assert "TASK [" not in out and "fatal:" not in out
 
 
-def test_the_score_only_on_a_failed_self_check(tmp_path):
+def test_the_convergence_on_a_failed_self_check(tmp_path):
     rc, out = run(tmp_path, self_check_ok=False)
     assert rc == 0, out
-    lines = out.split("\n")
-    at = next(i for i, line in enumerate(lines) if line.startswith("CONVERGENCE  "))
-    assert "The self-check first" in " ".join(lines[at:at + 4]) and "Next (" not in out
     assert "The self-check first (SELF-CHECK above)" in (tmp_path / "reports" / "big" / "report.txt").read_text()
 
 
+@pytest.mark.parametrize("check", [False, True])
+def test_the_shareable_copy(tmp_path, check):
+    rc, out = run(tmp_path, "-e", "import_cluster_report_shareable=true", *(["--check"] if check else []))
+    assert rc == 0, out
+    stem = tmp_path / "reports" / "big" / ("report.check" if check else "report")
+    copy, key = stem.with_name(stem.name + ".shareable.txt"), stem.with_name(stem.name + ".shareable.map")
+    assert oct(copy.stat().st_mode & 0o777) == "0o644"
+    if check:  # (the key of a copy not written: none)
+        assert not key.exists()
+    else:
+        assert oct(key.stat().st_mode & 0o777) == "0o600" and "n1 = cass001" in key.read_text()
+    text = copy.read_text()
+    assert text.startswith("SHAREABLE COPY of an import_cluster report")
+    assert "\nIMPORT c1%s  90 nodes (89 read)  " % (" (--check, nothing written)" if check else "") in text
+    assert not re.search(r"cass\d{3}|10\.0\.\d+\.\d+|\b[Bb]ig\b|\bbig_", text)
+    assert "cass001" not in text
+    assert "a copy to share (names, addresses and secrets replaced; check it before sharing): reports/big/%s.shareable.txt" % stem.name in out
+
+
 def test_the_tasks_pass_the_section_on():
-    show = next(t for t in WRITE["tasks"] if t["name"] == "Show the summary")["ansible.builtin.debug"]["msg"]
-    assert "convergence=_convergence_screen)" in show and "convergence=_convergence)" in WRITE["vars"]["_report"]
-    assert "screen=true" in WRITE["vars"]["_convergence_screen"] and "screen" not in WRITE["vars"]["_convergence"]
-    for name in ("_convergence", "_convergence_screen"):
-        assert "self_check_ok=_self_check_ok | bool" in WRITE["vars"][name]
+    assert "convergence=_convergence)" in WRITE["vars"]["_report"]
+    assert "self_check_ok=_self_check_ok | bool" in WRITE["vars"]["_convergence"]
+    assert "_convergence_screen" not in WRITE["vars"]
+    shareable = next(t for t in WRITE["tasks"] if t["name"] == "Write the shareable copy of the report")
+    assert [i["mode"] for i in shareable["loop"]] == ["0644", "0600"]
+    assert "import_cluster_report_shareable | default(false) | bool" in shareable["when"]
+    # the key made 0600 before anything is written in it (no window where it is readable by others)
+    names = [t["name"] for t in WRITE["tasks"]]
+    touch = WRITE["tasks"][names.index("Make the key of the shareable copy readable by its owner only")]
+    assert names.index(touch["name"]) < names.index(shareable["name"])
+    assert touch["ansible.builtin.file"]["mode"] == "0600" and touch["ansible.builtin.file"]["state"] == "touch"
