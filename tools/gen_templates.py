@@ -235,10 +235,50 @@ def opt_number(var, key, example, off="# "):
             % (off, var, key, var, var, example))
 
 
+def opt_text(var, key, value=None):
+    # A cassandra.yaml text commented out in stock without a value ("# key:"): written once the variable is set
+    return ("# %s:" % key, "{{ '# ' if %s | string in ['', 'None'] else '' }}%s:{{ (' ' ~ %s) if %s | string not in"
+            " ['', 'None'] else '' }}" % (var, key, value or var, var))
+
+
+def comma_list(var):
+    # A text Cassandra reads as a comma-separated list: a list given joined with commas
+    return "(%s | join(',') if %s is sequence and %s is not string else %s)" % (var, var, var, var)
+
+
+# The audit_logging_options sub-keys that have a variable, each line without its indent: the derivation maps 4.1's,
+# indented as 5.0's; 4.0 indents them otherwise (SECTION_RULES)
+AUDIT_SUB_KEYS = [
+    opt_text("cassandra_audit_logs_dir", "audit_logs_dir"),
+    ("# excluded_keyspaces: system, system_schema, system_virtual_schema",
+     "{{ '' if cassandra_audit_excluded_keyspaces else '# ' }}excluded_keyspaces: {{ %s or 'system, system_schema,"
+     " system_virtual_schema' }}" % comma_list("cassandra_audit_excluded_keyspaces")),
+    opt_text("cassandra_audit_included_categories", "included_categories",
+             comma_list("cassandra_audit_included_categories")),
+    opt_text("cassandra_audit_excluded_users", "excluded_users", comma_list("cassandra_audit_excluded_users")),
+    opt_number("cassandra_audit_max_queue_weight", "max_queue_weight", "268435456 # 256 MiB"),
+    opt_number("cassandra_audit_max_log_size", "max_log_size", "17179869184 # 16 GiB"),
+]
+# cassandra.yaml lines of a section the derivation cannot map, each at the indent the stock file has it there (the same
+# commented lines may be in another section): {series: {section: [(stock line, template line), without indent]}}
+SECTION_RULES = {"4.0": {"audit_logging_options": AUDIT_SUB_KEYS}}
+
+
+def replace_in_section(lines, section, rules):
+    start = lines.index(section + ":")
+    end = next(i for i in range(start, len(lines)) if not lines[i].strip())
+    for old, new in rules:
+        hits = [i for i in range(start, end) if lines[i].strip() == old]
+        assert len(hits) == 1, "cassandra.yaml %s: %r found %d times" % (section, old, len(hits))
+        line = lines[hits[0]]
+        lines[hits[0]] = line[:len(line) - len(line.lstrip())] + new
+
+
 # cassandra.yaml lines the derivation from 5.0 cannot map (4.0 keys carry the
 # unit in their name): applied to the derived template, same as RULES
 YAML_RULES = {
     "4.0": [
+        opt_number("cassandra_native_transport_max_frame_size_in_mb", "native_transport_max_frame_size_in_mb", "256"),
         opt_number("cassandra_file_cache_size_in_mb", "file_cache_size_in_mb", "512"),
         opt_number("cassandra_memtable_heap_space_in_mb", "memtable_heap_space_in_mb", "2048"),
         opt_number("cassandra_memtable_offheap_space_in_mb", "memtable_offheap_space_in_mb", "2048"),
@@ -271,12 +311,15 @@ def replace_lines(name, lines, rules):
 
 def yaml_paths(lines):
     # One key per line: raw text for comments/blank, YAML path for settings.
-    stack, out = [], []  # stack: [indent, key, child item count]
+    stack, out, seen = [], [], {}  # stack: [indent, key, child item count]
     for line in lines:
         body = line.lstrip()
         if not body or body.startswith("#"):
-            # Indented comments repeat across sections (e.g. "  # optional: true")
-            out.append("%s\0%s" % (stack[0][1] if stack else "", line) if line.startswith(" ") else line)
+            # Indented comments repeat across sections (e.g. "  # optional: true"), and within one: the lines of
+            # the commented-out full_query_logging_options fall under audit_logging_options. Numbered: first, second...
+            key = "%s\0%s" % (stack[0][1] if stack else "", line) if line.startswith(" ") else line
+            seen[key] = seen.get(key, -1) + 1
+            out.append("%s\0%d" % (key, seen[key]) if seen[key] else key)
             continue
         indent = len(line) - len(body)
         while stack and stack[-1][0] >= indent:
@@ -397,6 +440,8 @@ def main(series, stock_dir, out_dir):
             assert ref_tpl[0] == header("cassandra.yaml"), "reference template must start with the header"
             lines, new_vars, conflicts = derive_yaml(a.read().split("\n"), ref_tpl[1:], c.read().split("\n"))
         replace_lines("cassandra.yaml", lines, YAML_RULES.get(series, []))
+        for section, rules in SECTION_RULES.get(series, {}).items():
+            replace_in_section(lines, section, rules)
         section_indent(lines)
         with open(os.path.join(out_dir, "cassandra.yaml.j2"), "w") as f:
             f.write("\n".join([header("cassandra.yaml")] + lines) + TAIL[series] + EXTRA)

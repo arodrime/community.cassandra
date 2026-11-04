@@ -160,7 +160,10 @@ Role Variables
   `cassandra_internode_streaming_tcp_user_timeout`), the auth caches'
   `cassandra_roles_update_interval`, `cassandra_permissions_update_interval`,
   `cassandra_credentials_update_interval`, the GC log thresholds
-  `cassandra_gc_log_threshold` and `cassandra_gc_warn_threshold`, and on 5.0
+  `cassandra_gc_log_threshold` and `cassandra_gc_warn_threshold`,
+  `cassandra_native_transport_max_frame_size`, from 4.1 on
+  `cassandra_auto_snapshot_ttl` (`d`, `h` or `m`) and
+  `cassandra_streaming_stats_enabled` (4.1.1+), and on 5.0
   `cassandra_sstable_format` (`sstable.selected_format`: `bti` or `big`;
   `bti` needs `cassandra_storage_compatibility_mode` `UPGRADING` or `NONE`),
   `cassandra_partition_size_warn_threshold` and
@@ -168,9 +171,13 @@ Role Variables
   rates and durations take their unit, as in the stock comments
   (`24MiB/s`, `2000ms`); 4.0 has its own variables under its key names, in
   the key's unit (`cassandra_stream_throughput_outbound_megabits_per_sec`,
-  `cassandra_roles_update_interval_in_ms`, `cassandra_file_cache_size_in_mb`...).
-  A variable of a later series (5.0's, the `entire_sstable_*` ones on 4.0) is
-  refused; one of the other naming (a 4.0 `*_in_*` variable on 4.1+, or the
+  `cassandra_roles_update_interval_in_ms`, `cassandra_file_cache_size_in_mb`,
+  `cassandra_native_transport_max_frame_size_in_mb`...).
+  A variable of a key a later series or patch release added (5.0's, the
+  `entire_sstable_*`, `auto_snapshot_ttl` and cache size ones on 4.0,
+  `streaming_stats_enabled` before 4.1.1) is refused, checked against the
+  installed release (else, or in the upgrade's preview, `cassandra_package_version`
+  when pinned, else the series' latest release known); one of the other naming (a 4.0 `*_in_*` variable on 4.1+, or the
   reverse) is ignored, as for the older variables. On 4.x, `disk_access_mode`, which the stock file has no line for,
   is written at the end, under its own header.
 * `cassandra_auto_bootstrap` (default `true`, not written): `false` writes
@@ -234,8 +241,15 @@ Role Variables
   releases took here, e.g. `disk_access_mode`, `auto_bootstrap`,
   `heap_dump_path`, the streaming and memtable settings above);
   but `audit_logging_options` takes the sub-keys no variable covers (e.g.
-  `{audit_logging_options: {included_categories: DDL}}`), written in that section;
-  its logger is `cassandra_audit_logger_class_name` and
+  `{audit_logging_options: {roll_cycle: DAILY}}`), written in that section;
+  a sub-key that has a variable is refused there too. Its variables, empty by
+  default (the stock line stays commented out): `cassandra_audit_logs_dir`,
+  the comma-separated lists `cassandra_audit_included_categories`,
+  `cassandra_audit_excluded_keyspaces` and `cassandra_audit_excluded_users`
+  (a list is written joined with commas),
+  `cassandra_audit_max_queue_weight` and `cassandra_audit_max_log_size`
+  (numbers of bytes, no unit, in every series); its logger is
+  `cassandra_audit_logger_class_name` and
   `cassandra_audit_logger_parameters` (default `{}`: a mapping, written under
   the logger entry as the one item of its `parameters` list, in its order, each
   value written quoted, so the logger gets text; the stock loggers ignore them,

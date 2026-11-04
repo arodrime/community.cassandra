@@ -189,6 +189,14 @@ cassandra_audit_logger_class_name: "BinAuditLogger"
 # The stock loggers ignore them: for a custom logger, e.g.
 # {log_dir: /srv/audit, max_files: "7"}
 cassandra_audit_logger_parameters: {}
+# Sub-keys of audit_logging_options: "" leaves the stock line commented out
+# (Cassandra's default)
+cassandra_audit_logs_dir: ""  # e.g. /srv/cassandra/audit (Cassandra: <log dir>/audit)
+cassandra_audit_included_categories: ""  # e.g. DDL,DCL,AUTH
+cassandra_audit_excluded_keyspaces: ""  # e.g. system,system_schema,system_virtual_schema,app_cache
+cassandra_audit_excluded_users: ""  # e.g. monitor,backup
+cassandra_audit_max_queue_weight: ""  # in bytes, e.g. 268435456
+cassandra_audit_max_log_size: ""  # in bytes, e.g. 17179869184
 cassandra_diagnostic_events_enabled: false
 cassandra_repaired_data_tracking_for_range_reads_enabled: false
 cassandra_repaired_data_tracking_for_partition_reads_enabled: false
@@ -232,6 +240,9 @@ cassandra_permissions_update_interval: ""  # e.g. 2000ms
 cassandra_credentials_update_interval: ""  # e.g. 2000ms
 cassandra_gc_log_threshold: ""  # e.g. 200ms
 cassandra_gc_warn_threshold: ""  # e.g. 1000ms
+cassandra_native_transport_max_frame_size: ""  # e.g. 32MiB
+cassandra_auto_snapshot_ttl: ""  # 4.1+, e.g. 30d
+cassandra_streaming_stats_enabled: ""  # 4.1.1+, true/false
 # 5.0 only: sstable.selected_format, bti or big (bti needs
 # cassandra_storage_compatibility_mode UPGRADING or NONE)
 cassandra_sstable_format: ""
@@ -313,11 +324,12 @@ cassandra_permissions_update_interval_in_ms: ""
 cassandra_credentials_update_interval_in_ms: ""
 cassandra_gc_log_threshold_in_ms: ""
 cassandra_gc_warn_threshold_in_ms: ""
+cassandra_native_transport_max_frame_size_in_mb: ""
 
 # Settings no variable covers, written as-is at the end of cassandra.yaml,
 # e.g. {commitlog_total_space: 8192MiB}. Keys the template already has are
 # refused (use their variable), but audit_logging_options takes the sub-keys no
-# variable covers ({audit_logging_options: {included_categories: DDL}}),
+# variable covers ({audit_logging_options: {roll_cycle: DAILY}}),
 # written in that section (its logger: cassandra_audit_logger_class_name and
 # _parameters); Cassandra refuses unknown keys at startup.
 cassandra_extra_settings: {}

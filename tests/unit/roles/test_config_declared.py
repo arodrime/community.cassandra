@@ -7,6 +7,7 @@ __metaclass__ = type
 # the -e names check knowing them.
 
 import os
+import re
 
 import pytest
 import yaml
@@ -15,6 +16,7 @@ from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_names import cassandra_unknown_extra_vars
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_yaml_properties as known
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
@@ -87,14 +89,14 @@ NOW_VARIABLES = ["auto_bootstrap", "disk_access_mode", "file_cache_size", "memta
                  "internode_streaming_tcp_user_timeout", "roles_update_interval", "permissions_update_interval",
                  "credentials_update_interval", "gc_log_threshold", "gc_warn_threshold", "cdc_raw_directory",
                  "heap_dump_path", "sstable", "partition_size_warn_threshold", "partition_size_fail_threshold",
-                 "column_index_size"]
+                 "column_index_size", "native_transport_max_frame_size", "auto_snapshot_ttl", "streaming_stats_enabled"]
 NOW_VARIABLES_40 = ["auto_bootstrap", "disk_access_mode", "file_cache_size_in_mb", "memtable_heap_space_in_mb",
                     "memtable_offheap_space_in_mb", "memtable_flush_writers", "concurrent_compactors",
                     "stream_entire_sstables", "stream_throughput_outbound_megabits_per_sec",
                     "inter_dc_stream_throughput_outbound_megabits_per_sec", "streaming_connections_per_host",
                     "internode_streaming_tcp_user_timeout_in_ms", "roles_update_interval_in_ms",
                     "permissions_update_interval_in_ms", "credentials_update_interval_in_ms", "gc_log_threshold_in_ms",
-                    "gc_warn_threshold_in_ms", "cdc_raw_directory"]
+                    "gc_warn_threshold_in_ms", "cdc_raw_directory", "native_transport_max_frame_size_in_mb"]
 
 
 @pytest.mark.parametrize("version, key", [("50x", k) for k in NOW_VARIABLES] + [("40x", k) for k in NOW_VARIABLES_40]
@@ -128,6 +130,16 @@ def test_former_name_next_to_its_variable_is_refused(version, set_var, ok):
         assert msg.startswith("cassandra_extra_settings: gc_warn_threshold_in_ms (%s) already" % var)
 
 
+@pytest.mark.parametrize("version", ["41x", "50x"])
+def test_former_frame_size_name_next_to_its_variable_is_refused(version):
+    changes = {"cassandra_extra_settings": {"native_transport_max_frame_size_in_mb": 32}}
+    assert run("Refuse extra settings the template already has", version, **changes)[0] is True
+    passed, msg = run("Refuse extra settings the template already has", version,
+                      cassandra_native_transport_max_frame_size="32MiB", **changes)
+    assert passed is False and msg.startswith(
+        "cassandra_extra_settings: native_transport_max_frame_size_in_mb (cassandra_native_transport_max_frame_size)")
+
+
 @pytest.mark.parametrize("key", ["compaction_large_partition_warning_threshold", "compaction_large_partition_warning_threshold_mb"])
 def test_former_names_of_the_partition_size_guardrail_are_refused_on_50(key):
     # (on 4.1 the template's own key, compaction_large_partition_warning_threshold, and its _mb former name)
@@ -158,10 +170,24 @@ def test_extra_settings_refuse_a_dotted_key_by_its_first_part():
         "sstable.selected_format": "bti", "commitlog_total_space": "8192MiB"})
     assert passed is False and "sstable.selected_format (cassandra_sstable_format) already in cassandra.yaml" in msg
     assert run("Refuse extra settings the template already has",
-               cassandra_extra_settings={"commitlog_total_space": "8192MiB", "streaming_stats_enabled": False})[0] is True
+               cassandra_extra_settings={"commitlog_total_space": "8192MiB",
+                                         "internode_application_send_queue_capacity": "8MiB"})[0] is True
 
 
 # --- series ---------------------------------------------------------------------
+
+SINCE = "Refuse variables of keys the release does not know"
+NOT_INSTALLED = {"cassandra_config_pkg_conf": {"stat": {"exists": False}}}  # (the task runs with read.yml too)
+# set values of the variables of _cassandra_config_since
+SET = {"cassandra_sstable_format": "big", "cassandra_streaming_stats_enabled": False,
+       "cassandra_auto_snapshot_ttl": "30d", "cassandra_partition_size_warn_threshold": "100MiB",
+       "cassandra_partition_size_fail_threshold": "1GiB"}
+
+
+def since(version, var, **changes):
+    return run(SINCE, version, cassandra_storage_compatibility_mode="NONE",
+               **dict(NOT_INSTALLED, **dict({var: SET.get(var, "24MiB/s")}, **changes)))
+
 
 @pytest.mark.parametrize("version, var, ok", [
     ("50x", "cassandra_sstable_format", True),
@@ -171,18 +197,145 @@ def test_extra_settings_refuse_a_dotted_key_by_its_first_part():
     ("41x", "cassandra_entire_sstable_stream_throughput_outbound", True),
     ("40x", "cassandra_entire_sstable_stream_throughput_outbound", False),
     ("40x", "cassandra_entire_sstable_inter_dc_stream_throughput_outbound", False),
+    ("41x", "cassandra_auto_snapshot_ttl", True),
+    ("40x", "cassandra_auto_snapshot_ttl", False),
+    ("50x", "cassandra_streaming_stats_enabled", True),
+    ("41x", "cassandra_streaming_stats_enabled", True),  # the latest 4.1 release known
+    ("40x", "cassandra_streaming_stats_enabled", False),
 ])
 def test_settings_of_a_later_series_are_refused(version, var, ok):
-    passed, msg = run("Refuse settings of a later Cassandra series", version,
-                      cassandra_storage_compatibility_mode="NONE", **{var: "big" if "format" in var else "24MiB/s"})
+    passed, msg = since(version, var)
     assert passed is ok
     if not ok:
-        assert msg.startswith(var + ": not a setting of Cassandra " + version[0] + "." + version[1])
+        series = version[0] + "." + version[1]
+        key, minimum = ROLE_VARS["_cassandra_config_since"][var]
+        assert msg == ("node1: %s: Cassandra %s (the latest %s release known) does not know %s, it came with %s. That"
+                       " needs cassandra_version %sx or later: set it, or leave the variable empty; nothing is changed."
+                       % (var, ROLE_VARS["_cassandra_config_template_versions"][series], series, key, minimum,
+                          minimum[:3].replace(".", "")))
 
 
 @pytest.mark.parametrize("version", ["40x", "41x", "50x"])
 def test_series_check_passes_at_the_defaults(version):
-    assert run("Refuse settings of a later Cassandra series", version)[0] is True
+    assert run(SINCE, version, **NOT_INSTALLED)[0] is True
+
+
+UPGRADE_THE_NODE = "Upgrade the node, or leave the variable empty; nothing is changed."
+PIN = "Pin 4.1.1 or later in cassandra_package_version, or leave the variable empty; nothing is changed."
+
+
+@pytest.mark.parametrize("changes, ok, release, fix", [
+    ({"_cassandra_config_package": "4.1.0"}, False, "4.1.0 (installed)", UPGRADE_THE_NODE),
+    ({"_cassandra_config_package": "4.1.1"}, True, "", ""),
+    ({"_cassandra_config_package": "4.1.12-1"}, True, "", ""),
+    # nothing installed yet: the pin
+    ({"cassandra_package_version": "4.1.0"}, False, "4.1.0 (cassandra_package_version)", PIN),
+    ({"cassandra_package_version": "4.1.0*"}, False, "4.1.0 (cassandra_package_version)", PIN),
+    ({"cassandra_package_version": "1:4.1.0-1"}, False, "4.1.0 (cassandra_package_version)", PIN),  # an epoch
+    ({"cassandra_package_version": "4.1.2"}, True, "", ""),
+    ({"cassandra_package_version": "4.1.0", "_cassandra_config_package": "4.1.3"}, True, "", ""),  # installed first
+    ({"_cassandra_config_package": "4.0.21"}, True, "", ""),  # another series installed (upgrade preview): the series'
+    ({"cassandra_package_version": "4.0.20"}, True, "", ""),  # pinned to another series: the series' latest
+    ({}, True, "", ""),  # the latest 4.1 release known
+    ({"cassandra_streaming_stats_enabled": "", "_cassandra_config_package": "4.1.0"}, True, "", ""),  # empty: no line
+    ({"cassandra_streaming_stats_enabled": None, "_cassandra_config_package": "4.1.0"}, True, "", ""),
+    # the upgrade's preview: the release it installs (the pin) before the installed one
+    ({"_cassandra_config_package": "4.1.0", "cassandra_package_version": "4.1.5",
+      "_cassandra_config_target_preview": True}, True, "", ""),
+    ({"_cassandra_config_package": "4.1.5", "cassandra_package_version": "4.1.0",
+      "_cassandra_config_target_preview": True}, False, "4.1.0 (cassandra_package_version)", PIN),
+    ({"_cassandra_config_package": "4.1.0", "_cassandra_config_target_preview": True}, False, "4.1.0 (installed)",
+     UPGRADE_THE_NODE),  # (nothing pinned)
+])
+def test_a_patch_release_minimum(changes, ok, release, fix):
+    passed, msg = since("41x", "cassandra_streaming_stats_enabled", **changes)
+    assert passed is ok
+    if not ok:
+        assert msg == ("node1: cassandra_streaming_stats_enabled: Cassandra %s does not know streaming_stats_enabled,"
+                       " it came with 4.1.1. %s" % (release, fix))
+
+
+def test_several_variables_in_one_message():
+    passed, msg = since("41x", "cassandra_streaming_stats_enabled", _cassandra_config_package="4.1.0",
+                        cassandra_sstable_format="big")
+    assert passed is False
+    assert msg == ("node1: cassandra_streaming_stats_enabled: Cassandra 4.1.0 (installed) does not know"
+                   " streaming_stats_enabled, it came with 4.1.1; cassandra_sstable_format: Cassandra 4.1.0 (installed)"
+                   " does not know sstable.selected_format, it came with 5.0. That needs cassandra_version 50x or later:"
+                   " set it, or leave the variables empty; nothing is changed.")  # a later series: cassandra_version
+    # pinned: the latest release one of them came with
+    msg = since("41x", "cassandra_streaming_stats_enabled", cassandra_package_version="4.1.0",
+                cassandra_key_cache_size="100MiB")[1]
+    assert msg == PIN.join(["node1: cassandra_streaming_stats_enabled: Cassandra 4.1.0 (cassandra_package_version) does"
+                            " not know streaming_stats_enabled, it came with 4.1.1. ", ""])
+
+
+def test_the_check_runs_with_the_installed_release_and_before_install():
+    # read.yml (Cassandra installed: its release read), and main.yml when nothing is installed yet (--check)
+    imports = [t for t in load(*"roles cassandra_config tasks main.yml".split()) if "since.yml" in str(t)]
+    assert imports and imports[0]["when"] == "not cassandra_config_pkg_conf.stat.exists"
+    assert [t for t in load(*"roles cassandra_config tasks read.yml".split()) if "since.yml" in str(t)]
+    # an operator message (the ops callback prints it as is: it names the host, said once)
+    assert task(SINCE)["vars"]["cassandra_output"] is True
+
+
+def _first_release(key, series):
+    """The first release of series that accepts key (cassandra_yaml_properties): the series ("4.1") when all do."""
+    if key in known.ALL[series]:
+        return series
+    ranges = known.SOME[series].get(key)
+    return "%s.%d" % (series, ranges[0][0]) if ranges else None
+
+
+# The variables whose minimum is a patch release: the keys a series got after its first release (SOME)
+PATCH_MINIMUMS = sorted(var for var, (key, minimum) in ROLE_VARS["_cassandra_config_since"].items()
+                        if key.split(".")[0] in known.SOME.get(minimum[:3], {}))
+
+
+def test_minimums_match_the_releases_lists():
+    assert PATCH_MINIMUMS == ["cassandra_streaming_stats_enabled"]  # (today: the one)
+    for var, (key, minimum) in ROLE_VARS["_cassandra_config_since"].items():
+        assert _first_release(key.split(".")[0], minimum[:3]) == minimum, var
+        earlier = {"4.1": "4.0", "5.0": "4.1"}.get(minimum[:3])
+        if minimum.count(".") == 1 and earlier:  # a series' first release: none of the series before knows it
+            top = key.split(".")[0]
+            assert top not in known.ALL[earlier] and top not in known.SOME[earlier], var
+
+
+def _variable_keys(series):
+    """{key: variables} of the top-level keys the series' cassandra.yaml template writes through an optional variable
+    (empty by default: one an inventory sets, or not)."""
+    with open(os.path.join(ROLE, "templates", series, "cassandra.yaml.j2"), encoding="utf-8") as f:
+        lines = f.read().split("\n")
+    out = {}
+    for line in lines:
+        m = re.match(r"^(?:\{\{[^}]*\}\}|#)?\s?([a-z0-9_]+):", line)
+        if m:
+            for var in re.findall(r"cassandra_\w+", line):
+                if DEFAULTS.get(var, "x") in ("", None):
+                    out.setdefault(m.group(1), set()).add(var)
+    return out
+
+
+@pytest.mark.parametrize("series, earlier", [("4.1", "4.0"), ("5.0", "4.1")])
+def test_every_key_a_series_added_has_a_minimum(series, earlier):
+    """The other way: a key the series' template writes through a variable that the series before does not know has a
+    _cassandra_config_since entry, unless the series before has its own variable for it (its former name, e.g.
+    cassandra_file_cache_size_in_mb: the variable of the other naming is ignored there)."""
+    with open(os.path.join(ROLE, "templates", earlier, "cassandra.yaml.j2"), encoding="utf-8") as f:
+        before = set(re.findall(r"cassandra_\w+", f.read()))
+    since = ROLE_VARS["_cassandra_config_since"]
+    missing = []
+    for key, variables in sorted(_variable_keys(series).items()):
+        if key in known.ALL[earlier] or key in known.SOME[earlier]:
+            continue
+        for var in sorted(variables):
+            own = [v for v in before if v == var or v.startswith(var + "_")]
+            if not own and var not in since:
+                missing.append(var)
+            elif var in since:
+                assert since[var][0].split(".")[0] == key, var
+    assert missing == []
 
 
 @pytest.mark.parametrize("fmt, mode, ok", [("bti", "NONE", True), ("bti", "UPGRADING", True), ("bti", "CASSANDRA_4", False),
@@ -263,7 +416,8 @@ def test_add_datacenter_sets_auto_bootstrap_itself():
 @pytest.mark.parametrize("name", ["cassandra_auto_bootstrap", "cassandra_cdc_raw_dir", "cassandra_sstable_format",
                                   "cassandra_stream_throughput_outbound",
                                   "cassandra_stream_throughput_outbound_megabits_per_sec",
-                                  "cassandra_partition_size_fail_threshold", "cassandra_gc_warn_threshold_in_ms"])
+                                  "cassandra_partition_size_fail_threshold", "cassandra_gc_warn_threshold_in_ms",
+                                  "cassandra_native_transport_max_frame_size_in_mb", "cassandra_audit_max_log_size"])
 def test_extra_vars_check_knows_the_new_names(name):
     assert cassandra_unknown_extra_vars([name], []) == {}
 

@@ -3,7 +3,8 @@ __metaclass__ = type
 
 # cassandra_config: the audit logger's parameters (cassandra_audit_logger_parameters) written under its entry in
 # every series' cassandra.yaml, as Ansible renders the template (the one item Cassandra reads, its values as text);
-# a logger given in cassandra_extra_settings refused, naming the variables.
+# the section's sub-keys that have a variable written at their stock line; a logger, or a sub-key that has a
+# variable, given in cassandra_extra_settings refused, naming the variables.
 
 import os
 
@@ -84,10 +85,10 @@ def test_parameters_are_written_as_text(series):
 def test_parameters_and_extra_sub_keys(series):
     """The section's other sub-keys (cassandra_extra_settings) still at its own level, after the logger."""
     text = audit_section(series, cassandra_audit_logger_parameters={"a": "1", "b": "x"},
-                         cassandra_extra_settings={"audit_logging_options": {"included_categories": "DDL"}})
+                         cassandra_extra_settings={"audit_logging_options": {"roll_cycle": "DAILY"}})
     assert yaml.safe_load(text)["audit_logging_options"] == {
         "enabled": False, "logger": [{"class_name": "BinAuditLogger", "parameters": [{"a": "1", "b": "x"}]}],
-        "included_categories": "DDL"}
+        "roll_cycle": "DAILY"}
 
 
 @pytest.mark.parametrize("series", SERIES)
@@ -113,7 +114,7 @@ def test_a_logger_in_the_extra_settings_is_refused(version):
     t = task("Refuse extra settings the template already has")
     variables = dict(DEFAULTS, **dict(ROLE_VARS, cassandra_version=version, role_path=ROLE, inventory_hostname="node1"))
     variables["cassandra_extra_settings"] = {"audit_logging_options": {"logger": [
-        {"class_name": "FileAuditLogger", "parameters": [{"a": 1}]}], "included_categories": "DDL"}}
+        {"class_name": "FileAuditLogger", "parameters": [{"a": 1}]}], "roll_cycle": "DAILY"}}
     variables.update(t["vars"])
     assert render("{{ %s }}" % t["ansible.builtin.assert"]["that"], **variables) is False
     msg = " ".join(render(t["ansible.builtin.assert"]["fail_msg"], **variables).split())
@@ -121,8 +122,60 @@ def test_a_logger_in_the_extra_settings_is_refused(version):
                           " cassandra_audit_logger_parameters) already in cassandra.yaml")
     assert msg.endswith("set them with their variable")
     # the section's other sub-keys pass
-    variables["cassandra_extra_settings"] = {"audit_logging_options": {"included_categories": "DDL"}}
+    variables["cassandra_extra_settings"] = {"audit_logging_options": {"roll_cycle": "DAILY"}}
     assert render("{{ %s }}" % t["ansible.builtin.assert"]["that"], **variables) is True
+
+
+# the sub-keys that have a variable: (variable, value, the sub-key)
+SUB_KEYS = [("cassandra_audit_logs_dir", "/srv/audit", "audit_logs_dir"),
+            ("cassandra_audit_included_categories", "DDL,DCL", "included_categories"),
+            ("cassandra_audit_excluded_keyspaces", "system,app_cache", "excluded_keyspaces"),
+            ("cassandra_audit_excluded_users", "monitor,backup", "excluded_users"),
+            ("cassandra_audit_max_queue_weight", 134217728, "max_queue_weight"),
+            ("cassandra_audit_max_log_size", 8589934592, "max_log_size")]
+
+
+@pytest.mark.parametrize("version", ["40x", "41x", "50x"])
+@pytest.mark.parametrize("var, value, key", SUB_KEYS, ids=[c[2] for c in SUB_KEYS])
+def test_a_sub_key_with_a_variable_in_the_extra_settings_is_refused(version, var, value, key):
+    """Never the same sub-key twice in the section: refused whether its variable is set or not, the variable named."""
+    t = task("Refuse extra settings the template already has")
+    for changes in ({}, {var: value}):
+        variables = dict(DEFAULTS, **dict(ROLE_VARS, cassandra_version=version, role_path=ROLE,
+                                          inventory_hostname="node1", **changes))
+        variables["cassandra_extra_settings"] = {"audit_logging_options": {key: value, "roll_cycle": "DAILY"}}
+        variables.update(t["vars"])
+        assert render("{{ %s }}" % t["ansible.builtin.assert"]["that"], **variables) is False
+        msg = " ".join(render(t["ansible.builtin.assert"]["fail_msg"], **variables).split())
+        assert msg.startswith("cassandra_extra_settings: audit_logging_options.%s (%s) already in cassandra.yaml"
+                              % (key, var))
+
+
+def whole_section(series, **overrides):
+    """The template's audit_logging_options section, down to its blank line, rendered with the role defaults."""
+    with open(os.path.join(ROLE, "templates", series, "cassandra.yaml.j2"), encoding="utf-8") as f:
+        lines = f.read().split("\n")
+    start = lines.index("audit_logging_options:")
+    end = lines.index("", start)
+    variables = dict(DEFAULTS, cassandra_version=series.replace(".", "") + "x",
+                     _cassandra_config_extra_sections=ROLE_VARS["_cassandra_config_extra_sections"], **overrides)
+    return "\n".join(render(line, **variables) for line in lines[start:end]) + "\n"
+
+
+@pytest.mark.parametrize("series", SERIES)
+def test_sub_keys_written_in_the_section(series):
+    """Commented out at their defaults; set, at their stock line, next to the logger's parameters and the extra
+    sub-keys."""
+    stock = yaml.safe_load(whole_section(series))["audit_logging_options"]
+    assert stock == {"enabled": False, "logger": [{"class_name": "BinAuditLogger"}]}
+    text = whole_section(series, cassandra_audit_logger_parameters={"a": "1"},
+                         cassandra_extra_settings={"audit_logging_options": {"roll_cycle": "DAILY"}},
+                         **dict((var, value) for var, value, dummy in SUB_KEYS))
+    assert yaml.safe_load(text)["audit_logging_options"] == dict(
+        {"enabled": False, "logger": [{"class_name": "BinAuditLogger", "parameters": [{"a": "1"}]}],
+         "roll_cycle": "DAILY"}, **dict((key, value) for dummy, value, key in SUB_KEYS))
+    indent = "    " if series == "4.0" else "  "
+    assert "\n%smax_log_size: 8589934592\n" % indent in text and "\n%s# included_users:\n" % indent in text
 
 
 def refused(parameters):
@@ -150,3 +203,24 @@ def test_writable_parameters_pass():
     assert refused({"log_dir": "/srv/audit", "max_files": 7, "ratio": 0.5, "flag": True, "tab": "a\tb",
                     "note": "caf\u00e9", "Key_2.x-y": ""}) == ""
     assert refused(["a"]).startswith("cassandra_audit_logger_parameters: a mapping is expected.")
+
+
+@pytest.mark.parametrize("series", SERIES)
+def test_comma_lists_given_as_lists(series):
+    """Cassandra reads them as text: a list is written joined with commas, never as a YAML list it cannot start on."""
+    text = whole_section(series, cassandra_audit_included_categories=["DDL", "DCL"],
+                         cassandra_audit_excluded_keyspaces=["system", "app_cache"],
+                         cassandra_audit_excluded_users=["monitor"])
+    section = yaml.safe_load(text)["audit_logging_options"]
+    assert (section["included_categories"], section["excluded_keyspaces"], section["excluded_users"]) \
+        == ("DDL,DCL", "system,app_cache", "monitor")
+    assert "excluded_keyspaces" not in yaml.safe_load(whole_section(series, cassandra_audit_excluded_keyspaces=[]))[
+        "audit_logging_options"]  # empty: Cassandra's default
+
+
+@pytest.mark.parametrize("series", SERIES)
+def test_no_excluded_keyspace(series):
+    """"''" (the docs say so) writes an empty text: no keyspace excluded, not Cassandra's default."""
+    text = whole_section(series, cassandra_audit_excluded_keyspaces="''")
+    assert "excluded_keyspaces: ''\n" in text
+    assert yaml.safe_load(text)["audit_logging_options"]["excluded_keyspaces"] == ""

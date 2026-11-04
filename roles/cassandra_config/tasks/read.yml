@@ -112,6 +112,9 @@
     _rejected: "{{ cassandra_extra_settings | community.cassandra.cassandra_yaml_rejected(_version) }}"
   when: cassandra_extra_settings | length > 0
 
+- name: Check the variables against the installed release
+  ansible.builtin.import_tasks: since.yml
+
 - name: Say when Cassandra is newer than the templates
   ansible.builtin.debug:
     msg: >-

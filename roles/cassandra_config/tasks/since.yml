@@ -1,0 +1,40 @@
+---
+# A variable of a key a later series or patch release added (_cassandra_config_since): set for an earlier release,
+# Cassandra would refuse the key at startup, or the series' template has no line for it. Checked against the
+# installed release (read.yml), else (nothing installed yet, --check) cassandra_package_version or the series' latest
+# (_cassandra_config_release); the way out depends on which.
+- name: Refuse variables of keys the release does not know
+  ansible.builtin.assert:
+    that: _unknown | length == 0
+    fail_msg: >-
+      {{ inventory_hostname }}: {{ _unknown | map(attribute='text') | join('; ') }}. {{ _fix }}, or leave the
+      {{ 'variable' if _unknown | length == 1 else 'variables' }} empty; nothing is changed.
+    quiet: true
+  vars:
+    cassandra_output: true  # (the ops callback prints it as is: the host once, the message names it)
+    _release: "{{ _cassandra_config_release[0] }}"
+    _from: "{{ _cassandra_config_release[1] }}"
+    _unknown: >-
+      {%- set out = [] -%}
+      {%- for var, since in _cassandra_config_since.items()
+            if lookup('ansible.builtin.vars', var, default='') | string not in ['', 'None']
+            and _release is version(since[1], '<') -%}
+      {%-   set _ = out.append({'since': since[1], 'text': var ~ ': Cassandra ' ~ _release ~ ' ('
+                               ~ {'installed': 'installed', 'pinned': 'cassandra_package_version'}.get(_from,
+                                   'the latest ' ~ _cassandra_config_series ~ ' release known')
+                               ~ ') does not know ' ~ since[0] ~ ', it came with ' ~ since[1]}) -%}
+      {%- endfor -%}
+      {{ out }}
+    # the latest release one of them came with
+    _needed: >-
+      {%- set ns = namespace(top='0') -%}
+      {%- for since in _unknown | map(attribute='since') if ns.top is version(since, '<') -%}
+      {%-   set ns.top = since -%}
+      {%- endfor -%}
+      {{ ns.top }}
+    # a later series: cassandra_version, whatever the release's source
+    _fix: >-
+      {{ 'That needs cassandra_version ' ~ _needed.split('.')[:2] | join('') ~ 'x or later: set it'
+         if _from == 'latest' or _needed.split('.')[:2] | join('.') is version(_cassandra_config_series, '>')
+         else 'Upgrade the node' if _from == 'installed'
+         else 'Pin ' ~ _needed ~ ' or later in cassandra_package_version' }}

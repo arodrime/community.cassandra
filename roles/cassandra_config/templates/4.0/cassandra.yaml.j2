@@ -772,7 +772,7 @@ native_transport_port: {{ cassandra_native_transport_port }}
 # The maximum size of allowed frame. Frame (requests) larger than this will
 # be rejected as invalid. The default is 256MB. If you're changing this parameter,
 # you may want to adjust max_value_size_in_mb accordingly. This should be positive and less than 2048.
-# native_transport_max_frame_size_in_mb: 256
+{{ '# ' if cassandra_native_transport_max_frame_size_in_mb | string in ['', 'None'] else '' }}native_transport_max_frame_size_in_mb: {{ cassandra_native_transport_max_frame_size_in_mb if cassandra_native_transport_max_frame_size_in_mb | string not in ['', 'None'] else '256' }}
 
 # The maximum number of concurrent client connections.
 # The default is -1, which means unlimited.
@@ -1393,17 +1393,17 @@ audit_logging_options:
     enabled: {{ cassandra_audit_logging_enabled | lower }}
     logger:
       - class_name: {{ cassandra_audit_logger_class_name }}{{ ('\n        parameters:\n          - ' ~ cassandra_audit_logger_parameters | list | zip(cassandra_audit_logger_parameters.values() | map('string') | map('to_json', ensure_ascii=False)) | map('join', ': ') | join('\n            ')) if cassandra_audit_logger_parameters else '' }}{{ ('\n' ~ cassandra_extra_settings.audit_logging_options | to_nice_yaml(indent=2) | trim | indent(4, true)) if cassandra_extra_settings.audit_logging_options | default(none) is mapping and cassandra_extra_settings.audit_logging_options else '' }}
-    # audit_logs_dir:
+    {{ '# ' if cassandra_audit_logs_dir | string in ['', 'None'] else '' }}audit_logs_dir:{{ (' ' ~ cassandra_audit_logs_dir) if cassandra_audit_logs_dir | string not in ['', 'None'] else '' }}
     # included_keyspaces:
-    # excluded_keyspaces: system, system_schema, system_virtual_schema
-    # included_categories:
+    {{ '' if cassandra_audit_excluded_keyspaces else '# ' }}excluded_keyspaces: {{ (cassandra_audit_excluded_keyspaces | join(',') if cassandra_audit_excluded_keyspaces is sequence and cassandra_audit_excluded_keyspaces is not string else cassandra_audit_excluded_keyspaces) or 'system, system_schema, system_virtual_schema' }}
+    {{ '# ' if cassandra_audit_included_categories | string in ['', 'None'] else '' }}included_categories:{{ (' ' ~ (cassandra_audit_included_categories | join(',') if cassandra_audit_included_categories is sequence and cassandra_audit_included_categories is not string else cassandra_audit_included_categories)) if cassandra_audit_included_categories | string not in ['', 'None'] else '' }}
     # excluded_categories:
     # included_users:
-    # excluded_users:
+    {{ '# ' if cassandra_audit_excluded_users | string in ['', 'None'] else '' }}excluded_users:{{ (' ' ~ (cassandra_audit_excluded_users | join(',') if cassandra_audit_excluded_users is sequence and cassandra_audit_excluded_users is not string else cassandra_audit_excluded_users)) if cassandra_audit_excluded_users | string not in ['', 'None'] else '' }}
     # roll_cycle: HOURLY
     # block: true
-    # max_queue_weight: 268435456 # 256 MiB
-    # max_log_size: 17179869184 # 16 GiB
+    {{ '# ' if cassandra_audit_max_queue_weight | string in ['', 'None'] else '' }}max_queue_weight: {{ cassandra_audit_max_queue_weight if cassandra_audit_max_queue_weight | string not in ['', 'None'] else '268435456 # 256 MiB' }}
+    {{ '# ' if cassandra_audit_max_log_size | string in ['', 'None'] else '' }}max_log_size: {{ cassandra_audit_max_log_size if cassandra_audit_max_log_size | string not in ['', 'None'] else '17179869184 # 16 GiB' }}
     ## archive command is "/path/to/script.sh %path" where %path is replaced with the file being rolled:
     # archive_command:
     # max_archive_retries: 10

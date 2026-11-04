@@ -1602,3 +1602,23 @@ def test_cassandra_hosts_of_a_playbook_taken_of_the_inventory_refused(tmp_path):
     rc, output = run(tmp_path, "- import_playbook: community.cassandra.help\n", "-e", "cassandra_hosts=prod",
                      INVENTORY=str(tmp_path / "hosts.yml"))
     assert rc == 0 and output.split("\n")[0].startswith("prod  1 node  1 DC (dc1)"), output
+
+
+def test_a_verdict_that_names_its_host_names_it_once(tmp_path):
+    # cassandra_config's refusals start with the host (inventory_hostname): not said twice
+    playbook = """
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: Refusal
+      ansible.builtin.assert:
+        that: false
+        fail_msg: "{{ inventory_hostname }}: cassandra_x: refused; nothing is changed."
+        quiet: true
+      vars:
+        cassandra_output: true
+"""
+    rc, output = run(tmp_path, playbook)
+    assert rc != 0
+    assert "node1: cassandra_x: refused; nothing is changed." in output.splitlines()
+    assert "node1: node1:" not in output and "fatal: [node1]" not in output

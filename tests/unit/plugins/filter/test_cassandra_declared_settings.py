@@ -57,6 +57,9 @@ SINCE_41 = [
     ("cassandra_credentials_update_interval", "4000ms", "credentials_update_interval", "4000ms"),
     ("cassandra_gc_log_threshold", "300ms", "gc_log_threshold", "300ms"),
     ("cassandra_gc_warn_threshold", "2000ms", "gc_warn_threshold", "2000ms"),
+    ("cassandra_native_transport_max_frame_size", "32MiB", "native_transport_max_frame_size", "32MiB"),
+    ("cassandra_auto_snapshot_ttl", "30d", "auto_snapshot_ttl", "30d"),
+    ("cassandra_streaming_stats_enabled", False, "streaming_stats_enabled", False),
 ]
 ONLY_50 = [
     ("cassandra_partition_size_warn_threshold", "100MiB", "partition_size_warn_threshold", "100MiB"),
@@ -77,6 +80,17 @@ ONLY_40 = [
     ("cassandra_credentials_update_interval_in_ms", 4000, "credentials_update_interval_in_ms", 4000),
     ("cassandra_gc_log_threshold_in_ms", 300, "gc_log_threshold_in_ms", 300),
     ("cassandra_gc_warn_threshold_in_ms", 2000, "gc_warn_threshold_in_ms", 2000),
+    ("cassandra_native_transport_max_frame_size_in_mb", 32, "native_transport_max_frame_size_in_mb", 32),
+]
+# audit_logging_options' sub-keys: the same in every series
+AUDIT = [
+    ("cassandra_audit_logs_dir", "/srv/audit", "audit_logs_dir", "/srv/audit"),
+    ("cassandra_audit_included_categories", "DDL,DCL,AUTH", "included_categories", "DDL,DCL,AUTH"),
+    ("cassandra_audit_excluded_keyspaces", "system,system_schema,system_virtual_schema,app_cache", "excluded_keyspaces",
+     "system,system_schema,system_virtual_schema,app_cache"),
+    ("cassandra_audit_excluded_users", "monitor,backup", "excluded_users", "monitor,backup"),
+    ("cassandra_audit_max_queue_weight", 134217728, "max_queue_weight", 134217728),
+    ("cassandra_audit_max_log_size", 8589934592, "max_log_size", 8589934592),
 ]
 # 0 is a value (unthrottled, switched off), not "unset"
 ZEROS = [
@@ -97,6 +111,14 @@ def test_variable_writes_its_key(series, var, value, key, read):
     assert settings(series, **{var: value})[key] == read
 
 
+@pytest.mark.parametrize("series", ["40x", "41x", "50x"])
+@pytest.mark.parametrize("var, value, key, read", AUDIT, ids=[c[2] for c in AUDIT])
+def test_audit_variable_writes_its_sub_key(series, var, value, key, read):
+    stock = settings(series)["audit_logging_options"]
+    assert key not in stock and key not in settings(series, **{var: None})["audit_logging_options"]
+    assert settings(series, **{var: value})["audit_logging_options"] == dict(stock, **{key: read})
+
+
 @pytest.mark.parametrize("series, var, value, key, read", ZEROS)
 def test_zero_is_written_and_read_back(series, var, value, key, read):
     assert settings(series, **{var: value})[key] == read
@@ -109,6 +131,7 @@ def test_zero_is_written_and_read_back(series, var, value, key, read):
 def test_variables_read_back_by_the_import(series):
     # all of the series' at once (an import reads the whole files)
     values = dict((var, value) for s, var, value, dummy, dummy2 in CASES if s == series)
+    values.update((var, value) for var, value, dummy, dummy2 in AUDIT)
     files = dict((n, rendered(series, n, **values)) for n in _load_role(series, FACTS)[2])
     out = cassandra_config_import(files, series, FACTS)
     assert dict((k, out["vars"].get(k)) for k in values) == values
@@ -154,6 +177,9 @@ def test_declared_tail_renders_nothing_at_the_defaults(series):
     ("gc_log_threshold", "1500us", "1500us"),
     ("partition_size_fail_threshold", "1GiB", "1024MiB"),
     ("column_index_size", "1MiB", "1024KiB"),
+    ("native_transport_max_frame_size", "1GiB", "1024MiB"),
+    ("auto_snapshot_ttl", "1440m", "1d"),
+    ("auto_snapshot_ttl", "36h", "36h"),  # not whole in days: as it is
     ("roles_update_interval", "2000", "2000"),  # no unit: not one Cassandra 4.1+ reads, as it is
     ("compaction_throughput", "67108864B/s", "67108864B/s"),  # not one of these settings
 ])
@@ -217,6 +243,16 @@ def node_50():
             ("# partition_size_fail_threshold:", "partition_size_fail_threshold: 1GiB"),
             ("# gc_log_threshold: 200ms", "gc_log_threshold: 300ms"),
             ("# gc_warn_threshold: 1000ms", "gc_warn_threshold: 2s"),
+            ("# native_transport_max_frame_size: 16MiB", "native_transport_max_frame_size: 1GiB"),
+            ("# auto_snapshot_ttl: 30d", "auto_snapshot_ttl: 48h"),
+            ("# streaming_stats_enabled: true", "streaming_stats_enabled: false"),
+            ("  # audit_logs_dir:", "  audit_logs_dir: /srv/audit"),
+            ("  # excluded_keyspaces: system, system_schema, system_virtual_schema",
+             "  excluded_keyspaces: system,system_schema,system_virtual_schema,app_cache"),
+            ("  # included_categories:", "  included_categories: DDL,DCL"),
+            ("  # excluded_users:", "  excluded_users: monitor"),
+            ("  # max_queue_weight: 268435456 # 256 MiB", "  max_queue_weight: 134217728"),
+            ("  # max_log_size: 17179869184 # 16 GiB", "  max_log_size: 8589934592"),
             # set by hand near the top: read by its key wherever it is
             ("hinted_handoff_enabled: true", "auto_bootstrap: false\nhinted_handoff_enabled: true")]:
         y = edit(y, old, new)
@@ -240,6 +276,11 @@ EXPECTED_50 = {
     "cassandra_credentials_update_interval": "4000ms", "cassandra_partition_size_warn_threshold": "100MiB",
     "cassandra_partition_size_fail_threshold": "1024MiB", "cassandra_gc_log_threshold": "300ms",
     "cassandra_gc_warn_threshold": "2000ms", "cassandra_auto_bootstrap": False,
+    "cassandra_native_transport_max_frame_size": "1024MiB", "cassandra_auto_snapshot_ttl": "2d",
+    "cassandra_streaming_stats_enabled": False, "cassandra_audit_logs_dir": "/srv/audit",
+    "cassandra_audit_excluded_keyspaces": "system,system_schema,system_virtual_schema,app_cache",
+    "cassandra_audit_included_categories": "DDL,DCL", "cassandra_audit_excluded_users": "monitor",
+    "cassandra_audit_max_queue_weight": 134217728, "cassandra_audit_max_log_size": 8589934592,
 }
 
 
@@ -298,6 +339,50 @@ def test_import_and_self_check_4x(series):
     assert out["hand_edits"] == []
     assert "cassandra.yaml: auto_bootstrap: true, Cassandra's default, left out" in out["normalized"]
     assert check(node_4x(series), series)["differences"] == []
+
+
+# the settings added last, one at a time, under each name a node may write: (series, the stock line (a pattern, its
+# indent kept), the node's, the variable, the value imported)
+ONE_BY_ONE = [
+    ("50x", r"# native_transport_max_frame_size: 16MiB", "native_transport_max_frame_size: 32MiB",
+     "cassandra_native_transport_max_frame_size", "32MiB"),
+    ("50x", r"# native_transport_max_frame_size: 16MiB", "native_transport_max_frame_size_in_mb: 32",
+     "cassandra_native_transport_max_frame_size", "32MiB"),
+    ("41x", r"# native_transport_max_frame_size: 16MiB", "native_transport_max_frame_size: 1GiB",
+     "cassandra_native_transport_max_frame_size", "1024MiB"),
+    ("41x", r"# native_transport_max_frame_size: 16MiB", "native_transport_max_frame_size_in_mb: 32",
+     "cassandra_native_transport_max_frame_size", "32MiB"),
+    ("40x", r"# native_transport_max_frame_size_in_mb: 256", "native_transport_max_frame_size_in_mb: 32",
+     "cassandra_native_transport_max_frame_size_in_mb", 32),
+    ("50x", r"# auto_snapshot_ttl: 30d", "auto_snapshot_ttl: 12h", "cassandra_auto_snapshot_ttl", "12h"),
+    ("41x", r"# auto_snapshot_ttl: 30d", "auto_snapshot_ttl: 30d", "cassandra_auto_snapshot_ttl", "30d"),
+    ("50x", r"# streaming_stats_enabled: true", "streaming_stats_enabled: false", "cassandra_streaming_stats_enabled",
+     False),
+    ("41x", r"# streaming_stats_enabled: true", "streaming_stats_enabled: true", "cassandra_streaming_stats_enabled",
+     True),
+] + [(series, r"# %s:.*" % key, "%s: %s" % (key, text), var, value) for series in ("40x", "41x", "50x")
+     for key, text, var, value in [
+         ("audit_logs_dir", "/srv/audit", "cassandra_audit_logs_dir", "/srv/audit"),
+         ("included_categories", "DDL,DCL", "cassandra_audit_included_categories", "DDL,DCL"),
+         ("excluded_keyspaces", "system,app_cache", "cassandra_audit_excluded_keyspaces", "system,app_cache"),
+         ("excluded_users", "monitor", "cassandra_audit_excluded_users", "monitor"),
+         ("max_queue_weight", "134217728", "cassandra_audit_max_queue_weight", 134217728),
+         ("max_log_size", "'8589934592'", "cassandra_audit_max_log_size", 8589934592)]]
+
+
+@pytest.mark.parametrize("series, stock_line, line, var, value", ONE_BY_ONE,
+                         ids=["%s-%s" % (c[0], c[2].split(":")[0]) for c in ONE_BY_ONE])
+def test_import_and_self_check_of_each_new_setting(series, stock_line, line, var, value):
+    files = seeded(stock(series))
+    # the first one: full_query_logging_options (commented out) has max_queue_weight and max_log_size lines too
+    files["cassandra.yaml"], found = re.subn(r"(?m)^(\s*)%s$" % stock_line, r"\g<1>" + line, files["cassandra.yaml"],
+                                             count=1)
+    assert found
+    out = cassandra_config_import(files, series, FACTS, "", "/var/lib/cassandra")
+    assert out["vars"][var] == value
+    assert "cassandra_extra_settings" not in out["vars"]
+    assert out["hand_edits"] == []
+    assert check(files, series)["differences"] == []
 
 
 @pytest.mark.parametrize("series", ["40x", "41x"])
@@ -418,6 +503,7 @@ HAND_WRITTEN = {
     "cassandra_initial_token": ("-9223372036854775808",) * 2,  # text: a list of tokens too
     "cassandra_memtable_flush_writers": ("4", 4), "cassandra_concurrent_compactors": ("6", 6),
     "cassandra_stream_entire_sstables": ("false", False), "cassandra_streaming_connections_per_host": ("2", 2),
+    "cassandra_streaming_stats_enabled": ("false", False),
     "cassandra_partition_size_warn_threshold": ("100MiB", "100MiB"),
     "cassandra_partition_size_fail_threshold": ("500MiB", "500MiB"),
 }
@@ -484,12 +570,14 @@ NODE_50 = [
     ("# stream_throughput_outbound: 24MiB/s", "stream_throughput_outbound: 48MiB/s",
      "cassandra_stream_throughput_outbound"),
     ("hinted_handoff_enabled: true", "auto_bootstrap: false\nhinted_handoff_enabled: true", "cassandra_auto_bootstrap"),
+    ("# streaming_stats_enabled: true", "streaming_stats_enabled: false", "cassandra_streaming_stats_enabled"),
+    ("# auto_snapshot_ttl: 30d", "auto_snapshot_ttl: 7d", "cassandra_auto_snapshot_ttl"),
+    ("  # included_categories:", "  included_categories: DDL,DCL", "cassandra_audit_included_categories"),
     # no variable
-    ("# streaming_stats_enabled: true", "streaming_stats_enabled: false", None),
     ("# internode_application_send_queue_capacity: 4MiB", "internode_application_send_queue_capacity: 8MiB", None),
     ("# internode_application_receive_queue_capacity: 4MiB", "internode_application_receive_queue_capacity: 8MiB",
      None),
-    ("  # included_categories:", "  included_categories: DDL,DCL", None),
+    ("  # excluded_categories:", "  excluded_categories: QUERY", None),
 ]
 
 
@@ -497,15 +585,15 @@ def test_settings_with_a_variable_never_in_extra_settings_50():
     files = seeded(stock("50x"))
     for old, new, dummy in NODE_50:
         files["cassandra.yaml"] = edit(files["cassandra.yaml"], old, new)
-    # 4.x names a 5.0 node still reads, no variable either
+    # 4.x names a 5.0 node still reads: into the variable of their 5.0 name, else (none) as they are
     files["cassandra.yaml"] += ("native_transport_max_frame_size_in_mb: 32\n"
                                 "internode_application_send_queue_reserve_endpoint_capacity_in_bytes: 268435456\n")
     out = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
-    read = [var for dummy, dummy2, var in NODE_50 if var]
+    read = [var for dummy, dummy2, var in NODE_50 if var] + ["cassandra_native_transport_max_frame_size"]
     assert [var for var in read if var not in out["vars"]] == []
-    assert sorted(out["vars"]["cassandra_extra_settings"]) == [
-        "audit_logging_options", "internode_application_receive_queue_capacity",
-        "internode_application_send_queue_capacity",
-        "internode_application_send_queue_reserve_endpoint_capacity_in_bytes",
-        "native_transport_max_frame_size_in_mb", "streaming_stats_enabled"]
+    assert out["vars"]["cassandra_native_transport_max_frame_size"] == "32MiB"
+    assert out["vars"]["cassandra_extra_settings"] == {
+        "audit_logging_options": {"excluded_categories": "QUERY"},
+        "internode_application_receive_queue_capacity": "8MiB", "internode_application_send_queue_capacity": "8MiB",
+        "internode_application_send_queue_reserve_endpoint_capacity_in_bytes": 268435456}
     assert check(files, "50x")["differences"] == []

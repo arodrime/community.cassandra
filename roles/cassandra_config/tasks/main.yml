@@ -22,6 +22,10 @@
         after: "{{ _cassandra_config_files[_cassandra_config_series] | length }} files templated"
   when: not cassandra_config_pkg_conf.stat.exists
 
+- name: Check the variables against the release to install
+  ansible.builtin.import_tasks: since.yml
+  when: not cassandra_config_pkg_conf.stat.exists
+
 - name: Configure
   when: cassandra_config_pkg_conf.stat.exists
   block:

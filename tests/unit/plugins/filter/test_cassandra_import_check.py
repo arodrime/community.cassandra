@@ -966,8 +966,8 @@ def test_self_check_of_the_nodes_hides_another_filters_error(monkeypatch):
 # --- sections no variable covers: imported whole into cassandra_extra_settings ----
 
 NESTED = [  # (id, pattern, replacement, what cassandra_extra_settings gets)
-    ("audit sub-keys", r"(?m)^(\s*)# included_categories:$", r"\1included_categories: DDL,DCL\n\1included_users: [a, b]",
-     {"audit_logging_options": {"included_categories": "DDL,DCL", "included_users": ["a", "b"]}}),
+    ("audit sub-keys", r"(?m)^(\s*)# excluded_categories:$", r"\1excluded_categories: QUERY\n\1included_users: [a, b]",
+     {"audit_logging_options": {"excluded_categories": "QUERY", "included_users": ["a", "b"]}}),
     ("full query logging", r"(?m)^# ?full_query_logging_options:\n(\s*)# log_dir:\n(\s*)# roll_cycle: HOURLY$",
      r"full_query_logging_options:\n\1log_dir: /var/log/fql\n\2roll_cycle: DAILY",
      {"full_query_logging_options": {"log_dir": "/var/log/fql", "roll_cycle": "DAILY"}}),
@@ -1007,11 +1007,11 @@ def test_nested_sections_imported_whole(series, case, pattern, replace, extra, m
 
 def test_audit_extra_sub_keys_written_in_the_section():
     env, ctx, dummy = _load_role("50x", FACTS)
-    ctx["cassandra_extra_settings"] = {"audit_logging_options": {"included_categories": "DDL"}, "x": 1}
+    ctx["cassandra_extra_settings"] = {"audit_logging_options": {"roll_cycle": "DAILY"}, "x": 1}
     text = "\n".join(_render(env, "50x", "cassandra.yaml", ctx)[1])
-    assert "    - class_name: BinAuditLogger\n  included_categories: DDL\n" in text
+    assert "    - class_name: BinAuditLogger\n  roll_cycle: DAILY\n" in text
     assert text.endswith("# Settings no variable covers (cassandra_extra_settings)\nx: 1\n")
-    ctx["cassandra_extra_settings"] = {"audit_logging_options": {"included_categories": "DDL"}}
+    ctx["cassandra_extra_settings"] = {"audit_logging_options": {"roll_cycle": "DAILY"}}
     assert "Settings no variable covers" not in "\n".join(_render(env, "50x", "cassandra.yaml", ctx)[1])
 
 
@@ -1088,12 +1088,34 @@ def test_audit_logger_imported(series, case, entry, imported, same_text):
 @pytest.mark.parametrize("series", sorted(VERSIONS))
 def test_audit_logger_with_the_sections_other_sub_keys(series):
     files = audit_node(series, ["- class_name: FileAuditLogger", "  parameters:", '    - key1: "value1"'])
+    files["cassandra.yaml"] = re.sub(r"(?m)^(\s*)# excluded_categories:$", r"\1excluded_categories: QUERY",
+                                     files["cassandra.yaml"], count=1)
     files["cassandra.yaml"] = re.sub(r"(?m)^(\s*)# included_categories:$", r"\1included_categories: DDL",
                                      files["cassandra.yaml"], count=1)
     result = cassandra_config_import(files, series, FACTS, "", "/var/lib/cassandra")
     assert result["vars"]["cassandra_audit_logger_parameters"] == {"key1": "value1"}
-    assert result["vars"]["cassandra_extra_settings"] == {"audit_logging_options": {"included_categories": "DDL"}}
+    assert result["vars"]["cassandra_audit_included_categories"] == "DDL"
+    assert result["vars"]["cassandra_extra_settings"] == {"audit_logging_options": {"excluded_categories": "QUERY"}}
     assert result["hand_edits"] == [] and check(files, series)["differences"] == []
+
+
+@pytest.mark.parametrize("series", sorted(VERSIONS))
+def test_audit_sub_keys_written_after_the_logger(series):
+    """Where the role wrote them as extra settings: read into their variables wherever they are in the section, the
+    same settings (a note), no hand edit; another value is one."""
+    files = seeded(stock(series))
+    files["cassandra.yaml"] = re.sub(r"(?m)^(\s*)logger:\n(\s*- class_name: BinAuditLogger)$",
+                                     r"\1logger:\n\2\n\1included_categories: DDL\n\1max_log_size: 1000\n\1roll_cycle: DAILY",
+                                     files["cassandra.yaml"], count=1)
+    result = cassandra_config_import(files, series, FACTS, "", "/var/lib/cassandra")
+    assert (result["vars"]["cassandra_audit_included_categories"], result["vars"]["cassandra_audit_max_log_size"]) \
+        == ("DDL", 1000)
+    assert result["vars"]["cassandra_extra_settings"] == {"audit_logging_options": {"roll_cycle": "DAILY"}}
+    assert result["hand_edits"] == [] and check(files, series)["differences"] == []
+    assert "cassandra.yaml: audit_logging_options.included_categories, the same written another way" \
+        in result["normalized"]
+    changed = check(files, series, tamper={"cassandra_audit_max_log_size": 2000})["differences"]
+    assert changed and "max_log_size" in " ".join(changed)
 
 
 @pytest.mark.parametrize("series", sorted(VERSIONS))

@@ -47,7 +47,8 @@ QUANTITY_KEYS = {
     "entire_sstable_stream_throughput_outbound": "MiB/s", "entire_sstable_inter_dc_stream_throughput_outbound": "MiB/s",
     "internode_streaming_tcp_user_timeout": "ms", "roles_update_interval": "ms", "permissions_update_interval": "ms",
     "credentials_update_interval": "ms", "partition_size_warn_threshold": "MiB",
-    "partition_size_fail_threshold": "MiB", "gc_log_threshold": "ms", "gc_warn_threshold": "ms"}
+    "partition_size_fail_threshold": "MiB", "gc_log_threshold": "ms", "gc_warn_threshold": "ms",
+    "native_transport_max_frame_size": "MiB", "auto_snapshot_ttl": "d"}
 # Top-level settings the role leaves out at Cassandra's default, which a node may write: {key: that value}
 DEFAULT_WHEN_ABSENT = {"auto_bootstrap": "true"}
 # Settings that set nothing on the nodes compared (with the role's cassandra-env.sh), left out of the comparisons

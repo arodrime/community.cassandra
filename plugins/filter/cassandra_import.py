@@ -97,10 +97,17 @@ IDENTITY_OPTIONAL = {"cassandra_seed_provider_class_name": ("seed_provider", 0, 
                      "cassandra_storage_compatibility_mode": ("storage_compatibility_mode",)}
 # Read the same way, whatever the layout of their section (moved, indented otherwise, flow style)
 BY_PATH = {"cassandra_sstable_format": ("sstable", "selected_format"),
-           "cassandra_audit_logger_class_name": ("audit_logging_options", "logger", 0, "class_name")}
+           "cassandra_audit_logger_class_name": ("audit_logging_options", "logger", 0, "class_name"),
+           "cassandra_audit_logs_dir": ("audit_logging_options", "audit_logs_dir"),
+           "cassandra_audit_included_categories": ("audit_logging_options", "included_categories"),
+           "cassandra_audit_excluded_keyspaces": ("audit_logging_options", "excluded_keyspaces"),
+           "cassandra_audit_excluded_users": ("audit_logging_options", "excluded_users"),
+           "cassandra_audit_max_queue_weight": ("audit_logging_options", "max_queue_weight"),
+           "cassandra_audit_max_log_size": ("audit_logging_options", "max_log_size")}
 # The audit logger's parameters: the one mapping of its list (Cassandra reads the first, as text), read as text
 AUDIT_PARAMETERS = ("cassandra_audit_logger_parameters", ("audit_logging_options", "logger", 0, "parameters"))
-INTEGERS = ("cassandra_num_tokens", "cassandra_allocate_tokens_for_local_replication_factor")
+INTEGERS = ("cassandra_num_tokens", "cassandra_allocate_tokens_for_local_replication_factor",
+            "cassandra_audit_max_queue_weight", "cassandra_audit_max_log_size")
 # Same masking as cassandra_config's diff preview (plugin_utils cassandra_output)
 SECRET, SECRET_VALUE, _mask, _secret = out.SECRET, out.SECRET_VALUE, out.mask, out.secret
 
@@ -1126,6 +1133,43 @@ def _without_same_logger(rendered, live):
             note)
 
 
+def _sub_key_values(lines, section, keys):
+    """{key: (its value as text, the indexes of its lines and of its commented-out ones)} of the keys set once in
+    section's block layout (not YAML: left out)."""
+    block = next((indexes for key, indexes in _top_blocks(lines) if key == section), None)
+    block = block + _commented_under(lines, block[-1]) if block else None  # its stock commented lines last
+    out = {}
+    for key in keys if block else []:
+        active = _sub_key_lines(lines, block, [key])
+        if len([i for i in active if re.match(r"^\s*%s:" % re.escape(key), lines[i])]) != 1:
+            continue
+        try:
+            data = _as_text(yaml.compose(textwrap.dedent("\n".join(lines[i] for i in active))))
+        except yaml.YAMLError:
+            continue
+        if isinstance(data, dict) and data.get(key) is not None:
+            out[key] = (data[key], _sub_key_lines(lines, block, [key], True))
+    return out
+
+
+def _without_same_sub_keys(rendered, live):
+    """Both sides minus the lines (and the commented-out stock ones) of a section's sub-keys that have a variable
+    (_extra_sections, but its enabled and logger) when they set the same, wherever the node writes them in the
+    section (e.g. after the logger, where the role wrote them as extra settings) -> (rendered, live, normalized: a
+    note when written another way)."""
+    drop_rendered, drop_live, notes = set(), set(), []
+    for section, own in _extra_sections().items():
+        keys = [k for k in own if k not in ("enabled", "logger")]
+        role, node = _sub_key_values(rendered, section, keys), _sub_key_values(live, section, keys)
+        for key in sorted(k for k in role if k in node and role[k][0] == node[k][0]):
+            drop_rendered.update(role[key][1])
+            drop_live.update(node[key][1])
+            if [rendered[i] for i in role[key][1]] != [live[i] for i in node[key][1]]:
+                notes.append("cassandra.yaml: %s.%s, the same written another way" % (section, key))
+    return ([r for i, r in enumerate(rendered) if i not in drop_rendered],
+            [n for i, n in enumerate(live) if i not in drop_live], notes)
+
+
 def _yaml_compared(series, rendered, live, extras, rejected):
     """cassandra.yaml's lines to compare: without the settings the stock file has no line for, the keys under their
     former names, the extra settings and the keys rejected (masked first) -> (rendered, live, normalized: notes)."""
@@ -1135,6 +1179,8 @@ def _yaml_compared(series, rendered, live, extras, rejected):
     rendered, live, notes = _without_former_names(rendered, live)
     normalized += notes
     rendered, live, notes = _without_same_logger(rendered, live)
+    normalized += notes
+    rendered, live, notes = _without_same_sub_keys(rendered, live)
     normalized += notes
     if extras or rejected:
         # masked before the lines of those keys go: a secret's value may go on past the lines dropped

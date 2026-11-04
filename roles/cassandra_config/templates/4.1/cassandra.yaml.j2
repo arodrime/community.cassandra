@@ -869,7 +869,7 @@ native_transport_port: {{ cassandra_native_transport_port }}
 # be rejected as invalid. The default is 16MiB. If you're changing this parameter,
 # you may want to adjust max_value_size accordingly. This should be positive and less than 2048.
 # Min unit: MiB
-# native_transport_max_frame_size: 16MiB
+{{ '' if cassandra_native_transport_max_frame_size else '# ' }}native_transport_max_frame_size: {{ cassandra_native_transport_max_frame_size or '16MiB' }}
 
 # The maximum number of concurrent client connections.
 # The default is -1, which means unlimited.
@@ -978,7 +978,7 @@ auto_snapshot: {{ cassandra_auto_snapshot | lower }}
 # By default, auto snapshots *do not* have TTL, uncomment the property below
 # to enable TTL on auto snapshots.
 # Accepted units: d (days), h (hours) or m (minutes)
-# auto_snapshot_ttl: 30d
+{{ '' if cassandra_auto_snapshot_ttl else '# ' }}auto_snapshot_ttl: {{ cassandra_auto_snapshot_ttl or '30d' }}
 
 # The act of creating or clearing a snapshot involves creating or removing
 # potentially tens of thousands of links, which can cause significant performance
@@ -1228,7 +1228,7 @@ slow_query_log_timeout: {{ cassandra_slow_query_log_timeout }}
 # historic and currently running streams maybe impacted.
 # streaming_state_size: 40MiB
 # Enable/Disable tracking of streaming stats
-# streaming_stats_enabled: true
+{{ '# ' if cassandra_streaming_stats_enabled | string in ['', 'None'] else '' }}streaming_stats_enabled: {{ 'true' if cassandra_streaming_stats_enabled | string in ['', 'None'] else (cassandra_streaming_stats_enabled | string | lower) }}
 
 # Allows denying configurable access (rw/rr) to operations on configured ks, table, and partitions, intended for use by
 # operators to manage cluster health vs application access. See CASSANDRA-12106 and CEP-13 for more details.
@@ -1650,17 +1650,17 @@ audit_logging_options:
   enabled: {{ cassandra_audit_logging_enabled | lower }}
   logger:
     - class_name: {{ cassandra_audit_logger_class_name }}{{ ('\n      parameters:\n        - ' ~ cassandra_audit_logger_parameters | list | zip(cassandra_audit_logger_parameters.values() | map('string') | map('to_json', ensure_ascii=False)) | map('join', ': ') | join('\n          ')) if cassandra_audit_logger_parameters else '' }}{{ ('\n' ~ cassandra_extra_settings.audit_logging_options | to_nice_yaml(indent=2) | trim | indent(2, true)) if cassandra_extra_settings.audit_logging_options | default(none) is mapping and cassandra_extra_settings.audit_logging_options else '' }}
-  # audit_logs_dir:
+  {{ '# ' if cassandra_audit_logs_dir | string in ['', 'None'] else '' }}audit_logs_dir:{{ (' ' ~ cassandra_audit_logs_dir) if cassandra_audit_logs_dir | string not in ['', 'None'] else '' }}
   # included_keyspaces:
-  # excluded_keyspaces: system, system_schema, system_virtual_schema
-  # included_categories:
+  {{ '' if cassandra_audit_excluded_keyspaces else '# ' }}excluded_keyspaces: {{ (cassandra_audit_excluded_keyspaces | join(',') if cassandra_audit_excluded_keyspaces is sequence and cassandra_audit_excluded_keyspaces is not string else cassandra_audit_excluded_keyspaces) or 'system, system_schema, system_virtual_schema' }}
+  {{ '# ' if cassandra_audit_included_categories | string in ['', 'None'] else '' }}included_categories:{{ (' ' ~ (cassandra_audit_included_categories | join(',') if cassandra_audit_included_categories is sequence and cassandra_audit_included_categories is not string else cassandra_audit_included_categories)) if cassandra_audit_included_categories | string not in ['', 'None'] else '' }}
   # excluded_categories:
   # included_users:
-  # excluded_users:
+  {{ '# ' if cassandra_audit_excluded_users | string in ['', 'None'] else '' }}excluded_users:{{ (' ' ~ (cassandra_audit_excluded_users | join(',') if cassandra_audit_excluded_users is sequence and cassandra_audit_excluded_users is not string else cassandra_audit_excluded_users)) if cassandra_audit_excluded_users | string not in ['', 'None'] else '' }}
   # roll_cycle: HOURLY
   # block: true
-  # max_queue_weight: 268435456 # 256 MiB
-  # max_log_size: 17179869184 # 16 GiB
+  {{ '# ' if cassandra_audit_max_queue_weight | string in ['', 'None'] else '' }}max_queue_weight: {{ cassandra_audit_max_queue_weight if cassandra_audit_max_queue_weight | string not in ['', 'None'] else '268435456 # 256 MiB' }}
+  {{ '# ' if cassandra_audit_max_log_size | string in ['', 'None'] else '' }}max_log_size: {{ cassandra_audit_max_log_size if cassandra_audit_max_log_size | string not in ['', 'None'] else '17179869184 # 16 GiB' }}
   ## archive command is "/path/to/script.sh %path" where %path is replaced with the file being rolled:
   # archive_command:
   # max_archive_retries: 10

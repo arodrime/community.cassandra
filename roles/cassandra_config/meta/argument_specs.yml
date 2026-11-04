@@ -231,12 +231,12 @@ argument_specs:
         type: str
         default: ''
         description:
-        - C(prepared_statements_cache_size) in C(cassandra.yaml).
+        - C(prepared_statements_cache_size) in C(cassandra.yaml) (4.1+, refused on 4.0).
       cassandra_key_cache_size:
         type: str
         default: ''
         description:
-        - C(key_cache_size) in C(cassandra.yaml).
+        - C(key_cache_size) in C(cassandra.yaml) (4.1+, refused on 4.0).
       cassandra_key_cache_save_period:
         type: raw
         description:
@@ -255,7 +255,7 @@ argument_specs:
         type: str
         default: ''
         description:
-        - C(counter_cache_size) in C(cassandra.yaml).
+        - C(counter_cache_size) in C(cassandra.yaml) (4.1+, refused on 4.0).
       cassandra_counter_cache_save_period:
         type: raw
         description:
@@ -342,7 +342,7 @@ argument_specs:
         type: str
         default: ''
         description:
-        - C(index_summary_capacity) in C(cassandra.yaml).
+        - C(index_summary_capacity) in C(cassandra.yaml) (4.1+, refused on 4.0).
       cassandra_index_summary_resize_interval:
         type: str
         default: 60m
@@ -683,6 +683,47 @@ argument_specs:
           or a boolean: C(true) would be written C("True")). The stock loggers ignore them: for a custom logger,
           e.g. C({log_dir: /srv/audit, max_files: "7"}). A key is a plain word (a letter or C(_) first, not
           C(on), C(yes) or C(null)), a value a text, a number or a boolean on one line: the role refuses others.
+      cassandra_audit_logs_dir:
+        type: str
+        default: ''
+        description:
+        - C(audit_logging_options.audit_logs_dir), a directory, e.g. C(/srv/cassandra/audit). Left
+          commented out (Cassandra's default, C(<log dir>/audit)) when empty. The role does not create it.
+        - The audit sub-keys' texts are written as-is (quote a value holding C(#) yourself, e.g. C("'a#b'")).
+      cassandra_audit_included_categories:
+        type: raw
+        default: ''
+        description:
+        - C(audit_logging_options.included_categories), a comma-separated list, e.g.
+          C(DDL,DCL,AUTH), or a list (written joined with commas). Left commented out (Cassandra's default, all of
+          them) when empty.
+      cassandra_audit_excluded_keyspaces:
+        type: raw
+        default: ''
+        description:
+        - C(audit_logging_options.excluded_keyspaces), a comma-separated list, e.g.
+          C(system,system_schema,system_virtual_schema,app_cache), or a list (written joined with commas); it
+          replaces Cassandra's default, C(system), C(system_schema) and C(system_virtual_schema), left commented out
+          when empty. To exclude no keyspace, give C("''"), written C('').
+      cassandra_audit_excluded_users:
+        type: raw
+        default: ''
+        description:
+        - C(audit_logging_options.excluded_users), a comma-separated list, e.g.
+          C(monitor,backup), or a list (written joined with commas). Left commented out (Cassandra's default, none)
+          when empty.
+      cassandra_audit_max_queue_weight:
+        type: raw
+        default: ''
+        description:
+        - C(audit_logging_options.max_queue_weight), a number of bytes (no unit, in every
+          series), e.g. C(268435456). Left commented out (Cassandra's default, 256 MiB) when empty.
+      cassandra_audit_max_log_size:
+        type: raw
+        default: ''
+        description:
+        - C(audit_logging_options.max_log_size), a number of bytes (no unit, in every series),
+          e.g. C(17179869184). Left commented out (Cassandra's default, 16 GiB) when empty.
       cassandra_diagnostic_events_enabled:
         type: bool
         default: false
@@ -843,6 +884,25 @@ argument_specs:
         description:
         - C(gc_warn_threshold) in C(cassandra.yaml) (4.1+), e.g. C(1000ms). Left commented out (Cassandra's
           default) when empty.
+      cassandra_native_transport_max_frame_size:
+        type: str
+        default: ''
+        description:
+        - C(native_transport_max_frame_size) in C(cassandra.yaml) (4.1+, on 4.0
+          O(cassandra_native_transport_max_frame_size_in_mb)), in MiB or a larger unit, e.g. C(32MiB). Left commented
+          out (Cassandra's default, C(16MiB)) when empty.
+      cassandra_auto_snapshot_ttl:
+        type: str
+        default: ''
+        description:
+        - C(auto_snapshot_ttl) in C(cassandra.yaml) (4.1+, refused on 4.0), in C(d), C(h) or C(m),
+          e.g. C(30d). Left commented out (Cassandra's default, no TTL) when empty.
+      cassandra_streaming_stats_enabled:
+        type: raw
+        default: ''
+        description:
+        - C(streaming_stats_enabled) in C(cassandra.yaml) (4.1.1+, refused on an earlier release), e.g.
+          C(false). Left commented out (Cassandra's default, C(true)) when empty.
       cassandra_sstable_format:
         type: str
         default: ''
@@ -1227,6 +1287,12 @@ argument_specs:
         description:
         - C(gc_warn_threshold_in_ms) in C(cassandra.yaml) (4.0 only), e.g. C(1000). Left commented out
           (Cassandra's default) when empty.
+      cassandra_native_transport_max_frame_size_in_mb:
+        type: raw
+        default: ''
+        description:
+        - C(native_transport_max_frame_size_in_mb) in C(cassandra.yaml) (4.0 only), in MiB, e.g.
+          C(32). Left commented out (Cassandra's default, C(256)) when empty.
       cassandra_log_dir:
         type: path
         default: /var/log/cassandra

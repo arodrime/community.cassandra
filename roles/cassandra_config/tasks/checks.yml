@@ -145,24 +145,6 @@
       {{ out }}
   when: cassandra_extra_settings | length > 0
 
-# A key a later series added: the series' templates have no line for it, so set, it would be ignored
-- name: Refuse settings of a later Cassandra series
-  ansible.builtin.assert:
-    that: _later | length == 0
-    fail_msg: >-
-      {{ _later | join(', ') }}: not a setting of Cassandra {{ _cassandra_config_series }} (cassandra_version
-      {{ cassandra_version }}), only from {{ _since | join(', ') }} on. Remove {{ 'it' if _later | length == 1 else 'them' }}
-      from the inventory; nothing is changed.
-    quiet: true
-  vars:
-    _later: >-
-      {{ _cassandra_config_since | dict2items | rejectattr('value', 'version', _cassandra_config_series, '<=')
-         | map(attribute='key') | select('in', _set) | list }}
-    _set: >-
-      {{ _cassandra_config_since | list | zip(query('ansible.builtin.vars', *_cassandra_config_since | list))
-         | rejectattr(1, 'in', ['', none]) | map(attribute=0) | list }}
-    _since: "{{ _later | map('extract', _cassandra_config_since) | unique | list }}"
-
 # Cassandra 5.0 refuses to start with BTI in storage_compatibility_mode CASSANDRA_4 (4.x nodes may still read its
 # SSTables), and a format name other than big or bti
 - name: Refuse an SSTable format Cassandra would not start with
