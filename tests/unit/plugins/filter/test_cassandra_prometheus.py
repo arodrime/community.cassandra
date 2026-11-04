@@ -334,15 +334,14 @@ def test_a_guard_on_one_line_is_said_dropped(tmp_path):
     assert not [m for m in exporter_import(plain, "")["moved"] if "guards" in m]
 
 
-def test_the_moved_header_names_the_files(tmp_path):
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import _moved_lines
-
-    class Report(object):
-        names, full, groups, width = {}, False, None, None
-        read = [{"name": "n1", "moved": ["jvm-server.options line 212: -javaagent:x -> cassandra_prometheus_exporter_*"]}]
-    assert _moved_lines(Report())[0].startswith("MOVED ") and "jvm-server.options hand edits" in _moved_lines(Report())[0]
-    Report.read[0]["moved"].append("cassandra-env.sh line 3: -Dx=1 -> cassandra_jvm17_extra_options")
-    assert "cassandra-env.sh, jvm-server.options hand edits" in _moved_lines(Report())[0]
+def test_the_moved_entries_name_their_file():
+    """The exporter's agent moved from a JVM options file is said with that file, next to cassandra-env.sh's."""
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_import_report as rep
+    assert "jvm options file" in rep.MOVED[3]
+    moved = ["jvm-server.options line 212: -javaagent:x -> cassandra_prometheus_exporter_*",
+             "cassandra-env.sh line 3: -Dx=1 -> cassandra_jvm17_extra_options"]
+    pairs = rep._by_value([("n1",) + tuple(line.split(" -> ", 1)) for line in moved])
+    assert sorted(p[0].split(" line", 1)[0] for p in pairs) == ["cassandra-env.sh", "jvm-server.options"]
 
 
 def test_the_import_reads_the_jar_and_config_of_the_agent():

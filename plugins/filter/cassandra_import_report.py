@@ -944,7 +944,8 @@ KEPT = _Kind("file left as is", "files left as is", "Files left as is",
              "config files Ansible leaves as each node has them (cassandra_config_keep_files); their hand edits stay,"
              " and a change of the inventory does not reach them")
 MOVED = _Kind("hand edit moved", "hand edits moved", "Hand edits moved to variables",
-              "lines added by hand to cassandra-env.sh that now come from variables; Java gets the same options, but"
+              "lines added by hand to cassandra-env.sh or a jvm options file that now come from variables; Java gets the"
+              " same options, but"
               " the next apply_config rewrites the file and restarts the node")
 TO_CHECK = _Kind("setting to review", "settings to review", "Settings to review",
                  "values that work but deserve a look; each says why and what to do")
