@@ -50,4 +50,6 @@ def test_no_cqlsh_names_the_variable():
     with open(os.path.join(ROOT, "roles", "cassandra_operation", "tasks", "cql_login_try.yml")) as f:
         outcome = next(t for t in yaml.safe_load(f) if t.get("name") == "Keep the outcome of the CQL login")
     why = outcome["ansible.builtin.set_fact"]["cassandra_cql_login"]["why"]
-    assert "set' ~ ' cassandra_cqlsh_command to its bin/cqlsh'" in " ".join(why.split())
+    # (what was observed only: where it was looked for, not a guess of where it is)
+    assert "'no cqlsh in the PATH of root on ' ~ _cassandra_cql_login_from ~ ': cassandra_cqlsh_command gives the' ~ ' full" \
+        " path of one'" in " ".join(why.split()) and "virtualenv" not in why

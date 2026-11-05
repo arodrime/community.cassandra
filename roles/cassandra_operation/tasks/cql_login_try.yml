@@ -28,8 +28,8 @@
            else 'unchecked' }}
       why: >-
         {{ '' if _cassandra_cql_try.rc | default(1) == 0 or _err is search(_refused)
-           else 'no cqlsh on ' ~ _cassandra_cql_login_from ~ ' in the PATH of root; one in a virtualenv: set'
-                ~ ' cassandra_cqlsh_command to its bin/cqlsh' if _cassandra_cql_try.rc | default(1) == 127
+           else 'no cqlsh in the PATH of root on ' ~ _cassandra_cql_login_from ~ ': cassandra_cqlsh_command gives the'
+                ~ ' full path of one' if _cassandra_cql_try.rc | default(1) == 127
                 or _err is search('cqlsh: (command )?not found|No such file or directory')
            else 'cqlsh could not reach ' ~ _cassandra_cql_login_host ~ ' from ' ~ _cassandra_cql_login_from if _err is search('Unable to connect|Connection refused|timed out|NoHostAvailable')
            else 'cqlsh failed on ' ~ _cassandra_cql_login_from }}
