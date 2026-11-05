@@ -249,10 +249,12 @@ def test_what_is_left_to_do():
         {"state": "refused", "asked": False, "user": "alice", "password": GOOD},
         _cql_own={"user": "alice", "password": GOOD})[0]
     unset = todo({"state": "no_terminal"})[0]
-    assert "import again on a terminal, it asks for it" in unset and "group_vars/prod/" in unset
+    assert "import again on a terminal, it asks for it" in unset and "group_vars/prod/ (this import wrote it)" in unset
     assert "none typed: import again to type one" in todo({"state": "none"})[0]
     assert "not asked (cassandra_operation_confirm false)" in todo({"state": "not_asked"})[0]
-    assert "the run without --check asks for it" in todo({"state": "not_asked"}, ansible_check_mode=True)[0]
+    # --check writes nothing: no group_vars to set the login in yet (a first import), never sent there
+    checked = todo({"state": "not_asked"}, ansible_check_mode=True)[0]
+    assert "the run without --check asks for it" in checked and "group_vars/prod/" not in checked
     assert "not checked (no cqlsh on n1), written as typed" in todo(
         {"state": "unchecked", "asked": True, "user": "a", "why": "no cqlsh on n1"})[0]
     # the report gets them

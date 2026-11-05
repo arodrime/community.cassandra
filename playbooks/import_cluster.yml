@@ -1449,7 +1449,7 @@
     _cql_todo: >-
       {%- set c = cassandra_cql_login | default({}) -%}
       {%- set set_it = 'set cassandra_cql_username and cassandra_cql_password (the password vaulted) in group_vars/'
-                       ~ _layout.cluster_group ~ '/' -%}
+                       ~ _layout.cluster_group ~ '/ (this import wrote it)' -%}
       {%- set state = c.state | default('') -%}
       {%- if _cql_on | bool and _cql_own.user and not c.asked | default(false)
              and (c.user | default('') != _cql_own.user or c.password | default('') != _cql_own.password) -%}
@@ -1468,12 +1468,13 @@
           ~ ': check it with cqlsh'] }}
       {%- else -%}
       {{ ['CQL authentication is on and no CQL login is set (the operations that read the replication need one): '
-          ~ ('the run without --check asks for it' if ansible_check_mode
+          ~ ('the run without --check asks for it (--check writes nothing: no group_vars to set it in yet)'
+             if ansible_check_mode
              else 'none typed: import again to type one' if state == 'none'
              else 'not asked (cassandra_operation_confirm false): import again without it, on a terminal'
                   if state == 'not_asked'
              else 'import again on a terminal, it asks for it')
-          ~ ', or ' ~ set_it] }}
+          ~ ('' if ansible_check_mode else ', or ' ~ set_it)] }}
       {%- endif -%}
     _cql_from: "{{ (_nodes | default([]) | selectattr('read') | first | default({})).name | default('') }}"
     # what the playbooks are run with on this inventory: no -i when it is ansible.cfg's, no -e cassandra_hosts

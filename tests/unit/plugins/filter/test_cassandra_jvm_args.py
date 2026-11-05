@@ -339,8 +339,8 @@ def test_report_moved_cleanup_and_next(tmp_path):
     assert " ".join(x.strip() for x in lines[at + 3:at + 5]) == (
         "nothing to do now; the next apply_config rewrites cassandra-env.sh, jvm17-server.options in the collection's"
         " layout and restarts these nodes (same Java options)")
-    assert lines[at + 5] == ("    cassandra_jvm17_extra_options: read by that Java only; after update_java, move them to"
-                             " the new Java's")
+    assert lines[at + 5:at + 7] == [  # (a blank line between entries)
+        "", "    cassandra_jvm17_extra_options: read by that Java only; after update_java, move them to the new Java's"]
     at = lines.index("  Java options the running Java does not use (left out of the lines moved, else left as they are)")
     assert re.match(r"^    jvm11-server.options line \d+: -Xmx4G   all \(2 nodes\)$", lines[at + 1])
     assert lines[at + 2] == "      not read, Java 17 reads jvm17-server.options"

@@ -1,0 +1,5 @@
+minor_changes:
+  - "import_cluster - the report and the end of the run are easier to read: a rule of ``=`` above each section (two blank lines above it in report.txt, the ops callback's heavy rule on the screen), a blank line between two entries, a setting that differs between nodes shown as a table (every value with its nodes, one row each; on the screen, a value per node on more than 5 nodes is one row, each in the report), and a new section WHERE THE SETTINGS GO: each file of the inventory with how many settings it holds (host_vars with how many nodes), your own files (``group_vars/all/...``) with the settings they give."
+  - "ops callback - a line of ``=`` inside a screen is drawn as its heavy rule."
+bugfixes:
+  - "import_cluster - with CQL authentication on and no CQL login, a ``--check`` run no longer tells you to set it in ``group_vars/<cluster>/``, a folder only the run without ``--check`` writes: it says that run asks for the login."

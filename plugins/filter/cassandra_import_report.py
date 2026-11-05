@@ -813,19 +813,24 @@ def _say(report, name):
     return "%s (%s)" % (name, words)
 
 
-def _placed(report, key, members):
-    """Where the inventory keeps key for these nodes (their most specific level that has it) -> text."""
+def _place_of(report, key, node):
+    """Where the inventory keeps key for the node: "host_vars", the path of a file of yours, "group_vars/<group>"
+    (its most specific level that has it), "" when none."""
     layout = report.layout
     from_yours = layout.get("from_yours") or {}
+    if key in (layout.get("host_vars") or {}).get(node, {}):
+        return "host_vars"
+    if key in from_yours.get(node, {}):
+        return from_yours[node][key]["path"]
+    return next(("group_vars/%s" % g for g in reversed(report.chains.get(node, []))
+                 if key in (layout.get("group_vars") or {}).get(g, {})), "")
+
+
+def _placed(report, key, members):
+    """Where the inventory keeps key for these nodes (their most specific level that has it) -> text."""
     found = []
     for m in members:
-        if key in (layout.get("host_vars") or {}).get(m, {}):
-            place = "host_vars"
-        elif key in from_yours.get(m, {}):
-            place = from_yours[m][key]["path"]
-        else:
-            place = next(("group_vars/%s" % g for g in reversed(report.chains.get(m, []))
-                          if key in (layout.get("group_vars") or {}).get(g, {})), "")
+        place = _place_of(report, key, m)
         if place and place not in found:
             found.append(place)
     groups_vars = [f for f in found if f.startswith("group_vars/")]
@@ -961,8 +966,8 @@ def _entry(report, what, members, todo):
     """An entry: what and on which nodes, then what to do -> [two lines] (a longer text goes on, further in)."""
     who = _who(report, members) if members else ""
     lines = fill_text("%s   %s" % (what, unbreakable(who) if len(who) <= 40 else who) if members else what,
-                      report.width, "    ", "    ")
-    return lines + fill_text(todo, report.width, "      ", "  ") if todo else lines
+                      report.width, "    ", "  ")
+    return lines + (fill_text(todo, report.width, "      ") if todo else []) + [""]  # (a blank line between entries)
 
 
 def _hand_entries(report, edits):
@@ -1091,18 +1096,25 @@ def _convergence_place(report):
 
 
 def _differs_entries(report, differs):
+    """Each setting that differs: a table of its values (every one, with its nodes), then where they are set; on the
+    screen, a value per node (more than 5 nodes with one of their own) is one row, each in the report."""
     entries = []
     for path, values in differs:
         own = [(v, m) for v, m in values if len(m) == 1 and v not in ("(collection's default)", "(not set)")]
-        own = own if len(own) > 5 else []  # (a value per node: counted)
-        rest = [(v, m) for v, m in values if (v, m) not in own]
-        shown = rest if len(rest) <= 4 else rest[:3]
-        parts = ["%s on %s" % (_shown_value(v, path), _who(report, members)) for v, members in shown]
-        if len(shown) < len(rest):
-            parts.append("%d more values (in the inventory)" % (len(rest) - len(shown)))
+        own = own if report.screen and len(own) > 5 else []
+        rows = [(_shown_value(v, path), _who(report, members), "") for v, members in values if (v, members) not in own]
         if own:
-            parts.append("%d values, one per node, on %s" % (len(own), _who(report, [m[0] for dummy, m in own])))
-        text = "; ".join(parts)
+            rows.append(("%d values, one per node (each in the report)" % len(own),
+                         _who(report, [m[0] for dummy, m in own]), ""))
+        words = _say(report, path)
+        if words != path:
+            rows[0] = (rows[0][0], rows[0][1], words[len(path) + 1:])
+        table = out.settings_lines([(path, rows)], indent="    ", width=report.width)
+        if table[0] == "    %s:" % path or max(len(line) for line in table) > report.width:
+            # a long name, or a row that does not fit after it: the name on a line of its own, its values under it
+            # (a name longer than any column puts them there)
+            table = ["    %s:" % path] + out.settings_lines([("-" * 99, rows)], indent="     ", width=report.width)[1:]
+        entries += table
         places = []
         for dummy, members in values:
             for place in (_placed(report, _variable(path), members) or "").split(", "):
@@ -1111,10 +1123,40 @@ def _differs_entries(report, differs):
         if any(v.startswith("(in secrets.yml") for v, dummy in values):  # (a secret: in secrets.yml, never main.yml)
             places = [p.replace("/main.yml", "/secrets.yml") for p in places]
         moving = " Changing it moves data: a task for an experienced operator." if _variable(path) in DATA_DIRS else ""
-        entries += _entry(report, "%s: %s" % (_say(report, path), text), None,
-                          "set in %s; to give every node one value, see %s, convergence.%s" % (
-                              ", ".join(places) or "the collection's default", _convergence_place(report), moving))
+        entries += fill_text("set in %s; to give every node one value, see %s, convergence.%s" % (
+            ", ".join(places) or "the collection's default", _convergence_place(report), moving),
+            report.width, "      ") + [""]
     return entries
+
+
+def _where_lines(report, settings):
+    """WHERE THE SETTINGS GO: each file of the inventory and how many settings it holds (host_vars: with how many
+    nodes); your own files (the values the import leaves to them) with their settings named -> [line]."""
+    keys, nodes, yours = {}, {}, {}
+    for path, values in settings:
+        for dummy, members in values:
+            for m in members:
+                place = _place_of(report, _variable(path), m)
+                if not place:
+                    continue
+                if place.startswith("group_vars/") and "/" not in place[len("group_vars/"):]:
+                    place += "/main.yml"
+                elif place == "host_vars":
+                    place = "host_vars/<node>/main.yml"
+                else:  # (a file of yours)
+                    yours.setdefault(place, set()).add(_variable(path))
+                    continue
+                keys.setdefault(place, set()).add(_variable(path))
+                nodes.setdefault(place, set()).add(m)
+    rows = [("    %s" % place, out.plural(len(found), "setting") + (
+        " (%s)" % out.plural(len(nodes[place]), "node") if place.startswith("host_vars") else ""))
+        for place, found in sorted(keys.items(), key=lambda x: (x[0].startswith("host_vars"), x[0]))]
+    rows += [("    %s (yours)" % path, "%s: %s" % (out.plural(len(found), "setting"), ", ".join(sorted(found))))
+             for path, found in sorted(yours.items())]
+    if not rows:
+        return []
+    room = max(len(a) for a, dummy in rows) + 2
+    return [line for a, b in rows for line in fill_text(a.ljust(room) + b, report.width, "", " " * (room + 2))]
 
 
 def _review_blocks(report, data, differs, allow_unread):
@@ -1313,6 +1355,28 @@ def _details_lines(layout, self_check):
     return lines + ["  " + line if line else "" for line in (layout.get("report") or "").split("\n")]
 
 
+SECTION = re.compile(r"^[A-Z][A-Z-]+( [A-Z-]+)*($|  | \u2014|:)")  # a section's heading: capitals from column 0
+
+
+def _ruled(lines, width, screen):
+    """Each section after the first line: a rule of = above its heading, to tell them apart at a glance (as wide
+    as the longest line, 100 at most: never wider than the text); in the report two blank lines above it. On the
+    screen, the ops callback draws that line as its heavy rule, and the blank lines inside a section are " ": blank
+    there, where an empty line is a light rule (one is left above the screen's last line, the report's name)
+    -> [line]."""
+    rule = "=" * min(width, 100, max(len(line) for line in lines))
+    ruled = []
+    for i, line in enumerate(lines):
+        if i and SECTION.match(line):
+            while ruled and not ruled[-1]:
+                ruled.pop()
+            ruled += [" ", rule, " "] if screen else ["", "", rule]
+        elif screen and not line and i + 1 < len(lines) and not lines[i + 1].startswith("full report"):
+            line = " "
+        ruled.append(line)
+    return ruled
+
+
 def cassandra_import_report(layout, written, report_file, self_check, self_check_ok, secrets_clear=None,
                             leftovers=None, check=False, inventory="", hosts="", allow_unread=False, screen=False,
                             self_check_error="", cwd=None, in_git=None, changes=None, todo=None, width=None,
@@ -1364,6 +1428,10 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
         lines += ["", "TO REVIEW"]
         for kind, dummy, entries in reviews:
             lines += fill_text("%s: %s" % (kind.title, kind.about), width, "  ") + entries
+    where = _where_lines(report, data["settings"])
+    if where:
+        lines += [""] + fill_text("WHERE THE SETTINGS GO  (the inventory's files; a value set in yours is not written"
+                                  " again)", width, "", "  ") + where
     if screen:
         lines += [""] + fill_text("FOR INFO  in the report: the settings, versions, convergence and details", width, "",
                                   "  ")
@@ -1382,6 +1450,8 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     else:
         lines += [""] + _details_lines(layout, self_check)
     lines = [line.rstrip() for line in lines]
+    lines = [line for i, line in enumerate(lines) if line or not i or lines[i - 1]]  # (one blank line at most)
+    lines = _ruled(lines, width, screen)
     while lines and not lines[-1]:
         lines.pop()
     return lines

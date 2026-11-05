@@ -33,9 +33,11 @@ def report(nodes, ok=True, layout_extra=None, **kwargs):
 
 
 def section(lines, title):
-    """The lines of a section of the report, up to the next blank line."""
+    """The lines of a section of the report, up to the next heading (a blank line between its entries)."""
     at = lines.index(title)
-    end = lines.index("", at) if "" in lines[at:] else len(lines)
+    end = next((i for i in range(at + 1, len(lines)) if lines[i] and lines[i][0] != " "), len(lines))
+    while end > at + 1 and not lines[end - 1]:
+        end -= 1
     return lines[at + 1:end]
 
 
@@ -70,7 +72,8 @@ def test_clean_import_nothing_to_act_on():
                          "  self-check passed: the inventory gives every node that was read the settings it has now",
                          "  written: inventories/my_cluster.yml, group_vars/my_cluster*/",
                          "  report:  reports/my_cluster/report.txt"]
-    assert lines[5] == "WHAT THIS REPORT IS" and lines[9] == "" and lines[10] == "WORDS"  # (3 lines)
+    # each section: two blank lines and a rule above its heading
+    assert lines[4:8] == ["", "", "=" * 100, "WHAT THIS REPORT IS"] and lines[11:15] == ["", "", "=" * 100, "WORDS"]
     assert "TO DO" not in lines and "TO REVIEW" not in lines
     text = "\n".join(lines)
     assert "s3cret" not in text
@@ -140,15 +143,15 @@ def test_a_setting_said_in_plain_words_the_first_time():
     lines = report([node(1), node(2, "16G")])
     text = "\n".join(lines)
     assert text.count("(the memory Java gives Cassandra)") == 1
-    assert text.index("cassandra_max_heap_size (the memory Java gives Cassandra)") < text.index("\nFOR INFO\n")
+    assert text.index("(the memory Java gives Cassandra)") < text.index("\nFOR INFO\n")
 
 
 def test_values_that_differ_between_nodes_to_review():
     lines = report([node(1), node(2), node(3), node(4, "16G"), node(5, "16G")])
     review = section(lines, "TO REVIEW")
-    assert review[1:3] == [
-        "    cassandra_max_heap_size (the memory Java gives Cassandra): 8G on node1, node2, node3 (3 nodes); 16G on"
-        " node4, node5 (2 nodes)",
+    assert review[1:4] == [  # (a table: every value with its nodes)
+        "    cassandra_max_heap_size: 8G    node1, node2, node3 (3 nodes)   (the memory Java gives Cassandra)",
+        "                             16G   node4, node5 (2 nodes)",
         "      set in host_vars/<node>/main.yml; to give every node one value, see FOR INFO, convergence."]
     # (the heap per host)
     assert lines[2] == ("  written: inventories/my_cluster.yml, group_vars/my_cluster*/,"
@@ -164,11 +167,13 @@ def test_where_each_value_is_kept_and_the_dcs_name_the_nodes():
              dict(node(4, "16G"), dc="dc2"), dict(node(5, "4G"), dc="dc3"), dict(node(6, "4G"), dc="dc3"),
              dict(node(7, "4G"), dc="dc3")]
     review = section(report(nodes), "TO REVIEW")
-    assert review[1:3] == [
-        "    cassandra_max_heap_size (the memory Java gives Cassandra): 4G on dc3 (3 nodes); 16G on dc2 (2 nodes); 8G on"
-        " dc1 (2 nodes)",
+    assert review[1:6] == [
+        "    cassandra_max_heap_size: 4G    dc3 (3 nodes)   (the memory Java gives Cassandra)",
+        "                             16G   dc2 (2 nodes)",
+        "                             8G    dc1 (2 nodes)",
         "      set in group_vars/my_cluster_dc3/main.yml, group_vars/my_cluster_dc2/main.yml,"
-        " group_vars/my_cluster_dc1/main.yml; to give every node one value, see FOR"]
+        " group_vars/my_cluster_dc1/main.yml; to give every node one value, see FOR",
+        "      INFO, convergence."]
 
 
 def test_things_to_do_and_hand_edits():
@@ -200,10 +205,11 @@ def test_things_to_do_and_hand_edits():
     assert at < lines.index("TO REVIEW")
     review = section(lines, "TO REVIEW")
     at = review.index("    cassandra.yaml (Cassandra's main settings file) concurrent_writes: 48   node1, node2 (2 nodes)")
-    assert review[at:at + 3] == [
+    assert review[at:at + 4] == [  # (a blank line between entries)
         "    cassandra.yaml (Cassandra's main settings file) concurrent_writes: 48   node1, node2 (2 nodes)",
         "      to keep it: import again with -e import_cluster_keep_hand_edits=cassandra.yaml (Ansible then leaves"
         " cassandra.yaml as each node has it)",
+        "",
         "    jvm-server.options (Java's options) -Dcassandra.weird: 1   node3 (1 node)"]
     assert "    also 1 edit of the layout only (spacing, order, comments): no effect, listed under DETAILS" in review
     details = lines[lines.index("DETAILS: what the import read on each node"):]
@@ -225,7 +231,7 @@ def test_screen_and_check():
     lines = report([node(i) for i in range(1, 4)], check=True, screen=True, report_file=REPORT_CHECK,
                    leftovers={"stale": ["host_vars/gone/main.yml"]})
     assert lines[0] == "IMPORT my_cluster (--check, nothing written)  3 nodes  nothing to act on"
-    assert lines[2].startswith("  would write: ") and lines[3] == ""  # the report's path: last
+    assert lines[2].startswith("  would write: ") and lines[3] == " "  # the report's path: last (" ": a blank line)
     assert "  1. Write the inventory: the same command without --check." in lines
     assert lines[-1] == "full report (--check): reports/my_cluster/report.check.txt"  # written, report.txt left
     assert "TO REVIEW" not in lines and "DETAILS: what the import read on each node" not in lines
@@ -267,10 +273,11 @@ def test_differs_from_your_group_vars_all():
         "content": "cassandra_config_user: cassandra\ncassandra_config_group: cassandraops\n"}])
     lines = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, width=160)
     review = section(lines, "TO REVIEW")
-    assert review[1:5] == [
+    assert review[1:6] == [
         "    cassandra_config_group (the group of the config files): cassandra, yours: cassandraops"
         " (group_vars/all/standard.yml)   node1, node2 (2 nodes)",
         "      kept as the nodes have it (in host_vars/<node>/main.yml); to apply yours, delete it there, then apply_config",
+        "",
         "    cassandra_config_user (the owner of the config files): root, yours: cassandra (group_vars/all/standard.yml)"
         "   node1, node2 (2 nodes)",
         "      kept as the nodes have it (in host_vars/<node>/main.yml); to apply yours, delete it there, then apply_config"]
@@ -300,12 +307,12 @@ def test_reimport_check_with_nothing_to_change():
     assert screen[:4] == [
         "IMPORT my_cluster (--check, nothing written)  3 nodes  nothing to act on",
         "  self-check passed: the inventory gives every node that was read the settings it has now",
-        "  unchanged: inventories/my_cluster.yml, group_vars/my_cluster*/", ""]
+        "  unchanged: inventories/my_cluster.yml, group_vars/my_cluster*/", " "]  # (a blank line on the screen)
     assert screen[-1] == "full report (--check): reports/my_cluster/report.txt"
     assert not [line for line in screen if "Write the inventory" in line or "git commit" in line]
     # a thing to do still says so
     screen = report([node(1), node(2), node(3, read=False)], check=True, screen=True, changes=unchanged)
-    assert screen[4:6] == ["TO DO", "  1. Let the import read node3 (1 node), then import again"]
+    assert screen[7:9] == ["TO DO", "  1. Let the import read node3 (1 node), then import again"]
 
 
 def test_check_says_what_it_would_write():
@@ -333,13 +340,14 @@ def test_a_dict_value_one_row_per_sub_key():
     lines = report(nodes)
     text = "\n".join(lines)
     assert "pw0" not in text and "pw3" not in text
-    assert ("    cassandra_extra_settings.streaming_connections_per_host (cassandra.yaml settings without a variable of"
-            " their own): 2 on node1, node2, node3 (3 nodes); 1 on") in lines
-    assert ("    cassandra_extra_settings.sstable.selected_format: bti on all - node5 (4 nodes); (not set) on node5"
-            " (1 node)") in lines
-    at = [i for i, line in enumerate(lines) if line.startswith("    cassandra_extra_settings.server_encryption_options.")]
-    secret = " ".join(x.strip() for x in lines[at[0]:at[0] + 2])
-    assert "(in secrets.yml) on node1 (1 node)" in secret and "2 more values (in the inventory)" in secret
+    assert ("    cassandra_extra_settings.streaming_connections_per_host: 2   node1, node2, node3 (3 nodes)"
+            "   (cassandra.yaml settings without a variable of their own)") in lines
+    at = lines.index("    cassandra_extra_settings.sstable.selected_format: bti         all - node5 (4 nodes)")
+    assert lines[at + 1] == "                                                      (not set)   node5 (1 node)"
+    at = lines.index("    cassandra_extra_settings.server_encryption_options.keystore_password:")
+    assert lines[at + 1:at + 3] == ["      (in secrets.yml)            node1 (1 node)",  # (a long name: its values under it)
+                                    "      (in secrets.yml, value 2)   node2 (1 node)"]
+    assert lines[at + 5] == "      (in secrets.yml, value 5)   node5 (1 node)"  # (every value: none folded)
     assert "{" not in "\n".join(line for line in lines if line.startswith("    cassandra_extra_settings"))
 
 

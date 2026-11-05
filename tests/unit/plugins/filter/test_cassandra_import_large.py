@@ -117,8 +117,8 @@ def test_report_of_88_nodes():
     text = "\n".join(report)
     assert "s3cret" not in text and "k-a" not in text and "k-b" not in text
     # a secret is set in secrets.yml, never in main.yml
-    at = [i for i, line in enumerate(report) if line.startswith("    cassandra_jmx_password ")][0]
-    assert "set in group_vars/big_cluster_dc1/secrets.yml" in " ".join(report[at:at + 4])
+    at = [i for i, line in enumerate(report) if line.startswith("    cassandra_jmx_password:")][0]
+    assert "set in group_vars/big_cluster_dc1/secrets.yml" in " ".join(report[at:report.index("", at)])
     # DETAILS: every node by its name, its hand edits line by line
     assert all("  == %s" % n in report[details:] for n in PART_A + PART_B + PART_C)
     at = report.index("  == db111")
@@ -176,10 +176,14 @@ def test_one_node_off_the_rule_keeps_every_value_per_node():
     assert layout["host_vars"]["db11"]["cassandra_medusa_nodetool_host"] == "db11.example.net"
     for name, (written, read) in effective(nodes).items():
         assert written == read, name
-    # the report: one entry for the setting, not 88 lines
+    # the report: every value with its node; the screen: one row for them, not 88 lines
     report = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, width=400)
-    found = [line for line in report if "cassandra_medusa_nodetool_host" in line]
-    assert len(found) == 1 and found[0].endswith(": 88 values, one per node, on all (88 nodes)"), found
+    at = [i for i, line in enumerate(report) if line.startswith("    cassandra_medusa_nodetool_host:")]
+    assert len(at) == 1 and "other.example.net" in " ".join(report[at[0]:at[0] + 88])
+    assert len([line for line in report[at[0]:report.index("", at[0])] if " (1 node)" in line]) == 88
+    screen = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, width=400, screen=True)
+    found = [line for line in screen if "cassandra_medusa_nodetool_host" in line]
+    assert len(found) == 1 and "88 values, one per node (each in the report)  all (88 nodes)" in found[0], found
 
 
 def test_a_default_is_never_folded_into_the_value_per_node_row():
@@ -188,12 +192,15 @@ def test_a_default_is_never_folded_into_the_value_per_node_row():
         n["vars"]["cassandra_concurrent_writes"] = 32 + i
     del nodes[3]["vars"]["cassandra_concurrent_writes"]
     layout = cassandra_inventory_layout(nodes, "Big Cluster")
-    report = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, width=400)
-    assert "(collection's default) on db14 (1 node)" in "\n".join(report)
+    screen = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, width=400, screen=True)
+    at = [i for i, line in enumerate(screen) if line.startswith("    cassandra_concurrent_writes:")][0]
+    rows = screen[at:screen.index("", at)]
+    assert ["db14 (1 node)" in r for r in rows if "(collection's default)" in r] == [True]
+    assert "87 values, one per node" in " ".join(rows)
     del nodes[3]
     layout = cassandra_inventory_layout(nodes, "Big Cluster")
-    report = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, width=400)
-    row = [line for line in report if line.startswith("    cassandra_concurrent_writes")][0]
+    screen = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, width=400, screen=True)
+    row = [line for line in screen if line.startswith("    cassandra_concurrent_writes")][0]
     assert "(collection's default)" not in row and "87 values" in row
 
 

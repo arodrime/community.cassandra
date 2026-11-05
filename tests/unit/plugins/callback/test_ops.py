@@ -995,6 +995,28 @@ def test_the_import_screen_is_ruled(tmp_path):
                              "READY - nothing to change", "", "----", "", "full report: written by the run without --check"]
 
 
+def test_the_import_screen_sections_heavy_rules_entries_blank(tmp_path):
+    # import_cluster's screen: a line of = above each section is the heavy rule, " " between two entries a blank
+    # line (not a light rule between every entry)
+    playbook = """
+- hosts: node1
+  gather_facts: false
+  tasks:
+    - name: Show the summary
+      ansible.builtin.debug:
+        msg: ["IMPORT my_cluster  3 nodes  2 to review", " ", "==========", "TO REVIEW", "    a: 1   node1", " ",
+              "    b: 2   node2", " ", "==========", "WHAT TO DO NEXT", "  1. Read TO REVIEW", "",
+              "full report: reports/my_cluster/report.txt"]
+      vars:
+        cassandra_output: true
+"""
+    rc, output = run(tmp_path, playbook)
+    assert rc == 0, output
+    assert shown(output) == ["====", "", "IMPORT my_cluster  3 nodes  2 to review", "", "====", "", "TO REVIEW",
+                             "    a: 1   node1", "", "    b: 2   node2", "", "====", "", "WHAT TO DO NEXT",
+                             "  1. Read TO REVIEW", "", "----", "", "full report: reports/my_cluster/report.txt"]
+
+
 def test_air_around_rules_phases_and_paragraphs(tmp_path):
     # a blank line each side of a rule, never two in a row; a phase line a block of its own; a paragraph
     # break (" ", PARAGRAPH) blank inside a screen where "" is a rule
