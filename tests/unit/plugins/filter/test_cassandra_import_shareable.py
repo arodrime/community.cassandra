@@ -63,8 +63,9 @@ def test_what_helps_kept():
     text = shared["text"]
     assert text[0].startswith("SHAREABLE COPY of an import_cluster report") and text[1] == ""
     # the sections, the hand edits with their lines, the versions, the warnings, the import's own notes
-    for title in ("TO REVIEW", "FOR INFO", "WHAT TO DO NEXT", "DETAILS: what the import read on each node"):
-        assert title in text
+    for title in ("TO REVIEW", "FOR INFO", "WHAT TO DO NEXT", "DETAILS"):  # (each in its rule)
+        assert [line for line in text if line.startswith("==== %s =" % title)], title
+    assert "  What the import read on each node" in text
     joined = "\n".join(text)
     assert "        + hints_directory: /path" in joined and "        - hints_directory: /var/lib/cassandra/hints" in joined
     assert "    Cassandra 5.0.9, Java 17.0.12, Debian 12   all (6 nodes)" in text

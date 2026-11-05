@@ -32,13 +32,25 @@ def report(nodes, ok=True, layout_extra=None, **kwargs):
                                    **kwargs)
 
 
+def heading(lines, title):
+    """Where a section starts: its title in a rule of = (==== TO REVIEW ====...)."""
+    return next(i for i, line in enumerate(lines) if line.startswith("==== %s =" % title))
+
+
+def has(lines, title):
+    return any(line.startswith("==== %s =" % title) for line in lines)
+
+
 def section(lines, title):
-    """The lines of a section of the report, up to the next heading (a blank line between its entries)."""
-    at = lines.index(title)
-    end = next((i for i in range(at + 1, len(lines)) if lines[i] and lines[i][0] != " "), len(lines))
-    while end > at + 1 and not lines[end - 1]:
+    """The lines of a section of the report, from under its rule (its blank lines first left out) up to the next
+    rule or line from column 0 (a blank line between its entries)."""
+    at = heading(lines, title) + 1
+    while at < len(lines) and not lines[at].strip():
+        at += 1
+    end = next((i for i in range(at, len(lines)) if lines[i] and lines[i][0] != " "), len(lines))
+    while end > at and not lines[end - 1].strip():
         end -= 1
-    return lines[at + 1:end]
+    return lines[at:end]
 
 
 def test_compress():
@@ -73,15 +85,17 @@ def test_clean_import_nothing_to_act_on():
                          "  written: inventories/my_cluster.yml, group_vars/my_cluster*/",
                          "  report:  reports/my_cluster/report.txt"]
     # each section: two blank lines and a rule above its heading
-    assert lines[4:8] == ["", "", "=" * 100, "WHAT THIS REPORT IS"] and lines[11:15] == ["", "", "=" * 100, "WORDS"]
-    assert "TO DO" not in lines and "TO REVIEW" not in lines
+    # each section: two blank lines, its title in a rule, a blank line
+    assert lines[4:8] == ["", "", "==== WHAT THIS REPORT IS " + "=" * 75, ""]
+    assert lines[heading(lines, "WORDS") - 2:heading(lines, "WORDS") + 2] == ["", "", "==== WORDS " + "=" * 89, ""]
+    assert not has(lines, "TO DO") and not has(lines, "TO REVIEW")
     text = "\n".join(lines)
     assert "s3cret" not in text
     info = section(lines, "FOR INFO")
     assert "    cassandra_jmx_password:  (in secrets.yml)   all (5 nodes)   (the password nodetool logs in with)" in info
     assert "    cassandra_seeds:         node1, node3       all (5 nodes)" \
            "   (the nodes a starting node contacts first to join the cluster)" in info
-    assert "differs" not in text and lines[-1] != "" and "DETAILS: what the import read on each node" in lines
+    assert "differs" not in text and lines[-1] != "" and section(lines, "DETAILS")[0] == "  What the import read on each node"
     # what to do next: no -i when the inventory is ansible.cfg's, no -e cassandra_hosts for a cluster alone
     after = section(lines, "WHAT TO DO NEXT")
     assert after[0] == "  1. Review the files written, then keep them: git diff && git commit."
@@ -106,8 +120,8 @@ def test_sections_by_urgency_and_the_counts_in_the_head():
     lines = report(nodes, secrets_clear=["group_vars/my_cluster/secrets.yml"])
     assert lines[0] == ("IMPORT my_cluster  4 nodes (3 read)  5 to act on: 2 TO DO, 1 hand edit, 1 file left as is,"
                         " 1 setting that differs between nodes")
-    order = [lines.index(title) for title in ("WHAT THIS REPORT IS", "TO DO", "TO REVIEW", "FOR INFO",
-                                              "WHAT TO DO NEXT", "DETAILS: what the import read on each node")]
+    order = [heading(lines, title) for title in ("WHAT THIS REPORT IS", "TO DO", "TO REVIEW", "FOR INFO",
+                                                 "WHAT TO DO NEXT", "DETAILS")]
     assert order == sorted(order)
     # each TO DO a numbered step: what, why, the command to copy, what to check after
     todo = section(lines, "TO DO")
@@ -127,8 +141,8 @@ def test_sections_by_urgency_and_the_counts_in_the_head():
     assert section(lines, "WHAT TO DO NEXT")[0].startswith("  1. Do the TO DO steps above, in their order")
     # the screen: the same head, no FOR INFO details nor DETAILS, the report's path last
     screen = report(nodes, secrets_clear=["group_vars/my_cluster/secrets.yml"], screen=True)
-    assert screen[0] == lines[0] and "WHAT THIS REPORT IS" not in screen
-    assert "FOR INFO  in the report: the settings, versions, convergence and details" in screen
+    assert screen[0] == lines[0] and not has(screen, "WHAT THIS REPORT IS")
+    assert section(screen, "FOR INFO") == ["  In the report: the settings, versions, convergence and details"]
     assert screen[-1] == "full report: reports/my_cluster/report.txt"
 
 
@@ -143,7 +157,7 @@ def test_a_setting_said_in_plain_words_the_first_time():
     lines = report([node(1), node(2, "16G")])
     text = "\n".join(lines)
     assert text.count("(the memory Java gives Cassandra)") == 1
-    assert text.index("(the memory Java gives Cassandra)") < text.index("\nFOR INFO\n")
+    assert text.index("(the memory Java gives Cassandra)") < text.index("\n==== FOR INFO =")
 
 
 def test_values_that_differ_between_nodes_to_review():
@@ -202,7 +216,7 @@ def test_things_to_do_and_hand_edits():
     assert lines[at + 1:at + 5] == ["    Hand edits no variable covers (cassandra_config would revert them):",
                                     "      - cassandra.yaml, on node1 (1 node):", "          concurrent_writes",
                                     "            node1 (1 node): cassandra.yaml: concurrent_writes"]
-    assert at < lines.index("TO REVIEW")
+    assert at < heading(lines, "TO REVIEW")
     review = section(lines, "TO REVIEW")
     at = review.index("    cassandra.yaml (Cassandra's main settings file) concurrent_writes: 48   node1, node2 (2 nodes)")
     assert review[at:at + 4] == [  # (a blank line between entries)
@@ -212,7 +226,7 @@ def test_things_to_do_and_hand_edits():
         "",
         "    jvm-server.options (Java's options) -Dcassandra.weird: 1   node3 (1 node)"]
     assert "    also 1 edit of the layout only (spacing, order, comments): no effect, listed under DETAILS" in review
-    details = lines[lines.index("DETAILS: what the import read on each node"):]
+    details = lines[heading(lines, "DETAILS"):]
     assert "        + concurrent_writes: 48" in details and not [line for line in details if "SELF-CHECK" in line]
     # not a valid inventory: nothing to commit
     assert not [line for line in lines if "git commit" in line]
@@ -234,7 +248,7 @@ def test_screen_and_check():
     assert lines[2].startswith("  would write: ") and lines[3] == " "  # the report's path: last (" ": a blank line)
     assert "  1. Write the inventory: the same command without --check." in lines
     assert lines[-1] == "full report (--check): reports/my_cluster/report.check.txt"  # written, report.txt left
-    assert "TO REVIEW" not in lines and "DETAILS: what the import read on each node" not in lines
+    assert not has(lines, "TO REVIEW") and not has(lines, "DETAILS")
     full = report([node(i) for i in range(1, 4)], check=True, leftovers={"stale": ["host_vars/gone/main.yml"]})
     assert "    would be removed (an earlier import's, not written again): host_vars/gone/main.yml" in full
     # the shareable copy named on the screen when asked
@@ -312,7 +326,7 @@ def test_reimport_check_with_nothing_to_change():
     assert not [line for line in screen if "Write the inventory" in line or "git commit" in line]
     # a thing to do still says so
     screen = report([node(1), node(2), node(3, read=False)], check=True, screen=True, changes=unchanged)
-    assert screen[7:9] == ["TO DO", "  1. Let the import read node3 (1 node), then import again"]
+    assert section(screen, "TO DO")[0] == "  1. Let the import read node3 (1 node), then import again"
 
 
 def test_check_says_what_it_would_write():
@@ -400,7 +414,7 @@ def test_long_extra_lines_summarised():
     rows = [line for line in lines if line.strip().startswith("cassandra_env_extra_lines:")]
     assert rows == ["    cassandra_env_extra_lines: 20 lines (first: # BEGIN agent)  all (3 nodes)"
                     "   (lines added at the end of cassandra-env.sh)"]
-    assert "a-very-long-configuration" not in "\n".join(lines[:lines.index("DETAILS: what the import read on each node")])
+    assert "a-very-long-configuration" not in "\n".join(lines[:heading(lines, "DETAILS")])
     # a long value of its own: cut
     nodes[0]["vars"]["cassandra_extra_settings"] = {"x": "y" * 100}
     assert [line for line in report(nodes) if "yyy..." in line]

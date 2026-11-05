@@ -54,8 +54,8 @@ description:
     and around a recap (C(DONE  ...), C(FAILED  ...), C(STOPPED at ...), C(WAY OUT  ...), C(CHECK  ...), C(NOTHING TO DO  ...),
     C(HEALTHY  ...), C(NOT HEALTHY  ...)), above the C(status) playbook's report and around its
     verdict, its last line (and the warning under it). A light one (C(-----)) for each empty line inside them (the blank lines of the status
-    report stay blank), under a plan's first line and above a question; a heavy one for a line of C(=) inside them
-    (the sections of the C(import_cluster) screen). As wide as the terminal, 100 columns at most, a
+    report stay blank), under a plan's first line and above a question; a heavy one for a line of C(=) inside them,
+    with its title (C(==== TO REVIEW ====)) when it has one (the sections of the C(import_cluster) screen). As wide as the terminal, 100 columns at most, a
     blank line above and under each one. A line with only a space inside them separates two paragraphs of a block,
     printed blank (not as a rule).
   - The text of the C(help) playbook (a message with the task variable C(cassandra_output_help) set to C(true) too)
@@ -200,7 +200,7 @@ _OPERATIONS = ("add_node", "replace_node", "decommission_node", "remove_dead_nod
 # a plan or a screen (its first line), a recap (a stop block: "STOPPED at node2: ...", "WAY OUT  ..." too)
 _HEADED = re.compile(r"(PLAN|REFUSED|READY|NOTHING TO DO|%s)  |IMPORT \S+ " % "|".join(
     operation.replace("_", " ").upper() for operation in _OPERATIONS))
-_HEAVY = re.compile(r"={4,}$")  # a line of = inside a screen: its heavy rule (the sections of import_cluster's)
+_HEAVY = re.compile(r"(?:==== (\S.*?) )?={4,}$")  # a rule of = inside a screen, a title in it or not: its heavy rule
 _RECAP = re.compile(r"(DONE|FAILED|CHECK|HEALTHY|NOT HEALTHY|NOTHING TO DO|WAY OUT)  |(STOPPED|FAILED) at ")
 # a verdict block without rules, coloured by its lines (its blank lines blank): import_cluster's failed self-check
 _BLOCK = re.compile(r"SELF-CHECK FAILED  ")
@@ -598,7 +598,7 @@ class CallbackModule(DefaultCallback):
                 shades = []
                 continue
             if (headed or recap) and _HEAVY.match(line):  # a section of the screen: drawn as the heavy rule
-                self._rule(heavy=True)
+                self._rule(heavy=True, text=_HEAVY.match(line).group(1) or "")
                 shades = []
                 continue
             shades = _under(shades, line)

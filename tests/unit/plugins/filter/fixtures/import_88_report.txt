@@ -4,15 +4,15 @@ IMPORT big_cluster  88 nodes  9 to review: 3 hand edits, 6 settings that differ 
   report:  reports/big/report.txt
 
 
-====================================================================================================
-WHAT THIS REPORT IS
+==== WHAT THIS REPORT IS ===========================================================================
+
   import_cluster read the nodes (the Cassandra servers) of big_cluster and wrote an Ansible inventory for them; nothing on the nodes was changed.
   TO DO: steps to take before you use that inventory. TO REVIEW: things worth a look. FOR INFO: nothing to do.
   The cluster keeps running as it is while you read: nothing here is urgent for it.
 
 
-====================================================================================================
-WORDS
+==== WORDS =========================================================================================
+
   inventory  the files that describe the nodes to Ansible: group_vars/<group>/ for a group of nodes, host_vars/<node>/ for one node
   dc1, dc1/r1  a data center (a group of nodes that holds its own copy of the data), a rack in it
   all - n4, dc1 + n7  node lists: every node but n4; the nodes of dc1 and n7 too; the count follows
@@ -21,8 +21,8 @@ WORDS
   -e name=value  an option: add it to the import command
 
 
-====================================================================================================
-TO REVIEW
+==== TO REVIEW =====================================================================================
+
   Hand edits: lines changed by hand in a config file that no inventory variable carries; apply_config (the playbook that writes the config files) would put the
   file back as the collection writes it (nothing changes on the nodes until it runs)
     cassandra.yaml (Cassandra's main settings file) concurrent_writes: 48   db111 (1 node)
@@ -74,8 +74,9 @@ TO REVIEW
       give every node one value, see FOR INFO, convergence.
 
 
-====================================================================================================
-WHERE THE SETTINGS GO  (the inventory's files; a value set in yours is not written again)
+==== WHERE THE SETTINGS GO =========================================================================
+
+  The inventory's files; a value set in yours is not written again
     group_vars/big_cluster/main.yml          6 settings
     group_vars/big_cluster_dc1/main.yml      5 settings
     group_vars/big_cluster_dc2/main.yml      4 settings
@@ -90,8 +91,8 @@ WHERE THE SETTINGS GO  (the inventory's files; a value set in yours is not writt
     host_vars/<node>/main.yml                4 settings (87 nodes)
 
 
-====================================================================================================
-FOR INFO
+==== FOR INFO ======================================================================================
+
   Settings that are not the collection's default (the same on every node, or one per node by nature; the ones that differ are under TO REVIEW)
     cassandra_seeds:                                        db11, db071, db101   all (88 nodes)   (the nodes a starting node contacts first to join the cluster)
     cassandra_num_tokens:                                   16                   all (88 nodes)   (how many slices of the data each node owns)
@@ -121,8 +122,8 @@ FOR INFO
     cassandra_install_url, cassandra_install_username, cassandra_java_tarballs, cassandra_java_package, cassandra_offline
 
 
-====================================================================================================
-WHAT TO DO NEXT
+==== WHAT TO DO NEXT ===============================================================================
+
   1. Read TO REVIEW: each entry says what to do; none of it stops you from using the inventory.
   2. Review the files written, then keep them: git diff && git commit.
   3. Check that the inventory changes nothing on the nodes (these two commands only look, they change nothing):
@@ -130,4 +131,3 @@ WHAT TO DO NEXT
      nothing to do.
 
 
-====================================================================================================

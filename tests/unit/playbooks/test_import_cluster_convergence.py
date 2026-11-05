@@ -76,7 +76,7 @@ def test_the_report_and_the_end_of_the_run(tmp_path, check):
     assert "Convergence" not in " ".join(lines[head:end])  # (FOR INFO: in the report only)
     report = (tmp_path / "reports" / "big" / name).read_text()
     convergence = report.index("\n  Convergence: how close the nodes are to sharing every setting\n")
-    assert report.index("\nFOR INFO\n") < convergence < report.index("\n  Not read from the nodes")
+    assert report.index("\n==== FOR INFO =") < convergence < report.index("\n  Not read from the nodes")
     assert "    SETTINGS THAT DIFFER — the safest change first, then the fewest nodes" in report
     assert "    KEPT BY HAND " in report
     assert not (tmp_path / "reports" / "big" / ("report.txt" if check else "report.check.txt")).exists()

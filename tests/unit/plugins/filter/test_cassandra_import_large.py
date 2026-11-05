@@ -112,7 +112,7 @@ def test_screen_of_88_nodes_fits_the_terminal(width):
 
 def test_report_of_88_nodes():
     report = big_report(width=160)
-    details = report.index("DETAILS: what the import read on each node")
+    details = next(i for i, line in enumerate(report) if line.startswith("==== DETAILS ="))
     assert report[:details] == golden("import_88_report.txt", report[:details])
     text = "\n".join(report)
     assert "s3cret" not in text and "k-a" not in text and "k-b" not in text
@@ -218,7 +218,7 @@ def test_jvm_moves_of_88_nodes_named_by_groups():
                               " the JVM reads, -Xmx and -Xms; in cassandra-env.sh, MAX_HEAP_SIZE and HEAP_NEWSIZE)")
     layout = cassandra_inventory_layout(nodes, "Big Cluster")
     report = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, width=160)
-    report = report[:report.index("DETAILS: what the import read on each node")]
+    report = report[:next(i for i, line in enumerate(report) if line.startswith("==== DETAILS ="))]
     moved = [line for line in report if "UseNUMA" in line or "UseParNewGC" in line or "rewrites cassandra-env.sh" in line
              or "not moved to variables" in line]
     assert len(moved) == 4  # the moved row, its rewrite, the unused option, the reason (wrapped)

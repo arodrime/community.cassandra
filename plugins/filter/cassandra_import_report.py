@@ -1355,23 +1355,31 @@ def _details_lines(layout, self_check):
     return lines + ["  " + line if line else "" for line in (layout.get("report") or "").split("\n")]
 
 
-SECTION = re.compile(r"^[A-Z][A-Z-]+( [A-Z-]+)*($|  | \u2014|:)")  # a section's heading: capitals from column 0
+# a section's heading: capitals from column 0, then what it holds ("FOR INFO  in the report: ...", "WHERE ...  (...)",
+# "DETAILS: ...", "CONVERGENCE — ...")
+SECTION = re.compile(r"^([A-Z][A-Z-]+(?: [A-Z-]+)*)(?:$|  \((.*)\)$|  (.*)$| — (.*)$|: (.*)$)")
 
 
 def _ruled(lines, width, screen):
-    """Each section after the first line: a rule of = above its heading, to tell them apart at a glance (as wide
-    as the longest line, 100 at most: never wider than the text); in the report two blank lines above it. On the
-    screen, the ops callback draws that line as its heavy rule, and the blank lines inside a section are " ": blank
-    there, where an empty line is a light rule (one is left above the screen's last line, the report's name)
-    -> [line]."""
-    rule = "=" * min(width, 100, max(len(line) for line in lines))
+    """Each section after the first line: its title in a rule of = (==== TO REVIEW ====...), what it holds on the
+    line under it, to tell the sections apart at a glance; the rule as wide as the longest line, 100 at most (never
+    wider than the text). In the report two blank lines above it and one under it. On the screen, the ops callback
+    draws it as its heavy rule, and the blank lines inside a section are " ": blank there, where an empty line is a
+    light rule (one is left above the screen's last line, the report's name) -> [line]."""
+    room = min(width, 100, max(len(line) for line in lines))
     ruled = []
     for i, line in enumerate(lines):
-        if i and SECTION.match(line):
-            while ruled and not ruled[-1]:
+        heading = SECTION.match(line) if i else None
+        if heading:
+            while ruled and not ruled[-1].strip():
                 ruled.pop()
-            ruled += [" ", rule, " "] if screen else ["", "", rule]
-        elif screen and not line and i + 1 < len(lines) and not lines[i + 1].startswith("full report"):
+            title = "==== %s " % heading.group(1)
+            ruled += [" ", title + "=" * max(4, room - len(title)), " "] if screen else \
+                ["", "", title + "=" * max(4, room - len(title)), ""]
+            about = next((g for g in heading.groups()[1:] if g), "")
+            ruled += fill_text(about[:1].upper() + about[1:], width, "  ", "  ")
+            continue
+        if screen and not line and i + 1 < len(lines) and not lines[i + 1].startswith("full report"):
             line = " "
         ruled.append(line)
     return ruled
@@ -1430,11 +1438,9 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
             lines += fill_text("%s: %s" % (kind.title, kind.about), width, "  ") + entries
     where = _where_lines(report, data["settings"])
     if where:
-        lines += [""] + fill_text("WHERE THE SETTINGS GO  (the inventory's files; a value set in yours is not written"
-                                  " again)", width, "", "  ") + where
+        lines += ["", "WHERE THE SETTINGS GO  (the inventory's files; a value set in yours is not written again)"] + where
     if screen:
-        lines += [""] + fill_text("FOR INFO  in the report: the settings, versions, convergence and details", width, "",
-                                  "  ")
+        lines += ["", "FOR INFO  in the report: the settings, versions, convergence and details"]
     else:
         info = _info_blocks(report, data, leftovers, convergence)
         lines += ["", "FOR INFO"]

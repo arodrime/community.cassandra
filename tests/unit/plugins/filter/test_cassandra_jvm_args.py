@@ -346,7 +346,7 @@ def test_report_moved_cleanup_and_next(tmp_path):
     assert lines[at + 2] == "      not read, Java 17 reads jvm17-server.options"
     assert "1 hand edit moved" in lines[0]
     assert u"\u2192 expect cassandra-env.sh, jvm17-server.options rewritten (same Java options, see TO REVIEW), nothing" \
-        u" else" in " ".join(x.strip() for x in lines[lines.index("WHAT TO DO NEXT"):])
+        u" else" in " ".join(x.strip() for x in lines[next(i for i, line in enumerate(lines) if line.startswith("==== WHAT TO DO NEXT =")):])
 
 
 # --- what the JVM gets from its arguments ----------------------------------------

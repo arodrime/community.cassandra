@@ -2,10 +2,8 @@ IMPORT big_cluster  88 nodes  9 to review: 3 hand edits, 6 settings that differ 
   self-check passed: the inventory gives every node that was read the settings it has now
   written: inventories/big.yml, group_vars/big_cluster*/, host_vars/<node>/ of 88 nodes
  
+==== TO REVIEW =====================================================================================
  
-====================================================================================================
- 
-TO REVIEW
   Hand edits: lines changed by hand in a config file that no inventory variable carries; apply_config (the playbook that
   writes the config files) would put the file back as the collection writes it (nothing changes on the nodes until it
   runs)
@@ -67,10 +65,9 @@ TO REVIEW
       groups, host_vars/<node>/main.yml; to give every node one value, see reports/big/report.txt (FOR INFO),
       convergence.
  
+==== WHERE THE SETTINGS GO =========================================================================
  
-====================================================================================================
- 
-WHERE THE SETTINGS GO  (the inventory's files; a value set in yours is not written again)
+  The inventory's files; a value set in yours is not written again
     group_vars/big_cluster/main.yml          6 settings
     group_vars/big_cluster_dc1/main.yml      5 settings
     group_vars/big_cluster_dc2/main.yml      4 settings
@@ -84,15 +81,12 @@ WHERE THE SETTINGS GO  (the inventory's files; a value set in yours is not writt
     group_vars/big_cluster_dc3_r13/main.yml  3 settings
     host_vars/<node>/main.yml                4 settings (87 nodes)
  
+==== FOR INFO ======================================================================================
  
-====================================================================================================
+  In the report: the settings, versions, convergence and details
  
-FOR INFO  in the report: the settings, versions, convergence and details
+==== WHAT TO DO NEXT ===============================================================================
  
- 
-====================================================================================================
- 
-WHAT TO DO NEXT
   1. Read TO REVIEW: each entry says what to do; none of it stops you from using the inventory.
   2. Review the files written, then keep them: git diff && git commit.
   3. Check that the inventory changes nothing on the nodes (these two commands only look, they change nothing):
