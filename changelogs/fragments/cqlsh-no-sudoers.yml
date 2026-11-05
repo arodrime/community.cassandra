@@ -1,0 +1,3 @@
+bugfixes:
+  - "cassandra_install - no sudoers rule any more for cqlsh (``env_keep += CQLSH_PYTHON``): it let a user allowed to run cqlsh through sudo point it at any program. cqlsh keeps its Python through the ``/usr/local/bin/cqlsh`` wrapper and ``/etc/profile.d/cqlsh.sh``; under sudo, ``sudo -i cqlsh`` or ``/usr/local/bin/cqlsh``."
+  - "cassandra_cqlsh - a bare ``cqlsh`` is looked for in ``/usr/local/bin`` first, then in the PATH (root's under become may leave ``/usr/local/bin`` out): the playbooks run the wrapper ``cassandra_install`` writes, with the Python cqlsh supports."

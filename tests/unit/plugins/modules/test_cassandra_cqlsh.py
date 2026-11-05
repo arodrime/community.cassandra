@@ -15,9 +15,11 @@ class Exit(Exception):
     pass
 
 
-def run(monkeypatch, **params):
-    """Runs main() with params; returns (the argv run, run_command's keywords, the exit kwargs)."""
+def run(monkeypatch, found=None, **params):
+    """Runs main() with params; returns (the argv run, run_command's keywords, the exit kwargs). found: what
+    get_bin_path finds ({name: path}; none by default) and the dirs it was asked to look in first (found["dirs"])."""
     ran = []
+    found = {} if found is None else found
     defaults = dict(cqlsh_host="127.0.0.1", cqlsh_port=9042, username=None, password=None, keyspace=None, file=None,
                     execute=None, encoding="utf-8", cqlshrc=None, cqlversion=None, protocol_version=None,
                     connect_timeout=5, request_timeout=10, tty=False, debug=True, ssl=False, no_compact=False,
@@ -27,6 +29,10 @@ def run(monkeypatch, **params):
     class Module(object):
         def __init__(self, **kwargs):
             self.params = defaults
+
+        def get_bin_path(self, name, required=False, opt_dirs=None):
+            found["dirs"] = opt_dirs
+            return found.get(name)
 
         def run_command(self, args, **kwargs):
             ran.append((args, kwargs))
@@ -83,3 +89,14 @@ def test_paths_are_paths():
     import inspect
     source = inspect.getsource(cassandra_cqlsh.main)
     assert "file=dict(type='path')" in source and "cqlshrc=dict(type='path')" in source
+
+
+def test_a_bare_cqlsh_looked_for_in_usr_local_bin_first(monkeypatch):
+    # root's PATH under sudo may leave /usr/local/bin out, where cassandra_install's wrapper is
+    found = {"cqlsh": "/usr/local/bin/cqlsh"}
+    assert run(monkeypatch, found=found)[0][0] == "/usr/local/bin/cqlsh" and found["dirs"] == ["/usr/local/bin"]
+    assert run(monkeypatch)[0][0] == "cqlsh"  # (none found: as given, its error said by cqlsh's run)
+    # a command given: as it is
+    found = {"cqlsh": "/usr/local/bin/cqlsh"}
+    assert run(monkeypatch, found=found, cqlsh_cmd="/opt/venv/bin/cqlsh")[0][0] == "/opt/venv/bin/cqlsh"
+    assert "dirs" not in found

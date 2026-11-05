@@ -108,6 +108,9 @@ options:
     description:
       - cqlsh executable.
       - Split into words as a shell does, C($VAR) expanded, C(~) not (give the full path or C($HOME/...)).
+      - V(cqlsh) alone is looked for in C(/usr/local/bin) first, then in the PATH (root's under become, which may
+        leave C(/usr/local/bin) out). A cqlsh there, such as the wrapper C(cassandra_install) writes to run it with a
+        Python it supports, is the one a login shell runs too.
     type: str
     default: "cqlsh"
   transform:
@@ -294,7 +297,10 @@ def main():
         supports_check_mode=False,
     )
 
-    args = [os.path.expandvars(word) for word in shlex.split(module.params['cqlsh_cmd'])] + [
+    words = [os.path.expandvars(word) for word in shlex.split(module.params['cqlsh_cmd'])]
+    if words == ["cqlsh"]:  # (/usr/local/bin first: the PATH of root under sudo may leave it out)
+        words = [module.get_bin_path("cqlsh", opt_dirs=["/usr/local/bin"]) or "cqlsh"]
+    args = words + [
         module.params['cqlsh_host'],
         module.params['cqlsh_port'],
     ]

@@ -47,19 +47,15 @@
     - item.rc == 0
     - item.stdout != '/usr/lib/python3.6/site-packages'
 
-- name: Check for visudo (sudo installed)
-  ansible.builtin.stat:
-    path: /usr/sbin/visudo
-  register: cassandra_visudo
-
-# cqlsh honours CQLSH_PYTHON: wrapper for scripts/cron (/usr/local/bin comes
-# first in PATH), profile.d for login shells, env_keep for sudo.
+# cqlsh honours CQLSH_PYTHON: the wrapper for scripts, cron and root (the
+# playbooks run /usr/local/bin/cqlsh first), profile.d for login shells. No
+# sudoers rule keeps CQLSH_PYTHON (it would let a sudo cqlsh run any program):
+# under sudo, sudo -i cqlsh or /usr/local/bin/cqlsh.
 - name: Point cqlsh at its Python
   ansible.builtin.copy:
     dest: "{{ item.dest }}"
     content: "{{ item.content }}"
     mode: "{{ item.mode }}"
-    validate: "{{ item.validate | default(omit) }}"
   loop:
     - dest: /usr/local/bin/cqlsh
       mode: "0755"
@@ -72,19 +68,12 @@
       content: |
         # Managed by Ansible (cassandra_install)
         export CQLSH_PYTHON={{ _cassandra_cqlsh_python }}
-    - dest: /etc/sudoers.d/cqlsh
-      mode: "0440"
-      validate: /usr/sbin/visudo -cf %s
-      content: |
-        # Managed by Ansible (cassandra_install)
-        Defaults env_keep += "CQLSH_PYTHON"
   loop_control:
     label: "{{ item.dest }}"
   register: cassandra_cqlsh_wrapper
   when:
     - cassandra_cqlsh_python_manage | bool
     - _cassandra_cqlsh_python != ''
-    - item.dest != '/etc/sudoers.d/cqlsh' or cassandra_visudo.stat.exists
     # offline without python3.11: leave cqlsh as it is rather than point it at nothing
     - not (cassandra_offline | bool and _cassandra_cqlsh_python == '/usr/bin/python3.11'
            and 'python3.11' not in ansible_facts['packages'] | default({}))
@@ -93,7 +82,7 @@
 - name: Find the cqlsh Python pointers written by this role
   ansible.builtin.command: >-
     grep -lF "Managed by Ansible (cassandra_install)"
-    /usr/local/bin/cqlsh /etc/profile.d/cqlsh.sh /etc/sudoers.d/cqlsh
+    /usr/local/bin/cqlsh /etc/profile.d/cqlsh.sh
   register: cassandra_cqlsh_pointers
   changed_when: false
   failed_when: false
