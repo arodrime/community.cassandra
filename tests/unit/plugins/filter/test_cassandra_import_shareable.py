@@ -39,9 +39,11 @@ def site_node(i, dc):
 def site_report():
     nodes = [site_node(i, dc) for dc in ("paris", "lyon") for i in range(1, 4)]
     layout = cassandra_inventory_layout(nodes, "Orders Prod")
-    lines = cassandra_import_report(layout, ["/home/ops/sites/inventories/orders_prod.yml", "/home/ops/sites/inventories"],
-                                    "/home/ops/sites/reports/orders_prod/report.txt", {}, True, cwd="/home/ops/sites",
-                                    in_git=True, width=160)
+    args = (layout, ["/home/ops/sites/inventories/orders_prod.yml", "/home/ops/sites/inventories"],
+            "/home/ops/sites/reports/orders_prod/report.txt", {}, True)
+    # (as the playbook: report.txt, then report.details.txt, in one copy)
+    lines = cassandra_import_report(*args, cwd="/home/ops/sites", in_git=True, width=160) + [""] + \
+        cassandra_import_report(*args, cwd="/home/ops/sites", in_git=True, width=160, details=True)
     return nodes, lines, cassandra_import_shareable(lines, layout)
 
 
@@ -63,7 +65,7 @@ def test_what_helps_kept():
     text = shared["text"]
     assert text[0].startswith("SHAREABLE COPY of an import_cluster report") and text[1] == ""
     # the sections, the hand edits with their lines, the versions, the warnings, the import's own notes
-    for title in ("TO REVIEW", "FOR INFO", "WHAT TO DO NEXT", "DETAILS"):  # (each in its rule)
+    for title in ("WHAT TO DO NEXT", "FOR INFO", "DETAILS"):  # (each in its rule; report.txt, then the details)
         assert [line for line in text if line.startswith("==== %s =" % title)], title
     assert "  What the import read on each node" in text
     joined = "\n".join(text)
@@ -91,7 +93,7 @@ def test_columns_stay_aligned():
 
 
 def test_88_nodes_no_name_address_or_domain():
-    report = large.big_report(width=160)
+    report = large.big_report(width=160) + [""] + large.big_report(width=160, details=True)
     layout = cassandra_inventory_layout(large.fake_cluster(), "Big Cluster")
     text = "\n".join(cassandra_import_shareable(report, layout)["text"])
     assert not re.search(r"\bdb\d+|10\.100\.|example\.net|big_cluster|Big Cluster", text)
@@ -254,3 +256,14 @@ def test_words_the_collection_never_writes_are_masked():
     for kept in ("keyspace", "table", "keystore", "/etc/cassandra/", "jmx user", "Cassandra 5.0.9", "Java 17", "(2 nodes)"):
         assert kept in text
     assert [line for line in shared["map"] if line.endswith("= zorbex")]
+
+
+def test_kernel_settings_and_xml_tags_kept():
+    # (owner's cluster, 2026-11-05) vm.swappiness read as a domain, </file> as a path: both left as they are
+    lines = ["sysctl /etc/sysctl.d/99-x.conf: vm.swappiness = 0 (cassandra_linux: 1)",
+             "tuned [sysctl]: vm.dirty_ratio=10, net.core.rmem_max=212992",
+             "  +     <file>/var/log/cassandra/audit/audit.log</file>"]
+    text = "\n".join(cassandra_import_shareable(lines, layout_of([{"name": "a1"}]))["text"][2:])  # (its head said)
+    for kept in ("vm.swappiness = 0", "vm.dirty_ratio=10", "net.core.rmem_max", "</file>"):
+        assert kept in text
+    assert "domain1" not in text

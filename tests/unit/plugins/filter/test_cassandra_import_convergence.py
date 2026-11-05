@@ -402,11 +402,11 @@ def test_in_the_report_for_info():
     changes = {"changed": ["big.yml"] + files, "removed": [], "existed": []}
     common = dict(cwd="/p", in_git=True, changes=changes)
     report = cassandra_import_report(big, ["/p/inventories/big.yml", "/p/inventories"], REPORT, {}, True,
-                                     convergence=section(), **common)
+                                     convergence=section(), details=True, **common)  # (report.details.txt)
     at = report.index("  Convergence: how close the nodes are to sharing every setting")
     assert report[at + 1].startswith("    4 of 11 settings have the same value on every node")
     assert next(i for i, line in enumerate(report) if line.startswith("==== FOR INFO =")) < at < report.index(
         "  Not read from the nodes, so not in the inventory (your group_vars/all may set them)")
     # without it: as before
     assert not [line for line in cassandra_import_report(big, ["/p/inventories/big.yml", "/p/inventories"], REPORT,
-                                                         {}, True, **common) if "CONVERGENCE" in line]
+                                                         {}, True, details=True, **common) if "CONVERGENCE" in line]

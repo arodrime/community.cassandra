@@ -2,12 +2,14 @@
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 """The report of an import (import_cluster), and the screen that ends it.
 
-cassandra_import_report: the import's outcome -> the lines of report.txt, or with screen true the end of the run.
-    By urgency: a head (the verdict and its counts), what the report is, then TO DO (numbered steps, each with
-    the command to copy and what to check after), TO REVIEW (what deserves a look: one entry is two lines, what
-    and on which nodes, then what to do), FOR INFO (nothing to do), WHAT TO DO NEXT, and the DETAILS node by
-    node. Node lists in their shortest exact form, with their count: "all (12 nodes)", "dc1 - n3 + n9 (6
-    nodes)". A long value summarised ("20 lines (first: ...)"), whole in the files written. Secrets never shown.
+cassandra_import_report: the import's outcome -> the lines of report.txt, with details true of
+    report.details.txt, with screen true the end of the run. report.txt by urgency: a head (the verdict and its
+    counts), TO DO (numbered steps, each with the command to copy and what to check after), WORTH A LOOK, HAND
+    EDITS, DIFFERENT ON SOME NODES, LEFT AS THE NODES HAVE THEM (each entry: what and on which nodes, then what
+    to do, step by step), WHAT TO DO NEXT. report.details.txt: what the report is, its words, where the settings
+    go, FOR INFO (nothing to do), the DETAILS (the lines every node has once, then each node's own). Node lists
+    in their shortest exact form, with their count: "all (12 nodes)", "dc1 - n3 + n9 (6 nodes)". A long value
+    summarised ("20 lines (first: ...)"), whole in the files written. Secrets never shown.
 cassandra_import_self_check_advice: the end of the run on a failed self-check: what differs, grouped by what
     makes it pass, and how (report.txt has the same under TO DO, each node's differences under it).
 """
@@ -794,7 +796,7 @@ def report_sections(layout, self_check):
 # relative to it), the values of yours that differ and whether they all are in group_vars/all (standard), the
 # names already said in plain words (said, filled as the report goes)
 _Report = namedtuple("_Report", "layout read unread names everyone groups chains full width screen check cwd"
-                                " yours standard said report_name")
+                                " yours standard said report_name inventory hosts")
 
 
 def _who(report, members, full=None):
@@ -952,7 +954,7 @@ MOVED = _Kind("hand edit moved", "hand edits moved", "Hand edits moved to variab
               "lines added by hand to cassandra-env.sh or a jvm options file that now come from variables; Java gets the"
               " same options, but"
               " the next apply_config rewrites the file and restarts the node")
-TO_CHECK = _Kind("setting to review", "settings to review", "Settings to review",
+TO_CHECK = _Kind("thing worth a look", "things worth a look", "Worth a look",
                  "values that work but deserve a look; each says why and what to do")
 DIFFERS = _Kind("setting that differs between nodes", "settings that differ between nodes",
                 "Settings that differ between nodes",
@@ -1006,14 +1008,56 @@ def _hand_extra(report):
 
 
 def _kept_entries(report, kept):
-    """Files left as is: one entry per file, its nodes."""
-    by_file = {}
-    for name, f in kept:
-        by_file.setdefault(f, []).append(name)
-    return [line for f, members in by_file.items() for line in _entry(
-        report, "%s: left as each node has it" % _say(report, f), members,
-        "fine while its edits are wanted; to bring it back under Ansible, see %s, convergence (kept by hand)"
-        % _convergence_place(report))]
+    """Files left as is: one entry per file, its nodes, then how to give it back to Ansible, step by step (the
+    variables that carry its edits and where they go; the line to remove; the check; the run) -> [line]."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_convergence import kept_plan
+    cluster = report.layout["cluster_group"]
+    entries = []
+    for plan in kept_plan(report.layout, report.inventory, report.hosts, report.cwd):
+        nodes, name = plan["nodes"], plan["file"]
+        entries += fill_text("%s   %s" % (_say(report, name), unbreakable(_who(report, nodes))), report.width, "    ",
+                             "  ")
+        if report.screen:  # (the steps in report.txt)
+            continue
+        everyone = sorted(nodes) == sorted(report.names)
+        hosts = "host_vars/%s/main.yml" % nodes[0] if len(nodes) == 1 else \
+            "host_vars/<node>/main.yml of %s" % out.plural(len(nodes), "node")
+        if plan["loose"] and not plan["set"] and not plan["per_node"]:
+            entries += fill_text("%s that no variable carries (each under DETAILS): Ansible leaves the file as each"
+                                 " node has it; nothing to do while they are wanted" % out.plural(plan["loose"], "edit"),
+                                 report.width, "      ", "  ")
+            entries += [""]
+            continue
+        steps = []
+        if plan["loose"]:
+            steps.append("undo on the nodes the %s no variable carries (each under DETAILS), or keep the file as it is"
+                         % out.plural(plan["loose"], "edit"))
+        if plan["set"]:
+            steps.append("in %s: %s" % ("group_vars/%s/main.yml" % cluster if everyone else hosts,
+                                        ", ".join("%s: %s" % (k, v) for k, v in plan["set"])))
+        for variable, value in plan["per_node"]:
+            steps.append("in %s: %s: %s" % (hosts, variable, value))
+        steps.append("in %s: remove %s from cassandra_config_keep_files" % (hosts, name))
+        steps.append("check: %s %s what its diff still shows, Ansible would undo"
+                     % (unbreakable(plan["check"]), ARROW_RIGHT))
+        steps.append("the same without --check: it writes %s, then restarts the nodes" % name)
+        entries += fill_text("to give it back to Ansible%s:" % (
+            " (%s: already given)" % ", ".join(plan["already"]) if plan["already"] else ""), report.width, "      ", "  ")
+        for i, step in enumerate(steps):
+            entries += fill_text("%d. %s" % (i + 1, step), report.width, "        ", "   ")
+        entries += [""]
+    return entries
+
+
+def _left_alone_lines(report):
+    """What Ansible leaves as each node has it (the *_manage: false the import wrote), one line per set of nodes."""
+    by_nodes = {}
+    for label, members in report_sections(report.layout, {})["left_groups"].items():
+        if not label.startswith("cassandra_config_keep_files"):
+            by_nodes.setdefault(tuple(sorted(members)), []).append(label)
+    return [line for members, labels in by_nodes.items() for line in fill_text(
+        "not managed by Ansible here: %s   %s" % (", ".join(labels), unbreakable(_who(report, list(members)))),
+        report.width, "    ", "  ")]
 
 
 def _moved_entries(report):
@@ -1041,11 +1085,16 @@ def _to_check_entries(report):
     entries, count = [], 0
     found = suspicious(dict((n["name"], dict(n.get("vars") or {}, **{SUSPICIOUS_LINES: [
         e[4:] for e in n.get("hand_edits") or [] if e.startswith("  + ")]})) for n in read), [n["name"] for n in read])
-    for row, names, text, fix in found:  # (finding_lines: two lines already)
+    for row, names, text, fix in found:  # (an entry as the others: what, its nodes after it, then what to do)
         count += 1
-        first, second = finding_lines(row, names, text, fix, who=_who(report, names))
-        entries += fill_text(first, report.width, "    ", "    ") + fill_text(second.strip(), report.width,
-                                                                              "      ", "  ")
+        dummy, todo = finding_lines(row, names, text, fix)
+        if report.screen:  # (how to keep it on purpose: report.txt)
+            todo = todo.split("; kept on purpose: ")[0]
+        entries += _entry(report, text.replace(" on {nodes}", "").replace("{nodes}", "these nodes"), names,
+                          todo.strip())
+    for text, members, todo in _os_findings(report):
+        count += 1
+        entries += _entry(report, text, members, todo)
     for text, members in _jvm_warnings(read):
         count += 1
         option, sep, rest = text.partition("): ")
@@ -1067,6 +1116,52 @@ def _to_check_entries(report):
                           "no vault password was given, so their values are not compared with the nodes: import"
                           " again with --ask-vault-pass")
     return count, entries
+
+
+_THP_ON = re.compile(r"^THP now: enabled (always|madvise)\b")
+_THP_BY = re.compile(r"^THP set by (.+) \(not executable\)$")
+_READAHEAD = re.compile(r"^(?:device|disk) .*, SSD\): read_ahead_kb (\d+)")  # (a label may hold parentheses)
+_TUNED_DISK = re.compile(r"^tuned (\S+) \[disk\]: readahead=>?(\d+)")
+_TUNED_PROFILE = re.compile(r"^tuned: profile (\S+)")
+READAHEAD_MOST = 64  # KB: more on a data SSD is said (cassandra_linux writes 4)
+
+
+def _os_findings(report):
+    """What the import observed on the nodes that is worth a look, beyond their settings: transparent huge pages
+    on, a large read-ahead on the data SSDs, a unit that does not restart Cassandra, Medusa installed and not set
+    up -> [(finding, [nodes], what to do)], the same finding on several nodes once."""
+    found = {}
+
+    def add(text, todo, name):
+        found.setdefault((text, todo), []).append(name)
+
+    for n in report.read:
+        lines = (n.get("os") or {}).get("lines") or []
+        thp = next((m.group(1) for m in map(_THP_ON.match, lines) if m), "")
+        if thp:
+            script = next((m.group(1) for m in map(_THP_BY.match, lines) if m), "")
+            add("transparent huge pages enabled %s%s" % (
+                thp, ", set by %s, which is not executable" % script if script else ""),
+                "Cassandra wants them off (never), as cassandra_linux sets them", n["name"])
+        ahead = sorted(set(int(m.group(1)) for m in map(_READAHEAD.match, lines) if m and int(m.group(1)) > READAHEAD_MOST))
+        if ahead:
+            tuned = next((m for m in map(_TUNED_DISK.match, lines) if m), None)
+            profile = next((m.group(1) for m in map(_TUNED_PROFILE.match, lines) if m), "")
+            add("read-ahead %s KB on the data SSDs (cassandra_linux: 4)%s" % (
+                "/".join(str(a) for a in ahead),
+                ", and tuned (profile %s) sets readahead=>%s at each start" % (profile, tuned.group(2))
+                if tuned and profile else ""),
+                "a large read-ahead fills the page cache with data no read asked for" + (
+                    "; tuned would set it again: a tuned profile of your own without it" if tuned else ""), n["name"])
+        if str((n.get("unit") or {}).get("restart") or "") == "no":
+            add("Restart=no in Cassandra's systemd unit: a Cassandra that stops on an error stays down",
+                "fine if on purpose; cassandra_service's own unit restarts it (cassandra_service_unit_manage)",
+                n["name"])
+        medusa = n.get("medusa") or {}
+        if medusa.get("install") and not medusa.get("ini"):
+            add("Medusa installed, no /etc/medusa/medusa.ini: it is not set up there",
+                "nothing to do if the backups are made another way; cassandra_medusa sets it up", n["name"])
+    return [(text, members, todo) for (text, todo), members in found.items()]
 
 
 def _yours_rows(report):
@@ -1099,6 +1194,7 @@ def _differs_entries(report, differs):
     """Each setting that differs: a table of its values (every one, with its nodes), then where they are set; on the
     screen, a value per node (more than 5 nodes with one of their own) is one row, each in the report."""
     entries = []
+    plans = _differs_plans(report) if differs and not report.screen else {}
     for path, values in differs:
         own = [(v, m) for v, m in values if len(m) == 1 and v not in ("(collection's default)", "(not set)")]
         own = own if report.screen and len(own) > 5 else []
@@ -1123,10 +1219,40 @@ def _differs_entries(report, differs):
         if any(v.startswith("(in secrets.yml") for v, dummy in values):  # (a secret: in secrets.yml, never main.yml)
             places = [p.replace("/main.yml", "/secrets.yml") for p in places]
         moving = " Changing it moves data: a task for an experienced operator." if _variable(path) in DATA_DIRS else ""
-        entries += fill_text("set in %s; to give every node one value, see %s, convergence.%s" % (
-            ", ".join(places) or "the collection's default", _convergence_place(report), moving),
-            report.width, "      ") + [""]
+        if report.screen:  # (the table only: where it is set and how to give one value, in report.txt)
+            entries += [""]
+            continue
+        entries += fill_text("set in %s.%s" % (", ".join(places) or "the collection's default", moving),
+                             report.width, "      ")
+        step = plans.get(path)
+        if step:
+            entries += fill_text("to give every node %s: %s" % (step[0], step[1]), report.width, "      ", "  ")
+            entries += fill_text("then %s" % step[2], report.width, "      ", "  ")
+        entries += [""]
     return entries
+
+
+_ACTION = re.compile(r"^\u2192 (.*?) for all(?: \(a tie[^)]*\))?: (.*)$")
+
+
+def _differs_plans(report):
+    """How to give every node one value, per setting that differs (the convergence's way, said as steps) ->
+    {path: (the value, what to change, what then happens and its check)}."""
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_import_convergence as conv
+    data = report_sections(report.layout, {})
+    items, dummy = conv._setting_items(report.layout, data, report.read)  # pylint: disable=protected-access
+    plans = {}
+    for item in items:
+        m = _ACTION.match(conv._action(item, report.layout))  # pylint: disable=protected-access
+        if not m or not m.group(2):
+            continue
+        check = "check first: %s" % unbreakable(conv._check(  # pylint: disable=protected-access
+            item["changing"], item["kind"], report.inventory, report.hosts, report.cwd)) \
+            if conv._KINDS[item["kind"]][2] else "no check (apply_config does not show it)"  # pylint: disable=protected-access
+        value = conv._shown(m.group(1))  # pylint: disable=protected-access
+        plans[item["name"]] = (value if value != "default" else "the collection's default", m.group(2),
+                               "%s; %s" % (conv._then_text(item), check))  # pylint: disable=protected-access
+    return plans
 
 
 def _where_lines(report, settings):
@@ -1208,7 +1334,7 @@ def _value_rows(report, settings):
 def _info_blocks(report, data, leftovers, convergence):
     """FOR INFO: [(title, lines)], the ones with lines only."""
     blocks = [("Settings that are not the collection's default (the same on every node, or one per node by nature;"
-               " the ones that differ are under TO REVIEW)", _value_rows(report, data["settings"]))]
+               " the ones that differ are in report.txt)", _value_rows(report, data["settings"]))]
     blocks.append(("Versions", _versions_lines(report)))
     if convergence:
         blocks.append(("Convergence: how close the nodes are to sharing every setting",
@@ -1291,7 +1417,8 @@ def _about_lines(report, cluster):
     lines = ["WHAT THIS REPORT IS"] + [cut_text(text, report.width) for text in (
         "  import_cluster read the nodes (the Cassandra servers) of %s and wrote an Ansible inventory for them;"
         " nothing on the nodes was changed." % cluster,
-        "  TO DO: steps to take before you use that inventory. TO REVIEW: things worth a look. FOR INFO: nothing to do.",
+        "  report.txt says what to do and what is worth a look; this file holds the rest: the settings, the convergence,"
+        " the OS, what was read on each node.",
         "  The cluster keeps running as it is while you read: nothing here is urgent for it.")]
     lines += ["", "WORDS"]
     for word, meaning in WORDS_USED:
@@ -1318,9 +1445,10 @@ def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, ch
     items = []
     if steps:
         items.append("Do the TO DO steps above, in their order, then import again: the head should say nothing to"
-                     " act on, or TO REVIEW only.")
+                     " act on, or things to review only.")
     if reviews:
-        items.append("Read TO REVIEW: each entry says what to do; none of it stops you from using the inventory.")
+        items.append("Read the sections above: each entry says what to do; none of it stops you from using the"
+                     " inventory.")
     if report.check and not same:
         items.append("Write the inventory: the same command without --check%s."
                      % _what_changes(changed, removed, changes))
@@ -1336,7 +1464,7 @@ def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, ch
         items.append("Check that the inventory changes nothing on the nodes (these two commands only look, they"
                      " change nothing): %s %s expect %s; %s %s expect nothing to do." % (
                          unbreakable(apply_check), ARROW_RIGHT,
-                         "%s rewritten (same Java options, see TO REVIEW), nothing else" % ", ".join(moves) if moves
+                         "%s rewritten (same Java options, see HAND EDITS), nothing else" % ", ".join(moves) if moves
                          else "nothing to apply", unbreakable(topology), ARROW_RIGHT))
     if not items:
         items.append("Nothing: the inventory matches the nodes.")
@@ -1352,7 +1480,53 @@ def _details_lines(layout, self_check):
     lines = ["DETAILS: what the import read on each node"]
     for name, c in sorted((self_check or {}).items()):
         lines += ["  %s: %s" % (name, note) for note in c.get("notes") or []]
-    return lines + ["  " + line if line else "" for line in (layout.get("report") or "").split("\n")]
+    addresses = dict((n["name"], n.get("address") or "") for n in layout.get("nodes") or [])
+    return lines + ["  " + line if line else "" for line in _grouped(layout.get("report") or "", addresses)]
+
+
+def _indent(line):
+    return len(line) - len(line.lstrip())
+
+
+def _grouped(text, addresses=None):
+    """The layout's report with its node blocks ("== n3" and the lines under it) grouped: the lines every node has
+    once, under "== n1, n2.. (N nodes): what every one has", then each node's own lines only, under the lines they
+    belong to (a node's name in its lines read as <node>, its address, addresses: {name: address}, as <its
+    address>) -> [line]. One node, or none: as it is."""
+    lines = text.split("\n")
+    starts = [i for i, line in enumerate(lines) if re.match(r"^\s*== \S+\s*$", line)]
+    if len(starts) < 2:
+        return lines
+    ends = starts[1:] + [next((i for i in range(starts[-1] + 1, len(lines))
+                               if lines[i].strip() and _indent(lines[i]) <= _indent(lines[starts[-1]])), len(lines))]
+    blocks = []
+    for start, end in zip(starts, ends):
+        name = lines[start].strip()[3:].strip()
+        body = [re.sub(r"(?<![\w.-])%s(?![\w.-])" % re.escape(name), "<node>", line) for line in lines[start + 1:end]]
+        address = (addresses or {}).get(name) or ""
+        if address and address != name:
+            body = [re.sub(r"(?<![\w.:-])%s(?![\w:-]|\.\d)" % re.escape(address), "<its address>", line) for line in body]
+        while body and not body[-1].strip():
+            body.pop()
+        blocks.append((name, body))
+    shared = [line for line in blocks[0][1] if line.strip() and all(line in b for dummy, b in blocks[1:])]
+    head = lines[starts[0]][:_indent(lines[starts[0]])]
+    names = [name for name, dummy in blocks]
+    out_lines = lines[:starts[0]] + ["%s== %s (%d nodes): what every one has" % (head, ", ".join(names), len(names))]
+    out_lines += shared
+    for name, body in blocks:
+        own = [i for i, line in enumerate(body) if line.strip() and line not in shared]
+        if not own:
+            continue
+        keep = set(own)
+        for i in own:  # (the lines it belongs to: each less indented line above it)
+            level = _indent(body[i])
+            for j in range(i - 1, -1, -1):
+                if body[j].strip() and _indent(body[j]) < level:
+                    keep.add(j)
+                    level = _indent(body[j])
+        out_lines += ["", "%s== %s: its own" % (head, name)] + [body[i] for i in sorted(keep)]
+    return out_lines + ([""] if lines[ends[-1]:ends[-1] + 1] not in ([], [""]) else []) + lines[ends[-1]:]
 
 
 # a section's heading: capitals from column 0, then what it holds ("FOR INFO  in the report: ...", "WHERE ...  (...)",
@@ -1388,20 +1562,22 @@ def _ruled(lines, width, screen):
 def cassandra_import_report(layout, written, report_file, self_check, self_check_ok, secrets_clear=None,
                             leftovers=None, check=False, inventory="", hosts="", allow_unread=False, screen=False,
                             self_check_error="", cwd=None, in_git=None, changes=None, todo=None, width=None,
-                            strict=False, convergence=None, shareable=False):
+                            strict=False, convergence=None, shareable=False, details=False):
     """layout: cassandra_inventory_layout's (its nodes); written: [the hosts file, the inventory dir];
     report_file: where report.txt goes (report.check.txt under --check); self_check: {node: {differences, notes}};
     self_check_ok; secrets_clear: the secrets.yml files written in clear; leftovers: cassandra_inventory_leftovers';
     check: --check; inventory: the -i of the next commands ('' : ansible.cfg's); hosts: their -e cassandra_hosts
     ('' when the inventory holds this cluster alone); allow_unread: import_cluster_allow_unread; screen: the end
-    of the run (the head, TO DO, TO REVIEW, what to do next; FOR INFO and the details in the report only); cwd:
+    of the run (report.txt shorter: the differences and the files kept without their steps); cwd:
     paths shown relative to it; in_git: the inventory dir is in a git work tree (None: looked for); changes: what
     the run wrote or would write, {changed: [the files written that change], removed: [the files removed],
     existed: [the files there before]}, paths in the inventory dir (None: not known); todo: more TO DO steps (the
     CQL login); width: the lines fit in it (default: the terminal's for the screen, REPORT_WIDTH for the report);
     strict: import_cluster_strict (the run stops on a failed self-check, its HOW TO MAKE IT PASS below the
     screen); convergence: the lines of the CONVERGENCE section (cassandra_import_convergence's), under FOR INFO;
-    shareable: import_cluster_report_shareable (the screen names the copy too). Returns the lines.
+    shareable: import_cluster_report_shareable (the screen names the copy too); details: the lines of
+    report.details.txt instead (the settings, versions, convergence, OS, what was read on each node). Returns the
+    lines.
     e.g. -> ["IMPORT big_cluster  88 nodes  3 to act on: 3 hand edits", "  self-check passed: ...", ...]."""
     cluster = layout["cluster_group"]
     nodes = layout.get("nodes") or []
@@ -1414,17 +1590,18 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     yours = layout.get("yours") or []
     report = _Report(layout, read, [n for n in nodes if n not in read], [n["name"] for n in read], data["everyone"],
                      data["groups"], group_chains(layout.get("hosts") or {}), not screen, width, screen, check, cwd,
-                     yours, _standard(yours), set(), out.path_from(report_file, cwd))
+                     yours, _standard(yours), set(), out.path_from(report_file, cwd), inventory, hosts)
     changed, removed, same = _inventory_changes(changes)
     moves = sorted({f for n in read for f in n.get("rewritten") or []})
 
+    if boolean(details, strict=False):
+        return _finished(_details_report(report, data, layout, self_check, leftovers, convergence, cluster), width,
+                         False)
     steps = _todo_steps(report, allow_unread, self_check_ok, self_check_error, data["check_items"], secrets_clear,
                         leftovers, inventory_dir, list(todo or []), in_git, inventory, hosts)
     differs = _differs(report, data["settings"])
     reviews = _review_blocks(report, data, differs, allow_unread)
     lines = _head_lines(report, cluster, hosts_file, report_file, self_check_ok, same, steps, reviews)
-    if not screen:
-        lines += [""] + _about_lines(report, cluster)
     if steps:
         lines += ["", "TO DO"]
         for i, step in enumerate(steps):
@@ -1432,35 +1609,62 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
         if not self_check_ok and not screen:
             lines += [""] + _self_check_section(report, self_check, report_file, self_check_error, allow_unread,
                                                 inventory, hosts)
-    if reviews:
-        lines += ["", "TO REVIEW"]
-        for kind, dummy, entries in reviews:
-            lines += fill_text("%s: %s" % (kind.title, kind.about), width, "  ") + entries
-    where = _where_lines(report, data["settings"])
-    if where:
-        lines += ["", "WHERE THE SETTINGS GO  (the inventory's files; a value set in yours is not written again)"] + where
-    if screen:
-        lines += ["", "FOR INFO  in the report: the settings, versions, convergence and details"]
-    else:
-        info = _info_blocks(report, data, leftovers, convergence)
-        lines += ["", "FOR INFO"]
-        for title, entries in info:
-            lines += fill_text(title, width, "  ") + entries
+    blocks = dict((kind, entries) for kind, dummy, entries in reviews)
+    if TO_CHECK in blocks:
+        lines += ["", "WORTH A LOOK"] + blocks[TO_CHECK]
+    hand = [kind for kind in (HAND, MOVED) if kind in blocks]
+    if hand:
+        lines += ["", "HAND EDITS"]
+        for kind in hand:
+            lines += fill_text("%s: %s" % (kind.title, kind.about), width, "  ") + blocks[kind]
+    if DIFFERS in blocks:
+        lines += ["", "DIFFERENT ON SOME NODES"] + blocks[DIFFERS]
+        if screen:
+            lines += fill_text("where each value is set, and how to give every node one: %s"
+                               % out.path_from(report_file, cwd), width, "  ", "  ")
+    left = _left_alone_lines(report)
+    if KEPT in blocks or left:
+        lines += ["", "LEFT AS THE NODES HAVE THEM"] + blocks.get(KEPT, []) + left
+        if screen and KEPT in blocks:
+            lines += [""] + fill_text("how to give a file back to Ansible, step by step: %s"
+                                      % out.path_from(report_file, cwd), width, "  ", "  ")
+    if UNREAD in blocks:
+        lines += ["", "NODES NOT READ"] + blocks[UNREAD]
     lines += [""] + _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, changes, changed,
                                 removed, same, moves, inventory, hosts)
+    details_file = re.sub(r"\.txt$", "", report_file) + ".details.txt"
     if screen:
         lines += ["", "full report%s: %s" % (" (--check)" if check else "", out.path_from(report_file, cwd))]
         if boolean(shareable, strict=False):
             lines.append("a copy to share (names, addresses and secrets replaced; check it before sharing): %s"
                          % out.path_from(re.sub(r"\.txt$", "", report_file) + ".shareable.txt", cwd))
     else:
-        lines += [""] + _details_lines(layout, self_check)
+        lines += ["", "everything else (the settings, the convergence, the OS, each node): %s"
+                  % out.path_from(details_file, cwd)]
+    return _finished(lines, width, screen)
+
+
+def _finished(lines, width, screen):
+    """The lines as written: no trailing space, one blank line at most, each section ruled, no blank line last."""
     lines = [line.rstrip() for line in lines]
     lines = [line for i, line in enumerate(lines) if line or not i or lines[i - 1]]  # (one blank line at most)
     lines = _ruled(lines, width, screen)
     while lines and not lines[-1]:
         lines.pop()
     return lines
+
+
+def _details_report(report, data, layout, self_check, leftovers, convergence, cluster):
+    """report.details.txt: what the report is and its words, where the settings go, the settings, versions,
+    convergence and OS (FOR INFO), then what was read on each node (DETAILS) -> [line]."""
+    lines = ["IMPORT %s  the details of report.txt" % cluster, ""] + _about_lines(report, cluster)
+    where = _where_lines(report, data["settings"])
+    if where:
+        lines += ["", "WHERE THE SETTINGS GO  (the inventory's files; a value set in yours is not written again)"] + where
+    lines += ["", "FOR INFO"]
+    for title, entries in _info_blocks(report, data, leftovers, convergence):
+        lines += fill_text(title, report.width, "  ") + entries
+    return lines + [""] + _details_lines(layout, self_check)
 
 
 def _self_check_section(report, self_check, report_file, self_check_error, allow_unread, inventory, hosts):

@@ -1499,7 +1499,7 @@
       {%- set out = [] -%}
       {%- for n in _nodes | default([]) if not n.read | bool -%}{%- set _ = out.append(_layout.names[n.address]) -%}{%- endfor -%}
       {{ out }}
-    # report.txt: by urgency, TO DO, TO REVIEW, FOR INFO, then the details (cassandra_import_report);
+    # report.txt: by urgency, TO DO, WORTH A LOOK... what to do next (cassandra_import_report);
     # report.check.txt under --check (the real one left as it is)
     _report_args:
       written: ["{{ _dir ~ '/' ~ _hosts_file }}", "{{ _dir }}"]
@@ -1519,6 +1519,15 @@
            allow_unread=_report_args.allow_unread | bool,
            self_check_error=_self_check_error | default(''), changes=_changes, todo=_report_args.todo,
            convergence=_convergence) | join(_newline) }}
+    # report.details.txt: what report.txt leaves out (the settings, versions, convergence, OS, each node's lines)
+    _report_details: >-
+      {{ _layout | community.cassandra.cassandra_import_report(_report_args.written, _report_args.report_file,
+           _self_check | default({}), _self_check_ok | bool, secrets_clear=_report_args.secrets_clear,
+           leftovers=_leftovers | default({}), check=_report_args.check | bool,
+           inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
+           allow_unread=_report_args.allow_unread | bool,
+           self_check_error=_self_check_error | default(''), changes=_changes, todo=_report_args.todo,
+           convergence=_convergence, details=true) | join(_newline) }}
     # CONVERGENCE (report.txt, FOR INFO): how far the cluster is from one group, every setting in group_vars (what to
     # change, and how); output only: the inventory is written as it is
     _convergence: >-
@@ -1879,7 +1888,9 @@
         # (not the report, when import_cluster_report_dir puts it there: written again below)
         _found: "{{ import_cluster_existing.files | default([]) | map(attribute='path') | map('relpath', _dir)
                     | reject('match', '(.*/)?[.]') | reject('in', _report_files) | list }}"
-        _report_files: "{{ [(_report_dir ~ '/report.txt') | relpath(_dir), (_report_dir ~ '/report.check.txt') | relpath(_dir)] }}"
+        _report_files: >-
+          {{ ['report.txt', 'report.check.txt', 'report.details.txt', 'report.check.details.txt']
+             | map('regex_replace', '^', _report_dir ~ '/') | map('relpath', _dir) | list }}
         # the first line is enough to tell (a vaulted file: decrypted to its first line; an inventory file,
         # and the cluster's main.yml for its cluster name: all of it), and a secret's value never leaves
         # this task
@@ -2031,15 +2042,21 @@
 
     # a report.txt of the user's, or of another cluster's import: kept as <file>.<date>~; under --check,
     # report.check.txt (on the controller only: the inventory is not written)
-    - name: Write report.txt
+    - name: Write report.txt and report.details.txt
       ansible.builtin.copy:
-        content: "{{ (_report ~ '\n') | community.cassandra.cassandra_inventory_generated(_layout.cluster_group) }}"
-        dest: "{{ _report_args.report_file }}"
+        content: "{{ (item.text ~ '\n') | community.cassandra.cassandra_inventory_generated(_layout.cluster_group) }}"
+        dest: "{{ item.path }}"
         mode: "0644"
         backup: >-
-          {{ _report_args.report_file is file
-             and not lookup('ansible.builtin.file', _report_args.report_file).startswith(
+          {{ item.path is file
+             and not lookup('ansible.builtin.file', item.path).startswith(
                        '# Written by community.cassandra.import_cluster for ' ~ _layout.cluster_group ~ ':') }}
+      loop:
+        - {path: "{{ _report_args.report_file }}", text: "{{ _report }}"}
+        - {path: "{{ _report_args.report_file | regex_replace('[.]txt$', '') ~ '.details.txt' }}",
+           text: "{{ _report_details }}"}
+      loop_control:
+        label: "{{ item.path | basename }}"
       check_mode: false
       diff: false
       # (--check with the report in an inventory dir not there yet: not created)
@@ -2079,10 +2096,10 @@
         - item.part == 'text' or not ansible_check_mode
       vars:
         _shareable: >-
-          {{ _report | community.cassandra.cassandra_import_shareable(_layout, _report_args.written,
+          {{ (_report ~ _newline ~ _newline ~ _report_details) | community.cassandra.cassandra_import_shareable(_layout, _report_args.written,
                _report_args.report_file, _report_args.cwd) }}
 
-    # the end of the run: its head, TO DO, TO REVIEW and what to do next; FOR INFO and the details in report.txt
+    # the end of the run: report.txt shorter (the differences and the files kept without their steps)
     - name: Show the summary
       ansible.builtin.debug:
         msg: >-

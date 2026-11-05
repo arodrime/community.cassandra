@@ -6,6 +6,7 @@ __metaclass__ = type
 # template; and the inventory still gives each node its own values.
 
 import os
+import re
 
 import pytest
 
@@ -111,19 +112,21 @@ def test_screen_of_88_nodes_fits_the_terminal(width):
 
 
 def test_report_of_88_nodes():
-    report = big_report(width=160)
+    summary = big_report(width=160)
+    assert summary == golden("import_88_report.txt", summary)  # (report.txt; report.details.txt below)
+    report = summary + [""] + big_report(width=160, details=True)
     details = next(i for i, line in enumerate(report) if line.startswith("==== DETAILS ="))
-    assert report[:details] == golden("import_88_report.txt", report[:details])
     text = "\n".join(report)
     assert "s3cret" not in text and "k-a" not in text and "k-b" not in text
     # a secret is set in secrets.yml, never in main.yml
     at = [i for i, line in enumerate(report) if line.startswith("    cassandra_jmx_password:")][0]
     assert "set in group_vars/big_cluster_dc1/secrets.yml" in " ".join(report[at:report.index("", at)])
-    # DETAILS: every node by its name, its hand edits line by line
-    assert all("  == %s" % n in report[details:] for n in PART_A + PART_B + PART_C)
-    at = report.index("  == db111")
-    assert '        + <logger name="org.example.l9" level="WARN"/>' in report[at:at + 60]
-    assert "        + concurrent_writes: 48" in report[at:at + 60]
+    # DETAILS: the lines every node has once, under every node's name; then each node's own lines only
+    shared = next(line for line in report[details:] if line.startswith("  == ") and "what every one has" in line)
+    assert all(re.search(r" %s(,| \()" % n, shared) for n in PART_A + PART_B + PART_C)
+    at = report.index("  == db111: its own")
+    assert '        + <logger name="org.example.l9" level="WARN"/>' in report[report.index(shared):at]  # (every node's)
+    assert "        + concurrent_writes: 48" in report[at:at + 60]  # (db111's own)
 
 
 def effective(nodes):
@@ -182,7 +185,7 @@ def test_one_node_off_the_rule_keeps_every_value_per_node():
     assert len(at) == 1 and "other.example.net" in " ".join(report[at[0]:at[0] + 88])
     assert len([line for line in report[at[0]:report.index("", at[0])] if " (1 node)" in line]) == 88
     screen = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, width=400, screen=True)
-    found = [line for line in screen if "cassandra_medusa_nodetool_host" in line]
+    found = [line for line in screen if line.startswith("    cassandra_medusa_nodetool_host")]
     assert len(found) == 1 and "88 values, one per node (each in the report)  all (88 nodes)" in found[0], found
 
 
@@ -217,7 +220,8 @@ def test_jvm_moves_of_88_nodes_named_by_groups():
             n["not_moved"] = ("cassandra-env.sh would stop: the heap set without its pair (in the options files"
                               " the JVM reads, -Xmx and -Xms; in cassandra-env.sh, MAX_HEAP_SIZE and HEAP_NEWSIZE)")
     layout = cassandra_inventory_layout(nodes, "Big Cluster")
-    report = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, width=160)
+    report = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, width=160) + \
+        cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, width=160, details=True)
     report = report[:next(i for i, line in enumerate(report) if line.startswith("==== DETAILS ="))]
     moved = [line for line in report if "UseNUMA" in line or "UseParNewGC" in line or "rewrites cassandra-env.sh" in line
              or "not moved to variables" in line]

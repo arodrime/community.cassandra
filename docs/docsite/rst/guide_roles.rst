@@ -1302,7 +1302,11 @@ setting ``apply_config`` writes shows in its differences table, as any other cha
   more (the JVM's compressed pointers are lost: 31G at most), or over half the RAM; with the range to set. The RAM
   comes from the host's facts: ``health_check`` only;
 - ``AllowAllAuthenticator`` with an rpc address other hosts reach (``allow_all_authenticator``);
-- ``disk_failure_policy`` or ``commit_failure_policy`` ``ignore`` (``failure_policy_ignore``).
+- ``disk_failure_policy`` or ``commit_failure_policy`` ``ignore`` (``failure_policy_ignore``);
+- ``batch_size_fail_threshold`` over 1MiB (Cassandra's default: 50KiB) or ``native_transport_max_frame_size`` over
+  64MiB (default: 16MiB): requests that big held in a node's memory (``large_sizes``);
+- ``jmxremote.password`` readable by other users than its owner, its mode in ``cassandra_config_file_permissions``
+  (``jmx_passwords_readable``).
 
 A node that keeps one on purpose lists its id in ``cassandra_settings_kept_on_purpose`` (``host_vars`` or a group), e.g.
 ``cassandra_settings_kept_on_purpose: [heap_size]``; each finding says so, and an id no check has gets a line of its own.
@@ -1560,41 +1564,54 @@ node's name); what it can't compare (another template, a vaulted value of yours,
 password, a default made of facts) is listed under ``TO REVIEW``. Not read: the groups your own hosts files give these hosts, and the variables written in
 hosts files; keep your settings in ``group_vars/all``. Then ``apply_config --check --diff`` changes nothing.
 
-``report.txt`` is written for a reader who may be new to Cassandra and to the collection, by urgency, always in
-the same order. Its head is the verdict with its counts (``IMPORT orders  12 nodes  4 to act on: 1 TO DO, 2 hand
-edits, 1 file left as is``; ``3 to review: ...`` when there is nothing to do; ``nothing to act on``), the self-check
-(``passed``, or ``not passed yet: TO DO step 2``), the files written and where the report is; then ``WHAT THIS REPORT
-IS`` in three lines, ``WORDS`` (inventory, data center and rack, self-check, ``apply_config``, ``-e``), and:
+The import writes two files, for a reader who may be new to Cassandra and to the collection. ``report.txt`` says
+what to do and what is worth a look, by urgency, always in the same order, each section under its title in a rule
+(``==== TO DO ====``). Its head is the verdict with its counts (``IMPORT orders  12 nodes  4 to act on: 1 TO DO, 2
+hand edits, 1 file left as is``; ``3 to review: ...`` when there is nothing to do; ``nothing to act on``), the
+self-check (``passed``, or ``not passed yet: TO DO step 2``), the files written and where the report is; then:
 
 - ``TO DO``: what to do before using the inventory, one numbered step each, with why, the command to copy (paths
   from the current directory; the import command again with ``-e import_cluster_force=true``) and what to check
   after: nodes not read (what importing without them means), settings their Cassandra rejects, a self-check that failed (its ``SELF-CHECK``
   and ``HOW TO MAKE IT PASS`` right under it), your files that still win over the import, passwords written in clear,
   files of an earlier import of unknown origin, the CQL login;
-- ``TO REVIEW``: what deserves a look, by kind (hand edits, files left as is, hand edits moved to variables,
-  settings to review, settings that differ between nodes), one entry in two lines: what, where and on which nodes,
-  then what to do: a hand edit kept with ``-e import_cluster_keep_hand_edits=<its file>``, a value set in the file
-  named (``host_vars/<node>/main.yml``, ``group_vars/<group>/secrets.yml``...), a data directory moved by an
-  experienced operator. The settings to review are the ones that weaken the cluster, the Java options worth a look,
-  your values the nodes do not have, what could not be compared;
-- ``FOR INFO``: nothing to do. The settings that are not the collection's default (the same on every node, or one
-  per node by nature such as an address: one row, ``(a value per node)``), the versions (Cassandra, Java, the OS),
-  the convergence, what the roles leave as it is, the OS tuning (live value, the collection's in parentheses), the
-  Java options the running Java does not use, the files removed or replaced, what is not read from the nodes;
+- ``WORTH A LOOK``: what was seen that weakens the cluster or deserves a look, each with what to do: the settings of
+  the checks ``health_check`` makes too (``cassandra_settings_kept_on_purpose``), what the import saw on the nodes
+  (transparent huge pages on, a large read-ahead on the data SSDs and tuned setting it again, ``Restart=no`` in
+  Cassandra's unit, Medusa installed without its ``medusa.ini``), the Java options worth a look, your values the nodes
+  do not have, what could not be compared;
+- ``HAND EDITS``: the lines changed by hand that ``apply_config`` would put back (keep a file with
+  ``-e import_cluster_keep_hand_edits=<its file>``), the ones moved to variables;
+- ``DIFFERENT ON SOME NODES``: a table per setting, every value with its nodes, where each is set, and how to give
+  every node one value: the files to edit, what then happens on the nodes (restart or not) and the command to check it
+  first;
+- ``LEFT AS THE NODES HAVE THEM``: each file kept by hand with the steps to give it back to Ansible (the variables
+  that carry its edits and where to set them, a node's own address said so, the variables already given; the line to
+  remove from ``cassandra_config_keep_files``; the check; the run), and what the roles leave as it is (the
+  ``*_manage: false``);
 - ``WHAT TO DO NEXT``: the next steps, numbered (review and commit, the git step only when the inventory directory
   is in a git work tree; the read-only checks, without ``-i`` on the inventory of ``ansible.cfg``, without
-  ``-e cassandra_hosts`` when it holds this cluster alone), then the ``DETAILS``, node by node.
+  ``-e cassandra_hosts`` when it holds this cluster alone).
+
+``report.details.txt`` (``report.check.details.txt`` under ``--check``) holds the rest, for reference: what the
+report is and the words it uses (inventory, data center and rack, self-check, ``apply_config``, ``-e``), where the
+settings go (each file of the inventory and how many settings it holds), the settings that are not the collection's
+default, the versions, the convergence, the OS tuning (live value, the collection's in parentheses), the files removed
+or replaced, what is not read from the nodes, then what was read on each node: the lines every node has once, then
+each node's own lines only (a node's name read as ``<node>``, its address as ``<its address>``).
 
 A setting or a file is said in plain words the first time it is named (``cassandra_num_tokens (how many slices of
 the data each node owns)``). A node list is in its shortest exact form, with its count, by the inventory's DCs and
 racks, ``all`` every node of the cluster (a node not read shows: ``all - n4``): ``all (12 nodes)``, ``all - n4 (11 nodes)``, ``dc1 + n7 (7 nodes)``, ``dc1 - n3 + n9 (6 nodes)``, else the
 names. A long value is summarised (``20 lines (first: # BEGIN agent)``), whole in the files written; an empty one
 is ``''``, a null ``(empty)``, a series as its version (``4.1.x``); a file's mode is never taken for a secret
-because of the file's name (``jmxremote.password: 0400``). The run ends with the head, ``TO DO``, ``TO REVIEW``, ``WHAT TO DO NEXT`` and where the
-full report is; nothing else is printed under the ``community.cassandra.ops`` callback.
+because of the file's name (``jmxremote.password: 0400``). The run ends with ``report.txt`` made shorter (each difference as its table, each file
+kept by hand as its line, their steps in ``report.txt``) and where the report is; nothing else is printed under the
+``community.cassandra.ops`` callback, which draws each section's rule.
 
-``-e import_cluster_report_shareable=true`` also writes ``report.shareable.txt`` next to the report, a copy to
-send to someone who helps (a colleague, a forum, an issue): the same sections, hand edits and their lines,
+``-e import_cluster_report_shareable=true`` also writes ``report.shareable.txt`` next to the report, a copy of
+``report.txt`` and ``report.details.txt`` in one file to send to someone who helps (a colleague, a forum, an issue):
+the same sections, hand edits and their lines,
 versions and the import's own notes, with the node names as ``n1``, ``n2``... (in the order of their names, whatever
 their case, a node named by its address too), the clusters as ``c1`` (its name with spaces, ``-`` or ``_``), a data
 center or rack named after the site as ``dc1``, ``r1``... (after the ``dc1`` already in use), every address as

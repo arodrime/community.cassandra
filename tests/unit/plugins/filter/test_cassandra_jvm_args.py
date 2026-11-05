@@ -331,8 +331,9 @@ def test_report_moved_cleanup_and_next(tmp_path):
                                    add_to("jvm11-server.options", "-Xmx4G")))
     inventory, layout, dummy = imported(files, "50x", "17", launch(files, "17", tmp_path))
     nodes = [dict(layout["nodes"][0], name="n%d" % i, address="10.0.0.%d" % i) for i in (1, 2)]
-    lines = cassandra_import_report(cassandra_inventory_layout(nodes, "c"), ["/p/c.yml", "/p"], "/p/r.txt", {}, True,
-                                    cwd="/p", in_git=True)
+    args = (cassandra_inventory_layout(nodes, "c"), ["/p/c.yml", "/p"], "/p/r.txt", {}, True)
+    lines = cassandra_import_report(*args, cwd="/p", in_git=True) + \
+        cassandra_import_report(*args, cwd="/p", in_git=True, details=True)  # (report.txt, then report.details.txt)
     at = next(i for i, line in enumerate(lines) if line.startswith("  Hand edits moved to variables: "))
     assert re.match(r"^    cassandra-env.sh line \d+: -Xms8G -Xmx8G -XX:\+AlwaysPreTouch -> cassandra_heap_size: 8G;"
                     r" cassandra_jvm17_extra_options   all \(2 nodes\)$", lines[at + 2])
@@ -345,7 +346,7 @@ def test_report_moved_cleanup_and_next(tmp_path):
     assert re.match(r"^    jvm11-server.options line \d+: -Xmx4G   all \(2 nodes\)$", lines[at + 1])
     assert lines[at + 2] == "      not read, Java 17 reads jvm17-server.options"
     assert "1 hand edit moved" in lines[0]
-    assert u"\u2192 expect cassandra-env.sh, jvm17-server.options rewritten (same Java options, see TO REVIEW), nothing" \
+    assert u"\u2192 expect cassandra-env.sh, jvm17-server.options rewritten (same Java options, see HAND EDITS), nothing" \
         u" else" in " ".join(x.strip() for x in lines[next(i for i, line in enumerate(lines) if line.startswith("==== WHAT TO DO NEXT =")):])
 
 

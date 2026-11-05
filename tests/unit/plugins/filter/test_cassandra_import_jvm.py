@@ -230,8 +230,8 @@ def test_the_warnings_to_review_once_for_all_the_nodes():
     layout = cassandra_inventory_layout(nodes, "c")
     lines = cassandra_import_report(layout, ["c.yml", "."], "report.txt", {}, True, width=400, in_git=False)
     option, dummy, why = config["jvm_warnings"][0].partition("): ")
-    at = lines.index("    %s)   all (2 nodes)" % option)  # (under TO REVIEW, once for both)
-    assert lines[at + 1] == "      " + why and next(i for i, line in enumerate(lines) if line.startswith("==== TO REVIEW =")) < at
+    at = lines.index("    %s)   all (2 nodes)" % option)  # (under WORTH A LOOK, once for both)
+    assert lines[at + 1] == "      " + why and next(i for i, line in enumerate(lines) if line.startswith("==== WORTH A LOOK =")) < at
 
 
 def test_self_check_names_the_file_a_41_on_java_17_reads():

@@ -159,6 +159,47 @@ def _failure_policy(values, node):
             for key, why in sorted(FAILURE_POLICY.items()) if str(values.get(key) or "").strip().lower() == "ignore"]
 
 
+def _yaml_bytes(text):
+    """A cassandra.yaml size (640000KiB, 1024MiB, 16MB, 5KiB) in bytes, else None."""
+    m = re.match(r"^\s*(\d+)\s*(B|KiB|MiB|GiB|KB|MB|GB)?\s*$", str(text))
+    if not m:
+        return None
+    unit = (m.group(2) or "B").replace("i", "").replace("B", "") or "B"
+    return int(m.group(1)) * {"B": 1, "K": 1024, "M": 1024 ** 2, "G": GIB}[unit]
+
+
+# (variable, Cassandra's default, the size above which it is said, why it matters)
+LARGE = (
+    ("cassandra_batch_size_fail_threshold", "50KiB", 1024 ** 2,
+     "a batch this big is accepted, and a big batch weighs on the memory of the node that coordinates it"),
+    ("cassandra_native_transport_max_frame_size", "16MiB", 64 * 1024 ** 2,
+     "a client may send requests this big, held whole in the node's memory"),
+)
+
+
+def _large(values, node):
+    found = []
+    for key, default, most, why in LARGE:
+        size = _yaml_bytes(values.get(key, ""))
+        if size is not None and size > most:
+            found.append(("%s %s on {nodes} (Cassandra's default: %s): %s"
+                          % (key[len("cassandra_"):], values[key], default, why),
+                          "lower %s, once the applications are known not to need it" % key))
+    return found
+
+
+def _jmx_passwords_readable(values, node):
+    """jmxremote.password readable by other users than its owner (its mode, as the inventory keeps it)."""
+    perms = values.get("cassandra_config_file_permissions")
+    entry = perms.get("jmxremote.password") if isinstance(perms, dict) else None
+    mode = str((entry.get("mode") if isinstance(entry, dict) else entry) or "")  # ({mode, owner, group}, or the mode)
+    if re.match(r"^0?[0-7]{3}$", mode) and int(mode, 8) & 0o077:
+        return [("jmxremote.password is mode %s on {nodes}: users other than its owner can read the JMX passwords"
+                 % mode, "make it 0600: mode 0600 for jmxremote.password in cassandra_config_file_permissions,"
+                 " then apply_config")]
+    return []
+
+
 # (id, the check: (the node's variables, {name, member}) -> [(the finding, "{nodes}" where the nodes go, what to
 # do)]); add a row for another one
 SUSPICIOUS = [
@@ -167,6 +208,8 @@ SUSPICIOUS = [
     ("heap_size", _heap),
     ("allow_all_authenticator", _authenticator),
     ("failure_policy_ignore", _failure_policy),
+    ("large_sizes", _large),
+    ("jmx_passwords_readable", _jmx_passwords_readable),
 ]
 
 

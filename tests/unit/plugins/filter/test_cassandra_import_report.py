@@ -24,12 +24,16 @@ def node(i, heap="8G", hand=None, read=True, **extra):
 
 
 def report(nodes, ok=True, layout_extra=None, **kwargs):
+    """report.txt then report.details.txt (as one reads them); the screen alone with screen=True; one of the
+    files alone with details=False or True."""
     layout = dict(cassandra_inventory_layout(nodes, "My Cluster"), **(layout_extra or {}))
     kwargs.setdefault("cwd", "/p")
     kwargs.setdefault("in_git", True)
     kwargs.setdefault("width", 160)
-    return cassandra_import_report(layout, WRITTEN, kwargs.pop("report_file", REPORT), kwargs.pop("self_check", {}), ok,
-                                   **kwargs)
+    args = (layout, WRITTEN, kwargs.pop("report_file", REPORT), kwargs.pop("self_check", {}), ok)
+    if kwargs.get("screen") or "details" in kwargs:
+        return cassandra_import_report(*args, **kwargs)
+    return cassandra_import_report(*args, **kwargs) + [""] + cassandra_import_report(*args, details=True, **kwargs)
 
 
 def heading(lines, title):
@@ -84,11 +88,12 @@ def test_clean_import_nothing_to_act_on():
                          "  self-check passed: the inventory gives every node that was read the settings it has now",
                          "  written: inventories/my_cluster.yml, group_vars/my_cluster*/",
                          "  report:  reports/my_cluster/report.txt"]
-    # each section: two blank lines and a rule above its heading
-    # each section: two blank lines, its title in a rule, a blank line
-    assert lines[4:8] == ["", "", "==== WHAT THIS REPORT IS " + "=" * 75, ""]
+    # each section: two blank lines, its title in a rule, a blank line; what the report is: in the details
+    assert lines[4:8] == ["", "", "==== WHAT TO DO NEXT " + "=" * 79, ""]
     assert lines[heading(lines, "WORDS") - 2:heading(lines, "WORDS") + 2] == ["", "", "==== WORDS " + "=" * 89, ""]
-    assert not has(lines, "TO DO") and not has(lines, "TO REVIEW")
+    assert not has(lines, "TO DO") and not has(lines, "WORTH A LOOK") and not has(lines, "DIFFERENT ON SOME NODES")
+    assert has(report([node(1)], details=True), "WHAT THIS REPORT IS")
+    assert not has(report([node(1)], details=False), "WHAT THIS REPORT IS")
     text = "\n".join(lines)
     assert "s3cret" not in text
     info = section(lines, "FOR INFO")
@@ -120,8 +125,9 @@ def test_sections_by_urgency_and_the_counts_in_the_head():
     lines = report(nodes, secrets_clear=["group_vars/my_cluster/secrets.yml"])
     assert lines[0] == ("IMPORT my_cluster  4 nodes (3 read)  5 to act on: 2 TO DO, 1 hand edit, 1 file left as is,"
                         " 1 setting that differs between nodes")
-    order = [heading(lines, title) for title in ("WHAT THIS REPORT IS", "TO DO", "TO REVIEW", "FOR INFO",
-                                                 "WHAT TO DO NEXT", "DETAILS")]
+    order = [heading(lines, title) for title in ("TO DO", "HAND EDITS", "DIFFERENT ON SOME NODES",
+                                                 "LEFT AS THE NODES HAVE THEM", "WHAT TO DO NEXT", "WHAT THIS REPORT IS",
+                                                 "FOR INFO", "DETAILS")]
     assert order == sorted(order)
     # each TO DO a numbered step: what, why, the command to copy, what to check after
     todo = section(lines, "TO DO")
@@ -142,7 +148,6 @@ def test_sections_by_urgency_and_the_counts_in_the_head():
     # the screen: the same head, no FOR INFO details nor DETAILS, the report's path last
     screen = report(nodes, secrets_clear=["group_vars/my_cluster/secrets.yml"], screen=True)
     assert screen[0] == lines[0] and not has(screen, "WHAT THIS REPORT IS")
-    assert section(screen, "FOR INFO") == ["  In the report: the settings, versions, convergence and details"]
     assert screen[-1] == "full report: reports/my_cluster/report.txt"
 
 
@@ -162,11 +167,16 @@ def test_a_setting_said_in_plain_words_the_first_time():
 
 def test_values_that_differ_between_nodes_to_review():
     lines = report([node(1), node(2), node(3), node(4, "16G"), node(5, "16G")])
-    review = section(lines, "TO REVIEW")
-    assert review[1:4] == [  # (a table: every value with its nodes)
+    review = section(lines, "DIFFERENT ON SOME NODES")
+    assert review == [  # (a table: every value with its nodes; then how to give them one, step by step)
         "    cassandra_max_heap_size: 8G    node1, node2, node3 (3 nodes)   (the memory Java gives Cassandra)",
         "                             16G   node4, node5 (2 nodes)",
-        "      set in host_vars/<node>/main.yml; to give every node one value, see FOR INFO, convergence."]
+        "      set in host_vars/<node>/main.yml.",
+        "      to give every node 8G: cassandra_max_heap_size: 8G in group_vars/my_cluster/main.yml, removed from host_vars of"
+        " 5 nodes (node1, node2, node3, node4,",
+        "        node5)",
+        "      then 2 nodes change, restart unknown (apply_config does not write it); no check (apply_config does not show"
+        " it)"]
     # (the heap per host)
     assert lines[2] == ("  written: inventories/my_cluster.yml, group_vars/my_cluster*/,"
                         " host_vars/<node>/ (node1, node2, node3, node4, node5)")
@@ -180,14 +190,13 @@ def test_where_each_value_is_kept_and_the_dcs_name_the_nodes():
     nodes = [dict(node(1, "8G"), dc="dc1"), dict(node(2, "8G"), dc="dc1"), dict(node(3, "16G"), dc="dc2"),
              dict(node(4, "16G"), dc="dc2"), dict(node(5, "4G"), dc="dc3"), dict(node(6, "4G"), dc="dc3"),
              dict(node(7, "4G"), dc="dc3")]
-    review = section(report(nodes), "TO REVIEW")
-    assert review[1:6] == [
+    review = section(report(nodes), "DIFFERENT ON SOME NODES")
+    assert review[:4] == [
         "    cassandra_max_heap_size: 4G    dc3 (3 nodes)   (the memory Java gives Cassandra)",
         "                             16G   dc2 (2 nodes)",
         "                             8G    dc1 (2 nodes)",
         "      set in group_vars/my_cluster_dc3/main.yml, group_vars/my_cluster_dc2/main.yml,"
-        " group_vars/my_cluster_dc1/main.yml; to give every node one value, see FOR",
-        "      INFO, convergence."]
+        " group_vars/my_cluster_dc1/main.yml."]
 
 
 def test_things_to_do_and_hand_edits():
@@ -216,8 +225,8 @@ def test_things_to_do_and_hand_edits():
     assert lines[at + 1:at + 5] == ["    Hand edits no variable covers (cassandra_config would revert them):",
                                     "      - cassandra.yaml, on node1 (1 node):", "          concurrent_writes",
                                     "            node1 (1 node): cassandra.yaml: concurrent_writes"]
-    assert at < heading(lines, "TO REVIEW")
-    review = section(lines, "TO REVIEW")
+    assert at < heading(lines, "HAND EDITS")
+    review = section(lines, "HAND EDITS")
     at = review.index("    cassandra.yaml (Cassandra's main settings file) concurrent_writes: 48   node1, node2 (2 nodes)")
     assert review[at:at + 4] == [  # (a blank line between entries)
         "    cassandra.yaml (Cassandra's main settings file) concurrent_writes: 48   node1, node2 (2 nodes)",
@@ -248,16 +257,20 @@ def test_screen_and_check():
     assert lines[2].startswith("  would write: ") and lines[3] == " "  # the report's path: last (" ": a blank line)
     assert "  1. Write the inventory: the same command without --check." in lines
     assert lines[-1] == "full report (--check): reports/my_cluster/report.check.txt"  # written, report.txt left
-    assert not has(lines, "TO REVIEW") and not has(lines, "DETAILS")
+    assert not has(lines, "WORTH A LOOK") and not has(lines, "DETAILS")
     full = report([node(i) for i in range(1, 4)], check=True, leftovers={"stale": ["host_vars/gone/main.yml"]})
     assert "    would be removed (an earlier import's, not written again): host_vars/gone/main.yml" in full
     # the shareable copy named on the screen when asked
     lines = report([node(1)], screen=True, shareable=True)
     assert lines[-1] == ("a copy to share (names, addresses and secrets replaced; check it before sharing):"
                          " reports/my_cluster/report.shareable.txt")
-    # the screen sends the reader to the report's file for the convergence (only the report has FOR INFO)
+    # the screen: the table only, the steps in report.txt (said by its path), which has them in full
     lines = report([node(1), node(2, "16G")], screen=True)
-    assert "see reports/my_cluster/report.txt (FOR INFO), convergence." in " ".join(" ".join(lines).split())
+    flat = " ".join(" ".join(lines).split())
+    assert "where each value is set, and how to give every node one: reports/my_cluster/report.txt" in flat
+    assert "to give every node 16G" not in flat and "convergence" not in flat
+    full = " ".join(" ".join(report([node(1), node(2, "16G")], details=False)).split())
+    assert "to give every node 16G: cassandra_max_heap_size: 16G in group_vars/my_cluster/main.yml" in full
 
 
 def test_self_check_named_with_hand_edits_elsewhere_and_a_note():
@@ -286,8 +299,8 @@ def test_differs_from_your_group_vars_all():
         "path": "group_vars/all/standard.yml",
         "content": "cassandra_config_user: cassandra\ncassandra_config_group: cassandraops\n"}])
     lines = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, width=160)
-    review = section(lines, "TO REVIEW")
-    assert review[1:6] == [
+    review = section(lines, "WORTH A LOOK")
+    assert review[0:5] == [
         "    cassandra_config_group (the group of the config files): cassandra, yours: cassandraops"
         " (group_vars/all/standard.yml)   node1, node2 (2 nodes)",
         "      kept as the nodes have it (in host_vars/<node>/main.yml); to apply yours, delete it there, then apply_config",
@@ -295,10 +308,10 @@ def test_differs_from_your_group_vars_all():
         "    cassandra_config_user (the owner of the config files): root, yours: cassandra (group_vars/all/standard.yml)"
         "   node1, node2 (2 nodes)",
         "      kept as the nodes have it (in host_vars/<node>/main.yml); to apply yours, delete it there, then apply_config"]
-    assert lines[0].endswith("2 to review: 2 settings to review")  # (not again as settings that differ)
+    assert lines[0].endswith("2 to review: 2 things worth a look")  # (not again as settings that differ)
     # the screen has it too
     screen = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, screen=True, width=160)
-    assert review[1] in screen and screen[-2:] == ["", "full report: reports/my_cluster/report.txt"]
+    assert review[0] in screen and screen[-2:] == ["", "full report: reports/my_cluster/report.txt"]
 
 
 def test_differs_one_line_per_file_of_yours():
@@ -428,7 +441,7 @@ def test_hand_edits_by_file_counted():
              node(4, hand=same + ["jvm11-server.options, line 3:", "  + -XX:A=1", "  + -XX:B=2"]),
              node(5, hand=["cassandra.yaml, line 10:", "  + concurrent_writes: 48"] * 2)]
     lines = report(nodes)
-    entries = [line for line in section(lines, "TO REVIEW") if line.startswith("    ") and line[4] != " "]
+    entries = [line for line in section(lines, "HAND EDITS") if line.startswith("    ") and line[4] != " "]
     assert entries == [
         "    cassandra.yaml (Cassandra's main settings file) concurrent_writes: 48   node5 (1 node)",
         "    logback.xml (the logging settings): 3 edits   node1, node2, node4 (3 nodes)",
@@ -492,12 +505,11 @@ def test_kept_files_left_as_is_to_review():
     # a file with hand edits kept (import_cluster_keep_hand_edits): an entry of its own, its nodes
     hand = ["jmxremote.access: auditRole=readonly", "  + auditRole=readonly"]
     lines = report([node(1, hand=hand, keep={"cassandra_config_keep_files": ["jmxremote.access"]}), node(2)])
-    review = section(lines, "TO REVIEW")
-    at = review.index("    jmxremote.access: left as each node has it   node1 (1 node)")
-    assert review[at:at + 2] == [
-        "    jmxremote.access: left as each node has it   node1 (1 node)",
-        "      fine while its edits are wanted; to bring it back under Ansible, see FOR INFO, convergence (kept by"
-        " hand)"]
+    review = section(lines, "LEFT AS THE NODES HAVE THEM")
+    assert review[:2] == [
+        "    jmxremote.access   node1 (1 node)",
+        "      1 edit that no variable carries (each under DETAILS): Ansible leaves the file as each node has it; nothing"
+        " to do while they are wanted"]
     assert "1 file left as is" in lines[0]
 
 
@@ -560,8 +572,8 @@ def test_a_jvm_warning_to_review_in_two_lines():
     warning = ("-Xss1024M (cassandra_jvm_extra_options, from jvm-server.options, Java 17): 1 GiB of stack for every"
                " thread. Fix or remove it in cassandra_jvm_extra_options: it is kept as it is until then.")
     lines = report([node(1, jvm_warnings=[warning]), node(2, jvm_warnings=[warning])])
-    review = section(lines, "TO REVIEW")
-    assert review[1:3] == [
+    review = section(lines, "WORTH A LOOK")
+    assert review[0:2] == [
         "    -Xss1024M (cassandra_jvm_extra_options, from jvm-server.options, Java 17)   all (2 nodes)",
         "      1 GiB of stack for every thread. Fix or remove it in cassandra_jvm_extra_options: it is kept as it is until"
         " then."]
@@ -894,8 +906,8 @@ def test_auto_bootstrap_false_kept_on_its_nodes_with_a_warning():
     assert not [g for g, v in layout["group_vars"].items() if "cassandra_auto_bootstrap" in v]
     text = "\n".join(report(nodes))
     # an entry of two lines to review: the finding, then what to do and how to keep it
-    assert ("    auto_bootstrap false on all - node3 (2 nodes): a node that loses its data would restart empty, without"
-            " streaming it back\n      remove cassandra_auto_bootstrap (the default is true); kept on purpose: list"
+    assert ("    auto_bootstrap false: a node that loses its data would restart empty, without streaming it back   all -"
+            " node3 (2 nodes)\n      remove cassandra_auto_bootstrap (the default is true); kept on purpose: list"
             " auto_bootstrap_false in cassandra_settings_kept_on_purpose") in text
     every = [node(i) for i in range(1, 4)]
     for n in every:
@@ -908,8 +920,8 @@ def test_replace_flag_in_a_hand_edit_warned_with_its_line():
     nodes = [node(1, hand=["cassandra-env.sh, line 290:", '  + JVM_OPTS="$JVM_OPTS -Dcassandra.replace_address=10.0.0.9"']),
              node(2)]
     text = "\n".join(report(nodes))
-    assert ("    replace flag -Dcassandra.replace_address=10.0.0.9 in the node's config on node1 (1 node): the node is"
-            " bootstrapped already: Cassandra refuses its next start\n        with this flag\n      remove the line"
+    assert ("    replace flag -Dcassandra.replace_address=10.0.0.9 in the node's config: the node is bootstrapped already:"
+            " Cassandra refuses its next start with this flag\n      node1 (1 node)\n      remove the line"
             ' JVM_OPTS="$JVM_OPTS -Dcassandra.replace_address=10.0.0.9"; kept on purpose: list replace_address in'
             " cassandra_settings_kept_on_purpose") in text
     # never offered to keep as a hand edit
@@ -923,3 +935,77 @@ def test_a_suspicious_setting_does_not_change_whom_the_other_settings_are_for():
     lines = report(nodes)
     row = [line for line in lines if line.strip().startswith("cassandra_num_tokens:")][0]
     assert "all (3 nodes)" in row, row
+
+
+# --- a cluster like a real one taken over (made up): JMX opened by hand, the audit log in logback, the OS left ------
+
+ENV_EDITS = ["cassandra-env.sh, line 249:",
+             '  +   JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.password.file=/etc/cassandra/jmxremote.password"',
+             '  +   JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=%s"']
+LOGBACK_EDITS = ["logback.xml, line 89:", '  -   <!-- <appender name="AUDIT" class="x"> -->', '  +   <appender name="AUDIT" class="x">']
+OS_LINES = ["THP now: enabled always, defrag madvise (cassandra_linux: never never)",
+            "THP set by /etc/rc.d/rc.local (not executable)",
+            "tuned: profile virtual-guest (tuned active)",
+            "tuned /usr/lib/tuned/throughput-performance/tuned.conf [disk]: readahead=>4096",
+            "device vg-data (dm-3) (/var/lib/cassandra/data, SSD): read_ahead_kb 4096 (cassandra_linux: 4), scheduler none",
+            "disk sdb (under vg-data (dm-3), SSD): read_ahead_kb 4096 (cassandra_linux: 4), scheduler mq-deadline"]
+
+
+def taken_over(i):
+    n = node(i, hand=[line % ("10.0.0.%d" % i) if "%s" in line else line for line in ENV_EDITS] + LOGBACK_EDITS,
+             keep={"cassandra_config_keep_files": ["cassandra-env.sh", "logback.xml"], "cassandra_linux_manage": False},
+             os={"lines": OS_LINES}, unit={"restart": "no"}, medusa={"install": True, "ini": False})
+    n["vars"].update(cassandra_local_jmx=False)
+    return n
+
+
+def test_worth_a_look_what_was_seen_on_the_nodes():
+    review = section(report([taken_over(i) for i in range(1, 4)], details=False), "WORTH A LOOK")
+    entries = [line.strip() for line in review if line.startswith("    ") and not line.startswith("     ")]
+    assert entries == [
+        "transparent huge pages enabled always, set by /etc/rc.d/rc.local, which is not executable   all (3 nodes)",
+        "read-ahead 4096 KB on the data SSDs (cassandra_linux: 4), and tuned (profile virtual-guest) sets"
+        " readahead=>4096 at each start   all (3 nodes)",
+        "Restart=no in Cassandra's systemd unit: a Cassandra that stops on an error stays down   all (3 nodes)",
+        "Medusa installed, no /etc/medusa/medusa.ini: it is not set up there   all (3 nodes)"]
+    # a node with them right: nothing said
+    calm = node(1, os={"lines": ["THP now: enabled never, defrag never (same as cassandra_linux)",
+                                 "device sda (/var/lib/cassandra, SSD): read_ahead_kb 8 (cassandra_linux: 4)"]},
+                unit={"restart": "on-failure"}, medusa={"install": True, "ini": True})
+    assert not has(report([calm], details=False), "WORTH A LOOK")
+
+
+def test_a_kept_file_given_back_step_by_step():
+    lines = report([taken_over(i) for i in range(1, 4)], details=False)
+    left = section(lines, "LEFT AS THE NODES HAVE THEM")
+    flat = [" ".join(line.split()) for line in left]
+    at = flat.index("cassandra-env.sh (the script that sets Java's options when Cassandra starts) all (3 nodes)")
+    steps = " ".join(flat[at + 1:flat.index("", at)])
+    # the password file the collection writes already: said given; the address each node's own, in its host_vars
+    assert "to give it back to Ansible (cassandra_jmx_remote_password_file: already given):" in steps
+    assert "1. in host_vars/<node>/main.yml of 3 nodes: cassandra_jmx_rmi_hostname: <each node's own address>" in steps
+    assert "2. in host_vars/<node>/main.yml of 3 nodes: remove cassandra-env.sh from cassandra_config_keep_files" in steps
+    assert "3. check: ansible-playbook community.cassandra.apply_config --limit node1,node2,node3 --check --diff" in steps
+    assert "4. the same without --check: it writes cassandra-env.sh, then restarts the nodes" in steps
+    # edits no variable carries: nothing to do while wanted
+    assert "1 edit that no variable carries (each under DETAILS): Ansible leaves the file as each node has it; nothing" \
+        " to do while they are wanted" in " ".join(flat[flat.index("logback.xml (the logging settings) all (3 nodes)"):])
+    assert "    not managed by Ansible here: OS settings   all (3 nodes)" in left
+
+
+def test_details_said_once_for_every_node():
+    details = report([taken_over(i) for i in range(1, 4)], details=True)
+    at = details.index("  == node1, node2, node3 (3 nodes): what every one has")
+    shared = details[at:]
+    # the edit with each node's own address: one line for all of them
+    assert '        +   JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=<its address>"' in shared
+    assert not [line for line in details if "10.0.0.2" in line and "rmi" in line]
+    assert not [line for line in details if line.startswith("  == node2")]  # (nothing of its own)
+    # a node with lines of its own: those only, under the lines they belong to
+    nodes = [taken_over(i) for i in range(1, 4)]
+    nodes[1]["hand_edits"] += ["cassandra.yaml, line 10:", "  + concurrent_writes: 48"]
+    details = report(nodes, details=True)
+    at = details.index("  == node2: its own")
+    own = details[at + 1:details.index("", at)]
+    assert own[-2:] == ["      cassandra.yaml, line 10:", "        + concurrent_writes: 48"]
+    assert own[0].startswith("    Hand edits no variable carries") and len(own) == 3  # (the line it belongs to, then its own only)

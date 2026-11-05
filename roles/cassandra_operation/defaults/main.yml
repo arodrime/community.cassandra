@@ -27,7 +27,7 @@ _cassandra_service_jmx: >-
 # The settings that weaken the cluster (health_check's SETTINGS TO REVIEW, the import
 # report) a node keeps on purpose, by the id of their check, e.g. [heap_size]:
 # auto_bootstrap_false, replace_address, heap_size, allow_all_authenticator,
-# failure_policy_ignore
+# failure_policy_ignore, large_sizes, jmx_passwords_readable
 cassandra_settings_kept_on_purpose: []
 # add_node and replace_node check the new hosts before installing anything
 # (root access, directories and their mounts, Pythons, packages and their

@@ -62,7 +62,8 @@ def test_kept_given_another_way():
 def test_an_unknown_id_is_said():
     lines = cassandra_suspicious_settings({"node4": {KEPT: ["auto_bootstrap", "heap_size"]}, "node5": {KEPT: "auto_bootstrap"}})
     assert lines == ["%s: no check is called auto_bootstrap (node4, node5); the ids are auto_bootstrap_false, replace_address,"
-                     " heap_size, allow_all_authenticator, failure_policy_ignore" % KEPT]
+                     " heap_size, allow_all_authenticator, failure_policy_ignore, large_sizes, jmx_passwords_readable"
+                     % KEPT]
     assert KEPT == "cassandra_settings_kept_on_purpose"
 
 
@@ -205,3 +206,20 @@ def test_every_row_has_its_id_documented():
         option = yaml.safe_load(f)["argument_specs"]["main"]["options"][KEPT]
     assert "choices" not in option  # an unknown id: a line of its own, not a refusal
     assert [row for row, dummy in SUSPICIOUS if "V(%s)" % row not in " ".join(option["description"])] == []
+
+
+@pytest.mark.parametrize("values, found", [
+    ({"cassandra_batch_size_fail_threshold": "640000KiB"}, ["batch_size_fail_threshold 640000KiB on node4"]),
+    ({"cassandra_batch_size_fail_threshold": "1MiB"}, []),  # (at the limit: not said)
+    ({"cassandra_native_transport_max_frame_size": "1024MiB"}, ["native_transport_max_frame_size 1024MiB on node4"]),
+    ({"cassandra_native_transport_max_frame_size": "16MiB"}, []),
+    ({"cassandra_config_file_permissions": {"jmxremote.password": {"mode": "0644"}}},
+     ["jmxremote.password is mode 0644 on node4"]),
+    ({"cassandra_config_file_permissions": {"jmxremote.password": "0640"}}, ["jmxremote.password is mode 0640 on node4"]),
+    ({"cassandra_config_file_permissions": {"jmxremote.password": {"mode": "0600"}}}, []),
+    ({"cassandra_config_file_permissions": {"cassandra.yaml": "0644"}}, []),
+])
+def test_large_sizes_and_readable_jmx_passwords(values, found):
+    lines = cassandra_suspicious_settings({"node4": values})
+    assert [line for line in lines if not line.startswith("  ")] == [
+        line for line in lines if any(line.startswith(f) for f in found)] and len(lines) == 2 * len(found)

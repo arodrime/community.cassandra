@@ -46,7 +46,9 @@ argument_specs:
             or group).
           - V(auto_bootstrap_false), V(replace_address) (a replace flag left on a member of the ring), V(heap_size)
             (not set on a 4.x host with 64G of RAM, whose auto-sizing stops at 8G; under 2G, 32G or more, over half
-            the RAM), V(allow_all_authenticator) (with an rpc address other hosts reach), V(failure_policy_ignore).
+            the RAM), V(allow_all_authenticator) (with an rpc address other hosts reach), V(failure_policy_ignore),
+            V(large_sizes) (C(batch_size_fail_threshold) over 1MiB, C(native_transport_max_frame_size) over 64MiB),
+            V(jmx_passwords_readable) (C(jmxremote.password) readable by other users than its owner).
           - Each finding says how to keep it on purpose; an id no check has gets a line of its own.
           - The RAM-based heap checks need the host's facts, read by C(health_check), not by C(import_cluster).
       cassandra_add_node_cleanup:

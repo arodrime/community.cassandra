@@ -25,6 +25,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
     ARROW_RIGHT, DASH, NOT_COUNTED, REPORT_WIDTH, aligned_rows, fill_text, report_sections, who_text, unbreakable)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 
 # the files cassandra_config writes from its series' templates: a change in one is a restart (apply_config's rule);
 # the JMX files' templates are not a series' (cassandra_jmx_users: _kind)
@@ -314,6 +315,9 @@ def _template_text(name):
     return "\n".join(texts)
 
 
+OWN_ADDRESS = "<its address>"  # a node's own address in its hand edits
+
+
 def _kept_files(read):
     """The config files the nodes keep as edited by hand (cassandra_config_keep_files) -> [(file, [(its edit lines,
     [nodes])])], the same edits on several nodes once."""
@@ -326,11 +330,14 @@ def _kept_files(read):
             if not line.startswith(" "):
                 current = _edit_file(line)[0]
             per_file.setdefault(current, []).append(line)  # (masked by _blocks, a block at a time)
+        address = str(n.get("address") or "")
         for f in (n.get("keep") or {}).get("cassandra_config_keep_files") or []:
             if f not in found:
                 found[f] = []
                 order.append(f)
-            lines = tuple(per_file.get(f) or ())
+            # (the node's own address read as such: the same edit on every node, each with its address, is one)
+            lines = tuple(re.sub(r"(?<![\w.:-])%s(?![\w:-]|\.\d)" % re.escape(address), OWN_ADDRESS, line)
+                          if address else line for line in per_file.get(f) or ())
             entry = next((e for e in found[f] if e[0] == lines), None)
             if entry is None:
                 found[f].append((lines, [n["name"]]))
@@ -465,6 +472,49 @@ def _kept_lines(kept, layout, read, who, width, inventory, hosts, cwd):
                                                          unbreakable(_check(nodes, "restart", inventory, hosts, cwd))),
                            width, "    ", "  ")
     return lines
+
+
+def kept_plan(layout, inventory="", hosts="", cwd=None):
+    """How to give each file kept by hand back to the roles, as steps an operator follows (the short report) ->
+    [{file, nodes, set: [(variable, its value: the same on every node, or "<each node's own address>"), the
+    variables that would write the edits], per_node: [(variable, {node: value})], already: [the variables the
+    inventory or the collection's default already give these values], loose: the edits no variable carries, check:
+    the apply_config --check --diff of these nodes}]."""
+    read = [n for n in layout.get("nodes") or [] if boolean(n.get("read", False), strict=False)]
+    by_name = dict((n["name"], n) for n in read)
+    defaults = {}
+    for role in ("cassandra_config", "cassandra_service"):
+        defaults.update(role_file(role) or {})
+    plans = []
+    for name, variants in _kept_files(read):
+        nodes = [m for dummy, members in variants for m in members]
+        values, loose = {}, 0  # {variable: {node: value}}
+        for edits, members in variants:
+            for dummy, removed, added in _blocks(edits):
+                for line in added:
+                    variable, value = _carry(name, line)
+                    if variable and value is not None and " or " not in variable:
+                        for m in members:
+                            values.setdefault(variable, {})[m] = value
+                    elif not variable and not line.strip().startswith(("#", "<!--")):
+                        loose += 1
+                if removed and not added:
+                    loose += 1
+        same, per_node, already = [], [], []
+        for variable, found in sorted(values.items()):
+            given = [str((by_name[m].get("vars") or {}).get(variable, defaults.get(variable, ""))) for m in found]
+            if all(g == str(v).replace(OWN_ADDRESS, str(by_name[m].get("address") or ""))
+                   for g, (m, v) in zip(given, found.items())):
+                already.append(variable)
+            elif all(str(v) == OWN_ADDRESS for v in found.values()):
+                per_node.append((variable, "<each node's own address>"))
+            elif len(set(found.values())) == 1 and len(found) == len(nodes):
+                same.append((variable, list(found.values())[0]))
+            else:
+                per_node.append((variable, ", ".join("%s on %s" % (v, m) for m, v in sorted(found.items()))))
+        plans.append({"file": name, "nodes": nodes, "set": same, "per_node": per_node, "already": already,
+                      "loose": loose, "check": _check(nodes, "restart", inventory, hosts, cwd)})
+    return plans
 
 
 def cassandra_import_convergence(layout, self_check=None, inventory="", hosts="", cwd=None, width=None,

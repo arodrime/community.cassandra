@@ -210,7 +210,7 @@ OPERATIONS = [
                 " one of its nodes (-i <node>,), the others are found in the ring. A re-import reads the cluster from"
                 " the inventory (its logins too), keeps the files it did not write, --check --diff shows its changes"
                 " first. A DataStax Enterprise or ScyllaDB node is refused: Apache Cassandra only. Its report:"
-                " TO DO, TO REVIEW, then FOR INFO.",
+                " report.txt (what to do, what is worth a look), report.details.txt (the rest).",
      "options": [("-e import_cluster_dir=<dir>", "the inventory dir", "inventories"),
                  ("-e import_cluster_report_dir=<dir>", "report.txt dir", "next to the inventory dir"),
                  ("-e import_cluster_force=true", "re-import over this cluster's files", "false"),

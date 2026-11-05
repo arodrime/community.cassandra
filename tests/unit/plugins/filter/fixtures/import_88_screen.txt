@@ -2,7 +2,7 @@ IMPORT big_cluster  88 nodes  9 to review: 3 hand edits, 6 settings that differ 
   self-check passed: the inventory gives every node that was read the settings it has now
   written: inventories/big.yml, group_vars/big_cluster*/, host_vars/<node>/ of 88 nodes
  
-==== TO REVIEW =====================================================================================
+==== HAND EDITS ====================================================================================
  
   Hand edits: lines changed by hand in a config file that no inventory variable carries; apply_config (the playbook that
   writes the config files) would put the file back as the collection writes it (nothing changes on the nodes until it
@@ -20,74 +20,44 @@ IMPORT big_cluster  88 nodes  9 to review: 3 hand edits, 6 settings that differ 
       -e import_cluster_keep_hand_edits=jvm11-server.options (Ansible then leaves jvm11-server.options as each node has
       it)
  
-  Settings that differ between nodes: the nodes do not all have the same value; often on purpose (machines of other
-  sizes), sometimes a leftover
+==== DIFFERENT ON SOME NODES =======================================================================
+ 
     cassandra_config_file_permissions.cassandra.yaml:
       0640   dc2 + dc3 - db074 (51 nodes)   (who may read each config file)
       0644   dc1 + db074 (37 nodes)
-      set in host_vars/<node>/main.yml, group_vars/<group>/main.yml of 5 groups, group_vars/big_cluster_dc1/main.yml; to
-      give every node one value, see reports/big/report.txt (FOR INFO), convergence.
  
     cassandra_jmx_password: (in secrets.yml)            dc1 (36 nodes)   (the password nodetool logs in with)
                             (in secrets.yml, value 2)   dc2 (30 nodes)
                             (in secrets.yml, value 3)   dc3 (22 nodes)
-      set in group_vars/big_cluster_dc1/secrets.yml, group_vars/big_cluster_dc2/secrets.yml,
-      group_vars/big_cluster_dc3/secrets.yml; to give every node one value, see reports/big/report.txt (FOR INFO),
-      convergence.
  
     cassandra_extra_settings.streaming_connections_per_host:
       1   dc2 + dc3 - db111 (51 nodes)   (cassandra.yaml settings without a variable of their own)
       2   dc1 (36 nodes)
       6   db111 (1 node)
-      set in group_vars/<group>/main.yml of 4 groups, host_vars/<node>/main.yml, group_vars/big_cluster_dc1/main.yml; to
-      give every node one value, see reports/big/report.txt (FOR INFO), convergence.
  
     cassandra_medusa_extra_settings.storage.bucket_name:
       backups-b   dc2 + dc3 (52 nodes)   (settings of Medusa, the backup tool)
       backups-a   dc1 (36 nodes)
-      set in group_vars/big_cluster_dc2/main.yml, group_vars/big_cluster_dc3/main.yml,
-      group_vars/big_cluster_dc1/main.yml; to give every node one value, see reports/big/report.txt (FOR INFO),
-      convergence.
  
     cassandra_medusa_extra_settings.storage.secret_access_key:
       (in secrets.yml)            dc1 (36 nodes)
       (in secrets.yml, value 2)   dc2 (30 nodes)
       (in secrets.yml, value 3)   dc3 (22 nodes)
-      set in group_vars/big_cluster_dc1/secrets.yml, group_vars/big_cluster_dc2/secrets.yml,
-      group_vars/big_cluster_dc3/secrets.yml; to give every node one value, see reports/big/report.txt (FOR INFO),
-      convergence.
  
     cassandra_max_heap_size: 31G   dc1 (36 nodes)           (the memory Java gives Cassandra)
                              24G   dc2 (30 nodes)
                              16G   dc3 - db111 (21 nodes)
                              8G    db111 (1 node)
-      set in group_vars/big_cluster_dc1/main.yml, group_vars/big_cluster_dc2/main.yml, group_vars/<group>/main.yml of 3
-      groups, host_vars/<node>/main.yml; to give every node one value, see reports/big/report.txt (FOR INFO),
-      convergence.
  
-==== WHERE THE SETTINGS GO =========================================================================
+  where each value is set, and how to give every node one: reports/big/report.txt
  
-  The inventory's files; a value set in yours is not written again
-    group_vars/big_cluster/main.yml          6 settings
-    group_vars/big_cluster_dc1/main.yml      5 settings
-    group_vars/big_cluster_dc2/main.yml      4 settings
-    group_vars/big_cluster_dc2_r20/main.yml  1 setting
-    group_vars/big_cluster_dc2_r21/main.yml  1 setting
-    group_vars/big_cluster_dc2_r8/main.yml   1 setting
-    group_vars/big_cluster_dc2_r9/main.yml   1 setting
-    group_vars/big_cluster_dc3/main.yml      3 settings
-    group_vars/big_cluster_dc3_r10/main.yml  2 settings
-    group_vars/big_cluster_dc3_r12/main.yml  2 settings
-    group_vars/big_cluster_dc3_r13/main.yml  3 settings
-    host_vars/<node>/main.yml                4 settings (87 nodes)
+==== LEFT AS THE NODES HAVE THEM ===================================================================
  
-==== FOR INFO ======================================================================================
- 
-  In the report: the settings, versions, convergence and details
+    not managed by Ansible here: OS settings   dc3 (22 nodes)
  
 ==== WHAT TO DO NEXT ===============================================================================
  
-  1. Read TO REVIEW: each entry says what to do; none of it stops you from using the inventory.
+  1. Read the sections above: each entry says what to do; none of it stops you from using the inventory.
   2. Review the files written, then keep them: git diff && git commit.
   3. Check that the inventory changes nothing on the nodes (these two commands only look, they change nothing):
      ansible-playbook community.cassandra.apply_config --check --diff → expect nothing to apply;

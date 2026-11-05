@@ -163,7 +163,7 @@ def test_vault_password_script(tmp_path, monkeypatch):
 
 def test_every_file_written_is_marked():
     """hosts.yml, the vars files and report.txt start with the line that tells a re-import they are its own."""
-    for name in ("Write the hosts file", "Write group_vars and host_vars", "Write report.txt"):
+    for name in ("Write the hosts file", "Write group_vars and host_vars", "Write report.txt and report.details.txt"):
         assert "community.cassandra.cassandra_inventory_generated(_layout.cluster_group)" in str(TASKS[name]), name
 
 
@@ -328,9 +328,9 @@ def report_vars(check=False, **given):
 
 
 def test_report_of_another_kept(tmp_path):
-    task = TASKS["Write report.txt"]
+    task = TASKS["Write report.txt and report.details.txt"]
     report = tmp_path / "report.txt"
-    variables = report_vars(_report_dir=str(tmp_path))
+    variables = report_vars(_report_dir=str(tmp_path), item={"path": str(report)})
     assert render(task["ansible.builtin.copy"]["backup"], **variables) is False  # none there yet
     for text, backup in (("# Written by community.cassandra.import_cluster for cluster_a: x\n", False),
                          ("# Written by community.cassandra.import_cluster for cluster_ab: x\n", True),
@@ -344,15 +344,18 @@ def test_check_diff_writes_nothing():
     secrets hidden); only the report is written, as report.check.txt (on the controller, report.txt left), and its
     shareable copy when asked."""
     write = next(p for p in PLAYS if p.get("name") == "Write the inventory")["tasks"]
-    report_tasks = ("Write report.txt", "Create the report dir", "Write the shareable copy of the report")
+    report_tasks = ("Write report.txt and report.details.txt", "Create the report dir", "Write the shareable copy of the report")
     for task in write:
         if any(k in task for k in ("ansible.builtin.copy", "ansible.builtin.file")) and task["name"] not in report_tasks:
             assert "check_mode" not in task, task["name"]
             # --diff: the changes to the files there, not a new file whole (test_output_polish.py)
             assert task.get("diff", "{{ ansible_diff_mode | bool and ").startswith("{{ ansible_diff_mode | bool and "), task["name"]
     assert [TASKS[name]["check_mode"] for name in report_tasks] == [False, False, False]
-    assert TASKS["Write report.txt"]["diff"] is False
-    assert TASKS["Write report.txt"]["ansible.builtin.copy"]["dest"] == "{{ _report_args.report_file }}"
+    assert TASKS["Write report.txt and report.details.txt"]["diff"] is False
+    # report.txt, then report.details.txt next to it (report.check.details.txt under --check)
+    assert TASKS["Write report.txt and report.details.txt"]["ansible.builtin.copy"]["dest"] == "{{ item.path }}"
+    assert [i["path"] for i in TASKS["Write report.txt and report.details.txt"]["loop"]] == [
+        "{{ _report_args.report_file }}", "{{ _report_args.report_file | regex_replace('[.]txt$', '') ~ '.details.txt' }}"]
     assert report_vars()["_report_args"]["report_file"] == "/reports/cluster_a/report.txt"
     assert report_vars(check=True)["_report_args"]["report_file"] == "/reports/cluster_a/report.check.txt"
     # a re-import does not take report.check.txt for one of its files (it would remove it)

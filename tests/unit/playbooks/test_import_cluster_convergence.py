@@ -23,7 +23,7 @@ COLLECTIONS = os.path.abspath(os.path.join(TOP, "..", "..", ".."))
 with open(os.path.join(TOP, "playbooks", "import_cluster.yml"), encoding="utf-8") as f:
     WRITE = next(p for p in yaml.safe_load(f) if p["name"] == "Write the inventory")
 TASKS = [t for t in WRITE["tasks"] if t["name"] in (
-    "Write report.txt", "Make the key of the shareable copy readable by its owner only",
+    "Write report.txt and report.details.txt", "Make the key of the shareable copy readable by its owner only",
     "Write the shareable copy of the report", "Show the summary")]
 
 
@@ -34,7 +34,7 @@ def playbook(tmp_path, self_check_ok=True):
     (tmp_path / "layout.json").write_text(json.dumps(layout))
     (tmp_path / "reports" / "big").mkdir(parents=True)
     report_dir = str(tmp_path / "reports" / "big")
-    variables = dict((k, WRITE["vars"][k]) for k in ("_report", "_convergence", "_newline"))
+    variables = dict((k, WRITE["vars"][k]) for k in ("_report", "_report_details", "_convergence", "_newline"))
     variables.update(_self_check_ok=self_check_ok, _changes={"changed": [], "removed": [], "existed": []})
     plays = [{"name": "Write the inventory", "hosts": "localhost", "connection": "local", "gather_facts": False,
               "vars": variables,
@@ -74,7 +74,8 @@ def test_the_report_and_the_end_of_the_run(tmp_path, check):
     end = next(i for i, line in enumerate(lines) if line.startswith("full report"))
     assert lines[end] == "full report%s: reports/big/%s" % (" (--check)" if check else "", name)
     assert "Convergence" not in " ".join(lines[head:end])  # (FOR INFO: in the report only)
-    report = (tmp_path / "reports" / "big" / name).read_text()
+    assert (tmp_path / "reports" / "big" / name).read_text().startswith("# Written by")
+    report = (tmp_path / "reports" / "big" / name.replace(".txt", ".details.txt")).read_text()  # (its details)
     convergence = report.index("\n  Convergence: how close the nodes are to sharing every setting\n")
     assert report.index("\n==== FOR INFO =") < convergence < report.index("\n  Not read from the nodes")
     assert "    SETTINGS THAT DIFFER — the safest change first, then the fewest nodes" in report
@@ -89,7 +90,7 @@ def test_the_report_and_the_end_of_the_run(tmp_path, check):
 def test_the_convergence_on_a_failed_self_check(tmp_path):
     rc, out = run(tmp_path, self_check_ok=False)
     assert rc == 0, out
-    assert "The self-check first (SELF-CHECK above)" in (tmp_path / "reports" / "big" / "report.txt").read_text()
+    assert "The self-check first (SELF-CHECK above)" in (tmp_path / "reports" / "big" / "report.details.txt").read_text()
 
 
 @pytest.mark.parametrize("check", [False, True])

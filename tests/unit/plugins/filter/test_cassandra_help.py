@@ -334,7 +334,8 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
                        ring. A re-import reads the cluster from the inventory (its logins too),
                        keeps the files it did not write, --check --diff shows its changes first. A
                        DataStax Enterprise or ScyllaDB node is refused: Apache Cassandra only. Its
-                       report: TO DO, TO REVIEW, then FOR INFO.
+                       report: report.txt (what to do, what is worth a look), report.details.txt
+                       (the rest).
       $ ansible-playbook -i 192.0.2.11, community.cassandra.import_cluster \\
           -e import_cluster_dir=NEW_DIR
         -e import_cluster_dir=<dir>           the inventory dir (default: inventories)

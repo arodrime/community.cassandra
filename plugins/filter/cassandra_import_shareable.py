@@ -28,7 +28,7 @@ IPV4 = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.]*\w)")
 # an IPv6 address: a "::" in it, or 4 groups at least (a time, 13:33:20, has 3); its IPv4 tail masked already
 IPV6 = re.compile(r"(?<![\w:])(?:[0-9A-Fa-f]{0,4}:){2,7}(?:IP\b|[0-9A-Fa-f]{0,4}(?![\w:]))")
 URL = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s,;'\"<>)]+")
-PATH = re.compile(r"(?<![\w.~/>*-])/[\w.@+-]+(?:/[\w.@+*{}<>-]*)*")
+PATH = re.compile(r"(?<![\w.~/<>*-])/[\w.@+-]+(?:/[\w.@+*{}<>-]*)*")  # (not an XML closing tag: </file>)
 # a path from the home or the current directory (~/ops/x, ./ops, ../ops): the site's own, always masked
 RELATIVE_PATH = re.compile(r"(?<![\w/])(?:~[\w.-]*|\.\.?)/[\w.@+*-]+(?:/[\w.@+*-]*)*")
 TOKEN = re.compile(r"[\w-]+(?:\.[\w-]+)*")
@@ -53,7 +53,9 @@ EXTENSIONS = ("yaml", "yml", "xml", "options", "sh", "properties", "password", "
               "tmp", "map", "gz", "tar", "tgz", "zip", "deb", "rpm", "html")
 STOCK_DOTTED = ("org.apache.", "org.slf4j", "org.eclipse.", "org.yaml.", "org.jctools", "ch.qos.", "io.netty",
                 "io.dropwizard", "com.codahale", "com.datastax", "com.sun.", "com.google.", "java.", "javax.", "jdk.",
-                "sun.", "net.openhft", "cassandra.", "community.", "ansible.", "ansible_collections.")
+                "sun.", "net.openhft", "cassandra.", "community.", "ansible.", "ansible_collections.",
+                # the kernel's settings (sysctl, tuned): vm.swappiness, net.core.rmem_max...
+                "vm.", "net.core.", "net.ipv4.", "net.ipv6.", "kernel.", "fs.")
 # a data center or rack named so says nothing of the site (dc1, r2, rack3, a, b...)
 GENERIC = re.compile(r"(?i)^((dc|r|rack|zone|az)?[-_]?\d+|[a-z]{1,2})$")
 # common words a name may be: never replaced (the report's own text has them)
