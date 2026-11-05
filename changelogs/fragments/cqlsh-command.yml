@@ -1,0 +1,2 @@
+bugfixes:
+  - "cassandra_operation and the playbooks that read the schema over CQL - a cqlsh outside root's PATH (a virtualenv's ``bin/cqlsh``) could not be used: the checks ran the bare ``cqlsh`` and found none. The new ``cassandra_cqlsh_command`` (default ``cqlsh``) gives its full path to every one of them (the keyspaces' replication, import_cluster's CQL login check, add_datacenter, decommission_node, remove_datacenter, remove_dead_node, rolling_restart, stop_rack); import_cluster's TO DO names it when it finds no cqlsh."

@@ -161,6 +161,9 @@ cassandra_clock_check: true
 # decommission), when authentication is on
 cassandra_cql_username: ""
 cassandra_cql_password: ""
+# the cqlsh those checks run (as root, its PATH: /usr/bin, /bin...): the full path
+# of one elsewhere, e.g. a virtualenv's bin/cqlsh
+cassandra_cqlsh_command: cqlsh
 # add_node's mark of a bootstrap it started on a node, removed once the node
 # joined: data of this cluster without it is a former member's (reset_node_plan.yml)
 _cassandra_service_bootstrap_mark: /var/lib/cassandra/.ansible_bootstrap_started

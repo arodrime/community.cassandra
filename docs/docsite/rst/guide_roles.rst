@@ -1513,7 +1513,8 @@ Without a password file, they are written in clear with mode ``0600``, and the r
 
 With CQL authentication on (a ``PasswordAuthenticator``), the operations that read the replication (``decommission_node``,
 ``topology``, ``rolling_restart``...) log in with ``cassandra_cql_username`` and ``cassandra_cql_password``, which no
-node gives. When your inventory (any ``group_vars`` or ``host_vars`` file, vaulted or not) or ``-e`` sets them, the
+node gives. They run ``cqlsh`` on a node as root, found in root's ``PATH``; a cqlsh elsewhere (a virtualenv's) is given by
+its full path in ``cassandra_cqlsh_command`` (e.g. ``/opt/cassandra/venv/bin/cqlsh``). When your inventory (any ``group_vars`` or ``host_vars`` file, vaulted or not) or ``-e`` sets them, the
 import checks them with a real CQL login on one node (as the operations log in) and does not ask, nor write them (a
 refused login is a ``TO DO``). A login an earlier import wrote is kept on a re-import (``-i <node>,`` too). Otherwise it asks for them on the terminal (the password not shown), checks each one
 (3 tries), and writes them with the cluster's variables, the password in ``secrets.yml`` (vaulted as above). Without

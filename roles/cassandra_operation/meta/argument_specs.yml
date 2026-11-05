@@ -310,6 +310,13 @@ argument_specs:
         no_log: true
         description:
           - Password of O(cassandra_cql_username).
+      cassandra_cqlsh_command:
+        type: str
+        default: cqlsh
+        description:
+          - The cqlsh the checks over CQL run on the nodes (they run it as root, with root's PATH).
+          - The full path of a cqlsh outside it, for example a virtualenv's
+            (V(/opt/cassandra/venv/bin/cqlsh)); its Python is the virtualenv's.
       cassandra_service_enabled:
         type: bool
         default: true

@@ -231,6 +231,7 @@
           {{ cassandra_rpc_address | default('')
              if cassandra_rpc_address | default('') not in ['', 'localhost', '0.0.0.0'] else '127.0.0.1' }}
         username: "{{ cassandra_cql_username | default(omit, true) }}"
+        cqlsh_cmd: "{{ cassandra_cqlsh_command | default(omit, true) }}"  # (a cqlsh outside root's PATH, e.g. a virtualenv)
         password: "{{ cassandra_cql_password | default(omit, true) }}"
       loop: "{{ cassandra_new_dc_alter }}"
       run_once: true
