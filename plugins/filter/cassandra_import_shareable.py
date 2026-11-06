@@ -24,11 +24,15 @@ import re
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import group_chains
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
-IPV4 = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.]*\w)")
+IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?!\.?\d)")  # (also in a file name: 10.1.2.3.jks, ip_10.1.2.3)
+# a host named by its address with dashes (node-10-1-2-3); in an FQDN, the FQDN is masked whole
+DASHED_IPV4 = re.compile(r"(?<!\d)(?<!\d-)(?:\d{1,3}-){3}\d{1,3}(?!\d)(?!-\d)(?!\.[A-Za-z])")  # (a host named by it: node-10-1-2-3)
 # an IPv6 address: a "::" in it, or 4 groups at least (a time, 13:33:20, has 3); its IPv4 tail masked already
 IPV6 = re.compile(r"(?<![\w:])(?:[0-9A-Fa-f]{0,4}:){2,7}(?:IP\b|[0-9A-Fa-f]{0,4}(?![\w:]))")
 URL = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s,;'\"<>)]+")
-PATH = re.compile(r"(?<![\w.~/<>*-])/[\w.@+-]+(?:/[\w.@+*{}<>-]*)*")  # (not an XML closing tag: </file>)
+PATH = re.compile(r"(?<![\w.~/<>*-])/[\w.@+-]+(?:/[\w.@+*{}<>-]*)*")
+# a path as an XML element's value (<file>/srv/x/a.log</file>): up to the closing tag, never the tag itself
+XML_PATH = re.compile(r"(?<![/\w])(<[A-Za-z][\w:.-]*(?:\s[^<>]*)?>)(/[\w.@+-]+(?:/[\w.@+*{}-]*)*)")  # (not <node>/ of a path)
 # a path from the home or the current directory (~/ops/x, ./ops, ../ops): the site's own, always masked
 RELATIVE_PATH = re.compile(r"(?<![\w/])(?:~[\w.-]*|\.\.?)/[\w.@+*-]+(?:/[\w.@+*-]*)*")
 TOKEN = re.compile(r"[\w-]+(?:\.[\w-]+)*")
@@ -42,7 +46,7 @@ STOCK_DIRS = ("/etc/cassandra", "/etc/default", "/etc/sysconfig", "/etc/security
               "/usr/libexec", "/usr/local/bin", "/usr/local/sbin", "/lib", "/lib64", "/bin", "/sbin", "/opt/cassandra",
               "/opt/medusa", "/var/lib/cassandra", "/var/log/cassandra", "/var/log/medusa", "/var/log/audit",
               "/var/log/messages", "/var/log/syslog", "/var/run", "/var/tmp", "/var/cache", "/run", "/proc", "/sys",
-              "/dev", "/tmp")
+              "/dev", "/tmp", "/etc/rc.d", "/etc/rc.local", "/etc/tuned", "/etc/udev/rules.d")
 # these alone are kept, what follows them is masked unless a stock directory above
 STOCK_TOPS = ("/etc", "/usr", "/opt", "/var", "/var/lib", "/var/log", "/usr/local", "/srv", "/home", "/data")
 # what a dotted word that is not a host may be: a file (by its extension), a Java package of a stock part, the
@@ -53,9 +57,11 @@ EXTENSIONS = ("yaml", "yml", "xml", "options", "sh", "properties", "password", "
               "tmp", "map", "gz", "tar", "tgz", "zip", "deb", "rpm", "html")
 STOCK_DOTTED = ("org.apache.", "org.slf4j", "org.eclipse.", "org.yaml.", "org.jctools", "ch.qos.", "io.netty",
                 "io.dropwizard", "com.codahale", "com.datastax", "com.sun.", "com.google.", "java.", "javax.", "jdk.",
-                "sun.", "net.openhft", "cassandra.", "community.", "ansible.", "ansible_collections.",
-                # the kernel's settings (sysctl, tuned): vm.swappiness, net.core.rmem_max...
-                "vm.", "net.core.", "net.ipv4.", "net.ipv6.", "kernel.", "fs.")
+                "sun.", "net.openhft", "cassandra.", "community.", "ansible.", "ansible_collections.", "rc.local")
+# the kernel's settings (sysctl, tuned): vm.swappiness = 0, net.core.rmem_max=212992; kept as one only when a value
+# follows (= or :), a host name may start the same way (vm.lab.example.com)
+KERNEL_DOTTED = ("vm.", "net.core.", "net.ipv4.", "net.ipv6.", "kernel.", "fs.")
+KERNEL_KEY = re.compile(r"^(?:%s)[a-z0-9_]+(?:\.[a-z0-9_]+)*$" % "|".join(re.escape(k) for k in KERNEL_DOTTED))
 # a data center or rack named so says nothing of the site (dc1, r2, rack3, a, b...)
 GENERIC = re.compile(r"(?i)^((dc|r|rack|zone|az)?[-_]?\d+|[a-z]{1,2})$")
 # common words a name may be: never replaced (the report's own text has them)
@@ -166,11 +172,34 @@ def _key(layout, paths=()):
                 rest = rest.strip("_")
                 key.add(group, key.name(cluster) + "_g", "%s_%s" % (key.name(cluster), rest) if all(
                     GENERIC.match(p) for p in rest.split("_")) else None)
+    # the values of the settings that name the site (a bucket, a prefix, an fqdn, a user), read from the nodes: masked
+    # in every row of a table, not only in the one that names the setting
+    for n in nodes:
+        for name, value in _leaves(n.get("vars") or {}):
+            kind = VALUED_KINDS.get(VALUED_KEY.search(name).group(1).lower(), "user") if VALUED_KEY.search(name) else ""
+            if kind and isinstance(value, str) and value.strip() and "{{" not in value and not re.match(r"^[\d.]+$", value):
+                key.add(value.strip(), kind)
     for path in paths:
         for part in str(path).split("/"):
             if part and part not in (".", "..") and not key.name(part):
                 key.add(part, "dir")
     return key
+
+
+VALUED_KEY = re.compile(r"(?i)(bucket_name|bucket|prefix|fqdn|username|_user|superuser)$")
+VALUED_KINDS = {"bucket_name": "bucket", "bucket": "bucket", "prefix": "prefix", "fqdn": "host"}
+
+
+def _leaves(values, path=""):
+    """A node's variables -> [(their dotted path, a value that is not a dict nor a list)], list items under their
+    list's path."""
+    found = []
+    items = values.items() if isinstance(values, dict) else ((None, v) for v in values) if isinstance(values, list) \
+        else ()
+    for k, v in items:
+        name = path if k is None else ("%s.%s" % (path, k) if path else str(k))
+        found += _leaves(v, name) if isinstance(v, (dict, list)) else [(name, v)]
+    return found
 
 
 def _dotted(token, key):
@@ -181,8 +210,11 @@ def _dotted(token, key):
     first = key.get(labels[0])
     if labels[-1].lower() in EXTENSIONS:
         return ".".join([first] + labels[1:]) if first and re.match(r"^c\d+", first) else token
-    if first:  # a node's FQDN
-        return first + "." + key.add(".".join(labels[1:]), "domain")
+    if first and key.kinds.get(labels[0].lower()) == "n":  # a node's FQDN (its domain kept when a common word)
+        rest = ".".join(labels[1:])
+        return first + "." + (key.add(rest, "domain") or rest)
+    if first:  # (another name of the key first: masked as a whole)
+        return key.add(token, "domain") or token
     if (re.sub(r"^-+D?", "", token).startswith(STOCK_DOTTED) or any("_" in label for label in labels)
             or not re.match(r"^[A-Za-z]{2,24}$", labels[-1])):
         return token
@@ -191,11 +223,42 @@ def _dotted(token, key):
 
 def _path(path, key):
     """An absolute path: kept in a stock directory (by whole components, never one with ..), the names of the site
-    in its components replaced (/etc/cassandra/ssl/n1.jks); else masked."""
+    in its components replaced (/etc/cassandra/ssl/n1.jks), a short code of the site too (/etc/sysctl.d/01-word1.conf),
+    a tuned profile of the site's (/etc/tuned/word2/tuned.conf); else masked."""
     if ".." not in path.split("/") and (path in STOCK_TOPS or any(
             path == stock or path.startswith(stock + "/") for stock in STOCK_DIRS)):
-        return "/".join(key.inside(part) for part in path.split("/"))
+        parts = path.split("/")
+        at = 3 if path.startswith("/etc/tuned/") else 4 if path.startswith("/usr/lib/tuned/") else 0
+        if at and len(parts) > at + 1:  # (its profile's directory, a file under it)
+            parts[at] = _profile(parts[at], key)
+        return "/".join(_codes(key.inside(part), key) for part in parts)
     return "/" + key.add(path, "path")
+
+
+# a short code of the site (iv2, zq7, pr01: one or two letters, then digits): what the vocabulary pass leaves (fewer
+# than three letters), masked where the site names things (file names, tuned profiles, disk labels); not the OS's
+# own (x86_64, el8, sdb1, nvme0n1, dm-3, lz4, s3...) nor the copy's pseudonyms (n1, dc2, r1, c1)
+SHORT_CODE = re.compile(r"^[A-Za-z]{1,2}\d+[A-Za-z0-9]*$")
+OS_CODES = re.compile(r"(?i)^(x86|x64|el\d+|fc\d+|sd[a-z]+\d*|vd[a-z]+\d*|hd[a-z]+\d*|nvme\d+(n\d+(p\d+)?)?|md\d+|dm\d*|"
+                      r"lz4|s3|ec2|gp\d|io\d|v\d+|py\d+|ip\d?|ipv[46]|tls\d*|ssl\d*|sha\d+|md5|utf\d+|k8s|i\d86)$")
+STOCK_TUNED = ("balanced", "desktop", "latency-performance", "network-latency", "network-throughput", "powersave",
+               "throughput-performance", "virtual-guest", "virtual-host", "hpc-compute", "accelerator-performance",
+               "intel-sst", "optimize-serial-console", "aws", "functions", "recommend.d")
+
+
+def _codes(text, key):
+    """text (a file name, a label) with each short code of the site in it masked (01-sysctl-iv2.conf ->
+    01-sysctl-word1.conf), its other parts as they are."""
+    def code(part):
+        if SHORT_CODE.match(part) and not OS_CODES.match(part) and not PSEUDONYM.match(part) and part != "IP":
+            return key.add(part, "word") or part
+        return part
+    return "".join(code(p) for p in re.split(r"([-_.]+)", text))
+
+
+def _profile(name, key):
+    """A tuned profile's name: the stock ones as they are, a site's masked."""
+    return name if name in STOCK_TUNED or not name else (key.add(name, "word") or name)
 
 
 def _relative(path, key):
@@ -249,16 +312,23 @@ def _unknown_words(text, key):
 
 def _line(text, key):
     """A line of the report (_valued already) with the names of the key replaced, the addresses, the URLs and the
-    paths of the site masked (each found a name of the key)."""
-    text = URL.sub(lambda m: key.add(m.group(0), "url"), text)
-    text = PATH.sub(lambda m: _path(m.group(0), key), text)
-    text = RELATIVE_PATH.sub(lambda m: _relative(m.group(0), key), text)
-    text = re.sub(r"\b([\w.+-]+)@(?=[\w-]+\.)", lambda m: (key.add(m.group(1), "user") or m.group(1)) + "@", text)
+    paths of the site masked (each found a name of the key); the addresses first (a file named by one: IP.jks)."""
     text = re.sub(r"(?i)\bip-\d{1,3}-\d{1,3}-\d{1,3}-\d{1,3}\b(?!\.\w)", "IP", text)  # (a host named by its address)
     for real in sorted((r for r in key.order if ADDRESS.match(r)), key=len, reverse=True):  # (a node named by its IP)
-        text = re.sub(r"(?<![\w.:])%s(?![\w.:]*\w)" % re.escape(real), key.name(real), text)
+        text = re.sub(r"(?<![\d.:])%s(?!\.?\d|:\w)" % re.escape(real), key.name(real), text)
     text = IPV4.sub("IP", text)
+    text = DASHED_IPV4.sub("IP", text)
     text = IPV6.sub(lambda m: "IP" if ("::" in m.group(0) or m.group(0).count(":") >= 3) else m.group(0), text)
+    text = URL.sub(lambda m: key.add(m.group(0), "url"), text)
+    text = PATH.sub(lambda m: _path(m.group(0), key), text)
+    text = XML_PATH.sub(lambda m: m.group(1) + _path(m.group(2), key), text)
+    text = re.sub(r"\b(tuned:? \(?profile )([\w.-]+)", lambda m: m.group(1) + _profile(m.group(2), key), text)
+    text = re.sub(r"\b((?:device|disk) )([^\s(]+)", lambda m: m.group(1) + _codes(m.group(2), key), text)
+    text = re.sub(r"(\b(?:device|disk) \S+ \()(.*?)(, (?:SSD|rotational)\))",  # (its labels: (vg-lv (dm-3), SSD))
+                  lambda m: m.group(1) + re.sub(r"[\w.-]+", lambda t: _codes(t.group(0), key), m.group(2)) + m.group(3),
+                  text)
+    text = RELATIVE_PATH.sub(lambda m: _relative(m.group(0), key), text)
+    text = re.sub(r"\b([\w.+-]+)@(?=[\w-]+\.)", lambda m: (key.add(m.group(1), "user") or m.group(1)) + "@", text)
     for real in sorted((r for r in key.order if " " in r), key=len, reverse=True):  # (a cluster name with spaces)
         text = re.sub(re.escape(real), key.name(real), text, flags=re.I)
 
@@ -266,6 +336,8 @@ def _line(text, key):
         word = m.group(0)
         if key.get(word) or word.lower() in key.quiet:
             return key.get(word) or word
+        if KERNEL_KEY.match(word) and re.match(r"\s*[=:]", m.string[m.end():]):  # (vm.swappiness = 0)
+            return word
         if word.startswith("cassandra_") or re.sub(r"^-+D?", "", word).startswith(STOCK_DOTTED):
             return _dotted(word, key) if "." in word else word
         labels = word.split(".")
@@ -273,6 +345,9 @@ def _line(text, key):
             return key.inside(word)
         if "." in word and key.get(labels[0]):  # (a node's FQDN: its name, the domain masked)
             return _dotted(word, key)
+        if "." in word and key.kinds.get(labels[0].lower()) != "n" and any(
+                key.kinds.get(".".join(labels[i:]).lower()) == "domain" for i in range(1, len(labels))):
+            return key.add(word, "host") or word  # (a host of the site's domain: ntp1.<domain> whole)
         inside = key.inside(word)  # (a compound of a name: db1-old, db1_backup)
         if inside != word:
             return inside

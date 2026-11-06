@@ -267,3 +267,75 @@ def test_kernel_settings_and_xml_tags_kept():
     for kept in ("vm.swappiness = 0", "vm.dirty_ratio=10", "net.core.rmem_max", "</file>"):
         assert kept in text
     assert "domain1" not in text
+
+
+def shared_text(lines, nodes):
+    return "\n".join(cassandra_import_shareable(lines, layout_of(nodes))["text"][2:])  # (after its head)
+
+
+def test_audit_2026_11_06_a_node_name_then_a_common_word_does_not_break_the_copy():
+    # <node>.local, <node>.data: the copy was not written at all (a TypeError)
+    text = shared_text(["  + rpc_address: cdb-qx9north-01.local", "  + seed: cdb-qx9north-01.data"],
+                       [{"name": "cdb-qx9north-01"}])
+    assert "n1.local" in text and "n1.data" in text and "qx9north" not in text
+
+
+def test_audit_2026_11_06_addresses_inside_names():
+    text = shared_text(["    cassandra_keystore_file: /etc/cassandra/ssl/10.77.8.1.keystore   n1",
+                        "backup-172.16.5.4.tar.gz ip_10.77.8.1 node-10-77-8-1 /etc/cassandra/ssl/fd12:3456::3.jks",
+                        "Java 17.0.21.0.9-2.1.el8.x86_64, Cassandra 5.0.9, at 13:33:20"], [{"name": "a1"}])
+    assert not re.search(r"10\.77|172\.16|10-77|fd12|3456", text)
+    assert "/etc/cassandra/ssl/IP.keystore" in text and "node-IP" in text
+    for kept in ("17.0.21.0.9-2.1.el8.x86_64", "5.0.9", "13:33:20"):  # (versions and times are no addresses)
+        assert kept in text
+
+
+def test_audit_2026_11_06_a_path_as_an_xml_value_and_the_closing_tag():
+    text = shared_text(["        + <file>/srv/qxstore/backup/system.log</file>",
+                        "    in host_vars/<node>/main.yml of 9 nodes"], [{"name": "a1"}])
+    assert "qxstore" not in text and "<file>/path1</file>" in text
+    assert "host_vars/<node>/main.yml of 9 nodes" in text  # (<node> is no XML tag)
+
+
+def test_audit_2026_11_06_kernel_settings_kept_hosts_named_like_them_masked():
+    text = shared_text(["seed fs.qxstore.example.com and vm.qxlab.example.com",
+                        "sysctl: vm.swappiness = 0, net.core.rmem_max=212992, fs.file-max: 100000"], [{"name": "a1"}])
+    assert "qxstore" not in text and "qxlab" not in text and "example.com" not in text
+    for kept in ("vm.swappiness = 0", "net.core.rmem_max=212992"):
+        assert kept in text
+
+
+def test_audit_2026_11_06_short_site_codes_where_the_site_names_things():
+    text = shared_text([
+        "sysctl /etc/sysctl.d/01-sysctl-iv2.conf: vm.swappiness = 0   limits /etc/security/limits.d/90-zq7.conf",
+        "tuned: profile zq7-cass (tuned active); tuned (profile virtual-guest) sets readahead=>4096",
+        "tuned /usr/lib/tuned/zq7/tuned.conf [disk], /etc/tuned/virtual-guest/tuned.conf",
+        "device vgzq7-lv01 (dm-3) (/var/lib/cassandra/data, SSD): read_ahead_kb 4096",
+        "disk nvme0n1 (zq7-data, SSD): read_ahead_kb 8192; disk sdb1 (under vg (dm-3), SSD)",
+        "THP set by /etc/rc.d/rc.local (not executable)"], [{"name": "a1"}])
+    for leak in ("iv2", "zq7", "lv01"):
+        assert leak not in text, leak
+    for kept in ("virtual-guest", "nvme0n1", "sdb1", "dm-3", "/etc/rc.d/rc.local", "/etc/sysctl.d/01-sysctl-word",
+                 "/usr/lib/tuned/word"):
+        assert kept in text, kept
+
+
+def test_audit_2026_11_06_every_row_of_a_valued_setting_masked():
+    # the value of a bucket, prefix, fqdn or user: masked in every row of a table, not only the one naming it
+    nodes = [{"name": "a%d" % i, "vars": {"cassandra_medusa_prefix": "zp-north" if i < 3 else "zp-south",
+                                          "cassandra_jmx_username": "opsadm" if i < 3 else "monitor",
+                                          "cassandra_medusa_extra_settings": {"storage": {"bucket_name": "prod-bk"}}}}
+             for i in range(1, 5)]
+    text = shared_text(["    cassandra_medusa_prefix: zp-north   a1, a2 (2 nodes)",
+                        "                             zp-south   a3, a4 (2 nodes)",
+                        "    cassandra_jmx_username:  opsadm     a1, a2 (2 nodes)",
+                        "                             monitor    a3, a4 (2 nodes)",
+                        "    bucket prod-bk in the copy's free text"], nodes)
+    for leak in ("zp-north", "zp-south", "opsadm", "monitor", "prod-bk"):
+        assert leak not in text, leak
+
+
+def test_audit_2026_11_06_a_host_of_the_sites_domain_masked_whole():
+    text = shared_text(["  + seed: a1.qxbank.internal", "chrony: server ntp1.qxbank.internal iburst"],
+                       [{"name": "a1"}])
+    assert "ntp1" not in text and "qxbank" not in text
