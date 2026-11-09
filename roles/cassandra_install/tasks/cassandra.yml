@@ -116,11 +116,32 @@
         # dnf download, not the dnf module's download_only: that one resolves
         # the dependencies, and fails where no repository offers the Java
         # package they need (EL 10 has no Java 11 or 17)
+        # installed already: no dnf call (it reads every enabled repository, and an unreachable OS one fails it
+        # on an air-gapped site)
+        - name: Look for the dnf download command
+          ansible.builtin.command:
+            argv: [rpm, -q, --whatprovides, dnf-command(download)]
+          register: cassandra_install_dnf_download
+          changed_when: false
+          failed_when: false
+          check_mode: false  # a read
+
         - name: Install the dnf download command
-          ansible.builtin.package:
-            name: dnf-command(download)
-            state: present
-          retries: 3
+          when: cassandra_install_dnf_download.rc != 0
+          block:
+            - name: Install the dnf download command
+              ansible.builtin.package:
+                name: dnf-command(download)
+                state: present
+              retries: 3
+          rescue:
+            - name: Stop where dnf could not install it
+              ansible.builtin.fail:
+                msg: >-
+                  The dnf download command (dnf-command(download), from dnf-plugins-core) is not installed, and dnf could
+                  not install it: {{ ansible_failed_result | community.cassandra.cassandra_failure_cause }}. Make the
+                  repositories it names answer (or disable them), or install dnf-plugins-core by other means, then run
+                  again.
 
         - name: Download the Cassandra packages
           ansible.builtin.command:

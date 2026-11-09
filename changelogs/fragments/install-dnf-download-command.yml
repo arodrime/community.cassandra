@@ -1,0 +1,5 @@
+bugfixes:
+  - >-
+    cassandra_install - with a Java home on the RedHat family, the dnf download command is looked for with ``rpm``
+    first: dnf, which reads every enabled repository, runs only when it is missing, so an unreachable OS repository no
+    longer stops an air-gapped upgrade there; when dnf fails, the stop names the repositories it could not read.
