@@ -241,3 +241,15 @@ def test_nodes_done_earlier_or_stopped_midway_are_not_said_untouched():
 def test_none_and_empty_differ_as_the_assert_sees_them():
     msg = cassandra_differs({"node1": None, "node2": "", "node3": ""}, "cassandra_initial_token", "c")
     assert msg.startswith('cassandra_initial_token is not the same on every node of c (node2, node3: ""; node1: (none)):')
+
+
+def test_under_check_no_resume_nor_progress_file():
+    # --check wrote no progress file: the way out is the same check again, no .done file named
+    lines = stop("boom", resume=True, check=True, progress_file="/inv/.cassandra_progress/x", cwd="/inv")
+    assert lines[-2:] == ["WAY OUT  fix it, then check again:", "  ansible-playbook community.cassandra.rolling_restart --check"]
+    assert not any("progress:" in line or "cassandra_rolling_resume" in line for line in lines)
+    # a stop's own way out ending "then resume"
+    lines = stop(HEALTH, resume=True, check=True, progress_file="/inv/.cassandra_progress/x", cwd="/inv")
+    assert lines[-3:] == ["WAY OUT  start node4 (the server, then Cassandra), then check again:",
+                          "  ansible-playbook community.cassandra.rolling_restart --check",
+                          "  if the server is lost: replace_node; remove_dead_node only as a last resort"]

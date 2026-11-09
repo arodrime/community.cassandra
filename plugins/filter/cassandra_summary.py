@@ -147,19 +147,22 @@ def cassandra_stop_block(results, node, failure, operation="", action="", cluste
     head[-1] += ("" if head[-1].endswith((".", "!", "?")) else ".") + " " + touched
     table = out.recap(operation, str(cluster or ""), outcomes, check=check, head=False, causes=False)
     command = ""
-    if resume and not hint:
+    if resume and not hint:  # --check wrote no progress file: the same check again, not a resume
         command = cassandra_command(operation, inventory=inventory, hosts=hosts, cwd=cwd, default_inventory=default_inventory,
-                                    extra=["-e cassandra_rolling_resume=true"])
+                                    extra=["--check"] if check else ["-e cassandra_rolling_resume=true"])
+    again = "check again" if check else "resume"
     if not way_out:
-        way_out = [hint.strip() if hint else ("fix it, then resume:" if command else
+        way_out = [hint.strip() if hint else ("fix it, then %s:" % again if command else
                    "fix it, then check where the cluster stands (the status playbook) before running it again")]
     elif hint and not command:  # the failure's own way out ends "then resume": the hint says how
         way_out = [re.sub(r",? then resume:?$", ", then:", way_out[0])] + way_out[1:] + [hint.strip()]
+    elif check:
+        way_out = [re.sub(r"then resume(:?)$", r"then check again\1", way_out[0])] + way_out[1:]
     first = way_out[0]
     if command and not first.endswith(":"):
         first += ":"
     lines = [WAY_OUT + first] + (["  " + command] if command else []) + ["  " + line for line in way_out[1:]]
-    if command and progress_file:
+    if command and progress_file and not check:
         lines.append("  progress: %s" % (out.path_from(str(progress_file), cwd) if cwd else progress_file))
     return head + ([""] + table if table else []) + [""] + lines
 

@@ -1,0 +1,4 @@
+bugfixes:
+  - >-
+    rolling operations - a run under ``--check`` that stops gives the same check again as its way out, not a resume
+    of a progress file that ``--check`` never wrote (its path is no longer printed).
