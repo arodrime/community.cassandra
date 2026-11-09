@@ -1,0 +1,2 @@
+bugfixes:
+  - upgrade - a node nodetool cannot reach whose installed package is already the target (an interrupted canary or rolling phase) is pointed to ``apply_config --limit <node>`` first, which writes the target's config, then to ``systemctl start cassandra`` there (a start with the former config fails).

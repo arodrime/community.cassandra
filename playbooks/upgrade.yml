@@ -166,17 +166,44 @@
       failed_when: false  # a node not running: said below
       check_mode: false  # a read
 
+    # a node nodetool fails on: its package already the target (an interrupted canary or rolling phase) starts
+    # only once apply_config wrote the target's config
+    - name: Read the installed Cassandra package where nodetool failed
+      ansible.builtin.command:
+        argv: >-
+          {{ ['dpkg-query', '-W', '-f=${Version}', 'cassandra'] if ansible_facts['os_family'] == 'Debian'
+             else ['rpm', '-q', '--qf', '%{VERSION}', 'cassandra'] }}
+      register: cassandra_upgrade_installed
+      changed_when: false
+      failed_when: false
+      check_mode: false  # a read
+      when: cassandra_upgrade_running.rc | default(0) != 0
+
     # (an interrupted run may have left a node stopped: its package upgraded, its start failed, or Ctrl-C; or JMX
     # refuses nodetool there: its last error line says which)
     - name: Every node answers nodetool
       ansible.builtin.assert:
         that: _failed | length == 0
         fail_msg: >-
-          {{ _failed | join('; ') }}. A node not running Cassandra: start it (systemctl start cassandra there, or
-          apply_config --limit <node>, which starts a node whose unit failed), then run this phase again; a node
-          already upgraded is skipped. Nothing was done.
+          {{ _failed | join('; ') }}.
+          {%- if _on_target %} Package cassandra {{ cassandra_package_version }} (the target) is installed on
+          {{ _on_target | join(', ') }}: run ansible-playbook community.cassandra.apply_config --limit {{ _on_target | join(',') }}
+          (it writes the config of {{ cassandra_package_version }} and leaves Cassandra stopped there), then start
+          Cassandra there (systemctl start cassandra), then run this phase again.{% endif %}
+          {%- if _on_target | length < _failed | length %} A node not running Cassandra: start it (systemctl start cassandra there, or
+          apply_config --limit <node>, which starts a node whose unit failed), then run this phase again.{% endif %}
+          A node already upgraded is skipped. Nothing was done.
         quiet: true
       vars:
+        _on_target: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts | map('extract', hostvars) | selectattr('cassandra_upgrade_installed.rc', 'defined')
+                if h.cassandra_upgrade_installed.rc == 0 and h.cassandra_package_version | default('') | length > 0
+                   and (h.cassandra_upgrade_installed.stdout | trim == h.cassandra_package_version
+                        or (h.cassandra_upgrade_installed.stdout | trim).startswith(h.cassandra_package_version ~ '-')) -%}
+          {%-   set _ = out.append(h.inventory_hostname) -%}
+          {%- endfor -%}
+          {{ out }}
         _failed: >-
           {%- set out = [] -%}
           {%- for h in ansible_play_hosts | map('extract', hostvars) | selectattr('cassandra_upgrade_running.rc', 'defined')

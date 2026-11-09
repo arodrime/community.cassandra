@@ -134,7 +134,7 @@ def test_a_node_nodetool_fails_on_is_said_with_its_error_and_the_way_out():
     text = " ".join(render(check["ansible.builtin.assert"]["fail_msg"], **variables).split())
     assert text.startswith("nodetool version failed on n2 (%s); nodetool version failed on n3 (java.lang.SecurityException" % refused)
     assert "(no output). A node not running Cassandra: start it (systemctl start cassandra there, or apply_config --limit <node>" in text
-    assert text.endswith("then run this phase again; a node already upgraded is skipped. Nothing was done.")
+    assert text.endswith("then run this phase again. A node already upgraded is skipped. Nothing was done.")
     del hostvars["n4"]
     variables["ansible_play_hosts"] = list(hostvars)
     hostvars["n2"]["cassandra_upgrade_running"]["rc"] = hostvars["n3"]["cassandra_upgrade_running"]["rc"] = 0
