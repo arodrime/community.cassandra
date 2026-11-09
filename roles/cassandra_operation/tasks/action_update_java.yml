@@ -4,15 +4,18 @@
 # then checks the restarted node runs the Java installed for it: the same
 # binary and the same version, not only the same major.
 
-# Before anything changes, also under --check: the Java this node moves to, and the java it must run then (the
-# Java home's, else the system java, else the one of the JAVA_HOME it is given, read before the plan)
+# Before anything changes, also under --check: the Java this node moves to, and the java it must run then: the one
+# of the JAVA_HOME Cassandra is given (read before the plan, which checked it leads to the new Java), else the Java
+# home's, else the system java
 - name: Note the Java this node moves to
   ansible.builtin.set_fact:
     _cassandra_update_java_wanted: "{{ cassandra_java_version | community.cassandra.cassandra_java_major }}"
     _cassandra_update_java_expected: >-
-      {{ (_cassandra_java_home ~ '/bin/java') if _cassandra_java_home != ''
-         else '/usr/bin/java' if cassandra_java_set_default | bool
-         else ((cassandra_update_java_given.stdout_lines | default([''], true) | first) ~ '/bin/java') }}
+      {{ (_given ~ '/bin/java') if _given != ''
+         else (_cassandra_java_home ~ '/bin/java') if _cassandra_java_home != ''
+         else '/usr/bin/java' }}
+  vars:
+    _given: "{{ (cassandra_update_java_given.stdout_lines | default([''], true) | first) | regex_replace('(?<=.)/+$', '') }}"
 
 - name: Install Java
   ansible.builtin.include_role:
@@ -64,7 +67,7 @@
   ansible.builtin.assert:
     that:
       - _found.running_spec | default('') | community.cassandra.cassandra_java_major == _cassandra_update_java_wanted
-      - _found.running | default('') == _found.installed | default('')
+      - _found.running | default('') | regex_replace(_home_re, '') == _found.installed | default('') | regex_replace(_home_re, '')
       - _found.running_version | default('') == _found.installed_version | default('')
     fail_msg: >-
       {{ ([inventory_hostname ~ ' restarted on ' ~ (_found.running | default('') or 'no java found')
@@ -84,4 +87,6 @@
     _nl: "\n"
     _found: "{{ dict(cassandra_update_java_restarted.stdout_lines | default([]) | map('split', '=', 1)) }}"
     _home: "{{ _cassandra_update_java_expected | regex_replace('/bin/java$', '') }}"
+    # compared by their Java homes: a Java 8 JDK runs its jre/bin/java for its bin/java
+    _home_re: "(/jre)?/bin/java$"
   when: not ansible_check_mode

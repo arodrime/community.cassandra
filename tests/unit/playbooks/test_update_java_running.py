@@ -152,17 +152,39 @@ def test_the_restarted_node_runs_the_java_installed_for_it(tmp_path):
     assert _checked(_restarted(tmp_path / "e", java8, java8), wanted="11")[0] is False
 
 
+def test_each_post_restart_check_alone(tmp_path):
+    # the same binary, another version (replaced in place since): refused
+    java = _java(tmp_path / "opt" / "new" / "bin" / "java", "11.0.32")
+    restarted = _restarted(tmp_path / "a", java, java)
+    restarted["stdout_lines"] = [line.replace("running_version=11.0.32", "running_version=11.0.30")
+                                 for line in restarted["stdout_lines"]]
+    assert _checked(restarted, expected=str(java))[0] is False
+    # another binary, the same version (Temurin and OpenJDK 11.0.32): refused
+    other = _java(tmp_path / "opt" / "other" / "bin" / "java", "11.0.32")
+    assert _checked(_restarted(tmp_path / "b", other, java), expected=str(java))[0] is False
+    # a Java 8 JDK run by its jre/bin/java for its bin/java: the same Java home
+    jdk = tmp_path / "opt" / "jdk8"
+    jre_java = _java(jdk / "jre" / "bin" / "java", "1.8.0_392")
+    jdk_java = _java(jdk / "bin" / "java", "1.8.0_392")
+    assert _checked(_restarted(tmp_path / "c", jre_java, jdk_java), wanted="8", expected=str(jdk_java))[0] is True
+
+
 def test_the_java_it_moves_to_with_the_role_defaults_only():
     # no cassandra_java_version in the inventory (import_cluster writes none for the series' default): the role's
     with open(os.path.join(os.path.dirname(PLAYBOOK), "..", "roles", "cassandra_install", "defaults", "main.yml"),
               encoding="utf-8") as f:
         defaults = yaml.safe_load(f)
     note = ACTION_TASKS[0]["ansible.builtin.set_fact"]
-    variables = dict(defaults, cassandra_version="41x", ansible_facts={"os_family": "RedHat", "distribution": "Rocky"})
+    variables = dict(defaults, cassandra_version="41x", ansible_facts={"os_family": "RedHat", "distribution": "Rocky"},
+                     **ACTION_TASKS[0]["vars"])
     assert _template(note["_cassandra_update_java_wanted"], variables) == "11"
     assert _template(note["_cassandra_update_java_expected"], variables).strip() == "/usr/bin/java"
     variables["cassandra_java_home"] = "/opt/jdk-11.0.30/"
     assert _template(note["_cassandra_update_java_expected"], variables).strip() == "/opt/jdk-11.0.30/bin/java"
+    # a JAVA_HOME read for the node (the plan checked it leads to the new Java): its java, as the plan compared it
+    variables["cassandra_update_java_given"] = {"stdout_lines": ["/usr/lib/jvm/temurin-17/", "/usr/lib/jvm/temurin-17"]}
+    variables.update(dict((k, v) for k, v in ACTION_TASKS[0]["vars"].items()))
+    assert _template(note["_cassandra_update_java_expected"], variables).strip() == "/usr/lib/jvm/temurin-17/bin/java"
     # the play that runs it loads the role defaults first (play scoped: the first play's are gone)
     move = PLAYS[[p["name"] for p in PLAYS].index("Move to the new Java, one node at a time")]
     names = [t["name"] for t in move["tasks"]]

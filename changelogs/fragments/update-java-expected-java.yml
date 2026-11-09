@@ -1,0 +1,6 @@
+bugfixes:
+  - >-
+    update_java - the check after a restart compares the running Java with the one of the ``JAVA_HOME`` read for the
+    node, when there is one (as the plan did), else with the Java home's or the system java, and compares Java homes
+    (a Java 8 JDK runs its ``jre/bin/java``): two Javas of the same major (Temurin, OpenJDK) no longer disagree
+    between the plan and the check.
