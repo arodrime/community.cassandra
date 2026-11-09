@@ -756,6 +756,23 @@ satisfy it (the tarball stays the system ``java``): exclude the cassandra packag
 (``excludepkgs``, versionlock).
 ``update_java`` moves a cluster to a new tarball the same way as to a new package.
 
+Where a ``JAVA_HOME`` or a ``PATH`` names a symlink to the Java in use rather than the Java's own directory (e.g.
+``/apps/java/jdk -> jdk-11.0.30``), give that link in ``cassandra_java_link``: ``cassandra_install`` and ``update_java``
+keep it pointing at the Java home in use (the tarball's directory, or ``cassandra_java_home``), moving it to the new
+Java before the restart, and back on a rollback (``cassandra_java_home`` set to the old one). A link that already
+leads there is left as it is; a path there that is not a symlink is refused. ``import_cluster`` sets it when
+``/usr/bin/java`` leads to the running Java through such a link.
+
+Before its question, ``update_java`` reads the ``JAVA_HOME`` each node's Cassandra would restart with, wherever it is
+set: the unit's ``Environment`` (``cassandra_service_environment``; the unit itself when it is kept), its drop-ins and
+``EnvironmentFile``, ``/etc/default/cassandra`` for a unit generated from an init script, and the first
+``cassandra.in.sh`` that ``bin/cassandra`` reads. One that leads to another Java than the new one (resolved; a
+``JAVA_HOME`` that is ``cassandra_java_link`` follows it) stops the run before any node is drained, also under
+``--check``, saying where it is set. A node left drained (``Mode: DRAINED``, e.g. by a run that stopped there) is
+refused too, with the resume as the way out. After each restart, the java the node runs (its binary and its full
+version) must be the one installed for it, not only of the same major: else the run stops at that node, saying the
+``JAVA_HOME`` it was started with.
+
 With several clusters, the mirror can offer one tarball per Java major in ``cassandra_java_tarballs``, set once for
 all of them (here a ``group_vars/all`` file shared by the inventories), and each cluster only names its Java:
 
@@ -1317,7 +1334,9 @@ nodes get the same form); otherwise each node keeps its value in ``host_vars``. 
 change the ``fqdn`` of an existing ``medusa.ini`` unless ``cassandra_medusa_fqdn_change: true``.
 
 A node whose running Java is not a package (a JDK unpacked by hand, from a tarball) gets ``cassandra_java_home``: the
-roles then keep that Java and install no Java package. A node whose Java is a package gets
+roles then keep that Java and install no Java package. When its ``/usr/bin/java`` goes through a symlinked directory
+that leads to that Java (``/usr/bin/java -> /apps/java/jdk/bin/java``, ``/apps/java/jdk -> jdk-11.0.30``), that link
+becomes ``cassandra_java_link``, kept pointing at the Java in use from then on. A node whose Java is a package gets
 ``cassandra_java_tarballs: {}``: it keeps its package even where a shared ``cassandra_java_tarballs`` offers tarballs
 (see Java above); remove that line and run ``update_java`` to move it to the tarball. A node with
 ``cassandra_java_home`` needs no tarball either; the offer is for the nodes added later.
@@ -1359,7 +1378,7 @@ running Java's; one that has another needs ``JAVA_HOME`` (e.g. in ``cassandra_se
 ``update_java`` refuses such nodes before any restart until their ``JAVA_HOME``, resolved, is the new Java's home:
 the one in ``cassandra_service_environment``, or, when the unit is kept (``cassandra_service_unit_manage: false``),
 the one in the unit itself, edited by hand (``systemctl edit cassandra``); with a package Java, that package
-installed first. With ``false`` and ``/usr/bin/java`` missing while its
+installed first. The same goes for any node whose ``JAVA_HOME`` leads to another Java (see Java above). With ``false`` and ``/usr/bin/java`` missing while its
 alternative still leads to a java, only the link is made again. A Java updated while Cassandra runs (its directory
 gone, e.g. a RHEL JDK update) cannot be run any more: its major is read from the name of its directory, and its new
 build of that major (its package installed again, the build ``/usr/bin/java`` leads to first; else a

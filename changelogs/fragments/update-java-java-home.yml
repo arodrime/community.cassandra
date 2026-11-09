@@ -1,0 +1,18 @@
+bugfixes:
+  - >-
+    update_java - a ``JAVA_HOME`` that would restart Cassandra on another Java is refused before any node is drained,
+    also under ``--check`` and with ``cassandra_java_set_default: true``, wherever it is set: the unit's
+    ``Environment`` (or ``cassandra_service_environment``), its drop-ins and ``EnvironmentFile``,
+    ``/etc/default/cassandra`` for an init script, ``cassandra.in.sh``. The run reported success while the nodes
+    still ran their old Java of the same major.
+  - >-
+    update_java - after each restart, the Java the node runs (its binary and full version) is compared with the one
+    installed for it, not only its major version; a mismatch stops the run there with the ``JAVA_HOME`` it was
+    started with and the way out.
+  - >-
+    update_java - ``cassandra_java_version`` not set in the inventory (the series' default, e.g. a 4.1 cluster
+    imported on Java 11) no longer fails after the first node's restart: the rolling play loads the role defaults,
+    and the Java the node moves to is worked out before anything changes, under ``--check`` too.
+  - >-
+    update_java - a node left drained (``Mode: DRAINED``) is refused before the question, with the resume (or a
+    restart of that node) as the way out, instead of a 10-minute wait for it and a way out saying to start the server.

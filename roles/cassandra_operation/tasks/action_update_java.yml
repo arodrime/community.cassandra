@@ -1,7 +1,19 @@
 ---
 # Installs the Java the inventory asks for (made the default java), writes the
 # config (the jvm<N>-server.options of that Java apply), drains and restarts,
-# then checks the Java the restarted node runs.
+# then checks the restarted node runs the Java installed for it: the same
+# binary and the same version, not only the same major.
+
+# Before anything changes, also under --check: the Java this node moves to, and the java it must run then (the
+# Java home's, else the system java, else the one of the JAVA_HOME it is given, read before the plan)
+- name: Note the Java this node moves to
+  ansible.builtin.set_fact:
+    _cassandra_update_java_wanted: "{{ cassandra_java_version | community.cassandra.cassandra_java_major }}"
+    _cassandra_update_java_expected: >-
+      {{ (_cassandra_java_home ~ '/bin/java') if _cassandra_java_home != ''
+         else '/usr/bin/java' if cassandra_java_set_default | bool
+         else ((cassandra_update_java_given.stdout_lines | default([''], true) | first) ~ '/bin/java') }}
+
 - name: Install Java
   ansible.builtin.include_role:
     name: community.cassandra.cassandra_install
@@ -26,30 +38,50 @@
     tasks_from: jvm_started.yml
   when: not ansible_check_mode
 
-- name: Read the Java version it runs
-  ansible.builtin.command:
-    argv: ["/proc/{{ cassandra_jvm.pid | default('') }}/exe", -XshowSettings:properties, -version]
+# the running JVM's binary (as the kernel has it: resolved, " (deleted)" when replaced since it started), its Java
+# version, the JAVA_HOME it was started with; then the same of the java installed for it
+- name: Read the Java it runs and the one installed
+  ansible.builtin.shell: |
+    props() { "$1" -XshowSettings:properties -version 2>&1 | sed -n "s/^ *java[.]$2 = //p" | head -1; }
+    echo "running=$(readlink /proc/$PID/exe)"
+    echo "running_version=$(props /proc/$PID/exe version)"
+    echo "running_spec=$(props /proc/$PID/exe specification[.]version)"
+    echo "java_home=$(tr '\0' '\n' < /proc/$PID/environ 2>/dev/null | sed -n 's/^JAVA_HOME=//p' | head -1)"
+    echo "installed=$(readlink -f "$EXPECTED")"
+    echo "installed_version=$(props "$EXPECTED" version)"
+    exit 0
+  environment:
+    PID: "{{ cassandra_jvm.pid | default('') }}"
+    EXPECTED: "{{ _cassandra_update_java_expected }}"
   register: cassandra_update_java_restarted
   changed_when: false
-  failed_when: false
   check_mode: false  # read-only
   when:
     - not ansible_check_mode
     - cassandra_jvm.pid is defined
 
-- name: Check it runs Java {{ cassandra_java_version }}
+- name: Check it runs the Java installed for it
   ansible.builtin.assert:
-    that: _major == _wanted
+    that:
+      - _found.running_spec | default('') | community.cassandra.cassandra_java_major == _cassandra_update_java_wanted
+      - _found.running | default('') == _found.installed | default('')
+      - _found.running_version | default('') == _found.installed_version | default('')
     fail_msg: >-
-      {{ inventory_hostname }} restarted on Java {{ _major or 'unknown' }} ({{ cassandra_jvm.exe | default('not running', true) }}),
-      not {{ _wanted }}: the default java was not switched. Check update-alternatives --display java
-      (alternatives on RedHat) there and set it by hand, or set cassandra_java_home to the Java {{ cassandra_java_version }}
-      home; then run update_java again (this node is done again).
+      {{ ([inventory_hostname ~ ' restarted on ' ~ (_found.running | default('') or 'no java found')
+           ~ ' (Java ' ~ (_found.running_version | default('') or 'unknown') ~ '), not on the Java installed for it: '
+           ~ (_found.installed | default('') or _cassandra_update_java_expected) ~ ' (Java '
+           ~ (_found.installed_version | default('') or 'unknown') ~ ').']
+          + (['It was started with JAVA_HOME=' ~ _found.java_home ~ '.'] if _found.java_home | default('') != '' else [])
+          + ['WAY OUT  ' ~ ('point that JAVA_HOME at ' ~ _home ~ ' (or remove it) where it is set (the unit: systemctl'
+                            ~ ' cat cassandra; cassandra.in.sh), restart Cassandra on ' ~ inventory_hostname
+                            if _found.java_home | default('') != ''
+                            else 'make ' ~ _cassandra_update_java_expected ~ ' the java Cassandra starts with'
+                                 ~ ' (update-alternatives --display java; alternatives on RedHat), or set'
+                                 ~ ' cassandra_java_home to the Java ' ~ cassandra_java_version ~ ' home')
+             ~ ', then resume']) | join(_nl) }}
     quiet: true
   vars:
-    _spec: >-
-      {{ cassandra_update_java_restarted.stderr | default('') | regex_findall('java[.]specification[.]version = (\S+)')
-         | first | default('') }}
-    _major: "{{ _spec | community.cassandra.cassandra_java_major }}"
-    _wanted: "{{ cassandra_java_version | community.cassandra.cassandra_java_major }}"  # "1.8" in the inventory: 8
+    _nl: "\n"
+    _found: "{{ dict(cassandra_update_java_restarted.stdout_lines | default([]) | map('split', '=', 1)) }}"
+    _home: "{{ _cassandra_update_java_expected | regex_replace('/bin/java$', '') }}"
   when: not ansible_check_mode
