@@ -562,7 +562,7 @@
         # a symlinked directory /usr/bin/java goes through, that leads to the home of the running Java (e.g.
         # /usr/bin/java -> /apps/java/jdk/bin/java, /apps/java/jdk -> jdk-11.0.30): kept pointing at the Java in
         # use (cassandra_java_link)
-        p=/usr/bin/java n=0
+        p=/usr/bin/java n=0 jl=
         while [ -L "$p" ] && [ $n -lt 20 ]; do
           t=$(readlink "$p"); case $t in /*) p=$t ;; *) p=${p%/*}/$t ;; esac
           n=$((n + 1)); d=${p%/bin/java}
@@ -570,9 +570,16 @@
           d=$(readlink -m "${d%/*}")/${d##*/}
           if [ -L "$d" ] && [ "$(readlink -f "$d")" = "$(readlink -f "${bin%/bin/java}")" ]; then
             echo "javalink=$d"
+            jl=$d
             break
           fi
         done
+        # else the JAVA_HOME Cassandra was started with, when it is a link to that home
+        if [ -z "$jl" ]; then
+          d=$(tr '\0' '\n' < /proc/$pid/environ 2>/dev/null | sed -n 's/^JAVA_HOME=//p' | head -1)
+          d=${d%/}
+          [ -n "$d" ] && [ -L "$d" ] && [ "$(readlink -f "$d")" = "$(readlink -f "${bin%/bin/java}")" ] && echo "javalink=$d"
+        fi
         echo "sysjava=$sys"
         # where the config really is (/etc/cassandra/conf of the RPM is an alternatives link)
         case $cfg in /*) d=${cfg%/*} ;; *) d=/etc/cassandra/conf ;; esac

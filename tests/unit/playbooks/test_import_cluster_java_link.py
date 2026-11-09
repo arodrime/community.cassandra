@@ -230,7 +230,7 @@ def _write(path, text, mode=0o644):
     path.chmod(mode)
 
 
-def _run(tmp_path, running, system, rpm=None, dpkg=None, unit_env=""):
+def _run(tmp_path, running, system, rpm=None, dpkg=None, unit_env="", java_home=""):
     """The task's Java lines over tmp_path: the JVM run from running (a JVM whose directory is gone cannot run, as
     a real one: its libraries went too), /usr/bin/java a chain of links to system (none when None), rpm answering
     rpm ({"files": {package: [files]}, "owners": {file: package}}; none: no rpm), dpkg -S answering dpkg ({file:
@@ -258,7 +258,10 @@ def _run(tmp_path, running, system, rpm=None, dpkg=None, unit_env=""):
     _write(exe, '#!/bin/sh\n[ -d "%s" ] || exit 127\necho "    java.specification.version = 11" >&2\n'
            % os.path.dirname(str(running)), 0o755)
     lines = ['bin="%s"' % running] + _java_lines()[1:]
-    script = "\n".join(lines).replace("/usr/bin/java", str(usr_bin_java)).replace("/proc/$pid/exe", str(exe))
+    environ = tmp_path / "proc_environ"  # /proc/<pid>/environ: the JVM's environment
+    environ.write_bytes(b"PATH=/bin\0" + (("JAVA_HOME=%s\0" % java_home).encode() if java_home else b""))
+    script = "\n".join(lines).replace("/usr/bin/java", str(usr_bin_java)).replace("/proc/$pid/exe", str(exe)).replace(
+        "/proc/$pid/environ", str(environ))
     out = subprocess.run(["/bin/sh", "-c", script], env={"PATH": str(tools)}, stdout=subprocess.PIPE,
                          universal_newlines=True, check=True).stdout
     return dict(line.split("=", 1) for line in out.splitlines())
@@ -494,3 +497,17 @@ def test_role_leaves_the_system_java():
     with open(os.path.join(ROOT, "roles", "cassandra_install", "tasks", "java.yml")) as f:
         alt = task("Make the Java package's java the default java", yaml.safe_load(f))  # the block: its when
     assert gate in alt["when"]
+
+
+def test_lines_java_link_from_the_java_home_cassandra_runs_with(tmp_path):
+    # /usr/bin/java straight to the home, Cassandra started with JAVA_HOME=/apps/jre/jdk (a link to it)
+    java = _jdk(tmp_path, "jdk-11.0.30", "11.0.30")
+    link = tmp_path / "apps" / "jre" / "jdk"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(java.parent.parent)
+    assert _run(tmp_path, java, java, java_home=str(link) + "/")["javalink"] == str(link)
+    # a JAVA_HOME that is the home itself, or another Java: none
+    other = tmp_path / "other"
+    other.mkdir()
+    java = _jdk(other, "jdk-11.0.30", "11.0.30")
+    assert "javalink" not in _run(other, java, java, java_home=str(java.parent.parent))

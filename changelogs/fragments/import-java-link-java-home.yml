@@ -1,0 +1,4 @@
+minor_changes:
+  - >-
+    import_cluster - ``cassandra_java_link`` is also written when the ``JAVA_HOME`` Cassandra was started with is a
+    link to the running Java's home (and ``/usr/bin/java`` goes through no such link).
