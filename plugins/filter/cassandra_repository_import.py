@@ -43,12 +43,17 @@ def _key(path, stats, shipped):
     return ""
 
 
+# the series in a URL, written {{ cassandra_version }} by the import's writer (cassandra_import._vars_yaml): no
+# template until then, which ansible-core before 2.19 would render where the value is kept (a fact, hostvars)
+SERIES_TOKEN = "{cassandra_version}"
+
+
 def _series_url(url, series):
-    """A mirror URL that ends with the series ("/41x/" or "/41x") names it as cassandra_version, so the next
-    upgrade (another cassandra_version) follows it; the rest kept as written.
-    "http://mirror/repo/41x/", "41x" -> "http://mirror/repo/{{ cassandra_version }}/"."""
+    """A mirror URL that ends with the series ("/41x/" or "/41x") names it as cassandra_version (SERIES_TOKEN until
+    written), so the next upgrade (another cassandra_version) follows it; the rest kept as written.
+    "http://mirror/repo/41x/", "41x" -> "http://mirror/repo/{cassandra_version}/"."""
     m = re.match(r"^(.*/)%s(/?)$" % re.escape(series), url)
-    return "%s{{ cassandra_version }}%s" % (m.group(1), m.group(2)) if m else url
+    return "%s%s%s" % (m.group(1), SERIES_TOKEN, m.group(2)) if m else url
 
 
 def _keep(why):

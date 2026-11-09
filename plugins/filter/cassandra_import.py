@@ -64,6 +64,7 @@ from ansible.errors import AnsibleFilterError, AnsibleUndefinedVariable
 from ansible.module_utils.common.text.converters import to_bytes, to_text
 from ansible.module_utils.parsing.convert_bool import boolean
 from ansible.plugins.filter.core import regex_replace
+from ansible_collections.community.cassandra.plugins.filter.cassandra_repository_import import SERIES_TOKEN
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
     DEFAULT_WHEN_ABSENT, NOT_COMPARED, QUANTITY_KEYS, canonical_quantity, former_keys, former_names, former_value,
@@ -3199,6 +3200,15 @@ def _block(key):
     return "Other"
 
 
+try:  # ansible-core 2.19+ templates trusted strings only: a filter's output is used as it is
+    from ansible.template import trust_as_template  # noqa: F401 pylint: disable=unused-import
+
+    def _as_is(value):
+        return value
+except ImportError:  # before, any string not marked unsafe is templated again where it is used (a loop's item)
+    from ansible.utils.unsafe_proxy import wrap_var as _as_is
+
+
 class Unsafe(str):
     """A value read from a node that looks like a template (a password with
     {{, {% or {#): written !unsafe, so Ansible uses it as it is."""
@@ -3252,6 +3262,10 @@ def _vars_yaml(variables, templates=None, trusted=()):
     for key, template in (templates or {}).items():
         if variables.get(key) == template:
             data[key] = _plain(template)
+    # a mirror URL that names the series (cassandra_repository_import): written as a template, not !unsafe
+    url = data.get("cassandra_install_url")
+    if isinstance(url, str) and not isinstance(url, Unsafe) and SERIES_TOKEN in url:
+        data["cassandra_install_url"] = _plain(url.replace(SERIES_TOKEN, "{{ cassandra_version }}"))
     grouped = {}
     for key in data:
         grouped.setdefault(_block(key), []).append(key)
@@ -3299,7 +3313,7 @@ def cassandra_inventory_files(layout):
             for base, data, secret in (("main.yml", public, False), ("secrets.yml", secrets, True)):
                 if data:
                     files.append({"path": "%s/%s/%s" % (kind, name, base), "secret": secret,
-                                  "content": _vars_yaml(data, layout.get("templates"), layout.get("trusted") or ())})
+                                  "content": _as_is(_vars_yaml(data, layout.get("templates"), layout.get("trusted") or ()))})
     return files
 
 
@@ -3316,7 +3330,8 @@ _OWNABLE = re.compile(r"^(?:group_vars|host_vars)/[^/]+/(?:main|secrets)\.yml$")
 def cassandra_inventory_generated(content, cluster):
     """content, cluster (its group) -> content, marked as written by the import of the cluster (GENERATED first).
     e.g. ("x: 1\n", "prod") -> "# Written by community.cassandra.import_cluster for prod: ...\nx: 1\n"."""
-    return GENERATED % cluster + "\n" + content
+    # the templates it holds (a URL's {{ cassandra_version }}, a node's address) written as they are
+    return _as_is(GENERATED % cluster + "\n" + content)
 
 
 def written_for(text):

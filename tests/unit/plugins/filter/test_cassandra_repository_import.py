@@ -36,12 +36,12 @@ def yum(text=YUM, mode="0600", key=KEYS, files=None, from_file=False, key_mode="
 def test_role_written_mirror_taken_over():
     # the series at the end of the URL: as cassandra_version, so the next upgrade takes the next series' repository
     assert yum() == {"manage": True, "why": "", "vars": {
-        "cassandra_install_url": "https://mirror.example/rpm/{{ cassandra_version }}/", "cassandra_install_username": "svc",
+        "cassandra_install_url": "https://mirror.example/rpm/{cassandra_version}/", "cassandra_install_username": "svc",
         "cassandra_install_password": "tok"}}
 
 
 @pytest.mark.parametrize("url, written", [
-    ("http://mirror/repo/50x", "http://mirror/repo/{{ cassandra_version }}"),  # no trailing slash: kept so
+    ("http://mirror/repo/50x", "http://mirror/repo/{cassandra_version}"),  # no trailing slash: kept so
     ("http://mirror/repo/50x/os/", "http://mirror/repo/50x/os/"),  # not at the end: as it is
     ("http://mirror/repo/cassandra-50x/", "http://mirror/repo/cassandra-50x/"),  # part of a name: as it is
     ("http://mirror/50x/repo/", "http://mirror/50x/repo/"),
@@ -49,9 +49,13 @@ def test_role_written_mirror_taken_over():
 def test_series_in_the_url(url, written):
     out = yum(YUM.replace("https://mirror.example/rpm/50x/", url))
     assert out["vars"]["cassandra_install_url"] == written
-    # rendered with the series it was read with: the URL the node has
+    # written by the import as a template (not !unsafe), rendered with the series it was read with: the node's URL
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _vars_yaml
+    text = _vars_yaml({"cassandra_install_url": written})
+    assert "!unsafe" not in text
+    value = yaml.safe_load(text)["cassandra_install_url"]
     templar = Templar(loader=DataLoader(), variables={"cassandra_version": "50x"})
-    assert templar.template(trust_as_template(written)) == url
+    assert templar.template(trust_as_template(value)) == url
 
 
 def test_apache_defaults_need_no_variable():
@@ -179,7 +183,13 @@ def test_what_the_role_writes():
 def test_apt_series_in_the_url():
     # apt names the series in Suites; a mirror that also has it at the end of its URL gets cassandra_version there
     out = apt({SRC: DEB.replace("https://mirror.example/deb\n", "https://mirror.example/deb/50x/\n")})
-    assert out["manage"] is True and out["vars"]["cassandra_install_url"] == "https://mirror.example/deb/{{ cassandra_version }}/"
+    assert out["manage"] is True and out["vars"]["cassandra_install_url"] == "https://mirror.example/deb/{cassandra_version}/"
     # the import's self-check does not compare it with the node (the template is the user's way to write it)
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import NOT_READ
     assert "cassandra_install_url" in NOT_READ
+
+
+def test_a_url_with_a_template_read_from_a_node_stays_unsafe():
+    # a "{{" read from a node is never templated: only the import's own series token becomes one
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _vars_yaml
+    assert "!unsafe" in _vars_yaml({"cassandra_install_url": "http://m/{{ lookup('pipe', 'id') }}/"})
