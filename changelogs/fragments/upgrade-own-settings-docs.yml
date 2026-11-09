@@ -1,2 +1,2 @@
-bugfixes:
+trivial:
   - "guide - a variables file of your own (``group_vars/<cluster>/local.yml``) does not win over the import's ``main.yml``: said so, with the way to change a value the import writes."

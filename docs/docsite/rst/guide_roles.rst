@@ -1378,7 +1378,8 @@ running Java's; one that has another needs ``JAVA_HOME`` (e.g. in ``cassandra_se
 ``update_java`` refuses such nodes before any restart until their ``JAVA_HOME``, resolved, is the new Java's home:
 the one in ``cassandra_service_environment``, or, when the unit is kept (``cassandra_service_unit_manage: false``),
 the one in the unit itself, edited by hand (``systemctl edit cassandra``); with a package Java, that package
-installed first. The same goes for any node whose ``JAVA_HOME`` leads to another Java (see Java above). With ``false`` and ``/usr/bin/java`` missing while its
+installed first. The same goes for any node whose ``JAVA_HOME`` leads to another Java (see Java above).
+With ``false`` and ``/usr/bin/java`` missing while its
 alternative still leads to a java, only the link is made again. A Java updated while Cassandra runs (its directory
 gone, e.g. a RHEL JDK update) cannot be run any more: its major is read from the name of its directory, and its new
 build of that major (its package installed again, the build ``/usr/bin/java`` leads to first; else a

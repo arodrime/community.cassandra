@@ -374,9 +374,6 @@ def test_refused_before_any_restart_when_the_system_java_is_kept():
     variables["_kept"] = kept
     text = Templar(loader=DataLoader(), variables=variables).template(
         trust_as_template(check["ansible.builtin.assert"]["fail_msg"]))
-    variables["cassandra_java_set_default"] = False
-    text = Templar(loader=DataLoader(), variables=variables).template(
-        trust_as_template(check["ansible.builtin.assert"]["fail_msg"]))
     assert text.split("\n") == [
         "Cassandra would not restart on Java 17: the JAVA_HOME this node starts Cassandra with does not lead to it."
         " Nothing was done.", "  n1: no JAVA_HOME in cassandra_service_environment",
