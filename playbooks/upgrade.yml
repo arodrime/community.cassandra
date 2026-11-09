@@ -171,8 +171,8 @@
     - name: Read the installed Cassandra package where nodetool failed
       ansible.builtin.command:
         argv: >-
-          {{ ['dpkg-query', '-W', '-f=${Version}', 'cassandra'] if ansible_facts['os_family'] == 'Debian'
-             else ['rpm', '-q', '--qf', '%{VERSION}', 'cassandra'] }}
+          {{ ['dpkg-query', '-W', '-f=${db:Status-Status} ${Version}', 'cassandra'] if ansible_facts['os_family'] == 'Debian'
+             else ['rpm', '-q', '--qf', 'installed %{VERSION}', 'cassandra'] }}
       register: cassandra_upgrade_installed
       changed_when: false
       failed_when: false
@@ -185,31 +185,56 @@
       ansible.builtin.assert:
         that: _failed | length == 0
         fail_msg: >-
-          {{ _failed | join('; ') }}.
-          {%- if _on_target %} Package cassandra {{ cassandra_package_version }} (the target) is installed on
-          {{ _on_target | join(', ') }}: run ansible-playbook community.cassandra.apply_config --limit {{ _on_target | join(',') }}
-          (it writes the config of {{ cassandra_package_version }} and leaves Cassandra stopped there), then start
-          Cassandra there (systemctl start cassandra), then run this phase again.{% endif %}
-          {%- if _on_target | length < _failed | length %} A node not running Cassandra: start it (systemctl start cassandra there, or
-          apply_config --limit <node>, which starts a node whose unit failed), then run this phase again.{% endif %}
-          A node already upgraded is skipped. Nothing was done.
+          {{ (['nodetool version failed on ' ~ _failed | map(attribute='node') | join(', ') ~ '. Nothing was done.']
+              + _rows
+              + [('WAY OUT  ' ~ _steps | first)] + _steps[1:] | map('regex_replace', '^', '  ') | list
+              + ['  then run this phase again (a node already upgraded is skipped):',
+                 '  ' ~ 'upgrade' | community.cassandra.cassandra_command(extra=['-e cassandra_upgrade_phase=' ~ _phase],
+                                                                         **_cassandra_run_command_args)]) | join(_nl) }}
         quiet: true
       vars:
-        _on_target: >-
-          {%- set out = [] -%}
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"
+        # the installed package of a node nodetool failed on (dpkg: installed, not only unpacked or removed)
+        _installed: >-
+          {%- set out = {} -%}
           {%- for h in ansible_play_hosts | map('extract', hostvars) | selectattr('cassandra_upgrade_installed.rc', 'defined')
-                if h.cassandra_upgrade_installed.rc == 0 and h.cassandra_package_version | default('') | length > 0
-                   and (h.cassandra_upgrade_installed.stdout | trim == h.cassandra_package_version
-                        or (h.cassandra_upgrade_installed.stdout | trim).startswith(h.cassandra_package_version ~ '-')) -%}
-          {%-   set _ = out.append(h.inventory_hostname) -%}
+                if h.cassandra_upgrade_installed.rc == 0
+                   and (h.cassandra_upgrade_installed.stdout | trim).split(' ') | first == 'installed' -%}
+          {%-   set _ = out.update({h.inventory_hostname: (h.cassandra_upgrade_installed.stdout | trim).split(' ') | last}) -%}
           {%- endfor -%}
           {{ out }}
+        _on_target: >-
+          {%- set out = [] -%}
+          {%- for f in _failed if f.node in _installed and hostvars[f.node].cassandra_package_version | default('') | length > 0
+                and (_installed[f.node] == hostvars[f.node].cassandra_package_version
+                     or _installed[f.node].startswith(hostvars[f.node].cassandra_package_version ~ '-')) -%}
+          {%-   set _ = out.append(f.node) -%}
+          {%- endfor -%}
+          {{ out }}
+        _others: "{{ _failed | map(attribute='node') | reject('in', _on_target) | list }}"
+        # the target installed: its config written first (else its start fails on the former config)
+        _steps: >-
+          {{ (['on ' ~ _on_target | join(', ') ~ ' (the target installed): write its config, '
+               ~ 'apply_config' | community.cassandra.cassandra_command(limit=_on_target, **_cassandra_run_command_args)
+               ~ ', then start Cassandra there (systemctl start cassandra)'] if _on_target else [])
+             + (['on ' ~ _others | join(', ') ~ ': start Cassandra there (systemctl start cassandra; apply_config'
+                 ~ ' --limit <node> starts a node whose unit failed)'] if _others else []) }}
         _failed: >-
           {%- set out = [] -%}
           {%- for h in ansible_play_hosts | map('extract', hostvars) | selectattr('cassandra_upgrade_running.rc', 'defined')
                 | rejectattr('cassandra_upgrade_running.rc', 'equalto', 0) -%}
           {%-   set said = h.cassandra_upgrade_running.stderr | default('') | trim or h.cassandra_upgrade_running.stdout | default('') | trim or 'no output' -%}
-          {%-   set _ = out.append('nodetool version failed on ' ~ h.inventory_hostname ~ ' (' ~ said.splitlines() | last ~ ')') -%}
+          {%-   set _ = out.append({'node': h.inventory_hostname, 'said': said.splitlines() | last}) -%}
+          {%- endfor -%}
+          {{ out }}
+        # one node per row: its name, its package, nodetool's last line
+        _rows: >-
+          {%- set w = _failed | map(attribute='node') | map('length') | max | default(0) -%}
+          {%- set out = [] -%}
+          {%- for f in _failed -%}
+          {%-   set _ = out.append('  ' ~ f.node.ljust(w) ~ '  package ' ~ _installed.get(f.node, 'not installed')
+                                   ~ '  ' ~ f.said) -%}
           {%- endfor -%}
           {{ out }}
       run_once: true
@@ -320,14 +345,16 @@
       ansible.builtin.assert:
         that: _unprepared | length == 0
         fail_msg: >-
-          No snapshot pre-upgrade-{{ cassandra_upgrade_from }} on {{ _unprepared | join(', ') }} (the prepare phase takes it).
-          Way out: {{ 'upgrade' | community.cassandra.cassandra_command(extra=['-e cassandra_upgrade_phase=prepare'],
-                                                                        **_cassandra_run_command_args) }}, then this phase
-          again.
-          Nothing was done.
+          {{ ['No snapshot pre-upgrade-' ~ cassandra_upgrade_from ~ ' on ' ~ _unprepared | join(', ')
+              ~ ' (the prepare phase takes it). Nothing was done.',
+              'WAY OUT  run the prepare phase, then this phase again:',
+              '  ' ~ 'upgrade' | community.cassandra.cassandra_command(extra=['-e cassandra_upgrade_phase=prepare'],
+                                                                     **_cassandra_run_command_args)] | join(_nl) }}
         quiet: true
       run_once: true
       vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"
         _unprepared: >-
           {%- set out = [] -%}
           {%- for h in ansible_play_hosts | map('extract', hostvars) | selectattr('cassandra_upgrade_prepared.stdout', 'defined')
@@ -527,22 +554,48 @@
         mode: preserve
       when: not cassandra_upgrade_conf_copied.stat.exists
 
-    - name: Read the config copy
-      ansible.builtin.stat:
-        path: "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}.pre-upgrade-{{ cassandra_upgrade_from }}/cassandra.yaml"
-        get_checksum: false
-      register: cassandra_upgrade_conf_copy
+    # Every file of the config in the copy (names, and sizes for a copy made now: an earlier one may predate a later
+    # change of the config, which it keeps): lines "missing <file>" and "size <file>", none when it is whole
+    - name: Compare the config copy with the config
+      ansible.builtin.shell: |
+        list() { (cd "$1" && find -L . -type f -printf '%P %s\n' | LC_ALL=C sort); }
+        src=$(readlink -f "$SRC")
+        list "$src" > "$T.src" && list "$COPY" > "$T.copy" || { echo "unreadable $COPY"; rm -f "$T".*; exit 0; }
+        cut -d' ' -f1 "$T.copy" | LC_ALL=C sort > "$T.names"
+        cut -d' ' -f1 "$T.src" | LC_ALL=C comm -23 - "$T.names" | sed 's/^/missing /'
+        if [ "$FRESH" = yes ]; then
+          LC_ALL=C join "$T.src" "$T.copy" | awk '$2 != $3 {print "size " $1}'
+        fi
+        rm -f "$T".*
+        exit 0
+      args:
+        executable: /bin/bash
+      environment:
+        SRC: "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}"
+        COPY: "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}.pre-upgrade-{{ cassandra_upgrade_from }}"
+        T: /var/tmp/cassandra-upgrade-conf-compare
+        FRESH: "{{ 'no' if cassandra_upgrade_conf_copied.stat.exists else 'yes' }}"
+      register: cassandra_upgrade_conf_compare
+      changed_when: false
       when: not ansible_check_mode
 
-    - name: Check the config copy holds cassandra.yaml
+    - name: Check the config copy holds every file of the config
       ansible.builtin.assert:
-        that: cassandra_upgrade_conf_copy.stat.exists
+        that: cassandra_upgrade_conf_compare.stdout_lines | length == 0
         fail_msg: >-
-          {{ inventory_hostname }}: {{ _copy }} has no cassandra.yaml after the copy from {{ cassandra_conf_dir }}.
-          The snapshot pre-upgrade-{{ cassandra_upgrade_from }} is taken. Way out: look at {{ cassandra_conf_dir }} on
-          {{ inventory_hostname }} (cassandra_conf_dir: the directory Cassandra reads), then run prepare again.
+          {{ ([inventory_hostname ~ ': the config copy ' ~ _copy ~ ' is not whole (' ~ cassandra_conf_dir ~ ' has more,'
+               ~ ' or other sizes). The snapshot pre-upgrade-' ~ cassandra_upgrade_from ~ ' is taken; no node was'
+               ~ ' upgraded.']
+              + cassandra_upgrade_conf_compare.stdout_lines[:10] | map('regex_replace', '^', '  ') | list
+              + (['  ... ' ~ (cassandra_upgrade_conf_compare.stdout_lines | length - 10) ~ ' more']
+                 if cassandra_upgrade_conf_compare.stdout_lines | length > 10 else [])
+              + ['WAY OUT  remove ' ~ _copy ~ ' on ' ~ inventory_hostname ~ ' (rm -r), then run the prepare phase again:',
+                 '  ' ~ 'upgrade' | community.cassandra.cassandra_command(extra=['-e cassandra_upgrade_phase=prepare'],
+                                                                        **_cassandra_run_command_args)]) | join(_nl) }}
         quiet: true
       vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"
         _copy: "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}.pre-upgrade-{{ cassandra_upgrade_from }}"
       when: not ansible_check_mode
 

@@ -125,16 +125,18 @@ def test_a_node_nodetool_fails_on_is_said_with_its_error_and_the_way_out():
                     "rc": 1, "stdout": "", "stderr": "error: Authentication failed! Invalid username or password\n-- StackTrace --\n"
                                                      "java.lang.SecurityException: Authentication failed! Invalid username or password\n"}},
                 "n4": {"inventory_hostname": "n4", "cassandra_upgrade_running": {"rc": 255, "stdout": "", "stderr": ""}}}
-    variables = dict(check["vars"], hostvars=hostvars, ansible_play_hosts=list(hostvars))
+    variables = dict(check["vars"], hostvars=hostvars, ansible_play_hosts=list(hostvars), _phase="canary",
+                     _cassandra_run_command_args={"inventory": None, "default_inventory": "", "hosts": "", "cwd": None})
     assert render(check["vars"]["_failed"], **variables) == [
-        "nodetool version failed on n2 (%s)" % refused,
-        "nodetool version failed on n3 (java.lang.SecurityException: Authentication failed! Invalid username or password)",
-        "nodetool version failed on n4 (no output)"]
+        {"node": "n2", "said": refused},
+        {"node": "n3", "said": "java.lang.SecurityException: Authentication failed! Invalid username or password"},
+        {"node": "n4", "said": "no output"}]
     assert render("{{ %s }}" % check["ansible.builtin.assert"]["that"], **variables) is False
-    text = " ".join(render(check["ansible.builtin.assert"]["fail_msg"], **variables).split())
-    assert text.startswith("nodetool version failed on n2 (%s); nodetool version failed on n3 (java.lang.SecurityException" % refused)
-    assert "(no output). A node not running Cassandra: start it (systemctl start cassandra there, or apply_config --limit <node>" in text
-    assert text.endswith("then run this phase again. A node already upgraded is skipped. Nothing was done.")
+    lines = render(check["ansible.builtin.assert"]["fail_msg"], **variables).split("\n")
+    assert lines[0] == "nodetool version failed on n2, n3, n4. Nothing was done."
+    assert lines[3] == "  n4  package not installed  no output"
+    assert lines[4].startswith("WAY OUT  on n2, n3, n4: start Cassandra there (systemctl start cassandra; apply_config")
+    assert lines[-1] == "  ansible-playbook community.cassandra.upgrade -e cassandra_upgrade_phase=canary"
     del hostvars["n4"]
     variables["ansible_play_hosts"] = list(hostvars)
     hostvars["n2"]["cassandra_upgrade_running"]["rc"] = hostvars["n3"]["cassandra_upgrade_running"]["rc"] = 0

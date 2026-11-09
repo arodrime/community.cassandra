@@ -1,0 +1,10 @@
+bugfixes:
+  - >-
+    upgrade - a node nodetool does not answer is said one per row (its installed package, nodetool's last line), with
+    a ``WAY OUT`` and the run's own commands (``-i``, ``-e cassandra_hosts``); the ``WAY OUT`` of a missing
+    pre-upgrade snapshot has the same form. On Debian and Ubuntu, a package removed but not purged is not taken for
+    installed.
+  - >-
+    upgrade prepare - the config copy is checked to hold every file of the config (names, and sizes for a copy made
+    by this run), not only ``cassandra.yaml``; a copy that is not whole stops the phase with the way out (remove it,
+    run prepare again).

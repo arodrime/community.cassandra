@@ -51,25 +51,51 @@ def text(template, **variables):
     return " ".join(str(render(template, **variables)).split())
 
 
-def test_prepare_copies_the_config_files_and_checks_the_copy():
+def test_prepare_copies_the_config_files_and_checks_the_copy(tmp_path):
+    import subprocess
     copy = task("Prepare", "Copy the config")["ansible.builtin.copy"]
     assert "force" not in copy  # force: false copies nothing from a directory (an empty copy, said done)
     assert copy["remote_src"] is True and copy["src"].endswith("/") and copy["dest"].endswith("/")
     order = names("Prepare")
     assert (order.index("Look for an earlier config copy") < order.index("Copy the config")
-            < order.index("Read the config copy") < order.index("Check the config copy holds cassandra.yaml")
+            < order.index("Compare the config copy with the config") < order.index("Check the config copy holds every file of the config")
             < order.index("Say what the next phase is"))
     # an earlier prepare's copy (with its cassandra.yaml) is kept: the canary's config may be the new one by then
     assert task("Prepare", "Copy the config")["when"] == "not cassandra_upgrade_conf_copied.stat.exists"
     assert task("Prepare", "Say the config copy is already there")["when"] == "cassandra_upgrade_conf_copied.stat.exists"
-    check = task("Prepare", "Check the config copy holds cassandra.yaml")
+
+    # the comparison, run: every file of the config, by name (and size for a copy made now)
+    compare = task("Prepare", "Compare the config copy with the config")
+    conf, link = tmp_path / "default.conf", tmp_path / "conf"
+    (conf / "triggers").mkdir(parents=True)
+    for name, text in (("cassandra.yaml", "a: 1\n"), ("jvm-server.options", "-Xss256k\n"), ("triggers/README.txt", "x")):
+        (conf / name).write_text(text)
+    link.symlink_to(conf)  # /etc/cassandra/conf of the RPM: an alternatives link
+    copy_dir = tmp_path / "conf.pre-upgrade-4.1.12"
+
+    def compared(fresh="yes"):
+        env = {"SRC": str(link), "COPY": str(copy_dir), "T": str(tmp_path / "t"), "FRESH": fresh, "PATH": os.environ["PATH"]}
+        out = subprocess.run(["/bin/bash", "-c", compare["ansible.builtin.shell"]], env=env, stdout=subprocess.PIPE,
+                             universal_newlines=True, check=True)
+        return out.stdout.split("\n")[:-1]
+    subprocess.run(["cp", "-a", str(conf) + "/.", str(copy_dir)], check=True)
+    assert compared() == []
+    (copy_dir / "triggers" / "README.txt").unlink()
+    (copy_dir / "cassandra.yaml").write_text("a: 12\n")
+    assert compared() == ["missing triggers/README.txt", "size cassandra.yaml"]
+    assert compared(fresh="no") == ["missing triggers/README.txt"]  # an earlier copy: its sizes may differ
+
+    check = task("Prepare", "Check the config copy holds every file of the config")
     assert check["when"] == "not ansible_check_mode"
     variables = dict(check["vars"], inventory_hostname="n1", cassandra_conf_dir="/etc/cassandra/conf",
-                     cassandra_upgrade_from="4.1.12")
-    assert text(check["ansible.builtin.assert"]["fail_msg"], **variables) == (
-        "n1: /etc/cassandra/conf.pre-upgrade-4.1.12 has no cassandra.yaml after the copy from /etc/cassandra/conf. "
-        "The snapshot pre-upgrade-4.1.12 is taken. Way out: look at /etc/cassandra/conf on n1 (cassandra_conf_dir: "
-        "the directory Cassandra reads), then run prepare again.")
+                     cassandra_upgrade_from="4.1.12", cassandra_upgrade_conf_compare={"stdout_lines": ["missing cassandra.yaml"]},
+                     _cassandra_run_command_args={"inventory": None, "default_inventory": "", "hosts": "", "cwd": None})
+    assert render(check["ansible.builtin.assert"]["fail_msg"], **variables).split("\n") == [
+        "n1: the config copy /etc/cassandra/conf.pre-upgrade-4.1.12 is not whole (/etc/cassandra/conf has more, or other"
+        " sizes). The snapshot pre-upgrade-4.1.12 is taken; no node was upgraded.",
+        "  missing cassandra.yaml",
+        "WAY OUT  remove /etc/cassandra/conf.pre-upgrade-4.1.12 on n1 (rm -r), then run the prepare phase again:",
+        "  ansible-playbook community.cassandra.upgrade -e cassandra_upgrade_phase=prepare"]
 
 
 def test_prepare_under_check_says_what_a_real_run_would_do():
@@ -108,10 +134,10 @@ def test_canary_and_rolling_refuse_a_node_without_its_pre_upgrade_snapshot():
     variables = dict(check["vars"], hostvars=hostvars, ansible_play_hosts=list(hostvars), cassandra_upgrade_from="4.1.12",
                      _cassandra_run_command_args=run)
     assert render(check["vars"]["_unprepared"], **variables) == ["n2"]
-    assert text(check["ansible.builtin.assert"]["fail_msg"], **variables) == (
-        "No snapshot pre-upgrade-4.1.12 on n2 (the prepare phase takes it). Way out: ansible-playbook -i a.yml "
-        "community.cassandra.upgrade -e cassandra_hosts=staging_b -e cassandra_upgrade_phase=prepare, then this phase"
-        " again. Nothing was done.")
+    assert render(check["ansible.builtin.assert"]["fail_msg"], **variables).split("\n") == [
+        "No snapshot pre-upgrade-4.1.12 on n2 (the prepare phase takes it). Nothing was done.",
+        "WAY OUT  run the prepare phase, then this phase again:",
+        "  ansible-playbook -i a.yml community.cassandra.upgrade -e cassandra_hosts=staging_b -e cassandra_upgrade_phase=prepare"]
     hostvars["n2"]["cassandra_upgrade_prepared"]["stdout"] = LISTED
     assert render(check["vars"]["_unprepared"], **variables) == []
 
@@ -294,23 +320,31 @@ def test_a_down_node_with_the_target_package_is_pointed_to_apply_config():
             h["cassandra_upgrade_installed"] = {"rc": 0, "stdout": installed}
         return h
 
-    hostvars = {"n1": node("n1", 0), "n2": node("n2", 1, "5.0.9"), "n3": node("n3", 1, "4.1.12")}
-    variables = dict(check["vars"], hostvars=hostvars, ansible_play_hosts=list(hostvars), cassandra_package_version="5.0.9")
+    run = {"inventory": ["/inv/a.yml"], "default_inventory": "", "hosts": "staging_b", "cwd": "/inv"}
+    hostvars = {"n1": node("n1", 0), "n2": node("n2", 1, "installed 5.0.9"), "n3": node("n3", 1, "installed 4.1.12"),
+                "n4": node("n4", 1, "config-files 5.0.9")}  # dpkg: removed, its config kept: not installed
+    variables = dict(check["vars"], hostvars=hostvars, ansible_play_hosts=list(hostvars), cassandra_package_version="5.0.9",
+                     _phase="rolling", _cassandra_run_command_args=run)
     assert render(check["vars"]["_on_target"], **variables) == ["n2"]
-    assert text(check["ansible.builtin.assert"]["fail_msg"], **variables) == (
-        "nodetool version failed on n2 (%s); nodetool version failed on n3 (%s). Package cassandra 5.0.9 (the target) "
-        "is installed on n2: run ansible-playbook community.cassandra.apply_config --limit n2 (it writes the "
-        "config of 5.0.9 and leaves Cassandra stopped there), then start Cassandra there (systemctl start cassandra), "
-        "then run this phase again. A node not running Cassandra: start it "
-        "(systemctl start cassandra there, or apply_config --limit <node>, which starts a node whose unit failed), "
-        "then run this phase again. A node already upgraded is skipped. Nothing was done." % (REFUSED, REFUSED))
-    del hostvars["n3"]
+    assert render(check["ansible.builtin.assert"]["fail_msg"], **variables).split("\n") == [
+        "nodetool version failed on n2, n3, n4. Nothing was done.",
+        "  n2  package 5.0.9  " + REFUSED,
+        "  n3  package 4.1.12  " + REFUSED,
+        "  n4  package not installed  " + REFUSED,
+        "WAY OUT  on n2 (the target installed): write its config, ansible-playbook -i a.yml community.cassandra.apply_config"
+        " -e cassandra_hosts=staging_b --limit n2, then start Cassandra there (systemctl start cassandra)",
+        "  on n3, n4: start Cassandra there (systemctl start cassandra; apply_config --limit <node> starts a node whose"
+        " unit failed)",
+        "  then run this phase again (a node already upgraded is skipped):",
+        "  ansible-playbook -i a.yml community.cassandra.upgrade -e cassandra_hosts=staging_b -e cassandra_upgrade_phase=rolling"]
+    assert check["vars"]["cassandra_output"] is True
+    del hostvars["n3"], hostvars["n4"]
     variables["ansible_play_hosts"] = list(hostvars)
-    hostvars["n2"]["cassandra_upgrade_installed"]["stdout"] = "5.0.9-1"  # a Debian revision
-    msg = text(check["ansible.builtin.assert"]["fail_msg"], **variables)
-    # apply_config leaves a node stopped by the upgrade's drain stopped (its unit not failed): the start is said
-    assert "apply_config --limit n2 (it writes" in msg and "A node not running Cassandra" not in msg
-    assert "then start Cassandra there (systemctl start cassandra), then run this phase again" in msg
+    hostvars["n2"]["cassandra_upgrade_installed"]["stdout"] = "installed 5.0.9-1"  # a Debian revision
+    msg = render(check["ansible.builtin.assert"]["fail_msg"], **variables)
+    assert "WAY OUT  on n2 (the target installed)" in msg and "on n3" not in msg
+    assert read["ansible.builtin.command"]["argv"].count("installed %{VERSION}") == 1
+    assert "${db:Status-Status} ${Version}" in read["ansible.builtin.command"]["argv"]
 
 
 def test_apply_config_says_none_is_the_point_of_no_return():
