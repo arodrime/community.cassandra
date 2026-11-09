@@ -559,3 +559,17 @@ def test_the_recap_ends_with_the_optional_restart_for_the_read_ahead_set_live():
     for n in nodes:
         n["os_done"] = False
     assert "TO DO" not in cassandra_apply_config_recap(nodes, restart_command=command)
+
+
+def test_the_nodes_moving_storage_compatibility_mode_to_none(tmp_path):
+    """5.0's point of no return: said in the plan of apply_config (upgrade, UPGRADING -> NONE)."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import cassandra_apply_config_no_return
+    yaml50 = YAML + "storage_compatibility_mode: NONE\n"
+    nodes = [Node(tmp_path, "node1", files={"cassandra.yaml": yaml50.replace("NONE", "UPGRADING")},
+                  targets={"cassandra.yaml": yaml50}),
+             Node(tmp_path, "node2", targets={"cassandra.yaml": yaml50}, files={"cassandra.yaml": yaml50}),
+             Node(tmp_path, "node3", files={"cassandra.yaml": yaml50.replace("NONE", "CASSANDRA_4")},
+                  targets={"cassandra.yaml": yaml50.replace("NONE", "UPGRADING")}),
+             Node(tmp_path, "node4", files={"cassandra.yaml": yaml50.replace("3h", "6h")}, targets={"cassandra.yaml": yaml50})]
+    assert cassandra_apply_config_no_return([n.data() for n in nodes]) == ["node1"]
+    assert cassandra_apply_config_no_return([]) == []

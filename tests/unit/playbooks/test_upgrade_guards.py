@@ -112,6 +112,63 @@ def test_canary_and_rolling_refuse_a_node_without_its_pre_upgrade_snapshot():
     assert render(check["vars"]["_unprepared"], **variables) == []
 
 
+def test_sstables_refuse_a_50_target_until_storage_compatibility_mode_is_none():
+    check = task("Upgrade checks", "The sstables are rewritten once storage_compatibility_mode is NONE")
+    assert check["when"] == ["_phase == 'sstables'", "cassandra_version == '50x'"]
+
+    def said(mode):
+        hostvars = {"n1": {} if mode is None else {"cassandra_storage_compatibility_mode": mode}}
+        variables = dict(check["vars"], hostvars=hostvars, inventory_hostname="n1")
+        return (render("{{ %s }}" % check["ansible.builtin.assert"]["that"], **variables),
+                text(check["ansible.builtin.assert"]["fail_msg"], **variables))
+
+    assert said("NONE")[0] is True and said(None)[0] is True
+    ok, msg = said("CASSANDRA_4")
+    assert ok is False and msg == (
+        "cassandra_storage_compatibility_mode is CASSANDRA_4 for n1 in the inventory: in that mode 5.0 writes the "
+        "sstables in the 4.x format, the sstables phase would rewrite them in it. Way out: set "
+        "cassandra_storage_compatibility_mode: UPGRADING in the inventory and run apply_config, then NONE and "
+        "apply_config again (NONE is the point of no return), then this phase again. Nothing was done.")
+    ok, msg = said("UPGRADING")
+    assert ok is False and "set cassandra_storage_compatibility_mode: NONE in the inventory and run apply_config (NONE" in msg
+
+
+def next_phase(phase, check=False, modes=None, version="50x"):
+    say = task("Summary", "Say what the next phase is")
+    hostvars = dict(("n%d" % i, {} if m is None else {"cassandra_storage_compatibility_mode": m})
+                    for i, m in enumerate(modes or [None], 1))
+    variables = dict(say["vars"], hostvars=hostvars, ansible_play_hosts_all=list(hostvars), cassandra_version=version,
+                     cassandra_upgrade_phase=phase, cassandra_package_version="5.0.9", ansible_check_mode=check)
+    return text(say["ansible.builtin.debug"]["msg"], **variables)
+
+
+def test_rolling_says_the_next_mode_step_from_the_inventory_a_re_run_too():
+    # a rolling phase run again once every node runs 5.0 (cassandra_upgrade_from_series 50x by then): the same step
+    assert "cassandra_upgrade_from_series" not in str(task("Summary", "Say what the next phase is"))
+    assert next_phase("rolling", modes=["CASSANDRA_4"] * 3) == (
+        "Every node runs 5.0.9. Now set cassandra_storage_compatibility_mode: UPGRADING in the inventory and run "
+        "apply_config, then NONE and apply_config again (NONE is the point of no return). "
+        "Then -e cassandra_upgrade_phase=sstables.")
+    assert next_phase("rolling", modes=["UPGRADING"] * 3) == (
+        "Every node runs 5.0.9. Now set cassandra_storage_compatibility_mode: NONE in the inventory and run "
+        "apply_config (NONE is the point of no return). Then -e cassandra_upgrade_phase=sstables.")
+    assert next_phase("rolling", modes=["NONE", None]) == "Every node runs 5.0.9. Then -e cassandra_upgrade_phase=sstables."
+    assert next_phase("rolling", modes=["CASSANDRA_4"], version="41x") == (
+        "Every node runs 5.0.9. Then -e cassandra_upgrade_phase=sstables.")
+
+
+def test_check_mode_says_what_a_real_run_would_do():
+    assert next_phase("canary", check=True).startswith("--check: nothing was done. A real run upgrades the canary;")
+    assert next_phase("rolling", check=True, modes=["CASSANDRA_4"]).startswith(
+        "--check: nothing was done. A real run upgrades the nodes listed above. Now set cassandra_storage_compatibility_mode: UPGRADING")
+    assert next_phase("sstables", check=True) == (
+        "--check: nothing was done. A real run rewrites the sstables of the nodes listed above. "
+        "Then -e cassandra_upgrade_phase=cleanup.")
+    assert next_phase("sstables") == "sstables rewritten. Last: -e cassandra_upgrade_phase=cleanup."
+    for phase in ("canary", "rolling", "sstables"):
+        assert "nothing was done" in next_phase(phase, check=True) and "nothing was done" not in next_phase(phase)
+
+
 REFUSED = "nodetool: Failed to connect to '127.0.0.1:7199' - ConnectException: 'Connection refused (Connection refused)'."
 
 
@@ -150,3 +207,13 @@ def test_a_down_node_with_the_target_package_is_pointed_to_apply_config():
     assert "apply_config --limit n2 (it writes" in msg and "A node not running Cassandra" not in msg
     assert "then start Cassandra there (systemctl start cassandra), then run this phase again" in msg
 
+
+def test_apply_config_says_none_is_the_point_of_no_return():
+    with open(os.path.join(TOP, "playbooks", "apply_config.yml"), encoding="utf-8") as f:
+        content = f.read()
+    assert ("cassandra_apply_config_no_return: \"{{ _nodes | community.cassandra.cassandra_apply_config_no_return }}\""
+            in content)
+    plays = yaml.safe_load(content)
+    screen = next(t for p in plays for t in p.get("tasks", []) if t.get("name") == "Show the plan and confirm the run")
+    warnings = screen["vars"]["cassandra_screen"]["warnings"]
+    assert "cassandra_apply_config_no_return" in warnings and "the point of no return" in warnings

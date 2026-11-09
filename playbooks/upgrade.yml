@@ -336,6 +336,23 @@
           {{ out }}
       when: _phase in ['canary', 'rolling']
 
+    # 5.0 writes the 4.x sstable format until storage_compatibility_mode is NONE: rewriting them before is no upgrade
+    - name: The sstables are rewritten once storage_compatibility_mode is NONE
+      ansible.builtin.assert:
+        that: _mode == 'NONE'
+        fail_msg: >-
+          cassandra_storage_compatibility_mode is {{ _mode }} for {{ inventory_hostname }} in the inventory: in that mode
+          5.0 writes the sstables in the 4.x format, the sstables phase would rewrite them in it. Way out: set
+          cassandra_storage_compatibility_mode: {{ 'UPGRADING' if _mode == 'CASSANDRA_4' else 'NONE' }} in the inventory
+          and run apply_config{{ ', then NONE and apply_config again' if _mode == 'CASSANDRA_4' else '' }} (NONE is the
+          point of no return), then this phase again. Nothing was done.
+        quiet: true
+      vars:
+        _mode: "{{ hostvars[inventory_hostname].cassandra_storage_compatibility_mode | default('NONE') | string }}"
+      when:
+        - _phase == 'sstables'
+        - cassandra_version == '50x'
+
     - name: Free space on the data disk
       ansible.builtin.debug:
         msg: >-
@@ -731,10 +748,23 @@
     - name: Say what the next phase is
       ansible.builtin.debug:
         msg: >-
-          {{ {'canary': 'Watch the canary (logs, latencies, dropped messages in nodetool tpstats), then run -e cassandra_upgrade_phase=rolling.',
-              'rolling': 'Every node runs ' ~ cassandra_package_version ~ '. ' ~ ('Now set cassandra_storage_compatibility_mode: UPGRADING in the inventory and run apply_config, then NONE and apply_config again (NONE is the point of no return). ' if cassandra_version == '50x' and cassandra_upgrade_from_series != '50x' else '') ~ 'Then -e cassandra_upgrade_phase=sstables.',
-              'sstables': 'sstables rewritten. Last: -e cassandra_upgrade_phase=cleanup.'}[cassandra_upgrade_phase] }}
+          {{ ({'canary': '--check: nothing was done. A real run upgrades the canary; watch it then (logs, latencies, dropped messages in nodetool tpstats), then run -e cassandra_upgrade_phase=rolling.',
+               'rolling': '--check: nothing was done. A real run upgrades the nodes listed above. ' ~ _mode_step ~ 'Then -e cassandra_upgrade_phase=sstables.',
+               'sstables': '--check: nothing was done. A real run rewrites the sstables of the nodes listed above. Then -e cassandra_upgrade_phase=cleanup.'}
+              if ansible_check_mode else
+              {'canary': 'Watch the canary (logs, latencies, dropped messages in nodetool tpstats), then run -e cassandra_upgrade_phase=rolling.',
+               'rolling': 'Every node runs ' ~ cassandra_package_version ~ '. ' ~ _mode_step ~ 'Then -e cassandra_upgrade_phase=sstables.',
+               'sstables': 'sstables rewritten. Last: -e cassandra_upgrade_phase=cleanup.'})[cassandra_upgrade_phase] }}
       run_once: true
       vars:
         cassandra_output: true
         cassandra_output_gap: true
+        # 5.0: the mode the inventory gives, whatever the nodes ran before this run (a rolling phase run again)
+        _modes: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | map(attribute='cassandra_storage_compatibility_mode', default='NONE')
+             | map('string') | unique | list if cassandra_version == '50x' else [] }}
+        _mode_step: >-
+          {{ 'Now set cassandra_storage_compatibility_mode: UPGRADING in the inventory and run apply_config, then NONE and apply_config again (NONE is the point of no return). '
+             if 'CASSANDRA_4' in _modes else
+             'Now set cassandra_storage_compatibility_mode: NONE in the inventory and run apply_config (NONE is the point of no return). '
+             if 'UPGRADING' in _modes else '' }}

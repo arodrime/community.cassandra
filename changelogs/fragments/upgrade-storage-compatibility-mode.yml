@@ -1,0 +1,3 @@
+bugfixes:
+  - upgrade - to 5.0, the rolling phase run again says the next ``cassandra_storage_compatibility_mode`` step from the inventory's mode (it said none once every node ran 5.0); the sstables phase refuses while the mode is not ``NONE`` (5.0 writes the 4.x format until then), with the way out.
+  - apply_config - the plan warns that ``storage_compatibility_mode`` ``NONE`` is the point of no return on the nodes it moves to it.

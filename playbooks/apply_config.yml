@@ -476,6 +476,8 @@
         cassandra_apply_config_diff: >-
           {{ _nodes | community.cassandra.cassandra_apply_config_diff(width='terminal', margin=2,
                                                                     verbose=ansible_verbosity | int > 0) }}
+        # 5.0: the nodes the run moves to storage_compatibility_mode NONE (the plan says it is the point of no return)
+        cassandra_apply_config_no_return: "{{ _nodes | community.cassandra.cassandra_apply_config_no_return }}"
       run_once: true
       vars:
         _nodes: >-
@@ -597,6 +599,10 @@
           # the nodes' warnings, each one once, then (--check) why a real run is refused; the recap says how many
           warnings: >-
             {{ _nodes | community.cassandra.cassandra_apply_config_warnings
+               + [{'label': cassandra_apply_config_no_return | default([]) | community.cassandra.cassandra_node_list,
+                   'text': ('storage_compatibility_mode moves to NONE: the point of no return. Once a node runs with it,'
+                            ~ ' it cannot go back to UPGRADING or CASSANDRA_4, nor to its former Cassandra version.')
+                           if cassandra_apply_config_no_return | default([]) else ''}]
                + [{'label': 'refused',
                    'text': ('a real run is refused, before changing anything: ' ~ _cassandra_apply_config_refused | join(' '))
                            if ansible_check_mode and _cassandra_apply_config_refused | default([]) else ''}] }}

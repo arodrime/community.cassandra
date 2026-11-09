@@ -18,6 +18,8 @@ cassandra_apply_config_recap: the end of apply_config: a verdict line, then
     the outcomes (its plan showed the settings, before its question).
 cassandra_apply_config_down_ok: the other nodes the health checks of
     apply_config let be down while a node is done (their ring addresses).
+cassandra_apply_config_no_return: the nodes whose storage_compatibility_mode
+    moves to NONE (5.0's point of no return).
 """
 
 from __future__ import absolute_import, division, print_function
@@ -735,6 +737,23 @@ def cassandra_apply_config_warnings(nodes):
     return [{"label": out.nodes(by_text[t]), "text": t} for t in order]
 
 
+def cassandra_apply_config_no_return(nodes):
+    """nodes: as cassandra_apply_config_diff takes them -> the names of the nodes whose cassandra.yaml moves
+    storage_compatibility_mode to NONE (5.0: the point of no return), in their order.
+    e.g. node1 live with storage_compatibility_mode: UPGRADING, the inventory's NONE -> ["node1"]."""
+    found = []
+    for node in nodes or []:
+        prepared = _prepare(node)
+        per_node = _node_settings("cassandra.yaml", [prepared])[0]
+        if prepared["name"] not in per_node:
+            continue
+        before, after = per_node[prepared["name"]][:2]
+        old, new = before.get("storage_compatibility_mode"), after.get("storage_compatibility_mode")
+        if new is not None and str(new[0]).strip("'\"") == "NONE" and (old is None or str(old[0]).strip("'\"") != "NONE"):
+            found.append(prepared["name"])
+    return found
+
+
 def _after_run(node):
     """The node as the recap tells it: no "restart pending" note once this run restarted or started it."""
     if not (node.get("done") and node.get("then") in ("restart", "start")):
@@ -852,4 +871,5 @@ class FilterModule(object):
             "cassandra_apply_config_recap": cassandra_apply_config_recap,
             "cassandra_apply_config_warnings": cassandra_apply_config_warnings,
             "cassandra_apply_config_down_ok": cassandra_apply_config_down_ok,
+            "cassandra_apply_config_no_return": cassandra_apply_config_no_return,
         }
