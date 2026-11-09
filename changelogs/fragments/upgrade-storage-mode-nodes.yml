@@ -1,0 +1,6 @@
+bugfixes:
+  - >-
+    upgrade - the sstables phase and the next step said after the rolling phase read ``storage_compatibility_mode``
+    from each node's ``cassandra.yaml`` too (what Cassandra reads), not only from the inventory: an inventory already
+    at ``NONE`` before ``apply_config`` ran let the sstables phase rewrite the sstables in the 4.x format. The refusal
+    lists each node with both values and the way out.

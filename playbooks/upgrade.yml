@@ -336,19 +336,34 @@
           {{ out }}
       when: _phase in ['canary', 'rolling']
 
-    # 5.0 writes the 4.x sstable format until storage_compatibility_mode is NONE: rewriting them before is no upgrade
+    # 5.0 writes the 4.x sstable format until storage_compatibility_mode is NONE: rewriting them before is no upgrade.
+    # The mode each node reads (its cassandra.yaml, written by apply_config) and the inventory's, both at NONE
+    - name: Read storage_compatibility_mode in its cassandra.yaml
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: storage_mode_read.yml
+      when:
+        - _phase == 'sstables'
+        - cassandra_version == '50x'
+
     - name: The sstables are rewritten once storage_compatibility_mode is NONE
       ansible.builtin.assert:
-        that: _mode == 'NONE'
+        that: _behind | length == 0
         fail_msg: >-
-          cassandra_storage_compatibility_mode is {{ _mode }} for {{ inventory_hostname }} in the inventory: in that mode
-          5.0 writes the sstables in the 4.x format, the sstables phase would rewrite them in it. Way out: set
-          cassandra_storage_compatibility_mode: {{ 'UPGRADING' if _mode == 'CASSANDRA_4' else 'NONE' }} in the inventory
-          and run apply_config{{ ', then NONE and apply_config again' if _mode == 'CASSANDRA_4' else '' }} (NONE is the
-          point of no return), then this phase again. Nothing was done.
+          {{ (['storage_compatibility_mode is not NONE on ' ~ _behind | map(attribute='node') | join(', ') ~ ':']
+              + _behind | map('community.cassandra.cassandra_storage_mode_row') | list
+              + ['In that mode 5.0 writes the sstables in the 4.x format: the sstables phase would rewrite them in it.'
+                 ' Nothing was done.',
+                 'WAY OUT  ' ~ _behind | community.cassandra.cassandra_storage_mode_step | trim
+                 ~ ' Then run this phase again.']) | join(_nl) }}
         quiet: true
+      run_once: true
       vars:
-        _mode: "{{ hostvars[inventory_hostname].cassandra_storage_compatibility_mode | default('NONE') | string }}"
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"
+        _behind: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | community.cassandra.cassandra_storage_mode_nodes
+             | community.cassandra.cassandra_storage_mode_behind }}
       when:
         - _phase == 'sstables'
         - cassandra_version == '50x'
@@ -749,6 +764,16 @@
         cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
         cassandra_service_summary_operation: upgrade
 
+    # what each node reads once upgraded (a real rolling run wrote it; under --check the nodes are not upgraded)
+    - name: Read storage_compatibility_mode in its cassandra.yaml
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: storage_mode_read.yml
+      when:
+        - cassandra_upgrade_phase == 'rolling'
+        - cassandra_version == '50x'
+        - not ansible_check_mode
+
     - name: Say what the next phase is
       ansible.builtin.debug:
         msg: >-
@@ -763,12 +788,9 @@
       vars:
         cassandra_output: true
         cassandra_output_gap: true
-        # 5.0: the mode the inventory gives, whatever the nodes ran before this run (a rolling phase run again)
-        _modes: >-
-          {{ ansible_play_hosts_all | map('extract', hostvars) | map(attribute='cassandra_storage_compatibility_mode', default='NONE')
-             | map('string') | unique | list if cassandra_version == '50x' else [] }}
+        # 5.0: the earlier of the inventory's mode and the one each node reads (its cassandra.yaml, read below), a
+        # rolling phase run again too
         _mode_step: >-
-          {{ 'Now set cassandra_storage_compatibility_mode: UPGRADING in the inventory and run apply_config, then NONE and apply_config again (NONE is the point of no return). '
-             if 'CASSANDRA_4' in _modes else
-             'Now set cassandra_storage_compatibility_mode: NONE in the inventory and run apply_config (NONE is the point of no return). '
-             if 'UPGRADING' in _modes else '' }}
+          {{ ansible_play_hosts_all | map('extract', hostvars) | community.cassandra.cassandra_storage_mode_nodes
+             | community.cassandra.cassandra_storage_mode_behind | community.cassandra.cassandra_storage_mode_step
+             if cassandra_version == '50x' else '' }}
