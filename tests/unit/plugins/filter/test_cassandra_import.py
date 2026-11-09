@@ -1993,3 +1993,12 @@ def test_layout_over_a_template_compared_node_by_node():
     assert sorted(layout["from_yours"]["n1"]) == ["cassandra_listen_address", "cassandra_medusa_nodetool_host"]
     layout = _over(_owner_nodes()[:1], [("group_vars/all/x.yml", "cassandra_config_user: \"{{ my_user }}\"\n")])
     assert layout["not_compared"] == ["cassandra_config_user"]
+
+
+def test_config_vars_named_only_in_the_maps_of_names_by_series_are_ignored():
+    # cassandra_config's vars/ maps the names of a setting by series (_cassandra_config_since, _old_names...): a name
+    # found only there is no variable the series uses (e.g. 4.1's name of a 5.0 setting, after an upgrade to 5.0)
+    assert cassandra_config_ignored_vars(["cassandra_compaction_large_partition_warning_threshold"], "50x") == [
+        "cassandra_compaction_large_partition_warning_threshold"]
+    assert cassandra_config_ignored_vars(["cassandra_partition_size_warn_threshold"], "41x") == [
+        "cassandra_partition_size_warn_threshold"]

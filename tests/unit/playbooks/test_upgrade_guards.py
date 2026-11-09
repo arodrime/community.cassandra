@@ -355,7 +355,15 @@ def test_apply_config_says_none_is_the_point_of_no_return():
     plays = yaml.safe_load(content)
     screen = next(t for p in plays for t in p.get("tasks", []) if t.get("name") == "Show the plan and confirm the run")
     warnings = screen["vars"]["cassandra_screen"]["warnings"]
-    assert "cassandra_apply_config_no_return" in warnings and "the point of no return" in warnings
+
+    def said(no_return):
+        out = render(warnings, _nodes=[], cassandra_apply_config_no_return=no_return, ansible_check_mode=False,
+                     _cassandra_apply_config_refused=[])
+        return [w for w in out if w["text"]]
+    assert said(["n1", "n2"]) == [{"label": "n1, n2", "text": (
+        "storage_compatibility_mode moves to NONE: the point of no return. Once a node runs with it, it cannot go back"
+        " to UPGRADING or CASSANDRA_4, nor to its former Cassandra version.")}]
+    assert said([]) == []
 
 
 def test_the_nodes_outside_the_canary_are_said_so():
