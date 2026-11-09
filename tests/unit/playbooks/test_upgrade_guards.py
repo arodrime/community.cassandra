@@ -51,6 +51,38 @@ def text(template, **variables):
     return " ".join(str(render(template, **variables)).split())
 
 
+def test_prepare_copies_the_config_files_and_checks_the_copy():
+    copy = task("Prepare", "Copy the config")["ansible.builtin.copy"]
+    assert "force" not in copy  # force: false copies nothing from a directory (an empty copy, said done)
+    assert copy["remote_src"] is True and copy["src"].endswith("/") and copy["dest"].endswith("/")
+    order = names("Prepare")
+    assert (order.index("Look for an earlier config copy") < order.index("Copy the config")
+            < order.index("Read the config copy") < order.index("Check the config copy holds cassandra.yaml")
+            < order.index("Say what the next phase is"))
+    # an earlier prepare's copy (with its cassandra.yaml) is kept: the canary's config may be the new one by then
+    assert task("Prepare", "Copy the config")["when"] == "not cassandra_upgrade_conf_copied.stat.exists"
+    assert task("Prepare", "Say the config copy is already there")["when"] == "cassandra_upgrade_conf_copied.stat.exists"
+    check = task("Prepare", "Check the config copy holds cassandra.yaml")
+    assert check["when"] == "not ansible_check_mode"
+    variables = dict(check["vars"], inventory_hostname="n1", cassandra_conf_dir="/etc/cassandra/conf",
+                     cassandra_upgrade_from="4.1.12")
+    assert text(check["ansible.builtin.assert"]["fail_msg"], **variables) == (
+        "n1: /etc/cassandra/conf.pre-upgrade-4.1.12 has no cassandra.yaml after the copy from /etc/cassandra/conf. "
+        "The snapshot pre-upgrade-4.1.12 is taken. Way out: look at /etc/cassandra/conf on n1 (cassandra_conf_dir: "
+        "the directory Cassandra reads), then run prepare again.")
+
+
+def test_prepare_under_check_says_what_a_real_run_would_do():
+    say = task("Prepare", "Say what the next phase is")["ansible.builtin.debug"]["msg"]
+    variables = dict(cassandra_upgrade_from="4.1.12", cassandra_conf_dir="/etc/cassandra/conf")
+    assert text(say, ansible_check_mode=True, **variables) == (
+        "--check: nothing was done. A real run would take the snapshots pre-upgrade-4.1.12 and copy the config to "
+        "/etc/cassandra/conf.pre-upgrade-4.1.12.")
+    assert text(say, ansible_check_mode=False, **variables) == (
+        "Snapshots pre-upgrade-4.1.12 and config copies in /etc/cassandra/conf.pre-upgrade-4.1.12. "
+        "Next: -e cassandra_upgrade_phase=canary.")
+
+
 LISTED = ("Snapshot Details: \n"
           "Snapshot name     Keyspace name Column family name True size Size on disk\n"
           "pre-upgrade-4.1.12 ks1          t1                 0 bytes   1.2 KiB\n")

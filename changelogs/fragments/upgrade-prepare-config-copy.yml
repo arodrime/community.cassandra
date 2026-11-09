@@ -1,0 +1,2 @@
+bugfixes:
+  - "upgrade - the prepare phase's config copy (``<cassandra_conf_dir>.pre-upgrade-<version>``) was an empty directory (``copy`` with ``force: false`` copies no file from a directory); it now holds the config files, a copy an earlier prepare made with its ``cassandra.yaml`` is kept, and a copy without ``cassandra.yaml`` stops the run with the way out."

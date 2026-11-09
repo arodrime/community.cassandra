@@ -448,19 +448,61 @@
         _tags: "{{ cassandra_upgrade_snapshots.stdout | community.cassandra.cassandra_snapshot_names('pre-upgrade-') }}"
         _dates: "{{ cassandra_upgrade_snapshots.stdout | community.cassandra.cassandra_snapshot_dates('pre-upgrade-') }}"
 
+    # (copy's force: false copies nothing from a directory: a copy with a cassandra.yaml, from an earlier prepare,
+    # is kept by not copying at all, the canary's config may be the new series' by then)
+    - name: Look for an earlier config copy
+      ansible.builtin.stat:
+        path: "{{ _copy }}/cassandra.yaml"
+        get_checksum: false
+      register: cassandra_upgrade_conf_copied
+      check_mode: false  # a read
+      vars:
+        _copy: "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}.pre-upgrade-{{ cassandra_upgrade_from }}"
+
+    - name: Say the config copy is already there
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: config copy {{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}.pre-upgrade-{{
+          cassandra_upgrade_from }} already holds a cassandra.yaml: kept as it is, not copied again.
+      when: cassandra_upgrade_conf_copied.stat.exists
+      vars:
+        cassandra_output: true
+
     - name: Copy the config
       ansible.builtin.copy:
-        src: "{{ cassandra_conf_dir }}/"
-        dest: "{{ cassandra_conf_dir }}.pre-upgrade-{{ cassandra_upgrade_from }}/"
+        src: "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}/"
+        dest: "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}.pre-upgrade-{{ cassandra_upgrade_from }}/"
         remote_src: true
         mode: preserve
-        force: false
+      when: not cassandra_upgrade_conf_copied.stat.exists
+
+    - name: Read the config copy
+      ansible.builtin.stat:
+        path: "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}.pre-upgrade-{{ cassandra_upgrade_from }}/cassandra.yaml"
+        get_checksum: false
+      register: cassandra_upgrade_conf_copy
+      when: not ansible_check_mode
+
+    - name: Check the config copy holds cassandra.yaml
+      ansible.builtin.assert:
+        that: cassandra_upgrade_conf_copy.stat.exists
+        fail_msg: >-
+          {{ inventory_hostname }}: {{ _copy }} has no cassandra.yaml after the copy from {{ cassandra_conf_dir }}.
+          The snapshot pre-upgrade-{{ cassandra_upgrade_from }} is taken. Way out: look at {{ cassandra_conf_dir }} on
+          {{ inventory_hostname }} (cassandra_conf_dir: the directory Cassandra reads), then run prepare again.
+        quiet: true
+      vars:
+        _copy: "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}.pre-upgrade-{{ cassandra_upgrade_from }}"
+      when: not ansible_check_mode
 
     - name: Say what the next phase is
       ansible.builtin.debug:
         msg: >-
-          Snapshots pre-upgrade-{{ cassandra_upgrade_from }} and config copies in {{ cassandra_conf_dir }}.pre-upgrade-{{
-          cassandra_upgrade_from }}. Next: -e cassandra_upgrade_phase=canary.
+          {{ ('--check: nothing was done. A real run would take the snapshots pre-upgrade-' ~ cassandra_upgrade_from
+              ~ ' and copy the config to ' ~ cassandra_conf_dir ~ '.pre-upgrade-' ~ cassandra_upgrade_from ~ '.')
+             if ansible_check_mode else
+             ('Snapshots pre-upgrade-' ~ cassandra_upgrade_from ~ ' and config copies in ' ~ cassandra_conf_dir
+              ~ '.pre-upgrade-' ~ cassandra_upgrade_from ~ '. Next: -e cassandra_upgrade_phase=canary.') }}
       run_once: true
       vars:
         cassandra_output: true
