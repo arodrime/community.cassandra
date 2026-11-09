@@ -246,3 +246,13 @@ def test_the_playbooks_check_it_before_any_change():
     assert check["vars"]["cassandra_service_cluster_required"] is True
     assert "reject('in', groups['cassandra_target_rack_nodes'])" in check["vars"]["cassandra_service_cluster_candidates"]
     assert [p["name"] for p in plays].index("Find the rack's nodes") < [p["name"] for p in plays].index("Start the rack")
+
+
+def test_spaces_around_the_name_are_compared_as_they_are(tmp_path):
+    # a cassandra.yaml with cluster_name: 'my_cluster ' (import_cluster writes it so): the same name, spaces kept
+    rc, out, asked, went_on = run(tmp_path / "same", "my_cluster ", "my_cluster ")
+    assert rc == 0 and went_on == ["n0", "n9"], out
+    names = (("my_cluster", "my_cluster "), ("my_cluster ", "my_cluster"), (" my_cluster", "my_cluster"))
+    for i, (inventory_name, node_name) in enumerate(names):
+        rc, out, asked, went_on = run(tmp_path / str(i), inventory_name, node_name)
+        assert rc != 0 and went_on == [], out

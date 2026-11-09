@@ -87,8 +87,10 @@
     cassandra_output: true  # a verdict: its msg as is
     _found: "{{ hostvars[ansible_play_hosts | first]._cassandra_cluster_found }}"
     _from: "{{ _found.from | default('') }}"
+    # as nodetool prints it, spaces kept: compared as is with cassandra_cluster_name, which import_cluster writes as
+    # the node's cassandra.yaml has it (a name with a leading or trailing space is another name for Cassandra)
     _name: >-
-      {{ _found.stdout | default('') | regex_findall('(?m)^\s*Name: (.*)$') | first | default('') | trim }}
+      {{ _found.stdout | default('') | regex_findall('(?m)^\s*Name: (.*?)\r?$') | first | default('') }}
     # nodetool's own error line (error: ...), else the first line that is not a Java stack trace line
     _lines: >-
       {{ ((_found.stderr | default('')).splitlines() | map('trim') | select | list

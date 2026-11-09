@@ -1,0 +1,5 @@
+bugfixes:
+  - >-
+    cluster name check - a ``cluster_name`` with a leading or trailing space (as ``import_cluster`` writes it from
+    ``cassandra.yaml``) is compared as it is on both sides: the name nodetool prints was trimmed and the inventory's
+    was not, so every playbook refused the cluster it belongs to.
