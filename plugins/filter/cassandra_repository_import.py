@@ -43,6 +43,14 @@ def _key(path, stats, shipped):
     return ""
 
 
+def _series_url(url, series):
+    """A mirror URL that ends with the series ("/41x/" or "/41x") names it as cassandra_version, so the next
+    upgrade (another cassandra_version) follows it; the rest kept as written.
+    "http://mirror/repo/41x/", "41x" -> "http://mirror/repo/{{ cassandra_version }}/"."""
+    m = re.match(r"^(.*/)%s(/?)$" % re.escape(series), url)
+    return "%s{{ cassandra_version }}%s" % (m.group(1), m.group(2)) if m else url
+
+
 def _keep(why):
     return {"manage": False, "vars": {}, "why": why}
 
@@ -78,7 +86,7 @@ def _yum(files, stats, series, shipped):
         return None, why
     out = {}
     if repo["baseurl"] != RPM_URL % series:
-        out["cassandra_install_url"] = repo["baseurl"]
+        out["cassandra_install_url"] = _series_url(repo["baseurl"], series)
     if "username" in repo:
         out["cassandra_install_username"] = repo["username"]
         out["cassandra_install_password"] = repo["password"]
@@ -135,7 +143,7 @@ def _apt(files, stats, series, shipped, packages, debian_packages):
         return None, "the role would install %s with the repository" % ", ".join(missing)
     out = {}
     if src["URIs"].rstrip("/") != DEB_URL:
-        out["cassandra_install_url"] = src["URIs"]
+        out["cassandra_install_url"] = _series_url(src["URIs"], series)
     if auth in files:
         lines = [s for s in files[auth].split("\n") if s.strip()]
         m = re.match(r"^machine\s+(\S+)\s+login\s+(\S+)\s+password\s+(\S+)\s*$", lines[-1]) if lines else None

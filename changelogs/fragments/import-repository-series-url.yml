@@ -1,0 +1,5 @@
+bugfixes:
+  - >-
+    import_cluster - a mirror URL that ends with the series (``http://mirror/repo/41x/``) is written as
+    ``cassandra_install_url: "http://mirror/repo/{{ cassandra_version }}/"``, the rest as found: written with the
+    series itself, it kept the cluster on the former series' repository after an upgrade.
