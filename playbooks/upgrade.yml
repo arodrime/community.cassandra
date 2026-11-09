@@ -718,12 +718,16 @@
     - name: Say what is left to do
       ansible.builtin.debug:
         msg: >-
-          Upgrade over. Resume backups and repairs. The config copies ({{ cassandra_conf_dir }}.pre-upgrade-*) are kept;
-          remove them when you no longer need to roll back.
-      run_once: true
+          {{ '--check: nothing was removed. A real run removes the pre-upgrade snapshots listed above.'
+             if ansible_check_mode else _done }}
       vars:
+        _done: >-
+          Upgrade over. Resume backups and repairs. The config copies ({{ cassandra_conf_dir }}.pre-upgrade-*) are kept,
+          for reference: with the pre-upgrade snapshots removed they are no way back to the former version. Remove them
+          when you no longer need them.
         cassandra_output: true
         cassandra_output_gap: true
+      run_once: true
 
 - name: Summary
   hosts: "{{ 'cassandra_upgrade_nodes' if cassandra_upgrade_phase | default('') in ['canary', 'rolling', 'sstables'] else 'localhost:!localhost' }}"

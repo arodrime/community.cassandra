@@ -169,6 +169,18 @@ def test_check_mode_says_what_a_real_run_would_do():
         assert "nothing was done" in next_phase(phase, check=True) and "nothing was done" not in next_phase(phase)
 
 
+def test_cleanup_suggests_no_way_back():
+    say = task("Cleanup", "Say what is left to do")
+    variables = dict(say["vars"], cassandra_conf_dir="/etc/cassandra/conf")
+    real = text(say["ansible.builtin.debug"]["msg"], ansible_check_mode=False, **variables)
+    assert "roll back" not in real
+    assert real == ("Upgrade over. Resume backups and repairs. The config copies (/etc/cassandra/conf.pre-upgrade-*) "
+                    "are kept, for reference: with the pre-upgrade snapshots removed they are no way back to the former "
+                    "version. Remove them when you no longer need them.")
+    assert text(say["ansible.builtin.debug"]["msg"], ansible_check_mode=True, **variables) == (
+        "--check: nothing was removed. A real run removes the pre-upgrade snapshots listed above.")
+
+
 REFUSED = "nodetool: Failed to connect to '127.0.0.1:7199' - ConnectException: 'Connection refused (Connection refused)'."
 
 

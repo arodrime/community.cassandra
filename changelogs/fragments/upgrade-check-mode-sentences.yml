@@ -1,0 +1,2 @@
+bugfixes:
+  - upgrade - under ``--check``, the prepare, canary, rolling, sstables and cleanup phases say what a real run would do instead of saying it done; cleanup no longer suggests the config copies as a way back once the snapshots are removed.
