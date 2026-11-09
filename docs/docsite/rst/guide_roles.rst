@@ -48,7 +48,7 @@ would otherwise repeat:
       inventories/                    # one inventory for every cluster
         orders.yml                    # the hosts of each cluster, as import_cluster writes them
         billing.yml
-        group_vars/all/local.yml      # your own settings (mirror, ...): kept by a re-import
+        group_vars/all/local.yml      # your own settings (mirror, ...): kept by a re-import; main.yml wins over it
         group_vars/orders/main.yml    # written by import_cluster, as the groups of each datacenter and rack
         host_vars/node1/main.yml
       reports/orders/report.txt       # the import's report, outside the inventory
@@ -1570,7 +1570,13 @@ it (a node named by its address then, by its hostname now), each kept as a backu
 dirs), each file replaced kept as ``<file>.<date>~``. Never a file whose first line names another cluster. The report lists the files removed, the files
 kept (down to ``group_vars/<group>/``), and the files replaced at its paths that did not have its header, each kept
 as a ``<file>.<timestamp>~`` backup. A file of the import you edit by hand is replaced by the next import: put your own
-settings in files of your own (``group_vars/all/local.yml``, ``group_vars/<cluster>/local.yml``).
+settings in files of your own (``group_vars/all/local.yml``, ``group_vars/<cluster>/local.yml``), which a re-import
+keeps. Where one of them and the import's ``main.yml`` set the same variable, ``main.yml`` wins: Ansible reads the
+files of a ``group_vars/<group>/`` directory in name order, the last one winning (``local.yml`` before ``main.yml``),
+and a cluster's groups over ``all``. So a file of your own gives the variables the import does not write: the ones
+it cannot read from the nodes, and the ones where the nodes already have your value (see below). To change a value
+the import writes: set yours in your file, delete the line from ``main.yml``, then run ``apply_config`` (the nodes get
+your value); the next import finds it on the nodes and no longer writes it.
 
 Your own variables files in the inventory directory (``group_vars/all/*.yml``, and those of this cluster's groups
 and hosts) apply to the hosts too: the import takes them into account, for the variables it reads from the nodes
