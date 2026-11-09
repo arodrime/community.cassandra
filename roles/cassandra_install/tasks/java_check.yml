@@ -198,8 +198,10 @@
           - _algorithm in ['md5', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512']
           - _sum is match('^[0-9a-f]+$')
         fail_msg: >-
-          cassandra_java_tarball_checksum is {{ cassandra_java_tarball_checksum }}: for a file on the controller,
-          give <algorithm>:<hex>, e.g. sha256:0123... Nothing was changed.
+          cassandra_java_tarball_checksum is {{ cassandra_java_tarball_checksum }}:
+          {{ 'a checksum URL is read only for a tarball the nodes download (cassandra_java_tarball a URL); for a file on'
+             ~ ' the controller give the checksum itself' if _sum is match('^[a-z]+://') else 'give' }}
+          as <algorithm>:<hex> (md5, sha1, sha224, sha256, sha384 or sha512), e.g. sha256:0123... Nothing was changed.
         quiet: true
       when: cassandra_java_tarball_checksum != ''
 

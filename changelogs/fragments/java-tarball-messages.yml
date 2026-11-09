@@ -1,0 +1,4 @@
+bugfixes:
+  - >-
+    cassandra_install - a Java tarball download that fails masks a password with an ``@`` in it whole; a controller
+    tarball's checksum given as ``<algorithm>:<url>`` is refused with what to give instead (the checksum itself).

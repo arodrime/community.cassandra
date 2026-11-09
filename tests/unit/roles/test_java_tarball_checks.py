@@ -87,7 +87,11 @@ def test_a_controller_tarball_is_checked_against_its_checksum(tmp_path):
     # not <algorithm>:<hex>
     (tmp_path / "form").mkdir()
     rc, out = _controller_check(tmp_path / "form", "sha256:https://mirror/x.sha256")
-    assert rc != 0 and "for a file on the controller, give <algorithm>:<hex>, e.g. sha256:0123... Nothing was changed." in out
+    assert rc != 0 and ("a checksum URL is read only for a tarball the nodes download (cassandra_java_tarball a URL);"
+                        " for a file on the controller give the checksum itself as <algorithm>:<hex>") in out
+    (tmp_path / "algo").mkdir()
+    rc, out = _controller_check(tmp_path / "algo", "crc32:1234")
+    assert rc != 0 and "crc32:1234: give as <algorithm>:<hex> (md5, sha1, sha224, sha256, sha384 or sha512)" in out
     # unpacked there already: not needed
     (tmp_path / "done").mkdir()
     assert _controller_check(tmp_path / "done", "sha256:" + "0" * 64,
@@ -232,3 +236,19 @@ def test_the_java_link_refusals(tmp_path):
     # the link moved before the system java is compared (a /usr/bin/java through it then leads to the new Java)
     names = [t["name"] for t in _tasks("java_tarball.yml")]
     assert names.index("Point the Java link at this Java") < names.index("Resolve the system java and this one")
+
+
+def test_a_password_with_an_at_sign_is_masked_whole():
+    from ansible.parsing.dataloader import DataLoader
+    from ansible.template import Templar
+    try:
+        from ansible.template import trust_as_template
+    except ImportError:
+        def trust_as_template(template):
+            return template
+    stop = _find(_tasks("java_tarball.yml"), "Stop on the failed download")
+    variables = {"cassandra_java_tarball": "https://svc:p@ss@mirror.example/java/jdk-17.tar.gz",
+                 "cassandra_java_version": "17", "_status": "404", "_said": "Not Found"}
+    msg = " ".join(Templar(loader=DataLoader(), variables=variables).template(
+        trust_as_template(stop["ansible.builtin.fail"]["msg"])).split())
+    assert "https://svc:****@mirror.example/java/jdk-17.tar.gz" in msg and "ss@" not in msg
