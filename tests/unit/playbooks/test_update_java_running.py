@@ -394,30 +394,43 @@ def test_refused_before_any_restart_when_the_system_java_is_kept():
 
 
 def test_a_node_left_drained_is_refused_before_the_question():
-    # a plain re-run after a run stopped with a node drained: said at once, the way out is the resume (no wait of
-    # cassandra_service_health_timeout at the first node, no "start the server")
+    # a plain re-run after a run stopped with a node drained: said at once (no wait of cassandra_service_health_timeout
+    # at the first node, no "start the server"), the resume offered when there is a progress file to resume
     from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
     load_collection_filters()
     names = list(TASKS)
-    read, check = TASKS["Read whether Cassandra runs drained there"], TASKS["No node to move is left drained"]
+    read, check = TASKS["Read whether Cassandra runs drained there"], TASKS["No node of the run is left drained"]
     assert names.index("Note what this node needs") < names.index(read["name"]) < names.index(check["name"]) \
         < names.index("Show the plan and confirm the run")
     assert read["check_mode"] is False and read["failed_when"] is False  # --check says it too
-    assert "not cassandra_rolling_resume | default(false) | bool" in read["when"]
-    assert check["run_once"] is True and check["when"] == "not cassandra_rolling_resume | default(false) | bool"
+
+    def runs(task, **variables):
+        when = task["when"] if isinstance(task["when"], list) else [task["when"]]
+        return all(_template("{{ %s }}" % w, variables) for w in when)
+    # every node of the run, one already on the new Java too; none under a resume (it takes that node from DRAINED)
+    assert runs(read, cassandra_update_java_todo=False, cassandra_jvm={"pid": "1"}) is True
+    assert runs(read, cassandra_jvm={"pid": "1"}, cassandra_rolling_resume=True) is False
+    assert runs(read, cassandra_jvm={}) is False
+    assert check["run_once"] is True
+    assert runs(check) is True and runs(check, cassandra_rolling_resume="true") is False
+
     hosts = {"n1": {"inventory_hostname": "n1", "cassandra_update_java_netstats": {"mode": "NORMAL"}},
              "n2": {"inventory_hostname": "n2", "cassandra_update_java_netstats": {"skipped": True}},
              "n3": {"inventory_hostname": "n3", "cassandra_update_java_netstats": {"mode": "DRAINED"}}}
-    variables = dict(check["vars"], ansible_play_hosts_all=list(hosts), hostvars=hosts,
+    variables = dict(check["vars"], ansible_play_hosts_all=list(hosts), hostvars=hosts, _progress=["/inv/x.done"],
                      _cassandra_run_command_args={"inventory": ["/inv/hosts.yml"], "default_inventory": "/inv/hosts.yml",
                                                   "hosts": "", "cwd": "/inv"})
     assert _template("{{ _drained }}", variables) == ["n3"]
     assert _template("{{ %s }}" % check["ansible.builtin.assert"]["that"], variables) is False
     assert _template(check["ansible.builtin.assert"]["fail_msg"], variables).split("\n") == [
-        "Stopped before any change: Cassandra runs drained on n3 (nodetool netstats: Mode: DRAINED; gossip and the"
-        " native transport are off there).",
+        "Cassandra runs drained on n3 (nodetool netstats: Mode: DRAINED; gossip and the native transport are off"
+        " there). Nothing was done.",
         "WAY OUT  resume: the resumed run takes the node it stopped at first, from DRAINED:",
         "  ansible-playbook community.cassandra.update_java -e cassandra_rolling_resume=true",
         "  or restart Cassandra on n3 (systemctl restart cassandra), then run update_java again"]
+    # no progress file of update_java for this cluster: nothing to resume
+    variables["_progress"] = []
+    assert _template(check["ansible.builtin.assert"]["fail_msg"], variables).split("\n")[1:] == [
+        "WAY OUT  restart Cassandra on n3 (systemctl restart cassandra), then run update_java again"]
     hosts["n3"]["cassandra_update_java_netstats"] = {"mode": "NORMAL"}
     assert _template("{{ %s }}" % check["ansible.builtin.assert"]["that"], variables) is True

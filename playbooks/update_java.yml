@@ -220,25 +220,40 @@
       failed_when: false  # not running, JMX not answering: the health checks say it
       check_mode: false  # read-only
       when:
-        - cassandra_update_java_todo | bool
         - cassandra_jvm.pid is defined
         - not cassandra_rolling_resume | default(false) | bool
 
-    - name: No node to move is left drained
+    # every node of the run (one already on the new Java, drained, is waited for as well); the resume offered only
+    # when a progress file of update_java for this cluster is there to resume
+    - name: No node of the run is left drained
       ansible.builtin.assert:
         that: _drained | length == 0
         fail_msg: >-
-          {{ (['Stopped before any change: Cassandra runs drained on ' ~ _drained | join(', ')
-               ~ ' (nodetool netstats: Mode: DRAINED; gossip and the native transport are off there).',
-               'WAY OUT  resume: the resumed run takes the node it stopped at first, from DRAINED:',
-               '  ' ~ 'update_java' | community.cassandra.cassandra_command(extra=['-e cassandra_rolling_resume=true'],
-                                                                            **_cassandra_run_command_args),
-               '  or restart Cassandra on ' ~ _drained | join(', ') ~ ' (systemctl restart cassandra), then run'
-               ~ ' update_java again']) | join(_nl) }}
+          {{ (['Cassandra runs drained on ' ~ _drained | join(', ') ~ ' (nodetool netstats: Mode: DRAINED; gossip and'
+               ~ ' the native transport are off there). Nothing was done.']
+              + (['WAY OUT  resume: the resumed run takes the node it stopped at first, from DRAINED:',
+                  '  ' ~ 'update_java' | community.cassandra.cassandra_command(extra=['-e cassandra_rolling_resume=true'],
+                                                                               **_cassandra_run_command_args),
+                  '  or restart Cassandra on ' ~ _drained | join(', ') ~ ' (systemctl restart cassandra), then run'
+                  ~ ' update_java again']
+                 if _progress | length > 0 else
+                 ['WAY OUT  restart Cassandra on ' ~ _drained | join(', ') ~ ' (systemctl restart cassandra), then run'
+                  ~ ' update_java again'])) | join(_nl) }}
         quiet: true
       vars:
         cassandra_output: true  # a verdict: its msg as is (ops callback)
         _nl: "\n"
+        # where progress.yml keeps them: cassandra_rolling_progress_dir, else the inventory's dir, else the current one
+        _progress_dirs: >-
+          {{ [cassandra_rolling_progress_dir | expanduser] if cassandra_rolling_progress_dir | default('', true)
+             else [inventory_dir | default('', true) ~ '/.cassandra_progress', lookup('ansible.builtin.env', 'PWD') ~ '/.cassandra_progress'] }}
+        _progress: >-
+          {%- set out = [] -%}
+          {%- for d in _progress_dirs if d is abs -%}
+          {%-   set _ = out.extend(query('ansible.builtin.fileglob',
+                                         d ~ '/' ~ lookup('community.cassandra.cassandra_hosts') ~ '-update_java-*.done')) -%}
+          {%- endfor -%}
+          {{ out }}
         _drained: >-
           {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('cassandra_update_java_netstats', 'defined')
              | selectattr('cassandra_update_java_netstats.mode', 'defined')

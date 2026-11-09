@@ -1,0 +1,5 @@
+bugfixes:
+  - >-
+    update_java - a drained node is looked for on every node of the run, also one already on the new Java (the
+    health check would wait for it), not only on those to move; its refusal says "Nothing was done." and offers the
+    resume only when a progress file of update_java for this cluster is there, else a restart of that node.
