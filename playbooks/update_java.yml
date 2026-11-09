@@ -171,7 +171,7 @@
              if _from == 'unit' or (_from == '' and _kept_unit | bool)
              else 'cassandra_service_environment' if _from in ['', 'cassandra_service_environment']
              else _from ~ ' (edit it by hand)' }}
-        _link: "{{ cassandra_java_link | default('') | regex_replace('(?<=.)/+$', '') }}"
+        _link: "{{ _cassandra_java_link | default('') }}"
         _why: >-
           {{ '' if not cassandra_update_java_todo | bool
              else ('' if cassandra_java_set_default | bool else 'no JAVA_HOME in ' ~ _where) if _given[0] | default('') == ''

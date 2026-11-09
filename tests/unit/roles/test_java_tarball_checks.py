@@ -163,7 +163,7 @@ def test_the_java_link_follows_the_java_in_use(tmp_path):
     assert rc == 0 and os.path.realpath(str(tmp_path / "current")) == str(new), out
 
 
-def test_the_java_link_refusals():
+def test_the_java_link_refusals(tmp_path):
     from ansible.parsing.dataloader import DataLoader
     from ansible.template import Templar
     try:
@@ -174,28 +174,61 @@ def test_the_java_link_refusals():
     tasks = _tasks("java_check.yml")
     home = _find(tasks, "The Java link is for a Java home")
 
-    def refused(**variables):
-        variables = dict(variables, _link=trust_as_template(home["vars"]["_link"]), inventory_hostname="n1")
+    def refused(link, java_home="/apps/jre/jdk-11.0.30", conf="/etc/cassandra/conf"):
+        variables = dict(_system=trust_as_template(home["vars"]["_system"]), _conf=trust_as_template(home["vars"]["_conf"]),
+                         cassandra_java_link=link, _cassandra_java_link=link.rstrip("/") or "/",
+                         _cassandra_java_home=java_home, cassandra_conf_dir=conf, inventory_hostname="n1")
         templar = Templar(loader=DataLoader(), variables=variables)
         if all(templar.template(trust_as_template("{{ %s }}" % t)) for t in home["ansible.builtin.assert"]["that"]):
             return ""
         return " ".join(templar.template(trust_as_template(home["ansible.builtin.assert"]["fail_msg"])).split())
-    assert refused(cassandra_java_link="/apps/jre/jdk/", _cassandra_java_home="/apps/jre/jdk-11.0.30") == ""
-    assert refused(cassandra_java_link="/apps/jre/jdk", _cassandra_java_home="") == (
-        "n1: cassandra_java_link is /apps/jre/jdk: it is kept pointing at a Java home (cassandra_java_home, or a"
-        " tarball), and this node has a Java package. Set it so, or remove it.")
-    assert "give an absolute path" in refused(cassandra_java_link="jdk", _cassandra_java_home="/apps/jre/jdk-11.0.30")
-    assert "give an absolute path" in refused(cassandra_java_link="/apps/jre/jdk-11.0.30/",
-                                              _cassandra_java_home="/apps/jre/jdk-11.0.30")
-    # a directory or a file there: never replaced
-    kind = _find(tasks, "The Java link is a link, or not there yet")
-    found = {"stat": {"exists": True, "islnk": False, "isdir": True}}
-    templar = Templar(loader=DataLoader(), variables={"cassandra_java_check_link": found, "cassandra_java_link": "/apps/jre/jdk",
-                                                      "inventory_hostname": "n1"})
-    assert templar.template(trust_as_template("{{ %s }}" % kind["ansible.builtin.assert"]["that"])) is False
-    assert " ".join(templar.template(trust_as_template(kind["ansible.builtin.assert"]["fail_msg"])).split()) == (
-        "/apps/jre/jdk exists on n1 and is not a symlink (a directory): cassandra_java_link only makes or moves a link."
-        " Nothing was changed. Move it away, or set cassandra_java_link to another path.")
+    assert refused("/apps/jre/jdk/") == ""
+    assert refused("/opt/java/current") == ""
+    assert refused("/apps/jre/jdk", java_home="") == (
+        "n1: cassandra_java_link is /apps/jre/jdk: a link is kept pointing at a Java home (cassandra_java_home, or a"
+        " tarball), and this node has a Java package. Nothing was changed. Set cassandra_java_link to the path of a"
+        " link of its own (e.g. /opt/java/current), or remove it.")
+    assert "it must be an absolute path" in refused("jdk")
+    assert "it must be an absolute path" in refused("/apps/jre/jdk-11.0.30/")
+    # system paths and the config directory: never made a link
+    for link in ("/usr/bin/java", "/etc/alternatives/java", "/bin", "/lib64", "/lib/jvm", "/opt", "/usr", "/etc/x",
+                 "/etc/cassandra/conf", "/srv/conf/java"):
+        assert "a system path or the config directory" in refused(link, conf="/srv/conf"), link
+
+    # what is there: read by a script, refused unless absent, a link to a Java, or a link leading nowhere
+    look = _find(tasks, "Look at the Java link")
+    assert look["check_mode"] is False
+    jdk = tmp_path / "jdk-11"
+    (jdk / "bin").mkdir(parents=True)
+    (jdk / "bin" / "java").write_text("#!/bin/sh\n")
+    (jdk / "bin" / "java").chmod(0o755)
+    other = tmp_path / "data"
+    other.mkdir()
+    (tmp_path / "to-java").symlink_to(jdk)
+    (tmp_path / "to-data").symlink_to(other)
+    (tmp_path / "nowhere").symlink_to(tmp_path / "gone")
+    (tmp_path / "file").write_text("x")
+
+    def kind(path):
+        out = subprocess.run(["/bin/sh", "-c", look["ansible.builtin.shell"]], env={"L": str(path), "PATH": os.environ["PATH"]},
+                             stdout=subprocess.PIPE, universal_newlines=True, check=True)
+        return out.stdout.strip()
+    assert [kind(tmp_path / n) for n in ("to-java", "nowhere", "absent", "data", "file", "to-data")] == [
+        "link to a Java", "link leading nowhere", "absent", "a directory", "a file", "link to %s" % other]
+    check = _find(tasks, "The Java link is a link to a Java, or not there yet")
+
+    def allowed(stdout):
+        templar = Templar(loader=DataLoader(), variables={"cassandra_java_check_link": {"stdout": stdout},
+                                                          "_cassandra_java_link": "/apps/jre/jdk", "inventory_hostname": "n1"})
+        return (templar.template(trust_as_template("{{ %s }}" % check["ansible.builtin.assert"]["that"])),
+                " ".join(templar.template(trust_as_template(check["ansible.builtin.assert"]["fail_msg"])).split()))
+    assert all(allowed(k)[0] for k in ("absent", "link to a Java", "link leading nowhere"))
+    ok, msg = allowed("link to /srv/data")
+    assert ok is False and msg == (
+        "/apps/jre/jdk on n1 is link to /srv/data: cassandra_java_link only makes a link, or moves one that leads to a"
+        " Java (a bin/java or a release file there). Nothing was changed. Move it away, or set cassandra_java_link to"
+        " another path.")
+    assert allowed("a directory")[0] is False
     # the link moved before the system java is compared (a /usr/bin/java through it then leads to the new Java)
     names = [t["name"] for t in _tasks("java_tarball.yml")]
     assert names.index("Point the Java link at this Java") < names.index("Resolve the system java and this one")

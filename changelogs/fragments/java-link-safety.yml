@@ -1,0 +1,6 @@
+bugfixes:
+  - >-
+    cassandra_install - ``cassandra_java_link`` is refused before anything changes, ``--check`` too, when it is a
+    system path (``/usr/bin/...``, ``/etc/...``, ``/bin``, ``/lib*``, ``/opt``, ``/usr``...) or the config directory,
+    or when a link already there leads to something else than a Java (no ``bin/java``, no ``release`` file); the
+    messages say "Nothing was changed." and the way out.

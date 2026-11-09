@@ -123,39 +123,59 @@
     quiet: true
   when: cassandra_java_tarball != ''
 
-# cassandra_java_link: kept pointing at a Java home (java_tarball.yml); a path there that is not a link is not
-# replaced
+# cassandra_java_link (_cassandra_java_link: without a trailing /): kept pointing at a Java home (java_tarball.yml).
+# Refused before anything changes: no Java home to point at (a Java package), a path that is no place for it (a
+# system directory, the config directory), a path there that is not a link, or a link to something else than a Java
+# (no bin/java, no release file in what it leads to; one leading nowhere is made again)
 - name: The Java link is for a Java home
   ansible.builtin.assert:
     that:
       - _cassandra_java_home != ''
-      - cassandra_java_link is abs
-      - _link not in [_cassandra_java_home, '/']
+      - _cassandra_java_link is abs
+      - _cassandra_java_link != _cassandra_java_home
+      - not _system | bool
     fail_msg: >-
       {{ inventory_hostname }}: cassandra_java_link is {{ cassandra_java_link }}:
-      {{ 'it is kept pointing at a Java home (cassandra_java_home, or a tarball), and this node has a Java package.'
-         if _cassandra_java_home == '' else 'give an absolute path, other than the Java home itself.' }}
-      Set it so, or remove it.
+      {{ 'a link is kept pointing at a Java home (cassandra_java_home, or a tarball), and this node has a Java package.'
+         if _cassandra_java_home == ''
+         else ('a system path or the config directory, which the role does not replace with a link.' if _system | bool
+               else 'it must be an absolute path, other than the Java home itself.') }}
+      Nothing was changed. Set cassandra_java_link to the path of a link of its own (e.g. /opt/java/current), or remove
+      it.
     quiet: true
   vars:
-    _link: "{{ cassandra_java_link | regex_replace('(?<=.)/+$', '') }}"
+    _conf: "{{ cassandra_conf_dir | default('/etc/cassandra') | regex_replace('(?<=.)/+$', '') }}"
+    _system: >-
+      {{ _cassandra_java_link in ['/', '/bin', '/sbin', '/opt', '/usr', '/etc', '/var', '/home', '/root', '/boot', '/dev',
+                                  '/proc', '/sys', '/tmp']
+         or _cassandra_java_link is match('^/(usr/s?bin|usr/lib(64)?|etc|lib[^/]*|bin|sbin)(/|$)')
+         or _cassandra_java_link == _conf or _cassandra_java_link.startswith(_conf ~ '/') }}
   when: cassandra_java_link | default('') != ''
 
 - name: Look at the Java link
-  ansible.builtin.stat:
-    path: "{{ cassandra_java_link | regex_replace('(?<=.)/+$', '') }}"
-    follow: false
-    get_checksum: false
+  ansible.builtin.shell: |
+    if [ -L "$L" ]; then
+      t=$(readlink -f "$L")
+      if [ -z "$t" ] || [ ! -e "$t" ]; then echo "link leading nowhere"
+      elif [ -x "$t/bin/java" ] || [ -f "$t/release" ]; then echo "link to a Java"
+      else echo "link to $t"; fi
+    elif [ -d "$L" ]; then echo "a directory"
+    elif [ -e "$L" ]; then echo "a file"
+    else echo "absent"; fi
+  environment:
+    L: "{{ _cassandra_java_link }}"
   register: cassandra_java_check_link
+  changed_when: false
+  check_mode: false  # a read
   when: cassandra_java_link | default('') != ''
 
-- name: The Java link is a link, or not there yet
+- name: The Java link is a link to a Java, or not there yet
   ansible.builtin.assert:
-    that: not cassandra_java_check_link.stat.exists or cassandra_java_check_link.stat.islnk | default(false)
+    that: cassandra_java_check_link.stdout in ['absent', 'link leading nowhere', 'link to a Java']
     fail_msg: >-
-      {{ cassandra_java_link }} exists on {{ inventory_hostname }} and is not a symlink
-      ({{ 'a directory' if cassandra_java_check_link.stat.isdir | default(false) else 'a file' }}): cassandra_java_link only makes or
-      moves a link. Nothing was changed. Move it away, or set cassandra_java_link to another path.
+      {{ _cassandra_java_link }} on {{ inventory_hostname }} is {{ cassandra_java_check_link.stdout }}:
+      cassandra_java_link only makes a link, or moves one that leads to a Java (a bin/java or a release file there).
+      Nothing was changed. Move it away, or set cassandra_java_link to another path.
     quiet: true
   when: cassandra_java_link | default('') != ''
 

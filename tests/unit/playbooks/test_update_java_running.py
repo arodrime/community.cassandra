@@ -226,8 +226,8 @@ WHERE_KEPT = "its unit (kept: cassandra_service_unit_manage false; edit it by ha
      "JAVA_HOME=/opt/java/jdk-11 in /usr/share/cassandra/cassandra.in.sh (edit it by hand) is not the new Java"
      " (/opt/java/jdk-17.0.9)"),
     # a JAVA_HOME that is cassandra_java_link: moved to the new Java before the restart
-    (dict(TARBALL, cassandra_java_link="/apps/jre/jdk", **given("/apps/jre/jdk/", "/apps/jre/jdk-11.0.30", "11.0.30")), ""),
-    (dict(TARBALL, cassandra_java_link="/apps/jre/jdk", **given("/apps/jre/other", "/apps/jre/jdk-11.0.30", "11.0.30")),
+    (dict(TARBALL, _cassandra_java_link="/apps/jre/jdk", **given("/apps/jre/jdk/", "/apps/jre/jdk-11.0.30", "11.0.30")), ""),
+    (dict(TARBALL, _cassandra_java_link="/apps/jre/jdk", **given("/apps/jre/other", "/apps/jre/jdk-11.0.30", "11.0.30")),
      "JAVA_HOME=/apps/jre/other in cassandra_service_environment is not the new Java (/opt/java/jdk-17.0.9)"),
 ])
 def test_java_home_must_lead_to_the_new_java(variables, why):
