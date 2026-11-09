@@ -135,23 +135,45 @@
                 state: present
               retries: 3
           rescue:
-            - name: Stop where dnf could not install it
+            # dnf's own failure (it ran: rc, failures), else the task's (e.g. a variable): said as such
+            - name: Stop where the dnf download command could not be installed
               ansible.builtin.fail:
                 msg: >-
-                  The dnf download command (dnf-command(download), from dnf-plugins-core) is not installed, and dnf could
-                  not install it: {{ ansible_failed_result | community.cassandra.cassandra_failure_cause }}. Make the
-                  repositories it names answer (or disable them), or install dnf-plugins-core by other means, then run
-                  again.
+                  {{ ('The dnf download command (dnf-command(download), from dnf-plugins-core) is not installed, and dnf'
+                      ~ ' could not install it: ' ~ ansible_failed_result | community.cassandra.cassandra_failure_cause
+                      ~ '. Make the repositories it names answer (or disable them), or install dnf-plugins-core by other'
+                      ~ ' means, then run again.')
+                     if ansible_failed_result.rc is defined or ansible_failed_result.failures is defined
+                        or ansible_failed_result.results is defined
+                     else 'Install the dnf download command: ' ~ ansible_failed_result.msg | default('failed') }}
 
+        # excludepkgs/versionlock (kept from routine upgrades) don't apply here. The repository the role manages
+        # alone (cassandra-<series>): dnf reads no other one (an unreachable OS repository on an air-gapped site);
+        # repositories set up by other means: every enabled one, the failure naming those dnf could not read
         - name: Download the Cassandra packages
-          ansible.builtin.command:
-            # excludepkgs/versionlock (kept from routine upgrades) don't apply here
-            argv: "{{ ['dnf', '-q', 'download', '--disableexcludes=all', '--destdir', _rpms] + _cassandra_install_names }}"
-          register: cassandra_install_download
-          until: cassandra_install_download is succeeded
-          retries: 3
-          changed_when: false
           when: not ansible_check_mode
+          block:
+            - name: Download the Cassandra packages
+              ansible.builtin.command:
+                argv: >-
+                  {{ ['dnf', '-q', 'download', '--disableexcludes=all', '--destdir', _rpms]
+                     + (['--disablerepo=*', '--enablerepo=cassandra-' ~ cassandra_version] if _own_repo | bool else [])
+                     + _cassandra_install_names }}
+              register: cassandra_install_download
+              until: cassandra_install_download is succeeded
+              retries: 3
+              changed_when: false
+              vars:
+                _own_repo: "{{ cassandra_repository_manage | default(not cassandra_offline | default(false) | bool) | bool }}"
+          rescue:
+            - name: Stop where the Cassandra packages could not be downloaded
+              ansible.builtin.fail:
+                msg: >-
+                  {{ ('dnf could not download ' ~ _cassandra_install_names | join(', ') ~ ': '
+                      ~ ansible_failed_result | community.cassandra.cassandra_failure_cause ~ '. Nothing was installed.'
+                      ~ ' Make the repositories it names answer (or disable them), then run again.')
+                     if ansible_failed_result.rc is defined
+                     else 'Download the Cassandra packages: ' ~ ansible_failed_result.msg | default('failed') }}
 
         - name: Find them among the downloads
           ansible.builtin.find:

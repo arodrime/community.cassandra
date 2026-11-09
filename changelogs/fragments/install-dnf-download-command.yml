@@ -1,5 +1,7 @@
 bugfixes:
   - >-
     cassandra_install - with a Java home on the RedHat family, the dnf download command is looked for with ``rpm``
-    first: dnf, which reads every enabled repository, runs only when it is missing, so an unreachable OS repository no
-    longer stops an air-gapped upgrade there; when dnf fails, the stop names the repositories it could not read.
+    first and installed by dnf only when it is missing; the Cassandra packages are then downloaded from the
+    repository the role manages alone (``cassandra-<series>``), so an unreachable OS repository does not stop an
+    air-gapped install or upgrade there. With repositories set up by other means (``cassandra_repository_manage:
+    false``) dnf still reads every enabled one. When dnf fails, the stop names the repositories it could not read.
