@@ -1,0 +1,4 @@
+bugfixes:
+  - >-
+    upgrade - in the canary phase's table and stop block, the nodes other than the canary are said "left to the rolling
+    phase", not "left out by --limit".

@@ -579,6 +579,14 @@
         quiet: true
       run_once: true
 
+    # the others: said so in the canary's table and stop block (not "left out by --limit")
+    - name: Note the nodes the canary phase leaves to the rolling phase
+      ansible.builtin.set_fact:
+        cassandra_op_result: left to the rolling phase
+      when:
+        - cassandra_upgrade_phase == 'canary'
+        - inventory_hostname != _canary
+
     # add_host keeps the order, the next plays follow it
     - name: The node(s) of this phase, in order
       ansible.builtin.add_host:

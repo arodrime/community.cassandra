@@ -276,3 +276,15 @@ def test_apply_config_says_none_is_the_point_of_no_return():
     screen = next(t for p in plays for t in p.get("tasks", []) if t.get("name") == "Show the plan and confirm the run")
     warnings = screen["vars"]["cassandra_screen"]["warnings"]
     assert "cassandra_apply_config_no_return" in warnings and "the point of no return" in warnings
+
+
+def test_the_nodes_outside_the_canary_are_said_so():
+    # a canary run that stops: the other nodes are left to the rolling phase, not "left out by --limit"
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_summary import cassandra_stop_block
+    note = task("Pick the nodes and their order", "Note the nodes the canary phase leaves to the rolling phase")
+    assert note["when"] == ["cassandra_upgrade_phase == 'canary'", "inventory_hostname != _canary"]
+    result = note["ansible.builtin.set_fact"]["cassandra_op_result"]
+    lines = cassandra_stop_block([{"node": "n1", "result": result}, {"node": "n2", "result": "upgrade FAILED after 5s: x"},
+                                  {"node": "n3", "result": result}], "n2", "boom", operation="upgrade", resume=False)
+    assert "n1, n3 not touched (left to the rolling phase)" in [" ".join(x.split()) for x in lines]
+    assert not any("--limit" in x for x in lines)
