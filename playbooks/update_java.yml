@@ -95,19 +95,39 @@
     # Lines: JAVA_HOME, resolved, its Java version, where it is set; none: no line.
     - name: Read the JAVA_HOME Cassandra is given
       ansible.builtin.shell: |
-        jh= where=
-        # the value of the last plain JAVA_HOME= line of a shell file (export, quotes), none for an expression
+        jh= where= inc=
+        # the value of the last JAVA_HOME= line of a shell file (export, quotes) of a kind: "plain", or "fallback"
+        # (inside an if on JAVA_HOME, after a || or a &&: set only when nothing set it before); none for an expression
         assigned() {
-          sed -n 's/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}JAVA_HOME=//p' "$1" 2>/dev/null | tail -1 \
-            | sed "s/^[\"']//; s/[\"'][[:space:]]*$//; s/[[:space:]]*$//" | grep -v '[$`]'
+          awk -v want="$2" '
+            /^[[:space:]]*#/ { next }
+            /^[[:space:]]*if[[:space:]]/ { stack[++n] = ($0 ~ /JAVA_HOME/) }
+            /^[[:space:]]*fi([[:space:];]|$)/ { if (n > 0) n--; next }
+            {
+              fb = 0; for (i = 1; i <= n; i++) if (stack[i]) fb = 1
+              line = $0
+              if (match(line, /(\|\||&&)[[:space:]]*(export[[:space:]]+)?JAVA_HOME=[^;[:space:]]*/)) { fb = 1; line = substr(line, RSTART) }
+              else if (line !~ /^[[:space:]]*(export[[:space:]]+)?JAVA_HOME=/) next
+              sub(/^.*JAVA_HOME=/, "", line); sub(/[;[:space:]].*$/, "", line); gsub(/["\047]/, "", line)
+              if (line != "" && line !~ /[$`]/ && (fb ? "fallback" : "plain") == want) found = line
+            }
+            END { if (found != "") print found }' "$1" 2>/dev/null
         }
-        # the JAVA_HOME of the Environment= lines of a unit file
-        environment() {
-          sed -n 's/^[[:space:]]*Environment=//p' "$1" 2>/dev/null | tr ' ' '\n' | tr -d '"' | sed -n 's/^JAVA_HOME=//p' | tail -1
+        # a shell file read as bin/cassandra or an init script would: a plain value wins, a fallback only when
+        # nothing set JAVA_HOME before
+        read_file() {
+          v=$(assigned "$1" plain)
+          if [ -n "$v" ]; then jh=$v; where=$1; return; fi
+          v=$(assigned "$1" fallback)
+          if [ -n "$v" ] && [ -z "$jh" ]; then jh=$v; where=$1; fi
         }
+        # Environment= values (a value with spaces comes quoted by systemd): one NAME=value per line
+        env_lines() { xargs -n1 2>/dev/null; }
         if [ "$UNIT_KEPT" = yes ]; then
-          v=$(systemctl show cassandra -p Environment --value 2>/dev/null | tr ' ' '\n' | tr -d '"' | sed -n 's/^JAVA_HOME=//p' | tail -1)
+          vars=$(systemctl show cassandra -p Environment --value 2>/dev/null | env_lines)
+          v=$(echo "$vars" | sed -n 's/^JAVA_HOME=//p' | tail -1)
           [ -z "$v" ] || { jh=$v; where=unit; }
+          inc=$(echo "$vars" | sed -n 's/^CASSANDRA_INCLUDE=//p' | tail -1)
           files=$(systemctl show cassandra -p EnvironmentFiles --value 2>/dev/null | sed 's/ (ignore_errors=[a-z]*)/\n/g')
           case $(systemctl show cassandra -p SourcePath --value 2>/dev/null) in
             */init.d/cassandra) files="$files
@@ -117,23 +137,25 @@
           [ -z "$GIVEN" ] || { jh=$GIVEN; where=cassandra_service_environment; }
           files=
           for d in $(systemctl show cassandra -p DropInPaths --value 2>/dev/null); do
-            v=$(environment "$d")
+            vars=$(sed -n 's/^[[:space:]]*Environment=//p' "$d" 2>/dev/null | env_lines)
+            v=$(echo "$vars" | sed -n 's/^JAVA_HOME=//p' | tail -1)
             [ -z "$v" ] || { jh=$v; where=$d; }
+            v=$(echo "$vars" | sed -n 's/^CASSANDRA_INCLUDE=//p' | tail -1)
+            [ -z "$v" ] || inc=$v
             files="$files
         $(sed -n 's/^[[:space:]]*EnvironmentFile=//p' "$d" 2>/dev/null)"
           done
         fi
         for f in $files; do
           f=${f#-}
-          v=$(assigned "$f")
-          [ -z "$v" ] || { jh=$v; where=$f; }
+          read_file "$f"
         done
+        # CASSANDRA_INCLUDE: the file bin/cassandra reads instead of looking for a cassandra.in.sh
         home=$(getent passwd "$CASSANDRA_USER" 2>/dev/null | cut -d: -f6)
-        for f in /usr/sbin/cassandra.in.sh ${home:+"$home/.cassandra.in.sh"} /usr/share/cassandra/cassandra.in.sh \
+        for f in ${inc:+"$inc"} /usr/sbin/cassandra.in.sh ${home:+"$home/.cassandra.in.sh"} /usr/share/cassandra/cassandra.in.sh \
                  /usr/local/share/cassandra/cassandra.in.sh /opt/cassandra/cassandra.in.sh; do
-          [ -f "$f" ] || continue
-          v=$(assigned "$f")
-          [ -z "$v" ] || { jh=$v; where=$f; }
+          [ -f "$f" ] || { [ -z "$inc" ] || [ "$f" != "$inc" ] || break; continue; }
+          read_file "$f"
           break
         done
         [ -n "$jh" ] || exit 0

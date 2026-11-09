@@ -267,7 +267,7 @@ def _read(tmp_path, java_home, unit_kept=False, unit_env="", show=None, files=No
     read = TASKS["Read the JAVA_HOME Cassandra is given"]
     tools = tmp_path / "tools"
     tools.mkdir()
-    for tool in ("sed", "head", "tail", "readlink", "tr", "grep", "cut"):
+    for tool in ("sed", "head", "tail", "readlink", "tr", "grep", "cut", "awk", "xargs", "echo"):
         (tools / tool).symlink_to(shutil.which(tool))
     show = dict({"Environment": unit_env}, **(show or {}))
     cases = "".join("  *' %s '*) echo '%s' ;;\n" % (k, v) for k, v in show.items())
@@ -434,3 +434,32 @@ def test_a_node_left_drained_is_refused_before_the_question():
         "WAY OUT  restart Cassandra on n3 (systemctl restart cassandra), then run update_java again"]
     hosts["n3"]["cassandra_update_java_netstats"] = {"mode": "NORMAL"}
     assert _template("{{ %s }}" % check["ansible.builtin.assert"]["that"], variables) is True
+
+
+def test_read_a_fallback_counts_only_when_nothing_set_it(tmp_path):
+    # the packages' cassandra.in.sh style: a JAVA_HOME set only when none is
+    fallback = 'if [ -z "$JAVA_HOME" ]; then\n    JAVA_HOME=/opt/fallback\nfi\n[ -n "$JAVA_HOME" ] || JAVA_HOME=/opt/other\n'
+    lines = _read(tmp_path, "/opt/new", files={"/usr/share/cassandra/cassandra.in.sh": fallback})
+    assert lines[0] == "/opt/new" and lines[3] == "cassandra_service_environment"
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    lines = _read(bare, "", files={"/usr/share/cassandra/cassandra.in.sh": fallback})
+    assert lines[0] == "/opt/other" and lines[3].endswith("cassandra.in.sh")
+    # a plain one after an if on something else still wins
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    lines = _read(plain, "/opt/new", files={"/usr/share/cassandra/cassandra.in.sh": 'if [ -x /x ]; then\n  JAVA_HOME=/opt/old\nfi\n'})
+    assert lines[0] == "/opt/old"
+
+
+def test_read_cassandra_include_and_quoted_values(tmp_path):
+    # a kept unit giving CASSANDRA_INCLUDE: that file, not the packages' cassandra.in.sh; a value with spaces quoted
+    include = str(tmp_path / "srv" / "my.in.sh")
+    lines = _read(tmp_path, "", unit_kept=True,
+                  unit_env='"JVM_OPTS=-Da=1 -Db=2" CASSANDRA_INCLUDE=%s JAVA_HOME=/opt/unit' % include,
+                  files={include: "JAVA_HOME=/opt/included\n", "/usr/share/cassandra/cassandra.in.sh": "JAVA_HOME=/opt/pkg\n"})
+    assert lines[0] == "/opt/included" and lines[3] == include
+    other = tmp_path / "other"
+    other.mkdir()
+    lines = _read(other, "", unit_kept=True, unit_env='"JVM_OPTS=-Da=1 JAVA_HOME=/not/it" JAVA_HOME=/opt/unit')
+    assert lines[0] == "/opt/unit"

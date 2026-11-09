@@ -1,0 +1,6 @@
+bugfixes:
+  - >-
+    update_java - the ``JAVA_HOME`` Cassandra restarts with is read as the shell would: an assignment made only when
+    none is set (inside ``if [ -z "$JAVA_HOME" ]``, after ``||``) counts only when nothing set it before,
+    ``CASSANDRA_INCLUDE`` names the file ``bin/cassandra`` reads, and ``Environment=`` values with spaces are read
+    whole.
