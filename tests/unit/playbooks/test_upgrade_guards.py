@@ -51,6 +51,35 @@ def text(template, **variables):
     return " ".join(str(render(template, **variables)).split())
 
 
+LISTED = ("Snapshot Details: \n"
+          "Snapshot name     Keyspace name Column family name True size Size on disk\n"
+          "pre-upgrade-4.1.12 ks1          t1                 0 bytes   1.2 KiB\n")
+
+
+def test_canary_and_rolling_refuse_a_node_without_its_pre_upgrade_snapshot():
+    order = names("Upgrade checks")
+    assert order.index("Note the versions") < order.index("List the snapshots of the nodes to upgrade") \
+        < order.index("Every node to upgrade has its pre-upgrade snapshot")
+    listing = task("Upgrade checks", "List the snapshots of the nodes to upgrade")
+    assert listing["check_mode"] is False  # read under --check too: the canary --check before prepare refuses
+    assert "not cassandra_upgrade_done | bool" in listing["when"]
+    check = task("Upgrade checks", "Every node to upgrade has its pre-upgrade snapshot")
+    assert check["run_once"] is True and check["when"] == "_phase in ['canary', 'rolling']"
+    hostvars = {"n1": {"inventory_hostname": "n1", "cassandra_upgrade_from": "4.1.12",
+                       "cassandra_upgrade_prepared": {"stdout": LISTED}},
+                "n2": {"inventory_hostname": "n2", "cassandra_upgrade_from": "4.1.12",
+                       "cassandra_upgrade_prepared": {"stdout": "Snapshot Details: \nThere are no snapshots\n"}},
+                "n3": {"inventory_hostname": "n3", "cassandra_upgrade_from": "5.0.9",  # upgraded: not listed
+                       "cassandra_upgrade_prepared": {"skipped": True}}}
+    variables = dict(check["vars"], hostvars=hostvars, ansible_play_hosts=list(hostvars), cassandra_upgrade_from="4.1.12")
+    assert render(check["vars"]["_unprepared"], **variables) == ["n2"]
+    assert text(check["ansible.builtin.assert"]["fail_msg"], **variables) == (
+        "No snapshot pre-upgrade-4.1.12 on n2 (the prepare phase takes it). Way out: ansible-playbook "
+        "community.cassandra.upgrade -e cassandra_upgrade_phase=prepare, then this phase again. Nothing was done.")
+    hostvars["n2"]["cassandra_upgrade_prepared"]["stdout"] = LISTED
+    assert render(check["vars"]["_unprepared"], **variables) == []
+
+
 REFUSED = "nodetool: Failed to connect to '127.0.0.1:7199' - ConnectException: 'Connection refused (Connection refused)'."
 
 

@@ -306,6 +306,36 @@
              | community.cassandra.cassandra_config_ignored_vars(cassandra_version) }}
       when: _phase in ['preflight', 'prepare', 'canary', 'rolling']
 
+    # the way back of a node not upgraded yet: the snapshot prepare takes
+    - name: List the snapshots of the nodes to upgrade
+      ansible.builtin.command: "{{ _cassandra_service_nodetool }} listsnapshots"
+      register: cassandra_upgrade_prepared
+      changed_when: false
+      check_mode: false  # a read
+      when:
+        - _phase in ['canary', 'rolling']
+        - not cassandra_upgrade_done | bool
+
+    - name: Every node to upgrade has its pre-upgrade snapshot
+      ansible.builtin.assert:
+        that: _unprepared | length == 0
+        fail_msg: >-
+          No snapshot pre-upgrade-{{ cassandra_upgrade_from }} on {{ _unprepared | join(', ') }} (the prepare phase takes it).
+          Way out: ansible-playbook community.cassandra.upgrade -e cassandra_upgrade_phase=prepare, then this phase again.
+          Nothing was done.
+        quiet: true
+      run_once: true
+      vars:
+        _unprepared: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts | map('extract', hostvars) | selectattr('cassandra_upgrade_prepared.stdout', 'defined')
+                if ('pre-upgrade-' ~ h.cassandra_upgrade_from) not in h.cassandra_upgrade_prepared.stdout
+                   | community.cassandra.cassandra_snapshot_names('pre-upgrade-') -%}
+          {%-   set _ = out.append(h.inventory_hostname) -%}
+          {%- endfor -%}
+          {{ out }}
+      when: _phase in ['canary', 'rolling']
+
     - name: Free space on the data disk
       ansible.builtin.debug:
         msg: >-

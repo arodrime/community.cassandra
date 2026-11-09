@@ -1,0 +1,2 @@
+bugfixes:
+  - upgrade - the canary and rolling phases refuse to start while a node to upgrade has no ``pre-upgrade-<version>`` snapshot (the prepare phase was not run), under ``--check`` too.
