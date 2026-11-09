@@ -127,7 +127,8 @@ def test_a_failed_download_says_the_url_and_the_http_status(tmp_path):
     finally:
         server.shutdown()
     assert rc != 0, out
-    assert ("localhost: the Java tarball could not be downloaded from http://mirror-user:****@127.0.0.1:%d/java/jdk-17.tar.gz:"
+    assert ("TASK [Stop on the failed download]" in out and "localhost: the Java tarball" not in out)
+    assert ("The Java tarball could not be downloaded from http://mirror-user:****@127.0.0.1:%d/java/jdk-17.tar.gz:"
             " HTTP 404, Not Found. Nothing was unpacked. Check that URL (cassandra_java_tarball, or the"
             " cassandra_java_tarballs entry of Java 17) and its checksum, then run again." % server.server_port) in out
     assert "s3cret" not in out

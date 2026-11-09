@@ -321,7 +321,9 @@
         that: _unprepared | length == 0
         fail_msg: >-
           No snapshot pre-upgrade-{{ cassandra_upgrade_from }} on {{ _unprepared | join(', ') }} (the prepare phase takes it).
-          Way out: ansible-playbook community.cassandra.upgrade -e cassandra_upgrade_phase=prepare, then this phase again.
+          Way out: {{ 'upgrade' | community.cassandra.cassandra_command(extra=['-e cassandra_upgrade_phase=prepare'],
+                                                                        **_cassandra_run_command_args) }}, then this phase
+          again.
           Nothing was done.
         quiet: true
       run_once: true

@@ -103,11 +103,15 @@ def test_canary_and_rolling_refuse_a_node_without_its_pre_upgrade_snapshot():
                        "cassandra_upgrade_prepared": {"stdout": "Snapshot Details: \nThere are no snapshots\n"}},
                 "n3": {"inventory_hostname": "n3", "cassandra_upgrade_from": "5.0.9",  # upgraded: not listed
                        "cassandra_upgrade_prepared": {"skipped": True}}}
-    variables = dict(check["vars"], hostvars=hostvars, ansible_play_hosts=list(hostvars), cassandra_upgrade_from="4.1.12")
+    # the way out: the run's own command (its inventory, its cluster), as the other way outs
+    run = {"inventory": ["/inv/a.yml"], "default_inventory": "", "hosts": "staging_b", "cwd": "/inv"}
+    variables = dict(check["vars"], hostvars=hostvars, ansible_play_hosts=list(hostvars), cassandra_upgrade_from="4.1.12",
+                     _cassandra_run_command_args=run)
     assert render(check["vars"]["_unprepared"], **variables) == ["n2"]
     assert text(check["ansible.builtin.assert"]["fail_msg"], **variables) == (
-        "No snapshot pre-upgrade-4.1.12 on n2 (the prepare phase takes it). Way out: ansible-playbook "
-        "community.cassandra.upgrade -e cassandra_upgrade_phase=prepare, then this phase again. Nothing was done.")
+        "No snapshot pre-upgrade-4.1.12 on n2 (the prepare phase takes it). Way out: ansible-playbook -i a.yml "
+        "community.cassandra.upgrade -e cassandra_hosts=staging_b -e cassandra_upgrade_phase=prepare, then this phase"
+        " again. Nothing was done.")
     hostvars["n2"]["cassandra_upgrade_prepared"]["stdout"] = LISTED
     assert render(check["vars"]["_unprepared"], **variables) == []
 

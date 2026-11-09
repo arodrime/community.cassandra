@@ -1,0 +1,9 @@
+bugfixes:
+  - >-
+    rolling operations - under ``--check``, an unhealthy cluster's stop says "then check again" in its own message too,
+    as its way out does (it said "then resume").
+  - >-
+    upgrade - the way out of a node without its pre-upgrade snapshot gives the run's own command (``-i``,
+    ``-e cassandra_hosts``), as the other way outs do.
+  - >-
+    cassandra_install - a Java tarball that cannot be downloaded no longer names the node twice in the stop.

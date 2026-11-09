@@ -71,10 +71,11 @@
             or 'did not match' in cassandra_java_tarball_download.msg | default('')
       rescue:
         # what was asked (the URL, a login in it masked) and what came back
-        - name: Stop where the Java tarball could not be downloaded
+        # (the node is named by the line of its failure: not again in the message)
+        - name: Stop on the failed download
           ansible.builtin.fail:
             msg: >-
-              {{ inventory_hostname }}: the Java tarball could not be downloaded from
+              The Java tarball could not be downloaded from
               {{ cassandra_java_tarball | regex_replace('(://[^/@:\s]+:)[^@/\s]+@', '\1****@') }}:
               {{ ('HTTP ' ~ _status ~ ', ') if _status | int not in [-1, 200] else '' }}{{ _said | trim }}.
               Nothing was unpacked. Check that URL (cassandra_java_tarball, or the cassandra_java_tarballs entry of
