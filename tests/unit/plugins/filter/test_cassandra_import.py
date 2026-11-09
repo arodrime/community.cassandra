@@ -345,6 +345,33 @@ def test_config_vars_the_target_series_ignores():
     assert cassandra_config_ignored_vars(names, "40x") == ["cassandra_read_request_timeout"]
 
 
+@pytest.mark.parametrize("series", ["41x", "50x"])
+def test_config_vars_the_import_writes_are_not_ignored(series):
+    """What the import writes (the settings, the files' owner, group and modes, the account) is no variable the
+    upgrade preflight refuses: cassandra_config_group and _mode, used in the role's vars/, were refused."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import cassandra_permissions_import
+    files = node_files(series)
+    found = dict((name, {"exists": True, "pw_name": "cassandra", "gr_name": "wheel", "mode": "0600", "uid": 990,
+                         "gid": 990}) for name in files)
+    found["logback.xml"]["mode"] = "0400"
+    perms = cassandra_permissions_import(found, {"user": "dbuser", "group": "dbgrp"}, series)["vars"]
+    assert set(perms) == set(["cassandra_user", "cassandra_group", "cassandra_config_user", "cassandra_config_group",
+                              "cassandra_config_mode", "cassandra_config_public_mode",
+                              "cassandra_config_file_permissions"])
+    written = list(cassandra_config_import(files, series, FACTS)["vars"]) + list(perms)
+    assert cassandra_config_ignored_vars(written, series) == []
+    if series == "50x":  # a 4.1 inventory, upgrade to 5.0
+        assert cassandra_config_ignored_vars(list(perms), "50x") == []
+
+
+def test_config_vars_some_series_uses():
+    """Every cassandra_config variable is used by one series at least: one no series uses is read somewhere the
+    scan misses (the role's vars/ were missed)."""
+    names = list(cassandra_import.role_file("cassandra_config"))
+    ignored = [set(cassandra_config_ignored_vars(names, s)) for s in ("40x", "41x", "50x")]
+    assert ignored[0] & ignored[1] & ignored[2] == set()
+
+
 def test_jbod_data_directories_read_back():
     dirs = ["/data1/cassandra", "/data2/cassandra"]
     out = cassandra_config_import(node_files("50x", cassandra_data_file_directories=dirs), "50x", FACTS)

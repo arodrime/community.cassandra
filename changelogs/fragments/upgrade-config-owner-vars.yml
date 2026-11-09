@@ -1,0 +1,2 @@
+bugfixes:
+  - upgrade - the preflight no longer refuses ``cassandra_config_group``, ``cassandra_config_mode``, ``cassandra_config_user``, ``cassandra_config_public_mode``, ``cassandra_config_file_permissions`` and ``cassandra_user`` as variables the target series does not have; ``import_cluster`` writes them and ``cassandra_config`` reads them in its ``vars/``.

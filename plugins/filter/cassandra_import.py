@@ -3759,6 +3759,10 @@ def cassandra_import_kept_ansible_host(nodes, read, hosts_file, cluster_group, n
     return out
 
 
+# cassandra_config's vars/ that name variables by series: not a use of them
+VARS_BY_SERIES = ("_cassandra_config_since", "_cassandra_config_old_names", "_cassandra_config_old_names_of")
+
+
 def cassandra_config_ignored_vars(names, cassandra_version):
     """names: variable names; cassandra_version: a series (40x, 41x, 50x) -> the cassandra_config variables among
     them that series' templates, tasks and defaults do not use, sorted (e.g. 4.0 names after an upgrade to 4.1).
@@ -3775,6 +3779,10 @@ def cassandra_config_ignored_vars(names, cassandra_version):
     # variables other variables' defaults are built from count as used
     for value in role_file("cassandra_config").values():
         used.update(re.findall(r"\b(cassandra_\w+)", str(value)))
+    # and its vars/ (the config files' owner, group and modes), but for the maps of names by series
+    for key, value in role_file("cassandra_config", "vars").items():
+        if key not in VARS_BY_SERIES:
+            used.update(re.findall(r"\b(cassandra_\w+)", str(value)))
     tasks_dir = os.path.join(ROLE, "tasks")
     for name in os.listdir(tasks_dir):
         with open(os.path.join(tasks_dir, name)) as f:
