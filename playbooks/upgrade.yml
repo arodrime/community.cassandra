@@ -338,9 +338,25 @@
           {{ out }}
       when: _phase in ['canary', 'rolling']
 
-    # 5.0 writes the 4.x sstable format until storage_compatibility_mode is NONE: rewriting them before is no upgrade.
-    # The mode each node reads (its cassandra.yaml, written by apply_config) and the inventory's, both at NONE
-    - name: Read storage_compatibility_mode in its cassandra.yaml
+    # An upgrade from 4.x: the config copies prepare made (<conf>.pre-upgrade-<version>) name where it came from
+    # once every node runs 5.0 (a rolling phase run again, the sstables phase); a 5.0 patch upgrade's is a 5.0 one
+    - name: Find the config copies of the upgrades
+      ansible.builtin.shell: |
+        for d in "$C".pre-upgrade-*; do [ -d "$d" ] && echo "${d#"$C".pre-upgrade-}"; done
+        exit 0
+      environment:
+        C: "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}"
+      register: cassandra_upgrade_copies
+      changed_when: false
+      check_mode: false  # a read
+      when:
+        - _phase in ['rolling', 'sstables']
+        - cassandra_version == '50x'
+
+    # 5.0 coming from 4.x writes the 4.x sstable format until storage_compatibility_mode is NONE: rewriting them
+    # before is no upgrade. The mode in the inventory, in each node's cassandra.yaml and the one it runs, all NONE;
+    # one not read, or not a mode, is refused too
+    - name: Read storage_compatibility_mode on the nodes
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation
         tasks_from: storage_mode_read.yml
@@ -350,22 +366,23 @@
 
     - name: The sstables are rewritten once storage_compatibility_mode is NONE
       ansible.builtin.assert:
-        that: _behind | length == 0
+        that: not _from_4x | bool or _behind | length == 0
         fail_msg: >-
-          {{ (['storage_compatibility_mode is not NONE on ' ~ _behind | map(attribute='node') | join(', ') ~ ':']
-              + _behind | map('community.cassandra.cassandra_storage_mode_row') | list
-              + ['In that mode 5.0 writes the sstables in the 4.x format: the sstables phase would rewrite them in it.'
-                 ' Nothing was done.',
-                 'WAY OUT  ' ~ _behind | community.cassandra.cassandra_storage_mode_step | trim
-                 ~ ' Then run this phase again.']) | join(_nl) }}
+          {{ (['storage_compatibility_mode is not NONE on ' ~ _behind | map(attribute='node') | join(', ')
+               ~ ', or not read. In a mode before NONE, 5.0 writes the sstables in the 4.x format: the sstables phase'
+               ~ ' would rewrite them in it. Nothing was done.']
+              + _behind | community.cassandra.cassandra_storage_mode_rows
+              + ['WAY OUT  ' ~ _behind | community.cassandra.cassandra_storage_mode_way_out ~ ' Then run this phase'
+                 ~ ' again.']) | join(_nl) }}
         quiet: true
       run_once: true
       vars:
         cassandra_output: true  # a verdict: its msg as is (ops callback)
         _nl: "\n"
+        _hosts: "{{ ansible_play_hosts | map('extract', hostvars) | list }}"
+        _from_4x: "{{ _hosts | community.cassandra.cassandra_storage_mode_from_4x(cassandra_package_version) }}"
         _behind: >-
-          {{ ansible_play_hosts | map('extract', hostvars) | community.cassandra.cassandra_storage_mode_nodes
-             | community.cassandra.cassandra_storage_mode_behind }}
+          {{ _hosts | community.cassandra.cassandra_storage_mode_nodes | community.cassandra.cassandra_storage_mode_behind }}
       when:
         - _phase == 'sstables'
         - cassandra_version == '50x'
@@ -775,7 +792,7 @@
         cassandra_service_summary_operation: upgrade
 
     # what each node reads once upgraded (a real rolling run wrote it; under --check the nodes are not upgraded)
-    - name: Read storage_compatibility_mode in its cassandra.yaml
+    - name: Read storage_compatibility_mode on the nodes
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation
         tasks_from: storage_mode_read.yml
@@ -798,9 +815,11 @@
       vars:
         cassandra_output: true
         cassandra_output_gap: true
-        # 5.0: the earlier of the inventory's mode and the one each node reads (its cassandra.yaml, read below), a
-        # rolling phase run again too
+        # an upgrade from 4.x to 5.0 (a rolling phase run again too): the next step of the move to NONE, from the
+        # earliest mode of the inventory, the nodes' cassandra.yaml and the running ones (the task before)
+        _hosts: "{{ ansible_play_hosts_all | map('extract', hostvars) | list }}"
         _mode_step: >-
-          {{ ansible_play_hosts_all | map('extract', hostvars) | community.cassandra.cassandra_storage_mode_nodes
-             | community.cassandra.cassandra_storage_mode_behind | community.cassandra.cassandra_storage_mode_step
-             if cassandra_version == '50x' else '' }}
+          {{ _hosts | community.cassandra.cassandra_storage_mode_nodes | community.cassandra.cassandra_storage_mode_behind
+             | community.cassandra.cassandra_storage_mode_step
+             if cassandra_version == '50x' and _hosts | community.cassandra.cassandra_storage_mode_from_4x(cassandra_package_version)
+             else '' }}

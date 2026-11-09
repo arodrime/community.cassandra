@@ -1,13 +1,29 @@
 ---
-# 5.0: storage_compatibility_mode as this node's cassandra.yaml has it (what Cassandra reads at its start):
-# cassandra_storage_mode_read.stdout, "" when the file has no such line; rc 3 when the file cannot be read
-- name: Read storage_compatibility_mode in its cassandra.yaml
+# 5.0: storage_compatibility_mode on this node, as its cassandra.yaml has it (what Cassandra reads at its next
+# start) and as the running Cassandra took it (the "Node configuration:[...]" line it logs at its start, the last
+# one of its system.log). cassandra_storage_mode_read.stdout_lines: yaml_read=yes|no, yaml=<value, "" without the
+# line>, running=<value> (none when it was not found: no Cassandra running, or that line rotated away).
+# Read-only, under --check too.
+- name: Read storage_compatibility_mode in its cassandra.yaml and in the running Cassandra
   ansible.builtin.shell: |
-    [ -r "$F" ] || exit 3
-    sed -n 's/^storage_compatibility_mode:[[:space:]]*//p' "$F" | sed 's/[[:space:]]*#.*$//; s/[[:space:]]*$//' | tail -1
+    if [ -r "$F" ]; then
+      echo "yaml_read=yes"
+      echo "yaml=$(sed -n 's/^storage_compatibility_mode:[[:space:]]*//p' "$F" | sed 's/[[:space:]]*#.*$//; s/[[:space:]]*$//' | tail -1)"
+    else
+      echo "yaml_read=no"
+    fi
+    pid=
+    for p in $(pgrep -x java); do
+      tr '\0' '\n' < /proc/$p/cmdline 2>/dev/null | grep -qx org.apache.cassandra.service.CassandraDaemon && { pid=$p; break; }
+    done
+    [ -n "$pid" ] || exit 0
+    logdir=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's/^-Dcassandra[.]logdir=//p' | head -1)
+    m=$(grep -a 'Node configuration:\[' "${logdir:-/var/log/cassandra}/system.log" 2>/dev/null | tail -1 \
+        | sed -n 's/.*[[; ]storage_compatibility_mode=\([A-Z_0-9]*\).*/\1/p')
+    [ -z "$m" ] || echo "running=$m"
+    exit 0
   environment:
     F: "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}/cassandra.yaml"
   register: cassandra_storage_mode_read
   changed_when: false
-  failed_when: false  # not read: said as such
   check_mode: false  # a read

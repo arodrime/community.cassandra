@@ -116,48 +116,76 @@ def test_canary_and_rolling_refuse_a_node_without_its_pre_upgrade_snapshot():
     assert render(check["vars"]["_unprepared"], **variables) == []
 
 
-def _modes(modes):
-    """[(inventory mode, cassandra.yaml mode)] -> hostvars n1.. (None: not set / not read)."""
+def _modes(modes, from_series="41x", copies=()):
+    """[(inventory mode, cassandra.yaml mode, running mode)] -> hostvars n1.. (None: not set / not read); every
+    node coming from from_series, with those config copies."""
     hostvars = {}
-    for i, (inventory, yaml_mode) in enumerate(modes, 1):
-        h = {"inventory_hostname": "n%d" % i}
+    for i, mode in enumerate(modes, 1):
+        inventory, yaml_mode, running = (tuple(mode) + (None, None))[:3]
+        lines = (["yaml_read=yes", "yaml=" + yaml_mode] if yaml_mode is not None else ["yaml_read=no"]) + (
+            ["running=" + running] if running is not None else [])
+        h = {"inventory_hostname": "n%d" % i, "cassandra_upgrade_from_series": from_series,
+             "cassandra_storage_mode_read": {"stdout_lines": lines},
+             "cassandra_upgrade_copies": {"stdout_lines": list(copies)}}
         if inventory is not None:
             h["cassandra_storage_compatibility_mode"] = inventory
-        if yaml_mode is not None:
-            h["cassandra_storage_mode_read"] = {"rc": 0, "stdout": yaml_mode}
         hostvars["n%d" % i] = h
     return hostvars
 
 
+def _sstables(*modes, **kwargs):
+    check = task("Upgrade checks", "The sstables are rewritten once storage_compatibility_mode is NONE")
+    hostvars = _modes(modes, **kwargs)
+    variables = dict(check["vars"], hostvars=hostvars, ansible_play_hosts=list(hostvars), cassandra_package_version="5.0.9")
+    return (render("{{ %s }}" % check["ansible.builtin.assert"]["that"], **variables),
+            render(check["ansible.builtin.assert"]["fail_msg"], **variables).split("\n"))
+
+
 def test_sstables_refuse_a_50_target_until_storage_compatibility_mode_is_none():
-    read = task("Upgrade checks", "Read storage_compatibility_mode in its cassandra.yaml")
+    read = task("Upgrade checks", "Read storage_compatibility_mode on the nodes")
     check = task("Upgrade checks", "The sstables are rewritten once storage_compatibility_mode is NONE")
     assert read["ansible.builtin.include_role"]["tasks_from"] == "storage_mode_read.yml"
     assert check["when"] == read["when"] == ["_phase == 'sstables'", "cassandra_version == '50x'"]
     assert check["run_once"] is True
-
-    def said(*modes):
-        hostvars = _modes(modes)
-        variables = dict(check["vars"], hostvars=hostvars, ansible_play_hosts=list(hostvars))
-        return (render("{{ %s }}" % check["ansible.builtin.assert"]["that"], **variables),
-                render(check["ansible.builtin.assert"]["fail_msg"], **variables))
-
-    assert said(("NONE", "NONE"), (None, "NONE"))[0] is True
-    ok, msg = said(("CASSANDRA_4", "CASSANDRA_4"), ("NONE", "NONE"))
-    assert ok is False and msg.split("\n") == [
-        "storage_compatibility_mode is not NONE on n1:",
-        "  n1  inventory CASSANDRA_4  cassandra.yaml CASSANDRA_4",
-        "In that mode 5.0 writes the sstables in the 4.x format: the sstables phase would rewrite them in it."
-        " Nothing was done.",
+    assert _sstables(("NONE", "NONE", "NONE"), (None, "NONE", "NONE"))[0] is True
+    ok, msg = _sstables(("CASSANDRA_4", "CASSANDRA_4", "CASSANDRA_4"), ("NONE", "NONE", "NONE"))
+    assert ok is False and msg == [
+        "storage_compatibility_mode is not NONE on n1, or not read. In a mode before NONE, 5.0 writes the sstables in"
+        " the 4.x format: the sstables phase would rewrite them in it. Nothing was done.",
+        "  node  inventory    cassandra.yaml  running",
+        "  n1    CASSANDRA_4  CASSANDRA_4     CASSANDRA_4",
         "WAY OUT  Now set cassandra_storage_compatibility_mode: UPGRADING in the inventory and run apply_config, then"
         " NONE and apply_config again (NONE is the point of no return). Then run this phase again."]
-    # the inventory at NONE, apply_config not run: what the nodes read is still CASSANDRA_4 (it passed before)
-    ok, msg = said(("NONE", "CASSANDRA_4"), ("NONE", "CASSANDRA_4"))
-    assert ok is False and msg.split("\n")[:3] == [
-        "storage_compatibility_mode is not NONE on n1, n2:", "  n1  inventory NONE  cassandra.yaml CASSANDRA_4",
-        "  n2  inventory NONE  cassandra.yaml CASSANDRA_4"]
-    ok, msg = said(("UPGRADING", "UPGRADING"))
-    assert ok is False and "WAY OUT  Now set cassandra_storage_compatibility_mode: NONE in the inventory and run" in msg
+    # the inventory at NONE, apply_config not run: the nodes still read and run CASSANDRA_4
+    ok, msg = _sstables(("NONE", "CASSANDRA_4", "CASSANDRA_4"))
+    assert ok is False and msg[2] == "  n1    NONE       CASSANDRA_4     CASSANDRA_4"
+    ok, msg = _sstables(("UPGRADING", "UPGRADING", "UPGRADING"))
+    assert ok is False and msg[-1].startswith("WAY OUT  Now set cassandra_storage_compatibility_mode: NONE in the inventory")
+
+
+def test_sstables_refuse_a_mode_not_read_unknown_or_a_restart_pending():
+    # its cassandra.yaml not read, the running mode not found: refused, never taken as NONE
+    ok, msg = _sstables(("NONE", None, None))
+    assert ok is False and msg[2] == "  n1    NONE       not read        not read"
+    assert "Where the mode was not read (n1): its cassandra.yaml must be readable" in msg[-1]
+    # written NONE, still running UPGRADING: the restart is pending
+    ok, msg = _sstables(("NONE", "NONE", "UPGRADING"))
+    assert ok is False and "Now set cassandra_storage_compatibility_mode: NONE" in msg[-1]
+    # a typo in the inventory: not taken as NONE
+    ok, msg = _sstables(("NONNE", "NONE", "NONE"))
+    assert ok is False and msg[2] == "  n1    NONNE (unknown)  NONE            NONE"
+    assert msg[-1].startswith("WAY OUT  Set cassandra_storage_compatibility_mode for n1 to CASSANDRA_4, UPGRADING or NONE.")
+
+
+def test_a_5_0_patch_upgrade_is_not_steered_to_none():
+    # a 5.0 cluster kept on CASSANDRA_4, 5.0.8 -> 5.0.9: its sstables phase goes on, whatever older copies remain
+    patch = dict(from_series="50x", copies=("4.1.12", "5.0.8"))
+    assert _sstables(("CASSANDRA_4", "CASSANDRA_4", "CASSANDRA_4"), **patch)[0] is True
+    assert next_phase("rolling", modes=["CASSANDRA_4"], **patch) == "Every node runs 5.0.9. Then -e cassandra_upgrade_phase=sstables."
+    # every node on 5.0 by then (a rolling phase run again, the sstables phase), the copy of 4.1 names the origin
+    from_41 = dict(from_series="50x", copies=("4.1.12",))
+    assert _sstables(("CASSANDRA_4", "CASSANDRA_4", "CASSANDRA_4"), **from_41)[0] is False
+    assert "UPGRADING" in next_phase("rolling", modes=["CASSANDRA_4"], **from_41)
 
 
 def test_the_storage_mode_read_script(tmp_path):
@@ -166,22 +194,36 @@ def test_the_storage_mode_read_script(tmp_path):
         read = yaml.safe_load(f)[0]
     assert read["check_mode"] is False and read["register"] == "cassandra_storage_mode_read"
     path = tmp_path / "cassandra.yaml"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "pgrep").write_text("#!/bin/sh\nexit 1\n")  # no Cassandra running here
+    (bin_dir / "pgrep").chmod(0o755)
 
     def run(content):
         if content is not None:
             path.write_text(content)
-        out = subprocess.run(["/bin/sh", "-c", read["ansible.builtin.shell"]], env={"F": str(path), "PATH": os.environ["PATH"]},
-                             stdout=subprocess.PIPE, universal_newlines=True, check=False)
-        return out.returncode, out.stdout.strip()
-    assert run(None)[0] == 3  # no file: not read
-    assert run("cluster_name: x\nstorage_compatibility_mode: UPGRADING  # the step\n") == (0, "UPGRADING")
-    assert run("# storage_compatibility_mode: NONE\ncluster_name: x\n") == (0, "")
+        env = {"F": str(path), "PATH": "%s:%s" % (bin_dir, os.environ["PATH"])}
+        out = subprocess.run(["/bin/sh", "-c", read["ansible.builtin.shell"]], env=env,
+                             stdout=subprocess.PIPE, universal_newlines=True, check=True)
+        return out.stdout.split()
+    assert run(None) == ["yaml_read=no"]  # no file: not read
+    assert run("cluster_name: x\nstorage_compatibility_mode: UPGRADING  # the step\n") == ["yaml_read=yes", "yaml=UPGRADING"]
+    assert run("# storage_compatibility_mode: NONE\ncluster_name: x\n") == ["yaml_read=yes", "yaml="]
+    # the running mode: the last "Node configuration" line Cassandra logged
+    log = "INFO Node configuration:[a=1; storage_compatibility_mode=%s; z=2]\n"
+    script = read["ansible.builtin.shell"]
+    assert "Node configuration:" in script and "-Dcassandra[.]logdir=" in script
+    line = (log % "CASSANDRA_4") + (log % "NONE")
+    sed = subprocess.run(["sh", "-c", "grep -a 'Node configuration:\\[' | tail -1 | sed -n "
+                          "'s/.*[[; ]storage_compatibility_mode=\\([A-Z_0-9]*\\).*/\\1/p'"], input=line,
+                         stdout=subprocess.PIPE, universal_newlines=True, check=True)
+    assert sed.stdout.strip() == "NONE"
 
 
-def next_phase(phase, check=False, modes=None, version="50x", read=None):
+def next_phase(phase, check=False, modes=None, version="50x", read=None, **kwargs):
     say = task("Summary", "Say what the next phase is")
     modes = modes or [None]
-    hostvars = _modes(zip(modes, read or [None] * len(modes)))
+    hostvars = _modes(list(zip(modes, read or [None] * len(modes), read or [None] * len(modes))), **kwargs)
     variables = dict(say["vars"], hostvars=hostvars, ansible_play_hosts_all=list(hostvars), cassandra_version=version,
                      cassandra_upgrade_phase=phase, cassandra_package_version="5.0.9", ansible_check_mode=check)
     return text(say["ansible.builtin.debug"]["msg"], **variables)
@@ -204,7 +246,7 @@ def test_rolling_says_the_next_mode_step_from_the_inventory_a_re_run_too():
     assert next_phase("rolling", modes=["NONE", "NONE"], read=["UPGRADING", "NONE"]) == (
         "Every node runs 5.0.9. Now set cassandra_storage_compatibility_mode: NONE in the inventory and run "
         "apply_config (NONE is the point of no return). Then -e cassandra_upgrade_phase=sstables.")
-    read = task("Summary", "Read storage_compatibility_mode in its cassandra.yaml")
+    read = task("Summary", "Read storage_compatibility_mode on the nodes")
     assert read["when"] == ["cassandra_upgrade_phase == 'rolling'", "cassandra_version == '50x'", "not ansible_check_mode"]
 
 

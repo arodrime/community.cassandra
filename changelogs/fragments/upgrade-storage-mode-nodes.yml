@@ -1,6 +1,8 @@
 bugfixes:
   - >-
-    upgrade - the sstables phase and the next step said after the rolling phase read ``storage_compatibility_mode``
-    from each node's ``cassandra.yaml`` too (what Cassandra reads), not only from the inventory: an inventory already
-    at ``NONE`` before ``apply_config`` ran let the sstables phase rewrite the sstables in the 4.x format. The refusal
-    lists each node with both values and the way out.
+    upgrade - from 4.x to 5.0, the sstables phase and the next step said after the rolling phase read
+    ``storage_compatibility_mode`` from the inventory, from each node's ``cassandra.yaml`` and from the running
+    Cassandra (the ``Node configuration`` line it logs at its start), the earliest of the three: an inventory already
+    at ``NONE`` before ``apply_config`` ran let the sstables phase rewrite the sstables in the 4.x format. A mode not
+    read, or not a mode (a typo in the inventory), is refused too; the refusal shows a table of the three per node
+    and the way out. A 5.0 patch upgrade (its config copy a 5.0 one) is not steered to ``NONE``.
