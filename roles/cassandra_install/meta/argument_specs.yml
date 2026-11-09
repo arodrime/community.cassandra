@@ -173,6 +173,18 @@ argument_specs:
             Java package, as with O(cassandra_java_tarball). Its C(release) file, when it has
             one, must name O(cassandra_java_version).
           - import_cluster sets it for nodes whose running Java is not a package.
+      cassandra_java_link:
+        type: path
+        default: ""
+        description:
+          - A symlink kept pointing at the Java home in use (the directory a tarball is unpacked
+            in, or O(cassandra_java_home)), for example C(/opt/java/current) where a C(JAVA_HOME)
+            or a C(PATH) names it. The role and C(update_java) make it, or move it to the new
+            Java; a rollback (O(cassandra_java_home) set back) moves it back. A path there that
+            is not a symlink is refused. It needs a Java home, not a Java package.
+          - import_cluster sets it when C(/usr/bin/java) leads to the running Java through a
+            symlinked directory (for example C(/apps/java/jdk -> jdk-11.0.30)).
+          - Empty (the default) keeps no link.
       cassandra_java_tarball_checksum:
         type: str
         description:

@@ -1,0 +1,15 @@
+bugfixes:
+  - >-
+    cassandra_install - a Java tarball given as a file on the controller is checked against
+    ``cassandra_java_tarball_checksum`` before anything changes (it was copied and unpacked whatever its checksum);
+    a missing file is refused there too. ``update_java``, ``upgrade`` and the new node checks refuse it in their plan.
+  - >-
+    cassandra_install - a Java tarball that cannot be downloaded says the URL (a login in it masked), the HTTP status
+    and the server's answer, instead of "Request failed"; a 4xx answer or a wrong checksum is not retried.
+minor_changes:
+  - >-
+    cassandra_install - new ``cassandra_java_link``: a symlink kept pointing at the Java home in use (the tarball's
+    directory, or ``cassandra_java_home``), for a ``JAVA_HOME`` or a ``PATH`` that names it. Made or moved by the
+    role and ``update_java``, moved back on a rollback; a path there that is not a symlink is refused.
+    ``import_cluster`` sets it when ``/usr/bin/java`` leads to the running Java through such a link, so a re-import
+    and ``apply_config`` change nothing there.

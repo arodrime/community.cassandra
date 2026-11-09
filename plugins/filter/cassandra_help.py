@@ -349,6 +349,8 @@ class _Cluster(object):
                 s = next(k for k, hs in series.items() if host["name"] in hs)
                 java = "%s (role default)" % versions.get(str(s), "17")
             how = self._java_how(v, java.split()[0])
+            if _resolved(v.get("cassandra_java_link")) and how != "package":  # kept pointing at that Java
+                how += ", linked from %s" % v["cassandra_java_link"]
             out.setdefault("%s, %s" % (java, how), []).append(host["name"])
         if len(out) == 1:
             return list(out)[0]

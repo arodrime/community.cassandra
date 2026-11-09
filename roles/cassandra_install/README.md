@@ -87,6 +87,10 @@ Role Variables
   directory by other means, not a package: made the system `java`, and the
   Cassandra packages installed without a Java package, as with a tarball.
   `import_cluster` sets it for nodes whose running Java is not a package.
+* `cassandra_java_link` (default `""`): a symlink kept pointing at the Java
+  home in use (the tarball's directory, or `cassandra_java_home`), e.g. the
+  `/apps/java/jdk` a `JAVA_HOME` names; a path there that is not a symlink is
+  refused. `import_cluster` sets it when `/usr/bin/java` goes through it.
 * `cassandra_install_java` (default `true`): `false` when Java is installed
   by other means (an internal package, the system image); the Cassandra
   package still needs a Java package that satisfies its dependency.

@@ -1008,6 +1008,9 @@ def test_help_command_without_the_sudo_password_prompt():
     ({"cassandra_java_tarballs": {"11": {"url": "u"}}, "cassandra_install_java": False}, "Java: 11, set up by other means"),
     ({"cassandra_java_tarball": "https://mirror.example.com/jdk.tar.gz"}, "Java: 11, tarball"),
     ({"cassandra_java_home": "/opt/jdk-11"}, "Java: 11, at /opt/jdk-11"),
+    # cassandra_java_link: the link kept pointing at it; none for a package
+    ({"cassandra_java_home": "/opt/jdk-11", "cassandra_java_link": "/opt/jdk"}, "Java: 11, at /opt/jdk-11, linked from /opt/jdk"),
+    ({"cassandra_java_link": "/opt/jdk"}, "Java: 11, package"),
 ])
 def test_java_origin(more, java):
     hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])

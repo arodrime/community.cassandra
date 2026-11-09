@@ -122,3 +122,90 @@
       cassandra_java_home (or cassandra_java_tarball_dir) to another directory, or move that one away.
     quiet: true
   when: cassandra_java_tarball != ''
+
+# cassandra_java_link: kept pointing at a Java home (java_tarball.yml); a path there that is not a link is not
+# replaced
+- name: The Java link is for a Java home
+  ansible.builtin.assert:
+    that:
+      - _cassandra_java_home != ''
+      - cassandra_java_link is abs
+      - _link not in [_cassandra_java_home, '/']
+    fail_msg: >-
+      {{ inventory_hostname }}: cassandra_java_link is {{ cassandra_java_link }}:
+      {{ 'it is kept pointing at a Java home (cassandra_java_home, or a tarball), and this node has a Java package.'
+         if _cassandra_java_home == '' else 'give an absolute path, other than the Java home itself.' }}
+      Set it so, or remove it.
+    quiet: true
+  vars:
+    _link: "{{ cassandra_java_link | regex_replace('(?<=.)/+$', '') }}"
+  when: cassandra_java_link | default('') != ''
+
+- name: Look at the Java link
+  ansible.builtin.stat:
+    path: "{{ cassandra_java_link | regex_replace('(?<=.)/+$', '') }}"
+    follow: false
+    get_checksum: false
+  register: cassandra_java_check_link
+  when: cassandra_java_link | default('') != ''
+
+- name: The Java link is a link, or not there yet
+  ansible.builtin.assert:
+    that: not cassandra_java_check_link.stat.exists or cassandra_java_check_link.stat.islnk | default(false)
+    fail_msg: >-
+      {{ cassandra_java_link }} exists on {{ inventory_hostname }} and is not a symlink
+      ({{ 'a directory' if cassandra_java_check_link.stat.isdir | default(false) else 'a file' }}): cassandra_java_link only makes or
+      moves a link. Nothing was changed. Move it away, or set cassandra_java_link to another path.
+    quiet: true
+  when: cassandra_java_link | default('') != ''
+
+# A tarball on the controller is checked against cassandra_java_tarball_checksum before anything changes (a URL is,
+# by get_url, when downloaded); not when that Java is unpacked already, or kept as it is (java_tarball.yml)
+- name: Check the Java tarball on the controller
+  when:
+    - cassandra_java_tarball != ''
+    - cassandra_java_tarball is not match('https?://')
+    - not cassandra_java_check_unpacked.stat.exists | default(false)
+    - not cassandra_java_check_java.stat.exists | default(false) or cassandra_java_check_unpacking.stat.exists | default(false)
+  vars:
+    _algorithm: "{{ cassandra_java_tarball_checksum.split(':', 1)[0] | lower if ':' in cassandra_java_tarball_checksum else '' }}"
+    _sum: "{{ cassandra_java_tarball_checksum.split(':', 1)[1] | default('') | trim | lower }}"
+    _path: "{{ lookup('ansible.builtin.first_found', cassandra_java_tarball, errors='ignore') | default('', true) }}"
+  block:
+    - name: The checksum is <algorithm>:<hex>
+      ansible.builtin.assert:
+        that:
+          - _algorithm in ['md5', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512']
+          - _sum is match('^[0-9a-f]+$')
+        fail_msg: >-
+          cassandra_java_tarball_checksum is {{ cassandra_java_tarball_checksum }}: for a file on the controller,
+          give <algorithm>:<hex>, e.g. sha256:0123... Nothing was changed.
+        quiet: true
+      when: cassandra_java_tarball_checksum != ''
+
+    - name: Read the tarball's checksum on the controller
+      ansible.builtin.stat:
+        path: "{{ _path or cassandra_java_tarball }}"
+        get_checksum: "{{ cassandra_java_tarball_checksum != '' }}"
+        checksum_algorithm: "{{ _algorithm or 'sha256' }}"
+      register: cassandra_java_check_tarball
+      delegate_to: localhost
+      become: false  # the controller: no sudo there
+      check_mode: false  # read-only
+      vars:
+        ansible_become: false  # an inventory ansible_become beats the become keyword
+
+    - name: The tarball is there and has that checksum
+      ansible.builtin.assert:
+        that:
+          - cassandra_java_check_tarball.stat.exists and cassandra_java_check_tarball.stat.isreg
+          - cassandra_java_tarball_checksum == "" or cassandra_java_check_tarball.stat.checksum | default("") | lower == _sum
+        fail_msg: >-
+          {{ ('The Java tarball ' ~ cassandra_java_tarball ~ ' is not a file on the controller.')
+             if not (cassandra_java_check_tarball.stat.exists and cassandra_java_check_tarball.stat.isreg)
+             else ('The Java tarball ' ~ (_path or cassandra_java_tarball) ~ ' on the controller has ' ~ _algorithm ~ ' '
+                   ~ cassandra_java_check_tarball.stat.checksum | default("") ~ ', not ' ~ _sum ~ ' (cassandra_java_tarball_checksum).') }}
+          Nothing was changed on {{ inventory_hostname }}. Give the right file or the right checksum (in
+          cassandra_java_tarballs["{{ cassandra_java_version }}"], or cassandra_java_tarball and
+          cassandra_java_tarball_checksum), then run again.
+        quiet: true

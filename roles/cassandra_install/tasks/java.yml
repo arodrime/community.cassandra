@@ -98,7 +98,7 @@
     path: /usr/bin/java
     follow: true  # a link leading nowhere: not there
     get_checksum: false
-  register: cassandra_java_link
+  register: cassandra_java_system_link
 
 # false, /usr/bin/java missing while its alternative leads to a java: that link
 # alone is made again (below), the alternative left as it is
@@ -108,7 +108,7 @@
     follow: true
     get_checksum: false
   register: cassandra_java_alternative_link
-  when: not cassandra_java_link.stat.exists
+  when: not cassandra_java_system_link.stat.exists
 
 - name: Java from a tarball, or already unpacked (cassandra_java_home)
   ansible.builtin.include_tasks: java_tarball.yml
@@ -120,7 +120,7 @@
   when:
     - cassandra_install_java | bool
     - _cassandra_java_home == ''
-    - cassandra_java_set_default | bool or not cassandra_java_link.stat.exists
+    - cassandra_java_set_default | bool or not cassandra_java_system_link.stat.exists
       and not cassandra_java_alternative_link.stat.exists | default(false)
   vars:
     # the package's own java among the alternatives (a temurin or zulu path does not name java-<N>), else one that does
@@ -178,5 +178,5 @@
     state: link
     force: true  # over a link leading nowhere; under --check the alternative may not be there yet
   when:
-    - not cassandra_java_link.stat.exists
+    - not cassandra_java_system_link.stat.exists
     - cassandra_install_java | bool or _cassandra_java_home != ''

@@ -559,6 +559,20 @@
         echo "java=$jv"
         echo "javabin=$bin"
         echo "javapkg=$(package "$bin")"
+        # a symlinked directory /usr/bin/java goes through, that leads to the home of the running Java (e.g.
+        # /usr/bin/java -> /apps/java/jdk/bin/java, /apps/java/jdk -> jdk-11.0.30): kept pointing at the Java in
+        # use (cassandra_java_link)
+        p=/usr/bin/java n=0
+        while [ -L "$p" ] && [ $n -lt 20 ]; do
+          t=$(readlink "$p"); case $t in /*) p=$t ;; *) p=${p%/*}/$t ;; esac
+          n=$((n + 1)); d=${p%/bin/java}
+          [ "$d" != "$p" ] || continue
+          d=$(readlink -m "${d%/*}")/${d##*/}
+          if [ -L "$d" ] && [ "$(readlink -f "$d")" = "$(readlink -f "${bin%/bin/java}")" ]; then
+            echo "javalink=$d"
+            break
+          fi
+        done
         echo "sysjava=$sys"
         # where the config really is (/etc/cassandra/conf of the RPM is an alternatives link)
         case $cfg in /*) d=${cfg%/*} ;; *) d=/etc/cassandra/conf ;; esac
@@ -655,6 +669,8 @@
         import_cluster_java_home: "{{ _kv.javabin | dirname | dirname if _kv.javapkg | default('') == '' else '' }}"
         import_cluster_system_java: "{{ _kv.sysjava | default('') }}"
         import_cluster_java_bin: "{{ _kv.javabin | default('') }}"
+        # a link to the running Java's home that /usr/bin/java goes through (not for a package Java)
+        import_cluster_java_link: "{{ _kv.javalink | default('') if _kv.javapkg | default('') == '' else '' }}"
         # updated since Cassandra started: the java it runs, gone (the java read is its new build)
         import_cluster_java_updated: "{{ _kv.javaupdated | default('') }}"
         # its unit's JAVA_HOME, that Java gone

@@ -105,6 +105,11 @@ _cassandra_java_home: >-
      else ((cassandra_java_tarball_dir | regex_replace('/+$', '')) ~ '/'
            ~ (_cassandra_java_tarball_name | regex_replace('[.](tar[.]gz|tgz|tar)$', '')))
      if cassandra_java_tarball != '' else '' }}
+# A symlink kept pointing at the Java in use (the tarball's directory, or
+# cassandra_java_home), e.g. /opt/java/current for a JAVA_HOME or a PATH that
+# names it: made, or moved, by the role and update_java. "" (default): none.
+cassandra_java_link: ""
+_cassandra_java_link: "{{ cassandra_java_link | regex_replace('(?<=.)/+$', '') }}"
 # false: Java is installed by other means (an internal package, the system
 # image); the Cassandra package still needs a Java package that satisfies its
 # dependency

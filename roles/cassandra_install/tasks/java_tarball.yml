@@ -51,18 +51,39 @@
         - "'tar' not in _cassandra_install_before | default({})"  # installed: no repository read
 
     - name: Download the Java tarball
-      ansible.builtin.get_url:
-        url: "{{ cassandra_java_tarball }}"
-        dest: "{{ _local }}"
-        checksum: "{{ cassandra_java_tarball_checksum | default(omit, true) }}"
-        url_username: "{{ cassandra_java_tarball_username | default(omit, true) }}"
-        url_password: "{{ cassandra_java_tarball_password | default(omit, true) }}"
-        force_basic_auth: "{{ cassandra_java_tarball_username != '' }}"
-        mode: "0644"
-      retries: 3
-      register: cassandra_java_tarball_download
-      until: cassandra_java_tarball_download is succeeded
       when: _from_url
+      block:
+        - name: Download the Java tarball
+          ansible.builtin.get_url:
+            url: "{{ cassandra_java_tarball }}"
+            dest: "{{ _local }}"
+            checksum: "{{ cassandra_java_tarball_checksum | default(omit, true) }}"
+            url_username: "{{ cassandra_java_tarball_username | default(omit, true) }}"
+            url_password: "{{ cassandra_java_tarball_password | default(omit, true) }}"
+            force_basic_auth: "{{ cassandra_java_tarball_username != '' }}"
+            mode: "0644"
+          retries: 3
+          register: cassandra_java_tarball_download
+          # an answer of the server (404, 401...) or a wrong checksum is final
+          until: >-
+            cassandra_java_tarball_download is succeeded
+            or cassandra_java_tarball_download.status_code | default(0) | int in range(400, 500)
+            or 'did not match' in cassandra_java_tarball_download.msg | default('')
+      rescue:
+        # what was asked (the URL, a login in it masked) and what came back
+        - name: Stop where the Java tarball could not be downloaded
+          ansible.builtin.fail:
+            msg: >-
+              {{ inventory_hostname }}: the Java tarball could not be downloaded from
+              {{ cassandra_java_tarball | regex_replace('(://[^/@:\s]+:)[^@/\s]+@', '\1****@') }}:
+              {{ ('HTTP ' ~ _status ~ ', ') if _status | int not in [-1, 200] else '' }}{{ _said | trim }}.
+              Nothing was unpacked. Check that URL (cassandra_java_tarball, or the cassandra_java_tarballs entry of
+              Java {{ cassandra_java_version }}) and its checksum, then run again.
+          vars:
+            _status: "{{ ansible_failed_result.status_code | default(-1) }}"
+            _said: >-
+              {{ (ansible_failed_result.response | default('', true) or ansible_failed_result.msg | default('no answer'))
+                 | regex_replace('^HTTP Error [0-9]+: ', '') | regex_replace('(://[^/@:\s]+:)[^@/\s]+@', '\1****@') }}
 
     - name: Copy the Java tarball from the controller
       ansible.builtin.copy:
@@ -152,6 +173,27 @@
     quiet: true
   when: cassandra_java_tarball == ""
 
+# cassandra_java_link kept pointing at this Java (java_check.yml refused a path there that is not a link): first,
+# so a /usr/bin/java that goes through it already leads to this Java below. One that resolves to it is left as it
+# is (e.g. a relative link made by hand).
+- name: Resolve the Java link and this Java
+  ansible.builtin.command:
+    argv: [readlink, -m, "{{ _cassandra_java_link }}", "{{ _cassandra_java_home }}"]
+  register: cassandra_java_link_resolved
+  changed_when: false
+  check_mode: false  # read-only
+  when: _cassandra_java_link != ''
+
+- name: Point the Java link at this Java
+  ansible.builtin.file:
+    src: "{{ _cassandra_java_home }}"
+    dest: "{{ _cassandra_java_link }}"
+    state: link
+    force: true  # under --check the Java may not be unpacked yet
+  when:
+    - _cassandra_java_link != ''
+    - cassandra_java_link_resolved.stdout_lines | default([]) | unique | length != 1
+
 # Resolved, both: the directory itself may be a link (e.g. a "current" link)
 # -m: a /usr/bin/java that leads nowhere (an alternative of a removed Java)
 # still prints a line, so it is told apart from this one
@@ -174,7 +216,7 @@
     link: /usr/bin/java
     priority: 100
   when:
-    - cassandra_java_set_default | bool or not cassandra_java_link.stat.exists
+    - cassandra_java_set_default | bool or not cassandra_java_system_link.stat.exists
       and not cassandra_java_alternative_link.stat.exists | default(false)
     - not (ansible_check_mode and not cassandra_java_home_java.stat.exists)
     - cassandra_java_resolved.rc != 0 or cassandra_java_resolved.stdout_lines | length != 2

@@ -1,0 +1,200 @@
+from __future__ import (absolute_import, division, print_function)
+__metaclass__ = type
+
+# cassandra_install's Java tarball, run by ansible-playbook on localhost (the tasks taken from the role's files):
+# a tarball on the controller is checked against cassandra_java_tarball_checksum before anything changes (it was
+# copied and unpacked whatever its checksum); a download that fails says the URL (a login in it masked) and the
+# HTTP status; cassandra_java_link is made, moved, or left when it already leads to the Java.
+
+import hashlib
+import os
+import subprocess
+import sys
+import threading
+
+try:
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+except ImportError:  # Python 2: not run there (the controller's Python only)
+    BaseHTTPRequestHandler = HTTPServer = None
+
+import yaml
+
+TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
+COLLECTIONS = os.path.abspath(os.path.join(TOP, "..", "..", ".."))
+TASKS = os.path.join(TOP, "roles", "cassandra_install", "tasks")
+
+
+def _tasks(name):
+    with open(os.path.join(TASKS, name), encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def _find(tasks, name):
+    todo = list(tasks)
+    while todo:
+        t = todo.pop(0)
+        if t.get("name") == name:
+            return t
+        todo += t.get("block", []) + t.get("rescue", []) + t.get("always", [])
+    raise KeyError(name)
+
+
+def _play(tmp_path, tasks, variables, check=False):
+    """Runs tasks on localhost with variables -> (rc, the output, spaces normalised)."""
+    play = [{"hosts": "localhost", "gather_facts": False, "vars": variables, "tasks": tasks}]
+    (tmp_path / "play.yml").write_text(yaml.safe_dump(play))
+    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0",
+               ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_INVENTORY_UNPARSED_WARNING="0")
+    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", "localhost,",
+            "-c", "local", "-e", "ansible_python_interpreter=%s" % sys.executable, str(tmp_path / "play.yml")]
+    if check:
+        argv.append("--check")
+    result = subprocess.run(argv, env=env, cwd=str(tmp_path), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            timeout=300, check=False)
+    return result.returncode, " ".join(result.stdout.decode(errors="replace").split())
+
+
+def _controller_check(tmp_path, checksum, path=None, **more):
+    tarball = tmp_path / "OpenJDK17U-jdk_x64_linux_hotspot_17.0.18_8.tar.gz"
+    tarball.write_bytes(b"not really a tarball\n")
+    variables = dict({"cassandra_java_tarball": str(path or tarball), "cassandra_java_tarball_checksum": checksum,
+                      "cassandra_java_version": "17"}, **more)
+    return _play(tmp_path, [_find(_tasks("java_check.yml"), "Check the Java tarball on the controller")], variables)
+
+
+def test_a_controller_tarball_is_checked_against_its_checksum(tmp_path):
+    good = hashlib.sha256(b"not really a tarball\n").hexdigest()
+    (tmp_path / "good").mkdir()
+    rc, out = _controller_check(tmp_path / "good", "sha256:" + good.upper())
+    assert rc == 0, out
+    (tmp_path / "bad").mkdir()
+    rc, out = _controller_check(tmp_path / "bad", "sha256:" + "0" * 64)
+    assert rc != 0, out
+    assert ("The Java tarball %s on the controller has sha256 %s, not %s (cassandra_java_tarball_checksum). Nothing was"
+            " changed on localhost. Give the right file or the right checksum (in cassandra_java_tarballs[\"17\"], or"
+            " cassandra_java_tarball and cassandra_java_tarball_checksum), then run again."
+            % (tmp_path / "bad" / "OpenJDK17U-jdk_x64_linux_hotspot_17.0.18_8.tar.gz", good, "0" * 64)) in out
+    # another algorithm
+    (tmp_path / "md5").mkdir()
+    rc, out = _controller_check(tmp_path / "md5", "md5:" + hashlib.md5(b"not really a tarball\n").hexdigest())
+    assert rc == 0, out
+    # none given: only there
+    (tmp_path / "none").mkdir()
+    assert _controller_check(tmp_path / "none", "")[0] == 0
+    (tmp_path / "missing").mkdir()
+    rc, out = _controller_check(tmp_path / "missing", "", path=tmp_path / "missing" / "jdk.tar.gz")
+    assert rc != 0 and "The Java tarball %s is not a file on the controller." % (tmp_path / "missing" / "jdk.tar.gz") in out
+    # not <algorithm>:<hex>
+    (tmp_path / "form").mkdir()
+    rc, out = _controller_check(tmp_path / "form", "sha256:https://mirror/x.sha256")
+    assert rc != 0 and "for a file on the controller, give <algorithm>:<hex>, e.g. sha256:0123... Nothing was changed." in out
+    # unpacked there already: not needed
+    (tmp_path / "done").mkdir()
+    assert _controller_check(tmp_path / "done", "sha256:" + "0" * 64,
+                             cassandra_java_check_unpacked={"stat": {"exists": True}})[0] == 0
+
+
+def test_the_controller_check_runs_before_anything_changes():
+    # java_check.yml: run by install before java.yml, and by update_java, upgrade and the new node checks in their plan
+    names = [t["name"] for t in _tasks("install.yml")]
+    assert names.index("Check the Java") < names.index("Java, the package or a tarball, as the default java")
+    check = _find(_tasks("java_check.yml"), "Check the Java tarball on the controller")
+    read = _find(check["block"], "Read the tarball's checksum on the controller")
+    assert read["delegate_to"] == "localhost" and read["become"] is False and read["check_mode"] is False
+
+
+class _NotFound(BaseHTTPRequestHandler if BaseHTTPRequestHandler else object):
+    def do_GET(self):
+        self.send_response(404)
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+def test_a_failed_download_says_the_url_and_the_http_status(tmp_path):
+    server = HTTPServer(("127.0.0.1", 0), _NotFound)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        url = "http://mirror-user:s3cret@127.0.0.1:%d/java/jdk-17.tar.gz" % server.server_port
+        download = _find(_tasks("java_tarball.yml"), "Download the Java tarball")
+        assert "block" in download and download["rescue"]
+        download = dict(download, when="true")
+        variables = {"cassandra_java_tarball": url, "cassandra_java_tarball_checksum": "",
+                     "cassandra_java_tarball_username": "", "cassandra_java_tarball_password": "",
+                     "_local": str(tmp_path / "jdk.tar.gz"), "cassandra_java_version": "17"}
+        rc, out = _play(tmp_path, [download], variables)
+    finally:
+        server.shutdown()
+    assert rc != 0, out
+    assert ("localhost: the Java tarball could not be downloaded from http://mirror-user:****@127.0.0.1:%d/java/jdk-17.tar.gz:"
+            " HTTP 404, Not Found. Nothing was unpacked. Check that URL (cassandra_java_tarball, or the"
+            " cassandra_java_tarballs entry of Java 17) and its checksum, then run again." % server.server_port) in out
+    assert "s3cret" not in out
+    # a 404 is final: asked once
+    assert "retries left" not in out
+
+
+def _link(tmp_path, home, link, check=False):
+    tasks = _tasks("java_tarball.yml")
+    return _play(tmp_path, [_find(tasks, "Resolve the Java link and this Java"), _find(tasks, "Point the Java link at this Java")],
+                 {"_cassandra_java_home": str(home), "_cassandra_java_link": str(link)}, check=check)
+
+
+def test_the_java_link_follows_the_java_in_use(tmp_path):
+    old, new = tmp_path / "jre" / "jdk-11.0.30", tmp_path / "jre" / "jdk-11.0.32"
+    old.mkdir(parents=True)
+    new.mkdir()
+    link = tmp_path / "jre" / "jdk"
+    link.symlink_to("jdk-11.0.30")  # relative, made by hand
+    rc, out = _link(tmp_path, old, link)
+    assert rc == 0 and "changed=0" in out, out  # already leads there: left as it is
+    assert os.readlink(str(link)) == "jdk-11.0.30"
+    rc, out = _link(tmp_path, new, link, check=True)
+    assert rc == 0 and "changed=1" in out and os.readlink(str(link)) == "jdk-11.0.30", out
+    rc, out = _link(tmp_path, new, link)
+    assert rc == 0 and "changed=1" in out and os.path.realpath(str(link)) == str(new), out
+    # back (a rollback: cassandra_java_home set to the old one)
+    rc, out = _link(tmp_path, old, link)
+    assert rc == 0 and os.path.realpath(str(link)) == str(old), out
+    # none yet: made
+    rc, out = _link(tmp_path, new, tmp_path / "current")
+    assert rc == 0 and os.path.realpath(str(tmp_path / "current")) == str(new), out
+
+
+def test_the_java_link_refusals():
+    from ansible.parsing.dataloader import DataLoader
+    from ansible.template import Templar
+    try:
+        from ansible.template import trust_as_template
+    except ImportError:
+        def trust_as_template(template):
+            return template
+    tasks = _tasks("java_check.yml")
+    home = _find(tasks, "The Java link is for a Java home")
+
+    def refused(**variables):
+        variables = dict(variables, _link=trust_as_template(home["vars"]["_link"]), inventory_hostname="n1")
+        templar = Templar(loader=DataLoader(), variables=variables)
+        if all(templar.template(trust_as_template("{{ %s }}" % t)) for t in home["ansible.builtin.assert"]["that"]):
+            return ""
+        return " ".join(templar.template(trust_as_template(home["ansible.builtin.assert"]["fail_msg"])).split())
+    assert refused(cassandra_java_link="/apps/jre/jdk/", _cassandra_java_home="/apps/jre/jdk-11.0.30") == ""
+    assert refused(cassandra_java_link="/apps/jre/jdk", _cassandra_java_home="") == (
+        "n1: cassandra_java_link is /apps/jre/jdk: it is kept pointing at a Java home (cassandra_java_home, or a"
+        " tarball), and this node has a Java package. Set it so, or remove it.")
+    assert "give an absolute path" in refused(cassandra_java_link="jdk", _cassandra_java_home="/apps/jre/jdk-11.0.30")
+    assert "give an absolute path" in refused(cassandra_java_link="/apps/jre/jdk-11.0.30/",
+                                              _cassandra_java_home="/apps/jre/jdk-11.0.30")
+    # a directory or a file there: never replaced
+    kind = _find(tasks, "The Java link is a link, or not there yet")
+    found = {"stat": {"exists": True, "islnk": False, "isdir": True}}
+    templar = Templar(loader=DataLoader(), variables={"cassandra_java_check_link": found, "cassandra_java_link": "/apps/jre/jdk",
+                                                      "inventory_hostname": "n1"})
+    assert templar.template(trust_as_template("{{ %s }}" % kind["ansible.builtin.assert"]["that"])) is False
+    assert " ".join(templar.template(trust_as_template(kind["ansible.builtin.assert"]["fail_msg"])).split()) == (
+        "/apps/jre/jdk exists on n1 and is not a symlink (a directory): cassandra_java_link only makes or moves a link."
+        " Nothing was changed. Move it away, or set cassandra_java_link to another path.")
+    # the link moved before the system java is compared (a /usr/bin/java through it then leads to the new Java)
+    names = [t["name"] for t in _tasks("java_tarball.yml")]
+    assert names.index("Point the Java link at this Java") < names.index("Resolve the system java and this one")

@@ -3107,7 +3107,7 @@ BLOCKS = [
         "cassandra_version", "cassandra_package_version", "cassandra_install_method", "cassandra_packages",
         "cassandra_install_tools", "cassandra_install_jemalloc", "cassandra_package_hold",
         "cassandra_java_version",
-        "cassandra_java_home", "cassandra_java_package", "cassandra_java_tarball", "cassandra_java_tarball_checksum",
+        "cassandra_java_home", "cassandra_java_link", "cassandra_java_package", "cassandra_java_tarball", "cassandra_java_tarball_checksum",
         "cassandra_java_tarball_dir", "cassandra_install_java", "cassandra_java_set_default"]),
     ("Directories", [
         "cassandra_conf_dir", "cassandra_rpm_conf_alternative", "cassandra_data_dir", "cassandra_data_file_directories", "cassandra_commitlog_dir",

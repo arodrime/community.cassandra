@@ -29,7 +29,8 @@ from ansible_collections.community.cassandra.plugins.filter import cassandra_nod
 # the variables of a host the import reads (its facts, and what the play read on it)
 KEYS = ("ansible_facts", "ansible_host", "import_cluster_address", "import_cluster_config",
         "import_cluster_conf_dir", "import_cluster_dsbulk", "import_cluster_error", "import_cluster_held",
-        "import_cluster_java", "import_cluster_java_bin", "import_cluster_java_home", "import_cluster_java_package",
+        "import_cluster_java", "import_cluster_java_bin", "import_cluster_java_home", "import_cluster_java_link",
+        "import_cluster_java_package",
         "import_cluster_java_updated",
         "import_cluster_jmx_slurp", "import_cluster_jvm_cmdline",
         "import_cluster_keep", "import_cluster_log_dir", "import_cluster_medusa",
@@ -113,6 +114,8 @@ def _java_vars(hv, facts, read, series, java_default):
         java_vars["cassandra_java_version"] = java
     if read and hv.get("import_cluster_java_home", "") != "":
         java_vars["cassandra_java_home"] = hv["import_cluster_java_home"]
+        if hv.get("import_cluster_java_link", ""):  # kept pointing at that Java (cassandra_install)
+            java_vars["cassandra_java_link"] = hv["import_cluster_java_link"]
     if read and hv.get("import_cluster_java_package", "") not in ("", java_package):
         java_vars["cassandra_java_package"] = hv["import_cluster_java_package"]
     if read and hv.get("import_cluster_java_home", "") == "":

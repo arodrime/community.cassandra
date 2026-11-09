@@ -283,7 +283,42 @@ def test_lines_resolve_symlink_chains(tmp_path):
     java = _jdk(tmp_path, "jdk-17.0.20", "17.0.20")
     (tmp_path / "current").symlink_to(java.parent.parent)
     found = _run(tmp_path, java, tmp_path / "current" / "bin" / "java")
-    assert found == {"java": "17", "javabin": str(java), "javapkg": "", "sysjava": str(java)}
+    # the "current" link /usr/bin/java goes through: kept pointing at the Java in use (cassandra_java_link)
+    assert found == {"java": "17", "javabin": str(java), "javapkg": "", "sysjava": str(java),
+                     "javalink": str(tmp_path / "current")}
+
+
+def test_lines_java_link_of_a_hand_made_layout(tmp_path):
+    # /usr/bin/java -> /apps/cassandra/jre/jdk/bin/java, /apps/cassandra/jre/jdk -> jdk-11.0.30 (relative)
+    java = _jdk(tmp_path, "jdk-11.0.30", "11.0.30")
+    jre = tmp_path / "apps" / "cassandra" / "jre"
+    jre.mkdir(parents=True)
+    (jre / "jdk-11.0.30").symlink_to(java.parent.parent)
+    (jre / "jdk").symlink_to("jdk-11.0.30")
+    assert _run(tmp_path, java, jre / "jdk" / "bin" / "java")["javalink"] == str(jre / "jdk")
+    # a link to another Java than the running one: none
+    other = tmp_path / "other"
+    other.mkdir()
+    java = _jdk(other, "jdk-11.0.30", "11.0.30")
+    old = _jdk(other, "jdk-11.0.20", "11.0.20")
+    (other / "jdk").symlink_to(old.parent.parent)
+    assert "javalink" not in _run(other, java, other / "jdk" / "bin" / "java")
+    # no link on the way (the alternatives straight to the home): none
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    java = _jdk(plain, "jdk-11.0.30", "11.0.30")
+    assert "javalink" not in _run(plain, java, java)
+
+
+def test_java_link_written_with_the_java_home_only():
+    hv = {"import_cluster_java_home": "/apps/cassandra/jre/jdk-11.0.30", "import_cluster_java_link": "/apps/cassandra/jre/jdk",
+          "import_cluster_java_bin": "/apps/cassandra/jre/jdk-11.0.30/bin/java"}
+    out = node(hv)["vars"]
+    assert out["cassandra_java_home"] == "/apps/cassandra/jre/jdk-11.0.30"
+    assert out["cassandra_java_link"] == "/apps/cassandra/jre/jdk"
+    work_out = task("Work out the series and the conf dir")["ansible.builtin.set_fact"]
+    # a package Java: none (cassandra_install keeps the link for a Java home only)
+    assert work_out["import_cluster_java_link"] == "{{ _kv.javalink | default('') if _kv.javapkg | default('') == '' else '' }}"
 
 
 def test_lines_without_a_system_java(tmp_path):
@@ -451,7 +486,7 @@ def test_lines_java_gone_and_another_one(tmp_path):
 
 
 def test_role_leaves_the_system_java():
-    gate = ("cassandra_java_set_default | bool or not cassandra_java_link.stat.exists"
+    gate = ("cassandra_java_set_default | bool or not cassandra_java_system_link.stat.exists"
             " and not cassandra_java_alternative_link.stat.exists | default(false)")
     with open(os.path.join(ROOT, "roles", "cassandra_install", "tasks", "java_tarball.yml")) as f:
         link = task("Make it the system java", yaml.safe_load(f))
