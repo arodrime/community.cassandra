@@ -1254,3 +1254,16 @@ def test_token_ring_and_key_settings_are_not_secrets(key, value):
     # the ring's tokens and the key cache, repository keys and keyspaces: shown as they are
     assert not out.hidden(key, value) and out.shown(key, value) != "****"
     assert out.mask("%s: %s" % (key, value)) == "%s: %s" % (key, value)
+
+
+@pytest.mark.parametrize("line, shown", [
+    ("export http_proxy=http://bob:hunter2xx@proxy:3128", "export http_proxy=http://bob:****@proxy:3128"),
+    ("    <url>https://bob:hunter2xx@h/x</url>", "    <url>https://bob:****@h/x</url>"),
+    ("cassandra_install_url: https://u:p4ss@mirror/repo/", "cassandra_install_url: https://u:****@mirror/repo/"),
+    ("http://mirror/repo/ and user@host", "http://mirror/repo/ and user@host"),  # no password: as it is
+    ("x=https://bob:{{ cassandra_secret_env_bob_password }}@h", "x=https://bob:{{ cassandra_secret_env_bob_password }}@h"),
+])
+def test_a_urls_password_is_masked(line, shown):
+    # (rc9 audit) the userinfo password of a URL (an HTTP proxy, an appender's URL), in a diff or a report
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import mask
+    assert mask(line) == shown

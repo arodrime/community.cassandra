@@ -468,6 +468,22 @@ def test_your_copy_of_the_nodes_file(tmp_path, name, tail, yours_tail):
     assert self_check(files, layout, extra_files=[yours])["differences"] == []
 
 
+def test_a_proxys_password_goes_to_secrets_yml():
+    # (rc9 audit) export http_proxy=http://bob:pw@proxy:3128 at the end of cassandra-env.sh: the password in
+    # secrets.yml, the snippet refers to it
+    files = with_env("export http_proxy=http://bob:hunter2xx@proxy:3128")
+    out, n = imported(files)
+    assert out["vars"][ENV_END] == ["export http_proxy=http://bob:{{ cassandra_secret_env_bob_password }}@proxy:3128"]
+    layout = cassandra_inventory_layout([n], "c")
+    files_out = written(layout)
+    assert files_out["group_vars/c/cassandra-env.sh.snippet.j2"]["content"] == \
+        "export http_proxy=http://bob:{{ cassandra_secret_env_bob_password }}@proxy:3128\n"
+    assert yaml.safe_load(files_out["group_vars/c/secrets.yml"]["content"]) == {
+        "cassandra_secret_env_bob_password": "hunter2xx"}
+    assert not [f for f in files_out.values() if not f["secret"] and "hunter2xx" in f["content"]]
+    assert self_check(files, layout)["differences"] == []
+
+
 def test_a_reimport_drops_and_names_the_variables_no_longer_read():
     # (rc9 audit) an inventory a release candidate imported: its own main.yml is written again without them; in a
     # file of yours, the report names them (the playbooks refuse them)

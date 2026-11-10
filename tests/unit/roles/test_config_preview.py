@@ -591,3 +591,10 @@ def test_a_password_file_s_path_is_shown(tmp_path):
     live = 'JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.password.file=/etc/cassandra/jmxremote.password"\n'
     out = preview(tmp_path, "cassandra-env.sh", live, live.replace("/etc/cassandra/", "/etc/other/"))
     assert "+JVM_OPTS=\"$JVM_OPTS -Dcom.sun.management.jmxremote.password.file=/etc/other/jmxremote.password\"" in out, out
+
+
+def test_a_urls_password_masked_in_the_diff(tmp_path):
+    # (rc9 audit) an HTTP proxy's password in cassandra-env.sh, as apply_config's diff shows it
+    shown = changed_lines(preview(tmp_path, "cassandra-env.sh", "export http_proxy=http://bob:OLDLEAK@proxy:3128\n",
+                                  "export http_proxy=http://bob:NEWLEAK@proxy:3128\n"))
+    assert shown == ["-export http_proxy=http://bob:****@proxy:3128", "+export http_proxy=http://bob:****@proxy:3128"]

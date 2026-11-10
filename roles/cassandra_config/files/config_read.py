@@ -352,6 +352,10 @@ def still_on(state, line):
     return False
 
 
+# the password of a URL's userinfo (scheme://user:password@host), cassandra_output.USERINFO's
+USERINFO = re.compile(r"([A-Za-z][\w+.-]*://([^\s/:@'\"<>{}]+):)([^\s/@'\"<>{}]+)(@)")
+
+
 def masked(lines):
     """The lines of a file (their line ends kept), secrets masked."""
     out, state, continued = [], None, False
@@ -369,9 +373,10 @@ def masked(lines):
                 out.append((text[:indent] + "****" if text.strip() else text) + end)
                 state, continued = after, odd_backslashes(text)
                 continue
+        text = USERINFO.sub(r"\1****\4", text)
         if not SECRET_WORD.search(text):
             state = None
-            out.append(line)
+            out.append(text + end)
             continue
         state, continued = goes_on(text), odd_backslashes(text)
         out.append(SECRET.sub(r"\1****", SECRET_ELEMENT.sub(r"\1****", text)) + end)

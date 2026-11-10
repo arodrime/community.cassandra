@@ -281,3 +281,19 @@ def test_the_audit_file_against_its_default_resolved_with_the_nodes_values(serie
     variables, snippets, check = imported(files, series)
     assert variables.get("cassandra_log_audit_file") is written
     assert check["differences"] == []
+
+
+@pytest.mark.parametrize("series", SERIES)
+def test_a_urls_password_in_an_appender_goes_to_secrets_yml(series):
+    # (rc9 audit) <url>https://bob:pw@h/x</url> in an appender of its own: the password in secrets.yml, the snippet
+    # refers to it; never in clear in a file of the inventory written in clear
+    def edit(text):
+        block = ('  <appender name="H" class="ch.qos.logback.core.ConsoleAppender">\n'
+                 "    <url>https://bob:hunter2xx@h/x</url>\n  </appender>")
+        return root_ref("H")(text.replace("  <root level", block + "\n  <root level", 1))
+    inventory, layout = import_node(node_files(series, edit), series)
+    clear = "\n".join(f["content"] for f in inventory if not f["secret"])
+    assert "hunter2xx" not in clear and "hunter2xx" not in layout["report"]
+    assert "<url>https://bob:{{ cassandra_secret_logback_appenders_bob_password }}@h/x</url>" in clear
+    variables, snippets, check = imported(node_files(series, edit), series)
+    assert check["differences"] == []

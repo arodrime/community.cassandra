@@ -1974,6 +1974,10 @@ def _take_secrets(values, kind, taken, file_name, own=()):
                 break
             spans.append((re.sub(r"[\"'\s:=]+$", "", m.group(1)), span))
             pos = span[1]
+        if spans is not None:  # a URL's password (scheme://user:password@host), named by its user
+            spans = sorted(spans + [("%s_password" % m.group(2), (m.start(3), m.end(3))) for m in out.USERINFO.finditer(line)
+                                    if not [s for s in spans if s[1][0] < m.end(3) and m.start(3) < s[1][1]]],
+                           key=lambda s: s[1][0])
         if not spans:
             lines.append(line)
             continue
@@ -1984,7 +1988,7 @@ def _take_secrets(values, kind, taken, file_name, own=()):
             parts += [line[pos:start], "{{ %s }}" % var]
             pos = end
         new = "".join(parts) + line[pos:]
-        if new in own or _secret_words(SECRET_MOVED.sub("", new)):
+        if new in own or _secret_words(SECRET_MOVED_REF.sub("", SECRET_MOVED.sub("", new))):
             lines.append(line)
             continue
         taken.update(mine)
@@ -2008,7 +2012,7 @@ def _list_secret(key, value, trusted=()):
     the lists of SECRET_LISTS a secret word too; the secrets the import moved out of its own lines (trusted)
     left out."""
     if key in dict(SECRET_LISTS) and isinstance(value, list):
-        return any(_secret_words(SECRET_MOVED.sub("", v) if v in trusted else v) for v in value if isinstance(v, str))
+        return any(_secret_words(SECRET_MOVED_REF.sub("", SECRET_MOVED.sub("", v)) if v in trusted else v) for v in value if isinstance(v, str))
     return _secret(key, value)
 
 
