@@ -1,10 +1,14 @@
 name: CI_roles
 on:
   pull_request:
+  push:
+    branches: ['fork/**']  # the fork's work branches, before a pull request
+  workflow_dispatch:  # manual full run
 
-# A new push to a pull request cancels its runs still going
+# A new push cancels the runs of the same branch still going, a pull request's and a push's alike
+# (a pull request's head repository: two forks' branches of the same name stay apart)
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:

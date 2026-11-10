@@ -1,15 +1,18 @@
 name: CI
 on:
   pull_request:
+  push:
+    branches: ['fork/**']  # the fork's work branches, before a pull request
   workflow_dispatch:  # manual full run
 
 env:
   setup_cassandra_version_file: "./tests/integration/targets/setup_cassandra/defaults/main.yml"
   setup_ccm_version_file: "./tests/integration/targets/setup_cassandra_cluster_manager/defaults/main.yml"
 
-# A new push to a pull request cancels its runs still going
+# A new push cancels the runs of the same branch still going, a pull request's and a push's alike
+# (a pull request's head repository: two forks' branches of the same name stay apart)
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -251,7 +254,7 @@ jobs:
       run:
         working-directory: ansible_collections/community/cassandra
     strategy:
-      max-parallel: 3  # fork: leave runners to the other repos of the account
+      max-parallel: 2  # fork: with CI_roles, at most 15 runners at once (sanity 2, units 1, 40x 3, 41x 2, 50x 2, roles 3)
       fail-fast: false
       matrix:
         versions:
@@ -323,7 +326,7 @@ jobs:
       run:
         working-directory: ansible_collections/community/cassandra
     strategy:
-      max-parallel: 3  # fork: leave runners to the other repos of the account
+      max-parallel: 2  # fork: with CI_roles, at most 15 runners at once (sanity 2, units 1, 40x 3, 41x 2, 50x 2, roles 3)
       fail-fast: false
       matrix:
         versions:
