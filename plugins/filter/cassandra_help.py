@@ -110,6 +110,8 @@ OPERATIONS = [
      "options": [("-e cassandra_target_nodes=DEAD_NODE_ADDRESS", "the dead node: address, host ID or name", None),
                  ("-e cassandra_dead_node_method=removenode_force", "removenode_force/assassinate", "removenode"),
                  ("-e cassandra_dead_node_new_removal=true", "restarts a removal stuck elsewhere", "false"),
+                 ("-e cassandra_dead_node_assassinate_confirm=DEAD_NODE_ADDRESS",
+                  "assassinate without a terminal: its address", ""),
                  ("-e cassandra_decommission_force=true", "allows fewer nodes than replicas", "false")],
      "example": CHECK},
     {"name": "reset_node", "theme": "nodes", "guide": "Resetting a node",

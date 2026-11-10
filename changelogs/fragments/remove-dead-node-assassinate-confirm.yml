@@ -1,0 +1,2 @@
+minor_changes:
+  - remove_dead_node playbook - ``cassandra_dead_node_method=assassinate`` asks a second question of its own after the plan's, the operator types the dead node's address; without a terminal, ``cassandra_dead_node_assassinate_confirm`` gives it (``cassandra_operation_confirm=false`` does not skip it).

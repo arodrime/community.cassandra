@@ -112,6 +112,10 @@ Set in the inventory, as any role variable.
   refused unless the group is the whole ring; the operator types the cluster
   name, or gives it in `cassandra_create_cluster_reset_confirm` for a run
   without a terminal. Default `false`.
+* `cassandra_dead_node_assassinate_confirm`: `remove_dead_node` with
+  `assassinate` asks a second question after the plan's, the operator types
+  the dead node's address; a run without a terminal gives it here
+  (`cassandra_operation_confirm: false` does not skip it). Default `""`.
 * `cassandra_new_node_min_free_gb`: minimum free space (GiB) on each data
   directory's file system of a new host. Default `0` (none).
 * `cassandra_new_node_allow_kept_setup`: the checks refuse a new host with no

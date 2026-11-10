@@ -120,6 +120,14 @@ argument_specs:
         description:
           - The cluster name, for C(cassandra_create_cluster_reset) without a terminal (it replaces typing
             it). Any other value is refused.
+      cassandra_dead_node_assassinate_confirm:
+        type: str
+        default: ""
+        description:
+          - The address of the dead node, for C(remove_dead_node) with C(cassandra_dead_node_method=assassinate)
+            without a terminal (it replaces typing it; its host ID or inventory name as given in
+            C(cassandra_target_nodes) too). Any other value is refused. C(cassandra_operation_confirm=false) does not
+            skip this second question.
       cassandra_token_auto:
         type: raw
         default: false

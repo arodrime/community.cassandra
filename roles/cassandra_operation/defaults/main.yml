@@ -89,6 +89,9 @@ cassandra_node_state: present
 # name, or gives it in cassandra_create_cluster_reset_confirm (no terminal)
 cassandra_create_cluster_reset: false
 cassandra_create_cluster_reset_confirm: ""
+# remove_dead_node with assassinate: a second question, the operator types
+# the dead node's address, or gives it here (no terminal)
+cassandra_dead_node_assassinate_confirm: ""
 # One token per node (cassandra_num_tokens: 1): where add_node puts the new
 # nodes without cassandra_initial_token (false: refused; bisect; balanced;
 # true: shows both, asks), the replication factor the shares assume when no
@@ -218,7 +221,8 @@ cassandra_upgrade_sstables_timeout: 86400
 # cassandra_allow_unknown_variables=true lets it through)
 _cassandra_playbook_variables: [cassandra_hosts, cassandra_target_nodes, cassandra_target_dc, cassandra_target_rack,
                                 cassandra_upgrade_phase, cassandra_rolling_resume, cassandra_rolling_mode, cassandra_dead_node_method,
-                                cassandra_dead_node_new_removal, cassandra_replace_address,
+                                cassandra_dead_node_new_removal, cassandra_dead_node_assassinate_confirm,
+                                cassandra_replace_address,
                                 cassandra_rebuild_source_dc, cassandra_cleanup_mode, cassandra_status_raw,
                                 cassandra_allow_down_nodes, cassandra_allow_mixed_versions, cassandra_accept_default_identity,
                                 cassandra_add_node_reset, cassandra_replace_node_reset, cassandra_create_cluster_reset,

@@ -682,7 +682,9 @@ coordinating the removal, or else on one whose ring shows it ``DL`` (dead, being
 node is leaving or being removed, since ``nodetool removenode force`` finishes every removal or decommission that node
 knows of; it checks the node is gone afterwards, and does nothing when the node is already out of the ring.
 ``assassinate`` removes it from gossip without streaming, only when ``removenode`` can't finish: data it held alone is
-lost, repair afterwards. Run again after an interruption, ``removenode`` waits for the removal of that node still in
+lost, repair afterwards. After the plan's question, ``assassinate`` asks a second one of its own: type the dead node's
+address. Without a terminal, give it in ``-e cassandra_dead_node_assassinate_confirm=<its address>``;
+``cassandra_operation_confirm: false`` does not skip this question. Run again after an interruption, ``removenode`` waits for the removal of that node still in
 progress (the token the coordinator removes tells whose), whichever node of the run coordinates it, and does nothing
 when the node is already out of the ring. A node being removed (its gossip state, or ``DL``) that no node of the run
 is removing (a removal coordinated from outside ``cassandra_hosts``, or whose coordinator restarted) is refused rather

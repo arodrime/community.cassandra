@@ -169,6 +169,8 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
                                               removenode_force/assassinate (default: removenode)
         -e cassandra_dead_node_new_removal=true
                                               restarts a removal stuck elsewhere (default: false)
+        -e cassandra_dead_node_assassinate_confirm=DEAD_NODE_ADDRESS
+                                              assassinate without a terminal: its address
         -e cassandra_decommission_force=true  allows fewer nodes than replicas (default: false)
       Example (changing nothing):
       $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.remove_dead_node \\

@@ -7,7 +7,8 @@
 # its data is rebuilt from the other replicas (removenode). Take the dead host
 # out of the inventory (or mark it absent) first.
 #
-# One screen, one question. Re-running after an interruption waits for the
+# One screen, one question (assassinate: a second one, the node's address
+# typed). Re-running after an interruption waits for the
 # removal still in progress; a node already out of the ring is done.
 #
 # Options and defaults: ansible-playbook community.cassandra.help -e help_topic=remove_dead_node
@@ -428,6 +429,50 @@
         - _method == 'removenode_force'
         - not _nothing_to_do | bool
         - not ansible_check_mode  # removenode force did not run
+
+    # assassinate loses for good the data only the dead node held: a question of its own after
+    # the plan's, the operator types its address (or its host ID or name as given); without a
+    # terminal, -e cassandra_dead_node_assassinate_confirm=<its address> gives it.
+    # --check asks nothing.
+    - name: Confirm the assassinate
+      when:
+        - _method == 'assassinate'
+        - not ansible_check_mode
+      vars:
+        _given: "{{ cassandra_dead_node_assassinate_confirm | default('') | string | trim }}"
+        _accepted: "{{ [_dead_address, _dead_target] | unique }}"
+      block:
+        - name: The address given is the dead node's
+          ansible.builtin.assert:
+            that:
+              - _given == '' or _given in _accepted
+              - _given != '' or cassandra_operation_confirm | bool
+            fail_msg: >-
+              {{ ('cassandra_dead_node_assassinate_confirm is ' ~ _given ~ ', not the address of ' ~ _dead_address) if _given
+                 else 'cassandra_operation_confirm is false: give the address of the node to assassinate instead' }}
+              (-e cassandra_dead_node_assassinate_confirm={{ _dead_address }}): nothing was changed.
+            quiet: true
+          run_once: true
+
+        - name: Type the address of the node to assassinate
+          ansible.builtin.pause:
+            prompt: |-
+              DATA LOSS: assassinate takes {{ _dead_address }} out of gossip without streaming: the data only it held is LOST for good.
+              Type its address to go on, anything else stops
+          register: _cassandra_assassinate_typed
+          run_once: true
+          when: _given == ''
+          vars:
+            cassandra_output_gap: true  # a rule above the question (ops callback)
+
+        - name: The address typed is the dead node's
+          ansible.builtin.assert:
+            that: _given != '' or _cassandra_assassinate_typed.user_input | default('') | trim in _accepted
+            fail_msg: >-
+              Not the address of {{ _dead_address }}, stopped, nothing changed (without a terminal:
+              -e cassandra_dead_node_assassinate_confirm={{ _dead_address }}).
+            quiet: true
+          run_once: true
 
     - name: Remove it (assassinate, from {{ ansible_play_hosts[0] }})
       community.cassandra.cassandra_assassinate:
