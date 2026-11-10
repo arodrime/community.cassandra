@@ -86,6 +86,11 @@ def run_typed(tmp_path, answer):
     return os.waitstatus_to_exitcode(status), out.decode("utf-8", "replace")
 
 
+def assert_not_ready_to_copy(out):
+    """A refusal never prints the answer to copy: typing the address is the confirmation."""
+    assert "assassinate_confirm=10.0.0.14" not in out and "assassinate_confirm=node4" not in out, out
+
+
 @pytest.mark.parametrize("given", [ADDRESS, "node4", " 10.0.0.14 "])
 def test_given_without_a_terminal_goes_on(tmp_path, given):
     rc, out = run(tmp_path, cassandra_operation_confirm=False, cassandra_dead_node_assassinate_confirm=given)
@@ -96,8 +101,9 @@ def test_given_without_a_terminal_goes_on(tmp_path, given):
 def test_another_address_given_stops(tmp_path):
     rc, out = run(tmp_path, cassandra_operation_confirm=False, cassandra_dead_node_assassinate_confirm="10.0.0.15")
     assert rc != 0 and "WENT ON" not in out, out
-    assert "cassandra_dead_node_assassinate_confirm is 10.0.0.15, not the address of 10.0.0.14" in out, out
-    assert "-e cassandra_dead_node_assassinate_confirm=10.0.0.14): nothing was changed." in out, out
+    assert "cassandra_dead_node_assassinate_confirm is 10.0.0.15, not the address of the dead node" in out, out
+    assert "(-e \"cassandra_dead_node_assassinate_confirm=<the dead node's address>\"): nothing was changed." in out, out
+    assert_not_ready_to_copy(out)
 
 
 def test_first_question_skipped_does_not_skip_this_one(tmp_path):
@@ -105,12 +111,14 @@ def test_first_question_skipped_does_not_skip_this_one(tmp_path):
     rc, out = run(tmp_path, cassandra_operation_confirm=False)
     assert rc != 0 and "WENT ON" not in out, out
     assert "cassandra_operation_confirm is false: give the address of the node to assassinate instead" in out, out
+    assert_not_ready_to_copy(out)
 
 
 def test_no_terminal_to_type_it_on_stops(tmp_path):
     rc, out = run(tmp_path)
     assert rc != 0 and "WENT ON" not in out, out
-    assert "Not the address of 10.0.0.14, stopped, nothing changed (without a terminal:" in out, out
+    assert "Not the address of the dead node, stopped, nothing changed (without a terminal:" in out, out
+    assert_not_ready_to_copy(out)
 
 
 @pytest.mark.parametrize("answer, goes_on", [(ADDRESS, True), ("node4", True), ("yes", False), ("", False)])

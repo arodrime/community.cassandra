@@ -448,9 +448,9 @@
               - _given == '' or _given in _accepted
               - _given != '' or cassandra_operation_confirm | bool
             fail_msg: >-
-              {{ ('cassandra_dead_node_assassinate_confirm is ' ~ _given ~ ', not the address of ' ~ _dead_address) if _given
+              {{ ('cassandra_dead_node_assassinate_confirm is ' ~ _given ~ ', not the address of the dead node') if _given
                  else 'cassandra_operation_confirm is false: give the address of the node to assassinate instead' }}
-              (-e cassandra_dead_node_assassinate_confirm={{ _dead_address }}): nothing was changed.
+              (-e "cassandra_dead_node_assassinate_confirm=<the dead node's address>"): nothing was changed.
             quiet: true
           run_once: true
 
@@ -469,8 +469,8 @@
           ansible.builtin.assert:
             that: _given != '' or _cassandra_assassinate_typed.user_input | default('') | trim in _accepted
             fail_msg: >-
-              Not the address of {{ _dead_address }}, stopped, nothing changed (without a terminal:
-              -e cassandra_dead_node_assassinate_confirm={{ _dead_address }}).
+              Not the address of the dead node, stopped, nothing changed (without a terminal:
+              -e "cassandra_dead_node_assassinate_confirm=<the dead node's address>").
             quiet: true
           run_once: true
 
