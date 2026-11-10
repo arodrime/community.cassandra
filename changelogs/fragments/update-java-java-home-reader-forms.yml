@@ -1,0 +1,4 @@
+bugfixes:
+  - >-
+    update_java - the ``JAVA_HOME`` reader also takes single-quoted ``Environment=`` values of a drop-in, a one-line
+    ``if`` with a comment after it or a ``fi;``, and files with CRLF line ends.

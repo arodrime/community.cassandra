@@ -481,6 +481,10 @@ def test_read_one_line_forms_and_quoted_values(tmp_path, awk):
     assert first("[ -d /nowhere ] && JAVA_HOME=/nowhere\n", name="f") == "/opt/new"
     # a quoted value with spaces, kept whole
     assert first("JAVA_HOME='/opt/my java'\n", name="g") == "/opt/my java"
+    # a one-line if with a comment after it, a fi;, a file with CRLF line ends
+    assert first('if [ -z "$JAVA_HOME" ]; then JAVA_HOME=/opt/fb; fi  # set by ops\n', given="", name="h") == "/opt/fb"
+    assert first('if [ -z "$JAVA_HOME" ]; then JAVA_HOME=/opt/fb; fi;\n', given="", name="i") == "/opt/fb"
+    assert first("JAVA_HOME=/opt/crlf\r\n", name="j") == "/opt/crlf"
 
 
 def test_read_cassandra_include_and_quoted_values(tmp_path):
@@ -494,6 +498,13 @@ def test_read_cassandra_include_and_quoted_values(tmp_path):
     other.mkdir()
     lines = _read(other, "", unit_kept=True, unit_env='"JVM_OPTS=-Da=1 JAVA_HOME=/not/it" JAVA_HOME=/opt/unit')
     assert lines[0] == "/opt/unit"
+    # a drop-in with single quotes, as systemd takes them
+    single = tmp_path / "single"
+    single.mkdir()
+    drop_in = str(single / "cassandra.service.d" / "java.conf")
+    lines = _read(single, "/opt/new", show={"DropInPaths": drop_in},
+                  files={drop_in: "[Service]\nEnvironment='JVM_OPTS=-Da=1 JAVA_HOME=/not/it' 'JAVA_HOME=/opt/my jdk'\n"})
+    assert lines[0] == "/opt/my jdk"
 
 
 def test_the_progress_dir_resolved_as_progress_yml_does(tmp_path, monkeypatch):

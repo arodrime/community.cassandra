@@ -108,11 +108,12 @@
               if (q == "\042" || q == "\047") { v = substr(rest, 2); return substr(v, 1, index(v, q) - 1) }
               sub(/[; \t].*$/, "", rest); return rest
             }
+            { sub(/\r$/, "") }
             /^[ \t]*#/ { next }
             {
               line = $0; kind = ""
               for (i = 1; i <= n; i++) if (stack[i] == "fallback") kind = "fallback"; else if (kind == "" && stack[i] == "cond") kind = "cond"
-              one = (line ~ /^[ \t]*if[ \t].*;[ \t]*then[ \t]/ && line ~ /;[ \t]*fi[ \t]*$/)
+              one = (line ~ /^[ \t]*if[ \t].*;[ \t]*then[ \t]/ && line ~ /;[ \t]*fi[ \t;]*(#.*)?$/)
               if (line ~ /^[ \t]*if[ \t]/ && !one) { stack[++n] = (line ~ /JAVA_HOME/) ? "fallback" : "cond"; next }
               if (line ~ /^[ \t]*fi([ \t;]|$)/) { if (n > 0) n--; next }
               p = index(line, "JAVA_HOME=")
@@ -139,16 +140,17 @@
         $(assignments "$1")
         EOF_ASSIGNMENTS
         }
-        # an Environment= value of systemd (systemctl show, a unit line): NAME=value words, a quoted one kept whole
-        # (backslash escapes undone), one per line
+        # an Environment= value of systemd (systemctl show, a unit line): NAME=value words, one quoted (double or
+        # single quotes) kept whole (backslash escapes undone outside single quotes), one per line
         env_lines() {
           awk '{
-            s = $0; t = ""; q = 0
+            s = $0; t = ""; q = ""
             for (i = 1; i <= length(s); i++) {
               c = substr(s, i, 1)
-              if (c == "\134" && i < length(s)) { i++; t = t substr(s, i, 1); continue }
-              if (c == "\042") { q = !q; continue }
-              if ((c == " " || c == "\t") && !q) { if (t != "") print t; t = ""; continue }
+              if (q != "\047" && c == "\134" && i < length(s)) { i++; t = t substr(s, i, 1); continue }
+              if (q == "" && (c == "\042" || c == "\047")) { q = c; continue }
+              if (q != "" && c == q) { q = ""; continue }
+              if ((c == " " || c == "\t") && q == "") { if (t != "") print t; t = ""; continue }
               t = t c
             }
             if (t != "") print t
