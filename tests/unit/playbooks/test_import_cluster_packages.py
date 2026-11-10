@@ -116,11 +116,12 @@ def test_written_in_the_host_vars():
 def test_role_installs_the_inventory_packages():
     # no OS vars file overrides cassandra_packages any more
     role = os.path.join(ROOT, "roles", "cassandra_install")
-    assert not os.path.exists(os.path.join(role, "vars"))
+    assert os.listdir(os.path.join(role, "vars")) == ["main.yml"]  # its private variables only
     with open(os.path.join(role, "tasks", "install.yml")) as f:
         assert "include_vars" not in f.read()
-    with open(os.path.join(role, "defaults", "main.yml")) as f:
+    with open(os.path.join(role, "vars", "main.yml")) as f:
         defaults = yaml.safe_load(f)
+    assert [k for k in defaults if not k.startswith("_")] == []
     for packages, tools, expected in [("cassandra", True, ["cassandra", "cassandra-tools"]),
                                       (["cassandra"], False, ["cassandra"]),
                                       (["cassandra", "cassandra-tools"], True, ["cassandra", "cassandra-tools"])]:

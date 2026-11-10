@@ -1,0 +1,29 @@
+---
+# Private to the collection (a leading underscore): computed from the public settings in
+# defaults/main.yml or fixed. Role vars, so an inventory or play variable of the same name does not
+# override them by accident.
+
+_cassandra_packages: >-
+  {{ ([cassandra_packages] | flatten + (['cassandra-tools'] if cassandra_install_tools | bool else [])) | unique }}
+
+_cassandra_java_tarball_entry: "{{ cassandra_java_tarballs | community.cassandra.cassandra_java_tarball(cassandra_java_version) }}"
+
+_cassandra_java_tarball_from_entry: >-
+  {{ cassandra_java_tarball != '' and cassandra_java_tarball == _cassandra_java_tarball_entry.url | default('') }}
+
+# an entry with a username or a password has its own credentials, both
+_cassandra_java_tarball_own_credentials: >-
+  {{ _cassandra_java_tarball_from_entry
+     and (_cassandra_java_tarball_entry.username is defined or _cassandra_java_tarball_entry.password is defined) }}
+
+_cassandra_java_tarball_on_mirror: "{{ cassandra_java_tarball | community.cassandra.cassandra_same_origin(cassandra_install_url) }}"
+
+_cassandra_java_tarball_name: "{{ cassandra_java_tarball | urlsplit('path') | basename }}"
+
+_cassandra_java_home: >-
+  {{ cassandra_java_home | regex_replace('/+$', '') if cassandra_java_home != ''
+     else ((cassandra_java_tarball_dir | regex_replace('/+$', '')) ~ '/'
+           ~ (_cassandra_java_tarball_name | regex_replace('[.](tar[.]gz|tgz|tar)$', '')))
+     if cassandra_java_tarball != '' else '' }}
+
+_cassandra_java_link: "{{ cassandra_java_link | regex_replace('(?<=.)/+$', '') }}"

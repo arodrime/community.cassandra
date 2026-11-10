@@ -520,7 +520,7 @@ def test_nothing_of_the_exporter_nothing_to_do():
 def test_the_exporter_record_is_in_the_record_of_the_config_cassandra_started_with():
     variables = load("roles", "cassandra_config", "vars", "main.yml")
     assert "jmx_prometheus.at_start" in variables["_cassandra_config_snapshot_files"]
-    assert "jmx_prometheus.at_start" in load("roles", "cassandra_operation", "defaults", "main.yml")["_cassandra_service_config_files"]
+    assert "jmx_prometheus.at_start" in load("roles", "cassandra_operation", "vars", "main.yml")["_cassandra_service_config_files"]
 
 
 def pending(files, record, ctime=50.0, fact="cassandra_config_newer_files"):

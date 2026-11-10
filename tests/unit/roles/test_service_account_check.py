@@ -19,6 +19,8 @@ with open(os.path.join(ROLE, "tasks", "account_check.yml")) as f:
     TASKS = yaml.safe_load(f)
 with open(os.path.join(ROLE, "defaults", "main.yml")) as f:
     DEFAULTS = yaml.safe_load(f)
+with open(os.path.join(ROLE, "vars", "main.yml")) as f:  # the private ones
+    DEFAULTS.update(yaml.safe_load(f))
 
 CHECK = next(t for t in TASKS if t["name"] == "Refuse an account that could not read the config")["ansible.builtin.assert"]
 VARS = next(t for t in TASKS if t["name"] == "Refuse an account that could not read the config")["vars"]

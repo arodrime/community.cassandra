@@ -42,6 +42,8 @@ def test_marked_before_the_start_removed_once_joined():
     assert remove["ansible.builtin.file"] == {"path": "{{ _cassandra_service_bootstrap_mark }}", "state": "absent"}
     with open(DEFAULTS, encoding="utf-8") as f:
         defaults = yaml.safe_load(f)
+    with open(os.path.join(TASKS, "..", "vars", "main.yml"), encoding="utf-8") as f:
+        defaults.update(yaml.safe_load(f))
     assert defaults["_cassandra_service_bootstrap_mark"] == "/var/lib/cassandra/.ansible_bootstrap_started"
     assert defaults["cassandra_add_node_reset"] == "auto"
 

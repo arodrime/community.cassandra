@@ -30,7 +30,7 @@ def load(name):
 
 
 def defaults():
-    with open(os.path.join(TOP, "roles", "cassandra_operation", "defaults", "main.yml"), encoding="utf-8") as f:
+    with open(os.path.join(TOP, "roles", "cassandra_operation", "vars", "main.yml"), encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 

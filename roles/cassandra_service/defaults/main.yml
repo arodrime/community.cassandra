@@ -59,47 +59,9 @@ cassandra_stream_check_interval: 30  # seconds
 cassandra_stream_early_check_interval: 10  # seconds
 cassandra_stream_early_time: 300  # seconds
 
-# checks per include level of the progress waits (wait_loop.yml): Ansible nests
-# every include one level deeper and fails past ~150 levels. A round covers 6
-# hours of the check interval, 24 to 720 checks: at 30 s (the default) or more,
-# a month in 150 rounds; a shorter interval, less (10 s: 2 hours a round). By
-# groups of _cassandra_wait_size: once it ends, what is left of the round is
-# skipped by at most that many checks and groups, one task each
-_cassandra_stream_round_size: "{{ [24, [720, 21600 // ([1, cassandra_stream_check_interval | int] | max)] | min] | max }}"
-_cassandra_wait_size: "{{ ((_cassandra_stream_round_size | int) ** 0.5) | round(0, 'ceil') | int }}"
-
 # JMX access for the nodetool calls (the drain on stop, the wait for NORMAL)
 # (cassandra_jmx_port comes from cassandra_config). Credentials only when
 # remote JMX with authentication is on; prefer the password file.
 cassandra_jmx_username: ""
 cassandra_jmx_password: ""
 cassandra_jmx_password_file: ""
-# Owner, group and mode cassandra_config gives the config files (its defaults
-# when it is not in the play), for the check that the account can read them
-_cassandra_service_config_perms:
-  owner: "{{ cassandra_config_user | default('root') }}"
-  group: "{{ cassandra_config_group | default(cassandra_group) }}"
-  mode: "{{ cassandra_config_mode | default('0640') }}"
-  public_mode: "{{ cassandra_config_public_mode | default('0644') }}"
-  files: "{{ cassandra_config_file_permissions | default({}) }}"
-  user: "{{ cassandra_service_user }}"
-  user_group: "{{ cassandra_service_group }}"
-# Where the config Cassandra runs with is (no trailing slash: the record below keys
-# its files by their normalised path), and the checksums it started with. Read by
-# cassandra_operation's task files too (include_role: tasks_from: defaults.yml)
-_cassandra_service_conf_dir: >-
-  {{ cassandra_conf_dir | default('/etc/cassandra/conf' if ansible_facts['os_family'] == 'RedHat' else '/etc/cassandra')
-     | trim | regex_replace('/+$', '') }}
-_cassandra_service_config_snapshot: /var/lib/cassandra/.ansible_config_at_start.json
-# Where a node that started once keeps its system keyspace (system/): a data dir
-# (cassandra_data_file_directories, cassandra_data_dir) or, 4.1+, local_system_data_file_directory
-_cassandra_service_system_dirs: >-
-  {{ ([cassandra_data_file_directories | default([])] | flatten
-      + [(cassandra_extra_settings | default({})).local_system_data_file_directory | default('', true) | string,
-         cassandra_data_dir | default('/var/lib/cassandra/data')])
-     | select | map('regex_replace', '(?<=.)/+$', '') | unique | list }}
-_cassandra_service_jmx: >-
-  {{ {'port': cassandra_jmx_port | default(7199) | int}
-     | combine({'username': cassandra_jmx_username} if cassandra_jmx_username else {})
-     | combine({'password_file': cassandra_jmx_password_file} if cassandra_jmx_password_file
-               else ({'password': cassandra_jmx_password} if cassandra_jmx_password else {})) }}

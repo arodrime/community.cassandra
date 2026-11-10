@@ -171,9 +171,11 @@ def test_each_post_restart_check_alone(tmp_path):
 
 def test_the_java_it_moves_to_with_the_role_defaults_only():
     # no cassandra_java_version in the inventory (import_cluster writes none for the series' default): the role's
-    with open(os.path.join(os.path.dirname(PLAYBOOK), "..", "roles", "cassandra_install", "defaults", "main.yml"),
-              encoding="utf-8") as f:
-        defaults = yaml.safe_load(f)
+    defaults = {}
+    for kind in ("defaults", "vars"):
+        with open(os.path.join(os.path.dirname(PLAYBOOK), "..", "roles", "cassandra_install", kind, "main.yml"),
+                  encoding="utf-8") as f:
+            defaults.update(yaml.safe_load(f))
     note = ACTION_TASKS[0]["ansible.builtin.set_fact"]
     variables = dict(defaults, cassandra_version="41x", ansible_facts={"os_family": "RedHat", "distribution": "Rocky"},
                      **ACTION_TASKS[0]["vars"])

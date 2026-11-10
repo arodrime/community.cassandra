@@ -1,5 +1,5 @@
 ---
-# No-op: lets playbooks load this role's defaults
+# No-op: lets playbooks load this role's defaults and vars
 # (include_role: tasks_from: defaults.yml, public: true)
 # (a debug, not meta: noop, which warns when the include has a when)
 - name: Load cassandra_service defaults

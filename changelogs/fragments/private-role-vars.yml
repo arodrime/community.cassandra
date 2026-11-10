@@ -1,0 +1,2 @@
+trivial:
+  - cassandra_install, cassandra_operation, cassandra_service - the private variables (``_cassandra_*``) are role vars (``vars/main.yml``) instead of defaults, so an inventory or play variable of the same name no longer overrides them.

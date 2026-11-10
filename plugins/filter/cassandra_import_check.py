@@ -276,7 +276,8 @@ def _defaults():
     ctx = {}
     for role in ("cassandra_config", "cassandra_service", "cassandra_operation", "cassandra_medusa"):
         ctx.update(role_file(role) or {})
-    ctx.update(role_file("cassandra_config", "vars") or {})
+    for role in ("cassandra_config", "cassandra_service", "cassandra_operation"):  # their private variables
+        ctx.update(role_file(role, "vars") or {})
     return ctx
 
 

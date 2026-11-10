@@ -46,7 +46,7 @@ def render(template, **variables):
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
-DIRS = load("roles", "cassandra_service", "defaults", "main.yml")["_cassandra_service_system_dirs"]
+DIRS = load("roles", "cassandra_service", "vars", "main.yml")["_cassandra_service_system_dirs"]
 
 
 @pytest.mark.parametrize("variables, dirs", [

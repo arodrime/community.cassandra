@@ -80,7 +80,7 @@ def pending(snapshot, files, jvm=None, recorded=("42", 100.5)):
 
 
 def test_only_the_files_cassandra_config_writes(tmp_path):
-    patterns = yaml.safe_load(open(os.path.join(ROLE, "defaults", "main.yml")))["_cassandra_service_config_files"]
+    patterns = yaml.safe_load(open(os.path.join(ROLE, "vars", "main.yml")))["_cassandra_service_config_files"]
     read = task("config_pending.yml", "Checksum the config files and the unit, read the checksums recorded at the last start")
     assert "+ _cassandra_service_config_files" in read["ansible.builtin.command"]["argv"]
     names = ["cassandra.yaml", "cassandra-env.sh", "jvm-server.options", "jvm11-server.options", "jvm17-server.options",

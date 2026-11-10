@@ -25,7 +25,7 @@ except ImportError:
         return template
 
 ROLES = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles")
-# defined once, in cassandra_service's defaults, loaded by the task files that read them (Cassandra's account:
+# defined once, in cassandra_service's defaults or vars, loaded by the task files that read them (Cassandra's account:
 # exporter_check.yml)
 LOADED = ("_cassandra_service_conf_dir", "_cassandra_service_config_snapshot", "cassandra_service_user")
 
@@ -35,7 +35,12 @@ def load(role, kind="defaults"):
         return yaml.safe_load(f)
 
 
-SERVICE, OPERATION = load("cassandra_service"), load("cassandra_operation")
+def loaded(role):
+    """What a load of the role gives: its defaults, and its private variables (vars/main.yml)."""
+    return dict(load(role), **load(role, "vars"))
+
+
+SERVICE, OPERATION = loaded("cassandra_service"), loaded("cassandra_operation")
 
 
 def test_the_shared_defaults_are_equal():

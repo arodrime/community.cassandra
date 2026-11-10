@@ -124,7 +124,7 @@ def test_the_cql_read_asks_the_node_itself_and_says_when_it_could_not():
     assert cql["cqlsh_host"] == "{{ _cassandra_storage_mode_cql_host }}"
     assert cql["cqlsh_port"] == "{{ cassandra_native_transport_port | default(9042) }}"
     assert cql["ssl"] == "{{ _cassandra_storage_mode_cql_ssl }}"
-    defaults = _load("roles/cassandra_operation/defaults/main.yml")
+    defaults = _load("roles/cassandra_operation/vars/main.yml")
     for variables, host, ssl in (({}, "127.0.0.1", False),
                                  ({"cassandra_rpc_address": "10.0.0.5", "cassandra_listen_address": "10.0.0.6"}, "10.0.0.5", False),
                                  ({"cassandra_rpc_address": "0.0.0.0", "cassandra_listen_address": "10.0.0.6"}, "10.0.0.6", False),

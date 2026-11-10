@@ -18,8 +18,6 @@ COLLECTIONS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."
 PLAYBOOK = """
 - hosts: all
   gather_facts: false
-  vars:
-    _cassandra_wait_size: %(size)d
   tasks:
     - name: Start
       ansible.builtin.set_fact:
@@ -31,6 +29,7 @@ PLAYBOOK = """
         name: community.cassandra.cassandra_service
         tasks_from: wait_loop.yml
       vars:
+        _cassandra_wait_size: %(size)d  # a task var: above the role's vars/main.yml (a play var is not)
         _cassandra_wait_check: "%(check)s"
         _cassandra_wait_going: "{{ _status == 'going' }}"
 
@@ -99,10 +98,11 @@ def test_rounds_of_6_hours_up_to_720_checks(interval, round_size, group):
     except ImportError:  # ansible-core < 2.19
         def trust_as_template(value):
             return value
-    # the collection's own file, next to this test (its path as given: the same under a symlinked checkout)
-    defaults = os.path.join(TOP, "roles", "cassandra_service", "defaults", "main.yml")
-    with open(defaults) as f:
-        variables = yaml.safe_load(f)
+    # the collection's own files, next to this test (their path as given: the same under a symlinked checkout)
+    variables = {}
+    for kind in ("defaults", "vars"):  # the public settings, then the private ones computed from them
+        with open(os.path.join(TOP, "roles", "cassandra_service", kind, "main.yml")) as f:
+            variables.update(yaml.safe_load(f))
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
     variables["cassandra_stream_check_interval"] = interval
     templar = Templar(loader=DataLoader(), variables=variables)

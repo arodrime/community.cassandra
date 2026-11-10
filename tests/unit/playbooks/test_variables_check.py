@@ -38,7 +38,7 @@ def render(template, **variables):
 
 TASKS = load("roles", "cassandra_operation", "tasks", "variables_check.yml")
 CHECK = TASKS[0]
-PLAYBOOK_VARIABLES = load("roles", "cassandra_operation", "defaults", "main.yml")["_cassandra_playbook_variables"]
+PLAYBOOK_VARIABLES = load("roles", "cassandra_operation", "vars", "main.yml")["_cassandra_playbook_variables"]
 PLAYBOOKS = sorted(name[:-4] for name in os.listdir(os.path.join(TOP, "playbooks")) if name.endswith(".yml"))
 
 

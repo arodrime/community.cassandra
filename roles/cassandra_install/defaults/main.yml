@@ -14,8 +14,6 @@ cassandra_install_jemalloc: true
 # so routine upgrades leave them. import_cluster sets false for the nodes
 # where they are not held (a hold already there is never removed).
 cassandra_package_hold: true
-_cassandra_packages: >-
-  {{ ([cassandra_packages] | flatten + (['cassandra-tools'] if cassandra_install_tools | bool else [])) | unique }}
 
 # Cassandra series, same values as cassandra_repository ("40x", "41x", "50x").
 cassandra_version: "50x"
@@ -87,29 +85,14 @@ cassandra_java_tarball_username: >-
 cassandra_java_tarball_password: >-
   {{ _cassandra_java_tarball_entry.password | default('') if _cassandra_java_tarball_own_credentials
      else cassandra_install_password if _cassandra_java_tarball_on_mirror else '' }}
-_cassandra_java_tarball_entry: "{{ cassandra_java_tarballs | community.cassandra.cassandra_java_tarball(cassandra_java_version) }}"
-_cassandra_java_tarball_from_entry: >-
-  {{ cassandra_java_tarball != '' and cassandra_java_tarball == _cassandra_java_tarball_entry.url | default('') }}
-# an entry with a username or a password has its own credentials, both
-_cassandra_java_tarball_own_credentials: >-
-  {{ _cassandra_java_tarball_from_entry
-     and (_cassandra_java_tarball_entry.username is defined or _cassandra_java_tarball_entry.password is defined) }}
-_cassandra_java_tarball_on_mirror: "{{ cassandra_java_tarball | community.cassandra.cassandra_same_origin(cassandra_install_url) }}"
-_cassandra_java_tarball_name: "{{ cassandra_java_tarball | urlsplit('path') | basename }}"
 # Java already unpacked there by other means (not a package): made the system
 # java, and the Cassandra packages installed without a Java package, as with
 # a tarball. import_cluster sets it for nodes whose Java is not a package.
 cassandra_java_home: ""
-_cassandra_java_home: >-
-  {{ cassandra_java_home | regex_replace('/+$', '') if cassandra_java_home != ''
-     else ((cassandra_java_tarball_dir | regex_replace('/+$', '')) ~ '/'
-           ~ (_cassandra_java_tarball_name | regex_replace('[.](tar[.]gz|tgz|tar)$', '')))
-     if cassandra_java_tarball != '' else '' }}
 # A symlink kept pointing at the Java in use (the tarball's directory, or
 # cassandra_java_home), e.g. /opt/java/current for a JAVA_HOME or a PATH that
 # names it: made, or moved, by the role and update_java. "" (default): none.
 cassandra_java_link: ""
-_cassandra_java_link: "{{ cassandra_java_link | regex_replace('(?<=.)/+$', '') }}"
 # false: Java is installed by other means (an internal package, the system
 # image); the Cassandra package still needs a Java package that satisfies its
 # dependency

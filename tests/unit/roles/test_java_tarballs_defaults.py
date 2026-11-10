@@ -32,8 +32,10 @@ MIRROR = {
 
 
 def templar_with(**inventory):
-    with open(DEFAULTS) as f:
-        variables = yaml.safe_load(f)
+    variables = {}
+    for path in (DEFAULTS, os.path.join(os.path.dirname(DEFAULTS), "..", "vars", "main.yml")):  # and the private ones
+        with open(path) as f:
+            variables.update(yaml.safe_load(f))
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
     variables.update({
         "ansible_facts": {"os_family": "Debian", "distribution": "Ubuntu"},
