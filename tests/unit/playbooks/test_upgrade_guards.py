@@ -16,6 +16,7 @@ import yaml
 
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
+from ansible_collections.community.cassandra.plugins.filter.cassandra_storage_mode import cassandra_storage_mode_nodes
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 
 try:  # ansible-core 2.19+ renders trusted templates only
@@ -199,6 +200,10 @@ def _modes(modes, from_series="41x", copies=()):
 RUN = {"inventory": ["/inv/a.yml"], "default_inventory": "", "hosts": "", "cwd": "/inv"}
 
 
+def nodes_of(hostvars):
+    return cassandra_storage_mode_nodes(list(hostvars.values()))
+
+
 def _sstables(*modes, **kwargs):
     check = task("Upgrade checks", "The sstables are rewritten once storage_compatibility_mode is NONE")
     extra = kwargs.pop("extra", {})  # node -> lines added to what it read
@@ -207,7 +212,9 @@ def _sstables(*modes, **kwargs):
     for node, lines in extra.items():
         hostvars[node]["cassandra_storage_mode_read"]["stdout_lines"] += lines
     for node, mode in cql.items():
-        hostvars[node]["cassandra_storage_mode_cql"] = {"rc": 0, "out": " value\n-------\n %s\n\n(1 rows)\n" % mode}
+        # as cassandra_cqlsh returns it (transform: raw)
+        hostvars[node]["cassandra_storage_mode_cql"] = {"changed": True, "msg": "transform type was raw",
+                                                        "transformed_output": "value\n-------------\n %s\n\n(1 rows)" % mode}
     variables = dict(check["vars"], hostvars=hostvars, ansible_play_hosts=list(hostvars), cassandra_package_version="5.0.9",
                      _cassandra_run_command_args=RUN)
     return (render("{{ %s }}" % check["ansible.builtin.assert"]["that"], **variables),
@@ -259,6 +266,14 @@ def test_sstables_refuse_a_mode_not_read_unknown_or_a_restart_pending():
     assert msg[0] == "On n1, Cassandra runs UPGRADING, before the NONE its cassandra.yaml has. Nothing was done."
     assert msg[-1] == ("WAY OUT  Restart n1, so it runs the mode its cassandra.yaml has: ansible-playbook -i a.yml"
                        " community.cassandra.rolling_restart --limit n1. Then run this phase again.")
+    # cqlsh failed (no cqlshlib, a login refused): not read
+    for failed in ({"failed": True, "msg": "module execution failed"}, {"skipped": True}):
+        hostvars = _modes([("NONE", "NONE", "NONE", True)])
+        hostvars["n1"]["cassandra_storage_mode_cql"] = failed
+        assert nodes_of(hostvars)[0]["running"] is None
+    # null (no such line in the cassandra.yaml it started with): CASSANDRA_4
+    ok, msg = _sstables(("NONE", "", "", True), cql={"n1": "null"})
+    assert msg[2].endswith("CASSANDRA_4")
     # read NONE over CQL: it runs its file's mode, nothing pending
     assert _sstables(("NONE", "NONE", "NONE", True), cql={"n1": "NONE"})[0] is True
     # it logged UPGRADING at its start, NONE written since: the restart too

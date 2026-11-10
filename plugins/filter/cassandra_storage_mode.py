@@ -52,15 +52,16 @@ def cassandra_storage_mode_from_4x(hostvars, target):
 
 
 def _live(cql):
-    """cassandra_storage_mode_cql (storage_mode_read.yml) -> the mode system_views.settings has, None when not read
-    (null: no such line in the cassandra.yaml it started with, CASSANDRA_4)."""
-    if not cql or cql.get("rc", 1) != 0:
+    """cassandra_storage_mode_cql (storage_mode_read.yml, cassandra_cqlsh's result: its transformed_output with
+    transform raw) -> the mode system_views.settings has, None when not read (null: no such line in the cassandra.yaml
+    it started with, CASSANDRA_4)."""
+    if not cql or cql.get("failed") or cql.get("skipped"):
         return None
-    rows = [line.strip() for line in str(cql.get("out") or "").splitlines()]
-    for row in rows:
+    for row in str(cql.get("transformed_output") or "").splitlines():
+        row = row.strip()
         if row in _ORDER:
             return row
-        if row == "null":
+        if row in ("null", "None"):
             return _UNSET
     return None
 
