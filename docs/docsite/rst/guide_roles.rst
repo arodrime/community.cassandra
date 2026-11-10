@@ -1367,7 +1367,13 @@ and named their udev rule otherwise; ``cassandra_data_disk_tuning: false``) and 
 the hold (``cassandra_install_tools``, ``cassandra_install_jemalloc``, ``cassandra_dsbulk_install``,
 ``cassandra_package_hold``); a dsbulk the role's way keeps its ``cassandra_dsbulk_version``. Remove a line to let the role take that part over,
 after a ``--check --diff``; a host rebuilt under the same name must lose them and ``cassandra_imported_host``
-(``add_node`` and ``replace_node`` refuse such a host with no Cassandra installed). The system java
+(``add_node`` and ``replace_node`` refuse such a host with no Cassandra installed). The import also runs
+``cqlsh --version`` on each node: where cqlsh does not start, a TO DO says so with its last error line. With the
+Apache rpm on EL9 (``No module named 'cqlshlib'``: the package installs cqlshlib for python 3.6 only), remove
+``cassandra_cqlsh_python_manage: false`` from those nodes' ``host_vars`` and run ``create_cluster``: ``cassandra_install``
+links the package's cqlshlib into the Python cqlsh runs with (python3.11 and a wrapper only when that Python is out of
+the range cqlsh supports), and starts or restarts nothing on a running cluster; cqlsh then starts for root and the other
+users. The system java
 (``/usr/bin/java``, the one ``cassandra_install`` sets, resolved through its links) is compared with the binary the
 running Cassandra uses, by their Java homes (RHEL's Java 8 ``jre/bin/java`` and ``bin/java`` are one JDK): a node
 where it is another Java gets ``cassandra_java_set_default: false``, in ``group_vars`` of the cluster when every node

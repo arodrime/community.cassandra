@@ -599,6 +599,12 @@
         grep -qs 'Managed by Ansible (community.cassandra.cassandra_linux)' /etc/security/limits.d/cassandra.conf \
           && echo "own_os=yes"
         grep -qs 'Managed by Ansible (cassandra_install)' /usr/local/bin/cqlsh /etc/profile.d/cqlsh.sh && echo "own_cqlsh=yes"
+        # cqlsh starts (its version, no connection; as the playbooks run it: /usr/local/bin first), else its last
+        # error line (e.g. a package cqlshlib for another Python)
+        for c in /usr/local/bin/cqlsh cqlsh; do command -v "$c" >/dev/null 2>&1 && break; c=; done
+        if [ -n "$c" ] && ! v=$(timeout 30 "$c" --version 2>&1); then
+          echo "cqlsh_error=$(echo "$v" | grep -v '^[[:space:]]*$' | tail -1 | cut -c1-200)"
+        fi
         rf=
         for f in /etc/yum.repos.d/cassandra-*.repo /etc/apt/sources.list.d/cassandra-*.sources /etc/apt/sources.list.d/cassandra-*.list; do
           [ -e "$f" ] && rf="$rf $f"
@@ -698,6 +704,8 @@
           {{ _kv.config | dirname if _kv.config is match('/')
              else ('/etc/cassandra/conf' if ansible_facts['os_family'] == 'RedHat' else '/etc/cassandra') }}
         import_cluster_log_dir: "{{ _kv.logdir | default('') }}"
+        # cqlsh does not start: its last error line
+        import_cluster_cqlsh_error: "{{ _kv.cqlsh_error | default('') }}"
         import_cluster_storage_dir: "{{ _kv.storagedir | default('') }}"
         import_cluster_conf_target: "{{ _kv.conftarget | default('') }}"
         import_cluster_account:
@@ -1469,6 +1477,21 @@
                       ['cassandra_cql_username', 'cassandra_cql_password'], _vault_secret | default('')) -%}
       {{ {'user': v.cassandra_cql_username | default('') | string, 'password': v.cassandra_cql_password | default('') | string} }}
     # what is left to do about it (TO DO)
+    # cqlsh does not start on some nodes (seen at the read): what makes it start
+    # cqlsh does not start on some nodes (seen at the read): what makes it start, when its error says why
+    _cqlsh_todo: >-
+      {%- set broken, lib = [], [] -%}
+      {%- for h in _nodes | default([]) | map(attribute='name') | map('string')
+                 if hostvars[h] is defined and hostvars[h].import_cluster_cqlsh_error | default('') -%}
+      {%-   set _ = broken.append(h) -%}
+      {%-   if hostvars[h].import_cluster_cqlsh_error is search("No module named '?cqlshlib") -%}{%- set _ = lib.append(h) -%}{%- endif -%}
+      {%- endfor -%}
+      {%- set errors = broken | map('extract', hostvars, 'import_cluster_cqlsh_error') | unique | list -%}
+      {{ ['cqlsh does not start on ' ~ broken | join(', ') ~ ' (cqlsh --version: ' ~ errors | join('; ') ~ ').'
+          ~ (' cassandra_install links the cqlshlib of the package into the Python cqlsh runs with (RedHat): remove'
+             ~ ' cassandra_cqlsh_python_manage: false from the host_vars of ' ~ lib | join(', ') ~ ' (this import wrote'
+             ~ ' it), then run create_cluster (it starts or restarts nothing on a running cluster).' if lib
+             else ' Check cqlsh there (cassandra_cqlsh_command gives the full path of another one).')] if broken else [] }}
     _cql_todo: >-
       {%- set c = cassandra_cql_login | default({}) -%}
       {%- set set_it = 'set cassandra_cql_username and cassandra_cql_password (the password vaulted) in group_vars/'
@@ -1533,7 +1556,7 @@
       hosts: "{{ _next_hosts }}"
       cwd: "{{ lookup('ansible.builtin.env', 'PWD') }}"
       allow_unread: "{{ import_cluster_allow_unread | default(false) | bool }}"
-      todo: "{{ _cql_todo }}"
+      todo: "{{ _cql_todo + _cqlsh_todo }}"
     _report: >-
       {{ _layout | community.cassandra.cassandra_import_report(_report_args.written, _report_args.report_file,
            _self_check | default({}), _self_check_ok | bool, secrets_clear=_report_args.secrets_clear,

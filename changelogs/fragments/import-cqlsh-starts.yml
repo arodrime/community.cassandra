@@ -1,0 +1,5 @@
+minor_changes:
+  - >-
+    import_cluster - each node's cqlsh is started (``cqlsh --version``) at the read; where it does not start, the
+    report's TO DO says so with its last error line and, for a cqlshlib the Python cannot import (the Apache rpm on
+    EL9), how to fix it (``cassandra_cqlsh_python_manage`` back to the role, then ``create_cluster``).
