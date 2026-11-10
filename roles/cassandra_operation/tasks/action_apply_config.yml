@@ -78,6 +78,7 @@
   vars:
     cassandra_config_confirm: false
     _cassandra_config_no_question: true  # the run's own question covered it, whatever -e cassandra_config_confirm says
+    _cassandra_config_no_newsize_warning: true  # said by the run's preview (Compare the config)
     cassandra_config_reload_seeds: false  # the restart loads them
     _cassandra_config_no_restart_warning: true
     # shown before the run was confirmed, and in its recap at the end

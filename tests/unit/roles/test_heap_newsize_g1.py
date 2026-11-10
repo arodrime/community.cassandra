@@ -51,3 +51,18 @@ def test_the_upgrade_preflight_lists_it():
     assert preview and preview[0]["ansible.builtin.include_role"]["name"] == "community.cassandra.cassandra_config"
     assert "_phase == 'preflight'" in str(preview[0]["when"])
     assert not [t for t in tasks if "cassandra_heap_newsize" in str(t.get("when", ""))]  # not said twice
+
+
+def test_said_once_a_run():
+    # apply_config and upgrade say it in their preview (Compare the config, the preflight's config preview): not
+    # again at each node's write
+    warn = _task("roles/cassandra_config/tasks/checks.yml", "Warn about a young generation size G1 ignores")
+    on = dict(cassandra_version="50x", cassandra_heap_newsize="128M", _cassandra_config_gcs=["G1"])
+    assert _when(warn, _cassandra_config_no_newsize_warning=True, **on) is False
+    for path, name in (("roles/cassandra_operation/tasks/action_apply_config.yml", "Write the config"),
+                       ("roles/cassandra_operation/tasks/action_upgrade.yml", "Write the target series' config")):
+        write = _task(path, name)
+        assert write["ansible.builtin.include_role"]["name"] == "community.cassandra.cassandra_config"
+        assert write["vars"]["_cassandra_config_no_newsize_warning"] is True
+    preview = _task("playbooks/apply_config.yml", "Compare the config")
+    assert "_cassandra_config_no_newsize_warning" not in preview["vars"] and "when" not in preview

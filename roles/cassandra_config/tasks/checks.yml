@@ -206,7 +206,8 @@
       together, or neither
 
 # 5.0 with G1: HEAP_NEWSIZE is written as given (import_cluster keeps one found), and Cassandra ignores it (its
-# cassandra-env.sh says so at each start): said, not refused
+# cassandra-env.sh says so at each start): said, not refused; once a run (apply_config and upgrade say it in their
+# preview, not again at each node's write)
 - name: Warn about a young generation size G1 ignores
   ansible.builtin.debug:
     msg: >-
@@ -219,6 +220,7 @@
     - cassandra_version == '50x'
     - cassandra_heap_newsize != ''
     - "'G1' in _cassandra_config_gcs"
+    - not _cassandra_config_no_newsize_warning | default(false) | bool
 
 # The exporter's agent makes the JVM exit when it cannot start (a jar, a config or an address it cannot use);
 # bin/cassandra splits the options file's lines on blanks
