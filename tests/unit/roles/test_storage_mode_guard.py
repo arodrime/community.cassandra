@@ -160,7 +160,6 @@ def test_the_cql_read_asks_the_node_itself_and_says_when_it_could_not():
     assert "not _cassandra_storage_mode_cql_said | default(false) | bool" in say["when"]
 
 
-
 def test_jump_on_evidence_only():
     # runs CASSANDRA_4 (logged or read over CQL), NONE to be written or in its file: two steps
     assert cassandra_storage_mode_jump(_host("UPGRADING", logged="CASSANDRA_4"), "NONE") == "CASSANDRA_4"
