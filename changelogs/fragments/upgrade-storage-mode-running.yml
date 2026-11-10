@@ -1,0 +1,8 @@
+bugfixes:
+  - >-
+    upgrade - the sstables phase first checks every node runs the target (else the rolling phase, as the way out). The
+    mode a node runs is its ``cassandra.yaml``'s when Cassandra started after that file last changed (else a restart
+    is pending, the way out restarts those nodes); the ``Node configuration`` line Cassandra logs at its start
+    confirms it when still there, never required (the log rolls over daily). On a 5.0 target the phase is refused
+    while a node is not at ``NONE``; a cluster that stays before ``NONE`` (a 5.0 patch upgrade) is told its sstables
+    keep the 4.x format, nothing to rewrite.

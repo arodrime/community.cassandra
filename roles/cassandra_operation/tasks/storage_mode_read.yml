@@ -1,14 +1,16 @@
 ---
-# 5.0: storage_compatibility_mode on this node, as its cassandra.yaml has it (what Cassandra reads at its next
-# start) and as the running Cassandra took it (the "Node configuration:[...]" line it logs at its start, the last
-# one of its system.log). cassandra_storage_mode_read.stdout_lines: yaml_read=yes|no, yaml=<value, "" without the
-# line>, running=<value> (none when it was not found: no Cassandra running, or that line rotated away).
-# Read-only, under --check too.
+# 5.0: storage_compatibility_mode on this node, as its cassandra.yaml has it (what Cassandra reads at its start), and
+# the one the running Cassandra runs: its cassandra.yaml's when the process started after the file was last changed
+# (both observed: /proc/<pid> start, the file's mtime), else a restart is pending. The "Node configuration:[...]" line
+# Cassandra logs at its start (the last one of its system.log) confirms it when it is there (gone once the log rolled
+# over); never required. cassandra_storage_mode_read.stdout_lines: yaml_read=yes|no, yaml=<value, "" without the
+# line>, pending=yes when the file is newer than the process, logged=<the logged mode> when found. Read-only, under
+# --check too.
 - name: Read storage_compatibility_mode in its cassandra.yaml and in the running Cassandra
   ansible.builtin.shell: |
     if [ -r "$F" ]; then
       echo "yaml_read=yes"
-      echo "yaml=$(sed -n 's/^storage_compatibility_mode:[[:space:]]*//p' "$F" | sed 's/[[:space:]]*#.*$//; s/[[:space:]]*$//' | tail -1)"
+      echo "yaml=$(sed -n 's/^storage_compatibility_mode:[ \t]*//p' "$F" | sed 's/[ \t]*#.*$//; s/[ \t]*$//' | tail -1)"
     else
       echo "yaml_read=no"
     fi
@@ -16,11 +18,19 @@
     for p in $(pgrep -x java); do
       tr '\0' '\n' < /proc/$p/cmdline 2>/dev/null | grep -qx org.apache.cassandra.service.CassandraDaemon && { pid=$p; break; }
     done
-    [ -n "$pid" ] || exit 0
+    [ -n "$pid" ] || { echo "running=no"; exit 0; }
+    echo "running=yes"
+    # its start in seconds since the epoch (field 22 of stat, the 20th after the command name, in clock ticks since
+    # boot), against the file's last change
+    ticks=$(sed 's/^.*) //' /proc/$pid/stat | awk '{print $20}')
+    start=$(awk -v n="$(date +%s)" -v u="$(cut -d' ' -f1 /proc/uptime)" -v t="$ticks" -v h="$(getconf CLK_TCK)" \
+      'BEGIN {printf "%d", n - u + t / h}')
+    mtime=$(stat -c %Y "$F" 2>/dev/null)
+    [ -n "$mtime" ] && [ "$mtime" -gt "$start" ] && echo "pending=yes"
     logdir=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's/^-Dcassandra[.]logdir=//p' | head -1)
     m=$(grep -a 'Node configuration:\[' "${logdir:-/var/log/cassandra}/system.log" 2>/dev/null | tail -1 \
         | sed -n 's/.*[[; ]storage_compatibility_mode=\([A-Z_0-9]*\).*/\1/p')
-    [ -z "$m" ] || echo "running=$m"
+    [ -z "$m" ] || echo "logged=$m"
     exit 0
   environment:
     F: "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}/cassandra.yaml"

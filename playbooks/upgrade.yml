@@ -188,7 +188,8 @@
           {{ (['nodetool version failed on ' ~ _failed | map(attribute='node') | join(', ') ~ '. Nothing was done.']
               + _rows
               + ['WAY OUT  ' ~ (_steps | first | default(''))] + _steps[1:] | map('regex_replace', '^', '  ') | list
-              + ['  then run this phase again (a node already upgraded is skipped):',
+              + ['  then run this phase again' ~ (' (a node already upgraded is skipped):' if _phase in ['canary', 'rolling']
+                                                  else ':'),
                  '  ' ~ 'upgrade' | community.cassandra.cassandra_command(extra=['-e cassandra_upgrade_phase=' ~ _phase],
                                                                          **_cassandra_run_command_args)]) | join(_nl) }}
         quiet: true
@@ -380,9 +381,33 @@
         - _phase in ['rolling', 'sstables']
         - cassandra_version == '50x'
 
-    # 5.0 coming from 4.x writes the 4.x sstable format until storage_compatibility_mode is NONE: rewriting them
-    # before is no upgrade. The mode in the inventory, in each node's cassandra.yaml and the one it runs, all NONE;
-    # one not read, or not a mode, is refused too
+    # The sstables are rewritten once every node runs the target: else the rolling phase first (no word on the
+    # storage mode while a node runs the former version)
+    - name: The rolling phase is finished
+      ansible.builtin.assert:
+        that: _left | length == 0
+        fail_msg: >-
+          {{ ['The rolling phase is not finished: ' ~ _left | join(', ') ~ ' ' ~ ('runs' if _left | length == 1 else 'run')
+              ~ ' another version than ' ~ cassandra_package_version ~ '. Nothing was done.',
+              'WAY OUT  run the rolling phase, then this phase again:',
+              '  ' ~ 'upgrade' | community.cassandra.cassandra_command(extra=['-e cassandra_upgrade_phase=rolling'],
+                                                                     **_cassandra_run_command_args)] | join(_nl) }}
+        quiet: true
+      run_once: true
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"
+        _left: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts if not hostvars[h].cassandra_upgrade_done | default(false) | bool -%}
+          {%-   set _ = out.append(h) -%}
+          {%- endfor -%}
+          {{ out }}
+      when: _phase == 'sstables'
+
+    # 5.0 writes the 4.x sstable format until storage_compatibility_mode is NONE: rewriting them before is no upgrade.
+    # The mode in the inventory, in each node's cassandra.yaml and the one it runs, all NONE; one not read, or not a
+    # mode, is refused too. A cluster that stays before NONE (a 5.0 patch upgrade) is told there is nothing to rewrite
     - name: Read storage_compatibility_mode on the nodes
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation
@@ -393,14 +418,17 @@
 
     - name: The sstables are rewritten once storage_compatibility_mode is NONE
       ansible.builtin.assert:
-        that: not _from_4x | bool or _behind | length == 0
+        that: _behind | length == 0
         fail_msg: >-
           {{ (['storage_compatibility_mode is not NONE on ' ~ _behind | map(attribute='node') | join(', ')
                ~ ', or not read. In a mode before NONE, 5.0 writes the sstables in the 4.x format: the sstables phase'
                ~ ' would rewrite them in it. Nothing was done.']
               + _behind | community.cassandra.cassandra_storage_mode_rows
-              + ['WAY OUT  ' ~ _behind | community.cassandra.cassandra_storage_mode_way_out ~ ' Then run this phase'
-                 ~ ' again.']) | join(_nl) }}
+              + ['WAY OUT  ' ~ _behind | community.cassandra.cassandra_storage_mode_way_out(
+                                     _from_4x, 'rolling_restart' | community.cassandra.cassandra_command(
+                                       limit=_behind | selectattr('pending') | map(attribute='node') | list,
+                                       **_cassandra_run_command_args))
+                 ~ (' Then run this phase again.' if _from_4x | bool else '')]) | join(_nl) }}
         quiet: true
       run_once: true
       vars:

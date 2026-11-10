@@ -25,8 +25,8 @@ def test_the_earliest_of_the_three():
 
 def test_not_read_unknown_pending():
     found = behind(("NONE", None, None))
-    assert found[0]["unread"] == ["its cassandra.yaml", "the running mode"] and found[0]["mode"] == "NONE"
-    assert "Where the mode was not read (n1)" in cassandra_storage_mode_way_out(found)
+    assert found[0]["unread"] == ["its cassandra.yaml", "the mode it runs"] and found[0]["mode"] == "NONE"
+    assert "On n1, neither its cassandra.yaml nor the mode it runs could be read" in cassandra_storage_mode_way_out(found)
     found = behind(("NONNE", "NONE", "NONE"))
     assert found[0]["unknown"] is True
     found = behind(("NONE", "NONE", "UPGRADING"))
@@ -37,21 +37,41 @@ def test_not_read_unknown_pending():
 
 
 def test_pending_alone_says_restart():
-    # every mode NONE but one node still runs UPGRADING... the step covers it; a written CASSANDRA_4 run as NONE
-    # cannot happen (NONE is the point of no return): the restart sentence is for a yaml behind its running mode
-    found = [dict(behind(("NONE", "NONE", "UPGRADING"))[0], mode="NONE")]
-    assert cassandra_storage_mode_way_out(found).startswith("Restart n1 (ansible-playbook community.cassandra.rolling_restart)")
+    # NONE written everywhere, the node runs UPGRADING (logged at its start): a restart, not the inventory
+    found = behind(("NONE", "NONE", "UPGRADING"))
+    assert cassandra_storage_mode_way_out(found, restart_command="ansible-playbook x --limit n1") == (
+        "Restart n1, so they run the mode their cassandra.yaml has: ansible-playbook x --limit n1.")
+    # pending, nothing logged (the log rolled over): the same
+    found = cassandra_storage_mode_behind([{"node": "n1", "inventory": "NONE", "yaml": "NONE", "running": None,
+                                            "pending": True}])
+    assert found[0]["running"] == "restart pending (its cassandra.yaml changed since its start)"
+    assert cassandra_storage_mode_way_out(found).startswith("Restart n1")
+
+
+def test_a_cluster_staying_before_none_has_nothing_to_rewrite():
+    found = behind(("CASSANDRA_4", "CASSANDRA_4", "CASSANDRA_4"))
+    assert cassandra_storage_mode_way_out(found, from_4x=False).startswith(
+        "SSTables keep the 4.x format while storage_compatibility_mode is not NONE: nothing to rewrite.")
 
 
 def test_nodes_from_their_variables():
-    hostvars = [{"inventory_hostname": "n1", "cassandra_storage_compatibility_mode": "NONE",
-                 "cassandra_storage_mode_read": {"stdout_lines": ["yaml_read=yes", "yaml=CASSANDRA_4", "running=UPGRADING"]}},
-                {"inventory_hostname": "n2", "cassandra_storage_mode_read": {"stdout_lines": ["yaml_read=no"]}},
-                {"inventory_hostname": "n3"}]
+    def read(*lines):
+        return {"stdout_lines": list(lines)}
+    hostvars = [
+        {"inventory_hostname": "n1", "cassandra_storage_compatibility_mode": "NONE",
+         "cassandra_storage_mode_read": read("yaml_read=yes", "yaml=NONE", "running=yes")},  # started after the change
+        {"inventory_hostname": "n2", "cassandra_storage_mode_read": read("yaml_read=yes", "yaml=NONE", "running=yes",
+                                                                         "pending=yes", "logged=UPGRADING")},
+        {"inventory_hostname": "n3", "cassandra_storage_mode_read": read("yaml_read=yes", "yaml=NONE", "running=yes",
+                                                                         "pending=yes")},
+        {"inventory_hostname": "n4", "cassandra_storage_mode_read": read("yaml_read=no", "running=no")},
+        {"inventory_hostname": "n5"}]
     assert cassandra_storage_mode_nodes(hostvars) == [
-        {"node": "n1", "inventory": "NONE", "yaml": "CASSANDRA_4", "running": "UPGRADING"},
-        {"node": "n2", "inventory": None, "yaml": None, "running": None},
-        {"node": "n3", "inventory": None, "yaml": None, "running": None}]
+        {"node": "n1", "inventory": "NONE", "yaml": "NONE", "running": "NONE", "pending": False, "stopped": False},
+        {"node": "n2", "inventory": None, "yaml": "NONE", "running": "UPGRADING", "pending": True, "stopped": False},
+        {"node": "n3", "inventory": None, "yaml": "NONE", "running": None, "pending": True, "stopped": False},
+        {"node": "n4", "inventory": None, "yaml": None, "running": None, "pending": False, "stopped": True},
+        {"node": "n5", "inventory": None, "yaml": None, "running": None, "pending": False, "stopped": False}]
 
 
 def test_from_4x():
