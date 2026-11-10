@@ -47,6 +47,7 @@ def test_the_upgrade_preflight_lists_it():
     assert "ansible.builtin.debug" in warn  # said, the upgrade goes on
     base = dict(_phase="preflight", cassandra_version="50x", cassandra_heap_newsize="800M", cassandra_jvm_gc="G1")
     assert _when(warn, **base) is True
-    assert _when(warn, **dict(base, cassandra_jvm_gc="CMS")) is False
-    assert _when(warn, **dict(base, cassandra_heap_newsize="")) is False
-    assert _when(warn, **dict(base, _phase="cleanup")) is False
+    for key, value in (("cassandra_jvm_gc", "CMS"), ("cassandra_heap_newsize", ""), ("_phase", "cleanup")):
+        other = dict(base)
+        other[key] = value
+        assert _when(warn, **other) is False, key
