@@ -2,5 +2,6 @@ minor_changes:
   - >-
     cassandra_config, upgrade - with 5.0 and G1, a ``cassandra_heap_newsize`` set (e.g. one of a 4.x on CMS) is now
     written as ``HEAP_NEWSIZE`` in ``cassandra-env.sh``, which Cassandra ignores with G1 (it logs that it was
-    erroneously set): ``apply_config``, ``site.yml`` and the upgrade preflight (its config preview) warn about it,
-    once a run (not again at each node's write); remove the variable unless the node runs so on purpose. Its first apply rewrites ``cassandra-env.sh`` and restarts the node.
+    erroneously set): ``apply_config`` (in its preview, not again at each node's write), ``site.yml`` and the
+    upgrade's preflight phase (its config preview; not its rolling phase) warn about it; remove the variable unless
+    the node runs so on purpose. Its first apply rewrites ``cassandra-env.sh`` and restarts the node.

@@ -264,12 +264,20 @@ def test_sstables_refuse_a_mode_not_read_unknown_or_a_restart_pending():
         "  n1    NONE       UPGRADING       NONE",
         "WAY OUT  Write the inventory's mode back to the cassandra.yaml of n1 (apply_config restarts it): ansible-playbook -i a.yml"
         " community.cassandra.apply_config --limit n1. Then run this phase again."]
-    # the same with nothing logged (its log rolled over): its cassandra.yaml changed since its start
+    # nothing logged (its log rolled over), its cassandra.yaml changed since its start: the mode it runs is not
+    # known (it may run the file's), so no write back: the step and the restart. The inventory jumped to NONE, the
+    # file at CASSANDRA_4: the step to UPGRADING first, never apply_config straight to NONE
+    ok, msg = _sstables(("NONE", "CASSANDRA_4", "CASSANDRA_4", True))
+    assert ok is False and "Write the inventory's mode back" not in "\n".join(msg)
+    assert "Now set cassandra_storage_compatibility_mode: UPGRADING in the inventory" in msg[-1]
+    assert "Restart n1, so it runs the mode its cassandra.yaml has" in msg[-1]
     ok, msg = _sstables(("NONE", "UPGRADING", "UPGRADING", True), **patch)
-    assert ok is False and msg[0] == "On n1, cassandra.yaml has UPGRADING, before the inventory's NONE. Nothing was done."
-    assert msg[2] == "  n1    NONE       UPGRADING       not logged (its cassandra.yaml changed after Cassandra started)"
-    assert msg[-1].startswith("WAY OUT  Write the inventory's mode back to the cassandra.yaml of n1 (apply_config restarts it): ")
-    assert "Restart" not in msg[-1] and "rolling_restart" not in msg[-1]
+    assert ok is False and "Write the inventory's mode back" not in msg[-1] and "Restart n1" in msg[-1]
+    # two steps back (CASSANDRA_4 where NONE was, NONE logged): apply_config refuses that move, by hand
+    ok, msg = _sstables(("NONE", "CASSANDRA_4", "NONE"), **patch)
+    assert ok is False and msg[-1] == (
+        "WAY OUT  On n1, set storage_compatibility_mode: NONE back in cassandra.yaml by hand (apply_config moves it"
+        " one step at a time, it refuses this one). Then run this phase again.")
     # a typo in the inventory: not taken as NONE
     ok, msg = _sstables(("NONNE", "NONE", "NONE"))
     assert ok is False and msg[2] == "  n1    NONNE (unknown)  NONE            NONE"
@@ -354,18 +362,13 @@ def test_the_storage_mode_read_script(tmp_path):
     proc = subprocess.Popen(["sleep", "30"])
     try:
         time.sleep(1.2)
+        logs = tmp_path / "log"
+        logs.mkdir()
+        assert "/var/log/cassandra" in script
         fake = script.replace("$(pgrep -x java)", str(proc.pid)).replace(
-            "grep -qx org.apache.cassandra.service.CassandraDaemon", "true")
+            "grep -qx org.apache.cassandra.service.CassandraDaemon", "true").replace("/var/log/cassandra", str(logs))
         out = run(None, fake)
         assert "running=yes" in out and not [x for x in out if x.split("=")[0] in ("pending", "future", "start_read")]
-        os.chmod(str(path), 0o640)  # metadata only (ctime moves, mtime not): not pending
-        assert not [x for x in run(None, fake) if x.split("=")[0] in ("pending", "future", "start_read")]
-        path.write_text("storage_compatibility_mode: NONE\n")  # written after it started
-        assert "pending=yes" in run(None, fake)
-        # the mode it logged at its start, when there, decides instead (against the file): no pending line
-        logged = fake.replace("tail -1 \\\n", "tail -1; echo x storage_compatibility_mode=NONE; } \\\n").replace(
-            "m=$(grep -a", "m=$({ grep -a")
-        assert logged != fake and "logged=NONE" in run(None, logged) and "pending=yes" not in run(None, logged)
         # the record of the config it started with (config_snapshot.yml), of this JVM: by content
         with open("/proc/%d/stat" % proc.pid) as f:
             ticks = int(f.read().rsplit(")", 1)[1].split()[19])
@@ -379,15 +382,32 @@ def test_the_storage_mode_read_script(tmp_path):
                                           "/etc/systemd/system/cassandra.service": "0" * 40,
                                           "_jvm": dict(jvm, pid=pid)}, indent=4, sort_keys=True))
             return fake.replace('"$R"', '"%s"' % record)
-        assert "pending=yes" not in run(None, with_record(b"storage_compatibility_mode: NONE\n"))  # same content
+        none = b"storage_compatibility_mode: NONE\n"
+        os.chmod(str(path), 0o640)  # metadata only (ctime moves, mtime not)
+        # with the record of this JVM: by content, not pending
+        assert not [x for x in run(None, with_record(none)) if x.split("=")[0] in ("pending", "future", "start_read")]
+        # no record, nothing logged: by mtime and ctime, pending (a restart clears it)
+        assert "pending=yes" in run(None, fake)
+        # the mode it logged at its start (its system.log written since): decides instead, no pending line
+        (logs / "system.log").write_text("INFO Node configuration:[a=1; storage_compatibility_mode=NONE; z=2]\n")
+        out = run(None, fake)
+        assert "logged=NONE" in out and "pending=yes" not in out
+        # a system.log not written since this JVM started (an earlier start, another log): not taken
+        old = time.time() - 86400
+        os.utime(str(logs / "system.log"), (old, old))
+        out = run(None, fake)
+        assert not [x for x in out if x.startswith("logged=")] and "pending=yes" in out
+        path.write_text("storage_compatibility_mode: NONE\n")  # written after it started
+        assert "pending=yes" in run(None, fake)
+        assert "pending=yes" not in run(None, with_record(none))  # same content
         assert "pending=yes" in run(None, with_record(b"storage_compatibility_mode: UPGRADING\n"))  # another
-        # a file copied in with an older time (cp -p): by content, pending
-        path.write_text("storage_compatibility_mode: NONE\n")
-        os.utime(str(path), (time.time() - 86400, time.time() - 86400))
-        assert "pending=yes" not in run(None, fake)  # no record: by its mtime, not seen
+        # a file copied in with an older mtime (cp -p, mv, rsync -a, tar x): its ctime is new, pending with or
+        # without the record
+        os.utime(str(path), (old, old))
+        assert "pending=yes" in run(None, fake)
         assert "pending=yes" in run(None, with_record(b"storage_compatibility_mode: UPGRADING\n"))
-        # a record of another JVM: as none (by the mtime)
-        assert "pending=yes" not in run(None, with_record(b"storage_compatibility_mode: UPGRADING\n", pid="1"))
+        # a record of another JVM: as none (by mtime and ctime)
+        assert "pending=yes" in run(None, with_record(none, pid="1"))
         os.utime(str(path), (time.time() + 3600, time.time() + 3600))  # a time after now (a clock set back)
         out = run(None, fake)
         assert "future=yes" in out and "pending=yes" not in out

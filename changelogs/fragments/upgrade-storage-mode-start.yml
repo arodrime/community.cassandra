@@ -1,12 +1,13 @@
 bugfixes:
   - >-
-    upgrade sstables - the mode the running Cassandra runs is the one it logged at its start when its log has it,
-    else its ``cassandra.yaml``'s unless the file changed since that start: by content against the record of the
-    config it started with (the record of that JVM), else by the file's mtime against the start read from the boot
-    time and the process's own start (a ``chmod``, ``chown`` or relabel is no change). A start not read, or after
-    now, refuses (it is never taken as "no restart pending"); a ``cassandra.yaml`` with a time after now (a clock set
-    back) is said as such. A cluster in the middle of its move to ``NONE`` is told its next step too, and a restart
-    pending is always said. Each way out ends with what to do: a file time after now, the clock set right, then the
-    file touched and the node restarted; no Cassandra process, start it; a ``cassandra.yaml`` edited back to a mode
-    before the inventory's and the running one, the inventory's mode written back (``apply_config``), never a restart
-    into that earlier mode; then run this phase again.
+    upgrade sstables - the mode the running Cassandra runs is the one it logged at its start when its system.log has
+    it and was written since that start, else its ``cassandra.yaml``'s unless the file changed since that start: by
+    content against the record of the config it started with (the record of that JVM: a ``chmod``, ``chown`` or
+    relabel is no change), else by the later of the file's mtime and ctime against the start read from the boot time
+    and the process's own start. A start not read, or after now, refuses (it is never taken as "no restart
+    pending"); a ``cassandra.yaml`` with a time after now (a clock set back) is said as such. A cluster in the middle
+    of its move to ``NONE`` is told its next step too, and a restart pending is always said. Each way out ends with
+    what to do: a file time after now, the clock set right, then the file touched and the node restarted; no
+    Cassandra process, start it; a ``cassandra.yaml`` edited back to a mode before the inventory's and the logged
+    one, the inventory's mode written back (``apply_config``, or by hand two steps back), never a restart into that
+    earlier mode; then run this phase again.

@@ -1,9 +1,9 @@
 ---
 # 5.0: storage_compatibility_mode on this node, as its cassandra.yaml has it (what Cassandra reads at its start), and
 # the one the running Cassandra runs: the one it logged at its start ("Node configuration:[...]", the last one of its
-# system.log) when it is there (gone once the log rolled over), else its cassandra.yaml's unless the file changed
-# since the process started (by content against the record of the config it started with, else by the file mtime
-# against /proc/<pid>). cassandra_storage_mode_read.stdout_lines: yaml_read=yes|no, yaml=<value, "" without the line>,
+# system.log, written since that start) when it is there (gone once the log rolled over), else its cassandra.yaml's
+# unless the file changed since the process started (by content against the record of the config it started with,
+# else by the file mtime and ctime against /proc/<pid>). cassandra_storage_mode_read.stdout_lines: yaml_read=yes|no, yaml=<value, "" without the line>,
 # logged=<the logged mode> when found, pending=yes when the file changed since its start and nothing was logged.
 # file=<its path>. Read-only, under --check too. start_read=no: its start or the file time not read, after-now: its
 # start reads as after now; future=yes: the file has a time after now.
@@ -28,10 +28,6 @@
     done
     [ -n "$pid" ] || { echo "running=no"; exit 0; }
     echo "running=yes"
-    logdir=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's/^-Dcassandra[.]logdir=//p' | head -1)
-    m=$(grep -a 'Node configuration:\[' "${logdir:-/var/log/cassandra}/system.log" 2>/dev/null | tail -1 \
-        | sed -n 's/.*[[; ]storage_compatibility_mode=\([A-Z_0-9]*\).*/\1/p')
-    [ -z "$m" ] || echo "logged=$m"
     # its start in seconds since the epoch: the boot time (btime of /proc/stat) and its start in clock ticks since
     # boot (field 22 of stat, the 20th after the command name). Not known: start_read=no; after now (a boot time a
     # virtual machine got wrong): start_read=after-now; both refused, never taken as not pending. A file time after
@@ -41,7 +37,8 @@
     hz=$(getconf CLK_TCK 2>/dev/null); [ -n "$hz" ] || hz=100
     start=
     [ -n "$ticks" ] && [ -n "$btime" ] && start=$(awk -v b="$btime" -v t="$ticks" -v h="$hz" 'BEGIN {printf "%d", b + t / h}')
-    mtime=$(stat -L -c '%Y' "$F" 2>/dev/null)
+    set -- $(stat -L -c '%Y %Z' "$F" 2>/dev/null)
+    mtime=${1:-} ctime=${2:-}
     now=$(date +%s)
     if [ -z "$start" ] || [ -z "$mtime" ]; then
       echo "start_read=no"
@@ -50,15 +47,27 @@
       echo "start_read=after-now"
       exit 0
     fi
+    # the mode it logged at its start: the last "Node configuration" line of its system.log, taken only when that
+    # log was written since this JVM started (else the line may be of an earlier start, or of another log)
+    log="$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's/^-Dcassandra[.]logdir=//p' | head -1)"
+    log="${log:-/var/log/cassandra}/system.log"
+    m=
+    lt=$(stat -c '%Y' "$log" 2>/dev/null)
+    if [ -n "$lt" ] && [ "$lt" -ge "$start" ]; then
+      m=$(grep -a 'Node configuration:\[' "$log" 2>/dev/null | tail -1 \
+          | sed -n 's/.*[[; ]storage_compatibility_mode=\([A-Z_0-9]*\).*/\1/p')
+    fi
+    [ -z "$m" ] || echo "logged=$m"
     if [ "$mtime" -gt "$now" ]; then
       echo "future=yes"
       exit 0
     fi
     # Changed since that start, by content when the record of the config it started with (config_snapshot.yml of
     # cassandra_service) is the record of this JVM (its pid, its start within 2 seconds) and has the file: its
-    # checksum then; else by the time of the last write of the content (mtime: not ctime, which a chmod, a chown or
-    # a relabel moves too). A change is pending only when the mode it logged at that start is not there to tell
-    # (with it, the logged mode against the file decides)
+    # checksum then (a chmod, a chown or a relabel is no change). Else by the later of its mtime and ctime (a file
+    # moved or copied in with its old mtime has a new ctime; a chmod then reads as a change too: a restart clears
+    # it). A change is pending only when the mode it logged at that start is not there to tell (with it, the logged
+    # mode against the file decides)
     rpid= rstart= rsum=
     if [ -r "$R" ]; then
       rpid=$(sed -n 's/^ *"pid": *"*\([0-9]*\)"*,*$/\1/p' "$R" | head -1)
@@ -69,7 +78,7 @@
     if [ "$rpid" = "$pid" ] && [ -n "$rsum" ] && [ -n "$rstart" ] \
         && awk -v a="$rstart" -v b="$start" 'BEGIN {d = a - b; exit !(d < 2 && d > -2)}'; then
       [ "$(sha1sum < "$F" 2>/dev/null | cut -c1-40)" = "$rsum" ] || changed=yes
-    elif [ "$mtime" -gt "$start" ]; then
+    elif [ "$mtime" -gt "$start" ] || [ "${ctime:-0}" -gt "$start" ]; then
       changed=yes
     fi
     [ -z "$changed" ] || [ -n "$m" ] || echo "pending=yes"
