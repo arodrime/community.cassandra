@@ -587,6 +587,22 @@ def test_schema_disagreement_is_a_warning_while_an_upgrade_mixes_versions():
         "schema disagreement: nodetool error: boom"]
 
 
+def test_schema_disagreement_read_with_failed_when_false():
+    # the play reads cassandra_schema with failed_when: false, which clears failed: agreed says it
+    ring = [node("10.0.0.1")]
+    msg = "The cluster has not reached consensus on the schema: 2 versions, a on 10.0.0.1; b on 10.0.0.2"
+    differ = {"failed": False, "failed_when_result": False, "agreed": False, "msg": msg, "schema_status": {"a": [], "b": []}}
+    assert problems([view("n1", *ring)], expected=1, schema=differ) == ["schema disagreement: " + msg]
+    agreed = {"failed": False, "agreed": True, "msg": "The cluster has reached schema consensus", "schema_status": {"a": []}}
+    assert problems([view("n1", *ring)], expected=1, schema=agreed) == []
+    # a module that died without a result of its own: said too
+    died = {"failed": False, "failed_when_result": False, "msg": "MODULE FAILURE"}
+    assert problems([view("n1", *ring)], expected=1, schema=died) == ["schema disagreement: MODULE FAILURE"]
+    # skipped, or the peer unreachable (its own finding): no schema problem
+    assert problems([view("n1", *ring)], expected=1, schema={"skipped": True, "msg": "x"}) == []
+    assert problems([view("n1", *ring)], expected=1, schema={"unreachable": True, "msg": "ssh: no route"}) == []
+
+
 def test_report_settings_to_review_after_the_nodes_state():
     # the findings of cassandra_suspicious_settings (two lines each): their own block, last, no problem
     settings = ["heap 256M (cassandra_heap_size) on n1: too small, Cassandra needs 2G to 31G (under 32G)",

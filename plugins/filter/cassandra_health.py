@@ -115,7 +115,10 @@ def cassandra_health_findings(views, expected, node, gossip=None, binary=None, n
                           "text": "nodetool netstats failed on %s: %s" % (node, _error(netstats))})
         elif netstats["streaming"]:
             found.append({"kind": "streams", "on": node, "text": "streams in progress on %s (nodetool netstats)" % node})
-    if schema is not None and schema.get("failed"):
+    # cassandra_schema's agreed: the play reads it with failed_when false, which clears failed
+    if schema is not None and not schema.get("unreachable") and (
+            schema.get("failed") or schema.get("agreed") is False
+            or ("agreed" not in schema and "schema_status" not in schema and bool(schema.get("msg")) and not schema.get("skipped"))):
         msg = schema.get("msg", "")
         if mixed_versions and not msg.startswith("nodetool error"):
             found.append({"kind": "warning", "what": "schema", "msg": msg,

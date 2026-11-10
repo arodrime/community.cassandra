@@ -69,7 +69,7 @@ def port():
     server.close()
 
 
-def run(tmp_path, playbook, down=True, *args):
+def run(tmp_path, playbook, down=True, *args, **answers_given):
     answers = tmp_path / "nodetool"
     answers.mkdir(exist_ok=True)
     (answers / "version.txt").write_text("ReleaseVersion: 4.1.5\n")
@@ -77,7 +77,7 @@ def run(tmp_path, playbook, down=True, *args):
     (answers / "statusbinary.txt").write_text("running\n")
     with open(os.path.join(FIXTURES, "nodetool_netstats_normal.txt")) as f:
         (answers / "netstats.txt").write_text(f.read())
-    (answers / "describecluster.txt").write_text(DESCRIBE)
+    (answers / "describecluster.txt").write_text(answers_given.get("describecluster", DESCRIBE))
     (answers / "status.txt").write_text(STATUS % ("D" if down else "U"))
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -172,3 +172,24 @@ def test_health_check_healthy(tmp_path, port):
     assert rc == 0, output
     assert ruled(output) == [CLUSTER, "", "====", "", "HEALTHY  my_cluster  3 nodes  3 UN, schema agreed, no streams, ports open",
                              "", "===="]
+
+
+def test_health_check_a_schema_disagreement(tmp_path, port):
+    # describecluster of a real 4.1 cluster whose node2 missed a schema change: two versions, a problem
+    with open(os.path.join(FIXTURES, "nodetool_describecluster_41_disagreement.txt")) as f:
+        disagreement = f.read()
+    rc, output = run(tmp_path, "health_check", False, "-e", "cassandra_storage_port=%d" % port,
+                     "-e", "cassandra_native_transport_port=%d" % port, "-e", "cassandra_clock_check=false",
+                     "-e", "_cassandra_health_schema_interval=0", describecluster=disagreement)
+    assert rc != 0, output
+    assert ruled(output) == [
+        CLUSTER,
+        "",
+        "====",
+        "",
+        "NOT HEALTHY  my_cluster  3 nodes checked, 1 problem",
+        "  schema:  disagreement: The cluster has not reached consensus on the schema: 2 versions,"
+        " 4d51f0a3-0298-3f7b-8fe6-b50ea5158af7 on 172.19.0.2; 54e17321-3f2e-37ca-9b08-d91ba7bdd369 on 172.19.0.3",
+        "",
+        "====",
+    ]

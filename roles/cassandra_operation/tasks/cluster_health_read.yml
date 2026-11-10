@@ -68,8 +68,10 @@
 
     - name: Check schema agreement (same answer from any node)
       community.cassandra.cassandra_schema:
-        poll: 6
-        interval: 10
+        # up to a minute for a schema change to reach every node; while an upgrade mixes versions they
+        # disagree until the end (a warning): one read
+        poll: "{{ 1 if cassandra_allow_mixed_versions | default(false) | bool else 6 }}"
+        interval: "{{ _cassandra_health_schema_interval | default(10) }}"  # (the unit tests: 0)
       register: cassandra_health_schema_read
       delegate_to: "{{ _cassandra_health_peer }}"
       run_once: "{{ _batch }}"

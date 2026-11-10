@@ -69,6 +69,12 @@ rc:
   description: Return code of the last executed command.
   returned: when nodetool failed
   type: int
+agreed:
+  description:
+    - Whether the nodes agree on one schema version (the expected one with I(uuid)).
+    - "The result of a task run with C(failed_when: false) keeps it, when C(failed) does not."
+  returned: always
+  type: bool
 schema_status:
   description: The schema versions of the last successful read, each with its nodes.
   returned: always
@@ -203,7 +209,7 @@ def main():
     schema_status, unreachable, cluster_schema_list, iterations, \
         return_codes, stdout_list, stderr_list = nodetool_status_poll(module)
 
-    result = {}
+    result = {'agreed': agreed(schema_status, uuid) and return_codes[-1] == 0}
 
     result['schema_status'] = schema_status
     if unreachable:
