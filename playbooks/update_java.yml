@@ -96,33 +96,64 @@
     - name: Read the JAVA_HOME Cassandra is given
       ansible.builtin.shell: |
         jh= where= inc=
-        # the value of the last JAVA_HOME= line of a shell file (export, quotes) of a kind: "plain", or "fallback"
-        # (inside an if on JAVA_HOME, after a || or a &&: set only when nothing set it before); none for an expression
-        assigned() {
-          awk -v want="$2" '
-            /^[[:space:]]*#/ { next }
-            /^[[:space:]]*if[[:space:]]/ { stack[++n] = ($0 ~ /JAVA_HOME/) }
-            /^[[:space:]]*fi([[:space:];]|$)/ { if (n > 0) n--; next }
-            {
-              fb = 0; for (i = 1; i <= n; i++) if (stack[i]) fb = 1
-              line = $0
-              if (match(line, /(\|\||&&)[[:space:]]*(export[[:space:]]+)?JAVA_HOME=[^;[:space:]]*/)) { fb = 1; line = substr(line, RSTART) }
-              else if (line !~ /^[[:space:]]*(export[[:space:]]+)?JAVA_HOME=/) next
-              sub(/^.*JAVA_HOME=/, "", line); sub(/[;[:space:]].*$/, "", line); gsub(/["\047]/, "", line)
-              if (line != "" && line !~ /[$`]/ && (fb ? "fallback" : "plain") == want) found = line
+        # The JAVA_HOME= assignments of a shell file, in order, one per line: "<kind><tab><value>", the kind
+        # plain (top level), cond (under a test that is not on JAVA_HOME: an if, a &&: counts when that directory
+        # exists here) or fallback (under a test on JAVA_HOME, after a ||: counts only when nothing set it before).
+        # A quoted value is taken whole (spaces kept); one with a $ or a ` (an expression) is left out. Plain awk
+        # (mawk, busybox): no character classes.
+        assignments() {
+          awk '
+            function value(rest,   q, v) {
+              q = substr(rest, 1, 1)
+              if (q == "\042" || q == "\047") { v = substr(rest, 2); return substr(v, 1, index(v, q) - 1) }
+              sub(/[; \t].*$/, "", rest); return rest
             }
-            END { if (found != "") print found }' "$1" 2>/dev/null
+            /^[ \t]*#/ { next }
+            {
+              line = $0; kind = ""
+              for (i = 1; i <= n; i++) if (stack[i] == "fallback") kind = "fallback"; else if (kind == "" && stack[i] == "cond") kind = "cond"
+              one = (line ~ /^[ \t]*if[ \t].*;[ \t]*then[ \t]/ && line ~ /;[ \t]*fi[ \t]*$/)
+              if (line ~ /^[ \t]*if[ \t]/ && !one) { stack[++n] = (line ~ /JAVA_HOME/) ? "fallback" : "cond"; next }
+              if (line ~ /^[ \t]*fi([ \t;]|$)/) { if (n > 0) n--; next }
+              p = index(line, "JAVA_HOME=")
+              if (p == 0) next
+              before = substr(line, 1, p - 1)
+              if (one) kind = (substr(line, 1, index(line, "then")) ~ /JAVA_HOME/) ? "fallback" : "cond"
+              else if (before ~ /\|\|[ \t]*(export[ \t]+)?$/) kind = (before ~ /JAVA_HOME/) ? "fallback" : "cond"
+              else if (before ~ /&&[ \t]*(export[ \t]+)?$/) kind = (before ~ /JAVA_HOME/ && before ~ /-z/) ? "fallback" : "cond"
+              else if (before !~ /^[ \t]*(export[ \t]+)?$/ && !one) next
+              v = value(substr(line, p + 10))
+              if (v != "" && v !~ /[$`]/) print (kind == "" ? "plain" : kind) "\t" v
+            }' "$1" 2>/dev/null
         }
-        # a shell file read as bin/cassandra or an init script would: a plain value wins, a fallback only when
-        # nothing set JAVA_HOME before
+        # a shell file read as bin/cassandra or an init script would
         read_file() {
-          v=$(assigned "$1" plain)
-          if [ -n "$v" ]; then jh=$v; where=$1; return; fi
-          v=$(assigned "$1" fallback)
-          if [ -n "$v" ] && [ -z "$jh" ]; then jh=$v; where=$1; fi
+          tab=$(printf '\t')
+          while IFS="$tab" read -r kind v; do
+            case $kind in
+              plain) jh=$v; where=$1 ;;
+              cond) [ -d "$v" ] && { jh=$v; where=$1; } ;;
+              fallback) [ -n "$jh" ] || { jh=$v; where=$1; } ;;
+            esac
+          done <<EOF_ASSIGNMENTS
+        $(assignments "$1")
+        EOF_ASSIGNMENTS
         }
-        # Environment= values (a value with spaces comes quoted by systemd): one NAME=value per line
-        env_lines() { xargs -n1 2>/dev/null; }
+        # an Environment= value of systemd (systemctl show, a unit line): NAME=value words, a quoted one kept whole
+        # (backslash escapes undone), one per line
+        env_lines() {
+          awk '{
+            s = $0; t = ""; q = 0
+            for (i = 1; i <= length(s); i++) {
+              c = substr(s, i, 1)
+              if (c == "\134" && i < length(s)) { i++; t = t substr(s, i, 1); continue }
+              if (c == "\042") { q = !q; continue }
+              if ((c == " " || c == "\t") && !q) { if (t != "") print t; t = ""; continue }
+              t = t c
+            }
+            if (t != "") print t
+          }'
+        }
         if [ "$UNIT_KEPT" = yes ]; then
           vars=$(systemctl show cassandra -p Environment --value 2>/dev/null | env_lines)
           v=$(echo "$vars" | sed -n 's/^JAVA_HOME=//p' | tail -1)

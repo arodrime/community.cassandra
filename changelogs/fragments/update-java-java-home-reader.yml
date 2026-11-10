@@ -1,6 +1,7 @@
 bugfixes:
   - >-
     update_java - the ``JAVA_HOME`` Cassandra restarts with is read as the shell would: an assignment made only when
-    none is set (inside ``if [ -z "$JAVA_HOME" ]``, after ``||``) counts only when nothing set it before,
-    ``CASSANDRA_INCLUDE`` names the file ``bin/cassandra`` reads, and ``Environment=`` values with spaces are read
-    whole.
+    none is set (``if [ -z "$JAVA_HOME" ]``, also on one line, after ``||``) counts only when nothing set it before,
+    one under a test on something else (``[ -d /x ] && JAVA_HOME=/x``) when that directory is there,
+    ``CASSANDRA_INCLUDE`` names the file ``bin/cassandra`` reads, and quoted values with spaces are read whole, from a
+    file and from the unit's ``Environment=``. Plain awk only (mawk, busybox).

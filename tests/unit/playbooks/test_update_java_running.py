@@ -260,15 +260,16 @@ IN_SH = ("/usr/sbin/cassandra.in.sh", "/usr/share/cassandra/cassandra.in.sh", "/
          "/opt/cassandra/cassandra.in.sh", "/etc/default/cassandra")
 
 
-def _read(tmp_path, java_home, unit_kept=False, unit_env="", show=None, files=None):
+def _read(tmp_path, java_home, unit_kept=False, unit_env="", show=None, files=None, awk="awk"):
     """The read task's script, run: java_home given, the unit's Environment and other properties (show: {property:
     value}, a stub systemctl), files: {path: text} written under tmp_path (the fixed paths the script reads, moved
     there)."""
     read = TASKS["Read the JAVA_HOME Cassandra is given"]
     tools = tmp_path / "tools"
     tools.mkdir()
-    for tool in ("sed", "head", "tail", "readlink", "tr", "grep", "cut", "awk", "xargs", "echo"):
+    for tool in ("sed", "head", "tail", "readlink", "tr", "grep", "cut", "echo"):
         (tools / tool).symlink_to(shutil.which(tool))
+    (tools / "awk").symlink_to(shutil.which(awk))
     show = dict({"Environment": unit_env}, **(show or {}))
     cases = "".join("  *' %s '*) echo '%s' ;;\n" % (k, v) for k, v in show.items())
     (tools / "systemctl").write_text('#!/bin/sh\ncase " $* " in\n%s  *) echo ;;\nesac\n' % cases)
@@ -441,12 +442,45 @@ def test_read_a_fallback_counts_only_when_nothing_set_it(tmp_path):
     bare = tmp_path / "bare"
     bare.mkdir()
     lines = _read(bare, "", files={"/usr/share/cassandra/cassandra.in.sh": fallback})
-    assert lines[0] == "/opt/other" and lines[3].endswith("cassandra.in.sh")
-    # a plain one after an if on something else still wins
-    plain = tmp_path / "plain"
-    plain.mkdir()
-    lines = _read(plain, "/opt/new", files={"/usr/share/cassandra/cassandra.in.sh": 'if [ -x /x ]; then\n  JAVA_HOME=/opt/old\nfi\n'})
-    assert lines[0] == "/opt/old"
+    assert lines[0] == "/opt/fallback" and lines[3].endswith("cassandra.in.sh")  # the first fallback sets it
+    # under a test on something else: counts when that directory is there
+    cond = tmp_path / "cond"
+    cond.mkdir()
+    old = cond / "opt" / "old"
+    in_sh = 'if [ -x /x ]; then\n  JAVA_HOME=%s\nfi\n' % old
+    assert _read(cond, "/opt/new", files={"/usr/share/cassandra/cassandra.in.sh": in_sh})[0] == "/opt/new"
+    old.mkdir(parents=True)
+    (cond / "again").mkdir()
+    assert _read(cond / "again", "/opt/new", files={"/usr/share/cassandra/cassandra.in.sh": in_sh})[0] == str(old)
+
+
+@pytest.mark.parametrize("awk", ["mawk", "busybox", "gawk"])
+def test_read_one_line_forms_and_quoted_values(tmp_path, awk):
+    import shutil as sh
+    if not sh.which(awk):
+        pytest.skip("no %s here" % awk)
+    if awk == "busybox":
+        wrapper = tmp_path / "bb-awk"
+        wrapper.write_text("#!/bin/sh\nexec %s awk \"$@\"\n" % sh.which("busybox"))
+        wrapper.chmod(0o755)
+        awk = str(wrapper)
+    there = tmp_path / "jdk 11"  # a directory with a space in its name
+    there.mkdir()
+
+    def first(text, given="/opt/new", name="t"):
+        d = tmp_path / name
+        d.mkdir()
+        return _read(d, given, files={"/usr/share/cassandra/cassandra.in.sh": text}, awk=awk)[0]
+    # one-line if: on JAVA_HOME a fallback, else a test on something else (counts when the directory is there)
+    assert first('if [ -z "$JAVA_HOME" ]; then JAVA_HOME=/opt/fb; fi\n', name="a") == "/opt/new"
+    assert first('if [ -z "$JAVA_HOME" ]; then JAVA_HOME=/opt/fb; fi\n', given="", name="b") == "/opt/fb"
+    assert first('if [ -d "%s" ]; then JAVA_HOME="%s"; fi\n' % (there, there), name="c") == str(there)
+    assert first('if [ -d /nowhere ]; then JAVA_HOME=/nowhere; fi\n', name="d") == "/opt/new"
+    # [ -d x ] && JAVA_HOME=x: an override when the directory is there, not a fallback
+    assert first('[ -d "%s" ] && JAVA_HOME="%s"\n' % (there, there), name="e") == str(there)
+    assert first("[ -d /nowhere ] && JAVA_HOME=/nowhere\n", name="f") == "/opt/new"
+    # a quoted value with spaces, kept whole
+    assert first("JAVA_HOME='/opt/my java'\n", name="g") == "/opt/my java"
 
 
 def test_read_cassandra_include_and_quoted_values(tmp_path):
