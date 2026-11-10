@@ -106,16 +106,14 @@ def cassandra_storage_mode_behind(nodes):
         if [inventory[0], yaml[0], running[0]] == ["NONE"] * 3 and not n.get("pending"):
             continue
         written = [m for m in (inventory[0], yaml[0]) if m]
-        # its cassandra.yaml has a mode before the inventory's and before the one it runs (or, nothing logged, it
-        # changed since its start): edited back by hand (apply_config writes the inventory's, one step forward).
-        # The inventory's written back is the way out, not a restart into that earlier mode
-        earlier = yaml[0] and inventory[0] and _ORDER.index(yaml[0]) < _ORDER.index(inventory[0])
-        reverted = bool(earlier and (_ORDER.index(yaml[0]) < _ORDER.index(running[0]) if running[0]
-                                     else n.get("pending")))
+        # its cassandra.yaml has a mode before the inventory's and before the one it logged at its start: edited back
+        # by hand (apply_config writes the inventory's, one step forward). The inventory's written back is the way
+        # out, not a restart into that earlier mode. The mode it runs not known: the step and the restart, as for any
+        # node behind (it may run the earlier mode)
+        reverted = bool(yaml[0] and inventory[0] and running[0]
+                        and _ORDER.index(yaml[0]) < min(_ORDER.index(inventory[0]), _ORDER.index(running[0])))
         if reverted:
             written = [inventory[0]]
-            if running[0] is None and n.get("pending"):
-                running = (None, "not logged (%s)" % WRITTEN_AFTER)
         unread = ([] if n.get("yaml") is not None else ["its cassandra.yaml"]) + (
             ["the mode it runs (no Cassandra process found)"] if n.get("stopped") else
             ["the start of its Cassandra"] if n.get("start_unread") and n.get("running") is None else
@@ -131,6 +129,9 @@ def cassandra_storage_mode_behind(nodes):
             "start_later": bool(n.get("start_later")) and n.get("running") is None,
             "file": n.get("file") or "cassandra.yaml",
             "reverted": reverted,
+            # two steps back (CASSANDRA_4 where NONE was): apply_config moves one step at a time, it refuses that
+            "reverted_far": reverted and _ORDER.index(inventory[0]) - _ORDER.index(yaml[0]) > 1,
+            "inventory_mode": inventory[0],
             "pending": not reverted and (bool(n.get("pending")) or bool(yaml[0] and running[0] and yaml[0] != running[0]))})
     return behind
 
@@ -217,7 +218,11 @@ def cassandra_storage_mode_way_out(behind, from_4x=True, restart_command="", tot
         out.append(STAYS)
         if step and (_mid_move(behind) or len(behind) < total):
             out.append("To finish the move to NONE: " + step[0].lower() + step[1:])
-    reverted = _names(behind, "reverted")
+    reverted = ", ".join(b["node"] for b in behind if b["reverted"] and not b.get("reverted_far"))
+    for b in behind:
+        if b.get("reverted_far"):
+            out.append("On %s, set storage_compatibility_mode: %s back in %s by hand (apply_config moves it one step at"
+                       " a time, it refuses this one)." % (b["node"], b["inventory_mode"], b["file"]))
     if reverted:
         out.append("Write the inventory's mode back to the cassandra.yaml of %s (apply_config restarts %s)%s." % (
             reverted, _one(reverted, "it", "them"), (": " + apply_command) if apply_command else ""))
