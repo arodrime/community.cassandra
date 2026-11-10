@@ -21,7 +21,10 @@ except ImportError:
     def trust_as_template(template):
         return template
 
+from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
+
+load_collection_filters()  # (the role's messages use the collection's filters)
 
 ROLE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_config")
 STOCK = os.path.join(ROLE, "molecule", "default", "files", "stock-%s")
@@ -226,3 +229,26 @@ def test_the_role_refuses_the_variables_no_longer_read():
                    " (cassandra_config_template_snippets), then remove cassandra_env_extra_lines from the inventory"
                    " files that set it. Nothing is changed.")
 
+
+CONFIRM = load_tasks(os.path.join(ROLE, "tasks", "confirm.yml"))
+MOVES = next(t for t in CONFIRM if t.get("name") == "Find whether the audit events would move to audit.log")
+
+
+@pytest.mark.parametrize("live_audit, in_inventory, audit_file, said", [
+    (False, False, True, True),   # the default turns it on, the node has it off: said
+    (True, False, True, False),   # the node has it on already
+    (False, True, True, False),   # set in the inventory: wanted
+    (False, False, False, False),  # off
+])
+def test_said_when_the_default_moves_the_audit_events(live_audit, in_inventory, audit_file, said):
+    # (rc9 audit) an inventory imported by a release candidate, FileAuditLogger, the stock block commented out
+    import base64
+    with open(os.path.join(STOCK % "5.0.9", "logback.xml.stock"), encoding="utf-8") as f:
+        live = f.read()
+    if live_audit:
+        live = live.replace('  <!-- <appender name="AUDIT"', '  <appender name="AUDIT"')
+    hostvars = {"n1": {"cassandra_log_audit_file": audit_file} if in_inventory else {}}
+    ctx = dict(inventory_hostname="n1", hostvars=hostvars, cassandra_log_audit_file=audit_file,
+               _cassandra_config_changes=["logback.xml"],
+               _cassandra_config_compared={"logback.xml": base64.b64encode(live.encode()).decode()})
+    assert render(MOVES["ansible.builtin.set_fact"]["_cassandra_config_audit_moves"], **ctx) is said

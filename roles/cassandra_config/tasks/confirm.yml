@@ -35,6 +35,34 @@
       {{ cassandra_config_keep_stat.results | selectattr('stat.exists', 'defined') | selectattr('stat.exists')
          | map(attribute='item') | list if _cassandra_config_initialized | bool else [] }}
 
+# cassandra_log_audit_file left to its default (on with FileAuditLogger) while the node's logback.xml has the AUDIT
+# appender commented out (an inventory imported by a 2.1.0 release candidate): the audit events would leave
+# system.log for audit/audit.log; said once for the nodes of the run
+- name: Find whether the audit events would move to audit.log
+  ansible.builtin.set_fact:
+    _cassandra_config_audit_moves: >-
+      {{ 'logback.xml' in _cassandra_config_changes and cassandra_log_audit_file | bool
+         and 'cassandra_log_audit_file' not in hostvars[inventory_hostname]
+         and (_cassandra_config_compared | default({})).get('logback.xml') is not none
+         and (_cassandra_config_compared | default({})).get('logback.xml') | default('', true) | b64decode
+             is not search('(?m)^\s*<appender\s+name="AUDIT"') }}
+
+- name: Warn that the audit events would move to audit.log
+  ansible.builtin.debug:
+    msg: >-
+      WARNING  {{ _audit_on | community.cassandra.cassandra_node_list }}: logback.xml would write the audit events
+      to audit/audit.log, no longer to system.log (cassandra_log_audit_file, on by default with FileAuditLogger).
+      Re-import the cluster (import_cluster) to keep them as the nodes have them, or set cassandra_log_audit_file:
+      false to keep them in system.log.
+  run_once: true
+  vars:
+    cassandra_output: true
+    _audit_on: >-
+      {{ ansible_play_hosts | select('in', hostvars) | list
+         | map('extract', hostvars) | selectattr('_cassandra_config_audit_moves', 'defined')
+         | selectattr('_cassandra_config_audit_moves') | map(attribute='inventory_hostname') | list }}
+  when: _audit_on | length > 0
+
 - name: Warn that a file kept by hand is missing
   ansible.builtin.debug:
     msg: >-
