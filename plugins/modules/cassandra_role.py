@@ -369,8 +369,6 @@ def validate_keyspace_permissions(keyspace_permissions):
         "SELECT"
     ]
 
-    invalid_dict = {}
-
     for k in keyspace_permissions.keys():
         for v in keyspace_permissions[k]:
             if v not in perms:
@@ -420,7 +418,7 @@ def list_role_permissions(session, role):
     try:
         dict_factory_profile = session.execution_profile_clone_update(EXEC_PROFILE_DEFAULT, row_factory=dict_factory)
         role_permissions = session.execute(cql, execution_profile=dict_factory_profile)
-    except InvalidRequest as excep:
+    except InvalidRequest:
         # excep_code = type(excep).__name__
         # if excep_code == 2200: # User does not exist
         role_permissions = []
@@ -582,7 +580,6 @@ def build_role_permissions(session,
                                         ks)
                 perms_dict['revoke'].add(cql)
         else:
-            current_roles = set()
             if permission['resource'].startswith('<keyspace') \
                     and permission['role'] == role:  # We don't touch other permissions
                 ks = permission['resource'].split(' ')[1].replace('>', '')

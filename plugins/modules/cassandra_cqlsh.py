@@ -260,7 +260,7 @@ def transform_output(output, transform_type, split_char):
             transform_type = "split"
             split_char = "\t"
         else:
-            tranform_type = "raw"
+            transform_type = "raw"
     if transform_type == "json":
         json_list = []
         if output.strip().split("\n")[-1] == "(0 rows)":

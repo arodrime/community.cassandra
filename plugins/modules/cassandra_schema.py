@@ -100,18 +100,15 @@ def nodetool_status_poll(module):
     with the indicated interval. Returns as soon all nodes are up or the
     previous limits are reached.
     '''
-    cluster_status = None  # Last cluster status
     cluster_schema_list = []
     iterations = 0
     return_codes = []
     stdout_list = []
     stderr_list = []
-    down_running_total = None
     poll = module.params['poll']
     interval = module.params['interval']
 
     while iterations < poll:
-        down_running_total = 0  # reset between iterations
         iterations += 1
         n = NodeToolStatusCommand(module)
         (rc, out, err) = n.status_command()
@@ -147,9 +144,6 @@ def cluster_schema(stdout):
         }
     # TODO do something about UNREACHABLE nodes???
     '''
-    cluster_up_down = {}
-    schema_version_line = False
-    schema_version_lines = []
     return_dict = {}
 
     # match the scmea id and the list of hosts

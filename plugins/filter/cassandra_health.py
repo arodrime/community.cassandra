@@ -484,8 +484,8 @@ def cassandra_removal_state(ring, address, removal_status, gossip="", tokens="")
         return {"state": "absent", "on": "", "reason": ""}
     others_leaving = [n["address"] for n in nodes if n["state"] == "L" and n["address"] != address]
     removing = {}
-    for host, out in (removal_status or {}).items():
-        match = re.search(r"Removing token \(([^)]*)\)", out or "")
+    for host, status in (removal_status or {}).items():
+        match = re.search(r"Removing token \(([^)]*)\)", status or "")
         if match:
             removing[host] = match.group(1).strip()
     dead_tokens = set(_ring_tokens(tokens, address))

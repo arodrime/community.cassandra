@@ -566,7 +566,7 @@ def test_the_plan_title_and_the_stop_block_are_blocks_of_their_own():
 
 def test_a_stalled_peer_line_red_the_others_as_the_progress_line():
     from ansible import constants as C
-    from ansible_collections.community.cassandra.plugins.callback.ops import CallbackModule, colour
+    from ansible_collections.community.cassandra.plugins.callback.ops import colour
 
     assert colour("      to node2  0.0/7.2 GiB   0% STALLED", above="cyan") == C.COLOR_ERROR
     assert colour("      90 peers: 87 ok (avg 44%), 1 STALLED; slowest: node5 0% STALLED", above="cyan") == C.COLOR_ERROR
