@@ -264,15 +264,21 @@ def test_sstables_refuse_a_mode_not_read_unknown_or_a_restart_pending():
         "  n1    NONE       UPGRADING       NONE",
         "WAY OUT  Write the inventory's mode back to the cassandra.yaml of n1 (apply_config restarts it): ansible-playbook -i a.yml"
         " community.cassandra.apply_config --limit n1. Then run this phase again."]
-    # nothing logged (its log rolled over), its cassandra.yaml changed since its start: the mode it runs is not
-    # known (it may run the file's), so no write back: the step and the restart. The inventory jumped to NONE, the
-    # file at CASSANDRA_4: the step to UPGRADING first, never apply_config straight to NONE
-    ok, msg = _sstables(("NONE", "CASSANDRA_4", "CASSANDRA_4", True))
-    assert ok is False and "Write the inventory's mode back" not in "\n".join(msg)
-    assert "Now set cassandra_storage_compatibility_mode: UPGRADING in the inventory" in msg[-1]
-    assert "Restart n1, so it runs the mode its cassandra.yaml has" in msg[-1]
+    # nothing logged (its log rolled over, or older than its start), its cassandra.yaml changed since its start, a
+    # mode before the inventory's: the mode it runs is not known (the file's, or the inventory's if edited back).
+    # Never a restart (it could take the node back); one step: apply_config, forward either way
     ok, msg = _sstables(("NONE", "UPGRADING", "UPGRADING", True), **patch)
-    assert ok is False and "Write the inventory's mode back" not in msg[-1] and "Restart n1" in msg[-1]
+    assert ok is False and msg[0] == "On n1, cassandra.yaml has UPGRADING, before the inventory's NONE. Nothing was done."
+    assert msg[-1].startswith(
+        "WAY OUT  Write the inventory's mode back to the cassandra.yaml of n1 (apply_config restarts it): ")
+    assert "Restart" not in msg[-1] and "rolling_restart" not in msg[-1] and "SSTables keep" not in msg[-1]
+    # two steps (the inventory jumped to NONE, the file at CASSANDRA_4): apply_config refuses that move, never sent
+    # to NONE; by hand, to the mode it started with
+    ok, msg = _sstables(("NONE", "CASSANDRA_4", "CASSANDRA_4", True))
+    assert ok is False and msg[-1] == (
+        "WAY OUT  On n1, set storage_compatibility_mode back in cassandra.yaml by hand, to the mode its Cassandra"
+        " started with (not known here: nothing logged since its start; apply_config moves it one step at a time,"
+        " it refuses this one). Then run this phase again.")
     # two steps back (CASSANDRA_4 where NONE was, NONE logged): apply_config refuses that move, by hand
     ok, msg = _sstables(("NONE", "CASSANDRA_4", "NONE"), **patch)
     assert ok is False and msg[-1] == (
@@ -449,10 +455,10 @@ def test_rolling_says_the_next_mode_step_from_the_inventory_a_re_run_too():
     assert next_phase("rolling", modes=["NONE", None]) == "Every node runs 5.0.9. Then -e cassandra_upgrade_phase=sstables."
     assert next_phase("rolling", modes=["CASSANDRA_4"], version="41x") == (
         "Every node runs 5.0.9. Then -e cassandra_upgrade_phase=sstables.")
-    # the inventory at NONE, a node still reading UPGRADING (apply_config not run): the step to NONE again
+    # the inventory at NONE, a node still reading UPGRADING (apply_config not run): apply_config, the inventory has it
     assert next_phase("rolling", modes=["NONE", "NONE"], read=["UPGRADING", "NONE"]) == (
-        "Every node runs 5.0.9. Now set cassandra_storage_compatibility_mode: NONE in the inventory and run "
-        "apply_config (NONE is the point of no return). Then -e cassandra_upgrade_phase=sstables.")
+        "Every node runs 5.0.9. Now run apply_config (the inventory has cassandra_storage_compatibility_mode: NONE; "
+        "NONE is the point of no return). Then -e cassandra_upgrade_phase=sstables.")
     read = task("Summary", "Read storage_compatibility_mode on the nodes")
     assert read["when"] == ["cassandra_upgrade_phase == 'rolling'", "cassandra_version == '50x'", "not ansible_check_mode"]
 

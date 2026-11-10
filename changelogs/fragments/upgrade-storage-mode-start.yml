@@ -8,6 +8,7 @@ bugfixes:
     pending"); a ``cassandra.yaml`` with a time after now (a clock set back) is said as such. A cluster in the middle
     of its move to ``NONE`` is told its next step too, and a restart pending is always said. Each way out ends with
     what to do: a file time after now, the clock set right, then the file touched and the node restarted; no
-    Cassandra process, start it; a ``cassandra.yaml`` edited back to a mode before the inventory's and the logged
-    one, the inventory's mode written back (``apply_config``, or by hand two steps back), never a restart into that
-    earlier mode; then run this phase again.
+    Cassandra process, start it; a ``cassandra.yaml`` with a mode before the inventory's, while the node logged a
+    later one or (nothing logged) the file changed since its start, the inventory's mode written back
+    (``apply_config``, one step; by hand two steps back), never a restart into that earlier mode; the inventory at
+    the next mode already, ``apply_config``; then run this phase again.
