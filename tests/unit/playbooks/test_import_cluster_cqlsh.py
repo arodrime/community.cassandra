@@ -89,7 +89,8 @@ def test_the_cqlshlib_link_of_the_role_is_its_own(tmp_path):
         "python3 -c \"import sysconfig; print(sysconfig.get_paths()['purelib'])\"", "echo %s" % lib)
 
     def run():
-        return subprocess.run(["/bin/sh", "-c", snippet], stdout=subprocess.PIPE, universal_newlines=True).stdout
+        return subprocess.run(["/bin/sh", "-c", snippet], stdout=subprocess.PIPE, universal_newlines=True,
+                              check=False).stdout  # (a test that fails exits 1: its output says)
     assert run() == ""
     (lib / "cqlshlib").symlink_to(pkg / "cqlshlib")
     assert run() == "own_cqlsh=yes\n"
