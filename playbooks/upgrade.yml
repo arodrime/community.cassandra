@@ -253,6 +253,29 @@
       ansible.builtin.set_fact:
         cassandra_upgrade_run_nodes: "{{ ansible_play_hosts_all }}"
 
+    # and the versions of the cluster's nodes outside the run (another datacenter, --limit), as the ring gave
+    # them to preflight (describecluster's Database versions: <version>: [<address>:<port>, ...]); they do not
+    # change during this run. No backslash: Jinja unescapes its string literals from ansible-core 2.19 on only
+    - name: Note the versions of the nodes outside the run
+      ansible.builtin.set_fact:
+        cassandra_upgrade_outside_versions: >-
+          {%- set run = ansible_play_hosts_all | map('extract', hostvars) | map(attribute='_cassandra_preflight')
+                        | map(attribute='address', default='') | list -%}
+          {%- set described = hostvars[ansible_play_hosts_all | first].cassandra_preflight_describe.stdout | default('') -%}
+          {%- set section = ((described ~ _nl).split('Database versions:')[1:] | first | default('')).split(_nl ~ _nl) | first -%}
+          {%- set out = [] -%}
+          {%- for line in section.split(_nl) if ': [' in line and (line | trim)[:1] is match('[0-9]') -%}
+          {%-   set version = line.split(':')[0] | trim -%}
+          {%-   for node in line.split(': [', 1)[1].rsplit(']', 1)[0].split(',') -%}
+          {%-     set address = (node | trim).rsplit(':', 1)[0] | replace('[', '') | replace(']', '') -%}
+          {%-     if address and address not in run and version not in out -%}{%- set _ = out.append(version) -%}{%- endif -%}
+          {%-   endfor -%}
+          {%- endfor -%}
+          {{ out }}
+      vars:
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+      run_once: true
+
     - name: This playbook upgrades from the series it knows
       ansible.builtin.assert:
         that: cassandra_upgrade_from_series in _paths
@@ -730,12 +753,17 @@
   any_errors_fatal: true
   become: true
   vars:
-    # mixed from the canary's restart on: a node's cassandra_upgrade_done turns true once it runs the target
-    # (action_upgrade.yml), read over every node of the run when each health check runs. The canary's check before
-    # its restart (nobody done yet) and the last rolling node's check after its own (everybody done) are strict:
-    # a schema disagreement stops them; between the two, it is a warning
+    # mixed while the cluster runs more than one version: a node of the run runs the target once its
+    # cassandra_upgrade_done turns true (action_upgrade.yml), else the version it ran; the nodes outside the run
+    # (another datacenter, --limit) keep theirs. Read when each health check runs: a schema disagreement is a
+    # warning while the versions are mixed, and stops the run once the whole cluster runs one version
     cassandra_allow_mixed_versions: >-
-      {{ cassandra_upgrade_run_nodes | map('extract', hostvars, 'cassandra_upgrade_done') | map('bool') | unique | length > 1 }}
+      {%- set versions = cassandra_upgrade_outside_versions | default([]) | list -%}
+      {%- for h in cassandra_upgrade_run_nodes -%}
+      {%-   set _ = versions.append(cassandra_package_version if hostvars[h].cassandra_upgrade_done | bool
+                                    else hostvars[h].cassandra_upgrade_from) -%}
+      {%- endfor -%}
+      {{ versions | unique | length > 1 }}
   tasks:
     # first: each node its own facts before any run_once task (ansible/ansible#87148)
     - name: Give each node its own facts

@@ -1,0 +1,2 @@
+bugfixes:
+  - "upgrade playbook - under ``--limit`` (one datacenter at a time), the health check after the last node of the run stopped on the schema disagreement with the nodes left on the other version; the versions count as mixed while any node of the cluster (the ring's versions, not only the run's) runs another one."

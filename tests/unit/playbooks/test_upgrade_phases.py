@@ -180,17 +180,30 @@ def test_the_schema_may_disagree_while_the_versions_are_mixed():
     # every node of the run, noted by the checks play: the canary play's hosts are the canary alone
     noted = task("Upgrade checks", "Note the nodes of the run")["ansible.builtin.set_fact"]
     assert noted == {"cassandra_upgrade_run_nodes": "{{ ansible_play_hosts_all }}"}
+    assert names("Upgrade checks").index("Note the versions") < names("Upgrade checks").index(
+        "Note the versions of the nodes outside the run")
     mixed = play("Upgrade, one node at a time")["vars"]["cassandra_allow_mixed_versions"]
     assert "ansible_play_hosts" not in mixed
 
-    def allowed_for(**done):
-        hostvars = dict((node, {"cassandra_upgrade_done": value}) for node, value in done.items())
-        return render(mixed, hostvars=hostvars, cassandra_upgrade_run_nodes=list(hostvars), ansible_play_hosts_all=["n1"])
+    def allowed_for(outside=None, **done):
+        hostvars = dict((node, {"cassandra_upgrade_done": value, "cassandra_upgrade_from": "4.1.12"})
+                        for node, value in done.items())
+        variables = dict(hostvars=hostvars, cassandra_upgrade_run_nodes=list(hostvars), ansible_play_hosts_all=["n1"],
+                         cassandra_package_version="5.0.6")
+        if outside is not None:
+            variables["cassandra_upgrade_outside_versions"] = outside
+        return str(render(mixed, **variables)).strip() == "True"
 
     assert allowed_for(n1=False, n2=False, n3=False) is False  # the canary's check before its restart: nobody done yet
     assert allowed_for(n1=True, n2=False, n3="False") is True  # its check after: the canary on the target, the others not
     assert allowed_for(n1="True", n2=True, n3=False) is True  # the rolling phase, up to the last node's check before
     assert allowed_for(n1=True, n2=True, n3=True) is False  # the last node's check after: everybody done
+    assert allowed_for([], n1=True, n2=True, n3=True) is False
+    # --limit to one datacenter: the other one still on the old version keeps the versions mixed after the last
+    # node of the run, and the one already upgraded makes them mixed before the first
+    assert allowed_for(["4.1.12"], n1=True, n2=True, n3=True) is True
+    assert allowed_for(["5.0.6"], n1=False, n2=False, n3=False) is True
+    assert allowed_for(["5.0.6"], n1=True, n2=True, n3=True) is False
     with open(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "cluster_health_read.yml"), encoding="utf-8") as f:
         text = f.read()
     assert "mixed_versions=cassandra_allow_mixed_versions | default(false) | bool" in text
@@ -207,3 +220,29 @@ def test_a_node_is_noted_as_upgraded_once_it_runs_the_target():
     # its own play reads the flag too: a node already on the target is said so before its upgrade would turn it
     names = [t["name"] for t in play("Upgrade, one node at a time")["tasks"]]
     assert names.index("Already upgraded") < names.index("Upgrade this node")
+
+
+def names(play_name):
+    return [t.get("name") for t in play(play_name)["tasks"]]
+
+
+def test_the_versions_of_the_nodes_outside_the_run_from_the_ring():
+    # describecluster's Database versions as preflight read it (a real 4.1 cluster of 2 nodes, a third added as
+    # upgraded): the nodes outside the run (--limit, another datacenter) and their version
+    with open(os.path.join(TOP, "tests", "unit", "plugins", "modules", "fixtures",
+                           "nodetool_describecluster_41_agreement.txt"), encoding="utf-8") as f:
+        described = f.read().replace("Database versions:\n", "Database versions:\n\t5.0.6: [172.20.0.9:7000]\n")
+    noting = task("Upgrade checks", "Note the versions of the nodes outside the run")
+    outside = noting["ansible.builtin.set_fact"]["cassandra_upgrade_outside_versions"]
+
+    def versions(*run):
+        hostvars = dict(("n%d" % i, {"_cassandra_preflight": {"address": address}, "cassandra_preflight_describe": {"stdout": described}})
+                        for i, address in enumerate(run))
+        return render(outside, hostvars=hostvars, ansible_play_hosts_all=list(hostvars), **noting["vars"])
+
+    assert versions("172.20.0.2", "172.20.0.3", "172.20.0.9") == []  # the whole cluster in the run
+    assert versions("172.20.0.2", "172.20.0.3") == ["5.0.6"]  # the upgraded node left out
+    assert versions("172.20.0.9") == ["4.1.12"]  # the two old ones left out
+    assert versions("172.20.0.2", "172.20.0.9") == ["4.1.12"]
+    hostvars = {"n1": {"_cassandra_preflight": {"address": "10.0.0.1"}, "cassandra_preflight_describe": {"stdout": ""}}}
+    assert render(outside, hostvars=hostvars, ansible_play_hosts_all=["n1"], **noting["vars"]) == []  # no running node read
