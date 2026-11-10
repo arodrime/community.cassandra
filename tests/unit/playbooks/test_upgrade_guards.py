@@ -311,7 +311,7 @@ def test_the_storage_mode_read_script(tmp_path):
     import subprocess
     import time
     with open(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "storage_mode_read.yml"), encoding="utf-8") as f:
-        read = yaml.safe_load(f)[0]
+        read = yaml.safe_load(f)[1]
     assert read["check_mode"] is False and read["register"] == "cassandra_storage_mode_read"
     script = read["ansible.builtin.shell"]
     assert "[[:" not in script  # mawk and busybox awk/sed alike

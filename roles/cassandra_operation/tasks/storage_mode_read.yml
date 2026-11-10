@@ -7,6 +7,12 @@
 # logged=<the logged mode> when found, pending=yes when the file changed since its start and nothing was logged.
 # file=<its path>. Read-only, under --check too. start_read=no: its start or the file time not read, after-now: its
 # start reads as after now; future=yes: the file has a time after now.
+- name: Load the cassandra_service defaults (the record of the config Cassandra started with)
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_service
+    tasks_from: defaults.yml
+    public: true
+
 - name: Read storage_compatibility_mode in its cassandra.yaml and in the running Cassandra
   ansible.builtin.shell: |
     echo "file=$F"
@@ -70,7 +76,7 @@
     exit 0
   environment:
     F: "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}/cassandra.yaml"
-    R: "{{ _cassandra_service_config_snapshot | default('/var/lib/cassandra/.ansible_config_at_start.json') }}"
+    R: "{{ _cassandra_service_config_snapshot }}"
   register: cassandra_storage_mode_read
   changed_when: false
   check_mode: false  # a read
