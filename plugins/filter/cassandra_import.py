@@ -495,7 +495,7 @@ def _import_properties(tpl, rendered, live, ctx):
     return found
 
 
-def _extra_lines_at(name, tpl):
+def _end_lines_at(name, tpl):
     """Where a file's extra lines go: (its template lines that join a list of them, the index of the line they
     follow, None when appended at the end)."""
     tail = [t for t in tpl[-2:] if "| join(" in t]
@@ -548,7 +548,7 @@ def _import_file(env, series, name, ctx, live):
     # (the settings the stock file has no line for: written as by the role, however the node writes them)
     live = _align(rendered, _canonical(name, rendered + _declared_samples(series) if name.endswith(".yaml") else rendered,
                                        live))
-    tail, after = _extra_lines_at(name, tpl)
+    tail, after = _end_lines_at(name, tpl)
     found, appended, extra = _read_changed_lines(name, tpl, rendered, live, ctx, after)
     if appended and _carried(name, series, tpl, appended):
         extra = appended  # all of them or none: a block cut in two would not run (if ... fi) or parse (<root>)

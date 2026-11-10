@@ -447,7 +447,10 @@ cassandra_group: cassandra
 # but cannot rewrite them). cassandra.yaml (keystore passwords), the JVM
 # options files (their extra options, e.g. -Djavax.net.ssl.keyStorePassword=)
 # and cassandra-env.sh (your snippet's lines, e.g. a JVM_OPTS with a password) are
-# not readable by others. The other files hold no secret and are readable by all.
+# not readable by others. The other files (rackdc, logback.xml) are readable by
+# all; a secret your logback.xml snippet renders (a vaulted reference) would be
+# too: give the file its own mode (cassandra_config_file_permissions), which
+# import_cluster carries as each node has it.
 cassandra_config_user: root
 cassandra_config_group: "{{ cassandra_group }}"
 cassandra_config_mode: "0640"  # cassandra.yaml, jvm*-server.options, cassandra-env.sh

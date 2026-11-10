@@ -63,8 +63,11 @@ too (extra options such as `-Djavax.net.ssl.keyStorePassword=`), and
 `0640` (`cassandra_config_mode`). `nodetool` reads the JMX port in
 `cassandra-env.sh`: run as root or by a user of the group (Cassandra's
 account), it can; another user gets `grep: .../cassandra-env.sh: Permission
-denied` and the default port. The others (rackdc, logback) hold no secret:
-mode `0644` (`cassandra_config_public_mode`).
+denied` and the default port. The others (rackdc, logback):
+mode `0644` (`cassandra_config_public_mode`); a secret your `logback.xml`
+snippet renders would be readable by all: give the file its own mode
+(`cassandra_config_file_permissions`, which `import_cluster` carries as each
+node has it).
 `cassandra_config_file_permissions` sets a file apart, e.g.
 `{logback.xml: {mode: "0600"}}`. A change of owner, group or mode alone is
 shown, listed in the report and needs no confirmation nor restart (Cassandra

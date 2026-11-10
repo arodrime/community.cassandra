@@ -1611,8 +1611,9 @@ argument_specs:
         type: str
         default: "0644"
         description:
-        - Mode of the other config files (C(cassandra-rackdc.properties),
-          C(logback.xml)), which hold no secret. Octal, quoted.
+        - Mode of the other config files (C(cassandra-rackdc.properties), C(logback.xml)). Octal, quoted.
+        - A secret your C(logback.xml) snippet renders would be readable by all; give the file its own mode
+          (O(cassandra_config_file_permissions)), which C(import_cluster) carries as each node has it.
       cassandra_config_file_permissions:
         type: dict
         default: {}
