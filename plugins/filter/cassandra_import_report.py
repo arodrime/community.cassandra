@@ -29,11 +29,12 @@ from ansible.module_utils.parsing.convert_bool import boolean
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     IDENTITY, KEEP, NODE_LEVEL, NOT_READ, PER_NODE, group_chains, hand_edits_kept, _secret, vars_sort_key, values_hidden)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import HEAP_FILE
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import CONFIG_FILE
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import CONFIG_FILE, RESTART_DOES
 from ansible_collections.community.cassandra.plugins.filter.cassandra_suspicious import (
     LINES as SUSPICIOUS_LINES, REPLACE, finding_lines, suspicious)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import terminal_width
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 
 # shown in the head, or the ring's (dc and rack): not among the settings
 _NOT_SETTINGS = ("cassandra_cluster_name", "cassandra_dc", "cassandra_rack")
@@ -1022,7 +1023,13 @@ def _kept_entries(report, kept):
         everyone = sorted(nodes) == sorted(report.names)
         hosts = "host_vars/%s/main.yml" % nodes[0] if len(nodes) == 1 else \
             "host_vars/<node>/main.yml of %s" % out.plural(len(nodes), "node")
-        if plan["loose"] and not plan["set"] and not plan["per_node"]:
+        if plan.get("unread"):
+            # (bin/cassandra passes on the options of its Java's file only)
+            entries += fill_text("not read by the Java %s runs (observed: Java %s)" % (
+                nodes[0] if len(nodes) == 1 else "these nodes", plan["unread"]), report.width, "      ", "  ")
+            entries += fill_text("its edits have no effect on the running JVM: no variable carries them", report.width,
+                                 "      ", "  ")
+        elif plan["loose"] and not plan["set"] and not plan["per_node"]:
             entries += fill_text("%s that no variable carries (each under DETAILS): Ansible leaves the file as each"
                                  " node has it; nothing to do while they are wanted" % out.plural(plan["loose"], "edit"),
                                  report.width, "      ", "  ")
@@ -1040,7 +1047,8 @@ def _kept_entries(report, kept):
         steps.append("in %s: remove %s from cassandra_config_keep_files" % (hosts, name))
         steps.append("check: %s %s what its diff still shows, Ansible would undo"
                      % (unbreakable(plan["check"]), ARROW_RIGHT))
-        steps.append("the same without --check: it writes %s, then restarts the nodes" % name)
+        steps.append("the same without --check: it writes %s, then restarts the nodes%s" % (
+            name, " (the same Java options: their Java does not read it)" if plan.get("unread") else ""))
         entries += fill_text("to give it back to Ansible%s:" % (
             " (%s: already given)" % ", ".join(plan["already"]) if plan["already"] else ""), report.width, "      ", "  ")
         for i, step in enumerate(steps):
@@ -1126,10 +1134,29 @@ _TUNED_PROFILE = re.compile(r"^tuned: profile (\S+)")
 READAHEAD_MOST = 64  # KB: more on a data SSD is said (cassandra_linux writes 4)
 
 
+def _restart_finding(n, from_yours=None):
+    """A node whose unit's Restart= is not the one the inventory gives cassandra_service_restart -> (finding, what
+    to do); None when they are the same (the import carries the node's), or the unit was not read. from_yours: the
+    layout's (a value one of your files gives as the node has it: not in its variables)."""
+    restart = str((n.get("unit") or {}).get("restart") or "")
+    default = role_file("cassandra_service").get("cassandra_service_restart", "no")
+    yours = ((from_yours or {}).get(n["name"]) or {}).get("cassandra_service_restart") or {}
+    ours = str((n.get("vars") or {}).get("cassandra_service_restart", yours.get("value", default)))
+    if not restart or restart == ours:
+        return None
+    does = "; ".join("Restart=%s: %s" % (v, RESTART_DOES.get(v, "see systemd.service(5)")) for v in (restart, ours))
+    kept = "cassandra_service_unit_manage" in (n.get("keep") or {})
+    return ("Restart=%s in Cassandra's systemd unit, cassandra_service_restart: %s in the inventory" % (restart, ours),
+            "systemd, not Ansible, restarts Cassandra, by the unit's Restart=; %s; %s" % (
+                does, "this node keeps its own unit (cassandra_service_unit_manage: false): cassandra_service_restart"
+                      " does not change it" if kept else
+                "the next run of cassandra_service writes Restart=%s in the unit" % ours))
+
+
 def _os_findings(report):
     """What the import observed on the nodes that is worth a look, beyond their settings: transparent huge pages
-    on, a large read-ahead on the data SSDs, a unit that does not restart Cassandra, Medusa installed and not set
-    up -> [(finding, [nodes], what to do)], the same finding on several nodes once."""
+    on, a large read-ahead on the data SSDs, a unit's Restart= other than the inventory's, Medusa installed and not
+    set up -> [(finding, [nodes], what to do)], the same finding on several nodes once."""
     found = {}
 
     def add(text, todo, name):
@@ -1153,10 +1180,9 @@ def _os_findings(report):
                 if tuned and profile else ""),
                 "a large read-ahead fills the page cache with data no read asked for" + (
                     "; tuned would set it again: a tuned profile of your own without it" if tuned else ""), n["name"])
-        if str((n.get("unit") or {}).get("restart") or "") == "no":
-            add("Restart=no in Cassandra's systemd unit: a Cassandra that stops on an error stays down",
-                "fine if on purpose; cassandra_service's own unit restarts it (cassandra_service_unit_manage)",
-                n["name"])
+        restart = _restart_finding(n, report.layout.get("from_yours"))
+        if restart:
+            add(restart[0], restart[1], n["name"])
         medusa = n.get("medusa") or {}
         if medusa.get("install") and not medusa.get("ini"):
             add("Medusa installed, no /etc/medusa/medusa.ini: it is not set up there",

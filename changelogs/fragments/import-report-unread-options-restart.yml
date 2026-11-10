@@ -1,0 +1,3 @@
+bugfixes:
+  - 'import_cluster playbook - the report no longer proposes ``cassandra_heap_size`` or ``cassandra_jvm<N>_extra_options`` for the edits of a kept ``jvm<N>-server.options`` the running Java does not read (they have no effect on it; the heap would have changed): it says the file is not read and only takes it out of ``cassandra_config_keep_files``.'
+  - 'import_cluster playbook - the report no longer says "cassandra_service''s own unit restarts it" for a unit with ``Restart=no`` (``cassandra_service_restart`` defaults to ``no``): such a unit is not worth a look when the inventory gives it the same value, and a unit''s ``Restart=`` other than the inventory''s says what systemd does with each.'

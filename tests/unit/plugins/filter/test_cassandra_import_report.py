@@ -966,13 +966,92 @@ def test_worth_a_look_what_was_seen_on_the_nodes():
         "transparent huge pages enabled always, set by /etc/rc.d/rc.local, which is not executable   all (3 nodes)",
         "read-ahead 4096 KB on the data SSDs (cassandra_linux: 4), and tuned (profile virtual-guest) sets"
         " readahead=>4096 at each start   all (3 nodes)",
-        "Restart=no in Cassandra's systemd unit: a Cassandra that stops on an error stays down   all (3 nodes)",
         "Medusa installed, no /etc/medusa/medusa.ini: it is not set up there   all (3 nodes)"]
-    # a node with them right: nothing said
+    # a node with them right: nothing said (its Restart= carried into cassandra_service_restart, as the import does)
     calm = node(1, os={"lines": ["THP now: enabled never, defrag never (same as cassandra_linux)",
                                  "device sda (/var/lib/cassandra, SSD): read_ahead_kb 8 (cassandra_linux: 4)"]},
                 unit={"restart": "on-failure"}, medusa={"install": True, "ini": True})
+    calm["vars"]["cassandra_service_restart"] = "on-failure"
     assert not has(report([calm], details=False), "WORTH A LOOK")
+
+
+def test_restart_no_the_collections_default_is_not_worth_a_look():
+    # Restart=no is cassandra_service_restart's default too: the inventory gives the node what it has, nothing said
+    # (it was said "worth a look", with "cassandra_service's own unit restarts it": its default is no)
+    nodes = [node(i, unit={"restart": "no"}) for i in range(1, 4)]
+    lines = report(nodes)
+    assert not has(lines, "WORTH A LOOK")
+    assert not [line for line in lines if "unit restarts it" in line]
+
+
+def test_restart_other_than_the_inventorys_says_who_restarts():
+    # a node's Restart= other than the inventory's cassandra_service_restart: systemd's doing, both values said
+    nodes = [node(1, unit={"restart": "no"}), node(2, unit={"restart": "no"})]
+    for n in nodes:
+        n["vars"]["cassandra_service_restart"] = "on-failure"
+    review = [" ".join(line.split()) for line in section(report(nodes, details=False), "WORTH A LOOK")]
+    text = " ".join(review)
+    assert review[0] == ("Restart=no in Cassandra's systemd unit, cassandra_service_restart: on-failure in the"
+                         " inventory all (2 nodes)")
+    assert "systemd, not Ansible, restarts Cassandra, by the unit's Restart=" in text
+    assert "Restart=no: systemd leaves a Cassandra that stops down until someone starts it" in text
+    assert "Restart=on-failure: systemd starts Cassandra again when it dies on an error, a signal or a timeout" in text
+    assert "the next run of cassandra_service writes Restart=on-failure in the unit" in text
+    # a node keeping its own unit: the variable does not change it
+    kept = node(1, unit={"restart": "always"}, keep={"cassandra_service_unit_manage": False})
+    text = " ".join(" ".join(line.split()) for line in section(report([kept], details=False), "WORTH A LOOK"))
+    assert "Restart=always in Cassandra's systemd unit, cassandra_service_restart: no in the inventory" in text
+    assert "(cassandra_service_unit_manage: false): cassandra_service_restart does not change it" in text
+
+
+def _java11_node(i, keep_file="jvm8-server.options", java="11.0.22"):
+    hand = ["%s, line 12:" % keep_file, "  - #-Xmx4G", "  + -Xmx4G", "  + -XX:+UseParNewGC"]
+    n = node(i, hand=hand, keep={"cassandra_config_keep_files": [keep_file]},
+             versions={"cassandra": "4.1.5", "java": java, "os": "RHEL 8"})
+    n["vars"]["cassandra_version"] = "41x"
+    return n
+
+
+def test_a_kept_options_file_its_java_does_not_read_carries_nothing():
+    # Java 11 reads jvm11-server.options, not jvm8-server.options: the heap of jvm8's never in cassandra_heap_size
+    # (it would change the heap the node runs), its options in no variable; the way out: out of keep_files
+    other = node(2)
+    other["vars"]["cassandra_version"] = "41x"
+    lines = report([_java11_node(4), other], details=False)
+    left = [" ".join(line.split()) for line in section(lines, "LEFT AS THE NODES HAVE THEM")]
+    at = left.index("jvm8-server.options (Java's options, Java 8 only) node4 (1 node)")
+    entry = left[at:]
+    assert entry[:7] == [
+        "jvm8-server.options (Java's options, Java 8 only) node4 (1 node)",
+        "not read by the Java node4 runs (observed: Java 11)",
+        "its edits have no effect on the running JVM: no variable carries them",
+        "to give it back to Ansible:",
+        "1. in host_vars/node4/main.yml: remove jvm8-server.options from cassandra_config_keep_files",
+        "2. check: ansible-playbook community.cassandra.apply_config --limit node4 --check --diff → what its diff still"
+        " shows, Ansible would undo",
+        "3. the same without --check: it writes jvm8-server.options, then restarts the nodes (the same Java options:"
+        " their Java does not read it)"]
+    text = "\n".join(lines)
+    assert "cassandra_heap_size" not in text and "cassandra_jvm8_extra_options" not in text
+    # the Java that reads it (Java 8): its heap and options carried as before
+    lines = report([_java11_node(4, java="1.8.0_402"), other], details=False)
+    text = " ".join(" ".join(line.split()) for line in section(lines, "LEFT AS THE NODES HAVE THEM"))
+    assert "cassandra_heap_size: 4G, cassandra_jvm8_extra_options: [-XX:+UseParNewGC]" in text
+    assert "not read by the Java" not in text
+
+
+def test_a_kept_options_file_its_java_does_not_read_in_the_convergence():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_convergence import (
+        cassandra_import_convergence)
+    other = node(2)
+    other["vars"]["cassandra_version"] = "41x"
+    lines = cassandra_import_convergence(cassandra_inventory_layout([_java11_node(4), other], "My Cluster"))
+    at = lines.index("  KEPT BY HAND — cassandra_config_keep_files: left as their node has them")
+    text = " ".join(" ".join(line.split()) for line in lines[at:])
+    assert "jvm8-server.options kept on node4 (1 node) not read by the Java the node runs (observed: Java 11)" in text
+    assert "its edits have no effect on the running JVM: no variable carries them" in text
+    assert "take jvm8-server.options out of cassandra_config_keep_files (host_vars/node4/)" in text
+    assert "cassandra_heap_size" not in text and "cassandra_jvm8_extra_options" not in text
 
 
 def test_a_kept_file_given_back_step_by_step():
@@ -1009,3 +1088,26 @@ def test_details_said_once_for_every_node():
     own = details[at + 1:details.index("", at)]
     assert own[-2:] == ["      cassandra.yaml, line 10:", "        + concurrent_writes: 48"]
     assert own[0].startswith("    Hand edits no variable carries") and len(own) == 3  # (the line it belongs to, then its own only)
+
+
+def report_over(nodes, yours):
+    """report.txt with a file of yours (its values as the nodes have them are left to it, out of their variables)."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
+        cassandra_inventory_layout_over)
+    layout = cassandra_inventory_layout_over(nodes, "My Cluster", [{"path": "group_vars/all.yml", "content": yours}])
+    return cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, width=160), layout
+
+
+def test_your_files_values_count_for_the_series_and_the_restart_policy():
+    # (audit) a file of yours giving the same cassandra_version and cassandra_service_restart as the nodes: they
+    # leave the nodes' variables, the report reads them from yours
+    nodes = [_java11_node(4), node(2, unit={"restart": "always"})]
+    nodes[1]["vars"].update(cassandra_version="41x", cassandra_service_restart="always")
+    nodes[0]["vars"]["cassandra_service_restart"] = "always"
+    nodes[0]["unit"] = {"restart": "always"}
+    lines, layout = report_over(nodes, "cassandra_version: 41x\ncassandra_service_restart: always\n")
+    assert "cassandra_version" in layout["from_yours"]["node4"]  # (else the test proves nothing)
+    text = "\n".join(lines)
+    assert "not read by the Java node4 runs (observed: Java 11)" in text
+    assert "cassandra_heap_size: 4G" not in text
+    assert not has(lines, "WORTH A LOOK")

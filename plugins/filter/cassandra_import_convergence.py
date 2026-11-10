@@ -24,6 +24,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     JAVA_DEFAULT, KEEP, ROLE, SERIES, group_chains, hand_edits_kept, template_vars, undefined_name)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
     ARROW_RIGHT, DASH, NOT_COUNTED, REPORT_WIDTH, aligned_rows, fill_text, report_sections, who_text, unbreakable)
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 
@@ -318,9 +319,29 @@ def _template_text(name):
 OWN_ADDRESS = "<its address>"  # a node's own address in its hand edits
 
 
+def _unread_by(node, name):
+    """The major of the Java node runs when name is a jvm<N>-server.options it does not read (bin/cassandra reads
+    jvm-server.options and the one of its Java only) -> "11"; "" when it reads it, or when that is not known."""
+    if not re.match(r"^jvm\d+-server\.options$", name):
+        return ""
+    series = str((node.get("vars") or {}).get("cassandra_version") or "")
+    java = str((node.get("versions") or {}).get("java") or "")
+    read = jvm.options_file(series, java)
+    return str(jvm.java_major(java)) if read and read != name else ""
+
+
+def _with_yours(read, layout):
+    """The nodes read, their variables with the values one of your files gives as they have them (left out of
+    theirs: the layout's from_yours)."""
+    mine = layout.get("from_yours") or {}
+    return [dict(n, vars=dict(dict((k, v["value"]) for k, v in (mine.get(n["name"]) or {}).items()),
+                              **(n.get("vars") or {}))) for n in read]
+
+
 def _kept_files(read):
     """The config files the nodes keep as edited by hand (cassandra_config_keep_files) -> [(file, [(its edit lines,
-    [nodes])])], the same edits on several nodes once."""
+    [nodes], the major of the Java they run when it does not read the file, else "")])], the same edits on several
+    nodes once."""
     found, order = {}, []
     for n in read:
         kept, dummy = hand_edits_kept(n)
@@ -338,12 +359,23 @@ def _kept_files(read):
             # (the node's own address read as such: the same edit on every node, each with its address, is one)
             lines = tuple(re.sub(r"(?<![\w.:-])%s(?![\w:-]|\.\d)" % re.escape(address), OWN_ADDRESS, line)
                           if address else line for line in per_file.get(f) or ())
-            entry = next((e for e in found[f] if e[0] == lines), None)
+            unread = _unread_by(n, f)
+            entry = next((e for e in found[f] if e[0] == lines and e[2] == unread), None)
             if entry is None:
-                found[f].append((lines, [n["name"]]))
+                found[f].append((lines, [n["name"]], unread))
             else:
                 entry[1].append(n["name"])
     return [(f, found[f]) for f in order]
+
+
+def _kept_parts(kept):
+    """_kept_files' files, each split by the Java its nodes run: the variants of the nodes that read it, then those of
+    the nodes whose Java does not read it, by its major -> [(file, [(edit lines, [nodes])], "" or the major)]."""
+    parts = []
+    for name, variants in kept:
+        for java in sorted(set(v[2] for v in variants)):
+            parts.append((name, [(edits, members) for edits, members, unread in variants if unread == java], java))
+    return parts
 
 
 def _values_text(item, who):
@@ -363,7 +395,8 @@ def _then_text(item):
 
 
 def _shown(text):
-    """A value as the convergence names it: a secret by its number, a node without it as such."""
+    """A value as the convergence names it: a secret by its number, a node without it as such, a file of the
+    inventory by its path there."""
     text = re.sub(r"[\r\n]+", " ", str(text))  # (a line of its own would be read as another one)
     return {"(collection's default)": "default", "(not set)": "not set"}.get(text, text)
 
@@ -426,10 +459,23 @@ def _kept_lines(kept, layout, read, who, width, inventory, hosts, cwd):
     that would carry each and its value, and how to give the file back to the roles."""
     lines = []
     everyone = sorted(n["name"] for n in read)
-    for name, variants in kept:
+    for name, variants, java in _kept_parts(kept):
         nodes = [n for dummy, members in variants for n in members]
         several = ", %d variants" % len(variants) if len(variants) > 1 else ""
         lines += fill_text("%s   kept on %s%s" % (name, who(nodes), several), width, "  ", "    ")
+        if java:
+            # (bin/cassandra passes the options of its Java's file only: these edits do not reach the JVM)
+            lines += fill_text("not read by the Java %s runs (observed: Java %s)" % (
+                "the node" if len(nodes) == 1 else "these nodes", java), width, "    ", "  ")
+            lines += fill_text("its edits have no effect on the running JVM: no variable carries them", width, "    ")
+            lines += fill_text("%s to give it back to the roles: take %s out of cassandra_config_keep_files (%s):"
+                               " apply_config writes the role's, then restarts the node (the same Java options);"
+                               " check first: %s" % (
+                                   ARROW_RIGHT, name, "host_vars/%s/" % nodes[0] if len(nodes) == 1 else
+                                   "host_vars of %s (%s)" % (out.plural(len(nodes), "node"), out.full_list(nodes)),
+                                   unbreakable(_check(nodes, "restart", inventory, hosts, cwd))),
+                               width, "    ", "  ")
+            continue
         carried, loose = set(), 0
         for i, (edits, members) in enumerate(variants):
             blocks = _blocks(edits)
@@ -479,15 +525,20 @@ def kept_plan(layout, inventory="", hosts="", cwd=None):
     [{file, nodes, set: [(variable, its value: the same on every node, or "<each node's own address>"), the
     variables that would write the edits], per_node: [(variable, {node: value})], already: [the variables the
     inventory or the collection's default already give these values], loose: the edits no variable carries, check:
-    the apply_config --check --diff of these nodes}]."""
+    the apply_config --check --diff of these nodes, unread: the major of the Java these nodes run when it does not
+    read the file (its edits carried by no variable: they have no effect), else ""}]."""
     read = [n for n in layout.get("nodes") or [] if boolean(n.get("read", False), strict=False)]
     by_name = dict((n["name"], n) for n in read)
     defaults = {}
     for role in ("cassandra_config", "cassandra_service"):
         defaults.update(role_file(role) or {})
     plans = []
-    for name, variants in _kept_files(read):
+    for name, variants, java in _kept_parts(_kept_files(_with_yours(read, layout))):
         nodes = [m for dummy, members in variants for m in members]
+        if java:
+            plans.append({"file": name, "nodes": nodes, "set": [], "per_node": [], "already": [], "loose": 0,
+                          "unread": java, "check": _check(nodes, "restart", inventory, hosts, cwd)})
+            continue
         values, loose = {}, 0  # {variable: {node: value}}
         for edits, members in variants:
             for dummy, removed, added in _blocks(edits):
@@ -513,7 +564,7 @@ def kept_plan(layout, inventory="", hosts="", cwd=None):
             else:
                 per_node.append((variable, ", ".join("%s on %s" % (v, m) for m, v in sorted(found.items()))))
         plans.append({"file": name, "nodes": nodes, "set": same, "per_node": per_node, "already": already,
-                      "loose": loose, "check": _check(nodes, "restart", inventory, hosts, cwd)})
+                      "loose": loose, "unread": "", "check": _check(nodes, "restart", inventory, hosts, cwd)})
     return plans
 
 
@@ -614,7 +665,7 @@ def _convergence(layout, self_check, inventory, hosts, cwd, width, self_check_ok
         return who_text(members, data["everyone"], data["groups"])
 
     items, counted = _setting_items(layout, data, read)
-    kept = _kept_files(read)
+    kept = _kept_files(_with_yours(read, layout))
     score = _score(items, counted, kept, self_check_ok, layout["cluster_group"], len(nodes) - len(read))
     lines = _report_head(score, items, layout, data, read, width, self_check_ok)
     if items:

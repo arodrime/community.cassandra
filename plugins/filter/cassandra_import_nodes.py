@@ -40,6 +40,10 @@ KEYS = ("ansible_facts", "ansible_host", "import_cluster_address", "import_clust
         "import_cluster_storage_dir", "import_cluster_system_java", "import_cluster_unit",
         "import_cluster_unit_slurp", "import_cluster_version")
 DSBULK = re.compile(r"^/usr/share/dsbulk-([0-9]+(?:[.][0-9]+)*)/bin/dsbulk$")
+# what systemd does with a stopped Cassandra by the unit's Restart= (systemd.service(5)); Ansible restarts nothing
+RESTART_DOES = {"no": "systemd leaves a Cassandra that stops down until someone starts it",
+                "on-failure": "systemd starts Cassandra again when it dies on an error, a signal or a timeout",
+                "always": "systemd starts Cassandra again whenever it stops, but by systemctl stop"}
 NOT_READ_KEEP = {"cassandra_repository_manage": False, "cassandra_linux_manage": False,
                  "cassandra_cqlsh_python_manage": False, "cassandra_service_unit_manage": False,
                  "cassandra_java_set_default": False, "cassandra_firewall_manage": False,
@@ -250,8 +254,10 @@ def _versions_note(hv, java_link):
 
 def _started_note(unit, keep, unit_env):
     """The note on how Cassandra is started: its unit, restart policy, boot, what becomes of it -> text."""
-    return "started by %s, Restart=%s, at boot: %s%s%s%s)" % (
-        unit.get("file", "") or "no systemd unit", unit.get("restart", "") or "?", unit.get("boot", "") or "?",
+    restart = unit.get("restart", "") or "?"
+    return "started by %s, Restart=%s%s, at boot: %s%s%s%s)" % (
+        unit.get("file", "") or "no systemd unit", restart,
+        " (%s)" % RESTART_DOES[restart] if restart in RESTART_DOES else "", unit.get("boot", "") or "?",
         " (kept on this node; new nodes get the unit of cassandra_service, with the restart policy"
         if "cassandra_service_unit_manage" in keep
         else " (cassandra_service replaces it with its own unit, keeping the restart policy",
