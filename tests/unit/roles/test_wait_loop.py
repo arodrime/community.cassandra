@@ -12,6 +12,7 @@ import sys
 
 import pytest
 
+TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 COLLECTIONS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", ".."))
 
 PLAYBOOK = """
@@ -98,8 +99,8 @@ def test_rounds_of_6_hours_up_to_720_checks(interval, round_size, group):
     except ImportError:  # ansible-core < 2.19
         def trust_as_template(value):
             return value
-    defaults = os.path.join(COLLECTIONS, "ansible_collections", "community", "cassandra", "roles", "cassandra_service",
-                            "defaults", "main.yml")
+    # the collection's own file, next to this test (its path as given: the same under a symlinked checkout)
+    defaults = os.path.join(TOP, "roles", "cassandra_service", "defaults", "main.yml")
     with open(defaults) as f:
         variables = yaml.safe_load(f)
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
