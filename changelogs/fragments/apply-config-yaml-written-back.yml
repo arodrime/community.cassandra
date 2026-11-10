@@ -1,0 +1,5 @@
+bugfixes:
+  - >-
+    apply_config - a ``cassandra.yaml`` written back with the content the running Cassandra started with (edited by
+    hand since) no longer restarts the node: its seeds, the one setting Cassandra re-reads from the file, are
+    reloaded instead (``nodetool reloadseeds``), as other files written back were already not restarted.

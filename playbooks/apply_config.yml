@@ -83,14 +83,15 @@
 
     # A file written back with the content the running Cassandra started with (deleted or edited by hand
     # since): no restart for it. Only when the record is that JVM's (its pid and start, recorded with it:
-    # a start outside the roles leaves the one of an earlier JVM), never cassandra.yaml (settings changed
-    # live since, seeds reloaded...), nor when the conf directory itself changes (rpm alternative)
+    # a start outside the roles leaves the one of an earlier JVM), nor when the conf directory itself changes
+    # (rpm alternative). cassandra.yaml too: Cassandra re-reads only its seeds from it once started (nodetool
+    # reloadseeds, a hand edit may have loaded others): reloaded once written back (action_apply_config.yml)
     - name: Note the files written back as the running Cassandra started with them
       ansible.builtin.set_fact:
         _cassandra_apply_config_as_started: >-
           {%- set out = [] -%}
           {%- set conf = cassandra_conf_dir | trim | regex_replace('/+$', '') -%}
-          {%- for f in _cassandra_config_changes | default([]) if f in _new and f != 'cassandra.yaml' and not _switch -%}
+          {%- for f in _cassandra_config_changes | default([]) if f in _new and not _switch -%}
           {%-   for path, sum in _record.items() if path | basename == f and path | dirname | regex_replace('/+$', '') == conf -%}
           {%-     if sum == _new[f] | hash('sha1') and f not in out -%}{%- set _ = out.append(f) -%}{%- endif -%}
           {%-   endfor -%}
@@ -182,8 +183,7 @@
     # owner and mode, or its content, apply at once, written first once the run is confirmed; the JMX access
     # file is read at start: written back or changed, the node is restarted), nor one whose files are only
     # written back as its running Cassandra
-    # started with them (deleted or edited by hand since; never cassandra.yaml, whose settings can change
-    # live). A node where Cassandra failed (e.g. it could not read its config) is started once its config is
+    # started with them (deleted or edited by hand since; cassandra.yaml too, its seeds reloaded). A node where Cassandra failed (e.g. it could not read its config) is started once its config is
     # written; one stopped on purpose gets its config and stays stopped.
     - name: Note what this node needs
       ansible.builtin.set_fact:

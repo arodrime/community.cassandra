@@ -4,8 +4,9 @@ __metaclass__ = type
 # apply_config: a config file deleted or edited by hand on a running node, and
 # written back with the content the running Cassandra started with (the record
 # of its start, config_snapshot.yml) does not restart it: Cassandra runs with
-# exactly that. Never when the record is not that JVM's (another pid or start:
-# a start outside the roles), for cassandra.yaml, when another file changes or
+# exactly that (cassandra.yaml too: its seeds reloaded, the one setting Cassandra
+# re-reads from it). Never when the record is not that JVM's (another pid or start:
+# a start outside the roles), when another file changes or
 # a restart is pending for another one, nor when that JVM restarted between the
 # plan and the write. Rendered by Ansible.
 
@@ -59,6 +60,16 @@ def needs(changes=(OPTIONS,), new=None, record=None, recorded=("42", 100.0), sta
 
 def test_a_file_written_back_as_the_running_cassandra_started_with_it_is_no_restart():
     assert needs() == ("none", [OPTIONS + " written back as the running Cassandra started with it: no restart for it"])
+    # cassandra.yaml too (edited back by hand, the mode or a setting): no restart, its seeds reloaded at the write
+    assert needs(changes=["cassandra.yaml"], new={"cassandra.yaml": "num_tokens: 8\n"}) == (
+        "none", ["cassandra.yaml written back as the running Cassandra started with it: no restart for it"])
+    from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import load
+    action = load("roles", "cassandra_operation", "tasks", "action_apply_config.yml")
+    write = next(t for t in action if t.get("name") == "Write the config")
+    reload_seeds = write["vars"]["cassandra_config_reload_seeds"]
+    assert render(reload_seeds, {"cassandra_apply_config_as_started": {"files": ["cassandra.yaml"]}}) is True
+    assert render(reload_seeds, {"cassandra_apply_config_as_started": {"files": [OPTIONS]}}) is False
+    assert render(reload_seeds, {"cassandra_apply_config_as_started": {}}) is False
     # deleted by hand: absent now, so not pending either; edited by hand: pending, but written back
     assert needs(pending=True, newer=[OPTIONS])[0] == "none"
 
@@ -72,7 +83,7 @@ def test_a_file_written_back_as_the_running_cassandra_started_with_it_is_no_rest
     dict(recorded=("42", 60.0)),  # the same pid, another start (a reboot)
     dict(recorded=None),  # a record that does not say for which JVM (written by an earlier version)
     dict(start=None),  # the JVM's start unknown
-    dict(changes=["cassandra.yaml"], new={"cassandra.yaml": "num_tokens: 8\n"}),  # settings change live (seeds...)
+    dict(changes=["cassandra.yaml"], new={"cassandra.yaml": "num_tokens: 4\n"}),  # cassandra.yaml, another content
     dict(target="/etc/cassandra/default.conf"),  # the conf directory itself switches (rpm alternative)
     dict(record={}),  # no record of that file (imported, seeded without it)
     dict(conf="/etc/cassandra"),  # a record of another directory
