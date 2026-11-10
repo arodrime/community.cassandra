@@ -296,9 +296,10 @@
       vars:
         cassandra_output: true  # a verdict: its msg as is (ops callback)
         _nl: "\n"
-        # where progress.yml keeps them: cassandra_rolling_progress_dir, else the inventory's dir, else the current one
+        # where progress.yml keeps them: cassandra_rolling_progress_dir (a relative one from the current dir, as
+        # progress.yml resolves it), else the inventory's dir, else the current one
         _progress_dirs: >-
-          {{ [cassandra_rolling_progress_dir | expanduser] if cassandra_rolling_progress_dir | default('', true)
+          {{ [cassandra_rolling_progress_dir | expanduser | realpath] if cassandra_rolling_progress_dir | default('', true)
              else [inventory_dir | default('', true) ~ '/.cassandra_progress', lookup('ansible.builtin.env', 'PWD') ~ '/.cassandra_progress'] }}
         _progress: >-
           {%- set out = [] -%}

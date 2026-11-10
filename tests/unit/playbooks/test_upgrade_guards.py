@@ -409,6 +409,10 @@ def test_a_down_node_with_the_target_package_is_pointed_to_apply_config():
         "  then run this phase again (a node already upgraded is skipped):",
         "  ansible-playbook -i a.yml community.cassandra.upgrade -e cassandra_hosts=staging_b -e cassandra_upgrade_phase=rolling"]
     assert check["vars"]["cassandra_output"] is True
+    # a node already upgraded is skipped by the canary and rolling phases only
+    variables["_phase"] = "sstables"
+    assert "  then run this phase again:" in render(check["ansible.builtin.assert"]["fail_msg"], **variables).split("\n")
+    variables["_phase"] = "rolling"
     del hostvars["n3"], hostvars["n4"]
     variables["ansible_play_hosts"] = list(hostvars)
     hostvars["n2"]["cassandra_upgrade_installed"]["stdout"] = "installed 5.0.9-1"  # a Debian revision

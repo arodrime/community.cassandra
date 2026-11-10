@@ -494,3 +494,16 @@ def test_read_cassandra_include_and_quoted_values(tmp_path):
     other.mkdir()
     lines = _read(other, "", unit_kept=True, unit_env='"JVM_OPTS=-Da=1 JAVA_HOME=/not/it" JAVA_HOME=/opt/unit')
     assert lines[0] == "/opt/unit"
+
+
+def test_the_progress_dir_resolved_as_progress_yml_does(tmp_path, monkeypatch):
+    # a relative cassandra_rolling_progress_dir: from the current dir, as progress.yml resolves it
+    from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
+    load_collection_filters()
+    check = TASKS["No node of the run is left drained"]
+    monkeypatch.chdir(str(tmp_path))
+    dirs = _template(check["vars"]["_progress_dirs"], {"cassandra_rolling_progress_dir": "progress"})
+    assert dirs == [str(tmp_path / "progress")]
+    with open(os.path.join(os.path.dirname(PLAYBOOK), "..", "roles", "cassandra_operation", "tasks", "progress.yml"),
+              encoding="utf-8") as f:
+        assert "_given if _given is abs else _given | realpath" in f.read()
