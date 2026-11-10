@@ -201,7 +201,9 @@ def cassandra_storage_mode_way_out(behind, from_4x=True, restart_command="", tot
     future = _names(behind, "future")
     if future:
         out.append("Check the clock of %s: %s cassandra.yaml has a time after now; once it is right, write the file"
-                   " again (apply_config) or touch it." % (future, _one(future, "its", "their")))
+                   " again (apply_config) or touch it, then restart %s (the file is then newer than %s start)." % (
+                       future, _one(future, "its", "their"), _one(future, "the node", "the nodes"),
+                       _one(future, "its", "their")))
     for b in behind:
         if b["unread"]:
             out.append("On %s, %s%s." % (

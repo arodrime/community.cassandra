@@ -92,7 +92,9 @@ def test_a_start_not_read_and_a_file_time_after_now():
     found = behind_of([{"node": "n1", "inventory": "NONE", "yaml": "NONE", "running": None, "future": True}])
     assert found[0]["running"] == "cassandra.yaml has a time after now" and not found[0]["pending"]
     assert cassandra_storage_mode_headline(found) == "On n1, cassandra.yaml has a time after now. Nothing was done."
-    assert "Check the clock of n1" in cassandra_storage_mode_way_out(found)
+    assert cassandra_storage_mode_way_out(found) == (
+        "Check the clock of n1: its cassandra.yaml has a time after now; once it is right, write the file again"
+        " (apply_config) or touch it, then restart the node (the file is then newer than its start).")
     # read lines: never "not pending" when the start was not read
     nodes = cassandra_storage_mode_nodes([{"inventory_hostname": "n1", "cassandra_storage_mode_read": {
         "stdout_lines": ["yaml_read=yes", "yaml=NONE", "running=yes", "start_read=no"]}}])

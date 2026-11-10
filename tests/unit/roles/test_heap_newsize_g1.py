@@ -43,11 +43,11 @@ def test_the_config_role_warns():
 
 
 def test_the_upgrade_preflight_lists_it():
-    warn = _task("playbooks/upgrade.yml", "Settings the target series ignores with G1")
-    assert "ansible.builtin.debug" in warn  # said, the upgrade goes on
-    base = dict(_phase="preflight", cassandra_version="50x", cassandra_heap_newsize="800M", cassandra_jvm_gc="G1")
-    assert _when(warn, **base) is True
-    for key, value in (("cassandra_jvm_gc", "CMS"), ("cassandra_heap_newsize", ""), ("_phase", "cleanup")):
-        other = dict(base)
-        other[key] = value
-        assert _when(warn, **other) is False, key
+    # its preflight runs cassandra_config on the target's settings (the config preview): the warning above, once
+    with open(os.path.join(TOP, "playbooks", "upgrade.yml"), encoding="utf-8") as f:
+        plays = yaml.safe_load(f)
+    tasks = [t for p in plays for t in p.get("tasks", [])]
+    preview = [t for t in tasks if t.get("vars", {}).get("_cassandra_config_target_preview")]
+    assert preview and preview[0]["ansible.builtin.include_role"]["name"] == "community.cassandra.cassandra_config"
+    assert "_phase == 'preflight'" in str(preview[0]["when"])
+    assert not [t for t in tasks if "cassandra_heap_newsize" in str(t.get("when", ""))]  # not said twice
