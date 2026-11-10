@@ -1,0 +1,7 @@
+bugfixes:
+  - >-
+    upgrade, apply_config, rolling_restart - the CQL read of the ``storage_compatibility_mode`` Cassandra runs asks
+    the node on its own address (its ``cassandra_rpc_address``, else its ``cassandra_listen_address``, else
+    127.0.0.1), on its ``cassandra_native_transport_port``, with TLS when client encryption is required; a node where
+    it could not be read is said once a run, with cqlsh's last error line and what tells the mode instead (the line
+    Cassandra logged at its start, or its ``cassandra.yaml``).

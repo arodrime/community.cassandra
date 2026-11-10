@@ -235,3 +235,11 @@ _cassandra_playbook_variables: [cassandra_hosts, cassandra_target_nodes, cassand
                                 import_cluster_report_shareable,
                                 import_cluster_adopt, import_cluster_strict, import_cluster_debug,
                                 help_topic, help_write, help_runbook_dir, help_inventory]
+# storage_mode_read.yml's CQL read: the node's own address (its rpc_address, else its listen_address, else
+# 127.0.0.1: several instances on a host each their own), TLS when client encryption is required
+_cassandra_storage_mode_cql_host: >-
+  {{ (([cassandra_rpc_address | default(''), cassandra_listen_address | default('')]
+       | map('string') | reject('in', ['', 'localhost', '0.0.0.0']) | list) + ['127.0.0.1']) | first }}
+_cassandra_storage_mode_cql_ssl: >-
+  {{ cassandra_client_encryption_enabled | default(false) | bool
+     and not cassandra_client_encryption_optional | default('') | string | lower == 'true' }}

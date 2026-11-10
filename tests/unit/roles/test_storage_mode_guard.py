@@ -115,3 +115,41 @@ def test_where_it_runs():
         names = [t["name"] for t in play["tasks"]]
         assert names.index("Refuse a restart into an earlier storage_compatibility_mode") < names.index(
             "Show the plan and confirm the run"), playbook
+
+
+def test_the_cql_read_asks_the_node_itself_and_says_when_it_could_not():
+    tasks = _load("roles/cassandra_operation/tasks/storage_mode_read.yml")
+    read = next(t for t in tasks if t["name"].startswith("Read the storage_compatibility_mode the running"))
+    cql = read["community.cassandra.cassandra_cqlsh"]
+    assert cql["cqlsh_host"] == "{{ _cassandra_storage_mode_cql_host }}"
+    assert cql["cqlsh_port"] == "{{ cassandra_native_transport_port | default(9042) }}"
+    assert cql["ssl"] == "{{ _cassandra_storage_mode_cql_ssl }}"
+    defaults = _load("roles/cassandra_operation/defaults/main.yml")
+    for variables, host, ssl in (({}, "127.0.0.1", False),
+                                 ({"cassandra_rpc_address": "10.0.0.5", "cassandra_listen_address": "10.0.0.6"}, "10.0.0.5", False),
+                                 ({"cassandra_rpc_address": "0.0.0.0", "cassandra_listen_address": "10.0.0.6"}, "10.0.0.6", False),
+                                 ({"cassandra_client_encryption_enabled": True}, "127.0.0.1", True),
+                                 ({"cassandra_client_encryption_enabled": True,
+                                   "cassandra_client_encryption_optional": "true"}, "127.0.0.1", False)):
+        assert str(_render(defaults["_cassandra_storage_mode_cql_host"], **variables)).strip() == host
+        assert str(_render(defaults["_cassandra_storage_mode_cql_ssl"], **variables)).strip() in (str(ssl), str(ssl).lower())
+    # the filter's address (the read-first way out names it) is the same
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_storage_mode import _cql_host
+    assert [_cql_host(None), _cql_host("10.0.0.5", "x"), _cql_host("0.0.0.0", "10.0.0.6")] == [
+        "127.0.0.1", "10.0.0.5", "10.0.0.6"]
+    # not read over CQL: said, once a run per node, with what tells the mode instead
+    say = next(t for t in tasks if t["name"] == "Say that the mode Cassandra runs was not read over CQL")
+    failed = {"failed": True, "msg": "module execution failed", "rc": 1,
+              "err": "Traceback (most recent call last):\n  File x\nModuleNotFoundError: No module named 'cqlshlib'\n"}
+    base = dict(say["vars"], inventory_hostname="n1", _cassandra_storage_mode_cql_host="10.0.0.5",
+                _cassandra_storage_mode_cql_ssl=False, cassandra_storage_mode_cql=failed)
+    msg = " ".join(str(_render(say["ansible.builtin.debug"]["msg"], cassandra_storage_mode_read={
+        "stdout_lines": ["yaml=NONE", "running=yes", "logged=NONE"]}, **base)).split())
+    assert msg == ("WARNING n1: the storage_compatibility_mode Cassandra runs could not be read over CQL (cqlsh on"
+                   " 10.0.0.5:9042: ModuleNotFoundError: No module named 'cqlshlib'); the line it logged at its start"
+                   " tells it instead.")
+    msg = " ".join(str(_render(say["ansible.builtin.debug"]["msg"], cassandra_storage_mode_read={
+        "stdout_lines": ["yaml=NONE", "running=yes"]}, **base)).split())
+    assert msg.endswith("nothing logged since its start either: its cassandra.yaml tells it unless the file changed"
+                        " since that start.")
+    assert "not _cassandra_storage_mode_cql_said | default(false) | bool" in say["when"]

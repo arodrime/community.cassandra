@@ -91,15 +91,17 @@
   check_mode: false  # a read
 
 # The mode it runs, live: system_views.settings has the storage_compatibility_mode it read at its start (empty when
-# its cassandra.yaml had no such line: CASSANDRA_4). Over CQL as the operations log in (keyspaces.yml); not read
-# (cqlsh missing, a login refused, the node not up): the log line, the record or the file times tell instead
+# its cassandra.yaml had no such line: CASSANDRA_4). Over CQL as the operations log in (keyspaces.yml), on its own
+# address (its rpc_address, else its listen_address, else 127.0.0.1: several instances on a host each their own),
+# its native transport port, TLS when client encryption is required. Not read (cqlsh missing, a login refused, the
+# node not up): said, and the log line, the record or the file times tell instead
 - name: Read the storage_compatibility_mode the running Cassandra runs (system_views.settings)
   community.cassandra.cassandra_cqlsh:
     execute: "SELECT value FROM system_views.settings WHERE name = 'storage_compatibility_mode';"
     transform: raw
-    cqlsh_host: >-
-      {{ cassandra_rpc_address | default('')
-         if cassandra_rpc_address | default('') not in ['', 'localhost', '0.0.0.0'] else '127.0.0.1' }}
+    cqlsh_host: "{{ _cassandra_storage_mode_cql_host }}"
+    cqlsh_port: "{{ cassandra_native_transport_port | default(9042) }}"
+    ssl: "{{ _cassandra_storage_mode_cql_ssl }}"
     username: "{{ cassandra_cql_username | default(omit, true) }}"
     cqlsh_cmd: "{{ cassandra_cqlsh_command | default(omit, true) }}"  # (a cqlsh outside root's PATH, e.g. a virtualenv)
     password: "{{ cassandra_cql_password | default(omit, true) }}"
@@ -108,3 +110,30 @@
   changed_when: false
   check_mode: false  # a SELECT
   when: "'running=yes' in cassandra_storage_mode_read.stdout_lines"
+
+# once a run per node (the read runs again before each write and restart)
+- name: Say that the mode Cassandra runs was not read over CQL
+  ansible.builtin.debug:
+    msg: >-
+      WARNING  {{ inventory_hostname }}: the storage_compatibility_mode Cassandra runs could not be read over CQL
+      (cqlsh on {{ _cassandra_storage_mode_cql_host }}:{{ cassandra_native_transport_port | default(9042) }}{{
+      ' with TLS' if _cassandra_storage_mode_cql_ssl | bool else '' }}: {{ _why }}); {{
+      'the line it logged at its start tells it instead.'
+      if cassandra_storage_mode_read.stdout_lines | select('match', '^logged=') | list
+      else 'nothing logged since its start either: its cassandra.yaml tells it unless the file changed since that start.' }}
+  vars:
+    cassandra_output: true  # its msg as is (ops callback)
+    _why: >-
+      {{ (cassandra_storage_mode_cql.err | default('') | trim).splitlines() | select | list | last | default('')
+         | truncate(200, true, '...') or 'cqlsh returned ' ~ cassandra_storage_mode_cql.rc | default('no answer') }}
+  when:
+    - cassandra_storage_mode_cql is not skipped
+    - cassandra_storage_mode_cql.failed | default(false) or cassandra_storage_mode_cql.transformed_output is not defined
+    - not _cassandra_storage_mode_cql_said | default(false) | bool
+
+- name: Note that it was said
+  ansible.builtin.set_fact:
+    _cassandra_storage_mode_cql_said: true
+  when:
+    - cassandra_storage_mode_cql is not skipped
+    - cassandra_storage_mode_cql.failed | default(false) or cassandra_storage_mode_cql.transformed_output is not defined

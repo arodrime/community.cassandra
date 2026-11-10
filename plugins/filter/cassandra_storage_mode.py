@@ -66,9 +66,12 @@ def _live(cql):
     return None
 
 
-def _cql_host(rpc_address):
-    rpc = str(rpc_address or "")
-    return rpc if rpc not in ("", "localhost", "0.0.0.0") else "127.0.0.1"
+def _cql_host(rpc_address, listen_address=None):
+    """The address storage_mode_read.yml asks over CQL (its _cassandra_storage_mode_cql_host)."""
+    for address in (rpc_address, listen_address):
+        if str(address or "") not in ("", "localhost", "0.0.0.0", "None"):
+            return str(address)
+    return "127.0.0.1"
 
 
 def cassandra_storage_mode_nodes(hostvars):
@@ -102,7 +105,7 @@ def cassandra_storage_mode_nodes(hostvars):
                       "start_unread": start_unread, "start_later": start_later, "future": future,
                       "file": read.get("file") or "cassandra.yaml",
                       # the address storage_mode_read.yml asks over CQL (as keyspaces.yml)
-                      "cql_host": _cql_host(h.get("cassandra_rpc_address"))})
+                      "cql_host": _cql_host(h.get("cassandra_rpc_address"), h.get("cassandra_listen_address"))})
     return nodes
 
 
