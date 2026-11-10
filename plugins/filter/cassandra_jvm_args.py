@@ -46,7 +46,7 @@ HEAP_NAMES = ("MAX_HEAP_SIZE", "HEAP_NEWSIZE", "MAX_DIRECT_MEMORY_SIZE")
 # the variable that writes each heap assignment, by series (none: the template has no line for it)
 HEAP_VARS = {
     "MAX_HEAP_SIZE": {"40x": "cassandra_heap_size", "41x": "cassandra_heap_size", "50x": "cassandra_heap_size"},
-    "HEAP_NEWSIZE": {"40x": "cassandra_heap_newsize", "41x": "cassandra_heap_newsize"},
+    "HEAP_NEWSIZE": {"40x": "cassandra_heap_newsize", "41x": "cassandra_heap_newsize", "50x": "cassandra_heap_newsize"},
     "MAX_DIRECT_MEMORY_SIZE": {"50x": "cassandra_max_direct_memory_size"},
 }
 # a line adding plain options to JVM_OPTS (no expansion, no quote, no escape in them)

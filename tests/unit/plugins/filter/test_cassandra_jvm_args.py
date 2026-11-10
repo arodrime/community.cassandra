@@ -634,3 +634,26 @@ def test_a_moved_line_with_a_secret_shows_its_other_options(tmp_path):
     files = node_files("50x", before_extra('JVM_OPTS="$JVM_OPTS -Dcom.example.password=S3cr3t -Dz=1"'))
     node = imported(files, "50x", "17", launch(files, "17", tmp_path))[2]
     assert node["moved"] and "S3cr3t" not in str(node["moved"]) and "-Dz=1" in node["moved"][0]
+
+
+@pytest.mark.parametrize("java", ["11", "17"])
+def test_a_5_0_heap_newsize_with_g1_kept_as_found(tmp_path, java):
+    # a 5.0 node of the e2e: its stock MAX_HEAP_SIZE and HEAP_NEWSIZE lines uncommented (G1 ignores HEAP_NEWSIZE):
+    # the import carries both, the role writes them back as they are, so apply_config after the import changes
+    # nothing (it rewrote cassandra-env.sh and restarted the node)
+    def edit(files):
+        text = files["cassandra-env.sh"]
+        assert '#MAX_HEAP_SIZE="20G"\n#HEAP_NEWSIZE="10G"\n' in text
+        files["cassandra-env.sh"] = text.replace('#MAX_HEAP_SIZE="20G"\n#HEAP_NEWSIZE="10G"\n',
+                                                 'MAX_HEAP_SIZE="512M"\nHEAP_NEWSIZE="128M"\n')
+    files = node_files("50x", edit)
+    cmdline = launch(files, java, tmp_path)
+    inventory, layout, node = imported(files, "50x", java, cmdline)
+    rendered, variables = role_files(inventory, layout, files)
+    assert variables.get("cassandra_heap_size") == "512M" and variables.get("cassandra_heap_newsize") == "128M"
+    import difflib
+    assert [d for d in difflib.unified_diff(files["cassandra-env.sh"].split("\n"), rendered["cassandra-env.sh"].split("\n"),
+                                            lineterm="", n=0) if d[:1] in "+-" and d[:3] not in ("+++", "---")
+            and "Managed by Ansible" not in d] == []  # the role's mark aside, line for line
+    assert node["hand_edits"] == [] and "cassandra-env.sh" not in node.get("rewritten", [])
+    assert settings(launch(rendered, java, tmp_path)) == settings(cmdline)

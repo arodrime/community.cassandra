@@ -195,16 +195,15 @@
     quiet: true
 
 # Unless G1 is in use, cassandra-env.sh exits when only one of MAX_HEAP_SIZE
-# and HEAP_NEWSIZE is set; 5.0's leaves HEAP_NEWSIZE commented out
+# and HEAP_NEWSIZE is set (with G1 it ignores HEAP_NEWSIZE, written as found)
 - name: Assert heap settings are consistent
   ansible.builtin.assert:
     that: >-
       _cassandra_config_gcs | reject('equalto', 'G1') | list | length == 0
-      or (cassandra_heap_size == '' and cassandra_heap_newsize == '')
-      or (cassandra_heap_size != '' and cassandra_heap_newsize != '' and cassandra_version != '50x')
+      or (cassandra_heap_size == '') == (cassandra_heap_newsize == '')
     fail_msg: >-
       Without G1 (cassandra_jvm_gc, cassandra_jvm<N>_gc), set cassandra_heap_size and cassandra_heap_newsize
-      together on 4.x, and neither on 5.0 (its cassandra-env.sh has no HEAP_NEWSIZE)
+      together, or neither
 
 # The exporter's agent makes the JVM exit when it cannot start (a jar, a config or an address it cannot use);
 # bin/cassandra splits the options file's lines on blanks

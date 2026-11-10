@@ -1,0 +1,6 @@
+bugfixes:
+  - >-
+    cassandra_config - 5.0's ``cassandra-env.sh`` writes ``HEAP_NEWSIZE`` from ``cassandra_heap_newsize``, as 4.x's
+    does, and ``import_cluster`` carries a ``HEAP_NEWSIZE`` it finds there: a 5.0 node on G1 with ``HEAP_NEWSIZE`` set
+    (ignored by G1) was imported with a self-check that passed, then ``apply_config`` rewrote ``cassandra-env.sh``
+    and restarted it. Without G1, 5.0 takes ``cassandra_heap_size`` and ``cassandra_heap_newsize`` together, as 4.x.

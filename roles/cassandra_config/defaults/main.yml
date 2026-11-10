@@ -339,7 +339,7 @@ cassandra_extra_settings: {}
 # by the cassandra user in a package install).
 cassandra_log_dir: /var/log/cassandra
 cassandra_heap_size: ""  # "" = stock auto-sizing; e.g. "8G" sets -Xms/-Xmx
-cassandra_heap_newsize: ""  # 4.x without G1: set together with cassandra_heap_size, e.g. "800M"
+cassandra_heap_newsize: ""  # without G1: set together with cassandra_heap_size, e.g. "800M" (G1 ignores it)
 cassandra_max_direct_memory_size: ""
 # Where the JVM writes a heap dump (-XX:HeapDumpPath, CASSANDRA_HEAPDUMP_DIR,
 # which the environment may still give); a path is also 5.0's heap_dump_path

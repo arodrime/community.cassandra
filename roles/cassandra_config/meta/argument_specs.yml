@@ -1303,13 +1303,14 @@ argument_specs:
         default: ''
         description:
         - 'C(MAX_HEAP_SIZE) in C(cassandra-env.sh), for example C(8G). Empty: the stock automatic sizing.'
-        - Without G1 (CMS is the 4.x default), set O(cassandra_heap_newsize) as well on 4.x; on 5.0 it can only be set with
-          G1 (its C(cassandra-env.sh) has no C(HEAP_NEWSIZE)). The role refuses other combinations.
+        - Without G1 (CMS is the 4.x default), set O(cassandra_heap_newsize) as well. The role refuses one without the
+          other then.
       cassandra_heap_newsize:
         type: str
         default: ''
         description:
-        - C(HEAP_NEWSIZE) in C(cassandra-env.sh) (4.x). Without G1, it must be set together with O(cassandra_heap_size).
+        - C(HEAP_NEWSIZE) in C(cassandra-env.sh). Without G1, it must be set together with O(cassandra_heap_size); with
+          G1 Cassandra ignores it (import_cluster keeps one found, so the file is written as it is).
       cassandra_max_direct_memory_size:
         type: str
         default: ''

@@ -117,7 +117,7 @@ calculate_heap_sizes
 # or not (if you set one, set the other).
 
 {{ '' if cassandra_heap_size else '#' }}MAX_HEAP_SIZE="{{ cassandra_heap_size or '20G' }}"
-#HEAP_NEWSIZE="10G"
+{{ '' if cassandra_heap_newsize else '#' }}HEAP_NEWSIZE="{{ cassandra_heap_newsize or '10G' }}"
 {{ '' if cassandra_max_direct_memory_size else '#' }}MAX_DIRECT_MEMORY_SIZE="{{ cassandra_max_direct_memory_size or '10G' }}"
 
 # Set this to control the amount of arenas per-thread in glibc

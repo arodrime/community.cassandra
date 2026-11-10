@@ -303,9 +303,9 @@ Role Variables
   not accept.
 * `cassandra-env.sh`: `cassandra_log_dir` (defaults to `/var/log/cassandra`,
   as the deb/rpm packages patch it; the tarball's stock value is
-  `$CASSANDRA_HOME/logs`), `cassandra_heap_newsize` (4.x only: without G1
-  it goes with `cassandra_heap_size`, both or neither; on 5.0 a heap size
-  needs G1; the role asserts it),
+  `$CASSANDRA_HOME/logs`), `cassandra_heap_newsize` (without G1 it goes
+  with `cassandra_heap_size`, both or neither, the role asserts it; G1
+  ignores it, import_cluster keeps one found so the file stays the same),
   `cassandra_heap_size` (empty = stock auto-sizing),
   `cassandra_max_direct_memory_size` (5.0 only), `cassandra_heap_dump_dir`
   (where the JVM writes a heap dump, `-XX:HeapDumpPath`; a
@@ -319,7 +319,7 @@ Role Variables
 * GC: `cassandra_jvm_gc` defaults to the series' stock GC (`CMS` on 4.x,
   `G1` on 5.0). `G1` on 4.x turns on the stock G1 block with the
   `cassandra_jvm_*` values (5.0's by default); `CMS` needs Java 8/11
-  (and on 4.x `cassandra_heap_newsize` with `cassandra_heap_size`); `custom` comments
+  (and `cassandra_heap_newsize` with `cassandra_heap_size`); `custom` comments
   out both blocks (set your own flags, e.g. ZGC, with
   `cassandra_jvm<N>_extra_options`). `cassandra_jvm11_gc` etc. override it
   per file; `cassandra_jvm_cms_initiating_occupancy_fraction` tunes CMS.
