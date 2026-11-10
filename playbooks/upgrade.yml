@@ -426,7 +426,10 @@
                                      _from_4x, 'rolling_restart' | community.cassandra.cassandra_command(
                                        limit=_restart, **_cassandra_run_command_args), _hosts | length,
                                      'apply_config' | community.cassandra.cassandra_command(
-                                       limit=_behind | selectattr('reverted') | rejectattr('reverted_far') | map(attribute='node') | list,
+                                       limit=_behind | selectattr('write_back') | map(attribute='node') | list,
+                                       **_cassandra_run_command_args),
+                                     'rolling_restart' | community.cassandra.cassandra_command(
+                                       limit=_behind | selectattr('unsure') | map(attribute='node') | list,
                                        **_cassandra_run_command_args))]) | join(_nl) }}
         quiet: true
       run_once: true

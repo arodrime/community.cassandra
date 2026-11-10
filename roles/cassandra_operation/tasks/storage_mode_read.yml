@@ -89,3 +89,22 @@
   register: cassandra_storage_mode_read
   changed_when: false
   check_mode: false  # a read
+
+# The mode it runs, live: system_views.settings has the storage_compatibility_mode it read at its start (empty when
+# its cassandra.yaml had no such line: CASSANDRA_4). Over CQL as the operations log in (keyspaces.yml); not read
+# (cqlsh missing, a login refused, the node not up): the log line, the record or the file times tell instead
+- name: Read the storage_compatibility_mode the running Cassandra runs (system_views.settings)
+  community.cassandra.cassandra_cqlsh:
+    execute: "SELECT value FROM system_views.settings WHERE name = 'storage_compatibility_mode';"
+    transform: raw
+    cqlsh_host: >-
+      {{ cassandra_rpc_address | default('')
+         if cassandra_rpc_address | default('') not in ['', 'localhost', '0.0.0.0'] else '127.0.0.1' }}
+    username: "{{ cassandra_cql_username | default(omit, true) }}"
+    cqlsh_cmd: "{{ cassandra_cqlsh_command | default(omit, true) }}"  # (a cqlsh outside root's PATH, e.g. a virtualenv)
+    password: "{{ cassandra_cql_password | default(omit, true) }}"
+  register: cassandra_storage_mode_cql
+  failed_when: false
+  changed_when: false
+  check_mode: false  # a SELECT
+  when: "'running=yes' in cassandra_storage_mode_read.stdout_lines"

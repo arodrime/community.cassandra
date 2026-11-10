@@ -202,9 +202,12 @@ RUN = {"inventory": ["/inv/a.yml"], "default_inventory": "", "hosts": "", "cwd":
 def _sstables(*modes, **kwargs):
     check = task("Upgrade checks", "The sstables are rewritten once storage_compatibility_mode is NONE")
     extra = kwargs.pop("extra", {})  # node -> lines added to what it read
+    cql = kwargs.pop("cql", {})  # node -> the mode system_views.settings has
     hostvars = _modes(modes, **kwargs)
     for node, lines in extra.items():
         hostvars[node]["cassandra_storage_mode_read"]["stdout_lines"] += lines
+    for node, mode in cql.items():
+        hostvars[node]["cassandra_storage_mode_cql"] = {"rc": 0, "out": " value\n-------\n %s\n\n(1 rows)\n" % mode}
     variables = dict(check["vars"], hostvars=hostvars, ansible_play_hosts=list(hostvars), cassandra_package_version="5.0.9",
                      _cassandra_run_command_args=RUN)
     return (render("{{ %s }}" % check["ansible.builtin.assert"]["that"], **variables),
@@ -239,56 +242,76 @@ def test_sstables_refuse_a_mode_not_read_unknown_or_a_restart_pending():
     assert ok is False and msg[2] == "  n1    NONE       not read        no Cassandra process found"
     assert ("On n1, neither its cassandra.yaml nor the mode it runs (no Cassandra process found) could be read: the cassandra.yaml"
             " of its cassandra_conf_dir must be readable.") in msg[-1]
-    # NONE written by apply_config, the node started before that (the log rolled over: no logged mode): a restart
+    # NONE written by apply_config, the node started before that, nothing logged, CQL not read: the mode it runs is
+    # not known; it is read first (a restart could take it back, apply_config forward from the file)
     ok, msg = _sstables(("NONE", "NONE", "NONE", True))
-    assert ok is False and msg[2] == "  n1    NONE       NONE            restart pending (its cassandra.yaml changed after Cassandra started)"
-    assert msg[0] == "A restart is pending on n1 (its cassandra.yaml changed after Cassandra started). Nothing was done."
+    assert ok is False and msg[2] == "  n1    NONE       NONE            not known (its cassandra.yaml changed after Cassandra started)"
+    assert msg[0] == ("On n1, the mode Cassandra runs is not known: its cassandra.yaml (NONE) changed after it started."
+                      " Nothing was done.")
+    assert msg[-1] == (
+        "WAY OUT  On n1, read the mode its Cassandra runs (cqlsh, as the cluster's CQL user): SELECT value FROM"
+        " system_views.settings WHERE name = 'storage_compatibility_mode'; (null: CASSANDRA_4). The same as its"
+        " cassandra.yaml's (NONE) or the step before: restart it: ansible-playbook -i a.yml"
+        " community.cassandra.rolling_restart --limit n1. Two steps before: set UPGRADING in cassandra.yaml by hand"
+        " first. Later than NONE: set that mode back in cassandra.yaml by hand. Then run this phase again.")
+    # the same, read over CQL (system_views.settings): UPGRADING, a restart
+    ok, msg = _sstables(("NONE", "NONE", "NONE", True), cql={"n1": "UPGRADING"})
+    assert msg[0] == "On n1, Cassandra runs UPGRADING, before the NONE its cassandra.yaml has. Nothing was done."
     assert msg[-1] == ("WAY OUT  Restart n1, so it runs the mode its cassandra.yaml has: ansible-playbook -i a.yml"
                        " community.cassandra.rolling_restart --limit n1. Then run this phase again.")
+    # read NONE over CQL: it runs its file's mode, nothing pending
+    assert _sstables(("NONE", "NONE", "NONE", True), cql={"n1": "NONE"})[0] is True
     # it logged UPGRADING at its start, NONE written since: the restart too
     ok, msg = _sstables(("NONE", "NONE", "UPGRADING"))
     assert ok is False and "Restart n1, so it runs the mode its cassandra.yaml has" in msg[-1]
-    # a file time after now on n2, a restart pending on n1: both restarted, n2 touched first
-    ok, msg = _sstables(("NONE", "NONE", "NONE", True), ("NONE", "NONE", "NONE"), extra={"n2": ["future=yes"]})
+    # a file time after now on n2, a restart pending on n1 (logged UPGRADING): both restarted, n2 touched first
+    ok, msg = _sstables(("NONE", "NONE", "UPGRADING"), ("NONE", "NONE", "NONE"), extra={"n2": ["future=yes"]})
     assert ok is False and msg[-1] == (
         "WAY OUT  Set the clock of n2 right (its cassandra.yaml has a time after now), then on it: touch cassandra.yaml."
         " Restart n1, n2, so they run the mode their cassandra.yaml has: ansible-playbook -i a.yml"
         " community.cassandra.rolling_restart --limit n1,n2. Then run this phase again.")
+    # an apply_config cut after the write, before the restart: it runs CASSANDRA_4, its file UPGRADING. A restart
+    # only (it moves one step), no apply_config, no step: whatever the inventory says (A: NONE, A2: UPGRADING)
+    for inventory in ("NONE", "UPGRADING"):
+        ok, msg = _sstables((inventory, "UPGRADING", "CASSANDRA_4"))
+        assert ok is False and msg[0] == (
+            "On n1, Cassandra runs CASSANDRA_4, before the UPGRADING its cassandra.yaml has. Nothing was done.")
+        assert msg[-1] == ("WAY OUT  Restart n1, so it runs the mode its cassandra.yaml has: ansible-playbook -i a.yml"
+                           " community.cassandra.rolling_restart --limit n1. Then run this phase again.")
+    # A3, A4: the same, its log rolled over, CQL not read: read first, no apply_config, no restart outright
+    for inventory in ("NONE", "UPGRADING"):
+        ok, msg = _sstables((inventory, "UPGRADING", "UPGRADING", True))
+        assert ok is False and msg[-1].startswith("WAY OUT  On n1, read the mode its Cassandra runs")
+        assert "apply_config" not in msg[-1] and "Now set" not in msg[-1] and "Now run" not in msg[-1]
+        assert "The same as its cassandra.yaml's (UPGRADING) or the step before: restart it" in msg[-1]
+        # read over CQL: CASSANDRA_4, the restart
+        ok, msg = _sstables((inventory, "UPGRADING", "UPGRADING", True), cql={"n1": "CASSANDRA_4"})
+        assert msg[-1].startswith("WAY OUT  Restart n1") and "apply_config" not in msg[-1]
+    # two steps (it runs CASSANDRA_4, its file NONE): by hand to UPGRADING first, then the restart
+    ok, msg = _sstables(("NONE", "NONE", "CASSANDRA_4"))
+    assert msg[-1] == ("WAY OUT  On n1, set storage_compatibility_mode: UPGRADING in cassandra.yaml by hand (one step"
+                       " after the CASSANDRA_4 it runs). Restart n1, so it runs the mode its cassandra.yaml has:"
+                       " ansible-playbook -i a.yml community.cassandra.rolling_restart --limit n1. Then run this phase"
+                       " again.")
     # NONE in the inventory and running, its cassandra.yaml edited back to UPGRADING by hand (a 5.0 cluster): the
     # inventory's mode written back, never a restart into UPGRADING nor "nothing to rewrite"
     patch = dict(from_series="50x", copies=("5.0.8",))
     ok, msg = _sstables(("NONE", "UPGRADING", "NONE"), **patch)
     assert ok is False and msg == [
-        "On n1, cassandra.yaml has UPGRADING, before the inventory's NONE and the NONE it runs. Nothing was done.",
+        "On n1, cassandra.yaml has UPGRADING, before the NONE Cassandra runs. Nothing was done.",
         "  node  inventory  cassandra.yaml  running",
         "  n1    NONE       UPGRADING       NONE",
         "WAY OUT  Write the inventory's mode back to the cassandra.yaml of n1 (apply_config restarts it): ansible-playbook -i a.yml"
         " community.cassandra.apply_config --limit n1. Then run this phase again."]
-    # nothing logged (its log rolled over, or older than its start), its cassandra.yaml changed since its start, a
-    # mode before the inventory's: the mode it runs is not known (the file's, or the inventory's if edited back).
-    # Never a restart (it could take the node back); one step: apply_config, forward either way
-    ok, msg = _sstables(("NONE", "UPGRADING", "UPGRADING", True), **patch)
-    assert ok is False and msg[0] == "On n1, cassandra.yaml has UPGRADING, before the inventory's NONE. Nothing was done."
-    assert msg[-1].startswith(
-        "WAY OUT  Write the inventory's mode back to the cassandra.yaml of n1 (apply_config restarts it): ")
-    assert "Restart" not in msg[-1] and "rolling_restart" not in msg[-1] and "SSTables keep" not in msg[-1]
-    assert msg[2] == "  n1    NONE       UPGRADING       not known (its cassandra.yaml changed after Cassandra started)"
     # a 5.0 cluster staying at UPGRADING, the inventory at NONE already on every node: how to finish the move
     ok, msg = _sstables(*[("NONE", "UPGRADING", "UPGRADING")] * 3, **patch)
     assert msg[-1].endswith("To finish the move to NONE: now run apply_config (the inventory has"
                             " cassandra_storage_compatibility_mode: NONE; NONE is the point of no return).")
-    # two steps (the inventory jumped to NONE, the file at CASSANDRA_4): apply_config refuses that move, never sent
-    # to NONE; by hand, to the mode it started with
-    ok, msg = _sstables(("NONE", "CASSANDRA_4", "CASSANDRA_4", True))
-    assert ok is False and msg[-1] == (
-        "WAY OUT  On n1, set storage_compatibility_mode back in cassandra.yaml by hand, to the mode its Cassandra"
-        " started with (not known here: nothing logged since its start; apply_config moves it one step at a time,"
-        " it refuses this one). Then run this phase again.")
-    # two steps back (CASSANDRA_4 where NONE was, NONE logged): apply_config refuses that move, by hand
+    # two steps back (CASSANDRA_4 where NONE runs): apply_config would move it one step only, by hand
     ok, msg = _sstables(("NONE", "CASSANDRA_4", "NONE"), **patch)
     assert ok is False and msg[-1] == (
-        "WAY OUT  On n1, set storage_compatibility_mode: NONE back in cassandra.yaml by hand (apply_config moves it"
-        " one step at a time, it refuses this one). Then run this phase again.")
+        "WAY OUT  On n1, set storage_compatibility_mode: NONE back in cassandra.yaml by hand (the mode it runs;"
+        " apply_config writes the inventory's, one step from the file's). Then run this phase again.")
     # a typo in the inventory: not taken as NONE
     ok, msg = _sstables(("NONNE", "NONE", "NONE"))
     assert ok is False and msg[2] == "  n1    NONNE (unknown)  NONE            NONE"

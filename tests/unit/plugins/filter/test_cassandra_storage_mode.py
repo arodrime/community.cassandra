@@ -19,9 +19,11 @@ def behind(*nodes):
 def test_the_earliest_of_the_three():
     assert behind(("NONE", "NONE", "NONE"), (None, "NONE", "NONE")) == []
     found = behind(("NONE", "CASSANDRA_4", "CASSANDRA_4"), ("UPGRADING", "NONE", "NONE"), ("NONE", "''", "NONE"))
-    # n3: no such line (5.0 runs CASSANDRA_4 then) while it runs NONE: edited back, the inventory's mode is its own
+    # n3: no such line (5.0 runs CASSANDRA_4 then) while it runs NONE: edited back
     assert [(b["node"], b["mode"], b["reverted"]) for b in found] == [
-        ("n1", "CASSANDRA_4", False), ("n2", "UPGRADING", False), ("n3", "NONE", True)]
+        ("n1", "CASSANDRA_4", False), ("n2", "UPGRADING", False), ("n3", "CASSANDRA_4", True)]
+    # the earliest of the three, the running one too
+    assert behind(("NONE", "UPGRADING", "CASSANDRA_4"))[0]["mode"] == "CASSANDRA_4"
     assert cassandra_storage_mode_step(found).startswith("Now set cassandra_storage_compatibility_mode: UPGRADING")
     assert cassandra_storage_mode_step(found[1:2]).startswith("Now set cassandra_storage_compatibility_mode: NONE")
     assert cassandra_storage_mode_step([]) == ""
@@ -45,11 +47,11 @@ def test_pending_alone_says_restart():
     found = behind(("NONE", "NONE", "UPGRADING"))
     assert cassandra_storage_mode_way_out(found, restart_command="ansible-playbook x --limit n1") == (
         "Restart n1, so it runs the mode its cassandra.yaml has: ansible-playbook x --limit n1. Then run this phase again.")
-    # pending, nothing logged (the log rolled over): the same
+    # changed since its start, nothing logged, CQL not read: not known, read first
     found = cassandra_storage_mode_behind([{"node": "n1", "inventory": "NONE", "yaml": "NONE", "running": None,
                                             "pending": True}])
-    assert found[0]["running"] == "restart pending (its cassandra.yaml changed after Cassandra started)"
-    assert cassandra_storage_mode_way_out(found).startswith("Restart n1")
+    assert found[0]["running"] == "not known (its cassandra.yaml changed after Cassandra started)"
+    assert cassandra_storage_mode_way_out(found).startswith("On n1, read the mode its Cassandra runs")
 
 
 def test_a_cluster_staying_before_none_has_nothing_to_rewrite():
@@ -128,12 +130,14 @@ def test_a_start_not_read_and_a_file_time_after_now():
 
 
 def test_a_move_under_way_not_from_4x_gets_its_next_step_and_the_restart():
-    # not from 4.x, one node moved to UPGRADING (the others still CASSANDRA_4... or at NONE): how to finish the move
-    found = behind(("UPGRADING", "UPGRADING", "UPGRADING"), ("UPGRADING", "UPGRADING", "CASSANDRA_4"))
+    # not from 4.x, one node moved to UPGRADING (the others at NONE): how to finish the move
+    found = behind(("UPGRADING", "UPGRADING", "UPGRADING"), ("NONE", "NONE", "NONE"))
     out = cassandra_storage_mode_way_out(found, from_4x=False, total=3)
     assert out.startswith(STAYS) and "To finish the move to NONE: now set cassandra_storage_compatibility_mode: NONE" in out
-    # a restart pending is said along with the step
-    assert "Restart n2, so it runs the mode its cassandra.yaml has" in out
+    # a node running an earlier mode than its file: its restart alone first, then this phase (the step then)
+    found = behind(("UPGRADING", "UPGRADING", "UPGRADING"), ("UPGRADING", "UPGRADING", "CASSANDRA_4"))
+    assert cassandra_storage_mode_way_out(found, from_4x=False, total=3) == (
+        "Restart n2, so it runs the mode its cassandra.yaml has (rolling_restart --limit). Then run this phase again.")
     # the two ways a move is under way, each alone: modes that differ, every node behind
     found = behind(("UPGRADING", "UPGRADING", "UPGRADING"), ("CASSANDRA_4", "CASSANDRA_4", "CASSANDRA_4"))
     assert "To finish the move to NONE" in cassandra_storage_mode_way_out(found, from_4x=False, total=2)
