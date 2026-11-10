@@ -440,7 +440,7 @@
               + ['WAY OUT  ' ~ _behind | community.cassandra.cassandra_storage_mode_way_out(
                                      _from_4x, 'rolling_restart' | community.cassandra.cassandra_command(
                                        limit=_behind | selectattr('pending') | map(attribute='node') | list,
-                                       **_cassandra_run_command_args))
+                                       **_cassandra_run_command_args), _hosts | length)
                  ~ (' Then run this phase again.' if _from_4x | bool else '')]) | join(_nl) }}
         quiet: true
       run_once: true

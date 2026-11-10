@@ -213,13 +213,13 @@ def test_sstables_refuse_a_50_target_until_storage_compatibility_mode_is_none():
 def test_sstables_refuse_a_mode_not_read_unknown_or_a_restart_pending():
     # its cassandra.yaml not read, Cassandra not running: refused, never taken as NONE; what was not read named
     ok, msg = _sstables(("NONE", None, None))
-    assert ok is False and msg[2] == "  n1    NONE       not read        not running"
-    assert ("On n1, neither its cassandra.yaml nor the mode it runs (Cassandra not running) could be read: the cassandra.yaml"
+    assert ok is False and msg[2] == "  n1    NONE       not read        no Cassandra process found"
+    assert ("On n1, neither its cassandra.yaml nor the mode it runs (no Cassandra process found) could be read: the cassandra.yaml"
             " of its cassandra_conf_dir must be readable.") in msg[-1]
     # NONE written by apply_config, the node started before that (the log rolled over: no logged mode): a restart
     ok, msg = _sstables(("NONE", "NONE", "NONE", True))
-    assert ok is False and msg[2] == "  n1    NONE       NONE            restart pending (its cassandra.yaml changed since its start)"
-    assert msg[0] == "A restart is pending on n1 (its cassandra.yaml changed since its start). Nothing was done."
+    assert ok is False and msg[2] == "  n1    NONE       NONE            restart pending (its cassandra.yaml was written after Cassandra started)"
+    assert msg[0] == "A restart is pending on n1 (its cassandra.yaml was written after Cassandra started). Nothing was done."
     assert msg[-1] == ("WAY OUT  Restart n1, so it runs the mode its cassandra.yaml has: ansible-playbook -i a.yml"
                        " community.cassandra.rolling_restart --limit n1. Then run this phase again.")
     # it logged UPGRADING at its start, NONE written since: the restart too
@@ -297,16 +297,23 @@ def test_the_storage_mode_read_script(tmp_path):
     assert run(None) == ["yaml_read=no", "running=no"]  # no file: not read
     assert run("cluster_name: x\nstorage_compatibility_mode: UPGRADING  # the step\n")[:2] == ["yaml_read=yes", "yaml=UPGRADING"]
     assert run("# storage_compatibility_mode: NONE\ncluster_name: x\n")[:2] == ["yaml_read=yes", "yaml="]
-    # a running Cassandra: this shell's own process stands for it, started now; the file changed after it or not
+    # a running Cassandra: a process of this test stands for it, started after the file was written
+    path.write_text("storage_compatibility_mode: NONE\n")
+    time.sleep(1.2)
     proc = subprocess.Popen(["sleep", "30"])
     try:
         time.sleep(1.2)
         fake = script.replace("$(pgrep -x java)", str(proc.pid)).replace(
             "grep -qx org.apache.cassandra.service.CassandraDaemon", "true")
-        os.utime(str(path), (time.time() - 3600, time.time() - 3600))  # changed before it started
-        assert "pending=yes" not in run(None, fake) and "running=yes" in run(None, fake)
-        os.utime(str(path), (time.time() + 60, time.time() + 60))  # changed after it started
+        out = run(None, fake)
+        assert "running=yes" in out and not [x for x in out if x.split("=")[0] in ("pending", "future", "start_read")]
+        path.write_text("storage_compatibility_mode: NONE\n")  # written after it started
         assert "pending=yes" in run(None, fake)
+        os.utime(str(path), (time.time() + 3600, time.time() + 3600))  # a time after now (a clock set back)
+        out = run(None, fake)
+        assert "future=yes" in out and "pending=yes" not in out
+        # its start not computed (no btime): not read, never taken as not pending
+        assert "start_read=no" in run(None, fake.replace("/proc/stat 2>/dev/null", "/nonexistent 2>/dev/null"))
     finally:
         proc.kill()
     # the logged mode, when there: the last "Node configuration" line Cassandra logged

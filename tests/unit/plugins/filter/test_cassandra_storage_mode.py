@@ -5,8 +5,10 @@ __metaclass__ = type
 # node's cassandra.yaml and by the running Cassandra, the earliest; a mode not read or unknown is never NONE.
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_storage_mode import (
-    cassandra_storage_mode_behind, cassandra_storage_mode_from_4x, cassandra_storage_mode_nodes,
-    cassandra_storage_mode_rows, cassandra_storage_mode_step, cassandra_storage_mode_way_out)
+    STAYS, cassandra_storage_mode_behind, cassandra_storage_mode_from_4x, cassandra_storage_mode_headline,
+    cassandra_storage_mode_nodes, cassandra_storage_mode_rows, cassandra_storage_mode_step, cassandra_storage_mode_way_out)
+
+behind_of = cassandra_storage_mode_behind
 
 
 def behind(*nodes):
@@ -44,7 +46,7 @@ def test_pending_alone_says_restart():
     # pending, nothing logged (the log rolled over): the same
     found = cassandra_storage_mode_behind([{"node": "n1", "inventory": "NONE", "yaml": "NONE", "running": None,
                                             "pending": True}])
-    assert found[0]["running"] == "restart pending (its cassandra.yaml changed since its start)"
+    assert found[0]["running"] == "restart pending (its cassandra.yaml was written after Cassandra started)"
     assert cassandra_storage_mode_way_out(found).startswith("Restart n1")
 
 
@@ -67,11 +69,11 @@ def test_nodes_from_their_variables():
         {"inventory_hostname": "n4", "cassandra_storage_mode_read": read("yaml_read=no", "running=no")},
         {"inventory_hostname": "n5"}]
     assert cassandra_storage_mode_nodes(hostvars) == [
-        {"node": "n1", "inventory": "NONE", "yaml": "NONE", "running": "NONE", "pending": False, "stopped": False},
-        {"node": "n2", "inventory": None, "yaml": "NONE", "running": "UPGRADING", "pending": True, "stopped": False},
-        {"node": "n3", "inventory": None, "yaml": "NONE", "running": None, "pending": True, "stopped": False},
-        {"node": "n4", "inventory": None, "yaml": None, "running": None, "pending": False, "stopped": True},
-        {"node": "n5", "inventory": None, "yaml": None, "running": None, "pending": False, "stopped": False}]
+        {"node": "n1", "inventory": "NONE", "yaml": "NONE", "running": "NONE", "pending": False, "stopped": False, "start_unread": False, "future": False},
+        {"node": "n2", "inventory": None, "yaml": "NONE", "running": "UPGRADING", "pending": True, "stopped": False, "start_unread": False, "future": False},
+        {"node": "n3", "inventory": None, "yaml": "NONE", "running": None, "pending": True, "stopped": False, "start_unread": False, "future": False},
+        {"node": "n4", "inventory": None, "yaml": None, "running": None, "pending": False, "stopped": True, "start_unread": False, "future": False},
+        {"node": "n5", "inventory": None, "yaml": None, "running": None, "pending": False, "stopped": False, "start_unread": False, "future": False}]
 
 
 def test_from_4x():
@@ -82,3 +84,31 @@ def test_from_4x():
     assert cassandra_storage_mode_from_4x([h("50x", "4.1.12", "5.0.8")], "5.0.9") is False  # a patch upgrade
     assert cassandra_storage_mode_from_4x([h("50x")], "5.0.9") is False
     assert cassandra_storage_mode_from_4x([h("50x", "5.0.10")], "5.0.9") is False  # not below the target
+
+
+def test_a_start_not_read_and_a_file_time_after_now():
+    found = behind_of([{"node": "n1", "inventory": "NONE", "yaml": "NONE", "running": None, "start_unread": True}])
+    assert found[0]["running"] == "not read (the start of Cassandra)" and found[0]["unread"] == ["the start of its Cassandra"]
+    found = behind_of([{"node": "n1", "inventory": "NONE", "yaml": "NONE", "running": None, "future": True}])
+    assert found[0]["running"] == "cassandra.yaml has a time after now" and not found[0]["pending"]
+    assert cassandra_storage_mode_headline(found) == "On n1, cassandra.yaml has a time after now. Nothing was done."
+    assert "Check the clock of n1" in cassandra_storage_mode_way_out(found)
+    # read lines: never "not pending" when the start was not read
+    nodes = cassandra_storage_mode_nodes([{"inventory_hostname": "n1", "cassandra_storage_mode_read": {
+        "stdout_lines": ["yaml_read=yes", "yaml=NONE", "running=yes", "start_read=no"]}}])
+    assert nodes[0]["running"] is None and nodes[0]["start_unread"] is True
+
+
+def test_a_move_under_way_not_from_4x_gets_its_next_step_and_the_restart():
+    # not from 4.x, one node moved to UPGRADING (the others still CASSANDRA_4... or at NONE): how to finish the move
+    found = behind(("UPGRADING", "UPGRADING", "UPGRADING"), ("UPGRADING", "UPGRADING", "CASSANDRA_4"))
+    out = cassandra_storage_mode_way_out(found, from_4x=False, total=3)
+    assert out.startswith(STAYS) and "To finish the move to NONE: now set cassandra_storage_compatibility_mode: NONE" in out
+    # a restart pending is said along with the step
+    assert "Restart n2, so it runs the mode its cassandra.yaml has" in out
+    # every node before NONE, none moved: nothing but the skip
+    assert cassandra_storage_mode_way_out(behind(("CASSANDRA_4", "CASSANDRA_4", "CASSANDRA_4")), from_4x=False, total=1) == STAYS
+    # several nodes: the plural
+    found = behind(("CASSANDRA_4", "CASSANDRA_4", "CASSANDRA_4"), ("CASSANDRA_4", "CASSANDRA_4", "CASSANDRA_4"))
+    assert cassandra_storage_mode_headline(found, from_4x=False).startswith(
+        "storage_compatibility_mode is not NONE on n1, n2: their sstables are in the format they write.")

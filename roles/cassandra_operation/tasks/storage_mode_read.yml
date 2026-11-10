@@ -5,7 +5,7 @@
 # Cassandra logs at its start (the last one of its system.log) confirms it when it is there (gone once the log rolled
 # over); never required. cassandra_storage_mode_read.stdout_lines: yaml_read=yes|no, yaml=<value, "" without the
 # line>, pending=yes when the file is newer than the process, logged=<the logged mode> when found. Read-only, under
-# --check too.
+# --check too. start_read=no: its start or the file's time not read; future=yes: the file has a time after now.
 - name: Read storage_compatibility_mode in its cassandra.yaml and in the running Cassandra
   ansible.builtin.shell: |
     if [ -r "$F" ]; then
@@ -20,13 +20,23 @@
     done
     [ -n "$pid" ] || { echo "running=no"; exit 0; }
     echo "running=yes"
-    # its start in seconds since the epoch (field 22 of stat, the 20th after the command name, in clock ticks since
-    # boot), against the last change of the file
-    ticks=$(sed 's/^.*) //' /proc/$pid/stat | awk '{print $20}')
-    start=$(awk -v n="$(date +%s)" -v u="$(cut -d' ' -f1 /proc/uptime)" -v t="$ticks" -v h="$(getconf CLK_TCK)" \
-      'BEGIN {printf "%d", n - u + t / h}')
-    mtime=$(stat -c %Y "$F" 2>/dev/null)
-    [ -n "$mtime" ] && [ "$mtime" -gt "$start" ] && echo "pending=yes"
+    # its start in seconds since the epoch: the boot time (btime of /proc/stat) and its start in clock ticks since
+    # boot (field 22 of stat, the 20th after the command name); against the last write of the file (mtime or ctime,
+    # the later). Either not known: start_read=no (refused, never taken as not pending); a file time after now (a
+    # clock set back): future=yes
+    ticks=$(sed 's/^.*) //' /proc/$pid/stat 2>/dev/null | awk '{print $20}')
+    btime=$(awk '$1 == "btime" {print $2}' /proc/stat 2>/dev/null)
+    hz=$(getconf CLK_TCK 2>/dev/null); [ -n "$hz" ] || hz=100
+    start=
+    [ -n "$ticks" ] && [ -n "$btime" ] && start=$(awk -v b="$btime" -v t="$ticks" -v h="$hz" 'BEGIN {printf "%d", b + t / h}')
+    ftime=$(stat -L -c '%Y %Z' "$F" 2>/dev/null | awk '{print ($1 > $2) ? $1 : $2}')
+    if [ -z "$start" ] || [ -z "$ftime" ]; then
+      echo "start_read=no"
+    elif [ "$ftime" -gt "$(date +%s)" ]; then
+      echo "future=yes"
+    elif [ "$ftime" -gt "$start" ]; then
+      echo "pending=yes"
+    fi
     logdir=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's/^-Dcassandra[.]logdir=//p' | head -1)
     m=$(grep -a 'Node configuration:\[' "${logdir:-/var/log/cassandra}/system.log" 2>/dev/null | tail -1 \
         | sed -n 's/.*[[; ]storage_compatibility_mode=\([A-Z_0-9]*\).*/\1/p')
