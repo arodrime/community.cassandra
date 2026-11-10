@@ -156,6 +156,16 @@
 
 - name: Look at the Java link
   ansible.builtin.shell: |
+    # a link a package owns, or that the alternatives manage (its chain through /etc/alternatives): theirs, not moved
+    pkg=$(rpm -qf --qf '%{NAME}\n' "$L" 2>/dev/null | head -1) || pkg=
+    [ -n "$pkg" ] || pkg=$(dpkg -S "$L" 2>/dev/null | head -1 | cut -d: -f1)
+    if [ -n "$pkg" ]; then echo "owned by the package $pkg"; exit 0; fi
+    p=$L n=0
+    while [ -L "$p" ] && [ $n -lt 20 ]; do
+      t=$(readlink "$p"); case $t in /*) p=$t ;; *) p=${p%/*}/$t ;; esac
+      n=$((n + 1))
+      case $p in /etc/alternatives/*) echo "a link of the alternatives (through $p)"; exit 0 ;; esac
+    done
     if [ -L "$L" ]; then
       t=$(readlink -f "$L")
       if [ -z "$t" ] || [ ! -e "$t" ]; then echo "link leading nowhere"
@@ -176,8 +186,9 @@
     that: cassandra_java_check_link.stdout in ['absent', 'link leading nowhere', 'link to a Java']
     fail_msg: >-
       {{ _cassandra_java_link }} on {{ inventory_hostname }} is {{ cassandra_java_check_link.stdout }}:
-      cassandra_java_link only makes a link, or moves one that leads to a Java (a bin/java or a release file there).
-      Nothing was changed. Move it away, or set cassandra_java_link to another path.
+      cassandra_java_link only makes a link of its own, or moves one that leads to a Java (a bin/java or a release
+      file there), not one a package or the alternatives own. Nothing was changed. Set cassandra_java_link to a path of
+      its own (e.g. /opt/java/current), or move that one away.
     quiet: true
   when: cassandra_java_link | default('') != ''
 
