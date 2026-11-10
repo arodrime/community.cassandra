@@ -124,6 +124,17 @@ def append_list(var):
     return "{{ ('\\n' ~ (%s | join('\\n'))) if %s else '' }}" % (var, var)
 
 
+def append_snippet(var):
+    # Suffix after a file's extra lines: the rendered snippet of cassandra_config_template_snippets (cassandra_config's
+    # vars), '' when none.
+    return "{{ ('\\n' ~ %s) if %s else '' }}" % (var, var)
+
+
+def prepend_snippet(var):
+    # Prefix of a line: the rendered snippet of cassandra_config_template_snippets on the lines before it, '' when none.
+    return "{{ (%s ~ '\\n') if %s else '' }}" % (var, var)
+
+
 # The Prometheus exporter's Java agent (cassandra_config's vars), after the extra options of jvm-server.options
 JVM_AGENT = "{{ ('\\n' ~ _cassandra_config_jvm_agent) if _cassandra_config_jvm_agent else '' }}"
 
@@ -144,14 +155,17 @@ COMMON = {
         ("# prefer_local=true", "{{ '' if cassandra_prefer_local else '# ' }}prefer_local=true"),
     ],
     "logback.xml": [
-        ('  <root level="INFO">', '  <root level="{{ cassandra_log_level }}">'),
+        # the appenders of your snippet's "logback.xml:appenders" before <root>, which names them (logback 1.2: an
+        # appender before its appender-ref)
+        ('  <root level="INFO">', prepend_snippet("_cassandra_config_snippet_appenders")
+         + '  <root level="{{ cassandra_log_level }}">'),
         ('    <appender-ref ref="ASYNCDEBUGLOG" /> <!-- Comment this line to disable debug.log -->',
          "    {{ '' if cassandra_debug_log_enabled else '<!-- ' }}"
          '<appender-ref ref="ASYNCDEBUGLOG" />'
          "{{ '' if cassandra_debug_log_enabled else ' -->' }} <!-- Comment this line to disable debug.log -->"),
         ('  <logger name="org.apache.cassandra" level="DEBUG"/>',
          '  <logger name="org.apache.cassandra" level="{{ cassandra_log_level_cassandra }}"/>'
-         + append_list("cassandra_logback_extra_lines")),
+         + append_list("cassandra_logback_extra_lines") + append_snippet("_cassandra_config_snippet_logback")),
         # off by default: under systemd a second copy of system.log in the journal
         ('    <appender-ref ref="STDOUT" />',
          "    {{ '' if cassandra_log_console else '<!-- ' }}<appender-ref ref=\"STDOUT\" />"
@@ -173,8 +187,9 @@ ENV_COMMON = [
     ('#JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file=/etc/cassandra/jmxremote.access"',
      "{{ '' if cassandra_jmx_users else '#' }}"
      'JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file={{ cassandra_jmx_remote_access_file }}"'),
-    # the file's last line: the lines cassandra_env_extra_lines adds after it
-    ('JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"', 'JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"' + append_list("cassandra_env_extra_lines")),
+    # the file's last line: the lines cassandra_env_extra_lines adds after it, then the snippet
+    ('JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"', 'JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"' + append_list("cassandra_env_extra_lines")
+     + append_snippet("_cassandra_config_snippet_env")),
 ]
 
 

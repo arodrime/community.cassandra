@@ -70,6 +70,38 @@
       {%- endif -%}
       {{ out }}
 
+# Your own template pieces: logback.xml and cassandra-env.sh only (where the extra lines go), a file on the
+# controller, for a file the role writes with its own template
+- name: Refuse template snippets the role cannot use
+  ansible.builtin.assert:
+    that: _wrong | length == 0
+    fail_msg: "cassandra_config_template_snippets: {{ _wrong | join('; ') }}. Nothing is changed."
+    quiet: true
+  vars:
+    _wrong: >-
+      {%- set out = [] -%}
+      {%- if cassandra_config_template_snippets is not mapping -%}
+      {%-   set _ = out.append('a dict of {file name: template path} is expected') -%}
+      {%- else -%}
+      {%-   for f, path in cassandra_config_template_snippets.items() -%}
+      {%-     if f not in ['logback.xml', 'logback.xml:appenders', 'cassandra-env.sh'] -%}
+      {%-       set _ = out.append(f ~ ': only logback.xml, logback.xml:appenders and cassandra-env.sh take a snippet'
+                                   ~ ' (the JVM options files: cassandra_jvm*_extra_options)') -%}
+      {%-     elif path is not string or path is not match('/') -%}
+      {%-       set _ = out.append(f ~ ': an absolute path on the controller is expected (e.g. under inventory_dir)') -%}
+      {%-     elif path is not file -%}
+      {%-       set _ = out.append(f ~ ': ' ~ path ~ ' not found on the controller') -%}
+      {%-     elif f.split(':') | first in cassandra_config_keep_files -%}
+      {%-       set _ = out.append(f ~ ': its file is also in cassandra_config_keep_files (left as the node has it): one'
+                                   ~ ' or the other') -%}
+      {%-     elif f.split(':') | first in cassandra_config_template_overrides -%}
+      {%-       set _ = out.append(f ~ ": its file is also in cassandra_config_template_overrides (your whole template):"
+                                   ~ " put the lines in it, or use the role's template with the snippet") -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%- endif -%}
+      {{ out }}
+
 - name: Refuse audit logger parameters the template cannot write
   ansible.builtin.assert:
     that: cassandra_audit_logger_parameters is mapping and _wrong | length == 0

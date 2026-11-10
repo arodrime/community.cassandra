@@ -143,7 +143,9 @@ def test_extra_settings_checked_against_the_override(tmp_path):
 def render_file(series, name, **variables):
     with open(os.path.join(ROLE, "templates", series, name + ".j2"), encoding="utf-8") as f:
         text = f.read().split("\n", 1)[1]  # (without the header line)
-    ctx = dict(DEFAULTS, cassandra_version=series[0] + series[2] + "x", **variables)
+    ctx = dict(DEFAULTS, cassandra_version=series[0] + series[2] + "x", _cassandra_config_snippet_logback="",
+               _cassandra_config_snippet_appenders="", _cassandra_config_snippet_env="")
+    ctx.update(variables)
     return render(text, escape_backslashes=False, **ctx)
 
 
@@ -176,3 +178,82 @@ def test_said_when_your_template_renders_another_series(installed, overrides, sa
     t = task("Say which files your own templates render for another series than the one installed")
     variables = role_vars("5.0", cassandra_config_template_overrides=overrides, _cassandra_config_installed=installed)
     assert all(render("{{ %s }}" % w, **variables) for w in t["when"]) is said
+
+
+REFUSE_SNIPPETS = task("Refuse template snippets the role cannot use")
+
+
+def refused_snippets(snippets, keep=(), overrides=None):
+    variables = role_vars(cassandra_config_template_snippets=snippets, cassandra_config_keep_files=list(keep),
+                          cassandra_config_template_overrides=overrides or {})
+    return render(REFUSE_SNIPPETS["vars"]["_wrong"], **variables)
+
+
+def test_a_valid_snippet_passes(tmp_path):
+    (tmp_path / "s.j2").write_text("export X=1\n")
+    assert refused_snippets({"cassandra-env.sh": str(tmp_path / "s.j2"), "logback.xml": str(tmp_path / "s.j2")}) == []
+    assert refused_snippets({}) == []
+    assert "when" not in REFUSE_SNIPPETS  # always, under --check too
+
+
+@pytest.mark.parametrize("snippets, keep, overrides, said", [
+    ({"jvm11-server.options": "{tmp}"}, [], {}, "jvm11-server.options: only logback.xml, logback.xml:appenders and"
+                                                " cassandra-env.sh take a snippet (the JVM options files:"
+                                                " cassandra_jvm*_extra_options)"),
+    ({"cassandra.yaml": "{tmp}"}, [], {}, "cassandra.yaml: only logback.xml, logback.xml:appenders and cassandra-env.sh"),
+    ({"logback.xml": "s.j2"}, [], {}, "logback.xml: an absolute path on the controller is expected"),
+    ({"logback.xml": "/nowhere/s.j2"}, [], {}, "logback.xml: /nowhere/s.j2 not found on the controller"),
+    ({"logback.xml": "{tmp}"}, ["logback.xml"], {}, "logback.xml: its file is also in cassandra_config_keep_files"),
+    ({"logback.xml:appenders": "{tmp}"}, ["logback.xml"], {}, "logback.xml:appenders: its file is also in"
+                                                              " cassandra_config_keep_files"),
+    ({"logback.xml:appenders": "{tmp}"}, [], {"logback.xml": "/i/l.j2"}, "logback.xml:appenders: its file is also in"
+                                                                         " cassandra_config_template_overrides"),
+])
+def test_snippet_refusals(tmp_path, snippets, keep, overrides, said):
+    (tmp_path / "s.j2").write_text("x\n")
+    snippets = dict((k, str(tmp_path / "s.j2") if v == "{tmp}" else v) for k, v in snippets.items())
+    wrong = refused_snippets(snippets, keep, overrides)
+    assert len(wrong) == 1 and wrong[0].startswith(said), wrong
+    assert refused_snippets(["logback.xml"]) == ["a dict of {file name: template path} is expected"]
+
+
+def snippet_vars(snippets, **variables):
+    """The role's _cassandra_config_snippet_* rendered as the role does (the lookup by its short name: outside a play)."""
+    out = {}
+    for name in ("_cassandra_config_snippet_logback", "_cassandra_config_snippet_appenders", "_cassandra_config_snippet_env"):
+        out[name] = render(ROLE_VARS[name].replace("lookup('ansible.builtin.template'", "lookup('template'"),
+                           cassandra_config_template_snippets=snippets, **variables)
+    return out
+
+
+@pytest.mark.parametrize("series", ["4.0", "4.1", "5.0"])
+def test_snippets_rendered_after_the_extra_lines(tmp_path, series):
+    (tmp_path / "l.j2").write_text('{# mine #}\n  <logger name="com.{{ team }}" level="{{ level }}"/>\n'
+                                   '{% raw %}  <logger name="{{ as.is }}" level="INFO"/>\n{% endraw %}\n\n')
+    (tmp_path / "e.j2").write_text("export TEAM={{ team }}\n")
+    snippets = {"logback.xml": str(tmp_path / "l.j2"), "cassandra-env.sh": str(tmp_path / "e.j2")}
+    rendered = snippet_vars(snippets, team="ops", level="WARN")
+    assert rendered == {"_cassandra_config_snippet_logback": '  <logger name="com.ops" level="WARN"/>\n'
+                                                              '  <logger name="{{ as.is }}" level="INFO"/>',
+                        "_cassandra_config_snippet_appenders": "", "_cassandra_config_snippet_env": "export TEAM=ops"}
+    logback = render_file(series, "logback.xml", cassandra_logback_extra_lines=['  <logger name="x" level="WARN"/>'],
+                          **rendered)
+    assert logback.rstrip().endswith('"/>\n  <logger name="x" level="WARN"/>\n  <logger name="com.ops" level="WARN"/>\n'
+                                     '  <logger name="{{ as.is }}" level="INFO"/>\n</configuration>')
+    env = render_file(series, "cassandra-env.sh", cassandra_env_extra_lines=["export A=1"], **rendered)
+    assert env.rstrip("\n").endswith('JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"\nexport A=1\nexport TEAM=ops')
+    # none: the role's files as without
+    assert snippet_vars({}) == {"_cassandra_config_snippet_logback": "", "_cassandra_config_snippet_appenders": "",
+                                "_cassandra_config_snippet_env": ""}
+
+
+@pytest.mark.parametrize("series", ["4.0", "4.1", "5.0"])
+def test_the_appenders_snippet_before_root(tmp_path, series):
+    # (logback 1.2: an appender before the appender-ref naming it, in <root> or a logger)
+    (tmp_path / "a.j2").write_text('  <appender name="MINE" class="ch.qos.logback.core.FileAppender">\n'
+                                   '    <file>{{ dir }}/mine.log</file>\n  </appender>\n')
+    rendered = snippet_vars({"logback.xml:appenders": str(tmp_path / "a.j2")}, dir="/x")
+    logback = render_file(series, "logback.xml", **rendered)
+    assert '    <file>/x/mine.log</file>\n  </appender>\n  <root level="INFO">' in logback
+    names = [e.get("name") or e.tag for e in ET.fromstring(logback)]
+    assert names.index("MINE") == names.index("root") - 1

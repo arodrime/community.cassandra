@@ -45,6 +45,17 @@ cassandra_config_keep_files: []
 # mode, --check, diff, the restart that applies it). Names as above; a file
 # cannot be both kept and overridden.
 cassandra_config_template_overrides: {}
+# Your own template pieces added to the role's files, instead of lines in the
+# inventory: {insertion point: absolute path of a template on the controller},
+# e.g. {logback.xml: "{{ inventory_dir }}/group_vars/prod/logback.xml.snippet.j2"}.
+# Rendered with the same variables. The points:
+#   logback.xml            the end of its <configuration>, after cassandra_logback_extra_lines
+#   logback.xml:appenders  before <root> (appenders: logback 1.2 wants one before its appender-ref)
+#   cassandra-env.sh       its end, after cassandra_env_extra_lines
+# The JVM options files take cassandra_jvm*_extra_options, one option an item.
+# A file kept or overridden above takes no snippet. import_cluster writes
+# them for the blocks a node adds that no variable covers.
+cassandra_config_template_snippets: {}
 
 # Cassandra's data directory (cassandra_linux uses it to find the data disk).
 cassandra_data_dir: /var/lib/cassandra/data
@@ -351,7 +362,8 @@ cassandra_jmx_port: 7199
 cassandra_jmx_rmi_hostname: ""
 # Lines added at the end of cassandra-env.sh, as they are (e.g. an export, or
 # JVM_OPTS="$JVM_OPTS -D..." for an option no variable covers). import_cluster
-# carries there the lines a node has after the file's last one.
+# writes the lines a node has after the file's last one in a snippet instead
+# (cassandra_config_template_snippets).
 cassandra_env_extra_lines: []
 
 # ---- jvm8/jvm11/jvm17-server.options ----

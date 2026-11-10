@@ -14,6 +14,17 @@ _cassandra_config_templates: >-
   {%-   set _ = out.update({f: cassandra_config_template_overrides[f] | default(_cassandra_config_series ~ '/' ~ f ~ '.j2')}) -%}
   {%- endfor -%}
   {{ out }}
+# Your own template pieces (cassandra_config_template_snippets), rendered with the same variables, their last
+# newlines off: the templates add them after the file's extra lines ('' for none)
+_cassandra_config_snippet_logback: >-
+  {{ (lookup('ansible.builtin.template', cassandra_config_template_snippets['logback.xml']) | regex_replace('\n+$', ''))
+     if 'logback.xml' in cassandra_config_template_snippets else '' }}
+_cassandra_config_snippet_appenders: >-
+  {{ (lookup('ansible.builtin.template', cassandra_config_template_snippets['logback.xml:appenders'])
+      | regex_replace('\n+$', '')) if 'logback.xml:appenders' in cassandra_config_template_snippets else '' }}
+_cassandra_config_snippet_env: >-
+  {{ (lookup('ansible.builtin.template', cassandra_config_template_snippets['cassandra-env.sh']) | regex_replace('\n+$', ''))
+     if 'cassandra-env.sh' in cassandra_config_template_snippets else '' }}
 # Stock release each series' templates come from (tools/gen_templates.py)
 _cassandra_config_template_versions:
   "5.0": 5.0.9

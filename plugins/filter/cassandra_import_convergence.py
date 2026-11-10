@@ -244,8 +244,9 @@ def _blocks(lines):
 
 _EXPR = re.compile(r"\{\{.*?\}\}")
 _TOGGLE = re.compile(r"^\{\{[^}]*\}\}")  # a line written commented out or not: {{ '' if x else '# ' }}line
-# the lines a list adds after a line (cassandra_env_extra_lines, cassandra_logback_extra_lines): not that line's value
-_APPENDED = re.compile(r"\{\{[^{}]*\| join\([^{}]*\}\}$")
+# the lines a list adds after a line (cassandra_env_extra_lines, cassandra_logback_extra_lines), then the snippet's
+# (cassandra_config_template_snippets): not that line's value
+_APPENDED = re.compile(r"\{\{[^{}]*\| join\([^{}]*\}\}(?:\{\{[^{}]*_cassandra_config_snippet_\w+[^{}]*\}\})?$")
 _LINES = {}
 
 

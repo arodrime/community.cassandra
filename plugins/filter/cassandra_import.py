@@ -188,6 +188,9 @@ def _load_role(series, facts):
     ctx["_cassandra_config_quote"] = role_vars["_cassandra_config_quote"]
     ctx["_cassandra_config_extra_sections"] = role_vars["_cassandra_config_extra_sections"]
     ctx["_cassandra_config_plain_path"] = role_vars["_cassandra_config_plain_path"]
+    # (the extra lines read as such: a snippet of yours renders nothing here)
+    ctx["_cassandra_config_snippet_logback"] = ctx["_cassandra_config_snippet_appenders"] = ""
+    ctx["_cassandra_config_snippet_env"] = ""
     env = jinja2.Environment(keep_trailing_newline=True, trim_blocks=True)
     env.filters["regex_replace"] = regex_replace
     # Ansible's, as the templates use them (the JMX users' templates too)
@@ -387,6 +390,7 @@ _LINE_EXPRESSIONS = tuple((re.compile(pattern), reader) for pattern, reader in (
     (r"(\w+) if (\w+) == '([^']*)' else '([^']*)'", _read_chosen),
     (r"\('([^']*)' ~ (\w+) ~ '([^']*)'\) if \2 else '([^']*)'", _read_between),
     (r"\('\\n' ~ .*\) if \w+ else ''", _read_newline_list),
+    (r"\(\w+ ~ '\\n'\) if \w+ else ''", _read_newline_list),  # (lines before it: a snippet's)
 ))
 
 

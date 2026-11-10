@@ -112,7 +112,7 @@ appender reference in the root level section below.
   <appender name="LogbackMetrics" class="com.codahale.metrics.logback.InstrumentedAppender" />
    -->
 
-  <root level="{{ cassandra_log_level }}">
+{{ (_cassandra_config_snippet_appenders ~ '\n') if _cassandra_config_snippet_appenders else '' }}  <root level="{{ cassandra_log_level }}">
     <appender-ref ref="SYSTEMLOG" />
     {{ '' if cassandra_log_console else '<!-- ' }}<appender-ref ref="STDOUT" />{{ '' if cassandra_log_console else ' -->' }}
     {{ '' if cassandra_debug_log_enabled else '<!-- ' }}<appender-ref ref="ASYNCDEBUGLOG" />{{ '' if cassandra_debug_log_enabled else ' -->' }} <!-- Comment this line to disable debug.log -->
@@ -121,5 +121,5 @@ appender reference in the root level section below.
     -->
   </root>
 
-  <logger name="org.apache.cassandra" level="{{ cassandra_log_level_cassandra }}"/>{{ ('\n' ~ (cassandra_logback_extra_lines | join('\n'))) if cassandra_logback_extra_lines else '' }}
+  <logger name="org.apache.cassandra" level="{{ cassandra_log_level_cassandra }}"/>{{ ('\n' ~ (cassandra_logback_extra_lines | join('\n'))) if cassandra_logback_extra_lines else '' }}{{ ('\n' ~ _cassandra_config_snippet_logback) if _cassandra_config_snippet_logback else '' }}
 </configuration>

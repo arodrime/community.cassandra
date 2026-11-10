@@ -334,7 +334,7 @@ Role Variables
   `cassandra_jvm17_extra_options` append extra lines.
 * `cassandra-env.sh`: `cassandra_env_extra_lines` adds lines at its end,
   as they are (an `export`, or `JVM_OPTS="$JVM_OPTS -D..."` for an option no
-  variable covers).
+  variable covers); a template piece of yours goes after them (below).
 * TLS / mTLS (`cassandra.yaml`): `cassandra_internode_encryption`,
   `cassandra_server_keystore`, `cassandra_server_keystore_password`,
   `cassandra_truststore`, `cassandra_truststore_password`,
@@ -358,7 +358,25 @@ Role Variables
   no stdout copy of the logs, which under systemd would be a second copy of
   `system.log` in journald; JVM errors before logback starts still go there).
   `cassandra_logback_extra_lines` adds lines at the end of its
-  `<configuration>` (e.g. `<logger name="com.example" level="WARN"/>`).
+  `<configuration>` (e.g. `<logger name="com.example" level="WARN"/>`); a
+  template piece of yours goes after them (below).
+* Your own template pieces added to a file: `cassandra_config_template_snippets`,
+  `{insertion point: absolute path of a template on the controller}`, e.g.
+  `{logback.xml: "{{ inventory_dir }}/group_vars/prod/logback.xml.snippet.j2"}`.
+  The role renders each with the same variables and adds it there:
+
+  | point | where |
+  |---|---|
+  | `logback.xml` | the end of its `<configuration>`, after `cassandra_logback_extra_lines` |
+  | `logback.xml:appenders` | before `<root>` (logback 1.2 wants an appender before its `appender-ref`) |
+  | `cassandra-env.sh` | its end, after `cassandra_env_extra_lines` |
+
+  The JVM options files take `cassandra_jvm*_extra_options` (one option an
+  item, which the role checks: the heap, a second agent). The file is then
+  written, compared, shown and restarted for as a whole. A file in
+  `cassandra_config_keep_files` or `cassandra_config_template_overrides`
+  takes none (refused). `import_cluster` writes the blocks a node adds that no
+  variable covers in such snippets next to the inventory.
 * Your own template for a file: `cassandra_config_template_overrides`, e.g.
   `{cassandra-env.sh: "{{ inventory_dir }}/templates/cassandra-env.sh.j2"}`
   (an absolute path on the controller). The role renders it instead of its

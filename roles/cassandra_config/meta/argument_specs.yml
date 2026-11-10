@@ -84,6 +84,22 @@ argument_specs:
           - Rendered with the same variables, then written, compared, shown (secrets masked) and reported as the
             role's own file, with the same owner and mode, in C(--check) too. A name the role does not write, a
             relative or missing path, or a file also in O(cassandra_config_keep_files) is refused.
+      cassandra_config_template_snippets:
+        type: dict
+        default: {}
+        description:
+          - 'Your own template pieces added to the role''s files, instead of lines in the inventory, e.g.
+            C({logback.xml: "{{ inventory_dir }}/group_vars/prod/logback.xml.snippet.j2"}). Keys are insertion points;
+            values the absolute path of a template on the controller.'
+          - C(logback.xml) the end of its C(<configuration>), after O(cassandra_logback_extra_lines);
+            C(logback.xml:appenders) before C(<root>) (logback 1.2 wants an appender before its C(appender-ref));
+            C(cassandra-env.sh) its end, after O(cassandra_env_extra_lines).
+          - Rendered with the same variables, then written, compared, shown and restarted for like the rest of the
+            file.
+          - The JVM options files take none (O(cassandra_jvm_extra_options) and the C(cassandra_jvm<N>_extra_options),
+            one option an item). Another file name, a relative or missing path, or a file also in
+            O(cassandra_config_keep_files) or O(cassandra_config_template_overrides) is refused.
+          - C(import_cluster) writes them for the blocks a node adds that no variable covers.
       cassandra_data_dir:
         type: path
         default: /var/lib/cassandra/data
@@ -1348,7 +1364,8 @@ argument_specs:
         description:
         - Lines added at the end of C(cassandra-env.sh), as they are, e.g. C(export X=1) or
           C(JVM_OPTS="$JVM_OPTS -Dname=value") for an option no variable covers.
-        - C(import_cluster) carries there the lines a node has after the file's last one.
+        - C(import_cluster) writes the lines a node has after the file's last one in a snippet instead
+          (O(cassandra_config_template_snippets)).
       cassandra_jvm_gc:
         type: str
         choices:
@@ -1480,7 +1497,8 @@ argument_specs:
         description:
         - Lines added at the end of C(logback.xml)'s C(<configuration>), after the C(org.apache.cassandra) logger, as
           they are, e.g. C(<logger name="com.example" level="WARN"/>).
-        - C(import_cluster) carries there the lines a node has at that place.
+        - C(import_cluster) writes the lines a node has at that place in a snippet instead
+          (O(cassandra_config_template_snippets)).
       cassandra_log_console:
         type: bool
         default: false
