@@ -219,8 +219,8 @@ def cassandra_storage_mode_way_out(behind, from_4x=True, restart_command="", tot
             out.append("To finish the move to NONE: " + step[0].lower() + step[1:])
     reverted = _names(behind, "reverted")
     if reverted:
-        out.append("Write the inventory's mode back to the cassandra.yaml of %s%s." % (
-            reverted, (": " + apply_command) if apply_command else " (apply_config --limit)"))
+        out.append("Write the inventory's mode back to the cassandra.yaml of %s (apply_config restarts %s)%s." % (
+            reverted, _one(reverted, "it", "them"), (": " + apply_command) if apply_command else ""))
     future = [b for b in behind if b["future"]]
     for path in sorted(set(b["file"] for b in future)):
         nodes = ", ".join(b["node"] for b in future if b["file"] == path)
