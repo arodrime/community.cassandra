@@ -1233,3 +1233,24 @@ def test_a_node_range_longer_than_its_room_cut_after_its_dots():
     assert wrap_list(text, 30) == ["db-node-1.example.net..", "db-node-3.example.net,", "db-node-5.example.net"]
     assert wrap_list(text, 50) == ["db-node-1.example.net..db-node-3.example.net,", "db-node-5.example.net"]
     assert wrap_list("node1..node3", 8) == ["node1..", "node3"]  # (no space added inside a range)
+
+
+@pytest.mark.parametrize("key", ["cassandra_medusa_api_token", "vault_api_key", "monitoring_apikey", "grafana_access_token",
+                                 "oauth_refresh_token", "aws_session_token", "gitlab_private_token", "ci_bearer_token",
+                                 "s3_secret_key", "client_secret"])
+def test_token_and_key_names_are_secrets(key):
+    # a token or an API key under a name the earlier words missed: hidden, on screen and in a line of text
+    assert out.hidden(key, "s3cr3t") and out.shown(key, "s3cr3t") == "****"
+    assert out.mask("%s: s3cr3t" % key) == "%s: ****" % key
+
+
+@pytest.mark.parametrize("key, value", [("cassandra_initial_token", "-9223372036854775808"), ("num_tokens", 16),
+                                        ("cassandra_num_tokens", 16), ("cassandra_dead_tokens", ["1", "2"]),
+                                        ("cassandra_move_tokens", "5"), ("cassandra_add_node_token_kind", "vnodes"),
+                                        ("allocate_tokens_for_local_replication_factor", 3),
+                                        ("cassandra_key_cache_size", "100MiB"), ("cassandra_repository_key_url", "https://x/KEYS"),
+                                        ("cassandra_repository_key_fingerprints", ["A1B2"]), ("keyspace", "ks")])
+def test_token_ring_and_key_settings_are_not_secrets(key, value):
+    # the ring's tokens and the key cache, repository keys and keyspaces: shown as they are
+    assert not out.hidden(key, value) and out.shown(key, value) != "****"
+    assert out.mask("%s: %s" % (key, value)) == "%s: %s" % (key, value)
