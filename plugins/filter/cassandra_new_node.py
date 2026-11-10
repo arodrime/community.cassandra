@@ -23,9 +23,9 @@ __metaclass__ = type
 
 import os
 import re
+from urllib.parse import urlsplit, urlunsplit
 
 from ansible.module_utils.parsing.convert_bool import boolean
-from ansible.module_utils.six.moves.urllib.parse import urlsplit, urlunsplit
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import (
     parse_size, size as _size, sizes as _sizes)
 
