@@ -197,7 +197,12 @@ def test_unreachable_hosts(tmp_path):
     inventory = tmp_path / "hosts.ini"
     inventory.write_text("node1 ansible_connection=local\n"
                          "node3 ansible_connection=ssh ansible_host=127.0.0.1 ansible_port=9 ansible_ssh_timeout=3\n")
-    rc, output = run(tmp_path, playbook, INVENTORY=str(inventory))
+    # node3: a host ssh cannot reach (a stand-in ssh: the same on a controller without one)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "ssh").write_text("#!/bin/sh\necho 'ssh: connect to host 127.0.0.1 port 9: Connection refused' >&2\nexit 255\n")
+    (bin_dir / "ssh").chmod(0o755)
+    rc, output = run(tmp_path, playbook, INVENTORY=str(inventory), PATH="%s:%s" % (bin_dir, os.environ.get("PATH", "")))
     assert rc != 0
     lines = output.splitlines()
     assert any(line.startswith("UNREACHABLE  node3  ") for line in lines), output  # ignored: one line
