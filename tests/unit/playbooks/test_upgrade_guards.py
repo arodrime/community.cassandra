@@ -73,17 +73,24 @@ def test_prepare_copies_the_config_files_and_checks_the_copy(tmp_path):
     link.symlink_to(conf)  # /etc/cassandra/conf of the RPM: an alternatives link
     copy_dir = tmp_path / "conf.pre-upgrade-4.1.12"
 
+    (conf / "my notes.txt").write_text("a name with a space")
+    (conf / "cassandra.yaml.12345.2026-11-09@10:00:00~").write_text("an Ansible backup")  # left aside
+
     def compared(fresh="yes"):
-        env = {"SRC": str(link), "COPY": str(copy_dir), "T": str(tmp_path / "t"), "FRESH": fresh, "PATH": os.environ["PATH"]}
-        out = subprocess.run(["/bin/bash", "-c", compare["ansible.builtin.shell"]], env=env, stdout=subprocess.PIPE,
+        env = {"SRC": str(link), "COPY": str(copy_dir), "FRESH": fresh, "PATH": os.environ["PATH"],
+               "TMPDIR": str(tmp_path)}
+        out = subprocess.run(["/bin/sh", "-c", compare["ansible.builtin.shell"]], env=env, stdout=subprocess.PIPE,
                              universal_newlines=True, check=True)
         return out.stdout.split("\n")[:-1]
     subprocess.run(["cp", "-a", str(conf) + "/.", str(copy_dir)], check=True)
+    (copy_dir / "cassandra.yaml.12345.2026-11-09@10:00:00~").unlink()
     assert compared() == []
     (copy_dir / "triggers" / "README.txt").unlink()
+    (copy_dir / "my notes.txt").unlink()
     (copy_dir / "cassandra.yaml").write_text("a: 12\n")
-    assert compared() == ["missing triggers/README.txt", "size cassandra.yaml"]
-    assert compared(fresh="no") == ["missing triggers/README.txt"]  # an earlier copy: its sizes may differ
+    assert compared() == ["missing my notes.txt", "missing triggers/README.txt", "size cassandra.yaml"]
+    assert compared(fresh="no") == ["missing my notes.txt", "missing triggers/README.txt"]  # an earlier copy: its sizes may differ
+    assert sorted(os.listdir(str(tmp_path))) == ["conf", "conf.pre-upgrade-4.1.12", "default.conf"]  # its temp dir removed
 
     check = task("Prepare", "Check the config copy holds every file of the config")
     assert check["when"] == "not ansible_check_mode"

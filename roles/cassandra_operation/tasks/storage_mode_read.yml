@@ -21,7 +21,7 @@
     [ -n "$pid" ] || { echo "running=no"; exit 0; }
     echo "running=yes"
     # its start in seconds since the epoch (field 22 of stat, the 20th after the command name, in clock ticks since
-    # boot), against the file's last change
+    # boot), against the last change of the file
     ticks=$(sed 's/^.*) //' /proc/$pid/stat | awk '{print $20}')
     start=$(awk -v n="$(date +%s)" -v u="$(cut -d' ' -f1 /proc/uptime)" -v t="$ticks" -v h="$(getconf CLK_TCK)" \
       'BEGIN {printf "%d", n - u + t / h}')

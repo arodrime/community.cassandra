@@ -583,25 +583,24 @@
       when: not cassandra_upgrade_conf_copied.stat.exists
 
     # Every file of the config in the copy (names, and sizes for a copy made now: an earlier one may predate a later
-    # change of the config, which it keeps): lines "missing <file>" and "size <file>", none when it is whole
+    # change of the config, which it keeps), the backups Ansible leaves (<file>.<pid>.<date>~) aside: lines
+    # "missing <file>" and "size <file>", none when it is whole. Names with spaces kept whole (tab-separated lists).
     - name: Compare the config copy with the config
       ansible.builtin.shell: |
-        list() { (cd "$1" && find -L . -type f -printf '%P %s\n' | LC_ALL=C sort); }
-        src=$(readlink -f "$SRC")
-        list "$src" > "$T.src" && list "$COPY" > "$T.copy" || { echo "unreadable $COPY"; rm -f "$T".*; exit 0; }
-        cut -d' ' -f1 "$T.copy" | LC_ALL=C sort > "$T.names"
-        cut -d' ' -f1 "$T.src" | LC_ALL=C comm -23 - "$T.names" | sed 's/^/missing /'
-        if [ "$FRESH" = yes ]; then
-          LC_ALL=C join "$T.src" "$T.copy" | awk '$2 != $3 {print "size " $1}'
+        t=$(mktemp -d) || exit 1
+        list() { (cd "$1" && find -L . -type f ! -name '*~' -printf '%P\t%s\n'); }
+        if list "$(readlink -f "$SRC")" > "$t/src" && list "$COPY" > "$t/copy"; then
+          awk -F '\t' -v fresh="$FRESH" 'NR == FNR { src[$1] = $2; next } { copy[$1] = $2 }
+            END { for (f in src) if (!(f in copy)) print "missing " f; else if (fresh == "yes" && src[f] != copy[f]) print "size " f }' \
+            "$t/src" "$t/copy" | LC_ALL=C sort
+        else
+          echo "unreadable $COPY"
         fi
-        rm -f "$T".*
+        rm -rf "$t"
         exit 0
-      args:
-        executable: /bin/bash
       environment:
         SRC: "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}"
         COPY: "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}.pre-upgrade-{{ cassandra_upgrade_from }}"
-        T: /var/tmp/cassandra-upgrade-conf-compare
         FRESH: "{{ 'no' if cassandra_upgrade_conf_copied.stat.exists else 'yes' }}"
       register: cassandra_upgrade_conf_compare
       changed_when: false
