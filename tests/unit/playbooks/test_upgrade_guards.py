@@ -90,6 +90,13 @@ def test_prepare_copies_the_config_files_and_checks_the_copy(tmp_path):
     (copy_dir / "cassandra.yaml").write_text("a: 12\n")
     assert compared() == ["missing my notes.txt", "missing triggers/README.txt", "size cassandra.yaml"]
     assert compared(fresh="no") == ["missing my notes.txt", "missing triggers/README.txt"]  # an earlier copy: its sizes may differ
+    # a tree find cannot read: which one
+    os.chmod(str(copy_dir / "triggers"), 0)
+    try:
+        if os.geteuid() != 0:
+            assert compared()[0].startswith("unreadable copy %s: " % copy_dir)
+    finally:
+        os.chmod(str(copy_dir / "triggers"), 0o755)
     assert sorted(os.listdir(str(tmp_path))) == ["conf", "conf.pre-upgrade-4.1.12", "default.conf"]  # its temp dir removed
 
     check = task("Prepare", "Check the config copy holds every file of the config")
@@ -103,6 +110,17 @@ def test_prepare_copies_the_config_files_and_checks_the_copy(tmp_path):
         "  missing cassandra.yaml",
         "WAY OUT  remove /etc/cassandra/conf.pre-upgrade-4.1.12 on n1 (rm -r), then run the prepare phase again:",
         "  ansible-playbook community.cassandra.upgrade -e cassandra_upgrade_phase=prepare"]
+    # the config itself not read whole: said so, the way out on it (not on the copy)
+    variables["cassandra_upgrade_conf_compare"] = {"stdout_lines": [
+        "unreadable config /etc/cassandra/conf: find: './x': Permission denied"]}
+    lines = render(check["ansible.builtin.assert"]["fail_msg"], **variables).split("\n")
+    assert lines[0] == ("n1: the config /etc/cassandra/conf could not be read whole, the copy is not checked. The snapshot"
+                        " pre-upgrade-4.1.12 is taken; no node was upgraded.")
+    assert lines[2].startswith("WAY OUT  make /etc/cassandra/conf on n1 readable")
+    variables["cassandra_upgrade_conf_compare"] = {"stdout_lines": ["unreadable copy /etc/cassandra/conf.pre-upgrade-4.1.12: x"]}
+    lines = render(check["ansible.builtin.assert"]["fail_msg"], **variables).split("\n")
+    assert lines[0].startswith("n1: the config copy /etc/cassandra/conf.pre-upgrade-4.1.12 could not be read whole.")
+    assert lines[2].startswith("WAY OUT  remove /etc/cassandra/conf.pre-upgrade-4.1.12 on n1")
 
 
 def test_prepare_under_check_says_what_a_real_run_would_do():

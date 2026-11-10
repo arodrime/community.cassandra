@@ -1,0 +1,4 @@
+bugfixes:
+  - >-
+    upgrade prepare - a config or a config copy that cannot be read whole is said as such (which of the two, and the
+    error), with the way out that fits: make the config directory readable, or remove the copy.

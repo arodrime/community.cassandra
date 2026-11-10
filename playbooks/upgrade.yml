@@ -602,12 +602,15 @@
       ansible.builtin.shell: |
         t=$(mktemp -d) || exit 1
         list() { (cd "$1" && find -L . -type f ! -name '*~' -printf '%P\t%s\n'); }
-        if list "$(readlink -f "$SRC")" > "$t/src" && list "$COPY" > "$t/copy"; then
+        # a tree find cannot read whole: which one (the config, or the copy)
+        if ! list "$(readlink -f "$SRC")" > "$t/src" 2> "$t/err"; then
+          echo "unreadable config $SRC: $(tail -1 "$t/err")"
+        elif ! list "$COPY" > "$t/copy" 2> "$t/err"; then
+          echo "unreadable copy $COPY: $(tail -1 "$t/err")"
+        else
           awk -F '\t' -v fresh="$FRESH" 'NR == FNR { src[$1] = $2; next } { copy[$1] = $2 }
             END { for (f in src) if (!(f in copy)) print "missing " f; else if (fresh == "yes" && src[f] != copy[f]) print "size " f }' \
             "$t/src" "$t/copy" | LC_ALL=C sort
-        else
-          echo "unreadable $COPY"
         fi
         rm -rf "$t"
         exit 0
@@ -623,13 +626,20 @@
       ansible.builtin.assert:
         that: cassandra_upgrade_conf_compare.stdout_lines | length == 0
         fail_msg: >-
-          {{ ([inventory_hostname ~ ': the config copy ' ~ _copy ~ ' is not whole (' ~ cassandra_conf_dir ~ ' has more,'
-               ~ ' or other sizes). The snapshot pre-upgrade-' ~ cassandra_upgrade_from ~ ' is taken; no node was'
-               ~ ' upgraded.']
+          {{ ([inventory_hostname ~ ': ' ~ (('the config ' ~ cassandra_conf_dir ~ ' could not be read whole, the copy is not'
+                                              ~ ' checked') if _unreadable_config | bool
+                                             else ('the config copy ' ~ _copy ~ ' could not be read whole')
+                                             if _lines | select('match', '^unreadable copy ') | list
+                                             else ('the config copy ' ~ _copy ~ ' is not whole (' ~ cassandra_conf_dir
+                                                   ~ ' has more, or other sizes)'))
+               ~ '. The snapshot pre-upgrade-' ~ cassandra_upgrade_from ~ ' is taken; no node was upgraded.']
               + cassandra_upgrade_conf_compare.stdout_lines[:10] | map('regex_replace', '^', '  ') | list
               + (['  ... ' ~ (cassandra_upgrade_conf_compare.stdout_lines | length - 10) ~ ' more']
                  if cassandra_upgrade_conf_compare.stdout_lines | length > 10 else [])
-              + ['WAY OUT  remove ' ~ _copy ~ ' on ' ~ inventory_hostname ~ ' (rm -r), then run the prepare phase again:',
+              + [('WAY OUT  make ' ~ cassandra_conf_dir ~ ' on ' ~ inventory_hostname ~ ' readable (the directory'
+                  ~ ' Cassandra reads: cassandra_conf_dir), then run the prepare phase again:')
+                 if _unreadable_config | bool else
+                 ('WAY OUT  remove ' ~ _copy ~ ' on ' ~ inventory_hostname ~ ' (rm -r), then run the prepare phase again:'),
                  '  ' ~ 'upgrade' | community.cassandra.cassandra_command(extra=['-e cassandra_upgrade_phase=prepare'],
                                                                         **_cassandra_run_command_args)]) | join(_nl) }}
         quiet: true
@@ -637,6 +647,8 @@
         cassandra_output: true  # a verdict: its msg as is (ops callback)
         _nl: "\n"
         _copy: "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}.pre-upgrade-{{ cassandra_upgrade_from }}"
+        _lines: "{{ cassandra_upgrade_conf_compare.stdout_lines | default([]) }}"
+        _unreadable_config: "{{ _lines | select('match', '^unreadable config ') | list | length > 0 }}"
       when: not ansible_check_mode
 
     - name: Say what the next phase is
