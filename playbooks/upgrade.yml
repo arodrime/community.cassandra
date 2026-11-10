@@ -332,6 +332,21 @@
              | community.cassandra.cassandra_config_ignored_vars(cassandra_version) }}
       when: _phase in ['preflight', 'prepare', 'canary', 'rolling']
 
+    # a young generation size the target ignores with G1 (one of a 4.x on CMS): written as HEAP_NEWSIZE, said
+    - name: Settings the target series ignores with G1
+      ansible.builtin.debug:
+        msg: >-
+          WARNING  {{ inventory_hostname }} sets cassandra_heap_newsize ({{ cassandra_heap_newsize }}), which 5.0 with G1
+          ignores: written as HEAP_NEWSIZE in cassandra-env.sh, Cassandra logs "HEAP_NEWSIZE has erroneously been set"
+          at each start. Remove it from the inventory unless you want it so.
+      vars:
+        cassandra_output: true
+      when:
+        - _phase in ['preflight', 'prepare', 'canary', 'rolling']
+        - cassandra_version == '50x'
+        - cassandra_heap_newsize | default('') != ''
+        - "'G1' in [cassandra_jvm11_gc | default(cassandra_jvm_gc | default('G1')), cassandra_jvm17_gc | default(cassandra_jvm_gc | default('G1'))]"
+
     # the way back of a node not upgraded yet: the snapshot prepare takes
     - name: List the snapshots of the nodes to upgrade
       ansible.builtin.command: "{{ _cassandra_service_nodetool }} listsnapshots"
