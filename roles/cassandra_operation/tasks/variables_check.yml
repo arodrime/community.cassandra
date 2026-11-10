@@ -3,8 +3,10 @@
 # first plays of import_cluster and help), once, on the controller: a -e
 # variable under a prefix of the collection (cassandra_, import_cluster_,
 # help_) that no role or playbook knows (a typo) would otherwise be silently
-# ignored, and so would a variable under a former name (inventory or -e; not
-# for help and import_cluster, which read neither it nor its name now).
+# ignored, and so would a variable under a former name, or one no longer read
+# (cassandra_env_extra_lines...: the config would be written without its lines)
+# (inventory or -e; not for help and import_cluster, which read neither it nor
+# its name now; import_cluster writes those lines into snippets).
 # Inventory variables are not checked for typos here (preflight warns about
 # them). -e cassandra_allow_unknown_variables=true lets the unknown ones through,
 # -e cassandra_allow_unknown_variables=<name>,<name> those ones only.
@@ -14,7 +16,9 @@
     fail_msg: >-
       {%- set out = ['REFUSED  variable names  nothing was changed'] -%}
       {%- for name, now in _renamed.items() -%}
-      {%-   set _ = out.append('  ' ~ name ~ ' is renamed ' ~ now ~ ': set ' ~ now ~ ' instead.') -%}
+      {%-   set where = [] if now else name | community.cassandra.cassandra_files_setting(ansible_inventory_sources | default([]),
+                                                                                       playbook_dir | default('')) -%}
+      {%-   set _ = out.append('  ' ~ name ~ ' ' ~ name | community.cassandra.cassandra_former_name_text(now, where)) -%}
       {%- endfor -%}
       {%- for name, close in _unknown.items() -%}
       {%-   set _ = out.append('  -e ' ~ name ~ ': not a variable of this collection'

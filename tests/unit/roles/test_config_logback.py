@@ -212,3 +212,17 @@ def test_a_ref_to_an_appender_after_root_and_a_logger_set_twice_are_refused():
         " before <root>",
         "cassandra_log_levels: com.x is also a logger of your snippet of logback.xml (cassandra_config_template_snippets):"
         " logback would set it twice; keep one of them"]
+
+
+def test_the_role_refuses_the_variables_no_longer_read():
+    # (rc9 audit) the role run alone (a site playbook) refuses them too, before anything is written
+    tasks = load_tasks(os.path.join(ROLE, "tasks", "checks.yml"))
+    names = [t.get("name") for t in tasks]
+    refuse = tasks[names.index("Refuse the variables no longer read")]
+    assert "when" not in refuse and names.index(refuse["name"]) < names.index("Refuse template snippets the role cannot use")
+    msg = render(refuse["ansible.builtin.assert"]["fail_msg"], _removed=["cassandra_env_extra_lines"])
+    assert msg == ("cassandra_env_extra_lines is no longer read: cassandra-env.sh would be written without its lines."
+                   " Re-import the cluster (import_cluster), which writes these lines into snippet files"
+                   " (cassandra_config_template_snippets), then remove cassandra_env_extra_lines from the inventory"
+                   " files that set it. Nothing is changed.")
+

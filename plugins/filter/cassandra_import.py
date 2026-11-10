@@ -3311,6 +3311,9 @@ def _layout_over(nodes, cluster_name, user_files, inventory_dir=""):
             yours.append(d)
     layout["yours"] = sorted(yours, key=lambda y: (y["key"], y["node"]))
     layout["user_keys"] = sorted(set(k for dummy, data in user for k in data))
+    # the variables of your files no longer read (a release candidate's import wrote them): the playbooks refuse them
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_names import REMOVED
+    layout["removed_in_yours"] = sorted((path, k) for path, data in user for k in data if k in REMOVED)
     layout["from_yours"] = from_yours
     layout["not_compared"] = sorted(found.not_compared)
     layout["unread_files"] = unread

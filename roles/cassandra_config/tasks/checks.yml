@@ -70,6 +70,21 @@
       {%- endif -%}
       {{ out }}
 
+# Variables of the 2.1.0 release candidates no longer read (an inventory imported then): the files would be
+# written without their lines (the role run alone too, site.yml: the playbooks refuse them in preflight already)
+- name: Refuse the variables no longer read
+  ansible.builtin.assert:
+    that: _removed | length == 0
+    fail_msg: >-
+      {%- set out = [] -%}
+      {%- for name in _removed -%}
+      {%-   set _ = out.append(name ~ ' ' ~ name | community.cassandra.cassandra_former_name_text) -%}
+      {%- endfor -%}
+      {{ out | join(' ') }} Nothing is changed.
+    quiet: true
+  vars:
+    _removed: "{{ query('ansible.builtin.varnames', '^cassandra_(env|logback)_extra_lines$') | sort }}"
+
 # Your own template pieces: logback.xml and cassandra-env.sh only (their insertion points), a file on the
 # controller, for a file the role writes with its own template
 - name: Refuse template snippets the role cannot use

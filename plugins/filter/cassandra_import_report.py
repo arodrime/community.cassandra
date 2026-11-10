@@ -1135,6 +1135,11 @@ def _to_check_entries(report):
             entries += _entry(report, "%s: %s, yours: %s" % (_say(report, key), value, yours), members,
                               "kept as the nodes have it (in %s); to apply yours, delete it there, then apply_config"
                               % (_placed(report, key, members) or "?"))
+    for path, name in layout.get("removed_in_yours") or []:
+        count += 1
+        entries += _entry(report, "%s in %s (yours): no longer read" % (name, path), None,
+                          "the import wrote these lines in snippets (cassandra_config_template_snippets): remove %s"
+                          " from %s; the playbooks refuse it until then" % (name, path))
     if layout.get("not_compared"):
         count += 1
         entries += _entry(report, "not compared with the nodes: %s" % ", ".join(layout["not_compared"]), None,

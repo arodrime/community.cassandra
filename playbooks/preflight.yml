@@ -259,8 +259,8 @@
           {{ query('ansible.builtin.varnames', '^cas+andra_') | reject('in', query('community.cassandra.cassandra_extra_vars'))
              | community.cassandra.cassandra_unknown_names(_cassandra_playbook_variables) }}
 
-    # one under a former name, in any node's groups or host_vars (variables_check.yml sees the first host's and -e
-    # only): refused, not left to the WARNING below
+    # one under a former name, or no longer read (cassandra_env_extra_lines...), in any node's groups or host_vars
+    # (variables_check.yml sees the first host's and -e only): refused, not left to the WARNING below
     - name: No variable under a former name on any node
       ansible.builtin.assert:
         that: _renamed | length == 0
@@ -268,8 +268,10 @@
           {%- set out = ['REFUSED  variable names  nothing was changed'] -%}
           {%- for name, now in _renamed | dictsort -%}
           {%-   set hosts = ansible_play_hosts | select('in', _set_for[name]) | list -%}
-          {%-   set _ = out.append('  ' ~ name ~ ' (set for ' ~ hosts | community.cassandra.cassandra_node_list ~ ') is renamed '
-                                   ~ now ~ ': set ' ~ now ~ ' instead.') -%}
+          {%-   set where = [] if now else name | community.cassandra.cassandra_files_setting(ansible_inventory_sources | default([]),
+                                                                                           playbook_dir | default('')) -%}
+          {%-   set _ = out.append('  ' ~ name ~ ' (set for ' ~ hosts | community.cassandra.cassandra_node_list ~ ') '
+                                   ~ name | community.cassandra.cassandra_former_name_text(now, where)) -%}
           {%- endfor -%}
           {{ out | join(_nl) }}
         quiet: true

@@ -466,3 +466,20 @@ def test_your_copy_of_the_nodes_file(tmp_path, name, tail, yours_tail):
     assert "not carried" in layout["report"]
     assert "cassandra_secret_" not in "\n".join(f["content"] for f in cassandra_inventory_files(layout))
     assert self_check(files, layout, extra_files=[yours])["differences"] == []
+
+
+def test_a_reimport_drops_and_names_the_variables_no_longer_read():
+    # (rc9 audit) an inventory a release candidate imported: its own main.yml is written again without them; in a
+    # file of yours, the report names them (the playbooks refuse them)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout_over
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import cassandra_import_report
+    files = with_env("export A=1")
+    out, n = imported(files)
+    yours = {"path": "group_vars/all/local.yml", "content": "cassandra_env_extra_lines:\n  - export A=1\n"}
+    layout = cassandra_inventory_layout_over([n], "c", [yours])
+    text = "\n".join(f["content"] for f in cassandra_inventory_files(layout))
+    assert "cassandra_env_extra_lines" not in text and "export A=1" in text  # (in its snippet)
+    report = " ".join(" ".join(line.split()) for line in cassandra_import_report(
+        layout, ["/p/c.yml", "/p"], "/p/reports/c/report.txt", {}, True, cwd="/p", in_git=True, width=200))
+    assert "cassandra_env_extra_lines in group_vars/all/local.yml (yours): no longer read" in report
+    assert "remove cassandra_env_extra_lines from group_vars/all/local.yml; the playbooks refuse it until then" in report

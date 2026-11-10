@@ -44,6 +44,9 @@ RENAMED = dict([(name, "cassandra_target_nodes") for name in (
     ("cassandra_medusa_config_owner", "cassandra_medusa_config_user"),
     ("cassandra_medusa_key_file_owner", "cassandra_medusa_key_file_user"),
     ("cassandra_config_owner", "cassandra_config_user")])
+# variables of the 2.1.0 release candidates no longer read: {name: the file whose lines they gave}. An inventory that
+# still sets one is refused (its lines would be left out of the file, every node restarted without them)
+REMOVED = {"cassandra_env_extra_lines": "cassandra-env.sh", "cassandra_logback_extra_lines": "logback.xml"}
 
 
 # the secrets import_cluster moves out of a config file's lines, which refer to them (a snippet's lines...)
@@ -116,10 +119,53 @@ def cassandra_unknown_names(names, known, cutoff=0.8):
 
 
 def cassandra_renamed_names(names):
-    """names: the variables set. Returns {name: its name now} for those set under a former name.
+    """names: the variables set. Returns {name: its name now} for those set under a former name, {name: ""} for
+    those no longer read (REMOVED).
     Example:
     ["cassandra_new_nodes"] -> {"cassandra_new_nodes": "cassandra_target_nodes"}."""
-    return dict((name, RENAMED[name]) for name in names or [] if name in RENAMED)
+    return dict((name, RENAMED.get(name, "")) for name in names or [] if name in RENAMED or name in REMOVED)
+
+
+def cassandra_former_name_text(name, now="", where=None):
+    """The way out for a variable under a former name (now: its name now) or no longer read (REMOVED; where: the
+    inventory files that set it) -> text.
+    Example:
+    "cassandra_env_extra_lines", "", ["group_vars/prod/main.yml"] -> "is no longer read (...): re-import ..."."""
+    if now:
+        return "is renamed %s: set %s instead." % (now, now)
+    files = ", ".join(where or []) or "the inventory files that set it"
+    return ("is no longer read: %s would be written without its lines. Re-import the cluster (import_cluster), which"
+            " writes these lines into snippet files (cassandra_config_template_snippets), then remove %s from %s."
+            % (REMOVED.get(name, "the file"), name, files))
+
+
+def cassandra_files_setting(name, sources=None, playbook_dir=""):
+    """The group_vars and host_vars files next to the inventory sources (and the playbooks') that set the top-level
+    variable name, read as text -> [path]; a vaulted one that cannot be read here: "<path> (vaulted, not read)"."""
+    dirs = []
+    for source in list(sources or []) + ([playbook_dir] if playbook_dir else []):
+        base = str(source) if os.path.isdir(str(source)) else os.path.dirname(str(source))
+        if base and base not in dirs:
+            dirs.append(base)
+    key = re.compile(r"(?m)^%s\s*:" % re.escape(name))
+    found = []
+    for base in dirs:
+        for kind in ("group_vars", "host_vars"):
+            for top, dummy, files in sorted(os.walk(os.path.join(base, kind))):
+                for f in sorted(files):
+                    if f.startswith(".") or not f.endswith((".yml", ".yaml", ".json")) and "." in f:
+                        continue
+                    path = os.path.join(top, f)
+                    try:
+                        with open(path, encoding="utf-8", errors="replace") as text:
+                            content = text.read()
+                    except OSError:
+                        continue
+                    if content.startswith("$ANSIBLE_VAULT"):
+                        found.append("%s (vaulted, not read)" % path)
+                    elif key.search(content):
+                        found.append(path)
+    return found
 
 
 def _allowed(allow):
@@ -152,4 +198,6 @@ def cassandra_unknown_extra_vars(names, known, allow=False):
 class FilterModule(object):
     def filters(self):
         return {"cassandra_close_names": cassandra_close_names, "cassandra_unknown_names": cassandra_unknown_names,
-                "cassandra_renamed_names": cassandra_renamed_names, "cassandra_unknown_extra_vars": cassandra_unknown_extra_vars}
+                "cassandra_renamed_names": cassandra_renamed_names, "cassandra_unknown_extra_vars": cassandra_unknown_extra_vars,
+                "cassandra_former_name_text": cassandra_former_name_text,
+                "cassandra_files_setting": cassandra_files_setting}

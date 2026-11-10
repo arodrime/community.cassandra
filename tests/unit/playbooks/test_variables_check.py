@@ -16,6 +16,7 @@ from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_names import cassandra_unknown_extra_vars
+from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -36,6 +37,7 @@ def render(template, **variables):
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
+load_collection_filters()  # (the message names the files with the collection's filters)
 TASKS = load("roles", "cassandra_operation", "tasks", "variables_check.yml")
 CHECK = TASKS[0]
 PLAYBOOK_VARIABLES = load("roles", "cassandra_operation", "vars", "main.yml")["_cassandra_playbook_variables"]
@@ -197,3 +199,35 @@ def test_import_cluster_options_are_suggested():
                                        PLAYBOOK_VARIABLES)
     assert set(out.values()) <= options | {""}
     assert out["import_cluster_vault_passwd_file"] == "import_cluster_vault_password_file"
+
+
+@pytest.mark.parametrize("name, file_name", [("cassandra_env_extra_lines", "cassandra-env.sh"),
+                                             ("cassandra_logback_extra_lines", "logback.xml")])
+def test_a_variable_no_longer_read_refused_with_the_files_that_set_it(tmp_path, name, file_name):
+    # (rc9 audit) an inventory imported by a release candidate still sets the lines the import now writes in
+    # snippets: refused (else the file is written without them and every node restarted), the files named
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_names import cassandra_renamed_names
+    (tmp_path / "group_vars" / "prod").mkdir(parents=True)
+    (tmp_path / "group_vars" / "prod" / "main.yml").write_text("%s:\n  - export A=1\n" % name)
+    (tmp_path / "group_vars" / "prod" / "secrets.yml").write_text("$ANSIBLE_VAULT;1.1;AES256\n3132\n")
+    (tmp_path / "prod.yml").write_text("all: {}\n")
+    renamed = cassandra_renamed_names([name, "cassandra_heap_size"])
+    assert renamed == {name: ""}
+    variables = dict(CHECK["vars"], _renamed=renamed, _unknown={}, ansible_inventory_sources=[str(tmp_path / "prod.yml")],
+                     playbook_dir="/nowhere")
+    assert_ = CHECK["ansible.builtin.assert"]
+    assert render("{{ %s }}" % assert_["that"], **variables) is False
+    assert render(assert_["fail_msg"], **variables).split("\n") == [
+        "REFUSED  variable names  nothing was changed",
+        "  %s is no longer read: %s would be written without its lines. Re-import the cluster (import_cluster), which"
+        " writes these lines into snippet files (cassandra_config_template_snippets), then remove %s from %s, %s"
+        " (vaulted, not read)." % (name, file_name, name, tmp_path / "group_vars" / "prod" / "main.yml",
+                                   tmp_path / "group_vars" / "prod" / "secrets.yml")]
+
+
+def test_the_variables_no_longer_read_are_unknown_to_preflight_too():
+    # (preflight refuses the unknown ones under a former name or no longer read, for every node)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_names import (
+        cassandra_renamed_names, cassandra_unknown_names)
+    unknown = cassandra_unknown_names(["cassandra_env_extra_lines", "cassandra_logback_extra_lines"], PLAYBOOK_VARIABLES)
+    assert sorted(cassandra_renamed_names(list(unknown))) == ["cassandra_env_extra_lines", "cassandra_logback_extra_lines"]
