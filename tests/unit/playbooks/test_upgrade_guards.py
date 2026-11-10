@@ -100,7 +100,8 @@ def test_prepare_copies_the_config_files_and_checks_the_copy(tmp_path):
 
 def test_prepare_under_check_says_what_a_real_run_would_do():
     say = task("Prepare", "Say what the next phase is")["ansible.builtin.debug"]["msg"]
-    variables = dict(cassandra_upgrade_from="4.1.12", cassandra_conf_dir="/etc/cassandra/conf")
+    variables = dict(cassandra_upgrade_from="4.1.12", cassandra_conf_dir="/etc/cassandra/conf",
+                     ansible_play_hosts=["n1"], ansible_play_hosts_all=["n1"])
     assert text(say, ansible_check_mode=True, **variables) == (
         "--check: nothing was done. A real run would take the snapshots pre-upgrade-4.1.12 and copy the config to "
         "/etc/cassandra/conf.pre-upgrade-4.1.12.")
@@ -376,3 +377,26 @@ def test_the_nodes_outside_the_canary_are_said_so():
                                   {"node": "n3", "result": result}], "n2", "boom", operation="upgrade", resume=False)
     assert "n1, n3 not touched (left to the rolling phase)" in [" ".join(x.split()) for x in lines]
     assert not any("--limit" in x for x in lines)
+
+
+def test_the_summary_play_reads_with_the_role_defaults_and_lists_every_node_of_the_run():
+    order = names("Summary")
+    assert order.index("Load the role defaults") < order.index("Print the summary") \
+        < order.index("Read storage_compatibility_mode on the nodes")
+    load = task("Summary", "Load the role defaults")
+    assert "cassandra_config" in load["loop"] and load["ansible.builtin.include_role"]["public"] is True
+    summary = task("Summary", "Print the summary")
+    # the canary's play holds the canary alone: the other nodes of the run (left to the rolling phase) listed too
+    assert summary["vars"]["cassandra_service_summary_hosts"] == "{{ cassandra_upgrade_run_nodes | default(ansible_play_hosts_all) }}"
+    # every play that reads the nodes' storage_compatibility_mode has the role defaults (cassandra_conf_dir)
+    for play in ("Upgrade checks", "Summary"):
+        assert "Load the role defaults" in names(play)
+
+
+def test_prepare_says_where_it_did_not_go_through():
+    say = task("Prepare", "Say what the next phase is")["ansible.builtin.debug"]["msg"]
+    variables = dict(cassandra_upgrade_from="4.1.12", cassandra_conf_dir="/etc/cassandra/conf", ansible_check_mode=False)
+    assert text(say, ansible_play_hosts=["n1", "n3"], ansible_play_hosts_all=["n1", "n2", "n3"], **variables) == (
+        "Prepare did not go through on n2 (above): run the prepare phase again once that is fixed, before the canary"
+        " phase.")
+    assert text(say, ansible_play_hosts=["n1"], ansible_play_hosts_all=["n1"], **variables).startswith("Snapshots")

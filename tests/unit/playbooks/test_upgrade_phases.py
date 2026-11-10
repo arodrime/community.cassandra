@@ -141,6 +141,8 @@ def test_a_node_nodetool_fails_on_is_said_with_its_error_and_the_way_out():
     variables["ansible_play_hosts"] = list(hostvars)
     hostvars["n2"]["cassandra_upgrade_running"]["rc"] = hostvars["n3"]["cassandra_upgrade_running"]["rc"] = 0
     assert render("{{ %s }}" % check["ansible.builtin.assert"]["that"], **variables) is True
+    # an assert's message is templated whatever the result: every node answering, it still renders
+    assert render(check["ansible.builtin.assert"]["fail_msg"], **variables).startswith("nodetool version failed on .")
 
 
 def test_an_unset_phase_is_said_before_anything_else():

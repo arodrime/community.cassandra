@@ -187,7 +187,7 @@
         fail_msg: >-
           {{ (['nodetool version failed on ' ~ _failed | map(attribute='node') | join(', ') ~ '. Nothing was done.']
               + _rows
-              + [('WAY OUT  ' ~ _steps | first)] + _steps[1:] | map('regex_replace', '^', '  ') | list
+              + ['WAY OUT  ' ~ (_steps | first | default(''))] + _steps[1:] | map('regex_replace', '^', '  ') | list
               + ['  then run this phase again (a node already upgraded is skipped):',
                  '  ' ~ 'upgrade' | community.cassandra.cassandra_command(extra=['-e cassandra_upgrade_phase=' ~ _phase],
                                                                          **_cassandra_run_command_args)]) | join(_nl) }}
@@ -606,7 +606,10 @@
               ~ ' and copy the config to ' ~ cassandra_conf_dir ~ '.pre-upgrade-' ~ cassandra_upgrade_from ~ '.')
              if ansible_check_mode else
              ('Snapshots pre-upgrade-' ~ cassandra_upgrade_from ~ ' and config copies in ' ~ cassandra_conf_dir
-              ~ '.pre-upgrade-' ~ cassandra_upgrade_from ~ '. Next: -e cassandra_upgrade_phase=canary.') }}
+              ~ '.pre-upgrade-' ~ cassandra_upgrade_from ~ '. Next: -e cassandra_upgrade_phase=canary.')
+             if ansible_play_hosts | length == ansible_play_hosts_all | length else
+             ('Prepare did not go through on ' ~ ansible_play_hosts_all | reject('in', ansible_play_hosts) | join(', ')
+              ~ ' (above): run the prepare phase again once that is fixed, before the canary phase.') }}
       run_once: true
       vars:
         cassandra_output: true
@@ -836,12 +839,21 @@
         cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
       tags: [always]  # under --tags too
 
+    # cassandra_conf_dir and the others the reads below need (play scoped: the first plays' are gone)
+    - name: Load the role defaults
+      ansible.builtin.include_role:
+        name: "community.cassandra.{{ item }}"
+        tasks_from: defaults.yml
+        public: true
+      loop: [cassandra_config, cassandra_service, cassandra_operation]
+
+    # every node of the run: the canary's others said left to the rolling phase
     - name: Print the summary
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation
         tasks_from: summary.yml
       vars:
-        cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
+        cassandra_service_summary_hosts: "{{ cassandra_upgrade_run_nodes | default(ansible_play_hosts_all) }}"
         cassandra_service_summary_operation: upgrade
 
     # what each node reads once upgraded (a real rolling run wrote it; under --check the nodes are not upgraded)
