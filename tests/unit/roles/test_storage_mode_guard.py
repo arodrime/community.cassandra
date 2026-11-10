@@ -143,11 +143,12 @@ def test_the_cql_read_asks_the_node_itself_and_says_when_it_could_not():
               "err": "Traceback (most recent call last):\n  File x\nModuleNotFoundError: No module named 'cqlshlib'\n"}
     base = dict(say["vars"], inventory_hostname="n1", _cassandra_storage_mode_cql_host="10.0.0.5",
                 _cassandra_storage_mode_cql_ssl=False, cassandra_storage_mode_cql=failed)
-    msg = " ".join(str(_render(say["ansible.builtin.debug"]["msg"], cassandra_storage_mode_read={
-        "stdout_lines": ["yaml=NONE", "running=yes", "logged=NONE"]}, **base)).split())
-    assert msg == ("WARNING n1: the storage_compatibility_mode Cassandra runs could not be read over CQL (cqlsh on"
-                   " 10.0.0.5:9042: ModuleNotFoundError: No module named 'cqlshlib'); the line it logged at its start"
-                   " tells it instead.")
+    raw = str(_render(say["ansible.builtin.debug"]["msg"], cassandra_storage_mode_read={
+        "stdout_lines": ["yaml=NONE", "running=yes", "logged=NONE"]}, **base))
+    assert raw.startswith("WARNING  n1: ")
+    assert " ".join(raw.split()).split(": ", 1)[1] == (
+        "the storage_compatibility_mode Cassandra runs could not be read over CQL (cqlsh on 10.0.0.5:9042:"
+        " ModuleNotFoundError: No module named 'cqlshlib'); the line it logged at its start tells it instead.")
     msg = " ".join(str(_render(say["ansible.builtin.debug"]["msg"], cassandra_storage_mode_read={
         "stdout_lines": ["yaml=NONE", "running=yes"]}, **base)).split())
     assert msg.endswith("nothing logged since its start either: its cassandra.yaml tells it unless the file changed"
