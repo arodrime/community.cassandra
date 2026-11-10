@@ -8,6 +8,8 @@ __metaclass__ = type
 # back, a node down with the target package installed is pointed to apply_config, and apply_config's plan says
 # NONE is the point of no return.
 
+import hashlib
+import json
 import os
 
 import yaml
@@ -182,7 +184,7 @@ def _modes(modes, from_series="41x", copies=()):
         else:
             lines.append("running=yes")
             if running != yaml_mode:
-                lines += ["pending=yes", "logged=" + running]
+                lines.append("logged=" + running)
             elif pending:
                 lines.append("pending=yes")
         h = {"inventory_hostname": "n%d" % i, "cassandra_upgrade_from_series": from_series, "cassandra_upgrade_done": True,
@@ -325,13 +327,43 @@ def test_the_storage_mode_read_script(tmp_path):
             "grep -qx org.apache.cassandra.service.CassandraDaemon", "true")
         out = run(None, fake)
         assert "running=yes" in out and not [x for x in out if x.split("=")[0] in ("pending", "future", "start_read")]
+        os.chmod(str(path), 0o640)  # metadata only (ctime moves, mtime not): not pending
+        assert not [x for x in run(None, fake) if x.split("=")[0] in ("pending", "future", "start_read")]
         path.write_text("storage_compatibility_mode: NONE\n")  # written after it started
         assert "pending=yes" in run(None, fake)
+        # the mode it logged at its start, when there, decides instead (against the file): no pending line
+        logged = fake.replace("tail -1 \\\n", "tail -1; echo x storage_compatibility_mode=NONE; } \\\n").replace(
+            "m=$(grep -a", "m=$({ grep -a")
+        assert logged != fake and "logged=NONE" in run(None, logged) and "pending=yes" not in run(None, logged)
+        # the record of the config it started with (config_snapshot.yml), of this JVM: by content
+        with open("/proc/%d/stat" % proc.pid) as f:
+            ticks = int(f.read().rsplit(")", 1)[1].split()[19])
+        with open("/proc/uptime") as f:
+            up = float(f.read().split()[0])
+        jvm = {"pid": str(proc.pid), "start": round(time.time() - up + ticks / float(os.sysconf("SC_CLK_TCK")), 2)}
+        record = tmp_path / "record.json"
+
+        def with_record(content, pid=jvm["pid"]):
+            record.write_text(json.dumps({"/etc/x//../cassandra/cassandra.yaml": hashlib.sha1(content).hexdigest(),
+                                          "/etc/systemd/system/cassandra.service": "0" * 40,
+                                          "_jvm": dict(jvm, pid=pid)}, indent=4, sort_keys=True))
+            return fake.replace('"$R"', '"%s"' % record)
+        assert "pending=yes" not in run(None, with_record(b"storage_compatibility_mode: NONE\n"))  # same content
+        assert "pending=yes" in run(None, with_record(b"storage_compatibility_mode: UPGRADING\n"))  # another
+        # a file copied in with an older time (cp -p): by content, pending
+        path.write_text("storage_compatibility_mode: NONE\n")
+        os.utime(str(path), (time.time() - 86400, time.time() - 86400))
+        assert "pending=yes" not in run(None, fake)  # no record: by its mtime, not seen
+        assert "pending=yes" in run(None, with_record(b"storage_compatibility_mode: UPGRADING\n"))
+        # a record of another JVM: as none (by the mtime)
+        assert "pending=yes" not in run(None, with_record(b"storage_compatibility_mode: UPGRADING\n", pid="1"))
         os.utime(str(path), (time.time() + 3600, time.time() + 3600))  # a time after now (a clock set back)
         out = run(None, fake)
         assert "future=yes" in out and "pending=yes" not in out
         # its start not computed (no btime): not read, never taken as not pending
         assert "start_read=no" in run(None, fake.replace("/proc/stat 2>/dev/null", "/nonexistent 2>/dev/null"))
+        # its start after now (a boot time a virtual machine got wrong): not read either
+        assert "start_read=no" in run(None, fake.replace("printf \"%d\", b + t / h", "printf \"%d\", b + t / h + 86400"))
     finally:
         proc.kill()
     # the logged mode, when there: the last "Node configuration" line Cassandra logged

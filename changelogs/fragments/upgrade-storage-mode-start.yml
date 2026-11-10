@@ -1,6 +1,9 @@
 bugfixes:
   - >-
-    upgrade sstables - the start of Cassandra is read from the boot time and the process's own start (not from now
-    and the uptime), against the later of the file's mtime and ctime; a start not read refuses (it is never taken as
-    "no restart pending"), a ``cassandra.yaml`` with a time after now (a clock set back) is said as such. A cluster
-    in the middle of its move to ``NONE`` is told its next step too, and a restart pending is always said.
+    upgrade sstables - the mode the running Cassandra runs is the one it logged at its start when its log has it,
+    else its ``cassandra.yaml``'s unless the file changed since that start: by content against the record of the
+    config it started with (the record of that JVM), else by the file's mtime against the start read from the boot
+    time and the process's own start (a ``chmod``, ``chown`` or relabel is no change). A start not read, or after
+    now, refuses (it is never taken as "no restart pending"); a ``cassandra.yaml`` with a time after now (a clock set
+    back) is said as such. A cluster in the middle of its move to ``NONE`` is told its next step too, and a restart
+    pending is always said.

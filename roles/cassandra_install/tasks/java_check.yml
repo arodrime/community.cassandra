@@ -156,19 +156,21 @@
 
 - name: Look at the Java link
   ansible.builtin.shell: |
-    # a link a package owns, or that the alternatives manage (its chain through /etc/alternatives): theirs, not moved
-    # by their exit status: rpm says "not owned" on its standard output, with a failure
+    # a link a package owns, or one the alternatives manage (it leads straight into /etc/alternatives, as
+    # /usr/bin/java or /usr/lib/jvm/jre-17): theirs, not moved. A link of its own may lead further through them
+    # package ownership by the exit status: rpm says "not owned" on its standard output, with a failure
     pkg=
     if out=$(rpm -qf --qf '%{NAME}\n' "$L" 2>/dev/null); then pkg=$(echo "$out" | head -1); fi
     if [ -z "$pkg" ] && out=$(dpkg -S "$L" 2>/dev/null); then pkg=$(echo "$out" | head -1 | cut -d: -f1); fi
     if [ -n "$pkg" ]; then echo "owned by the package $pkg"; exit 0; fi
-    p=$L n=0
-    while [ -L "$p" ] && [ $n -lt 20 ]; do
-      t=$(readlink "$p"); case $t in /*) p=$t ;; *) p=${p%/*}/$t ;; esac
-      n=$((n + 1))
-      case $p in /etc/alternatives/*) echo "a link of the alternatives (through $p)"; exit 0 ;; esac
-    done
     if [ -L "$L" ]; then
+      t=$(readlink "$L")
+      case $t in
+        /*) ;;
+        */*) t=$(cd "${L%/*}/${t%/*}" 2>/dev/null && pwd -P)/${t##*/} ;;
+        *) t=$(cd "${L%/*}/" 2>/dev/null && pwd -P)/$t ;;
+      esac
+      case $t in /etc/alternatives/*) echo "a link of the alternatives (to $t)"; exit 0 ;; esac
       t=$(readlink -f "$L")
       if [ -z "$t" ] || [ ! -e "$t" ]; then echo "link leading nowhere"
       elif [ -x "$t/bin/java" ] || [ -f "$t/release" ]; then echo "link to a Java"

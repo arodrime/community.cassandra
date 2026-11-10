@@ -220,7 +220,7 @@ def test_the_java_link_refusals(tmp_path):
         out = subprocess.run(["/bin/sh", "-c", look["ansible.builtin.shell"]], env={"L": str(path), "PATH": os.environ["PATH"]},
                              stdout=subprocess.PIPE, universal_newlines=True, check=True)
         return out.stdout.strip()
-    # a package owns it (rpm -qf answers), or its chain goes through /etc/alternatives: refused
+    # a package owns it (rpm -qf answers), or it leads straight into /etc/alternatives: refused
     (tmp_path / "bin").mkdir()
     (tmp_path / "bin" / "rpm").write_text('#!/bin/sh\ncase "$4" in *owned*) echo java-17-openjdk-headless ;; *) exit 1 ;; esac\n')
     (tmp_path / "bin" / "rpm").chmod(0o755)
@@ -243,9 +243,20 @@ def test_the_java_link_refusals(tmp_path):
     (tmp_path / "alternatives").mkdir()
     (tmp_path / "alternatives" / "jre_17").symlink_to(jdk)
     (tmp_path / "via-alternatives").symlink_to(tmp_path / "alternatives" / "jre_17")
-    out = subprocess.run(["/bin/sh", "-c", alt], env={"L": str(tmp_path / "via-alternatives"), "PATH": os.environ["PATH"]},
-                         stdout=subprocess.PIPE, universal_newlines=True, check=True).stdout.strip()
-    assert out == "a link of the alternatives (through %s)" % (tmp_path / "alternatives" / "jre_17")
+    (tmp_path / "jvm").mkdir()
+    (tmp_path / "jvm" / "jre-17").symlink_to("../alternatives/jre_17")  # relative, straight into them
+
+    def look_alt(link):
+        return subprocess.run(["/bin/sh", "-c", alt], env={"L": str(link), "PATH": os.environ["PATH"]},
+                              stdout=subprocess.PIPE, universal_newlines=True, check=True).stdout.strip()
+    # a link straight into /etc/alternatives (as /usr/bin/java, /usr/lib/jvm/jre-17): theirs, refused
+    assert look_alt(tmp_path / "via-alternatives") == "a link of the alternatives (to %s)" % (
+        tmp_path / "alternatives" / "jre_17")
+    assert look_alt(tmp_path / "jvm" / "jre-17") == "a link of the alternatives (to %s)" % (
+        tmp_path / "alternatives" / "jre_17")
+    # a link of its own whose chain goes through them further on (/opt/java/current -> /usr/lib/jvm/jre-17): taken
+    (tmp_path / "current").symlink_to(tmp_path / "jvm" / "jre-17")
+    assert look_alt(tmp_path / "current") == "link to a Java"
     assert [kind(tmp_path / n) for n in ("to-java", "nowhere", "absent", "data", "file", "to-data")] == [
         "link to a Java", "link leading nowhere", "absent", "a directory", "a file", "link to %s" % other]
     check = _find(tasks, "The Java link is a link to a Java, or not there yet")
@@ -262,7 +273,7 @@ def test_the_java_link_refusals(tmp_path):
         " leads to a Java (a bin/java or a release file there), not one a package or the alternatives own. Nothing was"
         " changed. Set cassandra_java_link to a path of its own (e.g. /opt/java/current), or move that one away.")
     assert allowed("owned by the package java-17-openjdk-headless")[0] is False
-    assert allowed("a link of the alternatives (through /etc/alternatives/jre_17)")[0] is False
+    assert allowed("a link of the alternatives (to /etc/alternatives/jre_17)")[0] is False
     assert allowed("a directory")[0] is False
     # the link moved before the system java is compared (a /usr/bin/java through it then leads to the new Java)
     names = [t["name"] for t in _tasks("java_tarball.yml")]
