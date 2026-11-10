@@ -72,7 +72,8 @@ def test_nodes_from_their_variables():
                                                                          "pending=yes")},
         {"inventory_hostname": "n4", "cassandra_storage_mode_read": read("yaml_read=no", "running=no")},
         {"inventory_hostname": "n5"}]
-    flags = {"stopped": False, "start_unread": False, "start_later": False, "future": False, "file": "cassandra.yaml"}
+    flags = {"stopped": False, "start_unread": False, "start_later": False, "future": False, "file": "cassandra.yaml",
+             "cql_host": "127.0.0.1"}
     assert cassandra_storage_mode_nodes(hostvars) == [
         dict(flags, node="n1", inventory="NONE", yaml="NONE", running="NONE", pending=False),
         dict(flags, node="n2", inventory=None, yaml="NONE", running="UPGRADING", pending=False, file="/etc/c/cassandra.yaml"),

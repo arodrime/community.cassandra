@@ -256,11 +256,20 @@ def test_sstables_refuse_a_mode_not_read_unknown_or_a_restart_pending():
     assert msg[0] == ("On n1, the mode Cassandra runs is not known: its cassandra.yaml (NONE) changed after it started."
                       " Nothing was done.")
     assert msg[-1] == (
-        "WAY OUT  On n1, read the mode its Cassandra runs (cqlsh, as the cluster's CQL user): SELECT value FROM"
+        "WAY OUT  On n1, read the mode its Cassandra runs (cqlsh 127.0.0.1, as the cluster's CQL user): SELECT value FROM"
         " system_views.settings WHERE name = 'storage_compatibility_mode'; (null: CASSANDRA_4). The same as its"
         " cassandra.yaml's (NONE) or the step before: restart it: ansible-playbook -i a.yml"
         " community.cassandra.rolling_restart --limit n1. Two steps before: set UPGRADING in cassandra.yaml by hand"
         " first. Later than NONE: set that mode back in cassandra.yaml by hand. Then run this phase again.")
+    # two nodes not known: each its own restart (the other may run a later mode than its file), its own address
+    ok, msg = _sstables(("NONE", "NONE", "NONE", True), ("NONE", "NONE", "NONE", True))
+    out = msg[-1].split("On n2, ")
+    assert len(out) == 2 and "--limit n1." in out[0] and "n2" not in out[0].replace("On n1", "")
+    assert "--limit n2." in out[1] and "n1" not in out[1] and "--limit n1,n2" not in msg[-1]
+    # the address cqlsh asks: its rpc address when one is set
+    hostvars = _modes([("NONE", "NONE", "NONE", True)])
+    hostvars["n1"]["cassandra_rpc_address"] = "10.0.0.5"
+    assert nodes_of(hostvars)[0]["cql_host"] == "10.0.0.5"
     # the same, read over CQL (system_views.settings): UPGRADING, a restart
     ok, msg = _sstables(("NONE", "NONE", "NONE", True), cql={"n1": "UPGRADING"})
     assert msg[0] == "On n1, Cassandra runs UPGRADING, before the NONE its cassandra.yaml has. Nothing was done."
@@ -327,6 +336,13 @@ def test_sstables_refuse_a_mode_not_read_unknown_or_a_restart_pending():
     assert ok is False and msg[-1] == (
         "WAY OUT  On n1, set storage_compatibility_mode: NONE back in cassandra.yaml by hand (the mode it runs;"
         " apply_config writes the inventory's, one step from the file's). Then run this phase again.")
+    # the inventory behind the mode it runs (UPGRADING, it runs NONE, its file edited back): by hand, and the
+    # inventory set to that mode (apply_config never moves the file back: it refuses NONE -> UPGRADING)
+    ok, msg = _sstables(("UPGRADING", "UPGRADING", "NONE"), **patch)
+    assert msg[-1] == (
+        "WAY OUT  On n1, set storage_compatibility_mode: NONE back in cassandra.yaml by hand (the mode it runs;"
+        " apply_config writes the inventory's, one step from the file's), and cassandra_storage_compatibility_mode:"
+        " NONE in the inventory (apply_config never moves it back). Then run this phase again.")
     # a typo in the inventory: not taken as NONE
     ok, msg = _sstables(("NONNE", "NONE", "NONE"))
     assert ok is False and msg[2] == "  n1    NONNE (unknown)  NONE            NONE"

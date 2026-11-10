@@ -66,6 +66,11 @@ def _live(cql):
     return None
 
 
+def _cql_host(rpc_address):
+    rpc = str(rpc_address or "")
+    return rpc if rpc not in ("", "localhost", "0.0.0.0") else "127.0.0.1"
+
+
 def cassandra_storage_mode_nodes(hostvars):
     """hostvars: the nodes' variables (hostvars[host] of each) -> [{node, inventory, yaml, running, pending,
     stopped, start_unread, start_later, future, file}]: inventory None when not set; yaml None when its cassandra.yaml
@@ -95,7 +100,9 @@ def cassandra_storage_mode_nodes(hostvars):
         nodes.append({"node": h.get("inventory_hostname"), "inventory": h.get("cassandra_storage_compatibility_mode"),
                       "yaml": yaml, "running": running, "pending": pending, "stopped": read.get("running") == "no",
                       "start_unread": start_unread, "start_later": start_later, "future": future,
-                      "file": read.get("file") or "cassandra.yaml"})
+                      "file": read.get("file") or "cassandra.yaml",
+                      # the address storage_mode_read.yml asks over CQL (as keyspaces.yml)
+                      "cql_host": _cql_host(h.get("cassandra_rpc_address"))})
     return nodes
 
 
@@ -159,6 +166,7 @@ def cassandra_storage_mode_behind(nodes):
             "stopped": bool(n.get("stopped")),
             "start_later": bool(n.get("start_later")) and n.get("running") is None,
             "file": n.get("file") or "cassandra.yaml",
+            "cql_host": n.get("cql_host") or "127.0.0.1",
             "reverted": reverted,
             # its mode written back by apply_config: the inventory's, one step from the file's (it moves one at a time)
             "write_back": reverted and inventory[0] == r and _ORDER.index(r) - _ORDER.index(y) == 1,
@@ -248,13 +256,14 @@ QUERY = "SELECT value FROM system_views.settings WHERE name = 'storage_compatibi
 
 
 def cassandra_storage_mode_way_out(behind, from_4x=True, restart_command="", total=0, apply_command="",
-                                   check_restart_command=""):
+                                   check_restart_command=None):
     """behind: cassandra_storage_mode_behind's; from_4x: the upgrade comes from 4.x (the move to NONE is its next
     step), else a cluster that stays before NONE is told there is nothing to rewrite (and, some of its nodes at NONE
     already, how to finish the move: total, the number of nodes, more than the ones behind); restart_command: the
     command that restarts the nodes with a restart pending; apply_command: the apply_config command of the nodes whose
-    cassandra.yaml has a mode before the one it runs, the inventory's (reverted); check_restart_command: the restart
-    of the nodes whose running mode is not known (unsure), once read ->
+    cassandra.yaml has a mode before the one it runs, the inventory's (reverted); check_restart_command: {node: the
+    command that restarts that node alone} for the nodes whose running mode is not known (unsure): each sentence
+    names its own node's ->
     what to do before the sstables phase, one sentence per kind."""
     out = []
     unknown = _names(behind, "unknown")
@@ -282,8 +291,12 @@ def cassandra_storage_mode_way_out(behind, from_4x=True, restart_command="", tot
     by_apply = [b["node"] for b in back if b["write_back"]]
     for b in back:
         if b["node"] not in by_apply:
+            behind_inventory = b["inventory_mode"] and _ORDER.index(b["inventory_mode"]) < _ORDER.index(b["running_mode"])
             out.append("On %s, set storage_compatibility_mode: %s back in %s by hand (the mode it runs; apply_config"
-                       " writes the inventory's, one step from the file's)." % (b["node"], b["running_mode"], b["file"]))
+                       " writes the inventory's, one step from the file's)%s." % (
+                           b["node"], b["running_mode"], b["file"],
+                           (", and cassandra_storage_compatibility_mode: %s in the inventory (apply_config never moves"
+                            " it back)" % b["running_mode"]) if behind_inventory else ""))
     if by_apply:
         names = ", ".join(by_apply)
         out.append("Write the inventory's mode back to the cassandra.yaml of %s (apply_config restarts %s)%s." % (
@@ -292,11 +305,12 @@ def cassandra_storage_mode_way_out(behind, from_4x=True, restart_command="", tot
         if b.get("unsure"):
             y = b["yaml_mode"]
             out.append(
-                "On %s, read the mode its Cassandra runs (cqlsh, as the cluster's CQL user): %s (null: CASSANDRA_4)."
+                "On %s, read the mode its Cassandra runs (cqlsh %s, as the cluster's CQL user): %s (null: CASSANDRA_4)."
                 " %s: restart it%s.%s Later than %s: set that mode back in %s by hand." % (
-                    b["node"], QUERY,
+                    b["node"], b["cql_host"], QUERY,
                     ("The same as its cassandra.yaml's (%s) or the step before" % y) if y != "CASSANDRA_4"
-                    else "CASSANDRA_4", (": " + check_restart_command) if check_restart_command
+                    else "CASSANDRA_4", (": " + check_restart_command[b["node"]])
+                    if isinstance(check_restart_command, dict) and b["node"] in check_restart_command
                     else " (rolling_restart --limit %s)" % b["node"],
                     (" Two steps before: set UPGRADING in %s by hand first." % b["file"]) if y == "NONE" else "",
                     y, b["file"]))
