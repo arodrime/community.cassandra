@@ -197,8 +197,8 @@ def test_sstables_refuse_a_50_target_until_storage_compatibility_mode_is_none():
     assert _sstables(("NONE", "NONE", "NONE"), (None, "NONE", "NONE"))[0] is True
     ok, msg = _sstables(("CASSANDRA_4", "CASSANDRA_4", "CASSANDRA_4"), ("NONE", "NONE", "NONE"))
     assert ok is False and msg == [
-        "storage_compatibility_mode is not NONE on n1, or not read. In a mode before NONE, 5.0 writes the sstables in"
-        " the 4.x format: the sstables phase would rewrite them in it. Nothing was done.",
+        "storage_compatibility_mode is not NONE on n1: in a mode before NONE, 5.0 writes the sstables in the 4.x format,"
+        " the sstables phase would rewrite them in it. Nothing was done.",
         "  node  inventory    cassandra.yaml  running",
         "  n1    CASSANDRA_4  CASSANDRA_4     CASSANDRA_4",
         "WAY OUT  Now set cassandra_storage_compatibility_mode: UPGRADING in the inventory and run apply_config, then"
@@ -219,11 +219,12 @@ def test_sstables_refuse_a_mode_not_read_unknown_or_a_restart_pending():
     # NONE written by apply_config, the node started before that (the log rolled over: no logged mode): a restart
     ok, msg = _sstables(("NONE", "NONE", "NONE", True))
     assert ok is False and msg[2] == "  n1    NONE       NONE            restart pending (its cassandra.yaml changed since its start)"
-    assert msg[-1] == ("WAY OUT  Restart n1, so they run the mode their cassandra.yaml has: ansible-playbook -i a.yml"
+    assert msg[0] == "A restart is pending on n1 (its cassandra.yaml changed since its start). Nothing was done."
+    assert msg[-1] == ("WAY OUT  Restart n1, so it runs the mode its cassandra.yaml has: ansible-playbook -i a.yml"
                        " community.cassandra.rolling_restart --limit n1. Then run this phase again.")
     # it logged UPGRADING at its start, NONE written since: the restart too
     ok, msg = _sstables(("NONE", "NONE", "UPGRADING"))
-    assert ok is False and "Restart n1, so they run the mode their cassandra.yaml has" in msg[-1]
+    assert ok is False and "Restart n1, so it runs the mode its cassandra.yaml has" in msg[-1]
     # a typo in the inventory: not taken as NONE
     ok, msg = _sstables(("NONNE", "NONE", "NONE"))
     assert ok is False and msg[2] == "  n1    NONNE (unknown)  NONE            NONE"
@@ -241,6 +242,7 @@ def test_a_5_0_patch_upgrade_is_told_there_is_nothing_to_rewrite():
     # a 5.0 cluster kept on CASSANDRA_4, 5.0.8 -> 5.0.9: the sstables phase refused, nothing to rewrite (cleanup next)
     patch = dict(from_series="50x", copies=("4.1.12", "5.0.8"))
     ok, msg = _sstables(("CASSANDRA_4", "CASSANDRA_4", "CASSANDRA_4"), **patch)
+    assert msg[0] == "storage_compatibility_mode is not NONE on n1: its sstables are in the format it writes. Nothing was done."
     assert ok is False and msg[-1] == (
         "WAY OUT  SSTables keep the 4.x format while storage_compatibility_mode is not NONE: nothing to rewrite. Skip this"
         " phase (cleanup next), or move to NONE first (point of no return) if you want the 5.0 format.")

@@ -132,6 +132,28 @@ STAYS = ("SSTables keep the 4.x format while storage_compatibility_mode is not N
          " phase (cleanup next), or move to NONE first (point of no return) if you want the 5.0 format.")
 
 
+def cassandra_storage_mode_headline(behind, from_4x=True):
+    """behind: cassandra_storage_mode_behind's -> why the sstables phase is refused, one sentence per kind, then
+    "Nothing was done."."""
+    before = ", ".join(b["node"] for b in behind if b["mode"] in ("CASSANDRA_4", "UPGRADING")
+                       or b.get("running_mode") in ("CASSANDRA_4", "UPGRADING"))
+    pending = ", ".join(b["node"] for b in behind if b["pending"] and b["mode"] not in ("CASSANDRA_4", "UPGRADING"))
+    out = []
+    if before:
+        out.append("storage_compatibility_mode is not NONE on %s%s" % (before, (
+            ": in a mode before NONE, 5.0 writes the sstables in the 4.x format, the sstables phase would rewrite them"
+            " in it.") if from_4x else ": its sstables are in the format it writes."))
+    if pending:
+        out.append("A restart is pending on %s (its cassandra.yaml changed since its start)." % pending)
+    unknown = _names(behind, "unknown")
+    if unknown:
+        out.append("cassandra_storage_compatibility_mode is no mode for %s in the inventory." % unknown)
+    unread = _names(behind, "unread")
+    if unread:
+        out.append("The mode could not be read on %s." % unread)
+    return " ".join(out + ["Nothing was done."])
+
+
 def cassandra_storage_mode_way_out(behind, from_4x=True, restart_command=""):
     """behind: cassandra_storage_mode_behind's; from_4x: the upgrade comes from 4.x (the move to NONE is its next
     step), else a cluster that stays before NONE is told there is nothing to rewrite; restart_command: the command
@@ -148,8 +170,9 @@ def cassandra_storage_mode_way_out(behind, from_4x=True, restart_command=""):
         out.append(STAYS)
     pending = _names(behind, "pending")
     if pending and not step:
-        out.append("Restart %s, so they run the mode their cassandra.yaml has%s." % (
-            pending, (": " + restart_command) if restart_command else " (rolling_restart --limit)"))
+        out.append("Restart %s, so %s the mode %s cassandra.yaml has%s." % (
+            pending, "it runs" if "," not in pending else "they run", "its" if "," not in pending else "their",
+            (": " + restart_command) if restart_command else " (rolling_restart --limit)"))
     for b in behind:
         if b["unread"]:
             out.append("On %s, %s%s." % (
@@ -167,4 +190,5 @@ class FilterModule(object):
                 "cassandra_storage_mode_behind": cassandra_storage_mode_behind,
                 "cassandra_storage_mode_rows": cassandra_storage_mode_rows,
                 "cassandra_storage_mode_step": cassandra_storage_mode_step,
-                "cassandra_storage_mode_way_out": cassandra_storage_mode_way_out}
+                "cassandra_storage_mode_way_out": cassandra_storage_mode_way_out,
+                "cassandra_storage_mode_headline": cassandra_storage_mode_headline}

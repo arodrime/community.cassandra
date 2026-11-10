@@ -420,9 +420,7 @@
       ansible.builtin.assert:
         that: _behind | length == 0
         fail_msg: >-
-          {{ (['storage_compatibility_mode is not NONE on ' ~ _behind | map(attribute='node') | join(', ')
-               ~ ', or not read. In a mode before NONE, 5.0 writes the sstables in the 4.x format: the sstables phase'
-               ~ ' would rewrite them in it. Nothing was done.']
+          {{ ([_behind | community.cassandra.cassandra_storage_mode_headline(_from_4x)]
               + _behind | community.cassandra.cassandra_storage_mode_rows
               + ['WAY OUT  ' ~ _behind | community.cassandra.cassandra_storage_mode_way_out(
                                      _from_4x, 'rolling_restart' | community.cassandra.cassandra_command(

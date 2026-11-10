@@ -40,7 +40,7 @@ def test_pending_alone_says_restart():
     # NONE written everywhere, the node runs UPGRADING (logged at its start): a restart, not the inventory
     found = behind(("NONE", "NONE", "UPGRADING"))
     assert cassandra_storage_mode_way_out(found, restart_command="ansible-playbook x --limit n1") == (
-        "Restart n1, so they run the mode their cassandra.yaml has: ansible-playbook x --limit n1.")
+        "Restart n1, so it runs the mode its cassandra.yaml has: ansible-playbook x --limit n1.")
     # pending, nothing logged (the log rolled over): the same
     found = cassandra_storage_mode_behind([{"node": "n1", "inventory": "NONE", "yaml": "NONE", "running": None,
                                             "pending": True}])
