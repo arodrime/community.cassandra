@@ -601,9 +601,17 @@ def test_a_down_node_with_the_target_package_is_pointed_to_apply_config():
 def test_apply_config_says_none_is_the_point_of_no_return():
     with open(os.path.join(TOP, "playbooks", "apply_config.yml"), encoding="utf-8") as f:
         content = f.read()
-    assert ("cassandra_apply_config_no_return: \"{{ _nodes | community.cassandra.cassandra_apply_config_no_return }}\""
-            in content)
     plays = yaml.safe_load(content)
+    put = next(t for p in plays for t in p.get("tasks", []) if t.get("name") == "Put the settings that differ side by side")
+    no_return = put["ansible.builtin.set_fact"]["cassandra_apply_config_no_return"]
+    # a node that runs NONE already (logged, or read over CQL): its file written back, not the point of no return
+    hostvars = {"n1": {"cassandra_storage_mode_read": {"stdout_lines": ["yaml=UPGRADING", "running=yes", "logged=NONE"]}},
+                "n2": {"cassandra_storage_mode_read": {"stdout_lines": ["yaml=UPGRADING", "running=yes",
+                                                                        "logged=UPGRADING"]}},
+                "n3": {"cassandra_storage_mode_read": {"stdout_lines": ["yaml=UPGRADING", "running=yes"]}}}
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_storage_mode as modes
+    assert modes.cassandra_storage_mode_running_none(["n1", "n2", "n3"], hostvars) == ["n1"]
+    assert "cassandra_storage_mode_running_none(hostvars)" in no_return and "reject('in'" in no_return
     screen = next(t for p in plays for t in p.get("tasks", []) if t.get("name") == "Show the plan and confirm the run")
     warnings = screen["vars"]["cassandra_screen"]["warnings"]
 

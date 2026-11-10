@@ -354,6 +354,20 @@ def _mid_move(behind):
     return len(modes) > 1
 
 
+def cassandra_storage_mode_runs(host):
+    """host: a node's variables with storage_mode_read.yml's reads -> the storage_compatibility_mode it runs, as read
+    over CQL or logged at its start; "" when neither tells."""
+    lines = (host.get("cassandra_storage_mode_read") or {}).get("stdout_lines") or []
+    logged = dict(line.split("=", 1) for line in lines if "=" in line).get("logged")
+    running = _live(host.get("cassandra_storage_mode_cql")) or logged
+    return running if running in _ORDER else ""
+
+
+def cassandra_storage_mode_running_none(hosts, hostvars):
+    """hosts, hostvars -> the hosts that run storage_compatibility_mode NONE already (read over CQL or logged)."""
+    return [h for h in hosts or [] if cassandra_storage_mode_runs(hostvars[h]) == "NONE"]
+
+
 def cassandra_storage_mode_back(host, target=None):
     """host: a node's variables (hostvars[host], with storage_mode_read.yml's reads); target: the
     storage_compatibility_mode its cassandra.yaml will have (the inventory's, written), None: the one it has (a
@@ -361,9 +375,7 @@ def cassandra_storage_mode_back(host, target=None):
     mode read over CQL or logged at its start): a mode not known never refuses (the move forward from the file is
     guarded by cassandra_config's identity check)."""
     node = cassandra_storage_mode_nodes([host])[0]
-    lines = (host.get("cassandra_storage_mode_read") or {}).get("stdout_lines") or []
-    read = dict(line.split("=", 1) for line in lines if "=" in line)
-    running = _live(host.get("cassandra_storage_mode_cql")) or read.get("logged")
+    running = cassandra_storage_mode_runs(host)
     mode = _value(node["yaml"] if target is None else target, _UNSET)[0]
     if running in _ORDER and mode and _ORDER.index(mode) < _ORDER.index(running):
         return running
@@ -379,4 +391,6 @@ class FilterModule(object):
                 "cassandra_storage_mode_step": cassandra_storage_mode_step,
                 "cassandra_storage_mode_way_out": cassandra_storage_mode_way_out,
                 "cassandra_storage_mode_back": cassandra_storage_mode_back,
+                "cassandra_storage_mode_runs": cassandra_storage_mode_runs,
+                "cassandra_storage_mode_running_none": cassandra_storage_mode_running_none,
                 "cassandra_storage_mode_headline": cassandra_storage_mode_headline}

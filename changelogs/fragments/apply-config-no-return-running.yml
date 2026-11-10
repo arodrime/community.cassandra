@@ -1,0 +1,4 @@
+bugfixes:
+  - >-
+    apply_config - "storage_compatibility_mode moves to NONE: the point of no return" is no longer said for a node
+    that runs NONE already (read over CQL or logged at its start), whose ``cassandra.yaml`` is only written back.

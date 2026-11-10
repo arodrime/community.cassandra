@@ -476,8 +476,11 @@
         cassandra_apply_config_diff: >-
           {{ _nodes | community.cassandra.cassandra_apply_config_diff(width='terminal', margin=2,
                                                                     verbose=ansible_verbosity | int > 0) }}
-        # 5.0: the nodes the run moves to storage_compatibility_mode NONE (the plan says it is the point of no return)
-        cassandra_apply_config_no_return: "{{ _nodes | community.cassandra.cassandra_apply_config_no_return }}"
+        # 5.0: the nodes the run moves to storage_compatibility_mode NONE (the plan says it is the point of no return);
+        # not one that runs NONE already (read over CQL or logged at its start: its file written back)
+        cassandra_apply_config_no_return: >-
+          {{ _nodes | community.cassandra.cassandra_apply_config_no_return
+             | reject('in', ansible_play_hosts | community.cassandra.cassandra_storage_mode_running_none(hostvars)) | list }}
       run_once: true
       vars:
         _nodes: >-
