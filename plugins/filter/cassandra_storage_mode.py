@@ -154,7 +154,10 @@ def cassandra_storage_mode_behind(nodes):
         unsure = bool(r is None and y and n.get("pending") and not n.get("stopped"))
         if unsure:
             running = (None, "not known (%s)" % WRITTEN_AFTER)
-        written = [m for m in (inventory[0], y, r) if m]
+        # the inventory before both the file and the mode it runs (the node moved on, its inventory not): the
+        # inventory set to the mode it runs, not a step from the inventory's
+        lagging = bool(inventory[0] and y and r and _ORDER.index(inventory[0]) < min(_ORDER.index(y), _ORDER.index(r)))
+        written = [m for m in (None if lagging else inventory[0], y, r) if m]
         unread = ([] if n.get("yaml") is not None else ["its cassandra.yaml"]) + (
             ["the mode it runs (no Cassandra process found)"] if n.get("stopped") else
             ["the start of its Cassandra"] if n.get("start_unread") and n.get("running") is None else
@@ -171,6 +174,7 @@ def cassandra_storage_mode_behind(nodes):
             "file": n.get("file") or "cassandra.yaml",
             "cql_host": n.get("cql_host") or "127.0.0.1",
             "reverted": reverted,
+            "lagging": lagging,
             # its mode written back by apply_config: the inventory's, one step from the file's (it moves one at a time)
             "write_back": reverted and inventory[0] == r and _ORDER.index(r) - _ORDER.index(y) == 1,
             "ahead": ahead,
@@ -221,7 +225,7 @@ _BEFORE = ("CASSANDRA_4", "UPGRADING")
 def cassandra_storage_mode_headline(behind, from_4x=True):
     """behind: cassandra_storage_mode_behind's -> why the sstables phase is refused, one sentence per kind, then
     "Nothing was done."."""
-    plain = [b for b in behind if not (b.get("ahead") or b.get("reverted") or b.get("unsure"))]
+    plain = [b for b in behind if not (b.get("ahead") or b.get("reverted") or b.get("unsure") or b.get("lagging"))]
     before = ", ".join(b["node"] for b in plain if b["mode"] in _BEFORE or b.get("running_mode") in _BEFORE)
     pending = ", ".join(b["node"] for b in plain if b["pending"] and b["mode"] not in _BEFORE)
     out = []
@@ -234,6 +238,9 @@ def cassandra_storage_mode_headline(behind, from_4x=True):
         out.append("A restart is pending on %s (%s)." % (pending, _one(
             pending, WRITTEN_AFTER, "their cassandra.yaml changed after Cassandra started")))
     for b in behind:
+        if b.get("lagging"):
+            out.append("On %s, the inventory has %s, before the %s Cassandra runs." % (
+                b["node"], b["inventory_mode"], b["running_mode"]))
         if b.get("ahead"):
             out.append("On %s, Cassandra runs %s, before the %s its cassandra.yaml has." % (
                 b["node"], b["running_mode"], b["yaml_mode"]))
@@ -277,7 +284,7 @@ def cassandra_storage_mode_way_out(behind, from_4x=True, restart_command="", tot
     stays = any(b["mode"] in _BEFORE for b in behind)
     # a node to put right first (it runs another mode than its file, or that is not known): that alone, then this
     # phase again (it then says the next step)
-    first = [b for b in behind if b.get("ahead") or b.get("reverted") or b.get("unsure")]
+    first = [b for b in behind if b.get("ahead") or b.get("reverted") or b.get("unsure") or b.get("lagging")]
     if first:
         pass
     elif step and from_4x:
@@ -286,6 +293,10 @@ def cassandra_storage_mode_way_out(behind, from_4x=True, restart_command="", tot
         out.append(STAYS)
         if step and (_mid_move(behind) or len(behind) < total or _inventory_ahead(behind)):
             out.append("To finish the move to NONE: " + step[0].lower() + step[1:])
+    for b in behind:
+        if b.get("lagging"):
+            out.append("On %s, set cassandra_storage_compatibility_mode: %s in the inventory (the mode it runs)." % (
+                b["node"], b["running_mode"]))
     for b in behind:
         if b.get("ahead") and _ORDER.index(b["yaml_mode"]) - _ORDER.index(b["running_mode"]) > 1:
             out.append("On %s, set storage_compatibility_mode: %s in %s by hand (one step after the %s it runs)." % (
@@ -368,6 +379,18 @@ def cassandra_storage_mode_running_none(hosts, hostvars):
     return [h for h in hosts or [] if cassandra_storage_mode_runs(hostvars[h]) == "NONE"]
 
 
+def cassandra_storage_mode_jump(host, target=None):
+    """host, target: as cassandra_storage_mode_back's -> the mode it runs when a restart would take it more than one
+    step after it (CASSANDRA_4 to NONE: an apply_config cut after its write, the role run alone, a file edited by
+    hand), else "". Only on evidence, as cassandra_storage_mode_back."""
+    node = cassandra_storage_mode_nodes([host])[0]
+    running = cassandra_storage_mode_runs(host)
+    mode = _value(node["yaml"] if target is None else target, _UNSET)[0]
+    if running in _ORDER and mode and _ORDER.index(mode) - _ORDER.index(running) > 1:
+        return running
+    return ""
+
+
 def cassandra_storage_mode_back(host, target=None):
     """host: a node's variables (hostvars[host], with storage_mode_read.yml's reads); target: the
     storage_compatibility_mode its cassandra.yaml will have (the inventory's, written), None: the one it has (a
@@ -391,6 +414,7 @@ class FilterModule(object):
                 "cassandra_storage_mode_step": cassandra_storage_mode_step,
                 "cassandra_storage_mode_way_out": cassandra_storage_mode_way_out,
                 "cassandra_storage_mode_back": cassandra_storage_mode_back,
+                "cassandra_storage_mode_jump": cassandra_storage_mode_jump,
                 "cassandra_storage_mode_runs": cassandra_storage_mode_runs,
                 "cassandra_storage_mode_running_none": cassandra_storage_mode_running_none,
                 "cassandra_storage_mode_headline": cassandra_storage_mode_headline}

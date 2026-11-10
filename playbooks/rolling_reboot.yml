@@ -29,9 +29,9 @@
         cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
       tags: [always]  # under --tags too
 
-    # a node whose cassandra.yaml has an earlier storage_compatibility_mode than the one it runs: refused before
-    # the question (its restart would take it back)
-    - name: Refuse a restart into an earlier storage_compatibility_mode
+    # a node whose cassandra.yaml has another storage_compatibility_mode than the one it runs, back or more than one
+    # step ahead: refused before the question (its restart would take it there)
+    - name: Refuse a restart into another storage_compatibility_mode than one step from the one it runs
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation
         tasks_from: storage_mode_guard.yml

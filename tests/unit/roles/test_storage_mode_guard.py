@@ -10,7 +10,8 @@ import os
 import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
-from ansible_collections.community.cassandra.plugins.filter.cassandra_storage_mode import cassandra_storage_mode_back
+from ansible_collections.community.cassandra.plugins.filter.cassandra_storage_mode import (
+    cassandra_storage_mode_back, cassandra_storage_mode_jump)
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 
 try:  # ansible-core 2.19+ renders trusted templates only
@@ -104,17 +105,20 @@ def test_where_it_runs():
     block = next(t for t in _load("roles/cassandra_config/tasks/main.yml") if t.get("name") == "Configure")["block"]
     names = [t["name"] for t in block]
     assert names.index("Compare the new files with the live ones") < names.index(
-        "Refuse a storage_compatibility_mode before the one Cassandra runs") < names.index(
+        "Refuse a storage_compatibility_mode before the one Cassandra runs, or two steps after it") < names.index(
         "Show the changes and confirm them") < names.index("Write the files and directories")
-    guard = block[names.index("Refuse a storage_compatibility_mode before the one Cassandra runs")]
+    guard = block[names.index("Refuse a storage_compatibility_mode before the one Cassandra runs, or two steps after it")]
     assert guard["ansible.builtin.include_role"]["tasks_from"] == "storage_mode_guard.yml"
     assert guard["vars"]["_cassandra_storage_mode_written"] is True
-    # rolling_restart, rolling_reboot: before the question
-    for playbook in ("playbooks/rolling_restart.yml", "playbooks/rolling_reboot.yml"):
-        play = next(p for p in _load(playbook) if p.get("name") == "Set up the progress file")
+    # rolling_restart, rolling_reboot, update_java: before the question
+    for playbook, play_name in (("playbooks/rolling_restart.yml", "Set up the progress file"),
+                                ("playbooks/rolling_reboot.yml", "Set up the progress file"),
+                                ("playbooks/update_java.yml", "Check the Java change")):
+        play = next(p for p in _load(playbook) if p.get("name") == play_name)
         names = [t["name"] for t in play["tasks"]]
-        assert names.index("Refuse a restart into an earlier storage_compatibility_mode") < names.index(
-            "Show the plan and confirm the run"), playbook
+        guard = "Refuse a restart into another storage_compatibility_mode than one step from the one it runs"
+        assert names.index(guard) < names.index("Show the plan and confirm the run"), playbook
+        assert play["tasks"][names.index(guard)]["ansible.builtin.include_role"]["tasks_from"] == "storage_mode_guard.yml"
 
 
 def test_the_cql_read_asks_the_node_itself_and_says_when_it_could_not():
@@ -154,3 +158,56 @@ def test_the_cql_read_asks_the_node_itself_and_says_when_it_could_not():
     assert msg.endswith("nothing logged since its start either: its cassandra.yaml tells it unless the file changed"
                         " since that start.")
     assert "not _cassandra_storage_mode_cql_said | default(false) | bool" in say["when"]
+
+
+
+def test_jump_on_evidence_only():
+    # runs CASSANDRA_4 (logged or read over CQL), NONE to be written or in its file: two steps
+    assert cassandra_storage_mode_jump(_host("UPGRADING", logged="CASSANDRA_4"), "NONE") == "CASSANDRA_4"
+    assert cassandra_storage_mode_jump(_host("NONE", cql="CASSANDRA_4")) == "CASSANDRA_4"
+    assert cassandra_storage_mode_jump(_host("NONE", cql="null")) == "CASSANDRA_4"  # no such line at its start
+    # one step, the same, back (the other check), not known: nothing
+    assert cassandra_storage_mode_jump(_host("UPGRADING", logged="CASSANDRA_4")) == ""
+    assert cassandra_storage_mode_jump(_host("UPGRADING", logged="UPGRADING"), "NONE") == ""
+    assert cassandra_storage_mode_jump(_host("NONE", logged="NONE"), "CASSANDRA_4") == ""
+    assert cassandra_storage_mode_jump(_host("NONE"), "NONE") == ""
+
+
+def test_the_jump_says_why_and_the_way_out():
+    tasks = _load("roles/cassandra_operation/tasks/storage_mode_guard.yml")
+    check = next(t for t in tasks if t["name"] == "The restarts move the storage_compatibility_mode Cassandra runs one step at most")
+    assert check["run_once"] is True and check["vars"]["cassandra_output"] is True
+
+    def run(hosts, **extra):
+        hostvars = {}
+        for name, (host, inventory) in hosts.items():
+            hostvars[name] = dict(host, cassandra_version="50x", cassandra_storage_compatibility_mode=inventory)
+        variables = dict(check["vars"], hostvars=hostvars, ansible_play_hosts=list(hostvars), cassandra_version="50x",
+                         **extra)
+        return (_render("{{ %s }}" % check["ansible.builtin.assert"]["that"], **variables),
+                _render(check["ansible.builtin.assert"]["fail_msg"], **variables).split("\n"))
+    assert run({"n1": (_host("UPGRADING", logged="CASSANDRA_4"), "UPGRADING")}, _cassandra_storage_mode_written=True)[0]
+    # apply_config, the role: the file at UPGRADING (written ahead of the node), NONE in the inventory
+    ok, msg = run({"n1": (_host("UPGRADING", logged="CASSANDRA_4"), "NONE"),
+                   "n2": (_host("UPGRADING", logged="UPGRADING"), "NONE")}, _cassandra_storage_mode_written=True)
+    assert ok is False and msg == [
+        "A restart would take n1 from CASSANDRA_4 straight to NONE (5.0 moves CASSANDRA_4, UPGRADING, NONE, one step"
+        " at a time, each node restarted in UPGRADING before NONE). Nothing was changed.",
+        "  n1  runs CASSANDRA_4, its cassandra.yaml would have NONE",
+        "WAY OUT  On n1, set cassandra_storage_compatibility_mode: UPGRADING in the inventory, then run apply_config"
+        " --limit n1 (it writes UPGRADING and restarts it), then set NONE in the inventory again. Then run this again."]
+    # a restart alone (rolling_restart, rolling_reboot, update_java): its file at NONE, by hand
+    ok, msg = run({"n1": (_host("NONE", logged="CASSANDRA_4"), "NONE")})
+    assert ok is False and msg[1:] == [
+        "  n1  runs CASSANDRA_4, its cassandra.yaml has NONE",
+        "WAY OUT  On n1, set storage_compatibility_mode: UPGRADING in /etc/cassandra/conf/cassandra.yaml by hand"
+        " (apply_config never moves its NONE back), then run rolling_restart --limit n1 (it restarts it in"
+        " UPGRADING). Then run this again."]
+
+
+def test_apply_config_refuses_before_its_plan_warns():
+    # the guard runs in the config preview (Compare the config), before the plan and its warnings (point of no return)
+    plays = _load("playbooks/apply_config.yml")
+    names = [t["name"] for p in plays for t in p.get("tasks", [])]
+    assert names.index("Compare the config") < names.index("Put the settings that differ side by side") < names.index(
+        "Show the plan and confirm the run")

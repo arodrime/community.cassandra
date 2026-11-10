@@ -1,9 +1,11 @@
 ---
 # 5.0: refuse a restart that would take Cassandra back to an earlier storage_compatibility_mode than the one it
 # runs (a cassandra.yaml edited back by hand, or an inventory behind the node: Cassandra starts with the earlier
-# mode, or refuses to start on the sstables it wrote). The mode it runs as storage_mode_read.yml reads it (over CQL,
-# else the line it logged at its start); not known: nothing refused. Once for the nodes of the play: one of them
-# refused stops the run before any is restarted. _cassandra_storage_mode_written: true when the inventory's mode is
+# mode, or refuses to start on the sstables it wrote), or more than one step after it (CASSANDRA_4 to NONE). The mode
+# it runs as storage_mode_read.yml reads it (over CQL, else the line it logged at its start); not known: nothing
+# refused. Once for the nodes of the play (under serial, as update_java and the upgrade's rolling phase run their
+# nodes, those of its batch: a node of a later batch is checked at its turn): one of them refused stops the run
+# before any of them is restarted. _cassandra_storage_mode_written: true when the inventory's mode is
 # written first (cassandra_config), else the file's mode is the one restarted with. Read-only, under --check too.
 - name: Read the mode Cassandra runs
   ansible.builtin.include_tasks: storage_mode_read.yml
@@ -45,6 +47,53 @@
                                else ', then run apply_config --limit ' ~ h ~ ' (it writes it back).'))
                            if inventory != running
                            else 'On ' ~ h ~ ', run apply_config --limit ' ~ h ~ ' (it writes ' ~ running ~ ' back).'}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+  when: cassandra_version | default('') == '50x'
+
+# ... nor more than one step after it (CASSANDRA_4 to NONE: its cassandra.yaml written ahead of it, by an apply_config
+# cut before its restart, the role run alone or a hand edit): UPGRADING first. apply_config writes it when its file
+# is not past UPGRADING (cassandra_config moves the file one step at a time, never back); else by hand
+- name: The restarts move the storage_compatibility_mode Cassandra runs one step at most
+  ansible.builtin.assert:
+    that: _jump | length == 0
+    fail_msg: >-
+      {{ (['A restart would take ' ~ _jump | map(attribute='node') | join(', ') ~ ' from CASSANDRA_4 straight to NONE'
+           ~ ' (5.0 moves CASSANDRA_4, UPGRADING, NONE, one step at a time, each node restarted in UPGRADING before'
+           ~ ' NONE). Nothing was changed.']
+          + _jump | map(attribute='row') | list
+          + ['WAY OUT  ' ~ _jump | map(attribute='way_out') | join(' ') ~ ' Then run this again.']) | join(_nl) }}
+    quiet: true
+  run_once: true
+  vars:
+    cassandra_output: true  # a verdict: its msg as is (ops callback)
+    _nl: "\n"
+    _written: "{{ _cassandra_storage_mode_written | default(false) | bool }}"
+    _jump: >-
+      {%- set out = [] -%}
+      {%- for h in ansible_play_hosts if hostvars[h].cassandra_version | default('') == '50x' -%}
+      {%-   set hv = hostvars[h] -%}
+      {%-   set inventory = hv.cassandra_storage_compatibility_mode | default('NONE') -%}
+      {%-   set read = {'inventory_hostname': h,
+                        'cassandra_storage_mode_read': hv.cassandra_storage_mode_read | default({}),
+                        'cassandra_storage_mode_cql': hv.cassandra_storage_mode_cql | default({})} -%}
+      {%-   set running = read | community.cassandra.cassandra_storage_mode_jump(inventory if _written else none) -%}
+      {%-   if running -%}
+      {%-     set file = hv.cassandra_storage_mode_read.stdout_lines | default([]) | select('match', '^yaml=')
+                         | map('regex_replace', '^yaml=', '') | first | default('') or 'CASSANDRA_4' -%}
+      {%-     set path = hv.cassandra_storage_mode_read.stdout_lines | default([]) | select('match', '^file=')
+                         | map('regex_replace', '^file=', '') | first | default('its cassandra.yaml') -%}
+      {%-     set _ = out.append({
+                'node': h,
+                'row': '  ' ~ h ~ '  runs ' ~ running ~ ', its cassandra.yaml '
+                       ~ ('would have ' ~ inventory if _written else 'has ' ~ file),
+                'way_out': ('On ' ~ h ~ ', set storage_compatibility_mode: UPGRADING in ' ~ path ~ ' by hand (apply_config'
+                            ~ ' never moves its NONE back), then run rolling_restart --limit ' ~ h ~ ' (it restarts it'
+                            ~ ' in UPGRADING).') if file == 'NONE'
+                           else ('On ' ~ h ~ ', set cassandra_storage_compatibility_mode: UPGRADING in the inventory,'
+                                 ~ ' then run apply_config --limit ' ~ h ~ ' (it writes UPGRADING and restarts it), then'
+                                 ~ ' set NONE in the inventory again.')}) -%}
       {%-   endif -%}
       {%- endfor -%}
       {{ out }}

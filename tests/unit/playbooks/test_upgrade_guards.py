@@ -344,6 +344,11 @@ def test_sstables_refuse_a_mode_not_read_unknown_or_a_restart_pending():
         "WAY OUT  On n1, set storage_compatibility_mode: NONE back in cassandra.yaml by hand (the mode it runs;"
         " apply_config writes the inventory's, one step from the file's), and cassandra_storage_compatibility_mode:"
         " NONE in the inventory (apply_config never moves it back). Then run this phase again.")
+    # the inventory behind a node at NONE (its file and the mode it runs): the inventory set to it, no step from C4
+    ok, msg = _sstables(("CASSANDRA_4", "NONE", "NONE"))
+    assert ok is False and msg[0] == "On n1, the inventory has CASSANDRA_4, before the NONE Cassandra runs. Nothing was done."
+    assert msg[-1] == ("WAY OUT  On n1, set cassandra_storage_compatibility_mode: NONE in the inventory (the mode it"
+                       " runs). Then run this phase again.")
     # a typo in the inventory: not taken as NONE
     ok, msg = _sstables(("NONNE", "NONE", "NONE"))
     assert ok is False and msg[2] == "  n1    NONNE (unknown)  NONE            NONE"

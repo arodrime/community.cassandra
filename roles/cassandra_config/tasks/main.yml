@@ -38,8 +38,9 @@
     - name: Compare the new files with the live ones
       ansible.builtin.import_tasks: compare.yml
 
-    # (its restart, by the run or later, would take it back: Cassandra starts with the earlier mode, or not at all)
-    - name: Refuse a storage_compatibility_mode before the one Cassandra runs
+    # (its restart, by the run or later, would take it back: Cassandra starts with the earlier mode, or not at all;
+    # or more than one step ahead, CASSANDRA_4 to NONE)
+    - name: Refuse a storage_compatibility_mode before the one Cassandra runs, or two steps after it
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation
         tasks_from: storage_mode_guard.yml
