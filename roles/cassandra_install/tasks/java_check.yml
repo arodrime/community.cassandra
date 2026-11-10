@@ -157,8 +157,10 @@
 - name: Look at the Java link
   ansible.builtin.shell: |
     # a link a package owns, or that the alternatives manage (its chain through /etc/alternatives): theirs, not moved
-    pkg=$(rpm -qf --qf '%{NAME}\n' "$L" 2>/dev/null | head -1) || pkg=
-    [ -n "$pkg" ] || pkg=$(dpkg -S "$L" 2>/dev/null | head -1 | cut -d: -f1)
+    # by their exit status: rpm says "not owned" on its standard output, with a failure
+    pkg=
+    if out=$(rpm -qf --qf '%{NAME}\n' "$L" 2>/dev/null); then pkg=$(echo "$out" | head -1); fi
+    if [ -z "$pkg" ] && out=$(dpkg -S "$L" 2>/dev/null); then pkg=$(echo "$out" | head -1 | cut -d: -f1); fi
     if [ -n "$pkg" ]; then echo "owned by the package $pkg"; exit 0; fi
     p=$L n=0
     while [ -L "$p" ] && [ $n -lt 20 ]; do

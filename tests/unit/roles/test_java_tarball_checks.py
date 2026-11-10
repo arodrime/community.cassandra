@@ -230,6 +230,15 @@ def test_the_java_link_refusals(tmp_path):
                                                          "PATH": "%s:%s" % (tmp_path / "bin", os.environ["PATH"])},
                          stdout=subprocess.PIPE, universal_newlines=True, check=True).stdout.strip()
     assert out == "owned by the package java-17-openjdk-headless"
+    # a path no package owns: rpm says so on its standard output, failing (RHEL, Rocky): the link is taken
+    (tmp_path / "bin" / "rpm").write_text('#!/bin/sh\necho "file $4 is not owned by any package"\nexit 1\n')
+    (tmp_path / "bin" / "dpkg").write_text("#!/bin/sh\necho \"dpkg-query: no path found matching pattern $2\" >&2\nexit 1\n")
+    (tmp_path / "bin" / "dpkg").chmod(0o755)
+    (tmp_path / "mine").symlink_to(jdk)
+    out = subprocess.run(["/bin/sh", "-c", script], env={"L": str(tmp_path / "mine"),
+                                                         "PATH": "%s:%s" % (tmp_path / "bin", os.environ["PATH"])},
+                         stdout=subprocess.PIPE, universal_newlines=True, check=True).stdout.strip()
+    assert out == "link to a Java"
     alt = script.replace("/etc/alternatives/", str(tmp_path / "alternatives") + "/")
     (tmp_path / "alternatives").mkdir()
     (tmp_path / "alternatives" / "jre_17").symlink_to(jdk)

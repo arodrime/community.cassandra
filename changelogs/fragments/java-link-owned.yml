@@ -1,5 +1,5 @@
 bugfixes:
   - >-
-    cassandra_install - a ``cassandra_java_link`` path that a package owns (``rpm -qf``, ``dpkg -S``) or that the
-    alternatives manage (its chain goes through ``/etc/alternatives``) is refused before anything changes, with the
-    way out (a path of its own).
+    cassandra_install - a ``cassandra_java_link`` path that a package owns (``rpm -qf``, ``dpkg -S``, by their exit
+    status) or that the alternatives manage (its chain goes through ``/etc/alternatives``) is refused before anything
+    changes, with the way out (a path of its own).
