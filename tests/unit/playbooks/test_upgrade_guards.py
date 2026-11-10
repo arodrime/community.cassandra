@@ -201,7 +201,10 @@ RUN = {"inventory": ["/inv/a.yml"], "default_inventory": "", "hosts": "", "cwd":
 
 def _sstables(*modes, **kwargs):
     check = task("Upgrade checks", "The sstables are rewritten once storage_compatibility_mode is NONE")
+    extra = kwargs.pop("extra", {})  # node -> lines added to what it read
     hostvars = _modes(modes, **kwargs)
+    for node, lines in extra.items():
+        hostvars[node]["cassandra_storage_mode_read"]["stdout_lines"] += lines
     variables = dict(check["vars"], hostvars=hostvars, ansible_play_hosts=list(hostvars), cassandra_package_version="5.0.9",
                      _cassandra_run_command_args=RUN)
     return (render("{{ %s }}" % check["ansible.builtin.assert"]["that"], **variables),
@@ -238,13 +241,19 @@ def test_sstables_refuse_a_mode_not_read_unknown_or_a_restart_pending():
             " of its cassandra_conf_dir must be readable.") in msg[-1]
     # NONE written by apply_config, the node started before that (the log rolled over: no logged mode): a restart
     ok, msg = _sstables(("NONE", "NONE", "NONE", True))
-    assert ok is False and msg[2] == "  n1    NONE       NONE            restart pending (its cassandra.yaml was written after Cassandra started)"
-    assert msg[0] == "A restart is pending on n1 (its cassandra.yaml was written after Cassandra started). Nothing was done."
+    assert ok is False and msg[2] == "  n1    NONE       NONE            restart pending (its cassandra.yaml changed after Cassandra started)"
+    assert msg[0] == "A restart is pending on n1 (its cassandra.yaml changed after Cassandra started). Nothing was done."
     assert msg[-1] == ("WAY OUT  Restart n1, so it runs the mode its cassandra.yaml has: ansible-playbook -i a.yml"
                        " community.cassandra.rolling_restart --limit n1. Then run this phase again.")
     # it logged UPGRADING at its start, NONE written since: the restart too
     ok, msg = _sstables(("NONE", "NONE", "UPGRADING"))
     assert ok is False and "Restart n1, so it runs the mode its cassandra.yaml has" in msg[-1]
+    # a file time after now on n2, a restart pending on n1: both restarted, n2 touched first
+    ok, msg = _sstables(("NONE", "NONE", "NONE", True), ("NONE", "NONE", "NONE"), extra={"n2": ["future=yes"]})
+    assert ok is False and msg[-1] == (
+        "WAY OUT  Set the clock of n2 right (its cassandra.yaml has a time after now), then on it: touch cassandra.yaml."
+        " Restart n1, n2, so they run the mode their cassandra.yaml has: ansible-playbook -i a.yml"
+        " community.cassandra.rolling_restart --limit n1,n2. Then run this phase again.")
     # a typo in the inventory: not taken as NONE
     ok, msg = _sstables(("NONNE", "NONE", "NONE"))
     assert ok is False and msg[2] == "  n1    NONNE (unknown)  NONE            NONE"
@@ -266,6 +275,11 @@ def test_a_5_0_patch_upgrade_is_told_there_is_nothing_to_rewrite():
     assert ok is False and msg[-1] == (
         "WAY OUT  SSTables keep the 4.x format while storage_compatibility_mode is not NONE: nothing to rewrite. Skip this"
         " phase (cleanup next), or move to NONE first (point of no return) if you want the 5.0 format.")
+    # one node of three at NONE already, the others at UPGRADING (one mode among those behind): the step that
+    # finishes the move, from the number of nodes of the run
+    ok, msg = _sstables(("UPGRADING", "UPGRADING", "UPGRADING"), ("UPGRADING", "UPGRADING", "UPGRADING"),
+                        ("NONE", "NONE", "NONE"), **patch)
+    assert ok is False and "To finish the move to NONE: now set cassandra_storage_compatibility_mode: NONE" in msg[-1]
     # its rolling text is not steered to NONE
     assert next_phase("rolling", modes=["CASSANDRA_4"], **patch) == "Every node runs 5.0.9. Then -e cassandra_upgrade_phase=sstables."
     # every node on 5.0 by then (a rolling phase run again, the sstables phase), the copy of 4.1 names the origin
@@ -313,7 +327,8 @@ def test_the_storage_mode_read_script(tmp_path):
         env = {"F": str(path), "PATH": "%s:%s" % (bin_dir, os.environ["PATH"])}
         out = subprocess.run(["/bin/sh", "-c", sh_script], env=env, stdout=subprocess.PIPE, universal_newlines=True,
                              check=True)
-        return out.stdout.split()
+        assert out.stdout.split()[0] == "file=%s" % path
+        return out.stdout.split()[1:]
     assert run(None) == ["yaml_read=no", "running=no"]  # no file: not read
     assert run("cluster_name: x\nstorage_compatibility_mode: UPGRADING  # the step\n")[:2] == ["yaml_read=yes", "yaml=UPGRADING"]
     assert run("# storage_compatibility_mode: NONE\ncluster_name: x\n")[:2] == ["yaml_read=yes", "yaml="]
@@ -363,7 +378,7 @@ def test_the_storage_mode_read_script(tmp_path):
         # its start not computed (no btime): not read, never taken as not pending
         assert "start_read=no" in run(None, fake.replace("/proc/stat 2>/dev/null", "/nonexistent 2>/dev/null"))
         # its start after now (a boot time a virtual machine got wrong): not read either
-        assert "start_read=no" in run(None, fake.replace("printf \"%d\", b + t / h", "printf \"%d\", b + t / h + 86400"))
+        assert "start_read=after-now" in run(None, fake.replace("printf \"%d\", b + t / h", "printf \"%d\", b + t / h + 86400"))
     finally:
         proc.kill()
     # the logged mode, when there: the last "Node configuration" line Cassandra logged

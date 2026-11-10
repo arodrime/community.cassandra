@@ -424,9 +424,7 @@
               + _behind | community.cassandra.cassandra_storage_mode_rows
               + ['WAY OUT  ' ~ _behind | community.cassandra.cassandra_storage_mode_way_out(
                                      _from_4x, 'rolling_restart' | community.cassandra.cassandra_command(
-                                       limit=_behind | selectattr('pending') | map(attribute='node') | list,
-                                       **_cassandra_run_command_args), _hosts | length)
-                 ~ (' Then run this phase again.' if _from_4x | bool else '')]) | join(_nl) }}
+                                       limit=_restart, **_cassandra_run_command_args), _hosts | length)]) | join(_nl) }}
         quiet: true
       run_once: true
       vars:
@@ -436,6 +434,8 @@
         _from_4x: "{{ _hosts | community.cassandra.cassandra_storage_mode_from_4x(cassandra_package_version) }}"
         _behind: >-
           {{ _hosts | community.cassandra.cassandra_storage_mode_nodes | community.cassandra.cassandra_storage_mode_behind }}
+        # a restart pending, or a file with a time after now (touched once the clock is right): restarted
+        _restart: "{{ (_behind | selectattr('pending') | list + _behind | selectattr('future') | list) | map(attribute='node') | unique | list }}"
       when:
         - _phase == 'sstables'
         - cassandra_version == '50x'

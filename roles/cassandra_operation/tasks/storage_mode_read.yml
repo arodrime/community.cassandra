@@ -5,10 +5,11 @@
 # since the process started (by content against the record of the config it started with, else by the file mtime
 # against /proc/<pid>). cassandra_storage_mode_read.stdout_lines: yaml_read=yes|no, yaml=<value, "" without the line>,
 # logged=<the logged mode> when found, pending=yes when the file changed since its start and nothing was logged.
-# Read-only, under --check too. start_read=no: its start or the file time not read (or after now); future=yes: the
-# file has a time after now.
+# file=<its path>. Read-only, under --check too. start_read=no: its start or the file time not read, after-now: its
+# start reads as after now; future=yes: the file has a time after now.
 - name: Read storage_compatibility_mode in its cassandra.yaml and in the running Cassandra
   ansible.builtin.shell: |
+    echo "file=$F"
     if [ -r "$F" ]; then
       echo "yaml_read=yes"
       echo "yaml=$(sed -n 's/^storage_compatibility_mode:[ \t]*//p' "$F" | sed 's/[ \t]*#.*$//; s/[ \t]*$//' | tail -1)"
@@ -26,9 +27,9 @@
         | sed -n 's/.*[[; ]storage_compatibility_mode=\([A-Z_0-9]*\).*/\1/p')
     [ -z "$m" ] || echo "logged=$m"
     # its start in seconds since the epoch: the boot time (btime of /proc/stat) and its start in clock ticks since
-    # boot (field 22 of stat, the 20th after the command name). Not known, or after now (a boot time a virtual
-    # machine got wrong): start_read=no (refused, never taken as not pending). A file time after now (a clock set
-    # back): future=yes
+    # boot (field 22 of stat, the 20th after the command name). Not known: start_read=no; after now (a boot time a
+    # virtual machine got wrong): start_read=after-now; both refused, never taken as not pending. A file time after
+    # now (a clock set back): future=yes
     ticks=$(sed 's/^.*) //' /proc/$pid/stat 2>/dev/null | awk '{print $20}')
     btime=$(awk '$1 == "btime" {print $2}' /proc/stat 2>/dev/null)
     hz=$(getconf CLK_TCK 2>/dev/null); [ -n "$hz" ] || hz=100
@@ -36,8 +37,11 @@
     [ -n "$ticks" ] && [ -n "$btime" ] && start=$(awk -v b="$btime" -v t="$ticks" -v h="$hz" 'BEGIN {printf "%d", b + t / h}')
     mtime=$(stat -L -c '%Y' "$F" 2>/dev/null)
     now=$(date +%s)
-    if [ -z "$start" ] || [ -z "$mtime" ] || [ "$start" -gt "$now" ]; then
+    if [ -z "$start" ] || [ -z "$mtime" ]; then
       echo "start_read=no"
+      exit 0
+    elif [ "$start" -gt "$now" ]; then
+      echo "start_read=after-now"
       exit 0
     fi
     if [ "$mtime" -gt "$now" ]; then
