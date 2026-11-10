@@ -150,6 +150,7 @@ def test_a_dir_the_user_cannot_write_is_refused(tmp_path):
     assert "sudo chown -R" in out
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root: Ansible needs no become, the fake sudo is never run")
 def test_no_become_on_the_controller(tmp_path):
     sudo = tmp_path / "bin" / "sudo"
     sudo.parent.mkdir()

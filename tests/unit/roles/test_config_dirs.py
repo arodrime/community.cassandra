@@ -97,6 +97,7 @@ def test_dir_owner_and_mode_set_on_the_top_level_only():
     assert "_cassandra_config_dir_changes" in task("Show the owner, group and mode changes")["ansible.builtin.debug"]["msg"]
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="the files made here are root's, the account the sample is compared to")
 def test_dirs_another_account_owns_in_a_data_dir_sampled(tmp_path):
     look = task(LOOK)
     assert look["check_mode"] is False and look["changed_when"] is False
