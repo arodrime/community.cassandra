@@ -272,6 +272,11 @@ def test_sstables_refuse_a_mode_not_read_unknown_or_a_restart_pending():
     assert msg[-1].startswith(
         "WAY OUT  Write the inventory's mode back to the cassandra.yaml of n1 (apply_config restarts it): ")
     assert "Restart" not in msg[-1] and "rolling_restart" not in msg[-1] and "SSTables keep" not in msg[-1]
+    assert msg[2] == "  n1    NONE       UPGRADING       not known (its cassandra.yaml changed after Cassandra started)"
+    # a 5.0 cluster staying at UPGRADING, the inventory at NONE already on every node: how to finish the move
+    ok, msg = _sstables(*[("NONE", "UPGRADING", "UPGRADING")] * 3, **patch)
+    assert msg[-1].endswith("To finish the move to NONE: now run apply_config (the inventory has"
+                            " cassandra_storage_compatibility_mode: NONE; NONE is the point of no return).")
     # two steps (the inventory jumped to NONE, the file at CASSANDRA_4): apply_config refuses that move, never sent
     # to NONE; by hand, to the mode it started with
     ok, msg = _sstables(("NONE", "CASSANDRA_4", "CASSANDRA_4", True))

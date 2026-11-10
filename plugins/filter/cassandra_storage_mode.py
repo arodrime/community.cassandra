@@ -123,6 +123,8 @@ def cassandra_storage_mode_behind(nodes):
                                 else bool(n.get("pending")))
         if reverted:
             written = [inventory[0]]
+            if running[0] is None:
+                running = (None, "not known (%s)" % WRITTEN_AFTER)
         unread = ([] if n.get("yaml") is not None else ["its cassandra.yaml"]) + (
             ["the mode it runs (no Cassandra process found)"] if n.get("stopped") else
             ["the start of its Cassandra"] if n.get("start_unread") and n.get("running") is None else
@@ -229,7 +231,7 @@ def cassandra_storage_mode_way_out(behind, from_4x=True, restart_command="", tot
         out.append(step)
     elif stays and not from_4x:
         out.append(STAYS)
-        if step and (_mid_move(behind) or len(behind) < total):
+        if step and (_mid_move(behind) or len(behind) < total or _inventory_ahead(behind)):
             out.append("To finish the move to NONE: " + step[0].lower() + step[1:])
     reverted = ", ".join(b["node"] for b in behind if b["reverted"] and not b.get("reverted_far"))
     for b in behind:
@@ -266,6 +268,12 @@ def cassandra_storage_mode_way_out(behind, from_4x=True, restart_command="", tot
     if out and (from_4x or not stays):
         out.append("Then run this phase again.")
     return " ".join(out)
+
+
+def _inventory_ahead(behind):
+    """The inventory at a later mode than a node's cassandra.yaml: the move to NONE is chosen, not applied yet."""
+    return any(b.get("inventory_mode") and b["mode"] and _ORDER.index(b["inventory_mode"]) > _ORDER.index(b["mode"])
+               for b in behind)
 
 
 def _mid_move(behind):
