@@ -599,6 +599,10 @@
         grep -qs 'Managed by Ansible (community.cassandra.cassandra_linux)' /etc/security/limits.d/cassandra.conf \
           && echo "own_os=yes"
         grep -qs 'Managed by Ansible (cassandra_install)' /usr/local/bin/cqlsh /etc/profile.d/cqlsh.sh && echo "own_cqlsh=yes"
+        # (RedHat: the link of the package cqlshlib into python3, alone when python3 is in the range cqlsh supports)
+        lib=$(python3 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])" 2>/dev/null)
+        [ -n "$lib" ] && [ "$(readlink "$lib/cqlshlib" 2>/dev/null)" = /usr/lib/python3.6/site-packages/cqlshlib ] \
+          && echo "own_cqlsh=yes"
         # cqlsh starts (its version, no connection; as the playbooks run it: /usr/local/bin first), else its last
         # error line (e.g. a package cqlshlib for another Python)
         for c in /usr/local/bin/cqlsh cqlsh; do command -v "$c" >/dev/null 2>&1 && break; c=; done
@@ -1481,7 +1485,7 @@
     # cqlsh does not start on some nodes (seen at the read): what makes it start, when its error says why
     _cqlsh_todo: >-
       {%- set broken, lib = [], [] -%}
-      {%- for h in _nodes | default([]) | map(attribute='name') | map('string')
+      {%- for h in _nodes | default([]) | map(attribute='name') | map('string') | sort
                  if hostvars[h] is defined and hostvars[h].import_cluster_cqlsh_error | default('') -%}
       {%-   set _ = broken.append(h) -%}
       {%-   if hostvars[h].import_cluster_cqlsh_error is search("No module named '?cqlshlib") -%}{%- set _ = lib.append(h) -%}{%- endif -%}

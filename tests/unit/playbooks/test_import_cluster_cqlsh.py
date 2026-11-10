@@ -67,7 +67,7 @@ def test_the_todo_names_the_nodes_and_the_way(tmp_path):
         return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
     lib = "ModuleNotFoundError: No module named 'cqlshlib'"
     assert todo({"n1": "", "n2": ""}) == []
-    assert todo({"n1": lib, "n2": lib, "n3": ""}) == [
+    assert todo({"n2": lib, "n1": lib, "n3": ""}) == [
         "cqlsh does not start on n1, n2 (cqlsh --version: %s). cassandra_install links the cqlshlib of the package into"
         " the Python cqlsh runs with (RedHat): remove cassandra_cqlsh_python_manage: false from the host_vars of n1, n2"
         " (this import wrote it), then run create_cluster (it starts or restarts nothing on a running cluster)." % lib]
@@ -75,3 +75,21 @@ def test_the_todo_names_the_nodes_and_the_way(tmp_path):
     out = todo({"n1": "python3: not found"})
     assert out == ["cqlsh does not start on n1 (cqlsh --version: python3: not found). Check cqlsh there"
                    " (cassandra_cqlsh_command gives the full path of another one)."]
+
+
+def test_the_cqlshlib_link_of_the_role_is_its_own(tmp_path):
+    # after create_cluster linked cqlshlib (python3 in range: no wrapper), the next import leaves cqlsh to the role
+    script = _read_script()
+    start = script.index("# (RedHat: the link of the package cqlshlib")
+    end = script.index('echo "own_cqlsh=yes"', start) + len('echo "own_cqlsh=yes"')
+    lib, pkg = tmp_path / "site-packages", tmp_path / "py36"
+    lib.mkdir()
+    (pkg / "cqlshlib").mkdir(parents=True)
+    snippet = script[start:end].replace("/usr/lib/python3.6/site-packages/cqlshlib", str(pkg / "cqlshlib")).replace(
+        "python3 -c \"import sysconfig; print(sysconfig.get_paths()['purelib'])\"", "echo %s" % lib)
+
+    def run():
+        return subprocess.run(["/bin/sh", "-c", snippet], stdout=subprocess.PIPE, universal_newlines=True).stdout
+    assert run() == ""
+    (lib / "cqlshlib").symlink_to(pkg / "cqlshlib")
+    assert run() == "own_cqlsh=yes\n"
