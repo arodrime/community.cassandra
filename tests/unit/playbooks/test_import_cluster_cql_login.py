@@ -258,7 +258,7 @@ def test_what_is_left_to_do():
     assert "not checked (no cqlsh on n1), written as typed" in todo(
         {"state": "unchecked", "asked": True, "user": "a", "why": "no cqlsh on n1"})[0]
     # the report gets them
-    assert WRITE["vars"]["_report_args"]["todo"] == "{{ _cql_todo }}" and "todo=_report_args.todo" in WRITE["vars"]["_report"]
+    assert WRITE["vars"]["_report_args"]["todo"] == "{{ _cql_todo + _cqlsh_todo }}" and "todo=_report_args.todo" in WRITE["vars"]["_report"]
 
 
 def test_cql_address_of_the_node():

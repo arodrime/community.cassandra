@@ -25,8 +25,7 @@ with open(PLAYBOOK, encoding="utf-8") as _f:
 def _tasks(play):
     for t in play.get("tasks", []) + play.get("pre_tasks", []):
         yield t
-        for inner in t.get("block", []) + t.get("rescue", []) + t.get("always", []):
-            yield inner
+        yield from t.get("block", []) + t.get("rescue", []) + t.get("always", [])
 
 
 def _read_script():
