@@ -3,7 +3,7 @@ __metaclass__ = type
 
 # cassandra_config: your own template for a config file (cassandra_config_template_overrides), rendered
 # instead of the role's and handled as its own; the lines added at the end of cassandra-env.sh and of
-# logback.xml's <configuration> (cassandra_env_extra_lines, cassandra_logback_extra_lines).
+# logback.xml's <configuration> (your snippets: cassandra_config_template_snippets).
 
 import os
 import xml.etree.ElementTree as ET
@@ -144,24 +144,27 @@ def render_file(series, name, **variables):
     with open(os.path.join(ROLE, "templates", series, name + ".j2"), encoding="utf-8") as f:
         text = f.read().split("\n", 1)[1]  # (without the header line)
     ctx = dict(DEFAULTS, cassandra_version=series[0] + series[2] + "x", _cassandra_config_snippet_logback="",
-               _cassandra_config_snippet_appenders="", _cassandra_config_snippet_env="")
+               _cassandra_config_snippet_appenders="", _cassandra_config_snippet_env="", _cassandra_config_logback_refs=[],
+               _cassandra_config_log_levels=[], cassandra_log_pattern=ROLE_VARS["_cassandra_config_log_patterns"][
+                   series[0] + series[2] + "x"])
     ctx.update(variables)
     return render(text, escape_backslashes=False, **ctx)
 
 
 @pytest.mark.parametrize("series", ["4.0", "4.1", "5.0"])
-def test_env_extra_lines_after_the_last_line(series):
+def test_env_snippet_after_the_last_line(series):
     lines = ["export X=1", 'JVM_OPTS="$JVM_OPTS -Dcom.example=1"']
-    plain, more = render_file(series, "cassandra-env.sh"), render_file(series, "cassandra-env.sh", cassandra_env_extra_lines=lines)
+    plain = render_file(series, "cassandra-env.sh")
+    more = render_file(series, "cassandra-env.sh", _cassandra_config_snippet_env="\n".join(lines))
     last = 'JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"'
     assert plain.rstrip("\n").endswith(last)
     assert more == plain.replace(last + "\n", "\n".join([last] + lines) + "\n")
 
 
 @pytest.mark.parametrize("series", ["4.0", "4.1", "5.0"])
-def test_logback_extra_lines_inside_configuration(series):
+def test_logback_snippet_inside_configuration(series):
     lines = ['  <logger name="com.example" level="WARN"/>']
-    more = render_file(series, "logback.xml", cassandra_logback_extra_lines=lines, cassandra_log_level_cassandra="DEBUG")
+    more = render_file(series, "logback.xml", _cassandra_config_snippet_logback=lines[0], cassandra_log_level_cassandra="DEBUG")
     root = ET.fromstring(more)
     assert [(e.get("name"), e.get("level")) for e in root.findall("logger")][-2:] == [
         ("org.apache.cassandra", "DEBUG"), ("com.example", "WARN")]
@@ -227,21 +230,22 @@ def snippet_vars(snippets, **variables):
 
 
 @pytest.mark.parametrize("series", ["4.0", "4.1", "5.0"])
-def test_snippets_rendered_after_the_extra_lines(tmp_path, series):
+def test_snippets_rendered_at_their_points(tmp_path, series):
     (tmp_path / "l.j2").write_text('{# mine #}\n  <logger name="com.{{ team }}" level="{{ level }}"/>\n'
                                    '{% raw %}  <logger name="{{ as.is }}" level="INFO"/>\n{% endraw %}\n\n')
     (tmp_path / "e.j2").write_text("export TEAM={{ team }}\n")
     snippets = {"logback.xml": str(tmp_path / "l.j2"), "cassandra-env.sh": str(tmp_path / "e.j2")}
     rendered = snippet_vars(snippets, team="ops", level="WARN")
-    assert rendered == {"_cassandra_config_snippet_logback": '  <logger name="com.ops" level="WARN"/>\n'
-                                                              '  <logger name="{{ as.is }}" level="INFO"/>',
-                        "_cassandra_config_snippet_appenders": "", "_cassandra_config_snippet_env": "export TEAM=ops"}
-    logback = render_file(series, "logback.xml", cassandra_logback_extra_lines=['  <logger name="x" level="WARN"/>'],
+    assert rendered == {
+        "_cassandra_config_snippet_logback": '  <logger name="com.ops" level="WARN"/>\n  <logger name="{{ as.is }}" level="INFO"/>',
+        "_cassandra_config_snippet_appenders": "", "_cassandra_config_snippet_env": "export TEAM=ops"}
+    # (after the loggers of cassandra_log_levels)
+    logback = render_file(series, "logback.xml", _cassandra_config_log_levels=['  <logger name="x" level="WARN"/>'],
                           **rendered)
     assert logback.rstrip().endswith('"/>\n  <logger name="x" level="WARN"/>\n  <logger name="com.ops" level="WARN"/>\n'
                                      '  <logger name="{{ as.is }}" level="INFO"/>\n</configuration>')
-    env = render_file(series, "cassandra-env.sh", cassandra_env_extra_lines=["export A=1"], **rendered)
-    assert env.rstrip("\n").endswith('JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"\nexport A=1\nexport TEAM=ops')
+    env = render_file(series, "cassandra-env.sh", **rendered)
+    assert env.rstrip("\n").endswith('JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"\nexport TEAM=ops')
     # none: the role's files as without
     assert snippet_vars({}) == {"_cassandra_config_snippet_logback": "", "_cassandra_config_snippet_appenders": "",
                                 "_cassandra_config_snippet_env": ""}

@@ -37,12 +37,12 @@ appender reference in the root level section below.
       <!-- rollover daily -->
       <fileNamePattern>${cassandra.logdir}/system.log.%d{yyyy-MM-dd}.%i.zip</fileNamePattern>
       <!-- each file should be at most 50MB, keep 7 days worth of history, but at most 5GB -->
-      <maxFileSize>50MB</maxFileSize>
-      <maxHistory>7</maxHistory>
-      <totalSizeCap>5GB</totalSizeCap>
+      <maxFileSize>{{ cassandra_log_system_max_file_size }}</maxFileSize>
+      <maxHistory>{{ cassandra_log_system_max_history }}</maxHistory>
+      <totalSizeCap>{{ cassandra_log_system_total_size_cap }}</totalSizeCap>
     </rollingPolicy>
     <encoder>
-      <pattern>%-5level [%thread] %date{"yyyy-MM-dd'T'HH:mm:ss,SSS", UTC} %F:%L - %msg%n</pattern>
+      <pattern>{{ cassandra_log_pattern }}</pattern>
     </encoder>
   </appender>
 
@@ -54,12 +54,12 @@ appender reference in the root level section below.
       <!-- rollover daily -->
       <fileNamePattern>${cassandra.logdir}/debug.log.%d{yyyy-MM-dd}.%i.zip</fileNamePattern>
       <!-- each file should be at most 50MB, keep 7 days worth of history, but at most 5GB -->
-      <maxFileSize>50MB</maxFileSize>
-      <maxHistory>7</maxHistory>
-      <totalSizeCap>5GB</totalSizeCap>
+      <maxFileSize>{{ cassandra_log_debug_max_file_size }}</maxFileSize>
+      <maxHistory>{{ cassandra_log_debug_max_history }}</maxHistory>
+      <totalSizeCap>{{ cassandra_log_debug_total_size_cap }}</totalSizeCap>
     </rollingPolicy>
     <encoder>
-      <pattern>%-5level [%thread] %date{"yyyy-MM-dd'T'HH:mm:ss,SSS", UTC} %F:%L - %msg%n</pattern>
+      <pattern>{{ cassandra_log_pattern }}</pattern>
     </encoder>
   </appender>
 
@@ -79,32 +79,32 @@ appender reference in the root level section below.
       <level>INFO</level>
     </filter>
     <encoder>
-      <pattern>%-5level [%thread] %date{"yyyy-MM-dd'T'HH:mm:ss,SSS", UTC} %F:%L - %msg%n</pattern>
+      <pattern>{{ cassandra_log_pattern }}</pattern>
     </encoder>
   </appender>
 
   <!-- Uncomment below configuration (Audit Logging (FileAuditLogger) rolling file appender and Audit Logging
   additivity) in order to have the log events flow through separate log file instead of system.log.
   Audit Logging (FileAuditLogger) rolling file appender to audit.log -->
-  <!-- <appender name="AUDIT" class="ch.qos.logback.core.rolling.RollingFileAppender">
+  {{ '' if cassandra_log_audit_file else '<!-- ' }}<appender name="AUDIT" class="ch.qos.logback.core.rolling.RollingFileAppender">
     <file>${cassandra.logdir}/audit/audit.log</file>
-    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy"> -->
+    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">{{ '' if cassandra_log_audit_file else ' -->' }}
       <!-- rollover daily -->
-      <!-- <fileNamePattern>${cassandra.logdir}/audit/audit.log.%d{yyyy-MM-dd}.%i.zip</fileNamePattern> -->
+      {{ '' if cassandra_log_audit_file else '<!-- ' }}<fileNamePattern>${cassandra.logdir}/audit/audit.log.%d{yyyy-MM-dd}.%i.zip</fileNamePattern>{{ '' if cassandra_log_audit_file else ' -->' }}
       <!-- each file should be at most 50MB, keep 30 days worth of history, but at most 5GB -->
-      <!-- <maxFileSize>50MB</maxFileSize>
-      <maxHistory>30</maxHistory>
-      <totalSizeCap>5GB</totalSizeCap>
+      {{ '' if cassandra_log_audit_file else '<!-- ' }}<maxFileSize>{{ cassandra_log_audit_max_file_size }}</maxFileSize>
+      <maxHistory>{{ cassandra_log_audit_max_history }}</maxHistory>
+      <totalSizeCap>{{ cassandra_log_audit_total_size_cap }}</totalSizeCap>
     </rollingPolicy>
     <encoder>
-      <pattern>%-5level [%thread] %date{"yyyy-MM-dd'T'HH:mm:ss,SSS", UTC} %F:%L - %msg%n</pattern>
+      <pattern>{{ cassandra_log_pattern }}</pattern>
     </encoder>
-  </appender> -->
+  </appender>{{ '' if cassandra_log_audit_file else ' -->' }}
 
   <!-- Audit Logging additivity to redirect audit logging events to audit/audit.log -->
-  <!-- <logger name="org.apache.cassandra.audit" additivity="false" level="INFO">
+  {{ '' if cassandra_log_audit_file else '<!-- ' }}<logger name="org.apache.cassandra.audit" additivity="false" level="INFO">
     <appender-ref ref="AUDIT"/>
-  </logger> -->
+  </logger>{{ '' if cassandra_log_audit_file else ' -->' }}
 
   <!-- Uncomment bellow and corresponding appender-ref to activate logback metrics
   <appender name="LogbackMetrics" class="com.codahale.metrics.logback.InstrumentedAppender" />
@@ -112,16 +112,16 @@ appender reference in the root level section below.
 
   <!-- Uncomment below configuration and corresponding appender-ref to activate
   logging into system_views.system_logs virtual table. -->
-  <!-- <appender name="CQLLOG" class="org.apache.cassandra.utils.logging.VirtualTableAppender">
+  {{ '' if cassandra_log_cql_table else '<!-- ' }}<appender name="CQLLOG" class="org.apache.cassandra.utils.logging.VirtualTableAppender">
     <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
-      <level>WARN</level>
+      <level>{{ cassandra_log_cql_table_level }}</level>
     </filter>
-  </appender> -->
+  </appender>{{ '' if cassandra_log_cql_table else ' -->' }}
 
 {{ (_cassandra_config_snippet_appenders ~ '\n') if _cassandra_config_snippet_appenders else '' }}  <root level="{{ cassandra_log_level }}">
     <appender-ref ref="SYSTEMLOG" />
     {{ '' if cassandra_log_console else '<!-- ' }}<appender-ref ref="STDOUT" />{{ '' if cassandra_log_console else ' -->' }}
-    {{ '' if cassandra_debug_log_enabled else '<!-- ' }}<appender-ref ref="ASYNCDEBUGLOG" />{{ '' if cassandra_debug_log_enabled else ' -->' }} <!-- Comment this line to disable debug.log -->
+    {{ '' if cassandra_debug_log_enabled else '<!-- ' }}<appender-ref ref="ASYNCDEBUGLOG" />{{ '' if cassandra_debug_log_enabled else ' -->' }} <!-- Comment this line to disable debug.log -->{{ ('\n' ~ (_cassandra_config_logback_refs | join('\n'))) if _cassandra_config_logback_refs else '' }}
     <!--
     <appender-ref ref="LogbackMetrics" />
     -->
@@ -130,5 +130,5 @@ appender reference in the root level section below.
     -->
   </root>
 
-  <logger name="org.apache.cassandra" level="{{ cassandra_log_level_cassandra }}"/>{{ ('\n' ~ (cassandra_logback_extra_lines | join('\n'))) if cassandra_logback_extra_lines else '' }}{{ ('\n' ~ _cassandra_config_snippet_logback) if _cassandra_config_snippet_logback else '' }}
+  <logger name="org.apache.cassandra" level="{{ cassandra_log_level_cassandra }}"/>{{ ('\n' ~ (_cassandra_config_log_levels | join('\n'))) if _cassandra_config_log_levels else '' }}{{ ('\n' ~ _cassandra_config_snippet_logback) if _cassandra_config_snippet_logback else '' }}
 </configuration>

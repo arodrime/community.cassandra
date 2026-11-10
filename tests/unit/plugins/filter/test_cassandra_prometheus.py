@@ -187,7 +187,7 @@ def test_the_agent_is_imported_into_the_variables(tmp_path, case, edit, where):
     assert dict((k, variables.get(k)) for k in VARS) == VARS
     for name in ("cassandra_prometheus_exporter_version", "cassandra_prometheus_exporter_port",
                  "cassandra_prometheus_exporter_checksum", "cassandra_prometheus_exporter_address",
-                 "cassandra_jvm_extra_options", "cassandra_jvm17_extra_options", "cassandra_env_extra_lines"):
+                 "cassandra_jvm_extra_options", "cassandra_jvm17_extra_options", "cassandra_config_template_snippets"):
         assert name not in variables, name  # the role's (1.7.0, 9404, its checksum, every address), nothing else
     assert node["hand_edits"] == []
     assert [m for m in node["moved"] if m.startswith(where) and "-> cassandra_prometheus_exporter_*" in m]

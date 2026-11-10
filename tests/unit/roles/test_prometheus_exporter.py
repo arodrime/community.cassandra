@@ -202,8 +202,8 @@ def test_good_settings_pass():
     ({"cassandra_config_keep_files": ["jvm-server.options"]}, "jvm-server.options is in cassandra_config_keep_files"),
     ({"cassandra_jvm_extra_options": ["-javaagent:/opt/x/jmx_prometheus_javaagent-1.6.0.jar=9500:/etc/x.yml"]},
      "the JVM would load two"),
-    ({"cassandra_env_extra_lines": ['JVM_OPTS="$JVM_OPTS -javaagent:/x/jmx_prometheus_javaagent-1.6.0.jar=1:/x.yml"']},
-     "the JVM would load two"),
+    ({"_cassandra_config_snippet_env": 'JVM_OPTS="$JVM_OPTS -javaagent:/x/jmx_prometheus_javaagent-1.6.0.jar=1:/x.yml"'},
+     "already in cassandra_jvm*_extra_options or your snippet of cassandra-env.sh"),
     ({"cassandra_prometheus_exporter_config": "httpServer: {}", "cassandra_prometheus_exporter_username": "u",
       "cassandra_prometheus_exporter_password": "p"}, "has its own httpServer"),
 ])

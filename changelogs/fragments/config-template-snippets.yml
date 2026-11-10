@@ -1,0 +1,2 @@
+minor_changes:
+  - 'import_cluster playbook - the lines a node adds at the end of ``logback.xml`` or ``cassandra-env.sh``, and its own appenders before ``<root>``, are written in snippets next to the inventory (``group_vars/<cluster group>/<file>.snippet.j2``, or the node''s ``host_vars``) named by ``cassandra_config_template_snippets``; a secret in them goes to ``secrets.yml`` and the snippet refers to it (all the lines when it cannot be taken out alone).'

@@ -2,8 +2,8 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 # import_cluster: the lines a node has at the end of cassandra-env.sh (and of logback.xml's <configuration>)
-# carried as cassandra_env_extra_lines (cassandra_logback_extra_lines), so that the self-check passes without
-# keeping the file as it is; a secret in such a line (or in a JVM option) moved to secrets.yml in a variable of
+# carried in its snippet next to the inventory (cassandra_config_template_snippets), so that the self-check
+# passes without keeping the file as it is; a secret in such a line (or in a JVM option) moved to secrets.yml in a variable of
 # its own, the line referring to it, its value never written in clear; your own template for a file
 # (cassandra_config_template_overrides) rendered by the self-check.
 
@@ -14,7 +14,7 @@ import pytest
 import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    cassandra_config_import, cassandra_inventory_files, cassandra_inventory_layout)
+    ENV_END, LOGBACK_END, cassandra_config_import, cassandra_inventory_files, cassandra_inventory_layout)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import cassandra_import_self_check
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
     cassandra_import_self_check_advice)
@@ -35,7 +35,7 @@ def imported(files, name="n1", address="10.0.0.1"):
                  "keep": {"cassandra_service_unit_manage": False}}
 
 
-def self_check(files, layout, name="n1", extra_files=(), inventory_dir=""):
+def self_check(files, layout, name="n1", extra_files=(), inventory_dir="/p/inv"):
     return cassandra_import_self_check(cassandra_inventory_files(layout) + list(extra_files), layout["hosts"], name,
                                        dict(FACTS, hostname=name), files, {}, "/var/lib/cassandra", "17", "",
                                        role_permissions(files), inventory_dir=inventory_dir)
@@ -50,12 +50,11 @@ def with_env(*lines):
 def test_lines_at_the_end_of_cassandra_env_carried():
     files = with_env("export MY_AGENT_OPTS=-Dx=1", 'JVM_OPTS="$JVM_OPTS -javaagent:/opt/agent.jar"')
     out, n = imported(files)
-    assert out["vars"]["cassandra_env_extra_lines"] == ["export MY_AGENT_OPTS=-Dx=1",
-                                                        'JVM_OPTS="$JVM_OPTS -javaagent:/opt/agent.jar"']
+    assert out["vars"][ENV_END] == ["export MY_AGENT_OPTS=-Dx=1", 'JVM_OPTS="$JVM_OPTS -javaagent:/opt/agent.jar"']
     assert out["hand_edits"] == []
-    assert "cassandra-env.sh: 2 line(s) at its end kept with cassandra_env_extra_lines" in out["carried"]
+    assert "cassandra-env.sh: 2 line(s) at its end kept with (cassandra-env.sh)" in out["carried"]
     assert "hand edits carried into the inventory: cassandra-env.sh: 2 line(s) at its end kept with" \
-           " cassandra_env_extra_lines" in node({"import_cluster_config": out})["notes"]
+           " (cassandra-env.sh)" in node({"import_cluster_config": out})["notes"]
     layout = cassandra_inventory_layout([n], "c")
     assert self_check(files, layout)["differences"] == []
     # no hand edit left: nothing kept as it is, even when asked to keep them
@@ -67,7 +66,7 @@ def test_without_the_blank_line_at_the_end():
     files = stock()
     files["cassandra-env.sh"] = files["cassandra-env.sh"].rstrip("\n") + "\nexport FOO=1\n"
     out, n = imported(files)
-    assert out["vars"]["cassandra_env_extra_lines"] == ["export FOO=1"] and out["hand_edits"] == []
+    assert out["vars"][ENV_END] == ["export FOO=1"] and out["hand_edits"] == []
     assert self_check(files, cassandra_inventory_layout([n], "c"))["differences"] == []
 
 
@@ -82,7 +81,7 @@ def test_lines_a_variable_covers_stay_hand_edits(line):
     # with the lines around them (all of the end lines or none)
     files = with_env("export FOO=1", line)
     out, n = imported(files)
-    assert "cassandra_env_extra_lines" not in out["vars"]
+    assert ENV_END not in out["vars"]
     assert [x for x in out["hand_edits"] if x.startswith("  +") and x.strip() != "+"] == ["  + export FOO=1", "  + " + line]
 
 
@@ -94,14 +93,14 @@ def test_lines_a_variable_covers_stay_hand_edits(line):
 ])
 def test_end_lines_that_do_not_make_a_whole_stay_hand_edits(lines):
     out, n = imported(with_env(*lines))
-    assert "cassandra_env_extra_lines" not in out["vars"] and out["hand_edits"]
+    assert ENV_END not in out["vars"] and out["hand_edits"]
 
 
 def test_a_whole_block_at_the_end_carried():
     lines = ["if [ -f /etc/agent ]; then", '    JVM_OPTS="$JVM_OPTS -javaagent:/opt/agent.jar"', "fi"]
     files = with_env(*lines)
     out, n = imported(files)
-    assert out["vars"]["cassandra_env_extra_lines"] == lines and out["hand_edits"] == []
+    assert out["vars"][ENV_END] == lines and out["hand_edits"] == []
     assert self_check(files, cassandra_inventory_layout([n], "c"))["differences"] == []
 
 
@@ -109,14 +108,14 @@ def test_a_line_in_the_middle_stays_a_hand_edit_and_the_hint_says_how():
     files = stock()
     files["cassandra-env.sh"] = files["cassandra-env.sh"].replace("\nJMX_PORT=", '\nexport FOO=1\nJMX_PORT=', 1)
     out, n = imported(files)
-    assert "cassandra_env_extra_lines" not in out["vars"]
+    assert ENV_END not in out["vars"]
     assert "  + export FOO=1" in out["hand_edits"]
     layout = cassandra_inventory_layout([n], "c")
     check = self_check(files, layout)
     assert check["differences"]
     advice = " ".join(cassandra_import_self_check_advice(layout, {"n1": check}, width=400))
-    assert "cassandra_env_extra_lines" in advice and "cassandra_config_template_overrides" in advice
-    assert "cassandra_env_extra_lines and cassandra_logback_extra_lines for lines at the end of the file" in advice
+    assert "cassandra_config_template_snippets" in advice and "cassandra_config_template_overrides" in advice
+    assert "a template piece of yours for lines at the end of cassandra-env.sh or logback.xml" in " ".join(advice.split())
 
 
 def logback(text):
@@ -126,9 +125,9 @@ def logback(text):
 
 
 def test_loggers_at_the_end_of_logback_carried():
-    files = logback('  <logger name="com.example" level="WARN"/>\n</configuration>')
+    files = logback('  <logger name="com.example" level="WARN" additivity="false"/>\n</configuration>')
     out, n = imported(files)
-    assert out["vars"]["cassandra_logback_extra_lines"] == ['  <logger name="com.example" level="WARN"/>']
+    assert out["vars"][LOGBACK_END] == ['  <logger name="com.example" level="WARN" additivity="false"/>']
     assert out["hand_edits"] == []
     assert self_check(files, cassandra_inventory_layout([n], "c"))["differences"] == []
 
@@ -142,14 +141,14 @@ def test_loggers_at_the_end_of_logback_carried():
 ])
 def test_logback_lines_not_carried(text):
     out, dummy = imported(logback(text))
-    assert "cassandra_logback_extra_lines" not in out["vars"]
+    assert LOGBACK_END not in out["vars"]
     assert [line for line in out["hand_edits"] if line.startswith("logback.xml")]
 
 
 def test_logback_comment_after_the_root_element_neither_carried_nor_a_hand_edit():
     # logback.xml is read as XML: a comment outside <configuration> sets nothing (same settings, layout rewritten)
     out, dummy = imported(logback("</configuration>\n<!-- after the root element -->"))
-    assert "cassandra_logback_extra_lines" not in out["vars"]
+    assert LOGBACK_END not in out["vars"]
     assert not [line for line in out["hand_edits"] if line.startswith("logback.xml")]
     assert [n for n in out["normalized"] if n.startswith("logback.xml")]
 
@@ -168,7 +167,7 @@ def written(layout):
 def test_secrets_moved_to_secrets_yml():
     files = secret_files()
     out, n = imported(files)
-    assert out["vars"]["cassandra_env_extra_lines"] == [
+    assert out["vars"][ENV_END] == [
         'export KEYSTORE_PASSWORD="{{ cassandra_secret_env_keystore_password }}"',
         'JVM_OPTS="$JVM_OPTS -Dcom.example.flag=1'
         ' -Djavax.net.ssl.trustStorePassword={{ cassandra_secret_env_javax_net_ssl_truststorepassword }}"']
@@ -181,18 +180,22 @@ def test_secrets_moved_to_secrets_yml():
     assert yaml.safe_load(secrets["content"]) == {
         "cassandra_secret_env_keystore_password": "s3cr3t-A", "cassandra_secret_env_javax_net_ssl_truststorepassword": "tsP4ss",
         "cassandra_secret_jvm_javax_net_ssl_keystorepassword": "jvmP4ss"}
-    # the lines in main.yml, as templates (not !unsafe): Ansible gives them the secrets
+    # the lines in their snippet, as templates (not in a raw block): Ansible gives them the secrets
     data = yaml.safe_load(main["content"])
-    assert data["cassandra_env_extra_lines"] == out["vars"]["cassandra_env_extra_lines"]
+    assert ENV_END not in data
+    assert data["cassandra_config_template_snippets"] == {
+        "cassandra-env.sh": "{{ inventory_dir }}/group_vars/c/cassandra-env.sh.snippet.j2"}
     assert "!unsafe" not in main["content"]
+    snippet = files_out["group_vars/c/cassandra-env.sh.snippet.j2"]
+    assert not snippet["secret"] and snippet["content"] == "\n".join(out["vars"][ENV_END]) + "\n"
     # nowhere else in clear: not in main.yml, the report, the notes
     hv = {"import_cluster_config": out}
     notes = node(hv)["notes"]
-    for text in [main["content"], layout["report"], "\n".join(notes),
+    for text in [main["content"], snippet["content"], layout["report"], "\n".join(notes),
                  "\n".join(out["normalized"] + out["hand_edits"] + out["carried"])]:
         assert not [s for s in SECRETS if s in text]
     assert "hand edits carried into the inventory: cassandra-env.sh: KEYSTORE_PASSWORD=**** moved to secrets.yml as" \
-           " cassandra_secret_env_keystore_password, which cassandra_env_extra_lines refers to" in notes
+           " cassandra_secret_env_keystore_password, which its snippet refers to" in notes
     # the self-check renders them with the secrets: the node's files
     assert self_check(files, layout)["differences"] == []
 
@@ -202,15 +205,21 @@ def test_secrets_moved_to_secrets_yml():
     ("export TRUSTSTORE_PASSWORD=a'b'", "sh"),  # a word made of parts
     ("export TRUSTSTORE_PASSWORD= x", "sh"),  # an empty value, then a command
 ])
-def test_a_secret_not_told_whole_keeps_its_list_in_secrets_yml(line, kind):
+def test_a_secret_not_told_whole_keeps_its_lines_in_secrets_yml(line, kind):
+    # all the lines of its snippet in secrets.yml (cassandra_secret_env_lines), which the snippet renders: never in
+    # clear in the snippet nor in main.yml
     files = with_env("export FOO=1", line)
     out, n = imported(files)
-    assert out["vars"]["cassandra_env_extra_lines"] == ["export FOO=1", line]
-    files_out = written(cassandra_inventory_layout([n], "c"))
-    assert "cassandra_env_extra_lines" not in yaml.safe_load(files_out["group_vars/c/main.yml"]["content"])
-    assert "cassandra_env_extra_lines" in yaml.safe_load(files_out["group_vars/c/secrets.yml"]["content"])
-    assert "cassandra-env.sh: cassandra_env_extra_lines kept whole in secrets.yml (a secret in it could not be taken" \
-           " out alone)" in out["carried"]
+    assert out["vars"][ENV_END] == ["export FOO=1", line]
+    layout = cassandra_inventory_layout([n], "c")
+    files_out = written(layout)
+    assert files_out["group_vars/c/cassandra-env.sh.snippet.j2"]["content"] == "{{ cassandra_secret_env_lines }}\n"
+    assert yaml.safe_load(files_out["group_vars/c/secrets.yml"]["content"])["cassandra_secret_env_lines"] == \
+        "export FOO=1\n" + line
+    assert "TRUSTSTORE" not in files_out["group_vars/c/main.yml"]["content"]
+    assert "cassandra-env.sh: its 2 line(s) with a secret the import could not take out alone are in secrets.yml," \
+           " cassandra_secret_env_lines, which its snippet renders" in layout["report"]
+    assert self_check(files, layout)["differences"] == []
 
 
 def test_each_node_its_own_secret():
@@ -218,8 +227,8 @@ def test_each_node_its_own_secret():
     b, nb = imported(with_env('export KEYSTORE_PASSWORD="pw-two"'), "n2", "10.0.0.2")
     layout = cassandra_inventory_layout([na, nb], "c")
     files_out = written(layout)
-    assert yaml.safe_load(files_out["group_vars/c/main.yml"]["content"])["cassandra_env_extra_lines"] == [
-        'export KEYSTORE_PASSWORD="{{ cassandra_secret_env_keystore_password }}"']
+    assert files_out["group_vars/c/cassandra-env.sh.snippet.j2"]["content"] == \
+        'export KEYSTORE_PASSWORD="{{ cassandra_secret_env_keystore_password }}"\n'
     for name, pw in (("n1", "pw-one"), ("n2", "pw-two")):
         assert yaml.safe_load(files_out["host_vars/%s/secrets.yml" % name]["content"]) == {
             "cassandra_secret_env_keystore_password": pw}
@@ -261,11 +270,27 @@ def test_a_nodes_own_template_text_is_never_templated():
     own = 'JVM_OPTS="$JVM_OPTS -Djavax.net.ssl.trustStorePassword={{ cassandra_secret_env_javax_net_ssl_truststorepassword }}"'
     a, na = imported(with_env('JVM_OPTS="$JVM_OPTS -Djavax.net.ssl.trustStorePassword=x"'))
     b, nb = imported(with_env(own), "n2", "10.0.0.2")
-    assert b["trusted"] == [] and b["vars"]["cassandra_env_extra_lines"] == [own]
+    assert b["trusted"] == [] and b["vars"][ENV_END] == [own]
     layout = cassandra_inventory_layout([na, nb], "c")
-    assert layout["trusted"] == []
-    text = "\n".join(f["content"] for f in cassandra_inventory_files(layout))
-    assert re.search(r"!unsafe '?JVM_OPTS=", text)
+    files_out = written(layout)
+    # n1's line made by the import: in its snippet, a template; n2's own text (a secret's name in it): its lines
+    # in secrets.yml, !unsafe, which its snippet renders
+    assert files_out["host_vars/n1/cassandra-env.sh.snippet.j2"]["content"] == a["vars"][ENV_END][0] + "\n"
+    assert files_out["host_vars/n2/cassandra-env.sh.snippet.j2"]["content"] == "{{ cassandra_secret_env_lines }}\n"
+    assert re.search(r"!unsafe '?JVM_OPTS=", files_out["host_vars/n2/secrets.yml"]["content"])
+    assert self_check(with_env(own), layout, "n2")["differences"] == []
+
+
+def test_a_nodes_own_template_text_in_a_snippet_is_never_templated():
+    # a line read from a node with {{ in it (no secret): in a raw block of its snippet, rendered as it is
+    own = '  <logger name="{{ not.a.template }}" level="WARN" additivity="false"/>'
+    files = stock()
+    files["logback.xml"] = files["logback.xml"].replace("</configuration>", own + "\n</configuration>")
+    out, n = imported(files)
+    assert out["vars"][LOGBACK_END] == [own] and out["hand_edits"] == []
+    layout = cassandra_inventory_layout([n], "c")
+    assert written(layout)["group_vars/c/logback.xml.snippet.j2"]["content"] == "{%% raw %%}%s\n{%% endraw %%}\n" % own
+    assert self_check(files, layout)["differences"] == []
 
 
 def test_self_check_renders_your_own_template(tmp_path):
@@ -273,7 +298,7 @@ def test_self_check_renders_your_own_template(tmp_path):
     # yours), the self-check renders it as cassandra_config would
     files = stock()
     files["logback.xml"] = files["logback.xml"].replace("<root level=\"INFO\">",
-                                                        '<logger name="com.example" level="WARN"/>\n  <root level="INFO">')
+                                                        '<root level="INFO">\n    <appender-ref ref="SYSTEMLOG" />')
     out, n = imported(files)
     layout = cassandra_inventory_layout([n], "c")
     assert self_check(files, layout)["differences"]
@@ -316,10 +341,11 @@ def test_a_line_made_like_one_of_the_node_is_left_as_it_is():
     # the node has the very line the import would make of its other line: neither is written as a template
     own = 'export A_PASSWORD="{{ cassandra_secret_env_a_password }}"'
     out, n = imported(with_env('export A_PASSWORD="realpw"', own))
-    assert out["trusted"] == [] and out["vars"]["cassandra_env_extra_lines"][0] == 'export A_PASSWORD="realpw"'
+    assert out["trusted"] == [] and out["vars"][ENV_END][0] == 'export A_PASSWORD="realpw"'
     layout = cassandra_inventory_layout([n], "c")
     secrets = written(layout)["group_vars/c/secrets.yml"]["content"]
-    assert "cassandra_env_extra_lines:" in secrets and "!unsafe 'export A_PASSWORD=" in secrets
+    assert "cassandra_secret_env_lines: !unsafe 'export A_PASSWORD=" in secrets
+    assert self_check(with_env('export A_PASSWORD="realpw"', own), layout)["differences"] == []
 
 
 def test_self_check_says_what_cassandra_config_would_refuse(tmp_path):
@@ -342,7 +368,7 @@ def test_reimport_leaves_your_templates_files_to_them(tmp_path):
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout_over
     files = stock()
     files["logback.xml"] = files["logback.xml"].replace("<root level=\"INFO\">",
-                                                        '<logger name="com.example" level="WARN"/>\n  <root level="INFO">')
+                                                        '<root level="INFO">\n    <appender-ref ref="SYSTEMLOG" />')
     out, n = imported(files)
     n = dict(n, keep=dict(n["keep"], cassandra_config_keep_files=["logback.xml"]))
     yours = {"path": "group_vars/all/t.yml",
@@ -354,14 +380,15 @@ def test_reimport_leaves_your_templates_files_to_them(tmp_path):
 
 
 @pytest.mark.parametrize("name, text", [
-    ("logback.xml", '  <logger name="com.example" level="WARN"/>'),
+    ("logback.xml", '  <logger name="com.example" level="WARN" additivity="false"/>'),
     ("cassandra-env.sh", 'JVM_OPTS="$JVM_OPTS -javaagent:/opt/x.jar"'),
     ("cassandra-env.sh", 'export KEYSTORE_PASSWORD="s3cr3t-A"'),
 ])
 @pytest.mark.parametrize("has_it", [True, False])
 def test_your_template_and_the_end_lines(tmp_path, name, text, has_it):
     # your copy of the role's template, with the node's line in it (not carried again: it would be written twice)
-    # or without (carried, your copy renders the list as the role's does); its path under inventory_dir
+    # or without (not carried either: a file of your own template takes no snippet; the self-check names the line,
+    # for your template); its path under inventory_dir
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout_over
     files = stock()
     if name == "logback.xml":
@@ -380,14 +407,17 @@ def test_your_template_and_the_end_lines(tmp_path, name, text, has_it):
              "content": 'cassandra_config_template_overrides:\n  %s: "{{ inventory_dir }}/templates/t.j2"\n' % name}
     layout = cassandra_inventory_layout_over([n], "c", [yours], str(tmp_path))
     text_out = "\n".join(f["content"] for f in cassandra_inventory_files(layout))
-    assert ("extra_lines" in text_out) is not has_it
-    assert ("cassandra_secret_env_keystore_password" in text_out) is (not has_it and "PASSWORD" in text)
+    assert "snippet" not in text_out and "cassandra_secret_env_keystore_password" not in text_out
     assert ("are in your own template (cassandra_config_template_overrides): not carried" in layout["report"]) is has_it
-    assert self_check(files, layout, extra_files=[yours], inventory_dir=str(tmp_path))["differences"] == []
+    differences = self_check(files, layout, extra_files=[yours], inventory_dir=str(tmp_path))["differences"]
+    assert (differences == []) is has_it
+    if not has_it:
+        assert len(differences) == 1 and differences[0].startswith(name + ": node has ")
 
 
 @pytest.mark.parametrize("name, lines, in_yours", [
-    # a line your copy of the role's template has elsewhere (fi): the block still carried whole
+    # a line your copy of the role's template has elsewhere (fi): not left to it (the block is not all in it); a file
+    # of your own template takes no snippet: the self-check names the lines
     ("cassandra-env.sh", ["if [ -f /etc/x ]; then", "  . /etc/x", "fi"], []),
     ("logback.xml", ['  <appender name="X" class="ch.qos.logback.core.ConsoleAppender">', "  </appender>"], []),
     # your template has one of them only: all of them carried, in their order
@@ -410,8 +440,9 @@ def test_end_lines_left_to_your_template_all_or_none(tmp_path, name, lines, in_y
              "content": "cassandra_config_template_overrides:\n  %s: %s\n" % (name, tmp_path / "t.j2")}
     layout = cassandra_inventory_layout_over([n], "c", [yours])
     assert "not carried" not in layout["report"]
+    assert "snippet" not in "\n".join(f["content"] for f in cassandra_inventory_files(layout))
     if not in_yours:
-        assert self_check(files, layout, extra_files=[yours])["differences"] == []
+        assert [d for d in self_check(files, layout, extra_files=[yours])["differences"] if d.startswith(name)]
 
 
 @pytest.mark.parametrize("name, tail, yours_tail", [

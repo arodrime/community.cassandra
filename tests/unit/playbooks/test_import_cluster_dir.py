@@ -116,7 +116,7 @@ def secret(tmp_path, monkeypatch, **variables):
     keep = TASKS["Keep the vault password"]["ansible.builtin.set_fact"]["_vault_secret"]
     if variables["_vault"]:
         variables["_vault_secret"] = Templar(loader=loader, variables=variables).template(trust_as_template(keep))
-    variables["item"] = {"content": "a: b\n", "secret": True}
+    variables["item"] = {"path": "group_vars/prod/secrets.yml", "content": "a: b\n", "secret": True}
     variables["_layout"] = {"cluster_group": "prod"}
     write = TASKS["Write group_vars and host_vars"]["ansible.builtin.copy"]["content"]
     return variables, str(Templar(loader=loader, variables=variables).template(trust_as_template(write)))
@@ -428,6 +428,12 @@ def test_files_that_would_not_change_left_alone(secret, mode, same, written):
     variables.update(_text=text, import_cluster_existing_text={path: text} if same else {},
                      import_cluster_existing_modes={path: mode} if mode else {})
     assert render("{{ %s }}" % task["when"], **variables) is written
+    # a snippet (a template): the line in a Jinja comment, which renders nothing
+    snippet = write_vars(item={"path": "group_vars/cluster_a/logback.xml.snippet.j2", "content": "<x/>\n",
+                               "secret": False}, _vault=False)
+    assert render(task["vars"]["_text"], **snippet) == render(task["ansible.builtin.copy"]["content"], **snippet) == \
+        "{# Written by community.cassandra.import_cluster for cluster_a: the next import replaces it. Your own" \
+        " settings: other files. #}\n<x/>\n"
     hosts = TASKS["Write the hosts file"]
     variables.update(_content=text, import_cluster_existing_text={"cluster_a.yml": text} if same else {},
                      import_cluster_existing_modes={"cluster_a.yml": mode} if mode else {})

@@ -1593,8 +1593,8 @@
     # false) shows an error while writing the inventory, hidden otherwise.
     # Each node is named by import_cluster_host_names, with ansible_host set to its address in the ring; a node
     # without facts keeps the name it was given, or its address. The lines at the end of cassandra-env.sh and
-    # logback.xml are carried as cassandra_env_extra_lines and cassandra_logback_extra_lines (a secret in them to
-    # secrets.yml as a cassandra_secret_<file>_<name> variable); cassandra-env.sh's JVM_OPTS lines and heap move
+    # logback.xml are carried in snippets next to the inventory (cassandra_config_template_snippets; a secret in them
+    # to secrets.yml as a cassandra_secret_<file>_<name> variable); cassandra-env.sh's JVM_OPTS lines and heap move
     # to variables when the running JVM gets the same arguments (MOVED in the report); the options of a
     # jvm<N>-server.options its Java does not read are not imported, that file left as it is
     # (import_cluster_keep_unread_jvm_options=true imports them). Other hand edits no variable covers fail the
@@ -1753,7 +1753,9 @@
       no_log: true  # a secrets.yml in clear
       when: _read | length > 0
       vars:
-        _read: "{{ _found | select('match', '^((group_vars|host_vars)/[^/]+(/[^/]+)?[.](yml|yaml|json)|' ~ _top ~ ')$') | list }}"
+        _read: >-
+          {{ _found | select('match', '^((group_vars|host_vars)/[^/]+(/[^/]+)?[.](yml|yaml|json)|(group_vars|host_vars)/[^/]+/[^/]+[.]j2|'
+                                      ~ _top ~ ')$') | list }}
         _wanted: [[vars, content, "{{ _read | zip(_read | map('regex_replace', '^', _dir ~ '/')) | list }}"]]
         # every file Ansible reads as inventory (the hosts files: whose they are; the user's: their groups)
         _top: "(?!(group_vars|host_vars)/)(?!.*([.](pyc|pyo|swp|bak|rpm|md|txt|rst|orig|cfg|retry)|~)$).+"
@@ -1923,7 +1925,7 @@
           {%-   set t = r.content | b64decode -%}
           {%-   set _ = out.update({r.item: t if t.startswith('$ANSIBLE_VAULT') or not r.item is match('(group|host)_vars/')
                                               or r.item == 'group_vars/' ~ _layout.cluster_group ~ '/main.yml'
-                                         else t.splitlines() | first if t.startswith('# Written by ')
+                                         else t.splitlines() | first if t.startswith(('# Written by ', '{# Written by '))
                                          else t | community.cassandra.cassandra_leading_comments}) -%}
           {%- endfor -%}
           {{ out }}
@@ -2042,7 +2044,7 @@
         content: >-
           {{ item.content | community.cassandra.cassandra_inventory_generated(_layout.cluster_group)
              | ansible.builtin.vault(_vault_secret, vault_id=import_cluster_vault_id | default('default'))
-             if item.secret and _vault | bool else item.content | community.cassandra.cassandra_inventory_generated(_layout.cluster_group) }}
+             if item.secret and _vault | bool else item.content | community.cassandra.cassandra_inventory_generated(_layout.cluster_group, item.path) }}
         dest: "{{ _dir }}/{{ item.path }}"
         mode: "{{ '0600' if item.secret else '0644' }}"
         backup: "{{ item.path in _leftovers.replaced | default([]) }}"  # not an import's: kept as <file>.<date>~
@@ -2061,7 +2063,7 @@
              else import_cluster_existing_modes[item.path] | default('') == ('0600' if item.secret else '0644')
                   and import_cluster_existing_text[item.path] | default(none) == _text)
       vars:
-        _text: "{{ item.content | community.cassandra.cassandra_inventory_generated(_layout.cluster_group) }}"
+        _text: "{{ item.content | community.cassandra.cassandra_inventory_generated(_layout.cluster_group, item.path) }}"
 
     # a report.txt of the user's, or of another cluster's import: kept as <file>.<date>~; under --check,
     # report.check.txt (on the controller only: the inventory is not written)

@@ -46,7 +46,7 @@ RENAMED = dict([(name, "cassandra_target_nodes") for name in (
     ("cassandra_config_owner", "cassandra_config_user")])
 
 
-# the secrets import_cluster moves out of a config file's lines, which refer to them (cassandra_env_extra_lines...)
+# the secrets import_cluster moves out of a config file's lines, which refer to them (a snippet's lines...)
 SECRET_VARS = "cassandra_secret_"
 
 

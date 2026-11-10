@@ -377,7 +377,7 @@ def shell_lines(text, strict=False):
 
 
 def xml_settings(text):
-    """Every element, with its attributes and text, comments out."""
+    """Every element, with its attributes and text, comments out; logback.xml's in logback_order."""
     out = []
 
     def walk(el, path):
@@ -385,10 +385,48 @@ def xml_settings(text):
         attrs = " ".join('%s="%s"' % (k, v.upper() if k == "level" else v) for k, v in sorted(el.attrib.items()))
         here = "%s/%s%s" % (path, el.tag, ("[%s]" % attrs) if attrs else "")
         out.append(here + ((" = " + el.text.strip()) if (el.text or "").strip() else ""))
-        for child in el:
+        for child in logback_order(el, path == ""):
             walk(child, here)
     walk(ET.fromstring(text), "")
     return out
+
+
+def _logback_tag(el):
+    """An element's name as logback reads it: any case, without its namespace."""
+    return str(el.tag).rsplit("}", 1)[-1].lower()
+
+
+def logback_order(el, top=False):
+    """The children of an element in the order that matters to logback (1.2, Cassandra 4.x and 5.0): the
+    <appender-ref> of a logger or of <root> by name (each adds its appender, whatever its place); under
+    <configuration> (top), its <appender> by name, then its <logger> by name after the others, kept in order: logback
+    reads an appender before the appender-refs naming it, a logger once; so when every appender-ref of the file
+    comes after its appender, no appender nor logger is named twice and nothing is read in order (a property, an
+    include). Else as they are."""
+    children = list(el)
+    tag = _logback_tag(el)
+    if tag in ("root", "logger"):
+        refs = sorted((c for c in children if _logback_tag(c) == "appender-ref"), key=lambda c: str(c.get("ref")))
+        return [c for c in children if _logback_tag(c) != "appender-ref"] + refs
+    if not (top and tag == "configuration"):
+        return children
+    kinds = [_logback_tag(c) for c in children]
+    names = {"appender": set(), "logger": set()}
+    for child, kind in zip(children, kinds):
+        if kind not in ("appender", "logger", "root", "jmxconfigurator"):
+            return children
+        if kind == "logger" and str(child.get("name")).upper() == "ROOT":  # (the root again: the last one counts)
+            return children
+        refs = [e.get("ref") for e in child.iter() if _logback_tag(e) == "appender-ref"]
+        if any(ref not in names["appender"] for ref in refs):
+            return children
+        if kind in names:
+            if child.get("name") in names[kind]:
+                return children
+            names[kind].add(child.get("name"))
+    others = [c for c, k in zip(children, kinds) if k not in ("appender", "logger")]
+    return (sorted((c for c, k in zip(children, kinds) if k == "appender"), key=lambda c: str(c.get("name")))
+            + others + sorted((c for c, k in zip(children, kinds) if k == "logger"), key=lambda c: str(c.get("name"))))
 
 
 def same_settings(name, live, new, storage_dir=""):

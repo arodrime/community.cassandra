@@ -59,7 +59,7 @@ owned by `root`, group `cassandra_group` (`cassandra_config_user`,
 `cassandra_config_group`): Cassandra reads them, but cannot rewrite them.
 `cassandra.yaml` may hold keystore passwords, the `jvm*-server.options` files
 too (extra options such as `-Djavax.net.ssl.keyStorePassword=`), and
-`cassandra-env.sh` (its extra lines, e.g. a `JVM_OPTS` with a password): mode
+`cassandra-env.sh` (the lines of your snippet, e.g. a `JVM_OPTS` with a password): mode
 `0640` (`cassandra_config_mode`). `nodetool` reads the JMX port in
 `cassandra-env.sh`: run as root or by a user of the group (Cassandra's
 account), it can; another user gets `grep: .../cassandra-env.sh: Permission
@@ -332,9 +332,9 @@ Role Variables
   `cassandra_jvm_extra_options` (jvm-server.options),
   `cassandra_jvm8_extra_options`, `cassandra_jvm11_extra_options` and
   `cassandra_jvm17_extra_options` append extra lines.
-* `cassandra-env.sh`: `cassandra_env_extra_lines` adds lines at its end,
-  as they are (an `export`, or `JVM_OPTS="$JVM_OPTS -D..."` for an option no
-  variable covers); a template piece of yours goes after them (below).
+* `cassandra-env.sh`: lines of yours at its end (an `export`, or
+  `JVM_OPTS="$JVM_OPTS -D..."` for an option no variable covers): a template
+  piece of yours (below).
 * TLS / mTLS (`cassandra.yaml`): `cassandra_internode_encryption`,
   `cassandra_server_keystore`, `cassandra_server_keystore_password`,
   `cassandra_truststore`, `cassandra_truststore_password`,
@@ -357,9 +357,27 @@ Role Variables
   `cassandra_debug_log_enabled`, `cassandra_log_console` (default `false`:
   no stdout copy of the logs, which under systemd would be a second copy of
   `system.log` in journald; JVM errors before logback starts still go there).
-  `cassandra_logback_extra_lines` adds lines at the end of its
-  `<configuration>` (e.g. `<logger name="com.example" level="WARN"/>`); a
-  template piece of yours goes after them (below).
+  `cassandra_log_pattern`: the pattern of every log line, the series' stock
+  one by default. 5.0: `cassandra_log_cql_table` (default `false`) also
+  writes the logs in `system_views.system_logs` (the stock `CQLLOG`
+  appender), from `cassandra_log_cql_table_level` (WARN) up.
+  Rotation, the stock values by default: `cassandra_log_system_*`,
+  `cassandra_log_debug_*`, `cassandra_log_audit_*` with `max_file_size` (50MB),
+  `max_history` (7 days; the audit's 30) and `total_size_cap` (5GB).
+  `cassandra_log_audit_file`: audit events in `audit/audit.log` of the log
+  dir (the stock `AUDIT` appender and its `org.apache.cassandra.audit` logger,
+  commented out in the stock file, uncommented); on by default with
+  Cassandra's `FileAuditLogger` (`cassandra_audit_logging_enabled`,
+  `cassandra_audit_logger_class_name`), and a WARNING when it is turned off
+  then (the events go to `system.log`).
+  `cassandra_logback_root_extra_refs`: appenders `<root>` names besides the
+  stock ones (a stock one, `AUDIT` with the audit file, or one of your
+  snippet `logback.xml:appenders`; another name is refused).
+  `cassandra_log_levels`: `{logger name: level}` (e.g. `{com.example: WARN}`),
+  written after the `org.apache.cassandra` logger; not the root's, nor
+  `org.apache.cassandra`'s or the audit's, which their own variables set
+  (refused). Other elements of yours at the end of its `<configuration>` or
+  before `<root>`: a template piece of yours (below).
 * Your own template pieces added to a file: `cassandra_config_template_snippets`,
   `{insertion point: absolute path of a template on the controller}`, e.g.
   `{logback.xml: "{{ inventory_dir }}/group_vars/prod/logback.xml.snippet.j2"}`.
@@ -367,9 +385,9 @@ Role Variables
 
   | point | where |
   |---|---|
-  | `logback.xml` | the end of its `<configuration>`, after `cassandra_logback_extra_lines` |
+  | `logback.xml` | the end of its `<configuration>`, after the loggers of `cassandra_log_levels` |
   | `logback.xml:appenders` | before `<root>` (logback 1.2 wants an appender before its `appender-ref`) |
-  | `cassandra-env.sh` | its end, after `cassandra_env_extra_lines` |
+  | `cassandra-env.sh` | its end |
 
   The JVM options files take `cassandra_jvm*_extra_options` (one option an
   item, which the role checks: the heap, a second agent). The file is then

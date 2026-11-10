@@ -49,9 +49,9 @@ cassandra_config_template_overrides: {}
 # inventory: {insertion point: absolute path of a template on the controller},
 # e.g. {logback.xml: "{{ inventory_dir }}/group_vars/prod/logback.xml.snippet.j2"}.
 # Rendered with the same variables. The points:
-#   logback.xml            the end of its <configuration>, after cassandra_logback_extra_lines
+#   logback.xml            the end of its <configuration>, after the loggers of cassandra_log_levels
 #   logback.xml:appenders  before <root> (appenders: logback 1.2 wants one before its appender-ref)
-#   cassandra-env.sh       its end, after cassandra_env_extra_lines
+#   cassandra-env.sh       its end
 # The JVM options files take cassandra_jvm*_extra_options, one option an item.
 # A file kept or overridden above takes no snippet. import_cluster writes
 # them for the blocks a node adds that no variable covers.
@@ -360,11 +360,6 @@ cassandra_heap_dump_dir: "{{ '$CASSANDRA_LOG_DIR' if cassandra_version == '50x' 
 cassandra_local_jmx: true  # false = remote JMX, with authentication
 cassandra_jmx_port: 7199
 cassandra_jmx_rmi_hostname: ""
-# Lines added at the end of cassandra-env.sh, as they are (e.g. an export, or
-# JVM_OPTS="$JVM_OPTS -D..." for an option no variable covers). import_cluster
-# writes the lines a node has after the file's last one in a snippet instead
-# (cassandra_config_template_snippets).
-cassandra_env_extra_lines: []
 
 # ---- jvm8/jvm11/jvm17-server.options ----
 # Each cassandra_jvm_<option> applies to every jvm<N>-server.options file;
@@ -407,9 +402,42 @@ cassandra_debug_log_enabled: true
 # system.log. Off: logs go to system.log only (JVM errors before logback starts
 # still reach stdout).
 cassandra_log_console: false
-# Lines added at the end of logback.xml's <configuration>, after the
-# org.apache.cassandra logger, as they are (e.g. <logger name="com.example" level="WARN"/>).
-cassandra_logback_extra_lines: []
+# The pattern of every log line (system.log, debug.log, the console, the
+# audit file): the series' stock one by default (4.x ISO8601, 5.0 UTC)
+cassandra_log_pattern: "{{ _cassandra_config_log_patterns[cassandra_version] }}"
+# 5.0: the logs in the system_views.system_logs table too (the stock CQLLOG
+# appender, commented out in the stock file), from this level up
+cassandra_log_cql_table: false
+cassandra_log_cql_table_level: WARN
+# Rotation of system.log, debug.log and audit/audit.log (the stock values):
+# each file at most max_file_size, rolled daily, max_history days kept, all of
+# them at most total_size_cap
+cassandra_log_system_max_file_size: 50MB
+cassandra_log_system_max_history: 7
+cassandra_log_system_total_size_cap: 5GB
+cassandra_log_debug_max_file_size: 50MB
+cassandra_log_debug_max_history: 7
+cassandra_log_debug_total_size_cap: 5GB
+cassandra_log_audit_max_file_size: 50MB
+cassandra_log_audit_max_history: 30
+cassandra_log_audit_total_size_cap: 5GB
+# Audit events in a file of their own, audit/audit.log of the log dir: the
+# stock AUDIT appender and its org.apache.cassandra.audit logger, commented out
+# in the stock file, uncommented. On by default with Cassandra's
+# FileAuditLogger (cassandra_audit_logging_enabled and
+# cassandra_audit_logger_class_name); false: its events go to system.log.
+cassandra_log_audit_file: >-
+  {{ cassandra_audit_logging_enabled | bool
+     and (cassandra_audit_logger_class_name | string).split('.') | last == 'FileAuditLogger' }}
+# Appenders <root> also writes to, by name: a stock one (SYSTEMLOG, DEBUGLOG,
+# ASYNCDEBUGLOG, STDOUT), AUDIT (cassandra_log_audit_file), or one your snippet
+# logback.xml:appenders defines (cassandra_config_template_snippets)
+cassandra_logback_root_extra_refs: []
+# Loggers' levels, {logger name: level} (e.g. {com.example: WARN}), written
+# after the org.apache.cassandra logger. Not the root's (cassandra_log_level),
+# org.apache.cassandra's (cassandra_log_level_cassandra) nor the audit's
+# (cassandra_log_audit_file).
+cassandra_log_levels: {}
 
 # The account Cassandra runs as (cassandra_service's unit runs it so): it gets
 # the directories the role creates and the JMX users' files
@@ -418,7 +446,7 @@ cassandra_group: cassandra
 # The config files: owned by root, group cassandra_group (Cassandra reads them
 # but cannot rewrite them). cassandra.yaml (keystore passwords), the JVM
 # options files (their extra options, e.g. -Djavax.net.ssl.keyStorePassword=)
-# and cassandra-env.sh (its extra lines, e.g. a JVM_OPTS with a password) are
+# and cassandra-env.sh (your snippet's lines, e.g. a JVM_OPTS with a password) are
 # not readable by others. The other files hold no secret and are readable by all.
 cassandra_config_user: root
 cassandra_config_group: "{{ cassandra_group }}"

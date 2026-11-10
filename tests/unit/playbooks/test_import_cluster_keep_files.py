@@ -118,7 +118,7 @@ def test_report_names_the_edits_left_and_the_others():
 
 def test_self_check_leaves_out_the_kept_files():
     files = stock()
-    files["logback.xml"] = re.sub(r"<root level=\"INFO\">", '<logger name="com.example" level="WARN"/>\n  <root level="INFO">',
+    files["logback.xml"] = re.sub(r"<root level=\"INFO\">", '<root level="INFO">\n    <appender-ref ref="SYSTEMLOG" />',
                                   files["logback.xml"], count=1)
     out, layout = check(files, {})
     assert [d for d in out["differences"] if d.startswith("logback.xml")]
@@ -130,7 +130,7 @@ def test_self_check_leaves_out_the_kept_files():
 def test_the_stop_reads_the_self_checks_own_differences():
     # what the self-check really writes, read back by the stop: a logback.xml hand edit and the heap
     files = stock()
-    files["logback.xml"] = re.sub(r"<root level=\"INFO\">", '<logger name="com.example" level="WARN"/>\n  <root level="INFO">',
+    files["logback.xml"] = re.sub(r"<root level=\"INFO\">", '<root level="INFO">\n    <appender-ref ref="SYSTEMLOG" />',
                                   files["logback.xml"], count=1)
     out, layout = check(files, {})
     out["differences"].append(out["differences"][0])  # (the same difference twice: one item)
@@ -174,7 +174,7 @@ def test_role_leaves_them():
 def test_self_check_compares_the_owner_and_mode_of_the_kept_files():
     # cassandra_config keeps their content, not their owner, group and mode: those are compared
     files = stock()
-    files["logback.xml"] = re.sub(r"<root level=\"INFO\">", '<logger name="com.example" level="WARN"/>\n  <root level="INFO">',
+    files["logback.xml"] = re.sub(r"<root level=\"INFO\">", '<root level="INFO">\n    <appender-ref ref="SYSTEMLOG" />',
                                   files["logback.xml"], count=1)
     permissions = role_permissions(files)
     permissions["logback.xml"] = dict(permissions["logback.xml"], mode="0600")

@@ -91,9 +91,9 @@ argument_specs:
           - 'Your own template pieces added to the role''s files, instead of lines in the inventory, e.g.
             C({logback.xml: "{{ inventory_dir }}/group_vars/prod/logback.xml.snippet.j2"}). Keys are insertion points;
             values the absolute path of a template on the controller.'
-          - C(logback.xml) the end of its C(<configuration>), after O(cassandra_logback_extra_lines);
+          - C(logback.xml) the end of its C(<configuration>), after the loggers of O(cassandra_log_levels);
             C(logback.xml:appenders) before C(<root>) (logback 1.2 wants an appender before its C(appender-ref));
-            C(cassandra-env.sh) its end, after O(cassandra_env_extra_lines).
+            C(cassandra-env.sh) its end.
           - Rendered with the same variables, then written, compared, shown and restarted for like the rest of the
             file.
           - The JVM options files take none (O(cassandra_jvm_extra_options) and the C(cassandra_jvm<N>_extra_options),
@@ -1357,15 +1357,6 @@ argument_specs:
         default: ''
         description:
         - C(java.rmi.server.hostname) for remote JMX. Left commented out when empty.
-      cassandra_env_extra_lines:
-        type: list
-        elements: str
-        default: []
-        description:
-        - Lines added at the end of C(cassandra-env.sh), as they are, e.g. C(export X=1) or
-          C(JVM_OPTS="$JVM_OPTS -Dname=value") for an option no variable covers.
-        - C(import_cluster) writes the lines a node has after the file's last one in a snippet instead
-          (O(cassandra_config_template_snippets)).
       cassandra_jvm_gc:
         type: str
         choices:
@@ -1490,15 +1481,6 @@ argument_specs:
         default: true
         description:
         - Write C(debug.log).
-      cassandra_logback_extra_lines:
-        type: list
-        elements: str
-        default: []
-        description:
-        - Lines added at the end of C(logback.xml)'s C(<configuration>), after the C(org.apache.cassandra) logger, as
-          they are, e.g. C(<logger name="com.example" level="WARN"/>).
-        - C(import_cluster) writes the lines a node has at that place in a snippet instead
-          (O(cassandra_config_template_snippets)).
       cassandra_log_console:
         type: bool
         default: false
@@ -1506,6 +1488,93 @@ argument_specs:
         - Also send the logs to stdout (the C(STDOUT) appender of C(logback.xml)).
           Under systemd that is a second copy of C(system.log) in journald; JVM
           errors before logback starts go to stdout either way.
+      cassandra_log_pattern:
+        type: str
+        description:
+        - The pattern of every log line of C(logback.xml) (C(SYSTEMLOG), C(DEBUGLOG), C(STDOUT), C(AUDIT)).
+        - Default the series' stock one (4.x C(%date{ISO8601}), 5.0 in UTC).
+      cassandra_log_cql_table:
+        type: bool
+        default: false
+        description:
+        - 5.0 only (refused on 4.x). The logs also in the C(system_views.system_logs) table (the stock C(CQLLOG)
+          appender of C(logback.xml), commented out in the stock file, named by C(<root>)), from
+          O(cassandra_log_cql_table_level) up.
+      cassandra_log_cql_table_level:
+        type: str
+        default: WARN
+        description:
+        - The lowest level O(cassandra_log_cql_table) writes.
+      cassandra_log_system_max_file_size:
+        type: str
+        default: 50MB
+        description:
+        - 'Rotation of C(system.log) (C(SYSTEMLOG)) in C(logback.xml): the size of a file at most, e.g. C(100MB).'
+      cassandra_log_system_max_history:
+        type: int
+        default: 7
+        description:
+        - 'Rotation of C(system.log) (C(SYSTEMLOG)): the days of files kept.'
+      cassandra_log_system_total_size_cap:
+        type: str
+        default: 5GB
+        description:
+        - 'Rotation of C(system.log) (C(SYSTEMLOG)): the size of all its files at most.'
+      cassandra_log_debug_max_file_size:
+        type: str
+        default: 50MB
+        description:
+        - 'Rotation of C(debug.log) (C(DEBUGLOG)) in C(logback.xml): the size of a file at most, e.g. C(100MB).'
+      cassandra_log_debug_max_history:
+        type: int
+        default: 7
+        description:
+        - 'Rotation of C(debug.log) (C(DEBUGLOG)): the days of files kept.'
+      cassandra_log_debug_total_size_cap:
+        type: str
+        default: 5GB
+        description:
+        - 'Rotation of C(debug.log) (C(DEBUGLOG)): the size of all its files at most.'
+      cassandra_log_audit_max_file_size:
+        type: str
+        default: 50MB
+        description:
+        - 'Rotation of C(audit/audit.log) (C(AUDIT), with O(cassandra_log_audit_file)) in C(logback.xml): the size of a file at most, e.g. C(100MB).'
+      cassandra_log_audit_max_history:
+        type: int
+        default: 30
+        description:
+        - 'Rotation of C(audit/audit.log) (C(AUDIT), with O(cassandra_log_audit_file)): the days of files kept.'
+      cassandra_log_audit_total_size_cap:
+        type: str
+        default: 5GB
+        description:
+        - 'Rotation of C(audit/audit.log) (C(AUDIT), with O(cassandra_log_audit_file)): the size of all its files at most.'
+      cassandra_log_audit_file:
+        type: bool
+        description:
+        - Audit events in C(audit/audit.log) of the log dir; the stock C(AUDIT) appender of C(logback.xml) and its
+          C(org.apache.cassandra.audit) logger, commented out in the stock file, are uncommented.
+        - Default on with C(FileAuditLogger) (O(cassandra_audit_logging_enabled) and
+          O(cassandra_audit_logger_class_name)); V(false) then sends the audit events to C(system.log), with a WARNING.
+      cassandra_logback_root_extra_refs:
+        type: list
+        elements: str
+        default: []
+        description:
+        - Appenders C(<root>) of C(logback.xml) names besides the stock ones, by name.
+        - A stock one (C(SYSTEMLOG), C(DEBUGLOG), C(ASYNCDEBUGLOG), C(STDOUT)), C(AUDIT) with
+          O(cassandra_log_audit_file), or one your snippet C(logback.xml:appenders) defines
+          (O(cassandra_config_template_snippets)); another name is refused (logback would not start its configuration).
+      cassandra_log_levels:
+        type: dict
+        default: {}
+        description:
+        - 'Loggers'' levels, C({logger name: level}), e.g. C({com.example: WARN}), written after the
+          C(org.apache.cassandra) logger of C(logback.xml).'
+        - Not C(ROOT) (O(cassandra_log_level)), C(org.apache.cassandra) (O(cassandra_log_level_cassandra)) nor
+          C(org.apache.cassandra.audit) (O(cassandra_log_audit_file)); a level is one of C(TRACE), C(DEBUG), C(INFO),
+          C(WARN), C(ERROR), C(OFF), C(ALL), in any case.
       cassandra_user:
         type: str
         default: cassandra
@@ -1536,7 +1605,7 @@ argument_specs:
         - Mode of C(cassandra.yaml), which may hold keystore passwords, of the
           C(jvm*-server.options) files, whose extra options may too (e.g.
           C(-Djavax.net.ssl.keyStorePassword=)), and of C(cassandra-env.sh),
-          whose extra lines may too (C(nodetool) reads the JMX port in it, run
+          whose snippet lines may too (C(nodetool) reads the JMX port in it, run
           as root or by a user of O(cassandra_config_group)). Octal, quoted.
       cassandra_config_public_mode:
         type: str

@@ -159,6 +159,7 @@ def test_the_restart_kinds():
     assert _kind("cassandra_concurrent_reads") == "restart"
     assert _kind("cassandra_heap_size") == "restart"
     assert _kind("cassandra_jvm11_extra_options") == "restart"
+    assert _kind("cassandra_config_template_snippets") == "restart"  # (logback.xml or cassandra-env.sh's text)
     assert _kind("cassandra_jmx_users") == "jmx"  # passwords alone: no restart (read at each JMX login)
     assert _kind("cassandra_config_file_permissions") == "none"
     assert _kind("cassandra_seeds") == "seeds"

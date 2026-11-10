@@ -15,13 +15,39 @@ _cassandra_config_templates: >-
   {%- endfor -%}
   {{ out }}
 # Your own template pieces (cassandra_config_template_snippets), rendered with the same variables, their last
-# newlines off: the templates add them after the file's extra lines ('' for none)
+# newlines off: the templates add them at their insertion points ('' for none)
 _cassandra_config_snippet_logback: >-
   {{ (lookup('ansible.builtin.template', cassandra_config_template_snippets['logback.xml']) | regex_replace('\n+$', ''))
      if 'logback.xml' in cassandra_config_template_snippets else '' }}
 _cassandra_config_snippet_appenders: >-
   {{ (lookup('ansible.builtin.template', cassandra_config_template_snippets['logback.xml:appenders'])
       | regex_replace('\n+$', '')) if 'logback.xml:appenders' in cassandra_config_template_snippets else '' }}
+# logback.xml: the appender-refs of cassandra_logback_root_extra_refs, the loggers of cassandra_log_levels: their lines
+_cassandra_config_logback_refs: >-
+  {%- set out = [] -%}
+  {%- for ref in (['CQLLOG'] if cassandra_version == '50x' and cassandra_log_cql_table | bool else [])
+                 + cassandra_logback_root_extra_refs -%}
+  {%-   set _ = out.append('    <appender-ref ref="' ~ ref ~ '" />') -%}
+  {%- endfor -%}
+  {{ out }}
+_cassandra_config_log_levels: >-
+  {%- set out = [] -%}
+  {%- for name, level in cassandra_log_levels.items() -%}
+  {%-   set _ = out.append('  <logger name="' ~ name ~ '" level="' ~ level ~ '"/>') -%}
+  {%- endfor -%}
+  {{ out }}
+# the stock pattern of the log lines, by series (cassandra_log_pattern's default)
+_cassandra_config_log_patterns:
+  40x: "%-5level [%thread] %date{ISO8601} %F:%L - %msg%n"
+  41x: "%-5level [%thread] %date{ISO8601} %F:%L - %msg%n"
+  50x: '%-5level [%thread] %date{"yyyy-MM-dd''T''HH:mm:ss,SSS", UTC} %F:%L - %msg%n'
+# the logger names cassandra_log_levels may not take: {name: the variable that sets it}
+_cassandra_config_own_loggers:
+  ROOT: cassandra_log_level
+  org.apache.cassandra: cassandra_log_level_cassandra
+  org.apache.cassandra.audit: cassandra_log_audit_file
+# the appenders of the stock logback.xml <root> may name (AUDIT: with cassandra_log_audit_file)
+_cassandra_config_stock_appenders: [SYSTEMLOG, DEBUGLOG, ASYNCDEBUGLOG, STDOUT]
 _cassandra_config_snippet_env: >-
   {{ (lookup('ansible.builtin.template', cassandra_config_template_snippets['cassandra-env.sh']) | regex_replace('\n+$', ''))
      if 'cassandra-env.sh' in cassandra_config_template_snippets else '' }}

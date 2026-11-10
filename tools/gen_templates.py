@@ -125,8 +125,8 @@ def append_list(var):
 
 
 def append_snippet(var):
-    # Suffix after a file's extra lines: the rendered snippet of cassandra_config_template_snippets (cassandra_config's
-    # vars), '' when none.
+    # Suffix of a line: the rendered snippet of cassandra_config_template_snippets (cassandra_config's vars) on the
+    # lines after it, '' when none.
     return "{{ ('\\n' ~ %s) if %s else '' }}" % (var, var)
 
 
@@ -143,6 +143,74 @@ def last_line(var):
     line = "# The newline in the end of file is intentional"
     return (line, line + append_list(var))
 
+
+def block_of(name, lines, element):
+    """logback.xml: the lines of the <appender> or <logger> named element (commented out or not), from its first
+    line to its end tag -> (first, last) indexes; fails when the release has none, or more than one."""
+    starts = [i for i, line in enumerate(lines) if re.search(r'<(appender|logger) name="%s"' % re.escape(element), line)]
+    assert len(starts) == 1, "%s: <appender/logger name=%r> found %d times (the release moved it?)" % (
+        name, element, len(starts))
+    first = starts[0]
+    if re.search(r"/>\s*(-->)?\s*$", lines[first]):
+        return first, first
+    last = next((i for i in range(first, len(lines)) if re.search(r"</(appender|logger)>", lines[i])), None)
+    assert last is not None, "%s: %r has no end tag" % (name, element)
+    return first, last
+
+
+def in_block(element, old, new):
+    """A rule for a stock line unique inside the appender or logger named element (logback.xml)."""
+    return (element, old, new)
+
+
+# the stock audit appender (FileAuditLogger's audit.log) and its logger, commented out: on with cassandra_log_audit_file
+AUDIT_ON = "{{ '' if cassandra_log_audit_file else '<!-- ' }}"
+AUDIT_OFF = "{{ '' if cassandra_log_audit_file else ' -->' }}"
+AUDIT_PATTERN = "<fileNamePattern>${cassandra.logdir}/audit/audit.log.%d{yyyy-MM-dd}.%i.zip</fileNamePattern>"
+AUDIT_FILE = [
+    in_block("AUDIT", '  <!-- <appender name="AUDIT" class="ch.qos.logback.core.rolling.RollingFileAppender">',
+             "  " + AUDIT_ON + '<appender name="AUDIT" class="ch.qos.logback.core.rolling.RollingFileAppender">'),
+    in_block("AUDIT", '    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy"> -->',
+             '    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">' + AUDIT_OFF),
+    in_block("AUDIT", "      <!-- %s -->" % AUDIT_PATTERN, "      " + AUDIT_ON + AUDIT_PATTERN + AUDIT_OFF),
+    in_block("AUDIT", "      <!-- <maxFileSize>50MB</maxFileSize>",
+             "      " + AUDIT_ON + "<maxFileSize>{{ cassandra_log_audit_max_file_size }}</maxFileSize>"),
+    in_block("AUDIT", "      <maxHistory>30</maxHistory>", "      <maxHistory>{{ cassandra_log_audit_max_history }}</maxHistory>"),
+    in_block("AUDIT", "      <totalSizeCap>5GB</totalSizeCap>",
+             "      <totalSizeCap>{{ cassandra_log_audit_total_size_cap }}</totalSizeCap>"),
+    in_block("AUDIT", "  </appender> -->", "  </appender>" + AUDIT_OFF),
+    in_block("org.apache.cassandra.audit",
+             '  <!-- <logger name="org.apache.cassandra.audit" additivity="false" level="INFO">',
+             "  " + AUDIT_ON + '<logger name="org.apache.cassandra.audit" additivity="false" level="INFO">'),
+    in_block("org.apache.cassandra.audit", "  </logger> -->", "  </logger>" + AUDIT_OFF),
+]
+
+# the rotation of system.log and debug.log (the audit's: above), each in its appender
+ROTATION = [in_block(appender, "      <%s>%s</%s>" % (tag, stock, tag),
+                     "      <%s>{{ cassandra_log_%s_%s }}</%s>" % (tag, kind, var, tag))
+            for appender, kind in (("SYSTEMLOG", "system"), ("DEBUGLOG", "debug"))
+            for tag, stock, var in (("maxFileSize", "50MB", "max_file_size"), ("maxHistory", "7", "max_history"),
+                                    ("totalSizeCap", "5GB", "total_size_cap"))]
+
+# one pattern for every encoder (SYSTEMLOG, DEBUGLOG, STDOUT, AUDIT): the series' stock one by default
+PATTERNS = {"4.0": "%-5level [%thread] %date{ISO8601} %F:%L - %msg%n", "4.1": "%-5level [%thread] %date{ISO8601} %F:%L - %msg%n",
+            "5.0": "%-5level [%thread] %date{\"yyyy-MM-dd'T'HH:mm:ss,SSS\", UTC} %F:%L - %msg%n"}
+
+
+def pattern_rules(series):
+    return [in_block(appender, "      <pattern>%s</pattern>" % PATTERNS[series], "      <pattern>{{ cassandra_log_pattern }}</pattern>")
+            for appender in ("SYSTEMLOG", "DEBUGLOG", "STDOUT", "AUDIT")]
+
+
+# 5.0: the system_views.system_logs table (the stock CQLLOG appender, commented out; its appender-ref: in
+# cassandra_config's _cassandra_config_logback_refs)
+CQL_ON = "{{ '' if cassandra_log_cql_table else '<!-- ' }}"
+CQL_TABLE = [
+    in_block("CQLLOG", '  <!-- <appender name="CQLLOG" class="org.apache.cassandra.utils.logging.VirtualTableAppender">',
+             "  " + CQL_ON + '<appender name="CQLLOG" class="org.apache.cassandra.utils.logging.VirtualTableAppender">'),
+    in_block("CQLLOG", "      <level>WARN</level>", "      <level>{{ cassandra_log_cql_table_level }}</level>"),
+    in_block("CQLLOG", "  </appender> -->", "  </appender>{{ '' if cassandra_log_cql_table else ' -->' }}"),
+]
 
 COMMON = {
     "jvm-server.options": [
@@ -162,15 +230,18 @@ COMMON = {
         ('    <appender-ref ref="ASYNCDEBUGLOG" /> <!-- Comment this line to disable debug.log -->',
          "    {{ '' if cassandra_debug_log_enabled else '<!-- ' }}"
          '<appender-ref ref="ASYNCDEBUGLOG" />'
-         "{{ '' if cassandra_debug_log_enabled else ' -->' }} <!-- Comment this line to disable debug.log -->"),
+         "{{ '' if cassandra_debug_log_enabled else ' -->' }} <!-- Comment this line to disable debug.log -->"
+         # (your appender-refs: cassandra_logback_root_extra_refs, as lines in cassandra_config's vars)
+         + append_list("_cassandra_config_logback_refs")),
+        # the loggers of cassandra_log_levels (cassandra_config's vars), then your snippet
         ('  <logger name="org.apache.cassandra" level="DEBUG"/>',
          '  <logger name="org.apache.cassandra" level="{{ cassandra_log_level_cassandra }}"/>'
-         + append_list("cassandra_logback_extra_lines") + append_snippet("_cassandra_config_snippet_logback")),
+         + append_list("_cassandra_config_log_levels") + append_snippet("_cassandra_config_snippet_logback")),
         # off by default: under systemd a second copy of system.log in the journal
         ('    <appender-ref ref="STDOUT" />',
          "    {{ '' if cassandra_log_console else '<!-- ' }}<appender-ref ref=\"STDOUT\" />"
          "{{ '' if cassandra_log_console else ' -->' }}"),
-    ],
+    ] + AUDIT_FILE + ROTATION,
 }
 
 ENV_COMMON = [
@@ -187,9 +258,8 @@ ENV_COMMON = [
     ('#JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file=/etc/cassandra/jmxremote.access"',
      "{{ '' if cassandra_jmx_users else '#' }}"
      'JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file={{ cassandra_jmx_remote_access_file }}"'),
-    # the file's last line: the lines cassandra_env_extra_lines adds after it, then the snippet
-    ('JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"', 'JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"' + append_list("cassandra_env_extra_lines")
-     + append_snippet("_cassandra_config_snippet_env")),
+    # the file's last line: your snippet after it
+    ('JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"', 'JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"' + append_snippet("_cassandra_config_snippet_env")),
 ]
 
 
@@ -224,6 +294,7 @@ def rules_4x(pause, tenuring_and_region):
 
 RULES = {
     "5.0": dict(COMMON, **{
+        "logback.xml": COMMON["logback.xml"] + pattern_rules("5.0") + CQL_TABLE,
         "cassandra-env.sh": ENV_COMMON + [
             opt("cassandra_heap_size", '#MAX_HEAP_SIZE="20G"', 'MAX_HEAP_SIZE="@"', "20G"),
             opt("cassandra_max_direct_memory_size", '#MAX_DIRECT_MEMORY_SIZE="10G"', 'MAX_DIRECT_MEMORY_SIZE="@"', "10G"),
@@ -236,6 +307,8 @@ RULES = {
     "4.1": rules_4x("300", True),
     "4.0": rules_4x("500", False),
 }
+for _series in ("4.0", "4.1"):
+    RULES[_series]["logback.xml"] = COMMON["logback.xml"] + pattern_rules(_series)
 
 
 def sync_mode(mode, key, var, example=None):
@@ -322,9 +395,16 @@ YAML_RULES = {
 
 
 def replace_lines(name, lines, rules):
-    for old, new in rules:
-        hits = [i for i, line in enumerate(lines) if line == old]
-        assert len(hits) == 1, "%s: %r found %d times" % (name, old, len(hits))
+    for rule in rules:
+        if len(rule) == 3:  # (in_block: the line inside its appender or logger only)
+            element, old, new = rule
+            first, last = block_of(name, lines, element)
+            hits = [i for i in range(first, last + 1) if lines[i] == old]
+            assert len(hits) == 1, "%s, <%s>: %r found %d times" % (name, element, old, len(hits))
+        else:
+            old, new = rule
+            hits = [i for i, line in enumerate(lines) if line == old]
+            assert len(hits) == 1, "%s: %r found %d times" % (name, old, len(hits))
         lines[hits[0]] = new
 
 

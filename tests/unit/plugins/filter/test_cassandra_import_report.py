@@ -416,17 +416,18 @@ def test_an_empty_value_is_shown():
     assert [line.split()[1] for line in lines if line.strip().startswith("cassandra_cdc_raw_directory:")] == ["(empty)"]
 
 
-def test_long_extra_lines_summarised():
-    # (2026-11-02) a monitoring agent's block in cassandra_env_extra_lines: "N lines (first: ...)", whole in the files
+def test_long_end_lines_in_a_snippet():
+    # (2026-11-02) a monitoring agent's block at the end of cassandra-env.sh: in its snippet, the report names it
     block = ["# BEGIN agent"] + ['JVM_OPTS="$JVM_OPTS -javaagent:/opt/agent/agent.jar=port=%d,config=/opt/agent/'
                                  'a-very-long-configuration-file-name.yaml"' % (9000 + i) for i in range(18)] + ["# END"]
     nodes = [node(i) for i in range(1, 4)]
     for n in nodes:
-        n["vars"]["cassandra_env_extra_lines"] = list(block)
+        n["vars"]["(cassandra-env.sh)"] = list(block)
     lines = report(nodes)
-    rows = [line for line in lines if line.strip().startswith("cassandra_env_extra_lines:")]
-    assert rows == ["    cassandra_env_extra_lines: 20 lines (first: # BEGIN agent)  all (3 nodes)"
-                    "   (lines added at the end of cassandra-env.sh)"]
+    # (the import writes them in a snippet next to the inventory: its path)
+    rows = [line for line in lines if line.strip().startswith("cassandra_config_template_snippets")]
+    assert rows == ["    cassandra_config_template_snippets.cassandra-env.sh: group_vars/my_cluster/cassandra-env.sh.snippet.j2"
+                    "  all (3 nodes)"]
     assert "a-very-long-configuration" not in "\n".join(lines[:heading(lines, "DETAILS")])
     # a long value of its own: cut
     nodes[0]["vars"]["cassandra_extra_settings"] = {"x": "y" * 100}
@@ -644,12 +645,12 @@ def test_self_check_stop_golden():
         "                      -e import_cluster_keep_hand_edits=true; these files are then not managed by",
         "                      Ansible (kept as the node has them): cassandra-env.sh on node1 (1 node);",
         "                      jvm17-server.options on node2, node5 (2 nodes). To bring them under Ansible:",
-        "                      carry the edit in the inventory (cassandra_jvm*_extra_options,",
-        "                      cassandra_env_extra_lines and cassandra_logback_extra_lines for lines at the",
-        "                      end of the file, cassandra_extra_settings, ...) or give the file your own",
-        "                      template (cassandra_config_template_overrides), remove the file from",
-        "                      cassandra_config_keep_files, import again. To drop them instead: undo them on",
-        "                      the node, then import again",
+        "                      carry the edit in the inventory (cassandra_jvm*_extra_options, a template",
+        "                      piece of yours for lines at the end of cassandra-env.sh or logback.xml,",
+        "                      cassandra_config_template_snippets, cassandra_extra_settings, ...) or give the",
+        "                      file your own template (cassandra_config_template_overrides), remove the file",
+        "                      from cassandra_config_keep_files, import again. To drop them instead: undo",
+        "                      them on the node, then import again",
         "  your files          in host_vars/node3/local.yml, set cassandra_concurrent_reads to the node's",
         "                      value (64) or remove the line, then import again",
         "  not read            start Cassandra or fix the access on node4 (1 node), then import again; or",

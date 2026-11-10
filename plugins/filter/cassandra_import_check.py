@@ -57,8 +57,8 @@ from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import (
     cassandra_file_permissions, permission_differences)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
-    compared, jvm_options_settings, properties_settings, same_settings, same_yaml_value, shell_lines, xml_settings, yaml_settings,
-    yaml_rejected)
+    compared, jvm_options_settings, properties_settings, same_settings, same_yaml_value, shell_lines,
+    xml_settings, yaml_settings, yaml_rejected)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as _out
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_prometheus as prometheus
@@ -84,10 +84,25 @@ def cassandra_inventory_host_vars(files, hosts, name):
     return _host_vars(_read_files(files), hosts, name)
 
 
+# the templates next to the variables (the import's snippets and templates, .j2: not variables files), by path
+TEMPLATES = "(templates)"
+# the role's variable each snippet's text is in (cassandra_config's vars)
+SNIPPET_VARS = (("logback.xml", "_cassandra_config_snippet_logback"),
+                ("logback.xml:appenders", "_cassandra_config_snippet_appenders"),
+                ("cassandra-env.sh", "_cassandra_config_snippet_env"))
+# the import's path of a template: {{ inventory_dir }}/<path in the inventory>
+IN_INVENTORY = re.compile(r"^\{\{\s*inventory_dir\s*\}\}/(.+)$")
+
+
 def _read_files(files):
-    """The inventory files -> {group_vars/<group> or host_vars/<host>: its variables}."""
+    """The inventory files -> {group_vars/<group> or host_vars/<host>: its variables, TEMPLATES: {path: text} of
+    the templates among them}."""
     by_where = {}
+    templates = {}
     for f in files:
+        if f["path"].endswith(".j2"):  # (Ansible reads no .j2 there as variables)
+            templates[f["path"]] = f["content"]
+            continue
         parts = f["path"].split("/")
         by_where.setdefault(parts[0] + "/" + (parts[1].rsplit(".", 1)[0] if len(parts) == 2 else parts[1]), []).append(f)
     data = {}
@@ -97,6 +112,7 @@ def _read_files(files):
         found = in_dir or [f for ext in ("yml", "yaml", "json") for f in found if f["path"] == "%s.%s" % (where, ext)][:1]
         for f in sorted(found, key=lambda f: f["path"]):
             data.setdefault(where, {}).update(yaml.load(f["content"], Loader=Loader) or {})
+    data[TEMPLATES] = templates
     return data
 
 
@@ -264,11 +280,12 @@ def _defaults():
     return ctx
 
 
-def _render(variables, facts, live, conf_dir=""):
+def _render(variables, facts, live, conf_dir="", templates=None):
     """{file: text} the roles would write on a node with these variables: the
     cassandra_config files of its series, the JMX users' files, the unit when
     cassandra_service manages it (and the node's could be read), medusa.ini
-    when Medusa is on."""
+    when Medusa is on. templates: {path in the inventory: text} of the ones
+    about to be written there (read from it, not from the disk)."""
     ctx = _trusted(dict(_defaults(), **variables))
     ctx["ansible_facts"] = facts
     # the roles' templates rendered by Ansible itself (its template lookup, its filters and tests), with these
@@ -308,6 +325,7 @@ def _render(variables, facts, live, conf_dir=""):
         elif f in keep:
             errors.append("cassandra_config_template_overrides: %s is also in cassandra_config_keep_files,"
                           " cassandra_config would refuse it" % f)
+    errors += _snippets(variables, ctx, value, templar, keep, overrides, templates or {})
     wanted = [(f, overrides[f] if isinstance(overrides.get(f), str) and overrides[f].startswith("/")
                else "cassandra_config/templates/%s/%s.j2" % (series, f)) for f in ctx["_cassandra_config_files"][series]
               if not (f in keep and f in live)]
@@ -345,6 +363,47 @@ def _render(variables, facts, live, conf_dir=""):
                       % type(exc).__name__)
     # the environment Cassandra would get from the unit: the roles' one, else the node's, kept
     return rendered, errors, value("cassandra_service_environment") if unit_managed else None, permissions
+
+
+def _in_inventory(given, name, templates):
+    """The text of the snippet that given (cassandra_config_template_snippets, as written) names for
+    the file name, when it is one about to be written in the inventory ({{ inventory_dir }}/<path>), else None."""
+    path = given.get(name) if isinstance(given, dict) else None
+    m = IN_INVENTORY.match(str(path)) if isinstance(path, str) else None
+    return templates.get(m.group(1)) if m else None
+
+
+def _snippets(variables, ctx, value, templar, keep, overrides, templates):
+    """Your template pieces (cassandra_config_template_snippets): what cassandra_config refuses, a difference ->
+    [error]; their text rendered here (ctx: in their variable), from the inventory about to be written or from the
+    controller."""
+    try:
+        snippets = value("cassandra_config_template_snippets") or {}
+    except Exception as exc:  # pylint: disable=broad-except  # any template error, said by its type (no value)
+        return ["cassandra_config_template_snippets: cannot be read with these variables (%s)" % type(exc).__name__]
+    if not isinstance(snippets, dict):
+        return ["cassandra_config_template_snippets: not a dict, cassandra_config would refuse it"]
+    errors = []
+    for f, path in sorted(snippets.items()):
+        mine = _in_inventory(variables.get("cassandra_config_template_snippets"), f, templates)
+        if f not in dict(SNIPPET_VARS):
+            errors.append("cassandra_config_template_snippets: %s takes no snippet, cassandra_config would refuse it" % f)
+        elif mine is None and (not isinstance(path, str) or not path.startswith("/") or not os.path.isfile(path)):
+            errors.append("cassandra_config_template_snippets: %s: not an absolute path to a file on the controller,"
+                          " cassandra_config would refuse it" % f)
+        elif f.split(":")[0] in keep or f.split(":")[0] in overrides:
+            errors.append("cassandra_config_template_snippets: %s: its file is also in cassandra_config_%s,"
+                          " cassandra_config would refuse it" % (f, "keep_files" if f.split(":")[0] in keep
+                                                                 else "template_overrides"))
+        else:
+            if mine is None:  # yours on the controller: read here (rendered as the role's lookup would)
+                with open(path, encoding="utf-8") as text:
+                    mine = text.read()
+            try:
+                ctx[dict(SNIPPET_VARS)[f]] = as_is(re.sub(r"\n+$", "", templar.template(trust_as_template(mine)) or ""))
+            except Exception as exc:  # pylint: disable=broad-except  # a template error: said by its type (no value)
+                errors.append("%s: its snippet could not be rendered with these variables (%s)" % (f, type(exc).__name__))
+    return errors
 
 
 @values_hidden
@@ -426,7 +485,8 @@ def _self_check(files_data, hosts, name, facts, live, node_environment, storage_
                      inventory_hostname_short=name.split(".")[0])
     if inventory_dir:
         variables["inventory_dir"] = inventory_dir
-    rendered, errors, role_environment, wanted = _render(variables, facts, live, conf_dir)
+    rendered, errors, role_environment, wanted = _render(variables, facts, live, conf_dir,
+                                                         files_data.get(TEMPLATES) or {})
     if role_environment is None:  # the unit stays as it is
         role_environment = node_environment
     running = dict(running or {}, series=str(dict(_defaults(), **variables).get("cassandra_version")))

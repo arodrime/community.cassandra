@@ -1444,13 +1444,21 @@ the role's header, another series' file, or any file when the package came from 
 ``cassandra_repository_manage: false`` on that node, and the report says why.
 
 The lines a node has at the end of ``cassandra-env.sh`` (an ``export``, a ``JVM_OPTS="$JVM_OPTS -javaagent:..."``)
-or of ``logback.xml``'s ``<configuration>`` (a ``<logger>``) are carried as ``cassandra_env_extra_lines`` and
-``cassandra_logback_extra_lines`` (the role writes them there), the JVM options a node adds as
-``cassandra_jvm*_extra_options`` (written at the end of their file). A secret in one of those lines, named as the output masks one (``password``, ``secret``, ``_pass``...:
+or of ``logback.xml``'s ``<configuration>`` (a ``<logger>``) are carried in a template piece next to the inventory,
+not in its YAML: ``group_vars/<cluster group>/cassandra-env.sh.snippet.j2`` (``logback.xml.snippet.j2``) when every
+node has the same lines, else ``host_vars/<node>/``, which ``cassandra_config_template_snippets`` names (the role
+renders it where the lines were). Ansible reads
+no ``.j2`` there as variables or as an inventory. A node's own ``{{`` is written in a ``{% raw %}`` block, rendered as
+it is; the snippet's first line, a Jinja comment, says the import wrote it, and a re-import rewrites (or removes) it.
+The whole ``<appender>`` elements of its own a node has before ``<root>`` go to the snippet
+``logback.xml.appenders.snippet.j2`` (``cassandra_config_template_snippets``' ``logback.xml:appenders``, rendered before
+``<root>``), in their order.
+The JVM options a node adds are carried as ``cassandra_jvm*_extra_options`` (written at the end of their file). A secret in one of those lines, named as the output masks one (``password``, ``secret``, ``_pass``...:
 ``export KEYSTORE_PASSWORD=...``, ``-Djavax.net.ssl.keyStorePassword=...``) goes to ``secrets.yml`` (vaulted, as the passwords) in a variable of its own,
 ``cassandra_secret_<file>_<name>`` (e.g. ``cassandra_secret_env_keystore_password``), which the line refers to; the
 report names it, its value masked. A secret the import cannot take out of its line alone (a ``$(...)`` in it, a word
-the masking reads as part of its value) keeps its whole list in ``secrets.yml``. A secret that differs between nodes is in each node's
+the masking reads as part of its value) puts all the lines of its snippet in ``secrets.yml``, in a
+``cassandra_secret_<file>_lines`` variable the snippet refers to (never in clear in a snippet). A secret that differs between nodes is in each node's
 ``host_vars``: a node added later needs its own. Lines that set what a variable or the role's files already set
 (``MAX_HEAP_SIZE=``, ``-Xmx``, the JMX port, a GC), or that do not make a whole (an ``if`` without its ``fi``), are not carried: none of the end lines
 then is.
@@ -1470,7 +1478,14 @@ get it before the agent ``cassandra-env.sh`` adds). ``apply_config`` then rewrit
 the role's layout (and restarts the nodes): the report says so (``MOVED``). The options the running JVM does not use
 (in the options file of another Java, set again later, ignored by its Java version) are listed under ``CLEANUP``.
 ``logback.xml`` is read as logback reads it: its root level, the ``org.apache.cassandra`` level, ``debug.log`` and the
-console, however written.
+console, the stock ``AUDIT`` appender and its logger uncommented (``cassandra_log_audit_file``, written only when it is
+not its default: on with ``FileAuditLogger``), 5.0's ``CQLLOG`` appender named by ``<root>``
+(``cassandra_log_cql_table`` and its level), the rotation of each file (``cassandra_log_<system|debug|audit>_*``), the
+pattern of the log lines (``cassandra_log_pattern``, when every encoder has the same), the appenders ``<root>`` names besides the stock ones
+(``cassandra_logback_root_extra_refs``), the loggers that only set a level (``cassandra_log_levels``), however written
+and wherever they are. logback (1.2, as in Cassandra 4.x and 5.0) reads its ``<appender>`` and ``<logger>`` elements
+in any order once each ``appender-ref`` comes after its appender: ``cassandra_config`` and the self-check compare them
+so (no appender nor logger named twice; with a ``<property>`` or an ``<include>``, read in order, in the file's order).
 
 Other hand edits no variable covers (an extra logback appender, a line in the middle of ``cassandra-env.sh``, or one
 that sets what a variable does) fail the self-check. Carry them in the inventory (the variables above, if their place

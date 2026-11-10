@@ -101,6 +101,8 @@ def _kind(key):
         return "restart"
     if key.startswith("cassandra_linux_") or key in ("cassandra_data_readahead_kb", "cassandra_data_disk_tuning"):
         return "os"
+    if key in ("cassandra_config_template_snippets", "cassandra_config_template_overrides"):  # (a config file's text)
+        return "restart"
     if key == "cassandra_jmx_users":  # (jmxremote.password and .access, whose templates are not a series')
         return "jmx"
     if key in EXPORTER_RESTART:  # (the agent's option ends jvm-server.options; its HTTPS and login: read at start)
@@ -244,9 +246,9 @@ def _blocks(lines):
 
 _EXPR = re.compile(r"\{\{.*?\}\}")
 _TOGGLE = re.compile(r"^\{\{[^}]*\}\}")  # a line written commented out or not: {{ '' if x else '# ' }}line
-# the lines a list adds after a line (cassandra_env_extra_lines, cassandra_logback_extra_lines), then the snippet's
-# (cassandra_config_template_snippets): not that line's value
-_APPENDED = re.compile(r"\{\{[^{}]*\| join\([^{}]*\}\}(?:\{\{[^{}]*_cassandra_config_snippet_\w+[^{}]*\}\})?$")
+# the lines added after a line (cassandra_log_levels', a snippet's of cassandra_config_template_snippets, the JVM
+# options of cassandra_jvm*_extra_options): not that line's value
+_APPENDED = re.compile(r"(?:\{\{ \('\\n' ~ [^{}]*\}\})+$")
 _LINES = {}
 
 
@@ -399,6 +401,7 @@ def _shown(text):
     """A value as the convergence names it: a secret by its number, a node without it as such, a file of the
     inventory by its path there."""
     text = re.sub(r"[\r\n]+", " ", str(text))  # (a line of its own would be read as another one)
+    text = text.replace("{{ inventory_dir }}/", "")
     return {"(collection's default)": "default", "(not set)": "not set"}.get(text, text)
 
 

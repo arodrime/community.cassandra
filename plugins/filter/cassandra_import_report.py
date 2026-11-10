@@ -92,8 +92,12 @@ WORDS = {
     "cassandra_jvm8_extra_options": "extra Java options for Java 8",
     "cassandra_jvm11_extra_options": "extra Java options for Java 11",
     "cassandra_jvm17_extra_options": "extra Java options for Java 17",
-    "cassandra_env_extra_lines": "lines added at the end of cassandra-env.sh",
-    "cassandra_logback_extra_lines": "lines added at the end of logback.xml (logging)",
+    "cassandra_config_template_snippets": "your template pieces added to logback.xml or cassandra-env.sh",
+    "cassandra_log_audit_file": "audit events in their own file, audit/audit.log",
+    "cassandra_logback_root_extra_refs": "appenders the root logger also writes to",
+    "cassandra_log_levels": "loggers' levels",
+    "cassandra_log_pattern": "the pattern of the log lines",
+    "cassandra_log_cql_table": "the logs in the system_views.system_logs table too",
     "cassandra.yaml": "Cassandra's main settings file",
     "cassandra-env.sh": "the script that sets Java's options when Cassandra starts",
     "logback.xml": "the logging settings",
@@ -129,8 +133,9 @@ def _plain(value):
 
 def _short(text, name=""):
     """A value as one short text: a list of lines "20 lines (first: ...)" (name: its setting, "values" for a list
-    other than lines), a long text cut ("..."); the whole of it is in the files written."""
-    text = str(text)
+    other than lines), a file of the inventory by its path there, a long text cut ("..."); the whole of it is in the
+    files written."""
+    text = re.sub(r"^\{\{ inventory_dir \}\}/", "", str(text))
     if "\n" in text:
         items = text.split("\n")
         what = "lines" if re.search(r"(_lines|_options)$", name.split(".")[0]) else "values"
@@ -643,11 +648,11 @@ def _hints(layout, items, read, unread, who, error="", report=False, report_file
     if hand:
         hints.append(("hand edits", "to keep them as they are: import again with %s; these files are then not"
                       " managed by Ansible (kept as the node has them): %s. To bring them under Ansible: carry the"
-                      " edit in the inventory (cassandra_jvm*_extra_options, cassandra_env_extra_lines and"
-                      " cassandra_logback_extra_lines for lines at the end of the file, cassandra_extra_settings, ...)"
-                      " or give the file your own template (cassandra_config_template_overrides), remove the file"
-                      " from cassandra_config_keep_files, import again. To drop them instead: undo them on the node,"
-                      " then import again" % (
+                      " edit in the inventory (cassandra_jvm*_extra_options, a template piece of yours for lines at"
+                      " the end of cassandra-env.sh or logback.xml, cassandra_config_template_snippets,"
+                      " cassandra_extra_settings, ...) or give the file your own template"
+                      " (cassandra_config_template_overrides), remove the file from cassandra_config_keep_files,"
+                      " import again. To drop them instead: undo them on the node, then import again" % (
                           unbreakable("-e import_cluster_keep_hand_edits=true"),
                           "; ".join("%s on %s" % (f, who(m)) for f, m in sorted(hand.items())))))
     yours = {}  # (the file of yours, its variable): the nodes' values

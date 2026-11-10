@@ -70,7 +70,7 @@
       {%- endif -%}
       {{ out }}
 
-# Your own template pieces: logback.xml and cassandra-env.sh only (where the extra lines go), a file on the
+# Your own template pieces: logback.xml and cassandra-env.sh only (their insertion points), a file on the
 # controller, for a file the role writes with its own template
 - name: Refuse template snippets the role cannot use
   ansible.builtin.assert:
@@ -101,6 +101,83 @@
       {%-   endfor -%}
       {%- endif -%}
       {{ out }}
+
+# logback.xml: an appender-ref to an appender the file does not define stops logback's configuration at the start
+# (logback 1.2 also wants it defined before); a level for a logger a variable of its own sets would be set twice
+- name: Refuse logback appender-refs and levels the role cannot write
+  ansible.builtin.assert:
+    that: _wrong | length == 0
+    fail_msg: "{{ _wrong | join('; ') }}. Nothing is changed."
+    quiet: true
+  vars:
+    _known: >-
+      {{ _cassandra_config_stock_appenders + (['AUDIT'] if cassandra_log_audit_file | bool else [])
+         + (['CQLLOG'] if cassandra_version == '50x' and cassandra_log_cql_table | default(false) | bool else [])
+         + (_cassandra_config_snippet_appenders | regex_findall('<appender\s[^>]*name="([^"]+)"')) }}
+    # appenders and loggers of your snippet at the end of <configuration>
+    _after_root: >-
+      {{ _cassandra_config_snippet_logback | regex_findall('<appender\s[^>]*name="([^"]+)"') }}
+    _snippet_loggers: >-
+      {{ (_cassandra_config_snippet_logback ~ '\n' ~ _cassandra_config_snippet_appenders)
+         | regex_findall('<logger\s[^>]*name="([^"]+)"') }}
+    _wrong: >-
+      {%- set out = [] -%}
+      {%- if cassandra_logback_root_extra_refs is string or cassandra_logback_root_extra_refs is mapping -%}
+      {%-   set _ = out.append('cassandra_logback_root_extra_refs: a list of appender names is expected') -%}
+      {%- else -%}
+      {%-   for ref in cassandra_logback_root_extra_refs if ref not in _known -%}
+      {%-     if ref in _after_root -%}
+      {%-       set _ = out.append('cassandra_logback_root_extra_refs: ' ~ ref ~ ' is defined in your snippet logback.xml,'
+                                 ~ ' after <root>, where logback (1.2) does not find it: move it to your snippet'
+                                 ~ ' logback.xml:appenders (cassandra_config_template_snippets), before <root>') -%}
+      {%-     else -%}
+      {%-       set _ = out.append('cassandra_logback_root_extra_refs: ' ~ ref ~ ' is not an appender of logback.xml ('
+                                 ~ _known | join(', ') ~ '); define it in your snippet logback.xml:appenders'
+                                 ~ ' (cassandra_config_template_snippets), or remove it') -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%- endif -%}
+      {%- if cassandra_log_cql_table | bool and cassandra_version != '50x' -%}
+      {%-   set _ = out.append('cassandra_log_cql_table: the system_views.system_logs table is 5.0 only: set it to false'
+                             ~ ' for Cassandra ' ~ cassandra_version) -%}
+      {%- endif -%}
+      {%- if cassandra_log_cql_table | bool and 'CQLLOG' in cassandra_logback_root_extra_refs -%}
+      {%-   set _ = out.append('cassandra_logback_root_extra_refs: CQLLOG is named by cassandra_log_cql_table already:'
+                             ~ ' remove it from the list') -%}
+      {%- endif -%}
+      {%- if cassandra_log_levels is not mapping -%}
+      {%-   set _ = out.append('cassandra_log_levels: a dict of {logger name: level} is expected') -%}
+      {%- else -%}
+      {%-   for name, level in cassandra_log_levels.items() -%}
+      {%-     set own = 'ROOT' if name | string | upper == 'ROOT' else name -%}
+      {%-     if own in _cassandra_config_own_loggers -%}
+      {%-       set _ = out.append('cassandra_log_levels: ' ~ name ~ ' is set by ' ~ _cassandra_config_own_loggers[own]
+                                 ~ ': set it there, and remove ' ~ name ~ ' from cassandra_log_levels') -%}
+      {%-     elif name in _snippet_loggers -%}
+      {%-       set _ = out.append('cassandra_log_levels: ' ~ name ~ ' is also a logger of your snippet of logback.xml'
+                                 ~ ' (cassandra_config_template_snippets): logback would set it twice; keep one of them') -%}
+      {%-     elif (level | string | upper) not in ['TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'OFF', 'ALL'] -%}
+      {%-       set _ = out.append('cassandra_log_levels: ' ~ name ~ ': ' ~ level ~ ' is not a level (TRACE, DEBUG, INFO,'
+                                 ~ ' WARN, ERROR, OFF, ALL; quoted: an unquoted OFF is a boolean in YAML)') -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%- endif -%}
+      {{ out }}
+  when: "'logback.xml' not in cassandra_config_keep_files"  # (a file kept as it is: none of them written)
+
+# FileAuditLogger without the audit file: its events go to system.log (logback's root)
+- name: Warn about audit events going to system.log
+  ansible.builtin.debug:
+    msg: >-
+      WARNING  {{ inventory_hostname }}: Cassandra audits with FileAuditLogger, and cassandra_log_audit_file is false:
+      the audit events go to system.log, not audit/audit.log. Set cassandra_log_audit_file to true for a file of their
+      own, or leave it so if wanted.
+  vars:
+    cassandra_output: true
+  when:
+    - cassandra_audit_logging_enabled | bool
+    - (cassandra_audit_logger_class_name | string).split('.') | last == 'FileAuditLogger'
+    - not cassandra_log_audit_file | bool
 
 - name: Refuse audit logger parameters the template cannot write
   ansible.builtin.assert:
@@ -267,10 +344,10 @@
       {{ [cassandra_prometheus_exporter_tls_keystore, cassandra_prometheus_exporter_tls_keystore_password,
           cassandra_prometheus_exporter_tls_certificate_alias] | select | list | length }}
     _auth: "{{ [cassandra_prometheus_exporter_username, cassandra_prometheus_exporter_password] | select | list | length }}"
-    # the JVM options and cassandra-env.sh lines the inventory adds
+    # the JVM options the inventory adds, and your snippet of cassandra-env.sh
     _options: >-
       {{ (cassandra_jvm_extra_options + cassandra_jvm8_extra_options + cassandra_jvm11_extra_options
-          + cassandra_jvm17_extra_options + cassandra_env_extra_lines) | map('string') | join(' ') }}
+          + cassandra_jvm17_extra_options + [_cassandra_config_snippet_env]) | map('string') | join(' ') }}
     _wrong: >-
       {%- set out = [] -%}
       {%- if cassandra_prometheus_exporter_version is not string
@@ -303,8 +380,8 @@
       {%- endif -%}
       {%- if _options is search('jmx_prometheus_javaagent') -%}
       {%-   set _ = out.append('a jmx_prometheus_javaagent agent is already in cassandra_jvm*_extra_options or'
-                               ~ ' cassandra_env_extra_lines: the JVM would load two (the second exits on its port);'
-                               ~ ' remove it there, the role writes it') -%}
+                               ~ ' your snippet of cassandra-env.sh (cassandra_config_template_snippets): the JVM would'
+                               ~ ' load two (the second exits on its port); remove it there, the role writes it') -%}
       {%- endif -%}
       {%- for var in ['cassandra_prometheus_exporter_dir', 'cassandra_prometheus_exporter_config_file']
               if lookup('ansible.builtin.vars', var) | string not in ['', 'None']

@@ -54,6 +54,7 @@ import sys
 import textwrap
 import traceback
 import xml.etree.ElementTree as ET
+from xml.parsers import expat
 from collections import namedtuple
 
 import jinja2
@@ -188,6 +189,7 @@ def _load_role(series, facts):
     ctx["_cassandra_config_quote"] = role_vars["_cassandra_config_quote"]
     ctx["_cassandra_config_extra_sections"] = role_vars["_cassandra_config_extra_sections"]
     ctx["_cassandra_config_plain_path"] = role_vars["_cassandra_config_plain_path"]
+    ctx["_cassandra_config_log_patterns"] = role_vars["_cassandra_config_log_patterns"]
     # (the extra lines read as such: a snippet of yours renders nothing here)
     ctx["_cassandra_config_snippet_logback"] = ctx["_cassandra_config_snippet_appenders"] = ""
     ctx["_cassandra_config_snippet_env"] = ""
@@ -203,7 +205,9 @@ def _load_role(series, facts):
         for k, v in ctx.items():
             if isinstance(v, str) and "{{" in v:
                 ctx[k] = env.from_string(v).render(**ctx)
-                if ctx[k].startswith(("[", "{")):  # like Ansible, a rendered list/dict is one again
+                if ctx[k] in ("True", "False"):  # (cassandra_log_audit_file) like Ansible, a boolean again
+                    ctx[k] = ctx[k] == "True"
+                elif ctx[k].startswith(("[", "{")):  # like Ansible, a rendered list/dict is one again
                     try:
                         ctx[k] = ast.literal_eval(ctx[k])
                     except (ValueError, SyntaxError):
@@ -211,9 +215,29 @@ def _load_role(series, facts):
     return env, ctx, files
 
 
+# cassandra_config's vars made of other variables, as lines of logback.xml: worked out again from each rendering's
+DERIVED = ("_cassandra_config_logback_refs", "_cassandra_config_log_levels")
+# a node's whole <appender> elements before <root> (no variable of their own): its snippet logback.xml:appenders
+# once laid out (the import's own key, never in the inventory)
+APPENDERS = "(logback.xml:appenders)"
+# the lines a node has at the end of cassandra-env.sh, of logback.xml's <configuration>: their snippets once laid out
+ENV_END = "(cassandra-env.sh)"
+LOGBACK_END = "(logback.xml)"
+END_KEYS = {"cassandra-env.sh": ENV_END, "logback.xml": LOGBACK_END}
+# the role's variable each of these renders in (its snippet's)
+SNIPPET_TEXT = ((APPENDERS, "_cassandra_config_snippet_appenders"), (ENV_END, "_cassandra_config_snippet_env"),
+                (LOGBACK_END, "_cassandra_config_snippet_logback"))
+
+
 def _render(env, series, name, ctx):
     with open(os.path.join(ROLE, "templates", SERIES[series], name + ".j2")) as f:
         src = f.read()
+    ctx = dict(ctx)
+    for key in DERIVED:  # (lists of lines, as Ansible gives them)
+        ctx[key] = ast.literal_eval(env.from_string(role_file("cassandra_config", "vars")[key]).render(**ctx).strip())
+    for key, var in SNIPPET_TEXT:
+        if ctx.get(key):
+            ctx[var] = "\n".join(ctx[key])
     return src.split("\n"), env.from_string(src).render(**ctx).split("\n")
 
 
@@ -475,10 +499,10 @@ def _extra_lines_at(name, tpl):
     """Where a file's extra lines go: (its template lines that join a list of them, the index of the line they
     follow, None when appended at the end)."""
     tail = [t for t in tpl[-2:] if "| join(" in t]
-    # cassandra-env.sh and logback.xml: the line their extra lines follow (env: its last one; logback: the one
+    # cassandra-env.sh and logback.xml: the line their snippet follows (env: its last one; logback: the one
     # before </configuration>), the lines after it on the node; the JVM options files: lines appended
-    after = next((i for i in range(len(tpl) - 1, max(len(tpl) - 4, -1), -1) if "| join(" in tpl[i]), None) \
-        if name.endswith((".sh", ".xml")) else None
+    after = next((i for i in range(len(tpl) - 1, max(len(tpl) - 4, -1), -1)
+                  if "_cassandra_config_snippet_" in tpl[i]), None) if name.endswith((".sh", ".xml")) else None
     if after is not None:
         tail = [tpl[after]]
     return tail, after
@@ -529,7 +553,7 @@ def _import_file(env, series, name, ctx, live):
     if appended and _carried(name, series, tpl, appended):
         extra = appended  # all of them or none: a block cut in two would not run (if ... fi) or parse (<root>)
     if tail and extra:
-        found[re.search(r"\((\w+) \| join", tail[0]).group(1)] = extra
+        found[END_KEYS.get(name) or re.search(r"\((cassandra_\w+) \| join", tail[0]).group(1)] = extra
     if name.endswith(".yaml"):
         # top-level settings by their key, wherever the node has them (lines
         # added or moved by hand shift the ones below out of place)
@@ -1611,6 +1635,18 @@ def cassandra_config_import(live_files, cassandra_version, facts, conf_target=""
     raise error  # out of the except block: no chained message either
 
 
+def _audit_file(found, changed):
+    """cassandra_log_audit_file in changed (in place) only when the node's is not its default there: on with
+    FileAuditLogger (cassandra_audit_logging_enabled, cassandra_audit_logger_class_name as found)."""
+    if "cassandra_log_audit_file" not in found:
+        return
+    derived = boolean(found.get("cassandra_audit_logging_enabled", False), strict=False) and \
+        str(found.get("cassandra_audit_logger_class_name", "")).rsplit(".", maxsplit=1)[-1] == "FileAuditLogger"
+    changed.pop("cassandra_log_audit_file", None)
+    if bool(found["cassandra_log_audit_file"]) != derived:
+        changed["cassandra_log_audit_file"] = bool(found["cassandra_log_audit_file"])
+
+
 def _changed_values(found, ctx, from_shell):
     """The values found that are not the role defaults and are values for their variable -> {variable: value}."""
     return {k: v for k, v in found.items()
@@ -1774,7 +1810,12 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
                 from_shell.update(got)
     if "logback.xml" in live_files:
         where[0] = "logback.xml"
-        found.update(_logback(live_files["logback.xml"]))
+        for key, value in _logback(live_files["logback.xml"]).items():
+            if value is None:
+                found.pop(key, None)
+            else:
+                found[key] = value
+        found = _logback_carried(env, cassandra_version, ctx, found, live_files["logback.xml"])
     where[0] = "the JVM options files"
     jvm_notes, jvm_warnings, keep_files = _jvm_options(env, cassandra_version, ctx, [f for f in files if f in live_files],
                                                        found, str(java or ""), keep_unread_jvm_options, cmdline)
@@ -1786,6 +1827,7 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
         found.update((k, canonical_quantity(k[len("cassandra_"):], v)) for k, v in found.items()
                      if k[len("cassandra_"):] in QUANTITY_KEYS)
     changed = _changed_values(found, ctx, from_shell)
+    _audit_file(found, changed)
     if storage_dir and "cassandra.yaml" in live_files:
         dirs, keep_storage = _storage_dirs(live_files["cassandra.yaml"], storage_dir, ctx, changed)
         found.update(dirs)
@@ -1806,6 +1848,8 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     changed.update(jmx_vars)
     where[0] = "comparing the files with the role's"
     render = dict(ctx, **changed)
+    if "cassandra_log_audit_file" in found:  # (its default made of other values: the node's whatever it is)
+        render["cassandra_log_audit_file"] = bool(found["cassandra_log_audit_file"])
     if "cassandra.yaml" in live_files and render_dirs:
         render["cassandra_data_file_directories"] = render_dirs
     where[0] = "the JVM options"
@@ -1824,8 +1868,10 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
                                                                      live_as_found) if f not in moved["rewritten"]]
     hand += jmx_note
     carried = ["%s: %d line(s) at its end kept with %s" % (name, len(changed[key]), key)
-               for key, name in (("cassandra_env_extra_lines", "cassandra-env.sh"),
-                                 ("cassandra_logback_extra_lines", "logback.xml")) if changed.get(key)]
+               for name, key in END_KEYS.items() if changed.get(key)]
+    if changed.get(APPENDERS):
+        carried.append("logback.xml:appenders: %d line(s) of its own appenders before <root> kept with %s"
+                       % (len(changed[APPENDERS]), APPENDERS))
     out, trusted, secrets = _move_secrets(_inventory_vars(changed, found, ctx, live_files, facts, conf_target,
                                                           cassandra_version))
     return {"vars": out, "hand_edits": hand, "normalized": normalized, "comments": comments,
@@ -1838,12 +1884,13 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
 
 # The lists of lines the import fills from the hand edits a node has (cassandra-env.sh, logback.xml, the JVM
 # options files): a secret in one of them goes to secrets.yml in a variable of its own, the line refers to it
-SECRET_LISTS = (("cassandra_env_extra_lines", "cassandra-env.sh"), ("cassandra_logback_extra_lines", "logback.xml"),
+SECRET_LISTS = ((ENV_END, "cassandra-env.sh"), (LOGBACK_END, "logback.xml"), (APPENDERS, "logback.xml:appenders"),
                 ("cassandra_jvm_extra_options", "jvm-server.options"), ("cassandra_jvm8_extra_options", "jvm8-server.options"),
                 ("cassandra_jvm11_extra_options", "jvm11-server.options"),
                 ("cassandra_jvm17_extra_options", "jvm17-server.options"))
 SECRET_VAR = "cassandra_secret_"
-SECRET_FILES = {"cassandra-env.sh": "env", "logback.xml": "logback", "jvm-server.options": "jvm",
+SECRET_FILES = {"cassandra-env.sh": "env", "logback.xml": "logback", "logback.xml:appenders": "logback_appenders",
+                "jvm-server.options": "jvm",
                 "jvm8-server.options": "jvm8", "jvm11-server.options": "jvm11", "jvm17-server.options": "jvm17"}
 SECRET_NAME = re.compile(out.SECRET_NAME)
 # a secret's name and the variable it went to (removed to tell whether a line holds another secret)
@@ -1974,16 +2021,15 @@ def _move_secrets(variables):
     for key, name in SECRET_LISTS:
         if not isinstance(variables.get(key), list):
             continue
-        kind = "sh" if name.endswith(".sh") else "xml" if name.endswith(".xml") else "options"
+        kind = "sh" if name.endswith(".sh") else "xml" if name.startswith("logback.xml") else "options"
         lines, moved, made = _take_secrets(variables[key], kind, taken, name, own)
         if moved:
             variables[key] = lines
             variables.update((var, value) for var, (dummy, value) in moved.items())
             trusted += made
-            said += ["%s: %s=%s moved to secrets.yml as %s, which %s refers to" % (name, setting, out.MASK, var, key)
-                     for var, (setting, dummy) in sorted(moved.items())]
-        if _list_secret(key, variables[key], made):
-            said.append("%s: %s kept whole in secrets.yml (a secret in it could not be taken out alone)" % (name, key))
+            said += ["%s: %s=%s moved to secrets.yml as %s, which %s refers to" % (
+                name, setting, out.MASK, var, "its snippet" if key in dict(SNIPPET_LISTS) else key)
+                for var, (setting, dummy) in sorted(moved.items())]
     return variables, trusted, said
 
 
@@ -2179,7 +2225,121 @@ def _logback(text):
     loggers = [logger for logger in conf.findall("logger") if logger.get("name") == "org.apache.cassandra"]
     if len(loggers) == 1 and loggers[0].get("level"):
         found["cassandra_log_level_cassandra"] = loggers[0].get("level")
+    # the rotation of each file, by its appender (live: a commented-out AUDIT's values are not its own)
+    for name, kind in (("SYSTEMLOG", "system"), ("DEBUGLOG", "debug"), ("AUDIT", "audit")):
+        policy = next((a.find("rollingPolicy") for a in conf.findall("appender") if a.get("name") == name), None)
+        for tag, var in (("maxFileSize", "max_file_size"), ("maxHistory", "max_history"), ("totalSizeCap", "total_size_cap")):
+            key = "cassandra_log_%s_%s" % (kind, var)
+            text = (policy.findtext(tag) or "").strip() if policy is not None else ""
+            # (None: not read, whatever a line said)
+            found[key] = (int(text) if text.isdigit() and var == "max_history" else text) if text else None
+    # the audit file: the stock AUDIT appender and the audit logger naming it, both live
+    audit = [lg for lg in conf.findall("logger") if lg.get("name") == "org.apache.cassandra.audit"]
+    found["cassandra_log_audit_file"] = bool(
+        [a for a in conf.findall("appender") if a.get("name") == "AUDIT"]
+        and audit and "AUDIT" in [r.get("ref") for r in audit[0].findall("appender-ref")])
+    refs = [r.get("ref") for r in roots[0].findall("appender-ref")] if len(roots) == 1 else []
+    # 5.0's system_views.system_logs table: the stock CQLLOG appender live, <root> naming it
+    cql = "CQLLOG" in refs and [a for a in conf.findall("appender") if a.get("name") == "CQLLOG"]
+    if cql:
+        found["cassandra_log_cql_table"] = True
+    if len(roots) == 1:  # the appenders <root> names besides the stock ones, in their order
+        extra = [ref for ref in refs if ref not in ("SYSTEMLOG", "STDOUT", "ASYNCDEBUGLOG") + (("CQLLOG",) if cql else ())]
+        if extra and len(set(extra)) == len(extra):
+            found["cassandra_logback_root_extra_refs"] = extra
+    # the loggers that set a level only (no other attribute, nothing in them), each named once, not one a variable of
+    # its own sets
+    simple = [lg for lg in conf.findall("logger") if set(lg.attrib) == {"name", "level"} and not list(lg)
+              and lg.get("name") not in LOGBACK_OWN_LOGGERS and str(lg.get("name")).upper() != "ROOT"]
+    names = [lg.get("name") for lg in conf.findall("logger")]
+    levels = dict((lg.get("name"), lg.get("level")) for lg in simple if names.count(lg.get("name")) == 1)
+    if levels:
+        found["cassandra_log_levels"] = levels
     return found
+
+
+# the loggers of logback.xml a variable of its own sets (cassandra_log_levels may not take them)
+LOGBACK_OWN_LOGGERS = ("ROOT", "org.apache.cassandra", "org.apache.cassandra.audit")
+SIMPLE_LOGGER = re.compile(r'^\s*<logger\s+name="([^"]+)"\s+level="([^"]+)"\s*/>\s*$')
+
+
+def _logback_carried(env, series, ctx, found, text):
+    """logback.xml's variables found (_logback) taken from the lines the import carries too: the simple loggers of
+    cassandra_log_levels out of the end lines, the node's whole <appender> elements before <root> (not a stock one)
+    in APPENDERS (its snippet logback.xml:appenders) when nothing else keeps them -> found (a copy)."""
+    found = dict(found)
+    levels = found.get("cassandra_log_levels") or {}
+    end = [line for line in found.get(LOGBACK_END) or []
+           if not (SIMPLE_LOGGER.match(line) and SIMPLE_LOGGER.match(line).group(1) in levels)]
+    if end:
+        found[LOGBACK_END] = end
+    else:
+        found.pop(LOGBACK_END, None)
+    blocks = _appender_blocks(text)
+    if blocks:  # (a secret in them: to secrets.yml, as for the end lines)
+        found[APPENDERS] = blocks
+    # <root>'s refs only to appenders the inventory then defines (else a hand edit, cassandra_config would refuse them)
+    defined = list(ROOT_APPENDERS) + (["AUDIT"] if found.get("cassandra_log_audit_file") else []) + re.findall(
+        r'<appender\s[^>]*name="([^"]+)"', "\n".join(found.get(APPENDERS) or []))
+    if [ref for ref in found.get("cassandra_logback_root_extra_refs") or [] if ref not in defined]:
+        found.pop("cassandra_logback_root_extra_refs")
+    # one pattern for the stock appenders' encoders: read only when the live ones agree (else the lines that
+    # differ: hand edits)
+    try:
+        patterns = set((e.text or "").strip() for a in ET.fromstring(text) if _tag(a) == "appender"
+                       and a.get("name") in ("SYSTEMLOG", "DEBUGLOG", "STDOUT", "AUDIT")
+                       for e in a.iter() if _tag(e) == "pattern")
+    except ET.ParseError:
+        patterns = set()
+    if len(patterns) > 1:
+        found.pop("cassandra_log_pattern", None)
+    return found
+
+
+def _tag(el):
+    return str(el.tag).rsplit("}", 1)[-1].lower()
+
+
+# the appenders of the stock logback.xml <root> may name (their stock definitions, written by the role)
+ROOT_APPENDERS = ("SYSTEMLOG", "DEBUGLOG", "ASYNCDEBUGLOG", "STDOUT")
+# the stock ones a variable writes (the others, LogbackMetrics: as the node's own appenders)
+STOCK_APPENDERS = ("SYSTEMLOG", "DEBUGLOG", "ASYNCDEBUGLOG", "STDOUT", "AUDIT", "CQLLOG")
+
+
+def _appender_blocks(text):
+    """The lines of the node's whole <appender> elements before <root>, other than the stock ones, each on lines of
+    its own, in their order -> [line]; [] when there are none, or one shares a line with another element."""
+    lines = text.split("\n")
+    parser = expat.ParserCreate()
+    depth, opened, spans, root = [0], [], [], []
+
+    def start(tag, attrs):
+        depth[0] += 1
+        if depth[0] == 2:
+            opened.append((tag, attrs.get("name"), parser.CurrentLineNumber - 1, parser.CurrentColumnNumber))
+            if tag.lower() == "root" and not root:
+                root.append(parser.CurrentLineNumber - 1)
+
+    def end(tag):
+        if depth[0] == 2:
+            line, col = parser.CurrentLineNumber - 1, parser.CurrentColumnNumber
+            close = re.match(r"</\s*%s\s*>" % re.escape(tag), lines[line][col:])  # (an empty one: after it already)
+            spans.append(opened.pop() + (line, col + close.end() if close else col))
+        depth[0] -= 1
+
+    parser.StartElementHandler, parser.EndElementHandler = start, end
+    try:
+        parser.Parse(text, True)
+    except expat.ExpatError:
+        return []
+    out = []
+    for tag, name, first, col, last, after in spans:
+        if tag.lower() != "appender" or name in STOCK_APPENDERS or not root or first >= root[0]:
+            continue
+        if lines[first][:col].strip() or lines[last][after:].strip():
+            return []
+        out += lines[first:last + 1]
+    return out
 
 
 def _as_text(node):
@@ -2599,6 +2759,7 @@ def cassandra_inventory_layout(nodes, cluster_name):
     hosts, group_vars = _hosts_tree(nodes, cluster, dcg, rackg)
     host_vars = {}
     read, nodes, medusa, domain = _read_for_layout(nodes)
+    read, nodes, snippets = _snippets_for_layout(read, nodes, cluster)
     keys = sorted({k for n in read for k in n["vars"]} - {"cassandra_dc", "cassandra_rack"})
     templates = _name_templates(keys, read)
     for key in [k for k in keys if k in NODE_LEVEL]:
@@ -2629,7 +2790,92 @@ def cassandra_inventory_layout(nodes, cluster_name):
     return {"cluster_group": cluster, "cluster_name": cluster_name, "hosts": hosts, "group_vars": group_vars,
             "host_vars": host_vars, "differences": "\n".join(differences), "report": "\n".join(report),
             "names": dict((n["address"], n["name"]) for n in nodes if n.get("address")), "nodes": nodes,
-            "templates": templates, "trusted": _trusted_lines(read)}
+            "templates": templates, "trusted": _trusted_lines(read),
+            "snippets": snippets}
+
+
+# The lines the import carries at the end of a file (cassandra-env.sh, logback.xml's <configuration>): written in a
+# template piece of their own next to the variables (cassandra_config_template_snippets), not in the inventory's
+# YAML: (the list they come in, the file)
+SNIPPET_LISTS = ((LOGBACK_END, "logback.xml"), (ENV_END, "cassandra-env.sh"), (APPENDERS, "logback.xml:appenders"))
+SNIPPETS = "cassandra_config_template_snippets"
+
+
+def snippet_path(kind, name, point):
+    """Where the import writes the snippet of an insertion point: group_vars/<cluster>/ when every node has the
+    same, else host_vars/<node>/ (Ansible reads no .j2 there as variables, nor as an inventory); logback.xml:appenders
+    as logback.xml.appenders."""
+    return "%s/%s/%s.snippet.j2" % (kind, name, point.replace(":", "."))
+
+
+def snippet_text(lines, trusted=()):
+    """A snippet's text: the lines as the node has them; one that looks like a template (a {{ of the node's own)
+    in a raw block, Jinja renders it as it is; trusted: the lines the import made that refer to a secret's
+    variable (rendered)."""
+    out = []
+    for line in lines:
+        out.append("{%% raw %%}%s\n{%% endraw %%}" % line if line not in trusted and TEMPLATE_MARK.search(line)
+                   else line)
+    return "\n".join(out) + "\n"
+
+
+def _snippets_for_layout(read, nodes, cluster):
+    """The nodes' lines of SNIPPET_LISTS moved to snippet files: in their variables, cassandra_config_template_snippets
+    names them ({{ inventory_dir }}/...: a template the import made, trusted) -> (read, nodes, {path: text}). Lines
+    with a secret the import could not take out alone (or one that would end a raw block): all of them in secrets.yml,
+    cassandra_secret_<file>_lines, which the snippet renders. None when your own template renders the file, or when
+    the node keeps it as it is (cassandra_config refuses a snippet for it)."""
+    snippets = {}
+    for key, name in SNIPPET_LISTS:
+        having = [n for n in read if isinstance(n["vars"].get(key), list) and n["vars"][key]
+                  and name.split(":", maxsplit=1)[0] not in (n.get("yours_templates") or ())
+                  and name.split(":", maxsplit=1)[0] not in ((n.get("keep") or {}).get("cassandra_config_keep_files") or [])]
+        texts = [_snippet_of(n, key, name) for n in having]
+        # (the same text: a node's own {{ in a raw block, never the same as a line the import made)
+        same = len(having) == len(read) and len(set(texts)) == 1
+        for n, text in zip(having, texts):
+            path = snippet_path("group_vars", cluster, name) if same else snippet_path("host_vars", n["name"], name)
+            snippets[path] = text
+            n["snippet_refs"] = list(n.get("snippet_refs") or []) + SECRET_MOVED_REF.findall(text) + re.findall(
+                r"\{\{ (%s\w+) \}\}" % SECRET_VAR, text)
+            value = "{{ inventory_dir }}/" + path
+            n["vars"] = dict((k, v) for k, v in n["vars"].items() if k != key)
+            yours = n.get("yours_snippets") or {}
+            n["vars"][SNIPPETS] = dict(yours, **dict(n["vars"].get(SNIPPETS) or {}, **{name: value}))
+            n["trusted"] = list(n.get("trusted") or []) + [value] + [v for v in yours.values() if isinstance(v, str)]
+            n["notes"] = [note.replace("kept with %s" % key, "kept in %s (%s)" % (path, SNIPPETS))
+                          if note.startswith(CARRIED + name + ":") else note for note in n.get("notes") or []]
+    for n in read:  # (the lines not in a snippet: the node keeps the file, or your template renders it; their secrets)
+        if [key for key, dummy in SNIPPET_LISTS if key in n["vars"]]:
+            variables = dict((k, v) for k, v in n["vars"].items() if k not in dict(SNIPPET_LISTS))
+            used = set(m for v in variables.values() if isinstance(v, list) for line in v if isinstance(line, str)
+                       for m in SECRET_MOVED_REF.findall(line))
+            used.update(n.get("snippet_refs") or [])
+            n["vars"] = dict((k, v) for k, v in variables.items() if not k.startswith(SECRET_VAR) or k in used)
+    nodes = [next((r for r in read if r["name"] == n["name"]), n) for n in nodes]
+    return read, nodes, snippets
+
+
+def _snippet_of(n, key, name):
+    """The text of node n's snippet of the lines of key (from the file name); lines a secret stays in (or that would
+    end a raw block): all of them, as the node has them, in a variable of secrets.yml the snippet renders (set in
+    n's variables, in place) -> text."""
+    lines, trusted = n["vars"][key], n.get("trusted") or ()
+    if all(isinstance(line, str) and "endraw" not in line for line in lines) and not _list_secret(key, lines, trusted):
+        return snippet_text(lines, trusted)
+    var = SECRET_VAR + SECRET_FILES[name] + "_lines"
+    whole = "\n".join(SECRET_MOVED_REF.sub(lambda m: str(n["vars"].get(m.group(1), m.group(0))), str(line))
+                      for line in lines)
+    variables = dict((k, v) for k, v in n["vars"].items() if k != key)
+    used = set(m for k, v in variables.items() if isinstance(v, list) for line in v if isinstance(line, str)
+               for m in SECRET_MOVED_REF.findall(line))
+    n["vars"] = dict((k, v) for k, v in variables.items() if not k.startswith(SECRET_VAR) or k in used)
+    n["vars"][var] = whole
+    n["vars"][key] = lines  # (taken out by the caller)
+    n["notes"] = list(n.get("notes") or []) + [
+        "%s: its %d line(s) with a secret the import could not take out alone are in secrets.yml, %s, which its"
+        " snippet renders" % (name, len(lines), var)]
+    return "{{ %s }}\n" % var
 
 
 def _marked(value):
@@ -2822,10 +3068,19 @@ def _yours_rendered(n, theirs, inventory_dir=""):
     """A node's files your own template renders (cassandra_config_template_overrides in a file of yours): not
     compared with the role's templates here (the self-check renders yours), so neither hand edits nor kept as
     they are (cassandra_config refuses a file both kept and overridden); the end lines carried from such a file
-    that your template has itself left out (it would render them twice)."""
+    that your template has itself left out (it would render them twice); so are those your own snippet
+    (cassandra_config_template_snippets) has. The files of your templates noted ('yours_templates': their end lines
+    stay a variable, which your template may render)."""
+    snippets = (theirs.get(SNIPPETS) or (None,))[0]
+    if isinstance(snippets, dict) and snippets:
+        n["yours_snippets"] = dict(snippets)  # (a dict the import writes replaces yours: kept in it)
+    for key, f in SNIPPET_LISTS:
+        if isinstance(snippets, dict) and f in snippets and isinstance(n["vars"].get(key), list):
+            _left_to_yours(n, key, f, _template_text(snippets[f], inventory_dir))
     overrides = (theirs.get("cassandra_config_template_overrides") or (None,))[0]
     if not isinstance(overrides, dict) or not overrides:
         return
+    n["yours_templates"] = sorted(overrides)
     kept, edits = hand_edits_kept(dict(n, keep={"cassandra_config_keep_files": list(overrides)}))
     if kept:
         n["hand_edits"] = edits
@@ -3137,7 +3392,7 @@ BLOCKS = [
         "cassandra_jvm_initiating_heap_occupancy_percent", "cassandra_jvm_cms_initiating_occupancy_fraction",
         "cassandra_jvm_max_tenuring_threshold", "cassandra_jvm_parallel_gc_threads", "cassandra_jvm_conc_gc_threads",
         "cassandra_jvm_extra_options", "cassandra_jvm8_extra_options", "cassandra_jvm11_extra_options",
-        "cassandra_jvm17_extra_options", "cassandra_env_extra_lines"]),
+        "cassandra_jvm17_extra_options"]),
     ("Prometheus exporter (its Java agent)", [
         "cassandra_prometheus_exporter_enabled", "cassandra_prometheus_exporter_version",
         "cassandra_prometheus_exporter_checksum", "cassandra_prometheus_exporter_dir", "cassandra_prometheus_exporter_port",
@@ -3145,8 +3400,8 @@ BLOCKS = [
     ("Other cassandra.yaml settings", []),
     ("cassandra.yaml settings no variable covers", ["cassandra_extra_settings"]),
     ("Logging (logback.xml)", [
-        "cassandra_log_level", "cassandra_log_level_cassandra", "cassandra_debug_log_enabled", "cassandra_log_console",
-        "cassandra_logback_extra_lines"]),
+        "cassandra_log_level", "cassandra_log_level_cassandra", "cassandra_debug_log_enabled", "cassandra_log_console"]),
+    ("Template pieces next to the inventory (hand edits the import carried)", [SNIPPETS]),
     ("Secrets of the lines above (hand edits the import carried)", []),
     ("OS tuning (found on the nodes, for the nodes added later)", [
         "cassandra_linux_sysctl_file", "cassandra_linux_sysctl", "cassandra_linux_limits", "cassandra_data_readahead_kb",
@@ -3284,7 +3539,7 @@ def _vars_yaml(variables, templates=None, trusted=()):
     return "\n".join(out)
 
 
-# What the nodes can't tell, written under the variable that needs it
+# What the nodes can't tell, written under the variable that needs it: (the variable it asks for, the note)
 NOTES = {
     ("cassandra_install_method", "packages"): (
         "# TODO: cassandra_install_url: the directory of the package files, for new nodes (not read from the nodes)\n"),
@@ -3306,7 +3561,7 @@ def _split_secrets(variables, trusted=()):
 def cassandra_inventory_files(layout):
     """layout: cassandra_inventory_layout's -> [{path, content, secret}] for group_vars/<group>/ and
     host_vars/<host>/: main.yml, and secrets.yml for variables named like
-    passwords (and extra settings holding one).
+    passwords (and extra settings holding one); then the snippets (<file>.snippet.j2).
     e.g. -> [{"path": "group_vars/prod/main.yml", "content": "<its YAML>", "secret": False},
     {"path": "group_vars/prod/secrets.yml", "content": "<its YAML>", "secret": True}, ...]."""
     layout = _plain(layout)
@@ -3318,6 +3573,8 @@ def cassandra_inventory_files(layout):
                 if data:
                     files.append({"path": "%s/%s/%s" % (kind, name, base), "secret": secret,
                                   "content": _as_is(_vars_yaml(data, layout.get("templates"), layout.get("trusted") or ()))})
+    for path, text in sorted((layout.get("snippets") or {}).items()):
+        files.append({"path": path, "secret": False, "content": _as_is(text)})
     return files
 
 
@@ -3327,14 +3584,18 @@ def cassandra_inventory_files(layout):
 GENERATED = "# Written by community.cassandra.import_cluster for %s: the next import replaces it. Your own settings: other files."
 # the line of the releases before it named the cluster
 GENERATED_UNNAMED = "# Written by community.cassandra.import_cluster: the next import replaces it. Your own settings: other files."
-_HEADER = re.compile(r"# Written by community[.]cassandra[.]import_cluster(?: for ([^\s:]+))?: ")
-_OWNABLE = re.compile(r"^(?:group_vars|host_vars)/[^/]+/(?:main|secrets)\.yml$")
+# (a template's: in a Jinja comment, {# ... #})
+_HEADER = re.compile(r"\{?# Written by community[.]cassandra[.]import_cluster(?: for ([^\s:]+))?: ")
+_OWNABLE = re.compile(r"^(?:group_vars|host_vars)/[^/]+/(?:main\.yml|secrets\.yml|[^/]+\.j2)$")
 
 
-def cassandra_inventory_generated(content, cluster):
-    """content, cluster (its group) -> content, marked as written by the import of the cluster (GENERATED first).
+def cassandra_inventory_generated(content, cluster, path=""):
+    """content, cluster (its group), path: the file's (a template, .j2: the line in a Jinja comment, which renders
+    nothing) -> content, marked as written by the import of the cluster (GENERATED first).
     e.g. ("x: 1\n", "prod") -> "# Written by community.cassandra.import_cluster for prod: ...\nx: 1\n"."""
     # the templates it holds (a URL's {{ cassandra_version }}, a node's address) written as they are
+    if str(path).endswith(".j2"):
+        return _as_is("{%s #}\n%s" % (GENERATED % cluster, content))
     return _as_is(GENERATED % cluster + "\n" + content)
 
 
