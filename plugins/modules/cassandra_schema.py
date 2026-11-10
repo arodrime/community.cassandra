@@ -19,6 +19,10 @@ description:
     - Can poll multiple times to wait for the schema version to converge.
     - Can also specify a schema version if required.
     - Schema version is obtained through the usage of the nodetool describecluster command.
+    - The nodes agree when describecluster lists one schema version. The nodes it lists as C(UNREACHABLE)
+      are not a version and are not counted (their schema is not known); they are returned in C(unreachable).
+    - It polls until the nodes agree (on I(uuid) when given) or I(poll) runs out, then fails with each
+      version and its nodes.
 
 extends_documentation_fragment:
   - community.cassandra.nodetool_module_options
@@ -59,11 +63,25 @@ EXAMPLES = '''
 RETURN = '''
 msg:
   description: A message indicating what has happened.
-  returned: on success
-  type: bool
+  returned: always
+  type: str
 rc:
   description: Return code of the last executed command.
+  returned: when nodetool failed
+  type: int
+schema_status:
+  description: The schema versions of the last successful read, each with its nodes.
   returned: always
+  type: dict
+  sample: {"86afa796-d883-3932-aa73-6b017cef0d19": ["10.0.0.1:7000", "10.0.0.2:7000"]}
+unreachable:
+  description: The nodes describecluster lists as UNREACHABLE in the last successful read.
+  returned: when there are some
+  type: list
+  elements: str
+iterations:
+  description: The number of describecluster calls, when more than one.
+  returned: when more than one
   type: int
 '''
 
@@ -96,10 +114,12 @@ class NodeToolStatusCommand(NodeToolCmd):
 
 def nodetool_status_poll(module):
     '''
-    Calls NodeToolStatusCommand(module, status_cmd) a maximum of poll times
-    with the indicated interval. Returns as soon all nodes are up or the
-    previous limits are reached.
+    Calls nodetool describecluster a maximum of poll times with the
+    indicated interval. Returns as soon as the nodes agree on one schema
+    version (the expected one when uuid is given), or when poll runs out.
     '''
+    schema_status = {}  # the versions of the last successful read
+    unreachable = []
     cluster_schema_list = []
     iterations = 0
     return_codes = []
@@ -107,6 +127,7 @@ def nodetool_status_poll(module):
     stderr_list = []
     poll = module.params['poll']
     interval = module.params['interval']
+    uuid = module.params['uuid']
 
     while iterations < poll:
         iterations += 1
@@ -117,45 +138,49 @@ def nodetool_status_poll(module):
         return_codes.append(rc)
         if rc == 0:
             schema_status = cluster_schema(out)
+            unreachable = unreachable_nodes(out)
             cluster_schema_list.append(schema_status)
-            schema_count_total = len(cluster_schema_list)
-            if schema_count_total == 1:
-                break  # The cluster has one schema... we're good
-            else:
-                if iterations == poll:
-                    break
-                else:
-                    time.sleep(interval)  # Something is wrong, check again in a bit but
-        else:
-            if iterations == poll:
+            if agreed(schema_status, uuid):
                 break
-            else:
-                time.sleep(interval)
-    return schema_status, cluster_schema_list, iterations, \
-        return_codes, stdout_list, stderr_list, schema_count_total
+        if iterations < poll:
+            time.sleep(interval)  # not agreed yet, or nodetool failed: check again in a bit
+    return schema_status, unreachable, cluster_schema_list, iterations, \
+        return_codes, stdout_list, stderr_list
+
+
+def agreed(schema_status, uuid=None):
+    """One schema version (UNREACHABLE nodes are not one), the expected one when uuid is given."""
+    return len(schema_status) == 1 and (not uuid or uuid in schema_status)
+
+
+def unreachable_nodes(stdout):
+    """The nodes describecluster lists under UNREACHABLE (no schema version known for them)."""
+    match = re.search(r"^\s*UNREACHABLE: \[(.*)\]\s*$", stdout, re.MULTILINE)
+    return [n.strip() for n in match.group(1).split(",") if n.strip()] if match else []
+
+
+def versions_text(schema_status):
+    """'<version> on <nodes>; ...' for a message."""
+    return "; ".join("%s on %s" % (v, ", ".join(nodes)) for v, nodes in sorted(schema_status.items()))
 
 
 def cluster_schema(stdout):
     '''
-    Extract the scheam version output from the nodetool describecluster stdout
+    Extract the schema versions from the nodetool describecluster stdout
     Returns a dict in the following format...
         {
             "d4f18346-f81f-3786-aed4-40e03558b299:" [127.0.0.1]
         }
-    # TODO do something about UNREACHABLE nodes???
+    The UNREACHABLE line is not a schema version: see unreachable_nodes.
     '''
     return_dict = {}
 
-    # match the scmea id and the list of hosts
+    # match the schema id and the list of hosts
     regex = r"(\{){0,1}[0-9a-fA-F]{8}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{12}(\}){0,1}: \[.*\]"
 
-    matches = re.finditer(regex, stdout, re.MULTILINE)
-
-    for matchNum, match in enumerate(matches, start=1):
-
-        uuid, host_list = match.group().split(":")
-        return_dict[uuid.strip()] = host_list[:-1][1:].split(", ")
-        # Should do something about UNREACHABLE entries
+    for match in re.finditer(regex, stdout, re.MULTILINE):
+        uuid, host_list = match.group().split(":", 1)
+        return_dict[uuid.strip()] = host_list.strip()[1:-1].split(", ")
 
     return return_dict
 
@@ -175,13 +200,14 @@ def main():
     uuid = module.params['uuid']
     debug = module.params['debug']
 
-    schema_status, cluster_schema_list, iterations, \
-        return_codes, stdout_list, stderr_list, schema_count_total \
-        = nodetool_status_poll(module)
+    schema_status, unreachable, cluster_schema_list, iterations, \
+        return_codes, stdout_list, stderr_list = nodetool_status_poll(module)
 
     result = {}
 
     result['schema_status'] = schema_status
+    if unreachable:
+        result['unreachable'] = unreachable
     if iterations > 1:
         result['iterations'] = iterations
 
@@ -193,18 +219,24 @@ def main():
         if stdout_list:
             result['stdout_list'] = stdout_list
 
-    # Needs rethink
-    if return_codes[-1] == 0:  # Last execution successful
-        if schema_count_total == 1 and uuid in schema_status.keys():
-            result['msg'] = "The cluster has reached consensus with the expected version"
-        elif schema_count_total == 1:
-            result['msg'] = "The cluster has reached schema consensus"
-        else:
-            result['msg'] = "The cluster has not reached consensus on the schema"
-            module.fail_json(**result)
-    else:
-        result['msg'] = "nodetool error: {0}".format(stderr_list[-1])
+    not_counted = " (unreachable, not counted: {0})".format(", ".join(unreachable)) if unreachable else ""
+    if return_codes[-1] != 0:  # the last call failed: what nodetool said
+        result['msg'] = "nodetool error: {0}".format(stderr_list[-1] or stdout_list[-1])
         result['rc'] = return_codes[-1]
+        module.fail_json(**result)
+    elif not schema_status:
+        result['msg'] = "nodetool describecluster listed no schema version"
+        module.fail_json(**result)
+    elif agreed(schema_status, uuid):
+        result['msg'] = ("The cluster has reached consensus with the expected version" if uuid
+                         else "The cluster has reached schema consensus") + not_counted
+    elif len(schema_status) == 1:
+        result['msg'] = "The cluster agrees on schema version {0}, not the expected {1}".format(
+            list(schema_status)[0], uuid)
+        module.fail_json(**result)
+    else:
+        result['msg'] = "The cluster has not reached consensus on the schema: {0} versions, {1}{2}".format(
+            len(schema_status), versions_text(schema_status), not_counted)
         module.fail_json(**result)
 
     # Everything is good
