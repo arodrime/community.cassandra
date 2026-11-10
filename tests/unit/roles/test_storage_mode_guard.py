@@ -65,31 +65,38 @@ def test_the_guard_says_why_and_the_way_out():
     tasks = _load("roles/cassandra_operation/tasks/storage_mode_guard.yml")
     assert tasks[0]["ansible.builtin.include_tasks"] == "storage_mode_read.yml"
     check = tasks[1]
-    assert check["vars"]["cassandra_output"] is True and check["when"] == tasks[0]["when"]
+    # once for the nodes of the play: one refused stops the run before any node is restarted
+    assert check["run_once"] is True and check["vars"]["cassandra_output"] is True
 
-    def run(host, **extra):
-        variables = dict(check["vars"], inventory_hostname="n1", cassandra_version="50x",
-                         cassandra_storage_mode_read=host["cassandra_storage_mode_read"],
-                         cassandra_storage_mode_cql=host.get("cassandra_storage_mode_cql", {}), **extra)
+    def run(hosts, **extra):
+        hostvars = {}
+        for name, (host, inventory) in hosts.items():
+            hostvars[name] = dict(host, cassandra_version="50x", cassandra_storage_compatibility_mode=inventory)
+        variables = dict(check["vars"], hostvars=hostvars, ansible_play_hosts=list(hostvars), cassandra_version="50x",
+                         **extra)
         return (_render("{{ %s }}" % check["ansible.builtin.assert"]["that"], **variables),
                 _render(check["ansible.builtin.assert"]["fail_msg"], **variables).split("\n"))
-    # a passing node renders its message too (ansible-core 2.19+ templates it anyway)
-    ok, msg = run(_host("NONE", logged="NONE"), _cassandra_storage_mode_target="NONE")
-    assert ok is True and len(msg) == 2
-    ok, msg = run(_host("NONE", logged="NONE"), _cassandra_storage_mode_target="UPGRADING",
-                  _cassandra_storage_mode_way_out="run this playbook again (it writes that mode)")
+    # every node fine (a passing run renders its message too, as ansible-core 2.19+ does)
+    ok, msg = run({"n1": (_host("NONE", logged="NONE"), "NONE")}, _cassandra_storage_mode_written=True)
+    assert ok is True
+    # cassandra_config: the inventory behind the mode it runs
+    ok, msg = run({"n1": (_host("NONE", logged="NONE"), "NONE"), "n2": (_host("NONE", logged="NONE"), "UPGRADING")},
+                  _cassandra_storage_mode_written=True)
     assert ok is False and msg == [
-        "n1 runs storage_compatibility_mode NONE; UPGRADING would be in its cassandra.yaml and its restart would take"
-        " it back to that earlier mode (5.0 moves CASSANDRA_4, UPGRADING, NONE, never back). Nothing was changed.",
-        "WAY OUT  set cassandra_storage_compatibility_mode: NONE for n1 in the inventory, then run this playbook again"
-        " (it writes that mode)."]
-    ok, msg = run(_host("UPGRADING", logged="NONE"))
-    assert ok is False and msg == [
-        "n1 runs storage_compatibility_mode NONE; the UPGRADING it has would be in its cassandra.yaml and its restart"
-        " would take it back to that earlier mode (5.0 moves CASSANDRA_4, UPGRADING, NONE, never back). Nothing was"
-        " changed.",
-        "WAY OUT  set cassandra_storage_compatibility_mode: NONE for n1 in the inventory, then run apply_config (it"
-        " writes it back), then this run again."]
+        "A restart would take n2 back to an earlier storage_compatibility_mode than the one Cassandra runs (5.0 moves"
+        " CASSANDRA_4, UPGRADING, NONE, never back). Nothing was changed.",
+        "  n2  runs NONE, its cassandra.yaml would have UPGRADING",
+        "WAY OUT  On n2, set cassandra_storage_compatibility_mode: NONE in the inventory (apply_config then writes it)."
+        " Then run this again."]
+    # a restart alone: its file edited back by hand, the inventory right: apply_config writes it back
+    ok, msg = run({"n1": (_host("NONE", logged="NONE"), "NONE"), "n2": (_host("UPGRADING", logged="NONE"), "NONE")})
+    assert ok is False and msg[1:] == [
+        "  n2  runs NONE, its cassandra.yaml has UPGRADING",
+        "WAY OUT  On n2, run apply_config --limit n2 (it writes NONE back). Then run this again."]
+    # the inventory behind too: set it first
+    ok, msg = run({"n2": (_host("UPGRADING", logged="NONE"), "UPGRADING")})
+    assert msg[-1] == ("WAY OUT  On n2, set cassandra_storage_compatibility_mode: NONE in the inventory, then run"
+                       " apply_config --limit n2 (it writes it back). Then run this again.")
 
 
 def test_where_it_runs():
@@ -101,7 +108,7 @@ def test_where_it_runs():
         "Show the changes and confirm them") < names.index("Write the files and directories")
     guard = block[names.index("Refuse a storage_compatibility_mode before the one Cassandra runs")]
     assert guard["ansible.builtin.include_role"]["tasks_from"] == "storage_mode_guard.yml"
-    assert guard["vars"]["_cassandra_storage_mode_target"] == "{{ cassandra_storage_compatibility_mode }}"
+    assert guard["vars"]["_cassandra_storage_mode_written"] is True
     # rolling_restart, rolling_reboot: before the question
     for playbook in ("playbooks/rolling_restart.yml", "playbooks/rolling_reboot.yml"):
         play = next(p for p in _load(playbook) if p.get("name") == "Set up the progress file")

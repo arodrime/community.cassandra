@@ -44,8 +44,7 @@
         name: community.cassandra.cassandra_operation
         tasks_from: storage_mode_guard.yml
       vars:
-        _cassandra_storage_mode_target: "{{ cassandra_storage_compatibility_mode }}"
-        _cassandra_storage_mode_way_out: run this playbook again (it writes that mode)
+        _cassandra_storage_mode_written: true  # the inventory's mode, written then restarted with
       when: cassandra_version == '50x'
 
     - name: Show the changes and confirm them
