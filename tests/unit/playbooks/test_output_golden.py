@@ -193,3 +193,15 @@ def test_health_check_a_schema_disagreement(tmp_path, port):
         "",
         "====",
     ]
+
+
+def test_health_check_with_a_node_unreachable_for_describecluster(tmp_path, port):
+    # describecluster of a real 4.1 cluster listing a node UNREACHABLE: not a schema version; the check goes on
+    # (a result key 'unreachable' would have made Ansible take the host itself for unreachable)
+    with open(os.path.join(FIXTURES, "nodetool_describecluster_41_unreachable.txt")) as f:
+        unreachable = f.read()
+    rc, output = run(tmp_path, "health_check", False, "-e", "cassandra_storage_port=%d" % port,
+                     "-e", "cassandra_native_transport_port=%d" % port, "-e", "cassandra_clock_check=false",
+                     "-e", "_cassandra_health_schema_interval=0", describecluster=unreachable)
+    assert rc == 0, output
+    assert "HEALTHY  my_cluster  3 nodes  3 UN, schema agreed, no streams, ports open" in ruled(output), output

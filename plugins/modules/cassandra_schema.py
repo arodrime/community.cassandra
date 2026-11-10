@@ -20,7 +20,7 @@ description:
     - Can also specify a schema version if required.
     - Schema version is obtained through the usage of the nodetool describecluster command.
     - The nodes agree when describecluster lists one schema version. The nodes it lists as C(UNREACHABLE)
-      are not a version and are not counted (their schema is not known); they are returned in C(unreachable).
+      are not a version and are not counted (their schema is not known); they are returned in C(unreachable_nodes).
     - It polls until the nodes agree (on I(uuid) when given) or I(poll) runs out, then fails with each
       version and its nodes.
 
@@ -80,8 +80,10 @@ schema_status:
   returned: always
   type: dict
   sample: {"86afa796-d883-3932-aa73-6b017cef0d19": ["10.0.0.1:7000", "10.0.0.2:7000"]}
-unreachable:
-  description: The nodes describecluster lists as UNREACHABLE in the last successful read.
+unreachable_nodes:
+  description:
+    - The nodes describecluster lists as UNREACHABLE in the last successful read.
+    - "Not C(unreachable): Ansible reads that key of a result as the host itself unreachable."
   returned: when there are some
   type: list
   elements: str
@@ -213,7 +215,7 @@ def main():
 
     result['schema_status'] = schema_status
     if unreachable:
-        result['unreachable'] = unreachable
+        result['unreachable_nodes'] = unreachable  # (a key 'unreachable' would make Ansible mark the host unreachable)
     if iterations > 1:
         result['iterations'] = iterations
 

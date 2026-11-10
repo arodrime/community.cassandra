@@ -79,7 +79,7 @@ def test_agreement(series):
     assert kind is ExitJson, result
     assert result["msg"] == "The cluster has reached schema consensus"
     assert len(result["schema_status"]) == 1 and len(list(result["schema_status"].values())[0]) == 2
-    assert calls == 1 and sleeps == [] and "unreachable" not in result
+    assert calls == 1 and sleeps == [] and "unreachable_nodes" not in result and "unreachable" not in result
 
 
 @pytest.mark.parametrize("series", SERIES)
@@ -106,7 +106,7 @@ def test_unreachable_is_not_a_version(series):
     kind, result, calls, sleeps = run_main([ok(series, "unreachable")], poll=6)
     assert kind is ExitJson, result
     assert list(result["schema_status"].values()) == [["172.20.0.2"]]
-    assert result["unreachable"] == ["172.20.0.3"]
+    assert result["unreachable_nodes"] == ["172.20.0.3"] and "unreachable" not in result
     assert result["msg"] == "The cluster has reached schema consensus (unreachable, not counted: 172.20.0.3)"
     assert calls == 1
 
