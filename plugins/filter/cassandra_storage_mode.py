@@ -306,14 +306,14 @@ def cassandra_storage_mode_way_out(behind, from_4x=True, restart_command="", tot
             y = b["yaml_mode"]
             out.append(
                 "On %s, read the mode its Cassandra runs (cqlsh %s, as the cluster's CQL user): %s (null: CASSANDRA_4)."
-                " %s: restart it%s.%s Later than %s: set that mode back in %s by hand." % (
+                " %s: restart it%s.%s%s" % (
                     b["node"], b["cql_host"], QUERY,
                     ("The same as its cassandra.yaml's (%s) or the step before" % y) if y != "CASSANDRA_4"
                     else "CASSANDRA_4", (": " + check_restart_command[b["node"]])
                     if isinstance(check_restart_command, dict) and b["node"] in check_restart_command
                     else " (rolling_restart --limit %s)" % b["node"],
                     (" Two steps before: set UPGRADING in %s by hand first." % b["file"]) if y == "NONE" else "",
-                    y, b["file"]))
+                    (" Later than %s: set that mode back in %s by hand." % (y, b["file"])) if y != "NONE" else ""))
     future = [b for b in behind if b["future"]]
     for path in sorted(set(b["file"] for b in future)):
         nodes = ", ".join(b["node"] for b in future if b["file"] == path)
@@ -351,6 +351,22 @@ def _mid_move(behind):
     return len(modes) > 1
 
 
+def cassandra_storage_mode_back(host, target=None):
+    """host: a node's variables (hostvars[host], with storage_mode_read.yml's reads); target: the
+    storage_compatibility_mode its cassandra.yaml will have (the inventory's, written), None: the one it has (a
+    restart alone) -> the mode it runs when a restart would take it to an earlier one, else "". Only on evidence (the
+    mode read over CQL or logged at its start): a mode not known never refuses (the move forward from the file is
+    guarded by cassandra_config's identity check)."""
+    node = cassandra_storage_mode_nodes([host])[0]
+    lines = (host.get("cassandra_storage_mode_read") or {}).get("stdout_lines") or []
+    read = dict(line.split("=", 1) for line in lines if "=" in line)
+    running = _live(host.get("cassandra_storage_mode_cql")) or read.get("logged")
+    mode = _value(node["yaml"] if target is None else target, _UNSET)[0]
+    if running in _ORDER and mode and _ORDER.index(mode) < _ORDER.index(running):
+        return running
+    return ""
+
+
 class FilterModule(object):
     def filters(self):
         return {"cassandra_storage_mode_from_4x": cassandra_storage_mode_from_4x,
@@ -359,4 +375,5 @@ class FilterModule(object):
                 "cassandra_storage_mode_rows": cassandra_storage_mode_rows,
                 "cassandra_storage_mode_step": cassandra_storage_mode_step,
                 "cassandra_storage_mode_way_out": cassandra_storage_mode_way_out,
+                "cassandra_storage_mode_back": cassandra_storage_mode_back,
                 "cassandra_storage_mode_headline": cassandra_storage_mode_headline}

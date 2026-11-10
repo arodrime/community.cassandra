@@ -260,7 +260,8 @@ def test_sstables_refuse_a_mode_not_read_unknown_or_a_restart_pending():
         " system_views.settings WHERE name = 'storage_compatibility_mode'; (null: CASSANDRA_4). The same as its"
         " cassandra.yaml's (NONE) or the step before: restart it: ansible-playbook -i a.yml"
         " community.cassandra.rolling_restart --limit n1. Two steps before: set UPGRADING in cassandra.yaml by hand"
-        " first. Later than NONE: set that mode back in cassandra.yaml by hand. Then run this phase again.")
+        " first. Then run this phase again.")
+    assert "Later than NONE" not in _sstables(("NONE", "NONE", "NONE", True))[1][-1]
     # two nodes not known: each its own restart (the other may run a later mode than its file), its own address
     ok, msg = _sstables(("NONE", "NONE", "NONE", True), ("NONE", "NONE", "NONE", True))
     out = msg[-1].split("On n2, ")

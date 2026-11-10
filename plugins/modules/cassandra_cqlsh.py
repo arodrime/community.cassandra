@@ -230,6 +230,16 @@ def shown_cmd(args):
     return " ".join(shown)
 
 
+def masked(text, args):
+    """text with the password of args (as shown_cmd finds it) replaced by ********."""
+    for i, arg in enumerate(args):
+        secret = arg[len("--password="):] if arg.startswith("--password=") else (
+            args[i + 1] if arg == "--password" and i + 1 < len(args) else None)
+        if secret:
+            text = text.replace(secret, "********")
+    return text
+
+
 def transform_output(output, transform_type, split_char):
     if transform_type == "auto":  # determine what transform_type to perform
         if output.strip().startswith("[json]"):
@@ -345,6 +355,10 @@ def main():
         result['cmd'] = shown_cmd(args)
 
     if rc != 0:
+        # why, without debug: its rc and standard error (cqlsh does not echo the password; masked anyway, as a
+        # password given in additional_args)
+        result.setdefault('rc', rc)
+        result.setdefault('err', masked(err, args))
         module.fail_json(msg="module execution failed", **result)
     else:
         result['changed'] = True

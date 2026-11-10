@@ -1,0 +1,36 @@
+---
+# 5.0: refuse a restart that would take Cassandra back to an earlier storage_compatibility_mode than the one it
+# runs (a cassandra.yaml edited back by hand, or an inventory behind the node: Cassandra starts with the earlier
+# mode, or refuses to start on the sstables it wrote). The mode it runs as storage_mode_read.yml reads it (over CQL,
+# else the line it logged at its start); not known: nothing refused. _cassandra_storage_mode_target: the mode its
+# cassandra.yaml will have (cassandra_config: the inventory's); unset: the one it has (a restart alone).
+# _cassandra_storage_mode_way_out: what to run once the inventory is right. Read-only, under --check too.
+- name: Read the mode Cassandra runs
+  ansible.builtin.include_tasks: storage_mode_read.yml
+  when: cassandra_version | default('') == '50x'
+
+- name: The restart keeps the storage_compatibility_mode Cassandra runs, or a later one
+  ansible.builtin.assert:
+    that: _back == ''
+    fail_msg: >-
+      {{ [inventory_hostname ~ ' runs storage_compatibility_mode ' ~ _back ~ '; ' ~ _written ~ ' would be in its'
+          ~ ' cassandra.yaml and its restart would take it back to that earlier mode (5.0 moves CASSANDRA_4,'
+          ~ ' UPGRADING, NONE, never back). Nothing was changed.',
+          'WAY OUT  set cassandra_storage_compatibility_mode: ' ~ _back ~ ' for ' ~ inventory_hostname
+          ~ ' in the inventory, then ' ~ _cassandra_storage_mode_way_out
+            | default('run apply_config (it writes it back), then this run again') ~ '.'] | join(_nl) }}
+    quiet: true
+  vars:
+    cassandra_output: true  # a verdict: its msg as is (ops callback)
+    _nl: "\n"
+    _back: >-
+      {{ {'inventory_hostname': inventory_hostname,
+          'cassandra_storage_mode_read': cassandra_storage_mode_read | default({}),
+          'cassandra_storage_mode_cql': cassandra_storage_mode_cql | default({})}
+         | community.cassandra.cassandra_storage_mode_back(_cassandra_storage_mode_target | default(none)) }}
+    _written: >-
+      {{ _cassandra_storage_mode_target if _cassandra_storage_mode_target | default(none) is not none
+         else 'the ' ~ (cassandra_storage_mode_read.stdout_lines | default([]) | select('match', '^yaml=')
+                         | map('regex_replace', '^yaml=', '') | first | default('') or 'CASSANDRA_4 (no such line)')
+              ~ ' it has' }}
+  when: cassandra_version | default('') == '50x'

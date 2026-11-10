@@ -84,7 +84,7 @@
     [ -z "$changed" ] || [ -n "$m" ] || echo "pending=yes"
     exit 0
   environment:
-    F: "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}/cassandra.yaml"
+    F: "{{ _cassandra_service_conf_dir }}/cassandra.yaml"
     R: "{{ _cassandra_service_config_snapshot }}"
   register: cassandra_storage_mode_read
   changed_when: false

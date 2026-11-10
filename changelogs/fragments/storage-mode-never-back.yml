@@ -1,0 +1,8 @@
+bugfixes:
+  - >-
+    cassandra_config, rolling_restart, rolling_reboot - with 5.0, a restart that would take Cassandra back to an
+    earlier ``storage_compatibility_mode`` than the one it runs (a ``cassandra.yaml`` edited back by hand, an
+    inventory behind the node) is refused before anything changes, under ``--check`` too, with the way out (the
+    running mode in the inventory). The mode it runs is read over CQL (``system_views.settings``), else from the line
+    Cassandra logged at its start; when neither tells, nothing is refused (the forward move from the file stays
+    guarded by the identity check).

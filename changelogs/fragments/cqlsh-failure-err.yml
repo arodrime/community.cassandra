@@ -1,0 +1,4 @@
+minor_changes:
+  - >-
+    cassandra_cqlsh - a failure returns cqlsh's return code and standard error (``rc``, ``err``) without ``debug``,
+    so the reason shows (e.g. a cqlsh that cannot import cqlshlib); the password is masked in them.

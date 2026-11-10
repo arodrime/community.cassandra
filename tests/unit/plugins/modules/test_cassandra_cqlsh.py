@@ -15,7 +15,7 @@ class Exit(Exception):
     pass
 
 
-def run(monkeypatch, found=None, **params):
+def run(monkeypatch, found=None, answer=(0, "out", ""), **params):
     """Runs main() with params; returns (the argv run, run_command's keywords, the exit kwargs). found: what
     get_bin_path finds ({name: path}; none by default) and the dirs it was asked to look in first (found["dirs"])."""
     ran = []
@@ -36,7 +36,7 @@ def run(monkeypatch, found=None, **params):
 
         def run_command(self, args, **kwargs):
             ran.append((args, kwargs))
-            return 0, "out", ""
+            return answer
 
         def exit_json(self, **kwargs):
             raise Exit(kwargs)
@@ -100,3 +100,18 @@ def test_a_bare_cqlsh_looked_for_in_usr_local_bin_first(monkeypatch):
     found = {"cqlsh": "/usr/local/bin/cqlsh"}
     assert run(monkeypatch, found=found, cqlsh_cmd="/opt/venv/bin/cqlsh")[0][0] == "/opt/venv/bin/cqlsh"
     assert "dirs" not in found
+
+
+def test_a_failure_says_why_without_debug(monkeypatch):
+    # cqlsh failing (no cqlshlib for this python): its rc and standard error kept, debug off
+    err = "Traceback ...\nModuleNotFoundError: No module named 'cqlshlib'\n"
+    args, kwargs, result = run(monkeypatch, answer=(1, "", err), debug=False, username="alice", password=NASTY)
+    assert result["msg"] == "module execution failed" and result["rc"] == 1 and result["err"] == err
+    assert "cmd" not in result and "out" not in result
+    # never the password, even if cqlsh printed it
+    args, kwargs, result = run(monkeypatch, answer=(2, "", "Bad credentials %s for alice" % NASTY), debug=False,
+                               password=NASTY)
+    assert NASTY not in str(result) and result["err"] == "Bad credentials ******** for alice"
+    # a success: as before, no err without debug
+    args, kwargs, result = run(monkeypatch, debug=False)
+    assert "err" not in result and "rc" not in result
