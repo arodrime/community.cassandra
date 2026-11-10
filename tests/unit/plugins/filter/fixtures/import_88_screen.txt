@@ -1,4 +1,4 @@
-IMPORT big_cluster  88 nodes  9 to review: 3 hand edits, 6 settings that differ between nodes
+IMPORT big_cluster  88 nodes  9 entries to review: 3 hand edits, 6 settings that differ between nodes
   self-check passed: the inventory gives every node that was read the settings it has now
   written: inventories/big.yml, group_vars/big_cluster*/, host_vars/<node>/ of 88 nodes
  
@@ -63,4 +63,5 @@ IMPORT big_cluster  88 nodes  9 to review: 3 hand edits, 6 settings that differ 
      ansible-playbook community.cassandra.apply_config --check --diff → expect nothing to apply;
      ansible-playbook community.cassandra.topology --check → expect nothing to do.
 
+details: reports/big/report.details.txt
 full report: reports/big/report.txt

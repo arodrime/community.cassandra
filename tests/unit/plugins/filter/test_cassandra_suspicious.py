@@ -184,8 +184,9 @@ def test_allow_all_authenticator_on_an_address(values, warned):
     assert [r for r, t, f in rows(values)] == (["allow_all_authenticator"] if warned else [])
     if warned:
         assert rows(values)[0][1:] == (
-            "no authentication (AllowAllAuthenticator) on node4, and their RPC address is reachable from other hosts: any"
-            " client that reaches it gets in", "set an authenticator (cassandra_authenticator: PasswordAuthenticator)")
+            "no authentication (AllowAllAuthenticator) on node4, which listen for clients on an address other than"
+            " loopback (rpc_address or rpc_interface): a client that reaches it gets in without a login",
+            "set an authenticator (cassandra_authenticator: PasswordAuthenticator)")
 
 
 def test_failure_policy_ignore():

@@ -71,3 +71,25 @@ def test_apt_credentials_removed_only_with_the_mark():
         with open(os.path.join(ROOT, "roles", "cassandra_repository", "tasks", name)) as f:
             text = f.read()
         assert "auth.conf.d/cassandra.conf\n    state: absent" not in text and "'/etc/apt/auth.conf.d/cassandra.conf'" not in text
+
+
+def test_a_mirror_url_your_files_give_is_not_written_again():
+    # (owner list) the repository taken over gives the mirror's URL; your group_vars/all sets the same one (with
+    # {{ cassandra_version }}): not written again in the cluster's main.yml (it would win over yours), and no TODO
+    # asking for it
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
+        cassandra_inventory_files, cassandra_inventory_layout_over)
+    n = {"name": "n1", "address": "10.0.0.1", "hostname": "n1", "dc": "dc1", "rack": "r1", "read": True,
+         "vars": {"cassandra_version": "41x", "cassandra_install_method": "packages",
+                  "cassandra_install_url": "http://mirror/repo/{cassandra_version}/"},
+         "hand_edits": [], "normalized": [], "notes": [], "keep": {}}
+    yours = {"path": "group_vars/all/local.yml",
+             "content": 'cassandra_install_url: "http://mirror/repo/{{ cassandra_version }}/"\n'}
+    layout = cassandra_inventory_layout_over([n], "c", [yours])
+    text = "\n".join(f["content"] for f in cassandra_inventory_files(layout))
+    assert "cassandra_install_url:" not in text and "TODO: cassandra_install_url" not in text
+    # another URL of yours: the node's written (it wins, listed), and still no TODO
+    yours["content"] = 'cassandra_install_url: "http://other/repo/{{ cassandra_version }}/"\n'
+    text = "\n".join(f["content"] for f in cassandra_inventory_files(cassandra_inventory_layout_over([n], "c", [yours])))
+    assert "cassandra_install_url: http://mirror/repo/{{ cassandra_version }}/" in text
+    assert "TODO: cassandra_install_url" not in text

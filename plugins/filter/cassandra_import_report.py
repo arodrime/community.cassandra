@@ -1062,15 +1062,27 @@ def _kept_entries(report, kept):
     return entries
 
 
+# what the import's *_install: false (and the hold) mean: a package the nodes do not have, not a part Ansible leaves
+INSTALLED = {"cassandra_install_tools: False": "cassandra-tools", "cassandra_install_jemalloc: False": "jemalloc",
+             "cassandra_dsbulk_install: False": "DSBulk"}
+
+
 def _left_alone_lines(report):
-    """What Ansible leaves as each node has it (the *_manage: false the import wrote), one line per set of nodes."""
+    """What Ansible leaves as each node has it (the *_manage: false the import wrote), one line per set of nodes;
+    apart, the packages it does not install there because the nodes have none (*_install: false), and a hold."""
     by_nodes = {}
     for label, members in report_sections(report.layout, {})["left_groups"].items():
         if not label.startswith("cassandra_config_keep_files"):
-            by_nodes.setdefault(tuple(sorted(members)), []).append(label)
-    return [line for members, labels in by_nodes.items() for line in fill_text(
-        "not managed by Ansible here: %s   %s" % (", ".join(labels), unbreakable(_who(report, list(members)))),
-        report.width, "    ", "  ")]
+            kind = "installed" if label in INSTALLED else "hold" if label.startswith("cassandra_package_hold") \
+                else "managed"
+            by_nodes.setdefault((kind, tuple(sorted(members))), []).append(INSTALLED.get(label, label))
+    said = {"managed": "not managed by Ansible here: %s",
+            "installed": "not installed by Ansible here, as these nodes have none (true installs it): %s",
+            "hold": "the packages not held by Ansible here (apt): %s"}
+    order = ["managed", "installed", "hold"]
+    return [line for (kind, members), labels in sorted(by_nodes.items(), key=lambda kv: order.index(kv[0][0]))
+            for line in fill_text("%s   %s" % (said[kind] % ", ".join(labels), unbreakable(_who(report, list(members)))),
+                                  report.width, "    ", "  ")]
 
 
 def _moved_entries(report):
@@ -1103,6 +1115,11 @@ def _to_check_entries(report):
         dummy, todo = finding_lines(row, names, text, fix)
         if report.screen:  # (how to keep it on purpose: report.txt)
             todo = todo.split("; kept on purpose: ")[0]
+        todo = todo.strip()
+        if todo.startswith("set ") and "cassandra_authenticator" not in todo:  # (who gets the change: these nodes too, not only the ones added later)
+            todo = todo.replace("; kept on purpose: ", "; these nodes get it at their next apply_config (a restart"
+                                " each), nodes added later too; kept on purpose: ", 1) if "; kept on purpose: " in todo \
+                else todo + "; these nodes get it at their next apply_config (a restart each), nodes added later too"
         entries += _entry(report, text.replace(" on {nodes}", "").replace("{nodes}", "these nodes"), names,
                           todo.strip())
     for text, members, todo in _os_findings(report):
@@ -1169,12 +1186,17 @@ def _os_findings(report):
 
     for n in report.read:
         lines = (n.get("os") or {}).get("lines") or []
+        # (cassandra_linux_manage: false, as the import writes for a node it reads: Ansible leaves its OS settings)
+        left = "cassandra_linux_manage" in (n.get("keep") or {})
+        who = ("; these nodes: Ansible leaves their OS settings (cassandra_linux_manage: false), change it on them by"
+               " hand; nodes added later: cassandra_linux sets it") if left else \
+            "; these nodes get it at their next run of cassandra_linux, nodes added later too"
         thp = next((m.group(1) for m in map(_THP_ON.match, lines) if m), "")
         if thp:
             script = next((m.group(1) for m in map(_THP_BY.match, lines) if m), "")
             add("transparent huge pages enabled %s%s" % (
                 thp, ", set by %s, which is not executable" % script if script else ""),
-                "Cassandra wants them off (never), as cassandra_linux sets them", n["name"])
+                "Cassandra wants them off (never), as cassandra_linux sets them" + who, n["name"])
         ahead = sorted(set(int(m.group(1)) for m in map(_READAHEAD.match, lines) if m and int(m.group(1)) > READAHEAD_MOST))
         if ahead:
             tuned = next((m for m in map(_TUNED_DISK.match, lines) if m), None)
@@ -1184,7 +1206,8 @@ def _os_findings(report):
                 ", and tuned (profile %s) sets readahead=>%s at each start" % (profile, tuned.group(2))
                 if tuned and profile else ""),
                 "a large read-ahead fills the page cache with data no read asked for" + (
-                    "; tuned would set it again: a tuned profile of your own without it" if tuned else ""), n["name"])
+                    "; tuned would set it again: a tuned profile of your own without it" if tuned else "") + who,
+                n["name"])
         restart = _restart_finding(n, report.layout.get("from_yours"))
         if restart:
             add(restart[0], restart[1], n["name"])
@@ -1365,7 +1388,7 @@ def _value_rows(report, settings):
 def _info_blocks(report, data, leftovers, convergence):
     """FOR INFO: [(title, lines)], the ones with lines only."""
     blocks = [("Settings that are not the collection's default (the same on every node, or one per node by nature;"
-               " the ones that differ are in report.txt)", _value_rows(report, data["settings"]))]
+               " the ones that differ are in %s)" % os.path.basename(report.report_name), _value_rows(report, data["settings"]))]
     blocks.append(("Versions", _versions_lines(report)))
     if convergence:
         blocks.append(("Convergence: how close the nodes are to sharing every setting",
@@ -1424,8 +1447,8 @@ def _head_lines(report, cluster, hosts_file, report_file, self_check_ok, same, s
         "%d %s" % (n, kind.one if n == 1 else kind.many) for kind, n, dummy in reviews]
     nodes = out.plural(len(report.read) + len(report.unread), "node") + (
         " (%d read)" % len(report.read) if report.unread else "")
-    verdict = "%d to %s: %s" % (acted, "act on" if steps else "review", ", ".join(counts)) if acted \
-        else "nothing to act on"
+    verdict = "%s to %s: %s" % (out.plural(acted, "entry", "entries"), "act on" if steps else "review", ", ".join(counts)) \
+        if acted else "nothing to act on"
     lines = fill_text("IMPORT %s%s  %s  %s" % (cluster, " (--check, nothing written)" if report.check else "", nodes,
                                                verdict), report.width, "", "  ")
     check_step = next((i + 1 for i, step in enumerate(steps) if step.title == "Make the self-check pass"), None)
@@ -1446,10 +1469,11 @@ def _head_lines(report, cluster, hosts_file, report_file, self_check_ok, same, s
 def _about_lines(report, cluster):
     """What this report is, in 3 lines, then the words it uses."""
     lines = ["WHAT THIS REPORT IS"] + [cut_text(text, report.width) for text in (
-        "  import_cluster read the nodes (the Cassandra servers) of %s and wrote an Ansible inventory for them;"
-        " nothing on the nodes was changed." % cluster,
-        "  report.txt says what to do and what is worth a look; this file holds the rest: the settings, the convergence,"
-        " the OS, what was read on each node.",
+        "  import_cluster read the nodes (the Cassandra servers) of %s and %s an Ansible inventory for them;"
+        " nothing on the nodes was changed." % (cluster, "worked out (--check: nothing written)" if report.check
+                                                else "wrote"),
+        "  %s says what to do and what is worth a look; this file holds the rest: the settings, the convergence,"
+        " the OS, what was read on each node." % os.path.basename(report.report_name),
         "  The cluster keeps running as it is while you read: nothing here is urgent for it.")]
     lines += ["", "WORDS"]
     for word, meaning in WORDS_USED:
@@ -1584,7 +1608,7 @@ def _ruled(lines, width, screen):
             about = next((g for g in heading.groups()[1:] if g), "")
             ruled += fill_text(about[:1].upper() + about[1:], width, "  ", "  ")
             continue
-        if screen and not line and i + 1 < len(lines) and not lines[i + 1].startswith("full report"):
+        if screen and not line and i + 1 < len(lines) and not lines[i + 1].startswith(("full report", "details: ")):
             line = " "
         ruled.append(line)
     return ruled
@@ -1665,7 +1689,8 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
                                 removed, same, moves, inventory, hosts)
     details_file = re.sub(r"\.txt$", "", report_file) + ".details.txt"
     if screen:
-        lines += ["", "full report%s: %s" % (" (--check)" if check else "", out.path_from(report_file, cwd))]
+        lines += ["", "details: %s" % out.path_from(details_file, cwd),
+                  "full report%s: %s" % (" (--check)" if check else "", out.path_from(report_file, cwd))]
         if boolean(shareable, strict=False):
             lines.append("a copy to share (names, addresses and secrets replaced; check it before sharing): %s"
                          % out.path_from(re.sub(r"\.txt$", "", report_file) + ".shareable.txt", cwd))
@@ -1688,7 +1713,8 @@ def _finished(lines, width, screen):
 def _details_report(report, data, layout, self_check, leftovers, convergence, cluster):
     """report.details.txt: what the report is and its words, where the settings go, the settings, versions,
     convergence and OS (FOR INFO), then what was read on each node (DETAILS) -> [line]."""
-    lines = ["IMPORT %s  the details of report.txt" % cluster, ""] + _about_lines(report, cluster)
+    lines = ["IMPORT %s%s  the details of %s" % (cluster, " (--check, nothing written)" if report.check else "",
+                                                 os.path.basename(report.report_name)), ""] + _about_lines(report, cluster)
     where = _where_lines(report, data["settings"])
     if where:
         lines += ["", "WHERE THE SETTINGS GO  (the inventory's files; a value set in yours is not written again)"] + where

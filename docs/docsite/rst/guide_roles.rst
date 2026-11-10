@@ -1607,8 +1607,8 @@ hosts files; keep your settings in ``group_vars/all``. Then ``apply_config --che
 
 The import writes two files, for a reader who may be new to Cassandra and to the collection. ``report.txt`` says
 what to do and what is worth a look, by urgency, always in the same order, each section under its title in a rule
-(``==== TO DO ====``). Its head is the verdict with its counts (``IMPORT orders  12 nodes  4 to act on: 1 TO DO, 2
-hand edits, 1 file left as is``; ``3 to review: ...`` when there is nothing to do; ``nothing to act on``), the
+(``==== TO DO ====``). Its head is the verdict with its counts (``IMPORT orders  12 nodes  4 entries to act on: 1 TO DO, 2
+hand edits, 1 file left as is``; ``3 entries to review: ...`` when there is nothing to do; ``nothing to act on``), the
 self-check (``passed``, or ``not passed yet: TO DO step 2``), the files written and where the report is; then:
 
 - ``TO DO``: what to do before using the inventory, one numbered step each, with why, the command to copy (paths

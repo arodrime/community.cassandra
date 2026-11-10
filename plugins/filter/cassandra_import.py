@@ -3220,7 +3220,11 @@ def _left_to_theirs(nodes, layout, user, inventory_dir, found):
         theirs = _effective(name, chains.get(name, []), layout, user, mine=False)
         _yours_rendered(n, theirs, inventory_dir)
         for key in [k for k in n["vars"] if k in theirs and k not in ALWAYS and k not in ("cassandra_dc", "cassandra_rack")]:
-            value = _comparable(found, key, theirs[key][0], name)
+            value = theirs[key][0]
+            if key == "cassandra_install_url" and isinstance(value, str):  # (the series as the import writes it)
+                value = re.sub(r"\{\{\s*cassandra_version\s*\}\}", SERIES_TOKEN, value)
+            value = value if key == "cassandra_install_url" and not _templated(value) else \
+                _comparable(found, key, value, name)
             if value is not MISSING and _same(key, value, n["vars"][key]):
                 from_yours.setdefault(name, {})[key] = {"value": n["vars"].pop(key), "path": theirs[key][1]}
         # a value of theirs the node does not have: kept as found (written by the import), listed
@@ -3306,6 +3310,7 @@ def _layout_over(nodes, cluster_name, user_files, inventory_dir=""):
         if not any(y["node"] == d["node"] and y["key"] == d["key"] for y in yours):
             yours.append(d)
     layout["yours"] = sorted(yours, key=lambda y: (y["key"], y["node"]))
+    layout["user_keys"] = sorted(set(k for dummy, data in user for k in data))
     layout["from_yours"] = from_yours
     layout["not_compared"] = sorted(found.not_compared)
     layout["unread_files"] = unread
@@ -3512,11 +3517,12 @@ def _unsafe(value, trusted=()):
     return value
 
 
-def _vars_yaml(variables, templates=None, trusted=()):
+def _vars_yaml(variables, templates=None, trusted=(), given=()):
     """variables as YAML, grouped by subject (BLOCKS): a comment line per block,
     a blank line between blocks. Each key is dumped on its own, the same way
     a whole dict would be (same values and quoting). templates: {key: the
-    import's template of the nodes' names} written as a template; trusted: see _unsafe."""
+    import's template of the nodes' names} written as a template; trusted: see _unsafe; given: the variables your
+    files set (no note asks for one of them)."""
     data = _unsafe(json.loads(json.dumps(variables, default=str)), frozenset(trusted))
     for key, template in (templates or {}).items():
         if variables.get(key) == template:
@@ -3534,20 +3540,23 @@ def _vars_yaml(variables, templates=None, trusted=()):
         if not keys:
             continue
         keys.sort(key=lambda k: (order.index(k), "") if k in order else (len(order), k))
-        out.append("# %s\n" % title + "".join(yaml.dump({k: data[k]}, Dumper=Dumper, default_flow_style=False,
-                                                        sort_keys=k not in KEEP_ORDER) + _note(k, data[k]) for k in keys))
+        dumped = [yaml.dump({k: data[k]}, Dumper=Dumper, default_flow_style=False, sort_keys=k not in KEEP_ORDER)
+                  + _note(k, data[k], given) for k in keys]
+        out.append("# %s\n" % title + "".join(dumped))
     return "\n".join(out)
 
 
 # What the nodes can't tell, written under the variable that needs it: (the variable it asks for, the note)
 NOTES = {
-    ("cassandra_install_method", "packages"): (
-        "# TODO: cassandra_install_url: the directory of the package files, for new nodes (not read from the nodes)\n"),
+    ("cassandra_install_method", "packages"): ("cassandra_install_url", (
+        "# TODO: cassandra_install_url: the directory of the package files, for new nodes (not read from the nodes)\n")),
 }
 
 
-def _note(key, value):
-    return NOTES.get((key, value), "") if isinstance(value, str) else ""
+def _note(key, value, given=()):
+    """The note under key's value, '' when none or when your files set the variable it asks for (given)."""
+    asked, note = NOTES.get((key, value), (None, "")) if isinstance(value, str) else (None, "")
+    return "" if asked in given else note
 
 
 def _split_secrets(variables, trusted=()):
@@ -3572,7 +3581,8 @@ def cassandra_inventory_files(layout):
             for base, data, secret in (("main.yml", public, False), ("secrets.yml", secrets, True)):
                 if data:
                     files.append({"path": "%s/%s/%s" % (kind, name, base), "secret": secret,
-                                  "content": _as_is(_vars_yaml(data, layout.get("templates"), layout.get("trusted") or ()))})
+                                  "content": _as_is(_vars_yaml(data, layout.get("templates"), layout.get("trusted") or (),
+                                                               layout.get("user_keys") or ()))})
     for path, text in sorted((layout.get("snippets") or {}).items()):
         files.append({"path": path, "secret": False, "content": _as_is(text)})
     return files

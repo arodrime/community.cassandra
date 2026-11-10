@@ -123,7 +123,7 @@ def test_sections_by_urgency_and_the_counts_in_the_head():
     nodes = [node(1, hand=["cassandra.yaml, line 10:", "  - concurrent_writes: 32", "  + concurrent_writes: 48"]),
              node(2, "16G"), node(3, keep={"cassandra_config_keep_files": ["logback.xml"]}), node(4, read=False)]
     lines = report(nodes, secrets_clear=["group_vars/my_cluster/secrets.yml"])
-    assert lines[0] == ("IMPORT my_cluster  4 nodes (3 read)  5 to act on: 2 TO DO, 1 hand edit, 1 file left as is,"
+    assert lines[0] == ("IMPORT my_cluster  4 nodes (3 read)  5 entries to act on: 2 TO DO, 1 hand edit, 1 file left as is,"
                         " 1 setting that differs between nodes")
     order = [heading(lines, title) for title in ("TO DO", "HAND EDITS", "DIFFERENT ON SOME NODES",
                                                  "LEFT AS THE NODES HAVE THEM", "WHAT TO DO NEXT", "WHAT THIS REPORT IS",
@@ -208,7 +208,7 @@ def test_things_to_do_and_hand_edits():
                    leftovers={"unsure": ["host_vars/old/main.yml"]},
                    self_check={"node1": {"differences": ["cassandra.yaml: concurrent_writes"], "notes": []}})
     # (a self-check not passed: a step to do, said calmly, not in red)
-    assert lines[0].startswith("IMPORT my_cluster  4 nodes (3 read)  6 to act on: 4 TO DO, 2 hand")
+    assert lines[0].startswith("IMPORT my_cluster  4 nodes (3 read)  6 entries to act on: 4 TO DO, 2 hand")
     assert lines[1] == "  self-check not passed yet: TO DO step 2"
     titles = [line for line in lines if re.match(r"^  \d\. ", line)]
     assert titles[:4] == ["  1. Let the import read node4 (1 node), then import again", "  2. Make the self-check pass",
@@ -308,10 +308,10 @@ def test_differs_from_your_group_vars_all():
         "    cassandra_config_user (the owner of the config files): root, yours: cassandra (group_vars/all/standard.yml)"
         "   node1, node2 (2 nodes)",
         "      kept as the nodes have it (in host_vars/<node>/main.yml); to apply yours, delete it there, then apply_config"]
-    assert lines[0].endswith("2 to review: 2 things worth a look")  # (not again as settings that differ)
+    assert lines[0].endswith("2 entries to review: 2 things worth a look")  # (not again as settings that differ)
     # the screen has it too
     screen = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, screen=True, width=160)
-    assert review[0] in screen and screen[-2:] == ["", "full report: reports/my_cluster/report.txt"]
+    assert review[0] in screen and screen[-3:] == ["", "details: reports/my_cluster/report.details.txt", "full report: reports/my_cluster/report.txt"]
 
 
 def test_differs_one_line_per_file_of_yours():
@@ -448,7 +448,7 @@ def test_hand_edits_by_file_counted():
         "    logback.xml (the logging settings): 3 edits   node1, node2, node4 (3 nodes)",
         "    logback.xml: 1 edit   node3 (1 node)",
         "    jvm11-server.options (Java's options, Java 11 only): 1 edit   node4 (1 node)"]
-    assert lines[0] == "IMPORT my_cluster  5 nodes  4 to review: 4 hand edits"  # (no TO DO)
+    assert lines[0] == "IMPORT my_cluster  5 nodes  4 entries to review: 4 hand edits"  # (no TO DO)
     # one way to keep them: the file left as the node has it
     assert ("the lines are under DETAILS, node by node; to keep them: import again with"
             " -e import_cluster_keep_hand_edits=logback.xml (Ansible then leaves logback.xml as each node has it)") in \
@@ -1112,3 +1112,33 @@ def test_your_files_values_count_for_the_series_and_the_restart_policy():
     assert "not read by the Java node4 runs (observed: Java 11)" in text
     assert "cassandra_heap_size: 4G" not in text
     assert not has(lines, "WORTH A LOOK")
+
+
+def test_the_check_details_say_check_and_name_its_own_report():
+    # (owner list) report.check.details.txt: nothing written, and report.check.txt named, not report.txt
+    lines = report([node(1), node(2)], check=True, report_file=REPORT_CHECK, details=True)
+    text = "\n".join(lines)
+    assert "IMPORT my_cluster (--check, nothing written)  the details of report.check.txt" in lines
+    assert "worked out (--check: nothing written) an Ansible inventory" in text and "and wrote an" not in text
+    assert "report.check.txt says what to do" in text and "report.txt says" not in text
+
+
+def test_packages_not_installed_apart_from_what_ansible_leaves():
+    # (owner list) *_install: false is a package the nodes have none of, not a part Ansible leaves as it is
+    keep = {"cassandra_linux_manage": False, "cassandra_install_jemalloc": False, "cassandra_dsbulk_install": False}
+    left = section(report([node(1, keep=keep), node(2, keep=keep)], details=False), "LEFT AS THE NODES HAVE THEM")
+    assert [" ".join(line.split()) for line in left] == [
+        "not managed by Ansible here: OS settings all (2 nodes)",
+        "not installed by Ansible here, as these nodes have none (true installs it): DSBulk, jemalloc all (2 nodes)"]
+
+
+def test_worth_a_look_says_which_nodes_get_the_change():
+    # (owner list) existing nodes or nodes added later: said with each change to make
+    review = " ".join(" ".join(line.split()) for line in section(
+        report([taken_over(i) for i in range(1, 4)], details=False), "WORTH A LOOK"))
+    assert "these nodes: Ansible leaves their OS settings (cassandra_linux_manage: false), change it on them by hand;" \
+           " nodes added later: cassandra_linux sets it" in review
+    small = node(1)
+    small["vars"]["cassandra_heap_size"] = "1G"
+    review = " ".join(" ".join(line.split()) for line in section(report([small], details=False), "WORTH A LOOK"))
+    assert "these nodes get it at their next apply_config (a restart each), nodes added later too" in review

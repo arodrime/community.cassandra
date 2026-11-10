@@ -1,0 +1,4 @@
+bugfixes:
+  - 'import_cluster playbook - under ``--check``, ``report.check.details.txt`` says nothing was written and names ``report.check.txt``, no longer ``report.txt``; the screen also names the details file.'
+  - 'import_cluster playbook - the report says which nodes a change reaches (these nodes at their next run, or nodes added later only where Ansible leaves their OS settings), lists the packages it does not install apart from what Ansible leaves as it is, counts its entries as entries, and says of AllowAllAuthenticator only what was read (an rpc_address or rpc_interface other than loopback).'
+  - 'import_cluster playbook - a mirror URL your own files already give (``cassandra_install_url`` with ``{{ cassandra_version }}``) is no longer written again in the cluster''s ``main.yml``, where it won over yours, and the ``TODO: cassandra_install_url`` note is not written when your files set it.'
