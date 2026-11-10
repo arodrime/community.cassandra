@@ -511,3 +511,12 @@ def test_lines_java_link_from_the_java_home_cassandra_runs_with(tmp_path):
     other.mkdir()
     java = _jdk(other, "jdk-11.0.30", "11.0.30")
     assert "javalink" not in _run(other, java, java, java_home=str(java.parent.parent))
+
+
+def test_lines_java_link_of_a_usr_lib_jvm_name(tmp_path):
+    # /usr/bin/java -> alternatives -> /usr/lib/jvm/java-17/bin/java, /usr/lib/jvm/java-17 -> /opt/jdk-17
+    java = _jdk(tmp_path, "jdk-17", "17.0.9")
+    jvm = tmp_path / "usr" / "lib" / "jvm"
+    jvm.mkdir(parents=True)
+    (jvm / "java-17").symlink_to(java.parent.parent)
+    assert _run(tmp_path, java, jvm / "java-17" / "bin" / "java")["javalink"] == str(jvm / "java-17")

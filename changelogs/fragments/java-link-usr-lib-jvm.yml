@@ -1,0 +1,5 @@
+bugfixes:
+  - >-
+    cassandra_install - a ``cassandra_java_link`` named in ``/usr/lib/jvm`` (e.g. ``/usr/lib/jvm/java-17`` leading to
+    ``/opt/jdk-17``), where Javas are linked by name, is taken; ``/usr/lib/jvm`` itself and the other system paths are
+    still refused.

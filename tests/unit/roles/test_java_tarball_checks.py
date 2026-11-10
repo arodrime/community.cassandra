@@ -195,9 +195,12 @@ def test_the_java_link_refusals(tmp_path):
     assert "it must be an absolute path" in refused("jdk")
     assert "it must be an absolute path" in refused("/apps/jre/jdk-11.0.30/")
     # system paths and the config directory: never made a link
-    for link in ("/usr/bin/java", "/etc/alternatives/java", "/bin", "/lib64", "/lib/jvm", "/opt", "/usr", "/etc/x",
-                 "/etc/cassandra/conf", "/srv/conf/java"):
+    for link in ("/usr/bin/java", "/etc/alternatives/java", "/bin", "/lib64", "/lib/jvm", "/usr/lib/jvm", "/usr/lib/x",
+                 "/usr/lib/jvm/a/b", "/opt", "/usr", "/etc/x", "/etc/cassandra/conf", "/srv/conf/java"):
         assert "a system path or the config directory" in refused(link, conf="/srv/conf"), link
+    # where Javas are linked by name: allowed (e.g. /usr/lib/jvm/java-17 -> /opt/jdk-17)
+    for link in ("/usr/lib/jvm/java-17", "/usr/lib64/jvm/jre-11/", "/lib/jvm/current"):
+        assert refused(link) == "", link
 
     # what is there: read by a script, refused unless absent, a link to a Java, or a link leading nowhere
     look = _find(tasks, "Look at the Java link")
@@ -252,3 +255,19 @@ def test_a_password_with_an_at_sign_is_masked_whole():
     msg = " ".join(Templar(loader=DataLoader(), variables=variables).template(
         trust_as_template(stop["ansible.builtin.fail"]["msg"])).split())
     assert "https://svc:****@mirror.example/java/jdk-17.tar.gz" in msg and "ss@" not in msg
+
+
+def test_a_usr_lib_jvm_link_imported_then_left_as_it_is(tmp_path):
+    # /usr/lib/jvm/java-17 -> /opt/jdk-17 (the alternatives through it): the import writes it as cassandra_java_link
+    # (test_import_cluster_java_link), java_check takes it, and the role leaves the link as it is (site.yml no-op)
+    jdk = tmp_path / "opt" / "jdk-17"
+    (jdk / "bin").mkdir(parents=True)
+    (jdk / "bin" / "java").write_text("#!/bin/sh\n")
+    (jdk / "bin" / "java").chmod(0o755)
+    link = tmp_path / "usr" / "lib" / "jvm" / "java-17"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(jdk)
+    rc, out = _link(tmp_path, jdk, link, check=True)
+    assert rc == 0 and "changed=0" in out, out
+    rc, out = _link(tmp_path, jdk, link)
+    assert rc == 0 and "changed=0" in out and os.readlink(str(link)) == str(jdk), out

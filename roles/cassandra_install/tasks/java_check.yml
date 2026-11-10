@@ -125,7 +125,7 @@
 
 # cassandra_java_link (_cassandra_java_link: without a trailing /): kept pointing at a Java home (java_tarball.yml).
 # Refused before anything changes: no Java home to point at (a Java package), a path that is no place for it (a
-# system directory, the config directory), a path there that is not a link, or a link to something else than a Java
+# system directory, the config directory; /usr/lib/jvm/<name>, where Javas are linked, is one), a path there that is not a link, or a link to something else than a Java
 # (no bin/java, no release file in what it leads to; one leading nowhere is made again)
 - name: The Java link is for a Java home
   ansible.builtin.assert:
@@ -148,7 +148,9 @@
     _system: >-
       {{ _cassandra_java_link in ['/', '/bin', '/sbin', '/opt', '/usr', '/etc', '/var', '/home', '/root', '/boot', '/dev',
                                   '/proc', '/sys', '/tmp']
-         or _cassandra_java_link is match('^/(usr/s?bin|usr/lib(64)?|etc|lib[^/]*|bin|sbin)(/|$)')
+         or _cassandra_java_link is match('^/(usr/s?bin|etc|bin|sbin)(/|$)')
+         or (_cassandra_java_link is match('^/(usr/)?lib[^/]*(/|$)')
+             and _cassandra_java_link is not match('^/(usr/)?lib(64)?/jvm/[^/]+$'))
          or _cassandra_java_link == _conf or _cassandra_java_link.startswith(_conf ~ '/') }}
   when: cassandra_java_link | default('') != ''
 
