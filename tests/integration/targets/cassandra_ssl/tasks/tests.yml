@@ -37,7 +37,7 @@
   ansible.builtin.pip:
     name: cassandra-driver
   environment:
-    CASS_DRIVER_NO_CYTHON: 1 
+    CASS_DRIVER_NO_CYTHON: 1
 
 - name: Ensure Cassandra service from setup_cassandra isn't running
   ansible.builtin.service:
@@ -77,7 +77,7 @@
     CCM_CONFIG_DIR: "/home/cassandra/config"
     CASSANDRA_HOME: "/home/cassandra"
     JAVA_TOOL_OPTIONS: "-Dcom.sun.jndi.rmiURLParsing=legacy"
-    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin     
+    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 - name: Create SSL enabled Cassandra cluster via ccm tool
   # shell: "sudo -E -u cassandra bash -c \"{{ ccm_cmd }} create ssl-test-cluster -v {{ cassandra_version }} --ssl /home/ssl-test-cluster/ --require_client_auth > /dev/null\""
@@ -88,7 +88,7 @@
   environment:
     CCM_CONFIG_DIR: "/home/cassandra/config"
     CASSANDRA_HOME: "/home/cassandra"
-    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin  
+    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 - name: Add nodes to the Cassandra Cluster
   ansible.builtin.shell: "sudo -E -u cassandra bash -c '{{ ccm_cmd }} add {{ item.node }} -i {{ item.ip }} -j {{ item.port }} -b --data-center={{ item.dc }} --remote-debug-port {{ item.debug_port }} {{ item.args }}'"
@@ -173,7 +173,7 @@
 - name: Assert ccmsslkeyspace_cert_none exists 1
   ansible.builtin.assert:
     that:
-      - "'\\nCREATE KEYSPACE ccmsslkeyspace_cert_none WITH replication = {\\'class\\': \\'SimpleStrategy\\', \\'replication_factor\\': \\'1\\'}  AND durable_writes = true;' in ccmsslkeyspace_cert_none.stdout"  
+      - "'\\nCREATE KEYSPACE ccmsslkeyspace_cert_none WITH replication = {\\'class\\': \\'SimpleStrategy\\', \\'replication_factor\\': \\'1\\'}  AND durable_writes = true;' in ccmsslkeyspace_cert_none.stdout"
 
 - name: Creating a keyspace on an SSL-enabled cluster when ssl=True and ssl_cert_reqs=CERT_OPTIONAL should succeed
   community.cassandra.cassandra_keyspace:
@@ -181,8 +181,8 @@
     state: present
     ssl: True
     ssl_cert_reqs: 'CERT_OPTIONAL'
-    ssl_ca_certs: '/home/ssl-test-cluster/ssl-test.cer.pem' 
-  
+    ssl_ca_certs: '/home/ssl-test-cluster/ssl-test.cer.pem'
+
 - name: Get output of DESC KEYSPACE ccmsslkeyspace_cert_optional
   ansible.builtin.shell: export SSL_CERTFILE=/home/ssl-test-cluster/ssl-test.cer.pem; cqlsh --ssl --execute "DESC KEYSPACE ccmsslkeyspace_cert_optional"
   register: ccmsslkeyspace_cert_optional
@@ -198,14 +198,14 @@
     state: present
     ssl: True
     ssl_cert_reqs: 'CERT_OPTIONAL'
-    ssl_ca_certs: '/random/cert/location.cer.pem' 
-  ignore_errors: yes  
+    ssl_ca_certs: '/random/cert/location.cer.pem'
+  ignore_errors: yes
   register: ccmsslkeyspace_cert_optional_f
 
 - name: Assert ccmsslkeyspace_cert_optional_f fails
   ansible.builtin.assert:
     that:
-      - "'ssl_ca_certs certificate: File not found' in ccmsslkeyspace_cert_optional_f.msg"    
+      - "'ssl_ca_certs certificate: File not found' in ccmsslkeyspace_cert_optional_f.msg"
 
 - name: Creating a keyspace with ssl=True and ssl_cert_reqs=CERT_REQUIRED on an SSL enabled cluster with wrong ssl_ca_certs should fail
   community.cassandra.cassandra_keyspace:
@@ -213,14 +213,14 @@
     state: present
     ssl: True
     ssl_cert_reqs: 'CERT_REQUIRED'
-    ssl_ca_certs: '/random/cert/location.cer.pem' 
-  ignore_errors: yes  
+    ssl_ca_certs: '/random/cert/location.cer.pem'
+  ignore_errors: yes
   register: ccmsslkeyspace_cert_required_f
 
 - name: Assert ccmsslkeyspace_cert_required_f fails
   ansible.builtin.assert:
     that:
-      - "'ssl_ca_certs certificate: File not found' in ccmsslkeyspace_cert_required_f.msg" 
+      - "'ssl_ca_certs certificate: File not found' in ccmsslkeyspace_cert_required_f.msg"
 
 - name: Creating a keyspace with ssl=True and ssl_cert_reqs=CERT_REQUIRED on an SSL enabled cluster should succeed
   community.cassandra.cassandra_keyspace:
@@ -228,8 +228,8 @@
     state: present
     ssl: True
     ssl_cert_reqs: 'CERT_REQUIRED'
-    ssl_ca_certs: '/home/ssl-test-cluster/ssl-test.cer.pem' 
-  
+    ssl_ca_certs: '/home/ssl-test-cluster/ssl-test.cer.pem'
+
 - name: Get output of DESC KEYSPACE ccmsslkeyspace_cert_required
   ansible.builtin.shell: export SSL_CERTFILE=/home/ssl-test-cluster/ssl-test.cer.pem; cqlsh --ssl --execute "DESC KEYSPACE ccmsslkeyspace_cert_required"
   register: ccmsslkeyspace_cert_required
@@ -237,7 +237,7 @@
 - name: Assert ccmsslkeyspace_cert_required exists 3
   ansible.builtin.assert:
     that:
-      - "'\\nCREATE KEYSPACE ccmsslkeyspace_cert_required WITH replication = {\\'class\\': \\'SimpleStrategy\\', \\'replication_factor\\': \\'1\\'}  AND durable_writes = true;' in ccmsslkeyspace_cert_required.stdout"          
+      - "'\\nCREATE KEYSPACE ccmsslkeyspace_cert_required WITH replication = {\\'class\\': \\'SimpleStrategy\\', \\'replication_factor\\': \\'1\\'}  AND durable_writes = true;' in ccmsslkeyspace_cert_required.stdout"
 
 - name: Creating a keyspace for table tests with ssl:True and ssl_cert_reqs:CERT_NONE should succeed
   community.cassandra.cassandra_keyspace:
@@ -269,7 +269,7 @@
 - name: Assert create_table_required fails
   ansible.builtin.assert:
     that:
-      - "'ssl_ca_certs certificate: File not found' in create_table_required.msg"  
+      - "'ssl_ca_certs certificate: File not found' in create_table_required.msg"
 
 - name: Test table creation - Creating a table with ssl:True and ssl_cert_reqs:CERT_OPTIONAL and wrong ssl_ca_certs should fail
   community.cassandra.cassandra_table:
@@ -331,7 +331,7 @@
   community.cassandra.cassandra_keyspace:
     ssl: True
     ssl_cert_reqs: 'CERT_REQUIRED'
-    ssl_ca_certs: '/home/ssl-test-cluster/ssl-test.cer.pem' 
+    ssl_ca_certs: '/home/ssl-test-cluster/ssl-test.cer.pem'
     name: myappssl_cert_required
     state: present
 
@@ -371,7 +371,7 @@
   community.cassandra.cassandra_keyspace:
     ssl: True
     ssl_cert_reqs: 'CERT_OPTIONAL'
-    ssl_ca_certs: '/home/ssl-test-cluster/ssl-test.cer.pem' 
+    ssl_ca_certs: '/home/ssl-test-cluster/ssl-test.cer.pem'
     name: myappssl_cert_optional
     state: present
 
@@ -416,7 +416,7 @@
     CCM_CONFIG_DIR: "/home/cassandra/config"
     CASSANDRA_HOME: "/home/cassandra"
     JAVA_TOOL_OPTIONS: "-Dcom.sun.jndi.rmiURLParsing=legacy"
-    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin      
+    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 - name: Wait until the removed cluster's storage ports are free
   ansible.builtin.wait_for:
@@ -434,7 +434,7 @@
   environment:
     CCM_CONFIG_DIR: "/home/cassandra/config"
     CASSANDRA_HOME: "/home/cassandra"
-    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin  
+    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 - name: Add nodes to the Cassandra Cluster
   ansible.builtin.shell: "sudo -E -u cassandra bash -c '{{ ccm_cmd }} add {{ item.node }} -i {{ item.ip }} -j {{ item.port }} -b --data-center={{ item.dc }} --remote-debug-port {{ item.debug_port }} {{ item.args }}'"
@@ -538,9 +538,9 @@
 - name: Assert app_user exists in output
   ansible.builtin.assert:
     that:
-      - "'app_user' in myrole.stdout"  
+      - "'app_user' in myrole.stdout"
 
-- name: Create a role with ssl:true and CERT_VERIFY:REQUIRED 
+- name: Create a role with ssl:true and CERT_VERIFY:REQUIRED
   community.cassandra.cassandra_role:
     name: app_user_c_r
     ssl: True
@@ -577,9 +577,9 @@
 - name: Assert app_user_c_r exists in output
   ansible.builtin.assert:
     that:
-      - "'app_user_c_r' in myrole_required.stdout"  
+      - "'app_user_c_r' in myrole_required.stdout"
 
-- name: Create a role with ssl:true and CERT_VERIFY:OPTIONAL 
+- name: Create a role with ssl:true and CERT_VERIFY:OPTIONAL
   community.cassandra.cassandra_role:
     name: app_user_c_o
     ssl: True
@@ -616,9 +616,9 @@
 - name: Assert app_user_c_o exists in output
   ansible.builtin.assert:
     that:
-      - "'app_user_c_o' in myrole_optional.stdout"  
+      - "'app_user_c_o' in myrole_optional.stdout"
 
-- name: Create a role with ssl:true and CERT_VERIFY:REQUIRED and invalid ssl_ca_certs should FAIL 
+- name: Create a role with ssl:true and CERT_VERIFY:REQUIRED and invalid ssl_ca_certs should FAIL
   community.cassandra.cassandra_role:
     name: app_user_c_r
     ssl: True
@@ -636,7 +636,7 @@
     that:
       - "'ssl_ca_certs certificate: File not found' in create_role_required_fail.msg"
 
-- name: Create a role with ssl:true and CERT_VERIFY:OPTIONAL and invalid ssl_ca_certs should FAIL 
+- name: Create a role with ssl:true and CERT_VERIFY:OPTIONAL and invalid ssl_ca_certs should FAIL
   community.cassandra.cassandra_role:
     name: app_user_c_o
     ssl: True
@@ -657,4 +657,4 @@
 # - name: Sleep for 3600 seconds and continue with play
 #   ansible.builtin.wait_for:
 #     timeout: 3600
-#   delegate_to: localhost   
+#   delegate_to: localhost

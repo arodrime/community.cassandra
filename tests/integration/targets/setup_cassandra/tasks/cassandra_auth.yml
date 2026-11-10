@@ -64,7 +64,7 @@
 
 - name: Activate local jmx
   lineinfile:
-    path:  "{{ cassandra_env_file }}"
+    path: "{{ cassandra_env_file }}"
     regexp: '^if \[ \"\$LOCAL_JMX\" \=*'
     line: 'if [ "$LOCAL_JMX" = "no" ]; then'
   no_log: yes

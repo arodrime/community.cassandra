@@ -29,7 +29,7 @@
 
 - name: Assert starting status of interdcstreamthroughput
   ansible.builtin.assert:
-    that: "'Current inter-datacenter stream throughput: 200 Mb/s' == interdcstreamthroughput.stdout or 'Current stream throughput: 201.326592 Mb/s' == interdcstreamthroughput.stdout" 
+    that: "'Current inter-datacenter stream throughput: 200 Mb/s' == interdcstreamthroughput.stdout or 'Current stream throughput: 201.326592 Mb/s' == interdcstreamthroughput.stdout"
 
 - name: Read interdcstreamthroughput with module (no value)
   community.cassandra.cassandra_interdcstreamthroughput:
@@ -88,7 +88,7 @@
 
 - name: Assert interdcstreamthroughput is 200MB
   ansible.builtin.assert:
-    that: "'Current inter-datacenter stream throughput: 200 Mb/s' == interdcstreamthroughput.stdout or 'Current stream throughput: 200.0 Mb/s' == interdcstreamthroughput.stdout" 
+    that: "'Current inter-datacenter stream throughput: 200 Mb/s' == interdcstreamthroughput.stdout or 'Current stream throughput: 200.0 Mb/s' == interdcstreamthroughput.stdout"
 
 - name: Test module with check_mode = true
   community.cassandra.cassandra_interdcstreamthroughput:
@@ -107,7 +107,7 @@
 
 - name: Assert interdcstreamthroughput is still 200MB
   ansible.builtin.assert:
-    that: "'Current inter-datacenter stream throughput: 200 Mb/s' == interdcstreamthroughput.stdout or 'Current stream throughput: 200.0 Mb/s' == interdcstreamthroughput.stdout" 
+    that: "'Current inter-datacenter stream throughput: 200 Mb/s' == interdcstreamthroughput.stdout or 'Current stream throughput: 200.0 Mb/s' == interdcstreamthroughput.stdout"
 
 - name: Set interdcstreamthroughput to 250
   community.cassandra.cassandra_interdcstreamthroughput:
@@ -163,7 +163,7 @@
 
 - name: Set back to 200MB using the pw file option
   community.cassandra.cassandra_interdcstreamthroughput:
-    value:  200
+    value: 200
     username: "{{ cassandra_admin_user }}"
     password_file: /etc/cassandra/jmxremote.password
     debug: true
@@ -178,7 +178,7 @@
 - name: Assert interdcstreamthroughput is again 200MB
   ansible.builtin.assert:
     that:
-      - "'Current inter-datacenter stream throughput: 200 Mb/s' == interdcstreamthroughput.stdout or 'Current stream throughput: 200.0 Mb/s' == interdcstreamthroughput.stdout" 
+      - "'Current inter-datacenter stream throughput: 200 Mb/s' == interdcstreamthroughput.stdout or 'Current stream throughput: 200.0 Mb/s' == interdcstreamthroughput.stdout"
       - interdcstreamthroughput.changed == True
   when: cassandra_auth_tests == True
 

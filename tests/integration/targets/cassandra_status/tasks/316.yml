@@ -44,7 +44,7 @@
     name: mytestkeyspace
     state: present
 
-- name: keyspace flag 
+- name: keyspace flag
   community.cassandra.cassandra_status:
     host: 127.0.0.1
     port: 7100
@@ -175,7 +175,7 @@
 
 - name: Repeat test to ensure we don't get acccidental ip resolutions when not wanted
   block:
-    - name: keyspace flag 
+    - name: keyspace flag
       community.cassandra.cassandra_status:
         host: 127.0.0.1
         port: 7100

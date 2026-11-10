@@ -101,7 +101,7 @@
       - "assass.msg == 'The counter cache is empty'"
       - "assass.changed == False"
 
-- name: Invalidate the counter cache 
+- name: Invalidate the counter cache
   community.cassandra.cassandra_invalidatecache:
     cache: counter
     debug: true

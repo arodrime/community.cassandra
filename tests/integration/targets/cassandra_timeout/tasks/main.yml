@@ -69,7 +69,7 @@
   register: read
 
 - ansible.builtin.assert:
-    that: 
+    that:
       - read.changed
       - "read.msg == 'read timeout changed'"
 
@@ -89,7 +89,7 @@
   register: timeout
 
 - ansible.builtin.assert:
-    that: 
+    that:
       - "timeout.changed == False"
       - "timeout.msg == 'read timeout unchanged'"
 
@@ -115,12 +115,12 @@
     that:
       - "timeout.stdout == 'Current timeout for type read: 15000 ms'"
 
-- name: Set timeout to 0 
+- name: Set timeout to 0
   community.cassandra.cassandra_timeout:
     timeout: 0
     timeout_type: read
     debug: true
-  register: timeout  
+  register: timeout
 
 - ansible.builtin.assert:
     that:

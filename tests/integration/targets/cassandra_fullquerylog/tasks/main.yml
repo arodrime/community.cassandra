@@ -251,7 +251,7 @@
     that:
       - "'Error executing command' in nodetool_path_error.msg or 'No such file or directory' in nodetool_path_error.msg"
 
-- name: Set archive command 
+- name: Set archive command
   community.cassandra.cassandra_fullquerylog:
     username: "{{ cassandra_admin_user }}"
     password: "{{ cassandra_admin_pwd }}"
@@ -274,7 +274,7 @@
     that: "'/path/to/script.sh %path' in fql_status.stdout"
 
 - name: Run reset
-  community.cassandra.cassandra_fullquerylog:    
+  community.cassandra.cassandra_fullquerylog:
     username: "{{ cassandra_admin_user }}"
     password: "{{ cassandra_admin_pwd }}"
     state: "reset"
@@ -304,7 +304,7 @@
     that: "'DAILY' in fql_status.stdout"
 
 - name: Run reset
-  community.cassandra.cassandra_fullquerylog:    
+  community.cassandra.cassandra_fullquerylog:
     username: "{{ cassandra_admin_user }}"
     password: "{{ cassandra_admin_pwd }}"
     state: "reset"
@@ -335,7 +335,7 @@
     that: "'false' in fql_status.stdout"
 
 - name: Run reset
-  community.cassandra.cassandra_fullquerylog:    
+  community.cassandra.cassandra_fullquerylog:
     username: "{{ cassandra_admin_user }}"
     password: "{{ cassandra_admin_pwd }}"
     state: "reset"
@@ -367,7 +367,7 @@
     that: "'9999999999' in fql_status.stdout"
 
 - name: Run reset
-  community.cassandra.cassandra_fullquerylog:    
+  community.cassandra.cassandra_fullquerylog:
     username: "{{ cassandra_admin_user }}"
     password: "{{ cassandra_admin_pwd }}"
     state: "reset"
@@ -400,7 +400,7 @@
     that: "'8888' in fql_status.stdout"
 
 - name: Run reset
-  community.cassandra.cassandra_fullquerylog:    
+  community.cassandra.cassandra_fullquerylog:
     username: "{{ cassandra_admin_user }}"
     password: "{{ cassandra_admin_pwd }}"
     state: "reset"

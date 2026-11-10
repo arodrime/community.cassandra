@@ -21,7 +21,7 @@
   when: ansible_os_family not in  ['RedHat', 'Debian' ]
 
 - name: Disable IPv6 with sysctl
-  ansible.posix.sysctl: 
+  ansible.posix.sysctl:
     name: "{{ item }}"
     value: 1
     reload: yes
@@ -134,7 +134,7 @@
     ccm_cmd: /usr/local/bin/ccm
 
 - name: Test ccm executable
-  ansible.builtin.shell:  /usr/local/bin/ccm --help
+  ansible.builtin.shell: /usr/local/bin/ccm --help
   register: ccm
   ignore_errors: true
 
@@ -207,7 +207,7 @@
   environment:
     CCM_CONFIG_DIR: "/home/cassandra/config"
     CASSANDRA_HOME: "/home/cassandra"
-    JAVA_HOME: "{{ (ansible_os_family == 'RedHat') | ternary('/usr/lib/jvm/java-' ~ j_version ~ '-openjdk', '/usr/lib/jvm/java-' ~ j_version ~ '-openjdk-amd64') }}" 
+    JAVA_HOME: "{{ (ansible_os_family == 'RedHat') | ternary('/usr/lib/jvm/java-' ~ j_version ~ '-openjdk', '/usr/lib/jvm/java-' ~ j_version ~ '-openjdk-amd64') }}"
   with_items: "{{ cassandra_nodes }}"
   ignore_errors: true
 

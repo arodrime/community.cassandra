@@ -40,7 +40,7 @@
     debug: yes
   check_mode: yes
   register: aes
-  
+
 - assert:
     that:
       - "aes.changed"
@@ -52,7 +52,7 @@
     value: 34
     debug: yes
   register: aes
-  
+
 - assert:
     that:
       - "aes.changed"
@@ -64,7 +64,7 @@
     value: 34
     debug: yes
   register: aes
-  
+
 - assert:
     that:
       - "aes.changed == False"
@@ -189,7 +189,7 @@
     debug: yes
   check_mode: yes
   register: aes
-  
+
 - assert:
     that:
       - "aes.changed"
@@ -203,7 +203,7 @@
     value: 34
     debug: yes
   register: aes
-  
+
 - assert:
     that:
       - "aes.changed"
@@ -217,7 +217,7 @@
     value: 34
     debug: yes
   register: aes
-  
+
 - assert:
     that:
       - "aes.changed == False"

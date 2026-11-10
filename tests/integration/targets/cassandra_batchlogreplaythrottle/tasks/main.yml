@@ -166,7 +166,7 @@
 
 - name: Set back to 1024 KB/s using the pw file option
   community.cassandra.cassandra_batchlogreplaythrottle:
-    value:  1024
+    value: 1024
     username: "{{ cassandra_admin_user }}"
     password_file: /etc/cassandra/jmxremote.password
     debug: yes
@@ -178,7 +178,7 @@
   register: batchlogreplaythrottle
   when: cassandra_auth_tests == True
 
-- name: Assert batchlogreplaythrottle is again 1024 KB/s 
+- name: Assert batchlogreplaythrottle is again 1024 KB/s
   ansible.builtin.assert:
     that:
       - "'Batchlog replay throttle: 1024 KB/s' == batchlogreplaythrottle.stdout"

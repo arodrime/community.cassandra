@@ -156,7 +156,7 @@
 
 - name: Set back to 0.1 using the pw file option
   community.cassandra.cassandra_traceprobability:
-    value:  0.1
+    value: 0.1
     username: "{{ cassandra_admin_user }}"
     password_file: /etc/cassandra/jmxremote.password
     debug: yes
