@@ -37,6 +37,11 @@ esac
 printf 'Cluster Information:\\n\\tName: %s\\n\\tSnitch: org.apache.cassandra.locator.GossipingPropertyFileSnitch\\n' "$FAKE_NAME"
 """
 
+SSH = """#!/bin/sh
+echo "ssh: connect to host 192.0.2.1 port 22: Connection timed out" >&2
+exit 255
+"""
+
 
 def render(template, variables):
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
@@ -53,7 +58,9 @@ def run(tmp_path, inventory_name, node_name, candidates=("gone", "n1", "n2", "n3
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(parents=True)
     (bin_dir / "nodetool").write_text(NODETOOL)
-    lines = ["gone ansible_host=192.0.2.1 ansible_connection=ssh ansible_ssh_common_args='-o ConnectTimeout=2'"]
+    # gone: a host ssh cannot reach (a stand-in ssh: the same on a controller without one, and at once)
+    (bin_dir / "ssh").write_text(SSH)
+    lines = ["gone ansible_host=192.0.2.1 ansible_connection=ssh"]
     for host in ("n0", "n1", "n2", "n3", "n9"):
         # each host's own python, which tells the stand-in nodetool which host runs it
         python = bin_dir / ("python-" + host)
