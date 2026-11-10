@@ -1,0 +1,2 @@
+breaking_changes:
+  - The collection now requires ansible-core 2.16 or later, the oldest version its CI tests (cassandra_repository writes the apt source with ansible.builtin.deb822_repository).
