@@ -19,7 +19,9 @@ def behind(*nodes):
 def test_the_earliest_of_the_three():
     assert behind(("NONE", "NONE", "NONE"), (None, "NONE", "NONE")) == []
     found = behind(("NONE", "CASSANDRA_4", "CASSANDRA_4"), ("UPGRADING", "NONE", "NONE"), ("NONE", "''", "NONE"))
-    assert [(b["node"], b["mode"]) for b in found] == [("n1", "CASSANDRA_4"), ("n2", "UPGRADING"), ("n3", "CASSANDRA_4")]
+    # n3: no such line (5.0 runs CASSANDRA_4 then) while it runs NONE: edited back, the inventory's mode is its own
+    assert [(b["node"], b["mode"], b["reverted"]) for b in found] == [
+        ("n1", "CASSANDRA_4", False), ("n2", "UPGRADING", False), ("n3", "NONE", True)]
     assert cassandra_storage_mode_step(found).startswith("Now set cassandra_storage_compatibility_mode: UPGRADING")
     assert cassandra_storage_mode_step(found[1:2]).startswith("Now set cassandra_storage_compatibility_mode: NONE")
     assert cassandra_storage_mode_step([]) == ""

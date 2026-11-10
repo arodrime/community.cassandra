@@ -106,6 +106,16 @@ def cassandra_storage_mode_behind(nodes):
         if [inventory[0], yaml[0], running[0]] == ["NONE"] * 3 and not n.get("pending"):
             continue
         written = [m for m in (inventory[0], yaml[0]) if m]
+        # its cassandra.yaml has a mode before the inventory's and before the one it runs (or, nothing logged, it
+        # changed since its start): edited back by hand (apply_config writes the inventory's, one step forward).
+        # The inventory's written back is the way out, not a restart into that earlier mode
+        earlier = yaml[0] and inventory[0] and _ORDER.index(yaml[0]) < _ORDER.index(inventory[0])
+        reverted = bool(earlier and (_ORDER.index(yaml[0]) < _ORDER.index(running[0]) if running[0]
+                                     else n.get("pending")))
+        if reverted:
+            written = [inventory[0]]
+            if running[0] is None and n.get("pending"):
+                running = (None, "not logged (%s)" % WRITTEN_AFTER)
         unread = ([] if n.get("yaml") is not None else ["its cassandra.yaml"]) + (
             ["the mode it runs (no Cassandra process found)"] if n.get("stopped") else
             ["the start of its Cassandra"] if n.get("start_unread") and n.get("running") is None else
@@ -120,7 +130,8 @@ def cassandra_storage_mode_behind(nodes):
             "stopped": bool(n.get("stopped")),
             "start_later": bool(n.get("start_later")) and n.get("running") is None,
             "file": n.get("file") or "cassandra.yaml",
-            "pending": bool(n.get("pending")) or bool(yaml[0] and running[0] and yaml[0] != running[0])})
+            "reverted": reverted,
+            "pending": not reverted and (bool(n.get("pending")) or bool(yaml[0] and running[0] and yaml[0] != running[0]))})
     return behind
 
 
@@ -160,6 +171,7 @@ def cassandra_storage_mode_headline(behind, from_4x=True):
     """behind: cassandra_storage_mode_behind's -> why the sstables phase is refused, one sentence per kind, then
     "Nothing was done."."""
     before = ", ".join(b["node"] for b in behind if b["mode"] in _BEFORE or b.get("running_mode") in _BEFORE)
+    reverted = [b for b in behind if b.get("reverted")]
     pending = ", ".join(b["node"] for b in behind if b["pending"] and b["mode"] not in _BEFORE)
     out = []
     if before:
@@ -170,6 +182,9 @@ def cassandra_storage_mode_headline(behind, from_4x=True):
     if pending:
         out.append("A restart is pending on %s (%s)." % (pending, _one(
             pending, WRITTEN_AFTER, "their cassandra.yaml changed after Cassandra started")))
+    for b in reverted:
+        out.append("On %s, cassandra.yaml has %s, before the inventory's %s%s." % (
+            b["node"], b["yaml"], b["inventory"], (" and the %s it runs" % b["running_mode"]) if b["running_mode"] else ""))
     future = _names(behind, "future")
     if future:
         out.append("On %s, cassandra.yaml has a time after now." % future)
@@ -182,11 +197,12 @@ def cassandra_storage_mode_headline(behind, from_4x=True):
     return " ".join(out + ["Nothing was done."])
 
 
-def cassandra_storage_mode_way_out(behind, from_4x=True, restart_command="", total=0):
+def cassandra_storage_mode_way_out(behind, from_4x=True, restart_command="", total=0, apply_command=""):
     """behind: cassandra_storage_mode_behind's; from_4x: the upgrade comes from 4.x (the move to NONE is its next
     step), else a cluster that stays before NONE is told there is nothing to rewrite (and, some of its nodes at NONE
     already, how to finish the move: total, the number of nodes, more than the ones behind); restart_command: the
-    command that restarts the nodes with a restart pending ->
+    command that restarts the nodes with a restart pending; apply_command: the apply_config command of the nodes whose
+    cassandra.yaml has a mode before the inventory's (reverted) ->
     what to do before the sstables phase, one sentence per kind."""
     out = []
     unknown = _names(behind, "unknown")
@@ -201,6 +217,10 @@ def cassandra_storage_mode_way_out(behind, from_4x=True, restart_command="", tot
         out.append(STAYS)
         if step and (_mid_move(behind) or len(behind) < total):
             out.append("To finish the move to NONE: " + step[0].lower() + step[1:])
+    reverted = _names(behind, "reverted")
+    if reverted:
+        out.append("Write the inventory's mode back to the cassandra.yaml of %s%s." % (
+            reverted, (": " + apply_command) if apply_command else " (apply_config --limit)"))
     future = [b for b in behind if b["future"]]
     for path in sorted(set(b["file"] for b in future)):
         nodes = ", ".join(b["node"] for b in future if b["file"] == path)

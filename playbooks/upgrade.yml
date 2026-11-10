@@ -424,7 +424,10 @@
               + _behind | community.cassandra.cassandra_storage_mode_rows
               + ['WAY OUT  ' ~ _behind | community.cassandra.cassandra_storage_mode_way_out(
                                      _from_4x, 'rolling_restart' | community.cassandra.cassandra_command(
-                                       limit=_restart, **_cassandra_run_command_args), _hosts | length)]) | join(_nl) }}
+                                       limit=_restart, **_cassandra_run_command_args), _hosts | length,
+                                     'apply_config' | community.cassandra.cassandra_command(
+                                       limit=_behind | selectattr('reverted') | map(attribute='node') | list,
+                                       **_cassandra_run_command_args))]) | join(_nl) }}
         quiet: true
       run_once: true
       vars:

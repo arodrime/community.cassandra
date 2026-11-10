@@ -254,6 +254,22 @@ def test_sstables_refuse_a_mode_not_read_unknown_or_a_restart_pending():
         "WAY OUT  Set the clock of n2 right (its cassandra.yaml has a time after now), then on it: touch cassandra.yaml."
         " Restart n1, n2, so they run the mode their cassandra.yaml has: ansible-playbook -i a.yml"
         " community.cassandra.rolling_restart --limit n1,n2. Then run this phase again.")
+    # NONE in the inventory and running, its cassandra.yaml edited back to UPGRADING by hand (a 5.0 cluster): the
+    # inventory's mode written back, never a restart into UPGRADING nor "nothing to rewrite"
+    patch = dict(from_series="50x", copies=("5.0.8",))
+    ok, msg = _sstables(("NONE", "UPGRADING", "NONE"), **patch)
+    assert ok is False and msg == [
+        "On n1, cassandra.yaml has UPGRADING, before the inventory's NONE and the NONE it runs. Nothing was done.",
+        "  node  inventory  cassandra.yaml  running",
+        "  n1    NONE       UPGRADING       NONE",
+        "WAY OUT  Write the inventory's mode back to the cassandra.yaml of n1: ansible-playbook -i a.yml"
+        " community.cassandra.apply_config --limit n1. Then run this phase again."]
+    # the same with nothing logged (its log rolled over): its cassandra.yaml changed since its start
+    ok, msg = _sstables(("NONE", "UPGRADING", "UPGRADING", True), **patch)
+    assert ok is False and msg[0] == "On n1, cassandra.yaml has UPGRADING, before the inventory's NONE. Nothing was done."
+    assert msg[2] == "  n1    NONE       UPGRADING       not logged (its cassandra.yaml changed after Cassandra started)"
+    assert msg[-1].startswith("WAY OUT  Write the inventory's mode back to the cassandra.yaml of n1: ")
+    assert "Restart" not in msg[-1] and "rolling_restart" not in msg[-1]
     # a typo in the inventory: not taken as NONE
     ok, msg = _sstables(("NONNE", "NONE", "NONE"))
     assert ok is False and msg[2] == "  n1    NONNE (unknown)  NONE            NONE"
