@@ -94,12 +94,16 @@ comma-separated), as `cassandra_target_dc` and `cassandra_target_rack` name a da
 - `cassandra_invalidatecache`- Invalidates the various caches on the Cassandra node.
 - `cassandra_keyspace`- Manage keyspaces on your Cassandra cluster.
 - `cassandra_maxhintwindow`- Set the specified max hint window in ms.
+- `cassandra_move`- Moves a single-token node to a new token.
 - `cassandra_netstats`- Returns the mode of the node and whether it is streaming.
 - `cassandra_reload`-  Reloads various objects into the local node.
 - `cassandra_removenode`- Removes a node by the given host id from the cluster.
+- `cassandra_ring`- Returns the tokens of the ring, per datacenter.
 - `cassandra_role`- Manage roles on your Cassandra Cluster.
 - `cassandra_schema`- Validates the schema version as seen from the node.
 - `cassandra_status`- Validates the status of the cluster as seen from the node.
+- `cassandra_statusbinary`- Returns the status of the binary protocol.
+- `cassandra_statusgossip`- Returns the status of gossip.
 - `cassandra_stopdaemon`- Stops the Cassandra daemon.
 - `cassandra_streamthroughput`- Sets the stream throughput.
 - `cassandra_table`- Create or drop tables on a Cassandra Keyspace.
@@ -109,6 +113,17 @@ comma-separated), as `cassandra_target_dc` and `cassandra_target_rack` name a da
 - `cassandra_truncatehints`- Truncate all hints on the local node, or truncate hints for the endpoint(s) specified.
 - `cassandra_upgradesstables`- Upgrade SSTables which are not on the current Cassandra version.
 - `cassandra_verify`- Checks the data checksum for one or more tables.
+
+#### Lookups
+
+- `cassandra_hosts`- The inventory group of the cluster the operation playbooks run on.
+- `cassandra_nodes`- The hosts of the cluster, without those marked absent.
+- `cassandra_inventory`- The clusters of an inventory, read without decrypting anything and without the nodes.
+- `cassandra_extra_vars`- The names of the extra variables (`-e`) of the run.
+
+#### Callback
+
+- `ops`- Only the operator messages of the playbooks (`stdout_callback = community.cassandra.ops`, see Playbooks above).
 
 ## Module support for Consistency Level
 
@@ -150,36 +165,50 @@ Any contribution is welcome and we only ask contributors to:
 * Create an issues for any significant contribution that would change a large portion of the code base.
 * Add a changelog fragment in `changelogs/fragments/` for any user-visible change (see the [format](https://github.com/ansible-community/antsibull-changelog/blob/main/docs/changelogs.md#changelog-fragment-categories)). A new module needs no fragment, but a `version_added` in its documentation.
 
-## Running integration tests locally
+## Running the tests locally
 
 Clone the collection git project. The ansible-test tool requires a specific directory setup to function correctly so please follow carefully.
 
 ```
-cd && mkdir -p git/ansible_collections/community
-git clone https://github.com/ansible-collections/community.cassandra.git ./ansible_collections/community/cassandra
-cd ./git/ansible_collections/community/cassandra
+mkdir -p ~/git/ansible_collections/community
+git clone https://github.com/ansible-collections/community.cassandra.git ~/git/ansible_collections/community/cassandra
+cd ~/git/ansible_collections/community/cassandra
 ```
 
-Create a virtual environment
+Install ansible-core (2.16 or later, as in CI) in a virtual environment
 
 ```
-virtualenv venv
-source venv/bin/activate
-pip install -r requirements-3.6.txt
+python3 -m venv ~/venv-cassandra
+. ~/venv-cassandra/bin/activate
+pip install ansible-core
 ```
 
-Run all tests
+Sanity and unit tests (CI runs them on ansible-core 2.16, 2.19, 2.20 and 2.21, Python 3.10 to 3.14)
 
 ```
-ansible-test integration --docker ubuntu1804 -v --color --python 3.6
+ansible-test sanity --venv --python 3.12
+ansible-test units --venv --python 3.12 --requirements
 ```
 
-Run tests just for the cassandra_role module
+Integration tests of the modules (ansible-test's `default` container; CI runs them on Cassandra 4.0, 4.1 and 5.0)
 
 ```
-ansible-test integration --docker ubuntu1804 -v --color --python 3.6 cassandra_role
+ansible-galaxy collection install ansible.posix -p ~/git
+ansible-test integration --docker default -v --python 3.10
+ansible-test integration --docker default -v --python 3.10 cassandra_role
 ```
 
+The Cassandra version is `cassandra_version` in `tests/integration/targets/setup_cassandra/defaults/main.yml` (package
+series, e.g. `41x`) and `tests/integration/targets/setup_cassandra_cluster_manager/defaults/main.yml` (release, e.g.
+`4.1.7`).
+
+Tests of the roles, with molecule and Docker (as `.github/workflows/test-roles.yml`)
+
+```
+pip install molecule molecule-docker pytest-testinfra
+ansible-galaxy collection build && ansible-galaxy collection install community-cassandra-*.tar.gz 'community.docker:>=3.0.2'
+cd roles/cassandra_install && molecule test
+```
 
 ## License
 
