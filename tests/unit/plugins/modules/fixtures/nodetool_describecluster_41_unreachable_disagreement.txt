@@ -1,0 +1,32 @@
+Cluster Information:
+	Name: my_cluster
+	Snitch: org.apache.cassandra.locator.SimpleSnitch
+	DynamicEndPointSnitch: enabled
+	Partitioner: org.apache.cassandra.dht.Murmur3Partitioner
+	Schema versions:
+		570d8077-08c5-38a5-bf63-a812d7a8aecc: [172.18.0.2]
+
+		54e17321-3f2e-37ca-9b08-d91ba7bdd369: [172.18.0.3]
+
+		UNREACHABLE: [172.18.0.4]
+
+Stats for all nodes:
+	Live: 2
+	Joining: 0
+	Moving: 0
+	Leaving: 0
+	Unreachable: 1
+
+Data Centers: 
+	datacenter1 #Nodes: 3 #Down: 1
+
+Database versions:
+	4.1.12: [172.18.0.2:7000, 172.18.0.3:7000, 172.18.0.4:7000]
+
+Keyspaces:
+	system_traces -> Replication class: SimpleStrategy {replication_factor=2}
+	system_distributed -> Replication class: SimpleStrategy {replication_factor=3}
+	system_auth -> Replication class: SimpleStrategy {replication_factor=1}
+	orders -> Replication class: SimpleStrategy {replication_factor=1}
+	system_schema -> Replication class: LocalStrategy {}
+	system -> Replication class: LocalStrategy {}

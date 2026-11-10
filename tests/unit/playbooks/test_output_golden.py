@@ -205,3 +205,18 @@ def test_health_check_with_a_node_unreachable_for_describecluster(tmp_path, port
                      "-e", "_cassandra_health_schema_interval=0", describecluster=unreachable)
     assert rc == 0, output
     assert "HEALTHY  my_cluster  3 nodes  3 UN, schema agreed, no streams, ports open" in ruled(output), output
+
+
+def test_health_check_a_disagreement_among_the_nodes_reached(tmp_path, port):
+    # a real 5.0 cluster of 3: node3 UNREACHABLE (not counted), node1 and node2 on two schema versions: a problem
+    with open(os.path.join(FIXTURES, "nodetool_describecluster_50_unreachable_disagreement.txt")) as f:
+        described = f.read()
+    rc, output = run(tmp_path, "health_check", False, "-e", "cassandra_storage_port=%d" % port,
+                     "-e", "cassandra_native_transport_port=%d" % port, "-e", "cassandra_clock_check=false",
+                     "-e", "_cassandra_health_schema_interval=0", describecluster=described)
+    assert rc != 0, output
+    assert ruled(output)[4:6] == [
+        "NOT HEALTHY  my_cluster  3 nodes checked, 1 problem",
+        "  schema:  disagreement: The cluster has not reached consensus on the schema: 2 versions,"
+        " 25631fff-7ab7-3b7d-8360-c4340f95ea89 on 172.18.0.2; d03783d7-b468-3c1a-82f1-8e30b2edde8b on 172.18.0.3"
+        " (unreachable, not counted: 172.18.0.4)"], output

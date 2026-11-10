@@ -598,6 +598,15 @@ def test_schema_disagreement_read_with_failed_when_false():
     # a module that died without a result of its own: said too
     died = {"failed": False, "failed_when_result": False, "msg": "MODULE FAILURE"}
     assert problems([view("n1", *ring)], expected=1, schema=died) == ["schema disagreement: MODULE FAILURE"]
+    # some nodes UNREACHABLE for describecluster (cassandra_schema's unreachable_nodes): not counted, but the
+    # others disagreeing, or a failed last read, are still a problem
+    both = dict(differ, unreachable_nodes=["10.0.0.3"], msg=msg + " (unreachable, not counted: 10.0.0.3)")
+    assert problems([view("n1", *ring)], expected=1, schema=both) == ["schema disagreement: " + both["msg"]]
+    failed = {"failed": False, "agreed": False, "msg": "nodetool error: boom", "schema_status": {"a": []},
+              "unreachable_nodes": ["10.0.0.3"]}
+    assert problems([view("n1", *ring)], expected=1, schema=failed) == ["schema disagreement: nodetool error: boom"]
+    agreed_but_one = dict(agreed, unreachable_nodes=["10.0.0.3"])
+    assert problems([view("n1", *ring)], expected=1, schema=agreed_but_one) == []
     # skipped, or the peer unreachable (its own finding): no schema problem
     assert problems([view("n1", *ring)], expected=1, schema={"skipped": True, "msg": "x"}) == []
     assert problems([view("n1", *ring)], expected=1, schema={"unreachable": True, "msg": "ssh: no route"}) == []

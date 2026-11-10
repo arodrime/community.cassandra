@@ -4,7 +4,8 @@ __metaclass__ = type
 # cassandra_schema on real nodetool describecluster outputs of 2-node clusters
 # (fixtures/nodetool_describecluster_<series>_*.txt): both nodes up and agreed;
 # node2 stopped (UNREACHABLE); node2 paused while a keyspace was created on
-# node1, then back before it pulled the new schema (two versions).
+# node1, then back before it pulled the new schema (two versions); of 3 nodes,
+# node3 stopped and node2 behind (two versions and an UNREACHABLE line).
 
 import os
 
@@ -142,3 +143,23 @@ def test_a_failure_then_agreement_goes_on():
 def test_no_version_listed_fails():
     kind, result, calls, sleeps = run_main([(0, "Cluster Information:\n\tName: my_cluster\n", "")])
     assert kind is FailJson and result["msg"] == "nodetool describecluster listed no schema version"
+
+
+@pytest.mark.parametrize("series", SERIES)
+def test_disagreement_among_the_others_with_one_unreachable(series):
+    # node3 down: not counted; node1 and node2 still disagree: that is said, with the node not counted
+    kind, result, calls, sleeps = run_main([ok(series, "unreachable_disagreement")], poll=2)
+    assert kind is FailJson and result["agreed"] is False, result
+    versions = sorted(result["schema_status"].items())
+    assert len(versions) == 2 and result["unreachable_nodes"] == ["172.18.0.4"] and "unreachable" not in result
+    (first, first_nodes), (second, second_nodes) = versions
+    assert result["msg"] == ("The cluster has not reached consensus on the schema: 2 versions, %s on %s; %s on %s"
+                             " (unreachable, not counted: 172.18.0.4)" % (first, first_nodes[0], second, second_nodes[0]))
+
+
+@pytest.mark.parametrize("series", SERIES)
+def test_a_failed_last_poll_after_an_unreachable_read_is_nodetool_s_error(series):
+    refused = (1, "", "nodetool: Failed to connect to '127.0.0.1:7199'")
+    kind, result, calls, sleeps = run_main([ok(series, "unreachable"), refused], poll=2, uuid="00000000-0000-3000-8000-000000000000")
+    assert kind is FailJson and result["agreed"] is False, result
+    assert result["msg"] == "nodetool error: " + refused[2]

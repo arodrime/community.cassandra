@@ -115,7 +115,9 @@ def cassandra_health_findings(views, expected, node, gossip=None, binary=None, n
                           "text": "nodetool netstats failed on %s: %s" % (node, _error(netstats))})
         elif netstats["streaming"]:
             found.append({"kind": "streams", "on": node, "text": "streams in progress on %s (nodetool netstats)" % node})
-    # cassandra_schema's agreed: the play reads it with failed_when false, which clears failed
+    # cassandra_schema's agreed: the play reads it with failed_when false, which clears failed. unreachable: Ansible's
+    # (the peer not reached, said by its own finding); the nodes describecluster lists UNREACHABLE are the module's
+    # unreachable_nodes, not counted by it: the others disagreeing, or its nodetool error, still said here
     if schema is not None and not schema.get("unreachable") and (
             schema.get("failed") or schema.get("agreed") is False
             or ("agreed" not in schema and "schema_status" not in schema and bool(schema.get("msg")) and not schema.get("skipped"))):
