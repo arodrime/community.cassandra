@@ -15,7 +15,8 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_health import cassandra_health_problems
+from ansible_collections.community.cassandra.plugins.filter.cassandra_health import (
+    cassandra_health_findings, cassandra_health_sentences)
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -120,9 +121,9 @@ def test_the_health_check_lets_that_node_only_be_down():
     ring = {"dc1": {"nodes": [{"address": "10.0.0.%d" % i, "rack": "r1", "status": "U", "state": "N"} for i in (1, 2, 3)]}}
     ring["dc1"]["nodes"][1]["status"] = "D"
     view = [{"from": "n1", "result": {"cluster_status": ring}}]
-    assert cassandra_health_problems(view, 3, "n2", down_ok=down_ok) == []
+    assert cassandra_health_sentences(cassandra_health_findings(view, 3, "n2", down_ok=down_ok)) == []
     ring["dc1"]["nodes"][2]["status"] = "D"
-    assert cassandra_health_problems(view, 3, "n2", down_ok=down_ok) == ["10.0.0.3 (r1) is DN, seen from n1"]
+    assert cassandra_health_sentences(cassandra_health_findings(view, 3, "n2", down_ok=down_ok)) == ["10.0.0.3 (r1) is DN, seen from n1"]
 
 
 def test_its_drain_may_fail_on_a_stopped_node_only():

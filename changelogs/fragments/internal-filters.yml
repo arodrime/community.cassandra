@@ -1,0 +1,3 @@
+---
+minor_changes:
+  - filters - the collection's filters are internal (the implementation of its roles and playbooks), not a public API, and may change without notice (see the Filters guide).

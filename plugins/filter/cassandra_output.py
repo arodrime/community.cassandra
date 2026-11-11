@@ -5,7 +5,7 @@
 cassandra_output: true prints.
 
 cassandra_node_list: names -> "node1..node3, node5".
-cassandra_size, cassandra_duration: bytes, seconds -> "1.5 GiB", "1h02m".
+cassandra_duration: seconds -> "1h02m".
 cassandra_progress_line: a cassandra_stream_progress state -> the progress line and the line of the other ends.
 cassandra_normal_wait_line: the progress line of the wait for a node to be NORMAL.
 cassandra_phase, cassandra_check_what: a phase line, preflight's check line.
@@ -57,11 +57,6 @@ def cassandra_node_list(names, keep_order=False, full=False):
     """Node names -> one text, runs of names as ranges (full: every name; keep_order: as given, else sorted the
     natural way): ["node1", "node2", "node3", "node5"] -> "node1..node3, node5"."""
     return out.nodes(names, keep_order=keep_order, full=full)
-
-
-def cassandra_size(count, scale=None):
-    """Bytes -> a size (scale: the bytes of the unit to write it in, e.g. the total's): 1610612736 -> "1.5 GiB"."""
-    return out.size(count, scale)
 
 
 def cassandra_duration(seconds, short=False):
@@ -228,7 +223,6 @@ class FilterModule(object):
     def filters(self):
         return {
             "cassandra_node_list": cassandra_node_list,
-            "cassandra_size": cassandra_size,
             "cassandra_duration": cassandra_duration,
             "cassandra_progress_line": cassandra_progress_line,
             "cassandra_normal_wait_line": cassandra_normal_wait_line,

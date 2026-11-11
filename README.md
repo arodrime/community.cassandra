@@ -125,6 +125,10 @@ comma-separated), as `cassandra_target_dc` and `cassandra_target_rack` name a da
 
 - `ops`- Only the operator messages of the playbooks (`stdout_callback = community.cassandra.ops`, see Playbooks above).
 
+#### Filters
+
+The filters in `plugins/filter/` are internal: they are the implementation of the roles and playbooks, not a public API. They are not documented and may change or be removed in any release without notice.
+
 ## Module support for Consistency Level
 
 The pure-python modules, currently cassandra_role, cassandra_keyspace & cassandra_table all have a consistency_level parameter, through which the consistency level can be changed. Not all consistency levels are supported by read and write. The table below summarizes this.

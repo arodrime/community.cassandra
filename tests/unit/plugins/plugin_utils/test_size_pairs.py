@@ -10,10 +10,9 @@ import re
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
 # the functions that print one size
-SIZE = {"size", "_size", "_gib", "cassandra_size"}
-# where the helpers live, and the filter that exposes size(count, scale) to templates
-ALLOWED = {os.path.join("plugins", "plugin_utils", "cassandra_output.py"): None,
-           os.path.join("plugins", "filter", "cassandra_output.py"): {"cassandra_size"}}
+SIZE = {"size", "_size", "_gib"}
+# where the helpers live
+ALLOWED = {os.path.join("plugins", "plugin_utils", "cassandra_output.py"): None}
 # two sizes side by side that are not a done/total pair: (file, text of the line)
 NOT_PAIRS = {(os.path.join("plugins", "filter", "cassandra_new_node.py"), "on average (nodetool status), this host has")}
 
@@ -94,17 +93,3 @@ def test_no_size_pair_bypasses_the_helpers():
         found.extend("%s:%d" % (rel, line) for line in _bypasses(source, ALLOWED.get(rel) or ())
                      if not any(rel == file and text in lines[line - 1] for file, text in NOT_PAIRS))
     assert not found, "a done/total size pair outside cassandra_output.amount/sizes: %s" % found
-
-
-def test_no_template_prints_two_sizes_on_a_line():
-    found = []
-    for top in ("roles", "playbooks"):
-        for base, _dirs, files in os.walk(os.path.join(ROOT, top)):
-            for name in files:
-                if name.endswith((".yml", ".yaml", ".j2")):
-                    path = os.path.join(base, name)
-                    with open(path) as f:
-                        for number, line in enumerate(f, 1):
-                            if len(re.findall(r"cassandra_size\b", line)) > 1:
-                                found.append("%s:%d" % (os.path.relpath(path, ROOT), number))
-    assert not found

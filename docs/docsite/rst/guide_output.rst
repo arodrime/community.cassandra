@@ -407,7 +407,7 @@ With ``-v`` or more, it is the default callback. Under the default callback, the
 Blocks
 ------
 
-``cassandra_node_list``, ``cassandra_size``, ``cassandra_duration``, ``cassandra_progress_line``,
+``cassandra_node_list``, ``cassandra_duration``, ``cassandra_progress_line``,
 ``cassandra_phase``, ``cassandra_check_what``, ``cassandra_prepare_lines``, ``cassandra_left_system_warning``,
 ``cassandra_command``, ``cassandra_todo``, ``cassandra_removed_todo``, ``cassandra_seeds_todo``,
 ``cassandra_seeds_reload_todo``, ``cassandra_reimport_hosts``: their arguments are in

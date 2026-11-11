@@ -4,7 +4,7 @@ __metaclass__ = type
 import pytest
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_health import (
-    cassandra_health_findings, cassandra_health_problems, cassandra_health_report, cassandra_leaving_state,
+    cassandra_health_findings, cassandra_health_report, cassandra_health_sentences, cassandra_leaving_state,
     cassandra_removal_force_target, cassandra_removal_state)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import PARAGRAPH as P
 
@@ -24,7 +24,7 @@ def view(host, *nodes):
 def problems(views, expected=3, **kwargs):
     checks = dict(gossip=UP, binary=UP, netstats=IDLE, schema=AGREED)
     checks.update(kwargs)
-    return cassandra_health_problems(views, expected, "n1", **checks)
+    return cassandra_health_sentences(cassandra_health_findings(views, expected, "n1", **checks))
 
 
 def test_healthy():

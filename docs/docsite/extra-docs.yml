@@ -4,3 +4,4 @@ sections:
     toctree:
       - guide_roles
       - guide_output
+      - guide_filters
