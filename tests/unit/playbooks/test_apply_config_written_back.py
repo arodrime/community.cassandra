@@ -274,13 +274,19 @@ def test_a_restart_into_none_from_a_file_at_none_already_is_the_point_of_no_retu
     task = next(t for p in plays for t in p.get("tasks", []) if t.get("name") == "Put the settings that differ side by side")
     template = task["ansible.builtin.set_fact"]["cassandra_apply_config_no_return"]
 
-    def no_return(given="", **reads):
-        hostvars = dict((h, {"inventory_hostname": h, "cassandra_storage_mode_read": r,
+    def no_return(given="", then="restart", **reads):
+        hostvars = dict((h, {"inventory_hostname": h, "cassandra_storage_mode_read": r, "cassandra_apply_config_then": then,
                              "cassandra_storage_mode_running": given}) for h, r in reads.items())
-        return render(template, {"_nodes": [], "hostvars": hostvars, "ansible_play_hosts": list(hostvars)})
+        moved = render(task["vars"]["_moved"], {"hostvars": hostvars, "ansible_play_hosts": list(hostvars)})
+        return render(template, {"_nodes": [], "hostvars": hostvars, "ansible_play_hosts": list(hostvars),
+                                 "_moved": moved})
     assert no_return(n1=_mode_read("NONE", logged="UPGRADING"), n2=_mode_read("NONE", logged="NONE"),
                      n3=_mode_read("UPGRADING", logged="CASSANDRA_4")) == ["n1"]
     # given with -e when nothing else tells it (its file changed since its start)
     changed = _mode_read("NONE", more=("pending=yes", "changed=time"))
     assert no_return(n1=changed) == []
     assert no_return(n1=changed, given="n1:UPGRADING") == ["n1"]
+    # stopped: the mode it last ran (logged at its last start); started by the run only
+    stopped = _mode_read("NONE", running="no", more=("last_logged=UPGRADING",))
+    assert no_return(n1=stopped, then="start") == ["n1"]
+    assert no_return(n1=stopped, then="write") == []

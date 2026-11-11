@@ -380,6 +380,24 @@
               else 'none') if _running | bool
              else 'start' if _starts | bool else 'write' }}
 
+    # 5.0: a node not running that this run starts (its unit failed, or an interrupted run stopped it): the mode it
+    # last ran against the one it starts with (back, two steps on, into NONE unread), before the plan (the compare
+    # checked them as nodes, before it was known which ones are started)
+    - name: Refuse a start into another storage_compatibility_mode than one step from the one it last ran
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: storage_mode_guard.yml
+      vars:
+        _cassandra_storage_mode_written: true  # the inventory's mode, written then started with
+        _cassandra_storage_mode_read_done: true  # read by the compare
+        _cassandra_storage_mode_starts: "{{ _starting }}"
+        _starting: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('cassandra_apply_config_then', 'defined')
+             | selectattr('cassandra_apply_config_then', 'equalto', 'start') | map(attribute='inventory_hostname') | list }}
+      when:
+        - cassandra_version | default('') == '50x'
+        - _starting | length > 0
+
     # The Prometheus exporter's port free on a node to restart or start, before anything is written (the agent
     # would make the JVM exit; its jar and config are put in place by the write, checked again before the restart)
     - name: Check the Prometheus exporter's port is free
@@ -515,10 +533,16 @@
         # not one that runs NONE already (read over CQL or logged at its start: its file written back)
         cassandra_apply_config_no_return: >-
           {{ (_nodes | community.cassandra.cassandra_apply_config_no_return
-              + ansible_play_hosts | community.cassandra.cassandra_storage_mode_restarts_into_none(hostvars)) | unique
+              + ansible_play_hosts | select('in', _moved) | list
+                | community.cassandra.cassandra_storage_mode_restarts_into_none(hostvars)) | unique
              | reject('in', ansible_play_hosts | community.cassandra.cassandra_storage_mode_running_none(hostvars)) | list }}
       run_once: true
       vars:
+        # restarted or started by the run (a node left stopped is not moved)
+        _moved: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('cassandra_apply_config_then', 'defined')
+             | selectattr('cassandra_apply_config_then', 'in', ['restart', 'start'])
+             | map(attribute='inventory_hostname') | list }}
         _nodes: >-
           {%- set out = [] -%}
           {%- for h in ansible_play_hosts -%}

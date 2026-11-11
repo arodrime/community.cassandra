@@ -403,12 +403,17 @@
           {{ l }}
         _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default((_cassandra_preflight | default({})).cassandra_cluster_name | default('')) }}"
         cassandra_screen_question: "Move {{ _todo | join(', ') }} of {{ _cluster }} to Java {{ cassandra_java_version }}?"
+        _no_return: "{{ _todo | community.cassandra.cassandra_storage_mode_restarts_into_none(hostvars | default({})) }}"
         cassandra_screen:
           operation: update_java
           summary: "{{ _todo | join(', ') }} of {{ _cluster }} to Java {{ cassandra_java_version }}"
           intro:
             - Moves these nodes to the new Java, one at a time (install, config, drain, restart).
           blocks: "{{ _blocks }}"
+          # 5.0: a node whose cassandra.yaml has NONE while Cassandra runs an earlier mode: restarted into it
+          warnings:
+            - label: "{{ _no_return | community.cassandra.cassandra_node_list }}"
+              text: "{{ _no_return | community.cassandra.cassandra_storage_mode_no_return }}"
       when: groups['cassandra_update_java_True'] | default([]) | length > 0
 
 - name: Set up the progress file

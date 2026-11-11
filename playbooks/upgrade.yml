@@ -474,7 +474,7 @@
           {%- for b in _behind | selectattr('unsure') -%}
           {%-   set _ = out.update({b.node: 'rolling_restart' | community.cassandra.cassandra_command(
                                               limit=[b.node], extra=['-e cassandra_storage_mode_running=' ~ b.node
-                                                                     ~ ':<its mode>'],
+                                                                     ~ ':MODE'],
                                               **_cassandra_run_command_args)}) -%}
           {%- endfor -%}
           {{ out }}

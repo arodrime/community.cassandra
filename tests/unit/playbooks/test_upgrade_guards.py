@@ -259,15 +259,16 @@ def test_sstables_refuse_a_mode_not_read_unknown_or_a_restart_pending():
         "WAY OUT  On n1, read the mode its Cassandra runs (cqlsh 127.0.0.1, as the cluster's CQL user): SELECT value FROM"
         " system_views.settings WHERE name = 'storage_compatibility_mode'; (null: CASSANDRA_4). The same as its"
         " cassandra.yaml's (NONE) or the step before: restart it: ansible-playbook -i a.yml"
-        " community.cassandra.rolling_restart --limit n1 -e cassandra_storage_mode_running=n1:<its mode>. Two steps"
+        " community.cassandra.rolling_restart --limit n1 -e cassandra_storage_mode_running=n1:MODE (MODE: the mode"
+        " read). Two steps"
         " before: set UPGRADING in cassandra.yaml by hand first. Then run this phase again.")
     assert "Later than NONE" not in _sstables(("NONE", "NONE", "NONE", True))[1][-1]
     # two nodes not known: each its own restart (the other may run a later mode than its file), its own address
     ok, msg = _sstables(("NONE", "NONE", "NONE", True), ("NONE", "NONE", "NONE", True))
     out = msg[-1].split("On n2, ")
-    assert len(out) == 2 and "--limit n1 -e cassandra_storage_mode_running=n1:<its mode>." in out[0]
+    assert len(out) == 2 and "--limit n1 -e cassandra_storage_mode_running=n1:MODE (MODE: the mode read)." in out[0]
     assert "n2" not in out[0].replace("On n1", "")
-    assert "--limit n2 -e cassandra_storage_mode_running=n2:<its mode>." in out[1] and "n1" not in out[1]
+    assert "--limit n2 -e cassandra_storage_mode_running=n2:MODE (MODE: the mode read)." in out[1] and "n1" not in out[1]
     assert "--limit n1,n2" not in msg[-1]
     # the address cqlsh asks: its rpc address when one is set
     hostvars = _modes([("NONE", "NONE", "NONE", True)])
@@ -426,7 +427,7 @@ def test_the_storage_mode_read_script(tmp_path):
                              check=True)
         assert out.stdout.split()[0] == "file=%s" % path
         return out.stdout.split()[1:]
-    assert run(None) == ["yaml_read=no", "running=no"]  # no file: not read
+    assert run(None)[:2] == ["yaml_read=no", "running=no"]  # no file: not read
     assert run("cluster_name: x\nstorage_compatibility_mode: UPGRADING  # the step\n")[:2] == ["yaml_read=yes", "yaml=UPGRADING"]
     assert run("# storage_compatibility_mode: NONE\ncluster_name: x\n")[:2] == ["yaml_read=yes", "yaml="]
     # a running Cassandra: a process of this test stands for it, started after the file was written
@@ -498,6 +499,48 @@ def test_the_storage_mode_read_script(tmp_path):
                          input=(log % "CASSANDRA_4") + (log % "NONE"), stdout=subprocess.PIPE, universal_newlines=True,
                          check=True)
     assert sed.stdout.strip() == "NONE"
+
+
+def test_the_storage_mode_read_script_of_a_stopped_node(tmp_path):
+    # stopped: the mode it last ran, logged at its last start (unless that log is older than the record of the last
+    # start), else its file against the record of that start
+    import subprocess
+    import time
+    with open(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "storage_mode_read.yml"), encoding="utf-8") as f:
+        script = yaml.safe_load(f)[1]["ansible.builtin.shell"]
+    path, logs, record = tmp_path / "cassandra.yaml", tmp_path / "log", tmp_path / "record.json"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    logs.mkdir()
+    (bin_dir / "pgrep").write_text("#!/bin/sh\nexit 1\n")  # no Cassandra running here
+    (bin_dir / "pgrep").chmod(0o755)
+    path.write_text("storage_compatibility_mode: UPGRADING\n")
+
+    def run():
+        env = {"F": str(path), "L": str(logs), "R": str(record), "PATH": "%s:%s" % (bin_dir, os.environ["PATH"])}
+        out = subprocess.run(["/bin/sh", "-c", script], env=env, stdout=subprocess.PIPE, universal_newlines=True,
+                             check=True)
+        return [x for x in out.stdout.split("\n")[1:] if x and not x.startswith(("yaml", "log=", "record="))]
+    assert run() == ["running=no", "log_state=none"]
+    line = "INFO Node configuration:[a=1; storage_compatibility_mode=%s; z=2]\n"
+    (logs / "system.log").write_text(line % "NONE" + line % "CASSANDRA_4")
+    assert run() == ["running=no", "last_logged=CASSANDRA_4"]
+    # a 4.x start: no such mode logged, its formats CASSANDRA_4's
+    (logs / "system.log").write_text("INFO Node configuration:[a=1; z=2]\n")
+    assert run() == ["running=no", "last_logged=CASSANDRA_4"]
+    (logs / "system.log").write_text("INFO nothing\n")
+    assert run() == ["running=no"]
+    # the record of its last start: its cassandra.yaml then, against the file now
+    started = time.time()
+    record.write_text(json.dumps({"/etc/cassandra/cassandra.yaml": hashlib.sha1(b"storage_compatibility_mode: UPGRADING\n")
+                                  .hexdigest(), "_jvm": {"pid": "1", "start": started}}, indent=4))
+    assert run() == ["running=no", "last_same=yes"]
+    path.write_text("storage_compatibility_mode: NONE\n")
+    assert run() == ["running=no", "last_same=no"]
+    # a log older than that start (an earlier start's, or a log that moved): not taken
+    (logs / "system.log").write_text(line % "NONE")
+    os.utime(str(logs / "system.log"), (started - 3600, started - 3600))
+    assert run() == ["running=no", "log_state=old", "last_same=no"]
 
 
 def next_phase(phase, check=False, modes=None, version="50x", read=None, **kwargs):

@@ -47,6 +47,7 @@
         _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default((_cassandra_preflight | default({})).cassandra_cluster_name | default('')) }}"
         cassandra_screen_question: "Reboot {{ _nodes }} of {{ _cluster }}, one host at a time?"
         cassandra_screen_session_warning: true
+        _no_return: "{{ ansible_play_hosts | community.cassandra.cassandra_storage_mode_restarts_into_none(hostvars | default({})) }}"
         cassandra_screen:
           operation: rolling_reboot
           summary: "{{ _nodes }} of {{ _cluster }}, one host at a time"
@@ -56,6 +57,10 @@
               stops at the first problem, without touching the next node.{{
                 ' The nodes the interrupted run finished are skipped (cassandra_rolling_resume).'
                 if cassandra_rolling_resume | default(false) | bool else '' }}
+          # 5.0: a node whose cassandra.yaml has NONE while Cassandra runs an earlier mode: restarted into it
+          warnings:
+            - label: "{{ _no_return | community.cassandra.cassandra_node_list }}"
+              text: "{{ _no_return | community.cassandra.cassandra_storage_mode_no_return }}"
 
     # -e cassandra_rolling_resume=true: an interrupted run resumes, skipping the nodes already done
     - name: Set up the progress file

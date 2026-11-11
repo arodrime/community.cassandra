@@ -7,9 +7,12 @@
 # logged=<the logged mode> when found, pending=yes when the file changed since its start and nothing was logged
 # (changed=record: its checksum against the record of that start, time: its mtime or ctime); started_sha1=<the
 # checksum of the cassandra.yaml it started with> when that record is this JVM's.
-# file=<its path>. Read-only, under --check too. start_read=no: its start or the file time not read, after-now: its
-# start reads as after now; future=yes: the file has a time after now; jvm_version=<the version of the jar on its
-# classpath> when found.
+# file=<its path>. start_read=no: its start or the file time not read, after-now: its start reads as after now;
+# future=yes: the file has a time after now; jvm_version=<the version of the jar on its classpath> when found.
+# Stopped (running=no): the mode it last ran, last_logged=<the mode> from the last "Node configuration" line of its
+# system.log (CASSANDRA_4 for a 4.x start: no such mode), not taken when that log is older than the record of its last
+# start (log_state=old; none: no such log); last_same=yes|no: its cassandra.yaml is the one of the record of its last
+# start (written by the roles), or not; log=, record=: their paths. Read-only, under --check too.
 - name: Load the cassandra_service defaults (the record of the config Cassandra started with)
   ansible.builtin.include_role:
     name: community.cassandra.cassandra_service
@@ -25,6 +28,14 @@
     else
       echo "yaml_read=no"
     fi
+    # the record of the config Cassandra last started with (config_snapshot.yml of cassandra_service): its pid, its
+    # start, the checksum of its cassandra.yaml
+    rpid= rstart= rsum=
+    if [ -r "$R" ]; then
+      rpid=$(sed -n 's/^ *"pid": *"*\([0-9]*\)"*,*$/\1/p' "$R" | head -1)
+      rstart=$(sed -n 's/^ *"start": *\([0-9.]*\),*$/\1/p' "$R" | head -1)
+      rsum=$(sed -n 's/^ *"[^"]*\/cassandra[.]yaml": *"\([0-9a-f]*\)",*$/\1/p' "$R" | head -1)
+    fi
     # the CassandraDaemon of this PID namespace (a container's on this host is another node's), as config_snapshot.yml
     pid=
     me=$(readlink /proc/self/ns/pid 2>/dev/null)
@@ -32,7 +43,29 @@
       [ -z "$me" ] || [ "$(readlink /proc/$p/ns/pid 2>/dev/null)" = "$me" ] || continue
       tr '\0' '\n' < /proc/$p/cmdline 2>/dev/null | grep -qx org.apache.cassandra.service.CassandraDaemon && { pid=$p; break; }
     done
-    [ -n "$pid" ] || { echo "running=no"; exit 0; }
+    if [ -z "$pid" ]; then
+      echo "running=no"
+      # the mode it last ran: the last "Node configuration" line of its system.log, unless that log is older than
+      # the record of its last start (of an earlier start, or another log); else its file unchanged since the record
+      log="$L/system.log"
+      echo "log=$log"
+      echo "record=$R"
+      lt=$(stat -c '%Y' "$log" 2>/dev/null)
+      if [ -z "$lt" ]; then
+        echo "log_state=none"
+      elif [ -n "$rstart" ] && awk -v a="$rstart" -v b="$lt" 'BEGIN {exit !(b + 2 < a)}'; then
+        echo "log_state=old"
+      else
+        line=$(grep -a 'Node configuration:\[' "$log" 2>/dev/null | tail -1)
+        m=$(printf '%s\n' "$line" | sed -n 's/.*[[; ]storage_compatibility_mode=\([A-Z_0-9]*\).*/\1/p')
+        # a 4.x start logs no such mode: the 4.x formats, CASSANDRA_4
+        [ -z "$line" ] || echo "last_logged=${m:-CASSANDRA_4}"
+      fi
+      if [ -n "$rsum" ]; then
+        [ "$(sha1sum < "$F" 2>/dev/null | cut -c1-40)" = "$rsum" ] && echo "last_same=yes" || echo "last_same=no"
+      fi
+      exit 0
+    fi
     echo "running=yes"
     # the version it runs, by the jar on its classpath (a 4.x one has no storage_compatibility_mode)
     v=$(tr '\0' '\n' < /proc/$pid/cmdline 2>/dev/null | grep -o 'apache-cassandra-[0-9][0-9.]*[0-9]' | head -1)
@@ -77,12 +110,6 @@
     # moved or copied in with its old mtime has a new ctime; a chmod then reads as a change too: a restart clears
     # it). A change is pending only when the mode it logged at that start is not there to tell (with it, the logged
     # mode against the file decides)
-    rpid= rstart= rsum=
-    if [ -r "$R" ]; then
-      rpid=$(sed -n 's/^ *"pid": *"*\([0-9]*\)"*,*$/\1/p' "$R" | head -1)
-      rstart=$(sed -n 's/^ *"start": *\([0-9.]*\),*$/\1/p' "$R" | head -1)
-      rsum=$(sed -n 's/^ *"[^"]*\/cassandra[.]yaml": *"\([0-9a-f]*\)",*$/\1/p' "$R" | head -1)
-    fi
     changed=
     if [ "$rpid" = "$pid" ] && [ -n "$rsum" ] && [ -n "$rstart" ] \
         && awk -v a="$rstart" -v b="$start" 'BEGIN {d = a - b; exit !(d < 2 && d > -2)}'; then
@@ -96,6 +123,7 @@
   environment:
     F: "{{ _cassandra_service_conf_dir }}/cassandra.yaml"
     R: "{{ _cassandra_service_config_snapshot }}"
+    L: "{{ cassandra_log_dir | default('/var/log/cassandra', true) }}"
   register: cassandra_storage_mode_read
   changed_when: false
   check_mode: false  # a read

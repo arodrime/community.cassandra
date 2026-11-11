@@ -26,3 +26,15 @@ bugfixes:
     ``storage_compatibility_mode`` than the one Cassandra runs (written ahead of its restart) is restarted, no longer
     said to need nothing; its plan's point-of-no-return warning names a node whose ``cassandra.yaml`` has ``NONE``
     already while Cassandra runs an earlier mode (restarted into it).
+  - >-
+    rolling_restart, rolling_reboot, update_java - with 5.0, a restart into ``NONE`` (a ``cassandra.yaml`` at ``NONE``
+    while Cassandra runs an earlier mode) is refused unless the inventory has ``NONE``; the way out names both choices
+    (keep the running mode, set back by hand; or ``NONE`` in the inventory, then ``apply_config``). With ``NONE`` in the
+    inventory, the plan shows the point-of-no-return warning before the question.
+  - >-
+    storage_compatibility_mode guards - a node running Cassandra 4.x counts as ``CASSANDRA_4`` (a file at ``NONE`` is
+    refused as two steps) and takes no ``-e cassandra_storage_mode_running``; a stopped node is checked against the
+    mode it last ran (logged at its last start, else its file against the record of that start), and a node
+    ``apply_config`` starts is refused when nothing tells it. ``-e`` items with no mode, or two modes for a node, are
+    refused; ``update_java`` checks them against the nodes it updates, before its question, and compares the
+    inventory's mode with the file's as Cassandra reads them (quotes, case).
