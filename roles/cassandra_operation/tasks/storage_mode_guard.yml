@@ -91,6 +91,8 @@
                 'way_out': ('On ' ~ h ~ ', set storage_compatibility_mode: UPGRADING in ' ~ path ~ ' by hand (apply_config'
                             ~ ' never moves its NONE back), then run rolling_restart --limit ' ~ h ~ ' (it restarts it'
                             ~ ' in UPGRADING).') if file == 'NONE'
+                           else ('On ' ~ h ~ ', run rolling_restart --limit ' ~ h ~ ' (it restarts it in the ' ~ file
+                                 ~ ' its cassandra.yaml has, one step).') if file == 'UPGRADING'
                            else ('On ' ~ h ~ ', set cassandra_storage_compatibility_mode: UPGRADING in the inventory,'
                                  ~ ' then run apply_config --limit ' ~ h ~ ' (it writes UPGRADING and restarts it), then'
                                  ~ ' set NONE in the inventory again.')}) -%}

@@ -193,6 +193,13 @@ def test_the_jump_says_why_and_the_way_out():
         "A restart would take n1 from CASSANDRA_4 straight to NONE (5.0 moves CASSANDRA_4, UPGRADING, NONE, one step"
         " at a time, each node restarted in UPGRADING before NONE). Nothing was changed.",
         "  n1  runs CASSANDRA_4, its cassandra.yaml would have NONE",
+        "WAY OUT  On n1, run rolling_restart --limit n1 (it restarts it in the UPGRADING its cassandra.yaml has, one"
+        " step). Then run this again."]
+    # apply_config, the role: the file still at CASSANDRA_4 (NONE set in the inventory straight away): a restart of
+    # that file would not move it, the inventory goes through UPGRADING
+    ok, msg = run({"n1": (_host("CASSANDRA_4", logged="CASSANDRA_4"), "NONE")}, _cassandra_storage_mode_written=True)
+    assert ok is False and msg[1:] == [
+        "  n1  runs CASSANDRA_4, its cassandra.yaml would have NONE",
         "WAY OUT  On n1, set cassandra_storage_compatibility_mode: UPGRADING in the inventory, then run apply_config"
         " --limit n1 (it writes UPGRADING and restarts it), then set NONE in the inventory again. Then run this again."]
     # a restart alone (rolling_restart, rolling_reboot, update_java): its file at NONE, by hand
