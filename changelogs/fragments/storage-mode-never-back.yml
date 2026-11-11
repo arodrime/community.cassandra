@@ -7,9 +7,16 @@ bugfixes:
     hand edit), is refused before anything changes, under ``--check`` too, with the way out (the running mode in the
     inventory; ``UPGRADING`` first). The mode it runs is read over CQL (``system_views.settings``), else from the line
     Cassandra logged at its start; when neither tells and its ``cassandra.yaml`` changed since that start, a restart
-    into a mode before ``NONE`` is refused, the way out saying what could not be read and how to give the mode read
-    by hand (``-e cassandra_storage_mode_running=<node>:<mode>``). Under ``serial`` (``update_java``, the upgrade's
-    rolling phase) a run checks the nodes of each batch at its turn.
+    is refused (into ``NONE`` too: from ``CASSANDRA_4``, two steps), the way out saying what could not be read and how
+    to give the mode read by hand (``-e cassandra_storage_mode_running=<node>:<mode>``). That ``-e`` is taken only
+    where nothing else tells the mode: one that says another mode than the one read, is not a mode, or names no node
+    of the run is refused. Each way out leads to a run that passes (a file more than one step behind, or without the
+    line, is set by hand: ``apply_config`` only moves it one step forward from the line). Under ``serial``
+    (``update_java``, the upgrade's rolling phase) a run checks the nodes of each batch at its turn.
+  - >-
+    update_java - a node to update whose inventory has another ``storage_compatibility_mode`` than its
+    ``cassandra.yaml`` is refused before the question (``update_java`` writes the inventory's config, unshown, before
+    each restart): ``apply_config`` first. Its guards check only the nodes it restarts.
   - >-
     upgrade sstables - an inventory behind a node that runs a later mode (and has it in its file) is told to take the
     node's mode, not to move from the inventory's.
@@ -17,4 +24,5 @@ bugfixes:
     apply_config - a config file changed since Cassandra started, with the inventory's settings, is no restart only
     when Cassandra started with them (the record of its start); with 5.0, a ``cassandra.yaml`` at a later
     ``storage_compatibility_mode`` than the one Cassandra runs (written ahead of its restart) is restarted, no longer
-    said to need nothing.
+    said to need nothing; its plan's point-of-no-return warning names a node whose ``cassandra.yaml`` has ``NONE``
+    already while Cassandra runs an earlier mode (restarted into it).

@@ -7,8 +7,11 @@ modes from its variables (the inventory's, its cassandra.yaml's, the running one
 cassandra_storage_mode_behind: the nodes not at NONE on all three; cassandra_storage_mode_rows: them as a table;
 cassandra_storage_mode_step: the next step of the move; cassandra_storage_mode_way_out: what to do before the
 sstables are rewritten. The restart guards (storage_mode_guard.yml): cassandra_storage_mode_back (never back),
-cassandra_storage_mode_jump (one step at most), cassandra_storage_mode_unsure (the mode it runs not known);
-cassandra_storage_mode_ahead: a mode written since the start of Cassandra, not running yet (apply_config)."""
+cassandra_storage_mode_jump (one step at most), cassandra_storage_mode_unsure (the mode it runs not known); their
+stops with a way out that a run then passes (cassandra_storage_mode_back_stop, cassandra_storage_mode_jump_stop);
+cassandra_storage_mode_given_wrong, cassandra_storage_mode_given_unknown: -e cassandra_storage_mode_running taken
+only where nothing else tells the mode; cassandra_storage_mode_ahead: a mode written since the start of Cassandra, not
+running yet (apply_config); cassandra_storage_mode_restarts_into_none: such a restart into NONE."""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -327,7 +330,8 @@ def cassandra_storage_mode_way_out(behind, from_4x=True, restart_command="", tot
                     ("The same as its cassandra.yaml's (%s) or the step before" % y) if y != "CASSANDRA_4"
                     else "CASSANDRA_4", (": " + check_restart_command[b["node"]])
                     if isinstance(check_restart_command, dict) and b["node"] in check_restart_command
-                    else " (rolling_restart --limit %s)" % b["node"],
+                    else " (rolling_restart --limit %s -e cassandra_storage_mode_running=%s:<its mode>)" % (
+                        b["node"], b["node"]),
                     (" Two steps before: set UPGRADING in %s by hand first." % b["file"]) if y == "NONE" else "",
                     (" Later than %s: set that mode back in %s by hand." % (y, b["file"])) if y != "NONE" else ""))
     future = [b for b in behind if b["future"]]
@@ -376,34 +380,104 @@ def cassandra_storage_mode_runs(host):
     return running if running in _ORDER else ""
 
 
+def _given_pairs(given):
+    """-e cassandra_storage_mode_running (node:MODE,node:MODE, or a dict) -> ([(node, mode)], [the items that are no
+    node:MODE]). An IPv6 address keeps its colons: the mode is after the last one."""
+    if isinstance(given, dict):
+        return [(str(n).strip(), str(m).strip()) for n, m in given.items()], []
+    pairs, bad = [], []
+    for item in str(given or "").split(","):
+        item = item.strip()
+        if ":" in item:
+            node, mode = item.rsplit(":", 1)
+            pairs.append((node.strip(), mode.strip()))
+        elif item:
+            bad.append(item)
+    return pairs, bad
+
+
 def _stated(host):
     """host: a node's variables -> what -e cassandra_storage_mode_running gives for it (node:MODE,node:MODE, or a
     dict), as given ("" when nothing): the mode the operator read there by hand."""
-    given = host.get("cassandra_storage_mode_running") or ""
-    if isinstance(given, dict):
-        pairs = list(given.items())
-    else:
-        pairs = [p.split(":", 1) for p in str(given).split(",") if ":" in p]
-    found = [str(m).strip() for n, m in pairs if str(n).strip() == str(host.get("inventory_hostname"))]
+    found = [m for n, m in _given_pairs(host.get("cassandra_storage_mode_running"))[0]
+             if n == str(host.get("inventory_hostname"))]
     return found[-1] if found else ""
 
 
-def _running(host):
-    """The mode it runs: read over CQL or logged at its start, else as -e cassandra_storage_mode_running gives it;
-    "" when none tells."""
+GIVEN = "given with -e"
+FILE_TELLS = "its cassandra.yaml has it, unchanged since Cassandra started"
+
+
+def _read(host):
+    """-> (the mode it runs as read: over CQL, logged at its start, else its cassandra.yaml's when the file did not
+    change since that start; how it was read), ("", "") when none tells (a 4.x Cassandra: none)."""
+    lines = (host.get("cassandra_storage_mode_read") or {}).get("stdout_lines") or []
+    read = dict(line.split("=", 1) for line in lines if "=" in line)
+    if read.get("running") != "yes" or (read.get("jvm_version") and _version(read["jvm_version"])[:1] < (5,)):
+        return "", ""
+    live = _live(host.get("cassandra_storage_mode_cql"))
+    if live:
+        return live, "read over CQL"
+    if read.get("logged") in _ORDER:
+        return read["logged"], "logged at its start"
+    node = cassandra_storage_mode_nodes([host])[0]
+    if node["running"] in _ORDER:
+        return node["running"], FILE_TELLS
+    return "", ""
+
+
+def _running_how(host):
+    """-> (the mode it runs, how it is known): read over CQL or logged at its start, else as
+    -e cassandra_storage_mode_running gives it when nothing else tells (its cassandra.yaml changed since its start,
+    or that start not read): ("", "") when none tells, or the file tells (its own mode: no move)."""
+    mode, how = _read(host)
+    if mode:
+        return ("", "") if how == FILE_TELLS else (mode, how)
     stated = _stated(host).upper()
-    return cassandra_storage_mode_runs(host) or (stated if stated in _ORDER else "")
+    return (stated, GIVEN) if stated in _ORDER else ("", "")
+
+
+def _running(host):
+    """The mode it runs, as _running_how; "" when none tells."""
+    return _running_how(host)[0]
+
+
+def cassandra_storage_mode_given_wrong(host):
+    """host: as cassandra_storage_mode_back's -> the row that says why -e cassandra_storage_mode_running cannot be
+    taken for it (not a mode, or not the mode read: over CQL, logged, its cassandra.yaml unchanged since its start),
+    "" when it can (or gives nothing for it)."""
+    stated = _stated(host)
+    if not stated:
+        return ""
+    name = str(host.get("inventory_hostname"))
+    if stated.upper() not in _ORDER:
+        return "  %s  -e gives %s: not a mode (CASSANDRA_4, UPGRADING or NONE)" % (name, stated)
+    mode, how = _read(host)
+    if mode and mode != stated.upper():
+        return "  %s  -e gives %s, Cassandra runs %s (%s)" % (name, stated.upper(), mode, how)
+    return ""
+
+
+def cassandra_storage_mode_given_unknown(given, nodes):
+    """given: -e cassandra_storage_mode_running; nodes: the nodes of the run -> a row per item that names none of
+    them (no node:MODE, an address, a typo)."""
+    pairs, bad = _given_pairs(given)
+    names = set(str(n) for n in nodes or [])
+    return (["  %s  not node:MODE" % b for b in bad]
+            + ["  %s  -e gives %s: no such node in this run (its inventory name)" % (n, m)
+               for n, m in pairs if n not in names])
 
 
 def cassandra_storage_mode_ahead(host):
-    """host: as cassandra_storage_mode_back's -> {running, file} when Cassandra runs an earlier mode than its
-    cassandra.yaml has (written since its start, not running yet: a restart), else {}. Only on evidence."""
+    """host: as cassandra_storage_mode_back's -> {running, file, given} when Cassandra runs an earlier mode than its
+    cassandra.yaml has (written since its start, not running yet: a restart), else {}. Only on evidence; given: the
+    mode it runs as -e cassandra_storage_mode_running gives it."""
     node = cassandra_storage_mode_nodes([host])[0]
     lines = (host.get("cassandra_storage_mode_read") or {}).get("stdout_lines") or []
-    running = _running(host) if "running=yes" in lines else ""
+    running, how = _running_how(host) if "running=yes" in lines else ("", "")
     file_mode = _value(node["yaml"], _UNSET)[0]
     if running and file_mode and _ORDER.index(running) < _ORDER.index(file_mode):
-        return {"running": running, "file": file_mode}
+        return {"running": running, "file": file_mode, "given": how == GIVEN}
     return {}
 
 
@@ -411,10 +485,11 @@ def cassandra_storage_mode_unsure(host, target=None, target_sha1=None):
     """host, target: as cassandra_storage_mode_back's; target_sha1: the checksum of the cassandra.yaml written (with
     target), the one it started with when the record of its start has it (written back as it started: the mode it
     runs) -> {target, rows, cql} when a restart could take Cassandra
-    back and the mode it runs could not be read: it runs, nothing tells its mode (no CQL answer, no line logged since
-    its start, no -e cassandra_storage_mode_running for it) and its cassandra.yaml may have changed since that start
-    (else the file tells), the mode restarted with not NONE (NONE is never back). rows: what was read and what could
-    not, one fact per line; cql: where the CQL read asked. Else {}."""
+    back, or more than one step on, and the mode it runs could not be read: it runs, nothing tells its mode (no CQL
+    answer, no line logged since its start, no -e cassandra_storage_mode_running for it) and its cassandra.yaml may
+    have changed since that start (else the file tells). NONE too: a node that runs CASSANDRA_4 would cross the point
+    of no return in one step. rows: what was read and what could not, one fact per line; cql: where the CQL read
+    asked. Else {}."""
     lines = (host.get("cassandra_storage_mode_read") or {}).get("stdout_lines") or []
     read = dict(line.split("=", 1) for line in lines if "=" in line)
     if read.get("running") != "yes" or _running(host):
@@ -430,7 +505,7 @@ def cassandra_storage_mode_unsure(host, target=None, target_sha1=None):
         return {}
     node = cassandra_storage_mode_nodes([host])[0]
     mode = _value(node["yaml"] if target is None else target, _UNSET)[0]
-    if mode is None or mode == "NONE":
+    if mode is None:
         return {}
     name = str(host.get("inventory_hostname"))
     cql = "%s:%s" % (_cql_host(host.get("cassandra_rpc_address"), host.get("cassandra_listen_address")),
@@ -455,9 +530,6 @@ def cassandra_storage_mode_unsure(host, target=None, target_sha1=None):
         rows.append("CQL: not read (cqlsh on %s%s)" % (cql, (": " + err[-1].strip()[:200]) if err else ""))
     rows.append("system.log: not read (the start of its Cassandra not known)" if start in ("no", "after-now")
                 else "system.log: no storage_compatibility_mode logged since its start")
-    stated = _stated(host)
-    if stated:
-        rows.append("-e cassandra_storage_mode_running gives %s: not a mode (CASSANDRA_4, UPGRADING or NONE)" % stated)
     return {"target": mode, "rows": ["  %s  %s" % (name, r) for r in rows], "cql": cql}
 
 
@@ -492,6 +564,95 @@ def cassandra_storage_mode_back(host, target=None):
     return ""
 
 
+def _file(host):
+    """-> (its cassandra.yaml's mode, the line there, its path, as shown)."""
+    lines = (host.get("cassandra_storage_mode_read") or {}).get("stdout_lines") or []
+    read = dict(line.split("=", 1) for line in lines if "=" in line)
+    node = cassandra_storage_mode_nodes([host])[0]
+    mode = _value(node["yaml"], _UNSET)[0]
+    line = bool(node["yaml"])
+    return mode, line, read.get("file") or "its cassandra.yaml", (mode if line else "%s (no such line)" % _UNSET)
+
+
+def _stop(host, inventory, written, running, how):
+    """The row of a refused node: the mode it runs (how, when given with -e), the one its file has or would have."""
+    name = str(host.get("inventory_hostname"))
+    shown = _file(host)[3]
+    return "  %s  runs %s%s, its cassandra.yaml %s" % (
+        name, running, " (%s)" % GIVEN if how == GIVEN else "",
+        ("would have %s" % inventory) if written else ("has %s" % shown))
+
+
+def _again(host, how, running):
+    """The -e the next commands need when the mode it runs was given with it (nothing else tells it yet)."""
+    return (" -e cassandra_storage_mode_running=%s:%s" % (host.get("inventory_hostname"), running)) if how == GIVEN else ""
+
+
+def cassandra_storage_mode_back_stop(host, inventory="NONE", written=False):
+    """host: as cassandra_storage_mode_back's; inventory: its cassandra_storage_compatibility_mode; written: the
+    inventory's written first (cassandra_config), else a restart of its file -> {node, row, way_out} when the
+    restart would take it back, else {}. The way out writes the mode it runs back the way that works: apply_config
+    moves a file one step forward, from a storage_compatibility_mode line (cassandra_config's identity check);
+    else by hand, the inventory set to it when behind."""
+    running, how = _running_how(host)
+    if not cassandra_storage_mode_back(host, inventory if written else None):
+        return {}
+    name = str(host.get("inventory_hostname"))
+    file_mode, line, path = _file(host)[:3]
+    inventory_mode = _value(inventory, None)[0]
+    behind = inventory_mode is None or _ORDER.index(inventory_mode) < _ORDER.index(running)
+    one_step = line and file_mode and _ORDER.index(running) - _ORDER.index(file_mode) == 1
+    again = _again(host, how, running)
+    if written and file_mode and _ORDER.index(file_mode) >= _ORDER.index(running):
+        way_out = "On %s, set cassandra_storage_compatibility_mode: %s in the inventory (its cassandra.yaml has it)." % (
+            name, file_mode)
+    elif one_step and written:
+        way_out = "On %s, set cassandra_storage_compatibility_mode: %s in the inventory (apply_config then writes it)." % (
+            name, running)
+    elif one_step:
+        way_out = ("On %s, run apply_config --limit %s%s (it writes %s back)." % (name, name, again, running)
+                   if inventory_mode == running else
+                   "On %s, set cassandra_storage_compatibility_mode: %s in the inventory, then run apply_config --limit"
+                   " %s%s (it writes it back)." % (name, running, name, again))
+    else:
+        way_out = ("On %s, set storage_compatibility_mode: %s in %s by hand (apply_config moves it only one step"
+                   " forward, from a storage_compatibility_mode line)%s." % (
+                       name, running, path, (", and set cassandra_storage_compatibility_mode: %s in the inventory" % running)
+                       if behind else ""))
+    return {"node": name, "row": _stop(host, inventory, written, running, how), "way_out": way_out}
+
+
+def cassandra_storage_mode_jump_stop(host, inventory="NONE", written=False):
+    """host, inventory, written: as cassandra_storage_mode_back_stop's -> {node, row, way_out} when the restart would
+    move it more than one step, else {}. The way out takes it to UPGRADING first: a restart of a file at UPGRADING;
+    apply_config writes UPGRADING from a CASSANDRA_4 line only; else by hand."""
+    running, how = _running_how(host)
+    if not cassandra_storage_mode_jump(host, inventory if written else None):
+        return {}
+    name = str(host.get("inventory_hostname"))
+    file_mode, line, path = _file(host)[:3]
+    again = _again(host, how, running)
+    restart = "then run rolling_restart --limit %s%s (it restarts it in UPGRADING)" % (name, again)
+    if file_mode == "UPGRADING":
+        way_out = "On %s, run rolling_restart --limit %s%s (it restarts it in the UPGRADING its cassandra.yaml has," \
+                  " one step)." % (name, name, again)
+    elif file_mode == "CASSANDRA_4" and line:
+        way_out = ("On %s, set cassandra_storage_compatibility_mode: UPGRADING in the inventory, then run apply_config"
+                   " --limit %s%s (it writes UPGRADING and restarts it), then set NONE in the inventory again." % (
+                       name, name, again))
+    else:
+        way_out = "On %s, set storage_compatibility_mode: UPGRADING in %s by hand (%s), %s." % (
+            name, path, "apply_config never moves its NONE back" if file_mode == "NONE"
+            else "apply_config moves it only from a storage_compatibility_mode line", restart)
+    return {"node": name, "row": _stop(host, inventory, written, running, how), "way_out": way_out}
+
+
+def cassandra_storage_mode_restarts_into_none(hosts, hostvars):
+    """hosts, hostvars -> the hosts whose cassandra.yaml has NONE already while Cassandra runs an earlier mode
+    (cassandra_storage_mode_ahead): their restart crosses the point of no return with no change in the file."""
+    return [h for h in hosts or [] if cassandra_storage_mode_ahead(hostvars[h]).get("file") == "NONE"]
+
+
 class FilterModule(object):
     def filters(self):
         return {"cassandra_storage_mode_from_4x": cassandra_storage_mode_from_4x,
@@ -506,4 +667,9 @@ class FilterModule(object):
                 "cassandra_storage_mode_unsure": cassandra_storage_mode_unsure,
                 "cassandra_storage_mode_runs": cassandra_storage_mode_runs,
                 "cassandra_storage_mode_running_none": cassandra_storage_mode_running_none,
-                "cassandra_storage_mode_headline": cassandra_storage_mode_headline}
+                "cassandra_storage_mode_headline": cassandra_storage_mode_headline,
+                "cassandra_storage_mode_back_stop": cassandra_storage_mode_back_stop,
+                "cassandra_storage_mode_jump_stop": cassandra_storage_mode_jump_stop,
+                "cassandra_storage_mode_given_wrong": cassandra_storage_mode_given_wrong,
+                "cassandra_storage_mode_given_unknown": cassandra_storage_mode_given_unknown,
+                "cassandra_storage_mode_restarts_into_none": cassandra_storage_mode_restarts_into_none}

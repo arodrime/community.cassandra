@@ -209,8 +209,8 @@ def test_a_file_with_the_same_settings_is_no_restart_only_when_cassandra_started
                  record={CONF + "/" + OPTIONS: sha1("-Xss256k\n-XX:+UseG1GC # by hand\n")})[0] == "restart"
 
 
-def _mode_read(yaml_mode, logged=None, running="yes"):
-    lines = ["file=%s/cassandra.yaml" % CONF, "yaml_read=yes", "yaml=" + yaml_mode, "running=" + running]
+def _mode_read(yaml_mode, logged=None, running="yes", more=()):
+    lines = ["file=%s/cassandra.yaml" % CONF, "yaml_read=yes", "yaml=" + yaml_mode, "running=" + running] + list(more)
     return {"stdout_lines": lines + (["logged=" + logged] if logged else [])}
 
 
@@ -222,9 +222,14 @@ def test_a_storage_mode_written_ahead_of_the_node_is_restarted_without_a_record(
     assert needs(**ahead) == (
         "restart", ["restart pending (its cassandra.yaml has storage_compatibility_mode UPGRADING, Cassandra runs"
                     " CASSANDRA_4)"])
-    # given by hand (-e cassandra_storage_mode_running) when nothing was read
+    # given by hand (-e cassandra_storage_mode_running) when nothing was read (its file changed since its start)
+    changed = _mode_read("UPGRADING", more=("pending=yes", "changed=time"))
+    assert needs(**_but(ahead, cassandra_storage_mode_read=changed, cassandra_storage_mode_running="n1:CASSANDRA_4")) == (
+        "restart", ["restart pending (its cassandra.yaml has storage_compatibility_mode UPGRADING, Cassandra runs"
+                    " CASSANDRA_4 as given with -e)"])
+    # not against its file, unchanged since its start (the guard refuses that -e): the file tells
     assert needs(**_but(ahead, cassandra_storage_mode_read=_mode_read("UPGRADING"),
-                        cassandra_storage_mode_running="n1:CASSANDRA_4"))[0] == "restart"
+                        cassandra_storage_mode_running="n1:CASSANDRA_4")) == ("none", [])
     # it runs its file's mode, or a later one (the guards' case), or 4.x, or stopped: nothing for it
     for case in (dict(cassandra_storage_mode_read=_mode_read("UPGRADING", logged="UPGRADING")),
                  dict(cassandra_storage_mode_read=_mode_read("UPGRADING", logged="NONE")),
@@ -256,3 +261,26 @@ def test_the_way_out_of_the_jump_guard_and_apply_config_converge():
     done = _but(ahead, pending=False, newer=[], record={CONF + "/cassandra.yaml": sha1(UPGRADING)},
                 cassandra_storage_mode_read=_mode_read("UPGRADING", logged="UPGRADING"))
     assert needs(**done) == ("none", [])
+
+
+def test_a_restart_into_none_from_a_file_at_none_already_is_the_point_of_no_return():
+    # its cassandra.yaml at NONE already (no diff), Cassandra runs UPGRADING (logged): apply_config restarts it into
+    # NONE; the plan says it is the point of no return, as for a file it writes with NONE
+    import os
+    import yaml
+    with open(os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "apply_config.yml"),
+              encoding="utf-8") as f:
+        plays = yaml.safe_load(f)
+    task = next(t for p in plays for t in p.get("tasks", []) if t.get("name") == "Put the settings that differ side by side")
+    template = task["ansible.builtin.set_fact"]["cassandra_apply_config_no_return"]
+
+    def no_return(given="", **reads):
+        hostvars = dict((h, {"inventory_hostname": h, "cassandra_storage_mode_read": r,
+                             "cassandra_storage_mode_running": given}) for h, r in reads.items())
+        return render(template, {"_nodes": [], "hostvars": hostvars, "ansible_play_hosts": list(hostvars)})
+    assert no_return(n1=_mode_read("NONE", logged="UPGRADING"), n2=_mode_read("NONE", logged="NONE"),
+                     n3=_mode_read("UPGRADING", logged="CASSANDRA_4")) == ["n1"]
+    # given with -e when nothing else tells it (its file changed since its start)
+    changed = _mode_read("NONE", more=("pending=yes", "changed=time"))
+    assert no_return(n1=changed) == []
+    assert no_return(n1=changed, given="n1:UPGRADING") == ["n1"]

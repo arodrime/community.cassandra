@@ -97,7 +97,7 @@ _cassandra_playbook_variables: [cassandra_hosts, cassandra_target_nodes, cassand
 # 127.0.0.1: several instances on a host each their own), TLS when client encryption is required
 _cassandra_storage_mode_cql_host: >-
   {{ (([cassandra_rpc_address | default(''), cassandra_listen_address | default('')]
-       | map('string') | reject('in', ['', 'localhost', '0.0.0.0']) | list) + ['127.0.0.1']) | first }}
+       | map('string') | reject('in', ['', 'localhost', '0.0.0.0', 'None']) | list) + ['127.0.0.1']) | first }}
 
 _cassandra_storage_mode_cql_ssl: >-
   {{ cassandra_client_encryption_enabled | default(false) | bool

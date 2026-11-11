@@ -377,12 +377,17 @@
         _cassandra_exporter_check_left: nothing was done
       when: cassandra_update_java_todo | bool
 
-    # a node whose cassandra.yaml has another storage_compatibility_mode than the one it runs, back or more than one
-    # step ahead: refused before the question (its restart would take it there)
+    # a node to update whose cassandra.yaml has another storage_compatibility_mode than the one it runs, back or more
+    # than one step ahead, or than the inventory's (each node's config is written before its restart, unshown):
+    # refused before the question
     - name: Refuse a restart into another storage_compatibility_mode than one step from the one it runs
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation
         tasks_from: storage_mode_guard.yml
+      vars:
+        _cassandra_storage_mode_hosts: "{{ groups['cassandra_update_java_True'] | default([]) }}"
+        _cassandra_storage_mode_written: true  # the inventory's mode, written then restarted with
+        _cassandra_storage_mode_kept: true
 
     - name: Show the plan and confirm the run
       ansible.builtin.include_role:

@@ -25,8 +25,11 @@
     else
       echo "yaml_read=no"
     fi
+    # the CassandraDaemon of this PID namespace (a container's on this host is another node's), as config_snapshot.yml
     pid=
+    me=$(readlink /proc/self/ns/pid 2>/dev/null)
     for p in $(pgrep -x java); do
+      [ -z "$me" ] || [ "$(readlink /proc/$p/ns/pid 2>/dev/null)" = "$me" ] || continue
       tr '\0' '\n' < /proc/$p/cmdline 2>/dev/null | grep -qx org.apache.cassandra.service.CassandraDaemon && { pid=$p; break; }
     done
     [ -n "$pid" ] || { echo "running=no"; exit 0; }
