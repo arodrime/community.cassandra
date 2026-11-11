@@ -42,6 +42,15 @@ def test_other_causes_in_full_and_masked():
     assert "s3cret" not in cassandra_failure_cause({"msg": "mirror https://deploy:s3cret@mirror.example/x down"})
 
 
+def test_a_urls_password_with_a_slash_or_quotes_put_together_masked():
+    # (rc9 r4 audit) a / in the password; the shell's quotes put together ('http://bob:MK@'KM@h1: MK@KM)
+    for text in ("proxy http://bob:MK:/KM@h1:8080/x down", "-Dproxy.url=http://bob:MK/KM@h/x refused",
+                 "<url>http://bob:MK/KM@h1/x</url>", "export HTTP_PROXY='http://bob:MK@'KM@h1:8080/x' failed",
+                 'export HTTP_PROXY="http://bob:MK@"KM@h1:8080/x" failed'):
+        cause = cassandra_failure_cause({"msg": text})
+        assert "MK" not in cause and "KM" not in cause and "bob:****@h" in cause, cause
+
+
 def test_the_same_cause_once_with_its_nodes_then_what_to_do():
     failures = [{"host": "node5", "task": "Install python3.11", "result": EPEL, "family": "RedHat"},
                 {"host": "node6", "task": "Install python3.11", "result": EPEL, "family": "RedHat"},

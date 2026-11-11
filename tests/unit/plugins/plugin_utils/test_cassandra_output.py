@@ -1277,6 +1277,16 @@ def test_token_ring_and_key_settings_are_not_secrets(key, value):
     ('export HTTPS_PROXY="http://bob:Pa@ss#w0rdQ@proxy:3128"', 'export HTTPS_PROXY="http://bob:****@proxy:3128"'),
     ('export HTTPS_PROXY="http://bob:ZZ{#Q1@proxy"', 'export HTTPS_PROXY="http://bob:****@proxy"'),
     ("export HTTPS_PROXY=http://bob:ZZ#Q1@proxy:3128", "export HTTPS_PROXY=http://bob:****@proxy:3128"),
+    # (rc9 r4 audit) a / in the password: up to the last @ before a blank (or the quote the URL opens with)
+    ("export HTTP_PROXY=http://bob:MK:/KM@h1:8080/x", "export HTTP_PROXY=http://bob:****@h1:8080/x"),
+    ("-Dproxy.url=http://bob:MK/KM@h/x", "-Dproxy.url=http://bob:****@h/x"),
+    ("<url>http://bob:MK/KM@h1/x</url>", "<url>http://bob:****@h1/x</url>"),
+    ("A='http://bob:MK/KM@h/x';B='a@b'", "A='http://bob:****@h/x';B='a@b'"),
+    ("<url>http://bob:MK/KM@h1/x,https://al:MK/KM@h2/</url>", "<url>http://bob:****@h2/</url>"),
+    # (rc9 r4 audit) the shell's quotes put together ('http://bob:MK@'KM@h1: MK@KM): up to the last @ before a blank
+    ("export HTTP_PROXY='http://bob:MK@'KM@h1:8080/x'", "export HTTP_PROXY='http://bob:****@h1:8080/x'"),
+    ('export HTTP_PROXY="http://bob:MK@"KM@h1:8080/x"', 'export HTTP_PROXY="http://bob:****@h1:8080/x"'),
+    ('<remote url="http://bob:pw@h/x"/>', '<remote url="http://bob:****@h/x"/>'),
 ])
 def test_a_urls_password_is_masked(line, shown):
     # (rc9 audit) the userinfo password of a URL (an HTTP proxy, an appender's URL), in a diff or a report

@@ -1959,8 +1959,9 @@ def _secret_var(name, value, taken, file_name):
     return var
 
 
-# a URL's password with one of these is not taken out of its line (the line goes to secrets.yml whole)
-URL_PASSWORD_UNSAFE = re.compile(r"[\s'\"{}<>\\$`;&|()?#]")
+# a URL's password with one of these is not taken out of its line (the line goes to secrets.yml whole; a / or a
+# quote: USERINFO took it to the last @ of its word, maybe further than the password)
+URL_PASSWORD_UNSAFE = re.compile(r"[\s'\"{}<>\\$`;&|()?#/]")
 
 
 def _take_secrets(values, kind, taken, file_name, own=()):

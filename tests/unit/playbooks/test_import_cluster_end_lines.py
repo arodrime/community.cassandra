@@ -533,6 +533,41 @@ def test_a_proxys_password_with_a_quote_or_a_brace_sends_its_line_to_secrets_yml
     assert self_check(files, layout)["differences"] == []
 
 
+def with_appender(inner):
+    files = stock()
+    block = '  <appender name="H" class="ch.qos.logback.core.ConsoleAppender">\n    %s\n  </appender>\n' % inner
+    text = files["logback.xml"].replace("  <root level", block + "  <root level", 1)
+    files["logback.xml"] = re.sub(r"(<root level=\"[^\"]*\">)", r'\1\n    <appender-ref ref="H" />', text, count=1)
+    return files
+
+
+@pytest.mark.parametrize("files", [
+    # (rc9 r4 audit) a / in the password: masked and imported up to the last @ before a blank
+    with_env("export HTTP_PROXY=http://bob:MK:/KM@h1:8080/x"),
+    with_env('JVM_OPTS="$JVM_OPTS -Dproxy.url=http://bob:MK/KM@h1:8080/x"'),
+    dict(stock(), **{"jvm-server.options": stock()["jvm-server.options"] + "-Dproxy.url=http://bob:MK/KM@h/x\n"}),
+    logback("  <!-- http://bob:MK/KM@h1:8080/x -->\n</configuration>"),
+    with_appender("<url>http://bob:MK/KM@h1/x</url>"),
+    # (rc9 r4 audit) the shell's quotes put together: the value is http://bob:MK@KM@h1:8080/x
+    with_env("export HTTP_PROXY='http://bob:MK@'KM@h1:8080/x'"),
+    with_env('export HTTP_PROXY="http://bob:MK@"KM@h1:8080/x"'),
+], ids=["env-slash", "env-jvm-opts-slash", "jvm-slash", "logback-comment-slash", "appender-slash", "env-quotes",
+        "env-double-quotes"])
+def test_no_part_of_a_urls_password_shown_or_in_clear(files):
+    out, n = imported(files)
+    layout = cassandra_inventory_layout([n], "c")
+    shown = [f["content"] for f in cassandra_inventory_files(layout) if not f["secret"]]
+    shown += [layout["report"], "\n".join(node({"import_cluster_config": out})["notes"])]
+    shown += out["hand_edits"] + out["normalized"] + out.get("carried", [])
+    assert not [text for text in shown if "MK" in text or "KM" in text]
+    differences = self_check(files, layout)["differences"]
+    if [line for line in out["hand_edits"] if "bob:****@h" in line]:  # (the shell's quotes: a hand edit, masked)
+        assert differences and not [text for text in differences if "MK" in text or "KM" in text]
+    else:
+        secrets = "\n".join(f["content"] for f in cassandra_inventory_files(layout) if f["secret"])
+        assert "MK" in secrets and "KM" in secrets and differences == []
+
+
 def test_a_reimport_drops_and_names_the_variables_no_longer_read():
     # (rc9 audit) an inventory a release candidate imported: its own main.yml is written again without them; in a
     # file of yours, the report names them (the playbooks refuse them)

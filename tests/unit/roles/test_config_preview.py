@@ -615,3 +615,14 @@ def test_a_urls_password_with_an_at_a_quote_or_a_brace_masked_in_the_diff(tmp_pa
     shown = changed_lines(preview(tmp_path, "cassandra-env.sh", 'export HTTPS_PROXY="http://bob:%s@proxy:3128"\n' % old,
                                   'export HTTPS_PROXY="http://bob:%s@proxy:3128"\n' % new))
     assert shown == ['-export HTTPS_PROXY="http://bob:****@proxy:3128"', '+export HTTPS_PROXY="http://bob:****@proxy:3128"']
+
+
+@pytest.mark.parametrize("line, shown", [
+    # (rc9 r4 audit) a / in the password; the shell's quotes put together (http://bob:%s@KM@h1:8080/x)
+    ("export HTTP_PROXY=http://bob:%s:/KM@h1:8080/x", "export HTTP_PROXY=http://bob:****@h1:8080/x"),
+    ('JVM_OPTS="$JVM_OPTS -Dproxy.url=http://bob:%s/KM@h/x"', 'JVM_OPTS="$JVM_OPTS -Dproxy.url=http://bob:****@h/x"'),
+    ("export HTTP_PROXY='http://bob:%s@'KM@h1:8080/x'", "export HTTP_PROXY='http://bob:****@h1:8080/x'"),
+    ('export HTTP_PROXY="http://bob:%s@"KM@h1:8080/x"', 'export HTTP_PROXY="http://bob:****@h1:8080/x"')])
+def test_a_urls_password_with_a_slash_or_quotes_put_together_masked_in_the_diff(tmp_path, line, shown):
+    diff = changed_lines(preview(tmp_path, "cassandra-env.sh", line % "OLDLEAK" + "\n", line % "NEWLEAK" + "\n"))
+    assert diff == ["-" + shown, "+" + shown]

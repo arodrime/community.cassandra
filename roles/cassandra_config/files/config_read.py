@@ -352,9 +352,12 @@ def still_on(state, line):
     return False
 
 
-# the password of a URL's userinfo (scheme://user:password@host), cassandra_output.USERINFO's
-USERINFO = re.compile(r"(?P<head>(?P<q>['\"])?[A-Za-z][\w+.-]*://(?P<user>[^\s/:@'\"<>{}]+):)"
-                      r"(?P<password>(?:(?!(?P=q))[^\s/])+)@")
+# the password of a URL's userinfo (scheme://user:password@host), cassandra_output.USERINFO's (its comment
+# says what it masks)
+USERINFO = re.compile(r"(?P<head>(?P<q>['\"])?[A-Za-z][\w+.-]*://(?P<user>[^\s/:@'\"<>{}]+):)(?P<password>"
+                      r"(?(q)(?=(?:(?!(?P=q))\S)*(?P=q)[^\s;&|<>()])\S+|(?!))"
+                      r"|(?=(?:(?!(?P=q))\S)*/(?:(?!(?P=q))\S)*@)(?:(?!(?P=q))\S)+"
+                      r"|(?:(?!(?P=q))[^\s/])+)@")
 
 
 def masked(lines):
