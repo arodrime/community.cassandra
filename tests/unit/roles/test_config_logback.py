@@ -238,6 +238,7 @@ MOVES = next(t for t in CONFIRM if t.get("name") == "Find whether the audit even
     (False, False, True, True),   # the default turns it on, the node has it off: said
     (True, False, True, False),   # the node has it on already
     ("class", False, True, False),  # (rc9 r2 audit) on already, its class before its name, in single quotes
+    ("spaces", False, True, False),  # (rc9 r3 audit) on already, name = "AUDIT"
     (False, True, True, False),   # set in the inventory: wanted
     (False, False, False, False),  # off
 ])
@@ -250,6 +251,9 @@ def test_said_when_the_default_moves_the_audit_events(live_audit, in_inventory, 
         live = live.replace('  <!-- <appender name="AUDIT" class="ch.qos.logback.core.rolling.RollingFileAppender">',
                             "  <appender class='ch.qos.logback.core.rolling.RollingFileAppender' name='AUDIT'>")
         assert "name='AUDIT'" in live
+    elif live_audit == "spaces":
+        live = live.replace('  <!-- <appender name="AUDIT"', '  <appender name = "AUDIT"')
+        assert 'name = "AUDIT"' in live
     elif live_audit:
         live = live.replace('  <!-- <appender name="AUDIT"', '  <appender name="AUDIT"')
     hostvars = {"n1": {"cassandra_log_audit_file": audit_file} if in_inventory else {}}
@@ -263,16 +267,32 @@ def test_said_when_the_default_moves_the_audit_events(live_audit, in_inventory, 
     # (rc9 r2 audit) values written as they are that would leave logback.xml unreadable, on every node
     ({"cassandra_log_pattern": "%msg -- %n"}, "cassandra_log_pattern: %msg -- %n has a --, which XML does not take in a"
                                               " comment, where the template writes it while cassandra_log_audit_file is"
-                                              " false: write it without --, or set cassandra_log_audit_file to true"),
-    ({"cassandra_log_pattern": "%msg < %n"}, "cassandra_log_pattern: %msg < %n has a <, which ends the XML text there:"
+                                              " false. Way out, one of:"
+                                              "\n  write it without --"
+                                              "\n  set cassandra_log_audit_file to true: logback.xml then writes the audit"
+                                              " events (FileAuditLogger) to audit/audit.log, no longer to system.log"
+                                              "\n  add logback.xml to cassandra_config_keep_files: the node keeps its"
+                                              " logback.xml as it is"
+                                              "\n  write logback.xml from your own template"
+                                              " (cassandra_config_template_overrides)"),
+    ({"cassandra_log_pattern": "%msg < %n"}, "cassandra_log_pattern: %msg < %n has a <, which ends the XML value there:"
                                              " write it &lt;"),
-    ({"cassandra_log_pattern": "%msg & %n"}, "cassandra_log_pattern: %msg & %n has an & that starts no XML entity:"
-                                             " write it &amp;"),
+    ({"cassandra_log_pattern": "%msg & %n"}, "cassandra_log_pattern: %msg & %n has an & that starts no XML entity"
+                                             " (&amp; &lt; &gt; &quot; &apos; &#number;): write it &amp;"),
+    # (rc9 r3 audit) an entity logback's parser does not know; ]]> in a text
+    ({"cassandra_log_pattern": "%msg&nbsp;%n"}, "cassandra_log_pattern: %msg&nbsp;%n has an & that starts no XML"
+                                                " entity"),
+    ({"cassandra_log_pattern": "%msg ]]> %n"}, "cassandra_log_pattern: %msg ]]> %n has a ]]>, which XML does not take"
+                                               " in a text: write it ]]&gt;"),
+    ({"cassandra_log_cql_table_level": "W--ARN"}, "cassandra_log_cql_table_level: W--ARN has a --, which XML does not"
+                                                  " take in a comment, where the template writes it while"
+                                                  " cassandra_log_cql_table is false. Way out, one of:\n  write it"
+                                                  " without --\n  set cassandra_log_cql_table to true: logback.xml then"
+                                                  " writes the logs to the system_views.system_logs table too\n"),
     ({"cassandra_log_levels": {'com."x': "INFO"}}, 'cassandra_log_levels: com."x has a ", which ends the XML attribute'
                                                    " there: write it &quot;"),
     ({"cassandra_log_level": "IN<FO"}, "cassandra_log_level: IN<FO has a <"),
     ({"cassandra_log_audit_max_file_size": "5--0MB"}, "cassandra_log_audit_max_file_size: 5--0MB has a --"),
-    ({"cassandra_log_cql_table_level": "W--ARN"}, "cassandra_log_cql_table_level: W--ARN has a --"),
 ])
 def test_values_that_would_leave_logback_xml_unreadable_are_refused(variables, said):
     wrong = refused(**variables)
@@ -284,12 +304,30 @@ def test_values_that_would_leave_logback_xml_unreadable_are_refused(variables, s
 @pytest.mark.parametrize("series", sorted(VERSIONS))
 @pytest.mark.parametrize("variables", [
     {"cassandra_log_pattern": "%msg -- %n", "cassandra_log_audit_file": True},  # (the audit appender on: no comment)
-    {"cassandra_log_pattern": "%msg &amp; &lt;x&gt; &#38; %n"},
+    {"cassandra_log_pattern": "%msg &amp; &lt;x&gt; &#38; &quot;&apos;&#x26; %n"},
     {"cassandra_log_level": "${LVL:-INFO}", "cassandra_log_levels": {"com.x": "warn"}},
 ])
 def test_values_logback_xml_takes_pass(series, variables):
     assert refused(**variables) == []
     ET.fromstring(logback(series, **variables))
+
+
+def test_each_refusal_on_lines_of_its_own():
+    msg = render(REFUSE["ansible.builtin.assert"]["fail_msg"], _wrong=["a: one", "b: two\n  way out"])
+    assert msg == "a: one\nb: two\n  way out\nNothing is changed."
+
+
+def test_a_double_dash_is_yours_with_your_own_template():
+    # (rc9 r3 audit) the comment it would break is the role's template's: not refused with your own
+    assert refused(cassandra_log_pattern="%msg -- %n",
+                   cassandra_config_template_overrides={"logback.xml": "/t/logback.xml.j2"}) == []
+
+
+def test_an_appender_named_with_spaces_around_its_equal_sign_is_known():
+    # (rc9 r3 audit) name = "Q"; a filename= after it is not its name
+    assert refused('  <appender name = "Q" class="x" filename="f"/>', cassandra_logback_root_extra_refs=["Q"]) == []
+    wrong = refused('  <appender name="Q" class="x" filename="f"/>', cassandra_logback_root_extra_refs=["f"])
+    assert len(wrong) == 1 and wrong[0].startswith("cassandra_logback_root_extra_refs: f is not an appender"), wrong
 
 
 def test_an_appender_named_in_single_quotes_is_known():

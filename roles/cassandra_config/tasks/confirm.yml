@@ -45,7 +45,7 @@
          and 'cassandra_log_audit_file' not in hostvars[inventory_hostname]
          and (_cassandra_config_compared | default({})).get('logback.xml') is not none
          and (_cassandra_config_compared | default({})).get('logback.xml') | default('', true) | b64decode
-             is not search('(?m)^\s*<appender\s(?:[^>]*\s)?name=["\x27]AUDIT["\x27]') }}
+             is not search('(?m)^\s*<appender\s(?:[^>]*\s)?name\s*=\s*["\x27]AUDIT["\x27]') }}
 
 - name: Warn that the audit events would move to audit.log
   ansible.builtin.debug:

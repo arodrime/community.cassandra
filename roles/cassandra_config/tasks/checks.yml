@@ -123,19 +123,21 @@
 - name: Refuse logback appender-refs, levels and values the role cannot write
   ansible.builtin.assert:
     that: _wrong | length == 0
-    fail_msg: "{{ _wrong | join('; ') }}. Nothing is changed."
+    fail_msg: |-
+      {{ _wrong | join('\n') }}
+      Nothing is changed.
     quiet: true
   vars:
     _known: >-
       {{ _cassandra_config_stock_appenders + (['AUDIT'] if cassandra_log_audit_file | bool else [])
          + (['CQLLOG'] if cassandra_version == '50x' and cassandra_log_cql_table | default(false) | bool else [])
-         + (_cassandra_config_snippet_appenders | regex_findall('<appender\s[^>]*name=["\x27]([^"\x27]+)["\x27]')) }}
+         + (_cassandra_config_snippet_appenders | regex_findall('<appender\s[^>]*?\bname\s*=\s*["\x27]([^"\x27]+)["\x27]')) }}
     # appenders and loggers of your snippet at the end of <configuration>
     _after_root: >-
-      {{ _cassandra_config_snippet_logback | regex_findall('<appender\s[^>]*name=["\x27]([^"\x27]+)["\x27]') }}
+      {{ _cassandra_config_snippet_logback | regex_findall('<appender\s[^>]*?\bname\s*=\s*["\x27]([^"\x27]+)["\x27]') }}
     _snippet_loggers: >-
       {{ (_cassandra_config_snippet_logback ~ '\n' ~ _cassandra_config_snippet_appenders)
-         | regex_findall('<logger\s[^>]*name=["\x27]([^"\x27]+)["\x27]') }}
+         | regex_findall('<logger\s[^>]*?\bname\s*=\s*["\x27]([^"\x27]+)["\x27]') }}
     _wrong: >-
       {%- set out = [] -%}
       {%- if cassandra_logback_root_extra_refs is string or cassandra_logback_root_extra_refs is mapping -%}
@@ -181,6 +183,12 @@
       {#- the values written as they are in logback.xml: [variable, value, in an attribute, the variable that leaves
           the part it is in commented out (false)] -#}
       {%- set audit = '' if cassandra_log_audit_file | bool else 'cassandra_log_audit_file' -%}
+      {#- (your own template of logback.xml: its comments are yours) -#}
+      {%- set overrides = cassandra_config_template_overrides if cassandra_config_template_overrides is mapping else {} -%}
+      {%- set turned_on = {'cassandra_log_audit_file': ': logback.xml then writes the audit events (FileAuditLogger) to'
+                                                      ' audit/audit.log, no longer to system.log',
+                           'cassandra_log_cql_table': ': logback.xml then writes the logs to the'
+                                                     ' system_views.system_logs table too'} -%}
       {%- set xml = [['cassandra_log_level', cassandra_log_level, true, ''],
                      ['cassandra_log_level_cassandra', cassandra_log_level_cassandra, true, ''],
                      ['cassandra_log_pattern', cassandra_log_pattern, false, audit]] -%}
@@ -210,18 +218,26 @@
       {%- for var, value, attribute, commented in xml -%}
       {%-   set text = value | string -%}
       {%-   if '<' in text -%}
-      {%-     set _ = out.append(var ~ ': ' ~ text ~ ' has a <, which ends the XML text there: write it &lt;') -%}
+      {%-     set _ = out.append(var ~ ': ' ~ text ~ ' has a <, which ends the XML value there: write it &lt;') -%}
       {%-   endif -%}
-      {%-   if text is search('&(?![A-Za-z][\w.-]*;|#[0-9]+;|#x[0-9A-Fa-f]+;)') -%}
-      {%-     set _ = out.append(var ~ ': ' ~ text ~ ' has an & that starts no XML entity: write it &amp;') -%}
+      {#-   (logback's parser knows only XML's own five entities) -#}
+      {%-   if text is search('&(?!(?:amp|lt|gt|quot|apos);|#[0-9]+;|#x[0-9A-Fa-f]+;)') -%}
+      {%-     set _ = out.append(var ~ ': ' ~ text ~ ' has an & that starts no XML entity (&amp; &lt; &gt; &quot; &apos;'
+                               ~ ' &#number;): write it &amp;') -%}
+      {%-   endif -%}
+      {%-   if not attribute and ']]>' in text -%}
+      {%-     set _ = out.append(var ~ ': ' ~ text ~ ' has a ]]>, which XML does not take in a text: write it ]]&gt;') -%}
       {%-   endif -%}
       {%-   if attribute and '"' in text -%}
       {%-     set _ = out.append(var ~ ': ' ~ text ~ ' has a ", which ends the XML attribute there: write it &quot;') -%}
       {%-   endif -%}
-      {%-   if commented and '--' in text -%}
+      {%-   if commented and '--' in text and 'logback.xml' not in overrides -%}
       {%-     set _ = out.append(var ~ ': ' ~ text ~ ' has a --, which XML does not take in a comment, where the'
-                               ~ ' template writes it while ' ~ commented ~ ' is false: write it without --, or set '
-                               ~ commented ~ ' to true') -%}
+                               ~ ' template writes it while ' ~ commented ~ ' is false. Way out, one of:'
+                               ~ '\n  write it without --'
+                               ~ '\n  set ' ~ commented ~ ' to true' ~ turned_on[commented]
+                               ~ '\n  add logback.xml to cassandra_config_keep_files: the node keeps its logback.xml as it is'
+                               ~ '\n  write logback.xml from your own template (cassandra_config_template_overrides)') -%}
       {%-   endif -%}
       {%- endfor -%}
       {{ out }}
