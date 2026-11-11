@@ -513,7 +513,12 @@ def test_a_proxys_password_with_an_at_goes_to_secrets_yml_whole():
     ('export HTTPS_PROXY="http://bob:hu\'nter2xx@proxy:3128"', "hu'nter2xx"),
     ("export HTTPS_PROXY='http://bob:hu\"nter2xx@proxy:3128'", 'hu"nter2xx'),
     ("export HTTPS_PROXY=http://bob:hu{nter2xx@proxy:3128", "hu{nter2xx"),
-    ("export HTTPS_PROXY=http://bob:hu}nter2xx@proxy:3128", "hu}nter2xx")])
+    ("export HTTPS_PROXY=http://bob:hu}nter2xx@proxy:3128", "hu}nter2xx"),
+    # (rc9 r3 audit) a # or a ?: the line whole too
+    ('export HTTPS_PROXY="http://bob:hu#nter2xx@proxy:3128"', "hu#nter2xx"),
+    ('export HTTPS_PROXY="http://bob:hu?nter2xx@proxy:3128"', "hu?nter2xx"),
+    ('export HTTPS_PROXY="http://bob:hu@ss#nter2xx@proxy:3128"', "hu@ss#nter2xx"),
+    ('export HTTPS_PROXY="http://bob:hu{#nter2xx@proxy"', "hu{#nter2xx")])
 def test_a_proxys_password_with_a_quote_or_a_brace_sends_its_line_to_secrets_yml(line, password):
     # (rc9 r2 audit) where such a password ends is not sure: the lines go to secrets.yml whole, nothing in clear
     files = with_env(line)
@@ -521,7 +526,8 @@ def test_a_proxys_password_with_a_quote_or_a_brace_sends_its_line_to_secrets_yml
     layout = cassandra_inventory_layout([n], "c")
     files_out = written(layout)
     assert files_out["group_vars/c/cassandra-env.sh.snippet.j2"]["content"] == "{{ cassandra_secret_env_lines }}\n"
-    assert password in yaml.safe_load(files_out["group_vars/c/secrets.yml"]["content"])["cassandra_secret_env_lines"]
+    from ansible.parsing.utils.yaml import from_yaml  # (a line with {# in it is written !unsafe)
+    assert password in from_yaml(files_out["group_vars/c/secrets.yml"]["content"])["cassandra_secret_env_lines"]
     assert not [f for f in files_out.values() if not f["secret"] and "nter2xx" in f["content"]]
     assert "nter2xx" not in layout["report"]
     assert self_check(files, layout)["differences"] == []

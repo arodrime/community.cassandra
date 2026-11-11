@@ -1953,7 +1953,7 @@ def _secret_var(name, value, taken, file_name):
 
 
 # a URL's password with one of these is not taken out of its line (the line goes to secrets.yml whole)
-URL_PASSWORD_UNSAFE = re.compile(r"[\s'\"{}<>\\$`;&|()]")
+URL_PASSWORD_UNSAFE = re.compile(r"[\s'\"{}<>\\$`;&|()?#]")
 
 
 def _take_secrets(values, kind, taken, file_name, own=()):

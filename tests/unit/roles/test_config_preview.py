@@ -30,7 +30,7 @@ with warnings.catch_warnings():  # already done under ansible-test
     init_plugin_loader()  # the collection's filters (cassandra_node_standing), under plain pytest too
 
 from ansible_collections.community.cassandra.tests.unit.plugins.plugin_utils.test_cassandra_output import BLOCK_SECRETS_AFTER_AUDIT  # noqa: E402
-from ansible_collections.community.cassandra.tests.unit.roles.config_reader import compare, config_read, identity_changes, preview  # noqa: E402
+from ansible_collections.community.cassandra.tests.unit.roles.config_reader import SCRIPT, compare, config_read, identity_changes, preview  # noqa: E402
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks  # noqa: E402
 
 TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_config", "tasks")
@@ -600,7 +600,16 @@ def test_a_urls_password_masked_in_the_diff(tmp_path):
     assert shown == ["-export http_proxy=http://bob:****@proxy:3128", "+export http_proxy=http://bob:****@proxy:3128"]
 
 
-@pytest.mark.parametrize("old, new", [("p@OLDLEAK", "p@NEWLEAK"), ("p'OLDLEAK", "p'NEWLEAK"), ("p{OLDLEAK", "p}NEWLEAK")])
+def test_the_nodes_url_password_pattern_is_the_collections():
+    # (rc9 r3 audit) config_read.py runs alone on the node: its copy of the URL password pattern cannot drift
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import USERINFO
+    node = {"__name__": "config_read"}
+    exec(compile(SCRIPT, "config_read.py", "exec"), node)  # pylint: disable=exec-used
+    assert node["USERINFO"].pattern == USERINFO.pattern and node["USERINFO"].flags == USERINFO.flags
+
+
+@pytest.mark.parametrize("old, new", [("p@OLDLEAK", "p@NEWLEAK"), ("p'OLDLEAK", "p'NEWLEAK"), ("p{OLDLEAK", "p}NEWLEAK"),
+                                      ("p#OLDLEAK", "p?NEWLEAK"), ("p@OL#DLEAK", "p@NE?WLEAK"), ("p{#OLDLEAK", "p{?NEWLEAK")])
 def test_a_urls_password_with_an_at_a_quote_or_a_brace_masked_in_the_diff(tmp_path, old, new):
     # (rc9 r2 audit) up to the last @ of the authority: no part of it shown
     shown = changed_lines(preview(tmp_path, "cassandra-env.sh", 'export HTTPS_PROXY="http://bob:%s@proxy:3128"\n' % old,

@@ -254,9 +254,9 @@ _HIDDEN_ELEMENT = re.compile(r"(?i)(<(?P<name>" + _HIDDEN_NAME + r")(?:\s[^<>]*)
                              r"(?:" + _ELEMENT_TEXT + r"|(?!</(?P=name)\s*>).)*)")
 
 # the password of a URL's userinfo (scheme://user:password@host: an HTTP proxy, an appender's URL): up to the last
-# @ of the authority (a password may hold an @), which ends at a blank, /, ? or #, or at the quote the URL opens with
+# @ before a blank or a / (a password may hold an @, a ? or a #), or before the quote the URL opens with
 USERINFO = re.compile(r"(?P<head>(?P<q>['\"])?[A-Za-z][\w+.-]*://(?P<user>[^\s/:@'\"<>{}]+):)"
-                      r"(?P<password>(?:(?!(?P=q))[^\s/?#])+)@")
+                      r"(?P<password>(?:(?!(?P=q))[^\s/])+)@")
 
 # a secret's name and what comes before its value, anywhere on a line
 _HIDDEN_KEY_ONLY = re.compile(r"(?i)(" + _HIDDEN_NAME + r"\s*[:=]\s*)")

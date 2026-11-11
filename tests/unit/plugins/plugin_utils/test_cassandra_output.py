@@ -1271,6 +1271,12 @@ def test_token_ring_and_key_settings_are_not_secrets(key, value):
     ("http://bob:hu}nter2xx@proxy", "http://bob:****@proxy"),
     ("<url>https://bob:it'sXYZ1@h/x</url>", "<url>https://bob:****@h/x</url>"),
     ("A='http://bob:pw@h';B='a@b'", "A='http://bob:****@h';B='a@b'"),  # the quote the URL opens with ends it
+    # (rc9 r3 audit) a # or a ? in the password: up to the last @ before a blank or a /
+    ('export HTTPS_PROXY="http://bob:ZZ#Q1@proxy:3128"', 'export HTTPS_PROXY="http://bob:****@proxy:3128"'),
+    ('export HTTPS_PROXY="http://bob:Pa?ssQ9@proxy:3128"', 'export HTTPS_PROXY="http://bob:****@proxy:3128"'),
+    ('export HTTPS_PROXY="http://bob:Pa@ss#w0rdQ@proxy:3128"', 'export HTTPS_PROXY="http://bob:****@proxy:3128"'),
+    ('export HTTPS_PROXY="http://bob:ZZ{#Q1@proxy"', 'export HTTPS_PROXY="http://bob:****@proxy"'),
+    ("export HTTPS_PROXY=http://bob:ZZ#Q1@proxy:3128", "export HTTPS_PROXY=http://bob:****@proxy:3128"),
 ])
 def test_a_urls_password_is_masked(line, shown):
     # (rc9 audit) the userinfo password of a URL (an HTTP proxy, an appender's URL), in a diff or a report
