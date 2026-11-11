@@ -246,3 +246,13 @@ def test_the_versions_of_the_nodes_outside_the_run_from_the_ring():
     assert versions("172.20.0.2", "172.20.0.9") == ["4.1.12"]
     hostvars = {"n1": {"_cassandra_preflight": {"address": "10.0.0.1"}, "cassandra_preflight_describe": {"stdout": ""}}}
     assert render(outside, hostvars=hostvars, ansible_play_hosts_all=["n1"], **noting["vars"]) == []  # no running node read
+    # a node known to the ring by its broadcast_address (ring_address), another address in the inventory: in the run
+    hostvars = dict(("n%d" % i, {"_cassandra_preflight": {"address": "192.168.0.%d" % i, "ring_address": address},
+                                 "cassandra_preflight_describe": {"stdout": described}})
+                    for i, address in enumerate(("172.20.0.2", "172.20.0.3", "172.20.0.9")))
+    assert render(outside, hostvars=hostvars, ansible_play_hosts_all=list(hostvars), **noting["vars"]) == []
+    # the nodes outside, each with its version (said by the rolling phase's last words)
+    nodes = noting["ansible.builtin.set_fact"]["cassandra_upgrade_outside_nodes"]
+    hostvars = {"n1": {"_cassandra_preflight": {"address": "172.20.0.9"}, "cassandra_preflight_describe": {"stdout": described}}}
+    assert render(nodes, hostvars=hostvars, ansible_play_hosts_all=["n1"], **noting["vars"]) == [
+        {"address": "172.20.0.2", "version": "4.1.12"}, {"address": "172.20.0.3", "version": "4.1.12"}]

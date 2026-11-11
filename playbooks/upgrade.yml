@@ -254,13 +254,21 @@
         cassandra_upgrade_run_nodes: "{{ ansible_play_hosts_all }}"
 
     # and the versions of the cluster's nodes outside the run (another datacenter, --limit), as the ring gave
-    # them to preflight (describecluster's Database versions: <version>: [<address>:<port>, ...]); they do not
-    # change during this run. No backslash: Jinja unescapes its string literals from ansible-core 2.19 on only
+    # them to preflight (describecluster's Database versions: <version>: [<address>:<port>, ...], each node by its
+    # ring address: its broadcast_address, else its address); they do not change during this run.
+    # cassandra_upgrade_outside_nodes: those nodes, [{address, version}]. No backslash: Jinja unescapes its string
+    # literals from ansible-core 2.19 on only
     - name: Note the versions of the nodes outside the run
       ansible.builtin.set_fact:
-        cassandra_upgrade_outside_versions: >-
-          {%- set run = ansible_play_hosts_all | map('extract', hostvars) | map(attribute='_cassandra_preflight')
-                        | map(attribute='address', default='') | list -%}
+        cassandra_upgrade_outside_versions: "{{ _outside | map(attribute='version') | unique | list }}"
+        cassandra_upgrade_outside_nodes: "{{ _outside }}"
+      vars:
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _outside: >-
+          {%- set run = [] -%}
+          {%- for p in ansible_play_hosts_all | map('extract', hostvars) | map(attribute='_cassandra_preflight', default={}) -%}
+          {%-   set _ = run.extend([p.ring_address | default(''), p.address | default('')]) -%}
+          {%- endfor -%}
           {%- set described = hostvars[ansible_play_hosts_all | first].cassandra_preflight_describe.stdout | default('') -%}
           {%- set section = ((described ~ _nl).split('Database versions:')[1:] | first | default('')).split(_nl ~ _nl) | first -%}
           {%- set out = [] -%}
@@ -268,12 +276,10 @@
           {%-   set version = line.split(':')[0] | trim -%}
           {%-   for node in line.split(': [', 1)[1].rsplit(']', 1)[0].split(',') -%}
           {%-     set address = (node | trim).rsplit(':', 1)[0] | replace('[', '') | replace(']', '') -%}
-          {%-     if address and address not in run and version not in out -%}{%- set _ = out.append(version) -%}{%- endif -%}
+          {%-     if address and address not in run -%}{%- set _ = out.append({'address': address, 'version': version}) -%}{%- endif -%}
           {%-   endfor -%}
           {%- endfor -%}
           {{ out }}
-      vars:
-        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
       run_once: true
 
     - name: This playbook upgrades from the series it knows
@@ -467,7 +473,9 @@
           {%- set out = {} -%}
           {%- for b in _behind | selectattr('unsure') -%}
           {%-   set _ = out.update({b.node: 'rolling_restart' | community.cassandra.cassandra_command(
-                                              limit=[b.node], **_cassandra_run_command_args)}) -%}
+                                              limit=[b.node], extra=['-e cassandra_storage_mode_running=' ~ b.node
+                                                                     ~ ':<its mode>'],
+                                              **_cassandra_run_command_args)}) -%}
           {%- endfor -%}
           {{ out }}
         # a restart pending, or a file with a time after now (touched once the clock is right): restarted
@@ -948,11 +956,12 @@
       ansible.builtin.debug:
         msg: >-
           {{ ({'canary': '--check: nothing was done. A real run upgrades the canary; watch it then (logs, latencies, dropped messages in nodetool tpstats), then run -e cassandra_upgrade_phase=rolling.',
-               'rolling': '--check: nothing was done. A real run upgrades the nodes listed above. ' ~ _mode_step ~ 'Then -e cassandra_upgrade_phase=sstables.',
+               'rolling': '--check: nothing was done. A real run upgrades the nodes listed above. ' ~ _next_rolling,
                'sstables': '--check: nothing was done. A real run rewrites the sstables of the nodes listed above. Then -e cassandra_upgrade_phase=cleanup.'}
               if ansible_check_mode else
               {'canary': 'Watch the canary (logs, latencies, dropped messages in nodetool tpstats), then run -e cassandra_upgrade_phase=rolling.',
-               'rolling': 'Every node runs ' ~ cassandra_package_version ~ '. ' ~ _mode_step ~ 'Then -e cassandra_upgrade_phase=sstables.',
+               'rolling': ('Every node runs ' ~ cassandra_package_version ~ '. ' if not _outside
+                           else 'The nodes of this run run ' ~ cassandra_package_version ~ '. ') ~ _next_rolling,
                'sstables': 'sstables rewritten. Last: -e cassandra_upgrade_phase=cleanup.'})[cassandra_upgrade_phase] }}
       run_once: true
       vars:
@@ -966,3 +975,17 @@
              | community.cassandra.cassandra_storage_mode_step
              if cassandra_version == '50x' and _hosts | community.cassandra.cassandra_storage_mode_from_4x(cassandra_package_version)
              else '' }}
+        # the nodes outside the run (--limit, another datacenter) not on the target yet: upgraded first, the next
+        # step (the move of storage_compatibility_mode, the sstables) once every node runs it; a row per node
+        _outside: >-
+          {%- set out = [] -%}
+          {%- set rows = cassandra_upgrade_outside_nodes | default([]) | rejectattr('version', 'equalto', cassandra_package_version) | list -%}
+          {%- set w = rows | map(attribute='address') | map('length') | max | default(0) -%}
+          {%- for n in rows -%}{%- set _ = out.append('  ' ~ n.address.ljust(w) ~ '  ' ~ n.version) -%}{%- endfor -%}
+          {{ out }}
+        _next_rolling: >-
+          {{ (_mode_step ~ 'Then -e cassandra_upgrade_phase=sstables.') if not _outside
+             else ([('These nodes outside this run do not run ' ~ cassandra_package_version ~ ' yet:')] + _outside
+                   + ['Upgrade them first (the phases of this playbook, --limit to them).',
+                      'The next step comes once every node runs ' ~ cassandra_package_version ~ '.']) | join(_nl) }}
+        _nl: "\n"

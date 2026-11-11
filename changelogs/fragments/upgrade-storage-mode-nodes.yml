@@ -6,3 +6,8 @@ bugfixes:
     at ``NONE`` before ``apply_config`` ran let the sstables phase rewrite the sstables in the 4.x format. A mode not
     read, or not a mode (a typo in the inventory), is refused too; the refusal shows a table of the three per node
     and the way out. A 5.0 patch upgrade (its config copy a 5.0 one) is not steered to ``NONE``.
+  - >-
+    upgrade - the rolling phase under ``--limit`` (one datacenter) lists the nodes outside the run not on the target
+    yet and says to upgrade them first, instead of "every node runs" and the ``storage_compatibility_mode`` step; the
+    nodes outside the run are matched by their ring address (``broadcast_address``). The sstables phase's way out for a
+    mode not known gives the ``-e cassandra_storage_mode_running`` its restart needs.

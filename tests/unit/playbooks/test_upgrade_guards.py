@@ -259,14 +259,16 @@ def test_sstables_refuse_a_mode_not_read_unknown_or_a_restart_pending():
         "WAY OUT  On n1, read the mode its Cassandra runs (cqlsh 127.0.0.1, as the cluster's CQL user): SELECT value FROM"
         " system_views.settings WHERE name = 'storage_compatibility_mode'; (null: CASSANDRA_4). The same as its"
         " cassandra.yaml's (NONE) or the step before: restart it: ansible-playbook -i a.yml"
-        " community.cassandra.rolling_restart --limit n1. Two steps before: set UPGRADING in cassandra.yaml by hand"
-        " first. Then run this phase again.")
+        " community.cassandra.rolling_restart --limit n1 -e cassandra_storage_mode_running=n1:<its mode>. Two steps"
+        " before: set UPGRADING in cassandra.yaml by hand first. Then run this phase again.")
     assert "Later than NONE" not in _sstables(("NONE", "NONE", "NONE", True))[1][-1]
     # two nodes not known: each its own restart (the other may run a later mode than its file), its own address
     ok, msg = _sstables(("NONE", "NONE", "NONE", True), ("NONE", "NONE", "NONE", True))
     out = msg[-1].split("On n2, ")
-    assert len(out) == 2 and "--limit n1." in out[0] and "n2" not in out[0].replace("On n1", "")
-    assert "--limit n2." in out[1] and "n1" not in out[1] and "--limit n1,n2" not in msg[-1]
+    assert len(out) == 2 and "--limit n1 -e cassandra_storage_mode_running=n1:<its mode>." in out[0]
+    assert "n2" not in out[0].replace("On n1", "")
+    assert "--limit n2 -e cassandra_storage_mode_running=n2:<its mode>." in out[1] and "n1" not in out[1]
+    assert "--limit n1,n2" not in msg[-1]
     # the address cqlsh asks: its rpc address when one is set
     hostvars = _modes([("NONE", "NONE", "NONE", True)])
     hostvars["n1"]["cassandra_rpc_address"] = "10.0.0.5"
@@ -505,6 +507,32 @@ def next_phase(phase, check=False, modes=None, version="50x", read=None, **kwarg
     variables = dict(say["vars"], hostvars=hostvars, ansible_play_hosts_all=list(hostvars), cassandra_version=version,
                      cassandra_upgrade_phase=phase, cassandra_package_version="5.0.9", ansible_check_mode=check)
     return text(say["ansible.builtin.debug"]["msg"], **variables)
+
+
+def test_rolling_under_limit_says_the_nodes_left_outside_and_no_mode_step_yet():
+    # --limit to one datacenter: the other still on 4.1 (describecluster, by ring address); every node of the run
+    # on 5.0 does not make the cluster's: those nodes listed, upgraded first, no storage_compatibility_mode step yet
+    say = task("Summary", "Say what the next phase is")
+    hostvars = _modes([("CASSANDRA_4", "CASSANDRA_4", "CASSANDRA_4")] * 2)
+    outside = [{"address": "10.0.1.1", "version": "4.1.12"}, {"address": "10.0.1.20", "version": "4.1.12"},
+               {"address": "10.0.1.3", "version": "5.0.9"}]
+
+    def said(check, nodes):
+        variables = dict(say["vars"], hostvars=hostvars, ansible_play_hosts_all=list(hostvars), cassandra_version="50x",
+                         cassandra_upgrade_phase="rolling", cassandra_package_version="5.0.9", ansible_check_mode=check,
+                         cassandra_upgrade_outside_nodes=nodes)
+        return str(render(say["ansible.builtin.debug"]["msg"], **variables)).strip().split("\n")
+    assert said(False, outside) == [
+        "The nodes of this run run 5.0.9. These nodes outside this run do not run 5.0.9 yet:",
+        "  10.0.1.1   4.1.12",
+        "  10.0.1.20  4.1.12",
+        "Upgrade them first (the phases of this playbook, --limit to them).",
+        "The next step comes once every node runs 5.0.9."]
+    assert said(True, outside)[0] == ("--check: nothing was done. A real run upgrades the nodes listed above. These nodes"
+                                      " outside this run do not run 5.0.9 yet:")
+    # the nodes outside on the target already: the step, as before
+    assert said(False, outside[2:])[0].startswith("Every node runs 5.0.9. Now set cassandra_storage_compatibility_mode:"
+                                                  " UPGRADING")
 
 
 def test_rolling_says_the_next_mode_step_from_the_inventory_a_re_run_too():
