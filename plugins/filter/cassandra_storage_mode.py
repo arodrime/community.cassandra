@@ -6,7 +6,9 @@ cassandra_storage_mode_from_4x: whether this upgrade comes from 4.x; cassandra_s
 modes from its variables (the inventory's, its cassandra.yaml's, the running one: storage_mode_read.yml);
 cassandra_storage_mode_behind: the nodes not at NONE on all three; cassandra_storage_mode_rows: them as a table;
 cassandra_storage_mode_step: the next step of the move; cassandra_storage_mode_way_out: what to do before the
-sstables are rewritten."""
+sstables are rewritten. The restart guards (storage_mode_guard.yml): cassandra_storage_mode_back (never back),
+cassandra_storage_mode_jump (one step at most), cassandra_storage_mode_unsure (the mode it runs not known);
+cassandra_storage_mode_ahead: a mode written since the start of Cassandra, not running yet (apply_config)."""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -374,6 +376,91 @@ def cassandra_storage_mode_runs(host):
     return running if running in _ORDER else ""
 
 
+def _stated(host):
+    """host: a node's variables -> what -e cassandra_storage_mode_running gives for it (node:MODE,node:MODE, or a
+    dict), as given ("" when nothing): the mode the operator read there by hand."""
+    given = host.get("cassandra_storage_mode_running") or ""
+    if isinstance(given, dict):
+        pairs = list(given.items())
+    else:
+        pairs = [p.split(":", 1) for p in str(given).split(",") if ":" in p]
+    found = [str(m).strip() for n, m in pairs if str(n).strip() == str(host.get("inventory_hostname"))]
+    return found[-1] if found else ""
+
+
+def _running(host):
+    """The mode it runs: read over CQL or logged at its start, else as -e cassandra_storage_mode_running gives it;
+    "" when none tells."""
+    stated = _stated(host).upper()
+    return cassandra_storage_mode_runs(host) or (stated if stated in _ORDER else "")
+
+
+def cassandra_storage_mode_ahead(host):
+    """host: as cassandra_storage_mode_back's -> {running, file} when Cassandra runs an earlier mode than its
+    cassandra.yaml has (written since its start, not running yet: a restart), else {}. Only on evidence."""
+    node = cassandra_storage_mode_nodes([host])[0]
+    lines = (host.get("cassandra_storage_mode_read") or {}).get("stdout_lines") or []
+    running = _running(host) if "running=yes" in lines else ""
+    file_mode = _value(node["yaml"], _UNSET)[0]
+    if running and file_mode and _ORDER.index(running) < _ORDER.index(file_mode):
+        return {"running": running, "file": file_mode}
+    return {}
+
+
+def cassandra_storage_mode_unsure(host, target=None, target_sha1=None):
+    """host, target: as cassandra_storage_mode_back's; target_sha1: the checksum of the cassandra.yaml written (with
+    target), the one it started with when the record of its start has it (written back as it started: the mode it
+    runs) -> {target, rows, cql} when a restart could take Cassandra
+    back and the mode it runs could not be read: it runs, nothing tells its mode (no CQL answer, no line logged since
+    its start, no -e cassandra_storage_mode_running for it) and its cassandra.yaml may have changed since that start
+    (else the file tells), the mode restarted with not NONE (NONE is never back). rows: what was read and what could
+    not, one fact per line; cql: where the CQL read asked. Else {}."""
+    lines = (host.get("cassandra_storage_mode_read") or {}).get("stdout_lines") or []
+    read = dict(line.split("=", 1) for line in lines if "=" in line)
+    if read.get("running") != "yes" or _running(host):
+        return {}
+    if read.get("jvm_version") and _version(read["jvm_version"])[:1] < (5,):
+        return {}  # a 4.x Cassandra (an upgrade to 5.0): no such mode, its sstables in the 4.x format
+    if target_sha1 and read.get("started_sha1") == target_sha1:
+        return {}
+    changed = read.get("pending") == "yes"
+    future = read.get("future") == "yes"
+    start = read.get("start_read")
+    if not (changed or future or start in ("no", "after-now")):
+        return {}
+    node = cassandra_storage_mode_nodes([host])[0]
+    mode = _value(node["yaml"] if target is None else target, _UNSET)[0]
+    if mode is None or mode == "NONE":
+        return {}
+    name = str(host.get("inventory_hostname"))
+    cql = "%s:%s" % (_cql_host(host.get("cassandra_rpc_address"), host.get("cassandra_listen_address")),
+                     host.get("cassandra_native_transport_port") or 9042)
+    rows = ["its cassandra.yaml would have %s (the inventory's)" % mode if target is not None
+            else "its cassandra.yaml has %s" % mode]
+    if start == "no":
+        rows.append("the start of its Cassandra or the time of its cassandra.yaml could not be read")
+    elif start == "after-now":
+        rows.append("the start of its Cassandra reads as after now (the btime of /proc/stat)")
+    elif future:
+        rows.append("its cassandra.yaml has a time after now")
+    else:
+        rows.append("its cassandra.yaml changed since Cassandra started (%s)" % (
+            "its checksum is not the one recorded at that start" if read.get("changed") == "record"
+            else "its mtime or ctime is after that start"))
+    result = host.get("cassandra_storage_mode_cql") or {}
+    if result.get("transformed_output") is not None and not result.get("failed"):
+        rows.append("CQL: no storage_compatibility_mode in system_views.settings (cqlsh on %s)" % cql)
+    else:
+        err = [x for x in str(result.get("err") or result.get("msg") or "").strip().splitlines() if x.strip()]
+        rows.append("CQL: not read (cqlsh on %s%s)" % (cql, (": " + err[-1].strip()[:200]) if err else ""))
+    rows.append("system.log: not read (the start of its Cassandra not known)" if start in ("no", "after-now")
+                else "system.log: no storage_compatibility_mode logged since its start")
+    stated = _stated(host)
+    if stated:
+        rows.append("-e cassandra_storage_mode_running gives %s: not a mode (CASSANDRA_4, UPGRADING or NONE)" % stated)
+    return {"target": mode, "rows": ["  %s  %s" % (name, r) for r in rows], "cql": cql}
+
+
 def cassandra_storage_mode_running_none(hosts, hostvars):
     """hosts, hostvars -> the hosts that run storage_compatibility_mode NONE already (read over CQL or logged)."""
     return [h for h in hosts or [] if cassandra_storage_mode_runs(hostvars[h]) == "NONE"]
@@ -384,7 +471,7 @@ def cassandra_storage_mode_jump(host, target=None):
     step after it (CASSANDRA_4 to NONE: an apply_config cut after its write, the role run alone, a file edited by
     hand), else "". Only on evidence, as cassandra_storage_mode_back."""
     node = cassandra_storage_mode_nodes([host])[0]
-    running = cassandra_storage_mode_runs(host)
+    running = _running(host)
     mode = _value(node["yaml"] if target is None else target, _UNSET)[0]
     if running in _ORDER and mode and _ORDER.index(mode) - _ORDER.index(running) > 1:
         return running
@@ -398,7 +485,7 @@ def cassandra_storage_mode_back(host, target=None):
     mode read over CQL or logged at its start): a mode not known never refuses (the move forward from the file is
     guarded by cassandra_config's identity check)."""
     node = cassandra_storage_mode_nodes([host])[0]
-    running = cassandra_storage_mode_runs(host)
+    running = _running(host)
     mode = _value(node["yaml"] if target is None else target, _UNSET)[0]
     if running in _ORDER and mode and _ORDER.index(mode) < _ORDER.index(running):
         return running
@@ -415,6 +502,8 @@ class FilterModule(object):
                 "cassandra_storage_mode_way_out": cassandra_storage_mode_way_out,
                 "cassandra_storage_mode_back": cassandra_storage_mode_back,
                 "cassandra_storage_mode_jump": cassandra_storage_mode_jump,
+                "cassandra_storage_mode_ahead": cassandra_storage_mode_ahead,
+                "cassandra_storage_mode_unsure": cassandra_storage_mode_unsure,
                 "cassandra_storage_mode_runs": cassandra_storage_mode_runs,
                 "cassandra_storage_mode_running_none": cassandra_storage_mode_running_none,
                 "cassandra_storage_mode_headline": cassandra_storage_mode_headline}

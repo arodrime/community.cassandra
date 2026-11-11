@@ -6,9 +6,10 @@ bugfixes:
     ``NONE``: a file written ahead of the node by an ``apply_config`` cut before its restart, the role run alone, a
     hand edit), is refused before anything changes, under ``--check`` too, with the way out (the running mode in the
     inventory; ``UPGRADING`` first). The mode it runs is read over CQL (``system_views.settings``), else from the line
-    Cassandra logged at its start; when neither tells, nothing is refused (the forward move from the file stays
-    guarded by the identity check). Under ``serial`` (``update_java``, the upgrade's rolling phase) a run checks the
-    nodes of each batch at its turn.
+    Cassandra logged at its start; when neither tells and its ``cassandra.yaml`` changed since that start, a restart
+    into a mode before ``NONE`` is refused, the way out saying what could not be read and how to give the mode read
+    by hand (``-e cassandra_storage_mode_running=<node>:<mode>``). Under ``serial`` (``update_java``, the upgrade's
+    rolling phase) a run checks the nodes of each batch at its turn.
   - >-
     upgrade sstables - an inventory behind a node that runs a later mode (and has it in its file) is told to take the
     node's mode, not to move from the inventory's.

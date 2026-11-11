@@ -83,6 +83,7 @@ _cassandra_playbook_variables: [cassandra_hosts, cassandra_target_nodes, cassand
                                 cassandra_allow_down_nodes, cassandra_allow_mixed_versions, cassandra_accept_default_identity,
                                 cassandra_add_node_reset, cassandra_replace_node_reset, cassandra_create_cluster_reset,
                                 cassandra_create_cluster_reset_confirm, cassandra_allow_unknown_variables,
+                                cassandra_storage_mode_running,
                                 # import_cluster's and help's options (their header)
                                 import_cluster_dir, import_cluster_report_dir, import_cluster_force, import_cluster_host_names,
                                 import_cluster_set_ansible_host, import_cluster_vault_password_file, import_cluster_vault_id,

@@ -138,6 +138,12 @@ Set in the inventory, as any role variable.
   operation from its progress file, kept in `cassandra_rolling_progress_dir`
   (default: `.cassandra_progress` next to the inventory) for
   `cassandra_rolling_progress_days` (30).
+* `cassandra_storage_mode_running` (5.0, none by default): the
+  `storage_compatibility_mode` each node runs, read there by hand
+  (`n1:CASSANDRA_4,n2:UPGRADING`), for a node whose mode could not be read
+  (no CQL answer, no line logged since its start) and whose `cassandra.yaml`
+  changed since that start: a restart that could move it back is refused
+  until its mode is known.
 * The `upgrade` playbook's `sstables` phase (`nodetool upgradesstables`, one
   node at a time): `cassandra_upgrade_sstables_jobs` (default 2, nodetool's;
   0: every compaction thread), `cassandra_upgrade_sstables_timeout` (default

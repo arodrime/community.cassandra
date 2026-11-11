@@ -11,7 +11,7 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
 from ansible_collections.community.cassandra.plugins.filter.cassandra_storage_mode import (
-    cassandra_storage_mode_back, cassandra_storage_mode_jump)
+    cassandra_storage_mode_back, cassandra_storage_mode_jump, cassandra_storage_mode_unsure)
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 
 try:  # ansible-core 2.19+ renders trusted templates only
@@ -30,8 +30,8 @@ def _load(path):
         return yaml.safe_load(f)
 
 
-def _host(yaml_mode, logged=None, cql=None):
-    lines = ["file=/etc/cassandra/conf/cassandra.yaml", "yaml_read=yes", "yaml=" + yaml_mode, "running=yes"]
+def _host(yaml_mode, logged=None, cql=None, more=()):
+    lines = ["file=/etc/cassandra/conf/cassandra.yaml", "yaml_read=yes", "yaml=" + yaml_mode, "running=yes"] + list(more)
     if logged:
         lines.append("logged=" + logged)
     host = {"inventory_hostname": "n1", "cassandra_storage_mode_read": {"stdout_lines": lines}}
@@ -217,3 +217,114 @@ def test_apply_config_refuses_before_its_plan_warns():
     names = [t["name"] for p in plays for t in p.get("tasks", [])]
     assert names.index("Compare the config") < names.index("Put the settings that differ side by side") < names.index(
         "Show the plan and confirm the run")
+
+
+# its cassandra.yaml changed since its start (by the record of that start, or by its times), nothing logged since
+CHANGED = ("pending=yes", "changed=record")
+CQL_FAILED = {"failed": True, "rc": 1, "err": "Connection error: ('Unable to connect to any servers')\n"}
+
+
+def test_unsure_refuses_a_move_that_could_be_back():
+    # nothing tells the mode it runs, its file changed since its start: any mode before NONE could be back
+    for target in ("UPGRADING", "CASSANDRA_4"):
+        assert cassandra_storage_mode_unsure(_host("UPGRADING", more=CHANGED), target)["target"] == target
+    assert cassandra_storage_mode_unsure(_host("UPGRADING", more=CHANGED))["target"] == "UPGRADING"  # a restart alone
+    assert cassandra_storage_mode_unsure(_host("", more=CHANGED))["target"] == "CASSANDRA_4"  # no such line
+    # its file's time after now, its start not read: not known either
+    for more in (["future=yes"], ["start_read=no"], ["start_read=after-now"]):
+        assert cassandra_storage_mode_unsure(_host("CASSANDRA_4", more=more)), more
+    # a 4.x Cassandra (the preview of an upgrade to 5.0): no such mode, its sstables in the 4.x format: nothing
+    assert cassandra_storage_mode_unsure(_host("", more=CHANGED + ("jvm_version=4.1.5",)), "CASSANDRA_4") == {}
+    assert cassandra_storage_mode_unsure(_host("", more=CHANGED + ("jvm_version=5.0.2",)), "CASSANDRA_4")
+    # NONE is never back; the file not changed since its start (it tells the mode); the mode read; stopped: nothing
+    assert cassandra_storage_mode_unsure(_host("UPGRADING", more=CHANGED), "NONE") == {}
+    assert cassandra_storage_mode_unsure(_host("UPGRADING"), "CASSANDRA_4") == {}
+    assert cassandra_storage_mode_unsure(_host("UPGRADING", logged="UPGRADING", more=CHANGED), "CASSANDRA_4") == {}
+    assert cassandra_storage_mode_unsure(_host("UPGRADING", cql="UPGRADING", more=CHANGED)) == {}
+    stopped = {"inventory_hostname": "n1",
+               "cassandra_storage_mode_read": {"stdout_lines": ["yaml_read=yes", "yaml=", "running=no"]}}
+    assert cassandra_storage_mode_unsure(stopped, "CASSANDRA_4") == {}
+    # the mode read by hand, given: then the evidence-based checks decide (NONE given, UPGRADING to be written: back)
+    given = dict(_host("UPGRADING", more=CHANGED), cassandra_storage_mode_running="n1:NONE,n2:UPGRADING")
+    assert cassandra_storage_mode_unsure(given, "UPGRADING") == {}
+    assert cassandra_storage_mode_back(given, "UPGRADING") == "NONE"
+    assert cassandra_storage_mode_back(dict(given, cassandra_storage_mode_running={"n1": "UPGRADING"}), "UPGRADING") == ""
+    assert cassandra_storage_mode_jump(dict(given, cassandra_storage_mode_running="n1:CASSANDRA_4"), "NONE") == "CASSANDRA_4"
+    # given for another node only, or not a mode: still not known
+    assert cassandra_storage_mode_unsure(dict(given, cassandra_storage_mode_running="n2:NONE"), "UPGRADING")
+    assert cassandra_storage_mode_unsure(dict(given, cassandra_storage_mode_running="n1:NONNE"), "UPGRADING")["rows"][-1] \
+        == "  n1  -e cassandra_storage_mode_running gives NONNE: not a mode (CASSANDRA_4, UPGRADING or NONE)"
+
+
+def test_unsure_says_what_could_not_be_read_and_the_way_out():
+    tasks = _load("roles/cassandra_operation/tasks/storage_mode_guard.yml")
+    names = [t["name"] for t in tasks]
+    # after the evidence-based checks (they say more when the mode is known)
+    check = tasks[names.index("The restarts move no node back while the mode it runs is not known")]
+    assert names.index("The restarts move the storage_compatibility_mode Cassandra runs one step at most") < names.index(
+        check["name"])
+    assert check["run_once"] is True and check["vars"]["cassandra_output"] is True
+
+    def run(hosts, **extra):
+        hostvars = {}
+        for name, (host, inventory) in hosts.items():
+            hostvars[name] = dict(host, inventory_hostname=name, cassandra_version="50x",
+                                  cassandra_storage_compatibility_mode=inventory)
+        variables = dict(check["vars"], hostvars=hostvars, ansible_play_hosts=list(hostvars), cassandra_version="50x",
+                         **extra)
+        return (_render("{{ %s }}" % check["ansible.builtin.assert"]["that"], **variables),
+                _render(check["ansible.builtin.assert"]["fail_msg"], **variables).split("\n"))
+    assert run({"n1": (_host("UPGRADING", logged="CASSANDRA_4", more=CHANGED), "UPGRADING")},
+               _cassandra_storage_mode_written=True)[0] is True
+    # apply_config, the role: UPGRADING to be written, the mode it runs not read
+    n1 = dict(_host("UPGRADING", more=CHANGED), cassandra_storage_mode_cql=CQL_FAILED, cassandra_rpc_address="10.0.0.5")
+    n2 = dict(_host("CASSANDRA_4", more=("pending=yes", "changed=time")), cassandra_storage_mode_cql={"skipped": True})
+    ok, msg = run({"n1": (n1, "UPGRADING"), "n2": (n2, "UPGRADING"), "n3": (_host("UPGRADING", logged="UPGRADING"),
+                                                                            "UPGRADING")},
+                  _cassandra_storage_mode_written=True)
+    assert ok is False and msg == [
+        "A restart could take n1, n2 back to an earlier storage_compatibility_mode than the one Cassandra runs, which"
+        " could not be read (5.0 moves CASSANDRA_4, UPGRADING, NONE, never back). Nothing was changed.",
+        "  n1  its cassandra.yaml would have UPGRADING (the inventory's)",
+        "  n1  its cassandra.yaml changed since Cassandra started (its checksum is not the one recorded at that start)",
+        "  n1  CQL: not read (cqlsh on 10.0.0.5:9042: Connection error: ('Unable to connect to any servers'))",
+        "  n1  system.log: no storage_compatibility_mode logged since its start",
+        "  n2  its cassandra.yaml would have UPGRADING (the inventory's)",
+        "  n2  its cassandra.yaml changed since Cassandra started (its mtime or ctime is after that start)",
+        "  n2  CQL: not read (cqlsh on 127.0.0.1:9042)",
+        "  n2  system.log: no storage_compatibility_mode logged since its start",
+        "WAY OUT  Let this run read the mode over CQL: on n1, cqlsh on 10.0.0.5:9042, on n2, cqlsh on 127.0.0.1:9042, as"
+        " the cluster's CQL user (cassandra_cql_username, cassandra_cql_password; cassandra_cqlsh_command for a cqlsh"
+        " outside root's PATH). Or read it there by hand (SELECT value FROM system_views.settings WHERE name ="
+        " 'storage_compatibility_mode'; null: CASSANDRA_4) and give it: -e"
+        " cassandra_storage_mode_running=n1:<its mode>,n2:<its mode>. Then run this again."]
+    # a restart alone (rolling_restart): the file's mode; NONE in the file never refused
+    ok, msg = run({"n1": (n1, "NONE")})
+    assert ok is False and msg[1] == "  n1  its cassandra.yaml has UPGRADING"
+    assert run({"n1": (dict(n1, cassandra_storage_mode_read={"stdout_lines": [
+        "yaml_read=yes", "yaml=NONE", "running=yes", "pending=yes", "changed=time"]}), "NONE")})[0] is True
+    # cassandra.yaml written back as Cassandra started with it (the record of its start has its checksum): the mode it
+    # runs is the one written, no refusal (apply_config: no restart, its seeds reloaded)
+    import hashlib
+    rendered = "storage_compatibility_mode: UPGRADING\n"
+    started = dict(n1, cassandra_storage_mode_read={"stdout_lines": n1["cassandra_storage_mode_read"]["stdout_lines"]
+                                                    + ["started_sha1=" + hashlib.sha1(rendered.encode()).hexdigest()]})
+    assert run({"n1": (dict(started, _cassandra_config_new={"cassandra.yaml": rendered}), "UPGRADING")},
+               _cassandra_storage_mode_written=True)[0] is True
+    assert run({"n1": (dict(started, _cassandra_config_new={"cassandra.yaml": "storage_compatibility_mode: CASSANDRA_4\n"}),
+                       "CASSANDRA_4")}, _cassandra_storage_mode_written=True)[0] is False
+    assert run({"n1": (dict(started, _cassandra_config_new={"cassandra.yaml": rendered}), "UPGRADING")})[0] is False
+    # the mode given by hand: not refused here (the evidence-based checks decide)
+    assert run({"n1": (dict(n1, cassandra_storage_mode_running="n1:CASSANDRA_4"), "UPGRADING")},
+               _cassandra_storage_mode_written=True)[0] is True
+
+
+def test_the_read_says_how_the_file_changed_and_the_way_out_variable_is_known():
+    read = next(t for t in _load("roles/cassandra_operation/tasks/storage_mode_read.yml")
+                if t["name"] == "Read storage_compatibility_mode in its cassandra.yaml and in the running Cassandra")
+    shell = read["ansible.builtin.shell"]
+    assert "changed=record" in shell and "changed=time" in shell and 'echo "started_sha1=$rsum"' in shell
+    assert "grep -o 'apache-cassandra-[0-9][0-9.]*[0-9]'" in shell and 'echo "jvm_version=${v#apache-cassandra-}"' in shell
+    assert "printf 'pending=yes\\nchanged=%s\\n' \"$changed\"" in shell
+    variables = _load("roles/cassandra_operation/vars/main.yml")["_cassandra_playbook_variables"]
+    assert "cassandra_storage_mode_running" in variables
