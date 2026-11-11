@@ -162,6 +162,17 @@ def test_an_appender_named_in_single_quotes_and_named_by_root(series):
     assert check["differences"] == []
 
 
+@pytest.mark.parametrize("series", SERIES)
+def test_an_appender_named_with_spaces_and_named_by_root(series):
+    # (rc9 r3 audit) name = "Q" (spaces around =), a filename= after it: its name is Q
+    def edit(text):
+        mine = '  <appender name = "Q" class="ch.qos.logback.core.FileAppender" filename="f"/>'
+        return root_ref("Q")(text.replace("  <root level", mine + "\n  <root level", 1))
+    variables, snippets, check = imported(node_files(series, edit), series)
+    assert variables["cassandra_logback_root_extra_refs"] == ["Q"]
+    assert check["differences"] == []
+
+
 def test_a_level_for_a_logger_a_variable_sets_is_not_taken():
     def edit(text):
         return text.replace("</configuration>", '  <logger name="org.apache.cassandra.audit" level="WARN"/>\n'
@@ -335,4 +346,40 @@ def test_a_urls_password_with_an_at_a_quote_or_a_brace_in_an_appender_never_in_c
     assert ("<url>https://bob:{{ cassandra_secret_logback_appenders_bob_password }}@h/x</url>" in clear) is taken
     assert password in "\n".join(f["content"] for f in inventory if f["secret"])
     variables, snippets, check = imported(node_files(series, edit), series)
+    assert check["differences"] == []
+
+
+def live_pattern(pattern):
+    """The pattern of the appenders logback reads (not those of the audit block, when commented out)."""
+    def edit(text):
+        parts = text.split('<!-- <appender name="AUDIT"')
+        parts[0] = re.sub(r"<pattern>[^<]*</pattern>", "<pattern>%s</pattern>" % pattern, parts[0])
+        return '<!-- <appender name="AUDIT"'.join(parts)
+    return edit
+
+
+@pytest.mark.parametrize("series", SERIES)
+def test_a_pattern_with_two_dashes_and_the_audit_block_commented_out_is_not_carried(series):
+    # (rc9 r3 audit) the template writes the pattern in the commented-out audit appender too, where XML does not
+    # take a --: cassandra_config would refuse it; the lines stay hand edits, the report says why and what to do
+    files = node_files(series, live_pattern("%-5level [%thread] -- %msg%n"))
+    variables, snippets, check = imported(files, series)
+    assert "cassandra_log_pattern" not in variables
+    # (its lines, as for any hand edit: no longer "cannot be read as its program reads it")
+    assert check["differences"] and all(re.match(r"logback\.xml: node has .*/encoder/pattern = %-5level \[%thread\] -- "
+                                                 r"%msg%n, import would write ", d) for d in check["differences"])
+    out = cassandra_config_import(files, series, FACTS, "", "/var/lib/cassandra")
+    assert ("logback.xml: its log pattern (%-5level [%thread] -- %msg%n) has a --, which the role's template would"
+            " write in the audit appender it leaves commented out (cassandra_log_audit_file: false), where XML does"
+            " not take it: not carried in cassandra_log_pattern. Write the pattern without -- on the nodes and import"
+            " again, or keep logback.xml as it is (-e import_cluster_keep_hand_edits=logback.xml)") in out["hand_edits"]
+    dummy, layout = import_node(files, series)
+    assert "its log pattern (%-5level [%thread] -- %msg%n) has a --" in " ".join(layout["report"].split())
+
+
+@pytest.mark.parametrize("series", SERIES)
+def test_a_pattern_with_two_dashes_and_the_audit_appender_on_is_carried(series):
+    files = node_files(series, lambda text: live_pattern("%-5level [%thread] -- %msg%n")(audit_on(text)), auditing=True)
+    variables, snippets, check = imported(files, series)
+    assert variables["cassandra_log_pattern"] == "%-5level [%thread] -- %msg%n"
     assert check["differences"] == []

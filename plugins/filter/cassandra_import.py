@@ -1636,13 +1636,18 @@ def cassandra_config_import(live_files, cassandra_version, facts, conf_target=""
     raise error  # out of the except block: no chained message either
 
 
+def _audit_file_default(found):
+    """cassandra_log_audit_file's default for the values found: on with FileAuditLogger."""
+    return boolean(found.get("cassandra_audit_logging_enabled", False), strict=False) and \
+        str(found.get("cassandra_audit_logger_class_name", "")).rsplit(".", maxsplit=1)[-1] == "FileAuditLogger"
+
+
 def _audit_file(found, changed):
     """cassandra_log_audit_file in changed (in place) only when the node's is not its default there: on with
     FileAuditLogger (cassandra_audit_logging_enabled, cassandra_audit_logger_class_name as found)."""
     if "cassandra_log_audit_file" not in found:
         return
-    derived = boolean(found.get("cassandra_audit_logging_enabled", False), strict=False) and \
-        str(found.get("cassandra_audit_logger_class_name", "")).rsplit(".", maxsplit=1)[-1] == "FileAuditLogger"
+    derived = _audit_file_default(found)
     changed.pop("cassandra_log_audit_file", None)
     if bool(found["cassandra_log_audit_file"]) != derived:
         changed["cassandra_log_audit_file"] = bool(found["cassandra_log_audit_file"])
@@ -1816,7 +1821,9 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
                 found.pop(key, None)
             else:
                 found[key] = value
-        found = _logback_carried(env, cassandra_version, ctx, found, live_files["logback.xml"])
+        found, logback_note = _logback_carried(env, cassandra_version, ctx, found, live_files["logback.xml"])
+    else:
+        logback_note = []
     where[0] = "the JVM options files"
     jvm_notes, jvm_warnings, keep_files = _jvm_options(env, cassandra_version, ctx, [f for f in files if f in live_files],
                                                        found, str(java or ""), keep_unread_jvm_options, cmdline)
@@ -1867,7 +1874,7 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     changed.update(exporter["vars"])
     rewritten = moved["rewritten"] + [f for f in _exporter_rewritten(env, cassandra_version, render, exporter,
                                                                      live_as_found) if f not in moved["rewritten"]]
-    hand += jmx_note
+    hand += logback_note + jmx_note
     carried = ["%s: %d line(s) at its end kept with %s" % (name, len(changed[key]), key)
                for name, key in END_KEYS.items() if changed.get(key)]
     if changed.get(APPENDERS):
@@ -2281,7 +2288,8 @@ SIMPLE_LOGGER = re.compile(r'^\s*<logger\s+name="([^"]+)"\s+level="([^"]+)"\s*/>
 def _logback_carried(env, series, ctx, found, text):
     """logback.xml's variables found (_logback) taken from the lines the import carries too: the simple loggers of
     cassandra_log_levels out of the end lines, the node's whole <appender> elements before <root> (not a stock one)
-    in APPENDERS (its snippet logback.xml:appenders) when nothing else keeps them -> found (a copy)."""
+    in APPENDERS (its snippet logback.xml:appenders) when nothing else keeps them -> (found (a copy), notes for
+    the report)."""
     found = dict(found)
     levels = found.get("cassandra_log_levels") or {}
     end = [line for line in found.get(LOGBACK_END) or []
@@ -2295,7 +2303,7 @@ def _logback_carried(env, series, ctx, found, text):
         found[APPENDERS] = blocks
     # <root>'s refs only to appenders the inventory then defines (else a hand edit, cassandra_config would refuse them)
     defined = list(ROOT_APPENDERS) + (["AUDIT"] if found.get("cassandra_log_audit_file") else []) + re.findall(
-        r'<appender\s[^>]*name=["\']([^"\']+)["\']', "\n".join(found.get(APPENDERS) or []))
+        r'<appender\s[^>]*?\bname\s*=\s*["\']([^"\']+)["\']', "\n".join(found.get(APPENDERS) or []))
     if [ref for ref in found.get("cassandra_logback_root_extra_refs") or [] if ref not in defined]:
         found.pop("cassandra_logback_root_extra_refs")
     # one pattern for the stock appenders' encoders: read only when the live ones agree (else the lines that
@@ -2308,7 +2316,17 @@ def _logback_carried(env, series, ctx, found, text):
         patterns = set()
     if len(patterns) > 1:
         found.pop("cassandra_log_pattern", None)
-    return found
+    # a pattern with -- while the audit appender is commented out: the template writes it in that comment, where
+    # XML does not take it (cassandra_config refuses it), so not carried (the lines that differ: hand edits)
+    notes = []
+    audit = found["cassandra_log_audit_file"] if "cassandra_log_audit_file" in found else _audit_file_default(found)
+    if "--" in str(found.get("cassandra_log_pattern", "")) and not audit:
+        notes.append("logback.xml: its log pattern (%s) has a --, which the role's template would write in the"
+                     " audit appender it leaves commented out (cassandra_log_audit_file: false), where XML does not"
+                     " take it: not carried in cassandra_log_pattern. Write the pattern without -- on the nodes and"
+                     " import again, or keep logback.xml as it is (-e import_cluster_keep_hand_edits=logback.xml)"
+                     % _mask(found.pop("cassandra_log_pattern")))
+    return found, notes
 
 
 def _tag(el):
