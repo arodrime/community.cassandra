@@ -293,6 +293,18 @@ def test_a_nodes_own_template_text_in_a_snippet_is_never_templated():
     assert self_check(files, layout)["differences"] == []
 
 
+def test_lines_with_endraw_say_why_they_are_in_secrets_yml():
+    # (rc9 r2 audit) not a secret: the report says endraw, not a secret the import could not take out
+    files = with_env("export FOO=1", "# {% endraw %} here")
+    out, n = imported(files)
+    layout = cassandra_inventory_layout([n], "c")
+    report = " ".join(layout["report"].split())
+    assert "cassandra-env.sh: its 2 line(s) are in secrets.yml, cassandra_secret_env_lines, which its snippet renders:" \
+           " one has endraw, which would end the raw block a snippet writes it in (not a secret)" in report
+    assert "could not take out alone" not in report
+    assert self_check(files, layout)["differences"] == []
+
+
 def test_self_check_renders_your_own_template(tmp_path):
     # a logback.xml no variable makes: your template for it (cassandra_config_template_overrides, in a file of
     # yours), the self-check renders it as cassandra_config would

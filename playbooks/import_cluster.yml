@@ -1480,8 +1480,6 @@
                   | community.cassandra.cassandra_inventory_own_values(_layout.cluster_group,
                       ['cassandra_cql_username', 'cassandra_cql_password'], _vault_secret | default('')) -%}
       {{ {'user': v.cassandra_cql_username | default('') | string, 'password': v.cassandra_cql_password | default('') | string} }}
-    # what is left to do about it (TO DO)
-    # cqlsh does not start on some nodes (seen at the read): what makes it start
     # cqlsh does not start on some nodes (seen at the read): what makes it start, when its error says why
     _cqlsh_todo: >-
       {%- set broken, lib = [], [] -%}
@@ -1496,6 +1494,7 @@
              ~ ' cassandra_cqlsh_python_manage: false from the host_vars of ' ~ lib | join(', ') ~ ' (this import wrote'
              ~ ' it), then run create_cluster (it starts or restarts nothing on a running cluster).' if lib
              else ' Check cqlsh there (cassandra_cqlsh_command gives the full path of another one).')] if broken else [] }}
+    # what is left to do about it (TO DO)
     _cql_todo: >-
       {%- set c = cassandra_cql_login | default({}) -%}
       {%- set set_it = 'set cassandra_cql_username and cassandra_cql_password (the password vaulted) in group_vars/'

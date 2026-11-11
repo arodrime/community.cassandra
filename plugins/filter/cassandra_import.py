@@ -496,8 +496,9 @@ def _import_properties(tpl, rendered, live, ctx):
 
 
 def _end_lines_at(name, tpl):
-    """Where a file's extra lines go: (its template lines that join a list of them, the index of the line they
-    follow, None when appended at the end)."""
+    """Where a file's extra lines go: (the template lines they are read after: a JVM options file's line that joins
+    its extra options, or the line that renders the snippet of cassandra-env.sh or logback.xml; the index of that
+    snippet's line, None for a JVM options file, its extra lines appended at the end)."""
     tail = [t for t in tpl[-2:] if "| join(" in t]
     # cassandra-env.sh and logback.xml: the line their snippet follows (env: its last one; logback: the one
     # before </configuration>), the lines after it on the node; the JVM options files: lines appended
@@ -2259,9 +2260,10 @@ def _logback(text):
         if extra and len(set(extra)) == len(extra):
             found["cassandra_logback_root_extra_refs"] = extra
     # the loggers that set a level only (no other attribute, nothing in them), each named once, not one a variable of
-    # its own sets
+    # its own sets; a level of logback's (not a property: ${LVL:-INFO}), a name the role writes as it is
     simple = [lg for lg in conf.findall("logger") if set(lg.attrib) == {"name", "level"} and not list(lg)
-              and lg.get("name") not in LOGBACK_OWN_LOGGERS and str(lg.get("name")).upper() != "ROOT"]
+              and lg.get("name") not in LOGBACK_OWN_LOGGERS and str(lg.get("name")).upper() != "ROOT"
+              and str(lg.get("level")).upper() in LOG_LEVELS and not re.search(r"[\"'<>&]", lg.get("name"))]
     names = [lg.get("name") for lg in conf.findall("logger")]
     levels = dict((lg.get("name"), lg.get("level")) for lg in simple if names.count(lg.get("name")) == 1)
     if levels:
@@ -2269,6 +2271,8 @@ def _logback(text):
     return found
 
 
+# logback's levels (cassandra_log_levels takes only these)
+LOG_LEVELS = ("TRACE", "DEBUG", "INFO", "WARN", "ERROR", "OFF", "ALL")
 # the loggers of logback.xml a variable of its own sets (cassandra_log_levels may not take them)
 LOGBACK_OWN_LOGGERS = ("ROOT", "org.apache.cassandra", "org.apache.cassandra.audit")
 SIMPLE_LOGGER = re.compile(r'^\s*<logger\s+name="([^"]+)"\s+level="([^"]+)"\s*/>\s*$')
@@ -2291,7 +2295,7 @@ def _logback_carried(env, series, ctx, found, text):
         found[APPENDERS] = blocks
     # <root>'s refs only to appenders the inventory then defines (else a hand edit, cassandra_config would refuse them)
     defined = list(ROOT_APPENDERS) + (["AUDIT"] if found.get("cassandra_log_audit_file") else []) + re.findall(
-        r'<appender\s[^>]*name="([^"]+)"', "\n".join(found.get(APPENDERS) or []))
+        r'<appender\s[^>]*name=["\']([^"\']+)["\']', "\n".join(found.get(APPENDERS) or []))
     if [ref for ref in found.get("cassandra_logback_root_extra_refs") or [] if ref not in defined]:
         found.pop("cassandra_logback_root_extra_refs")
     # one pattern for the stock appenders' encoders: read only when the live ones agree (else the lines that
@@ -2872,7 +2876,8 @@ def _snippet_of(n, key, name):
     end a raw block): all of them, as the node has them, in a variable of secrets.yml the snippet renders (set in
     n's variables, in place) -> text."""
     lines, trusted = n["vars"][key], n.get("trusted") or ()
-    if all(isinstance(line, str) and "endraw" not in line for line in lines) and not _list_secret(key, lines, trusted):
+    secret = _list_secret(key, lines, trusted)
+    if all(isinstance(line, str) and "endraw" not in line for line in lines) and not secret:
         return snippet_text(lines, trusted)
     var = SECRET_VAR + SECRET_FILES[name] + "_lines"
     whole = "\n".join(SECRET_MOVED_REF.sub(lambda m: str(n["vars"].get(m.group(1), m.group(0))), str(line))
@@ -2885,7 +2890,9 @@ def _snippet_of(n, key, name):
     n["vars"][key] = lines  # (taken out by the caller)
     n["notes"] = list(n.get("notes") or []) + [
         "%s: its %d line(s) with a secret the import could not take out alone are in secrets.yml, %s, which its"
-        " snippet renders" % (name, len(lines), var)]
+        " snippet renders" % (name, len(lines), var) if secret else
+        "%s: its %d line(s) are in secrets.yml, %s, which its snippet renders: one has endraw, which would end the"
+        " raw block a snippet writes it in (not a secret)" % (name, len(lines), var)]
     return "{{ %s }}\n" % var
 
 
@@ -3079,9 +3086,9 @@ def _yours_rendered(n, theirs, inventory_dir=""):
     """A node's files your own template renders (cassandra_config_template_overrides in a file of yours): not
     compared with the role's templates here (the self-check renders yours), so neither hand edits nor kept as
     they are (cassandra_config refuses a file both kept and overridden); the end lines carried from such a file
-    that your template has itself left out (it would render them twice); so are those your own snippet
-    (cassandra_config_template_snippets) has. The files of your templates noted ('yours_templates': their end lines
-    stay a variable, which your template may render)."""
+    that your template has itself are left out (it would render them twice); so are those your own snippet
+    (cassandra_config_template_snippets) has. The files of your templates noted ('yours_templates': no snippet is
+    written for them; a JVM options file's end lines stay its variable, which your template may render)."""
     snippets = (theirs.get(SNIPPETS) or (None,))[0]
     if isinstance(snippets, dict) and snippets:
         n["yours_snippets"] = dict(snippets)  # (a dict the import writes replaces yours: kept in it)

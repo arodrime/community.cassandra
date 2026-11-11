@@ -140,6 +140,28 @@ def test_simple_loggers_as_levels(series):
     assert check["differences"] == []
 
 
+@pytest.mark.parametrize("series", SERIES)
+def test_a_level_from_a_property_stays_an_end_line(series):
+    # (rc9 r2 audit) level="${LVL:-INFO}": not a level cassandra_config takes in cassandra_log_levels
+    line = '  <logger name="com.example.p" level="${LVL:-INFO}"/>'
+    variables, snippets, check = imported(node_files(series, lambda t: t.replace(
+        "</configuration>", line + "\n</configuration>")), series)
+    assert "cassandra_log_levels" not in variables
+    assert list(snippets.values()) == [line + "\n"]
+    assert check["differences"] == []
+
+
+@pytest.mark.parametrize("series", SERIES)
+def test_an_appender_named_in_single_quotes_and_named_by_root(series):
+    # (rc9 r2 audit) name='Q': the ref of <root> to it kept
+    def edit(text):
+        mine = "  <appender name='Q' class='ch.qos.logback.core.ConsoleAppender'/>"
+        return root_ref("Q")(text.replace("  <root level", mine + "\n  <root level", 1))
+    variables, snippets, check = imported(node_files(series, edit), series)
+    assert variables["cassandra_logback_root_extra_refs"] == ["Q"]
+    assert check["differences"] == []
+
+
 def test_a_level_for_a_logger_a_variable_sets_is_not_taken():
     def edit(text):
         return text.replace("</configuration>", '  <logger name="org.apache.cassandra.audit" level="WARN"/>\n'
