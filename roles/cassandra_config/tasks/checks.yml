@@ -118,8 +118,9 @@
       {{ out }}
 
 # logback.xml: an appender-ref to an appender the file does not define stops logback's configuration at the start
-# (logback 1.2 also wants it defined before); a level for a logger a variable of its own sets would be set twice
-- name: Refuse logback appender-refs and levels the role cannot write
+# (logback 1.2 also wants it defined before); a level for a logger a variable of its own sets would be set twice;
+# a value the template writes as it is must keep the file XML (else logback reads none of it, on every node)
+- name: Refuse logback appender-refs, levels and values the role cannot write
   ansible.builtin.assert:
     that: _wrong | length == 0
     fail_msg: "{{ _wrong | join('; ') }}. Nothing is changed."
@@ -128,13 +129,13 @@
     _known: >-
       {{ _cassandra_config_stock_appenders + (['AUDIT'] if cassandra_log_audit_file | bool else [])
          + (['CQLLOG'] if cassandra_version == '50x' and cassandra_log_cql_table | default(false) | bool else [])
-         + (_cassandra_config_snippet_appenders | regex_findall('<appender\s[^>]*name="([^"]+)"')) }}
+         + (_cassandra_config_snippet_appenders | regex_findall('<appender\s[^>]*name=["\x27]([^"\x27]+)["\x27]')) }}
     # appenders and loggers of your snippet at the end of <configuration>
     _after_root: >-
-      {{ _cassandra_config_snippet_logback | regex_findall('<appender\s[^>]*name="([^"]+)"') }}
+      {{ _cassandra_config_snippet_logback | regex_findall('<appender\s[^>]*name=["\x27]([^"\x27]+)["\x27]') }}
     _snippet_loggers: >-
       {{ (_cassandra_config_snippet_logback ~ '\n' ~ _cassandra_config_snippet_appenders)
-         | regex_findall('<logger\s[^>]*name="([^"]+)"') }}
+         | regex_findall('<logger\s[^>]*name=["\x27]([^"\x27]+)["\x27]') }}
     _wrong: >-
       {%- set out = [] -%}
       {%- if cassandra_logback_root_extra_refs is string or cassandra_logback_root_extra_refs is mapping -%}
@@ -177,6 +178,52 @@
       {%-     endif -%}
       {%-   endfor -%}
       {%- endif -%}
+      {#- the values written as they are in logback.xml: [variable, value, in an attribute, the variable that leaves
+          the part it is in commented out (false)] -#}
+      {%- set audit = '' if cassandra_log_audit_file | bool else 'cassandra_log_audit_file' -%}
+      {%- set xml = [['cassandra_log_level', cassandra_log_level, true, ''],
+                     ['cassandra_log_level_cassandra', cassandra_log_level_cassandra, true, ''],
+                     ['cassandra_log_pattern', cassandra_log_pattern, false, audit]] -%}
+      {%- for var, value, commented in [
+            ['cassandra_log_system_max_file_size', cassandra_log_system_max_file_size, ''],
+            ['cassandra_log_system_max_history', cassandra_log_system_max_history, ''],
+            ['cassandra_log_system_total_size_cap', cassandra_log_system_total_size_cap, ''],
+            ['cassandra_log_debug_max_file_size', cassandra_log_debug_max_file_size, ''],
+            ['cassandra_log_debug_max_history', cassandra_log_debug_max_history, ''],
+            ['cassandra_log_debug_total_size_cap', cassandra_log_debug_total_size_cap, ''],
+            ['cassandra_log_audit_max_file_size', cassandra_log_audit_max_file_size, audit],
+            ['cassandra_log_audit_max_history', cassandra_log_audit_max_history, audit],
+            ['cassandra_log_audit_total_size_cap', cassandra_log_audit_total_size_cap, audit]] -%}
+      {%-   set _ = xml.append([var, value, false, commented]) -%}
+      {%- endfor -%}
+      {%- if cassandra_version == '50x' -%}
+      {%-   set _ = xml.append(['cassandra_log_cql_table_level', cassandra_log_cql_table_level, false, '' if
+                                cassandra_log_cql_table | bool else 'cassandra_log_cql_table']) -%}
+      {%- endif -%}
+      {%- for name in (cassandra_log_levels if cassandra_log_levels is mapping else {}) -%}
+      {%-   set _ = xml.append(['cassandra_log_levels', name, true, '']) -%}
+      {%- endfor -%}
+      {%- for ref in ([] if cassandra_logback_root_extra_refs is string or cassandra_logback_root_extra_refs is mapping
+                      else cassandra_logback_root_extra_refs) -%}
+      {%-   set _ = xml.append(['cassandra_logback_root_extra_refs', ref, true, '']) -%}
+      {%- endfor -%}
+      {%- for var, value, attribute, commented in xml -%}
+      {%-   set text = value | string -%}
+      {%-   if '<' in text -%}
+      {%-     set _ = out.append(var ~ ': ' ~ text ~ ' has a <, which ends the XML text there: write it &lt;') -%}
+      {%-   endif -%}
+      {%-   if text is search('&(?![A-Za-z][\w.-]*;|#[0-9]+;|#x[0-9A-Fa-f]+;)') -%}
+      {%-     set _ = out.append(var ~ ': ' ~ text ~ ' has an & that starts no XML entity: write it &amp;') -%}
+      {%-   endif -%}
+      {%-   if attribute and '"' in text -%}
+      {%-     set _ = out.append(var ~ ': ' ~ text ~ ' has a ", which ends the XML attribute there: write it &quot;') -%}
+      {%-   endif -%}
+      {%-   if commented and '--' in text -%}
+      {%-     set _ = out.append(var ~ ': ' ~ text ~ ' has a --, which XML does not take in a comment, where the'
+                               ~ ' template writes it while ' ~ commented ~ ' is false: write it without --, or set '
+                               ~ commented ~ ' to true') -%}
+      {%-   endif -%}
+      {%- endfor -%}
       {{ out }}
   when: "'logback.xml' not in cassandra_config_keep_files"  # (a file kept as it is: none of them written)
 

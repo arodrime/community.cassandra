@@ -103,7 +103,7 @@ def task(name):
     raise KeyError(name)
 
 
-REFUSE = task("Refuse logback appender-refs and levels the role cannot write")
+REFUSE = task("Refuse logback appender-refs, levels and values the role cannot write")
 WARN = task("Warn about audit events going to system.log")
 
 
@@ -237,6 +237,7 @@ MOVES = next(t for t in CONFIRM if t.get("name") == "Find whether the audit even
 @pytest.mark.parametrize("live_audit, in_inventory, audit_file, said", [
     (False, False, True, True),   # the default turns it on, the node has it off: said
     (True, False, True, False),   # the node has it on already
+    ("class", False, True, False),  # (rc9 r2 audit) on already, its class before its name, in single quotes
     (False, True, True, False),   # set in the inventory: wanted
     (False, False, False, False),  # off
 ])
@@ -245,10 +246,52 @@ def test_said_when_the_default_moves_the_audit_events(live_audit, in_inventory, 
     import base64
     with open(os.path.join(STOCK % "5.0.9", "logback.xml.stock"), encoding="utf-8") as f:
         live = f.read()
-    if live_audit:
+    if live_audit == "class":
+        live = live.replace('  <!-- <appender name="AUDIT" class="ch.qos.logback.core.rolling.RollingFileAppender">',
+                            "  <appender class='ch.qos.logback.core.rolling.RollingFileAppender' name='AUDIT'>")
+        assert "name='AUDIT'" in live
+    elif live_audit:
         live = live.replace('  <!-- <appender name="AUDIT"', '  <appender name="AUDIT"')
     hostvars = {"n1": {"cassandra_log_audit_file": audit_file} if in_inventory else {}}
     ctx = dict(inventory_hostname="n1", hostvars=hostvars, cassandra_log_audit_file=audit_file,
                _cassandra_config_changes=["logback.xml"],
                _cassandra_config_compared={"logback.xml": base64.b64encode(live.encode()).decode()})
     assert render(MOVES["ansible.builtin.set_fact"]["_cassandra_config_audit_moves"], **ctx) is said
+
+
+@pytest.mark.parametrize("variables, said", [
+    # (rc9 r2 audit) values written as they are that would leave logback.xml unreadable, on every node
+    ({"cassandra_log_pattern": "%msg -- %n"}, "cassandra_log_pattern: %msg -- %n has a --, which XML does not take in a"
+                                              " comment, where the template writes it while cassandra_log_audit_file is"
+                                              " false: write it without --, or set cassandra_log_audit_file to true"),
+    ({"cassandra_log_pattern": "%msg < %n"}, "cassandra_log_pattern: %msg < %n has a <, which ends the XML text there:"
+                                             " write it &lt;"),
+    ({"cassandra_log_pattern": "%msg & %n"}, "cassandra_log_pattern: %msg & %n has an & that starts no XML entity:"
+                                             " write it &amp;"),
+    ({"cassandra_log_levels": {'com."x': "INFO"}}, 'cassandra_log_levels: com."x has a ", which ends the XML attribute'
+                                                   " there: write it &quot;"),
+    ({"cassandra_log_level": "IN<FO"}, "cassandra_log_level: IN<FO has a <"),
+    ({"cassandra_log_audit_max_file_size": "5--0MB"}, "cassandra_log_audit_max_file_size: 5--0MB has a --"),
+    ({"cassandra_log_cql_table_level": "W--ARN"}, "cassandra_log_cql_table_level: W--ARN has a --"),
+])
+def test_values_that_would_leave_logback_xml_unreadable_are_refused(variables, said):
+    wrong = refused(**variables)
+    assert len(wrong) == 1 and wrong[0].startswith(said), wrong
+    with pytest.raises(ET.ParseError):
+        ET.fromstring(logback("5.0", **variables))
+
+
+@pytest.mark.parametrize("series", sorted(VERSIONS))
+@pytest.mark.parametrize("variables", [
+    {"cassandra_log_pattern": "%msg -- %n", "cassandra_log_audit_file": True},  # (the audit appender on: no comment)
+    {"cassandra_log_pattern": "%msg &amp; &lt;x&gt; &#38; %n"},
+    {"cassandra_log_level": "${LVL:-INFO}", "cassandra_log_levels": {"com.x": "warn"}},
+])
+def test_values_logback_xml_takes_pass(series, variables):
+    assert refused(**variables) == []
+    ET.fromstring(logback(series, **variables))
+
+
+def test_an_appender_named_in_single_quotes_is_known():
+    # (rc9 r2 audit) name='Q' as name="Q"
+    assert refused("  <appender name='Q' class='x'/>", cassandra_logback_root_extra_refs=["Q"]) == []
