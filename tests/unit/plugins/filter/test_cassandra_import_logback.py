@@ -297,3 +297,20 @@ def test_a_urls_password_in_an_appender_goes_to_secrets_yml(series):
     assert "<url>https://bob:{{ cassandra_secret_logback_appenders_bob_password }}@h/x</url>" in clear
     variables, snippets, check = imported(node_files(series, edit), series)
     assert check["differences"] == []
+
+
+@pytest.mark.parametrize("password, taken", [("p@ss@XYZ1", True), ("it'sXYZ1", False), ("it{sXYZ1", False)])
+@pytest.mark.parametrize("series", SERIES)
+def test_a_urls_password_with_an_at_a_quote_or_a_brace_in_an_appender_never_in_clear(series, password, taken):
+    # (rc9 r2 audit) an @: the password up to the last @ in secrets.yml; a quote or a brace: the lines whole
+    def edit(text):
+        block = ('  <appender name="H" class="ch.qos.logback.core.ConsoleAppender">\n'
+                 "    <url>https://bob:%s@h/x</url>\n  </appender>" % password)
+        return root_ref("H")(text.replace("  <root level", block + "\n  <root level", 1))
+    inventory, layout = import_node(node_files(series, edit), series)
+    clear = "\n".join(f["content"] for f in inventory if not f["secret"])
+    assert "XYZ1" not in clear and "XYZ1" not in layout["report"]
+    assert ("<url>https://bob:{{ cassandra_secret_logback_appenders_bob_password }}@h/x</url>" in clear) is taken
+    assert password in "\n".join(f["content"] for f in inventory if f["secret"])
+    variables, snippets, check = imported(node_files(series, edit), series)
+    assert check["differences"] == []

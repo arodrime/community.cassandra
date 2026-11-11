@@ -353,7 +353,8 @@ def still_on(state, line):
 
 
 # the password of a URL's userinfo (scheme://user:password@host), cassandra_output.USERINFO's
-USERINFO = re.compile(r"([A-Za-z][\w+.-]*://([^\s/:@'\"<>{}]+):)([^\s/@'\"<>{}]+)(@)")
+USERINFO = re.compile(r"(?P<head>(?P<q>['\"])?[A-Za-z][\w+.-]*://(?P<user>[^\s/:@'\"<>{}]+):)"
+                      r"(?P<password>(?:(?!(?P=q))[^\s/?#])+)@")
 
 
 def masked(lines):
@@ -373,7 +374,7 @@ def masked(lines):
                 out.append((text[:indent] + "****" if text.strip() else text) + end)
                 state, continued = after, odd_backslashes(text)
                 continue
-        text = USERINFO.sub(r"\1****\4", text)
+        text = USERINFO.sub(r"\g<head>****@", text)
         if not SECRET_WORD.search(text):
             state = None
             out.append(text + end)

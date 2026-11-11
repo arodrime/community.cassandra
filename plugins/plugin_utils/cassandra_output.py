@@ -253,8 +253,10 @@ _ELEMENT_TEXT = r"<!\[CDATA\[(?:.*?\]\]>|.*)|<!--(?:.*?-->|.*)"
 _HIDDEN_ELEMENT = re.compile(r"(?i)(<(?P<name>" + _HIDDEN_NAME + r")(?:\s[^<>]*)?>)(\s*(?!</(?P=name)\s*>)(?:" + _ELEMENT_TEXT + r"|\S)"
                              r"(?:" + _ELEMENT_TEXT + r"|(?!</(?P=name)\s*>).)*)")
 
-# the password of a URL's userinfo (scheme://user:password@host: an HTTP proxy, an appender's URL)
-USERINFO = re.compile(r"([A-Za-z][\w+.-]*://([^\s/:@'\"<>{}]+):)([^\s/@'\"<>{}]+)(@)")
+# the password of a URL's userinfo (scheme://user:password@host: an HTTP proxy, an appender's URL): up to the last
+# @ of the authority (a password may hold an @), which ends at a blank, /, ? or #, or at the quote the URL opens with
+USERINFO = re.compile(r"(?P<head>(?P<q>['\"])?[A-Za-z][\w+.-]*://(?P<user>[^\s/:@'\"<>{}]+):)"
+                      r"(?P<password>(?:(?!(?P=q))[^\s/?#])+)@")
 
 # a secret's name and what comes before its value, anywhere on a line
 _HIDDEN_KEY_ONLY = re.compile(r"(?i)(" + _HIDDEN_NAME + r"\s*[:=]\s*)")
@@ -407,7 +409,7 @@ def mask(text):
                 out.append(line[:indent] + MASK if line.strip() else line)
                 state, continued = after, _odd_backslashes(line)
                 continue
-        line = USERINFO.sub(r"\1" + MASK + r"\4", line)
+        line = USERINFO.sub(r"\g<head>" + MASK + "@", line)
         if not _HIDDEN_WORD.search(line):
             state = None
             out.append(_HIDDEN_OPTION.sub(r"\1" + MASK, line))

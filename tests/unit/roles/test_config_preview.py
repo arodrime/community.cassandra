@@ -598,3 +598,11 @@ def test_a_urls_password_masked_in_the_diff(tmp_path):
     shown = changed_lines(preview(tmp_path, "cassandra-env.sh", "export http_proxy=http://bob:OLDLEAK@proxy:3128\n",
                                   "export http_proxy=http://bob:NEWLEAK@proxy:3128\n"))
     assert shown == ["-export http_proxy=http://bob:****@proxy:3128", "+export http_proxy=http://bob:****@proxy:3128"]
+
+
+@pytest.mark.parametrize("old, new", [("p@OLDLEAK", "p@NEWLEAK"), ("p'OLDLEAK", "p'NEWLEAK"), ("p{OLDLEAK", "p}NEWLEAK")])
+def test_a_urls_password_with_an_at_a_quote_or_a_brace_masked_in_the_diff(tmp_path, old, new):
+    # (rc9 r2 audit) up to the last @ of the authority: no part of it shown
+    shown = changed_lines(preview(tmp_path, "cassandra-env.sh", 'export HTTPS_PROXY="http://bob:%s@proxy:3128"\n' % old,
+                                  'export HTTPS_PROXY="http://bob:%s@proxy:3128"\n' % new))
+    assert shown == ['-export HTTPS_PROXY="http://bob:****@proxy:3128"', '+export HTTPS_PROXY="http://bob:****@proxy:3128"']

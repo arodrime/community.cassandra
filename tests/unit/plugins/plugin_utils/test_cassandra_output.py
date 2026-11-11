@@ -1262,6 +1262,15 @@ def test_token_ring_and_key_settings_are_not_secrets(key, value):
     ("cassandra_install_url: https://u:p4ss@mirror/repo/", "cassandra_install_url: https://u:****@mirror/repo/"),
     ("http://mirror/repo/ and user@host", "http://mirror/repo/ and user@host"),  # no password: as it is
     ("x=https://bob:{{ cassandra_secret_env_bob_password }}@h", "x=https://bob:{{ cassandra_secret_env_bob_password }}@h"),
+    # (rc9 r2 audit) up to the last @ of the authority, whatever the password holds
+    ("X=http://bob:p@ss@h", "X=http://bob:****@h"),
+    ('export HTTPS_PROXY="http://bob:p@ssw0rdXY@proxy:3128"', 'export HTTPS_PROXY="http://bob:****@proxy:3128"'),
+    ("http://bob:hu'nter2xx@proxy", "http://bob:****@proxy"),
+    ('x="http://bob:hu"nter2xx@proxy"', 'x="http://bob:****@proxy"'),
+    ("http://bob:hu{nter2xx@proxy", "http://bob:****@proxy"),
+    ("http://bob:hu}nter2xx@proxy", "http://bob:****@proxy"),
+    ("<url>https://bob:it'sXYZ1@h/x</url>", "<url>https://bob:****@h/x</url>"),
+    ("A='http://bob:pw@h';B='a@b'", "A='http://bob:****@h';B='a@b'"),  # the quote the URL opens with ends it
 ])
 def test_a_urls_password_is_masked(line, shown):
     # (rc9 audit) the userinfo password of a URL (an HTTP proxy, an appender's URL), in a diff or a report

@@ -1951,6 +1951,10 @@ def _secret_var(name, value, taken, file_name):
     return var
 
 
+# a URL's password with one of these is not taken out of its line (the line goes to secrets.yml whole)
+URL_PASSWORD_UNSAFE = re.compile(r"[\s'\"{}<>\\$`;&|()]")
+
+
 def _take_secrets(values, kind, taken, file_name, own=()):
     """A list of lines -> (the lines, each secret in them replaced by a reference to its variable, {variable:
     (its name in the line, value)}, the lines made so). A line is left as it is (its list then goes to secrets.yml
@@ -1974,9 +1978,12 @@ def _take_secrets(values, kind, taken, file_name, own=()):
                 break
             spans.append((re.sub(r"[\"'\s:=]+$", "", m.group(1)), span))
             pos = span[1]
+        urls = list(out.USERINFO.finditer(line))
+        if spans is not None and [m for m in urls if URL_PASSWORD_UNSAFE.search(m.group("password"))]:
+            spans = None  # a quote, a brace...: where the password ends is not sure, the line stays whole
         if spans is not None:  # a URL's password (scheme://user:password@host), named by its user
-            spans = sorted(spans + [("%s_password" % m.group(2), (m.start(3), m.end(3))) for m in out.USERINFO.finditer(line)
-                                    if not [s for s in spans if s[1][0] < m.end(3) and m.start(3) < s[1][1]]],
+            spans = sorted(spans + [("%s_password" % m.group("user"), m.span("password")) for m in urls
+                                    if not [s for s in spans if s[1][0] < m.end("password") and m.start("password") < s[1][1]]],
                            key=lambda s: s[1][0])
         if not spans:
             lines.append(line)
