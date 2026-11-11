@@ -13,3 +13,8 @@ bugfixes:
   - >-
     upgrade sstables - an inventory behind a node that runs a later mode (and has it in its file) is told to take the
     node's mode, not to move from the inventory's.
+  - >-
+    apply_config - a config file changed since Cassandra started, with the inventory's settings, is no restart only
+    when Cassandra started with them (the record of its start); with 5.0, a ``cassandra.yaml`` at a later
+    ``storage_compatibility_mode`` than the one Cassandra runs (written ahead of its restart) is restarted, no longer
+    said to need nothing.

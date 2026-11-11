@@ -31,7 +31,7 @@ def sha1(text):
 
 
 def needs(changes=(OPTIONS,), new=None, record=None, recorded=("42", 100.0), start=100.0, pending=False, newer=(),
-          running=True, conf=CONF, target=None, full=False, kept=(), keep_files=()):
+          running=True, conf=CONF, target=None, full=False, kept=(), keep_files=(), **extra):
     """(then, notes) of a running node whose files in changes are written with new {name: text}; recorded:
     the JVM (pid, start) the record was written for (None: an older record, without it)."""
     new = {OPTIONS: STARTED_WITH, "cassandra.yaml": "num_tokens: 16\n"} if new is None else new
@@ -49,6 +49,7 @@ def needs(changes=(OPTIONS,), new=None, record=None, recorded=("42", 100.0), sta
                  "_cassandra_config_kept": list(kept), "cassandra_config_keep_files": list(keep_files),
                  "_cassandra_preflight_running": running, "cassandra_apply_config_unit": {"skipped": True},
                  "cassandra_jvm": {"pid": "42", "start": "%.2f" % start} if start is not None else {}}
+    variables = dict(variables, inventory_hostname="n1", **extra)
     variables = with_task_vars(AS_STARTED, variables)
     variables["_cassandra_apply_config_as_started"] = render(
         AS_STARTED["ansible.builtin.set_fact"]["_cassandra_apply_config_as_started"], variables)
@@ -174,3 +175,84 @@ def test_a_file_left_as_it_is_with_the_same_settings_is_no_restart():
     assert same == ("none", [OPTIONS + " changed since the running Cassandra started, same settings: no restart for it"])
     kept = needs(changes=(), pending=True, newer=[OPTIONS], kept=[OPTIONS], keep_files=[OPTIONS])
     assert kept[0] == "restart" and kept[1][0].startswith("restart pending (" + OPTIONS)
+
+
+C4 = "storage_compatibility_mode: CASSANDRA_4\n"
+UPGRADING = "storage_compatibility_mode: UPGRADING\n"
+
+
+def _but(case, **changed):
+    """The case with some arguments changed."""
+    out = dict(case)
+    out.update(changed)
+    return out
+
+
+def test_a_file_with_the_same_settings_is_no_restart_only_when_cassandra_started_with_them():
+    # UPGRADING written ahead of the node (an apply_config cut before its restart, the role run alone): the file has
+    # the inventory's settings, but the running Cassandra started with CASSANDRA_4 (the record of its start):
+    # written since its start, not running yet: a restart, never "same settings: no restart"
+    ahead = dict(changes=(), pending=True, newer=["cassandra.yaml"], kept=["cassandra.yaml"],
+                 new={"cassandra.yaml": UPGRADING}, record={CONF + "/cassandra.yaml": sha1(C4)})
+    assert needs(**ahead) == ("restart", ["restart pending (cassandra.yaml changed since the running Cassandra started)"])
+    # it started with the file as cassandra_config renders it, a comment added by hand since: no restart
+    started = _but(ahead, record={CONF + "/cassandra.yaml": sha1(UPGRADING)})
+    assert needs(**started) == (
+        "none", ["cassandra.yaml changed since the running Cassandra started, same settings: no restart for it"])
+    # not known what it started with: the record of another JVM, none for that file, another directory
+    for case in (dict(recorded=("41", 100.0)), dict(record={}),
+                 dict(record={"/etc/cassandra/cassandra.yaml": sha1(UPGRADING)})):
+        assert needs(**_but(started, **case))[0] == "restart", case
+    # the options file started with as written another way (same settings), a comment added since: not known to
+    # be the same settings as the inventory's (only its checksum is recorded): a restart
+    assert needs(changes=(), pending=True, newer=[OPTIONS], kept=[OPTIONS],
+                 record={CONF + "/" + OPTIONS: sha1("-Xss256k\n-XX:+UseG1GC # by hand\n")})[0] == "restart"
+
+
+def _mode_read(yaml_mode, logged=None, running="yes"):
+    lines = ["file=%s/cassandra.yaml" % CONF, "yaml_read=yes", "yaml=" + yaml_mode, "running=" + running]
+    return {"stdout_lines": lines + (["logged=" + logged] if logged else [])}
+
+
+def test_a_storage_mode_written_ahead_of_the_node_is_restarted_without_a_record():
+    # no record of its start (imported, restarted by hand): nothing pending by the files, but the mode it logged at
+    # its start (CASSANDRA_4) is before its cassandra.yaml's (UPGRADING): a restart, said
+    ahead = dict(changes=(), recorded=None, record={}, cassandra_version="50x",
+                 cassandra_storage_mode_read=_mode_read("UPGRADING", logged="CASSANDRA_4"))
+    assert needs(**ahead) == (
+        "restart", ["restart pending (its cassandra.yaml has storage_compatibility_mode UPGRADING, Cassandra runs"
+                    " CASSANDRA_4)"])
+    # given by hand (-e cassandra_storage_mode_running) when nothing was read
+    assert needs(**_but(ahead, cassandra_storage_mode_read=_mode_read("UPGRADING"),
+                        cassandra_storage_mode_running="n1:CASSANDRA_4"))[0] == "restart"
+    # it runs its file's mode, or a later one (the guards' case), or 4.x, or stopped: nothing for it
+    for case in (dict(cassandra_storage_mode_read=_mode_read("UPGRADING", logged="UPGRADING")),
+                 dict(cassandra_storage_mode_read=_mode_read("UPGRADING", logged="NONE")),
+                 dict(cassandra_storage_mode_read=_mode_read("UPGRADING")),
+                 dict(cassandra_version="41x")):
+        assert needs(**_but(ahead, **case)) == ("none", []), case
+    # the note of the files written after its start with no record leaves out cassandra.yaml then (it is restarted)
+    say = find(FIND["tasks"], "Say which files changed since Cassandra started, with no record of the ones it started with")
+    base = {"inventory_hostname": "n1", "cassandra_version": "50x", "cassandra_config_unknown_files": ["cassandra.yaml"]}
+    for read, said in ((_mode_read("UPGRADING", logged="CASSANDRA_4"), []),
+                       (_mode_read("UPGRADING", logged="UPGRADING"), ["cassandra.yaml"])):
+        variables = with_task_vars(say, dict(base, cassandra_storage_mode_read=read))
+        assert variables["_unknown"] == said
+
+
+def test_the_way_out_of_the_jump_guard_and_apply_config_converge():
+    # the jump guard's way out (On n1, run rolling_restart --limit n1: it restarts it in the UPGRADING its
+    # cassandra.yaml has) passes the guards of rolling_restart; apply_config with UPGRADING in the inventory restarts
+    # it too; once restarted (UPGRADING logged, the record of that start), apply_config has nothing more to do
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_storage_mode import (
+        cassandra_storage_mode_back, cassandra_storage_mode_jump, cassandra_storage_mode_unsure)
+    host = {"inventory_hostname": "n1", "cassandra_storage_mode_read": _mode_read("UPGRADING", logged="CASSANDRA_4")}
+    assert [f(host) for f in (cassandra_storage_mode_back, cassandra_storage_mode_jump, cassandra_storage_mode_unsure)] \
+        == ["", "", {}]
+    ahead = dict(changes=(), pending=True, newer=["cassandra.yaml"], kept=["cassandra.yaml"],
+                 new={"cassandra.yaml": UPGRADING}, record={CONF + "/cassandra.yaml": sha1(C4)}, cassandra_version="50x",
+                 cassandra_storage_mode_read=_mode_read("UPGRADING", logged="CASSANDRA_4"))
+    assert needs(**ahead)[0] == "restart"
+    done = _but(ahead, pending=False, newer=[], record={CONF + "/cassandra.yaml": sha1(UPGRADING)},
+                cassandra_storage_mode_read=_mode_read("UPGRADING", logged="UPGRADING"))
+    assert needs(**done) == ("none", [])

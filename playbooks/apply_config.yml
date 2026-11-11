@@ -110,12 +110,22 @@
     - name: Say which files changed since Cassandra started, with no record of the ones it started with
       ansible.builtin.debug:
         msg: >-
-          {{ inventory_hostname }}: {{ cassandra_config_unknown_files | join(', ') }} written after Cassandra started
+          {{ inventory_hostname }}: {{ _unknown | join(', ') }} written after Cassandra started
           (not by the roles, which keep a record of the files it starts with): not restarted for them. If they
           changed a setting, run rolling_restart to apply it.
       vars:
         cassandra_output: true
-      when: cassandra_config_unknown_files | length > 0
+        # (5.0: not cassandra.yaml when Cassandra runs an earlier storage_compatibility_mode than it has: restarted)
+        _unknown: >-
+          {{ cassandra_config_unknown_files | reject('equalto', 'cassandra.yaml') | list
+             if cassandra_version | default('') == '50x'
+                and {'inventory_hostname': inventory_hostname,
+                     'cassandra_storage_mode_read': cassandra_storage_mode_read | default({}),
+                     'cassandra_storage_mode_cql': cassandra_storage_mode_cql | default({}),
+                     'cassandra_storage_mode_running': cassandra_storage_mode_running | default('')}
+                    | community.cassandra.cassandra_storage_mode_ahead
+             else cassandra_config_unknown_files }}
+      when: _unknown | length > 0
 
     # its unit not running: a JVM started another way still runs the config it read
     - name: Look for a Cassandra JVM the unit did not start
@@ -225,7 +235,9 @@
         # the plan's warnings only (the recap says how many)
         cassandra_apply_config_notes: >-
           {{ (['restart pending (' ~ _newer | join(', ') ~ ' changed since the running Cassandra started)']
-              if _pending | bool else [])
+              if _pending | bool and cassandra_config_restart_pending | bool and _newer else [])
+             + (['restart pending (its cassandra.yaml has storage_compatibility_mode ' ~ _mode_ahead.file
+                 ~ ', Cassandra runs ' ~ _mode_ahead.running ~ ')'] if _pending | bool and _mode_ahead else [])
              + ([_as_started | join(', ') ~ ' written back as the running Cassandra started with '
                  ~ ('it' if _as_started | length == 1 else 'them') ~ ': no restart for ' ~ ('it' if _as_started | length == 1 else 'them')]
                 if _as_started and _running | bool else [])
@@ -286,16 +298,37 @@
         _exporter: "{{ _cassandra_config_exporter_changes | default([]) }}"
         _exporter_restart: "{{ _exporter | selectattr('restart') | list | length > 0 }}"
         # (trusted for the JVM the record was written for: the same pid, the same start)
-        _jvm: "{{ (cassandra_pending_snapshot.content | b64decode | from_json)._jvm | default({})
-                  if cassandra_pending_snapshot.content is defined else {} }}"
-        _as_started: >-
-          {{ _cassandra_apply_config_as_started | default([])
-             if cassandra_jvm.start is defined and _jvm.pid | default('') | string == cassandra_jvm.pid | default('-') | string
-                and (_jvm.start | default(0) | float - cassandra_jvm.start | float) | abs < 2 else [] }}
+        _record: "{{ cassandra_pending_snapshot.content | b64decode | from_json if cassandra_pending_snapshot.content is defined else {} }}"
+        _jvm: "{{ _record._jvm | default({}) }}"
+        _current: >-
+          {{ cassandra_jvm.start is defined and _jvm.pid | default('') | string == cassandra_jvm.pid | default('-') | string
+             and (_jvm.start | default(0) | float - cassandra_jvm.start | float) | abs < 2 }}
+        _as_started: "{{ _cassandra_apply_config_as_started | default([]) if _current | bool else [] }}"
         # the files changed since the start, but the ones written back as they were then
         # a file changed since the start but left as it is by cassandra_config (same settings, only comments
-        # or spelling): nothing for Cassandra to pick up
-        _same: "{{ _cassandra_config_kept | default([]) | reject('in', cassandra_config_keep_files | default([])) | list }}"
+        # or spelling): nothing for Cassandra to pick up when it runs those settings, i.e. started with the file as
+        # cassandra_config renders it (the record of that start has its checksum). Else (e.g. UPGRADING written ahead
+        # of a node that runs CASSANDRA_4) written since its start, not running yet: a restart
+        _same: >-
+          {%- set out = [] -%}
+          {%- set conf = cassandra_conf_dir | default('') | trim | regex_replace('/+$', '') -%}
+          {%- set new = _cassandra_config_new | default({}) -%}
+          {%- for f in _cassandra_config_kept | default([]) if f in new and f not in cassandra_config_keep_files | default([])
+                                                                and _current | bool -%}
+          {%-   for path, sum in _record.items() if path | basename == f and path | dirname | regex_replace('/+$', '') == conf -%}
+          {%-     if sum == new[f] | hash('sha1') and f not in out -%}{%- set _ = out.append(f) -%}{%- endif -%}
+          {%-   endfor -%}
+          {%- endfor -%}
+          {{ out }}
+        # 5.0: Cassandra runs an earlier storage_compatibility_mode than its cassandra.yaml has (read over CQL, logged
+        # at its start, or given by hand, cassandra_storage_mode_running): written since its start, not running yet (also
+        # with no record of that start)
+        _mode_ahead: >-
+          {{ {'inventory_hostname': inventory_hostname,
+              'cassandra_storage_mode_read': cassandra_storage_mode_read | default({}),
+              'cassandra_storage_mode_cql': cassandra_storage_mode_cql | default({}),
+              'cassandra_storage_mode_running': cassandra_storage_mode_running | default('')}
+             | community.cassandra.cassandra_storage_mode_ahead if cassandra_version | default('') == '50x' else {} }}
         _newer: "{{ cassandra_config_newer_files | default([]) | reject('in', _as_started) | reject('in', _same) | list }}"
         _perms: "{{ _cassandra_config_perm_changes | default([]) | map(attribute='item') | map('regex_replace', ' [(].*$', '') | map('basename') | list }}"
         _dirs: "{{ _cassandra_config_dir_changes | default([]) | map(attribute='item') | map('regex_replace', ' [(].*$', '') | list }}"
@@ -304,7 +337,7 @@
         # node the interrupted run stopped (then started)
         _same_newer: "{{ cassandra_config_newer_files | default([]) | select('in', _same) | list }}"
         _pending: >-
-          {{ cassandra_config_restart_pending | bool and _newer | length > 0
+          {{ (cassandra_config_restart_pending | bool and _newer | length > 0 or _mode_ahead | length > 0)
              and (_running | bool or cassandra_rolling_resume | default(false) | bool) }}
         _unit: "{{ cassandra_apply_config_unit.status | default({}) }}"
         # failed, or restarting after a failure; not a stop that ended failed (SIGTERM's 143 with no
