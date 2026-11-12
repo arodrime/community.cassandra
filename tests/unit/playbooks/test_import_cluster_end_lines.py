@@ -161,7 +161,8 @@ def secret_files():
 
 
 def written(layout):
-    return dict((f["path"], f) for f in cassandra_inventory_files(layout))
+    """{path: file} with its text as read back from the disk (a plain str: before 2.19 it is handed over unsafe)."""
+    return dict((f["path"], dict(f, content="".join([f["content"]]))) for f in cassandra_inventory_files(layout))
 
 
 def test_secrets_moved_to_secrets_yml():

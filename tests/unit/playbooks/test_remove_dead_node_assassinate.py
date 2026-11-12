@@ -43,7 +43,8 @@ def playbook(tmp_path, **variables):
     (tmp_path / "confirm.yml").write_text(json.dumps([play]))
     (tmp_path / "hosts.ini").write_text("node1\n")
     env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0",
-               ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_DEPRECATION_WARNINGS="0", ANSIBLE_STDOUT_CALLBACK="default")
+               ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_DEPRECATION_WARNINGS="0", ANSIBLE_STDOUT_CALLBACK="default",
+               ANSIBLE_CALLBACK_RESULT_FORMAT="yaml")  # a msg as text on 2.16 too (its JSON escapes quotes)
     env.pop("ANSIBLE_CONFIG", None)
     argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", str(tmp_path / "hosts.ini"),
             "-c", "local", "-e", "ansible_python_interpreter=" + sys.executable, str(tmp_path / "confirm.yml")]
