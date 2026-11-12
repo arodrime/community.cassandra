@@ -18,8 +18,14 @@ _cassandra_wait_size: "{{ ((_cassandra_stream_round_size | int) ** 0.5) | round(
 _cassandra_service_config_perms:
   owner: "{{ cassandra_config_user | default('root') }}"
   group: "{{ cassandra_config_group | default(cassandra_group) }}"
-  mode: "{{ cassandra_config_mode | default('0640') }}"
-  public_mode: "{{ cassandra_config_public_mode | default('0644') }}"
+  # an unquoted mode (0640, read by YAML as 416) as octal text: before ansible-core 2.19 a template gives its
+  # number as text ("416"), then read as octal
+  mode: >-
+    {{ '%04o' % cassandra_config_mode if cassandra_config_mode | default('') is integer
+       else cassandra_config_mode | default('0640') }}
+  public_mode: >-
+    {{ '%04o' % cassandra_config_public_mode if cassandra_config_public_mode | default('') is integer
+       else cassandra_config_public_mode | default('0644') }}
   files: "{{ cassandra_config_file_permissions | default({}) }}"
   user: "{{ cassandra_service_user }}"
   user_group: "{{ cassandra_service_group }}"
