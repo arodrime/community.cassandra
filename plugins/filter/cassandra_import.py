@@ -2120,9 +2120,10 @@ def _exporter_import(live_files, cmdline, ctx, read=None, conf_dirs=()):
     with open(os.path.join(ROLE, "files", "jmx_prometheus.yml"), encoding="utf-8") as f:
         default_rules = f.read()
     own = found["config"] in ["%s/jmx_prometheus.yml" % str(d).rstrip("/") for d in conf_dirs if d]
+    config = read.get("config") or None  # None: not read ('' before ansible-core 2.19, a task's vars)
     if own:  # the role's own config (a node the roles set up): written again from the role's variables
         variables.pop("cassandra_prometheus_exporter_config_file")
-        taken, why = prometheus.carried_config(read["config"], default_rules) if read.get("config") is not None \
+        taken, why = prometheus.carried_config(config, default_rules) if config is not None \
             else (None, "it could not be read on the node")
         if taken is None:
             notes.append("%s, the role's exporter config: its content NOT carried into cassandra_prometheus_exporter_config"
@@ -2131,7 +2132,7 @@ def _exporter_import(live_files, cmdline, ctx, read=None, conf_dirs=()):
         else:
             variables.update(taken)
     elif read.get("carry"):
-        taken, why = prometheus.carried_config(read["config"], default_rules) if read.get("config") is not None \
+        taken, why = prometheus.carried_config(config, default_rules) if config is not None \
             else (None, "it could not be read on the node (make it readable there, then import again)")
         if taken is None:
             notes.append("%s: its content NOT carried into cassandra_prometheus_exporter_config: %s; its path is"

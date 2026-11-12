@@ -9,6 +9,8 @@ __metaclass__ = type
 import pytest
 import yaml
 
+from ansible.utils.unsafe_proxy import AnsibleUnsafeText
+
 from ansible_collections.community.cassandra.plugins.filter.cassandra_health import cassandra_health_report
 from ansible_collections.community.cassandra.plugins.filter.cassandra_prometheus import cassandra_prometheus_config_change
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_prometheus import (
@@ -281,9 +283,10 @@ def test_carried_open_telemetry_headers_go_to_secrets_yml(tmp_path):
     assert "cassandra_prometheus_exporter_config" in _split_secrets(plain["vars"])[0]
 
 
-def test_carry_asked_for_a_config_not_read(tmp_path):
+@pytest.mark.parametrize("unread", [{}, {"config": None}, {"config": ""}])  # '': none before ansible-core 2.19
+def test_carry_asked_for_a_config_not_read(tmp_path, unread):
     files = before_extra(seeded(stock("50x")), PASSING_BLOCK)
-    out = exporter_import(files, "", sha256="ab" * 32, carry=True)  # (its config not readable on the node)
+    out = exporter_import(files, "", sha256="ab" * 32, carry=True, **unread)  # (its config not readable on the node)
     assert out["vars"]["cassandra_prometheus_exporter_config_file"] == CONF
     assert [n for n in out["jvm_notes"] if "NOT carried" in n and "could not be read on the node" in n
             and "import again" in n]
@@ -312,10 +315,12 @@ def test_a_reimport_of_the_roles_own_config():
     out = imported_with(header + "rules: [{pattern: x}]\nhttpServer:\n  authentication:\n    basic: {username: u, password: p}\n")
     assert yaml.safe_load(out["vars"]["cassandra_prometheus_exporter_config"]) == {"rules": [{"pattern": "x"}]}
     assert out["vars"]["cassandra_prometheus_exporter_username"] == "u" and "Managed by" not in str(out["vars"])
-    # not read: the role writes its own, said
-    out = imported_with(None)
-    assert "cassandra_prometheus_exporter_config_file" not in out["vars"]
-    assert [n for n in out["jvm_notes"] if "the role writes its own rules there" in n]
+    # not read: the role writes its own, said ('': none before ansible-core 2.19)
+    for unread in (None, "", AnsibleUnsafeText("")):
+        out = imported_with(unread)
+        assert "cassandra_prometheus_exporter_config_file" not in out["vars"]
+        assert "cassandra_prometheus_exporter_config" not in out["vars"]
+        assert [n for n in out["jvm_notes"] if "the role writes its own rules there" in n]
 
 
 def test_a_version_the_role_refuses_is_not_imported(tmp_path):
