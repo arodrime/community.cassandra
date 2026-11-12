@@ -115,10 +115,11 @@
          | map(attribute='inventory_hostname') | first | default('') }}
     _tp_single: "{{ hostvars[ansible_play_hosts_all[0]]._cassandra_preflight.cassandra_num_tokens | int == 1 }}"
     _tp_todo: "{{ (cassandra_topology_plan.add + cassandra_topology_plan.remove) | length > 0 or cassandra_topology_plan.seeds.step }}"
-    # the datacenters left with fewer nodes than a keyspace has replicas there (as decommission_node checks it)
+    # the datacenters left with fewer nodes than a keyspace has replicas there (as decommission_node checks it);
+    # not read: no mapping (none is '' once shared by set_fact before ansible-core 2.19)
     _tp_replication: >-
       {{ cassandra_keyspaces | community.cassandra.cassandra_replication_problems(cassandra_topology_plan.nodes_left)
-         if cassandra_topology_plan.in_ring and cassandra_keyspaces | default(none) is not none else [] }}
+         if cassandra_topology_plan.in_ring and cassandra_keyspaces | default(none) is mapping else [] }}
   tasks:
     # first: each node its own facts before any run_once task (ansible/ansible#87148)
     - name: Give each node its own facts
@@ -316,7 +317,7 @@
              + (["the keyspaces' replication could not be read (" ~ _cassandra_topology_keyspaces_error | default('')
                  ~ '): a removal is not checked blind. With CQL authentication on, set cassandra_cql_username and'
                  ~ ' cassandra_cql_password.']
-                if cassandra_topology_plan.in_ring and cassandra_keyspaces is none else [])
+                if cassandra_topology_plan.in_ring and cassandra_keyspaces is not mapping else [])
              + ((['Removing ' ~ cassandra_topology_plan.in_ring | join(', ') ~ ' leaves too few nodes:'] + _tp_replication
                  + ['Lower the replication first (ALTER KEYSPACE, then repair), or set cassandra_decommission_force: true:'
                     ~ ' those replicas are then lost, and QUORUM can fail.'])
