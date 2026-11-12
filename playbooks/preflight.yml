@@ -371,7 +371,9 @@
       run_once: true
 
     # The seed rule (help says the same): 2 or 3 seeds per datacenter, on different racks; one line per
-    # datacenter when one breaks it, with a seed list that follows it
+    # datacenter when one breaks it, with a seed list that follows it (among the nodes running, in a datacenter
+    # that has some). Judged on every node of the cluster only: with some left out (--limit, not answering),
+    # nothing is said, the ones left out may be the seeds
     - name: Seed layout
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation
@@ -394,7 +396,8 @@
         _cluster: "{{ lookup('community.cassandra.cassandra_hosts') }}"
         _layout: >-
           {{ ansible_play_hosts | map('extract', hostvars, ['_cassandra_preflight', 'layout']) | list
-             | community.cassandra.cassandra_seed_layout }}
+             | community.cassandra.cassandra_seed_layout(unread=query('community.cassandra.cassandra_nodes') | difference(ansible_play_hosts),
+                                                         up=_cassandra_preflight_running_nodes) }}
       when: (_layout.problems + _layout.notes) | length > 0
 
     # Once the cluster exists, every seed must be a live member: a stale seed

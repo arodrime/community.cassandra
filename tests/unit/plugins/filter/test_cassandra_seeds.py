@@ -60,6 +60,19 @@ def test_more_than_three_seeds_is_a_note():
     assert out["lines"] == ["Seeds  dc1  n1 (r1), n2 (r2), n3 (r3), n4 (r4)  note: 4 seeds: 2 to 3 are enough"]
 
 
+def test_limit_to_a_node_that_is_no_seed_says_nothing():
+    # --limit h-n5, cassandra_seeds: [h-n1, h-n2]: h-n5 alone has no seed, the cluster does
+    out = cassandra_seed_layout([node("h-n5", "r1")], unread=["h-n1", "h-n2", "h-n3", "h-n4"])
+    assert out == {"lines": [], "dcs": [], "problems": [], "notes": [], "suggested": []}
+
+
+def test_suggestion_picks_running_nodes_only():
+    nodes = [node("n1", "r1"), node("n2", "r2"), node("n3", "r3"), node("b1", "r1", dc="dc2"), node("b2", "r2", dc="dc2")]
+    out = cassandra_seed_layout(nodes, unread=[], up=["n2", "n3"])
+    # dc1 runs: its running nodes only; dc2 has none running (a new datacenter): any of its nodes
+    assert out["suggested"] == ["ip-n2", "ip-n3", "ip-b1", "ip-b2"]
+
+
 def test_more_racks_than_seeds_is_fine():
     nodes = [node("n%d" % i, "r%d" % i, seed=i <= 3) for i in range(1, 6)]
     assert cassandra_seed_layout(nodes)["problems"] == []
