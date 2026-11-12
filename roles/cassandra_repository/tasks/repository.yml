@@ -161,6 +161,7 @@
         force_basic_auth: "{{ _on_mirror | bool }}"
       retries: 3
       register: _cassandra_repository_key_download
+      no_log: "{{ cassandra_repository_key_url is search('@|[?]') }}"  # credentials or a signature in the URL
       until: _cassandra_repository_key_download is succeeded
       changed_when: false  # a temp file: the install below reports the change
       check_mode: false  # read-only for the host's config: the check below needs the file

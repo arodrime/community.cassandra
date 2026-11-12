@@ -104,6 +104,7 @@
             mode: "0600"
           retries: 3
           register: cassandra_install_dsbulk_download
+          no_log: "{{ cassandra_dsbulk_url is search('@|[?]') }}"  # credentials or a signature in the URL
           # a wrong checksum is final
           until: >-
             cassandra_install_dsbulk_download is succeeded

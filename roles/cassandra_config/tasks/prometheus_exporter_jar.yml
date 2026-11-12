@@ -90,6 +90,7 @@
         force_basic_auth: "{{ _on_mirror | bool }}"
       retries: 3
       register: cassandra_config_exporter_download
+      no_log: "{{ cassandra_prometheus_exporter_url is search('@|[?]') }}"  # credentials or a signature in the URL
       # a wrong checksum is final
       until: >-
         cassandra_config_exporter_download is succeeded
