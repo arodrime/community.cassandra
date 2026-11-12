@@ -78,8 +78,9 @@ HOSTVARS = {
               "_cassandra_preflight": {"ring_address": "10.0.0.5"}}}
 HOSTS = sorted(HOSTVARS)
 REASON = ("node5: Cassandra not running, and node1, node2 would be restarted, which needs every other node up.")
-WAY = ("Apply the config there first (--limit node5) and start it if stopped on purpose, or, if an interrupted run"
-       " stopped it, resume it (-e cassandra_rolling_resume=true); then run again.")
+WAY = ("Apply the config there first (--limit node5) and start it with start_rack (which checks the start first) if"
+       " stopped on purpose, or, if an interrupted run stopped it, resume it (-e cassandra_rolling_resume=true); then run"
+       " again.")
 
 
 def refused(hostvars):
@@ -110,7 +111,7 @@ def test_the_refusal_names_a_failed_unit_this_run_does_not_start():
     assert reason == "node5, node7: Cassandra not running, and node1, node2 would be restarted, which needs every other node up."
     # --limit names node5 only (the config applied there, started if stopped on purpose); node7's way out is on the node
     failed_way = ("node7: the cassandra unit failed and nothing is to apply: see systemctl status cassandra / journalctl -u"
-                  " cassandra there, fix it and start it, then run again.")
+                  " cassandra there, fix it and start it with start_rack (which checks the start first), then run again.")
     assert way == WAY + " " + failed_way
     # node7 the only node down: no --limit sentence (nothing to apply there)
     hostvars.pop("node5")
@@ -168,7 +169,8 @@ def test_the_check_recap_ends_with_the_refusal():
     # no plan shown (a later play stopped first): the recap says it, last
     lines = render(t["ansible.builtin.debug"]["msg"], variables)
     assert lines[0] == "CHECK  apply_config  c  3 would apply, 1 nothing to apply"
-    assert lines[-3:] == ["", "WARNING  a real run is refused, before changing anything: " + REASON, "  " + WAY]
+    warning = lines.index("WARNING  a real run is refused, before changing anything: " + REASON)
+    assert lines[warning - 1] == "" and " ".join(line.strip() for line in lines[warning + 1:]) == WAY  # (laid out)
     # the nodes' outcomes are all there, before it
     assert "node1, node2  would apply, then restart" in lines
     # the plan said it: said once, the recap points at it

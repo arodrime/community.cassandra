@@ -40,11 +40,14 @@
         cassandra_output: true  # a verdict: its msg as is (ops callback)
 
     # a node whose cassandra.yaml has another storage_compatibility_mode than the one it runs, back or more than one
-    # step ahead: refused before the question (its restart would take it there)
+    # step ahead: refused before the question (its restart would take it there); a stopped one (a resumed run starts
+    # the node the interrupted one stopped) against the mode it last ran, refused when nothing tells it
     - name: Refuse a restart into another storage_compatibility_mode than one step from the one it runs
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation
         tasks_from: storage_mode_guard.yml
+      vars:
+        _cassandra_storage_mode_starts: "{{ ansible_play_hosts }}"  # (the stopped ones among them)
 
     # before the progress file: a run stopped here leaves none (a resume takes the latest)
     # asks once (cassandra_operation_confirm: false, or --check, asks nothing)

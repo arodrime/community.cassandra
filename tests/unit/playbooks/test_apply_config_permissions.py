@@ -143,7 +143,7 @@ def test_a_failed_unit_with_nothing_to_apply_is_said_under_the_node():
     # and the recap, where it would read as "nothing to apply" alone
     assert note(running=False, unit="failed") == (False, "write", [
         "its cassandra unit failed and nothing is to apply: not started by this run (see systemctl status cassandra"
-        " / journalctl -u cassandra there, fix it and start it)"])
+        " / journalctl -u cassandra there, fix it and start it with start_rack)"])
     assert note(running=False) == (False, "write", [])  # stopped on purpose: nothing to say
     assert note(running=False, unit="failed", result="timeout") == (False, "write", [])  # a stop that timed out: no failure
 

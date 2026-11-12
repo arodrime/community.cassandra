@@ -135,6 +135,7 @@
         rolespec_validate: false  # as the include it was: no argument check
       vars:
         cassandra_service_state: restarted
+        _cassandra_storage_mode_checked: true  # (storage_mode_guard.yml, before the plan)
       when: _restart | bool
 
     # (kept on a node left down: a resumed run starts it once fixed)

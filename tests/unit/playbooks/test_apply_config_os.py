@@ -366,7 +366,7 @@ def test_the_restart_window_reuses_the_restart():
     assert [t["name"] for t in win["rescue"]] == ["Look for a Cassandra JVM", "Start Cassandra again, without them",
                                                   "Forget the mark of the stop", "Stop the run"]
     again = win["rescue"][1]
-    assert again["vars"] == {"cassandra_service_state": "restarted"}
+    assert again["vars"] == {"cassandra_service_state": "restarted", "_cassandra_storage_mode_checked": True}
     for jvm, checked, expected in ((1, None, True), (0, None, True), (0, "failed", False), (1, "ok", True)):
         variables = {"cassandra_service_window_jvm": {"rc": jvm}}
         if checked:

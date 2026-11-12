@@ -251,7 +251,7 @@
                 if not _running | bool and _clock.mark is defined and not _stopped | bool
                 else [])
              + (['its cassandra unit failed and nothing is to apply: not started by this run (see systemctl status cassandra'
-                 ' / journalctl -u cassandra there, fix it and start it)']
+                 ' / journalctl -u cassandra there, fix it and start it with start_rack)']
                 if _unit_failed | bool and not _running | bool and not _todo | bool else [])
              + (_no_unit | map(attribute='item') | reject('match', 'package ') | map('regex_replace', '$',
                 ' cannot run here (the condition of its unit): left as it is') | list)
@@ -421,11 +421,13 @@
           {{ [] if not _down else
              [_down | join(', ') ~ ': Cassandra not running, and ' ~ _restart | join(', ') ~ ' would be restarted, which needs'
               ~ ' every other node up.',
-              [('Apply the config there first (--limit ' ~ _limit | join(',') ~ ') and start ' ~ _them ~ ' if stopped on purpose,'
+              [('Apply the config there first (--limit ' ~ _limit | join(',') ~ ') and start ' ~ _them ~ ' with start_rack'
+                ~ ' (which checks the start first) if stopped on purpose,'
                 ~ ' or, if an interrupted run stopped ' ~ _them ~ ', resume it (-e cassandra_rolling_resume=true); then run again.'
                 if _limit else ''),
                (_failed | join(', ') ~ ': the cassandra unit failed and nothing is to apply: see systemctl status cassandra'
-                ~ ' / journalctl -u cassandra there, fix it and start it, then run again.' if _failed else ''),
+                ~ ' / journalctl -u cassandra there, fix it and start it with start_rack (which checks the start first),'
+                ~ ' then run again.' if _failed else ''),
                ('A restart for the tuned profile or the LVM read-ahead can be left for later:'
                 ~ ' -e cassandra_linux_tuned_switch_restart=false -e cassandra_data_lvchange_restart=false.'
                 if _restart | map('extract', hostvars) | map(attribute='cassandra_apply_config_disks_window', default=[])

@@ -38,3 +38,12 @@ bugfixes:
     ``apply_config`` starts is refused when nothing tells it. ``-e`` items with no mode, or two modes for a node, are
     refused; ``update_java`` checks them against the nodes it updates, before its question, and compares the
     inventory's mode with the file's as Cassandra reads them (quotes, case).
+  - >-
+    storage_compatibility_mode guards - the mode checked is the one of the ``cassandra.yaml`` Cassandra will really
+    start with: the file on the node when ``cassandra_config_keep_files`` keeps it, the render of the operator's
+    template (``cassandra_config_template_overrides``), else the inventory's. ``cassandra_service`` (``site.yml``,
+    ``start_rack``) checks each node it starts or restarts that ever started, a start into ``NONE`` included (no plan
+    warned of it); a resumed ``rolling_restart`` or ``rolling_reboot`` checks the node it starts, ``sync_clocks`` the
+    nodes of its restart windows. The ``-e cassandra_storage_mode_running`` of a way out keeps the items given; after
+    ``update_java``'s "apply_config first", the run is done again without it. ``apply_config``'s refusal of a node
+    not running names ``start_rack`` to start it, which checks the start.

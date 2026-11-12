@@ -6,14 +6,18 @@
 # -e cassandra_storage_mode_running gives it); not known: refused only when its file may have changed since its
 # start (the last check). Once for the nodes of the play (under serial, as update_java and the upgrade's rolling phase run their
 # nodes, those of its batch: a node of a later batch is checked at its turn): one of them refused stops the run
-# before any of them is restarted. _cassandra_storage_mode_written: true when the inventory's mode is
-# written first (cassandra_config), else the file's mode is the one restarted with. _cassandra_storage_mode_hosts:
+# before any of them is restarted. _cassandra_storage_mode_written: true when the config is written first
+# (cassandra_config), else the file's mode is the one restarted with; the mode compared is the one of the cassandra.yaml
+# Cassandra will really start with (cassandra_storage_mode_written: the inventory's, the render of the operator's
+# template, or the file on the node when cassandra_config_keep_files keeps it). _cassandra_storage_mode_hosts:
 # the nodes the run restarts (default: those of the play); _cassandra_storage_mode_kept: true when the run writes the
 # inventory's config without showing it (update_java): a node whose inventory has another mode than its file is
 # refused (apply_config shows that change first). A restart of its file (rolling_restart, rolling_reboot) into NONE
 # is refused where the inventory has another mode (the plan warns when it has NONE). A stopped
 # node: the mode it last ran (logged at its last start, or its file unchanged since); the nodes the run starts
-# (_cassandra_storage_mode_starts, apply_config) are refused when nothing tells it. _cassandra_storage_mode_read_done:
+# (_cassandra_storage_mode_starts: apply_config's, a resumed rolling_restart's, cassandra_service's) are refused when
+# nothing tells it. _cassandra_storage_mode_unannounced: true when no plan warned of the point of no return
+# (cassandra_service alone: site.yml, start_rack): a start into NONE is refused. _cassandra_storage_mode_read_done:
 # true when the play read the nodes already. Read-only, under --check too.
 - name: Read the mode Cassandra runs
   ansible.builtin.include_tasks: storage_mode_read.yml
@@ -24,7 +28,8 @@
 # -e cassandra_storage_mode_running=<node>:<mode>: the mode read by hand, taken only where nothing else tells it
 # (over CQL, logged at its start, its cassandra.yaml unchanged since that start); one that says another mode than
 # those, is not a mode, gives none or two, names no node the run restarts (the nodes of its later plays too: a refusal
-# before the question), or names a node that runs Cassandra 4.x (no such mode) is refused, never left aside
+# before the question; _cassandra_storage_mode_given_nodes: the nodes another guard of the run checks too), or names a
+# node that runs Cassandra 4.x (no such mode) is refused, never left aside
 - name: The mode given with -e is taken only where nothing else tells it
   ansible.builtin.assert:
     that: _wrong | length == 0
@@ -51,7 +56,7 @@
       {%-   if row -%}{%- set _ = out.append(row) -%}{%- endif -%}
       {%- endfor -%}
       {{ out + _given | community.cassandra.cassandra_storage_mode_given_unknown(
-                 _cassandra_storage_mode_hosts | default(ansible_play_hosts_all)) }}
+                 _cassandra_storage_mode_given_nodes | default(_cassandra_storage_mode_hosts | default(ansible_play_hosts_all))) }}
   when:
     - cassandra_version | default('') == '50x'
     - cassandra_storage_mode_running | default('') | length > 0
@@ -83,7 +88,8 @@
                         'cassandra_storage_mode_cql': hv.cassandra_storage_mode_cql | default({}),
                         'cassandra_storage_mode_running': hv.cassandra_storage_mode_running | default('')}
                        | community.cassandra.cassandra_storage_mode_back_stop(
-                           hv.cassandra_storage_compatibility_mode | default('NONE'), _written) -%}
+                           hv.cassandra_storage_compatibility_mode | default('NONE'),
+                           hv | community.cassandra.cassandra_storage_mode_written(_written)) -%}
       {%-   if stop -%}{%- set _ = out.append(stop) -%}{%- endif -%}
       {%- endfor -%}
       {{ out }}
@@ -118,23 +124,28 @@
                         'cassandra_storage_mode_cql': hv.cassandra_storage_mode_cql | default({}),
                         'cassandra_storage_mode_running': hv.cassandra_storage_mode_running | default('')}
                        | community.cassandra.cassandra_storage_mode_jump_stop(
-                           hv.cassandra_storage_compatibility_mode | default('NONE'), _written) -%}
+                           hv.cassandra_storage_compatibility_mode | default('NONE'),
+                           hv | community.cassandra.cassandra_storage_mode_written(_written)) -%}
       {%-   if stop -%}{%- set _ = out.append(stop) -%}{%- endif -%}
       {%- endfor -%}
       {{ out }}
   when: cassandra_version | default('') == '50x'
 
-# ... nor, a restart of its file (rolling_restart, rolling_reboot), into NONE from the mode it runs while the
-# inventory has another mode (an apply_config cut after its write of NONE, the inventory set back since): the point of
-# no return is the operator's choice, made in the inventory (the plan then warns). update_java writes the inventory's
-# mode: the check that it keeps the file's says it
+# ... nor into NONE from the mode it runs while the inventory has another mode, with a file the inventory does not
+# write (a restart of its file, rolling_restart or rolling_reboot; a kept one, cassandra_config_keep_files; the
+# operator's template, cassandra_config_template_overrides; an apply_config cut after its write of NONE, the inventory
+# set back since): the point of no return is the operator's choice, made in the inventory (the plan then warns). Nor,
+# a start or restart of cassandra_service alone (_cassandra_storage_mode_unannounced: no plan, nothing warns), into NONE
+# whatever the inventory. update_java writes the inventory's mode: the check that it keeps the file's says it
 - name: The restarts take no node into NONE unless the inventory has it
   ansible.builtin.assert:
     that: _none | length == 0
     fail_msg: >-
       {{ (['A ' ~ _none | map(attribute='verb') | unique | join(' or ') ~ ' would take '
            ~ _none | map(attribute='node') | join(', ') ~ ' into storage_compatibility_mode NONE, the point of no return,'
-           ~ ' which the inventory does not have there. Nothing was changed.']
+           ~ (' which the inventory does not have there.' if _announced else
+              ' with no warning before it: once a node runs NONE, it cannot go back to UPGRADING or CASSANDRA_4, nor to'
+              ~ ' its former Cassandra version.') ~ ' Nothing was changed.']
           + _none | map(attribute='row') | list
           + _none | community.cassandra.cassandra_storage_mode_way_out_lines) | join(_nl) }}
     quiet: true
@@ -142,6 +153,8 @@
   vars:
     cassandra_output: true  # a verdict: its msg as is (ops callback)
     _nl: "\n"
+    _written: "{{ _cassandra_storage_mode_written | default(false) | bool }}"
+    _announced: "{{ not _cassandra_storage_mode_unannounced | default(false) | bool }}"
     _none: >-
       {%- set out = [] -%}
       {%- for h in _cassandra_storage_mode_hosts | default(ansible_play_hosts)
@@ -152,13 +165,12 @@
                         'cassandra_storage_mode_cql': hv.cassandra_storage_mode_cql | default({}),
                         'cassandra_storage_mode_running': hv.cassandra_storage_mode_running | default('')}
                        | community.cassandra.cassandra_storage_mode_into_none_stop(
-                           hv.cassandra_storage_compatibility_mode | default('NONE')) -%}
+                           hv.cassandra_storage_compatibility_mode | default('NONE'),
+                           hv | community.cassandra.cassandra_storage_mode_written(_written), _announced) -%}
       {%-   if stop -%}{%- set _ = out.append(stop) -%}{%- endif -%}
       {%- endfor -%}
       {{ out }}
-  when:
-    - cassandra_version | default('') == '50x'
-    - not _cassandra_storage_mode_written | default(false) | bool
+  when: cassandra_version | default('') == '50x'
 
 # update_java writes the inventory's config before each restart, without showing it: a storage_compatibility_mode
 # change there would cross a step (NONE: the point of no return) unseen. apply_config shows it first, with its warning;
@@ -172,16 +184,21 @@
           + _changed | map(attribute='row') | list
           + (['WAY OUT  Choose one:',
               '  1. Run apply_config first: it shows the change, and its warning for NONE.',
+              '     ' ~ _then_after_apply,
               "  2. Or keep the mode of each cassandra.yaml, in the inventory:"]
-             + _changed | map(attribute='keep') | select | list + ['  Then run this again.']
+             + _changed | map(attribute='keep') | select | list + ['     Then run this again.']
              if _changed | map(attribute='keep') | select | list | length == _changed | length else
-             ['WAY OUT  Run apply_config first: it shows the change, and its warning for NONE. Then run this again.'])
+             ['WAY OUT  Run apply_config first: it shows the change, and its warning for NONE. ' ~ _then_after_apply])
          ) | join(_nl) }}
     quiet: true
   run_once: true
   vars:
     cassandra_output: true  # a verdict: its msg as is (ops callback)
     _nl: "\n"
+    # apply_config restarts the node: Cassandra then logs the mode it runs, the one given is no longer the one to give
+    _then_after_apply: >-
+      {{ 'Then run this again without -e cassandra_storage_mode_running.'
+         if cassandra_storage_mode_running | default('') | length > 0 else 'Then run this again.' }}
     _changed: >-
       {%- set out = [] -%}
       {%- for h in _cassandra_storage_mode_hosts | default(ansible_play_hosts)
@@ -191,7 +208,8 @@
                         'cassandra_storage_mode_cql': hostvars[h].cassandra_storage_mode_cql | default({}),
                         'cassandra_storage_mode_running': hostvars[h].cassandra_storage_mode_running | default('')}
                        | community.cassandra.cassandra_storage_mode_kept_stop(
-                           hostvars[h].cassandra_storage_compatibility_mode | default('NONE') | string) -%}
+                           hostvars[h].cassandra_storage_compatibility_mode | default('NONE') | string,
+                           hostvars[h] | community.cassandra.cassandra_storage_mode_written) -%}
       {%-   if stop -%}{%- set _ = out.append(stop) -%}{%- endif -%}
       {%- endfor -%}
       {{ out }}
@@ -217,8 +235,8 @@
              "     SELECT value FROM system_views.settings WHERE name = 'storage_compatibility_mode';"]
           + _unsure | map(attribute='where') | list
           + ['  2. Run this again with:',
-             '     -e cassandra_storage_mode_running='
-             ~ _unsure | map(attribute='node') | map('regex_replace', '$', ':MODE') | join(','),
+             '     -e cassandra_storage_mode_running=' ~ _given | community.cassandra.cassandra_storage_mode_given_plus(
+                                                           _unsure | map(attribute='node') | list),
              '     MODE: CASSANDRA_4, UPGRADING or NONE, as read',
              '  Or let this run read it over CQL:',
              '  1. Set cassandra_cql_username and cassandra_cql_password.',
@@ -230,6 +248,7 @@
     cassandra_output: true  # a verdict: its msg as is (ops callback)
     _nl: "\n"
     _written: "{{ _cassandra_storage_mode_written | default(false) | bool }}"
+    _given: "{{ cassandra_storage_mode_running | default('') }}"  # its items kept in the -e of the way out
     _unsure: >-
       {%- set out = [] -%}
       {%- for h in _cassandra_storage_mode_hosts | default(ansible_play_hosts)
@@ -242,10 +261,10 @@
                         'cassandra_rpc_address': hv.cassandra_rpc_address | default(''),
                         'cassandra_listen_address': hv.cassandra_listen_address | default(''),
                         'cassandra_native_transport_port': hv.cassandra_native_transport_port | default(9042)} -%}
-      {%-   set rendered = (hv._cassandra_config_new | default({})).get('cassandra.yaml') if _written else none -%}
+      {%-   set w = hv | community.cassandra.cassandra_storage_mode_written(_written) -%}
+      {%-   set rendered = (hv._cassandra_config_new | default({})).get('cassandra.yaml') if w.mode is not none else none -%}
       {%-   set unsure = read | community.cassandra.cassandra_storage_mode_unsure(
-                hv.cassandra_storage_compatibility_mode | default('NONE') if _written else none,
-                rendered | hash('sha1') if rendered is not none else none) -%}
+                w, rendered | hash('sha1') if rendered is not none else none) -%}
       {%-   if unsure -%}
       {%-     set _ = out.append({'node': h, 'rows': unsure.rows,
                                   'where': '     ' ~ h ~ '  cqlsh on ' ~ unsure.cql}) -%}
@@ -273,8 +292,8 @@
           + _unsure | map(attribute='where') | list
           + ['  2. None there (rolled over): the newest archive of it that has one (system.log.*.zip).',
              '  3. Run this again with:',
-             '     -e cassandra_storage_mode_running='
-             ~ _unsure | map(attribute='node') | map('regex_replace', '$', ':MODE') | join(','),
+             '     -e cassandra_storage_mode_running=' ~ _given | community.cassandra.cassandra_storage_mode_given_plus(
+                                                           _unsure | map(attribute='node') | list),
              '     MODE: CASSANDRA_4, UPGRADING or NONE, as found']) | join(_nl) }}
     quiet: true
   run_once: true
@@ -282,6 +301,7 @@
     cassandra_output: true  # a verdict: its msg as is (ops callback)
     _nl: "\n"
     _written: "{{ _cassandra_storage_mode_written | default(false) | bool }}"
+    _given: "{{ cassandra_storage_mode_running | default('') }}"  # its items kept in the -e of the way out
     _unsure: >-
       {%- set out = [] -%}
       {%- for h in _cassandra_storage_mode_starts | default([])
@@ -291,7 +311,7 @@
                         'cassandra_storage_mode_read': hv.cassandra_storage_mode_read | default({}),
                         'cassandra_storage_mode_running': hv.cassandra_storage_mode_running | default('')} -%}
       {%-   set unsure = read | community.cassandra.cassandra_storage_mode_stopped_unsure(
-                hv.cassandra_storage_compatibility_mode | default('NONE') if _written else none) -%}
+                hv | community.cassandra.cassandra_storage_mode_written(_written)) -%}
       {%-   if unsure -%}
       {%-     set _ = out.append({'node': h, 'rows': unsure.rows, 'where': '     ' ~ h ~ '  ' ~ unsure.log}) -%}
       {%-   endif -%}

@@ -44,4 +44,5 @@
   vars:
     _cassandra_change_report_quiet: "{{ ansible_verbosity | int == 0 }}"  # the recap says it (-v shows it)
     cassandra_service_state: restarted
+    _cassandra_storage_mode_checked: true  # (storage_mode_guard.yml, before the plan)
     _cassandra_service_unit_written: true

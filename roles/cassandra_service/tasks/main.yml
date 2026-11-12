@@ -164,6 +164,43 @@
              | map(attribute='item') | map('community.cassandra.cassandra_seed_host') | reject('in', _created_now) | list }}
       when: _existing | length > 0
 
+    # 5.0: the cassandra.yaml on the node, as Cassandra starts with it, against the storage_compatibility_mode it ran
+    # (storage_mode_guard.yml: back, two steps on, into NONE with no warning before it, or not known: refused, the
+    # way out said), on the nodes this task starts or restarts that ever started. Not when the run that includes this
+    # checked the start before its plan (_cassandra_storage_mode_checked: rolling_restart, rolling_reboot,
+    # apply_config, update_java, upgrade)
+    - name: Note whether this node is restarted
+      ansible.builtin.set_fact:
+        _cassandra_service_restarts: >-
+          {{ cassandra_service_state == 'restarted' or (cassandra_service_restart_on_change | bool
+                                                        and cassandra_service_unit | default({}) is changed) }}
+      when:
+        - cassandra_version | default('') == '50x'
+        - not _cassandra_storage_mode_checked | default(false) | bool
+
+    - name: Refuse a start into another storage_compatibility_mode than one step from the one it ran
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: storage_mode_guard.yml
+      vars:
+        _cassandra_storage_mode_unannounced: true  # no plan warned of the point of no return
+        _cassandra_storage_mode_hosts: "{{ _moved }}"
+        _cassandra_storage_mode_starts: "{{ _moved }}"  # (the stopped ones among them)
+        _cassandra_storage_mode_given_nodes: "{{ ansible_play_hosts_all }}"  # (the -e of cassandra_config's guard too)
+        _moved: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts if hostvars[h].cassandra_service_was_initialized | default(false) | bool -%}
+          {%-   set hv = hostvars[h] -%}
+          {%-   if hv._cassandra_service_restarts | default(false) | bool
+                   or 'running=no' in (hv.cassandra_storage_mode_read | default({})).stdout_lines | default([]) -%}
+          {%-     set _ = out.append(h) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
+      when:
+        - cassandra_version | default('') == '50x'
+        - not _cassandra_storage_mode_checked | default(false) | bool
+
     - name: Start or restart cassandra
       ansible.builtin.systemd_service:
         name: cassandra

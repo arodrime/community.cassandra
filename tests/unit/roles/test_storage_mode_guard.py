@@ -445,9 +445,10 @@ def test_update_java_refuses_a_storage_mode_change_and_checks_only_its_nodes():
         "  n1  inventory NONE, its cassandra.yaml UPGRADING",
         "WAY OUT  Choose one:",
         "  1. Run apply_config first: it shows the change, and its warning for NONE.",
+        "     Then run this again.",
         "  2. Or keep the mode of each cassandra.yaml, in the inventory:",
         "     n1  cassandra_storage_compatibility_mode: UPGRADING",
-        "  Then run this again."]
+        "     Then run this again."]
     # behind too (refused before Java is installed); only the nodes update_java restarts
     hosts = {"n1": (_host("NONE", logged="NONE"), "UPGRADING"), "n2": (_host("NONE", logged="NONE"), "NONE")}
     assert guard(KEPT, hosts, _cassandra_storage_mode_kept=True)[1][1] == "  n1  inventory UPGRADING, its cassandra.yaml NONE"
@@ -465,9 +466,10 @@ def test_a_restart_of_a_file_into_none_needs_none_in_the_inventory():
     names = [t["name"] for t in _load(GUARD)]
     assert names.index(JUMP) < names.index(INTO_NONE) < names.index(UNSURE)
     check = next(t for t in _load(GUARD) if t["name"] == INTO_NONE)
-    # restarts of the file alone: not apply_config (it warns), nor update_java (it writes the inventory's: refused when
-    # it is not the file's)
-    assert "not _cassandra_storage_mode_written | default(false) | bool" in check["when"]
+    # every run: a written inventory's mode never refuses here (its own NONE is the operator's choice, the plan warns)
+    assert check["when"] == "cassandra_version | default('') == '50x'"
+    assert guard(INTO_NONE, {"n1": (_host("UPGRADING", logged="UPGRADING"), "NONE")},
+                 _cassandra_storage_mode_written=True)[0] is True
     # it runs UPGRADING (logged), its file NONE (apply_config cut after its write), the inventory set back
     ok, msg = guard(INTO_NONE, {"n1": (_host("NONE", logged="UPGRADING"), "UPGRADING"),
                                 "n2": (_host("NONE", logged="NONE"), "UPGRADING")})
@@ -625,7 +627,7 @@ def test_kept_compares_the_modes_as_cassandra_reads_them():
             is True, (file_mode, inventory)
     ok, msg = guard(KEPT, {"n1": (_host('"UPGRADING"', logged="UPGRADING"), "NONE")}, _cassandra_storage_mode_kept=True)
     assert ok is False and msg[1] == '  n1  inventory NONE, its cassandra.yaml "UPGRADING"'
-    assert msg[5] == "     n1  cassandra_storage_compatibility_mode: UPGRADING"
+    assert msg[6] == "     n1  cassandra_storage_compatibility_mode: UPGRADING"
 
 
 def test_items_of_e_with_no_mode_or_two_are_refused():
@@ -648,3 +650,220 @@ def test_e_names_only_the_nodes_the_run_restarts():
     ok, msg = guard(GIVEN, hosts, cassandra_storage_mode_running="n2:UPGRADING", _cassandra_storage_mode_hosts=["n1"])
     assert ok is False and msg[1] == "  n2  -e gives UPGRADING: no such node in this run (its inventory name)"
     assert guard(GIVEN, hosts, cassandra_storage_mode_running="n1:UPGRADING", _cassandra_storage_mode_hosts=["n1"])[0]
+
+
+# The guard checks the cassandra.yaml Cassandra will really start with: kept on the node (cassandra_config_keep_files),
+# the render of the operator's template (cassandra_config_template_overrides), else the inventory's mode
+KEEP = {"cassandra_config_keep_files": ["cassandra.yaml"]}
+
+
+def _template(mode):
+    return {"cassandra_config_template_overrides": {"cassandra.yaml": "my-cassandra.yaml.j2"},
+            "_cassandra_config_new": {"cassandra.yaml": "num_tokens: 16\nstorage_compatibility_mode: %s  # ours\n" % mode}}
+
+
+def test_the_mode_written_is_the_one_of_the_file_it_starts_with():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_storage_mode import (
+        cassandra_storage_mode_written)
+    assert cassandra_storage_mode_written({"cassandra_storage_compatibility_mode": "UPGRADING"}) == {
+        "mode": "UPGRADING", "source": "inventory"}
+    assert cassandra_storage_mode_written({"cassandra_storage_compatibility_mode": "UPGRADING"}, False) == {
+        "mode": None, "source": "file"}
+    assert cassandra_storage_mode_written(dict(KEEP, cassandra_storage_compatibility_mode="NONE")) == {
+        "mode": None, "source": "kept"}
+    assert cassandra_storage_mode_written(dict(_template("'NONE'"), cassandra_storage_compatibility_mode="UPGRADING")) == {
+        "mode": "NONE", "source": "template"}
+    no_line = dict(_template("x"), _cassandra_config_new={"cassandra.yaml": "num_tokens: 16\n"})
+    assert cassandra_storage_mode_written(no_line)["mode"] == "CASSANDRA_4"  # no such line: what 5.0 runs then
+    # the role's own template renders the inventory's mode
+    assert cassandra_storage_mode_written(dict(_template("NONE"), cassandra_config_template_overrides={},
+                                               cassandra_storage_compatibility_mode="UPGRADING"))["mode"] == "UPGRADING"
+
+
+def test_a_kept_cassandra_yaml_is_checked_as_it_is_on_the_node():
+    # the inventory one step on, the kept file back (CASSANDRA_4) or two steps on (NONE): its restart takes it there
+    back = dict(_host("CASSANDRA_4", logged="UPGRADING"), **KEEP)
+    ok, msg = guard(BACK, {"n1": (back, "UPGRADING")}, _cassandra_storage_mode_written=True)
+    assert ok is False and msg[1:] == [
+        "  n1  runs UPGRADING, its cassandra.yaml has CASSANDRA_4 (cassandra_config_keep_files)",
+        "WAY OUT  On n1, set storage_compatibility_mode: UPGRADING in /etc/cassandra/conf/cassandra.yaml by hand"
+        " (cassandra_config_keep_files: apply_config leaves it as it is). Then run this again."]
+    ok, msg = guard(JUMP, {"n1": (dict(_host("NONE", logged="CASSANDRA_4"), **KEEP), "UPGRADING")},
+                    _cassandra_storage_mode_written=True)
+    assert ok is False and msg[1] == "  n1  runs CASSANDRA_4, its cassandra.yaml has NONE (cassandra_config_keep_files)"
+    # into NONE with the inventory before it: refused as a restart of its file is
+    ok, msg = guard(INTO_NONE, {"n1": (dict(_host("NONE", logged="UPGRADING"), **KEEP), "UPGRADING")},
+                    _cassandra_storage_mode_written=True)
+    assert ok is False and msg[1] == (
+        "  n1  runs UPGRADING, its cassandra.yaml has NONE (cassandra_config_keep_files), the inventory UPGRADING")
+    # its mode not read: the kept file's (not the inventory's) could be back
+    unsure = dict(_host("CASSANDRA_4", more=CHANGED), cassandra_storage_mode_cql=CQL_FAILED, **KEEP)
+    ok, msg = guard(UNSURE, {"n1": (unsure, "NONE")}, _cassandra_storage_mode_written=True)
+    assert ok is False and msg[3] == "  n1  its cassandra.yaml has CASSANDRA_4 (cassandra_config_keep_files)"
+    # update_java leaves a kept file as it is: no mode change for it to show
+    assert guard(KEPT, {"n1": (dict(_host("UPGRADING", logged="UPGRADING"), **KEEP), "NONE")},
+                 _cassandra_storage_mode_kept=True)[0] is True
+    # the same file at the mode it runs: nothing refused
+    assert guard(BACK, {"n1": (dict(_host("UPGRADING", logged="UPGRADING"), **KEEP), "CASSANDRA_4")},
+                 _cassandra_storage_mode_written=True)[0] is True
+
+
+def test_the_operators_template_is_checked_as_it_renders():
+    # the inventory at UPGRADING, the template renders CASSANDRA_4: back
+    ok, msg = guard(BACK, {"n1": (dict(_host("UPGRADING", logged="UPGRADING"), **_template("CASSANDRA_4")), "UPGRADING")},
+                    _cassandra_storage_mode_written=True)
+    assert ok is False and msg[1:] == [
+        "  n1  runs UPGRADING, its cassandra.yaml would have CASSANDRA_4 (cassandra_config_template_overrides)",
+        "WAY OUT  On n1, set storage_compatibility_mode: UPGRADING in your cassandra.yaml template"
+        " (cassandra_config_template_overrides) (its cassandra.yaml has it). Then run this again."]
+    # it renders NONE from CASSANDRA_4: two steps; UPGRADING first, from the template
+    ok, msg = guard(JUMP, {"n1": (dict(_host("CASSANDRA_4", logged="CASSANDRA_4"), **_template("NONE")), "CASSANDRA_4")},
+                    _cassandra_storage_mode_written=True)
+    assert ok is False and msg[-1] == (
+        "WAY OUT  On n1, set storage_compatibility_mode: UPGRADING in your cassandra.yaml template"
+        " (cassandra_config_template_overrides) first, then run apply_config --limit n1 (it writes UPGRADING and restarts"
+        " it). Then run this again.")
+    # it renders NONE from UPGRADING, the inventory at UPGRADING: not the operator's choice in the inventory
+    ok, msg = guard(INTO_NONE, {"n1": (dict(_host("UPGRADING", logged="UPGRADING"), **_template("NONE")), "UPGRADING")},
+                    _cassandra_storage_mode_written=True)
+    assert ok is False and msg[1:5] == [
+        "  n1  runs UPGRADING, its cassandra.yaml would have NONE (cassandra_config_template_overrides), the inventory"
+        " UPGRADING",
+        "WAY OUT  On n1, choose one:",
+        "  1. Keep UPGRADING:",
+        "     set storage_compatibility_mode: UPGRADING in your cassandra.yaml template"
+        " (cassandra_config_template_overrides)."]
+    # rendered at the mode it runs, or the next one with NONE in the inventory: nothing refused
+    for check in (BACK, JUMP, INTO_NONE):
+        assert guard(check, {"n1": (dict(_host("UPGRADING", logged="UPGRADING"), **_template("NONE")), "NONE")},
+                     _cassandra_storage_mode_written=True)[0] is True
+
+
+def test_cassandra_service_checks_each_start_it_does():
+    tasks = _load("roles/cassandra_service/tasks/main.yml")
+    block = next(t for t in tasks if t.get("name") == "Start or restart this node")["block"]
+    names = [t["name"] for t in block]
+    check = block[names.index("Refuse a start into another storage_compatibility_mode than one step from the one it ran")]
+    # right before the start, after it is known whether the node ever started
+    assert names.index("Remember whether it was") < names.index(check["name"]) == names.index("Start or restart cassandra") - 1
+    assert check["ansible.builtin.include_role"]["tasks_from"] == "storage_mode_guard.yml"
+    assert check["vars"]["_cassandra_storage_mode_unannounced"] is True
+    # the -e cassandra_config's guard needed for a running node (site.yml) is not refused here as naming no node
+    assert check["vars"]["_cassandra_storage_mode_given_nodes"] == "{{ ansible_play_hosts_all }}"
+    running = dict(_host("UPGRADING", more=CHANGED), cassandra_storage_mode_cql=CQL_FAILED)
+    hosts = {"n1": (_stopped("UPGRADING", "last_logged=UPGRADING"), "UPGRADING"), "n2": (running, "UPGRADING")}
+    assert guard(GIVEN, hosts, cassandra_storage_mode_running="n2:UPGRADING", _cassandra_storage_mode_hosts=["n1"],
+                 _cassandra_storage_mode_given_nodes=["n1", "n2"])[0] is True
+    assert guard(GIVEN, hosts, cassandra_storage_mode_running="n2:UPGRADING", _cassandra_storage_mode_hosts=["n1"])[0] is False
+    assert "not _cassandra_storage_mode_checked | default(false) | bool" in check["when"]
+    # the nodes it starts (stopped) or restarts, that ever started; not one left running, nor a new one
+    hostvars = {
+        "n1": {"cassandra_service_was_initialized": True, "cassandra_storage_mode_read": {"stdout_lines": ["running=no"]}},
+        "n2": {"cassandra_service_was_initialized": True, "cassandra_storage_mode_read": {"stdout_lines": ["running=yes"]}},
+        "n3": {"cassandra_service_was_initialized": True, "_cassandra_service_restarts": True,
+               "cassandra_storage_mode_read": {"stdout_lines": ["running=yes"]}},
+        "n4": {"cassandra_service_was_initialized": False, "cassandra_storage_mode_read": {"stdout_lines": ["running=no"]}}}
+    assert _render(check["vars"]["_moved"], hostvars=hostvars, ansible_play_hosts=sorted(hostvars)) == ["n1", "n3"]
+    # the runs that checked it before their plan say so
+    for path, name in (("roles/cassandra_operation/tasks/action_restart.yml", "Restart it and wait until it has joined"),
+                       ("roles/cassandra_operation/tasks/action_reboot.yml", "Wait until the node has joined"),
+                       ("roles/cassandra_operation/tasks/action_apply_config.yml", "Start the node and wait until it has joined"),
+                       ("roles/cassandra_operation/tasks/action_upgrade.yml", "Start it and wait until it has joined")):
+        task = next(t for t in _load(path) if t.get("name") == name)
+        assert task["vars"]["_cassandra_storage_mode_checked"] is True, path
+    # start_rack, site.yml: the role as is, checked there
+    start = next(t for p in _load("playbooks/start_rack.yml") for t in p.get("tasks", [])
+                 if t.get("name") == "Start Cassandra and wait until the node has joined")
+    assert "_cassandra_storage_mode_checked" not in start["vars"]
+
+
+def test_a_start_into_none_with_no_plan_before_it_is_refused():
+    # stopped, last ran UPGRADING, its file NONE (an apply_config cut after its write), NONE in the inventory: site.yml
+    # or start_rack would start it into NONE with no warning
+    stopped = _stopped("NONE", "last_logged=UPGRADING")
+    ok, msg = guard(INTO_NONE, {"n1": (stopped, "NONE")}, _cassandra_storage_mode_unannounced=True)
+    assert ok is False and msg == [
+        "A start would take n1 into storage_compatibility_mode NONE, the point of no return, with no warning before it:"
+        " once a node runs NONE, it cannot go back to UPGRADING or CASSANDRA_4, nor to its former Cassandra version."
+        " Nothing was changed.",
+        "  n1  stopped, last ran UPGRADING, its cassandra.yaml has NONE, the inventory NONE",
+        "WAY OUT  On n1, choose one:",
+        "  1. Keep UPGRADING:",
+        "     set storage_compatibility_mode: UPGRADING back in /etc/cassandra/conf/cassandra.yaml by hand,",
+        "     and cassandra_storage_compatibility_mode: UPGRADING in the inventory.",
+        "  2. Or move to NONE (the point of no return):",
+        "     Start Cassandra there by hand (systemctl start cassandra): it cannot go back once it runs NONE.",
+        "  Then run this again."]
+    # a plan that warns before it asks (rolling_restart, apply_config): the inventory's choice
+    assert guard(INTO_NONE, {"n1": (stopped, "NONE")})[0] is True
+    # a running node the role restarts (cassandra_service_state: restarted): rolling_restart warns first
+    ok, msg = guard(INTO_NONE, {"n1": (_host("NONE", logged="UPGRADING"), "NONE")}, _cassandra_storage_mode_unannounced=True)
+    assert ok is False and msg[-2] == "     Run rolling_restart --limit n1 (it shows the warning first)."
+
+
+def test_the_rolling_runs_check_the_nodes_they_start():
+    # a resumed run starts the node the interrupted one stopped: against the mode it last ran, refused when not known
+    for path in ("playbooks/rolling_restart.yml", "playbooks/rolling_reboot.yml"):
+        task = next(t for p in _load(path) for t in p.get("tasks", []) if t.get("ansible.builtin.include_role", {}).get(
+            "tasks_from") == "storage_mode_guard.yml")
+        assert task["vars"]["_cassandra_storage_mode_starts"] == "{{ ansible_play_hosts }}", path
+    unread = _stopped("UPGRADING", "log_state=none", "last_same=no")
+    ok, msg = guard(STOPPED, {"n1": (unread, "UPGRADING"), "n2": (_host("UPGRADING", logged="UPGRADING"), "UPGRADING")},
+                    _cassandra_storage_mode_starts=["n1", "n2"])
+    assert ok is False and msg[0] == "A start could move n1 back, or two steps on. Nothing was changed."
+    assert msg[3] == "  n1  its cassandra.yaml has UPGRADING"
+    # sync_clocks' restart windows: checked, its plan not warning of NONE
+    task = next(t for p in _load("playbooks/sync_clocks.yml") for t in p.get("tasks", [])
+                if t.get("ansible.builtin.include_role", {}).get("tasks_from") == "storage_mode_guard.yml")
+    assert task["vars"]["_cassandra_storage_mode_unannounced"] is True
+    assert task["vars"]["_cassandra_storage_mode_starts"] == task["vars"]["_cassandra_storage_mode_hosts"]
+
+
+def test_the_e_of_the_way_out_keeps_the_items_given():
+    # n2's mode given already (nothing else tells it), n1's not read: the next run needs both
+    n1 = dict(_host("UPGRADING", more=CHANGED), cassandra_storage_mode_cql=CQL_FAILED)
+    n2 = dict(_host("NONE", more=CHANGED), inventory_hostname="n2", cassandra_storage_mode_cql=CQL_FAILED)
+    ok, msg = guard(UNSURE, {"n1": (n1, "UPGRADING"), "n2": (n2, "NONE")}, cassandra_storage_mode_running="n2:NONE")
+    assert ok is False and "     -e cassandra_storage_mode_running=n2:NONE,n1:MODE" in msg
+    stopped = _stopped("UPGRADING", "log_state=none", "last_same=no")
+    ok, msg = guard(STOPPED, {"n1": (stopped, "UPGRADING"), "n2": (n2, "NONE")}, cassandra_storage_mode_running="n2:NONE",
+                    _cassandra_storage_mode_starts=["n1", "n2"])
+    assert ok is False and "     -e cassandra_storage_mode_running=n2:NONE,n1:MODE" in msg
+    # nothing given: the refused nodes alone
+    ok, msg = guard(UNSURE, {"n1": (n1, "UPGRADING"), "n2": (n2, "NONE")})
+    assert "     -e cassandra_storage_mode_running=n1:MODE,n2:MODE" in msg
+
+
+def test_update_java_sends_to_apply_config_without_the_e_it_restarts_with():
+    # the mode given with -e (nothing else tells it): apply_config restarts the node, Cassandra then logs its mode
+    given = dict(_host("UPGRADING", more=CHANGED), cassandra_storage_mode_cql=CQL_FAILED,
+                 cassandra_storage_mode_running="n1:UPGRADING")
+    ok, msg = guard(KEPT, {"n1": (given, "NONE")}, _cassandra_storage_mode_kept=True,
+                    cassandra_storage_mode_running="n1:UPGRADING")
+    assert ok is False and msg[2:] == [
+        "WAY OUT  Choose one:",
+        "  1. Run apply_config first: it shows the change, and its warning for NONE.",
+        "     Then run this again without -e cassandra_storage_mode_running.",
+        "  2. Or keep the mode of each cassandra.yaml, in the inventory:",
+        "     n1  cassandra_storage_compatibility_mode: UPGRADING",
+        "     Then run this again."]
+    # no choice (the file's mode is not one to keep): the same
+    ok, msg = guard(KEPT, {"n1": (dict(given, cassandra_storage_mode_read={"stdout_lines": [
+        "yaml_read=yes", "yaml=BAD", "running=yes"]}), "NONE")}, _cassandra_storage_mode_kept=True,
+        cassandra_storage_mode_running="n1:UPGRADING")
+    assert ok is False and msg[-1] == ("WAY OUT  Run apply_config first: it shows the change, and its warning for NONE."
+                                       " Then run this again without -e cassandra_storage_mode_running.")
+
+
+def test_a_template_into_none_is_refused_when_the_file_alone_tells_the_mode():
+    # nothing logged, no CQL, its cassandra.yaml (UPGRADING) unchanged since its start: it runs UPGRADING; the operator's
+    # template writes NONE, the inventory has CASSANDRA_4: not chosen
+    host = dict(_host("UPGRADING", more=("started_sha1=x",)), cassandra_storage_mode_cql=CQL_FAILED, **_template("NONE"))
+    ok, msg = guard(INTO_NONE, {"n1": (host, "CASSANDRA_4")}, _cassandra_storage_mode_written=True)
+    assert ok is False and msg[1] == (
+        "  n1  runs UPGRADING, its cassandra.yaml would have NONE (cassandra_config_template_overrides), the inventory"
+        " CASSANDRA_4")
+    # the file's value quoted: read as Cassandra reads it
+    quoted = dict(host, cassandra_storage_mode_read={"stdout_lines": [
+        "yaml_read=yes", "yaml='UPGRADING'", "running=yes", "started_sha1=x"]})
+    assert guard(INTO_NONE, {"n1": (quoted, "CASSANDRA_4")}, _cassandra_storage_mode_written=True)[0] is False

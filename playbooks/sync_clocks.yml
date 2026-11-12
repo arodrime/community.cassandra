@@ -139,6 +139,19 @@
           slew: wait while its daemon corrects the offset
           window: set the clock in a restart window
 
+    # 5.0: a node set in a restart window whose cassandra.yaml has another storage_compatibility_mode than one step
+    # from the one it runs (or last ran, stopped by an interrupted run), or NONE from an earlier one (its plan does not
+    # warn of the point of no return): refused before the question
+    - name: Refuse a restart into another storage_compatibility_mode than one step from the one it runs
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: storage_mode_guard.yml
+      vars:
+        _cassandra_storage_mode_hosts: "{{ groups['cassandra_sync_clock_window_True'] | default([]) }}"
+        _cassandra_storage_mode_starts: "{{ groups['cassandra_sync_clock_window_True'] | default([]) }}"
+        _cassandra_storage_mode_unannounced: true
+      when: groups['cassandra_sync_clock_window_True'] | default([]) | length > 0
+
     # a node whose clock is ahead is said in a warning: what it stamped meanwhile
     # carries future timestamps
     - name: Show the clocks and confirm the run
