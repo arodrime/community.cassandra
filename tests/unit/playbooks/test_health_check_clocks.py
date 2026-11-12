@@ -134,7 +134,8 @@ def test_a_clock_off_and_one_not_read_are_a_problem(tmp_path, port):
         u"  node2  OFF       chronyd, synchronised to 192.0.2.1, +200.0 ms (±0.7 ms): ahead of its source by 200.0 ms,"
         " more than 50.0 ms",
     ]
-    assert lines[5].startswith("  node3  NOT READ  its clock could not be read: Module result deserialization failed")
+    # then ansible-core's words for the probe's failure (MODULE FAILURE before 2.19)
+    assert lines[5].startswith("  node3  NOT READ  its clock could not be read: ")
     assert lines[6].startswith("WARNING  node2's clock is AHEAD by about 200.0 ms: the writes it stamped as coordinator")
     verdict = lines.index("NOT HEALTHY  my_cluster  3 nodes checked, 1 problem")
     assert lines[verdict - 3:verdict] == ["", "====", ""]
