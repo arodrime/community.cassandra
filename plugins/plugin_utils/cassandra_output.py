@@ -46,6 +46,19 @@ _UNITS = (("TiB", 1024.0 ** 4), ("GiB", GIB), ("MiB", 1024.0 ** 2), ("KiB", 1024
 # --- sizes, rates, durations ---------------------------------------------------------------
 
 
+def number(value, default=None):
+    """A number a template hands over, as a number: before ansible-core 2.19 a variable set by a template (a
+    task's vars, set_fact, -e) is text ("12", "12.5"; "" for none, AnsibleUnsafeText). An int, a float with a
+    fraction; default for none (None, "", "None"). Text that is no number raises ValueError."""
+    if value is None or isinstance(value, (int, float)):
+        return default if value is None else value
+    text = str(value).strip()
+    if text in ("", "None"):
+        return default
+    figure = float(text)
+    return int(figure) if figure.is_integer() else figure
+
+
 def _unit(count):
     """The unit count reads at least 1 in: (name, factor), ("B", 1) under
     1 KiB; the larger one when the smaller would round up to 1024.0."""
@@ -120,7 +133,7 @@ def rate(per_second):
 def duration(seconds, short=False):
     """"45s", "9m20s", "1h12m", "2d04h"; short: minutes at most under an
     hour ("9m"), for an ETA."""
-    seconds = int(max(0, seconds or 0))
+    seconds = int(max(0, number(seconds, 0)))
     if seconds >= 86400:
         return "%dd%02dh" % (seconds // 86400, seconds % 86400 // 3600)
     if seconds >= 3600:
@@ -1371,7 +1384,8 @@ def step_head(index, total_steps, node, operation):
     """The head of a progress line: the node's position in the run, the node,
     two spaces, what is done to it: "[2/5] node2  restart"; "node2  restart"
     outside a rolling operation (total_steps 0)."""
-    where = ("[%d/%d] %s" % (int(index), int(total_steps), node)) if int(total_steps or 0) else str(node)
+    index, total_steps = number(index, 0), number(total_steps, 0)
+    where = ("[%d/%d] %s" % (index, total_steps, node)) if total_steps else str(node)
     return "  ".join(x for x in [where, str(operation or "")] if x)
 
 

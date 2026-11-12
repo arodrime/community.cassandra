@@ -101,7 +101,8 @@ def cassandra_op_recap(results, check=False, cluster="", operation="", action=""
     node4, 110s on node5 -> ["DONE  rolling_restart  my_cluster  2 restarted", "  node4, node5  restarted  1m40s..1m50s
     each"]."""
     outcomes, operation = _outcomes(results, operation, action)
-    return out.recap(operation, str(cluster or ""), outcomes, check=check, seconds=seconds)
+    # seconds: text before ansible-core 2.19 (a task's vars), "" for none
+    return out.recap(operation, str(cluster or ""), outcomes, check=check, seconds=out.number(seconds))
 
 
 # Ansible's own words for a command that failed: the task's stderr says more

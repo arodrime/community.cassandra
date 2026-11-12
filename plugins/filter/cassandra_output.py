@@ -117,6 +117,7 @@ def cassandra_normal_wait_line(mode, waited=0, timeout=0, index=0, steps=0, node
         return "  ".join([out.step_head(index, steps, node, operation), str(what)])
     if done:
         head = out.step_head(index, steps, node, out.done_word(operation))
+        elapsed = out.number(elapsed)  # (text before ansible-core 2.19: a task's vars)
         took = out.duration(elapsed) if elapsed else ""  # none or 0: not in a rolling operation
         return "  ".join(x for x in [head, "NORMAL after %s" % out.duration(waited), took] if x)
     if mode in _MODE_STATE:
