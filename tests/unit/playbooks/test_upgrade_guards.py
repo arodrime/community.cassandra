@@ -646,6 +646,8 @@ def test_a_down_node_with_the_target_package_is_pointed_to_apply_config():
     run = {"inventory": ["/inv/a.yml"], "default_inventory": "", "hosts": "staging_b", "cwd": "/inv"}
     hostvars = {"n1": node("n1", 0), "n2": node("n2", 1, "installed 5.0.9"), "n3": node("n3", 1, "installed 4.1.12"),
                 "n4": node("n4", 1, "config-files 5.0.9")}  # dpkg: removed, its config kept: not installed
+    for name, rack in (("n2", "r1"), ("n3", "r1"), ("n4", "r2")):
+        hostvars[name]["_cassandra_preflight"] = {"cassandra_dc": "dc1", "cassandra_rack": rack}
     variables = dict(check["vars"], hostvars=hostvars, ansible_play_hosts=list(hostvars), cassandra_package_version="5.0.9",
                      _phase="rolling", _cassandra_run_command_args=run)
     assert render(check["vars"]["_on_target"], **variables) == ["n2"]
@@ -655,9 +657,15 @@ def test_a_down_node_with_the_target_package_is_pointed_to_apply_config():
         "  n3  package 4.1.12  " + REFUSED,
         "  n4  package not installed  " + REFUSED,
         "WAY OUT  on n2 (the target installed): write its config, ansible-playbook -i a.yml community.cassandra.apply_config"
-        " -e cassandra_hosts=staging_b --limit n2, then start Cassandra there (systemctl start cassandra)",
-        "  on n3, n4: start Cassandra there (systemctl start cassandra; apply_config --limit <node> starts a node whose"
-        " unit failed)",
+        " -e cassandra_hosts=staging_b --limit n2, then start Cassandra there with start_rack (which checks the start"
+        " first): ansible-playbook -i a.yml community.cassandra.start_rack -e cassandra_hosts=staging_b --limit n2"
+        " -e cassandra_target_dc=dc1 -e cassandra_target_rack=r1",
+        # a node started by hand would skip the check of its storage_compatibility_mode: start_rack, on these
+        # nodes alone (without --limit, every stopped node of the rack), one command per rack
+        "  on n3, n4: start Cassandra there with start_rack (which checks the start first): ansible-playbook -i a.yml"
+        " community.cassandra.start_rack -e cassandra_hosts=staging_b --limit n3 -e cassandra_target_dc=dc1"
+        " -e cassandra_target_rack=r1; ansible-playbook -i a.yml community.cassandra.start_rack -e cassandra_hosts=staging_b"
+        " --limit n4 -e cassandra_target_dc=dc1 -e cassandra_target_rack=r2",
         "  then run this phase again (a node already upgraded is skipped):",
         "  ansible-playbook -i a.yml community.cassandra.upgrade -e cassandra_hosts=staging_b -e cassandra_upgrade_phase=rolling"]
     assert check["vars"]["cassandra_output"] is True

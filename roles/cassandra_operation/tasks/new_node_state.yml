@@ -17,7 +17,14 @@
          else ansible_facts['default_ipv4']['address'] }}
     _add: >-
       {{ cassandra_node_standing | community.cassandra.cassandra_node_add_state(
-           cassandra_add_node_reset | default('auto') | community.cassandra.cassandra_reset_choice, _address) }}
+           cassandra_add_node_reset | default('auto') | community.cassandra.cassandra_reset_choice, _address, _start) }}
+    # a member down: start_rack on it alone (without --limit, every stopped node of its rack), which checks the start
+    _start: >-
+      {{ 'start_rack' | community.cassandra.cassandra_command(
+           limit=[inventory_hostname],
+           extra={'cassandra_target_dc': _cassandra_preflight.cassandra_dc | default(cassandra_dc | default('')),
+                  'cassandra_target_rack': _cassandra_preflight.cassandra_rack | default(cassandra_rack | default(''))},
+           **_cassandra_run_command_args) }}
     _state: "{{ _add.state }}"
   block:
     - name: A node of the cluster is not being added (its ring to join)

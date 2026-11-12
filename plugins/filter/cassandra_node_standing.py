@@ -516,7 +516,7 @@ def cassandra_node_standing(node, cluster_name, title="", running=False, jvm=Non
             "cluster_keyspaces_known": cluster_keyspaces is not None, "foreign": f.foreign}
 
 
-def cassandra_node_add_state(state, choice="auto", address=""):
+def cassandra_node_add_state(state, choice="auto", address="", start_command=""):
     """add_node's view of a node's state (cassandra_node_standing). Returns
     {'state', 'refusal'}: 'new' (not in the ring: added, emptied first when
     it holds data and may be: cassandra_add_node_reset_check), 'joining' (a
@@ -529,7 +529,8 @@ def cassandra_node_add_state(state, choice="auto", address=""):
     A node holding data that is not in the ring is 'new': whether it is
     emptied first is cassandra_add_node_reset_check's. choice:
     cassandra_add_node_reset (cassandra_reset_choice); address: its address,
-    for the replace_node command.
+    for the replace_node command; start_command: the start_rack command that
+    starts it alone (a member down: started with the check of its start).
     e.g. a state "member" -> {state: "joined", refusal: ""}; "blank" -> {state: "new", refusal: ""}."""
     s = state.get("state")
     ring = state.get("ring") or {}
@@ -559,8 +560,10 @@ def cassandra_node_add_state(state, choice="auto", address=""):
             " again (it empties the node first: cassandra_add_node_reset)." % (in_ring, e_id))}
     if s == "member_down":
         return {"state": "down", "refusal": (
-            "already in the ring (host ID %s) but down: start it (systemctl start cassandra) and check its logs;"
-            " add_node is not needed." % e_id)}
+            "already in the ring (host ID %s) but down: start it with start_rack (which checks the start first): %s;"
+            " check its logs; add_node is not needed." % (
+                e_id, start_command or "start_rack --limit %s -e cassandra_target_dc=<dc> -e cassandra_target_rack=<rack>"
+                % state.get("node")))}
     if s == "member_busy":
         return {"state": "busy", "refusal": (
             "%s in the ring (J joining, L leaving, M moving): wait until it is UN, then run add_node again." % in_ring)}

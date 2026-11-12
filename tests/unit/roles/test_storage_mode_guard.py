@@ -920,3 +920,15 @@ def test_the_upgrade_checks_its_starts_before_any_node_is_drained():
     assert ok is False and "  n1  its cassandra.yaml would have NONE (the inventory's)" in msg
     # read over CQL: two steps, refused
     assert guard(JUMP, {"n1": (_host("UPGRADING", cql="CASSANDRA_4", more=CHANGED), "NONE")}, **up)[0] is False
+
+
+def test_add_node_starts_a_member_down_with_start_rack_on_it_alone():
+    # the way out of a member down given to add_node: start_rack (which checks the start), --limit that node, its
+    # datacenter and rack
+    task = _load("roles/cassandra_operation/tasks/new_node_state.yml")[0]
+    assert ", _address, _start) }}" in task["vars"]["_add"]
+    run = {"inventory": ["/srv/inv/prod.yml"], "default_inventory": "", "hosts": "prod", "cwd": "/srv/inv"}
+    assert _render(task["vars"]["_start"], inventory_hostname="node7", _cassandra_run_command_args=run,
+                   _cassandra_preflight={"cassandra_dc": "dc1", "cassandra_rack": "r1"}) == (
+        "ansible-playbook -i prod.yml community.cassandra.start_rack -e cassandra_hosts=prod --limit node7"
+        " -e cassandra_target_dc=dc1 -e cassandra_target_rack=r1")

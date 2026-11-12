@@ -147,10 +147,16 @@ def test_the_files_written_back_are_checked_after_the_write():
     # stopped during the write: started again, then apply_config again
     results = {"results": [{"item": OPTIONS, "stat": {"exists": True, "checksum": sha1(STARTED_WITH)}}]}
     variables = dict(stop["vars"], cassandra_apply_config_as_started=plan, cassandra_apply_config_written_back=results,
-                     inventory_hostname="n3", cassandra_jvm={})
-    assert render(stop["ansible.builtin.assert"]["fail_msg"], variables) == (
+                     inventory_hostname="n3", cassandra_jvm={}, ansible_inventory_sources=["/srv/inv/prod.yml"],
+                     cassandra_hosts="prod", _cassandra_preflight={"cassandra_dc": "dc1", "cassandra_rack": "r2"})
+    # start_rack on it alone, which checks the start (by hand, its storage_compatibility_mode would go unchecked)
+    msg = render(stop["ansible.builtin.assert"]["fail_msg"], variables)
+    assert msg.startswith(
         "Cassandra restarted or stopped while %s was written back (the plan said no restart): start Cassandra on it"
-        " (systemctl start cassandra), then run apply_config again" % OPTIONS)
+        " with start_rack (which checks the start first): ansible-playbook -i " % OPTIONS), msg
+    assert msg.endswith("community.cassandra.start_rack -e cassandra_hosts=prod --limit n3 -e cassandra_target_dc=dc1"
+                        " -e cassandra_target_rack=r2; then run apply_config again"), msg
+    assert "systemctl" not in msg
 
 
 def test_a_node_not_running_reads_its_files_when_it_starts():

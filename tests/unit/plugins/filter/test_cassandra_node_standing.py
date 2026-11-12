@@ -552,6 +552,14 @@ def test_add_node_refusal_texts():
         " add: run replace_node (-e cassandra_target_nodes=node7 -e cassandra_replace_address=10.0.0.7).")
     assert refusal(answers=_answers(_me("D", "J"))).startswith("down in the middle of its bootstrap (DJ, host ID id-7)")
     assert refusal(answers=_answers(_me("D", "N"))).startswith("already in the ring (host ID id-7) but down")
+    # a member down: started with start_rack, which checks the start (by hand, its storage_compatibility_mode goes
+    # unchecked), on it alone
+    start = "ansible-playbook community.cassandra.start_rack --limit node7 -e cassandra_target_dc=dc1 -e cassandra_target_rack=r1"
+    assert cassandra_node_add_state(_state(answers=_answers(_me("D", "N"))), "auto", ME, start)["refusal"] == (
+        "already in the ring (host ID id-7) but down: start it with start_rack (which checks the start first): %s;"
+        " check its logs; add_node is not needed." % start)
+    assert "systemctl" not in refusal(answers=_answers(_me("D", "N")))
+    assert "start_rack --limit node7 -e cassandra_target_dc=<dc>" in refusal(answers=_answers(_me("D", "N")))
     assert refusal(answers=_answers(_me("U", "N"))) == (
         "the ring has UN host ID id-7 at this address, but this node does not answer (not running, or JMX unreachable):"
         " the address is used by another node (IP reused, or a replace in progress). Find which machine owns id-7"

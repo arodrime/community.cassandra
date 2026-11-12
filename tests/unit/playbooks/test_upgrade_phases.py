@@ -135,7 +135,8 @@ def test_a_node_nodetool_fails_on_is_said_with_its_error_and_the_way_out():
     lines = render(check["ansible.builtin.assert"]["fail_msg"], **variables).split("\n")
     assert lines[0] == "nodetool version failed on n2, n3, n4. Nothing was done."
     assert lines[3] == "  n4  package not installed  no output"
-    assert lines[4].startswith("WAY OUT  on n2, n3, n4: start Cassandra there (systemctl start cassandra; apply_config")
+    assert lines[4].startswith("WAY OUT  on n2, n3, n4: start Cassandra there with start_rack (which checks the start"
+                               " first): ansible-playbook community.cassandra.start_rack --limit n2,n3,n4")
     assert lines[-1] == "  ansible-playbook community.cassandra.upgrade -e cassandra_upgrade_phase=canary"
     del hostvars["n4"]
     variables["ansible_play_hosts"] = list(hostvars)

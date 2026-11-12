@@ -52,4 +52,9 @@ bugfixes:
     upgrade - a 5.0 patch upgrade checks, in its canary and rolling phases and before any node is drained, the
     ``storage_compatibility_mode`` each node will start with (the inventory's, written with the target's config): a
     mode back, two steps on, into ``NONE`` (no warning of the point of no return comes first), or not known, is
-    refused with the way out. A resumed ``update_java`` checks the node it starts against the mode it last ran.
+    refused with the way out (every node of the run runs then: a stopped one is refused before, by the check that
+    each node answers ``nodetool``). A resumed ``update_java`` checks the node it starts against the mode it last ran.
+  - >-
+    upgrade, apply_config, add_node - a way out that starts a stopped node gives the ``start_rack`` command on that
+    node alone (``--limit``, its datacenter and rack), which checks the start, instead of ``systemctl start
+    cassandra``, which would skip the ``storage_compatibility_mode`` check.

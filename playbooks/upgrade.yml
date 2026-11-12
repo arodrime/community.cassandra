@@ -218,9 +218,30 @@
         _steps: >-
           {{ (['on ' ~ _on_target | join(', ') ~ ' (the target installed): write its config, '
                ~ 'apply_config' | community.cassandra.cassandra_command(limit=_on_target, **_cassandra_run_command_args)
-               ~ ', then start Cassandra there (systemctl start cassandra)'] if _on_target else [])
-             + (['on ' ~ _others | join(', ') ~ ': start Cassandra there (systemctl start cassandra; apply_config'
-                 ~ ' --limit <node> starts a node whose unit failed)'] if _others else []) }}
+               ~ ', then start Cassandra there with start_rack (which checks the start first): '
+               ~ _start_rack.on_target | join('; ')] if _on_target else [])
+             + (['on ' ~ _others | join(', ') ~ ': start Cassandra there with start_rack (which checks the start first): '
+                 ~ _start_rack.others | join('; ')] if _others else []) }}
+        # start_rack on these nodes alone, a command per rack (without --limit, it starts every stopped node of the
+        # rack, one stopped on purpose too)
+        _start_rack: >-
+          {%- set out = {} -%}
+          {%- for kind, nodes in [['on_target', _on_target], ['others', _others]] -%}
+          {%-   set racks = {} -%}
+          {%-   for h in nodes -%}
+          {%-     set p = hostvars[h]._cassandra_preflight | default({}) -%}
+          {%-     set key = (p.cassandra_dc | default(hostvars[h].cassandra_dc | default('')),
+                             p.cassandra_rack | default(hostvars[h].cassandra_rack | default(''))) -%}
+          {%-     set _ = racks.update({key: racks.get(key, []) + [h]}) -%}
+          {%-   endfor -%}
+          {%-   set _ = out.update({kind: []}) -%}
+          {%-   for key in racks -%}
+          {%-     set _ = out[kind].append('start_rack' | community.cassandra.cassandra_command(
+                          limit=racks[key], extra={'cassandra_target_dc': key[0], 'cassandra_target_rack': key[1]},
+                          **_cassandra_run_command_args)) -%}
+          {%-   endfor -%}
+          {%- endfor -%}
+          {{ out }}
         _failed: >-
           {%- set out = [] -%}
           {%- for h in ansible_play_hosts | map('extract', hostvars) | selectattr('cassandra_upgrade_running.rc', 'defined')
@@ -783,7 +804,9 @@
         tasks_from: storage_mode_guard.yml
       vars:
         _cassandra_storage_mode_hosts: "{{ _storage_mode_nodes }}"
-        _cassandra_storage_mode_starts: "{{ _storage_mode_nodes }}"  # (the stopped ones among them)
+        # (none stopped: "Every node answers nodetool" refused a stopped node of the run before this play; kept should
+        # that check change)
+        _cassandra_storage_mode_starts: "{{ _storage_mode_nodes }}"
         _cassandra_storage_mode_written: true  # the inventory's mode, written then started with
         _cassandra_storage_mode_unannounced: true  # no plan warns of the point of no return
       when: _storage_mode_nodes | length > 0
