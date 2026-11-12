@@ -134,16 +134,16 @@ def _heap(values, node):
 
 
 def _authenticator(values, node):
-    """No client authentication on a native transport address other hosts reach (rpc_address; "": the
-    hostname's; an rpc_interface of the extra settings)."""
+    """No client authentication, and a native transport address set to other than loopback (rpc_address; "": the
+    hostname's; an rpc_interface of the extra settings). Only the settings are read: not who can connect."""
     authenticator = str(values.get("cassandra_authenticator") or "AllowAllAuthenticator").strip()
     rpc = values.get("cassandra_rpc_address", "localhost")
     extra = values.get("cassandra_extra_settings")
-    reached = bool(isinstance(extra, dict) and extra.get("rpc_interface")) or not LOCAL.match(
+    not_loopback = bool(isinstance(extra, dict) and extra.get("rpc_interface")) or not LOCAL.match(
         str(rpc if rpc is not None else "localhost").strip())
-    if authenticator.rsplit(".", maxsplit=1)[-1] == "AllowAllAuthenticator" and reached:
-        return [("no authentication (AllowAllAuthenticator) on {nodes}, which listen for clients on an address other than"
-                 " loopback (rpc_address or rpc_interface): a client that reaches it gets in without a login",
+    if authenticator.rsplit(".", maxsplit=1)[-1] == "AllowAllAuthenticator" and not_loopback:
+        return [("no authentication (AllowAllAuthenticator) on {nodes}, whose client address (rpc_address or"
+                 " rpc_interface) is not loopback: a client that can connect to it needs no login",
                  "set an authenticator (cassandra_authenticator: PasswordAuthenticator)")]
     return []
 

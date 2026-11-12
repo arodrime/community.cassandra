@@ -61,9 +61,9 @@ def test_the_todo_names_the_nodes_and_the_way(tmp_path):
     play = next(p for p in PLAYS if p.get("name") == "Write the inventory")
     template = play["vars"]["_cqlsh_todo"]
 
-    def todo(errors):
+    def todo(errors, check=False):
         hostvars = {h: {"import_cluster_cqlsh_error": e} for h, e in errors.items()}
-        variables = {"_nodes": [{"name": h} for h in errors], "hostvars": hostvars}
+        variables = {"_nodes": [{"name": h} for h in errors], "hostvars": hostvars, "ansible_check_mode": check}
         return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
     lib = "ModuleNotFoundError: No module named 'cqlshlib'"
     assert todo({"n1": "", "n2": ""}) == []
@@ -71,6 +71,8 @@ def test_the_todo_names_the_nodes_and_the_way(tmp_path):
         "cqlsh does not start on n1, n2 (cqlsh --version: %s). cassandra_install links the cqlshlib of the package into"
         " the Python cqlsh runs with (RedHat): remove cassandra_cqlsh_python_manage: false from the host_vars of n1, n2"
         " (this import wrote it), then run create_cluster (it starts or restarts nothing on a running cluster)." % lib]
+    # --check: the host_vars are not written yet
+    assert "(this import would write it), then run create_cluster" in todo({"n1": lib}, check=True)[0]
     # another error: said as it is, no fix guessed
     out = todo({"n1": "python3: not found"})
     assert out == ["cqlsh does not start on n1 (cqlsh --version: python3: not found). Check cqlsh there"

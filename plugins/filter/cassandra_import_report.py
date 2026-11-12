@@ -920,8 +920,10 @@ def _todo_steps(report, allow_unread, self_check_ok, self_check_error, check_ite
         paths = " ".join(out.path_from(os.path.join(inventory_dir, f), report.cwd) for f in secrets_clear)
         steps.append(_Step(
             "Encrypt the passwords file%s" % ("" if len(secrets_clear) == 1 else "s"),
-            "the passwords read on the nodes are written in clear text there. ansible-vault asks for a new password:"
-            " keep it safe, every playbook run on this inventory needs it from then on (--ask-vault-pass)",
+            "%s in clear text there. ansible-vault asks for a new password: keep it safe, every playbook run on this"
+            " inventory needs it from then on (--ask-vault-pass)" % (
+                "the run without --check writes the passwords read on the nodes" if report.check
+                else "the passwords read on the nodes are written"),
             unbreakable("ansible-vault encrypt %s" % paths),
             "%s shows $ANSIBLE_VAULT;1.1;AES256" % unbreakable("head -1 %s" % paths.split(" ", maxsplit=1)[0])))
     if leftovers.get("unsure"):
@@ -949,7 +951,7 @@ def _step_lines(number, step, width):
 
 # a kind of TO REVIEW entries: its name in the head's counts (singular, plural), its title, what it means
 _Kind = namedtuple("_Kind", "one many title about")
-HAND = _Kind("hand edit", "hand edits", "Hand edits",
+HAND = _Kind("hand-edit entry", "hand-edit entries", "Hand edits",  # (an entry may count several edits: "10 edits")
              "lines changed by hand in a config file that no inventory variable carries; apply_config (the playbook"
              " that writes the config files) would put the file back as the collection writes it (nothing changes on"
              " the nodes until it runs)")
@@ -1067,19 +1069,29 @@ INSTALLED = {"cassandra_install_tools: False": "cassandra-tools", "cassandra_ins
              "cassandra_dsbulk_install: False": "DSBulk"}
 
 
+def _left_kind(label):
+    """A label of left_groups -> managed (a KEEP switch, *_manage: false: left as the node has it), installed (a
+    *_install: false: a package the nodes do not have, not installed), hold (cassandra_package_hold: false), value
+    (another variable, set to what the node has: cassandra_log_dir: /x)."""
+    if label in INSTALLED:
+        return "installed"
+    if label.startswith("cassandra_package_hold"):
+        return "hold"
+    return "managed" if label in KEEP or label in KEEP_SHORT.values() else "value"
+
+
 def _left_alone_lines(report):
     """What Ansible leaves as each node has it (the *_manage: false the import wrote), one line per set of nodes;
     apart, the packages it does not install there because the nodes have none (*_install: false), and a hold."""
     by_nodes = {}
     for label, members in report_sections(report.layout, {})["left_groups"].items():
         if not label.startswith("cassandra_config_keep_files"):
-            kind = "installed" if label in INSTALLED else "hold" if label.startswith("cassandra_package_hold") \
-                else "managed"
-            by_nodes.setdefault((kind, tuple(sorted(members))), []).append(INSTALLED.get(label, label))
+            by_nodes.setdefault((_left_kind(label), tuple(sorted(members))), []).append(INSTALLED.get(label, label))
     said = {"managed": "not managed by Ansible here: %s",
             "installed": "not installed by Ansible here, as these nodes have none (true installs it): %s",
-            "hold": "the packages not held by Ansible here (apt): %s"}
-    order = ["managed", "installed", "hold"]
+            "hold": "the packages not held by Ansible here (apt): %s",
+            "value": "set to what these nodes have: %s"}
+    order = ["managed", "installed", "hold", "value"]
     return [line for (kind, members), labels in sorted(by_nodes.items(), key=lambda kv: order.index(kv[0][0]))
             for line in fill_text("%s   %s" % (said[kind] % ", ".join(labels), unbreakable(_who(report, list(members)))),
                                   report.width, "    ", "  ")]
@@ -1103,6 +1115,10 @@ def _moved_entries(report):
     return entries
 
 
+# a finding's fix made in the inventory, which apply_config writes to the nodes (then restarts them)
+_BY_APPLY_CONFIG = re.compile(r"^(set |remove cassandra_|lower cassandra_|change -Xmx in cassandra_jvm)")
+
+
 def _to_check_entries(report):
     """Settings to review: the suspicious ones, the JVM options worth a look, the values of yours kept as found, what
     was not compared -> (how many, [entry lines])."""
@@ -1116,10 +1132,11 @@ def _to_check_entries(report):
         if report.screen:  # (how to keep it on purpose: report.txt)
             todo = todo.split("; kept on purpose: ")[0]
         todo = todo.strip()
-        if todo.startswith("set ") and "cassandra_authenticator" not in todo:  # (who gets the change: these nodes too, not only the ones added later)
-            todo = todo.replace("; kept on purpose: ", "; these nodes get it at their next apply_config (a restart"
-                                " each), nodes added later too; kept on purpose: ", 1) if "; kept on purpose: " in todo \
-                else todo + "; these nodes get it at their next apply_config (a restart each), nodes added later too"
+        if _BY_APPLY_CONFIG.match(todo) and "cassandra_authenticator" not in todo:  # (who gets the change: these nodes too, not only the ones added later)
+            who = "these nodes change at their next apply_config (a restart each)" if todo.startswith("remove ") \
+                else "these nodes get it at their next apply_config (a restart each), nodes added later too"
+            todo = todo.replace("; kept on purpose: ", "; %s; kept on purpose: " % who, 1) \
+                if "; kept on purpose: " in todo else todo + "; " + who
         entries += _entry(report, text.replace(" on {nodes}", "").replace("{nodes}", "these nodes"), names,
                           todo.strip())
     for text, members, todo in _os_findings(report):
@@ -1398,16 +1415,21 @@ def _info_blocks(report, data, leftovers, convergence):
     if convergence:
         blocks.append(("Convergence: how close the nodes are to sharing every setting",
                        ["  " + line if line else "" for line in convergence[1:]]))
-    by_nodes = []
-    for label, members in data["left_groups"].items():
-        entry = next((e for e in by_nodes if e[1] == sorted(members)), None)
-        if entry is None:
-            by_nodes.append([[label], sorted(members)])
-        else:
-            entry[0].append(label)
-    blocks.append(("Parts Ansible leaves as each node has them (*_manage: false)",
-                   [line for labels, members in by_nodes for line in fill_text(
-                       "%s   %s" % (", ".join(labels), _who(report, members)), report.width, "    ", "    ")]))
+    for kind, title in (("managed", "Parts Ansible leaves as each node has them (*_manage: false)"),
+                        ("installed", "Packages Ansible does not install, as these nodes have none (*_install: false)"),
+                        ("hold", "Packages Ansible does not hold (apt), as these nodes have them not held"),
+                        ("value", "Variables set to what each node has")):
+        by_nodes = []
+        for label, members in data["left_groups"].items():
+            if _left_kind(label) != kind:
+                continue
+            entry = next((e for e in by_nodes if e[1] == sorted(members)), None)
+            if entry is None:
+                by_nodes.append([[label], sorted(members)])
+            else:
+                entry[0].append(label)
+        blocks.append((title, [line for labels, members in by_nodes for line in fill_text(
+            "%s   %s" % (", ".join(labels), _who(report, members)), report.width, "    ", "    ")]))
     if data["tuning"]:
         blocks.append(("OS tuning: the live value of each setting (and the collection's)", out.settings_lines(
             [(name, [(_short(text), _who(report, members), "") for text, members in values])
@@ -1454,7 +1476,7 @@ def _head_lines(report, cluster, hosts_file, report_file, self_check_ok, same, s
         " (%d read)" % len(report.read) if report.unread else "")
     verdict = "%s to %s: %s" % (out.plural(acted, "entry", "entries"), "act on" if steps else "review", ", ".join(counts)) \
         if acted else "nothing to act on"
-    lines = fill_text("IMPORT %s%s  %s  %s" % (cluster, " (--check, nothing written)" if report.check else "", nodes,
+    lines = fill_text("IMPORT %s%s  %s  %s" % (cluster, " (--check, inventory not written)" if report.check else "", nodes,
                                                verdict), report.width, "", "  ")
     check_step = next((i + 1 for i, step in enumerate(steps) if step.title == "Make the self-check pass"), None)
     lines += fill_text("self-check %s" % (
@@ -1475,7 +1497,7 @@ def _about_lines(report, cluster):
     """What this report is, in 3 lines, then the words it uses."""
     lines = ["WHAT THIS REPORT IS"] + [cut_text(text, report.width) for text in (
         "  import_cluster read the nodes (the Cassandra servers) of %s and %s an Ansible inventory for them;"
-        " nothing on the nodes was changed." % (cluster, "worked out (--check: nothing written)" if report.check
+        " nothing on the nodes was changed." % (cluster, "worked out (--check: not written)" if report.check
                                                 else "wrote"),
         "  %s says what to do and what is worth a look; this file holds the rest: the settings, the convergence,"
         " the OS, what was read on each node." % os.path.basename(report.report_name),
@@ -1613,7 +1635,7 @@ def _ruled(lines, width, screen):
             about = next((g for g in heading.groups()[1:] if g), "")
             ruled += fill_text(about[:1].upper() + about[1:], width, "  ", "  ")
             continue
-        if screen and not line and i + 1 < len(lines) and not lines[i + 1].startswith(("full report", "details: ")):
+        if screen and not line and i + 1 < len(lines) and not lines[i + 1].startswith(("report: ", "details: ")):
             line = " "
         ruled.append(line)
     return ruled
@@ -1695,12 +1717,12 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     details_file = re.sub(r"\.txt$", "", report_file) + ".details.txt"
     if screen:
         lines += ["", "details: %s" % out.path_from(details_file, cwd),
-                  "full report%s: %s" % (" (--check)" if check else "", out.path_from(report_file, cwd))]
+                  "report: %s" % out.path_from(report_file, cwd)]
         if boolean(shareable, strict=False):
             lines.append("a copy to share (names, addresses and secrets replaced; check it before sharing): %s"
                          % out.path_from(re.sub(r"\.txt$", "", report_file) + ".shareable.txt", cwd))
     else:
-        lines += ["", "everything else (the settings, the convergence, the OS, each node): %s"
+        lines += ["", "details (the settings, the convergence, the OS, each node): %s"
                   % out.path_from(details_file, cwd)]
     return _finished(lines, width, screen)
 
@@ -1718,7 +1740,7 @@ def _finished(lines, width, screen):
 def _details_report(report, data, layout, self_check, leftovers, convergence, cluster):
     """report.details.txt: what the report is and its words, where the settings go, the settings, versions,
     convergence and OS (FOR INFO), then what was read on each node (DETAILS) -> [line]."""
-    lines = ["IMPORT %s%s  the details of %s" % (cluster, " (--check, nothing written)" if report.check else "",
+    lines = ["IMPORT %s%s  the details of %s" % (cluster, " (--check, inventory not written)" if report.check else "",
                                                  os.path.basename(report.report_name)), ""] + _about_lines(report, cluster)
     where = _where_lines(report, data["settings"])
     if where:

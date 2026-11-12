@@ -123,7 +123,7 @@ def test_sections_by_urgency_and_the_counts_in_the_head():
     nodes = [node(1, hand=["cassandra.yaml, line 10:", "  - concurrent_writes: 32", "  + concurrent_writes: 48"]),
              node(2, "16G"), node(3, keep={"cassandra_config_keep_files": ["logback.xml"]}), node(4, read=False)]
     lines = report(nodes, secrets_clear=["group_vars/my_cluster/secrets.yml"])
-    assert lines[0] == ("IMPORT my_cluster  4 nodes (3 read)  5 entries to act on: 2 TO DO, 1 hand edit, 1 file left as is,"
+    assert lines[0] == ("IMPORT my_cluster  4 nodes (3 read)  5 entries to act on: 2 TO DO, 1 hand-edit entry, 1 file left as is,"
                         " 1 setting that differs between nodes")
     order = [heading(lines, title) for title in ("TO DO", "HAND EDITS", "DIFFERENT ON SOME NODES",
                                                  "LEFT AS THE NODES HAVE THEM", "WHAT TO DO NEXT", "WHAT THIS REPORT IS",
@@ -148,7 +148,7 @@ def test_sections_by_urgency_and_the_counts_in_the_head():
     # the screen: the same head, no FOR INFO details nor DETAILS, the report's path last
     screen = report(nodes, secrets_clear=["group_vars/my_cluster/secrets.yml"], screen=True)
     assert screen[0] == lines[0] and not has(screen, "WHAT THIS REPORT IS")
-    assert screen[-1] == "full report: reports/my_cluster/report.txt"
+    assert screen[-1] == "report: reports/my_cluster/report.txt"
 
 
 def test_all_is_every_node_never_only_the_ones_read():
@@ -208,7 +208,7 @@ def test_things_to_do_and_hand_edits():
                    leftovers={"unsure": ["host_vars/old/main.yml"]},
                    self_check={"node1": {"differences": ["cassandra.yaml: concurrent_writes"], "notes": []}})
     # (a self-check not passed: a step to do, said calmly, not in red)
-    assert lines[0].startswith("IMPORT my_cluster  4 nodes (3 read)  6 entries to act on: 4 TO DO, 2 hand")
+    assert lines[0].startswith("IMPORT my_cluster  4 nodes (3 read)  6 entries to act on: 4 TO DO, 2 hand-edit")
     assert lines[1] == "  self-check not passed yet: TO DO step 2"
     titles = [line for line in lines if re.match(r"^  \d\. ", line)]
     assert titles[:4] == ["  1. Let the import read node4 (1 node), then import again", "  2. Make the self-check pass",
@@ -250,13 +250,43 @@ def test_left_as_it_is_grouped_by_nodes():
                                     "    firewall   all (4 nodes)"]
 
 
+def test_left_alone_apart_from_installs_holds_and_values():
+    # a *_install: false, a hold, a value as the node has it: not said as *_manage: false (screen and details)
+    keep = {"cassandra_linux_manage": False, "cassandra_install_tools": False, "cassandra_package_hold": False,
+            "cassandra_log_dir": "/srv/log"}
+    nodes = [node(i, keep=dict(keep)) for i in range(1, 4)]
+    left = section(report(nodes, screen=True), "LEFT AS THE NODES HAVE THEM")
+    assert "    not managed by Ansible here: OS settings   all (3 nodes)" in left
+    assert "    set to what these nodes have: cassandra_log_dir: /srv/log   all (3 nodes)" in left
+    details = report(nodes, details=True)
+    at = details.index("  Parts Ansible leaves as each node has them (*_manage: false)")
+    assert details[at + 1:at + 8] == [
+        "    OS settings   all (3 nodes)",
+        "  Packages Ansible does not install, as these nodes have none (*_install: false)",
+        "    cassandra_install_tools: False   all (3 nodes)",
+        "  Packages Ansible does not hold (apt), as these nodes have them not held",
+        "    cassandra_package_hold: False   all (3 nodes)",
+        "  Variables set to what each node has",
+        "    cassandra_log_dir: /srv/log   all (3 nodes)"]
+
+
+def test_check_says_the_secrets_are_not_written_yet():
+    lines = report([node(i) for i in range(1, 4)], check=True, screen=True, report_file=REPORT_CHECK,
+                   secrets_clear=["group_vars/my_cluster/secrets.yml"])
+    text = " ".join(line.strip() for line in lines)
+    assert "the run without --check writes the passwords read on the nodes in clear text there" in text
+    assert "are written in clear text" not in text
+    assert lines[-2:] == ["details: reports/my_cluster/report.check.details.txt",
+                          "report: reports/my_cluster/report.check.txt"]
+
+
 def test_screen_and_check():
     lines = report([node(i) for i in range(1, 4)], check=True, screen=True, report_file=REPORT_CHECK,
                    leftovers={"stale": ["host_vars/gone/main.yml"]})
-    assert lines[0] == "IMPORT my_cluster (--check, nothing written)  3 nodes  nothing to act on"
+    assert lines[0] == "IMPORT my_cluster (--check, inventory not written)  3 nodes  nothing to act on"
     assert lines[2].startswith("  would write: ") and lines[3] == " "  # the report's path: last (" ": a blank line)
     assert "  1. Write the inventory: the same command without --check." in lines
-    assert lines[-1] == "full report (--check): reports/my_cluster/report.check.txt"  # written, report.txt left
+    assert lines[-1] == "report: reports/my_cluster/report.check.txt"  # written, report.txt left
     assert not has(lines, "WORTH A LOOK") and not has(lines, "DETAILS")
     full = report([node(i) for i in range(1, 4)], check=True, leftovers={"stale": ["host_vars/gone/main.yml"]})
     assert "    would be removed (an earlier import's, not written again): host_vars/gone/main.yml" in full
@@ -311,7 +341,7 @@ def test_differs_from_your_group_vars_all():
     assert lines[0].endswith("2 entries to review: 2 things worth a look")  # (not again as settings that differ)
     # the screen has it too
     screen = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, screen=True, width=160)
-    assert review[0] in screen and screen[-3:] == ["", "details: reports/my_cluster/report.details.txt", "full report: reports/my_cluster/report.txt"]
+    assert review[0] in screen and screen[-3:] == ["", "details: reports/my_cluster/report.details.txt", "report: reports/my_cluster/report.txt"]
 
 
 def test_differs_one_line_per_file_of_yours():
@@ -332,10 +362,10 @@ def test_reimport_check_with_nothing_to_change():
     unchanged = {"changed": [], "removed": [], "existed": ["my_cluster.yml", "group_vars/my_cluster/main.yml"]}
     screen = report([node(i) for i in range(1, 4)], check=True, screen=True, changes=unchanged)
     assert screen[:4] == [
-        "IMPORT my_cluster (--check, nothing written)  3 nodes  nothing to act on",
+        "IMPORT my_cluster (--check, inventory not written)  3 nodes  nothing to act on",
         "  self-check passed: the inventory gives every node that was read the settings it has now",
         "  unchanged: inventories/my_cluster.yml, group_vars/my_cluster*/", " "]  # (a blank line on the screen)
-    assert screen[-1] == "full report (--check): reports/my_cluster/report.txt"
+    assert screen[-1] == "report: reports/my_cluster/report.txt"
     assert not [line for line in screen if "Write the inventory" in line or "git commit" in line]
     # a thing to do still says so
     screen = report([node(1), node(2), node(3, read=False)], check=True, screen=True, changes=unchanged)
@@ -448,7 +478,7 @@ def test_hand_edits_by_file_counted():
         "    logback.xml (the logging settings): 3 edits   node1, node2, node4 (3 nodes)",
         "    logback.xml: 1 edit   node3 (1 node)",
         "    jvm11-server.options (Java's options, Java 11 only): 1 edit   node4 (1 node)"]
-    assert lines[0] == "IMPORT my_cluster  5 nodes  4 entries to review: 4 hand edits"  # (no TO DO)
+    assert lines[0] == "IMPORT my_cluster  5 nodes  4 entries to review: 4 hand-edit entries"  # (no TO DO)
     # one way to keep them: the file left as the node has it
     assert ("the lines are under DETAILS, node by node; to keep them: import again with"
             " -e import_cluster_keep_hand_edits=logback.xml (Ansible then leaves logback.xml as each node has it)") in \
@@ -908,8 +938,9 @@ def test_auto_bootstrap_false_kept_on_its_nodes_with_a_warning():
     text = "\n".join(report(nodes))
     # an entry of two lines to review: the finding, then what to do and how to keep it
     assert ("    auto_bootstrap false: a node that loses its data would restart empty, without streaming it back   all -"
-            " node3 (2 nodes)\n      remove cassandra_auto_bootstrap (the default is true); kept on purpose: list"
-            " auto_bootstrap_false in cassandra_settings_kept_on_purpose") in text
+            " node3 (2 nodes)\n      remove cassandra_auto_bootstrap (the default is true); these nodes change at their"
+            " next apply_config (a restart each); kept on purpose: list\n      auto_bootstrap_false in"
+            " cassandra_settings_kept_on_purpose") in text
     every = [node(i) for i in range(1, 4)]
     for n in every:
         n["vars"]["cassandra_auto_bootstrap"] = False
@@ -1115,11 +1146,11 @@ def test_your_files_values_count_for_the_series_and_the_restart_policy():
 
 
 def test_the_check_details_say_check_and_name_its_own_report():
-    # (owner list) report.check.details.txt: nothing written, and report.check.txt named, not report.txt
+    # (owner list) report.check.details.txt: inventory not written, and report.check.txt named, not report.txt
     lines = report([node(1), node(2)], check=True, report_file=REPORT_CHECK, details=True)
     text = "\n".join(lines)
-    assert "IMPORT my_cluster (--check, nothing written)  the details of report.check.txt" in lines
-    assert "worked out (--check: nothing written) an Ansible inventory" in text and "and wrote an" not in text
+    assert "IMPORT my_cluster (--check, inventory not written)  the details of report.check.txt" in lines
+    assert "worked out (--check: not written) an Ansible inventory" in text and "and wrote an" not in text
     assert "report.check.txt says what to do" in text and "report.txt says" not in text
 
 

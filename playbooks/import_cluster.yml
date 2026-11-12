@@ -1491,8 +1491,9 @@
       {%- set errors = broken | map('extract', hostvars, 'import_cluster_cqlsh_error') | unique | list -%}
       {{ ['cqlsh does not start on ' ~ broken | join(', ') ~ ' (cqlsh --version: ' ~ errors | join('; ') ~ ').'
           ~ (' cassandra_install links the cqlshlib of the package into the Python cqlsh runs with (RedHat): remove'
-             ~ ' cassandra_cqlsh_python_manage: false from the host_vars of ' ~ lib | join(', ') ~ ' (this import wrote'
-             ~ ' it), then run create_cluster (it starts or restarts nothing on a running cluster).' if lib
+             ~ ' cassandra_cqlsh_python_manage: false from the host_vars of ' ~ lib | join(', ')
+             ~ (' (this import would write it)' if ansible_check_mode | default(false) else ' (this import wrote it)')
+             ~ ', then run create_cluster (it starts or restarts nothing on a running cluster).' if lib
              else ' Check cqlsh there (cassandra_cqlsh_command gives the full path of another one).')] if broken else [] }}
     # what is left to do about it (TO DO)
     _cql_todo: >-
