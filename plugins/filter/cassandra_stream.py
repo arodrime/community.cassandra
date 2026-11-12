@@ -683,7 +683,7 @@ def cassandra_stream_status(state, join=False, leave=False, own=None, seen="", j
         return "jmx_refused"
     if state.get("stalled"):
         return "stalled"
-    now = state.get("now", 0) if now is None else now
+    now = out.number(state.get("now", 0) if now is None else now, 0)  # (text before ansible-core 2.19)
     if int(max_time or 0) > 0 and now - int(state.get("start", now)) >= int(max_time):
         return "too_long"
     return "going"

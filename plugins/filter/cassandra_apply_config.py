@@ -832,7 +832,7 @@ def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, d
     "node2  would apply, then restart", "node1  nothing to apply", "", "WARNING  node2: node2's data dirs belong to root"]."""
     nodes = list(nodes or []) if check else [_after_run(n) for n in nodes or []]
     lines, counts = _grouped(nodes, check, width=width)
-    shown = [_recap_verdict(counts, check, cluster, seconds)]
+    shown = [_recap_verdict(counts, check, cluster, out.number(seconds))]  # (text before ansible-core 2.19)
     if check and diff:
         shown += [""] + list(diff) + [""]
     lines = lines + _recap_warnings(nodes, check, refused, planned, width)

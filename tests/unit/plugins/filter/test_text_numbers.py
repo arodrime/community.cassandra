@@ -9,6 +9,10 @@ import pytest
 from ansible.utils.unsafe_proxy import AnsibleUnsafeText
 
 from ansible_collections.community.cassandra.plugins.filter import cassandra_output
+from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import cassandra_apply_config_recap
+from ansible_collections.community.cassandra.plugins.filter.cassandra_health import cassandra_health_report
+from ansible_collections.community.cassandra.plugins.filter.cassandra_replication import cassandra_rack_down_problems
+from ansible_collections.community.cassandra.plugins.filter.cassandra_stream import cassandra_stream_status
 from ansible_collections.community.cassandra.plugins.filter.cassandra_summary import cassandra_op_recap
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
@@ -76,3 +80,36 @@ def test_op_recap_seconds(seconds):
 @pytest.mark.parametrize("none", ["", AnsibleUnsafeText(""), None])
 def test_op_recap_without_seconds(none):
     assert recap(none) == recap(None) and not recap(none).endswith("s")
+
+
+@pytest.mark.parametrize("seconds", as_text(75))
+def test_apply_config_recap_seconds(seconds):
+    nodes = [{"name": "node1", "todo": False, "result": "nothing to apply"}]
+    assert cassandra_apply_config_recap(nodes, check=True, cluster="c", seconds=seconds)[0] == \
+        "CHECK  apply_config  c  1 nothing to apply  1m15s"
+    assert cassandra_apply_config_recap(nodes, check=True, cluster="c", seconds="")[0] == \
+        "CHECK  apply_config  c  1 nothing to apply"
+
+
+@pytest.mark.parametrize("now", as_text(100))
+def test_stream_status_now(now):
+    state = {"now": 0, "start": 0, "stalled": False}
+    assert cassandra_stream_status(state, join=True, own={"mode": "JOINING"}, max_time="100", now=now) == "too_long"
+    assert cassandra_stream_status(state, join=True, own={"mode": "JOINING"}, max_time="101", now=now) == "going"
+
+
+@pytest.mark.parametrize("racks", as_text(2))
+def test_rack_down_racks(racks):
+    keyspaces = {"orders": {"class": "NetworkTopologyStrategy", "rf": {"dc1": 3}}}
+    assert cassandra_rack_down_problems(keyspaces, "dc1", racks)["problems"] == [
+        "orders has 3 replicas in dc1, which has 2 rack(s): a rack holds more than one of them"]
+
+
+@pytest.mark.parametrize("members, said", [("4", "4 UN"), (AnsibleUnsafeText("4"), "4 UN"), ("", "2 UN")])
+def test_health_report_members(members, said):
+    assert said in cassandra_health_report({}, "c", ["n1", "n2"], members=members)["lines"][0]
+
+
+@pytest.mark.parametrize("others, group", [("0", ""), (AnsibleUnsafeText("0"), ""), ("", ""), ("2", "c1"), (2, "c1")])
+def test_reimport_hosts_others(others, group):
+    assert cassandra_output.cassandra_reimport_hosts("c1", others=others) == group

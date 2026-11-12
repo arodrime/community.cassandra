@@ -21,6 +21,7 @@ __metaclass__ = type
 import json
 
 from ansible.errors import AnsibleFilterError
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 
 def cassandra_keyspaces(stdout):
@@ -70,6 +71,7 @@ def cassandra_rack_down_problems(keyspaces, dc, racks):
     -> {problems, warnings}: ks 3 replicas
     in dc1 of 2 racks -> problems ["ks has 3 replicas in dc1, which has 2 rack(s): a rack holds more than one of them"]."""
     problems, warnings = [], []
+    racks = out.number(racks, 0)  # (text before ansible-core 2.19)
     for name in sorted(keyspaces):
         rf = keyspaces[name]["rf"]
         if "*" in rf and rf["*"] > 1:

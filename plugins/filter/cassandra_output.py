@@ -185,7 +185,7 @@ def cassandra_reimport_hosts(group, hosts="", env_cluster="", files=True, others
         return hosts
     if env_cluster and files:
         return ""
-    return group if others else ""
+    return group if out.number(others, 0) else ""  # (text before ansible-core 2.19: "0")
 
 
 def cassandra_phase(name, names=None, node="", what="", count=None):

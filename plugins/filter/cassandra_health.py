@@ -361,7 +361,7 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
         lines.append("  not counted, marked cassandra_node_state: absent: %s" % out.nodes(absent))
     block = ["", "SETTINGS TO REVIEW"] + ["  " + line for line in settings] if settings else []
     if not rows:
-        size = members if members is not None else len(hosts)
+        size = out.number(members, len(hosts))  # (text before ansible-core 2.19, '' for none)
         return {"healthy": True, "problems": 0, "lines": [
             "HEALTHY  %s  %s  %d UN, schema agreed, no streams, ports open" % (
                 cluster, out.plural(len(hosts), "node"), size)] + block}
