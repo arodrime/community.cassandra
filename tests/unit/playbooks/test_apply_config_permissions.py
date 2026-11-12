@@ -96,7 +96,8 @@ def note(changes=(), perms=(), pending=False, running=True, unit="inactive", jvm
     variables = {"_cassandra_config_changes": list(changes), "_cassandra_config_perm_changes": list(perms),
                  "cassandra_config_restart_pending": pending, "cassandra_config_newer_files": ["cassandra.yaml"],
                  "_cassandra_preflight_running": running, "cassandra_jvm": jvm or {},
-                 "_cassandra_config_dir_notes": [],
+                 "_cassandra_config_dir_notes": [], "inventory_hostname": "node7",
+                 "_cassandra_preflight": {"cassandra_dc": "dc1", "cassandra_rack": "r2"},
                  "cassandra_apply_config_unit": {"skipped": True} if running else {
                      "status": {"ActiveState": unit, "Result": result, "ExecMainStatus": status}}}
     variables = with_task_vars(NOTE, variables)
@@ -143,7 +144,8 @@ def test_a_failed_unit_with_nothing_to_apply_is_said_under_the_node():
     # and the recap, where it would read as "nothing to apply" alone
     assert note(running=False, unit="failed") == (False, "write", [
         "its cassandra unit failed and nothing is to apply: not started by this run (see systemctl status cassandra"
-        " / journalctl -u cassandra there, fix it and start it with start_rack)"])
+        " / journalctl -u cassandra there, fix it and start it on this node alone: ansible-playbook"
+        " community.cassandra.start_rack --limit node7 -e cassandra_target_dc=dc1 -e cassandra_target_rack=r2)"])
     assert note(running=False) == (False, "write", [])  # stopped on purpose: nothing to say
     assert note(running=False, unit="failed", result="timeout") == (False, "write", [])  # a stop that timed out: no failure
 

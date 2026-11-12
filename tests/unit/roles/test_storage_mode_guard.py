@@ -432,7 +432,9 @@ def test_update_java_refuses_a_storage_mode_change_and_checks_only_its_nodes():
     assert names.index("Group the nodes to do") < names.index(guard_task["name"])
     assert guard_task["vars"] == {
         "_cassandra_storage_mode_hosts": "{{ groups['cassandra_update_java_True'] | default([]) }}",
-        "_cassandra_storage_mode_written": True, "_cassandra_storage_mode_kept": True}
+        "_cassandra_storage_mode_written": True, "_cassandra_storage_mode_kept": True,
+        # a resumed run starts the node the interrupted one stopped: against the mode it last ran
+        "_cassandra_storage_mode_starts": "{{ groups['cassandra_update_java_True'] | default([]) }}"}
     # it runs UPGRADING, NONE already in the inventory: update_java would write NONE, unshown; refused before the
     # question (the back check alone passes it: one step on)
     hosts = {"n1": (_host("UPGRADING", logged="UPGRADING"), "NONE"), "n2": (_host("NONE", logged="NONE"), "NONE"),
@@ -867,3 +869,54 @@ def test_a_template_into_none_is_refused_when_the_file_alone_tells_the_mode():
     quoted = dict(host, cassandra_storage_mode_read={"stdout_lines": [
         "yaml_read=yes", "yaml='UPGRADING'", "running=yes", "started_sha1=x"]})
     assert guard(INTO_NONE, {"n1": (quoted, "CASSANDRA_4")}, _cassandra_storage_mode_written=True)[0] is False
+
+
+def test_the_upgrade_checks_its_starts_before_any_node_is_drained():
+    # action_upgrade.yml starts each node with _cassandra_storage_mode_checked: the canary and rolling phases check
+    # the nodes they upgrade from 5.0, before the plays that drain them, as cassandra_config will write them
+    plays = _load("playbooks/upgrade.yml")
+    names = [p.get("name") for p in plays]
+    pick = plays[names.index("Pick the nodes and their order")]
+    assert names.index(pick["name"]) < names.index("Upgrade, one node at a time")
+    assert pick["any_errors_fatal"] is True
+    tasks = [t["name"] for t in pick["tasks"]]
+    task = pick["tasks"][tasks.index("Refuse a start into another storage_compatibility_mode than one step from the"
+                                     " one it runs")]
+    assert tasks.index("The node(s) of this phase, in order") < tasks.index(task["name"])
+    assert task["ansible.builtin.include_role"]["tasks_from"] == "storage_mode_guard.yml"
+    assert task["vars"] == {
+        "_cassandra_storage_mode_hosts": "{{ _storage_mode_nodes }}",
+        "_cassandra_storage_mode_starts": "{{ _storage_mode_nodes }}",
+        "_cassandra_storage_mode_written": True, "_cassandra_storage_mode_unannounced": True}
+    # the nodes of the phase not upgraded yet, from 5.0 (from 4.x: CASSANDRA_4 runs and is written, asserted)
+    hostvars = {"n1": {"cassandra_upgrade_done": False, "cassandra_upgrade_from_series": "50x"},
+                "n2": {"cassandra_upgrade_done": True, "cassandra_upgrade_from_series": "50x"},
+                "n3": {"cassandra_upgrade_done": False, "cassandra_upgrade_from_series": "41x"}}
+    for phase, nodes in (("canary", ["n1"]), ("rolling", ["n1"]), ("sstables", [])):
+        assert _render(pick["vars"]["_storage_mode_nodes"], hostvars=hostvars, cassandra_upgrade_phase=phase,
+                       groups={"cassandra_upgrade_nodes": ["n1", "n2", "n3"]}) == nodes, phase
+    # a 5.0 patch upgrade: n1 runs UPGRADING, NONE in the inventory: cassandra_config would write NONE and the node
+    # start into it with no warning
+    up = dict(_cassandra_storage_mode_written=True, _cassandra_storage_mode_unannounced=True)
+    ok, msg = guard(INTO_NONE, {"n1": (_host("UPGRADING", logged="UPGRADING"), "NONE")}, **up)
+    assert ok is False and msg == [
+        "A restart would take n1 into storage_compatibility_mode NONE, the point of no return, with no warning before"
+        " it: once a node runs NONE, it cannot go back to UPGRADING or CASSANDRA_4, nor to its former Cassandra"
+        " version. Nothing was changed.",
+        "  n1  runs UPGRADING, its cassandra.yaml would have NONE, the inventory NONE",
+        "WAY OUT  On n1, choose one:",
+        "  1. Keep UPGRADING:",
+        "     set cassandra_storage_compatibility_mode: UPGRADING in the inventory.",
+        "  2. Or move to NONE (the point of no return):",
+        "     Run apply_config --limit n1 (it shows the warning first).",
+        "  Then run this again."]
+    # the same mode: the upgrade goes on
+    assert guard(INTO_NONE, {"n1": (_host("NONE", logged="NONE"), "NONE")}, **up)[0] is True
+    assert guard(INTO_NONE, {"n1": (_host("UPGRADING", logged="UPGRADING"), "UPGRADING")}, **up)[0] is True
+    # it runs CASSANDRA_4 (its file edited to UPGRADING by hand since its start, the log rolled over, no CQL):
+    # not known, refused before NONE is written
+    unread = dict(_host("UPGRADING", more=CHANGED), cassandra_storage_mode_cql=CQL_FAILED)
+    ok, msg = guard(UNSURE, {"n1": (unread, "NONE")}, **up)
+    assert ok is False and "  n1  its cassandra.yaml would have NONE (the inventory's)" in msg
+    # read over CQL: two steps, refused
+    assert guard(JUMP, {"n1": (_host("UPGRADING", cql="CASSANDRA_4", more=CHANGED), "NONE")}, **up)[0] is False

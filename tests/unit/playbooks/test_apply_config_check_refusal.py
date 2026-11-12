@@ -75,11 +75,12 @@ HOSTVARS = {
     "node3": {"cassandra_apply_config_todo": False, "cassandra_apply_config_then": "none",
               "_cassandra_preflight": {"ring_address": "10.0.0.3"}},
     "node5": {"cassandra_apply_config_todo": True, "cassandra_apply_config_then": "write",
-              "_cassandra_preflight": {"ring_address": "10.0.0.5"}}}
+              "_cassandra_preflight": {"ring_address": "10.0.0.5", "cassandra_dc": "dc1", "cassandra_rack": "r1"}}}
 HOSTS = sorted(HOSTVARS)
 REASON = ("node5: Cassandra not running, and node1, node2 would be restarted, which needs every other node up.")
-WAY = ("Apply the config there first (--limit node5) and start it with start_rack (which checks the start first) if"
-       " stopped on purpose, or, if an interrupted run stopped it, resume it (-e cassandra_rolling_resume=true); then run"
+WAY = ("Apply the config there first (--limit node5) and start it with start_rack (which checks the start first:"
+       " ansible-playbook community.cassandra.start_rack --limit node5 -e cassandra_target_dc=dc1"
+       " -e cassandra_target_rack=r1) if stopped on purpose, or, if an interrupted run stopped it, resume it (-e cassandra_rolling_resume=true); then run"
        " again.")
 
 
@@ -103,7 +104,7 @@ def test_the_refusal_names_a_failed_unit_this_run_does_not_start():
     # node7's unit failed and nothing is to apply there: in no play (then write, not to do), so --limit node7
     # would do nothing: the way out is on the node
     failed = {"cassandra_apply_config_todo": False, "cassandra_apply_config_then": "write", "cassandra_apply_config_unit_failed": True,
-              "_cassandra_preflight": {"ring_address": "10.0.0.7"}}
+              "_cassandra_preflight": {"ring_address": "10.0.0.7", "cassandra_dc": "dc1", "cassandra_rack": "r2"}}
     hostvars = dict(HOSTVARS, node7=failed)
     t = task("Note whether restarts are refused while a node is not running")
     variables = dict(trust(t["vars"]), hostvars=hostvars, ansible_play_hosts=sorted(hostvars))
@@ -111,7 +112,9 @@ def test_the_refusal_names_a_failed_unit_this_run_does_not_start():
     assert reason == "node5, node7: Cassandra not running, and node1, node2 would be restarted, which needs every other node up."
     # --limit names node5 only (the config applied there, started if stopped on purpose); node7's way out is on the node
     failed_way = ("node7: the cassandra unit failed and nothing is to apply: see systemctl status cassandra / journalctl -u"
-                  " cassandra there, fix it and start it with start_rack (which checks the start first), then run again.")
+                  " cassandra there, fix it and start it with start_rack (which checks the start first: ansible-playbook"
+                  " community.cassandra.start_rack --limit node7 -e cassandra_target_dc=dc1 -e cassandra_target_rack=r2),"
+                  " then run again.")
     assert way == WAY + " " + failed_way
     # node7 the only node down: no --limit sentence (nothing to apply there)
     hostvars.pop("node5")
@@ -121,6 +124,32 @@ def test_the_refusal_names_a_failed_unit_this_run_does_not_start():
     # the fact the refusal reads, set with the node's needs
     note = task("Note what this node needs")
     assert note["ansible.builtin.set_fact"]["cassandra_apply_config_unit_failed"] == "{{ _unit_failed }}"
+
+
+def test_the_start_rack_of_the_way_out_starts_these_nodes_alone():
+    # start_rack without --limit starts every stopped node of the rack (one stopped on purpose too): the nodes down
+    # named, a command per rack, its datacenter and rack given
+    down = {"cassandra_apply_config_todo": True, "cassandra_apply_config_then": "write"}
+    hostvars = dict(HOSTVARS,
+                    node6=dict(down, _cassandra_preflight={"ring_address": "10.0.0.6", "cassandra_dc": "dc1",
+                                                           "cassandra_rack": "r1"}),
+                    node8=dict(down, _cassandra_preflight={"ring_address": "10.0.0.8", "cassandra_dc": "dc2",
+                                                           "cassandra_rack": "r1"}))
+    t = task("Note whether restarts are refused while a node is not running")
+    variables = dict(trust(t["vars"]), hostvars=hostvars, ansible_play_hosts=sorted(hostvars),
+                     ansible_inventory_sources=["/srv/inv/prod.yml"], cassandra_hosts="prod")
+    way = render(t["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"], variables)[1]
+    assert ("(which checks the start first: ansible-playbook -i /srv/inv/prod.yml community.cassandra.start_rack"
+            " -e cassandra_hosts=prod --limit node5,node6 -e cassandra_target_dc=dc1 -e cassandra_target_rack=r1;"
+            " ansible-playbook -i /srv/inv/prod.yml community.cassandra.start_rack -e cassandra_hosts=prod --limit node8"
+            " -e cassandra_target_dc=dc2 -e cassandra_target_rack=r1) if stopped on purpose") in way
+    # the plan's note of a failed unit left stopped: start_rack on that node alone (the note's own expression)
+    note = task("Note what this node needs")["ansible.builtin.set_fact"]["cassandra_apply_config_notes"]
+    start = note.index("'start_rack' | community.cassandra.cassandra_command(")
+    expr = "{{ " + note[start:note.index(") ~ ')']", start) + 1] + " }}"
+    variables = {"_cassandra_preflight": {"cassandra_dc": "dc1", "cassandra_rack": "r2"}, "inventory_hostname": "node7"}
+    assert render(expr, variables) == ("ansible-playbook community.cassandra.start_rack --limit node7"
+                                       " -e cassandra_target_dc=dc1 -e cassandra_target_rack=r2")
 
 
 def test_the_plan_says_a_failed_unit_left_stopped_is_not_stopped_on_purpose():

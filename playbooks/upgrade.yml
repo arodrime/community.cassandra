@@ -702,6 +702,7 @@
 # canary last (already upgraded: skipped, re-run it to resume)
 - name: Pick the nodes and their order
   hosts: "{{ query('community.cassandra.cassandra_nodes') if cassandra_upgrade_phase | default('') in ['canary', 'rolling', 'sstables'] else 'localhost:!localhost' }}"
+  any_errors_fatal: true  # one node refused: none is changed
   gather_facts: false
   become: true
   vars:
@@ -713,6 +714,15 @@
     _canary: >-
       {{ _target | first | default(_order | reject('in', ansible_play_hosts | map('extract', hostvars)
          | selectattr('_cassandra_service_is_seed') | map(attribute='inventory_hostname') | list) | first | default(_order[0])) }}
+    # the nodes of this phase it upgrades from 5.0 (canary, rolling)
+    _storage_mode_nodes: >-
+      {%- set out = [] -%}
+      {%- for h in groups['cassandra_upgrade_nodes'] | default([])
+            if cassandra_upgrade_phase in ['canary', 'rolling'] and not hostvars[h].cassandra_upgrade_done | bool
+               and hostvars[h].cassandra_upgrade_from_series == '50x' -%}
+      {%-   set _ = out.append(h) -%}
+      {%- endfor -%}
+      {{ out }}
   tasks:
     # first: each node its own facts before any run_once task (ansible/ansible#87148)
     - name: Give each node its own facts
@@ -754,6 +764,29 @@
            else _order | reject('equalto', _canary) | list + [_canary] }}
       run_once: true
       changed_when: false
+
+    # 5.0 patch upgrade: each node of the run starts on the config cassandra_config writes (the inventory's
+    # storage_compatibility_mode), with no warning of the point of no return: a mode back, two steps on, into NONE,
+    # or not known, refused before any node is drained (storage_mode_guard.yml). From 4.x: a 4.x Cassandra runs
+    # CASSANDRA_4, the inventory's (asserted above), nothing to check
+    - name: Load the role defaults
+      ansible.builtin.include_role:
+        name: "community.cassandra.{{ item }}"
+        tasks_from: defaults.yml
+        public: true
+      loop: [cassandra_config, cassandra_service, cassandra_operation]
+      when: _storage_mode_nodes | length > 0
+
+    - name: Refuse a start into another storage_compatibility_mode than one step from the one it runs
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: storage_mode_guard.yml
+      vars:
+        _cassandra_storage_mode_hosts: "{{ _storage_mode_nodes }}"
+        _cassandra_storage_mode_starts: "{{ _storage_mode_nodes }}"  # (the stopped ones among them)
+        _cassandra_storage_mode_written: true  # the inventory's mode, written then started with
+        _cassandra_storage_mode_unannounced: true  # no plan warns of the point of no return
+      when: _storage_mode_nodes | length > 0
 
 - name: Upgrade, one node at a time
   hosts: "{{ 'cassandra_upgrade_nodes' if cassandra_upgrade_phase | default('') in ['canary', 'rolling'] else 'localhost:!localhost' }}"

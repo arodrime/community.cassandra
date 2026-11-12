@@ -251,7 +251,13 @@
                 if not _running | bool and _clock.mark is defined and not _stopped | bool
                 else [])
              + (['its cassandra unit failed and nothing is to apply: not started by this run (see systemctl status cassandra'
-                 ' / journalctl -u cassandra there, fix it and start it with start_rack)']
+                 ' / journalctl -u cassandra there, fix it and start it on this node alone: '
+                 ~ 'start_rack' | community.cassandra.cassandra_command(
+                     inventory=ansible_inventory_sources | default([]),
+                     default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+                     hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD'), limit=[inventory_hostname],
+                     extra={'cassandra_target_dc': _cassandra_preflight.cassandra_dc | default(cassandra_dc),
+                            'cassandra_target_rack': _cassandra_preflight.cassandra_rack | default(cassandra_rack)}) ~ ')']
                 if _unit_failed | bool and not _running | bool and not _todo | bool else [])
              + (_no_unit | map(attribute='item') | reject('match', 'package ') | map('regex_replace', '$',
                 ' cannot run here (the condition of its unit): left as it is') | list)
@@ -422,12 +428,12 @@
              [_down | join(', ') ~ ': Cassandra not running, and ' ~ _restart | join(', ') ~ ' would be restarted, which needs'
               ~ ' every other node up.',
               [('Apply the config there first (--limit ' ~ _limit | join(',') ~ ') and start ' ~ _them ~ ' with start_rack'
-                ~ ' (which checks the start first) if stopped on purpose,'
+                ~ ' (which checks the start first: ' ~ _start_rack.limit | join('; ') ~ ') if stopped on purpose,'
                 ~ ' or, if an interrupted run stopped ' ~ _them ~ ', resume it (-e cassandra_rolling_resume=true); then run again.'
                 if _limit else ''),
                (_failed | join(', ') ~ ': the cassandra unit failed and nothing is to apply: see systemctl status cassandra'
-                ~ ' / journalctl -u cassandra there, fix it and start it with start_rack (which checks the start first),'
-                ~ ' then run again.' if _failed else ''),
+                ~ ' / journalctl -u cassandra there, fix it and start it with start_rack (which checks the start first: '
+                ~ _start_rack.failed | join('; ') ~ '), then run again.' if _failed else ''),
                ('A restart for the tuned profile or the LVM read-ahead can be left for later:'
                 ~ ' -e cassandra_linux_tuned_switch_restart=false -e cassandra_data_lvchange_restart=false.'
                 if _restart | map('extract', hostvars) | map(attribute='cassandra_apply_config_disks_window', default=[])
@@ -465,6 +471,28 @@
         # the other nodes down: their config applied with --limit, then started
         _limit: "{{ _down | reject('in', _failed) | list }}"
         _them: "{{ 'them' if _limit | length > 1 else 'it' }}"
+        # start_rack on these nodes alone, a command per rack (without --limit, it starts every stopped node of the
+        # rack, one stopped on purpose too)
+        _start_rack: >-
+          {%- set out = {} -%}
+          {%- for kind, nodes in [['limit', _limit], ['failed', _failed]] -%}
+          {%-   set racks = {} -%}
+          {%-   for h in nodes -%}
+          {%-     set p = hostvars[h]._cassandra_preflight | default({}) -%}
+          {%-     set key = (p.cassandra_dc | default(hostvars[h].cassandra_dc | default('')),
+                             p.cassandra_rack | default(hostvars[h].cassandra_rack | default(''))) -%}
+          {%-     set _ = racks.update({key: racks.get(key, []) + [h]}) -%}
+          {%-   endfor -%}
+          {%-   set _ = out.update({kind: []}) -%}
+          {%-   for key in racks -%}
+          {%-     set _ = out[kind].append('start_rack' | community.cassandra.cassandra_command(
+                          inventory=ansible_inventory_sources | default([]),
+                          default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+                          hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD'), limit=racks[key],
+                          extra={'cassandra_target_dc': key[0], 'cassandra_target_rack': key[1]})) -%}
+          {%-   endfor -%}
+          {%- endfor -%}
+          {{ out }}
 
     - name: Refuse restarts while a node is not running
       ansible.builtin.fail:

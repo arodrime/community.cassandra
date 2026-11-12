@@ -379,7 +379,8 @@
 
     # a node to update whose cassandra.yaml has another storage_compatibility_mode than the one it runs, back or more
     # than one step ahead, or than the inventory's (each node's config is written before its restart, unshown):
-    # refused before the question
+    # refused before the question; a stopped one (a resumed run starts the node the interrupted one stopped) against
+    # the mode it last ran, refused when nothing tells it
     - name: Refuse a restart into another storage_compatibility_mode than one step from the one it runs
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation
@@ -388,6 +389,7 @@
         _cassandra_storage_mode_hosts: "{{ groups['cassandra_update_java_True'] | default([]) }}"
         _cassandra_storage_mode_written: true  # the inventory's mode, written then restarted with
         _cassandra_storage_mode_kept: true
+        _cassandra_storage_mode_starts: "{{ groups['cassandra_update_java_True'] | default([]) }}"  # (the stopped ones among them)
 
     - name: Show the plan and confirm the run
       ansible.builtin.include_role:

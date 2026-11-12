@@ -46,4 +46,10 @@ bugfixes:
     warned of it); a resumed ``rolling_restart`` or ``rolling_reboot`` checks the node it starts, ``sync_clocks`` the
     nodes of its restart windows. The ``-e cassandra_storage_mode_running`` of a way out keeps the items given; after
     ``update_java``'s "apply_config first", the run is done again without it. ``apply_config``'s refusal of a node
-    not running names ``start_rack`` to start it, which checks the start.
+    not running gives the ``start_rack`` command that starts that node alone (``--limit``, its datacenter and rack),
+    which checks the start.
+  - >-
+    upgrade - a 5.0 patch upgrade checks, in its canary and rolling phases and before any node is drained, the
+    ``storage_compatibility_mode`` each node will start with (the inventory's, written with the target's config): a
+    mode back, two steps on, into ``NONE`` (no warning of the point of no return comes first), or not known, is
+    refused with the way out. A resumed ``update_java`` checks the node it starts against the mode it last ran.

@@ -860,7 +860,8 @@ def cassandra_storage_mode_into_none_stop(host, inventory="NONE", written=False,
     inventory has another mode (an apply_config cut after its write of NONE, the inventory set back since, a kept
     file, the operator's template), or, not announced, whatever the inventory; else {} (two steps: the jump's). The
     way out: the operator's choice, the mode it runs kept (its file set back by hand) or NONE (apply_config or
-    rolling_restart, which warn first; a stopped node started by hand once told)."""
+    rolling_restart, which warn first, apply_config when the run writes the config; a stopped node started by hand
+    once told)."""
     running, how = _running_how(host)
     target, source = _target(inventory, written)
     if not running and target is not None:
@@ -877,7 +878,8 @@ def cassandra_storage_mode_into_none_stop(host, inventory="NONE", written=False,
             if target is None or _file(host)[0] == "NONE" else [])
     keep += [_set(source, running)] if source == TEMPLATE else []
     keep += ["cassandra_storage_compatibility_mode: %s in the inventory" % running] if inventory_mode[0] != running else []
-    move = ("run apply_config --limit %s%s (it shows the warning first)." % (name, again) if announced
+    # (the upgrade writes the inventory's config with no plan before: apply_config writes it and warns first)
+    move = ("run apply_config --limit %s%s (it shows the warning first)." % (name, again) if announced or target is not None
             else "start Cassandra there by hand (systemctl start cassandra): it cannot go back once it runs NONE."
             if stopped else "run rolling_restart --limit %s%s (it shows the warning first)." % (name, again))
     then = ([move[:1].upper() + move[1:]] if inventory_mode[0] == "NONE"
