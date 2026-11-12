@@ -101,7 +101,9 @@ def _read_files(files):
     templates = {}
     for f in files:
         if f["path"].endswith(".j2"):  # (Ansible reads no .j2 there as variables)
-            templates[f["path"]] = f["content"]
+            # a copy as a plain str: before 2.19 the import hands its files over marked unsafe (never templated on
+            # the way), which a Templar would leave as it is
+            templates[f["path"]] = "".join([f["content"]])
             continue
         parts = f["path"].split("/")
         by_where.setdefault(parts[0] + "/" + (parts[1].rsplit(".", 1)[0] if len(parts) == 2 else parts[1]), []).append(f)
