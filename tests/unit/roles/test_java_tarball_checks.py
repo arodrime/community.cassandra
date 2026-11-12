@@ -44,7 +44,8 @@ def _play(tmp_path, tasks, variables, check=False):
     play = [{"hosts": "localhost", "gather_facts": False, "vars": variables, "tasks": tasks}]
     (tmp_path / "play.yml").write_text(yaml.safe_dump(play))
     env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0",
-               ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_INVENTORY_UNPARSED_WARNING="0")
+               ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_INVENTORY_UNPARSED_WARNING="0",
+               ANSIBLE_CALLBACK_RESULT_FORMAT="yaml")  # a msg as text on 2.16 too (its JSON escapes quotes)
     argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", "localhost,",
             "-c", "local", "-e", "ansible_python_interpreter=%s" % sys.executable, str(tmp_path / "play.yml")]
     if check:
