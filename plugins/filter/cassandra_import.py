@@ -2055,7 +2055,7 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     for name in [n for n in LATER_STOCK if n in live_files and n in files]:
         for line in without_later_stock(name, "\n".join(_render(env, cassandra_version, name, ctx)[1]), live_files[name])[1]:
             jvm_warnings.append("%s (%s): added by apply_config: %s; missing because this file predates it" % (
-                line, name, LATER_STOCK[name][line]))
+                line, name, LATER_STOCK[name][line][0]))
     where[0] = "cassandra.yaml"
     if "cassandra.yaml" in live_files:
         found.update(_identity(live_files["cassandra.yaml"], cassandra_version))

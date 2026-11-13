@@ -258,15 +258,18 @@ JVM_LISTS = jvm.LISTS
 JVM_UNLOCK = ("UnlockDiagnosticVMOptions", "UnlockExperimentalVMOptions", "UnlockCommercialFeatures")
 # Stock lines a later release added (file: {line: why}): a node's file without one predates it, not a hand edit;
 # the role adds it (said under WORTH A LOOK)
-LATER_STOCK = {"jvm-server.options": {"-Dchronicle.analytics.disable=true": "Cassandra's default since CASSANDRA-19656"}}
+# (the stock comment line above it too: a file with it is of that release, its line removed or changed by hand)
+LATER_STOCK = {"jvm-server.options": {"-Dchronicle.analytics.disable=true": (
+    "Cassandra's default since CASSANDRA-19656", "# Disable chronicle analytics. See CASSANDRA-19656")}}
 
 
 def without_later_stock(name, rendered, live):
-    """rendered (a file's text) without the LATER_STOCK lines of name the node's text (live) has not -> (text,
-    [those lines])."""
+    """rendered (a file's text) without the LATER_STOCK lines of name the node's text (live) has nothing of: no
+    line naming its option, on or commented out, nor its stock comment -> (text, [those lines])."""
     lines = rendered.split("\n")
-    have = set(line.strip() for line in str(live or "").split("\n"))
-    missing = [line for line in LATER_STOCK.get(name, {}) if line in lines and line not in have]
+    text = str(live or "")
+    missing = [line for line, (dummy, comment) in LATER_STOCK.get(name, {}).items() if line in lines
+               and line.split("=", 1)[0] not in text and comment not in text]
     return "\n".join(line for line in lines if line not in missing), missing
 
 

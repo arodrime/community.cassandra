@@ -415,8 +415,24 @@ def test_a_custom_gc_inventory_the_role_takes(tmp_path):
     assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
 
 
+# a file of a release before it: neither the line nor its stock comment
+OLDER_CHRONICLE = "# Disable chronicle analytics. See CASSANDRA-19656\n-Dchronicle.analytics.disable=true\n"
 CHRONICLE = ("-Dchronicle.analytics.disable=true (jvm-server.options): added by apply_config: Cassandra's default since"
              " CASSANDRA-19656; missing because this file predates it")
+
+
+@pytest.mark.parametrize("edit, said, differs", [
+    (("-Dchronicle.analytics.disable=true\n", ""), False, True),  # the stock comment there: removed by hand
+    ((OLDER_CHRONICLE, ""), True, False),
+    (("-Dchronicle.analytics.disable=true", "#-Dchronicle.analytics.disable=true"), False, True),
+    (("-Dchronicle.analytics.disable=true", "-Dchronicle.analytics.disable=false"), False, False)],  # (carried)
+    ids=["line removed", "older file", "commented out", "set false"])
+def test_a_later_stock_line_only_when_the_file_predates_it(tmp_path, edit, said, differs):
+    # (audit r4) only a file with nothing of the line (its option, its stock comment) predates it
+    files = node_files("50x", lambda f: f.update({"jvm-server.options": f["jvm-server.options"].replace(*edit)}))
+    cmdline = launch(files, "17", tmp_path)
+    assert (CHRONICLE in cassandra_config_import(files, "50x", FACTS, java="17", cmdline=cmdline)["jvm_warnings"]) is said
+    assert bool(check(files, "50x", java="17", cmdline=cmdline)["differences"]) is differs
 
 
 def dev_node(chronicle=True):
@@ -432,7 +448,7 @@ def dev_node(chronicle=True):
             "#-Xlog:gc=info,heap*=trace,age*=debug,safepoint=info,promotion*=trace:file=/var/log/cassandra/gc.log",
             "#-Xlog:gc=info,heap*=trace,age*=debug,safepoint=info,promotion*=trace:file=/data/cassandra/log/gc.log")
         text = files["jvm-server.options"].replace("-Xss256k", "-Xss1024M") + "-XX:-UseBiasedLocking\n"
-        files["jvm-server.options"] = text if chronicle else text.replace("-Dchronicle.analytics.disable=true\n", "")
+        files["jvm-server.options"] = text if chronicle else text.replace(OLDER_CHRONICLE, "")
     return edit
 
 
@@ -551,7 +567,7 @@ def older_release(files):
     files["cassandra-env.sh"] += '\n%s\n\nif [ -n "$CASSANDRA_CONF" ]; then\n    JVM_OPTS="$JVM_OPTS %s"\nfi\n' % (
         RMI, AGENT)
     files["jvm-server.options"] = files["jvm-server.options"].replace("-Xss256k", "-Xss1024M").replace(
-        "-Dchronicle.analytics.disable=true\n", "") + "-XX:-UseBiasedLocking\n"
+        OLDER_CHRONICLE, "") + "-XX:-UseBiasedLocking\n"
     text = files["jvm17-server.options"].replace("-XX:MaxTenuringThreshold=2", "-Xms31G\n-Xmx31G")
     files["jvm17-server.options"] = "\n".join(line for line in text.split("\n") if line not in G1_TUNING)
 
