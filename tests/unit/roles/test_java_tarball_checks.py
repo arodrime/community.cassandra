@@ -3,7 +3,7 @@ __metaclass__ = type
 
 # cassandra_install's Java tarball, run by ansible-playbook on localhost (the tasks taken from the role's files):
 # a tarball on the controller is checked against cassandra_java_tarball_checksum before anything changes (it was
-# copied and unpacked whatever its checksum); a download that fails says the URL (a login in it masked) and the
+# copied and unpacked whatever its checksum); a download that fails says the URL (a login, a query in it masked) and the
 # HTTP status; cassandra_java_link is made, moved, or left when it already leads to the Java.
 
 import hashlib
@@ -18,6 +18,8 @@ except ImportError:  # Python 2: not run there (the controller's Python only)
     BaseHTTPRequestHandler = HTTPServer = None
 
 import yaml
+
+from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 COLLECTIONS = os.path.abspath(os.path.join(TOP, "..", "..", ".."))
@@ -121,7 +123,7 @@ def test_a_failed_download_says_the_url_and_the_http_status(tmp_path):
     server = HTTPServer(("127.0.0.1", 0), _NotFound)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        url = "http://mirror-user:s3cret@127.0.0.1:%d/java/jdk-17.tar.gz" % server.server_port
+        url = "http://mirror-user:s3cret@127.0.0.1:%d/java/jdk-17.tar.gz?X-Amz-Signature=5ig" % server.server_port
         download = _find(_tasks("java_tarball.yml"), "Download the Java tarball")
         assert "block" in download and download["rescue"]
         download = dict(download, when="true")
@@ -133,10 +135,10 @@ def test_a_failed_download_says_the_url_and_the_http_status(tmp_path):
         server.shutdown()
     assert rc != 0, out
     assert ("TASK [Stop on the failed download]" in out and "localhost: the Java tarball" not in out)
-    assert ("The Java tarball could not be downloaded from http://mirror-user:****@127.0.0.1:%d/java/jdk-17.tar.gz:"
+    assert ("The Java tarball could not be downloaded from http://****@127.0.0.1:%d/java/jdk-17.tar.gz?****:"
             " HTTP 404, Not Found. Nothing was unpacked. Check that URL (cassandra_java_tarball, or the"
             " cassandra_java_tarballs entry of Java 17) and its checksum, then run again." % server.server_port) in out
-    assert "s3cret" not in out
+    assert "s3cret" not in out and "5ig" not in out
     # a 404 is final: asked once
     assert "retries left" not in out
 
@@ -289,12 +291,13 @@ def test_a_password_with_an_at_sign_is_masked_whole():
     except ImportError:
         def trust_as_template(template):
             return template
+    load_collection_filters()  # (the message uses the collection's filters)
     stop = _find(_tasks("java_tarball.yml"), "Stop on the failed download")
     variables = {"cassandra_java_tarball": "https://svc:p@ss@mirror.example/java/jdk-17.tar.gz",
                  "cassandra_java_version": "17", "_status": "404", "_said": "Not Found"}
     msg = " ".join(Templar(loader=DataLoader(), variables=variables).template(
         trust_as_template(stop["ansible.builtin.fail"]["msg"])).split())
-    assert "https://svc:****@mirror.example/java/jdk-17.tar.gz" in msg and "ss@" not in msg
+    assert "https://****@mirror.example/java/jdk-17.tar.gz" in msg and "ss@" not in msg
 
 
 def test_a_usr_lib_jvm_link_imported_then_left_as_it_is(tmp_path):

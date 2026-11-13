@@ -49,7 +49,7 @@
     that: >-
       cassandra_java_tarball == ''
       or _cassandra_java_tarball_name | regex_replace('[.](tar[.]gz|tgz|tar)$', '') not in ['', '.', '..']
-    fail_msg: "cassandra_java_tarball is {{ cassandra_java_tarball }}: give a tarball file with a name of its own."
+    fail_msg: "cassandra_java_tarball is {{ cassandra_java_tarball | community.cassandra.cassandra_url_masked }}: give a tarball file with a name of its own."
     quiet: true
 
 # A Java already there (cassandra_java_home, e.g. imported, or a tarball

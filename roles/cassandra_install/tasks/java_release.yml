@@ -12,7 +12,7 @@
   ansible.builtin.assert:
     that: _found in ['', cassandra_java_version | community.cassandra.cassandra_java_major]
     fail_msg: >-
-      {{ ('The Java tarball ' ~ _cassandra_java_tarball_name ~ ' (' ~ cassandra_java_tarball ~ ')')
+      {{ ('The Java tarball ' ~ _cassandra_java_tarball_name ~ ' (' ~ cassandra_java_tarball | community.cassandra.cassandra_url_masked ~ ')')
          if _cassandra_java_release_of_tarball | bool else _cassandra_java_home }} is Java {{ _found }}
       (JAVA_VERSION in {{ _cassandra_java_home }}/release on {{ inventory_hostname }}),
       not Java {{ cassandra_java_version }} (cassandra_java_version).

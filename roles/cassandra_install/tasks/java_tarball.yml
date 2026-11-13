@@ -72,13 +72,13 @@
             or cassandra_java_tarball_download.status_code | default(0) | int in range(400, 500)
             or 'did not match' in cassandra_java_tarball_download.msg | default('')
       rescue:
-        # what was asked (the URL, a login in it masked) and what came back
+        # what was asked (the URL, a login or query in it masked) and what came back
         # (the node is named by the line of its failure: not again in the message)
         - name: Stop on the failed download
           ansible.builtin.fail:
             msg: >-
               The Java tarball could not be downloaded from
-              {{ cassandra_java_tarball | regex_replace('(://[^/@:\s]+:)[^/\s]*@', '\1****@') }}:
+              {{ cassandra_java_tarball | community.cassandra.cassandra_url_masked }}:
               {{ ('HTTP ' ~ _status ~ ', ') if _status | int not in [-1, 200] else '' }}{{ _said | trim }}.
               Nothing was unpacked. Check that URL (cassandra_java_tarball, or the cassandra_java_tarballs entry of
               Java {{ cassandra_java_version }}) and its checksum, then run again.
@@ -86,7 +86,7 @@
             _status: "{{ ansible_failed_result.status_code | default(-1) }}"
             _said: >-
               {{ (ansible_failed_result.response | default('', true) or ansible_failed_result.msg | default('no answer'))
-                 | regex_replace('^HTTP Error [0-9]+: ', '') | regex_replace('(://[^/@:\s]+:)[^/\s]*@', '\1****@') }}
+                 | regex_replace('^HTTP Error [0-9]+: ', '') | community.cassandra.cassandra_url_masked }}
 
     - name: Copy the Java tarball from the controller
       ansible.builtin.copy:
@@ -105,9 +105,10 @@
         mode: "0755"
       loop: [absent, directory]
 
+    # the marks name the tarball for a reader (only their presence counts), its URL masked
     - name: Mark the unpack started
       ansible.builtin.copy:
-        content: "{{ cassandra_java_tarball }}\n"
+        content: "{{ cassandra_java_tarball | community.cassandra.cassandra_url_masked }}\n"
         dest: "{{ _cassandra_java_home }}/.unpacking"
         mode: "0644"
       when: not ansible_check_mode  # the directory is not really made under --check
@@ -132,7 +133,7 @@
 
     - name: Mark it unpacked
       ansible.builtin.copy:
-        content: "{{ cassandra_java_tarball }}\n"
+        content: "{{ cassandra_java_tarball | community.cassandra.cassandra_url_masked }}\n"
         dest: "{{ _cassandra_java_home }}/.unpacked"
         mode: "0644"
       when: not ansible_check_mode  # the directory is not really made under --check

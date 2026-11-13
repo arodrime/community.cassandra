@@ -217,7 +217,7 @@
           - _cassandra_repository_key_list.stdout_lines | length > 0
           - _unknown | length == 0
         fail_msg: >-
-          {{ cassandra_repository_key_url }} holds no key or unknown keys ({{ _unknown | join(', ') }}).
+          {{ cassandra_repository_key_url | community.cassandra.cassandra_url_masked }} holds no key or unknown keys ({{ _unknown | join(', ') }}).
           Check them, then add them to cassandra_repository_key_fingerprints.
         quiet: true
       when: _cassandra_repository_gpg_check.rc | default(0) == 0

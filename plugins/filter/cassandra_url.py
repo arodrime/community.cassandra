@@ -1,11 +1,14 @@
 # Copyright: Contributors to the community.cassandra collection
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 """cassandra_same_origin: whether two http(s) URLs are on the same server
-(same scheme, host and port), to send a mirror's credentials only to it."""
+(same scheme, host and port), to send a mirror's credentials only to it.
+cassandra_url_masked: a URL, or a text holding some, as the output shows it:
+no login, no query (a signature, a token)."""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import re
 from urllib.parse import urlsplit
 
 DEFAULT_PORTS = {"http": 80, "https": 443}
@@ -32,8 +35,22 @@ def cassandra_same_origin(url, other):
     return origin is not None and origin == _origin(other)
 
 
+# scheme://, a login (user:password@, up to the last @ before the host), the
+# host and path, a query, a fragment
+_URL = re.compile(r"([a-zA-Z][a-zA-Z0-9+.-]*://)([^\s/?#'\"<>]*@)?([^\s?#'\"<>]*)(\?[^\s#'\"<>]*)?(#[^\s'\"<>]*)?")
+
+
+def cassandra_url_masked(text):
+    """text with the login and the query of every URL in it masked, for the
+    output: "https://user:pass@m.example.com/jdk.tgz?X-Amz-Signature=abc" ->
+    "https://****@m.example.com/jdk.tgz?****"; a path or a URL without them as is."""
+    return _URL.sub(lambda m: m.group(1) + ("****@" if m.group(2) else "") + m.group(3)
+                    + ("?****" if m.group(4) else ""), str(text if text is not None else ""))
+
+
 class FilterModule(object):
     def filters(self):
         return {
             "cassandra_same_origin": cassandra_same_origin,
+            "cassandra_url_masked": cassandra_url_masked,
         }
