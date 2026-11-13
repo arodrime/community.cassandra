@@ -1,0 +1,7 @@
+bugfixes:
+  - "import_cluster - an option written in the place of a G1 line of jvm<N>-server.options (``-Xmx31G`` for ``-XX:MaxTenuringThreshold=2``) is carried in ``cassandra_jvm<N>_extra_options``; it was dropped, so the heap the JVM runs with was not imported."
+  - "import_cluster - a GC block that is not the stock one (G1 without some of its tuning lines, as in an older release's file) is imported as ``cassandra_jvm<N>_gc: custom`` with the node's GC options in ``cassandra_jvm<N>_extra_options``, instead of hand edits the roles would revert."
+  - "import_cluster - an option carried in the extra options at another place than the node has it (``-Xss1024M`` in the place of ``-Xss256k``) is no longer also listed as a hand edit when the file has other edits."
+  - "import_cluster - an active ``-Djava.rmi.server.hostname`` line of cassandra-env.sh outside any block, below the stock comment or at the end of the file, is imported as ``cassandra_jmx_rmi_hostname`` (the node's address in its group form)."
+  - "import_cluster - a hand edit of a JVM options file (a stock line removed) no longer stops the move of cassandra-env.sh's JVM_OPTS lines and the Prometheus exporter's block, nor fails the self-check on those files: it is said on its own."
+  - "import_cluster report - an edit that differs between nodes only by each node's own address is one entry (``<its address>``), in HAND EDITS and in SELF-CHECK."
