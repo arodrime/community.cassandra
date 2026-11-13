@@ -832,17 +832,21 @@
               + import_cluster_repo_slurp.results | default([]) | selectattr('content', 'defined') | map(attribute='content')
                 | map('b64decode') | map('regex_findall', '(?m)^(?:gpgkey\s*=\s*file://|Signed-By:\s*)(\S+)') | flatten)
              | unique }}
-        # the Prometheus exporter's agent the config files give: its jar's sha256, its config
+        # the Prometheus exporter's agent the config files give its Java (as the import finds it): its jar's sha256,
+        # its config
         _exporter: >-
           {{ dict(import_cluster_slurp.results | default([]) | selectattr('content', 'defined') | map(attribute='item')
                   | zip(import_cluster_slurp.results | default([]) | selectattr('content', 'defined') | map(attribute='content')
-                        | map('b64decode'))) | community.cassandra.cassandra_prometheus_agent_paths }}
+                        | map('b64decode')))
+             | community.cassandra.cassandra_prometheus_agent_paths(import_cluster_series | default(''),
+                                                                    import_cluster_java | default('')) }}
         _wanted: >-
           {{ ([['jmx', 'content', _jmx]]
               if import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
                  and not import_cluster_jmx_files.unknown | default('') else [])
              + ([['repo', 'checksum', _repo | zip(_repo) | list]] if import_cluster_repo_files | default([]) | length > 0 else [])
-             + ([['exporter_jar', 'sha256', [['jar', _exporter.jar]]], ['exporter_config', 'content', [['config', _exporter.config]]]]
+             + ([['exporter_jar', 'sha256', [[_exporter.jar, _exporter.jar]]],
+                 ['exporter_config', 'content', [[_exporter.config, _exporter.config]]]]
                 if _exporter else []) }}
 
     - name: Keep the JMX users and the repository files' mode
@@ -852,6 +856,9 @@
         import_cluster_exporter_read:
           sha256: "{{ (_read.exporter_jar | default([{}]) | first).sha256 | default('') }}"
           config: "{{ (_read.exporter_config | default([{}]) | first).content | default('') }}"
+          # (the paths read: the import takes them for the agent it finds only)
+          jar: "{{ (_read.exporter_jar | default([{}]) | first).item | default('') }}"
+          config_file: "{{ (_read.exporter_config | default([{}]) | first).item | default('') }}"
       no_log: true
       when: import_cluster_users_read is not skipped
       vars:
@@ -957,6 +964,8 @@
               exporter:
                 sha256: "{{ import_cluster_exporter_read.sha256 | default('') }}"
                 config: "{{ import_cluster_exporter_read.config | default('') | b64decode if import_cluster_exporter_read.config | default('') else none }}"
+                jar: "{{ import_cluster_exporter_read.jar | default('') }}"
+                config_file: "{{ import_cluster_exporter_read.config_file | default('') }}"
                 carry: "{{ import_cluster_carry_exporter_config | default(false) | bool }}"
             _slurped: "{{ import_cluster_slurp.results + import_cluster_jmx_slurp.results | default([]) }}"
             _live: >-

@@ -2319,8 +2319,9 @@ def _exporter_import(live_files, cmdline, ctx, read=None, conf_dirs=(), java_fil
     without it, {vars: cassandra_prometheus_exporter_*, moved: report lines, notes, found: the agent and its
     file}). The rest of the import reads the node as without it: the role writes it from these variables (at the
     end of jvm-server.options). read: what the import read of it on the node, {sha256: of its jar, config: its
-    config's text (None: not read), carry: its content into cassandra_prometheus_exporter_config (else the path,
-    which a node added later has not)}; conf_dirs: the node's conf dir (the role's config there is its own: its
+    config's text (None: not read), jar, config_file: the paths they were read at (another agent's: not read),
+    carry: its content into cassandra_prometheus_exporter_config (else the path, which a node added later has
+    not)}; conf_dirs: the node's conf dir (the role's config there is its own: its
     content, the role's variables again); java_files: the options files the running Java reads (None: not known, all
     of them)."""
     read = dict(read or {})
@@ -2353,6 +2354,11 @@ def _exporter_import(live_files, cmdline, ctx, read=None, conf_dirs=(), java_fil
                  "cassandra_prometheus_exporter_dir": found["dir"], "cassandra_prometheus_exporter_port": found["port"],
                  "cassandra_prometheus_exporter_address": found["address"],
                  "cassandra_prometheus_exporter_config_file": found["config"]}
+    # what was read on the node: of this agent's jar and config only (read for another agent: not read)
+    if read.get("jar") and read["jar"] != found["jar"]:
+        read.pop("sha256", None)
+    if read.get("config_file") and read["config_file"] != found["config"]:
+        read.pop("config", None)
     # the jar the node has (its version from its name), checked by its sha256: never left unchecked
     if read.get("sha256"):
         variables["cassandra_prometheus_exporter_checksum"] = "sha256:" + read["sha256"]

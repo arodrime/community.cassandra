@@ -24,6 +24,7 @@ import os
 import yaml
 
 from ansible.errors import AnsibleFilterError
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_prometheus import (
     at_start_digest, config_change, without_agent)
 
@@ -74,11 +75,14 @@ def cassandra_prometheus_config_error(text):
     return ""
 
 
-def cassandra_prometheus_agent_paths(files):
+def cassandra_prometheus_agent_paths(files, series="", java=""):
     """A node's config files ({name: text}) -> {jar, config} of the exporter's agent they give the JVM, as
-    import_cluster imports it (the first JVM options file, else cassandra-env.sh), {} when none: what the import
-    reads of it (its jar's sha256, its config)."""
-    names = sorted(f for f in files or {} if str(f).startswith("jvm") and str(f).endswith("-server.options"))
+    import_cluster imports it (the first JVM options file the running Java reads, series and java given: those of
+    its series, else any; then cassandra-env.sh), {} when none: what the import reads of it (its jar's sha256, its
+    config)."""
+    read = jvm.read_files(series, str(java or "")) if jvm.options_file(series, str(java or "")) else None
+    names = sorted(f for f in files or {} if str(f).startswith("jvm") and str(f).endswith("-server.options")
+                   and (read is None or f in read))
     for name in names + ["cassandra-env.sh"]:
         if isinstance((files or {}).get(name), str):
             dummy, found = without_agent(name, files[name])

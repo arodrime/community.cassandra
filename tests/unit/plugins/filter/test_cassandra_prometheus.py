@@ -355,6 +355,30 @@ def test_the_import_reads_the_jar_and_config_of_the_agent():
     assert cassandra_prometheus_agent_paths({"jvm-server.options": "-ea\n"}) == {}
 
 
+@pytest.mark.parametrize("live", ["jvm17-server.options", "cassandra-env.sh"])
+def test_the_agent_read_is_the_one_the_running_java_gets(live):
+    # (audit r6) 5.0 on Java 17: an old agent in jvm11-server.options (not read), the live one in jvm17 or
+    # cassandra-env.sh: the paths read are the live one's
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_prometheus import cassandra_prometheus_agent_paths
+    old = "-javaagent:/opt/old/jmx_prometheus_javaagent-0.20.0.jar=9404:/opt/old/old.yml"
+    files = {"jvm11-server.options": old + "\n", live: OPTION + "\n" if live.endswith(".options")
+             else 'JVM_OPTS="$JVM_OPTS %s"\n' % OPTION}
+    assert cassandra_prometheus_agent_paths(files, "50x", "17") == {"jar": JAR, "config": CONF}
+    assert cassandra_prometheus_agent_paths(files)["jar"] == "/opt/old/jmx_prometheus_javaagent-0.20.0.jar"  # (any)
+    # the import: what was read of another agent's jar and config is not taken
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_config_import
+    node = seeded(stock("50x"))
+    node["jvm17-server.options"] += OPTION + "\n"
+    read = {"sha256": "ab" * 32, "config": "rules: []\n", "jar": "/opt/old/jmx_prometheus_javaagent-0.20.0.jar",
+            "config_file": "/opt/old/old.yml", "carry": True}
+    out = cassandra_config_import(node, "50x", {"os_family": "Debian"}, jvm={"cmdline": "", "java": "17", "exporter": read})
+    assert "cassandra_prometheus_exporter_checksum" not in out["vars"] and "cassandra_prometheus_exporter_config" not in out["vars"]
+    assert [n for n in out["jvm_notes"] if "jar could not be read" in n]
+    out = cassandra_config_import(node, "50x", {"os_family": "Debian"}, jvm={"cmdline": "", "java": "17", "exporter": dict(
+        read, jar=JAR, config_file=CONF)})
+    assert out["vars"]["cassandra_prometheus_exporter_checksum"] == "sha256:" + "ab" * 32
+
+
 def test_a_node_without_the_exporter_imports_none():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_config_import
     out = cassandra_config_import(seeded(stock("50x")), "50x", {"os_family": "Debian"})
