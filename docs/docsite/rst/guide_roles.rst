@@ -1173,15 +1173,18 @@ restart pending, which the next ``apply_config`` does: ``jmx_prometheus.at_start
 digest of these parts for the record of the config Cassandra started with. The jars of other versions the role
 downloaded are removed once the new one is written; turned off, the role removes its jars, its config and that record,
 none while a line the next start reads still names the exporter (``jmx_prometheus``: its jar or its config, however
-reached, an exporter of your own too): a WARNING says where and how to remove that line, or, when that agent is your
-own exporter and not the role's, to delete ``<cassandra_prometheus_exporter_dir>/.cassandra_config`` so that the role
-forgets its files. It reads ``cassandra-env.sh`` and every JVM options file of the series (as written; with
-``--check`` and in ``apply_config``'s preview, those kept by hand as they are on the node, or as the role is to write
-one not there yet, the others as the role is to write them); the unit and its drop-ins (``systemctl cat cassandra``,
-else ``/etc``, ``/run``, ``/usr/lib`` and ``/lib/systemd/system``), the ``EnvironmentFile`` they name,
-``/etc/default/cassandra`` and the ``cassandra.in.sh`` files ``bin/cassandra`` may source (``CASSANDRA_INCLUDE`` of
-``cassandra_service_environment``, ``~<cassandra_service_user>/.cassandra.in.sh``, ``/usr/share/cassandra``,
-``/usr/sbin``, ``/usr/local/share/cassandra``, ``/opt/cassandra``); and ``cassandra_service_environment``.
+reached, an exporter of your own too): a WARNING says where and how to remove that line (or comment it out with
+``#``), or, when that agent is your own exporter and not the role's, to delete the role's files
+(``<cassandra_prometheus_exporter_dir>/.cassandra_config``, the jars it lists, ``jmx_prometheus.yml`` and
+``jmx_prometheus.at_start`` of the conf dir). It reads ``cassandra-env.sh`` and every JVM options file of the series
+(as written; with ``--check`` and in ``apply_config``'s preview, those kept by hand as they are on the node, or as the
+role is to write one not there yet, the others as the role is to write them); the unit and its drop-ins (those
+``systemctl cat cassandra`` lists and those on disk in ``/etc``, ``/run``, ``/usr/lib`` and ``/lib/systemd/system``),
+the ``EnvironmentFile`` they name, ``/etc/default/cassandra`` and the ``cassandra.in.sh`` files ``bin/cassandra`` may
+source (``CASSANDRA_INCLUDE`` of ``cassandra_service_environment``, the unit, its ``EnvironmentFile`` or
+``/etc/default/cassandra``; ``~<cassandra_service_user>/.cassandra.in.sh``, ``/usr/share/cassandra``, ``/usr/sbin``,
+``/usr/local/share/cassandra``, ``/opt/cassandra``); and ``cassandra_service_environment``. Not read: systemd's
+``DefaultEnvironment=`` and ``systemctl set-environment``.
 A running Cassandra keeps the jar it opened until its restart.
 
 The agent makes the JVM exit when it cannot start: a port already in use, a jar or a config missing. Cassandra then
