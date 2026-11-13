@@ -21,6 +21,7 @@ except ImportError:
     def trust_as_template(template):
         return template
 
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _load_role, _render
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
@@ -341,7 +342,6 @@ def test_an_appender_named_in_single_quotes_is_known():
 
 def test_a_g1_value_left_empty_comments_its_stock_line_out():
     # the owner's practice: tune G1 by commenting a stock line out, never by deleting it
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _load_role, _render
     env, ctx, dummy = _load_role("50x", {"os_family": "Debian"})
     lines = _render(env, "50x", "jvm17-server.options", dict(ctx, cassandra_jvm_g1_new_size_percent="",
                                                              cassandra_jvm17_max_gc_pause_millis="",
@@ -352,7 +352,6 @@ def test_a_g1_value_left_empty_comments_its_stock_line_out():
 
 
 def test_the_heap_in_the_jvm_options():
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _load_role, _render
     env, ctx, dummy = _load_role("50x", {"os_family": "Debian"})
     on = dict(ctx, cassandra_heap_size="31G", cassandra_heap_in_jvm_options=True, cassandra_jvm_extra_options=["-Dx=1"])
     assert _render(env, "50x", "jvm-server.options", on)[1][-4:-1] == ["-Xms31G", "-Xmx31G", "-Dx=1"]
