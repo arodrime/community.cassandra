@@ -8,10 +8,12 @@
 #   - cassandra-env.sh and every JVM options file of the series: in a run that writes, as written on the node; in one
 #     that only looks (--check, apply_config's preview), those kept as they are on the node (one not there yet as the
 #     role is to write it), the others as the role is to write them (your templates and snippets, the extra options);
-#   - the unit and its drop-ins (systemctl cat cassandra, else /etc, /run, /usr/lib and /lib/systemd/system), the
-#     EnvironmentFiles they name, /etc/default/cassandra, the cassandra.in.sh files bin/cassandra may source
-#     (CASSANDRA_INCLUDE of cassandra_service_environment, ~<cassandra_service_user>/.cassandra.in.sh,
-#     /usr/share/cassandra, /usr/sbin, /usr/local/share/cassandra, /opt/cassandra), as they are on the node;
+#   - the unit and its drop-ins (those systemctl cat cassandra lists and those on disk in /etc, /run, /usr/lib and
+#     /lib/systemd/system), the EnvironmentFiles they name, /etc/default/cassandra, the cassandra.in.sh files
+#     bin/cassandra may source (CASSANDRA_INCLUDE of cassandra_service_environment, the unit, its EnvironmentFiles or
+#     /etc/default/cassandra; ~<cassandra_service_user>/.cassandra.in.sh, /usr/share/cassandra, /usr/sbin,
+#     /usr/local/share/cassandra, /opt/cassandra), as they are on the node; not systemd's DefaultEnvironment= nor
+#     systemctl set-environment;
 #   - cassandra_service_environment (the unit's environment cassandra_service writes, JVM_EXTRA_OPTS).
 # Removed, they would stop Cassandra at its next start. A running Cassandra keeps the jar it opened until its
 # restart (the one the JVM options file now gives is there).
@@ -49,32 +51,51 @@
         # names the exporter (jmx_prometheus: its jar or its config, however reached; kept, it costs a warning,
         # removed, Cassandra would not start)
         if [ "$on" != on ]; then
-          # the unit and its drop-ins (systemd's own list, else where they can be), the EnvironmentFiles they name
-          units=$(systemctl cat cassandra 2>/dev/null | sed -n 's|^# \(/.*\)$|\1|p')
-          [ -n "$units" ] || units=$(ls -d /etc/systemd/system/cassandra.service /run/systemd/system/cassandra.service \
-            /usr/lib/systemd/system/cassandra.service /lib/systemd/system/cassandra.service \
-            /etc/systemd/system/cassandra.service.d/*.conf /run/systemd/system/cassandra.service.d/*.conf \
-            /usr/lib/systemd/system/cassandra.service.d/*.conf /lib/systemd/system/cassandra.service.d/*.conf 2>/dev/null)
-          env_files=$(for u in $units; do sed -n 's/^[[:space:]]*EnvironmentFile=-\{0,1\}//p' "$u" 2>/dev/null; done)
-          # the cassandra.in.sh bin/cassandra sources (CASSANDRA_INCLUDE, else the first of these there), the
-          # package's /etc/default/cassandra
+          root=${10}  # (the tests' host)
+          # the unit and its drop-ins: those systemd has loaded (systemctl cat: the "# <path>" line each starts with)
+          # and those on disk (one added without a daemon-reload is read at the next start), each once
+          units=$(
+            {
+              systemctl cat cassandra 2>/dev/null \
+                | awk '(NR == 1 || previous == "") && /^# \// { print substr($0, 3) } { previous = $0 }' \
+                | sed "s|^|$root|"
+              for d in /etc /run /usr/lib /lib; do
+                ls -d "$root$d/systemd/system/cassandra.service" "$root$d"/systemd/system/cassandra.service.d/*.conf \
+                  2>/dev/null
+              done
+            } | while IFS= read -r u; do [ -f "$u" ] && echo "$(readlink -f "$u") $u"; done | awk '!seen[$1]++ { print $2 }'
+          )
+          # the EnvironmentFiles they name (EnvironmentFile = -/path, quoted or not)
+          env_files=$(
+            for u in $units; do sed -n 's/^[[:space:]]*EnvironmentFile[[:space:]]*=[[:space:]]*//p' "$u" 2>/dev/null; done \
+              | tr -d "\"'" | tr ' ' '\n' | sed -n "s|^-\{0,1\}\(/.*\)|$root\1|p"
+          )
+          # the cassandra.in.sh bin/cassandra sources: CASSANDRA_INCLUDE (of cassandra_service_environment, the unit,
+          # its EnvironmentFiles, /etc/default/cassandra), else the first of these there
+          includes=$(
+            cat $units $env_files "$root/etc/default/cassandra" 2>/dev/null | grep -v '^[[:space:]]*[#;]' \
+              | sed -n "s/.*CASSANDRA_INCLUDE=[\"']\{0,1\}\([^\"'[:space:]]*\).*/\1/p" | sed -n "s|^/|$root/|p"
+          )
           home=$(getent passwd "$user" 2>/dev/null | cut -d: -f6)
-          start_files="$include ${home:+$home/.cassandra.in.sh} /usr/share/cassandra/cassandra.in.sh
-            /usr/sbin/cassandra.in.sh /usr/local/share/cassandra/cassandra.in.sh /opt/cassandra/cassandra.in.sh
-            /etc/default/cassandra $env_files"
+          start_files="${include:+$root$include} $includes ${home:+$root$home/.cassandra.in.sh}
+            $root/usr/share/cassandra/cassandra.in.sh $root/usr/sbin/cassandra.in.sh
+            $root/usr/local/share/cassandra/cassandra.in.sh $root/opt/cassandra/cassandra.in.sh
+            $root/etc/default/cassandra $env_files"
           {
             for f in $files $units $start_files; do
               case "$f" in /*) path=$f ;; *) path=$conf/$f ;; esac
-              grep -v '^[[:space:]]*#' "$path" 2>/dev/null | grep -qF jmx_prometheus || continue
+              grep -v '^[[:space:]]*[#;]' "$path" 2>/dev/null | grep -qF jmx_prometheus || continue
+              name=${f#"$root"}
               case " $(echo $units) " in
-                *" $f "*) case "$f" in
+                *" $f "*) case "$name" in
+                    /etc/systemd/system/cassandra.service.d/override.conf) kind=override ;;
                     *.service.d/*) kind=drop-in ;;
                     *) grep -qs '^# Managed by Ansible (community.cassandra.cassandra_service)' "$f" \
                          && kind=role-unit || kind=unit ;;
                   esac ;;
                 *) case "$f" in /*) kind=file ;; *) kind=conf ;; esac ;;
               esac
-              echo "kept|$f|$kind"
+              echo "kept|$name|$kind"
             done
             for f in $if_missing; do [ -e "$conf/$f" ] || echo "kept|$f|conf"; done
             for f in $to_write; do
@@ -93,6 +114,7 @@
       - "{{ _if_missing | join(' ') }}"
       - "{{ cassandra_service_user | default(cassandra_user) }}"
       - "{{ _unit_env.CASSANDRA_INCLUDE | default('') }}"
+      - ""
   register: cassandra_config_exporter_unused
   changed_when: false
   check_mode: false  # reads only
@@ -134,20 +156,22 @@
     msg: >-
       WARNING  {{ inventory_hostname }}: the Prometheus exporter is off, but {{ _kept | map('first') | join(', ') }}
       still {{ 'names' if _kept | length == 1 else 'name' }} its agent or config (jmx_prometheus): the role's jar and
-      config are left in place, or Cassandra would not start. Remove or comment the agent's line in
+      config are left in place, or Cassandra would not start. Remove the agent's line (or comment it out with #) in
       {% for source, kind in _kept %}{{ source }} ({{ _ways[kind] }}){{ ', ' if not loop.last else '' }}{% endfor %}.
-      Or, if that agent is your own exporter and not the role's, delete
-      {{ cassandra_prometheus_exporter_dir | regex_replace('(?<=.)/+$', '') }}/.cassandra_config so the role forgets
-      its files (then remove the role's jar and the role's config by hand if wanted).
+      Or, if that agent is your own exporter and not the role's, delete the role's files: {{ _dir }}/.cassandra_config,
+      the jars it lists, {{ _conf }}/jmx_prometheus.yml and {{ _conf }}/jmx_prometheus.at_start.
   vars:
     cassandra_output: true
     _kept: >-
       {{ cassandra_config_exporter_unused.stdout_lines | select('match', 'kept[|]')
          | map('regex_replace', '^kept[|]', '') | map('split', '|') | list }}
+    _dir: "{{ cassandra_prometheus_exporter_dir | regex_replace('(?<=.)/+$', '') }}"
+    _conf: "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}"
     _ways:
       conf: the file, or your copy or template, your snippet, the extra options
       role-unit: change cassandra_service_environment, then run cassandra_service
-      drop-in: systemctl edit cassandra
+      override: systemctl edit cassandra
+      drop-in: edit it, then systemctl daemon-reload
       unit: systemctl edit --full cassandra
       file: the file
   when: _kept | length > 0

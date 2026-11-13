@@ -388,16 +388,16 @@ CLEANUP = load_tasks(os.path.join(ROLE, "tasks", "prometheus_exporter_cleanup.ym
 
 def unused(tmp_path, on, listed=("jmx_prometheus_javaagent-1.6.0.jar", "jmx_prometheus_javaagent-1.7.0.jar"),
            others=("theirs.jar",), config_header=True, options=None, env=None, files="", to_write="", if_missing="",
-           units=None, home_insh=None, include="", systemd=True):
+           host=None, loaded=None, include=""):
     """What the cleanup finds in a directory and a conf dir made so (sh runs its script); options, env: the content
     of the conf dir's jvm-server.options, cassandra-env.sh ({dir}: the jars' dir, {conf}: the conf dir); files: the
-    ones it reads there; to_write, if_missing: as the task gives them; units: {name: text} of the unit and its
-    drop-ins (name with a /: a drop-in), listed by a systemctl of the test (none: systemd's absent); home_insh: the
-    .cassandra.in.sh of the account's home (getent of the test)."""
-    jars, conf, bin_dir = tmp_path / "exporter", tmp_path / "conf", tmp_path / "bin"
-    jars.mkdir(parents=True)
-    conf.mkdir()
-    bin_dir.mkdir()
+    ones it reads there; to_write, if_missing, include: as the task gives them; host: {absolute path: text} of the
+    host's files (the unit, its drop-ins, /etc/default/cassandra, ~cassandra/.cassandra.in.sh: /home/cassandra),
+    made under a root of their own (the real host's never read); loaded: the units systemctl lists (None: those of
+    host; [] none, systemd absent)."""
+    jars, conf, bin_dir, root = tmp_path / "exporter", tmp_path / "conf", tmp_path / "bin", tmp_path / "root"
+    for d in (jars, conf, bin_dir, root):
+        d.mkdir(parents=True, exist_ok=True)
     for name, text in (("jvm-server.options", options), ("cassandra-env.sh", env)):
         if text is not None:
             (conf / name).write_text(text.replace("{dir}", str(jars)).replace("{conf}", str(conf)))
@@ -407,24 +407,19 @@ def unused(tmp_path, on, listed=("jmx_prometheus_javaagent-1.6.0.jar", "jmx_prom
     (conf / "jmx_prometheus.yml").write_text(("# Managed by Ansible (community.cassandra.cassandra_config): x\n"
                                               if config_header else "# mine\n") + "rules: []\n")
     (conf / "jmx_prometheus.at_start").write_text("x\n")
-    listing = ""
-    for name, text in (units or {}).items():
-        (tmp_path / "unit" / os.path.dirname(name)).mkdir(parents=True, exist_ok=True)
-        (tmp_path / "unit" / name).write_text(text.replace("{dir}", str(jars)).replace("{tmp}", str(tmp_path)))
-        listing += "# %s\n%s\n" % (tmp_path / "unit" / name, text)
-    (tmp_path / "listing").write_text(listing)
-    (bin_dir / "systemctl").write_text("#!/bin/sh\ncat '%s'\n" % (tmp_path / "listing") if systemd and units
-                                       else "#!/bin/sh\nexit 1\n")
-    (tmp_path / "home").mkdir()
-    if home_insh is not None:
-        (tmp_path / "home" / ".cassandra.in.sh").write_text(home_insh.replace("{dir}", str(jars)))
-    (bin_dir / "getent").write_text("#!/bin/sh\n[ \"$2\" = cassandra ] && echo 'cassandra:x:1:1::%s:/bin/sh'\n"
-                                    % (tmp_path / "home"))
+    for path, text in (host or {}).items():
+        (root / path.lstrip("/")).parent.mkdir(parents=True, exist_ok=True)
+        (root / path.lstrip("/")).write_text(text.replace("{dir}", str(jars)))
+    loaded = [p for p in host or {} if "/systemd/" in p] if loaded is None else loaded
+    # (systemctl cat: each file's "# <path>" line, its content, a blank line)
+    (tmp_path / "listing").write_text("\n".join("# %s\n%s" % (p, host[p]) for p in loaded))
+    (bin_dir / "systemctl").write_text("#!/bin/sh\ncat '%s'\n" % (tmp_path / "listing") if loaded else "#!/bin/sh\nexit 1\n")
+    (bin_dir / "getent").write_text("#!/bin/sh\n[ \"$2\" = cassandra ] && echo 'cassandra:x:1:1::/home/cassandra:/bin/sh'\n")
     for tool in ("systemctl", "getent"):
         (bin_dir / tool).chmod(0o755)
     argv = find(CLEANUP, "Find what the exporter's agent no longer needs")["ansible.builtin.command"]["argv"]
     run = subprocess.run(argv[:4] + [str(jars), "jmx_prometheus_javaagent-1.7.0.jar", str(conf), on, files, to_write,
-                                     if_missing, "cassandra", include.replace("{tmp}", str(tmp_path))],
+                                     if_missing, "cassandra", include, str(root)],
                          stdout=subprocess.PIPE, check=True,
                          env=dict(os.environ, PATH="%s:%s" % (bin_dir, os.environ["PATH"])))
     return [line.replace(str(tmp_path), "") for line in run.stdout.decode().split("\n") if line]
@@ -475,27 +470,66 @@ def test_off_nothing_removed_while_the_next_start_may_still_load_it(tmp_path):
     assert len(unused(tmp_path / "jamm", "off", env=jamm, files="cassandra-env.sh")) == 5
     assert len(unused(tmp_path / "b", "off", options="-ea\n#" + role_agent, files="jvm-server.options")) == 5
     assert len(unused(tmp_path / "c", "off", options="-ea\n" + role_agent)) == 5
-    # (audit r8) what a start reads besides the conf dir: the unit and its drop-ins (systemctl cat), the
-    # EnvironmentFiles they name, ~cassandra/.cassandra.in.sh, CASSANDRA_INCLUDE; each said with its kind
+    # (audit r8, r9) what a start reads besides the conf dir: the unit and its drop-ins (systemctl cat, and those on
+    # disk), the EnvironmentFiles they name, /etc/default/cassandra, the cassandra.in.sh bin/cassandra sources; each
+    # said with its kind (its way out)
     line = "JVM_EXTRA_OPTS=-javaagent:{dir}/jmx_prometheus_javaagent-1.7.0.jar=9404:/etc/x.yml"
     header = "# Managed by Ansible (community.cassandra.cassandra_service): change the role variables\n"
-    assert unused(tmp_path / "u1", "off", units={"cassandra.service": header + "Environment=" + line}) == [
-        "kept|/unit/cassandra.service|role-unit"]
-    assert unused(tmp_path / "u2", "off", units={"cassandra.service": "[Service]\nEnvironment=" + line}) == [
-        "kept|/unit/cassandra.service|unit"]
-    drop_in = {"cassandra.service": "[Service]\n", "cassandra.service.d/override.conf": "Environment=" + line}
-    assert unused(tmp_path / "u3", "off", units=drop_in) == ["kept|/unit/cassandra.service.d/override.conf|drop-in"]
-    (tmp_path / "u5").mkdir()
-    (tmp_path / "u5" / "env").write_text(line.replace("{dir}", "/x") + "\n")
-    assert unused(tmp_path / "u5", "off", units={"cassandra.service": "EnvironmentFile=-{tmp}/env\n"}) == [
-        "kept|/env|file"]
-    # (systemd absent, or no unit: nothing of it read; harmless)
-    assert len(unused(tmp_path / "u6", "off", units={"cassandra.service": "Environment=" + line}, systemd=False)) == 5
-    insh = 'JVM_OPTS="$JVM_OPTS -javaagent:{dir}/jmx_prometheus_javaagent-1.7.0.jar=9404:/etc/x.yml"\n'
-    assert unused(tmp_path / "h", "off", home_insh=insh) == ["kept|/home/.cassandra.in.sh|file"]
-    (tmp_path / "i").mkdir()
-    (tmp_path / "i" / "mine.in.sh").write_text(insh.replace("{dir}", "/x"))
-    assert unused(tmp_path / "i", "off", include="{tmp}/mine.in.sh") == ["kept|/mine.in.sh|file"]
+    unit = "/etc/systemd/system/cassandra.service"
+    for case, host, said in [
+            ("role-unit", {unit: header + "[Service]\nEnvironment=" + line}, "%s|role-unit" % unit),
+            ("unit", {"/usr/lib/systemd/system/cassandra.service": "[Service]\nEnvironment=" + line},
+             "/usr/lib/systemd/system/cassandra.service|unit"),
+            ("override", {unit: "[Service]\n", unit + ".d/override.conf": "Environment=" + line},
+             unit + ".d/override.conf|override"),
+            ("drop-in", {unit: "[Service]\n", unit + ".d/50-agent.conf": "Environment=" + line},
+             unit + ".d/50-agent.conf|drop-in"),
+            ("environment-file", {unit: "EnvironmentFile = -/etc/cassandra.env\n", "/etc/cassandra.env": line},
+             "/etc/cassandra.env|file"),
+            ("quoted", {unit: 'EnvironmentFile="/etc/cassandra.env"\n', "/etc/cassandra.env": line},
+             "/etc/cassandra.env|file"),
+            ("default", {"/etc/default/cassandra": line}, "/etc/default/cassandra|file"),
+            ("home", {"/home/cassandra/.cassandra.in.sh": line}, "/home/cassandra/.cassandra.in.sh|file"),
+            ("package", {"/usr/share/cassandra/cassandra.in.sh": line}, "/usr/share/cassandra/cassandra.in.sh|file"),
+            ("include-of-the-unit", {unit: "Environment=CASSANDRA_INCLUDE=/srv/in.sh\n", "/srv/in.sh": line},
+             "/srv/in.sh|file"),
+            ("include-of-an-environment-file", {unit: "EnvironmentFile=/etc/c.env\n",
+                                                "/etc/c.env": 'CASSANDRA_INCLUDE="/srv/in.sh"\n', "/srv/in.sh": line},
+             "/srv/in.sh|file")]:
+        assert unused(tmp_path / case, "off", host=host) == ["kept|" + said], case
+    # (audit r9, A1) a drop-in on disk systemd has not loaded yet (no daemon-reload): read, the next start reads it
+    host = {unit: "[Service]\n", unit + ".d/50-agent.conf": "Environment=" + line}
+    assert unused(tmp_path / "not-loaded", "off", host=host, loaded=[unit]) == [
+        "kept|%s.d/50-agent.conf|drop-in" % unit]
+    # systemd absent: the units on disk read all the same; nothing there: nothing kept (harmless)
+    assert unused(tmp_path / "no-systemd", "off", host={unit: "Environment=" + line}, loaded=[]) == [
+        "kept|%s|unit" % unit]
+    assert len(unused(tmp_path / "nothing", "off", loaded=[])) == 5
+    # the same unit through /lib and /usr/lib (merged /usr): said once
+    lib = tmp_path / "merged" / "root" / "lib"
+    lib.parent.mkdir(parents=True)
+    lib.symlink_to("usr/lib")
+    assert unused(tmp_path / "merged", "off", host={"/usr/lib/systemd/system/cassandra.service": "Environment=" + line},
+                  loaded=[]) == ["kept|/usr/lib/systemd/system/cassandra.service|unit"]
+    # comments (# and ;) and a "# /path" line inside a unit's content (not a file of systemctl cat's): not read
+    host = {unit: "[Service]\n; Environment=%s\n# Environment=%s\n# /etc/c.env\n" % (line, line),
+            "/etc/c.env": line}
+    assert len(unused(tmp_path / "comments", "off", host=host)) == 5
+    # CASSANDRA_INCLUDE of cassandra_service_environment
+    assert unused(tmp_path / "include", "off", host={"/srv/mine.in.sh": line}, include="/srv/mine.in.sh") == [
+        "kept|/srv/mine.in.sh|file"]
+    # (audit r9, B1) the way out for an exporter of your own, followed to the letter: nothing left to keep
+    yours = 'JVM_OPTS="$JVM_OPTS -javaagent:/opt/own/jmx_prometheus_javaagent-1.2.0.jar=7070:/opt/own/mine.yml"\n'
+    case = tmp_path / "w1"
+    assert unused(case, "off", env=yours, files="cassandra-env.sh") == ["kept|cassandra-env.sh|conf"]
+    for name in ["exporter/.cassandra_config", "exporter/jmx_prometheus_javaagent-1.6.0.jar",
+                 "exporter/jmx_prometheus_javaagent-1.7.0.jar", "conf/jmx_prometheus.yml", "conf/jmx_prometheus.at_start"]:
+        (case / name).unlink()
+    argv = find(CLEANUP, "Find what the exporter's agent no longer needs")["ansible.builtin.command"]["argv"]
+    run = subprocess.run(argv[:4] + [str(case / "exporter"), "jmx_prometheus_javaagent-1.7.0.jar", str(case / "conf"),
+                                     "off", "cassandra-env.sh", "", "", "cassandra", "", str(case / "root")],
+                         stdout=subprocess.PIPE, check=True)
+    assert run.stdout == b""
     # what is to be written (the unit's environment, only looking the role's render); a file kept but not there yet
     assert unused(tmp_path / "s6b", "off", to_write="cassandra_service_environment jvm17-server.options") == [
         "kept|cassandra_service_environment|role-unit", "kept|jvm17-server.options|conf"]
@@ -507,7 +541,7 @@ def test_off_nothing_removed_while_the_next_start_may_still_load_it(tmp_path):
     def args(**variables):
         variables = role_vars(**variables)
         variables.update((k, render(v, variables) if isinstance(v, str) else v) for k, v in task_vars.items())
-        return [render(a, variables) for a in argv[-5:]]
+        return [render(a, variables) for a in argv[-6:-1]]
     looking = dict(_cassandra_config_exporter_writes={"skipped": True, "changed": False})
     kept = ["cassandra.yaml", "jvm-server.options", "jvm8-server.options", "jvm17-server.options"]
     # a run that writes: the files the next start reads, as written, all the series' JVM files whatever
@@ -548,7 +582,7 @@ def test_off_nothing_removed_while_the_next_start_may_still_load_it(tmp_path):
     bare.mkdir()
     (bare / "jvm-server.options").write_text(AGENT_LINE)
     run = subprocess.run(argv[:4] + [str(bare / "none"), "x.jar", str(bare), "off", "jvm-server.options", "", "",
-                                     "cassandra", ""], stdout=subprocess.PIPE, check=True)
+                                     "cassandra", "", str(bare / "root")], stdout=subprocess.PIPE, check=True)
     assert run.stdout == b""
     # said, with the way out of each; nothing removed, nothing noted
     variables = role_vars(inventory_hostname="n1", cassandra_config_exporter_unused={"stdout_lines": [
@@ -563,16 +597,19 @@ def test_off_nothing_removed_while_the_next_start_may_still_load_it(tmp_path):
     msg = message("kept|jvm-server.options|conf")
     assert when(said, variables) is True
     assert "but jvm-server.options still names its agent or config (jmx_prometheus)" in msg
-    assert "Remove or comment the agent's line in jvm-server.options (the file, or your copy or template, your" \
-        " snippet, the extra options)." in msg
-    assert "Or, if that agent is your own exporter and not the role's, delete /opt/prometheus-jmx-exporter/" \
-        ".cassandra_config so the role forgets its files (then remove the role's jar and the role's config by hand" \
-        " if wanted)." in msg
-    msg = message("kept|cassandra_service_environment|role-unit", "kept|/etc/systemd/system/cassandra.service.d/x.conf"
-                  "|drop-in", "kept|/usr/lib/systemd/system/cassandra.service|unit", "kept|/etc/default/cassandra|file")
-    assert "line in cassandra_service_environment (change cassandra_service_environment, then run cassandra_service)," \
-        " /etc/systemd/system/cassandra.service.d/x.conf (systemctl edit cassandra), /usr/lib/systemd/system/" \
-        "cassandra.service (systemctl edit --full cassandra), /etc/default/cassandra (the file)." in msg
+    assert "Remove the agent's line (or comment it out with #) in jvm-server.options (the file, or your copy or" \
+        " template, your snippet, the extra options)." in msg
+    assert "Or, if that agent is your own exporter and not the role's, delete the role's files:" \
+        " /opt/prometheus-jmx-exporter/.cassandra_config, the jars it lists, /etc/cassandra/jmx_prometheus.yml and" \
+        " /etc/cassandra/jmx_prometheus.at_start." in msg
+    msg = message("kept|cassandra_service_environment|role-unit", "kept|/etc/systemd/system/cassandra.service.d/"
+                  "override.conf|override", "kept|/etc/systemd/system/cassandra.service.d/x.conf|drop-in",
+                  "kept|/usr/lib/systemd/system/cassandra.service|unit", "kept|/etc/default/cassandra|file")
+    assert "in cassandra_service_environment (change cassandra_service_environment, then run cassandra_service)," \
+        " /etc/systemd/system/cassandra.service.d/override.conf (systemctl edit cassandra)," \
+        " /etc/systemd/system/cassandra.service.d/x.conf (edit it, then systemctl daemon-reload)," \
+        " /usr/lib/systemd/system/cassandra.service (systemctl edit --full cassandra), /etc/default/cassandra" \
+        " (the file)." in msg
     variables["cassandra_config_exporter_unused"] = {"stdout_lines": ["kept|jvm-server.options|conf"]}
     assert render(find(CLEANUP, "Remove them")["loop"], variables) == []
     note = find(CLEANUP, "Note what is removed")
