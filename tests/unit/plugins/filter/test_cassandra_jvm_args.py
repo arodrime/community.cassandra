@@ -20,7 +20,8 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import_che
     cassandra_inventory_host_vars,
 )
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import cassandra_import_report
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import IPV4, cassandra_inventory_layout
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
+    IPV4, cassandra_config_import, cassandra_inventory_layout)
 
 from .test_cassandra_import_check import FACTS, check, import_node, seeded, stock
 
@@ -376,6 +377,10 @@ def test_a_custom_gc_inventory_the_role_takes(tmp_path):
     assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
 
 
+CHRONICLE = ("-Dchronicle.analytics.disable=true (jvm-server.options): added by apply_config: Cassandra's default since"
+             " CASSANDRA-19656; missing because this file predates it")
+
+
 def dev_node(chronicle=True):
     """(2026-11-13, a 5.0.9 DEV node) the heap and the stack in G1's block, its tuning commented out with a marker of
     its own, a longer pause; -Xss1024M in jvm-server.options (jvm17-server.options is read after it: its -Xss256k
@@ -405,10 +410,11 @@ def test_the_dev_node_jvm_files(tmp_path):
         "cassandra_jvm_extra_options": ["-Xss1024M", "-XX:-UseBiasedLocking"], **TUNED}
     assert settings(launch(rendered, "17", tmp_path)) == settings(cmdline)
     assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
-    # without the chronicle line (an older file): that line only
+    # without the chronicle line (an older file): no difference, said under WORTH A LOOK
     files = node_files("50x", dev_node(chronicle=False))
-    assert [d.split(":")[1].strip() for d in check(files, "50x", java="17", cmdline=launch(files, "17", tmp_path))[
-        "differences"]] == ["-Dchronicle.analytics.disable"]
+    cmdline = launch(files, "17", tmp_path)
+    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
+    assert CHRONICLE in cassandra_config_import(files, "50x", FACTS, java="17", cmdline=cmdline)["jvm_warnings"]
 
 
 def test_the_stock_gc_block_stays_g1(tmp_path):
@@ -483,15 +489,14 @@ def test_a_hand_edit_of_an_options_file_does_not_stop_a_move(tmp_path):
     # a stock line removed from jvm-server.options (said as a hand edit, the role puts it back): the JVM_OPTS line
     # of cassandra-env.sh is moved all the same, the self-check says that line only
     files = node_files("50x", before_extra('JVM_OPTS="$JVM_OPTS -Dfoo=1"'))
-    files["jvm-server.options"] = files["jvm-server.options"].replace("-Dchronicle.analytics.disable=true\n", "")
+    files["jvm-server.options"] = files["jvm-server.options"].replace("-XX:+UseNUMA\n", "")
     cmdline = launch(files, "17", tmp_path)
     inventory, layout, node = imported(files, "50x", "17", cmdline)
     assert node["vars"]["cassandra_jvm17_extra_options"] == ["-Dfoo=1"]
-    assert [line for line in node["hand_edits"] if line.startswith("  ")] == ["  - -Dchronicle.analytics.disable=true"]
+    assert [line for line in node["hand_edits"] if line.startswith("  ")] == ["  - -XX:+UseNUMA"]
     out = check(files, "50x", java="17", cmdline=cmdline)
-    assert out["differences"] == ["jvm-server.options: -Dchronicle.analytics.disable: node has nothing, import would"
-                                  " write '-Dchronicle.analytics.disable=true'"]
-    assert [n for n in out["notes"] if n.endswith("but for -Dchronicle.analytics.disable, above")]
+    assert out["differences"] == ["jvm-server.options: UseNUMA: node has nothing, import would write '-XX:+UseNUMA'"]
+    assert [n for n in out["notes"] if n.endswith("but for UseNUMA, above")]
     # the hand edit in the file the move goes to: not moved
     files = node_files("50x", before_extra('JVM_OPTS="$JVM_OPTS -Dfoo=1"'))
     files["jvm17-server.options"] = files["jvm17-server.options"].replace("-Djdk.attach.allowAttachSelf=true\n", "")
@@ -514,25 +519,27 @@ def older_release(files):
 
 
 def test_a_node_with_the_files_of_an_older_release(tmp_path):
-    # everything carried but the chronicle line, said on its own
+    # everything carried; the chronicle line, a stock line of a later release, said under WORTH A LOOK
     files = node_files("50x", older_release)
     cmdline = launch(files, "17", tmp_path)
     inventory, layout, node = imported(files, "50x", "17", cmdline)
-    assert [line for line in node["hand_edits"] if line.startswith("  ")] == ["  - -Dchronicle.analytics.disable=true"]
+    assert node["hand_edits"] == []
+    assert CHRONICLE in cassandra_config_import(files, "50x", FACTS, java="17", cmdline=cmdline)["jvm_warnings"]
     variables = role_files(inventory, layout, files)[1]
     assert variables["cassandra_jmx_rmi_hostname"] == IPV4 and "cassandra_jvm17_gc" not in variables
     assert "cassandra_jvm17_extra_options" not in variables and variables["cassandra_heap_size"] == "31G"
     assert dict((k, variables.get(k)) for k in TUNED) == TUNED
     assert variables["cassandra_jvm_extra_options"] == ["-Xss1024M", "-XX:-UseBiasedLocking"]
-    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == [
-        "jvm-server.options: -Dchronicle.analytics.disable: node has nothing, import would write"
-        " '-Dchronicle.analytics.disable=true'"]
+    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
 
 
 def test_the_way_out_of_an_options_file_hand_edit_keeps_it(tmp_path):
-    # the report's way out for the chronicle line: jvm-server.options kept, with cassandra-env.sh (whose lines were
+    # the report's way out for a stock line removed: jvm-server.options kept, with cassandra-env.sh (whose lines were
     # moved: a JVM file kept, nothing is moved), and the self-check passes then
-    files = node_files("50x", older_release)
+    def edit(files):
+        older_release(files)
+        files["jvm-server.options"] = files["jvm-server.options"].replace("-XX:+UseNUMA\n", "")
+    files = node_files("50x", edit)
     cmdline = launch(files, "17", tmp_path)
     node = imported(files, "50x", "17", cmdline)[2]
     nodes = [dict(node, name="n1", address="10.0.0.1")]

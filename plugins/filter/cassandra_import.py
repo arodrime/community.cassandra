@@ -68,8 +68,8 @@ from ansible.plugins.filter.core import regex_replace
 from ansible_collections.community.cassandra.plugins.filter.cassandra_repository_import import SERIES_TOKEN
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
-    DEFAULT_WHEN_ABSENT, JVM_UNLOCK, NOT_COMPARED, QUANTITY_KEYS, canonical_quantity, former_keys, former_names,
-    former_value, jvm_options_settings, quantity, same_settings, shell_words, xml_settings, yaml_rejected)
+    DEFAULT_WHEN_ABSENT, JVM_UNLOCK, LATER_STOCK, NOT_COMPARED, QUANTITY_KEYS, canonical_quantity, former_keys, former_names,
+    former_value, jvm_options_settings, quantity, without_later_stock, same_settings, shell_words, xml_settings, yaml_rejected)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_prometheus as prometheus
@@ -292,13 +292,6 @@ def _read_switch(m, e, cap, seen):
     seen.flags[m.group(1)] = cap == ""
 
 
-def _read_switch_both(m, e, cap, seen):
-    """{{ '' if x and y else '#' }}: the line on by both (x a switch, y the value), not read when off (either)."""
-    if cap == "":
-        seen.found[m.group(1)] = True
-        seen.flags[m.group(2)] = True
-
-
 def _read_comment_switch(m, e, cap, seen):
     """{{ '# ' if x == '' else '' }} (or x | string in ['', 'None']): the line switched off by x unset."""
     seen.flags[e.split()[3]] = cap == ""
@@ -426,11 +419,10 @@ _LINE_EXPRESSIONS = tuple((re.compile(pattern), reader) for pattern, reader in (
     (r"\('([^']*)' ~ (\w+) ~ '([^']*)'\) if \2 else '([^']*)'", _read_between),
     (r"\('\\n' ~ .*\) if \w+ else ''", _read_newline_list),
     (r"\(\w+ ~ '\\n'\) if \w+ else ''", _read_newline_list),  # (lines before it: a snippet's)
-    # the heap in cassandra-env.sh unless in the JVM options (cassandra_heap_in_jvm_options), or there
+    # the heap in cassandra-env.sh unless in the JVM options (cassandra_heap_in_jvm_options; there: read as extra
+    # options, then as the heap when -Xms and -Xmx are alike, _heap_in_options)
     (r"'' if (\w+) and not \w+ else '[^']*'", _read_switch),
     (r"(\w+) if \1 and not \w+ else '[^']*'", _read_or_default),
-    (r"'' if (\w+) and (\w+) else '[^']*'", _read_switch_both),
-    (r"\w+ if \w+ and (\w+) else '[^']*'", _read_or_default),
     (r"\('\\n-Xms' ~ .*\) if .* else ''", _read_newline_list),
 ))
 
@@ -1402,7 +1394,8 @@ def _leftovers(env, series, files, ctx, live_files, rejected=(), skip=(), proven
     for name in files:
         if name not in live_files or name in skip:
             continue
-        rendered = _render(env, series, name, ctx)[1]
+        # (a stock line of a later release the node's file predates: not a hand edit, said apart)
+        rendered = without_later_stock(name, "\n".join(_render(env, series, name, ctx)[1]), live_files[name])[0].split("\n")
         if name.endswith(".properties"):
             more_hand, more_normalized = _properties_leftovers(name, rendered, live_files[name])
             hand += more_hand
@@ -2048,6 +2041,10 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
             and not (keep is True or jvm_args.COMMON in keep) \
             and not re.search(r"(?m)^[^#]*JVM_OPTS=.*-Xm[sxn][0-9]", live_files.get(jvm_args.ENV, "")):
         _heap_in_options(found, cassandra_version, str(java or ""))
+    for name in [n for n in LATER_STOCK if n in live_files and n in files]:
+        for line in without_later_stock(name, "\n".join(_render(env, cassandra_version, name, ctx)[1]), live_files[name])[1]:
+            jvm_warnings.append("%s (%s): added by apply_config: %s; missing because this file predates it" % (
+                line, name, LATER_STOCK[name][line]))
     where[0] = "cassandra.yaml"
     if "cassandra.yaml" in live_files:
         found.update(_identity(live_files["cassandra.yaml"], cassandra_version))
@@ -2422,8 +2419,9 @@ def _jvm_moves(env, series, files, ctx, render, live_files, running):
     if kept:  # import_cluster_keep_hand_edits: those files left as they are (said with the files kept)
         return {"vars": {}, "moved": [], "rewritten": [], "cleanup": [], "shown": [], "not_moved": ""}
 
-    def rendered(variables):
-        return dict((name, "\n".join(_render(env, series, name, variables)[1])) for name in jvm_files)
+    def rendered(variables):  # (a stock line of a later release the node's file predates: left out, said apart)
+        return dict((name, without_later_stock(name, "\n".join(_render(env, series, name, variables)[1]),
+                                               live_files.get(name))[0]) for name in jvm_files)
     if running.get("jaas") and jvm_args.ENV in live_files and jvm_args.ENV in jvm_files \
             and jvm_args.env_has_candidates(live_files[jvm_args.ENV], rendered(render)[jvm_args.ENV]):
         # JMX authenticated by JAAS, not imported: cassandra-env.sh to keep as it is (its note), its lines not moved

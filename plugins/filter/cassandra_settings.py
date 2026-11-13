@@ -256,6 +256,20 @@ def properties_settings(text):
 JVM_LISTS = jvm.LISTS
 # options the ones they unlock must come after
 JVM_UNLOCK = ("UnlockDiagnosticVMOptions", "UnlockExperimentalVMOptions", "UnlockCommercialFeatures")
+# Stock lines a later release added (file: {line: why}): a node's file without one predates it, not a hand edit;
+# the role adds it (said under WORTH A LOOK)
+LATER_STOCK = {"jvm-server.options": {"-Dchronicle.analytics.disable=true": "Cassandra's default since CASSANDRA-19656"}}
+
+
+def without_later_stock(name, rendered, live):
+    """rendered (a file's text) without the LATER_STOCK lines of name the node's text (live) has not -> (text,
+    [those lines])."""
+    lines = rendered.split("\n")
+    have = set(line.strip() for line in str(live or "").split("\n"))
+    missing = [line for line in LATER_STOCK.get(name, {}) if line in lines and line not in have]
+    return "\n".join(line for line in lines if line not in missing), missing
+
+
 # what cassandra-env.sh looks for in the options (grep), whatever comes after
 JVM_ENV_GREPS = ("Xmn", "Xmx", "Xms", "UseConcMarkSweepGC", "+UseG1GC", "-Xlog:gc", "-Xloggc", "MaxDirectMemorySize",
                  "ParallelGCThreads", "ConcGCThreads")

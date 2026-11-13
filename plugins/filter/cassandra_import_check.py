@@ -58,7 +58,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_permission
     cassandra_file_permissions, permission_differences)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
     compared, jvm_options_settings, properties_settings, same_settings, same_yaml_value, shell_lines,
-    xml_settings, yaml_settings, yaml_rejected)
+    without_later_stock, xml_settings, yaml_settings, yaml_rejected)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as _out
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_prometheus as prometheus
@@ -517,6 +517,9 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
     """running: {cmdline, newer, series} (cassandra_import_self_check's jvm); series: cassandra_version, else running's."""
     differences, notes, heap, by_file = [], [], [], {}
     series = series or (running or {}).get("series", "")
+    # a stock line of a later release the node's file predates: not a difference (the import says it under WORTH A LOOK)
+    rendered = dict((name, without_later_stock(name, text, live.get(name))[0] if name in live else text)
+                    for name, text in rendered.items())
     # the log dir written as itself in logback.xml: ${cassandra.logdir}, each side's (the node's: as its JVM got it)
     if "logback.xml" in live:
         live = dict(live, **{"logback.xml": logback_as_log_dir(live["logback.xml"], log_dir_of(

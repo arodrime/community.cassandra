@@ -1477,7 +1477,9 @@ options (another GC in G1's place, a line no variable switches), ``cassandra_jvm
 lines, in their order, in ``cassandra_jvm<N>_extra_options``; either only when it removes the GC's differences and
 adds none, else they stay hand edits. An ``-Xms`` and an ``-Xmx`` of the same size in the options files the running Java
 reads are ``cassandra_heap_size`` with ``cassandra_heap_in_jvm_options`` (the role writes them in ``jvm-server.options``),
-when the running JVM's arguments show it gets the same.
+when the running JVM's arguments show it gets the same. A stock line a later release added that the node's file
+predates (5.0's ``-Dchronicle.analytics.disable=true`` of ``jvm-server.options``, CASSANDRA-19656) is no difference:
+``apply_config`` adds it, the report says so under WORTH A LOOK; any other stock line the node lacks is one.
 
 Hand edits of ``cassandra-env.sh`` that add plain options to ``JVM_OPTS`` (``JVM_OPTS="$JVM_OPTS -Xms8G -Xmx8G
 -XX:+AlwaysPreTouch"``, outside any ``if``), and the heap (``MAX_HEAP_SIZE``, ``HEAP_NEWSIZE``,
