@@ -162,6 +162,15 @@ def test_biased_locking_on_java_17_is_a_warning():
     assert cassandra_config_import(node_files("50x"), "50x", FACTS, java="11")["jvm_warnings"] == []
 
 
+def test_an_option_in_the_place_of_a_gc_line_is_carried():
+    # the heap written over two of the G1 lines: not taken for them (it was dropped, the heap not imported)
+    files = node_files("50x")
+    files["jvm17-server.options"] = files["jvm17-server.options"].replace(
+        "-XX:MaxTenuringThreshold=2", "-Xms31G").replace("-XX:G1HeapRegionSize=16m", "-Xmx31G")
+    out = cassandra_config_import(files, "50x", FACTS, java="17")
+    assert out["vars"]["cassandra_jvm17_extra_options"][-2:] == ["-Xms31G", "-Xmx31G"]
+
+
 def test_an_option_the_template_writes_is_not_carried_again():
     files = node_files("50x")
     lines = files["jvm-server.options"].split("\n")

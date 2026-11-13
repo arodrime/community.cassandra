@@ -355,6 +355,8 @@ def _read_prefixed_choice(m, e, cap, seen):
     if cap != off and cap.startswith(prefix):
         seen.found[var] = _value(cap[len(prefix):])
         seen.gc.setdefault(gcvar, set()).add(name)
+    elif cap != off:  # another option in its place (-Xmx8G for -XX:MaxTenuringThreshold=2): not this line's
+        return False
 
 
 def _read_choice(m, e, cap, seen):
