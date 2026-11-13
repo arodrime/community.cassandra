@@ -79,15 +79,15 @@ _cassandra_config_perm_settings:
   # the account the unit runs Cassandra as (cassandra_service), else cassandra_user
   user: "{{ cassandra_service_user | default(cassandra_user) }}"
   user_group: "{{ cassandra_service_group | default(cassandra_group) }}"
-# The GC of the jvm<N>-server.options file the node's Java reads (cassandra_java_version, cassandra_install's
-# default for the series when not set: 4.x reads jvm8 on Java 8, jvm11 after; 5.0 jvm11 on Java 11, jvm17 after);
-# custom with -XX:+UseG1GC on in its extra options (the last of it there, after jvm-server.options'): G1
-# (cassandra-env.sh finds it, what holds for G1 holds)
-# the GC of each jvm<N>-server.options file of the series, as given
+# The GC of each jvm<N>-server.options file of the series, as given
 _cassandra_config_gc_names: >-
   {{ [cassandra_jvm8_gc | default(cassandra_jvm_gc), cassandra_jvm11_gc | default(cassandra_jvm_gc)]
      if cassandra_version in ['40x', '41x']
      else [cassandra_jvm11_gc | default(cassandra_jvm_gc), cassandra_jvm17_gc | default(cassandra_jvm_gc)] }}
+# The GC of the jvm<N>-server.options file the node's Java reads (cassandra_java_version, cassandra_install's
+# default for the series when not set: 4.x reads jvm8 on Java 8, jvm11 after; 5.0 jvm11 on Java 11, jvm17 after);
+# custom with -XX:+UseG1GC on in its extra options (the last of it there, after jvm-server.options'): G1
+# (cassandra-env.sh finds it, what holds for G1 holds)
 _cassandra_config_java_major: >-
   {{ ((cassandra_java_version | default({'40x': '11', '41x': '11', '50x': '17'}[cassandra_version] | default('17')))
       | string).split('.') | reject('equalto', '1') | first | int }}
