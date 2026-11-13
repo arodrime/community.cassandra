@@ -504,6 +504,11 @@ def test_an_edit_with_each_node_s_own_address_is_one_entry():
     items = _self_check_items(nodes, checks)
     assert [(i["text"], len(i["lines"])) for i in items] == [
         ('JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=<its address>"', 3)]
+    # a setting's values too: one value for the three nodes
+    checks = dict(("node%d" % i, {"differences": [
+        "cassandra.yaml: listen_address: node has '10.0.0.%d', import would write '10.0.0.99'" % i]}) for i in (1, 2, 10))
+    assert [i["pairs"] for i in _self_check_items(nodes, checks)] == [
+        [(n, "<its address>", "10.0.0.99") for n in ("node1", "node10", "node2")]]
 
 
 def test_a_logback_hand_edit_says_the_templates_of_yours():

@@ -519,7 +519,7 @@ def _self_check_items(read, self_check, theirs_win=None):
                 text = node_text
             else:
                 text = "not on the node: " + role_text
-            if not setting:  # a line of a file: the same on every node, each with its own address
+            if not setting:  # a line of a file (a setting's values below): each node's own address as one
                 text = _its_address(text, addresses.get(name))
             key = (kind, f, setting, text)
             if key not in found:
@@ -528,7 +528,8 @@ def _self_check_items(read, self_check, theirs_win=None):
                 items.append(found[key])
             item = found[key]
             if setting:
-                node_text, role_text = _unquoted(node_text), _unquoted(role_text)
+                node_text, role_text = [None if v is None else _its_address(v, addresses.get(name))
+                                        for v in (_unquoted(node_text), _unquoted(role_text))]
                 secret = _secret(setting, node_text) or _secret(setting, role_text)
                 item["pairs"].append(tuple([name] + [None if v is None else out.MASK if secret else out.mask(v)
                                                      for v in (node_text, role_text)]))
