@@ -424,8 +424,9 @@
   ansible.builtin.assert:
     that: _wrong | length == 0
     fail_msg: >-
-      {{ 'Values' if _wrong | length > 1 else 'A value' }} cassandra_config does not take: {{ _wrong | join('; ') }}.
-      Write a plain number (e.g. 300, no unit; the heap region size a number with k, m or g, e.g. 16m), or "" to
+      {{ 'Values' if _wrong | length > 1 else 'A value' }} cassandra_config does not take: {{ _wrong | join('; ') }}
+      (written as {{ 'they are' if _wrong | length > 1 else 'it is' }} in the JVM options file, the JVM would not
+      start). Write a plain number (e.g. 300, no unit; the heap region size a number with k, m or g, e.g. 16m), or "" to
       comment its stock line out; nothing is changed.
     quiet: true
   vars:

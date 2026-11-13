@@ -155,7 +155,8 @@ def _wrong(**variables):
 def test_g1_tuning_values_message():
     task = _task("roles/cassandra_config/tasks/checks.yml", "Refuse G1 tuning values the JVM would not start with")
     for wrong, said in ((["cassandra_jvm_max_gc_pause_millis 300ms"], "A value cassandra_config does not take: "),
-                        (["a 1", "b 2"], "Values cassandra_config does not take: a 1; b 2.")):
+                        (["a 1", "b 2"], "Values cassandra_config does not take: a 1; b 2 (written as they are in the"
+                                         " JVM options file, the JVM would not start).")):
         templar = Templar(loader=DataLoader(), variables={"_wrong": wrong})
         assert said in templar.template(trust_as_template(task["ansible.builtin.assert"]["fail_msg"]))
 
