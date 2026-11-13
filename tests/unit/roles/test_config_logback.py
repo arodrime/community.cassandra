@@ -161,12 +161,16 @@ def generator():
 
 @pytest.mark.parametrize("series", sorted(VERSIONS))
 def test_the_templates_are_the_generators(series):
+    # every template but cassandra.yaml (derived from the reference's) is what tools/gen_templates.py writes
     gen = generator()
-    with open(os.path.join(STOCK % VERSIONS[series], "logback.xml.stock"), encoding="utf-8") as f:
-        lines = f.read().split("\n")
-    gen.replace_lines("logback.xml", lines, gen.RULES[series]["logback.xml"])
-    with open(os.path.join(ROLE, "templates", series, "logback.xml.j2"), encoding="utf-8") as f:
-        assert f.read().split("\n")[1:] == lines
+    for name, rules in sorted(gen.RULES[series].items()):
+        if name == "cassandra.yaml":
+            continue
+        with open(os.path.join(STOCK % VERSIONS[series], name + ".stock"), encoding="utf-8") as f:
+            lines = f.read().split("\n")
+        gen.replace_lines(name, lines, rules)
+        with open(os.path.join(ROLE, "templates", series, name + ".j2"), encoding="utf-8") as f:
+            assert f.read().split("\n")[1:] == lines, name
 
 
 def test_a_rule_scoped_to_an_appender_fails_when_the_release_has_no_such_appender():

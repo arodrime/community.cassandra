@@ -301,6 +301,8 @@ RULES = {
         "logback.xml": COMMON["logback.xml"] + pattern_rules("5.0") + CQL_TABLE,
         "cassandra-env.sh": ENV_COMMON + [
             opt("cassandra_heap_size", '#MAX_HEAP_SIZE="20G"', 'MAX_HEAP_SIZE="@"', "20G"),
+            # (G1 ignores it, written as found: import_cluster carries a node's)
+            opt("cassandra_heap_newsize", '#HEAP_NEWSIZE="10G"', 'HEAP_NEWSIZE="@"', "10G"),
             opt("cassandra_max_direct_memory_size", '#MAX_DIRECT_MEMORY_SIZE="10G"', 'MAX_DIRECT_MEMORY_SIZE="@"', "10G"),
             ('    CASSANDRA_HEAPDUMP_DIR="$CASSANDRA_LOG_DIR"',
              '    CASSANDRA_HEAPDUMP_DIR="{{ cassandra_heap_dump_dir }}"'),
