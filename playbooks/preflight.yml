@@ -387,12 +387,13 @@
         _note: >-
           {{ (_layout.lines | reject('search', '  ok$') | list if _in_plan | bool else _layout.lines) | join(_nl)
              ~ ((_nl ~ '  suggested in the group_vars of ' ~ _cluster ~ ': cassandra_seeds: ' ~ _layout.suggested | to_json
-                 ~ (' (update the inventory: topology then applies it live)' if _deferred | bool
+                 ~ (' (update the inventory: topology then applies it live)' ~ _suggested_stopped if _deferred | bool
                     else (_suggested_stopped ~ _nl ~ '  then apply it live: ' ~ _change_seeds))) if _layout.problems else '') }}
-        # one line per suggested seed that is stopped
+        # one line per suggested seed that is stopped, before the playbook that applies the seeds
         _suggested_stopped: >-
           {{ _layout.stopped | map('regex_replace', '^', _nl ~ '  ')
-             | map('regex_replace', '$', ' is stopped: start it before change_seeds (every seed must be up, the runs stop until it is)')
+             | map('regex_replace', '$', ' is stopped: start it before ' ~ ('topology' if _deferred | bool else 'change_seeds')
+                   ~ ' (every seed must be up: the playbooks that check the seeds stop until it is)')
              | join }}
         _change_seeds: >-
           {{ 'change_seeds' | community.cassandra.cassandra_command(

@@ -327,9 +327,19 @@ def test_preflight_notes_render_one_line_each():
                   _change_seeds=cmd, _deferred=False, _in_plan=True, _suggested_stopped=stopped)
     assert note.split("\n")[1:] == [
         '  suggested in the group_vars of prod: cassandra_seeds: ["n1", "n2", "b1", "b2"]',
-        "  b1 is stopped: start it before change_seeds (every seed must be up, the runs stop until it is)",
-        "  b2 is stopped: start it before change_seeds (every seed must be up, the runs stop until it is)",
+        "  b1 is stopped: start it before change_seeds (every seed must be up: the playbooks that check the seeds stop"
+        " until it is)",
+        "  b2 is stopped: start it before change_seeds (every seed must be up: the playbooks that check the seeds stop"
+        " until it is)",
         "  then apply it live: " + cmd]
+    # topology's plan: the stopped ones too, to start before topology
+    note = render(t["vars"]["_note"], _layout=dict(layout, stopped=["b2"]), _cluster="prod", _nl="\n",
+                  _change_seeds=cmd, _deferred=True, _in_plan=True, _suggested_stopped=stopped)
+    assert note.split("\n")[1:] == [
+        '  suggested in the group_vars of prod: cassandra_seeds: ["n1", "n2", "b1", "b2"]'
+        ' (update the inventory: topology then applies it live)',
+        "  b2 is stopped: start it before topology (every seed must be up: the playbooks that check the seeds stop"
+        " until it is)"]
     # a note only (more than 3 seeds): the lines, no suggestion
     layout = {"lines": ["Seeds  dc1  n1 (r1), n2 (r1), n3 (r1), n4 (r1)  note: 4 seeds: 2 to 3 are enough"],
               "problems": [], "notes": ["dc1: 4 seeds: 2 to 3 are enough"], "suggested": []}
