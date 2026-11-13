@@ -106,11 +106,9 @@
                 mode: "0600"
               retries: 3
               register: cassandra_install_dsbulk_download
-              # its result shows a query (a signature) as given, and a login before ansible-core 2.19 (masked
-              # since): hidden then, the rescue says why
-              no_log: >-
-                {{ cassandra_dsbulk_url is search('[?]')
-                   or (cassandra_dsbulk_url is search('@') and ansible_version.full is version('2.19', '<')) }}
+              # a login or a query (a signature) in the URL shows in its result, its retries and its error (2.19+
+              # masks the result's url only): hidden then, the rescue says why
+              no_log: "{{ cassandra_dsbulk_url is search('@|[?]') }}"
               # a wrong checksum is final
               until: >-
                 cassandra_install_dsbulk_download is succeeded

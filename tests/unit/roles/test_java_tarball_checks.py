@@ -17,6 +17,7 @@ try:
 except ImportError:  # Python 2: not run there (the controller's Python only)
     BaseHTTPRequestHandler = HTTPServer = None
 
+import pytest
 import yaml
 
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
@@ -41,7 +42,7 @@ def _find(tasks, name):
     raise KeyError(name)
 
 
-def _play(tmp_path, tasks, variables, check=False):
+def _play(tmp_path, tasks, variables, check=False, verbosity=0):
     """Runs tasks on localhost with variables -> (rc, the output, spaces normalised)."""
     play = [{"hosts": "localhost", "gather_facts": False, "vars": variables, "tasks": tasks}]
     (tmp_path / "play.yml").write_text(yaml.safe_dump(play))
@@ -52,6 +53,8 @@ def _play(tmp_path, tasks, variables, check=False):
             "-c", "local", "-e", "ansible_python_interpreter=%s" % sys.executable, str(tmp_path / "play.yml")]
     if check:
         argv.append("--check")
+    if verbosity:
+        argv.append("-" + "v" * verbosity)
     result = subprocess.run(argv, env=env, cwd=str(tmp_path), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             timeout=300, check=False)
     return result.returncode, " ".join(result.stdout.decode(errors="replace").split())
@@ -119,25 +122,27 @@ class _NotFound(BaseHTTPRequestHandler if BaseHTTPRequestHandler else object):
         pass
 
 
-def test_a_failed_download_says_the_url_and_the_http_status(tmp_path):
+@pytest.mark.parametrize("query", ["?X-Amz-Signature=5ig", ""])
+def test_a_failed_download_says_the_url_and_the_http_status(tmp_path, query):
     server = HTTPServer(("127.0.0.1", 0), _NotFound)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        url = "http://mirror-user:s3cret@127.0.0.1:%d/java/jdk-17.tar.gz?X-Amz-Signature=5ig" % server.server_port
+        url = "http://mirror-user:s3cret@127.0.0.1:%d/java/jdk-17.tar.gz%s" % (server.server_port, query)
         download = _find(_tasks("java_tarball.yml"), "Download the Java tarball")
         assert "block" in download and download["rescue"]
         download = dict(download, when="true")
         variables = {"cassandra_java_tarball": url, "cassandra_java_tarball_checksum": "",
                      "cassandra_java_tarball_username": "", "cassandra_java_tarball_password": "",
                      "_local": str(tmp_path / "jdk.tar.gz"), "cassandra_java_version": "17"}
-        rc, out = _play(tmp_path, [download], variables)
+        rc, out = _play(tmp_path, [download], variables, verbosity=3)  # -vvv: the module's arguments shown
     finally:
         server.shutdown()
     assert rc != 0, out
     assert ("TASK [Stop on the failed download]" in out and "localhost: the Java tarball" not in out)
-    assert ("The Java tarball could not be downloaded from http://****@127.0.0.1:%d/java/jdk-17.tar.gz?****:"
+    assert ("The Java tarball could not be downloaded from http://****@127.0.0.1:%d/java/jdk-17.tar.gz%s:"
             " HTTP 404, Not Found. Nothing was unpacked. Check that URL (cassandra_java_tarball, or the"
-            " cassandra_java_tarballs entry of Java 17) and its checksum, then run again." % server.server_port) in out
+            " cassandra_java_tarballs entry of Java 17) and its checksum, then run again."
+            % (server.server_port, "?****" if query else "")) in out
     assert "s3cret" not in out and "5ig" not in out
     # a 404 is final: asked once
     assert "retries left" not in out

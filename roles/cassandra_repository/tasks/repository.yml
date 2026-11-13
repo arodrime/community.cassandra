@@ -163,11 +163,9 @@
             force_basic_auth: "{{ _on_mirror | bool }}"
           retries: 3
           register: _cassandra_repository_key_download
-          # its result shows a query (a signature) as given, and a login before ansible-core 2.19 (masked
-          # since): hidden then, the rescue says why
-          no_log: >-
-            {{ cassandra_repository_key_url is search('[?]')
-               or (cassandra_repository_key_url is search('@') and ansible_version.full is version('2.19', '<')) }}
+          # a login or a query (a signature) in the URL shows in its result, its retries and its error (2.19+
+          # masks the result's url only): hidden then, the rescue says why
+          no_log: "{{ cassandra_repository_key_url is search('@|[?]') }}"
           until: _cassandra_repository_key_download is succeeded
           changed_when: false  # a temp file: the install below reports the change
           check_mode: false  # read-only for the host's config: the check below needs the file
