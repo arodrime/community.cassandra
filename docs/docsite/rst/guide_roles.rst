@@ -1475,9 +1475,13 @@ The GC block of a ``jvm<N>-server.options`` file is read as the stock one with i
 node has commented out or removed, ``""`` (the role writes it commented out). When that cannot give the node's GC
 options (another GC in G1's place, a line no variable switches), ``cassandra_jvm<N>_gc: custom`` with the node's GC
 lines, in their order, in ``cassandra_jvm<N>_extra_options``; either only when it removes the GC's differences and
-adds none, else they stay hand edits. An ``-Xms`` and an ``-Xmx`` of the same size in the options files the running Java
-reads are ``cassandra_heap_size`` with ``cassandra_heap_in_jvm_options`` (the role writes them in ``jvm-server.options``),
-when the running JVM's arguments show it gets the same. A stock line a later release added that the node's file
+adds none, else they stay hand edits. (Not every series has every G1 line: 4.0's stock file has no
+``MaxTenuringThreshold`` nor ``G1HeapRegionSize`` line, 4.x none for ``G1NewSizePercent`` and its unlock option; those
+variables write nothing there.) An ``-Xms`` and an ``-Xmx`` of the same size among the extra options of the options
+files the running Java reads (with an ``-Xmn`` too when the node does not run G1) are ``cassandra_heap_size`` (and
+``cassandra_heap_newsize``) with ``cassandra_heap_in_jvm_options`` (the role writes them in ``jvm-server.options``):
+only with Cassandra running and its arguments showing the JVM gets the same, ``jvm-server.options`` not kept as it is,
+and ``cassandra-env.sh`` setting no heap of its own (no ``MAX_HEAP_SIZE``, ``HEAP_NEWSIZE`` nor ``-Xm*`` there). A stock line a later release added that the node's file
 predates (5.0's ``-Dchronicle.analytics.disable=true`` of ``jvm-server.options``, CASSANDRA-19656) is no difference:
 ``apply_config`` adds it, the report says so under WORTH A LOOK; any other stock line the node lacks is one.
 
