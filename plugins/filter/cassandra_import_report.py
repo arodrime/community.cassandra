@@ -1573,7 +1573,8 @@ def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, ch
         items.append("Review the files written, then keep them: %s." % unbreakable("git diff && git commit") if git
                      else "Review the files written in %s." % out.path_from(inventory_dir, report.cwd))
     if self_check_ok:
-        heap_moved = [n for n in report.read if (n.get("vars") or {}).get("cassandra_heap_in_jvm_options")]
+        heap_moved = [line for n in report.read for line in n.get("normalized") or []
+                      if line.endswith("moved to jvm-server.options (cassandra_heap_in_jvm_options), the same for the JVM")]
         apply_check = out.command("apply_config", inventory=inventory or None, hosts=hosts or None,
                                   extra=["--check", "--diff"], cwd=report.cwd)
         topology = out.command("topology", inventory=inventory or None, hosts=hosts or None, extra=["--check"],
