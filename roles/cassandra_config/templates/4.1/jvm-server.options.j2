@@ -180,8 +180,8 @@
 # the same value to avoid stop-the-world GC pauses during resize, and
 # so that we can lock the heap in memory on startup to prevent any
 # of it from being swapped out.
-{{ '' if cassandra_heap_in_jvm_options and cassandra_heap_size else '#' }}-Xms{{ cassandra_heap_size if cassandra_heap_in_jvm_options and cassandra_heap_size else '4G' }}
-{{ '' if cassandra_heap_in_jvm_options and cassandra_heap_size else '#' }}-Xmx{{ cassandra_heap_size if cassandra_heap_in_jvm_options and cassandra_heap_size else '4G' }}
+{{ '' if (cassandra_heap_in_jvm_options | bool) and cassandra_heap_size else '#' }}-Xms{{ cassandra_heap_size if (cassandra_heap_in_jvm_options | bool) and cassandra_heap_size else '4G' }}
+{{ '' if (cassandra_heap_in_jvm_options | bool) and cassandra_heap_size else '#' }}-Xmx{{ cassandra_heap_size if (cassandra_heap_in_jvm_options | bool) and cassandra_heap_size else '4G' }}
 
 # Young generation size is automatically calculated by cassandra-env
 # based on this formula: min(100 * num_cores, 1/4 * heap size)
@@ -197,7 +197,7 @@
 # The example below assumes a modern 8-core+ machine for decent
 # times. If in doubt, and if you do not particularly want to tweak, go
 # 100 MB per physical CPU core.
-{{ '' if cassandra_heap_in_jvm_options and cassandra_heap_size and cassandra_heap_newsize else '#' }}-Xmn{{ cassandra_heap_newsize if cassandra_heap_in_jvm_options and cassandra_heap_size and cassandra_heap_newsize else '800M' }}
+{{ '' if (cassandra_heap_in_jvm_options | bool) and cassandra_heap_size and cassandra_heap_newsize else '#' }}-Xmn{{ cassandra_heap_newsize if (cassandra_heap_in_jvm_options | bool) and cassandra_heap_size and cassandra_heap_newsize else '800M' }}
 
 ###################################
 # EXPIRATION DATE OVERFLOW POLICY #

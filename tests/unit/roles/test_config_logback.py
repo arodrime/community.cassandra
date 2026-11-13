@@ -358,6 +358,10 @@ def test_the_heap_in_the_jvm_options():
     assert _render(env, "50x", "jvm-server.options", on)[1][-4:-1] == ["-Xms31G", "-Xmx31G", "-Dx=1"]
     assert '#MAX_HEAP_SIZE="20G"' in _render(env, "50x", "cassandra-env.sh", on)[1]
     assert 'MAX_HEAP_SIZE="31G"' in _render(env, "50x", "cassandra-env.sh", dict(on, cassandra_heap_in_jvm_options=False))[1]
+    # (audit r4) -e cassandra_heap_in_jvm_options=false gives the string "false": off too
+    off = dict(on, cassandra_heap_in_jvm_options="false")
+    assert 'MAX_HEAP_SIZE="31G"' in _render(env, "50x", "cassandra-env.sh", off)[1]
+    assert "-Xmx31G" not in _render(env, "50x", "jvm-server.options", off)[1]
     # 4.x: its stock heap lines, -Xmn with the young generation
     env, ctx, dummy = _load_role("41x", {"os_family": "Debian"})
     on = dict(ctx, cassandra_heap_size="8G", cassandra_heap_newsize="800M", cassandra_heap_in_jvm_options=True)

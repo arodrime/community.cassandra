@@ -116,8 +116,8 @@ calculate_heap_sizes
 # When using CMS both MAX_HEAP_SIZE and HEAP_NEWSIZE should be either set
 # or not (if you set one, set the other).
 
-{{ '' if cassandra_heap_size and not cassandra_heap_in_jvm_options else '#' }}MAX_HEAP_SIZE="{{ cassandra_heap_size if cassandra_heap_size and not cassandra_heap_in_jvm_options else '20G' }}"
-{{ '' if cassandra_heap_newsize and not cassandra_heap_in_jvm_options else '#' }}HEAP_NEWSIZE="{{ cassandra_heap_newsize if cassandra_heap_newsize and not cassandra_heap_in_jvm_options else '10G' }}"
+{{ '' if cassandra_heap_size and not (cassandra_heap_in_jvm_options | bool) else '#' }}MAX_HEAP_SIZE="{{ cassandra_heap_size if cassandra_heap_size and not (cassandra_heap_in_jvm_options | bool) else '20G' }}"
+{{ '' if cassandra_heap_newsize and not (cassandra_heap_in_jvm_options | bool) else '#' }}HEAP_NEWSIZE="{{ cassandra_heap_newsize if cassandra_heap_newsize and not (cassandra_heap_in_jvm_options | bool) else '10G' }}"
 {{ '' if cassandra_max_direct_memory_size else '#' }}MAX_DIRECT_MEMORY_SIZE="{{ cassandra_max_direct_memory_size or '10G' }}"
 
 # Set this to control the amount of arenas per-thread in glibc

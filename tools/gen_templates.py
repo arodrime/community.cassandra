@@ -67,8 +67,8 @@ def opt(var, commented, active, example, off="#"):
 
 
 # The heap in the JVM options (cassandra_heap_in_jvm_options): cassandra-env.sh's heap lines stay commented out
-IN_ENV = "%s and not cassandra_heap_in_jvm_options"
-IN_OPTIONS = "cassandra_heap_in_jvm_options and %s"
+IN_ENV = "%s and not (cassandra_heap_in_jvm_options | bool)"
+IN_OPTIONS = "(cassandra_heap_in_jvm_options | bool) and %s"
 
 
 def heap_opt(var, commented, active, example, where):
@@ -80,7 +80,7 @@ def heap_opt(var, commented, active, example, where):
 # 5.0's jvm-server.options has no heap lines: the heap after its last line, before the extra options
 JVM_HEAP_50 = ("{{ ('\\n-Xms' ~ cassandra_heap_size ~ '\\n-Xmx' ~ cassandra_heap_size"
                " ~ (('\\n-Xmn' ~ cassandra_heap_newsize) if cassandra_heap_newsize else ''))"
-               " if cassandra_heap_in_jvm_options and cassandra_heap_size else '' }}")
+               " if (cassandra_heap_in_jvm_options | bool) and cassandra_heap_size else '' }}")
 
 
 def jvm_var(n):

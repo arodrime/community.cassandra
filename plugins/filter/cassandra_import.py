@@ -421,8 +421,8 @@ _LINE_EXPRESSIONS = tuple((re.compile(pattern), reader) for pattern, reader in (
     (r"\(\w+ ~ '\\n'\) if \w+ else ''", _read_newline_list),  # (lines before it: a snippet's)
     # the heap in cassandra-env.sh unless in the JVM options (cassandra_heap_in_jvm_options; there: read as extra
     # options, then as the heap when -Xms and -Xmx are alike, _heap_in_options)
-    (r"'' if (\w+) and not \w+ else '[^']*'", _read_switch),
-    (r"(\w+) if \1 and not \w+ else '[^']*'", _read_or_default),
+    (r"'' if (\w+) and not \(\w+ \| bool\) else '[^']*'", _read_switch),
+    (r"(\w+) if \1 and not \(\w+ \| bool\) else '[^']*'", _read_or_default),
     (r"\('\\n-Xms' ~ .*\) if .* else ''", _read_newline_list),
 ))
 
