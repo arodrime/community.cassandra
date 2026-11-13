@@ -1171,8 +1171,13 @@ parts are read at start: a change there restarts the node (``write + restart (th
 openTelemetry: read at start)``). Written another way (``site.yml``, a run that stopped before the restart), it is a
 restart pending, which the next ``apply_config`` does: ``jmx_prometheus.at_start``, next to the config, keeps the
 digest of these parts for the record of the config Cassandra started with. The jars of other versions the role
-downloaded are removed once the new one is written; turned off, the role removes its jars, its config and that record
-(none while a JVM options file kept by hand, ``cassandra_config_keep_files``, still loads the agent: a WARNING says so).
+downloaded are removed once the new one is written; turned off, the role removes its jars, its config and that record,
+none while the next start may still load them (a jar of ``cassandra_prometheus_exporter_dir``, an agent's jar through
+a variable, the conf dir's ``jmx_prometheus.yml``): a WARNING says which file gives it. It reads ``cassandra-env.sh``
+and every JVM options file of the series (as written; with ``--check`` and in ``apply_config``'s preview, those kept by
+hand as they are on the node, the others as the role is to write them), ``cassandra.in.sh`` (the conf dir's,
+``/usr/share/cassandra``'s), the unit ``/etc/systemd/system/cassandra.service`` and its drop-ins, and
+``cassandra_service_environment``. An exporter of your own, its jar and config elsewhere, needs none of them.
 A running Cassandra keeps the jar it opened until its restart.
 
 The agent makes the JVM exit when it cannot start: a port already in use, a jar or a config missing. Cassandra then
