@@ -78,7 +78,7 @@ def task_that(name):
 def test_heap_pairs(version, gcs, size, newsize, ok):
     that = "{{ %s }}" % task_that("Assert heap settings are consistent")
     assert render(that, cassandra_version=version, _cassandra_config_gcs=gcs, cassandra_heap_size=size,
-                  cassandra_heap_newsize=newsize) is ok
+                  cassandra_heap_newsize=newsize, cassandra_heap_in_jvm_options=False) is ok
 
 
 @pytest.mark.parametrize("gcs, ok", [

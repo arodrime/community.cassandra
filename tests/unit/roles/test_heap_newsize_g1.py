@@ -110,3 +110,15 @@ def test_no_young_generation_with_g1_when_the_heap_is_in_the_jvm_options():
     # (cassandra-env.sh stops on -Xmn with G1)
     assert _assert(check, cassandra_heap_newsize="3G", cassandra_heap_in_jvm_options=True, **on) is False
     assert _assert(check, cassandra_heap_newsize="3G", cassandra_heap_in_jvm_options=False, **on) is True
+
+
+def test_the_heap_in_the_jvm_options_needs_no_young_generation():
+    # (audit r4) CMS with the heap in the JVM options: cassandra-env.sh works the young generation out itself
+    heap = _task("roles/cassandra_config/tasks/checks.yml", "Assert heap settings are consistent")
+    cms = dict(cassandra_version="41x", cassandra_heap_size="8G")
+    assert _assert(heap, cassandra_heap_in_jvm_options=True, **cms) is True
+    assert _assert(heap, cassandra_heap_in_jvm_options="false", **cms) is False  # (a string from -e: as a bool)
+    # -Xmn with CMS: taken (G1 only refuses it)
+    check = _task("roles/cassandra_config/tasks/checks.yml",
+                  "Assert no young generation size with G1 when the heap is in the JVM options")
+    assert _assert(check, cassandra_heap_newsize="2G", cassandra_heap_in_jvm_options=True, **cms) is True

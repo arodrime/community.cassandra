@@ -326,6 +326,44 @@ def test_the_heap_in_an_options_file_is_cassandra_heap_size(tmp_path):
     assert "cassandra_heap_size" not in imported(files, "50x", "17", launch(files, "17", tmp_path))[2]["vars"]
 
 
+def heap_lines_on(xmn=""):
+    def edit(files):
+        text = files["jvm-server.options"].replace("#-Xms4G\n#-Xmx4G", "-Xms8G\n-Xmx8G")
+        files["jvm-server.options"] = text.replace("#-Xmn800M", xmn) if xmn else text
+    return edit
+
+
+@pytest.mark.parametrize("xmn", ["", "-Xmn2G"], ids=["without -Xmn", "with -Xmn"])
+def test_a_cms_heap_in_the_jvm_options_the_role_takes(tmp_path, xmn):
+    # (audit r4) 4.1 on CMS, its stock heap lines uncommented: the heap in the JVM options, which the role's heap
+    # assert takes without cassandra_heap_newsize (cassandra-env.sh works -Xmn out); -Xmn there: the young generation
+    from ansible_collections.community.cassandra.tests.unit.roles.test_heap_newsize_g1 import _assert, _task
+    files = node_files("41x", heap_lines_on(xmn))
+    cmdline = launch(files, "11", tmp_path)
+    inventory, layout, node = imported(files, "41x", "11", cmdline)
+    assert node["hand_edits"] == []
+    rendered, variables = role_files(inventory, layout, files)
+    assert variables["cassandra_heap_in_jvm_options"] is True and variables["cassandra_heap_size"] == "8G"
+    assert variables.get("cassandra_heap_newsize") == (xmn[4:] or None)
+    assert rendered["jvm-server.options"].split("\n")[1:] == files["jvm-server.options"].split("\n")  # (as the node has it)
+    assert check(files, "41x", java="11", cmdline=cmdline)["differences"] == []
+    simple = dict((k, v) for k, v in variables.items() if not str(v).startswith("{{"))
+    for name in ("Assert heap settings are consistent",
+                 "Assert no young generation size with G1 when the heap is in the JVM options"):
+        assert _assert(_task("roles/cassandra_config/tasks/checks.yml", name), **simple) is True
+
+
+def test_g1_with_a_young_generation_in_cassandra_env_keeps_the_heap_as_it_is(tmp_path):
+    # (audit r4) 5.0 on G1, HEAP_NEWSIZE in cassandra-env.sh (G1 ignores it), the heap in jvm-server.options: not
+    # moved to cassandra_heap_in_jvm_options (it would write -Xmn there, with which cassandra-env.sh stops)
+    files = node_files("50x", both(on_top('HEAP_NEWSIZE="10G"'), add_to("jvm-server.options", "-Xms16G\n-Xmx16G")))
+    cmdline = launch(files, "17", tmp_path)
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    assert node["hand_edits"] == [] and "cassandra_heap_in_jvm_options" not in node["vars"]
+    assert node["vars"]["cassandra_jvm_extra_options"] == ["-Xms16G", "-Xmx16G"]
+    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
+
+
 def jvm17(*pairs, drop=()):
     def edit(files):
         text = files["jvm17-server.options"]

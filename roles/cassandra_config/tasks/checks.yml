@@ -389,6 +389,7 @@
     that: >-
       _cassandra_config_gcs | reject('equalto', 'G1') | list | length == 0
       or (cassandra_heap_size == '') == (cassandra_heap_newsize == '')
+      or cassandra_heap_in_jvm_options | bool
     fail_msg: >-
       Without G1 (cassandra_jvm_gc, cassandra_jvm<N>_gc), set cassandra_heap_size and cassandra_heap_newsize
       together, or neither

@@ -1515,25 +1515,30 @@ def _jvm_options(env, series, ctx, files, found, java, keep_unread, cmdline):
     return notes, jvm.set_twice(options, java) + jvm.check(options, java), keep
 
 
-def _heap_in_options(found, series, java):
+def _heap_in_options(found, series, java, live_files):
     """The heap set in the JVM options files the running Java reads, an -Xms and an -Xmx line of the same size among
-    their extra options (none else of the heap there, none in cassandra-env.sh): cassandra_heap_size with
-    cassandra_heap_in_jvm_options, out of the extra options -> found changed in place. Only with the running JVM's
-    arguments: they show the JVM gets the same where the role writes them (jvm-server.options)."""
-    if not jvm.options_file(series, java) or found.get("cassandra_heap_size"):
+    their extra options (an -Xmn line too without G1; none else of the heap there, none in cassandra-env.sh, its
+    HEAP_NEWSIZE included): cassandra_heap_size (cassandra_heap_newsize) with cassandra_heap_in_jvm_options, out of
+    the extra options -> found changed in place. Only with the running JVM's arguments: they show the JVM gets the
+    same where the role writes them (jvm-server.options)."""
+    if not jvm.options_file(series, java) or found.get("cassandra_heap_size") or found.get("cassandra_heap_newsize"):
         return
-    lines = [(jvm.options_variable(f), line) for f in jvm.read_files(series, java)
-             for line in found.get(jvm.options_variable(f)) or []]
-    names = HEAP_OPTIONS + ("MaxHeapSize", "InitialHeapSize")
+    read = jvm.read_files(series, java)
+    lines = [(jvm.options_variable(f), line) for f in read for line in found.get(jvm.options_variable(f)) or []]
+    names = HEAP_OPTIONS + ("MaxHeapSize", "InitialHeapSize", "NewSize", "MaxNewSize")
     heap = [(var, line) for var, line in lines if any(jvm.option_name(o) in names for o in jvm.words(line))]
-    sizes = dict((line.strip()[:4], line.strip()[4:]) for dummy, line in heap if re.match(r"^-Xm[sx]\S+$", line.strip()))
-    if len(heap) != 2 or set(sizes) != {"-Xms", "-Xmx"} or sizes["-Xms"] != sizes["-Xmx"]:
+    sizes = dict((line.strip()[:4], line.strip()[4:]) for dummy, line in heap if re.match(r"^-Xm[sxn]\S+$", line.strip()))
+    g1 = [o for f in read for o in jvm.words(live_files.get(f, "").split("\n")) if jvm.option_name(o) == "UseG1GC"]
+    if len(heap) != len(sizes) or set(sizes) - {"-Xmn"} != {"-Xms", "-Xmx"} or sizes["-Xms"] != sizes["-Xmx"] \
+            or ("-Xmn" in sizes and g1[-1:] == ["-XX:+UseG1GC"]):  # (-Xmn with G1: cassandra-env.sh stops)
         return
     for var, line in heap:
         found[var] = [o for o in found[var] if o != line]
         if not found[var]:
             found.pop(var)
     found["cassandra_heap_size"] = sizes["-Xmx"]
+    if "-Xmn" in sizes:
+        found["cassandra_heap_newsize"] = sizes["-Xmn"]
     found["cassandra_heap_in_jvm_options"] = True
 
 
@@ -2036,11 +2041,13 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     where[0] = "the JVM options files"
     jvm_notes, jvm_warnings, keep_files = _jvm_options(env, cassandra_version, ctx, [f for f in files if f in live_files],
                                                        found, str(java or ""), keep_unread_jvm_options, cmdline)
-    # (not with jvm-server.options kept as it is, where the role writes it; not with cassandra-env.sh's own -Xm*)
+    # (not with jvm-server.options kept as it is, where the role writes it; not with cassandra-env.sh's own heap:
+    # -Xm* it adds, MAX_HEAP_SIZE or HEAP_NEWSIZE set outside a block, wherever)
     if cmdline and not set(running.get("newer") or []) & {jvm_args.ENV, jvm_args.COMMON} \
             and not (keep is True or jvm_args.COMMON in keep) \
-            and not re.search(r"(?m)^[^#]*JVM_OPTS=.*-Xm[sxn][0-9]", live_files.get(jvm_args.ENV, "")):
-        _heap_in_options(found, cassandra_version, str(java or ""))
+            and not re.search(r"(?m)^[^#]*JVM_OPTS=.*-Xm[sxn][0-9]|^(export )?(MAX_HEAP_SIZE|HEAP_NEWSIZE)=[^\s#]",
+                              live_files.get(jvm_args.ENV, "")):
+        _heap_in_options(found, cassandra_version, str(java or ""), live_files)
     for name in [n for n in LATER_STOCK if n in live_files and n in files]:
         for line in without_later_stock(name, "\n".join(_render(env, cassandra_version, name, ctx)[1]), live_files[name])[1]:
             jvm_warnings.append("%s (%s): added by apply_config: %s; missing because this file predates it" % (
