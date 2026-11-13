@@ -992,6 +992,10 @@ def _entry(report, what, members, todo):
     return lines + (fill_text(todo, report.width, "      ") if todo else []) + [""]  # (a blank line between entries)
 
 
+# the files that take your own template or a piece of it (cassandra_config_template_overrides, _snippets)
+SNIPPET_FILES = ("cassandra-env.sh", "logback.xml")
+
+
 def _hand_entries(report, edits):
     """Hand edits: a setting edited (its value), a file's other edits counted -> [entry lines]; the one way to keep
     them, the file left as the node has it."""
@@ -1005,6 +1009,10 @@ def _hand_entries(report, edits):
                 todo = "%sto keep %s: import again with %s (Ansible then leaves %s as each node has it)" % (
                     "" if setting else "the lines are under DETAILS, node by node; ", "it" if setting else "them",
                     unbreakable("-e import_cluster_keep_hand_edits=" + f), f)
+                if f in SNIPPET_FILES:  # (no variable carries them: the file's template of yours, or a piece of it)
+                    todo += ("; or carry %s: your own template of %s (cassandra_config_template_overrides), or a"
+                             " template piece for lines at its end (cassandra_config_template_snippets)"
+                             % ("it" if setting else "them", f))
             shown = "%s %s: %s" % (_say(report, f), setting, _short(text)) if setting else "%s: %s" % (
                 _say(report, f), _short(text))
             entries += _entry(report, shown, members, todo)

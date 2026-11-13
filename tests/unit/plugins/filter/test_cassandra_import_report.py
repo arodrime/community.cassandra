@@ -506,6 +506,18 @@ def test_an_edit_with_each_node_s_own_address_is_one_entry():
         ('JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=<its address>"', 3)]
 
 
+def test_a_logback_hand_edit_says_the_templates_of_yours():
+    # no variable carries it (the audit file at another path): its way out, beside keeping the file as it is
+    hand = ["logback.xml, line 90:", "  -     <file>${cassandra.logdir}/audit/audit.log</file>",
+            "  +     <file>/data/audit/audit.log</file>"]
+    text = " ".join(" ".join(section(report([node(1, hand=hand)]), "HAND EDITS")).split())
+    assert "-e import_cluster_keep_hand_edits=logback.xml (Ansible then leaves logback.xml as each node has it); or" \
+           " carry them: your own template of logback.xml (cassandra_config_template_overrides), or a template piece" \
+           " for lines at its end (cassandra_config_template_snippets)" in text
+    hand = ["cassandra.yaml, line 10:", "  + concurrent_writes: 48"]
+    assert "cassandra_config_template_overrides" not in " ".join(section(report([node(1, hand=hand)]), "HAND EDITS"))
+
+
 def test_written_host_vars_counted_on_a_large_cluster():
     nodes = [node(i, "16G" if i % 4 == 1 else "8G") for i in range(1, 60, 2)]  # node1, node3...: no range
     lines = report(nodes, screen=True)
