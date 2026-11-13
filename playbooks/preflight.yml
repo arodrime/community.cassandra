@@ -466,11 +466,12 @@
               {%-   set _ = out.append(h) -%}
               {%- endfor -%}
               {{ out }}
-            # a node of the cluster left out of this run (--limit): its address was not read, so it is not
-            # judged here (the full run does; each node's own check before a restart stops on any node down)
+            # a node of the cluster left out of this run by --limit (not one that did not answer): its address was
+            # not read, so it is not judged here (the full run does; each node's own check before a restart stops
+            # on any node down)
             _outside: >-
               {%- set out = [] -%}
-              {%- for h in query('community.cassandra.cassandra_nodes') if h not in ansible_play_hosts
+              {%- for h in query('community.cassandra.cassandra_nodes') if h not in ansible_play_hosts_all
                     and item | community.cassandra.cassandra_seed_host in [h, hostvars[h].ansible_host | default(h)] -%}
               {%-   set _ = out.append(h) -%}
               {%- endfor -%}

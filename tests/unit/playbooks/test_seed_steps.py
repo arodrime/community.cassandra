@@ -89,7 +89,9 @@ def seed_up(item, **extra):
     extra.setdefault("cassandra_preflight_status", ring(1, 2, 3))
     extra.setdefault("_cassandra_preflight_target", "add")
     variables = dict(SEED_UP["vars"], item=item, hostvars=hostvars, ansible_play_hosts=GROUP, _from="n1",
-                     groups={"all": GROUP, "prod": GROUP}, cassandra_hosts="prod", **extra)
+                     groups={"all": GROUP, "prod": GROUP}, cassandra_hosts="prod")
+    variables.update(extra)
+    variables.setdefault("ansible_play_hosts_all", variables["ansible_play_hosts"])
     return render("{{ %s }}" % SEED_UP["ansible.builtin.assert"]["that"], **variables)
 
 
@@ -117,11 +119,13 @@ def test_preflight_lets_add_node_and_topology_add_a_seed():
 
 def test_preflight_leaves_a_seed_out_of_the_limit_unjudged():
     # --limit n2, seeds by inventory name as import_cluster writes them: n1's address was not read in this run
-    limited = dict(ansible_play_hosts=["n2"], _cassandra_preflight_target=None)
+    limited = dict(ansible_play_hosts=["n2"], ansible_play_hosts_all=["n2"], _cassandra_preflight_target=None)
     assert seed_up("n1", **limited) is True
     assert seed_up("n1", cassandra_preflight_status=ring(2, 3), **limited) is True  # down: the full run says it
     assert seed_up("n9", **limited) is False  # no host of the cluster
     assert seed_up("n1", _cassandra_preflight_target=None) is False  # in the run: its name is no ring address
+    # in the run but not answering (cassandra_allow_down_nodes): judged, not left out
+    assert seed_up("10.0.0.5", ansible_play_hosts=["n1", "n2", "n3"], _cassandra_preflight_target=None) is False
 
 
 # join_seeds.yml: the seeds a new node starts with, never itself
