@@ -24,6 +24,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_jvm_option
 def test_the_file_each_java_reads(series, java, name):
     assert jvm.options_file(series, java) == name
     assert cassandra_jvm_options_file(series, java) == name
+    assert jvm.read_files_known(series, java) == (["jvm-server.options", name] if name else None)
 
 
 @pytest.mark.parametrize("option, size", [

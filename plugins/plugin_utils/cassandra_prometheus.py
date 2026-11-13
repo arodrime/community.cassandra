@@ -33,6 +33,8 @@ import yaml
 AGENT = re.compile(r"-javaagent:(?P<jar>(?P<dir>/[^\s\"'=]*)/jmx_prometheus_javaagent-(?P<version>[0-9][0-9A-Za-z.-]*)\.jar)"
                    r"=(?:(?P<host>[\w.-]+|\[[0-9A-Fa-f:.]+\]):)?(?P<port>\d{1,5}):(?P<config>/[^\s\"';]+)")
 # a shell assignment, outside quotes or not (the block's guards may set nothing else than JVM_OPTS)
+# a version cassandra_config takes (cassandra_prometheus_exporter_version), e.g. 1.7.0, not 1.0.1-rc
+RELEASE = re.compile(r"^[0-9]+(\.[0-9]+)*$")
 ASSIGNMENT = re.compile(r"(?:^|[\s;&|({])(?:export\s+)?([A-Za-z_]\w*)=")
 OPENERS = ("if", "case", "for", "while", "until", "{")
 CLOSERS = ("fi", "esac", "done", "}")

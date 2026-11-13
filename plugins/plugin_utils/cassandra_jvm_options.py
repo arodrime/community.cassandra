@@ -129,6 +129,11 @@ def read_files(series, java):
     return ["jvm-server.options"] + ([dep] if dep else [])
 
 
+def read_files_known(series, java):
+    """The options files a Java reads (read_files), None when its Java or series is not known (then: all of them)."""
+    return read_files(series, java) if options_file(series, java) else None
+
+
 def words(lines):
     """The options of option lines (several on a line, as bin/cassandra splits
     them); a string is one line."""

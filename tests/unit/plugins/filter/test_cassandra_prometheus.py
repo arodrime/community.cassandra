@@ -379,6 +379,14 @@ def test_the_agent_read_is_the_one_the_running_java_gets(live):
     assert out["vars"]["cassandra_prometheus_exporter_checksum"] == "sha256:" + "ab" * 32
 
 
+def test_the_agent_read_skips_the_ones_the_import_skips():
+    # (audit r7) an agent of a version cassandra_config does not take, left as it is: the next one's paths read
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_prometheus import cassandra_prometheus_agent_paths
+    rc = "-javaagent:/opt/rc/jmx_prometheus_javaagent-1.0.1-rc.jar=9404:/opt/rc/rc.yml"
+    files = {"jvm-server.options": rc + "\n", "cassandra-env.sh": 'JVM_OPTS="$JVM_OPTS %s"\n' % OPTION}
+    assert cassandra_prometheus_agent_paths(files, "50x", "17") == {"jar": JAR, "config": CONF}
+
+
 def test_a_node_without_the_exporter_imports_none():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_config_import
     out = cassandra_config_import(seeded(stock("50x")), "50x", {"os_family": "Debian"})

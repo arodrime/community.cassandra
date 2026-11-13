@@ -2008,7 +2008,7 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     as_read = (live_files, cmdline)
     live_files, cmdline, exporter = _exporter_import(
         live_files, cmdline, ctx, running.get("exporter"), [ctx.get("cassandra_conf_dir"), conf_target],
-        jvm.read_files(cassandra_version, java) if jvm.options_file(cassandra_version, java) else None)
+        jvm.read_files_known(cassandra_version, java))
     if exporter["found"] and (keep is True or exporter["found"]["file"] in keep or jvm_args.COMMON in keep):
         # the agent's file kept as it is (import_cluster_keep_hand_edits): it stays there, the role writes none (nor
         # could it in a kept jvm-server.options, where it writes it: cassandra_config refuses that)
@@ -2340,7 +2340,7 @@ def _exporter_import(live_files, cmdline, ctx, read=None, conf_dirs=(), java_fil
         # (a version cassandra_config refuses, e.g. 1.0.1-rc: left as it is)
         why = got["why"] if got["kind"] == "kept" else "the JVM gets it already from %s" % found["file"] if found \
             else "its version %s is not a release number cassandra_config takes, like 1.7.0" % got["version"] \
-            if not re.match(r"^[0-9]+(\.[0-9]+)*$", got["version"]) else ""
+            if not prometheus.RELEASE.match(got["version"]) else ""
         if why:
             notes.append("%s line %d: the Prometheus exporter's agent (%s): NOT imported (%s), left as a hand edit" % (
                 name, got["line"], out.mask(got["option"]), why))
