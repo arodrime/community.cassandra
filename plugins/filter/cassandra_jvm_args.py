@@ -34,7 +34,7 @@ import difflib
 import re
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
-    JVM_LISTS, JVM_UNLOCK, shell_words)
+    JVM_ENV_GREPS, JVM_LISTS, JVM_UNLOCK, shell_words)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_prometheus as prometheus
@@ -198,22 +198,46 @@ def env_lines(text):
     return lines
 
 
+def _moved_lines(live, role, ops):
+    """The texts of the lines adding plain options to JVM_OPTS outside any block that both files have once, at
+    another place (the role's line of a variable, the node's own below the stock comment): bash adds the same, as no
+    other line of either file sets one of their options."""
+    def once(lines, side):
+        texts = [line["text"] for line in lines]
+        return set(line["text"] for op in ops for line in lines[op[side]:op[side + 1]]
+                   if not line["depth"] and APPEND.match(line["text"]) and texts.count(line["text"]) == 1)
+    moved = once(role, 1) & once(live, 3)
+    for text in list(moved):
+        names = set(jvm.option_name(o) for o in APPEND.match(text).group(1).split())
+        others = [line for line in role + live if line["text"] != text]
+        set_elsewhere = any(jvm.option_name(w) in names for line in others
+                            for w in re.split(r"[\s\"'=]+", line["text"]) if w.startswith("-"))
+        if None in names or any(g in text for g in JVM_ENV_GREPS) or set_elsewhere:
+            moved.discard(text)
+    return moved
+
+
 def env_differences(live, role):
     """The lines of the node's cassandra-env.sh not in the role's -> ([its JVM_OPTS lines: {n, text, words}], [its
     heap assignments]); NotSame when they differ otherwise (only lines outside any block may: a line adding plain
-    options to JVM_OPTS on the node's side, a heap assignment on either)."""
+    options to JVM_OPTS on the node's side, a heap assignment on either, a line adding plain options at another
+    place on both)."""
     added, heap = [], []
     matcher = difflib.SequenceMatcher(None, [line["text"] for line in role], [line["text"] for line in live],
                                       autojunk=False)
-    for op, i1, i2, j1, j2 in matcher.get_opcodes():
-        if op == "equal":
-            continue
+    ops = [op for op in matcher.get_opcodes() if op[0] != "equal"]
+    moved = _moved_lines(live, role, ops)
+    for op, i1, i2, j1, j2 in ops:
         if (i1 and GREP.match(role[i1 - 1]["text"])) or (j1 and GREP.match(live[j1 - 1]["text"])):
             raise NotSame("cassandra-env.sh differs right after a grep (its $? read on the next line)")
         for line in role[i1:i2]:
+            if line["text"] in moved:
+                continue
             if line["depth"] or not SET.match(line["text"]):
                 raise NotSame("cassandra-env.sh differs from the role's otherwise than by JVM_OPTS lines and the heap")
         for line in live[j1:j2]:
+            if line["text"] in moved:
+                continue
             append = APPEND.match(line["text"]) if not line["depth"] else None
             if append and append.group(1).split():
                 added.append(dict(line, options=append.group(1).split()))
@@ -511,7 +535,8 @@ def cassandra_jvm_args_adopt(cmdline, live, render, variables, series, java, nod
         role_heap, dummy = heap_values(info["role_lines"], node_env)
     except NotSame as exc:
         return {"why": str(exc)} if env_has_candidates(live[ENV], role[ENV]) else None
-    if not info["added"] and not info["heap_lines"]:
+    if not info["added"] and not info["heap_lines"] \
+            and [line["text"] for line in info["live_lines"]] == [line["text"] for line in info["role_lines"]]:
         return None
     end = info["end"]
     # the heap cassandra-env.sh gets, set where the role writes it

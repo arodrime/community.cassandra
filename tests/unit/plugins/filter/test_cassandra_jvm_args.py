@@ -20,7 +20,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import_che
     cassandra_inventory_host_vars,
 )
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import cassandra_import_report
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import import IPV4, cassandra_inventory_layout
 
 from .test_cassandra_import_check import FACTS, check, import_node, seeded, stock
 
@@ -286,6 +286,24 @@ def test_the_stock_gc_block_stays_g1(tmp_path):
     inventory, layout, node = imported(files, "50x", "17", launch(files, "17", tmp_path))
     variables = role_files(inventory, layout, files)[1]
     assert "cassandra_jvm17_gc" not in node["vars"] and variables["cassandra_jvm17_max_gc_pause_millis"] == 500
+
+
+RMI = 'JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=10.0.0.1"'
+
+
+@pytest.mark.parametrize("edit", [after_line('# JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=<public name>"', RMI),
+                                  add_to("cassandra-env.sh", RMI)], ids=["below the stock comment", "at the end"])
+def test_the_rmi_hostname_line_elsewhere_is_its_variable(tmp_path, edit):
+    files = node_files("50x", edit)
+    cmdline = launch(files, "17", tmp_path)
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    assert node["hand_edits"] == [] and node["vars"]["cassandra_jmx_rmi_hostname"] == IPV4  # (each node its own)
+    rendered = role_files(inventory, layout, files)[0]
+    assert settings(launch(rendered, "17", tmp_path)) == settings(cmdline)
+    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
+    # inside a block: not read there
+    files = node_files("50x", add_to("cassandra-env.sh", 'if [ -n "$CASSANDRA_CONF" ]; then\n%s\nfi' % RMI))
+    assert "cassandra_jmx_rmi_hostname" not in imported(files, "50x", "17", launch(files, "17", tmp_path))[2]["vars"]
 
 
 @pytest.mark.parametrize("case, series, java, edit", NOT_MOVED, ids=[c[0] for c in NOT_MOVED])

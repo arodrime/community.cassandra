@@ -82,7 +82,10 @@ def test_lines_a_variable_covers_stay_hand_edits(line):
     files = with_env("export FOO=1", line)
     out, n = imported(files)
     assert ENV_END not in out["vars"]
-    assert [x for x in out["hand_edits"] if x.startswith("  +") and x.strip() != "+"] == ["  + export FOO=1", "  + " + line]
+    rmi = "rmi.server.hostname" in line  # (read into cassandra_jmx_rmi_hostname: the stock line is on in its place)
+    assert [x for x in out["hand_edits"] if x.startswith("  +") and x.strip() != "+"] == [
+        '  + # JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=<public name>"'] * rmi + ["  + export FOO=1", "  + " + line]
+    assert ("cassandra_jmx_rmi_hostname" in out["vars"]) == rmi
 
 
 @pytest.mark.parametrize("lines", [

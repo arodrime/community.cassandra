@@ -563,6 +563,29 @@ def _import_file(env, series, name, ctx, live):
         found.update(_import_by_key(tpl, live, ctx))
     if name.endswith(".options"):
         _custom_gc(env, series, name, ctx, tpl, live, found)
+    if name.endswith(".sh"):
+        found.update(_env_lines_elsewhere(tpl, live, ctx))
+    return found
+
+
+# cassandra-env.sh's lines of a variable a node may have switched on at another place than the stock one (below the
+# stock comment, at the end), outside any block: bash runs them as well there
+ELSEWHERE = ("-Djava.rmi.server.hostname=",)
+
+
+def _env_lines_elsewhere(tpl, live, ctx):
+    """The values of cassandra-env.sh's lines of ELSEWHERE that the node has on outside any block, wherever they are
+    (the last one counts) -> {variable: value}."""
+    try:
+        top = set(line["n"] for line in jvm_args.env_lines("\n".join(live)) if not line["depth"])
+    except jvm_args.NotSame:
+        return {}
+    found = {}
+    for t in [t for t in tpl if "{{" in t and any(word in t for word in ELSEWHERE)]:
+        for n, line in enumerate(live):
+            got = _read_line(t, line, ctx) if n + 1 in top else None
+            if got and all(got.values()):
+                found.update(got)
     return found
 
 
