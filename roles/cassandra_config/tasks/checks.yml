@@ -383,7 +383,8 @@
     quiet: true
 
 # Unless G1 is in use, cassandra-env.sh exits when only one of MAX_HEAP_SIZE
-# and HEAP_NEWSIZE is set (with G1 it ignores HEAP_NEWSIZE, written as found)
+# and HEAP_NEWSIZE is set (with G1 it ignores HEAP_NEWSIZE, written as found); the heap in the JVM options writes
+# neither (cassandra-env.sh works the young generation out itself without -Xmn)
 - name: Assert heap settings are consistent
   ansible.builtin.assert:
     that: >-
@@ -402,6 +403,17 @@
       cassandra_heap_in_jvm_options writes cassandra_heap_newsize as -Xmn in jvm-server.options, which cassandra-env.sh
       refuses with G1 (Cassandra would not start): set cassandra_heap_newsize to "", or cassandra_heap_in_jvm_options
       to false
+    quiet: true
+
+# The heap in the JVM options: jvm-server.options written by the role
+- name: Refuse the heap in the JVM options with jvm-server.options left as it is
+  ansible.builtin.assert:
+    that: not (cassandra_heap_in_jvm_options | bool) or 'jvm-server.options' not in cassandra_config_keep_files
+    fail_msg: >-
+      cassandra_heap_in_jvm_options writes the heap in jvm-server.options, which is in cassandra_config_keep_files (the
+      role leaves it as it is): the heap would be in neither file. Remove jvm-server.options from
+      cassandra_config_keep_files, or set cassandra_heap_in_jvm_options to false (MAX_HEAP_SIZE in cassandra-env.sh);
+      nothing is changed.
     quiet: true
 
 # 5.0 with G1: HEAP_NEWSIZE is written as given (import_cluster keeps one found), and Cassandra ignores it (its

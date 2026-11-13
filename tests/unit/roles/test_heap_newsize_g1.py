@@ -122,3 +122,11 @@ def test_the_heap_in_the_jvm_options_needs_no_young_generation():
     check = _task("roles/cassandra_config/tasks/checks.yml",
                   "Assert no young generation size with G1 when the heap is in the JVM options")
     assert _assert(check, cassandra_heap_newsize="2G", cassandra_heap_in_jvm_options=True, **cms) is True
+
+
+def test_the_heap_in_the_jvm_options_with_jvm_server_options_kept():
+    check = _task("roles/cassandra_config/tasks/checks.yml",
+                  "Refuse the heap in the JVM options with jvm-server.options left as it is")
+    on = dict(cassandra_version="50x", cassandra_heap_size="31G", cassandra_heap_in_jvm_options=True)
+    assert _assert(check, cassandra_config_keep_files=["jvm-server.options"], **on) is False
+    assert _assert(check, cassandra_config_keep_files=["cassandra-env.sh"], **on) is True
