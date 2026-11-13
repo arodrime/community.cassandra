@@ -115,6 +115,15 @@ def test_preflight_lets_add_node_and_topology_add_a_seed():
     assert "cassandra_nodes" in imports["vars"]["_cassandra_preflight_adding"]
 
 
+def test_preflight_leaves_a_seed_out_of_the_limit_unjudged():
+    # --limit n2, seeds by inventory name as import_cluster writes them: n1's address was not read in this run
+    limited = dict(ansible_play_hosts=["n2"], _cassandra_preflight_target=None)
+    assert seed_up("n1", **limited) is True
+    assert seed_up("n1", cassandra_preflight_status=ring(2, 3), **limited) is True  # down: the full run says it
+    assert seed_up("n9", **limited) is False  # no host of the cluster
+    assert seed_up("n1", _cassandra_preflight_target=None) is False  # in the run: its name is no ring address
+
+
 # join_seeds.yml: the seeds a new node starts with, never itself
 
 JOIN = load("roles", "cassandra_operation", "tasks", "join_seeds.yml")[0]

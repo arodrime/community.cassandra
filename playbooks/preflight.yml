@@ -440,6 +440,7 @@
               or (_cassandra_preflight_members_down_ok | default(false) | bool and _addr in _all)
               or (_cassandra_preflight_seeds_down_ok | default(false) | bool and _addr in _all and _addr in _stopped)
               or (_seed_added | length > 0 and (_addr not in _all or _addr in _joining))
+              or (_host | length == 0 and _outside | length > 0)
             fail_msg: >-
               Seed {{ item }} ({{ _addr }}) is not an up member of the cluster (nodetool status on {{ _from }}).
               {{ (_absent | first ~ ' is marked cassandra_node_state: absent: take it out of cassandra_seeds in the'
@@ -462,6 +463,15 @@
               {%- set out = [] -%}
               {%- for h in query('community.cassandra.cassandra_nodes', state='absent')
                     if item | community.cassandra.cassandra_seed_host in [h, hostvars[h].ansible_host | default(h)] -%}
+              {%-   set _ = out.append(h) -%}
+              {%- endfor -%}
+              {{ out }}
+            # a node of the cluster left out of this run (--limit): its address was not read, so it is not
+            # judged here (the full run does; each node's own check before a restart stops on any node down)
+            _outside: >-
+              {%- set out = [] -%}
+              {%- for h in query('community.cassandra.cassandra_nodes') if h not in ansible_play_hosts
+                    and item | community.cassandra.cassandra_seed_host in [h, hostvars[h].ansible_host | default(h)] -%}
               {%-   set _ = out.append(h) -%}
               {%- endfor -%}
               {{ out }}
