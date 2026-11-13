@@ -130,3 +130,20 @@ def test_the_heap_in_the_jvm_options_with_jvm_server_options_kept():
     on = dict(cassandra_version="50x", cassandra_heap_size="31G", cassandra_heap_in_jvm_options=True)
     assert _assert(check, cassandra_config_keep_files=["jvm-server.options"], **on) is False
     assert _assert(check, cassandra_config_keep_files=["cassandra-env.sh"], **on) is True
+
+
+def _wrong(**variables):
+    task = _task("roles/cassandra_config/tasks/checks.yml", "Refuse G1 tuning values the JVM would not start with")
+    found = _role_vars(cassandra_version="50x", **variables)
+    found["_wrong"] = task["vars"]["_wrong"]
+    found = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in found.items())
+    return Templar(loader=DataLoader(), variables=found).template(trust_as_template("{{ _wrong }}"))
+
+
+def test_g1_tuning_values_the_jvm_takes():
+    # (audit r4) "" comments the line out; a unit or a percent sign: the JVM would refuse the line
+    assert _wrong() == [] and _wrong(cassandra_jvm17_max_gc_pause_millis="", cassandra_jvm_g1_heap_region_size="32m") == []
+    assert _wrong(cassandra_jvm_max_gc_pause_millis="300ms", cassandra_jvm17_g1_new_size_percent="50%",
+                  cassandra_jvm11_g1_heap_region_size="abc") == [
+        "cassandra_jvm11_g1_heap_region_size abc", "cassandra_jvm17_g1_new_size_percent 50%",
+        "cassandra_jvm_max_gc_pause_millis 300ms"]

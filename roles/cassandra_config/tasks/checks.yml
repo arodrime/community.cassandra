@@ -416,6 +416,30 @@
       nothing is changed.
     quiet: true
 
+# G1's tuning values, written as they are in the JVM options files: a number (a size for the heap region), or ""
+# for the stock line commented out; the JVM refuses another text (300ms, 50%)
+- name: Refuse G1 tuning values the JVM would not start with
+  ansible.builtin.assert:
+    that: _wrong | length == 0
+    fail_msg: >-
+      {{ _wrong | join('; ') }}: the JVM would not start with it. Write a plain number (e.g. 300, no unit; the heap
+      region size a number with k, m or g, e.g. 16m), or "" to comment its stock line out; nothing is changed.
+    quiet: true
+  vars:
+    _wrong: >-
+      {%- set out = [] -%}
+      {%- for name in ['max_tenuring_threshold', 'g1_heap_region_size', 'g1_new_size_percent',
+                       'g1_rset_updating_pause_time_percent', 'max_gc_pause_millis',
+                       'initiating_heap_occupancy_percent'] -%}
+      {%-   for prefix in ['cassandra_jvm_', 'cassandra_jvm8_', 'cassandra_jvm11_', 'cassandra_jvm17_'] -%}
+      {%-     set value = lookup('ansible.builtin.vars', prefix ~ name, default='') | string -%}
+      {%-     if value is not match('^([0-9]+[kKmMgG]?|)$' if name == 'g1_heap_region_size' else '^([0-9]+|)$') -%}
+      {%-       set _ = out.append(prefix ~ name ~ ' ' ~ value) -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
 # 5.0 with G1: HEAP_NEWSIZE is written as given (import_cluster keeps one found), and Cassandra ignores it (its
 # cassandra-env.sh says so at each start): said, not refused; once a run (apply_config and upgrade say it in their
 # preview, not again at each node's write)
