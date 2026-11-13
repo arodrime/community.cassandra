@@ -23,9 +23,9 @@ __metaclass__ = type
 
 import os
 import re
-from urllib.parse import urlsplit, urlunsplit
 
 from ansible.module_utils.parsing.convert_bool import boolean
+from ansible_collections.community.cassandra.plugins.filter.cassandra_url import cassandra_url_masked
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import (
     parse_size, size as _size, sizes as _sizes)
 
@@ -281,19 +281,6 @@ def cassandra_new_node_network(reached, own_ports, ss_output=None, running=False
     return _result(problems, warnings, info)
 
 
-def _shown(url):
-    """A URL without its credentials or query (a signature)"""
-    try:
-        parts = urlsplit(url or "")
-        host = parts.hostname or ""
-        port = parts.port
-    except ValueError:
-        return "(the URL)"
-    if not parts.netloc:
-        return url
-    return urlunsplit((parts.scheme, host + (":%d" % port if port else ""), parts.path, "", ""))
-
-
 def cassandra_new_node_urls(results):
     """results: a uri loop result over {'name', 'url', 'match'} items (match:
     a regex the page must hold, e.g. the version wanted). No answer at all
@@ -302,7 +289,7 @@ def cassandra_new_node_urls(results):
     for r in (results or {}).get("results", []):
         item = r.get("item", {})
         status = int(r.get("status", -1))
-        name, url = item.get("name"), _shown(item.get("url"))
+        name, url = item.get("name"), cassandra_url_masked(item.get("url"))
         if status <= 0:
             warnings.append("%s: no answer from %s (a proxy set only for the package manager or pip is not used by"
                             " this check)" % (name, url))

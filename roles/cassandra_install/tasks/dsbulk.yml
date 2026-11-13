@@ -21,15 +21,21 @@
         fail_msg: cassandra_dsbulk_version must be a release number like "1.11.2" (quoted), not "{{ cassandra_dsbulk_version }}"
         quiet: true
 
-    # get_url would read another URL, and show this one whole in its error: refused, the URL not shown
-    - name: The dsbulk URL's login is percent-encoded
+    # get_url would read another URL, or send the login as it is (2.16 does not decode a %XX), and
+    # show the URL whole in its error: refused, the URL not shown
+    - name: The dsbulk URL holds a plain login, if any
       ansible.builtin.assert:
-        that: cassandra_dsbulk_url | community.cassandra.cassandra_url_login_ok
-        fail_msg: >-
-          cassandra_dsbulk_url holds a login with a character that must be percent-encoded (/ # ? " @ space...):
-          write it as %2F %23 %3F %22 %40 %20. The URL is not shown (its login), nothing was downloaded.
-          Encode the login in cassandra_dsbulk_url, then run again.
+        that: cassandra_dsbulk_url | community.cassandra.cassandra_url_login_ok(ansible_version.full)
+        fail_msg: |-
+          cassandra_dsbulk_url: the part before its last @ is not a plain login.
+          A plain login is user:password with letters, digits and - . _ ~ ! $ & ' ( ) * + , ; ={{ ' or %XX' if _decodes else '' }} only.
+          The URL is not shown; nothing was downloaded.
+          For a file on the mirror (the server of cassandra_install_url): take the login out of the URL and set cassandra_install_username and cassandra_install_password.
+          On ansible-core 2.19 or later (this run: {{ ansible_version.full }}), a login can be percent-encoded instead (/ as %2F, @ as %40...).
+          An @ in the path is written %40. Then run again.
         quiet: true
+      vars:
+        _decodes: "{{ ansible_version.full is version('2.19', '>=') }}"
 
     - name: Look for this dsbulk version
       ansible.builtin.stat:
@@ -116,9 +122,9 @@
                 mode: "0600"
               retries: 3
               register: cassandra_install_dsbulk_download
-              # a login or a query (a signature) in the URL shows in its result, its retries and its error (2.19+
-              # masks the result's url only): hidden then, the rescue says why
-              no_log: "{{ cassandra_dsbulk_url is search('@|[?]') }}"
+              # a login, a query (a signature) or a fragment in the URL, or in a checksum URL, shows in its result, its retries
+              # and its error (2.19+ masks the result's url only): hidden then, the rescue says why
+              no_log: "{{ (cassandra_dsbulk_url ~ ' ' ~ cassandra_dsbulk_checksum | default('')) is search('[@?#]') }}"
               # a wrong checksum is final
               until: >-
                 cassandra_install_dsbulk_download is succeeded

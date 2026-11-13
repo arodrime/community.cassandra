@@ -397,7 +397,7 @@
           after:
             - >-
               afterwards: Cassandra {{ cassandra_package_version | default('', true) or ('series ' ~ _p.cassandra_version) }},
-              Java {{ cassandra_java_version | default('of the series') }} ({{ ('tarball ' ~ cassandra_java_tarball)
+              Java {{ cassandra_java_version | default('of the series') }} ({{ ('tarball ' ~ cassandra_java_tarball | community.cassandra.cassandra_url_masked)
               if cassandra_java_tarball | default('', true) else ('in ' ~ cassandra_java_home) if cassandra_java_home | default('', true)
               else 'package' if cassandra_install_java | default(true) | bool else 'set up by other means' }}),
               Medusa {{ ('on (' ~ cassandra_medusa_version | default('0.30.1') ~ ' in ' ~ (cassandra_medusa_venv | default('/opt/cassandra-medusa')

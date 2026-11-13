@@ -7,15 +7,21 @@
 # managed by other means (cassandra_prometheus_exporter_config_file) must be there. One that cannot be: the run
 # stops here, before anything else is written.
 
-# get_url would read another URL, and show this one whole in its error: refused, the URL not shown
-- name: The exporter's URL login is percent-encoded
+# get_url would read another URL, or send the login as it is (2.16 does not decode a %XX), and
+# show the URL whole in its error: refused, the URL not shown
+- name: The exporter's URL holds a plain login, if any
   ansible.builtin.assert:
-    that: cassandra_prometheus_exporter_url | community.cassandra.cassandra_url_login_ok
-    fail_msg: >-
-      cassandra_prometheus_exporter_url holds a login with a character that must be percent-encoded (/ # ? " @ space...):
-      write it as %2F %23 %3F %22 %40 %20. The URL is not shown (its login), nothing was downloaded.
-      Encode the login in cassandra_prometheus_exporter_url, then run again.
+    that: cassandra_prometheus_exporter_url | community.cassandra.cassandra_url_login_ok(ansible_version.full)
+    fail_msg: |-
+      cassandra_prometheus_exporter_url: the part before its last @ is not a plain login.
+      A plain login is user:password with letters, digits and - . _ ~ ! $ & ' ( ) * + , ; ={{ ' or %XX' if _decodes else '' }} only.
+      The URL is not shown; nothing was downloaded.
+      For a file on the mirror (the server of cassandra_install_url): take the login out of the URL and set cassandra_install_username and cassandra_install_password.
+      On ansible-core 2.19 or later (this run: {{ ansible_version.full }}), a login can be percent-encoded instead (/ as %2F, @ as %40...).
+      An @ in the path is written %40. Then run again.
     quiet: true
+  vars:
+    _decodes: "{{ ansible_version.full is version('2.19', '>=') }}"
 
 - name: Look at the exporter's jar, its config and the record of its parts read at start
   ansible.builtin.stat:
@@ -101,9 +107,9 @@
         force_basic_auth: "{{ _on_mirror | bool }}"
       retries: 3
       register: cassandra_config_exporter_download
-      # a login or a query (a signature) in the URL shows in its result, its retries and its error (2.19+
-      # masks the result's url only): hidden then, the rescue says why
-      no_log: "{{ cassandra_prometheus_exporter_url is search('@|[?]') }}"
+      # a login, a query (a signature) or a fragment in the URL, or in a checksum URL, shows in its result, its retries
+      # and its error (2.19+ masks the result's url only): hidden then, the rescue says why
+      no_log: "{{ (cassandra_prometheus_exporter_url ~ ' ' ~ cassandra_prometheus_exporter_checksum | default('')) is search('[@?#]') }}"
       # a wrong checksum is final
       until: >-
         cassandra_config_exporter_download is succeeded
@@ -127,7 +133,13 @@
         msg: >-
           {{ inventory_hostname }}: the Prometheus exporter's jar could not be downloaded to
           {{ _cassandra_config_exporter_jar }} from {{ cassandra_prometheus_exporter_url | community.cassandra.cassandra_url_masked }}
-          ({{ ansible_failed_result.msg | default('?') | community.cassandra.cassandra_url_masked }}).
+          ({{ ('HTTP ' ~ _status ~ ', ') if _status | int not in [-1, 200] else '' }}{{ _said }}).
           The JVM options that load it are not written, and this run neither stops nor starts Cassandra there: it is
           left as it is. Fix cassandra_prometheus_exporter_url or cassandra_prometheus_exporter_checksum (set both with
           cassandra_prometheus_exporter_version), or put the jar there, then run again.
+      vars:
+        _status: "{{ ansible_failed_result.status_code | default(-1) }}"
+        _said: >-
+          {{ (ansible_failed_result.response | default('', true) or ansible_failed_result.msg | default('no answer'))
+             | regex_replace('^HTTP Error [0-9]+: ', '') | community.cassandra.cassandra_url_masked
+             | trim | regex_replace('[.]$', '') }}

@@ -315,8 +315,11 @@ def test_urls_never_show_credentials_or_signatures():
         {"item": {"name": "pip", "url": "https://bob:s3cret@mirror:8443/simple/cassandra-medusa/"}, "status": 404},
         {"item": {"name": "Java", "url": "https://bucket.s3/jdk.tgz?X-Amz-Signature=abc"}, "status": 200}]}
     out = cassandra_new_node_urls(results)
-    assert out["problems"] == ["pip: https://mirror:8443/simple/cassandra-medusa/ answers HTTP 404"]
-    assert out["info"] == ["Java: https://bucket.s3/jdk.tgz reached"]
+    assert out["problems"] == ["pip: https://****@mirror:8443/simple/cassandra-medusa/ answers HTTP 404"]
+    assert out["info"] == ["Java: https://bucket.s3/jdk.tgz?**** reached"]
+    # a login with a raw / in it: masked whole
+    out = cassandra_new_node_urls({"results": [{"item": {"name": "Java", "url": "https://AbC/dEf+tok@m/jdk.tgz"}, "status": 401}]})
+    assert out["problems"] == ["Java: https://****@m/jdk.tgz answers HTTP 401: check the credentials"]
 
 
 def test_link_target_decides_the_file_system():

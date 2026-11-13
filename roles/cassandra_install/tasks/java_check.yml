@@ -42,15 +42,21 @@
       (cassandra_java_tarballs: {} for a Java package).
     quiet: true
 
-# get_url would read another URL, and show this one whole in its error: refused, the URL not shown
-- name: The tarball URL's login is percent-encoded
+# get_url would read another URL, or send the login as it is (2.16 does not decode a %XX), and
+# show the URL whole in its error: refused, the URL not shown
+- name: The tarball URL holds a plain login, if any
   ansible.builtin.assert:
-    that: cassandra_java_tarball | community.cassandra.cassandra_url_login_ok
-    fail_msg: >-
-      cassandra_java_tarball (or the cassandra_java_tarballs entry of Java {{ cassandra_java_version }}) holds a
-      login with a character that must be percent-encoded (/ # ? " @ space...): write it as %2F %23 %3F %22 %40 %20.
-      The URL is not shown (its login), nothing was downloaded. Encode the login there, then run again.
+    that: cassandra_java_tarball | community.cassandra.cassandra_url_login_ok(ansible_version.full)
+    fail_msg: |-
+      cassandra_java_tarball (or the cassandra_java_tarballs entry of Java {{ cassandra_java_version }}): the part before its last @ is not a plain login.
+      A plain login is user:password with letters, digits and - . _ ~ ! $ & ' ( ) * + , ; ={{ ' or %XX' if _decodes else '' }} only.
+      The URL is not shown; nothing was downloaded.
+      Take the login out of the URL and set cassandra_java_tarball_username and cassandra_java_tarball_password.
+      On ansible-core 2.19 or later (this run: {{ ansible_version.full }}), a login can be percent-encoded instead (/ as %2F, @ as %40...).
+      An @ in the path is written %40. Then run again.
     quiet: true
+  vars:
+    _decodes: "{{ ansible_version.full is version('2.19', '>=') }}"
 
 # Its name makes its temporary file and its directory: without one (or with
 # "." or ".."), the role would remove /var/tmp, /var or cassandra_java_tarball_dir

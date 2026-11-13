@@ -1,6 +1,9 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
+import random
+import string
+
 import pytest
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_url import (
@@ -50,8 +53,13 @@ def test_default_ports():
     # a password percent-encoded, or with a ' (RFC 3986 allows it raw)
     ("https://u:pa%2Fs%22s%20@m.example.com/x", "https://****@m.example.com/x"),
     ("https://u:pa'ss@m.example.com/x", "https://****@m.example.com/x"),
-    # an @ in the path: no login
-    ("https://m.example.com/path@v2/x.tgz", "https://m.example.com/path@v2/x.tgz"),
+    # all up to the last @ masked, whatever is in it: a / ? # in a login, or an @ in the path (masks more)
+    ("https://user:/s3cr3t@m.example.com/x", "https://****@m.example.com/x"),
+    ("https://AbC/dEf+tok@m.example.com/x", "https://****@m.example.com/x"),
+    ("https://u:12?s3cr3t@m.example.com/x", "https://****@m.example.com/x"),
+    ("https://u:12#s3cr3t@m.example.com/x?sig=a", "https://****@m.example.com/x?****"),
+    ("https://m.example.com/path@v2/x.tgz", "https://****@v2/x.tgz"),
+    ("https://m.example.com/x?sig=a@b", "https://****@b"),
     # a query, a fragment masked up to the next whitespace (a quote or a < in them too)
     ("https://m.example.com/x?sig=a'b\"c<d", "https://m.example.com/x?****"),
     ("https://m.example.com/x#a'b", "https://m.example.com/x#****"),
@@ -81,20 +89,17 @@ def test_urls_masked_in_a_text():
 
 @pytest.mark.parametrize("url", [
     "https://m.example.com/jdk.tgz",
-    "https://user:pa%2Fs%23s%3F%22%20%40@m.example.com:8443/jdk.tgz",
     "https://T0KEN@m.example.com/jdk.tgz",
-    "https://u:pa'ss!$&()*+,;=~@m.example.com/jdk.tgz",
-    "https://m.example.com/path@v2/jdk.tgz",
-    "https://m.example.com:8443/path@v2/jdk.tgz",
-    "https://[::1]:8443/path@v2/jdk.tgz",
-    "https://m.example.com/jdk.tgz?X-Amz-Signature=a@b",
-    "/srv/files/jdk.tgz",
+    "https://u:pa'ss!$&()*+,;=~@m.example.com:8443/jdk.tgz",
+    "https://[::1]:8443/jdk.tgz",
+    "/srv/files/j@dk.tgz",
     "file:///srv/files/jdk.tgz",
     "",
     None,
 ])
-def test_login_ok(url):
-    assert cassandra_url_login_ok(url) is True
+@pytest.mark.parametrize("version", ["2.16.19", "2.19.0", "2.20.1rc1", None])
+def test_login_ok(url, version):
+    assert cassandra_url_login_ok(url, version) is True
 
 
 @pytest.mark.parametrize("url", [
@@ -103,9 +108,40 @@ def test_login_ok(url):
     "https://u:pa<ss>@m.example.com/jdk.tgz",
     "https://u:p@ss@m.example.com/jdk.tgz",
     "https://u:pa/ss@m.example.com/jdk.tgz",
-    "https://u:pa#ss@m.example.com/jdk.tgz",
-    "https://u:pa?ss@m.example.com/jdk.tgz",
-    "https://u:pa/s s@m.example.com/jdk.tgz",
+    "https://user:/s3cr3t@m.example.com/jdk.tgz",  # a / at the start of the password
+    "https://AbC/dEf+tok@m.example.com/jdk.tgz",  # a token alone, a / in it
+    "https://u:12#s3cr3t@m.example.com/jdk.tgz",
+    "https://u:12?s3cr3t@m.example.com/jdk.tgz",
+    "https://u:pa%2@m.example.com/jdk.tgz",  # not a %XX
+    "https://m.example.com/path@v2/jdk.tgz",  # an @ in the path: written %40
+    "https://m.example.com/jdk.tgz?X-Amz-Signature=a@b",
 ])
-def test_login_to_encode(url):
+@pytest.mark.parametrize("version", ["2.16.19", "2.19.0", "2.21.4", None])
+def test_login_refused(url, version):
+    assert cassandra_url_login_ok(url, version) is False
+
+
+# ansible-core 2.16 sends a percent-encoded login as it is (2.19+ decodes it)
+@pytest.mark.parametrize("url", ["https://u:p%2Fw@m.example.com/jdk.tgz", "https://user%40corp.com:pw@m.example.com/x"])
+def test_an_encoded_login_needs_2_19(url):
+    assert cassandra_url_login_ok(url, "2.16.19") is False
+    assert cassandra_url_login_ok(url, "2.18.9") is False
     assert cassandra_url_login_ok(url) is False
+    assert cassandra_url_login_ok(url, "2.19.15") is True
+    assert cassandra_url_login_ok(url, "2.21.4") is True
+
+
+LOGIN_CHARS = string.ascii_letters + string.digits + "-._~!$&'()*+,;=:/?#@%[]\\\"<>{}|^`"
+REST_CHARS = string.ascii_lowercase + string.digits + "./?#=&-:'\"<>)"
+
+
+def test_masking_never_leaks_a_login():
+    # all from scheme:// to the last @ of a URL is masked, whatever it holds: what is shown does not depend on it
+    rnd = random.Random(1)
+    for dummy in range(5000):
+        login = "".join(rnd.choice(LOGIN_CHARS) for dummy in range(rnd.randint(1, 24)))
+        rest = "".join(rnd.choice(REST_CHARS) for dummy in range(rnd.randint(0, 24)))
+        for before, after in (("", ""), ("a ", " b"), ("<", ">,"), ("'", "': HTTP 401")):
+            shown = cassandra_url_masked(before + "https://" + login + "@" + rest + after)
+            assert shown == cassandra_url_masked(before + "https://x@" + rest + after), (login, rest, shown)
+            assert shown.startswith(before + "https://****@"), (login, rest, shown)

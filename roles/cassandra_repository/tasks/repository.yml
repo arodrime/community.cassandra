@@ -48,7 +48,7 @@
   vars: &_cassandra_repository_check
     _results: "{{ _cassandra_repository_metadata.results | default([]) | rejectattr('skipped', 'defined') | list }}"
     _codes: "{{ _results | map(attribute='status') | list }}"
-    _shown: "{{ cassandra_install_url | regex_replace('//[^/@]*@', '//') }}"
+    _shown: "{{ cassandra_install_url | community.cassandra.cassandra_url_masked }}"
   when: _results | length > 0
 
 - name: Say the repository could not be checked
@@ -151,15 +151,21 @@
 - name: Download the Cassandra signing keys and check their fingerprints
   when: cassandra_repository_key_url != ""
   block:
-    # get_url would read another URL, and show this one whole in its error: refused, the URL not shown
-    - name: The signing keys URL's login is percent-encoded
+    # get_url would read another URL, or send the login as it is (2.16 does not decode a %XX), and
+    # show the URL whole in its error: refused, the URL not shown
+    - name: The signing keys URL holds a plain login, if any
       ansible.builtin.assert:
-        that: cassandra_repository_key_url | community.cassandra.cassandra_url_login_ok
-        fail_msg: >-
-          cassandra_repository_key_url holds a login with a character that must be percent-encoded (/ # ? " @ space...):
-          write it as %2F %23 %3F %22 %40 %20. The URL is not shown (its login), nothing was downloaded.
-          Encode the login in cassandra_repository_key_url, then run again.
+        that: cassandra_repository_key_url | community.cassandra.cassandra_url_login_ok(ansible_version.full)
+        fail_msg: |-
+          cassandra_repository_key_url: the part before its last @ is not a plain login.
+          A plain login is user:password with letters, digits and - . _ ~ ! $ & ' ( ) * + , ; ={{ ' or %XX' if _decodes else '' }} only.
+          The URL is not shown; nothing was downloaded.
+          For a file on the mirror (the server of cassandra_install_url): take the login out of the URL and set cassandra_install_username and cassandra_install_password.
+          On ansible-core 2.19 or later (this run: {{ ansible_version.full }}), a login can be percent-encoded instead (/ as %2F, @ as %40...).
+          An @ in the path is written %40. Then run again.
         quiet: true
+      vars:
+        _decodes: "{{ ansible_version.full is version('2.19', '>=') }}"
 
     - name: Download the signing keys, or say why not
       block:
@@ -173,9 +179,9 @@
             force_basic_auth: "{{ _on_mirror | bool }}"
           retries: 3
           register: _cassandra_repository_key_download
-          # a login or a query (a signature) in the URL shows in its result, its retries and its error (2.19+
-          # masks the result's url only): hidden then, the rescue says why
-          no_log: "{{ cassandra_repository_key_url is search('@|[?]') }}"
+          # a login, a query (a signature) or a fragment in the URL shows in its result, its retries and its error
+          # (2.19+ masks the result's url only): hidden then, the rescue says why
+          no_log: "{{ cassandra_repository_key_url is search('[@?#]') }}"
           until: _cassandra_repository_key_download is succeeded
           changed_when: false  # a temp file: the install below reports the change
           check_mode: false  # read-only for the host's config: the check below needs the file

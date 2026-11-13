@@ -17,6 +17,7 @@ except ImportError:  # Python 2: not run there (the controller's Python only)
     HTTPServer = None
 
 from ansible.parsing.dataloader import DataLoader
+from ansible.release import __version__ as ansible_version
 from ansible.template import Templar
 
 try:  # ansible-core 2.19+ renders trusted templates only
@@ -28,6 +29,8 @@ except ImportError:
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 from ansible_collections.community.cassandra.tests.unit.roles.test_java_tarball_checks import _NotFound, _play
 
+MIRROR = ("For a file on the mirror (the server of cassandra_install_url): take the login out of the URL and set"
+          " cassandra_install_username and cassandra_install_password.")
 ROLES = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles")
 SIGNED = "?X-Amz-Signature=5ig"
 
@@ -48,24 +51,37 @@ def _find(tasks, name, module=None):
 
 
 DOWNLOADS = [
-    ("cassandra_install", "java_tarball.yml", "Download the Java tarball", "cassandra_java_tarball"),
-    ("cassandra_install", "dsbulk.yml", "Download dsbulk", "cassandra_dsbulk_url"),
-    ("cassandra_config", "prometheus_exporter_jar.yml", "Download the exporter's jar", "cassandra_prometheus_exporter_url"),
-    ("cassandra_repository", "repository.yml", "Download the signing keys", "cassandra_repository_key_url"),
+    ("cassandra_install", "java_tarball.yml", "Download the Java tarball", "cassandra_java_tarball",
+     "cassandra_java_tarball_checksum"),
+    ("cassandra_install", "dsbulk.yml", "Download dsbulk", "cassandra_dsbulk_url", "cassandra_dsbulk_checksum"),
+    ("cassandra_config", "prometheus_exporter_jar.yml", "Download the exporter's jar", "cassandra_prometheus_exporter_url",
+     "cassandra_prometheus_exporter_checksum"),
+    ("cassandra_repository", "repository.yml", "Download the signing keys", "cassandra_repository_key_url", None),
 ]
 
 
-@pytest.mark.parametrize("role, tasks, name, variable", DOWNLOADS)
-@pytest.mark.parametrize("url, hidden", [
-    ("https://u:pw@m.example.com/f.tgz", True),
-    ("https://T0KEN@m.example.com/f.tgz", True),
-    ("https://m.example.com/f.tgz" + SIGNED, True),
-    ("https://u:pw@m.example.com/f.tgz" + SIGNED, True),
-    ("https://m.example.com/f.tgz", False),  # its error stays shown
+@pytest.mark.parametrize("role, tasks, name, variable, checksum", DOWNLOADS)
+@pytest.mark.parametrize("url, sums, hidden", [
+    ("https://u:pw@m.example.com/f.tgz", "", True),
+    ("https://T0KEN@m.example.com/f.tgz", "", True),
+    ("https://m.example.com/f.tgz" + SIGNED, "", True),
+    ("https://u:pw@m.example.com/f.tgz" + SIGNED, "", True),
+    ("https://m.example.com/f.tgz#access_token=abc", "", True),
+    ("https://m.example.com/f.tgz", "", False),  # its error stays shown
+    # a checksum URL with a login, a query or a fragment
+    ("https://m.example.com/f.tgz", "sha256:https://u:pw@m.example.com/f.sha256", True),
+    ("https://m.example.com/f.tgz", "sha256:https://m.example.com/f.sha256" + SIGNED, True),
+    ("https://m.example.com/f.tgz", "sha256:https://m.example.com/f.sha256#t=abc", True),
+    ("https://m.example.com/f.tgz", "sha256:0123abcd", False),
 ])
-def test_no_log_where_the_url_holds_a_secret(role, tasks, name, variable, url, hidden):
+def test_no_log_where_the_url_holds_a_secret(role, tasks, name, variable, checksum, url, sums, hidden):
     download = _find(_tasks(role, tasks), name, "ansible.builtin.get_url")
-    assert Templar(loader=DataLoader(), variables={variable: url}).template(trust_as_template(download["no_log"])) is hidden
+    variables = {variable: url}
+    if checksum:
+        variables[checksum] = sums
+    elif sums:  # no checksum there
+        return
+    assert Templar(loader=DataLoader(), variables=variables).template(trust_as_template(download["no_log"])) is hidden
 
 
 def _fails(tmp_path, block, variables, query, password):
@@ -116,42 +132,84 @@ def test_a_failed_signing_keys_download_says_why(tmp_path, query, shown, passwor
 
 
 CHECKS = [
-    ("cassandra_install", "java_check.yml", "The tarball URL's login is percent-encoded", "cassandra_java_tarball"),
-    ("cassandra_install", "dsbulk.yml", "The dsbulk URL's login is percent-encoded", "cassandra_dsbulk_url"),
-    ("cassandra_config", "prometheus_exporter_jar.yml", "The exporter's URL login is percent-encoded",
-     "cassandra_prometheus_exporter_url"),
-    ("cassandra_repository", "repository.yml", "The signing keys URL's login is percent-encoded",
-     "cassandra_repository_key_url"),
+    ("cassandra_install", "java_check.yml", "The tarball URL holds a plain login, if any", "cassandra_java_tarball",
+     "Take the login out of the URL and set cassandra_java_tarball_username and cassandra_java_tarball_password."),
+    ("cassandra_install", "dsbulk.yml", "The dsbulk URL holds a plain login, if any", "cassandra_dsbulk_url", MIRROR),
+    ("cassandra_config", "prometheus_exporter_jar.yml", "The exporter's URL holds a plain login, if any",
+     "cassandra_prometheus_exporter_url", MIRROR),
+    ("cassandra_repository", "repository.yml", "The signing keys URL holds a plain login, if any",
+     "cassandra_repository_key_url", MIRROR),
 ]
+DECODES = tuple(int(n) for n in ansible_version.split(".")[:2]) >= (2, 19)
 
 
-# get_url would read another URL (a host, a "port" taken from the login) and show it whole in its error: refused
-# before, the URL not shown (-vvv)
-@pytest.mark.parametrize("role, tasks, name, variable", CHECKS)
-@pytest.mark.parametrize("password", ['s3"cr3t', "s3 cr3t", "s3<cr3t", "s3/cr3t", "s3#cr3t", "s3?cr3t", "s3@cr3t"])
-def test_a_login_to_encode_is_refused_unshown(tmp_path, role, tasks, name, variable, password):
+def _check(tmp_path, role, tasks, name, variable, url):
     check = _find(_tasks(role, tasks), name, "ansible.builtin.assert")
-    rc, out = _play(tmp_path, [check], {variable: "https://reader:%s@m.example.com/f.tgz" % password,
-                                        "cassandra_java_version": "17"}, verbosity=3)
+    return _play(tmp_path, [check], {variable: url, "cassandra_java_version": "17"}, verbosity=3)
+
+
+# get_url would read another URL (a host, a "port" taken from the login), or send the login as it is, and show
+# the URL whole in its error: refused before, the URL not shown (-vvv)
+@pytest.mark.parametrize("role, tasks, name, variable, way_out", CHECKS)
+@pytest.mark.parametrize("url", [
+    'https://reader:s3"cr3t@m.example.com/f.tgz',
+    "https://reader:s3 cr3t@m.example.com/f.tgz",
+    "https://reader:s3<cr3t@m.example.com/f.tgz",
+    "https://reader:s3/cr3t@m.example.com/f.tgz",
+    "https://reader:/s3cr3t@m.example.com/f.tgz",  # a / at the start
+    "https://AbC/s3cr3t+tok@m.example.com/f.tgz",  # a token alone, a / in it
+    "https://reader:12#s3cr3t@m.example.com/f.tgz",  # a "port" 12 before the #, the ?
+    "https://reader:12?s3cr3t@m.example.com/f.tgz",
+    "https://reader:s3@cr3t@m.example.com/f.tgz",
+    "https://m.example.com/s3cr3t@v2/f.tgz",  # an @ in the path
+])
+def test_a_login_not_plain_is_refused_unshown(tmp_path, role, tasks, name, variable, way_out, url):
+    rc, out = _check(tmp_path, role, tasks, name, variable, url)
     assert rc != 0, out
     assert "cr3t" not in out and "m.example.com" not in out
-    assert ("holds a login with a character that must be percent-encoded (/ # ? \" @ space...): write it as %2F %23"
-            " %3F %22 %40 %20. The URL is not shown (its login), nothing was downloaded.") in out
+    assert "the part before its last @ is not a plain login." in out
+    assert "The URL is not shown; nothing was downloaded." in out
+    assert way_out in out
+    assert "An @ in the path is written %40. Then run again." in out
+    assert ("On ansible-core 2.19 or later (this run: %s), a login can be percent-encoded instead (/ as %%2F, @ as"
+            " %%40...)." % ansible_version) in out
 
 
-@pytest.mark.parametrize("role, tasks, name, variable", CHECKS)
-@pytest.mark.parametrize("url", ["https://reader:s3%2Fcr%22t@m.example.com/f.tgz", "https://m.example.com/v@2/f.tgz",
-                                 "https://m.example.com/f.tgz?X-Amz-Signature=a@b", ""])
-def test_a_login_percent_encoded_passes(tmp_path, role, tasks, name, variable, url):
-    check = _find(_tasks(role, tasks), name, "ansible.builtin.assert")
-    rc, out = _play(tmp_path, [check], {variable: url, "cassandra_java_version": "17"})
+# ansible-core 2.16 sends a percent-encoded login as it is (401): refused there, taken on 2.19+
+@pytest.mark.parametrize("role, tasks, name, variable, way_out", CHECKS)
+@pytest.mark.parametrize("url", ["https://reader:s3%2Fcr%22t@m.example.com/f.tgz", "https://reader%40corp.com:s3cr3t@m.example.com/f.tgz"])
+def test_a_login_percent_encoded_needs_2_19(tmp_path, role, tasks, name, variable, way_out, url):
+    rc, out = _check(tmp_path, role, tasks, name, variable, url)
+    assert (rc == 0) is DECODES, out
+    assert "cr3t" not in out or rc == 0
+
+
+@pytest.mark.parametrize("role, tasks, name, variable, way_out", CHECKS)
+@pytest.mark.parametrize("url", ["https://reader:s3cr3t!$&'()*+,;=~@m.example.com:8443/f.tgz", "https://T0KEN@m.example.com/f.tgz",
+                                 "https://m.example.com/v%402/f.tgz", "https://m.example.com/f.tgz" + SIGNED, "", "/srv/f.tgz"])
+def test_a_plain_login_passes(tmp_path, role, tasks, name, variable, way_out, url):
+    rc, out = _check(tmp_path, role, tasks, name, variable, url)
     assert rc == 0, out
+
+
+@pytest.mark.skipif(HTTPServer is None, reason="Python 3")
+@pytest.mark.parametrize("query, shown", [(SIGNED, "?****"), ("", "")])
+def test_a_failed_exporter_download_says_why(tmp_path, query, shown):
+    block = _find(_tasks("cassandra_config", "prometheus_exporter_jar.yml"), "Download the exporter's jar")
+    jar = str(tmp_path / "jmx_prometheus_javaagent.jar")
+    out = _fails(tmp_path, block, lambda url: {
+        "cassandra_prometheus_exporter_url": url, "cassandra_prometheus_exporter_checksum": "",
+        "cassandra_prometheus_exporter_dir": str(tmp_path), "_cassandra_config_exporter_jar": jar,
+        "_cassandra_config_exporter_jar_state": "missing", "cassandra_install_url": ""}, query, "s3cret")
+    assert ("jar could not be downloaded to %s from"
+            " http://****@127.0.0.1:PORT/f.tar.gz%s (HTTP 404, Not Found). The JVM options" % (jar, shown)) in out
 
 
 @pytest.mark.parametrize("role, tasks, name", [
     ("cassandra_install", "java_tarball.yml", "Stop on the failed download"),
     ("cassandra_install", "dsbulk.yml", "Stop on the failed dsbulk download"),
     ("cassandra_repository", "repository.yml", "Stop on the failed signing keys download"),
+    ("cassandra_config", "prometheus_exporter_jar.yml", "Stop where the jar could not be downloaded"),
 ])
 def test_what_the_download_said_ends_without_a_dot(role, tasks, name):
     # the message adds its own: "... did not match.." otherwise

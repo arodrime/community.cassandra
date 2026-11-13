@@ -64,9 +64,9 @@
             mode: "0644"
           retries: 3
           register: cassandra_java_tarball_download
-          # a login or a query (a signature) in the URL shows in its result, its retries and its error (2.19+
-          # masks the result's url only): hidden then, the rescue says why
-          no_log: "{{ cassandra_java_tarball is search('@|[?]') }}"
+          # a login, a query (a signature) or a fragment in the URL, or in a checksum URL, shows in its result, its retries
+          # and its error (2.19+ masks the result's url only): hidden then, the rescue says why
+          no_log: "{{ (cassandra_java_tarball ~ ' ' ~ cassandra_java_tarball_checksum | default('')) is search('[@?#]') }}"
           # an answer of the server (404, 401...) or a wrong checksum is final
           until: >-
             cassandra_java_tarball_download is succeeded
