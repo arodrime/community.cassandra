@@ -472,3 +472,9 @@ def test_the_log_dir_written_as_itself_only_when_the_jvm_gets_it():
 def test_the_audit_dir_is_listed_with_the_logging():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _block
     assert _block("cassandra_log_audit_dir") == _block("cassandra_log_audit_file") == "Logging (logback.xml)"
+
+
+def test_the_heap_switch_and_g1_values_are_listed_with_the_jvm():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _block
+    assert _block("cassandra_heap_in_jvm_options") == _block("cassandra_jvm_g1_rset_updating_pause_time_percent") \
+        == "JVM & heap (cassandra-env.sh, jvm*-server.options)"

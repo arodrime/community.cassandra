@@ -3675,8 +3675,10 @@ BLOCKS = [
         "cassandra_jmx_password_file", "cassandra_jmx_password", "cassandra_jmx_users"]),
     ("CQL login (the operations that read the replication)", ["cassandra_cql_username", "cassandra_cql_password"]),
     ("JVM & heap (cassandra-env.sh, jvm*-server.options)", [
-        "cassandra_heap_size", "cassandra_heap_newsize", "cassandra_max_direct_memory_size", "cassandra_jvm_gc",
-        "cassandra_jvm_max_gc_pause_millis", "cassandra_jvm_g1_heap_region_size", "cassandra_jvm_g1_new_size_percent",
+        "cassandra_heap_size", "cassandra_heap_newsize", "cassandra_heap_in_jvm_options",
+        "cassandra_max_direct_memory_size", "cassandra_jvm_gc", "cassandra_jvm_max_gc_pause_millis",
+        "cassandra_jvm_g1_heap_region_size", "cassandra_jvm_g1_new_size_percent",
+        "cassandra_jvm_g1_rset_updating_pause_time_percent",
         "cassandra_jvm_initiating_heap_occupancy_percent", "cassandra_jvm_cms_initiating_occupancy_fraction",
         "cassandra_jvm_max_tenuring_threshold", "cassandra_jvm_parallel_gc_threads", "cassandra_jvm_conc_gc_threads",
         "cassandra_jvm_extra_options", "cassandra_jvm8_extra_options", "cassandra_jvm11_extra_options",
