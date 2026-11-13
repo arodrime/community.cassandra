@@ -329,6 +329,42 @@ def test_a_custom_gc_inventory_the_role_takes(tmp_path):
     assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
 
 
+def dev_node(chronicle=True):
+    """(2026-11-13, a 5.0.9 DEV node) the heap and the stack in G1's block, its tuning commented out with a marker of
+    its own, a longer pause; -Xss1024M in jvm-server.options (jvm17-server.options is read after it: its -Xss256k
+    wins), biased locking off there."""
+    def edit(files):
+        text = files["jvm17-server.options"].replace("-XX:+ParallelRefProcEnabled\n",
+                                                     "-XX:+ParallelRefProcEnabled\n-Xms31G\n-Xmx31G\n-Xss256k\n")
+        for line in G1_TUNING:
+            text = text.replace("\n%s\n" % line, "\n#XX %s\n" % line)
+        files["jvm17-server.options"] = text.replace("-XX:MaxGCPauseMillis=300", "-XX:MaxGCPauseMillis=500").replace(
+            "#-Xlog:gc=info,heap*=trace,age*=debug,safepoint=info,promotion*=trace:file=/var/log/cassandra/gc.log",
+            "#-Xlog:gc=info,heap*=trace,age*=debug,safepoint=info,promotion*=trace:file=/data/cassandra/log/gc.log")
+        text = files["jvm-server.options"].replace("-Xss256k", "-Xss1024M") + "-XX:-UseBiasedLocking\n"
+        files["jvm-server.options"] = text if chronicle else text.replace("-Dchronicle.analytics.disable=true\n", "")
+    return edit
+
+
+def test_the_dev_node_jvm_files(tmp_path):
+    files = node_files("50x", dev_node())
+    cmdline = launch(files, "17", tmp_path)
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    assert node["hand_edits"] == []
+    rendered, variables = role_files(inventory, layout, files)
+    assert dict((k, v) for k, v in variables.items() if k.startswith(("cassandra_jvm", "cassandra_heap"))) == {
+        "cassandra_jvm17_gc": "custom",
+        "cassandra_jvm17_extra_options": ["-XX:+UseG1GC", "-XX:+ParallelRefProcEnabled", "-Xms31G", "-Xmx31G", "-Xss256k",
+                                          "-XX:MaxGCPauseMillis=500"],
+        "cassandra_jvm_extra_options": ["-Xss1024M", "-XX:-UseBiasedLocking"]}
+    assert settings(launch(rendered, "17", tmp_path)) == settings(cmdline)
+    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
+    # without the chronicle line (an older file): that line only
+    files = node_files("50x", dev_node(chronicle=False))
+    assert [d.split(":")[1].strip() for d in check(files, "50x", java="17", cmdline=launch(files, "17", tmp_path))[
+        "differences"]] == ["-Dchronicle.analytics.disable"]
+
+
 def test_the_stock_gc_block_stays_g1(tmp_path):
     files = node_files("50x", lambda f: f.update({"jvm17-server.options": f["jvm17-server.options"].replace(
         "-XX:MaxGCPauseMillis=300", "-XX:MaxGCPauseMillis=500")}))
