@@ -1172,12 +1172,16 @@ openTelemetry: read at start)``). Written another way (``site.yml``, a run that 
 restart pending, which the next ``apply_config`` does: ``jmx_prometheus.at_start``, next to the config, keeps the
 digest of these parts for the record of the config Cassandra started with. The jars of other versions the role
 downloaded are removed once the new one is written; turned off, the role removes its jars, its config and that record,
-none while the next start may still load them (a jar of ``cassandra_prometheus_exporter_dir``, an agent's jar through
-a variable, the conf dir's ``jmx_prometheus.yml``): a WARNING says which file gives it. It reads ``cassandra-env.sh``
-and every JVM options file of the series (as written; with ``--check`` and in ``apply_config``'s preview, those kept by
-hand as they are on the node, the others as the role is to write them), ``cassandra.in.sh`` (the conf dir's,
-``/usr/share/cassandra``'s), the unit ``/etc/systemd/system/cassandra.service`` and its drop-ins, and
-``cassandra_service_environment``. An exporter of your own, its jar and config elsewhere, needs none of them.
+none while a line the next start reads still names the exporter (``jmx_prometheus``: its jar or its config, however
+reached, an exporter of your own too): a WARNING says where and how to remove that line, or, when that agent is your
+own exporter and not the role's, to delete ``<cassandra_prometheus_exporter_dir>/.cassandra_config`` so that the role
+forgets its files. It reads ``cassandra-env.sh`` and every JVM options file of the series (as written; with
+``--check`` and in ``apply_config``'s preview, those kept by hand as they are on the node, or as the role is to write
+one not there yet, the others as the role is to write them); the unit and its drop-ins (``systemctl cat cassandra``,
+else ``/etc``, ``/run``, ``/usr/lib`` and ``/lib/systemd/system``), the ``EnvironmentFile`` they name,
+``/etc/default/cassandra`` and the ``cassandra.in.sh`` files ``bin/cassandra`` may source (``CASSANDRA_INCLUDE`` of
+``cassandra_service_environment``, ``~<cassandra_service_user>/.cassandra.in.sh``, ``/usr/share/cassandra``,
+``/usr/sbin``, ``/usr/local/share/cassandra``, ``/opt/cassandra``); and ``cassandra_service_environment``.
 A running Cassandra keeps the jar it opened until its restart.
 
 The agent makes the JVM exit when it cannot start: a port already in use, a jar or a config missing. Cassandra then
@@ -1487,9 +1491,10 @@ files the running Java reads (with an ``-Xmn`` too when the node does not run G1
 ``cassandra_heap_newsize``) with ``cassandra_heap_in_jvm_options`` (the role writes them in ``jvm-server.options``):
 only with Cassandra running and its arguments showing the JVM gets the same, no JVM file kept as it is
 (``cassandra-env.sh``, ``jvm-server.options``, the options file its Java reads), and ``cassandra-env.sh`` setting no heap
-of its own: no line of it the stock file has not that sets ``MAX_HEAP_SIZE`` or ``HEAP_NEWSIZE``, or has an ``-Xms``,
-``-Xmx`` or ``-Xmn``, however written (indented, through a variable, a default ``${MAX_HEAP_SIZE:=8G}``); with one, the pair stays in the extra options
-where the node has it. A stock line a later release added that the node's file
+of its own: no line of it the stock file has not, outside a comment, with ``MAX_HEAP_SIZE=``, ``HEAP_NEWSIZE=`` (or
+``:=``, a default such as ``${MAX_HEAP_SIZE:=8G}``), ``-Xms``, ``-Xmx`` or ``-Xmn`` anywhere in it (indented, through a
+variable); with one, the pair stays in the extra options where the node has it. A heap set in a file
+``cassandra-env.sh`` sources is not seen. A stock line a later release added that the node's file
 predates (5.0's ``-Dchronicle.analytics.disable=true`` of ``jvm-server.options``, CASSANDRA-19656) is no difference:
 ``apply_config`` adds it, the report says so under WORTH A LOOK; any other stock line the node lacks is one.
 
