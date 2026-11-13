@@ -2045,10 +2045,12 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     where[0] = "the JVM options files"
     jvm_notes, jvm_warnings, keep_files = _jvm_options(env, cassandra_version, ctx, [f for f in files if f in live_files],
                                                        found, str(java or ""), keep_unread_jvm_options, cmdline)
-    # (not with jvm-server.options kept as it is, where the role writes it; not with cassandra-env.sh's own heap:
-    # -Xm* it adds, MAX_HEAP_SIZE or HEAP_NEWSIZE set outside a block, wherever)
+    # (not with a JVM file kept as it is: cassandra-env.sh, jvm-server.options where the role writes it, the options
+    # file the heap is in; not with cassandra-env.sh's own heap: -Xm* it adds, MAX_HEAP_SIZE or HEAP_NEWSIZE set
+    # outside a block, wherever)
+    jvm_files = {jvm_args.ENV, jvm_args.COMMON, jvm.options_file(cassandra_version, str(java or ""))}
     if cmdline and not set(running.get("newer") or []) & {jvm_args.ENV, jvm_args.COMMON} \
-            and not (keep is True or jvm_args.COMMON in keep) \
+            and not (keep is True or set(keep) & jvm_files) \
             and not re.search(r"(?m)^[^#]*JVM_OPTS=.*-Xm[sxn][0-9]|^(export )?(MAX_HEAP_SIZE|HEAP_NEWSIZE)=[^\s#]",
                               live_files.get(jvm_args.ENV, "")):
         _heap_in_options(found, cassandra_version, str(java or ""), live_files)

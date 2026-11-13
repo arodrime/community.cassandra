@@ -375,6 +375,27 @@ def test_the_report_says_the_heap_moves_to_jvm_server_options(tmp_path):
     assert not [line for line in lines if "see HAND EDITS" in line]
 
 
+@pytest.mark.parametrize("series, java, where, heap, keep", [
+    (s, j, f, h, k) for s, j, f, h in (("50x", "17", "jvm17-server.options", "-Xms16G\n-Xmx16G"),
+                                       ("41x", "11", "jvm11-server.options", "-Xms8G\n-Xmx8G\n-Xmn2G"))
+    for k in (f, "cassandra-env.sh", "jvm-server.options")])
+def test_the_heap_of_an_options_file_stays_with_a_jvm_file_kept(tmp_path, series, java, where, heap, keep):
+    # (audit r5) a JVM file kept as it is: the heap left in the extra options where the node has it (moved to
+    # jvm-server.options, it was set twice, the self-check passing while apply_config changed the file)
+    files = node_files(series, add_to(where, heap))
+    cmdline = launch(files, java, tmp_path)
+    jvm = {"cmdline": cmdline, "java": java, "keep": keep, "environment": {}, "newer": []}
+    kept = {"cassandra_service_unit_manage": False, "cassandra_config_keep_files": [keep]}
+    inventory, layout = import_node(files, series, jvm=jvm, keep=kept)
+    node = layout["nodes"][0]
+    assert "cassandra_heap_in_jvm_options" not in node["vars"] and "cassandra_heap_size" not in node["vars"]
+    assert node["vars"]["cassandra_jvm%s_extra_options" % where[3:5]] == heap.split("\n")
+    assert node["rewritten"] == []
+    out = cassandra_import_self_check(inventory, layout["hosts"], "n1", FACTS, files, {}, "/var/lib/cassandra", java,
+                                      "", {}, jvm=jvm)
+    assert out["differences"] == [] and not [n for n in out["notes"] if "rewrites" in n]
+
+
 def jvm17(*pairs, drop=()):
     def edit(files):
         text = files["jvm17-server.options"]
