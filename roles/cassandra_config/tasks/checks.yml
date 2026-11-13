@@ -393,6 +393,16 @@
       Without G1 (cassandra_jvm_gc, cassandra_jvm<N>_gc), set cassandra_heap_size and cassandra_heap_newsize
       together, or neither
 
+# The heap in the JVM options: -Xmn there with G1 stops cassandra-env.sh
+- name: Assert no young generation size with G1 when the heap is in the JVM options
+  ansible.builtin.assert:
+    that: not (cassandra_heap_in_jvm_options | bool) or cassandra_heap_newsize == '' or 'G1' not in _cassandra_config_gcs
+    fail_msg: >-
+      cassandra_heap_in_jvm_options writes cassandra_heap_newsize as -Xmn in jvm-server.options, which cassandra-env.sh
+      refuses with G1 (Cassandra would not start): set cassandra_heap_newsize to "", or cassandra_heap_in_jvm_options
+      to false
+    quiet: true
+
 # 5.0 with G1: HEAP_NEWSIZE is written as given (import_cluster keeps one found), and Cassandra ignores it (its
 # cassandra-env.sh says so at each start): said, not refused; once a run (apply_config and upgrade say it in their
 # preview, not again at each node's write)

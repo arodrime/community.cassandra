@@ -118,10 +118,10 @@ def test_the_template_generator_writes_the_same_line():
         import gen_templates
     finally:
         sys.path.pop(0)
-    rule = [r for r in gen_templates.COMMON["jvm-server.options"] if r[0].startswith("#-Dcassandra.expiration")][0]
     for series in ("4.0", "4.1", "5.0"):
+        rule = [r for r in gen_templates.RULES[series]["jvm-server.options"] if r[0].startswith("#-Dcassandra.expiration")][0]
         with open(os.path.join(ROLE, "templates", series, "jvm-server.options.j2")) as f:
-            assert rule[1] in f.read().split("\n")
+            assert rule[1] in f.read().split("\n") and rule[1].endswith(gen_templates.JVM_AGENT)
 
 
 # --- the exporter's config ----------------------------------------------------

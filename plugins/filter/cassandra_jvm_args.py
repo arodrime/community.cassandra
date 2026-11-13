@@ -490,8 +490,10 @@ def options_edits(live, role, series, java):
     for name in (COMMON, options_file(series, java)):
         if name in live and name in role:
             a, b = jvm_options_settings(live[name]), jvm_options_settings(role[name])
+            # (the heap: in one file or the other, cassandra-env.sh greps for it; never apart)
             found.update((k, name) for k in set(a) | set(b)
-                         if a.get(k) != b.get(k) and not k.startswith("(") and k not in in_env)
+                         if a.get(k) != b.get(k) and not k.startswith("(") and k not in in_env
+                         and k not in ("-Xms", "-Xmx", "-Xmn"))
     return found
 
 
@@ -560,8 +562,10 @@ def cassandra_jvm_args_adopt(cmdline, live, render, variables, series, java, nod
         role_heap, dummy = heap_values(info["role_lines"], node_env)
     except NotSame as exc:
         return {"why": str(exc)} if env_has_candidates(live[ENV], role[ENV]) else None
-    if not info["added"] and not info["heap_lines"] \
-            and [line["text"] for line in info["live_lines"]] == [line["text"] for line in info["role_lines"]]:
+    env_same = [line["text"] for line in info["live_lines"]] == [line["text"] for line in info["role_lines"]]
+    heap_moved = any(jvm_options_settings(live[f]).get(k) != jvm_options_settings(role[f]).get(k)
+                     for f in (COMMON, dep) if f in live and f in role for k in ("-Xms", "-Xmx"))
+    if not info["added"] and not info["heap_lines"] and env_same and not heap_moved:
         return None
     # the options files' own hand edits: said on their own, not in the way of the move (unless the file the lines go
     # to has some: its hand edits would mix with them)
@@ -593,8 +597,10 @@ def cassandra_jvm_args_adopt(cmdline, live, render, variables, series, java, nod
                                             node_env, node_env, apart)
         if same:
             moved = _moved(info, found, options, extras_var)
-            # the files are rewritten: their own extra options set again later are left out too
-            tidy, gone = _without_dead(args, info, variables, found, live, series, java)
+            # the files are rewritten for cassandra-env.sh's lines: their own extra options set again later are left
+            # out too (not for lines at another place, nor the heap of an options file: those files stay as they are)
+            tidy, gone = _without_dead(args, info, variables, found, live, series, java, set(apart.values())) \
+                if info["added"] or info["heap_lines"] else ({}, [])
             if gone and cassandra_jvm_args_same(cmdline, live, render(dict(variables, **dict(found, **tidy))), series,
                                                 java, node_env, node_env, apart)[0]:
                 found.update(tidy)
@@ -658,13 +664,13 @@ def env_has_candidates(live, role):
         return False
 
 
-def _without_dead(args, info, variables, found, live, series, java):
+def _without_dead(args, info, variables, found, live, series, java, apart=()):
     """The extra options variables of the options files the running Java reads (variables: as imported, found: the
     move's) without the lines the node had whose options are all set again later in the arguments -> ({variable:
     lines}, [report lines])."""
     words, start, end = info["words"], info["start"], info["end"]
     tidy, gone = {}, []
-    for name in (COMMON, options_file(series, java)):
+    for name in [f for f in (COMMON, options_file(series, java)) if f not in apart]:  # (apart: compared as they are)
         var = "cassandra_%s_extra_options" % ("jvm" if name == COMMON else name.split("-", maxsplit=1)[0])
         lines = list(found.get(var, variables.get(var)) or [])
         for entry in list(variables.get(var) or []):

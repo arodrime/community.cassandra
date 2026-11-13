@@ -351,6 +351,9 @@ cassandra_extra_settings: {}
 cassandra_log_dir: /var/log/cassandra
 cassandra_heap_size: ""  # "" = stock auto-sizing; e.g. "8G" sets -Xms/-Xmx
 cassandra_heap_newsize: ""  # without G1: set together with cassandra_heap_size, e.g. "800M" (G1 ignores it)
+# true: the heap as -Xms/-Xmx (-Xmn: cassandra_heap_newsize) in jvm-server.options, read by every Java (4.x: its
+# stock heap lines uncommented; 5.0: after its last line), not MAX_HEAP_SIZE in cassandra-env.sh
+cassandra_heap_in_jvm_options: false
 cassandra_max_direct_memory_size: ""
 # Where the JVM writes a heap dump (-XX:HeapDumpPath, CASSANDRA_HEAPDUMP_DIR,
 # which the environment may still give); a path is also 5.0's heap_dump_path

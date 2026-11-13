@@ -100,3 +100,13 @@ def test_a_custom_gc_on_g1_takes_the_heap_alone():
                        **jvm11) is False
     # extra options not a list: no type error (the argument checks say so)
     assert _assert(heap, cassandra_jvm17_extra_options="-XX:+UseG1GC", **custom) is False
+
+
+def test_no_young_generation_with_g1_when_the_heap_is_in_the_jvm_options():
+    check = _task("roles/cassandra_config/tasks/checks.yml",
+                  "Assert no young generation size with G1 when the heap is in the JVM options")
+    on = dict(cassandra_version="50x", cassandra_heap_size="31G")
+    assert _assert(check, cassandra_heap_newsize="", cassandra_heap_in_jvm_options=True, **on) is True
+    # (cassandra-env.sh stops on -Xmn with G1)
+    assert _assert(check, cassandra_heap_newsize="3G", cassandra_heap_in_jvm_options=True, **on) is False
+    assert _assert(check, cassandra_heap_newsize="3G", cassandra_heap_in_jvm_options=False, **on) is True

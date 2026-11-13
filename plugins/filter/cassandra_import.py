@@ -292,6 +292,13 @@ def _read_switch(m, e, cap, seen):
     seen.flags[m.group(1)] = cap == ""
 
 
+def _read_switch_both(m, e, cap, seen):
+    """{{ '' if x and y else '#' }}: the line on by both (x a switch, y the value), not read when off (either)."""
+    if cap == "":
+        seen.found[m.group(1)] = True
+        seen.flags[m.group(2)] = True
+
+
 def _read_comment_switch(m, e, cap, seen):
     """{{ '# ' if x == '' else '' }} (or x | string in ['', 'None']): the line switched off by x unset."""
     seen.flags[e.split()[3]] = cap == ""
@@ -419,6 +426,12 @@ _LINE_EXPRESSIONS = tuple((re.compile(pattern), reader) for pattern, reader in (
     (r"\('([^']*)' ~ (\w+) ~ '([^']*)'\) if \2 else '([^']*)'", _read_between),
     (r"\('\\n' ~ .*\) if \w+ else ''", _read_newline_list),
     (r"\(\w+ ~ '\\n'\) if \w+ else ''", _read_newline_list),  # (lines before it: a snippet's)
+    # the heap in cassandra-env.sh unless in the JVM options (cassandra_heap_in_jvm_options), or there
+    (r"'' if (\w+) and not \w+ else '[^']*'", _read_switch),
+    (r"(\w+) if \1 and not \w+ else '[^']*'", _read_or_default),
+    (r"'' if (\w+) and (\w+) else '[^']*'", _read_switch_both),
+    (r"\w+ if \w+ and (\w+) else '[^']*'", _read_or_default),
+    (r"\('\\n-Xms' ~ .*\) if .* else ''", _read_newline_list),
 ))
 
 
@@ -1324,9 +1337,10 @@ def _yaml_compared(series, rendered, live, extras, rejected):
     return rendered, live, normalized
 
 
-def _file_ops(name, rendered, live):
+def _file_ops(name, rendered, live, proven=()):
     """The differences of a file's lines from the rendering (difflib opcodes), a JVM options file's options moved
-    only left out -> (opcodes, normalized: notes)."""
+    only left out (proven: the names the JVM is shown to get the same of, wherever they are) -> (opcodes,
+    normalized: notes)."""
     ops = difflib.SequenceMatcher(None, rendered, live, autojunk=False).get_opcodes()
     moved = [op for op in ops if op[0] != "equal"
              and _same_settings(name, rendered[op[1]:op[2]], live[op[3]:op[4]]) is None]
@@ -1345,7 +1359,7 @@ def _file_ops(name, rendered, live):
     for op in moved:
         options = jvm.words(rendered[op[1]:op[2]] + live[op[3]:op[4]])
         names = set(jvm.option_name(o) for o in options)
-        if options and None not in names and all(role.get(k) == node.get(k) for k in names) \
+        if options and None not in names and all(role.get(k) == node.get(k) or k in proven for k in names) \
                 and all(role.get(k) == node.get(k) for k in set(role) | set(node) if k.startswith("(set before")):
             same.append(op)
             notes.append("%s: %s, at another place than the role writes it: the same for the JVM (the last one"
@@ -1379,7 +1393,7 @@ def _difference_lines(name, rendered, live, ops):
     return hand, normalized, comments
 
 
-def _leftovers(env, series, files, ctx, live_files, rejected=(), skip=()):
+def _leftovers(env, series, files, ctx, live_files, rejected=(), skip=(), proven=()):
     """What the role would still change in the node's files, rendered with ctx: rejected: the cassandra.yaml keys
     its Cassandra rejects; skip: files not compared here (the JVM's, its arguments shown to be the same) -> (hand
     edits, normalized lines, comment lines)."""
@@ -1403,7 +1417,7 @@ def _leftovers(env, series, files, ctx, live_files, rejected=(), skip=()):
         if name == "cassandra.yaml":
             rendered, live, notes = _yaml_compared(series, rendered, live, extras, rejected)
             normalized += notes
-        ops, notes = _file_ops(name, rendered, live)
+        ops, notes = _file_ops(name, rendered, live, proven)
         normalized += notes
         if all(op == "equal" for op, i1, i2, j1, j2 in ops):
             continue
@@ -1506,6 +1520,28 @@ def _jvm_options(env, series, ctx, files, found, java, keep_unread, cmdline):
     options = [(o, "%s, from %s" % (var, f), jvm.fix_it(var)) for f, var in [(f, jvm.options_variable(f)) for f in read]
                for o in jvm.words(found.get(var))]
     return notes, jvm.set_twice(options, java) + jvm.check(options, java), keep
+
+
+def _heap_in_options(found, series, java):
+    """The heap set in the JVM options files the running Java reads, an -Xms and an -Xmx line of the same size among
+    their extra options (none else of the heap there, none in cassandra-env.sh): cassandra_heap_size with
+    cassandra_heap_in_jvm_options, out of the extra options -> found changed in place. Only with the running JVM's
+    arguments: they show the JVM gets the same where the role writes them (jvm-server.options)."""
+    if not jvm.options_file(series, java) or found.get("cassandra_heap_size"):
+        return
+    lines = [(jvm.options_variable(f), line) for f in jvm.read_files(series, java)
+             for line in found.get(jvm.options_variable(f)) or []]
+    names = HEAP_OPTIONS + ("MaxHeapSize", "InitialHeapSize")
+    heap = [(var, line) for var, line in lines if any(jvm.option_name(o) in names for o in jvm.words(line))]
+    sizes = dict((line.strip()[:4], line.strip()[4:]) for dummy, line in heap if re.match(r"^-Xm[sx]\S+$", line.strip()))
+    if len(heap) != 2 or set(sizes) != {"-Xms", "-Xmx"} or sizes["-Xms"] != sizes["-Xmx"]:
+        return
+    for var, line in heap:
+        found[var] = [o for o in found[var] if o != line]
+        if not found[var]:
+            found.pop(var)
+    found["cassandra_heap_size"] = sizes["-Xmx"]
+    found["cassandra_heap_in_jvm_options"] = True
 
 
 def _same_xml(live, rendered):
@@ -2007,6 +2043,11 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     where[0] = "the JVM options files"
     jvm_notes, jvm_warnings, keep_files = _jvm_options(env, cassandra_version, ctx, [f for f in files if f in live_files],
                                                        found, str(java or ""), keep_unread_jvm_options, cmdline)
+    # (not with jvm-server.options kept as it is, where the role writes it; not with cassandra-env.sh's own -Xm*)
+    if cmdline and not set(running.get("newer") or []) & {jvm_args.ENV, jvm_args.COMMON} \
+            and not (keep is True or jvm_args.COMMON in keep) \
+            and not re.search(r"(?m)^[^#]*JVM_OPTS=.*-Xm[sxn][0-9]", live_files.get(jvm_args.ENV, "")):
+        _heap_in_options(found, cassandra_version, str(java or ""))
     where[0] = "cassandra.yaml"
     if "cassandra.yaml" in live_files:
         found.update(_identity(live_files["cassandra.yaml"], cassandra_version))
@@ -2049,8 +2090,9 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
         else:
             changed[key] = value
     where[0] = "comparing the files with the role's"
+    # (the heap shown the same from the running JVM's arguments wherever its file has it: not a hand edit there)
     hand, normalized, comments = _leftovers(env, cassandra_version, files, render, live_files, rejected,
-                                            moved["shown"])
+                                            moved["shown"], HEAP_OPTIONS if moved["shown"] else ())
     normalized += log_dir_note
     if jvm_args.ENV in moved["rewritten"] and not moved["moved"]:  # its lines at other places only: the same JVM
         normalized.append("cassandra-env.sh: lines at another place than the role writes them (e.g. in the remote JMX"

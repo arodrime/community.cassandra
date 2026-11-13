@@ -309,7 +309,9 @@ Role Variables
   `$CASSANDRA_HOME/logs`), `cassandra_heap_newsize` (without G1 it goes
   with `cassandra_heap_size`, both or neither, the role asserts it; G1
   ignores it, import_cluster keeps one found so the file stays the same),
-  `cassandra_heap_size` (empty = stock auto-sizing),
+  `cassandra_heap_size` (empty = stock auto-sizing; with
+  `cassandra_heap_in_jvm_options: true` written as `-Xms`/`-Xmx` in
+  `jvm-server.options` instead, read by every Java),
   `cassandra_max_direct_memory_size` (5.0 only), `cassandra_heap_dump_dir`
   (where the JVM writes a heap dump, `-XX:HeapDumpPath`; a
   `CASSANDRA_HEAPDUMP_DIR` the service environment gives still wins. Stock

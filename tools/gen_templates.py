@@ -66,6 +66,23 @@ def opt(var, commented, active, example, off="#"):
     return (commented, "{{ '' if %s else '%s' }}%s" % (var, off, active.replace("@", value)))
 
 
+# The heap in the JVM options (cassandra_heap_in_jvm_options): cassandra-env.sh's heap lines stay commented out
+IN_ENV = "%s and not cassandra_heap_in_jvm_options"
+IN_OPTIONS = "cassandra_heap_in_jvm_options and %s"
+
+
+def heap_opt(var, commented, active, example, where):
+    # A heap setting written in one place (where: IN_ENV or IN_OPTIONS), else its stock line as it is
+    on = where % var
+    return (commented, "{{ '' if %s else '#' }}%s" % (on, active.replace("@", "{{ %s if %s else '%s' }}" % (var, on, example))))
+
+
+# 5.0's jvm-server.options has no heap lines: the heap after its last line, before the extra options
+JVM_HEAP_50 = ("{{ ('\\n-Xms' ~ cassandra_heap_size ~ '\\n-Xmx' ~ cassandra_heap_size"
+               " ~ (('\\n-Xmn' ~ cassandra_heap_newsize) if cassandra_heap_newsize else ''))"
+               " if cassandra_heap_in_jvm_options and cassandra_heap_size else '' }}")
+
+
 def jvm_var(n):
     # cassandra_jvm<n>_<name> overrides cassandra_jvm_<name>
     def var(name):
@@ -294,9 +311,14 @@ def rules_4x(pause, tenuring_and_region):
     return dict(COMMON, **{
         "cassandra-env.sh": ENV_COMMON + [
             HEAP_DUMP_4X,
-            opt("cassandra_heap_size", '#MAX_HEAP_SIZE="4G"', 'MAX_HEAP_SIZE="@"', "4G"),
-            opt("cassandra_heap_newsize", '#HEAP_NEWSIZE="800M"', 'HEAP_NEWSIZE="@"', "800M"),
+            heap_opt("cassandra_heap_size", '#MAX_HEAP_SIZE="4G"', 'MAX_HEAP_SIZE="@"', "4G", IN_ENV),
+            heap_opt("cassandra_heap_newsize", '#HEAP_NEWSIZE="800M"', 'HEAP_NEWSIZE="@"', "800M", IN_ENV),
         ],
+        # its stock heap lines, uncommented with cassandra_heap_in_jvm_options
+        "jvm-server.options": COMMON["jvm-server.options"] + [
+            heap_opt("cassandra_heap_size", "#-Xms4G", "-Xms@", "4G", IN_OPTIONS),
+            heap_opt("cassandra_heap_size", "#-Xmx4G", "-Xmx@", "4G", IN_OPTIONS),
+            heap_opt("cassandra_heap_newsize", "#-Xmn800M", "-Xmn@", "800M", IN_OPTIONS % "cassandra_heap_size and %s")],
         "jvm8-server.options": jvm_rules(8, cms_lines("", parnew=True), g1) + [last_line("cassandra_jvm8_extra_options")],
         "jvm11-server.options": jvm_rules(11, cms_lines(""), g1) + [last_line("cassandra_jvm11_extra_options")],
     })
@@ -305,10 +327,14 @@ def rules_4x(pause, tenuring_and_region):
 RULES = {
     "5.0": dict(COMMON, **{
         "logback.xml": COMMON["logback.xml"] + pattern_rules("5.0") + CQL_TABLE,
+        "jvm-server.options": [
+            ("#-Dcassandra.expiration_date_overflow_policy=REJECT",
+             "#-Dcassandra.expiration_date_overflow_policy=REJECT" + JVM_HEAP_50 + append_list("cassandra_jvm_extra_options")
+             + JVM_AGENT)],
         "cassandra-env.sh": ENV_COMMON + [
-            opt("cassandra_heap_size", '#MAX_HEAP_SIZE="20G"', 'MAX_HEAP_SIZE="@"', "20G"),
+            heap_opt("cassandra_heap_size", '#MAX_HEAP_SIZE="20G"', 'MAX_HEAP_SIZE="@"', "20G", IN_ENV),
             # (G1 ignores it, written as found: import_cluster carries a node's)
-            opt("cassandra_heap_newsize", '#HEAP_NEWSIZE="10G"', 'HEAP_NEWSIZE="@"', "10G"),
+            heap_opt("cassandra_heap_newsize", '#HEAP_NEWSIZE="10G"', 'HEAP_NEWSIZE="@"', "10G", IN_ENV),
             opt("cassandra_max_direct_memory_size", '#MAX_DIRECT_MEMORY_SIZE="10G"', 'MAX_DIRECT_MEMORY_SIZE="@"', "10G"),
             ('    CASSANDRA_HEAPDUMP_DIR="$CASSANDRA_LOG_DIR"',
              '    CASSANDRA_HEAPDUMP_DIR="{{ cassandra_heap_dump_dir }}"'),

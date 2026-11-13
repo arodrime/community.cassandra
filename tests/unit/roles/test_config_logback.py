@@ -349,3 +349,18 @@ def test_a_g1_value_left_empty_comments_its_stock_line_out():
     assert "#-XX:+UnlockExperimentalVMOptions" in lines and "#-XX:G1NewSizePercent=50" in lines
     assert "#-XX:MaxGCPauseMillis=300" in lines and "-XX:G1RSetUpdatingPauseTimePercent=7" in lines
     assert "-XX:MaxTenuringThreshold=2" in lines  # (the others as they are)
+
+
+def test_the_heap_in_the_jvm_options():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _load_role, _render
+    env, ctx, dummy = _load_role("50x", {"os_family": "Debian"})
+    on = dict(ctx, cassandra_heap_size="31G", cassandra_heap_in_jvm_options=True, cassandra_jvm_extra_options=["-Dx=1"])
+    assert _render(env, "50x", "jvm-server.options", on)[1][-4:-1] == ["-Xms31G", "-Xmx31G", "-Dx=1"]
+    assert '#MAX_HEAP_SIZE="20G"' in _render(env, "50x", "cassandra-env.sh", on)[1]
+    assert 'MAX_HEAP_SIZE="31G"' in _render(env, "50x", "cassandra-env.sh", dict(on, cassandra_heap_in_jvm_options=False))[1]
+    # 4.x: its stock heap lines, -Xmn with the young generation
+    env, ctx, dummy = _load_role("41x", {"os_family": "Debian"})
+    on = dict(ctx, cassandra_heap_size="8G", cassandra_heap_newsize="800M", cassandra_heap_in_jvm_options=True)
+    lines = _render(env, "41x", "jvm-server.options", on)[1]
+    assert "-Xms8G" in lines and "-Xmx8G" in lines and "-Xmn800M" in lines and "#-Xms4G" not in lines
+    assert "#-Xms4G" in _render(env, "41x", "jvm-server.options", dict(ctx, cassandra_heap_size="8G"))[1]

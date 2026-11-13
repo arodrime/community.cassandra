@@ -1475,7 +1475,9 @@ The GC block of a ``jvm<N>-server.options`` file is read as the stock one with i
 node has commented out or removed, ``""`` (the role writes it commented out). When that cannot give the node's GC
 options (another GC in G1's place, a line no variable switches), ``cassandra_jvm<N>_gc: custom`` with the node's GC
 lines, in their order, in ``cassandra_jvm<N>_extra_options``; either only when it removes the GC's differences and
-adds none, else they stay hand edits.
+adds none, else they stay hand edits. An ``-Xms`` and an ``-Xmx`` of the same size in the options files the running Java
+reads are ``cassandra_heap_size`` with ``cassandra_heap_in_jvm_options`` (the role writes them in ``jvm-server.options``),
+when the running JVM's arguments show it gets the same.
 
 Hand edits of ``cassandra-env.sh`` that add plain options to ``JVM_OPTS`` (``JVM_OPTS="$JVM_OPTS -Xms8G -Xmx8G
 -XX:+AlwaysPreTouch"``, outside any ``if``), and the heap (``MAX_HEAP_SIZE``, ``HEAP_NEWSIZE``,

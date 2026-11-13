@@ -279,12 +279,13 @@ def test_gc_lines_removed_are_carried(tmp_path, removed):
     inventory, layout, node = imported(files, "50x", "17", cmdline)
     assert node["hand_edits"] == []
     rendered, variables = role_files(inventory, layout, files)
+    # (the heap: cassandra_heap_size in jvm-server.options)
+    assert variables["cassandra_heap_size"] == "31G" and variables["cassandra_heap_in_jvm_options"] is True
     if "-XX:+UseG1GC" in removed:
         assert variables["cassandra_jvm17_gc"] == "custom"
-        assert variables["cassandra_jvm17_extra_options"] == ["-Xms31G", "-Xmx31G", "-XX:MaxGCPauseMillis=300"]
+        assert variables["cassandra_jvm17_extra_options"] == ["-XX:MaxGCPauseMillis=300"]
     else:
-        assert "cassandra_jvm17_gc" not in variables and variables["cassandra_jvm17_extra_options"] == ["-Xms31G",
-                                                                                                        "-Xmx31G"]
+        assert "cassandra_jvm17_gc" not in variables and "cassandra_jvm17_extra_options" not in variables
         assert dict((k, variables.get(k)) for k in TUNED) == TUNED
     assert settings(launch(rendered, "17", tmp_path)) == settings(cmdline)
     assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
@@ -304,6 +305,24 @@ def test_a_gc_reading_kept_beside_another_hand_edit(tmp_path, removed):
     assert [line for line in node["hand_edits"] if line.startswith("  ")] == ["  - -Djdk.attach.allowAttachSelf=true"]
     assert [d.split(":")[1].strip() for d in check(files, "50x", java="17", cmdline=cmdline)["differences"]] == [
         "-Djdk.attach.allowAttachSelf"]
+
+
+def test_the_heap_in_an_options_file_is_cassandra_heap_size(tmp_path):
+    # an -Xms/-Xmx pair in jvm17-server.options: cassandra_heap_size, written in jvm-server.options
+    # (cassandra_heap_in_jvm_options), shown the same from the running JVM's arguments
+    files = node_files("50x", add_to("jvm17-server.options", "-Xms16G\n-Xmx16G"))
+    cmdline = launch(files, "17", tmp_path)
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    assert node["hand_edits"] == []
+    rendered, variables = role_files(inventory, layout, files)
+    assert variables["cassandra_heap_size"] == "16G" and variables["cassandra_heap_in_jvm_options"] is True
+    assert "cassandra_jvm17_extra_options" not in variables
+    assert settings(launch(rendered, "17", tmp_path)) == settings(cmdline)
+    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
+    # Cassandra not running: as read (nothing shows the same arguments), sizes not alike either
+    assert "cassandra_heap_size" not in imported(files, "50x", "17", "")[2]["vars"]
+    files = node_files("50x", add_to("jvm17-server.options", "-Xms8G\n-Xmx16G"))
+    assert "cassandra_heap_size" not in imported(files, "50x", "17", launch(files, "17", tmp_path))[2]["vars"]
 
 
 def jvm17(*pairs, drop=()):
@@ -381,7 +400,8 @@ def test_the_dev_node_jvm_files(tmp_path):
     assert node["hand_edits"] == []
     rendered, variables = role_files(inventory, layout, files)
     assert dict((k, v) for k, v in variables.items() if k.startswith(("cassandra_jvm", "cassandra_heap"))) == {
-        "cassandra_jvm17_extra_options": ["-Xms31G", "-Xmx31G", "-Xss256k"], "cassandra_jvm17_max_gc_pause_millis": 500,
+        "cassandra_heap_size": "31G", "cassandra_heap_in_jvm_options": True,
+        "cassandra_jvm17_extra_options": ["-Xss256k"], "cassandra_jvm17_max_gc_pause_millis": 500,
         "cassandra_jvm_extra_options": ["-Xss1024M", "-XX:-UseBiasedLocking"], **TUNED}
     assert settings(launch(rendered, "17", tmp_path)) == settings(cmdline)
     assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
@@ -501,7 +521,7 @@ def test_a_node_with_the_files_of_an_older_release(tmp_path):
     assert [line for line in node["hand_edits"] if line.startswith("  ")] == ["  - -Dchronicle.analytics.disable=true"]
     variables = role_files(inventory, layout, files)[1]
     assert variables["cassandra_jmx_rmi_hostname"] == IPV4 and "cassandra_jvm17_gc" not in variables
-    assert variables["cassandra_jvm17_extra_options"] == ["-Xms31G", "-Xmx31G"]
+    assert "cassandra_jvm17_extra_options" not in variables and variables["cassandra_heap_size"] == "31G"
     assert dict((k, variables.get(k)) for k in TUNED) == TUNED
     assert variables["cassandra_jvm_extra_options"] == ["-Xss1024M", "-XX:-UseBiasedLocking"]
     assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == [

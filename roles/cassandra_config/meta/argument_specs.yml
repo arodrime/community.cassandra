@@ -1327,6 +1327,14 @@ argument_specs:
         description:
         - C(HEAP_NEWSIZE) in C(cassandra-env.sh). Without G1, it must be set together with O(cassandra_heap_size); with
           G1 Cassandra ignores it (import_cluster keeps one found, so the file is written as it is).
+      cassandra_heap_in_jvm_options:
+        type: bool
+        default: false
+        description:
+        - 'V(true): O(cassandra_heap_size) as C(-Xms)/C(-Xmx) (O(cassandra_heap_newsize): C(-Xmn)) in C(jvm-server.options),
+          read by every Java (4.x: its stock heap lines uncommented; 5.0: after its last line), not C(MAX_HEAP_SIZE) in
+          C(cassandra-env.sh).'
+        - With G1 the role refuses O(cassandra_heap_newsize) then (C(cassandra-env.sh) stops on C(-Xmn) with G1).
       cassandra_max_direct_memory_size:
         type: str
         default: ''

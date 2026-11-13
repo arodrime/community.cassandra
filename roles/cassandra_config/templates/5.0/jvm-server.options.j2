@@ -186,4 +186,4 @@
 #   or 2038-01-19T03:14:06+00:00 and the client will receive a warning.
 # * CAP_NOWARN: same as previous, except that the client warning will not be emitted.
 #
-#-Dcassandra.expiration_date_overflow_policy=REJECT{{ ('\n' ~ (cassandra_jvm_extra_options | join('\n'))) if cassandra_jvm_extra_options else '' }}{{ ('\n' ~ _cassandra_config_jvm_agent) if _cassandra_config_jvm_agent else '' }}
+#-Dcassandra.expiration_date_overflow_policy=REJECT{{ ('\n-Xms' ~ cassandra_heap_size ~ '\n-Xmx' ~ cassandra_heap_size ~ (('\n-Xmn' ~ cassandra_heap_newsize) if cassandra_heap_newsize else '')) if cassandra_heap_in_jvm_options and cassandra_heap_size else '' }}{{ ('\n' ~ (cassandra_jvm_extra_options | join('\n'))) if cassandra_jvm_extra_options else '' }}{{ ('\n' ~ _cassandra_config_jvm_agent) if _cassandra_config_jvm_agent else '' }}
