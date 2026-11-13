@@ -383,3 +383,36 @@ def test_a_pattern_with_two_dashes_and_the_audit_appender_on_is_carried(series):
     variables, snippets, check = imported(files, series)
     assert variables["cassandra_log_pattern"] == "%-5level [%thread] -- %msg%n"
     assert check["differences"] == []
+
+
+def with_log_dir(log_dir, logback):
+    """cassandra-env.sh's log dir moved to /data/cassandra/log, logback.xml edited by logback(text)."""
+    def edit(files):
+        files["cassandra-env.sh"] = files["cassandra-env.sh"].replace("CASSANDRA_LOG_DIR=/var/log/cassandra",
+                                                                      "CASSANDRA_LOG_DIR=" + log_dir)
+        files["logback.xml"] = logback(files["logback.xml"])
+        return files
+    return edit(seeded(stock("50x")))
+
+
+def literal(path):
+    def edit(text):
+        for name in ("system.log", "debug.log"):
+            text = text.replace("${cassandra.logdir}/" + name, "%s/%s" % (path, name))
+        return text
+    return edit
+
+
+def test_the_log_dir_written_as_itself_is_the_same_file():
+    # (2026-11-13, a 5.0.9 RPM node) system.log and debug.log under the log dir of cassandra-env.sh, written as
+    # itself: what ${cassandra.logdir} is for logback, no hand edit
+    files = with_log_dir("/data/cassandra/log", literal("/data/cassandra/log"))
+    out = cassandra_config_import(files, "50x", FACTS)
+    assert out["hand_edits"] == [] and out["vars"]["cassandra_log_dir"] == "/data/cassandra/log"
+    assert "logback.xml: /data/cassandra/log written as itself, the dir Cassandra gives logback as ${cassandra.logdir}:" \
+           " the same files" in out["normalized"]
+    assert imported(files, "50x")[2]["differences"] == []
+    # another dir: other files, a hand edit
+    files = with_log_dir("/data/cassandra/log", literal("/srv/logs"))
+    assert cassandra_config_import(files, "50x", FACTS)["hand_edits"]
+    assert imported(files, "50x")[2]["differences"]

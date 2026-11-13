@@ -1569,6 +1569,26 @@ def _shell_value(text, names):
     return None if re.search(r"[$`]", text) or text.startswith("~") else text
 
 
+def log_dir_of(env_sh, cmdline=""):
+    """The dir the JVM gets as cassandra.logdir: its -Dcassandra.logdir (cmdline: /proc/<pid>/cmdline), else the
+    last plain path cassandra-env.sh sets CASSANDRA_LOG_DIR to; '' when not known."""
+    for arg in str(cmdline or "").split("\0"):
+        if arg.startswith("-Dcassandra.logdir="):
+            return arg[len("-Dcassandra.logdir="):]
+    values = [_shell_value(m.group(1), {}) for m in
+              re.finditer(r"^\s*(?:export\s+)?CASSANDRA_LOG_DIR=(\S+)\s*$", str(env_sh or ""), re.M)]
+    values = [v for v in values if v and v.startswith("/")]
+    return values[-1] if values else ""
+
+
+def logback_as_log_dir(text, log_dir):
+    """logback.xml with the log dir written as itself at the start of a <file> or <fileNamePattern> as
+    ${cassandra.logdir} (bin/cassandra gives the JVM -Dcassandra.logdir=<it>): the same files for logback."""
+    if not log_dir.startswith("/") or not log_dir.rstrip("/"):
+        return text
+    return re.sub(r"(<(file|fileNamePattern)>\s*)%s/" % re.escape(log_dir.rstrip("/")), r"\1${cassandra.logdir}/", text)
+
+
 def _shell_code(line):
     """A shell line without its comment (a # starting a word, outside quotes)."""
     quote = None
@@ -1892,6 +1912,14 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
             found.update(got)
             if name.endswith(".sh"):
                 from_shell.update(got)
+    log_dir = log_dir_of(live_files.get("cassandra-env.sh", ""), cmdline)
+    if "logback.xml" in live_files and logback_as_log_dir(live_files["logback.xml"], log_dir) != live_files["logback.xml"]:
+        # the log dir written as itself: the same files as ${cassandra.logdir}, read so
+        live_files = dict(live_files, **{"logback.xml": logback_as_log_dir(live_files["logback.xml"], log_dir)})
+        log_dir_note = ["logback.xml: %s written as itself, the dir Cassandra gives logback as ${cassandra.logdir}: the"
+                        " same files" % log_dir]
+    else:
+        log_dir_note = []
     if "logback.xml" in live_files:
         where[0] = "logback.xml"
         for key, value in _logback(live_files["logback.xml"]).items():
@@ -1949,6 +1977,7 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     where[0] = "comparing the files with the role's"
     hand, normalized, comments = _leftovers(env, cassandra_version, files, render, live_files, rejected,
                                             moved["shown"])
+    normalized += log_dir_note
     changed.update(exporter["vars"])
     rewritten = moved["rewritten"] + [f for f in _exporter_rewritten(env, cassandra_version, render, exporter,
                                                                      live_as_found) if f not in moved["rewritten"]]

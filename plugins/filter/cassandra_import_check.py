@@ -52,7 +52,7 @@ except ImportError:  # before, any string not marked unsafe
     def trust_as_template(value):
         return value
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    Unsafe, error_without_message, undefined_name, values_hidden)
+    Unsafe, error_without_message, log_dir_of, logback_as_log_dir, undefined_name, values_hidden)
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import (
     cassandra_file_permissions, permission_differences)
@@ -517,6 +517,9 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
     """running: {cmdline, newer, series} (cassandra_import_self_check's jvm); series: cassandra_version, else running's."""
     differences, notes, heap, by_file = [], [], [], {}
     series = series or (running or {}).get("series", "")
+    if "logback.xml" in live:  # the log dir written as itself: ${cassandra.logdir} for logback
+        live = dict(live, **{"logback.xml": logback_as_log_dir(live["logback.xml"], log_dir_of(
+            live.get("cassandra-env.sh", ""), (running or {}).get("cmdline")))})
     if "cassandra-env.sh" in live:  # the Prometheus exporter's block: the line it runs (the role writes the agent)
         live = dict(live, **{"cassandra-env.sh": prometheus.block_as_line(live["cassandra-env.sh"],
                                                                           (running or {}).get("cmdline"))})
