@@ -1,3 +1,5 @@
+minor_changes:
+  - "cassandra_config - new ``cassandra_log_audit_dir``: the dir of logback.xml's audit file (``audit.log`` of the ``AUDIT`` appender, ``cassandra_log_audit_file``), ``${cassandra.logdir}/audit`` by default as before; import_cluster reads it from the node's ``AUDIT`` appender."
 bugfixes:
   - "import_cluster - an option written in the place of a G1 line of jvm<N>-server.options (``-Xmx31G`` for ``-XX:MaxTenuringThreshold=2``) is carried in ``cassandra_jvm<N>_extra_options``; it was dropped, so the heap the JVM runs with was not imported."
   - "import_cluster - a GC block that is not the stock one (G1 without some of its tuning lines, as in an older release's file) is imported as ``cassandra_jvm<N>_gc: custom`` with the node's GC options in ``cassandra_jvm<N>_extra_options``, instead of hand edits the roles would revert."
@@ -8,3 +10,4 @@ bugfixes:
   - "import_cluster - remote JMX set up in the else branch of cassandra-env.sh's LOCAL_JMX test (the password and access file lines and ``-Djava.rmi.server.hostname`` there, the stock password file line commented out) is carried by ``cassandra_jmx_rmi_hostname`` and the JMX users when the running JVM shows that branch ran; the self-check no longer shows that shape as a stray ``fi``."
   - "import_cluster - logback.xml writing the log dir as itself (``/data/cassandra/log/system.log``) where it is the dir Cassandra gives logback as ``${cassandra.logdir}`` is no longer a hand edit."
   - "import_cluster report - a hand edit of logback.xml or cassandra-env.sh names its way out besides keeping the file: your own template of it (``cassandra_config_template_overrides``) or a piece for lines at its end (``cassandra_config_template_snippets``)."
+  - "import_cluster - cassandra-env.sh lines that are only at another place for the JVM (shown by the running JVM's arguments) are listed with the layout-only edits, no effect, instead of nothing at all."
