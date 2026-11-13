@@ -479,18 +479,27 @@ def test_off_nothing_removed_while_the_next_start_may_still_load_it(tmp_path):
     every = ["cassandra-env.sh", "jvm-server.options", "jvm11-server.options", "jvm17-server.options"]
     assert args(cassandra_java_version="11", **writes) == (every + not_the_roles, [])
     assert args(**writes)[0] == every + not_the_roles
-    # only looking: the series' files kept (a jvm8-server.options of 4.x kept on 5.0: not), your templates; the files
-    # the role does not write
+    # only looking: the series' files kept (a jvm8-server.options of 4.x kept on 5.0: not), the files the role does
+    # not write, as they are on the node; the others as the role is to write them (audit r7: the preview and the run
+    # read the same)
     assert args(cassandra_config_keep_files=kept, **looking) == (
         ["jvm-server.options", "jvm17-server.options"] + not_the_roles, [])
-    assert args(cassandra_config_template_overrides={"cassandra-env.sh": "/x/env.j2"}, **looking)[0] == \
-        ["cassandra-env.sh"] + not_the_roles
-    # only looking: what the role is to write, the extra options and your snippet of cassandra-env.sh (s4)
     agent = "-javaagent:/opt/prometheus-jmx-exporter/jmx_prometheus_javaagent-1.7.0.jar=9404:/etc/x.yml"
-    assert args(cassandra_jvm17_extra_options=[agent], **looking)[1] == ["cassandra_jvm*_extra_options"]
-    assert args(_cassandra_config_snippet_env='JVM_OPTS="$JVM_OPTS %s"' % agent, **looking)[1] == \
-        ["cassandra_config_template_snippets"]
-    assert args(cassandra_jvm17_extra_options=["-Dx=1"], **looking)[1] == []
+
+    def rendered(**variables):
+        new = role_render(dict({"cassandra_version": "50x", "cassandra_service_unit_manage": False}, **variables),
+                          FACTS, {})[0]
+        return args(_cassandra_config_new=new, **dict(looking, **variables))[1]
+    assert rendered() == []  # the stock files (their commented agent, jamm's): nothing
+    assert rendered(cassandra_jvm17_extra_options=[agent]) == ["jvm17-server.options"]
+    assert rendered(cassandra_jvm17_extra_options=[agent], cassandra_config_keep_files=["jvm17-server.options"]) == []
+    snippet = tmp_path / "snippet.j2"
+    snippet.write_text('JVM_OPTS="$JVM_OPTS %s"\n' % agent)
+    assert rendered(cassandra_config_template_snippets={"cassandra-env.sh": str(snippet)}) == ["cassandra-env.sh"]
+    snippet.write_text('# JVM_OPTS="$JVM_OPTS %s"\n' % agent)
+    assert rendered(cassandra_config_template_snippets={"cassandra-env.sh": str(snippet)}) == []
+    # a run that writes reads the node only
+    assert args(_cassandra_config_new={"jvm17-server.options": agent}, **writes)[1] == []
     # (audit r7, s6) the unit's environment cassandra-env.sh appends (JVM_EXTRA_OPTS), in both
     environment = {"JVM_EXTRA_OPTS": agent, "LOCAL_JMX": "no"}
     for run in (writes, looking):

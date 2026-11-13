@@ -3,13 +3,18 @@
 # cassandra_install removes the dsbulk versions it installed before. On: the jars of other versions the role
 # downloaded into cassandra_prometheus_exporter_dir (listed in its .cassandra_config; a jar put there by other
 # means stays). Off: those jars, that list (and the directory when it is then empty), the role's config (its
-# header line) and the record of its parts read at start; nothing while the next start may still load an exporter's
-# agent or the role's config: in a run that writes, the files that start reads, as written; in one that only looks
-# (--check, apply_config's preview), the ones the role does not write from its template (kept by hand, your own
-# templates) as they are, and what it is to write from the variables (the extra options, your snippet of
-# cassandra-env.sh): removed, they would stop Cassandra at its next start. A
-# running Cassandra keeps the jar it opened until its restart (the one the JVM options file now gives is there).
-# (a task check mode skips: this run writes the files, or only looks, --check or check_mode applied to the role)
+# header line) and the record of its parts read at start; nothing while the next start may still load one of
+# them (a jar of that directory, an agent's jar through a variable, the conf dir's jmx_prometheus.yml), as it reads:
+#   - cassandra-env.sh and every JVM options file of the series: in a run that writes, as written on the node; in one
+#     that only looks (--check, apply_config's preview), those kept as they are on the node, the others as the role
+#     is to write them (its render, your templates and snippets, the extra options);
+#   - cassandra.in.sh (the conf dir's, /usr/share/cassandra's), the unit /etc/systemd/system/cassandra.service and
+#     its drop-ins, as they are on the node;
+#   - cassandra_service_environment (the unit's environment cassandra_service writes, JVM_EXTRA_OPTS).
+# Removed, they would stop Cassandra at its next start. A running Cassandra keeps the jar it opened until its
+# restart (the one the JVM options file now gives is there).
+# Skipped in check mode (--check, or check_mode applied to the role, as apply_config's preview does): this run
+# only looks, else it writes the files
 - name: Tell a run that writes from one that only looks
   ansible.builtin.command: "true"
   register: _cassandra_config_exporter_writes
@@ -50,7 +55,6 @@
                 || printf '%s\n' "$lines" | grep -qE 'javaagent:[^[:space:]=]*[$][^[:space:]=]*jmx_prometheus_javaagent'
               } && echo "kept|$f"
             done
-            set -f
             for f in $rendered; do echo "kept|$f"; done
           } | grep . && exit 0
         fi
@@ -81,24 +85,26 @@
       - /usr/share/cassandra/cassandra.in.sh
       - /etc/systemd/system/cassandra.service
       - /etc/systemd/system/cassandra.service.d/*.conf
-    # read on the node: in a run that writes, as written; in one that only looks, the ones the role does not write
-    # from its template (kept by hand, your own templates)
+    _writes: "{{ _cassandra_config_exporter_writes is not skipped }}"
+    # read on the node: in a run that writes, as written; in one that only looks, the ones kept as they are
     _on_node: >-
-      {{ (_jvm_files if _cassandra_config_exporter_writes is not skipped
-          else (cassandra_config_keep_files + (cassandra_config_template_overrides
-                if cassandra_config_template_overrides is mapping else {}) | list)
-               | select('in', _jvm_files) | unique | list) + _not_the_roles }}
-    # what the role (or cassandra_service) is to write from the variables: the unit's environment
-    # (cassandra_service_environment, JVM_EXTRA_OPTS); only looking, the extra options and your snippet of
-    # cassandra-env.sh too
+      {{ (_jvm_files if _writes | bool else _jvm_files | select('in', cassandra_config_keep_files) | list)
+         + _not_the_roles }}
+    # what the run is to write: only looking, the role's render of the others (their lines but comments); the unit's
+    # environment cassandra_service writes
     _rendered: >-
-      {{ (['cassandra_service_environment'] if (cassandra_service_environment | default({})
-           if cassandra_service_environment | default({}) is mapping else {}).values() | map('string') | join(' ')
-           is search(_agent) else [])
-         + ([] if _cassandra_config_exporter_writes is not skipped
-            else ['cassandra_jvm*_extra_options'] if _cassandra_config_java_options is search(_agent)
-            else ['cassandra_config_template_snippets'] if _cassandra_config_snippet_env | string is search(_agent)
-            else []) }}
+      {%- set out = [] -%}
+      {%- for f in _jvm_files if not _writes | bool and f not in cassandra_config_keep_files -%}
+      {%-   if (_cassandra_config_new | default({}))[f] | default('') | regex_replace('(?m)^[ \t]*#.*$', '')
+               is search(_agent) -%}
+      {%-     set _ = out.append(f) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- set unit_env = cassandra_service_environment | default({}) -%}
+      {%- if (unit_env if unit_env is mapping else {}).values() | map('string') | join(' ') is search(_agent) -%}
+      {%-   set _ = out.append('cassandra_service_environment') -%}
+      {%- endif -%}
+      {{ out }}
 
 - name: Say what the exporter's agent in a file still needs is left in place
   ansible.builtin.debug:

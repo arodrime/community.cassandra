@@ -107,18 +107,6 @@ _cassandra_config_gc_17: >-
   {{ 'G1' if (cassandra_jvm17_gc | default(cassandra_jvm_gc)) == 'custom'
      and _cassandra_config_g1_options_17 | select('match', '^-XX:[+-]UseG1GC$') | list | last | default('')
      == '-XX:+UseG1GC' else cassandra_jvm17_gc | default(cassandra_jvm_gc) }}
-# The JVM files the node's Java reads (cassandra-env.sh, jvm-server.options, its jvm<N>-server.options), and the extra
-# options the role writes in its options files (as text)
-_cassandra_config_java_files: >-
-  {{ ['cassandra-env.sh', 'jvm-server.options',
-      ('jvm8-server.options' if _cassandra_config_java_major | int < 11 else 'jvm11-server.options')
-      if cassandra_version in ['40x', '41x'] else
-      ('jvm11-server.options' if _cassandra_config_java_major | int < 17 else 'jvm17-server.options')] }}
-_cassandra_config_java_options: >-
-  {{ (_cassandra_config_g1_options_8 if _cassandra_config_java_major | int < 11 else _cassandra_config_g1_options_11)
-     | join(' ') if cassandra_version in ['40x', '41x'] else
-     (_cassandra_config_g1_options_11 if _cassandra_config_java_major | int < 17 else _cassandra_config_g1_options_17)
-     | join(' ') }}
 # the options of jvm-server.options' and of jvm<N>-server.options' extra options (one not a list: none; the role's
 # argument checks say so)
 _cassandra_config_g1_options_8: >-
