@@ -3,7 +3,8 @@ __metaclass__ = type
 
 import pytest
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_url import cassandra_same_origin, cassandra_url_masked
+from ansible_collections.community.cassandra.plugins.filter.cassandra_url import (
+    cassandra_same_origin, cassandra_url_login_ok, cassandra_url_masked)
 
 MIRROR = "https://mirror.example.com/cassandra/"
 
@@ -46,14 +47,16 @@ def test_default_ports():
      "https://b.s3.amazonaws.com/jdk.tgz?****"),
     ("https://m.example.com/KEYS?token=abc#part", "https://m.example.com/KEYS?****#****"),
     ("https://m.example.com/KEYS#access_token=abc", "https://m.example.com/KEYS#****"),
-    # a password with any character: the login runs to the last @ (a path with an @ hides the host: too much, not
-    # too little)
-    ("https://u:pa/ss@m.example.com/x", "https://****@m.example.com/x"),
+    # a password percent-encoded, or with a ' (RFC 3986 allows it raw)
+    ("https://u:pa%2Fs%22s%20@m.example.com/x", "https://****@m.example.com/x"),
     ("https://u:pa'ss@m.example.com/x", "https://****@m.example.com/x"),
-    ("https://u:pa#ss@m.example.com/x", "https://****@m.example.com/x"),
-    ("https://u:pa?ss@m.example.com/x", "https://****@m.example.com/x"),
-    ("https://m.example.com/a@b/c", "https://****@b/c"),
+    # an @ in the path: no login
+    ("https://m.example.com/path@v2/x.tgz", "https://m.example.com/path@v2/x.tgz"),
+    # a query, a fragment masked up to the next whitespace (a quote or a < in them too)
+    ("https://m.example.com/x?sig=a'b\"c<d", "https://m.example.com/x?****"),
+    ("https://m.example.com/x#a'b", "https://m.example.com/x#****"),
     ("https://m.example.com/jdk.tgz", "https://m.example.com/jdk.tgz"),
+    ("no URL: user@host.example.com?", "no URL: user@host.example.com?"),
     ("/srv/files/jdk.tgz", "/srv/files/jdk.tgz"),
     ("file:///srv/files/jdk.tgz", "file:///srv/files/jdk.tgz"),
     ("", ""),
@@ -71,3 +74,38 @@ def test_urls_masked_in_a_text():
     text = "from https://m.example.com/a?sig=x, then (https://m.example.com/b#t=y); see https://m.example.com/c?s=z."
     assert cassandra_url_masked(text) == ("from https://m.example.com/a?****, then (https://m.example.com/b#****);"
                                           " see https://m.example.com/c?****.")
+    text = "Request failed for 'https://m.example.com/a?sig=x': HTTP 404, <https://m.example.com/b?s=y>"
+    assert cassandra_url_masked(text) == ("Request failed for 'https://m.example.com/a?****': HTTP 404,"
+                                          " <https://m.example.com/b?****>")
+
+
+@pytest.mark.parametrize("url", [
+    "https://m.example.com/jdk.tgz",
+    "https://user:pa%2Fs%23s%3F%22%20%40@m.example.com:8443/jdk.tgz",
+    "https://T0KEN@m.example.com/jdk.tgz",
+    "https://u:pa'ss!$&()*+,;=~@m.example.com/jdk.tgz",
+    "https://m.example.com/path@v2/jdk.tgz",
+    "https://m.example.com:8443/path@v2/jdk.tgz",
+    "https://[::1]:8443/path@v2/jdk.tgz",
+    "https://m.example.com/jdk.tgz?X-Amz-Signature=a@b",
+    "/srv/files/jdk.tgz",
+    "file:///srv/files/jdk.tgz",
+    "",
+    None,
+])
+def test_login_ok(url):
+    assert cassandra_url_login_ok(url) is True
+
+
+@pytest.mark.parametrize("url", [
+    'https://u:pa"ss@m.example.com/jdk.tgz',
+    "https://u:pa ss@m.example.com/jdk.tgz",
+    "https://u:pa<ss>@m.example.com/jdk.tgz",
+    "https://u:p@ss@m.example.com/jdk.tgz",
+    "https://u:pa/ss@m.example.com/jdk.tgz",
+    "https://u:pa#ss@m.example.com/jdk.tgz",
+    "https://u:pa?ss@m.example.com/jdk.tgz",
+    "https://u:pa/s s@m.example.com/jdk.tgz",
+])
+def test_login_to_encode(url):
+    assert cassandra_url_login_ok(url) is False

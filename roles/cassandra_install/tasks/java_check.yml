@@ -42,6 +42,16 @@
       (cassandra_java_tarballs: {} for a Java package).
     quiet: true
 
+# get_url would read another URL, and show this one whole in its error: refused, the URL not shown
+- name: The tarball URL's login is percent-encoded
+  ansible.builtin.assert:
+    that: cassandra_java_tarball | community.cassandra.cassandra_url_login_ok
+    fail_msg: >-
+      cassandra_java_tarball (or the cassandra_java_tarballs entry of Java {{ cassandra_java_version }}) holds a
+      login with a character that must be percent-encoded (/ # ? " @ space...): write it as %2F %23 %3F %22 %40 %20.
+      The URL is not shown (its login), nothing was downloaded. Encode the login there, then run again.
+    quiet: true
+
 # Its name makes its temporary file and its directory: without one (or with
 # "." or ".."), the role would remove /var/tmp, /var or cassandra_java_tarball_dir
 - name: The tarball has a file name

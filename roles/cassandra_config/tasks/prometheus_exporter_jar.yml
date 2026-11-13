@@ -6,6 +6,17 @@
 # downloaded are listed in <dir>/.cassandra_config (prometheus_exporter_cleanup.yml removes the old ones). A config
 # managed by other means (cassandra_prometheus_exporter_config_file) must be there. One that cannot be: the run
 # stops here, before anything else is written.
+
+# get_url would read another URL, and show this one whole in its error: refused, the URL not shown
+- name: The exporter's URL login is percent-encoded
+  ansible.builtin.assert:
+    that: cassandra_prometheus_exporter_url | community.cassandra.cassandra_url_login_ok
+    fail_msg: >-
+      cassandra_prometheus_exporter_url holds a login with a character that must be percent-encoded (/ # ? " @ space...):
+      write it as %2F %23 %3F %22 %40 %20. The URL is not shown (its login), nothing was downloaded.
+      Encode the login in cassandra_prometheus_exporter_url, then run again.
+    quiet: true
+
 - name: Look at the exporter's jar, its config and the record of its parts read at start
   ansible.builtin.stat:
     path: "{{ item }}"
@@ -115,7 +126,7 @@
       ansible.builtin.fail:
         msg: >-
           {{ inventory_hostname }}: the Prometheus exporter's jar could not be downloaded to
-          {{ _cassandra_config_exporter_jar }} from {{ cassandra_prometheus_exporter_url | urlsplit('hostname') or 'the node' }}
+          {{ _cassandra_config_exporter_jar }} from {{ cassandra_prometheus_exporter_url | community.cassandra.cassandra_url_masked }}
           ({{ ansible_failed_result.msg | default('?') | community.cassandra.cassandra_url_masked }}).
           The JVM options that load it are not written, and this run neither stops nor starts Cassandra there: it is
           left as it is. Fix cassandra_prometheus_exporter_url or cassandra_prometheus_exporter_checksum (set both with
