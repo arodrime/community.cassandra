@@ -353,6 +353,16 @@ def test_a_cms_heap_in_the_jvm_options_the_role_takes(tmp_path, xmn):
         assert _assert(_task("roles/cassandra_config/tasks/checks.yml", name), **simple) is True
 
 
+def test_a_heap_size_in_cassandra_env_keeps_the_heap_as_it_is(tmp_path):
+    # (audit r5) MAX_HEAP_SIZE set at the top of cassandra-env.sh, the heap in jvm-server.options: not moved
+    files = node_files("50x", both(on_top("MAX_HEAP_SIZE=16G"), add_to("jvm-server.options", "-Xms16G\n-Xmx16G")))
+    cmdline = launch(files, "17", tmp_path)
+    node = imported(files, "50x", "17", cmdline)[2]
+    assert "cassandra_heap_in_jvm_options" not in node["vars"]
+    assert node["vars"]["cassandra_jvm_extra_options"] == ["-Xms16G", "-Xmx16G"]
+    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
+
+
 def test_g1_with_a_young_generation_in_cassandra_env_keeps_the_heap_as_it_is(tmp_path):
     # (audit r4) 5.0 on G1, HEAP_NEWSIZE in cassandra-env.sh (G1 ignores it), the heap in jvm-server.options: not
     # moved to cassandra_heap_in_jvm_options (it would write -Xmn there, with which cassandra-env.sh stops)

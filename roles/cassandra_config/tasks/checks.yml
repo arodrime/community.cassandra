@@ -388,12 +388,14 @@
 - name: Assert heap settings are consistent
   ansible.builtin.assert:
     that: >-
-      _cassandra_config_gcs | reject('equalto', 'G1') | list | length == 0
-      or (cassandra_heap_size == '') == (cassandra_heap_newsize == '')
-      or cassandra_heap_in_jvm_options | bool
+      (cassandra_heap_newsize == '' or cassandra_heap_size != '') if cassandra_heap_in_jvm_options | bool
+      else (_cassandra_config_gcs | reject('equalto', 'G1') | list | length == 0
+            or (cassandra_heap_size == '') == (cassandra_heap_newsize == ''))
     fail_msg: >-
-      Without G1 (cassandra_jvm_gc, cassandra_jvm<N>_gc), set cassandra_heap_size and cassandra_heap_newsize
-      together, or neither
+      {{ 'With cassandra_heap_in_jvm_options, cassandra_heap_newsize goes with cassandra_heap_size (-Xmn is written
+      with -Xms and -Xmx): set cassandra_heap_size, or cassandra_heap_newsize to ""'
+      if cassandra_heap_in_jvm_options | bool else 'Without G1 (cassandra_jvm_gc, cassandra_jvm<N>_gc), set
+      cassandra_heap_size and cassandra_heap_newsize together, or neither' }}
 
 # The heap in the JVM options: -Xmn there with G1 stops cassandra-env.sh
 - name: Assert no young generation size with G1 when the heap is in the JVM options
@@ -422,8 +424,9 @@
   ansible.builtin.assert:
     that: _wrong | length == 0
     fail_msg: >-
-      {{ _wrong | join('; ') }}: the JVM would not start with it. Write a plain number (e.g. 300, no unit; the heap
-      region size a number with k, m or g, e.g. 16m), or "" to comment its stock line out; nothing is changed.
+      {{ 'Values' if _wrong | length > 1 else 'A value' }} cassandra_config does not take: {{ _wrong | join('; ') }}.
+      Write a plain number (e.g. 300, no unit; the heap region size a number with k, m or g, e.g. 16m), or "" to
+      comment its stock line out; nothing is changed.
     quiet: true
   vars:
     _wrong: >-

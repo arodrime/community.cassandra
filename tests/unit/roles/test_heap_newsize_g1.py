@@ -6,9 +6,11 @@ __metaclass__ = type
 # refusal).
 
 import os
+import warnings
 
 import yaml
 from ansible.parsing.dataloader import DataLoader
+from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar
 
 try:  # ansible-core 2.19+ renders trusted templates only
@@ -16,6 +18,10 @@ try:  # ansible-core 2.19+ renders trusted templates only
 except ImportError:
     def trust_as_template(template):
         return template
+
+with warnings.catch_warnings():  # already done under ansible-test
+    warnings.simplefilter("ignore")
+    init_plugin_loader()  # Ansible's filters, under plain pytest too
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
@@ -112,6 +118,14 @@ def test_no_young_generation_with_g1_when_the_heap_is_in_the_jvm_options():
     assert _assert(check, cassandra_heap_newsize="3G", cassandra_heap_in_jvm_options=False, **on) is True
 
 
+def test_the_heap_in_the_jvm_options_writes_the_young_generation_with_the_heap():
+    # (audit r5) -Xmn is written with -Xms/-Xmx only: cassandra_heap_newsize alone would be lost
+    heap = _task("roles/cassandra_config/tasks/checks.yml", "Assert heap settings are consistent")
+    on = dict(cassandra_version="50x", cassandra_heap_in_jvm_options=True)
+    assert _assert(heap, cassandra_heap_size="", cassandra_heap_newsize="2G", **on) is False
+    assert _assert(heap, cassandra_heap_size="8G", cassandra_heap_newsize="2G", **on) is True
+
+
 def test_the_heap_in_the_jvm_options_needs_no_young_generation():
     # (audit r4) CMS with the heap in the JVM options: cassandra-env.sh works the young generation out itself
     heap = _task("roles/cassandra_config/tasks/checks.yml", "Assert heap settings are consistent")
@@ -138,6 +152,14 @@ def _wrong(**variables):
     found["_wrong"] = task["vars"]["_wrong"]
     found = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in found.items())
     return Templar(loader=DataLoader(), variables=found).template(trust_as_template("{{ _wrong }}"))
+
+
+def test_g1_tuning_values_message():
+    task = _task("roles/cassandra_config/tasks/checks.yml", "Refuse G1 tuning values the JVM would not start with")
+    for wrong, said in ((["cassandra_jvm_max_gc_pause_millis 300ms"], "A value cassandra_config does not take: "),
+                        (["a 1", "b 2"], "Values cassandra_config does not take: a 1; b 2.")):
+        templar = Templar(loader=DataLoader(), variables={"_wrong": wrong})
+        assert said in templar.template(trust_as_template(task["ansible.builtin.assert"]["fail_msg"]))
 
 
 def test_g1_tuning_values_the_jvm_takes():
