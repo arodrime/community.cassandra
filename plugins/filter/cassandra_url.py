@@ -50,6 +50,14 @@ def _decodes_login(ansible_version):
     return len(numbers) == 2 and (int(numbers[0]), int(numbers[1])) >= (2, 19)
 
 
+def _login_cut(head):
+    """Whether head (a URL after scheme://, up to its first ? or #) may be a login cut by a raw ? or # in it,
+    when an @ follows: no path ("u:12?w@m"), or a port that is no number ("u:p?w@m", "u:/w?x@m").
+    "m/f.tgz" (then "?sig=a@b") -> False: the @ is in the query."""
+    host = head.split("/", 1)[0].rpartition("]")[2]
+    return "/" not in head or (":" in host and not host.rpartition(":")[2].isdigit())
+
+
 def cassandra_url_login_ok(url, ansible_version=None):
     """False when the URL holds an @ and what runs from scheme:// to its last @ is not a plain login: get_url would
     read it another way, or send it as it is ("https://u:pw@m/f.tgz" -> True; "https://u:p/w@m/f.tgz",
@@ -59,7 +67,10 @@ def cassandra_url_login_ok(url, ansible_version=None):
     scheme = _SCHEME.match(url)
     if not scheme or "@" not in url[scheme.end():]:
         return True
-    login = url[scheme.end():].rpartition("@")[0]
+    head = re.split(r"[?#]", url[scheme.end():], 1)[0]  # an @ in a query or a fragment is no login
+    if "@" not in head:
+        return not _login_cut(head)
+    login = head.rpartition("@")[0]
     return (_LOGIN_ENCODED if _decodes_login(ansible_version) else _LOGIN).match(login) is not None
 
 
@@ -82,15 +93,19 @@ def _hidden(part, mark):
 def _masked(match):
     url = match.group(0)
     scheme = _SCHEME.match(url).group(0)
-    login, at, rest = url[len(scheme):].rpartition("@")
-    path, query, fragment = _REST.match(rest).groups()
+    head, query, fragment = _REST.match(url[len(scheme):]).groups()
+    if "@" not in (head or "") and "@" in url and _login_cut(head or ""):
+        # a raw ? or # in a login: all up to the last @ masked, query or not
+        head, query, fragment = _REST.match(url[len(scheme):].rpartition("@")[2]).groups()
+        head = "x@" + head
+    login, at, path = head.rpartition("@")
     return scheme + ("****@" if at else "") + path + _hidden(query, "?") + _hidden(fragment, "#")
 
 
 def cassandra_url_masked(text):
     """text with the login, the query and the fragment of every URL in it masked, for the output:
     "https://user:pass@m.example.com/jdk.tgz?X-Amz-Signature=abc" -> "https://****@m.example.com/jdk.tgz?****".
-    The login is all from scheme:// to the URL's last @, whatever is in it: an @ in the path masks more
+    The login is all from scheme:// to the last @ before the query, whatever is in it: an @ in the path masks more
     ("https://m/v@2/f.tgz" -> "https://****@2/f.tgz"), never less. A path or a URL without them as is."""
     return _URL.sub(_masked, str(text if text is not None else ""))
 

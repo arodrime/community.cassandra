@@ -129,7 +129,7 @@
       register: cassandra_upgrade_files
       failed_when: false
       check_mode: false
-      no_log: "{{ cassandra_install_url is search('@|[?]') }}"  # credentials or a signature in the URL
+      no_log: "{{ cassandra_install_url is search('[@?#]') }}"  # credentials or a signature in the URL
       when:
         - _phase in ['preflight', 'prepare', 'canary', 'rolling']
         - cassandra_install_method == 'packages'

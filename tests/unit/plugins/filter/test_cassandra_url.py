@@ -59,7 +59,7 @@ def test_default_ports():
     ("https://u:12?s3cr3t@m.example.com/x", "https://****@m.example.com/x"),
     ("https://u:12#s3cr3t@m.example.com/x?sig=a", "https://****@m.example.com/x?****"),
     ("https://m.example.com/path@v2/x.tgz", "https://****@v2/x.tgz"),
-    ("https://m.example.com/x?sig=a@b", "https://****@b"),
+    ("https://m.example.com/x?sig=a@b", "https://m.example.com/x?****"),
     # a query, a fragment masked up to the next whitespace (a quote or a < in them too)
     ("https://m.example.com/x?sig=a'b\"c<d", "https://m.example.com/x?****"),
     ("https://m.example.com/x#a'b", "https://m.example.com/x#****"),
@@ -93,6 +93,8 @@ def test_urls_masked_in_a_text():
     "https://u:pa'ss!$&()*+,;=~@m.example.com:8443/jdk.tgz",
     "https://[::1]:8443/jdk.tgz",
     "/srv/files/j@dk.tgz",
+    "https://m.example.com/jdk.tgz?X-Amz-Signature=a@b",  # an @ in a query is no login
+    "https://m.example.com/f.tgz?GoogleAccessId=sa@p.iam.gserviceaccount.com&Signature=S",
     "file:///srv/files/jdk.tgz",
     "",
     None,
@@ -114,7 +116,6 @@ def test_login_ok(url, version):
     "https://u:12?s3cr3t@m.example.com/jdk.tgz",
     "https://u:pa%2@m.example.com/jdk.tgz",  # not a %XX
     "https://m.example.com/path@v2/jdk.tgz",  # an @ in the path: written %40
-    "https://m.example.com/jdk.tgz?X-Amz-Signature=a@b",
 ])
 @pytest.mark.parametrize("version", ["2.16.19", "2.19.0", "2.21.4", None])
 def test_login_refused(url, version):
@@ -131,12 +132,13 @@ def test_an_encoded_login_needs_2_19(url):
     assert cassandra_url_login_ok(url, "2.21.4") is True
 
 
-LOGIN_CHARS = string.ascii_letters + string.digits + "-._~!$&'()*+,;=:/?#@%[]\\\"<>{}|^`"
+LOGIN_CHARS = string.ascii_letters + string.digits + "-._~!$&'()*+,;=:/@%[]\\\"<>{}|^`"
 REST_CHARS = string.ascii_lowercase + string.digits + "./?#=&-:'\"<>)"
 
 
 def test_masking_never_leaks_a_login():
-    # all from scheme:// to the last @ of a URL is masked, whatever it holds: what is shown does not depend on it
+    # all from scheme:// to the last @ before the query is masked, whatever it holds: what is shown does not
+    # depend on it (a ? or # starts the query: test_a_raw_query_mark_in_a_password)
     rnd = random.Random(1)
     for dummy in range(5000):
         login = "".join(rnd.choice(LOGIN_CHARS) for dummy in range(rnd.randint(1, 24)))
@@ -145,3 +147,22 @@ def test_masking_never_leaks_a_login():
             shown = cassandra_url_masked(before + "https://" + login + "@" + rest + after)
             assert shown == cassandra_url_masked(before + "https://x@" + rest + after), (login, rest, shown)
             assert shown.startswith(before + "https://****@"), (login, rest, shown)
+
+
+# an @ in the query is no login: the query stays masked whole, what follows the @ included
+@pytest.mark.parametrize("url, shown", [
+    ("https://m/repo?token=x@y&sig=SECRET", "https://m/repo?****"),
+    ("https://m/f.tgz?GoogleAccessId=sa@p.iam.gserviceaccount.com&Signature=SECRETSIG&Expires=1", "https://m/f.tgz?****"),
+    ("https://u:p@m/f.tgz?sig=SEC@RET", "https://****@m/f.tgz?****"),
+    ("https://m/f.tgz#a@SECRET", "https://m/f.tgz#****"),
+])
+def test_an_at_in_the_query_stays_masked(url, shown):
+    assert cassandra_url_masked(url + " end.") == shown + " end."
+
+
+# a raw ? or # in a password ends the host on a port that is no number: masked up to the last @ all the same
+@pytest.mark.parametrize("url", ["https://u:p?SECRET@m/f.tgz", "https://u:p#SECRET@m/f.tgz?sig=1",
+                                 "https://user:/SECRET?x@m/f.tgz"])
+def test_a_raw_query_mark_in_a_password(url):
+    shown = cassandra_url_masked(url)
+    assert "SECRET" not in shown and shown.startswith("https://****@m/f.tgz"), shown

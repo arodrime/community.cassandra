@@ -89,7 +89,7 @@
   # URLs with credentials or a signature
   no_log: >-
     {{ [cassandra_java_tarball, cassandra_medusa_pip_index_url, cassandra_install_url,
-        cassandra_repository_key_url] | select('search', '@|[?]') | list | length > 0 }}
+        cassandra_repository_key_url] | select('search', '[@?#]') | list | length > 0 }}
 
 - name: Look for the apt package lists (Debian)
   ansible.builtin.find:
@@ -127,7 +127,7 @@
   # a password, or credentials or a signature in a URL
   no_log: >-
     {{ _auth.values() | map('last') | select | list | length > 0
-       or _cassandra_new_node_plan.urls | map(attribute='url') | select('search', '@|[?]') | list | length > 0 }}
+       or _cassandra_new_node_plan.urls | map(attribute='url') | select('search', '[@?#]') | list | length > 0 }}
   loop: "{{ _cassandra_new_node_plan.urls }}"
   loop_control:
     label: "{{ item.name }}"
