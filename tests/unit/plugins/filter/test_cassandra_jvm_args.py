@@ -737,6 +737,15 @@ def test_the_exporter_s_agent_imported_unless_its_file_is_kept(tmp_path, where, 
                                        "", {}, jvm=jvm)["differences"] == []
 
 
+def test_the_exporter_s_agent_in_a_file_its_java_does_not_read(tmp_path):
+    # (audit r5) the agent in jvm11-server.options on Java 17: the JVM does not load it, not imported
+    files = node_files("50x", add_to("jvm11-server.options", AGENT))
+    jvm = {"cmdline": launch(files, "17", tmp_path), "java": "17", "environment": {}, "newer": []}
+    out = cassandra_config_import(files, "50x", FACTS, jvm=jvm)
+    assert not [k for k in out["vars"] if k.startswith("cassandra_prometheus_exporter")]
+    assert out["keep_files"] == ["jvm11-server.options"]  # (its options not read: the file left as it is)
+
+
 @pytest.mark.parametrize("case, series, java, edit", NOT_MOVED, ids=[c[0] for c in NOT_MOVED])
 def test_hand_edits_not_moved_stay_hand_edits(tmp_path, case, series, java, edit):
     files = node_files(series, edit)

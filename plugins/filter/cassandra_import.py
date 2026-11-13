@@ -2002,8 +2002,9 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     live_as_found = live_files
     keep = keep_files_option(running.get("keep", False))
     as_read = (live_files, cmdline)
-    live_files, cmdline, exporter = _exporter_import(live_files, cmdline, ctx, running.get("exporter"),
-                                                     [ctx.get("cassandra_conf_dir"), conf_target])
+    live_files, cmdline, exporter = _exporter_import(
+        live_files, cmdline, ctx, running.get("exporter"), [ctx.get("cassandra_conf_dir"), conf_target],
+        jvm.read_files(cassandra_version, java) if jvm.options_file(cassandra_version, java) else None)
     if exporter["found"] and (keep is True or exporter["found"]["file"] in keep or jvm_args.COMMON in keep):
         # the agent's file kept as it is (import_cluster_keep_hand_edits): it stays there, the role writes none (nor
         # could it in a kept jvm-server.options, where it writes it: cassandra_config refuses that)
@@ -2312,7 +2313,7 @@ def keep_files_option(value):
     return names
 
 
-def _exporter_import(live_files, cmdline, ctx, read=None, conf_dirs=()):
+def _exporter_import(live_files, cmdline, ctx, read=None, conf_dirs=(), java_files=None):
     """The Prometheus exporter's agent a node's files give its JVM: a line of a JVM options file, a JVM_OPTS line of
     cassandra-env.sh or a block of it (if ... fi) that only adds it -> (the files without it, the JVM's arguments
     without it, {vars: cassandra_prometheus_exporter_*, moved: report lines, notes, found: the agent and its
@@ -2320,10 +2321,12 @@ def _exporter_import(live_files, cmdline, ctx, read=None, conf_dirs=()):
     end of jvm-server.options). read: what the import read of it on the node, {sha256: of its jar, config: its
     config's text (None: not read), carry: its content into cassandra_prometheus_exporter_config (else the path,
     which a node added later has not)}; conf_dirs: the node's conf dir (the role's config there is its own: its
-    content, the role's variables again)."""
+    content, the role's variables again); java_files: the options files the running Java reads (None: not known, all
+    of them)."""
     read = dict(read or {})
     files, found, notes, moved = dict(live_files), None, [], []
-    names = sorted(f for f in files if re.match(r"^jvm\d*-server\.options$", f)) + [jvm_args.ENV]
+    names = sorted(f for f in files if re.match(r"^jvm\d*-server\.options$", f)
+                   and (java_files is None or f in java_files)) + [jvm_args.ENV]
     for name in [n for n in names if isinstance(files.get(n), str)]:
         text, got = prometheus.without_agent(name, files[name])
         if got is None:
