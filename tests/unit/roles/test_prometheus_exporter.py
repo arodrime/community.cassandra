@@ -387,9 +387,9 @@ CLEANUP = load_tasks(os.path.join(ROLE, "tasks", "prometheus_exporter_cleanup.ym
 
 
 def unused(tmp_path, on, listed=("jmx_prometheus_javaagent-1.6.0.jar", "jmx_prometheus_javaagent-1.7.0.jar"),
-           others=("theirs.jar",), config_header=True, kept="", options=None):
-    """What the cleanup finds in a directory and a conf dir made so (sh runs its script); kept: the JVM's files
-    kept by hand (cassandra_config_keep_files), options: the content of the conf dir's jvm-server.options."""
+           others=("theirs.jar",), config_header=True, options=None):
+    """What the cleanup finds in a directory and a conf dir made so (sh runs its script); options: the content of
+    the conf dir's jvm-server.options."""
     jars, conf = tmp_path / "exporter", tmp_path / "conf"
     jars.mkdir(parents=True)
     conf.mkdir()
@@ -402,7 +402,7 @@ def unused(tmp_path, on, listed=("jmx_prometheus_javaagent-1.6.0.jar", "jmx_prom
                                               if config_header else "# mine\n") + "rules: []\n")
     (conf / "jmx_prometheus.at_start").write_text("x\n")
     argv = find(CLEANUP, "Find what the exporter's agent no longer needs")["ansible.builtin.command"]["argv"]
-    run = subprocess.run(argv[:4] + [str(jars), "jmx_prometheus_javaagent-1.7.0.jar", str(conf), on, kept],
+    run = subprocess.run(argv[:4] + [str(jars), "jmx_prometheus_javaagent-1.7.0.jar", str(conf), on],
                          stdout=subprocess.PIPE, check=True)
     return [line.replace(str(tmp_path), "") for line in run.stdout.decode().split("\n") if line]
 
@@ -424,30 +424,26 @@ def test_off_a_config_not_the_roles_stays(tmp_path):
 AGENT_LINE = "-javaagent:/opt/prometheus-jmx-exporter/jmx_prometheus_javaagent-1.7.0.jar=9404:/etc/cassandra/jmx_prometheus.yml\n"
 
 
-def test_off_nothing_removed_while_a_file_kept_by_hand_still_loads_the_agent(tmp_path):
-    # removed, the jar and config the kept jvm-server.options names would stop Cassandra at its next start
-    assert unused(tmp_path / "a", "off", kept="jvm-server.options", options="-ea\n" + AGENT_LINE) == ["kept|jvm-server.options"]
-    # kept by hand without the agent (removed from it), or not kept (the role wrote it without the agent): removed
-    assert len(unused(tmp_path / "b", "off", kept="jvm-server.options", options="-ea\n#" + AGENT_LINE)) == 5
-    assert len(unused(tmp_path / "c", "off", options="-ea\n" + AGENT_LINE)) == 5
+def test_off_nothing_removed_while_a_file_still_loads_the_agent(tmp_path):
+    # removed, the jar and config jvm-server.options names would stop Cassandra at its next start: a file kept by
+    # hand, or (audit r4) the agent in the extra options the role wrote there
+    assert unused(tmp_path / "a", "off", options="-ea\n" + AGENT_LINE) == ["kept|jvm-server.options"]
+    # without the agent (commented out): removed
+    assert len(unused(tmp_path / "b", "off", options="-ea\n#" + AGENT_LINE)) == 5
     argv = find(CLEANUP, "Find what the exporter's agent no longer needs")["ansible.builtin.command"]["argv"]
-    assert render(argv[-1], role_vars(cassandra_config_keep_files=["cassandra.yaml", "jvm-server.options",
-                                                                   "jvm17-server.options", "cassandra-env.sh"])) \
-        == "jvm-server.options jvm17-server.options cassandra-env.sh"
     # nothing of the role's there (an exporter set up by hand): nothing said
     bare = tmp_path / "d"
     bare.mkdir()
     (bare / "jvm-server.options").write_text(AGENT_LINE)
-    run = subprocess.run(argv[:4] + [str(bare / "none"), "x.jar", str(bare), "off", "jvm-server.options"],
-                         stdout=subprocess.PIPE, check=True)
+    run = subprocess.run(argv[:4] + [str(bare / "none"), "x.jar", str(bare), "off"], stdout=subprocess.PIPE, check=True)
     assert run.stdout == b""
     # said, with the way out; nothing removed, nothing noted
     variables = role_vars(inventory_hostname="n1", cassandra_config_exporter_unused={"stdout_lines": ["kept|jvm-server.options"]})
-    said = find(CLEANUP, "Say what the exporter's agent in a file kept by hand still needs is left in place")
+    said = find(CLEANUP, "Say what the exporter's agent in a file still needs is left in place")
     variables.update((k, render(v, variables)) for k, v in said["vars"].items() if k.startswith("_"))
     assert when(said, variables) is True
     msg = render(said["ansible.builtin.debug"]["msg"], variables)
-    assert "jvm-server.options (kept by hand" in msg and "Remove the agent's line from your copy" in msg
+    assert "jvm-server.options still gives" in msg and "Remove the agent's line there" in msg
     assert render(find(CLEANUP, "Remove them")["loop"], variables) == []
     note = find(CLEANUP, "Note what is removed")
     for name, value in note["vars"].items():

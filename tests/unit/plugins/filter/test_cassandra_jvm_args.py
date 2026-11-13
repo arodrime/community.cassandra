@@ -662,6 +662,24 @@ def test_the_owner_dev_node_in_full_sync(tmp_path):
         "cassandra_jvm17_extra_options": ["-Xss256k"], "cassandra_jvm17_max_gc_pause_millis": 500, **TUNED}
 
 
+@pytest.mark.parametrize("where, keep, imported_too", [
+    ("jvm-server.options", ["cassandra-env.sh"], True), ("jvm17-server.options", ["cassandra-env.sh"], True),
+    ("jvm17-server.options", ["jvm17-server.options"], False), ("jvm17-server.options", ["jvm-server.options"], False)])
+def test_the_exporter_s_agent_imported_unless_its_file_is_kept(tmp_path, where, keep, imported_too):
+    # (audit r4) the agent in an options file, another file kept: imported (it was carried as an extra option, the
+    # exporter off, and the role's cleanup removed its jar); its own file kept, or jvm-server.options where the role
+    # writes it: not imported, the file gives it as it does
+    files = node_files("50x", add_to(where, AGENT))
+    cmdline = launch(files, "17", tmp_path)
+    jvm = {"cmdline": cmdline, "java": "17", "keep": ",".join(keep), "environment": {}, "newer": []}
+    inventory, layout = import_node(files, "50x", jvm=jvm, keep={"cassandra_service_unit_manage": False,
+                                                                 "cassandra_config_keep_files": keep})
+    variables = layout["nodes"][0]["vars"]
+    assert bool(variables.get("cassandra_prometheus_exporter_enabled")) is imported_too
+    assert cassandra_import_self_check(inventory, layout["hosts"], "n1", FACTS, files, {}, "/var/lib/cassandra", "17",
+                                       "", {}, jvm=jvm)["differences"] == []
+
+
 @pytest.mark.parametrize("case, series, java, edit", NOT_MOVED, ids=[c[0] for c in NOT_MOVED])
 def test_hand_edits_not_moved_stay_hand_edits(tmp_path, case, series, java, edit):
     files = node_files(series, edit)

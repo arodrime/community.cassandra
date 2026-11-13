@@ -2000,15 +2000,19 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     where[0] = "the Prometheus exporter's agent"
     live_as_found = live_files
     keep = keep_files_option(running.get("keep", False))
-    if keep is True or set(keep) & {jvm_args.ENV, jvm_args.COMMON}:
-        # a JVM file kept as it is (import_cluster_keep_hand_edits): its agent stays in it, the role writes none
-        # (it could not write it in a kept jvm-server.options: cassandra_config refuses that)
-        exporter = {"vars": {}, "moved": [], "found": None, "notes": [
-            "the Prometheus exporter's agent: NOT imported, cassandra-env.sh or jvm-server.options kept as it is"
-            " (import_cluster_keep_hand_edits) give it as they do"] if prometheus.agent(cmdline) else []}
-    else:
-        live_files, cmdline, exporter = _exporter_import(live_files, cmdline, ctx, running.get("exporter"),
-                                                         [ctx.get("cassandra_conf_dir"), conf_target])
+    as_read = (live_files, cmdline)
+    live_files, cmdline, exporter = _exporter_import(live_files, cmdline, ctx, running.get("exporter"),
+                                                     [ctx.get("cassandra_conf_dir"), conf_target])
+    if exporter["found"] and (keep is True or exporter["found"]["file"] in keep or jvm_args.COMMON in keep):
+        # the agent's file kept as it is (import_cluster_keep_hand_edits): it stays there, the role writes none (nor
+        # could it in a kept jvm-server.options, where it writes it: cassandra_config refuses that)
+        live_files, cmdline = as_read
+        agent_file = exporter["found"]["file"]
+        why = ("that file is kept as it is (import_cluster_keep_hand_edits) and gives it as it does"
+               if keep is True or agent_file in keep else "jvm-server.options, where the role writes it, is kept as it"
+               " is (import_cluster_keep_hand_edits); %s gives it as it does" % agent_file)
+        exporter = {"vars": {}, "moved": [], "found": None,
+                    "notes": ["%s: the Prometheus exporter's agent NOT imported: %s" % (agent_file, why)]}
     running["cmdline"] = cmdline
     release, rejected = str(release or SERIES[cassandra_version]), []
     found, from_shell = {}, set()

@@ -580,6 +580,8 @@ def _jvm_rewritten(rendered, live, by_file, heap, node_environment, role_environ
     own hand edits change -> (files, {setting: its file}); ([], {}) otherwise."""
     series = running.get("series")
     group = [jvm_args.ENV, jvm_args.COMMON, jvm_args.options_file(series, java)]
+    # a file the roles leave as it is (cassandra_config_keep_files): the node's
+    rendered = dict(dict((f, live[f]) for f in group if f in live and f not in rendered), **rendered)
     differing = [name for name in group if by_file.get(name)]
     if not running.get("cmdline") or set(running.get("newer") or []) & set(group) or not (differing or heap) \
             or not all(f in rendered and f in live for f in group):
