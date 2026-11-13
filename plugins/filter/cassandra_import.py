@@ -1629,15 +1629,18 @@ def log_dir_of(env_sh, cmdline="", environment=None, newer=()):
         m = re.match(r"^(?:export )?CASSANDRA_LOG_DIR=(\S+)$", line["text"])
         if LOG_DIR_GUARD.match(line["text"]) and not line["depth"]:
             inside = True
-        elif inside and line["depth"] == 1 and m:
+            continue
+        if inside and line["depth"] == 1 and re.match(r"^(else|elif)\b", line["text"]):
+            return ""  # the guard with another branch: not sure
+        if inside and line["depth"] == 1 and m:
             guarded.append(m.group(1))
             continue
-        elif not line["depth"]:
+        if not line["depth"]:
             inside = False
         if m and not line["depth"]:
             top.append(m.group(1))
-        elif m:
-            return ""  # set in another block: not sure
+        elif m or re.search(r"\bCASSANDRA_LOG_DIR=|\bunset\b.*\bCASSANDRA_LOG_DIR\b", line["text"]):
+            return ""  # set in another block, set empty, unset: not sure
     value = top[-1] if top else (environment or {}).get("CASSANDRA_LOG_DIR") or (guarded[-1] if guarded else "")
     value = _shell_value(value, {}) if value else ""
     return value if value and value.startswith("/") else ""

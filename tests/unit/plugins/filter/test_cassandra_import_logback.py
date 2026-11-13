@@ -445,6 +445,11 @@ def test_the_log_dir_the_jvm_gets():
     assert log_dir_of(env, environment={"CASSANDRA_LOG_DIR": "/srv/log"}) == "/srv/log"  # the unit's first
     assert log_dir_of(env + "\nCASSANDRA_LOG_DIR=/top\n", environment={"CASSANDRA_LOG_DIR": "/srv/log"}) == "/top"
     assert log_dir_of(env + '\nif [ -d /x ]; then\n  CASSANDRA_LOG_DIR=/x\nfi\n') == ""  # another block: not sure
+    # (re-audit, 2026-11-14) the guard with an else, the dir set empty or unset: not sure either
+    assert log_dir_of(env.replace("    CASSANDRA_LOG_DIR=/var/log/cassandra\n",
+                                  "    CASSANDRA_LOG_DIR=/var/log/cassandra\nelse\n    CASSANDRA_LOG_DIR=/y\n")) == ""
+    assert log_dir_of(env + "\nCASSANDRA_LOG_DIR=\n") == ""
+    assert log_dir_of(env + "\nunset CASSANDRA_LOG_DIR\n") == ""
     # the running JVM's: the last one (bin/cassandra's own comes after JVM_OPTS); none: not known
     assert log_dir_of(env, "java\0-Dcassandra.logdir=/a\0-Dcassandra.logdir=/b\0Main") == "/b"
     assert log_dir_of(env, "java\0Main") == ""
