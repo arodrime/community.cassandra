@@ -6,12 +6,12 @@ __metaclass__ = type
 # refusal).
 
 import os
-import warnings
 
 import yaml
 from ansible.parsing.dataloader import DataLoader
-from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar
+
+from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -19,9 +19,7 @@ except ImportError:
     def trust_as_template(template):
         return template
 
-with warnings.catch_warnings():  # already done under ansible-test
-    warnings.simplefilter("ignore")
-    init_plugin_loader()  # Ansible's filters, under plain pytest too
+load_collection_filters()  # (done under ansible-test; under plain pytest too, this checkout's collection)
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
