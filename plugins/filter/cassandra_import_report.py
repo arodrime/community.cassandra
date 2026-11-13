@@ -1573,6 +1573,7 @@ def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, ch
         items.append("Review the files written, then keep them: %s." % unbreakable("git diff && git commit") if git
                      else "Review the files written in %s." % out.path_from(inventory_dir, report.cwd))
     if self_check_ok:
+        heap_moved = [n for n in report.read if (n.get("vars") or {}).get("cassandra_heap_in_jvm_options")]
         apply_check = out.command("apply_config", inventory=inventory or None, hosts=hosts or None,
                                   extra=["--check", "--diff"], cwd=report.cwd)
         topology = out.command("topology", inventory=inventory or None, hosts=hosts or None, extra=["--check"],
@@ -1580,7 +1581,8 @@ def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, ch
         items.append("Check that the inventory changes nothing on the nodes (these two commands only look, they"
                      " change nothing): %s %s expect %s; %s %s expect nothing to do." % (
                          unbreakable(apply_check), ARROW_RIGHT,
-                         "%s rewritten (same Java options, see HAND EDITS), nothing else" % ", ".join(moves) if moves
+                         "%s rewritten: %sthe same JVM arguments, nothing else" % (", ".join(moves), (
+                             "the heap moves to jvm-server.options, " if heap_moved else "")) if moves
                          else "nothing to apply", unbreakable(topology), ARROW_RIGHT))
     if not items:
         items.append("Nothing: the inventory matches the nodes.")

@@ -364,6 +364,17 @@ def test_g1_with_a_young_generation_in_cassandra_env_keeps_the_heap_as_it_is(tmp
     assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
 
 
+def test_the_report_says_the_heap_moves_to_jvm_server_options(tmp_path):
+    # (audit r4) the heap pair at the end of jvm17-server.options: the role writes it in jvm-server.options
+    files = node_files("50x", add_to("jvm17-server.options", "-Xms16G\n-Xmx16G"))
+    nodes = [dict(imported(files, "50x", "17", launch(files, "17", tmp_path))[2], name="n1", address="10.0.0.1")]
+    lines = cassandra_import_report(cassandra_inventory_layout(nodes, "c"), ["c.yml", "."], "report.txt", {}, True,
+                                    width=400, in_git=False)
+    assert [line for line in lines if "jvm-server.options, jvm17-server.options rewritten: the heap moves to"
+            " jvm-server.options, the same JVM arguments, nothing else" in line]
+    assert not [line for line in lines if "see HAND EDITS" in line]
+
+
 def jvm17(*pairs, drop=()):
     def edit(files):
         text = files["jvm17-server.options"]
@@ -786,7 +797,7 @@ def test_report_moved_cleanup_and_next(tmp_path):
     assert re.match(r"^    jvm11-server.options line \d+: -Xmx4G   all \(2 nodes\)$", lines[at + 1])
     assert lines[at + 2] == "      not read, Java 17 reads jvm17-server.options"
     assert "1 hand edit moved" in lines[0]
-    assert u"\u2192 expect cassandra-env.sh, jvm17-server.options rewritten (same Java options, see HAND EDITS), nothing" \
+    assert u"\u2192 expect cassandra-env.sh, jvm17-server.options rewritten: the same JVM arguments, nothing" \
         u" else" in " ".join(x.strip() for x in lines[next(i for i, line in enumerate(lines) if line.startswith("==== WHAT TO DO NEXT =")):])
 
 
