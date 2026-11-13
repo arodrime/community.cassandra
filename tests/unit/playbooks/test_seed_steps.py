@@ -346,7 +346,7 @@ def test_preflight_names_a_seed_marked_absent():
     groups = {"all": GROUP, "prod": GROUP + ["n2b"]}
     hostvars = {"n1": node(1, seed_entry="10.0.0.1"), "n2": node(2), "n3": node(3), "n5": node(5),
                 "n2b": {"cassandra_node_state": "absent", "ansible_host": "10.0.0.22"}}
-    variables = dict(SEED_UP["vars"], item="10.0.0.22:7000", hostvars=hostvars, ansible_play_hosts=GROUP,
+    variables = dict(SEED_UP["vars"], item="10.0.0.22:7000", hostvars=hostvars, ansible_play_hosts=GROUP, ansible_play_hosts_all=GROUP,
                      cassandra_preflight_status=ring(1, 2, 3), _from="n1", groups=groups, cassandra_hosts="prod")
     assert render("{{ %s }}" % SEED_UP["ansible.builtin.assert"]["that"], **variables) is False
     assert render(SEED_UP["ansible.builtin.assert"]["fail_msg"], **variables).strip().endswith(
