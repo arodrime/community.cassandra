@@ -437,14 +437,20 @@ def test_off_nothing_removed_while_the_next_start_may_still_load_it(tmp_path):
     own = "-javaagent:/usr/share/own/jmx_prometheus_javaagent-0.20.0.jar=9404:{conf}/jmx_prometheus.yml\n"
     assert unused(tmp_path / "f", "off", options="-ea\n" + own, files="jvm-server.options") == [
         "kept|jvm-server.options"]
+    # (audit r7, s11) an exporter of your own, its jar and config elsewhere: needs none of the role's, removed; a
+    # variable in another agent's path (jamm's in cassandra-env.sh): nothing of the exporter
+    yours = "-javaagent:/usr/share/own/jmx_prometheus_javaagent-0.20.0.jar=9404:/usr/share/own/mine.yml\n"
+    assert len(unused(tmp_path / "s11", "off", options="-ea\n" + yours, files="jvm-server.options")) == 5
+    jamm = 'JVM_OPTS="$JVM_OPTS -javaagent:$CASSANDRA_HOME/lib/jamm-0.4.0.jar"\n'
+    assert len(unused(tmp_path / "jamm", "off", env=jamm, files="cassandra-env.sh")) == 5
     # (audit r7) one in cassandra.in.sh (s10), in the unit or a drop-in (an absolute path): kept
     insh = 'JVM_OPTS="$JVM_OPTS -javaagent:{dir}/jmx_prometheus_javaagent-1.7.0.jar=9404:/etc/x.yml"\n'
     assert unused(tmp_path / "s10", "off", insh=insh, files="cassandra.in.sh") == ["kept|cassandra.in.sh"]
     unit = tmp_path / "unit"
     (unit / "cassandra.service.d").mkdir(parents=True)
     (unit / "cassandra.service.d" / "override.conf").write_text(
-        "[Service]\nEnvironment=JVM_EXTRA_OPTS=-javaagent:/opt/prometheus-jmx-exporter/jmx_prometheus_javaagent-1.7.0.jar"
-        "=9404:/etc/x.yml\n")
+        "[Service]\nEnvironment=JVM_EXTRA_OPTS=-javaagent:%s/jmx_prometheus_javaagent-1.7.0.jar=9404:/etc/x.yml\n"
+        % (tmp_path / "s6" / "exporter"))
     assert unused(tmp_path / "s6", "off", files="%s/cassandra.service %s/cassandra.service.d/*.conf" % (unit, unit)) == [
         "kept|%s/cassandra.service.d/override.conf" % unit]
     # the unit's environment of the variables (s6), said by its name
@@ -504,6 +510,11 @@ def test_off_nothing_removed_while_the_next_start_may_still_load_it(tmp_path):
     assert when(said, variables) is True
     msg = render(said["ansible.builtin.debug"]["msg"], variables)
     assert "jvm-server.options still gives" in msg and "Remove the agent's line there" in msg
+    variables["cassandra_config_exporter_unused"] = {"stdout_lines": [
+        "kept|cassandra_service_environment", "kept|/etc/systemd/system/cassandra.service.d/override.conf"]}
+    variables.update((k, render(v, variables)) for k, v in said["vars"].items() if k.startswith("_"))
+    msg = render(said["ansible.builtin.debug"]["msg"], variables)
+    assert "your snippet, cassandra_service_environment, systemctl edit cassandra for the unit)" in msg
     assert render(find(CLEANUP, "Remove them")["loop"], variables) == []
     note = find(CLEANUP, "Note what is removed")
     for name, value in note["vars"].items():

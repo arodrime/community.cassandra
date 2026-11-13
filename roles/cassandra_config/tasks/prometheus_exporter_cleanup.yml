@@ -38,15 +38,17 @@
           fi
         )
         [ -n "$unused" ] || exit 0
-        # off, the next start may still load an agent or the role's config: nothing removed (broadly: any agent of
-        # the exporter, its jar's path through a variable too, the config of the conf dir; kept, it costs a warning,
-        # removed, Cassandra would not start)
+        # off, the next start may still load the role's jar or config: nothing removed (broadly: a jar of its
+        # directory, an agent's jar through a variable, the conf dir's config; kept, it costs a warning, removed,
+        # Cassandra would not start). An exporter of your own (its jar and config elsewhere) needs none of them.
         if [ "$on" != on ]; then
           {
             for f in $files; do
               case "$f" in /*) path=$f ;; *) path=$conf/$f ;; esac
-              grep -v '^[[:space:]]*#' "$path" 2>/dev/null \
-                | grep -qsE -e 'jmx_prometheus_javaagent' -e "$conf/jmx_prometheus[.]yml" && echo "kept|$f"
+              lines=$(grep -v '^[[:space:]]*#' "$path" 2>/dev/null) || continue
+              { printf '%s\n' "$lines" | grep -qF -e "$dir/" -e "$conf/jmx_prometheus.yml" \
+                || printf '%s\n' "$lines" | grep -qE 'javaagent:[^[:space:]=]*[$][^[:space:]=]*jmx_prometheus_javaagent'
+              } && echo "kept|$f"
             done
             set -f
             for f in $rendered; do echo "kept|$f"; done
@@ -64,9 +66,10 @@
   changed_when: false
   check_mode: false  # reads only
   vars:
-    # (an agent of the exporter, or the conf dir's config)
+    # (as the script finds it: a jar of the role's directory, an agent's jar through a variable, the conf dir's config)
     _agent: >-
-      jmx_prometheus_javaagent|{{ (cassandra_conf_dir | regex_replace('(?<=.)/+$', '')) | regex_escape }}/jmx_prometheus[.]yml
+      {{ (cassandra_prometheus_exporter_dir | regex_replace('(?<=.)/+$', '')) | regex_escape }}/|{{
+         (cassandra_conf_dir | regex_replace('(?<=.)/+$', '')) | regex_escape }}/jmx_prometheus[.]yml|javaagent:[^\s=]*[$][^\s=]*jmx_prometheus_javaagent
     # the series' cassandra-env.sh and JVM options files: all of them (a Java other than cassandra_java_version's
     # reads another)
     _jvm_files: >-
@@ -103,7 +106,9 @@
       WARNING  {{ inventory_hostname }}: the Prometheus exporter is off, but {{ _kept | join(', ') }} still
       {{ 'gives' if _kept | length == 1 else 'give' }} Cassandra an exporter's agent or the role's config: its jar and
       config are left in place, or Cassandra would not start. Remove the agent's line there (the file, your copy or
-      template, the extra options or your snippet), then run again to remove them.
+      template, the extra options or your snippet{{ ', cassandra_service_environment' if 'cassandra_service_environment' in _kept
+      else '' }}{{ ', systemctl edit cassandra for the unit' if _kept | select('match', '/etc/systemd/') | list else '' }}), or
+      point it at a jar and config of your own, then run again to remove them.
   vars:
     cassandra_output: true
     _kept: "{{ cassandra_config_exporter_unused.stdout_lines | select('match', 'kept[|]') | map('regex_replace', '^kept[|]', '') | list }}"
