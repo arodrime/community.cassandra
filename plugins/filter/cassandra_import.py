@@ -1569,16 +1569,40 @@ def _shell_value(text, names):
     return None if re.search(r"[$`]", text) or text.startswith("~") else text
 
 
-def log_dir_of(env_sh, cmdline=""):
-    """The dir the JVM gets as cassandra.logdir: its -Dcassandra.logdir (cmdline: /proc/<pid>/cmdline), else the
-    last plain path cassandra-env.sh sets CASSANDRA_LOG_DIR to; '' when not known."""
-    for arg in str(cmdline or "").split("\0"):
-        if arg.startswith("-Dcassandra.logdir="):
-            return arg[len("-Dcassandra.logdir="):]
-    values = [_shell_value(m.group(1), {}) for m in
-              re.finditer(r"^\s*(?:export\s+)?CASSANDRA_LOG_DIR=(\S+)\s*$", str(env_sh or ""), re.M)]
-    values = [v for v in values if v and v.startswith("/")]
-    return values[-1] if values else ""
+# the stock guard of cassandra-env.sh's own CASSANDRA_LOG_DIR: the unit's wins over it
+LOG_DIR_GUARD = re.compile(r'^if \[ "x\$CASSANDRA_LOG_DIR" = x \] ?; then$')  # (as env_lines writes it)
+
+
+def log_dir_of(env_sh, cmdline="", environment=None, newer=()):
+    """The dir the JVM gets as cassandra.logdir -> '' when not sure (then nothing is read as it).
+    cmdline: the running JVM's /proc/<pid>/cmdline: its last -Dcassandra.logdir (bin/cassandra adds its own after
+    JVM_OPTS), none there: not known; not used when cassandra-env.sh changed since it started (newer). Else
+    cassandra-env.sh's: its last plain path set outside any block, else the unit's (environment), else the one of
+    the stock guard (CASSANDRA_LOG_DIR unset)."""
+    if cmdline and jvm_args.ENV not in (newer or []):
+        found = [arg for arg in str(cmdline).split("\0") if arg.startswith("-Dcassandra.logdir=")]
+        return found[-1][len("-Dcassandra.logdir="):] if found else ""
+    try:
+        lines = jvm_args.env_lines(str(env_sh or ""))
+    except jvm_args.NotSame:
+        return ""
+    top, guarded, inside = [], [], False
+    for line in lines:
+        m = re.match(r"^(?:export )?CASSANDRA_LOG_DIR=(\S+)$", line["text"])
+        if LOG_DIR_GUARD.match(line["text"]) and not line["depth"]:
+            inside = True
+        elif inside and line["depth"] == 1 and m:
+            guarded.append(m.group(1))
+            continue
+        elif not line["depth"]:
+            inside = False
+        if m and not line["depth"]:
+            top.append(m.group(1))
+        elif m:
+            return ""  # set in another block: not sure
+    value = top[-1] if top else (environment or {}).get("CASSANDRA_LOG_DIR") or (guarded[-1] if guarded else "")
+    value = _shell_value(value, {}) if value else ""
+    return value if value and value.startswith("/") else ""
 
 
 def logback_as_log_dir(text, log_dir):
@@ -1912,7 +1936,8 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
             found.update(got)
             if name.endswith(".sh"):
                 from_shell.update(got)
-    log_dir = log_dir_of(live_files.get("cassandra-env.sh", ""), cmdline)
+    log_dir = log_dir_of(live_files.get("cassandra-env.sh", ""), cmdline, running.get("environment"),
+                         running.get("newer"))
     if "logback.xml" in live_files and logback_as_log_dir(live_files["logback.xml"], log_dir) != live_files["logback.xml"]:
         # the log dir written as itself: the same files as ${cassandra.logdir}, read so
         live_files = dict(live_files, **{"logback.xml": logback_as_log_dir(live_files["logback.xml"], log_dir)})

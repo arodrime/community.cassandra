@@ -11,8 +11,9 @@ import re
 import pytest
 import yaml
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_config_import
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import cassandra_import_self_check
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_config_import, log_dir_of
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import (
+    _compare_files, cassandra_import_self_check)
 from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_import_check import (
     FACTS, import_node, seeded, stock)
 
@@ -436,3 +437,23 @@ def test_the_audit_file_in_a_dir_of_its_own(series):
         "${cassandra.logdir}/audit/", "/data/cassandra/log/audit/"))
     out = cassandra_config_import(files, "50x", FACTS)
     assert out["hand_edits"] == [] and "cassandra_log_audit_dir" not in out["vars"]
+
+
+def test_the_log_dir_the_jvm_gets():
+    env = seeded(stock("50x"))["cassandra-env.sh"]  # (the stock guard: /var/log/cassandra when unset)
+    assert log_dir_of(env) == "/var/log/cassandra"
+    assert log_dir_of(env, environment={"CASSANDRA_LOG_DIR": "/srv/log"}) == "/srv/log"  # the unit's first
+    assert log_dir_of(env + "\nCASSANDRA_LOG_DIR=/top\n", environment={"CASSANDRA_LOG_DIR": "/srv/log"}) == "/top"
+    assert log_dir_of(env + '\nif [ -d /x ]; then\n  CASSANDRA_LOG_DIR=/x\nfi\n') == ""  # another block: not sure
+    # the running JVM's: the last one (bin/cassandra's own comes after JVM_OPTS); none: not known
+    assert log_dir_of(env, "java\0-Dcassandra.logdir=/a\0-Dcassandra.logdir=/b\0Main") == "/b"
+    assert log_dir_of(env, "java\0Main") == ""
+    # cassandra-env.sh changed since the JVM started: its own
+    assert log_dir_of(env, "java\0-Dcassandra.logdir=/a\0Main", newer=["cassandra-env.sh"]) == "/var/log/cassandra"
+
+
+def test_the_log_dir_written_as_itself_only_when_the_jvm_gets_it():
+    # the first -Dcassandra.logdir the literal dir, the last (the one the JVM uses) another: other files
+    files = with_log_dir("/data/cassandra/log", literal("/data/cassandra/log"))
+    cmdline = "java\0-Dcassandra.logdir=/data/cassandra/log\0-Dcassandra.logdir=/srv/log\0Main"
+    assert cassandra_config_import(files, "50x", FACTS, cmdline=cmdline)["hand_edits"]

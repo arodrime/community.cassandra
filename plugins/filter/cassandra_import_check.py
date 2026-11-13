@@ -517,9 +517,11 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
     """running: {cmdline, newer, series} (cassandra_import_self_check's jvm); series: cassandra_version, else running's."""
     differences, notes, heap, by_file = [], [], [], {}
     series = series or (running or {}).get("series", "")
-    if "logback.xml" in live:  # the log dir written as itself: ${cassandra.logdir} for logback
+    # the log dir written as itself in logback.xml: ${cassandra.logdir} (as the node's JVM got it)
+    if "logback.xml" in live:
         live = dict(live, **{"logback.xml": logback_as_log_dir(live["logback.xml"], log_dir_of(
-            live.get("cassandra-env.sh", ""), (running or {}).get("cmdline")))})
+            live.get("cassandra-env.sh", ""), (running or {}).get("cmdline"), node_environment,
+            (running or {}).get("newer")))})
     if "cassandra-env.sh" in live:  # the Prometheus exporter's block: the line it runs (the role writes the agent)
         live = dict(live, **{"cassandra-env.sh": prometheus.block_as_line(live["cassandra-env.sh"],
                                                                           (running or {}).get("cmdline"))})
