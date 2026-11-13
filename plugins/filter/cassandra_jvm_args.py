@@ -219,7 +219,7 @@ def _moved_lines(live, role, ops):
 
 def env_differences(live, role):
     """The lines of the node's cassandra-env.sh not in the role's -> ([its JVM_OPTS lines: {n, text, words}], [its
-    heap assignments], [its lines in a block that the role's has outside any (_moved_lines): they must have run]);
+    heap assignments], [its lines the role's has at another place (_moved_lines)]);
     NotSame when they differ otherwise (only lines outside any block may: a line adding plain options to JVM_OPTS
     on the node's side, a heap assignment on either; and a line adding plain options at another place on both)."""
     def ops_of(role, live):  # (a line in a block differs from the same line outside any)
@@ -228,7 +228,7 @@ def env_differences(live, role):
         return [op for op in matcher.get_opcodes() if op[0] != "equal"]
     added, heap = [], []
     moved = _moved_lines(live, role, ops_of(role, live))
-    in_blocks = [line for line in live if line["text"] in moved and line["depth"]]
+    moved_lines = [line for line in live if line["text"] in moved]
     if any(line["text"] in moved and GREP.match(lines[i - 1]["text"]) for lines in (role, live)
            for i, line in enumerate(lines) if i):
         raise NotSame("cassandra-env.sh differs right after a grep (its $? read on the next line)")
@@ -250,7 +250,7 @@ def env_differences(live, role):
                 heap.append(line)
             else:
                 raise NotSame("cassandra-env.sh differs from the role's otherwise than by JVM_OPTS lines and the heap")
-    return added, heap, in_blocks
+    return added, heap, moved_lines
 
 
 def _plain_value(word):
@@ -399,17 +399,17 @@ def _analyse(args, live, role, series, java, node_env):
     if ENV not in live or ENV not in role:
         raise NotSame("cassandra-env.sh not read")
     live_lines, role_lines = env_lines(live[ENV]), env_lines(role[ENV])
-    added, heap_lines, in_blocks = env_differences(live_lines, role_lines)
+    added, heap_lines, moved = env_differences(live_lines, role_lines)
     # options the unit gives cassandra-env.sh to add (JVM_EXTRA_OPTS, MX4J_*): a line moved to the options files
     # would go before them, and an option of another spelling among them (-Xint and -Xmixed, -Xrs and
     # -XX:-ReduceSignalUsage, -verbose:gc and -Xlog...) would win instead
-    if (added or in_blocks) and any((node_env or {}).get(name) for name in ("JVM_EXTRA_OPTS", "MX4J_ADDRESS",
-                                                                            "MX4J_PORT")):
+    if (added or moved) and any((node_env or {}).get(name) for name in ("JVM_EXTRA_OPTS", "MX4J_ADDRESS", "MX4J_PORT")):
         raise NotSame("the unit gives cassandra-env.sh options to add (JVM_EXTRA_OPTS, MX4J_*)")
-    # a line the node has in a block, the role outside any: the same only when its block ran
-    for line in in_blocks:
+    # a line the node has at another place than the role (in a block: the same only when its block ran)
+    for line in moved:
         if len(_found(args, APPEND.match(line["text"]).group(1).split(), after_files, end)) != 1:
-            raise NotSame("a JVM_OPTS line of cassandra-env.sh in a block is not once in the running JVM's arguments")
+            raise NotSame("a JVM_OPTS line of cassandra-env.sh at another place is not once in the running JVM's"
+                          " arguments")
     # the node's JVM_OPTS lines in the arguments, in the order cassandra-env.sh adds them
     at = after_files
     for line in added:

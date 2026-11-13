@@ -306,6 +306,14 @@ def test_the_rmi_hostname_line_elsewhere_is_its_variable(tmp_path, edit):
     assert "cassandra_jmx_rmi_hostname" not in imported(files, "50x", "17", launch(files, "17", tmp_path))[2]["vars"]
 
 
+def test_a_line_at_another_place_after_the_unit_s_extra_options_is_not_the_same(tmp_path):
+    # the node's rmi line after JVM_EXTRA_OPTS wins over the unit's; the role's, before it, would not
+    env = {"JVM_EXTRA_OPTS": "-Djava.rmi.server.hostname=10.9.9.9"}
+    files = node_files("50x", add_to("cassandra-env.sh", RMI))
+    cmdline = launch(files, "17", tmp_path, environment=env)
+    assert check(files, "50x", java="17", cmdline=cmdline, env=env)["differences"]
+
+
 def remote_jmx(local_jmx="no"):
     """(2026-11-13, a 5.0.9 RPM node) remote JMX: the JMX files and the rmi hostname in its branch, below the
     authentication line, the stock password file line commented out (its users readable)."""
