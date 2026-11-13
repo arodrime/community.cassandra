@@ -3,18 +3,25 @@
 # cassandra_install removes the dsbulk versions it installed before. On: the jars of other versions the role
 # downloaded into cassandra_prometheus_exporter_dir (listed in its .cassandra_config; a jar put there by other
 # means stays). Off: those jars, that list (and the directory when it is then empty), the role's config (its
-# header line) and the record of its parts read at start; nothing while the JVM would still load the role's jar: a file
-# its Java reads kept by hand (cassandra_config_keep_files, read on the node), or the agent in the extra options the
-# role writes (cassandra_jvm*_extra_options: what the run writes, not the file still on the node, --check included):
-# removed, they would stop Cassandra at its next start. A
+# header line) and the record of its parts read at start; nothing while the next start may still load an exporter's
+# agent or the role's config: in a run that writes, the files that start reads, as written; in one that only looks
+# (--check, apply_config's preview), the ones the role does not write from its template (kept by hand, your own
+# templates) as they are, and what it is to write from the variables (the extra options, your snippet of
+# cassandra-env.sh): removed, they would stop Cassandra at its next start. A
 # running Cassandra keeps the jar it opened until its restart (the one the JVM options file now gives is there).
+# (a task check mode skips: this run writes the files, or only looks, --check or check_mode applied to the role)
+- name: Tell a run that writes from one that only looks
+  ansible.builtin.command: "true"
+  register: _cassandra_config_exporter_writes
+  changed_when: false
+
 - name: Find what the exporter's agent no longer needs
   ansible.builtin.command:
     argv:
       - sh
       - -c
       - |
-        dir=$1 keep=$2 conf=$3 on=$4 kept=$5 extras=$6
+        dir=$1 keep=$2 conf=$3 on=$4 files=$5 rendered=$6
         list="$dir/.cassandra_config"
         unused=$(
           if [ -f "$list" ]; then
@@ -31,14 +38,16 @@
           fi
         )
         [ -n "$unused" ] || exit 0
-        # off, the JVM still loads the role's jar (a kept file its Java reads, the extra options): nothing removed
+        # off, the next start may still load an agent or the role's config: nothing removed (broadly: any agent of
+        # the exporter, its jar's path through a variable too, the config of the conf dir; kept, it costs a warning,
+        # removed, Cassandra would not start)
         if [ "$on" != on ]; then
           {
-            for f in $kept; do
-              grep -v '^[[:space:]]*#' "$conf/$f" 2>/dev/null | grep -qsF -- "-javaagent:$dir/jmx_prometheus_javaagent-" \
-                && echo "kept|$f"
+            for f in $files; do
+              grep -v '^[[:space:]]*#' "$conf/$f" 2>/dev/null \
+                | grep -qsE -e 'jmx_prometheus_javaagent' -e "$conf/jmx_prometheus[.]yml" && echo "kept|$f"
             done
-            [ -n "$extras" ] && echo "kept|$extras"
+            [ -n "$rendered" ] && echo "kept|$rendered"
           } | grep . && exit 0
         fi
         echo "$unused"
@@ -47,23 +56,39 @@
       - "{{ _cassandra_config_exporter_jar | basename }}"
       - "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}"
       - "{{ 'on' if cassandra_prometheus_exporter_enabled | bool else 'off' }}"
-      - "{{ cassandra_config_keep_files | select('in', _cassandra_config_java_files) | join(' ') }}"
+      # written: the files the next start reads, as they are now on the node (its Java not given,
+      # cassandra_java_version: all of the series' JVM files); only looking: the ones the role does not write from its
+      # own template (kept by hand, your own templates) as they are on the node
       - >-
-        {{ 'cassandra_jvm*_extra_options' if ('-javaagent:' ~ (cassandra_prometheus_exporter_dir
-           | regex_replace('(?<=.)/+$', '')) ~ '/jmx_prometheus_javaagent-') in _cassandra_config_java_options
+        {{ ((_cassandra_config_java_files if cassandra_java_version is defined
+             else _cassandra_config_files[_cassandra_config_series]
+                  | select('match', '^(jvm[0-9]*-server[.]options|cassandra-env[.]sh)$') | list)
+            if _cassandra_config_exporter_writes is not skipped
+            else (cassandra_config_keep_files + (cassandra_config_template_overrides
+                  if cassandra_config_template_overrides is mapping else {}) | list)
+                 | select('in', _cassandra_config_java_files) | unique) | join(' ') }}
+      # only looking: what the role is to write there from the variables, the extra options and your snippet of
+      # cassandra-env.sh
+      - >-
+        {{ '' if _cassandra_config_exporter_writes is not skipped
+           else 'cassandra_jvm*_extra_options' if _cassandra_config_java_options is search(_agent)
+           else 'cassandra_config_template_snippets' if _cassandra_config_snippet_env | string is search(_agent)
            else '' }}
   register: cassandra_config_exporter_unused
   changed_when: false
   check_mode: false  # reads only
+  vars:
+    # (an agent of the exporter, or the conf dir's config)
+    _agent: >-
+      jmx_prometheus_javaagent|{{ (cassandra_conf_dir | regex_replace('(?<=.)/+$', '')) | regex_escape }}/jmx_prometheus[.]yml
 
 - name: Say what the exporter's agent in a file still needs is left in place
   ansible.builtin.debug:
     msg: >-
       WARNING  {{ inventory_hostname }}: the Prometheus exporter is off, but {{ _kept | join(', ') }} still
-      {{ 'gives' if _kept | length == 1 else 'give' }} Cassandra its agent (a file kept by hand,
-      cassandra_config_keep_files, or the agent in cassandra_jvm*_extra_options): its jar and config are left in
-      place, or Cassandra would not start. Remove the agent's line there (your copy, or the extra options), then run
-      again to remove them.
+      {{ 'gives' if _kept | length == 1 else 'give' }} Cassandra an exporter's agent or the role's config: its jar and
+      config are left in place, or Cassandra would not start. Remove the agent's line there (the file, your copy or
+      template, the extra options or your snippet), then run again to remove them.
   vars:
     cassandra_output: true
     _kept: "{{ cassandra_config_exporter_unused.stdout_lines | select('match', 'kept[|]') | map('regex_replace', '^kept[|]', '') | list }}"
