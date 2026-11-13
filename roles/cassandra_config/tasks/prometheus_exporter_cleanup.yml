@@ -44,10 +44,12 @@
         if [ "$on" != on ]; then
           {
             for f in $files; do
-              grep -v '^[[:space:]]*#' "$conf/$f" 2>/dev/null \
+              case "$f" in /*) path=$f ;; *) path=$conf/$f ;; esac
+              grep -v '^[[:space:]]*#' "$path" 2>/dev/null \
                 | grep -qsE -e 'jmx_prometheus_javaagent' -e "$conf/jmx_prometheus[.]yml" && echo "kept|$f"
             done
-            [ -n "$rendered" ] && echo "kept|$rendered"
+            set -f
+            for f in $rendered; do echo "kept|$f"; done
           } | grep . && exit 0
         fi
         echo "$unused"
@@ -56,24 +58,8 @@
       - "{{ _cassandra_config_exporter_jar | basename }}"
       - "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}"
       - "{{ 'on' if cassandra_prometheus_exporter_enabled | bool else 'off' }}"
-      # written: the files the next start reads, as they are now on the node (its Java not given,
-      # cassandra_java_version: all of the series' JVM files); only looking: the ones the role does not write from its
-      # own template (kept by hand, your own templates) as they are on the node
-      - >-
-        {{ ((_cassandra_config_java_files if cassandra_java_version is defined
-             else _cassandra_config_files[_cassandra_config_series]
-                  | select('match', '^(jvm[0-9]*-server[.]options|cassandra-env[.]sh)$') | list)
-            if _cassandra_config_exporter_writes is not skipped
-            else (cassandra_config_keep_files + (cassandra_config_template_overrides
-                  if cassandra_config_template_overrides is mapping else {}) | list)
-                 | select('in', _cassandra_config_java_files) | unique) | join(' ') }}
-      # only looking: what the role is to write there from the variables, the extra options and your snippet of
-      # cassandra-env.sh
-      - >-
-        {{ '' if _cassandra_config_exporter_writes is not skipped
-           else 'cassandra_jvm*_extra_options' if _cassandra_config_java_options is search(_agent)
-           else 'cassandra_config_template_snippets' if _cassandra_config_snippet_env | string is search(_agent)
-           else '' }}
+      - "{{ _on_node | join(' ') }}"
+      - "{{ _rendered | join(' ') }}"
   register: cassandra_config_exporter_unused
   changed_when: false
   check_mode: false  # reads only
@@ -81,6 +67,35 @@
     # (an agent of the exporter, or the conf dir's config)
     _agent: >-
       jmx_prometheus_javaagent|{{ (cassandra_conf_dir | regex_replace('(?<=.)/+$', '')) | regex_escape }}/jmx_prometheus[.]yml
+    # the series' cassandra-env.sh and JVM options files: all of them (a Java other than cassandra_java_version's
+    # reads another)
+    _jvm_files: >-
+      {{ _cassandra_config_files[_cassandra_config_series]
+         | select('match', '^(jvm[0-9]*-server[.]options|cassandra-env[.]sh)$') | list }}
+    # the files the role does not write that give the JVM options: cassandra.in.sh, the unit and its drop-ins
+    _not_the_roles:
+      - cassandra.in.sh
+      - /usr/share/cassandra/cassandra.in.sh
+      - /etc/systemd/system/cassandra.service
+      - /etc/systemd/system/cassandra.service.d/*.conf
+    # read on the node: in a run that writes, as written; in one that only looks, the ones the role does not write
+    # from its template (kept by hand, your own templates)
+    _on_node: >-
+      {{ (_jvm_files if _cassandra_config_exporter_writes is not skipped
+          else (cassandra_config_keep_files + (cassandra_config_template_overrides
+                if cassandra_config_template_overrides is mapping else {}) | list)
+               | select('in', _jvm_files) | unique | list) + _not_the_roles }}
+    # what the role (or cassandra_service) is to write from the variables: the unit's environment
+    # (cassandra_service_environment, JVM_EXTRA_OPTS); only looking, the extra options and your snippet of
+    # cassandra-env.sh too
+    _rendered: >-
+      {{ (['cassandra_service_environment'] if (cassandra_service_environment | default({})
+           if cassandra_service_environment | default({}) is mapping else {}).values() | map('string') | join(' ')
+           is search(_agent) else [])
+         + ([] if _cassandra_config_exporter_writes is not skipped
+            else ['cassandra_jvm*_extra_options'] if _cassandra_config_java_options is search(_agent)
+            else ['cassandra_config_template_snippets'] if _cassandra_config_snippet_env | string is search(_agent)
+            else []) }}
 
 - name: Say what the exporter's agent in a file still needs is left in place
   ansible.builtin.debug:

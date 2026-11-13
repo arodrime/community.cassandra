@@ -387,14 +387,14 @@ CLEANUP = load_tasks(os.path.join(ROLE, "tasks", "prometheus_exporter_cleanup.ym
 
 
 def unused(tmp_path, on, listed=("jmx_prometheus_javaagent-1.6.0.jar", "jmx_prometheus_javaagent-1.7.0.jar"),
-           others=("theirs.jar",), config_header=True, options=None, env=None, files="", rendered=""):
+           others=("theirs.jar",), config_header=True, options=None, env=None, insh=None, files="", rendered=""):
     """What the cleanup finds in a directory and a conf dir made so (sh runs its script); options, env: the content
-    of the conf dir's jvm-server.options, cassandra-env.sh ({dir}: the jars' dir, {conf}: the conf dir); files: the
+    of the conf dir's jvm-server.options, cassandra-env.sh, cassandra.in.sh ({dir}: the jars' dir, {conf}: the conf dir); files: the
     ones it reads there; rendered: what the role is to write gives an agent (said by its name)."""
     jars, conf = tmp_path / "exporter", tmp_path / "conf"
     jars.mkdir(parents=True)
     conf.mkdir()
-    for name, text in (("jvm-server.options", options), ("cassandra-env.sh", env)):
+    for name, text in (("jvm-server.options", options), ("cassandra-env.sh", env), ("cassandra.in.sh", insh)):
         if text is not None:
             (conf / name).write_text(text.replace("{dir}", str(jars)).replace("{conf}", str(conf)))
     for name in list(listed) + list(others):
@@ -437,6 +437,19 @@ def test_off_nothing_removed_while_the_next_start_may_still_load_it(tmp_path):
     own = "-javaagent:/usr/share/own/jmx_prometheus_javaagent-0.20.0.jar=9404:{conf}/jmx_prometheus.yml\n"
     assert unused(tmp_path / "f", "off", options="-ea\n" + own, files="jvm-server.options") == [
         "kept|jvm-server.options"]
+    # (audit r7) one in cassandra.in.sh (s10), in the unit or a drop-in (an absolute path): kept
+    insh = 'JVM_OPTS="$JVM_OPTS -javaagent:{dir}/jmx_prometheus_javaagent-1.7.0.jar=9404:/etc/x.yml"\n'
+    assert unused(tmp_path / "s10", "off", insh=insh, files="cassandra.in.sh") == ["kept|cassandra.in.sh"]
+    unit = tmp_path / "unit"
+    (unit / "cassandra.service.d").mkdir(parents=True)
+    (unit / "cassandra.service.d" / "override.conf").write_text(
+        "[Service]\nEnvironment=JVM_EXTRA_OPTS=-javaagent:/opt/prometheus-jmx-exporter/jmx_prometheus_javaagent-1.7.0.jar"
+        "=9404:/etc/x.yml\n")
+    assert unused(tmp_path / "s6", "off", files="%s/cassandra.service %s/cassandra.service.d/*.conf" % (unit, unit)) == [
+        "kept|%s/cassandra.service.d/override.conf" % unit]
+    # the unit's environment of the variables (s6), said by its name
+    assert unused(tmp_path / "s6b", "off", rendered="cassandra_service_environment") == [
+        "kept|cassandra_service_environment"]
     # what the role is to write gives one (only looking: the extra options, a snippet of cassandra-env.sh, s4)
     assert unused(tmp_path / "e", "off", rendered="cassandra_config_template_snippets") == [
         "kept|cassandra_config_template_snippets"]
@@ -448,23 +461,35 @@ def test_off_nothing_removed_while_the_next_start_may_still_load_it(tmp_path):
 
     def args(**variables):
         variables = role_vars(**variables)
-        variables.update((k, render(v, variables)) for k, v in task_vars.items())
-        return render(argv[-2], variables).strip(), render(argv[-1], variables).strip()
+        variables.update((k, render(v, variables) if isinstance(v, str) else v) for k, v in task_vars.items())
+        return render(argv[-2], variables).split(), render(argv[-1], variables).split()
     looking = dict(_cassandra_config_exporter_writes={"skipped": True, "changed": False})
     kept = ["cassandra.yaml", "jvm-server.options", "jvm8-server.options", "jvm17-server.options"]
-    # a run that writes: the files the next start reads, as written; its Java not given, the series' JVM files
+    not_the_roles = ["cassandra.in.sh", "/usr/share/cassandra/cassandra.in.sh", "/etc/systemd/system/cassandra.service",
+                     "/etc/systemd/system/cassandra.service.d/*.conf"]
+    # a run that writes: the files the next start reads, as written, all the series' JVM files whatever
+    # cassandra_java_version says (audit r7, s7: 11 given, the node runs 17), cassandra.in.sh, the unit (s10, s6)
     writes = dict(_cassandra_config_exporter_writes={"rc": 0, "changed": False}, cassandra_config_keep_files=kept)
-    assert args(cassandra_java_version="17", **writes) == ("cassandra-env.sh jvm-server.options jvm17-server.options", "")
-    assert args(**writes)[0] == "cassandra-env.sh jvm-server.options jvm11-server.options jvm17-server.options"
-    # only looking: the files kept that its Java reads (a jvm8-server.options kept on Java 17: not), your templates
-    assert args(cassandra_config_keep_files=kept, **looking) == ("jvm-server.options jvm17-server.options", "")
-    assert args(cassandra_config_template_overrides={"cassandra-env.sh": "/x/env.j2"}, **looking)[0] == "cassandra-env.sh"
+    every = ["cassandra-env.sh", "jvm-server.options", "jvm11-server.options", "jvm17-server.options"]
+    assert args(cassandra_java_version="11", **writes) == (every + not_the_roles, [])
+    assert args(**writes)[0] == every + not_the_roles
+    # only looking: the series' files kept (a jvm8-server.options of 4.x kept on 5.0: not), your templates; the files
+    # the role does not write
+    assert args(cassandra_config_keep_files=kept, **looking) == (
+        ["jvm-server.options", "jvm17-server.options"] + not_the_roles, [])
+    assert args(cassandra_config_template_overrides={"cassandra-env.sh": "/x/env.j2"}, **looking)[0] == \
+        ["cassandra-env.sh"] + not_the_roles
     # only looking: what the role is to write, the extra options and your snippet of cassandra-env.sh (s4)
     agent = "-javaagent:/opt/prometheus-jmx-exporter/jmx_prometheus_javaagent-1.7.0.jar=9404:/etc/x.yml"
-    assert args(cassandra_jvm17_extra_options=[agent], **looking)[1] == "cassandra_jvm*_extra_options"
+    assert args(cassandra_jvm17_extra_options=[agent], **looking)[1] == ["cassandra_jvm*_extra_options"]
     assert args(_cassandra_config_snippet_env='JVM_OPTS="$JVM_OPTS %s"' % agent, **looking)[1] == \
-        "cassandra_config_template_snippets"
-    assert args(cassandra_jvm17_extra_options=["-Dx=1"], **looking)[1] == ""
+        ["cassandra_config_template_snippets"]
+    assert args(cassandra_jvm17_extra_options=["-Dx=1"], **looking)[1] == []
+    # (audit r7, s6) the unit's environment cassandra-env.sh appends (JVM_EXTRA_OPTS), in both
+    environment = {"JVM_EXTRA_OPTS": agent, "LOCAL_JMX": "no"}
+    for run in (writes, looking):
+        assert args(cassandra_service_environment=environment, **run)[1] == ["cassandra_service_environment"]
+        assert args(cassandra_service_environment={"LOCAL_JMX": "no"}, **run)[1] == []
     # nothing of the role's there (an exporter set up by hand): nothing said
     bare = tmp_path / "d"
     bare.mkdir()
