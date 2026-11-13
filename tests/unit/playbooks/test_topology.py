@@ -302,8 +302,10 @@ def test_preflight_notes_render_one_line_each():
         "WARNING  cassandra_x (set for n1) is not known to this collection: its roles and playbooks do not read it"]
     t = found["Seed layout"]
     layout = {"lines": ["Seeds  dc1  n1 (r1), n2 (r2)  ok", "WARNING  Seeds  dc2  b1 (r1)  1 seed: 2 to 3 per datacenter"],
-              "problems": ["dc2: 1 seed: 2 to 3 per datacenter"], "notes": [], "suggested": ["n1", "n2", "b1", "b2"]}
+              "problems": ["dc2: 1 seed: 2 to 3 per datacenter"], "notes": [], "suggested": ["n1", "n2", "b1", "b2"],
+              "stopped": []}
     cmd = "ansible-playbook community.cassandra.change_seeds -e cassandra_hosts=prod"
+    stopped = trust_as_template(t["vars"]["_suggested_stopped"])
     for deferred, lines in ((True, ['WARNING  Seeds  dc2  b1 (r1)  1 seed: 2 to 3 per datacenter',
                                     '  suggested in the group_vars of prod: cassandra_seeds: ["n1", "n2", "b1", "b2"]'
                                     ' (update the inventory: topology then applies it live)']),
@@ -312,13 +314,22 @@ def test_preflight_notes_render_one_line_each():
                                      '  suggested in the group_vars of prod: cassandra_seeds: ["n1", "n2", "b1", "b2"]',
                                      '  then apply it live: ' + cmd])):
         note = render(t["vars"]["_note"], _layout=layout, _cluster="prod", _nl="\n", _change_seeds=cmd,
-                      _deferred=deferred, _in_plan=deferred)
+                      _deferred=deferred, _in_plan=deferred, _suggested_stopped=stopped)
         assert note.split("\n") == lines
     # kept for an operation's plan (not topology's): the WARNING lines, the way out change_seeds
-    note = render(t["vars"]["_note"], _layout=layout, _cluster="prod", _nl="\n", _change_seeds=cmd, _deferred=False, _in_plan=True)
+    note = render(t["vars"]["_note"], _layout=layout, _cluster="prod", _nl="\n", _change_seeds=cmd, _deferred=False,
+                  _in_plan=True, _suggested_stopped=stopped)
     assert note.split("\n") == ['WARNING  Seeds  dc2  b1 (r1)  1 seed: 2 to 3 per datacenter',
                                 '  suggested in the group_vars of prod: cassandra_seeds: ["n1", "n2", "b1", "b2"]',
                                 '  then apply it live: ' + cmd]
+    # a suggested seed that is stopped: one line each, before the way out
+    note = render(t["vars"]["_note"], _layout=dict(layout, stopped=["b1", "b2"]), _cluster="prod", _nl="\n",
+                  _change_seeds=cmd, _deferred=False, _in_plan=True, _suggested_stopped=stopped)
+    assert note.split("\n")[1:] == [
+        '  suggested in the group_vars of prod: cassandra_seeds: ["n1", "n2", "b1", "b2"]',
+        "  b1 is stopped: start it before change_seeds (every seed must be up, the runs stop until it is)",
+        "  b2 is stopped: start it before change_seeds (every seed must be up, the runs stop until it is)",
+        "  then apply it live: " + cmd]
     # a note only (more than 3 seeds): the lines, no suggestion
     layout = {"lines": ["Seeds  dc1  n1 (r1), n2 (r1), n3 (r1), n4 (r1)  note: 4 seeds: 2 to 3 are enough"],
               "problems": [], "notes": ["dc1: 4 seeds: 2 to 3 are enough"], "suggested": []}

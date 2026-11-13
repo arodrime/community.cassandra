@@ -63,14 +63,16 @@ def test_more_than_three_seeds_is_a_note():
 def test_limit_to_a_node_that_is_no_seed_says_nothing():
     # --limit h-n5, cassandra_seeds: [h-n1, h-n2]: h-n5 alone has no seed, the cluster does
     out = cassandra_seed_layout([node("h-n5", "r1")], unread=["h-n1", "h-n2", "h-n3", "h-n4"])
-    assert out == {"lines": [], "dcs": [], "problems": [], "notes": [], "suggested": []}
+    assert out == {"lines": [], "dcs": [], "problems": [], "notes": [], "suggested": [], "stopped": []}
 
 
 def test_suggestion_picks_running_nodes_first():
     nodes = [node("n1", "r1"), node("n2", "r2"), node("n3", "r3"), node("b1", "r1", dc="dc2"), node("b2", "r2", dc="dc2")]
     out = cassandra_seed_layout(nodes, unread=[], up=["n2", "n3"])
-    # dc1 runs: its running nodes first, n1 makes 3 racks; dc2 has none running (a new datacenter): any of its nodes
-    assert out["suggested"] == ["ip-n2", "ip-n3", "ip-n1", "ip-b1", "ip-b2"]
+    # dc1 runs: its running nodes, on 2 racks, are enough; dc2 has none running (a new datacenter): any of its nodes
+    assert out["suggested"] == ["ip-n2", "ip-n3", "ip-b1", "ip-b2"]
+    assert out["stopped"] == []
+    assert rejudged(nodes, out["suggested"]) == []
 
 
 def rejudged(nodes, suggested):
@@ -81,11 +83,25 @@ def rejudged(nodes, suggested):
 
 
 def test_suggestion_with_one_node_running_follows_the_rule():
-    # 3 racks, only n2 runs: running only would suggest [n2] alone
+    # 3 racks, only n2 runs: running only would suggest [n2] alone; one stopped node makes the minimum
     nodes = [node("n1", "r1"), node("n2", "r2"), node("n3", "r3")]
     out = cassandra_seed_layout(nodes, up=["n2"])
-    assert out["suggested"] == ["ip-n2", "ip-n1", "ip-n3"]
+    assert out["suggested"] == ["ip-n2", "ip-n1"]
+    assert out["stopped"] == ["n1"]
     assert rejudged(nodes, out["suggested"]) == []
+
+
+def test_suggestion_leaves_out_a_stopped_node_it_does_not_need():
+    # 3 racks, n1 and n2 run (2 racks): n3, stopped, is not needed
+    nodes = [node("n1", "r1"), node("n2", "r2"), node("n3", "r3")]
+    out = cassandra_seed_layout(nodes, up=["n1", "n2"])
+    assert (out["suggested"], out["stopped"]) == (["ip-n1", "ip-n2"], [])
+    assert rejudged(nodes, out["suggested"]) == []
+    # 3 racks running: 3 seeds, all running; not known (help): the rule's 3
+    nodes = [node("n1", "r1"), node("n2", "r2"), node("n3", "r3")]
+    for up in (["n1", "n2", "n3"], None):
+        out = cassandra_seed_layout(nodes, up=up)
+        assert (out["suggested"], out["stopped"]) == (["ip-n1", "ip-n2", "ip-n3"], [])
 
 
 def test_suggestion_with_one_rack_running_covers_the_racks():
@@ -93,6 +109,7 @@ def test_suggestion_with_one_rack_running_covers_the_racks():
     nodes = [node("n1", "r1"), node("n2", "r2"), node("n3", "r1"), node("n4", "r2")]
     out = cassandra_seed_layout(nodes, up=["n1", "n3"])
     assert out["suggested"] == ["ip-n1", "ip-n2"]
+    assert out["stopped"] == ["n2"]
     assert rejudged(nodes, out["suggested"]) == []
 
 
