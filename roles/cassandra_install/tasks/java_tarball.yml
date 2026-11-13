@@ -64,8 +64,11 @@
             mode: "0644"
           retries: 3
           register: cassandra_java_tarball_download
-          # its result shows the URL as given before ansible-core 2.19 (the rescue says it masked)
-          no_log: "{{ cassandra_java_tarball is search('@|[?]') }}"  # credentials or a signature in the URL
+          # its result shows a query (a signature) as given, and a login before ansible-core 2.19 (masked
+          # since): hidden then, the rescue says why
+          no_log: >-
+            {{ cassandra_java_tarball is search('[?]')
+               or (cassandra_java_tarball is search('@') and ansible_version.full is version('2.19', '<')) }}
           # an answer of the server (404, 401...) or a wrong checksum is final
           until: >-
             cassandra_java_tarball_download is succeeded

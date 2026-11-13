@@ -67,7 +67,7 @@
           ansible.builtin.assert:
             that:
               - "'checksum' in ansible_failed_result.msg"
-              - ansible_failed_task.name == 'Download dsbulk'
+              - ansible_failed_task.name == 'Stop on the failed dsbulk download'
 
     - name: Change the dsbulk version with check_mode
       ansible.builtin.include_role:

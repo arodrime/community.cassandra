@@ -90,7 +90,11 @@
         force_basic_auth: "{{ _on_mirror | bool }}"
       retries: 3
       register: cassandra_config_exporter_download
-      no_log: "{{ cassandra_prometheus_exporter_url is search('@|[?]') }}"  # credentials or a signature in the URL
+      # its result shows a query (a signature) as given, and a login before ansible-core 2.19 (masked
+      # since): hidden then, the rescue says why
+      no_log: >-
+        {{ cassandra_prometheus_exporter_url is search('[?]')
+           or (cassandra_prometheus_exporter_url is search('@') and ansible_version.full is version('2.19', '<')) }}
       # a wrong checksum is final
       until: >-
         cassandra_config_exporter_download is succeeded
@@ -114,7 +118,7 @@
         msg: >-
           {{ inventory_hostname }}: the Prometheus exporter's jar could not be downloaded to
           {{ _cassandra_config_exporter_jar }} from {{ cassandra_prometheus_exporter_url | urlsplit('hostname') or 'the node' }}
-          ({{ ansible_failed_result.msg | default('?') }}). The JVM options that load it are not written, and this
-          run neither stops nor starts Cassandra there: it is left as it is. Fix cassandra_prometheus_exporter_url or
-          cassandra_prometheus_exporter_checksum (set both with cassandra_prometheus_exporter_version), or put the jar
-          there, then run again.
+          ({{ ansible_failed_result.msg | default('?') | community.cassandra.cassandra_url_masked }}).
+          The JVM options that load it are not written, and this run neither stops nor starts Cassandra there: it is
+          left as it is. Fix cassandra_prometheus_exporter_url or cassandra_prometheus_exporter_checksum (set both with
+          cassandra_prometheus_exporter_version), or put the jar there, then run again.

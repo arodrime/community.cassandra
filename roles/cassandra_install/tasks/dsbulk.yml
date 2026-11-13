@@ -93,22 +93,42 @@
             path: "{{ _cassandra_install_dsbulk_home }}.new"
             state: absent
 
-        - name: Download dsbulk
-          ansible.builtin.get_url:
-            url: "{{ cassandra_dsbulk_url }}"
-            dest: "{{ _cassandra_install_dsbulk_home }}.tar.gz"
-            checksum: "{{ cassandra_dsbulk_checksum }}"
-            url_username: "{{ cassandra_install_username if _on_mirror | bool else omit }}"
-            url_password: "{{ cassandra_install_password if _on_mirror | bool else omit }}"
-            force_basic_auth: "{{ _on_mirror | bool }}"
-            mode: "0600"
-          retries: 3
-          register: cassandra_install_dsbulk_download
-          no_log: "{{ cassandra_dsbulk_url is search('@|[?]') }}"  # credentials or a signature in the URL
-          # a wrong checksum is final
-          until: >-
-            cassandra_install_dsbulk_download is succeeded
-            or 'did not match' in cassandra_install_dsbulk_download.msg | default('')
+        - name: Download dsbulk, or say why not
+          block:
+            - name: Download dsbulk
+              ansible.builtin.get_url:
+                url: "{{ cassandra_dsbulk_url }}"
+                dest: "{{ _cassandra_install_dsbulk_home }}.tar.gz"
+                checksum: "{{ cassandra_dsbulk_checksum }}"
+                url_username: "{{ cassandra_install_username if _on_mirror | bool else omit }}"
+                url_password: "{{ cassandra_install_password if _on_mirror | bool else omit }}"
+                force_basic_auth: "{{ _on_mirror | bool }}"
+                mode: "0600"
+              retries: 3
+              register: cassandra_install_dsbulk_download
+              # its result shows a query (a signature) as given, and a login before ansible-core 2.19 (masked
+              # since): hidden then, the rescue says why
+              no_log: >-
+                {{ cassandra_dsbulk_url is search('[?]')
+                   or (cassandra_dsbulk_url is search('@') and ansible_version.full is version('2.19', '<')) }}
+              # a wrong checksum is final
+              until: >-
+                cassandra_install_dsbulk_download is succeeded
+                or 'did not match' in cassandra_install_dsbulk_download.msg | default('')
+          rescue:
+            - name: Stop on the failed dsbulk download
+              ansible.builtin.fail:
+                msg: >-
+                  dsbulk {{ cassandra_dsbulk_version }} could not be downloaded from
+                  {{ cassandra_dsbulk_url | community.cassandra.cassandra_url_masked }}:
+                  {{ ('HTTP ' ~ _status ~ ', ') if _status | int not in [-1, 200] else '' }}{{ _said | trim }}.
+                  Nothing was installed. Check cassandra_dsbulk_url and cassandra_dsbulk_checksum
+                  (or set cassandra_dsbulk_install to false), then run again.
+              vars:
+                _status: "{{ ansible_failed_result.status_code | default(-1) }}"
+                _said: >-
+                  {{ (ansible_failed_result.response | default('', true) or ansible_failed_result.msg | default('no answer'))
+                     | regex_replace('^HTTP Error [0-9]+: ', '') | community.cassandra.cassandra_url_masked }}
 
         - name: Create the dsbulk directory
           ansible.builtin.file:
