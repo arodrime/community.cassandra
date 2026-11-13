@@ -8,7 +8,7 @@ import re
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
-    _compress, cassandra_import_report, cassandra_import_self_check_advice, node_list)
+    _compress, _self_check_items, cassandra_import_report, cassandra_import_self_check_advice, node_list)
 
 ARROW = u"←"
 WRITTEN = ["/p/inventories/my_cluster.yml", "/p/inventories"]
@@ -489,6 +489,21 @@ def test_hand_edits_by_file_counted():
     found = [re.search(r"\d+ edits?( \(variant \d\))?", line).group(0) for line in lines
              if line.startswith("    logback.xml")]
     assert found == ["3 edits (variant 1)", "1 edit", "3 edits (variant 2)"]
+
+
+def test_an_edit_with_each_node_s_own_address_is_one_entry():
+    # (2026-11-13) 24 nodes, each its own JVM_OPTS line with its address: one entry, not one "variant" per node
+    def rmi(i):
+        return ["cassandra-env.sh, line 300:", "  + # mine", '  + JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=10.0.0.%d"' % i]
+    nodes = [node(i, hand=rmi(i)) for i in (1, 2, 10)]
+    entries = [line for line in section(report(nodes), "HAND EDITS") if line.startswith("    ") and line[4] != " "]
+    assert entries == ["    cassandra-env.sh (the script that sets Java's options when Cassandra starts): 1 edit   all (3 nodes)"]
+    checks = dict(("node%d" % i, {"differences": [
+        'cassandra-env.sh: node has JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=10.0.0.%d", import would write'
+        ' nothing' % i]}) for i in (1, 2, 10))
+    items = _self_check_items(nodes, checks)
+    assert [(i["text"], len(i["lines"])) for i in items] == [
+        ('JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=<its address>"', 3)]
 
 
 def test_written_host_vars_counted_on_a_large_cluster():

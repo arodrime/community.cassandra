@@ -254,14 +254,23 @@ def _edits(node):
     return found
 
 
+def _its_address(text, address):
+    """text with the node's own address in it as <its address> (the same edit on every node, each its own address)."""
+    if not address:
+        return text
+    return re.sub(r"(?<![\w.:-])%s(?![\w:-]|\.\d)" % re.escape(address), "<its address>", text)
+
+
 def _hand_edit_rows(read):
     """The HAND EDITS of the nodes read -> [(node, name, value text)]: a setting by its name ("cassandra.yaml
     concurrent_writes") and its value; a file's other edits counted, the same ones on the same nodes ("logback.xml":
-    "10 edits"; another set of edits as many: "10 edits (variant 2)"); a note on a file as it is."""
+    "10 edits"; another set of edits as many: "10 edits (variant 2)"); a note on a file as it is. A node's own
+    address in them: <its address>."""
     pairs, variants, files = [], {}, []
     for n in read:
         blocks = {}
         for f, setting, text in _edits(n):
+            text = _its_address(text, n.get("address"))
             if setting == "":
                 blocks.setdefault(f, []).append(text)
                 if f not in files:
@@ -486,6 +495,7 @@ def _self_check_items(read, self_check, theirs_win=None):
     again."""
     files_of = _hand_files(read)
     items, found = [], {}
+    addresses = dict((n["name"], n.get("address")) for n in read)
     for name, c in sorted((self_check or {}).items()):
         for d in c.get("differences") or []:
             f, setting, node_text, role_text = _difference(d)
@@ -508,6 +518,8 @@ def _self_check_items(read, self_check, theirs_win=None):
                 text = node_text
             else:
                 text = "not on the node: " + role_text
+            if not setting:  # a line of a file: the same on every node, each with its own address
+                text = _its_address(text, addresses.get(name))
             key = (kind, f, setting, text)
             if key not in found:
                 found[key] = {"kind": kind, "file": f, "setting": setting, "text": out.mask(text), "pairs": [],
@@ -1587,7 +1599,7 @@ def _grouped(text, addresses=None):
         body = [re.sub(r"(?<![\w.-])%s(?![\w.-])" % re.escape(name), "<node>", line) for line in lines[start + 1:end]]
         address = (addresses or {}).get(name) or ""
         if address and address != name:
-            body = [re.sub(r"(?<![\w.:-])%s(?![\w:-]|\.\d)" % re.escape(address), "<its address>", line) for line in body]
+            body = [_its_address(line, address) for line in body]
         while body and not body[-1].strip():
             body.pop()
         blocks.append((name, body))
