@@ -3604,7 +3604,8 @@ BLOCKS = [
     ("Other cassandra.yaml settings", []),
     ("cassandra.yaml settings no variable covers", ["cassandra_extra_settings"]),
     ("Logging (logback.xml)", [
-        "cassandra_log_level", "cassandra_log_level_cassandra", "cassandra_debug_log_enabled", "cassandra_log_console"]),
+        "cassandra_log_level", "cassandra_log_level_cassandra", "cassandra_debug_log_enabled", "cassandra_log_console",
+        "cassandra_log_audit_file", "cassandra_log_audit_dir"]),
     ("Template pieces next to the inventory (hand edits the import carried)", [SNIPPETS]),
     ("Secrets of the lines above (hand edits the import carried)", []),
     ("OS tuning (found on the nodes, for the nodes added later)", [

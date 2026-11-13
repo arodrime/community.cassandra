@@ -462,3 +462,8 @@ def test_the_log_dir_written_as_itself_only_when_the_jvm_gets_it():
     rendered["logback.xml"] = files["logback.xml"]
     live = dict(files, **{"logback.xml": seeded(stock("50x"))["logback.xml"]})
     assert [d for d in _compare_files(rendered, live)["differences"] if d.startswith("logback.xml")] == []
+
+
+def test_the_audit_dir_is_listed_with_the_logging():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _block
+    assert _block("cassandra_log_audit_dir") == _block("cassandra_log_audit_file") == "Logging (logback.xml)"
