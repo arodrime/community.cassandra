@@ -79,26 +79,45 @@ _cassandra_config_perm_settings:
   # the account the unit runs Cassandra as (cassandra_service), else cassandra_user
   user: "{{ cassandra_service_user | default(cassandra_user) }}"
   user_group: "{{ cassandra_service_group | default(cassandra_group) }}"
-# GC of each jvm<N>-server.options file of the series; custom with -XX:+UseG1GC on in its extra options (the last
-# of it there, after jvm-server.options'): G1 (cassandra-env.sh finds it, what holds for G1 holds)
+# The GC of the jvm<N>-server.options file the node's Java reads (cassandra_java_version, cassandra_install's
+# default for the series when not set: 4.x reads jvm8 on Java 8, jvm11 after; 5.0 jvm11 on Java 11, jvm17 after);
+# custom with -XX:+UseG1GC on in its extra options (the last of it there, after jvm-server.options'): G1
+# (cassandra-env.sh finds it, what holds for G1 holds)
+# the GC of each jvm<N>-server.options file of the series, as given
+_cassandra_config_gc_names: >-
+  {{ [cassandra_jvm8_gc | default(cassandra_jvm_gc), cassandra_jvm11_gc | default(cassandra_jvm_gc)]
+     if cassandra_version in ['40x', '41x']
+     else [cassandra_jvm11_gc | default(cassandra_jvm_gc), cassandra_jvm17_gc | default(cassandra_jvm_gc)] }}
+_cassandra_config_java_major: >-
+  {{ ((cassandra_java_version | default({'40x': '11', '41x': '11', '50x': '17'}[cassandra_version] | default('17')))
+      | string).split('.') | reject('equalto', '1') | first | int }}
 _cassandra_config_gcs: >-
-  {{ [_cassandra_config_gc_8, _cassandra_config_gc_11] if cassandra_version in ['40x', '41x']
-     else [_cassandra_config_gc_11, _cassandra_config_gc_17] }}
+  {{ [_cassandra_config_gc_8 if _cassandra_config_java_major | int < 11 else _cassandra_config_gc_11]
+     if cassandra_version in ['40x', '41x']
+     else [_cassandra_config_gc_11 if _cassandra_config_java_major | int < 17 else _cassandra_config_gc_17] }}
 _cassandra_config_gc_8: >-
   {{ 'G1' if (cassandra_jvm8_gc | default(cassandra_jvm_gc)) == 'custom'
-     and ((cassandra_jvm_extra_options + cassandra_jvm8_extra_options) | join(' ')).split()
-         | select('match', '^-XX:[+-]UseG1GC$') | list | last | default('') == '-XX:+UseG1GC'
-     else cassandra_jvm8_gc | default(cassandra_jvm_gc) }}
+     and _cassandra_config_g1_options_8 | select('match', '^-XX:[+-]UseG1GC$') | list | last | default('')
+     == '-XX:+UseG1GC' else cassandra_jvm8_gc | default(cassandra_jvm_gc) }}
 _cassandra_config_gc_11: >-
   {{ 'G1' if (cassandra_jvm11_gc | default(cassandra_jvm_gc)) == 'custom'
-     and ((cassandra_jvm_extra_options + cassandra_jvm11_extra_options) | join(' ')).split()
-         | select('match', '^-XX:[+-]UseG1GC$') | list | last | default('') == '-XX:+UseG1GC'
-     else cassandra_jvm11_gc | default(cassandra_jvm_gc) }}
+     and _cassandra_config_g1_options_11 | select('match', '^-XX:[+-]UseG1GC$') | list | last | default('')
+     == '-XX:+UseG1GC' else cassandra_jvm11_gc | default(cassandra_jvm_gc) }}
 _cassandra_config_gc_17: >-
   {{ 'G1' if (cassandra_jvm17_gc | default(cassandra_jvm_gc)) == 'custom'
-     and ((cassandra_jvm_extra_options + cassandra_jvm17_extra_options) | join(' ')).split()
-         | select('match', '^-XX:[+-]UseG1GC$') | list | last | default('') == '-XX:+UseG1GC'
-     else cassandra_jvm17_gc | default(cassandra_jvm_gc) }}
+     and _cassandra_config_g1_options_17 | select('match', '^-XX:[+-]UseG1GC$') | list | last | default('')
+     == '-XX:+UseG1GC' else cassandra_jvm17_gc | default(cassandra_jvm_gc) }}
+# the options of jvm-server.options' and of jvm<N>-server.options' extra options (one not a list: none; the role's
+# argument checks say so)
+_cassandra_config_g1_options_8: >-
+  {{ (((cassandra_jvm_extra_options if cassandra_jvm_extra_options is iterable and cassandra_jvm_extra_options is not string and cassandra_jvm_extra_options is not mapping else [])
+       + (cassandra_jvm8_extra_options if cassandra_jvm8_extra_options is iterable and cassandra_jvm8_extra_options is not string and cassandra_jvm8_extra_options is not mapping else [])) | join(' ')).split() }}
+_cassandra_config_g1_options_11: >-
+  {{ (((cassandra_jvm_extra_options if cassandra_jvm_extra_options is iterable and cassandra_jvm_extra_options is not string and cassandra_jvm_extra_options is not mapping else [])
+       + (cassandra_jvm11_extra_options if cassandra_jvm11_extra_options is iterable and cassandra_jvm11_extra_options is not string and cassandra_jvm11_extra_options is not mapping else [])) | join(' ')).split() }}
+_cassandra_config_g1_options_17: >-
+  {{ (((cassandra_jvm_extra_options if cassandra_jvm_extra_options is iterable and cassandra_jvm_extra_options is not string and cassandra_jvm_extra_options is not mapping else [])
+       + (cassandra_jvm17_extra_options if cassandra_jvm17_extra_options is iterable and cassandra_jvm17_extra_options is not string and cassandra_jvm17_extra_options is not mapping else [])) | join(' ')).split() }}
 # Where the package puts its config (RedHat: the alternatives target it ships)
 _cassandra_config_pkg_conf_dir: "{{ '/etc/cassandra/default.conf' if ansible_facts['os_family'] == 'RedHat' else cassandra_conf_dir }}"
 # The record of the config files the running Cassandra started with (config_seed.yml writes it before a

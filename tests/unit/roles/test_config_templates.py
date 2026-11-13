@@ -88,8 +88,8 @@ def test_heap_pairs(version, gcs, size, newsize, ok):
     (["g1", "G1"], False),
 ])
 def test_gc_values(gcs, ok):
-    that = [t for t in task_that("Assert required cassandra_config variables are set") if "_cassandra_config_gcs" in t][0]
-    assert render("{{ %s }}" % that, _cassandra_config_gcs=gcs) is ok
+    that = [t for t in task_that("Assert required cassandra_config variables are set") if "_cassandra_config_gc_names" in t][0]
+    assert render("{{ %s }}" % that, _cassandra_config_gc_names=gcs) is ok
 
 
 def owners(tasks):

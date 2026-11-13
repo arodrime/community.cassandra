@@ -7,7 +7,7 @@
       - cassandra_conf_dir is defined and cassandra_conf_dir != ""
       - cassandra_data_file_directories | length > 0
       - cassandra_config_confirm | string | lower in ['auto', 'true', 'false', 'yes', 'no']
-      - _cassandra_config_gcs | reject('in', ['G1', 'CMS', 'custom']) | list | length == 0
+      - _cassandra_config_gc_names | reject('in', ['G1', 'CMS', 'custom']) | list | length == 0
       - cassandra_data_dir is defined and cassandra_data_dir != ""
       - cassandra_version in ["40x", "41x", "50x"]
     fail_msg: >-

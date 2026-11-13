@@ -91,8 +91,12 @@ def test_a_custom_gc_on_g1_takes_the_heap_alone():
     assert _assert(heap, cassandra_jvm17_extra_options=["-XX:+UseZGC"], **custom) is False
     assert _assert(heap, cassandra_jvm17_extra_options=["-XX:+UseG1GC", "-XX:-UseG1GC"], **custom) is False
     assert _assert(heap, cassandra_jvm_extra_options=["-XX:+UseG1GC"], **custom) is True  # (jvm-server.options')
-    # 4.x: jvm8-server.options' CMS still asks for the pair
-    assert _assert(heap, cassandra_version="41x", cassandra_heap_size="8G", cassandra_jvm11_gc="custom",
-                   cassandra_jvm11_extra_options=["-XX:+UseG1GC"]) is False
-    assert _assert(heap, cassandra_version="41x", cassandra_heap_size="8G", cassandra_jvm_gc="custom",
-                   cassandra_jvm_extra_options=["-XX:+UseG1GC"]) is True
+    # (re-audit, 2026-11-14) 4.x: the file its Java reads only (Java 11, the series' default: jvm11; jvm8's default
+    # CMS does not count); on Java 8, jvm8's
+    for jvm11 in (dict(cassandra_jvm11_gc="custom", cassandra_jvm11_extra_options=["-XX:+UseG1GC"]),
+                  dict(cassandra_jvm11_gc="G1")):
+        assert _assert(heap, cassandra_version="41x", cassandra_heap_size="8G", **jvm11) is True
+        assert _assert(heap, cassandra_version="41x", cassandra_heap_size="8G", cassandra_java_version="1.8",
+                       **jvm11) is False
+    # extra options not a list: no type error (the argument checks say so)
+    assert _assert(heap, cassandra_jvm17_extra_options="-XX:+UseG1GC", **custom) is False
