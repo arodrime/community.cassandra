@@ -68,8 +68,8 @@ from ansible.plugins.filter.core import regex_replace
 from ansible_collections.community.cassandra.plugins.filter.cassandra_repository_import import SERIES_TOKEN
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
-    DEFAULT_WHEN_ABSENT, NOT_COMPARED, QUANTITY_KEYS, canonical_quantity, former_keys, former_names, former_value,
-    jvm_options_settings, quantity, same_settings, shell_words, xml_settings, yaml_rejected)
+    DEFAULT_WHEN_ABSENT, JVM_UNLOCK, NOT_COMPARED, QUANTITY_KEYS, canonical_quantity, former_keys, former_names,
+    former_value, jvm_options_settings, quantity, same_settings, shell_words, xml_settings, yaml_rejected)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_prometheus as prometheus
@@ -604,26 +604,42 @@ GC_LINE = re.compile(r"\((cassandra_jvm\d+_gc) \| default\(cassandra_jvm_gc\)\) 
 
 
 def _custom_gc(env, series, name, ctx, tpl, live, found):
-    """A jvm<N>-server.options whose GC options are not the stock block of the GC the role writes (a line of it
-    removed or commented out, another option in its place): cassandra_jvm<N>_gc custom (the role's blocks
-    commented out), the node's GC lines first in its extra options, in their order -> found changed in place."""
+    """A jvm<N>-server.options whose GC options the role's stock block cannot write as the node has them (a line of
+    it removed or commented out, another GC in its place): cassandra_jvm<N>_gc custom (the role's blocks commented
+    out), the node's GC lines (any GC, its threads, the unlock options) in its extra options, in the node's order
+    with them -> found changed in place; only when that gives the JVM what the node's file does and the stock block
+    does not (else as read: what differs stays a hand edit)."""
     gc_lines = [t for t in tpl if GC_LINE.search(t)]
     if not gc_lines:
         return
-    names = set(jvm.option_name(w.lstrip("#")) for t in gc_lines for w in re.findall(r"'(#?-[^']*)'", t)) - {None}
-
-    def gc_options(lines):
-        return [o for o in jvm.words(lines) if jvm.option_name(o) in names]
     var = jvm.options_variable(name)
-    if gc_options(_render(env, series, name, dict(ctx, **found))[1]) == gc_options(live):
+    node = jvm_options_settings("\n".join(live))
+
+    def settings(variables):
+        return jvm_options_settings("\n".join(_render(env, series, name, dict(ctx, **variables))[1]))
+    if settings(found) == node:
         return
-    extras = list(found.get(var) or [])
-    carried = [line for line in live if gc_options(line) and line not in extras]
-    for read in set(re.findall(r"\b(cassandra_jvm\d+_\w+)\b", " ".join(gc_lines))):  # what the block's lines gave
-        found.pop(read, None)
-    found[GC_LINE.search(gc_lines[0]).group(1)] = "custom"
-    if carried + extras:
-        found[var] = carried + extras
+    block = gc_lines + [t for t in tpl if "_gc_threads" in t]
+    names = set(jvm.option_name(w.lstrip("#")) for t in gc_lines for w in re.findall(r"'(#?-[^']*)'", t))
+    names |= {"ParallelGCThreads", "ConcGCThreads"} | set(JVM_UNLOCK)
+
+    def is_gc(line):
+        return any(jvm.option_name(o) in names or re.match(r"^Use\w*GC$", jvm.option_name(o) or "")
+                   for o in jvm.words(line))
+    extras, lines = list(found.get(var) or []), []
+    for line in live:
+        if line in extras:
+            extras.remove(line)
+            lines.append(line)
+        elif is_gc(line):
+            lines.append(line)
+    custom = dict((k, v) for k, v in found.items()  # (less what the block's lines gave)
+                  if k not in re.findall(r"\b(cassandra_jvm\d+_\w+)\b", " ".join(block)))
+    custom[GC_LINE.search(gc_lines[0]).group(1)] = "custom"
+    custom[var] = lines
+    if settings(custom) == node:
+        found.clear()
+        found.update((k, v) for k, v in custom.items() if v != [] or k != var)
 
 
 def _carried(name, series, tpl, lines):

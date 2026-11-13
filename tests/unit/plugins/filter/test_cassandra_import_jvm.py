@@ -168,7 +168,8 @@ def test_an_option_in_the_place_of_a_gc_line_is_carried():
     files["jvm17-server.options"] = files["jvm17-server.options"].replace(
         "-XX:MaxTenuringThreshold=2", "-Xms31G").replace("-XX:G1HeapRegionSize=16m", "-Xmx31G")
     out = cassandra_config_import(files, "50x", FACTS, java="17")
-    assert out["vars"]["cassandra_jvm17_extra_options"][-2:] == ["-Xms31G", "-Xmx31G"]
+    extras = out["vars"]["cassandra_jvm17_extra_options"]
+    assert extras[extras.index("-Xms31G"):][:2] == ["-Xms31G", "-Xmx31G"]
 
 
 def test_an_option_the_template_writes_is_not_carried_again():
