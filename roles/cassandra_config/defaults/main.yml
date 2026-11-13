@@ -429,6 +429,11 @@ cassandra_log_audit_total_size_cap: 5GB
 cassandra_log_audit_file: >-
   {{ cassandra_audit_logging_enabled | bool
      and (cassandra_audit_logger_class_name | string).split('.') | last == 'FileAuditLogger' }}
+# The dir of that audit file (audit.log and its rolled files): the log dir's
+# audit/ by default (${cassandra.logdir}, the dir Cassandra gives logback), or
+# a path of its own, e.g. /data/audit. Not cassandra.yaml's audit_logs_dir
+# (cassandra_audit_logs_dir, BinAuditLogger's).
+cassandra_log_audit_dir: "${cassandra.logdir}/audit"
 # Appenders <root> also writes to, by name: a stock one (SYSTEMLOG, DEBUGLOG,
 # ASYNCDEBUGLOG, STDOUT), AUDIT (cassandra_log_audit_file), or one your snippet
 # logback.xml:appenders defines (cassandra_config_template_snippets)

@@ -373,6 +373,8 @@ Role Variables
   Cassandra's `FileAuditLogger` (`cassandra_audit_logging_enabled`,
   `cassandra_audit_logger_class_name`), and a WARNING when it is turned off
   then (the events go to `system.log`).
+  `cassandra_log_audit_dir`: the dir of that file, the log dir's `audit/` by
+  default (`${cassandra.logdir}/audit`), or a path of its own.
   `cassandra_logback_root_extra_refs`: appenders `<root>` names besides the
   stock ones (a stock one, `AUDIT` with the audit file, or one of your
   snippet `logback.xml:appenders`; another name is refused).

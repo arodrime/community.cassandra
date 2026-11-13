@@ -1557,6 +1557,13 @@ argument_specs:
           C(org.apache.cassandra.audit) logger, commented out in the stock file, are uncommented.
         - Default on with C(FileAuditLogger) (O(cassandra_audit_logging_enabled) and
           O(cassandra_audit_logger_class_name)); V(false) then sends the audit events to C(system.log), with a WARNING.
+      cassandra_log_audit_dir:
+        type: str
+        default: ${cassandra.logdir}/audit
+        description:
+        - 'The dir of the audit file (O(cassandra_log_audit_file)) in C(logback.xml): C(audit.log) and its rolled files.'
+        - 'The log dir''s C(audit/) by default (C(${cassandra.logdir}), the dir Cassandra gives logback), or a path of
+          its own, e.g. C(/data/audit). Not C(cassandra.yaml)''s C(audit_logs_dir) (O(cassandra_audit_logs_dir)).'
       cassandra_logback_root_extra_refs:
         type: list
         elements: str

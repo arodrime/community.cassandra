@@ -172,7 +172,11 @@ AUDIT_FILE = [
              "  " + AUDIT_ON + '<appender name="AUDIT" class="ch.qos.logback.core.rolling.RollingFileAppender">'),
     in_block("AUDIT", '    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy"> -->',
              '    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">' + AUDIT_OFF),
-    in_block("AUDIT", "      <!-- %s -->" % AUDIT_PATTERN, "      " + AUDIT_ON + AUDIT_PATTERN + AUDIT_OFF),
+    # its dir (cassandra_log_audit_dir: the log dir's audit/ by default)
+    in_block("AUDIT", "    <file>${cassandra.logdir}/audit/audit.log</file>",
+             "    <file>{{ cassandra_log_audit_dir }}/audit.log</file>"),
+    in_block("AUDIT", "      <!-- %s -->" % AUDIT_PATTERN, "      " + AUDIT_ON + AUDIT_PATTERN.replace(
+        "${cassandra.logdir}/audit/", "{{ cassandra_log_audit_dir }}/") + AUDIT_OFF),
     in_block("AUDIT", "      <!-- <maxFileSize>50MB</maxFileSize>",
              "      " + AUDIT_ON + "<maxFileSize>{{ cassandra_log_audit_max_file_size }}</maxFileSize>"),
     in_block("AUDIT", "      <maxHistory>30</maxHistory>", "      <maxHistory>{{ cassandra_log_audit_max_history }}</maxHistory>"),
