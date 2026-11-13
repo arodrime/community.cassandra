@@ -91,7 +91,7 @@ def test_a_failed_dsbulk_download_says_why(tmp_path, query, shown):
         "cassandra_dsbulk_url": url, "cassandra_dsbulk_version": "1.11.2", "cassandra_dsbulk_checksum": "",
         "_cassandra_install_dsbulk_home": str(tmp_path / "dsbulk-1.11.2"), "_on_mirror": False}, query)
     assert ("dsbulk 1.11.2 could not be downloaded from http://****@127.0.0.1:PORT/f.tar.gz%s: HTTP 404,"
-            " Not Found. Nothing was installed. Check cassandra_dsbulk_url and cassandra_dsbulk_checksum (or set"
+            " Not Found. dsbulk was not installed. Check cassandra_dsbulk_url and cassandra_dsbulk_checksum (or set"
             " cassandra_dsbulk_install to false), then run again." % shown) in out
 
 
@@ -103,5 +103,18 @@ def test_a_failed_signing_keys_download_says_why(tmp_path, query, shown):
         "cassandra_repository_key_url": url, "_cassandra_repository_key_path": str(tmp_path / "KEYS"),
         "cassandra_install_url": "", "cassandra_install_password": ""}, query)
     assert ("The Cassandra signing keys could not be downloaded from http://****@127.0.0.1:PORT/f.tar.gz%s:"
-            " HTTP 404, Not Found. The repository is left as it is. Check cassandra_repository_key_url (empty:"
-            " the keys shipped with the role), then run again." % shown) in out
+            " HTTP 404, Not Found. The repository source is left as it is. Check cassandra_repository_key_url"
+            " (empty: the keys shipped with the role), then run again." % shown) in out
+
+
+@pytest.mark.parametrize("role, tasks, name", [
+    ("cassandra_install", "java_tarball.yml", "Stop on the failed download"),
+    ("cassandra_install", "dsbulk.yml", "Stop on the failed dsbulk download"),
+    ("cassandra_repository", "repository.yml", "Stop on the failed signing keys download"),
+])
+def test_what_the_download_said_ends_without_a_dot(role, tasks, name):
+    # the message adds its own: "... did not match.." otherwise
+    said = _find(_tasks(role, tasks), name)["vars"]["_said"]
+    failed = {"msg": "The checksum for /x did not match 0abc; it was 1def. "}
+    assert Templar(loader=DataLoader(), variables={"ansible_failed_result": failed}).template(
+        trust_as_template(said)) == "The checksum for /x did not match 0abc; it was 1def"

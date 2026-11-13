@@ -80,14 +80,15 @@
             msg: >-
               The Java tarball could not be downloaded from
               {{ cassandra_java_tarball | community.cassandra.cassandra_url_masked }}:
-              {{ ('HTTP ' ~ _status ~ ', ') if _status | int not in [-1, 200] else '' }}{{ _said | trim }}.
+              {{ ('HTTP ' ~ _status ~ ', ') if _status | int not in [-1, 200] else '' }}{{ _said }}.
               Nothing was unpacked. Check that URL (cassandra_java_tarball, or the cassandra_java_tarballs entry of
               Java {{ cassandra_java_version }}) and its checksum, then run again.
           vars:
             _status: "{{ ansible_failed_result.status_code | default(-1) }}"
             _said: >-
               {{ (ansible_failed_result.response | default('', true) or ansible_failed_result.msg | default('no answer'))
-                 | regex_replace('^HTTP Error [0-9]+: ', '') | community.cassandra.cassandra_url_masked }}
+                 | regex_replace('^HTTP Error [0-9]+: ', '') | community.cassandra.cassandra_url_masked
+                 | trim | regex_replace('[.]$', '') }}
 
     - name: Copy the Java tarball from the controller
       ansible.builtin.copy:

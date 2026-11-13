@@ -119,14 +119,15 @@
                 msg: >-
                   dsbulk {{ cassandra_dsbulk_version }} could not be downloaded from
                   {{ cassandra_dsbulk_url | community.cassandra.cassandra_url_masked }}:
-                  {{ ('HTTP ' ~ _status ~ ', ') if _status | int not in [-1, 200] else '' }}{{ _said | trim }}.
-                  Nothing was installed. Check cassandra_dsbulk_url and cassandra_dsbulk_checksum
+                  {{ ('HTTP ' ~ _status ~ ', ') if _status | int not in [-1, 200] else '' }}{{ _said }}.
+                  dsbulk was not installed. Check cassandra_dsbulk_url and cassandra_dsbulk_checksum
                   (or set cassandra_dsbulk_install to false), then run again.
               vars:
                 _status: "{{ ansible_failed_result.status_code | default(-1) }}"
                 _said: >-
                   {{ (ansible_failed_result.response | default('', true) or ansible_failed_result.msg | default('no answer'))
-                     | regex_replace('^HTTP Error [0-9]+: ', '') | community.cassandra.cassandra_url_masked }}
+                     | regex_replace('^HTTP Error [0-9]+: ', '') | community.cassandra.cassandra_url_masked
+                     | trim | regex_replace('[.]$', '') }}
 
         - name: Create the dsbulk directory
           ansible.builtin.file:
