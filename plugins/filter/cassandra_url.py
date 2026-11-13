@@ -3,7 +3,7 @@
 """cassandra_same_origin: whether two http(s) URLs are on the same server
 (same scheme, host and port), to send a mirror's credentials only to it.
 cassandra_url_masked: a URL, or a text holding some, as the output shows it:
-no login, no query (a signature, a token)."""
+no login, no query (a signature, a token), no fragment."""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -35,17 +35,28 @@ def cassandra_same_origin(url, other):
     return origin is not None and origin == _origin(other)
 
 
-# scheme://, a login (user:password@, up to the last @ before the host), the
-# host and path, a query, a fragment
-_URL = re.compile(r"([a-zA-Z][a-zA-Z0-9+.-]*://)([^\s/?#'\"<>]*@)?([^\s?#'\"<>]*)(\?[^\s#'\"<>]*)?(#[^\s'\"<>]*)?")
+# scheme://, a login (user:password@, up to the last @ of the URL: a password
+# may hold any character, better too much hidden than too little), the host
+# and path, a query, a fragment
+_URL = re.compile(r"([a-zA-Z][a-zA-Z0-9+.-]*://)([^\s<>\"]*@)?([^\s?#'\"<>]*)(\?[^\s#'\"<>]*)?(#[^\s'\"<>]*)?")
+# what ends a sentence after a URL, not masked with its query or fragment
+_PUNCTUATION = ".,;)"
+
+
+def _hidden(part, mark):
+    """A query or a fragment masked, the punctuation after it kept."""
+    if not part:
+        return ""
+    end = part.rstrip(_PUNCTUATION)
+    return mark + "****" + part[max(len(end), 1):]
 
 
 def cassandra_url_masked(text):
-    """text with the login and the query of every URL in it masked, for the
-    output: "https://user:pass@m.example.com/jdk.tgz?X-Amz-Signature=abc" ->
+    """text with the login, the query and the fragment of every URL in it
+    masked, for the output: "https://user:pass@m.example.com/jdk.tgz?X-Amz-Signature=abc" ->
     "https://****@m.example.com/jdk.tgz?****"; a path or a URL without them as is."""
-    return _URL.sub(lambda m: m.group(1) + ("****@" if m.group(2) else "") + m.group(3)
-                    + ("?****" if m.group(4) else ""), str(text if text is not None else ""))
+    return _URL.sub(lambda m: m.group(1) + ("****@" if m.group(2) else "") + m.group(3) + _hidden(m.group(4), "?")
+                    + _hidden(m.group(5), "#"), str(text if text is not None else ""))
 
 
 class FilterModule(object):

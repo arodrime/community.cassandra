@@ -44,7 +44,15 @@ def test_default_ports():
     ("https://user:p@ss@m.example.com:8443/jdk.tgz", "https://****@m.example.com:8443/jdk.tgz"),
     ("https://b.s3.amazonaws.com/jdk.tgz?X-Amz-Credential=AKIA&X-Amz-Signature=abc",
      "https://b.s3.amazonaws.com/jdk.tgz?****"),
-    ("https://m.example.com/KEYS?token=abc#part", "https://m.example.com/KEYS?****"),
+    ("https://m.example.com/KEYS?token=abc#part", "https://m.example.com/KEYS?****#****"),
+    ("https://m.example.com/KEYS#access_token=abc", "https://m.example.com/KEYS#****"),
+    # a password with any character: the login runs to the last @ (a path with an @ hides the host: too much, not
+    # too little)
+    ("https://u:pa/ss@m.example.com/x", "https://****@m.example.com/x"),
+    ("https://u:pa'ss@m.example.com/x", "https://****@m.example.com/x"),
+    ("https://u:pa#ss@m.example.com/x", "https://****@m.example.com/x"),
+    ("https://u:pa?ss@m.example.com/x", "https://****@m.example.com/x"),
+    ("https://m.example.com/a@b/c", "https://****@b/c"),
     ("https://m.example.com/jdk.tgz", "https://m.example.com/jdk.tgz"),
     ("/srv/files/jdk.tgz", "/srv/files/jdk.tgz"),
     ("file:///srv/files/jdk.tgz", "file:///srv/files/jdk.tgz"),
@@ -59,3 +67,7 @@ def test_urls_masked_in_a_text():
     text = "Request failed for 'https://u:pw@m.example.com/a?sig=x': HTTP 404, see https://m.example.com/b."
     assert cassandra_url_masked(text) == ("Request failed for 'https://****@m.example.com/a?****': HTTP 404,"
                                           " see https://m.example.com/b.")
+    # the punctuation after a query or a fragment stays
+    text = "from https://m.example.com/a?sig=x, then (https://m.example.com/b#t=y); see https://m.example.com/c?s=z."
+    assert cassandra_url_masked(text) == ("from https://m.example.com/a?****, then (https://m.example.com/b#****);"
+                                          " see https://m.example.com/c?****.")
