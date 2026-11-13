@@ -579,6 +579,51 @@ def test_a_kept_jvm_file_keeps_the_exporter_s_agent(tmp_path, keep):
                                   ["jvm-server.options: UseNUMA: node has nothing, import would write '-XX:+UseNUMA'"])
 
 
+def owner_dev_node(files):
+    """(2026-11-14) a 5.0.9 RPM DEV node, its four files: cassandra-env.sh (its log dir, remote JMX with the JMX files
+    and the rmi hostname in its branch), logback.xml (the log dir written as itself, the audit file in a dir of its
+    own), jvm-server.options of 4.x (-Xss1024M, biased locking off, no chronicle line), jvm17-server.options (the
+    heap and the stack in G1's block, its tuning commented out)."""
+    from .test_cassandra_import_logback import audit_on
+    remote_jmx()(files)
+    files["cassandra-env.sh"] = files["cassandra-env.sh"].replace("CASSANDRA_LOG_DIR=/var/log/cassandra",
+                                                                  "CASSANDRA_LOG_DIR=/data/cassandra/log")
+    text = audit_on(files["logback.xml"]).replace("${cassandra.logdir}/audit/", "/data/audit/").replace(
+        "    <file>/data/audit/audit.log", "          <file>/data/audit/audit.log")
+    for name in ("system.log", "debug.log"):
+        text = text.replace("${cassandra.logdir}/" + name, "/data/cassandra/log/" + name)
+    files["logback.xml"] = text
+    jvm17 = files["jvm17-server.options"]
+    dev_node()(files)
+    files["jvm-server.options"] = stock("41x")["jvm-server.options"].replace("-Xss256k", "-Xss1024M")
+    assert files["jvm17-server.options"] != jvm17
+
+
+def test_the_owner_dev_node_in_full_sync(tmp_path):
+    files = node_files("50x", owner_dev_node)
+    # the JVM's log dir: the node's (the test's launch gives its own)
+    cmdline = launch(files, "17", tmp_path).replace("-Dcassandra.logdir=/run/logs", "-Dcassandra.logdir=/data/cassandra/log")
+    out = cassandra_config_import(files, "50x", FACTS, keep_unread_jvm_options=True, jvm={
+        "cmdline": cmdline, "java": "17", "environment": {}, "newer": []})
+    assert out["hand_edits"] == [] and out["keep_files"] == []
+    assert CHRONICLE in out["jvm_warnings"]
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    rendered, variables = role_files(inventory, layout, files)
+    # bash: the same JVM arguments, but for the chronicle line apply_config adds
+    flags, others = settings(launch(rendered, "17", tmp_path))
+    assert flags.pop("-Dchronicle.analytics.disable") == "true"
+    assert (flags, others) == settings(launch(files, "17", tmp_path))
+    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
+    prefixes = ("cassandra_jvm", "cassandra_heap", "cassandra_log", "cassandra_jmx", "cassandra_local")
+    assert dict((k, v) for k, v in node["vars"].items() if k.startswith(prefixes)) == {
+        "cassandra_log_dir": "/data/cassandra/log", "cassandra_local_jmx": False, "cassandra_jmx_rmi_hostname": IPV4,
+        "cassandra_jmx_users": [{"name": "monitor", "password": "m0nitor", "access": "readonly"}],
+        "cassandra_log_audit_file": True, "cassandra_log_audit_dir": "/data/audit", "cassandra_log_console": True,
+        "cassandra_heap_size": "31G", "cassandra_heap_in_jvm_options": True,
+        "cassandra_jvm_extra_options": ["-Xss1024M", "-XX:-UseBiasedLocking"],
+        "cassandra_jvm17_extra_options": ["-Xss256k"], "cassandra_jvm17_max_gc_pause_millis": 500, **TUNED}
+
+
 @pytest.mark.parametrize("case, series, java, edit", NOT_MOVED, ids=[c[0] for c in NOT_MOVED])
 def test_hand_edits_not_moved_stay_hand_edits(tmp_path, case, series, java, edit):
     files = node_files(series, edit)
