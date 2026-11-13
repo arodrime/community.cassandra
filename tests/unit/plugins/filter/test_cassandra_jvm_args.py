@@ -528,6 +528,30 @@ def test_the_way_out_of_an_options_file_hand_edit_keeps_it(tmp_path):
     assert out["differences"] == []
 
 
+@pytest.mark.parametrize("keep", [["cassandra-env.sh", "jvm-server.options"], ["cassandra-env.sh"]])
+def test_a_kept_jvm_file_keeps_the_exporter_s_agent(tmp_path, keep):
+    # (re-audit, 2026-11-14) the exporter's block the only move, a hand edit in jvm-server.options: the report's way
+    # out keeps both files; the agent is then not imported (cassandra_config refuses to write it in a kept
+    # jvm-server.options), cassandra-env.sh gives it as it does
+    def edit(files):
+        files["cassandra-env.sh"] += '\nif [ -n "$CASSANDRA_CONF" ]; then\n    JVM_OPTS="$JVM_OPTS %s"\nfi\n' % AGENT
+        files["jvm-server.options"] = files["jvm-server.options"].replace("-XX:+UseNUMA\n", "")
+    files = node_files("50x", edit)
+    cmdline = launch(files, "17", tmp_path)
+    nodes = [dict(imported(files, "50x", "17", cmdline)[2], name="n1", address="10.0.0.1")]
+    lines = cassandra_import_report(cassandra_inventory_layout(nodes, "c"), ["c.yml", "."], "report.txt", {}, True,
+                                    width=400, in_git=False)
+    assert [line for line in lines if "-e import_cluster_keep_hand_edits=cassandra-env.sh,jvm-server.options" in line]
+    jvm = {"cmdline": cmdline, "java": "17", "keep": ",".join(keep), "environment": {}, "newer": []}
+    inventory, layout = import_node(files, "50x", jvm=jvm, keep={"cassandra_service_unit_manage": False,
+                                                                 "cassandra_config_keep_files": keep})
+    assert not [k for k in layout["nodes"][0]["vars"] if k.startswith("cassandra_prometheus_exporter")]
+    out = cassandra_import_self_check(inventory, layout["hosts"], "n1", FACTS, files, {}, "/var/lib/cassandra", "17",
+                                      "", {}, jvm=jvm)
+    assert out["differences"] == ([] if "jvm-server.options" in keep else
+                                  ["jvm-server.options: UseNUMA: node has nothing, import would write '-XX:+UseNUMA'"])
+
+
 @pytest.mark.parametrize("case, series, java, edit", NOT_MOVED, ids=[c[0] for c in NOT_MOVED])
 def test_hand_edits_not_moved_stay_hand_edits(tmp_path, case, series, java, edit):
     files = node_files(series, edit)
