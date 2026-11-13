@@ -416,20 +416,24 @@ def test_a_hand_edit_of_an_options_file_does_not_stop_a_move(tmp_path):
     assert imported(files, "50x", "17", launch(files, "17", tmp_path))[2]["moved"] == []
 
 
-def test_a_node_with_the_files_of_an_older_release(tmp_path):
-    # (2026-11-13, a 5.0.9 cluster on RPM) its jvm17 G1 block without the tuning lines, the heap in their place,
-    # -Xss1024M for -Xss256k, the rmi hostname at the end of cassandra-env.sh, the exporter's agent in an if ... fi
-    # block, the chronicle line not there: everything carried but that line, said on its own
-    agent = "-javaagent:/opt/jmx_exporter/jmx_prometheus_javaagent-1.7.0.jar=9404:/etc/cassandra/jmx_exporter.yml"
+AGENT = "-javaagent:/opt/jmx_exporter/jmx_prometheus_javaagent-1.7.0.jar=9404:/etc/cassandra/jmx_exporter.yml"
 
-    def edit(files):
-        files["cassandra-env.sh"] += '\n%s\n\nif [ -n "$CASSANDRA_CONF" ]; then\n    JVM_OPTS="$JVM_OPTS %s"\nfi\n' % (
-            RMI, agent)
-        files["jvm-server.options"] = files["jvm-server.options"].replace("-Xss256k", "-Xss1024M").replace(
-            "-Dchronicle.analytics.disable=true\n", "") + "-XX:-UseBiasedLocking\n"
-        text = files["jvm17-server.options"].replace("-XX:MaxTenuringThreshold=2", "-Xms31G\n-Xmx31G")
-        files["jvm17-server.options"] = "\n".join(line for line in text.split("\n") if line not in G1_TUNING)
-    files = node_files("50x", edit)
+
+def older_release(files):
+    """(2026-11-13, a 5.0.9 cluster on RPM) its jvm17 G1 block without the tuning lines, the heap in their place,
+    -Xss1024M for -Xss256k, the rmi hostname at the end of cassandra-env.sh, the exporter's agent in an if ... fi
+    block, the chronicle line not there."""
+    files["cassandra-env.sh"] += '\n%s\n\nif [ -n "$CASSANDRA_CONF" ]; then\n    JVM_OPTS="$JVM_OPTS %s"\nfi\n' % (
+        RMI, AGENT)
+    files["jvm-server.options"] = files["jvm-server.options"].replace("-Xss256k", "-Xss1024M").replace(
+        "-Dchronicle.analytics.disable=true\n", "") + "-XX:-UseBiasedLocking\n"
+    text = files["jvm17-server.options"].replace("-XX:MaxTenuringThreshold=2", "-Xms31G\n-Xmx31G")
+    files["jvm17-server.options"] = "\n".join(line for line in text.split("\n") if line not in G1_TUNING)
+
+
+def test_a_node_with_the_files_of_an_older_release(tmp_path):
+    # everything carried but the chronicle line, said on its own
+    files = node_files("50x", older_release)
     cmdline = launch(files, "17", tmp_path)
     inventory, layout, node = imported(files, "50x", "17", cmdline)
     assert [line for line in node["hand_edits"] if line.startswith("  ")] == ["  - -Dchronicle.analytics.disable=true"]
@@ -441,6 +445,25 @@ def test_a_node_with_the_files_of_an_older_release(tmp_path):
     assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == [
         "jvm-server.options: -Dchronicle.analytics.disable: node has nothing, import would write"
         " '-Dchronicle.analytics.disable=true'"]
+
+
+def test_the_way_out_of_an_options_file_hand_edit_keeps_it(tmp_path):
+    # the report's way out for the chronicle line: jvm-server.options kept, with cassandra-env.sh (whose lines were
+    # moved: a JVM file kept, nothing is moved), and the self-check passes then
+    files = node_files("50x", older_release)
+    cmdline = launch(files, "17", tmp_path)
+    node = imported(files, "50x", "17", cmdline)[2]
+    nodes = [dict(node, name="n1", address="10.0.0.1")]
+    lines = cassandra_import_report(cassandra_inventory_layout(nodes, "c"), ["c.yml", "."], "report.txt", {}, True,
+                                    width=400, in_git=False)
+    assert [line for line in lines if "-e import_cluster_keep_hand_edits=cassandra-env.sh,jvm-server.options" in line]
+    keep = ["cassandra-env.sh", "jvm-server.options"]
+    jvm = {"cmdline": cmdline, "java": "17", "keep": ",".join(keep), "environment": {}, "newer": []}
+    inventory, layout = import_node(files, "50x", jvm=jvm, keep={"cassandra_service_unit_manage": False,
+                                                                 "cassandra_config_keep_files": keep})
+    out = cassandra_import_self_check(inventory, layout["hosts"], "n1", FACTS, files, {}, "/var/lib/cassandra", "17",
+                                      "", {}, jvm=jvm)
+    assert out["differences"] == []
 
 
 @pytest.mark.parametrize("case, series, java, edit", NOT_MOVED, ids=[c[0] for c in NOT_MOVED])

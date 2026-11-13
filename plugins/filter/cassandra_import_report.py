@@ -997,6 +997,16 @@ def _entry(report, what, members, todo):
 SNIPPET_FILES = ("cassandra-env.sh", "logback.xml")
 
 
+def _kept_with(report, f, members):
+    """The files to keep for the hand edits of f on these nodes: f, and cassandra-env.sh with a JVM options file
+    when cassandra-env.sh's lines were moved to variables (a JVM file kept, nothing of it is moved: they would be
+    lost) -> [file]."""
+    moved = [n for n in report.read if n["name"] in members and (n.get("moved") or n.get("rewritten"))]
+    if moved and re.match(r"^jvm\d*-server\.options$", f):
+        return ["cassandra-env.sh", f]
+    return [f]
+
+
 def _hand_entries(report, edits):
     """Hand edits: a setting edited (its value), a file's other edits counted -> [entry lines]; the one way to keep
     them, the file left as the node has it."""
@@ -1007,9 +1017,11 @@ def _hand_entries(report, edits):
             if REPLACE.search(text):  # (never to keep: under Settings to review)
                 todo = "a replace flag: remove it, see Settings to review"
             else:
-                todo = "%sto keep %s: import again with %s (Ansible then leaves %s as each node has it)" % (
+                keep = _kept_with(report, f, members)
+                todo = "%sto keep %s: import again with %s (Ansible then leaves %s as each node has it%s)" % (
                     "" if setting else "the lines are under DETAILS, node by node; ", "it" if setting else "them",
-                    unbreakable("-e import_cluster_keep_hand_edits=" + f), f)
+                    unbreakable("-e import_cluster_keep_hand_edits=" + ",".join(keep)), " and ".join(keep),
+                    "; cassandra-env.sh's lines moved to variables stay in it then" if len(keep) > 1 else "")
                 if f in SNIPPET_FILES:  # (no variable carries them: the file's template of yours, or a piece of it)
                     todo += ("; or carry %s: your own template of %s (cassandra_config_template_overrides), or a"
                              " template piece for lines at its end (cassandra_config_template_snippets)"
