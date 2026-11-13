@@ -2005,12 +2005,13 @@ def seed_layout(nodes, up=None):
     note. nodes: [{name, address, dc, rack, seed}] in inventory order; up: the
     names of the nodes seen running (None: not known): a suggestion picks
     them first in a datacenter that has some, then tops up from its other nodes
-    only to follow the rule (one with none running, a new one: any).
+    only to follow the rule (one with none running: 2 of them, any; a new
+    cluster: by the rule).
     Returns {lines: one per datacenter ("Seeds  dc1  node1 (rack_a), node3
     (rack_b)  ok", a warning's "WARNING  Seeds  dc2  ..."), dcs: [{dc, level
     ok|note|warning, text}], problems: the warnings' texts, notes, suggested: a seed list that follows the rule
     (addresses, every datacenter; empty without a warning), stopped: the names
-    in it not running, in a datacenter that has some running}."""
+    in it not running, when some node of the cluster runs}."""
     dcs = {}
     for n in nodes or []:
         dcs.setdefault(n["dc"], {}).setdefault(n["rack"], []).append(n)
@@ -2052,8 +2053,10 @@ def seed_layout(nodes, up=None):
                 # a stopped node only to reach the minimum or a second rack
                 up_racks = len(set(n["rack"] for n in members if n["name"] in running))
                 target = min(target, max(SEEDS_MIN, up_racks))
+            elif up:  # none running here, some elsewhere: as few stopped seeds as the rule allows
+                target = min(target, SEEDS_MIN)
             keep = pick_seeds(racks, target, running or None)
-            stopped += [n["name"] for n in keep if running and n["name"] not in running]
+            stopped += [n["name"] for n in keep if up and n["name"] not in up]
         suggested += [n["address"] for n in keep]
     result["suggested"] = suggested if result["problems"] else []
     result["stopped"] = stopped if result["problems"] else []

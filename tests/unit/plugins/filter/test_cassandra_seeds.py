@@ -69,10 +69,25 @@ def test_limit_to_a_node_that_is_no_seed_says_nothing():
 def test_suggestion_picks_running_nodes_first():
     nodes = [node("n1", "r1"), node("n2", "r2"), node("n3", "r3"), node("b1", "r1", dc="dc2"), node("b2", "r2", dc="dc2")]
     out = cassandra_seed_layout(nodes, unread=[], up=["n2", "n3"])
-    # dc1 runs: its running nodes, on 2 racks, are enough; dc2 has none running (a new datacenter): any of its nodes
+    # dc1 runs: its running nodes, on 2 racks, are enough; dc2 has none running: any of its nodes, stopped
     assert out["suggested"] == ["ip-n2", "ip-n3", "ip-b1", "ip-b2"]
-    assert out["stopped"] == []
+    assert out["stopped"] == ["b1", "b2"]
     assert rejudged(nodes, out["suggested"]) == []
+
+
+def test_a_datacenter_with_none_running_gets_the_minimum_stopped_seeds():
+    # dc2, 3 racks, none running while dc1 runs: 2 seeds (not 3), both said stopped
+    nodes = [node("a1", "r1", True), node("a2", "r2", True),
+             node("b1", "r1", dc="dc2"), node("b2", "r2", dc="dc2"), node("b3", "r3", dc="dc2")]
+    out = cassandra_seed_layout(nodes, up=["a1", "a2"])
+    assert out["suggested"] == ["ip-a1", "ip-a2", "ip-b1", "ip-b2"]
+    assert out["stopped"] == ["b1", "b2"]
+    assert rejudged(nodes, out["suggested"]) == []
+    # not known (help), or nothing running: the rule's 3, none said stopped
+    for up in (None, []):
+        nodes = [dict(n, seed=n["name"] in ("a1", "a2")) for n in nodes]
+        out = cassandra_seed_layout(nodes, up=up)
+        assert (out["suggested"][2:], out["stopped"]) == (["ip-b1", "ip-b2", "ip-b3"], [])
 
 
 def rejudged(nodes, suggested):
