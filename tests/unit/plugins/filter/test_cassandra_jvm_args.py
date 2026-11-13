@@ -256,6 +256,38 @@ def test_heap_moved_with_a_heap_in_the_options_of_another_java(tmp_path):
     assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
 
 
+G1_TUNING = ("-XX:MaxTenuringThreshold=2", "-XX:G1HeapRegionSize=16m", "-XX:+UnlockExperimentalVMOptions",
+             "-XX:G1NewSizePercent=50", "-XX:G1RSetUpdatingPauseTimePercent=5", "-XX:InitiatingHeapOccupancyPercent=70")
+
+
+@pytest.mark.parametrize("removed", [G1_TUNING, ("-XX:+UseG1GC", "-XX:+ParallelRefProcEnabled") + G1_TUNING],
+                         ids=["G1 without its tuning", "the JVM's default GC"])
+def test_gc_lines_removed_are_carried_as_a_custom_gc(tmp_path, removed):
+    # 5.0's G1 block without some of its lines (an older release's file): cassandra_jvm17_gc custom, the node's GC
+    # lines in cassandra_jvm17_extra_options, in their order; the heap the node wrote in their place too
+    def edit(files):
+        text = files["jvm17-server.options"].replace("-XX:MaxTenuringThreshold=2", "-Xms31G\n-Xmx31G")
+        files["jvm17-server.options"] = "\n".join(line for line in text.split("\n") if line not in removed)
+    files = node_files("50x", edit)
+    cmdline = launch(files, "17", tmp_path)
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    assert node["hand_edits"] == []
+    rendered, variables = role_files(inventory, layout, files)
+    kept = [o for o in ("-XX:+UseG1GC", "-XX:+ParallelRefProcEnabled", "-XX:MaxGCPauseMillis=300") if o not in removed]
+    assert variables["cassandra_jvm17_gc"] == "custom"
+    assert variables["cassandra_jvm17_extra_options"] == kept + ["-Xms31G", "-Xmx31G"]
+    assert settings(launch(rendered, "17", tmp_path)) == settings(cmdline)
+    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
+
+
+def test_the_stock_gc_block_stays_g1(tmp_path):
+    files = node_files("50x", lambda f: f.update({"jvm17-server.options": f["jvm17-server.options"].replace(
+        "-XX:MaxGCPauseMillis=300", "-XX:MaxGCPauseMillis=500")}))
+    inventory, layout, node = imported(files, "50x", "17", launch(files, "17", tmp_path))
+    variables = role_files(inventory, layout, files)[1]
+    assert "cassandra_jvm17_gc" not in node["vars"] and variables["cassandra_jvm17_max_gc_pause_millis"] == 500
+
+
 @pytest.mark.parametrize("case, series, java, edit", NOT_MOVED, ids=[c[0] for c in NOT_MOVED])
 def test_hand_edits_not_moved_stay_hand_edits(tmp_path, case, series, java, edit):
     files = node_files(series, edit)

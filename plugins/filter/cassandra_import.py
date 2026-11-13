@@ -561,7 +561,36 @@ def _import_file(env, series, name, ctx, live):
         # top-level settings by their key, wherever the node has them (lines
         # added or moved by hand shift the ones below out of place)
         found.update(_import_by_key(tpl, live, ctx))
+    if name.endswith(".options"):
+        _custom_gc(env, series, name, ctx, tpl, live, found)
     return found
+
+
+# a JVM options file's line written for one GC (the stock block of G1 or CMS): its file's GC variable
+GC_LINE = re.compile(r"\((cassandra_jvm\d+_gc) \| default\(cassandra_jvm_gc\)\) == ")
+
+
+def _custom_gc(env, series, name, ctx, tpl, live, found):
+    """A jvm<N>-server.options whose GC options are not the stock block of the GC the role writes (a line of it
+    removed or commented out, another option in its place): cassandra_jvm<N>_gc custom (the role's blocks
+    commented out), the node's GC lines first in its extra options, in their order -> found changed in place."""
+    gc_lines = [t for t in tpl if GC_LINE.search(t)]
+    if not gc_lines:
+        return
+    names = set(jvm.option_name(w.lstrip("#")) for t in gc_lines for w in re.findall(r"'(#?-[^']*)'", t)) - {None}
+
+    def gc_options(lines):
+        return [o for o in jvm.words(lines) if jvm.option_name(o) in names]
+    var = jvm.options_variable(name)
+    if gc_options(_render(env, series, name, dict(ctx, **found))[1]) == gc_options(live):
+        return
+    extras = list(found.get(var) or [])
+    carried = [line for line in live if gc_options(line) and line not in extras]
+    for read in set(re.findall(r"\b(cassandra_jvm\d+_\w+)\b", " ".join(gc_lines))):  # what the block's lines gave
+        found.pop(read, None)
+    found[GC_LINE.search(gc_lines[0]).group(1)] = "custom"
+    if carried + extras:
+        found[var] = carried + extras
 
 
 def _carried(name, series, tpl, lines):
@@ -1375,6 +1404,7 @@ def _jvm_options(env, series, ctx, files, found, java, keep_unread, cmdline):
                          " (import_cluster_keep_unread_jvm_options)" % (name, shown, java, " and ".join(read), var))
             continue
         heaps += [(name, o) for o in jvm.words(found.pop(var)) if jvm.option_name(o) in HEAP_OPTIONS]
+        found.pop(var.replace("_extra_options", "_gc"), None)  # (custom: its GC lines were among them)
         keep.append(name)
         notes.append("%s: %s not read by Java %s (it reads %s): not imported, nodes added later get the role's file."
                      " They stay in this node's file, left as it is (cassandra_config_keep_files): they would apply"
