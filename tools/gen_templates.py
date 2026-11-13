@@ -76,14 +76,19 @@ def jvm_var(n):
 def gc_switch(n, gc, lines):
     # Lines of one GC's block: active when this file's GC is `gc`, commented
     # otherwise. (stock, None) keeps the flag; (stock, name) sets its value
-    # from cassandra_jvm_<name>.
+    # from cassandra_jvm_<name>; G1's: commented too when that value is ""
+    # (stock, None, name): when the value of name is "" (the unlock option of
+    # G1NewSizePercent).
     v = jvm_var(n)
     rules = []
-    for stock, name in lines:
+    for stock, name, *when in lines:
         flag = stock.lstrip("#")
         on = "'%s'" % flag if name is None else "'%s=' ~ %s" % (flag.split("=")[0], v(name))
         off = stock if stock.startswith("#") else "#" + stock
-        rules.append((stock, "{{ %s if %s == '%s' else '%s' }}" % (on, v("gc"), gc, off)))
+        cond = "%s == '%s'" % (v("gc"), gc)
+        if gc == "G1" and (name or when):
+            cond += " and %s | string != ''" % v(name or when[0])
+        rules.append((stock, "{{ %s if %s else '%s' }}" % (on, cond, off)))
     return rules
 
 
@@ -99,8 +104,9 @@ def cms_lines(prefix, parnew=False):
 G1_50 = [
     ("-XX:+UseG1GC", None), ("-XX:+ParallelRefProcEnabled", None),
     ("-XX:MaxTenuringThreshold=2", "max_tenuring_threshold"), ("-XX:G1HeapRegionSize=16m", "g1_heap_region_size"),
-    ("-XX:+UnlockExperimentalVMOptions", None), ("-XX:G1NewSizePercent=50", "g1_new_size_percent"),
-    ("-XX:G1RSetUpdatingPauseTimePercent=5", None), ("-XX:MaxGCPauseMillis=300", "max_gc_pause_millis"),
+    ("-XX:+UnlockExperimentalVMOptions", None, "g1_new_size_percent"), ("-XX:G1NewSizePercent=50", "g1_new_size_percent"),
+    ("-XX:G1RSetUpdatingPauseTimePercent=5", "g1_rset_updating_pause_time_percent"),
+    ("-XX:MaxGCPauseMillis=300", "max_gc_pause_millis"),
     ("-XX:InitiatingHeapOccupancyPercent=70", "initiating_heap_occupancy_percent"),
 ]
 
@@ -110,7 +116,7 @@ def g1_lines_4x(pause, tenuring_and_region):
     if tenuring_and_region:
         lines += [("#-XX:MaxTenuringThreshold=1", "max_tenuring_threshold"),
                   ("#-XX:G1HeapRegionSize=16m", "g1_heap_region_size")]
-    return lines + [("#-XX:G1RSetUpdatingPauseTimePercent=5", None),
+    return lines + [("#-XX:G1RSetUpdatingPauseTimePercent=5", "g1_rset_updating_pause_time_percent"),
                     ("#-XX:MaxGCPauseMillis=%s" % pause, "max_gc_pause_millis"),
                     ("#-XX:InitiatingHeapOccupancyPercent=70", "initiating_heap_occupancy_percent")]
 

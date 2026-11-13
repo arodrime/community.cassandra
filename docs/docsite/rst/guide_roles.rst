@@ -1471,6 +1471,12 @@ the masking reads as part of its value) puts all the lines of its snippet in ``s
 (``MAX_HEAP_SIZE=``, ``-Xmx``, the JMX port, a GC), or that do not make a whole (an ``if`` without its ``fi``), are not carried: none of the end lines
 then is.
 
+The GC block of a ``jvm<N>-server.options`` file is read as the stock one with its values; a G1 tuning line the
+node has commented out or removed, ``""`` (the role writes it commented out). When that cannot give the node's GC
+options (another GC in G1's place, a line no variable switches), ``cassandra_jvm<N>_gc: custom`` with the node's GC
+lines, in their order, in ``cassandra_jvm<N>_extra_options``; either only when it removes the GC's differences and
+adds none, else they stay hand edits.
+
 Hand edits of ``cassandra-env.sh`` that add plain options to ``JVM_OPTS`` (``JVM_OPTS="$JVM_OPTS -Xms8G -Xmx8G
 -XX:+AlwaysPreTouch"``, outside any ``if``), and the heap (``MAX_HEAP_SIZE``, ``HEAP_NEWSIZE``,
 ``MAX_DIRECT_MEMORY_SIZE``) set elsewhere in the file, are moved to the variables that write them where the role does:

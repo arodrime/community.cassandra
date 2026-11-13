@@ -1374,30 +1374,35 @@ argument_specs:
         description:
         - C(-XX:CMSInitiatingOccupancyFraction) with CMS.
       cassandra_jvm_max_tenuring_threshold:
-        type: int
+        type: raw
         default: 2
         description:
-        - C(-XX:MaxTenuringThreshold) with G1.
+        - 'C(-XX:MaxTenuringThreshold) with G1; V("") comments the stock line out.'
       cassandra_jvm_g1_heap_region_size:
-        type: str
+        type: raw
         default: 16m
         description:
-        - C(-XX:G1HeapRegionSize) with G1.
+        - 'C(-XX:G1HeapRegionSize) with G1; V("") comments the stock line out.'
       cassandra_jvm_g1_new_size_percent:
-        type: int
+        type: raw
         default: 50
         description:
-        - C(-XX:G1NewSizePercent) with G1.
+        - 'C(-XX:G1NewSizePercent) with G1; V("") comments the stock line out. C(-XX:+UnlockExperimentalVMOptions) commented out with it.'
+      cassandra_jvm_g1_rset_updating_pause_time_percent:
+        type: raw
+        default: 5
+        description:
+        - 'C(-XX:G1RSetUpdatingPauseTimePercent) with G1; V("") comments the stock line out.'
       cassandra_jvm_max_gc_pause_millis:
-        type: int
+        type: raw
         default: 300
         description:
-        - C(-XX:MaxGCPauseMillis) with G1.
+        - 'C(-XX:MaxGCPauseMillis) with G1; V("") comments the stock line out.'
       cassandra_jvm_initiating_heap_occupancy_percent:
-        type: int
+        type: raw
         default: 70
         description:
-        - C(-XX:InitiatingHeapOccupancyPercent) with G1.
+        - 'C(-XX:InitiatingHeapOccupancyPercent) with G1; V("") comments the stock line out.'
       cassandra_jvm_parallel_gc_threads:
         type: raw
         default: ''

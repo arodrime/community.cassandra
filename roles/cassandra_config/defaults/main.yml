@@ -367,12 +367,14 @@ cassandra_jmx_rmi_hostname: ""
 # GC: the series' stock one by default (CMS on 4.x, G1 on 5.0). G1 on 4.x
 # turns on the stock G1 block, with the values below (5.0's); CMS needs
 # Java 8/11. custom: both blocks commented, set your own flags with
-# cassandra_jvm<N>_extra_options.
+# cassandra_jvm<N>_extra_options. A G1 value "" comments its stock line out
+# (G1NewSizePercent's: its UnlockExperimentalVMOptions line too).
 cassandra_jvm_gc: "{{ 'CMS' if cassandra_version in ['40x', '41x'] else 'G1' }}"  # G1, CMS or custom
 cassandra_jvm_cms_initiating_occupancy_fraction: 75
 cassandra_jvm_max_tenuring_threshold: 2
 cassandra_jvm_g1_heap_region_size: "16m"
 cassandra_jvm_g1_new_size_percent: 50
+cassandra_jvm_g1_rset_updating_pause_time_percent: 5
 cassandra_jvm_max_gc_pause_millis: 300
 cassandra_jvm_initiating_heap_occupancy_percent: 70
 cassandra_jvm_parallel_gc_threads: ""  # "" = JVM default

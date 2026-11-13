@@ -260,11 +260,17 @@ G1_TUNING = ("-XX:MaxTenuringThreshold=2", "-XX:G1HeapRegionSize=16m", "-XX:+Unl
              "-XX:G1NewSizePercent=50", "-XX:G1RSetUpdatingPauseTimePercent=5", "-XX:InitiatingHeapOccupancyPercent=70")
 
 
+TUNED = dict(("cassandra_jvm17_%s" % k, "") for k in (
+    "max_tenuring_threshold", "g1_heap_region_size", "g1_new_size_percent", "g1_rset_updating_pause_time_percent",
+    "initiating_heap_occupancy_percent"))
+
+
 @pytest.mark.parametrize("removed", [G1_TUNING, ("-XX:+UseG1GC", "-XX:+ParallelRefProcEnabled") + G1_TUNING],
                          ids=["G1 without its tuning", "the JVM's default GC"])
-def test_gc_lines_removed_are_carried_as_a_custom_gc(tmp_path, removed):
-    # 5.0's G1 block without some of its lines (an older release's file): cassandra_jvm17_gc custom, the node's GC
-    # lines in cassandra_jvm17_extra_options, in their order; the heap the node wrote in their place too
+def test_gc_lines_removed_are_carried(tmp_path, removed):
+    # 5.0's G1 block without some of its lines (an older release's file), the heap the node wrote in their place:
+    # G1 with those lines' variables "" (commented out); without G1 at all: cassandra_jvm17_gc custom, the node's GC
+    # lines in cassandra_jvm17_extra_options, in their order
     def edit(files):
         text = files["jvm17-server.options"].replace("-XX:MaxTenuringThreshold=2", "-Xms31G\n-Xmx31G")
         files["jvm17-server.options"] = "\n".join(line for line in text.split("\n") if line not in removed)
@@ -273,12 +279,31 @@ def test_gc_lines_removed_are_carried_as_a_custom_gc(tmp_path, removed):
     inventory, layout, node = imported(files, "50x", "17", cmdline)
     assert node["hand_edits"] == []
     rendered, variables = role_files(inventory, layout, files)
-    kept = [o for o in ("-XX:+UseG1GC", "-XX:+ParallelRefProcEnabled", "-Xms31G", "-Xmx31G", "-XX:MaxGCPauseMillis=300")
-            if o not in removed]  # (in the node's order)
-    assert variables["cassandra_jvm17_gc"] == "custom"
-    assert variables["cassandra_jvm17_extra_options"] == kept
+    if "-XX:+UseG1GC" in removed:
+        assert variables["cassandra_jvm17_gc"] == "custom"
+        assert variables["cassandra_jvm17_extra_options"] == ["-Xms31G", "-Xmx31G", "-XX:MaxGCPauseMillis=300"]
+    else:
+        assert "cassandra_jvm17_gc" not in variables and variables["cassandra_jvm17_extra_options"] == ["-Xms31G",
+                                                                                                        "-Xmx31G"]
+        assert dict((k, variables.get(k)) for k in TUNED) == TUNED
     assert settings(launch(rendered, "17", tmp_path)) == settings(cmdline)
     assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
+
+
+@pytest.mark.parametrize("removed", [G1_TUNING, ("-XX:+UseG1GC", "-XX:+ParallelRefProcEnabled") + G1_TUNING],
+                         ids=["G1 without its tuning", "the JVM's default GC"])
+def test_a_gc_reading_kept_beside_another_hand_edit(tmp_path, removed):
+    # (re-audit, 2026-11-14) a stock line of the file removed too: the GC read all the same, that line the only
+    # difference (custom was dropped then: 8 differences)
+    def edit(files):
+        text = files["jvm17-server.options"].replace("-Djdk.attach.allowAttachSelf=true\n", "")
+        files["jvm17-server.options"] = "\n".join(line for line in text.split("\n") if line not in removed)
+    files = node_files("50x", edit)
+    cmdline = launch(files, "17", tmp_path)
+    node = imported(files, "50x", "17", cmdline)[2]
+    assert [line for line in node["hand_edits"] if line.startswith("  ")] == ["  - -Djdk.attach.allowAttachSelf=true"]
+    assert [d.split(":")[1].strip() for d in check(files, "50x", java="17", cmdline=cmdline)["differences"]] == [
+        "-Djdk.attach.allowAttachSelf"]
 
 
 def jvm17(*pairs, drop=()):
@@ -298,9 +323,12 @@ GC_SHAPES = [  # (id, edit, custom): clean at 9356e934 (the first two) or a hand
                                           "-XX:+UseG1GC -XX:+ParallelRefProcEnabled")), False),
     ("ZGC in the place of G1", jvm17(("-XX:+UseG1GC\n", "-XX:+UseZGC\n")), True),
     ("the parallel GC in the place of G1", jvm17(("-XX:+UseG1GC\n", "-XX:+UseParallelGC\n")), True),
-    # custom with GC threads: they stay after the unlock option, carried with it
+    # GC threads with a tuning line removed: G1, that line's variable ""
+    ("G1 with GC threads", jvm17(("#-XX:ParallelGCThreads=16", "-XX:ParallelGCThreads=8"),
+                                 drop=("-XX:InitiatingHeapOccupancyPercent=70",)), False),
+    # custom with GC threads (no variable switches ParallelRefProcEnabled): they stay after the unlock option
     ("custom with GC threads", jvm17(("#-XX:ParallelGCThreads=16", "-XX:ParallelGCThreads=8"),
-                                     drop=("-XX:InitiatingHeapOccupancyPercent=70",)), True),
+                                     drop=("-XX:+ParallelRefProcEnabled",)), True),
 ]
 
 
@@ -316,9 +344,9 @@ def test_gc_lines_otherwise_never_worse_than_before_the_custom_gc(tmp_path, case
 
 
 def test_a_custom_gc_inventory_the_role_takes(tmp_path):
-    # MAX_HEAP_SIZE alone (G1), G1's tuning lines not there: custom, which the role's heap assert takes (G1 on)
+    # MAX_HEAP_SIZE alone (G1), ParallelRefProcEnabled not there: custom, which the role's heap assert takes (G1 on)
     from ansible_collections.community.cassandra.tests.unit.roles.test_heap_newsize_g1 import _assert, _task
-    files = node_files("50x", both(on_top("MAX_HEAP_SIZE=31G"), jvm17(drop=G1_TUNING)))
+    files = node_files("50x", both(on_top("MAX_HEAP_SIZE=31G"), jvm17(drop=("-XX:+ParallelRefProcEnabled",))))
     cmdline = launch(files, "17", tmp_path)
     inventory, layout, node = imported(files, "50x", "17", cmdline)
     variables = role_files(inventory, layout, files)[1]
@@ -353,10 +381,8 @@ def test_the_dev_node_jvm_files(tmp_path):
     assert node["hand_edits"] == []
     rendered, variables = role_files(inventory, layout, files)
     assert dict((k, v) for k, v in variables.items() if k.startswith(("cassandra_jvm", "cassandra_heap"))) == {
-        "cassandra_jvm17_gc": "custom",
-        "cassandra_jvm17_extra_options": ["-XX:+UseG1GC", "-XX:+ParallelRefProcEnabled", "-Xms31G", "-Xmx31G", "-Xss256k",
-                                          "-XX:MaxGCPauseMillis=500"],
-        "cassandra_jvm_extra_options": ["-Xss1024M", "-XX:-UseBiasedLocking"]}
+        "cassandra_jvm17_extra_options": ["-Xms31G", "-Xmx31G", "-Xss256k"], "cassandra_jvm17_max_gc_pause_millis": 500,
+        "cassandra_jvm_extra_options": ["-Xss1024M", "-XX:-UseBiasedLocking"], **TUNED}
     assert settings(launch(rendered, "17", tmp_path)) == settings(cmdline)
     assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
     # without the chronicle line (an older file): that line only
@@ -474,9 +500,9 @@ def test_a_node_with_the_files_of_an_older_release(tmp_path):
     inventory, layout, node = imported(files, "50x", "17", cmdline)
     assert [line for line in node["hand_edits"] if line.startswith("  ")] == ["  - -Dchronicle.analytics.disable=true"]
     variables = role_files(inventory, layout, files)[1]
-    assert variables["cassandra_jmx_rmi_hostname"] == IPV4 and variables["cassandra_jvm17_gc"] == "custom"
-    assert variables["cassandra_jvm17_extra_options"] == ["-XX:+UseG1GC", "-XX:+ParallelRefProcEnabled", "-Xms31G",
-                                                          "-Xmx31G", "-XX:MaxGCPauseMillis=300"]
+    assert variables["cassandra_jmx_rmi_hostname"] == IPV4 and "cassandra_jvm17_gc" not in variables
+    assert variables["cassandra_jvm17_extra_options"] == ["-Xms31G", "-Xmx31G"]
+    assert dict((k, variables.get(k)) for k in TUNED) == TUNED
     assert variables["cassandra_jvm_extra_options"] == ["-Xss1024M", "-XX:-UseBiasedLocking"]
     assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == [
         "jvm-server.options: -Dchronicle.analytics.disable: node has nothing, import would write"

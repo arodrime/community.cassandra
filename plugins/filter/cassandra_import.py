@@ -346,7 +346,9 @@ def _read_spaced_word(m, e, cap, seen):
     seen.found[e.split()[2].rstrip(")")] = cap[1:]
 
 
-_PREFIXED_CHOICE = re.compile(r"'([^']*)' ~ %s if %s == '(\w+)' else '([^']*)'" % (V, V))
+# G1's tuning lines: commented out too when their value is "" (... and value | string != '')
+WHEN_SET = r"(?: and \(?\w+(?: \| default\(\w+\))?\)? \| string != '')?"
+_PREFIXED_CHOICE = re.compile(r"'([^']*)' ~ %s if %s == '(\w+)'%s else '([^']*)'" % (V, V, WHEN_SET))
 
 
 def _read_prefixed_choice(m, e, cap, seen):
@@ -411,8 +413,8 @@ _LINE_EXPRESSIONS = tuple((re.compile(pattern), reader) for pattern, reader in (
     (r"'yes' if (\w+) else 'no'", _read_yes_no),
     (r"(\w+) if \w+ is string else .*", _read_string),
     (r"\(' ' \+ (\w+)\) if \w+ else ''", _read_spaced_word),
-    (r"'[^']*' ~ %s if %s == '(\w+)' else '([^']*)'" % (V, V), _read_prefixed_choice),
-    (r"'([^']*)' if %s == '(\w+)' else '([^']*)'" % V, _read_choice),
+    (r"'[^']*' ~ %s if %s == '(\w+)'%s else '([^']*)'" % (V, V, WHEN_SET), _read_prefixed_choice),
+    (r"'([^']*)' if %s == '(\w+)'%s else '([^']*)'" % (V, WHEN_SET), _read_choice),
     (r"(\w+) if (\w+) == '([^']*)' else '([^']*)'", _read_chosen),
     (r"\('([^']*)' ~ (\w+) ~ '([^']*)'\) if \2 else '([^']*)'", _read_between),
     (r"\('\\n' ~ .*\) if \w+ else ''", _read_newline_list),
@@ -599,45 +601,65 @@ def _env_lines_elsewhere(tpl, live, ctx, remote_jmx=False):
     return found
 
 
+# G1's tuning variables: "" comments their stock line out
+G1_TUNING = re.compile(r"^cassandra_jvm\d*_(?:max_tenuring_threshold|g1_heap_region_size|g1_new_size_percent"
+                       r"|g1_rset_updating_pause_time_percent|max_gc_pause_millis|initiating_heap_occupancy_percent)$")
 # a JVM options file's line written for one GC (the stock block of G1 or CMS): its file's GC variable
 GC_LINE = re.compile(r"\((cassandra_jvm\d+_gc) \| default\(cassandra_jvm_gc\)\) == ")
 
 
 def _custom_gc(env, series, name, ctx, tpl, live, found):
-    """A jvm<N>-server.options whose GC options the role's stock block cannot write as the node has them (a line of
-    it removed or commented out, another GC in its place): cassandra_jvm<N>_gc custom (the role's blocks commented
-    out), the node's GC lines (any GC, its threads, the unlock options) in its extra options, in the node's order
-    with them -> found changed in place; only when that gives the JVM what the node's file does and the stock block
-    does not (else as read: what differs stays a hand edit)."""
+    """A jvm<N>-server.options whose GC options the role's stock block cannot write as the node has them -> found
+    changed in place, first of these that gives the JVM the node's GC options and differs in nothing more than the
+    reading as is (a hand edit elsewhere in the file stays one):
+    - G1 with the tuning lines the node has not on commented out (their variables ""), its other values as read;
+    - cassandra_jvm<N>_gc custom (the role's blocks commented out), the node's GC lines (any GC, its threads, the
+      unlock options) in its extra options, in the node's order with them.
+    Else as read: what differs stays a hand edit."""
     gc_lines = [t for t in tpl if GC_LINE.search(t)]
     if not gc_lines:
         return
     var = jvm.options_variable(name)
     node = jvm_options_settings("\n".join(live))
-
-    def settings(variables):
-        return jvm_options_settings("\n".join(_render(env, series, name, dict(ctx, **variables))[1]))
-    if settings(found) == node:
-        return
     block = gc_lines + [t for t in tpl if "_gc_threads" in t]
     names = set(jvm.option_name(w.lstrip("#")) for t in gc_lines for w in re.findall(r"'(#?-[^']*)'", t))
     names |= {"ParallelGCThreads", "ConcGCThreads"} | set(JVM_UNLOCK)
 
-    def is_gc(line):
-        return any(jvm.option_name(o) in names or re.match(r"^Use\w*GC$", jvm.option_name(o) or "")
-                   for o in jvm.words(line))
+    def is_gc(option):
+        return option in names or bool(re.match(r"^Use\w*GC$", option or "")) or str(option).startswith("(set before")
+
+    def differences(variables):
+        role = jvm_options_settings("\n".join(_render(env, series, name, dict(ctx, **variables))[1]))
+        return set(k for k in set(role) | set(node) if role.get(k) != node.get(k))
+    as_read = differences(found)
+    if not [k for k in as_read if is_gc(k)]:
+        return
+
+    def better(variables):  # the GC's differences gone, none added
+        found_now = differences(variables)
+        return found_now <= as_read and not [k for k in found_now if is_gc(k)]
+    # G1 with the tuning lines the node has not on commented out (their value ""): the node's own G1 block
+    tuned = {}
+    for t in [t for t in gc_lines if "== 'G1'" in t]:
+        value = re.search(r"\((cassandra_jvm\d+_\w+) \| default\(cassandra_jvm_\w+\)\) if", t)
+        option = re.match(r"\{\{ '(-[^'=]+)=' ~", t)
+        if value and option and not node.get(jvm.option_name(option.group(1) + "=")):
+            tuned[value.group(1)] = ""
+    if tuned and node.get("UseG1GC") == ["-XX:+UseG1GC"] and better(dict(found, **tuned)):
+        found.update(tuned)
+        return
     extras, lines = list(found.get(var) or []), []
     for line in live:
         if line in extras:
             extras.remove(line)
             lines.append(line)
-        elif is_gc(line):
+        elif any(is_gc(jvm.option_name(o)) for o in jvm.words(line)):
             lines.append(line)
     custom = dict((k, v) for k, v in found.items()  # (less what the block's lines gave)
                   if k not in re.findall(r"\b(cassandra_jvm\d+_\w+)\b", " ".join(block)))
     custom[GC_LINE.search(gc_lines[0]).group(1)] = "custom"
     custom[var] = lines
-    if settings(custom) == node:
+    if better(custom):
         found.clear()
         found.update((k, v) for k, v in custom.items() if v != [] or k != var)
 
@@ -1799,7 +1821,7 @@ def _changed_values(found, ctx, from_shell):
             # a number the node does not give as one (e.g. JMX_PORT="${JMX_PORT:-7299}"): not a value
             # for the variable, left to the report (the role would write the default)
             and not (isinstance(_default(ctx, k), int) and not isinstance(_default(ctx, k), bool)
-                     and not isinstance(v, int))
+                     and not isinstance(v, int) and not (v == "" and G1_TUNING.match(k)))
             # a shell expansion (CASSANDRA_LOG_DIR="$CASSANDRA_HOME/logs"): not a value either,
             # unless the variable is one (cassandra_heap_dump_dir: $CASSANDRA_LOG_DIR, on 4.x too)
             and not (k in from_shell and isinstance(v, str) and re.search(r"[$`]", v)

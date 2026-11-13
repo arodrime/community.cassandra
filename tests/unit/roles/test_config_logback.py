@@ -337,3 +337,15 @@ def test_an_appender_named_with_spaces_around_its_equal_sign_is_known():
 def test_an_appender_named_in_single_quotes_is_known():
     # (rc9 r2 audit) name='Q' as name="Q"
     assert refused("  <appender name='Q' class='x'/>", cassandra_logback_root_extra_refs=["Q"]) == []
+
+
+def test_a_g1_value_left_empty_comments_its_stock_line_out():
+    # the owner's practice: tune G1 by commenting a stock line out, never by deleting it
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _load_role, _render
+    env, ctx, dummy = _load_role("50x", {"os_family": "Debian"})
+    lines = _render(env, "50x", "jvm17-server.options", dict(ctx, cassandra_jvm_g1_new_size_percent="",
+                                                             cassandra_jvm17_max_gc_pause_millis="",
+                                                             cassandra_jvm_g1_rset_updating_pause_time_percent=7))[1]
+    assert "#-XX:+UnlockExperimentalVMOptions" in lines and "#-XX:G1NewSizePercent=50" in lines
+    assert "#-XX:MaxGCPauseMillis=300" in lines and "-XX:G1RSetUpdatingPauseTimePercent=7" in lines
+    assert "-XX:MaxTenuringThreshold=2" in lines  # (the others as they are)

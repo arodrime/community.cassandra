@@ -329,9 +329,11 @@ Role Variables
 * `jvm<N>-server.options`: 5.0 G1 settings as
   `cassandra_jvm_<option>` (`max_gc_pause_millis`,
   `initiating_heap_occupancy_percent`, `g1_heap_region_size`,
-  `g1_new_size_percent`, `max_tenuring_threshold`, `parallel_gc_threads`,
-  `conc_gc_threads`), applied to both files; `cassandra_jvm11_<option>` or
-  `cassandra_jvm17_<option>` overrides one file.
+  `g1_new_size_percent`, `g1_rset_updating_pause_time_percent`,
+  `max_tenuring_threshold`, `parallel_gc_threads`, `conc_gc_threads`), applied
+  to both files; `cassandra_jvm11_<option>` or `cassandra_jvm17_<option>`
+  overrides one file. A G1 value `""` comments its stock line out
+  (`g1_new_size_percent`'s `-XX:+UnlockExperimentalVMOptions` line too).
   `cassandra_jvm_extra_options` (jvm-server.options),
   `cassandra_jvm8_extra_options`, `cassandra_jvm11_extra_options` and
   `cassandra_jvm17_extra_options` append extra lines.
