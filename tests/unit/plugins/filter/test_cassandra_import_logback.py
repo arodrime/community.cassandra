@@ -457,3 +457,8 @@ def test_the_log_dir_written_as_itself_only_when_the_jvm_gets_it():
     files = with_log_dir("/data/cassandra/log", literal("/data/cassandra/log"))
     cmdline = "java\0-Dcassandra.logdir=/data/cassandra/log\0-Dcassandra.logdir=/srv/log\0Main"
     assert cassandra_config_import(files, "50x", FACTS, cmdline=cmdline)["hand_edits"]
+    # the roles' own file with the dir written as itself (a template of yours): read so too
+    rendered = dict(files)
+    rendered["logback.xml"] = files["logback.xml"]
+    live = dict(files, **{"logback.xml": seeded(stock("50x"))["logback.xml"]})
+    assert [d for d in _compare_files(rendered, live)["differences"] if d.startswith("logback.xml")] == []
