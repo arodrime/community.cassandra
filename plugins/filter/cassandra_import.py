@@ -165,6 +165,8 @@ EXTRA_HEADER = "# Settings no variable covers (cassandra_extra_settings)"
 DECLARED_HEADER = "# Settings the stock file has no line for (their variables)"
 # the heap options, which cassandra-env.sh adds from MAX_HEAP_SIZE / HEAP_NEWSIZE unless the options files set them
 HEAP_OPTIONS = ("-Xms", "-Xmx", "-Xmn")
+# the layout note of the heap of an options file the role writes in jvm-server.options (the report reads it)
+HEAP_MOVED = "moved to jvm-server.options (cassandra_heap_in_jvm_options), the same for the JVM"
 # The undefined errors naming a field or a variable, nothing else of the data.
 # Jinja words a missing dict key (d[key]) the same way: nothing here or in the
 # playbook may index a dict with a key read from the nodes.
@@ -1519,10 +1521,11 @@ def _heap_in_options(found, series, java, live_files):
     """The heap set in the JVM options files the running Java reads, an -Xms and an -Xmx line of the same size among
     their extra options (an -Xmn line too without G1; none else of the heap there, none in cassandra-env.sh, its
     HEAP_NEWSIZE included): cassandra_heap_size (cassandra_heap_newsize) with cassandra_heap_in_jvm_options, out of
-    the extra options -> found changed in place; the files they came from. Only with the running JVM's arguments:
+    the extra options -> found changed in place; {file: its heap options (-Xms, -Xmx, -Xmn)}. Only with the
+    running JVM's arguments:
     they show the JVM gets the same where the role writes them (jvm-server.options)."""
     if not jvm.options_file(series, java) or found.get("cassandra_heap_size") or found.get("cassandra_heap_newsize"):
-        return []
+        return {}
     read = jvm.read_files(series, java)
     lines = [(jvm.options_variable(f), line) for f in read for line in found.get(jvm.options_variable(f)) or []]
     names = HEAP_OPTIONS + ("MaxHeapSize", "InitialHeapSize", "NewSize", "MaxNewSize")
@@ -1531,7 +1534,7 @@ def _heap_in_options(found, series, java, live_files):
     g1 = [o for f in read for o in jvm.words(live_files.get(f, "").split("\n")) if jvm.option_name(o) == "UseG1GC"]
     if len(heap) != len(sizes) or set(sizes) - {"-Xmn"} != {"-Xms", "-Xmx"} or sizes["-Xms"] != sizes["-Xmx"] \
             or ("-Xmn" in sizes and g1[-1:] == ["-XX:+UseG1GC"]):  # (-Xmn with G1: cassandra-env.sh stops)
-        return []
+        return {}
     for var, line in heap:
         found[var] = [o for o in found[var] if o != line]
         if not found[var]:
@@ -1540,7 +1543,8 @@ def _heap_in_options(found, series, java, live_files):
     if "-Xmn" in sizes:
         found["cassandra_heap_newsize"] = sizes["-Xmn"]
     found["cassandra_heap_in_jvm_options"] = True
-    return sorted(set(f for f in read for var, dummy in heap if var == jvm.options_variable(f)))
+    return dict((f, [line.strip()[:4] for var, line in heap if var == jvm.options_variable(f)]) for f in read
+                if [var for var, dummy in heap if var == jvm.options_variable(f)])
 
 
 def _same_xml(live, rendered):
@@ -2048,16 +2052,17 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     jvm_notes, jvm_warnings, keep_files = _jvm_options(env, cassandra_version, ctx, [f for f in files if f in live_files],
                                                        found, str(java or ""), keep_unread_jvm_options, cmdline)
     # (not with a JVM file kept as it is: cassandra-env.sh, jvm-server.options where the role writes it, the options
-    # file the heap is in; not with cassandra-env.sh's own heap: -Xm* it adds, MAX_HEAP_SIZE or HEAP_NEWSIZE set
-    # outside a block, wherever)
+    # file the heap is in; not with a heap of cassandra-env.sh's own: a line not the stock file's that sets
+    # MAX_HEAP_SIZE or HEAP_NEWSIZE, or has an -Xms, -Xmx or -Xmn, however written)
     jvm_files = {jvm_args.ENV, jvm_args.COMMON, jvm.options_file(cassandra_version, str(java or ""))}
+    stock_env = set(line.strip() for line in _render(env, cassandra_version, jvm_args.ENV, ctx)[1])
+    env_heap = [line for line in live_files.get(jvm_args.ENV, "").split("\n") if line.strip() not in stock_env
+                and re.search(r"^[^#]*(\b(MAX_HEAP_SIZE|HEAP_NEWSIZE)=|-Xm[sxn])", line)]
     if cmdline and not set(running.get("newer") or []) & {jvm_args.ENV, jvm_args.COMMON} \
-            and not (keep is True or set(keep) & jvm_files) \
-            and not re.search(r"(?m)^[^#]*JVM_OPTS=.*-Xm[sxn][0-9]|^(export )?(MAX_HEAP_SIZE|HEAP_NEWSIZE)=[^\s#]",
-                              live_files.get(jvm_args.ENV, "")):
-        heap_files = _heap_in_options(found, cassandra_version, str(java or ""), live_files)
+            and not (keep is True or set(keep) & jvm_files) and not env_heap:
+        heap_moved = _heap_in_options(found, cassandra_version, str(java or ""), live_files)
     else:
-        heap_files = []
+        heap_moved = {}
     for name in [n for n in LATER_STOCK if n in live_files and n in files]:
         for line in without_later_stock(name, "\n".join(_render(env, cassandra_version, name, ctx)[1]), live_files[name])[1]:
             jvm_warnings.append("%s (%s): added by apply_config: %s; missing because this file predates it" % (
@@ -2108,8 +2113,8 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     hand, normalized, comments = _leftovers(env, cassandra_version, files, render, live_files, rejected,
                                             moved["shown"], HEAP_OPTIONS if moved["shown"] else ())
     normalized += log_dir_note
-    normalized += ["%s: -Xms/-Xmx moved to jvm-server.options (cassandra_heap_in_jvm_options), the same for the JVM" % f
-                   for f in heap_files if f != jvm_args.COMMON]
+    normalized += ["%s: %s %s" % (f, "/".join(options), HEAP_MOVED) for f, options in sorted(heap_moved.items())
+                   if f != jvm_args.COMMON]
     if jvm_args.ENV in moved["rewritten"] and not moved["moved"]:  # its lines at other places only: the same JVM
         normalized.append("cassandra-env.sh: lines at another place than the role writes them (e.g. in the remote JMX"
                           " branch): the same arguments for the JVM (worked out from the running JVM's), no effect")

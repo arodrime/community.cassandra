@@ -353,6 +353,27 @@ def test_a_cms_heap_in_the_jvm_options_the_role_takes(tmp_path, xmn):
         assert _assert(_task("roles/cassandra_config/tasks/checks.yml", name), **simple) is True
 
 
+def test_a_heap_of_cassandra_env_however_written_keeps_the_heap_as_it_is(tmp_path):
+    # (audit r6) -Xmx through a variable in cassandra-env.sh: the pair left in the extra options
+    files = node_files("50x", both(before_extra('JVM_OPTS="$JVM_OPTS -Xmx$MYHEAP"'), on_top("MYHEAP=16G"),
+                                   add_to("jvm-server.options", "-Xms16G\n-Xmx16G")))
+    node = imported(files, "50x", "17", launch(files, "17", tmp_path))[2]
+    assert "cassandra_heap_in_jvm_options" not in node["vars"]
+    assert node["vars"]["cassandra_jvm_extra_options"] == ["-Xms16G", "-Xmx16G"]
+
+
+@pytest.mark.parametrize("series, java, edit, said", [
+    ("50x", "17", both(add_to("jvm-server.options", "-Xms16G"), add_to("jvm17-server.options", "-Xmx16G")),
+     ["jvm17-server.options: -Xmx "]),
+    ("41x", "11", add_to("jvm11-server.options", "-Xms8G\n-Xmx8G\n-Xmn2G"), ["jvm11-server.options: -Xms/-Xmx/-Xmn "])],
+    ids=["split pair", "with -Xmn"])
+def test_the_heap_moved_names_what_each_file_had(tmp_path, series, java, edit, said):
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import HEAP_MOVED
+    files = node_files(series, edit)
+    node = imported(files, series, java, launch(files, java, tmp_path))[2]
+    assert [n for n in node["normalized"] if n.endswith(HEAP_MOVED)] == [s + HEAP_MOVED for s in said]
+
+
 def test_a_heap_size_in_cassandra_env_keeps_the_heap_as_it_is(tmp_path):
     # (audit r5) MAX_HEAP_SIZE set at the top of cassandra-env.sh, the heap in jvm-server.options: not moved
     files = node_files("50x", both(on_top("MAX_HEAP_SIZE=16G"), add_to("jvm-server.options", "-Xms16G\n-Xmx16G")))

@@ -27,7 +27,7 @@ from collections import namedtuple
 from ansible.module_utils.parsing.convert_bool import boolean
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    IDENTITY, KEEP, NODE_LEVEL, NOT_READ, PER_NODE, group_chains, hand_edits_kept, _secret, vars_sort_key, values_hidden)
+    HEAP_MOVED, IDENTITY, KEEP, NODE_LEVEL, NOT_READ, PER_NODE, group_chains, hand_edits_kept, _secret, vars_sort_key, values_hidden)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import HEAP_FILE
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import CONFIG_FILE, RESTART_DOES
 from ansible_collections.community.cassandra.plugins.filter.cassandra_suspicious import (
@@ -1573,8 +1573,7 @@ def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, ch
         items.append("Review the files written, then keep them: %s." % unbreakable("git diff && git commit") if git
                      else "Review the files written in %s." % out.path_from(inventory_dir, report.cwd))
     if self_check_ok:
-        heap_moved = [line for n in report.read for line in n.get("normalized") or []
-                      if line.endswith("moved to jvm-server.options (cassandra_heap_in_jvm_options), the same for the JVM")]
+        heap_moved = [line for n in report.read for line in n.get("normalized") or [] if line.endswith(HEAP_MOVED)]
         apply_check = out.command("apply_config", inventory=inventory or None, hosts=hosts or None,
                                   extra=["--check", "--diff"], cwd=report.cwd)
         topology = out.command("topology", inventory=inventory or None, hosts=hosts or None, extra=["--check"],
