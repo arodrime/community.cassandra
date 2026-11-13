@@ -3,8 +3,9 @@
 # cassandra_install removes the dsbulk versions it installed before. On: the jars of other versions the role
 # downloaded into cassandra_prometheus_exporter_dir (listed in its .cassandra_config; a jar put there by other
 # means stays). Off: those jars, that list (and the directory when it is then empty), the role's config (its
-# header line) and the record of its parts read at start; nothing while a file that gives the JVM its options still
-# loads the agent (one kept by hand, cassandra_config_keep_files, or the agent in cassandra_jvm*_extra_options):
+# header line) and the record of its parts read at start; nothing while the JVM would still load the role's jar: a file
+# its Java reads kept by hand (cassandra_config_keep_files, read on the node), or the agent in the extra options the
+# role writes (cassandra_jvm*_extra_options: what the run writes, not the file still on the node, --check included):
 # removed, they would stop Cassandra at its next start. A
 # running Cassandra keeps the jar it opened until its restart (the one the JVM options file now gives is there).
 - name: Find what the exporter's agent no longer needs
@@ -13,7 +14,7 @@
       - sh
       - -c
       - |
-        dir=$1 keep=$2 conf=$3 on=$4
+        dir=$1 keep=$2 conf=$3 on=$4 kept=$5 extras=$6
         list="$dir/.cassandra_config"
         unused=$(
           if [ -f "$list" ]; then
@@ -30,11 +31,15 @@
           fi
         )
         [ -n "$unused" ] || exit 0
-        # off, a file that gives the JVM its options still loads the agent: nothing removed
+        # off, the JVM still loads the role's jar (a kept file its Java reads, the extra options): nothing removed
         if [ "$on" != on ]; then
-          for f in "$conf"/jvm*-server.options "$conf"/cassandra-env.sh; do
-            grep -qs '^[^#]*-javaagent:[^ ]*jmx_prometheus_javaagent' "$f" && echo "kept|${f##*/}"
-          done | grep . && exit 0
+          {
+            for f in $kept; do
+              grep -v '^[[:space:]]*#' "$conf/$f" 2>/dev/null | grep -qsF -- "-javaagent:$dir/jmx_prometheus_javaagent-" \
+                && echo "kept|$f"
+            done
+            [ -n "$extras" ] && echo "kept|$extras"
+          } | grep . && exit 0
         fi
         echo "$unused"
       - sh
@@ -42,6 +47,11 @@
       - "{{ _cassandra_config_exporter_jar | basename }}"
       - "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}"
       - "{{ 'on' if cassandra_prometheus_exporter_enabled | bool else 'off' }}"
+      - "{{ cassandra_config_keep_files | select('in', _cassandra_config_java_files) | join(' ') }}"
+      - >-
+        {{ 'cassandra_jvm*_extra_options' if ('-javaagent:' ~ (cassandra_prometheus_exporter_dir
+           | regex_replace('(?<=.)/+$', '')) ~ '/jmx_prometheus_javaagent-') in _cassandra_config_java_options
+           else '' }}
   register: cassandra_config_exporter_unused
   changed_when: false
   check_mode: false  # reads only

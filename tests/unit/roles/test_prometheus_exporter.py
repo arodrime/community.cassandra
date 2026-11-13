@@ -387,14 +387,15 @@ CLEANUP = load_tasks(os.path.join(ROLE, "tasks", "prometheus_exporter_cleanup.ym
 
 
 def unused(tmp_path, on, listed=("jmx_prometheus_javaagent-1.6.0.jar", "jmx_prometheus_javaagent-1.7.0.jar"),
-           others=("theirs.jar",), config_header=True, options=None):
+           others=("theirs.jar",), config_header=True, options=None, kept="", extras=""):
     """What the cleanup finds in a directory and a conf dir made so (sh runs its script); options: the content of
-    the conf dir's jvm-server.options."""
+    the conf dir's jvm-server.options ({dir}: the jars' dir); kept: the files kept by hand its Java reads; extras: the
+    extra options that give the agent (said by their name)."""
     jars, conf = tmp_path / "exporter", tmp_path / "conf"
     jars.mkdir(parents=True)
     conf.mkdir()
     if options is not None:
-        (conf / "jvm-server.options").write_text(options)
+        (conf / "jvm-server.options").write_text(options.replace("{dir}", str(jars)))
     for name in list(listed) + list(others):
         (jars / name).write_text("x")
     (jars / ".cassandra_config").write_text("".join(n + "\n" for n in listed))
@@ -402,7 +403,7 @@ def unused(tmp_path, on, listed=("jmx_prometheus_javaagent-1.6.0.jar", "jmx_prom
                                               if config_header else "# mine\n") + "rules: []\n")
     (conf / "jmx_prometheus.at_start").write_text("x\n")
     argv = find(CLEANUP, "Find what the exporter's agent no longer needs")["ansible.builtin.command"]["argv"]
-    run = subprocess.run(argv[:4] + [str(jars), "jmx_prometheus_javaagent-1.7.0.jar", str(conf), on],
+    run = subprocess.run(argv[:4] + [str(jars), "jmx_prometheus_javaagent-1.7.0.jar", str(conf), on, kept, extras],
                          stdout=subprocess.PIPE, check=True)
     return [line.replace(str(tmp_path), "") for line in run.stdout.decode().split("\n") if line]
 
@@ -424,18 +425,36 @@ def test_off_a_config_not_the_roles_stays(tmp_path):
 AGENT_LINE = "-javaagent:/opt/prometheus-jmx-exporter/jmx_prometheus_javaagent-1.7.0.jar=9404:/etc/cassandra/jmx_prometheus.yml\n"
 
 
-def test_off_nothing_removed_while_a_file_still_loads_the_agent(tmp_path):
-    # removed, the jar and config jvm-server.options names would stop Cassandra at its next start: a file kept by
-    # hand, or (audit r4) the agent in the extra options the role wrote there
-    assert unused(tmp_path / "a", "off", options="-ea\n" + AGENT_LINE) == ["kept|jvm-server.options"]
-    # without the agent (commented out): removed
-    assert len(unused(tmp_path / "b", "off", options="-ea\n#" + AGENT_LINE)) == 5
+def test_off_nothing_removed_while_the_jvm_still_loads_the_agent(tmp_path):
+    # removed, the jar and config a kept jvm-server.options names would stop Cassandra at its next start
+    role_agent = "-javaagent:{dir}/jmx_prometheus_javaagent-1.7.0.jar=9404:/etc/cassandra/jmx_prometheus.yml\n"
+    assert unused(tmp_path / "a", "off", options="-ea\n" + role_agent, kept="jvm-server.options") == [
+        "kept|jvm-server.options"]
+    # (audit r5) or the agent in the extra options the role writes: what the run writes, not the file on the node
+    assert unused(tmp_path / "e", "off", extras="cassandra_jvm*_extra_options") == ["kept|cassandra_jvm*_extra_options"]
+    # kept without the agent (commented out), (c) not kept: the role wrote it (--check: will write it) without the
+    # agent, an operator's own agent (another jar): removed
+    assert len(unused(tmp_path / "b", "off", options="-ea\n#" + role_agent, kept="jvm-server.options")) == 5
+    assert len(unused(tmp_path / "c", "off", options="-ea\n" + role_agent)) == 5
+    assert len(unused(tmp_path / "f", "off", options="-ea\n" + AGENT_LINE, kept="jvm-server.options")) == 5
     argv = find(CLEANUP, "Find what the exporter's agent no longer needs")["ansible.builtin.command"]["argv"]
+    # the files kept that its Java reads (a jvm8-server.options kept on Java 17: not)
+    assert render(argv[-2], role_vars(cassandra_config_keep_files=["cassandra.yaml", "jvm-server.options",
+                                                                   "jvm8-server.options", "jvm17-server.options",
+                                                                   "cassandra-env.sh"])) \
+        == "jvm-server.options jvm17-server.options cassandra-env.sh"
+    # the extra options the run writes give the role's agent: said by their name, whatever the file on the node has
+    agent = "-javaagent:/opt/prometheus-jmx-exporter/jmx_prometheus_javaagent-1.7.0.jar=9404:/etc/x.yml"
+    assert render(argv[-1], role_vars(cassandra_prometheus_exporter_dir="/opt/prometheus-jmx-exporter/",
+                                      cassandra_jvm17_extra_options=[agent])).strip() == "cassandra_jvm*_extra_options"
+    assert render(argv[-1], role_vars(cassandra_prometheus_exporter_dir="/opt/other",
+                                      cassandra_jvm17_extra_options=[agent])).strip() == ""
     # nothing of the role's there (an exporter set up by hand): nothing said
     bare = tmp_path / "d"
     bare.mkdir()
     (bare / "jvm-server.options").write_text(AGENT_LINE)
-    run = subprocess.run(argv[:4] + [str(bare / "none"), "x.jar", str(bare), "off"], stdout=subprocess.PIPE, check=True)
+    run = subprocess.run(argv[:4] + [str(bare / "none"), "x.jar", str(bare), "off", "jvm-server.options", ""],
+                         stdout=subprocess.PIPE, check=True)
     assert run.stdout == b""
     # said, with the way out; nothing removed, nothing noted
     variables = role_vars(inventory_hostname="n1", cassandra_config_exporter_unused={"stdout_lines": ["kept|jvm-server.options"]})
