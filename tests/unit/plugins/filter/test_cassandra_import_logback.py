@@ -418,13 +418,21 @@ def test_the_log_dir_written_as_itself_is_the_same_file():
     assert imported(files, "50x")[2]["differences"]
 
 
-def test_the_audit_file_at_another_path_is_a_hand_edit():
-    # the AUDIT appender on, its file out of the log dir: no variable carries the path (a hand edit), the audit
-    # file on all the same
+@pytest.mark.parametrize("series", SERIES)
+def test_the_audit_file_in_a_dir_of_its_own(series):
+    # (2026-11-13) the AUDIT appender on, its file out of the log dir (a line indented otherwise): its dir read into
+    # cassandra_log_audit_dir, the audit file on, the same file for logback
     def audit_elsewhere(text):
-        return audit_on(text).replace("${cassandra.logdir}/audit/", "/data/audit/")
-    out = cassandra_config_import(node_files("50x", audit_elsewhere), "50x", FACTS)
-    assert out["vars"]["cassandra_log_audit_file"] is True
-    assert [line for line in out["hand_edits"] if line.startswith("  +")] == [
-        "  +     <file>/data/audit/audit.log</file>",
-        "  +       <fileNamePattern>/data/audit/audit.log.%d{yyyy-MM-dd}.%i.zip</fileNamePattern>"]
+        return audit_on(text).replace("${cassandra.logdir}/audit/", "/data/audit/").replace(
+            "    <file>/data/audit/audit.log", "          <file>/data/audit/audit.log")
+    files = node_files(series, audit_elsewhere)
+    out = cassandra_config_import(files, series, FACTS)
+    assert out["hand_edits"] == []
+    variables, snippets, check = imported(files, series)
+    assert variables["cassandra_log_audit_dir"] == "/data/audit" and variables["cassandra_log_audit_file"] is True
+    assert check["differences"] == []
+    # under the log dir, written as itself: the default
+    files = with_log_dir("/data/cassandra/log", lambda text: audit_on(text).replace(
+        "${cassandra.logdir}/audit/", "/data/cassandra/log/audit/"))
+    out = cassandra_config_import(files, "50x", FACTS)
+    assert out["hand_edits"] == [] and "cassandra_log_audit_dir" not in out["vars"]

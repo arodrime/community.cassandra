@@ -2369,6 +2369,13 @@ def _logback(text):
     found["cassandra_log_audit_file"] = bool(
         [a for a in conf.findall("appender") if a.get("name") == "AUDIT"]
         and audit and "AUDIT" in [r.get("ref") for r in audit[0].findall("appender-ref")])
+    # the dir of its file: the same for audit.log and its rolled files (the stock names)
+    appender = next((a for a in conf.findall("appender") if a.get("name") == "AUDIT"), None)
+    if appender is not None:
+        path = (appender.findtext("file") or "").strip()
+        pattern = (appender.findtext("rollingPolicy/fileNamePattern") or "").strip()
+        if path.endswith("/audit.log") and pattern == path + ".%d{yyyy-MM-dd}.%i.zip":
+            found["cassandra_log_audit_dir"] = path[:-len("/audit.log")]
     refs = [r.get("ref") for r in roots[0].findall("appender-ref")] if len(roots) == 1 else []
     # 5.0's system_views.system_logs table: the stock CQLLOG appender live, <root> naming it
     cql = "CQLLOG" in refs and [a for a in conf.findall("appender") if a.get("name") == "CQLLOG"]

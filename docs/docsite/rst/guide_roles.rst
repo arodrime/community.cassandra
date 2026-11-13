@@ -1487,7 +1487,8 @@ the role's layout (and restarts the nodes): the report says so (``MOVED``). The 
 (in the options file of another Java, set again later, ignored by its Java version) are listed under ``CLEANUP``.
 ``logback.xml`` is read as logback reads it: its root level, the ``org.apache.cassandra`` level, ``debug.log`` and the
 console, the stock ``AUDIT`` appender and its logger uncommented (``cassandra_log_audit_file``, written only when it is
-not its default: on with ``FileAuditLogger``), 5.0's ``CQLLOG`` appender named by ``<root>``
+not its default: on with ``FileAuditLogger``) and the dir of its file (``cassandra_log_audit_dir``), the log dir
+written as itself where it is the one Cassandra gives logback (``${cassandra.logdir}``), 5.0's ``CQLLOG`` appender named by ``<root>``
 (``cassandra_log_cql_table`` and its level), the rotation of each file (``cassandra_log_<system|debug|audit>_*``), the
 pattern of the log lines (``cassandra_log_pattern``, when every encoder has the same), the appenders ``<root>`` names besides the stock ones
 (``cassandra_logback_root_extra_refs``), the loggers that only set a level (``cassandra_log_levels``), however written
