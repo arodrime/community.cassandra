@@ -66,3 +66,33 @@ def test_said_once_a_run():
         assert write["vars"]["_cassandra_config_no_newsize_warning"] is True
     preview = _task("playbooks/apply_config.yml", "Compare the config")
     assert "_cassandra_config_no_newsize_warning" not in preview["vars"] and "when" not in preview
+
+
+def _role_vars(**variables):
+    found = {}
+    for path in ("roles/cassandra_config/defaults/main.yml", "roles/cassandra_config/vars/main.yml"):
+        with open(os.path.join(TOP, path), encoding="utf-8") as f:
+            found.update(yaml.safe_load(f))
+    return dict(found, **variables)
+
+
+def _assert(task, **variables):
+    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in _role_vars(**variables).items())
+    templar = Templar(loader=DataLoader(), variables=variables)
+    return templar.template(trust_as_template("{{ %s }}" % task["ansible.builtin.assert"]["that"]))
+
+
+def test_a_custom_gc_on_g1_takes_the_heap_alone():
+    # (import_cluster: G1's stock block not the node's, its lines carried) G1 all the same: MAX_HEAP_SIZE alone
+    heap = _task("roles/cassandra_config/tasks/checks.yml", "Assert heap settings are consistent")
+    custom = dict(cassandra_version="50x", cassandra_heap_size="31G", cassandra_jvm17_gc="custom")
+    assert _assert(heap, cassandra_jvm17_extra_options=["-XX:+UseG1GC", "-XX:MaxGCPauseMillis=500"], **custom) is True
+    # another GC, or G1 turned off after: the pair needed, as before
+    assert _assert(heap, cassandra_jvm17_extra_options=["-XX:+UseZGC"], **custom) is False
+    assert _assert(heap, cassandra_jvm17_extra_options=["-XX:+UseG1GC", "-XX:-UseG1GC"], **custom) is False
+    assert _assert(heap, cassandra_jvm_extra_options=["-XX:+UseG1GC"], **custom) is True  # (jvm-server.options')
+    # 4.x: jvm8-server.options' CMS still asks for the pair
+    assert _assert(heap, cassandra_version="41x", cassandra_heap_size="8G", cassandra_jvm11_gc="custom",
+                   cassandra_jvm11_extra_options=["-XX:+UseG1GC"]) is False
+    assert _assert(heap, cassandra_version="41x", cassandra_heap_size="8G", cassandra_jvm_gc="custom",
+                   cassandra_jvm_extra_options=["-XX:+UseG1GC"]) is True

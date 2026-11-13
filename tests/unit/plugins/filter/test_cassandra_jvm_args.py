@@ -315,6 +315,20 @@ def test_gc_lines_otherwise_never_worse_than_before_the_custom_gc(tmp_path, case
     assert settings(launch(rendered, "17", tmp_path)) == settings(cmdline)
 
 
+def test_a_custom_gc_inventory_the_role_takes(tmp_path):
+    # MAX_HEAP_SIZE alone (G1), G1's tuning lines not there: custom, which the role's heap assert takes (G1 on)
+    from ansible_collections.community.cassandra.tests.unit.roles.test_heap_newsize_g1 import _assert, _task
+    files = node_files("50x", both(on_top("MAX_HEAP_SIZE=31G"), jvm17(drop=G1_TUNING)))
+    cmdline = launch(files, "17", tmp_path)
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    variables = role_files(inventory, layout, files)[1]
+    assert variables["cassandra_jvm17_gc"] == "custom" and variables["cassandra_heap_size"] == "31G"
+    assert "cassandra_heap_newsize" not in variables
+    heap = _task("roles/cassandra_config/tasks/checks.yml", "Assert heap settings are consistent")
+    assert _assert(heap, **dict((k, v) for k, v in variables.items() if not str(v).startswith("{{"))) is True
+    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
+
+
 def test_the_stock_gc_block_stays_g1(tmp_path):
     files = node_files("50x", lambda f: f.update({"jvm17-server.options": f["jvm17-server.options"].replace(
         "-XX:MaxGCPauseMillis=300", "-XX:MaxGCPauseMillis=500")}))

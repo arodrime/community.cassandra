@@ -79,11 +79,26 @@ _cassandra_config_perm_settings:
   # the account the unit runs Cassandra as (cassandra_service), else cassandra_user
   user: "{{ cassandra_service_user | default(cassandra_user) }}"
   user_group: "{{ cassandra_service_group | default(cassandra_group) }}"
-# GC of each jvm<N>-server.options file of the series
+# GC of each jvm<N>-server.options file of the series; custom with -XX:+UseG1GC on in its extra options (the last
+# of it there, after jvm-server.options'): G1 (cassandra-env.sh finds it, what holds for G1 holds)
 _cassandra_config_gcs: >-
-  {{ [cassandra_jvm8_gc | default(cassandra_jvm_gc), cassandra_jvm11_gc | default(cassandra_jvm_gc)]
-     if cassandra_version in ['40x', '41x']
-     else [cassandra_jvm11_gc | default(cassandra_jvm_gc), cassandra_jvm17_gc | default(cassandra_jvm_gc)] }}
+  {{ [_cassandra_config_gc_8, _cassandra_config_gc_11] if cassandra_version in ['40x', '41x']
+     else [_cassandra_config_gc_11, _cassandra_config_gc_17] }}
+_cassandra_config_gc_8: >-
+  {{ 'G1' if (cassandra_jvm8_gc | default(cassandra_jvm_gc)) == 'custom'
+     and ((cassandra_jvm_extra_options + cassandra_jvm8_extra_options) | join(' ')).split()
+         | select('match', '^-XX:[+-]UseG1GC$') | list | last | default('') == '-XX:+UseG1GC'
+     else cassandra_jvm8_gc | default(cassandra_jvm_gc) }}
+_cassandra_config_gc_11: >-
+  {{ 'G1' if (cassandra_jvm11_gc | default(cassandra_jvm_gc)) == 'custom'
+     and ((cassandra_jvm_extra_options + cassandra_jvm11_extra_options) | join(' ')).split()
+         | select('match', '^-XX:[+-]UseG1GC$') | list | last | default('') == '-XX:+UseG1GC'
+     else cassandra_jvm11_gc | default(cassandra_jvm_gc) }}
+_cassandra_config_gc_17: >-
+  {{ 'G1' if (cassandra_jvm17_gc | default(cassandra_jvm_gc)) == 'custom'
+     and ((cassandra_jvm_extra_options + cassandra_jvm17_extra_options) | join(' ')).split()
+         | select('match', '^-XX:[+-]UseG1GC$') | list | last | default('') == '-XX:+UseG1GC'
+     else cassandra_jvm17_gc | default(cassandra_jvm_gc) }}
 # Where the package puts its config (RedHat: the alternatives target it ships)
 _cassandra_config_pkg_conf_dir: "{{ '/etc/cassandra/default.conf' if ansible_facts['os_family'] == 'RedHat' else cassandra_conf_dir }}"
 # The record of the config files the running Cassandra started with (config_seed.yml writes it before a
