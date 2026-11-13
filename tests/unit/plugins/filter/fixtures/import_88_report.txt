@@ -13,8 +13,8 @@ IMPORT big_cluster  88 nodes  9 entries to review: 3 hand-edit entries, 6 settin
 
     logback.xml (the logging settings): 10 edits   all (88 nodes)
       the lines are under DETAILS, node by node; to keep them: import again with -e import_cluster_keep_hand_edits=logback.xml (Ansible then leaves logback.xml
-      as each node has it); or carry them: your own template of logback.xml (cassandra_config_template_overrides), or a template piece for lines at its end
-      (cassandra_config_template_snippets)
+      as each node has it); or carry them: your own template of logback.xml (cassandra_config_template_overrides), or a template piece for its end or for
+      appenders before <root> (cassandra_config_template_snippets)
 
     jvm11-server.options (Java's options, Java 11 only): 5 edits   dc2 (30 nodes)
       the lines are under DETAILS, node by node; to keep them: import again with -e import_cluster_keep_hand_edits=jvm11-server.options (Ansible then leaves

@@ -513,9 +513,10 @@ def test_a_logback_hand_edit_says_the_templates_of_yours():
     text = " ".join(" ".join(section(report([node(1, hand=hand)]), "HAND EDITS")).split())
     assert "-e import_cluster_keep_hand_edits=logback.xml (Ansible then leaves logback.xml as each node has it); or" \
            " carry them: your own template of logback.xml (cassandra_config_template_overrides), or a template piece" \
-           " for lines at its end (cassandra_config_template_snippets)" in text
-    hand = ["cassandra.yaml, line 10:", "  + concurrent_writes: 48"]
-    assert "cassandra_config_template_overrides" not in " ".join(section(report([node(1, hand=hand)]), "HAND EDITS"))
+           " for its end or for appenders before <root> (cassandra_config_template_snippets)" in text
+    # a setting's row (a variable carries it, or a file of another kind): not said
+    for hand in (["cassandra.yaml, line 10:", "  + concurrent_writes: 48"], ["cassandra-env.sh, line 9:", "  + FOO=1"]):
+        assert "cassandra_config_template_overrides" not in " ".join(section(report([node(1, hand=hand)]), "HAND EDITS"))
 
 
 def test_written_host_vars_counted_on_a_large_cluster():

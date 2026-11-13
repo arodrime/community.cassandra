@@ -1022,10 +1022,10 @@ def _hand_entries(report, edits):
                     "" if setting else "the lines are under DETAILS, node by node; ", "it" if setting else "them",
                     unbreakable("-e import_cluster_keep_hand_edits=" + ",".join(keep)), " and ".join(keep),
                     "; cassandra-env.sh's lines moved to variables stay in it then" if len(keep) > 1 else "")
-                if f in SNIPPET_FILES:  # (no variable carries them: the file's template of yours, or a piece of it)
-                    todo += ("; or carry %s: your own template of %s (cassandra_config_template_overrides), or a"
-                             " template piece for lines at its end (cassandra_config_template_snippets)"
-                             % ("it" if setting else "them", f))
+                if f in SNIPPET_FILES and not setting:  # (lines no variable carries: your template, or a piece)
+                    todo += ("; or carry them: your own template of %s (cassandra_config_template_overrides), or a"
+                             " template piece for %s (cassandra_config_template_snippets)"
+                             % (f, "its end or for appenders before <root>" if f == "logback.xml" else "lines at its end"))
             shown = "%s %s: %s" % (_say(report, f), setting, _short(text)) if setting else "%s: %s" % (
                 _say(report, f), _short(text))
             entries += _entry(report, shown, members, todo)
