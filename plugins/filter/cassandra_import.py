@@ -564,26 +564,36 @@ def _import_file(env, series, name, ctx, live):
     if name.endswith(".options"):
         _custom_gc(env, series, name, ctx, tpl, live, found)
     if name.endswith(".sh"):
-        found.update(_env_lines_elsewhere(tpl, live, ctx))
+        found.update(_env_lines_elsewhere(tpl, live, ctx, found.get("cassandra_local_jmx") is False))
     return found
 
 
 # cassandra-env.sh's lines of a variable a node may have switched on at another place than the stock one (below the
-# stock comment, at the end), outside any block: bash runs them as well there
+# stock comment, at the end) outside any block, or in the remote JMX branch: bash runs them as well there
 ELSEWHERE = ("-Djava.rmi.server.hostname=",)
+LOCAL_JMX_TEST = 'if [ "$LOCAL_JMX" = yes ]; then'  # (as env_lines writes it)
 
 
-def _env_lines_elsewhere(tpl, live, ctx):
-    """The values of cassandra-env.sh's lines of ELSEWHERE that the node has on outside any block, wherever they are
-    (the last one counts) -> {variable: value}."""
+def _env_lines_elsewhere(tpl, live, ctx, remote_jmx=False):
+    """The values of cassandra-env.sh's lines of ELSEWHERE that the node has on outside any block, or in the else
+    branch of its LOCAL_JMX test when it sets remote JMX (remote_jmx: LOCAL_JMX=no read), wherever they are (the last
+    one counts) -> {variable: value}."""
     try:
-        top = set(line["n"] for line in jvm_args.env_lines("\n".join(live)) if not line["depth"])
+        lines = jvm_args.env_lines("\n".join(live))
     except jvm_args.NotSame:
         return {}
+    ran = set(line["n"] for line in lines if not line["depth"])
+    test = next((i for i, line in enumerate(lines) if line["text"] == LOCAL_JMX_TEST and not line["depth"]), None)
+    if remote_jmx and test is not None:
+        branch = lines[test + 1:]
+        branch = branch[:next((i for i, line in enumerate(branch) if not line["depth"]), len(branch))]  # (to its fi)
+        at_else = next((i for i, line in enumerate(branch) if line["text"] == "else" and line["depth"] == 1), None)
+        if at_else is not None:
+            ran |= set(line["n"] for line in branch[at_else + 1:] if line["depth"] == 1 and line["text"] != "fi")
     found = {}
     for t in [t for t in tpl if "{{" in t and any(word in t for word in ELSEWHERE)]:
         for n, line in enumerate(live):
-            got = _read_line(t, line, ctx) if n + 1 in top else None
+            got = _read_line(t, line.strip(), ctx) if n + 1 in ran else None
             if got and all(got.values()):
                 found.update(got)
     return found

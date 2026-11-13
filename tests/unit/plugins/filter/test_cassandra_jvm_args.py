@@ -306,6 +306,39 @@ def test_the_rmi_hostname_line_elsewhere_is_its_variable(tmp_path, edit):
     assert "cassandra_jmx_rmi_hostname" not in imported(files, "50x", "17", launch(files, "17", tmp_path))[2]["vars"]
 
 
+def remote_jmx(local_jmx="no"):
+    """(2026-11-13, a 5.0.9 RPM node) remote JMX: the JMX files and the rmi hostname in its branch, below the
+    authentication line, the stock password file line commented out (its users readable)."""
+    auth = '  JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.authenticate=true"'
+    password = 'JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.password.file=/etc/cassandra/jmxremote.password"'
+    access = 'JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file=/etc/cassandra/jmxremote.access"'
+
+    def edit(files):
+        text = files["cassandra-env.sh"].replace("    LOCAL_JMX=yes", "    LOCAL_JMX=" + local_jmx)
+        text = text.replace(auth, "\n  ".join((auth, password, access, RMI)))
+        files["cassandra-env.sh"] = text.replace("\n%s\n" % password, "\n# %s\n" % password)
+        files["jmxremote.password"] = "monitor m0nitor\n"
+        files["jmxremote.access"] = "monitor readonly\n"
+    return edit
+
+
+def test_remote_jmx_lines_in_its_branch_are_carried(tmp_path):
+    files = node_files("50x", remote_jmx())
+    cmdline = launch(files, "17", tmp_path)
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    assert node["hand_edits"] == []
+    rendered, variables = role_files(inventory, layout, files)
+    assert variables["cassandra_jmx_rmi_hostname"] == IPV4 and variables["cassandra_local_jmx"] is False
+    assert [u["name"] for u in variables["cassandra_jmx_users"]] == ["monitor"]
+    assert settings(launch(rendered, "17", tmp_path)) == settings(cmdline)
+    # (the self-check said "not on the node: fi": the block's end paired with another line)
+    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
+    # local JMX: that branch does not run, its rmi line is not read
+    files = node_files("50x", remote_jmx("yes"))
+    inventory, layout, node = imported(files, "50x", "17", launch(files, "17", tmp_path))
+    assert "cassandra_jmx_rmi_hostname" not in node["vars"] and node["hand_edits"]
+
+
 def test_a_hand_edit_of_an_options_file_does_not_stop_a_move(tmp_path):
     # a stock line removed from jvm-server.options (said as a hand edit, the role puts it back): the JVM_OPTS line
     # of cassandra-env.sh is moved all the same, the self-check says that line only
