@@ -1230,14 +1230,27 @@ def _file_ops(name, rendered, live):
     ops = difflib.SequenceMatcher(None, rendered, live, autojunk=False).get_opcodes()
     moved = [op for op in ops if op[0] != "equal"
              and _same_settings(name, rendered[op[1]:op[2]], live[op[3]:op[4]]) is None]
-    if name.endswith(".options") and moved and \
-            jvm_options_settings("\n".join(rendered)) == jvm_options_settings("\n".join(live)):
+    if not (name.endswith(".options") and moved):
+        return ops, []
+    role, node = jvm_options_settings("\n".join(rendered)), jvm_options_settings("\n".join(live))
+    if role == node:
         # the same options, a line at another place (the last of an option counts): cassandra_config
         # leaves such a file as it is
         return [op for op in ops if op not in moved], [
             "%s: the same options, some at another place: left as it is (cassandra_config_normalize: true"
             " rewrites it)" % name]
-    return ops, []
+    # other edits in the file: still, an option the JVM gets the same from the role's lines (one carried in the
+    # extra options) is no hand edit where the node has it
+    same, notes = [], []
+    for op in moved:
+        options = jvm.words(rendered[op[1]:op[2]] + live[op[3]:op[4]])
+        names = set(jvm.option_name(o) for o in options)
+        if options and None not in names and all(role.get(k) == node.get(k) for k in names) \
+                and all(role.get(k) == node.get(k) for k in set(role) | set(node) if k.startswith("(set before")):
+            same.append(op)
+            notes.append("%s: %s, at another place than the role writes it: the same for the JVM (the last one"
+                         " counts)" % (name, ", ".join(sorted(names))))
+    return [op for op in ops if op not in same], notes
 
 
 def _difference_lines(name, rendered, live, ops):

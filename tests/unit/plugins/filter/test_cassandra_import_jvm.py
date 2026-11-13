@@ -187,6 +187,19 @@ def test_an_option_the_template_writes_is_not_carried_again():
            " true rewrites it)" in out["normalized"]
 
 
+def test_an_option_carried_is_no_hand_edit_beside_another_edit():
+    # -Xss1024M in the place of -Xss256k, carried at the end (the last one counts), a stock line removed: only the
+    # removed line is a hand edit (the report said -Xss1024M both carried and a hand edit no variable carries)
+    files = node_files("50x")
+    files["jvm-server.options"] = files["jvm-server.options"].replace("-Xss256k", "-Xss1024M").replace(
+        "-Dchronicle.analytics.disable=true\n", "")
+    out = cassandra_config_import(files, "50x", FACTS, java="17")
+    assert out["vars"]["cassandra_jvm_extra_options"] == ["-Xss1024M"]
+    assert [line for line in out["hand_edits"] if line.startswith("  ")] == ["  - -Dchronicle.analytics.disable=true"]
+    assert "jvm-server.options: -Xss, at another place than the role writes it: the same for the JVM (the last one" \
+           " counts)" in out["normalized"]
+
+
 @pytest.mark.parametrize("line", ["-ea", "-da:net.openhft..."])
 def test_an_option_without_a_name_is_carried_again(line):
     # the template writes it, but the JVM gets each of them: given twice, twice (dropped by the first version)
