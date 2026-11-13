@@ -1519,11 +1519,10 @@ def _jvm_options(env, series, ctx, files, found, java, keep_unread, cmdline):
 
 def _heap_in_options(found, series, java, live_files):
     """The heap set in the JVM options files the running Java reads, an -Xms and an -Xmx line of the same size among
-    their extra options (an -Xmn line too without G1; none else of the heap there, none in cassandra-env.sh, its
-    HEAP_NEWSIZE included): cassandra_heap_size (cassandra_heap_newsize) with cassandra_heap_in_jvm_options, out of
-    the extra options -> found changed in place; {file: its heap options (-Xms, -Xmx, -Xmn)}. Only with the
-    running JVM's arguments:
-    they show the JVM gets the same where the role writes them (jvm-server.options)."""
+    their extra options (an -Xmn line too without G1; none else of the heap there): cassandra_heap_size
+    (cassandra_heap_newsize) with cassandra_heap_in_jvm_options, out of the extra options -> found changed in place;
+    {file: its heap options (-Xms, -Xmx, -Xmn)}, {} when not. The caller makes sure the JVM gets the same where the
+    role writes them (jvm-server.options) and cassandra-env.sh sets no heap of its own."""
     if not jvm.options_file(series, java) or found.get("cassandra_heap_size") or found.get("cassandra_heap_newsize"):
         return {}
     read = jvm.read_files(series, java)
@@ -1543,8 +1542,12 @@ def _heap_in_options(found, series, java, live_files):
     if "-Xmn" in sizes:
         found["cassandra_heap_newsize"] = sizes["-Xmn"]
     found["cassandra_heap_in_jvm_options"] = True
-    return dict((f, [line.strip()[:4] for var, line in heap if var == jvm.options_variable(f)]) for f in read
-                if [var for var, dummy in heap if var == jvm.options_variable(f)])
+    moved = {}
+    for f in read:
+        options = [line.strip()[:4] for var, line in heap if var == jvm.options_variable(f)]
+        if options:
+            moved[f] = options
+    return moved
 
 
 def _same_xml(live, rendered):
