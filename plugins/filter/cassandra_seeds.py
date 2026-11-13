@@ -14,19 +14,16 @@ __metaclass__ = type
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 
-def cassandra_seed_layout(nodes, unread=None, up=None):
+def cassandra_seed_layout(nodes, unread=None):
     """nodes: [{'name', 'address', 'dc', 'rack', 'seed'}] in inventory order.
     The seed rule of preflight and help (plugin_utils cassandra_output
     seed_layout): {'lines': one per datacenter, 'problems': the warnings,
-    'notes', 'suggested': [addresses] (empty when there is no warning),
-    'stopped': [the names in it not running]}.
+    'notes', 'suggested': [addresses] (empty when there is no warning)}.
     unread: the cluster's nodes not in nodes (--limit, not answering): the
     seeds are then not judged (nothing returned), as the ones left out may be
-    the seeds. up: the names of the nodes seen running, the ones a
-    suggestion picks first in a datacenter that has some (the other nodes
-    then complete it, only as far as the rule needs).
+    the seeds.
     Example: lines ["Seeds  dc1  node1 (rack1), node4 (rack2)  ok"]."""
-    return out.seed_layout([] if unread else nodes, up=up)
+    return out.seed_layout([] if unread else nodes)
 
 
 def _true(value):

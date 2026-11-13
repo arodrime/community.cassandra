@@ -1982,14 +1982,11 @@ def seed_target(nodes, racks):
     return min(nodes, SEEDS_MAX, max(SEEDS_MIN, racks))
 
 
-def pick_seeds(racks, target, running=None):
-    """target nodes of a datacenter, one rack after the other, its running
-    nodes first (running: their names, None: not known), then its seeds (racks
-    holding one first: well placed seeds stay)."""
-    def rank(n):
-        return (running is not None and n["name"] not in running, not n["seed"])
-    order = sorted(racks, key=lambda r: min(rank(n) for n in racks[r]))
-    queues = dict((r, sorted(racks[r], key=rank)) for r in order)
+def pick_seeds(racks, target):
+    """target nodes of a datacenter, one rack after the other, its seeds first
+    (racks holding a seed first: well placed seeds stay)."""
+    order = sorted(racks, key=lambda r: not any(n["seed"] for n in racks[r]))
+    queues = dict((r, sorted(racks[r], key=lambda n: not n["seed"])) for r in order)
     picked = []
     while len(picked) < target and any(queues.values()):
         for rack in order:
@@ -1998,26 +1995,21 @@ def pick_seeds(racks, target, running=None):
     return picked
 
 
-def seed_layout(nodes, up=None):
+def seed_layout(nodes):
     """The seed rule (Q7), the same for preflight and help: 2 or 3 seeds per
     datacenter, on different racks when it has several; 1 seed (in a
     datacenter of more than one node) or none is a warning, more than 3 a
-    note. nodes: [{name, address, dc, rack, seed}] in inventory order; up: the
-    names of the nodes seen running (None: not known): a suggestion picks
-    them first in a datacenter that has some, then tops up from its other nodes
-    only to follow the rule (one with none running: 2 of them, any; a new
-    cluster: by the rule).
+    note. nodes: [{name, address, dc, rack, seed}] in inventory order.
     Returns {lines: one per datacenter ("Seeds  dc1  node1 (rack_a), node3
     (rack_b)  ok", a warning's "WARNING  Seeds  dc2  ..."), dcs: [{dc, level
     ok|note|warning, text}], problems: the warnings' texts, notes, suggested: a seed list that follows the rule
-    (addresses, every datacenter; empty without a warning), stopped: the names
-    in it not running, when some node of the cluster runs}."""
+    (addresses, every datacenter; empty without a warning)}."""
     dcs = {}
     for n in nodes or []:
         dcs.setdefault(n["dc"], {}).setdefault(n["rack"], []).append(n)
     width = max([len(str(dc)) for dc in dcs] or [0])
-    result = {"lines": [], "dcs": [], "problems": [], "notes": [], "suggested": [], "stopped": []}
-    suggested, stopped = [], []
+    result = {"lines": [], "dcs": [], "problems": [], "notes": [], "suggested": []}
+    suggested = []
     for dc, racks in dcs.items():
         members = [n for rack in racks.values() for n in rack]
         seeds = [n for n in members if n["seed"]]
@@ -2045,19 +2037,7 @@ def seed_layout(nodes, up=None):
             result["problems"].append("%s: %s" % (dc, text))
         elif level == "note":
             result["notes"].append("%s: %s" % (dc, text))
-        keep = seeds
-        if level == "warning":
-            running = [n["name"] for n in members if n["name"] in (up or [])]
-            target = seed_target(len(members), len(racks))
-            if running:
-                # a stopped node only to reach the minimum or a second rack
-                up_racks = len(set(n["rack"] for n in members if n["name"] in running))
-                target = min(target, max(SEEDS_MIN, up_racks))
-            elif up:  # none running here, some elsewhere: as few stopped seeds as the rule allows
-                target = min(target, SEEDS_MIN)
-            keep = pick_seeds(racks, target, running or None)
-            stopped += [n["name"] for n in keep if up and n["name"] not in up]
+        keep = seeds if level != "warning" else pick_seeds(racks, seed_target(len(members), len(racks)))
         suggested += [n["address"] for n in keep]
     result["suggested"] = suggested if result["problems"] else []
-    result["stopped"] = stopped if result["problems"] else []
     return result

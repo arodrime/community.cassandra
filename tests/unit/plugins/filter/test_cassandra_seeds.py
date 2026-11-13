@@ -63,69 +63,7 @@ def test_more_than_three_seeds_is_a_note():
 def test_limit_to_a_node_that_is_no_seed_says_nothing():
     # --limit h-n5, cassandra_seeds: [h-n1, h-n2]: h-n5 alone has no seed, the cluster does
     out = cassandra_seed_layout([node("h-n5", "r1")], unread=["h-n1", "h-n2", "h-n3", "h-n4"])
-    assert out == {"lines": [], "dcs": [], "problems": [], "notes": [], "suggested": [], "stopped": []}
-
-
-def test_suggestion_picks_running_nodes_first():
-    nodes = [node("n1", "r1"), node("n2", "r2"), node("n3", "r3"), node("b1", "r1", dc="dc2"), node("b2", "r2", dc="dc2")]
-    out = cassandra_seed_layout(nodes, unread=[], up=["n2", "n3"])
-    # dc1 runs: its running nodes, on 2 racks, are enough; dc2 has none running: any of its nodes, stopped
-    assert out["suggested"] == ["ip-n2", "ip-n3", "ip-b1", "ip-b2"]
-    assert out["stopped"] == ["b1", "b2"]
-    assert rejudged(nodes, out["suggested"]) == []
-
-
-def test_a_datacenter_with_none_running_gets_the_minimum_stopped_seeds():
-    # dc2, 3 racks, none running while dc1 runs: 2 seeds (not 3), both said stopped
-    nodes = [node("a1", "r1", True), node("a2", "r2", True),
-             node("b1", "r1", dc="dc2"), node("b2", "r2", dc="dc2"), node("b3", "r3", dc="dc2")]
-    out = cassandra_seed_layout(nodes, up=["a1", "a2"])
-    assert out["suggested"] == ["ip-a1", "ip-a2", "ip-b1", "ip-b2"]
-    assert out["stopped"] == ["b1", "b2"]
-    assert rejudged(nodes, out["suggested"]) == []
-    # not known (help), or nothing running: the rule's 3, none said stopped
-    for up in (None, []):
-        nodes = [dict(n, seed=n["name"] in ("a1", "a2")) for n in nodes]
-        out = cassandra_seed_layout(nodes, up=up)
-        assert (out["suggested"][2:], out["stopped"]) == (["ip-b1", "ip-b2", "ip-b3"], [])
-
-
-def rejudged(nodes, suggested):
-    """The seed rule's verdict on nodes with the suggested list as their seeds."""
-    for n in nodes:
-        n["seed"] = n["address"] in suggested
-    return cassandra_seed_layout(nodes)["problems"]
-
-
-def test_suggestion_with_one_node_running_follows_the_rule():
-    # 3 racks, only n2 runs: running only would suggest [n2] alone; one stopped node makes the minimum
-    nodes = [node("n1", "r1"), node("n2", "r2"), node("n3", "r3")]
-    out = cassandra_seed_layout(nodes, up=["n2"])
-    assert out["suggested"] == ["ip-n2", "ip-n1"]
-    assert out["stopped"] == ["n1"]
-    assert rejudged(nodes, out["suggested"]) == []
-
-
-def test_suggestion_leaves_out_a_stopped_node_it_does_not_need():
-    # 3 racks, n1 and n2 run (2 racks): n3, stopped, is not needed
-    nodes = [node("n1", "r1"), node("n2", "r2"), node("n3", "r3")]
-    out = cassandra_seed_layout(nodes, up=["n1", "n2"])
-    assert (out["suggested"], out["stopped"]) == (["ip-n1", "ip-n2"], [])
-    assert rejudged(nodes, out["suggested"]) == []
-    # 3 racks running: 3 seeds, all running; not known (help): the rule's 3
-    nodes = [node("n1", "r1"), node("n2", "r2"), node("n3", "r3")]
-    for up in (["n1", "n2", "n3"], None):
-        out = cassandra_seed_layout(nodes, up=up)
-        assert (out["suggested"], out["stopped"]) == (["ip-n1", "ip-n2", "ip-n3"], [])
-
-
-def test_suggestion_with_one_rack_running_covers_the_racks():
-    # running only on r1: running only would put both seeds on r1
-    nodes = [node("n1", "r1"), node("n2", "r2"), node("n3", "r1"), node("n4", "r2")]
-    out = cassandra_seed_layout(nodes, up=["n1", "n3"])
-    assert out["suggested"] == ["ip-n1", "ip-n2"]
-    assert out["stopped"] == ["n2"]
-    assert rejudged(nodes, out["suggested"]) == []
+    assert out == {"lines": [], "dcs": [], "problems": [], "notes": [], "suggested": []}
 
 
 def test_more_racks_than_seeds_is_fine():
