@@ -66,11 +66,34 @@ def test_limit_to_a_node_that_is_no_seed_says_nothing():
     assert out == {"lines": [], "dcs": [], "problems": [], "notes": [], "suggested": []}
 
 
-def test_suggestion_picks_running_nodes_only():
+def test_suggestion_picks_running_nodes_first():
     nodes = [node("n1", "r1"), node("n2", "r2"), node("n3", "r3"), node("b1", "r1", dc="dc2"), node("b2", "r2", dc="dc2")]
     out = cassandra_seed_layout(nodes, unread=[], up=["n2", "n3"])
-    # dc1 runs: its running nodes only; dc2 has none running (a new datacenter): any of its nodes
-    assert out["suggested"] == ["ip-n2", "ip-n3", "ip-b1", "ip-b2"]
+    # dc1 runs: its running nodes first, n1 makes 3 racks; dc2 has none running (a new datacenter): any of its nodes
+    assert out["suggested"] == ["ip-n2", "ip-n3", "ip-n1", "ip-b1", "ip-b2"]
+
+
+def rejudged(nodes, suggested):
+    """The seed rule's verdict on nodes with the suggested list as their seeds."""
+    for n in nodes:
+        n["seed"] = n["address"] in suggested
+    return cassandra_seed_layout(nodes)["problems"]
+
+
+def test_suggestion_with_one_node_running_follows_the_rule():
+    # 3 racks, only n2 runs: running only would suggest [n2] alone
+    nodes = [node("n1", "r1"), node("n2", "r2"), node("n3", "r3")]
+    out = cassandra_seed_layout(nodes, up=["n2"])
+    assert out["suggested"] == ["ip-n2", "ip-n1", "ip-n3"]
+    assert rejudged(nodes, out["suggested"]) == []
+
+
+def test_suggestion_with_one_rack_running_covers_the_racks():
+    # running only on r1: running only would put both seeds on r1
+    nodes = [node("n1", "r1"), node("n2", "r2"), node("n3", "r1"), node("n4", "r2")]
+    out = cassandra_seed_layout(nodes, up=["n1", "n3"])
+    assert out["suggested"] == ["ip-n1", "ip-n2"]
+    assert rejudged(nodes, out["suggested"]) == []
 
 
 def test_more_racks_than_seeds_is_fine():

@@ -21,8 +21,9 @@ def cassandra_seed_layout(nodes, unread=None, up=None):
     'notes', 'suggested': [addresses] (empty when there is no warning)}.
     unread: the cluster's nodes not in nodes (--limit, not answering): the
     seeds are then not judged (nothing returned), as the ones left out may be
-    the seeds. up: the names of the nodes seen running, the only ones a
-    suggestion picks in a datacenter that has some.
+    the seeds. up: the names of the nodes seen running, the ones a
+    suggestion picks first in a datacenter that has some (the other nodes
+    then complete it, so it always follows the rule).
     Example: lines ["Seeds  dc1  node1 (rack1), node4 (rack2)  ok"]."""
     return out.seed_layout([] if unread else nodes, up=up)
 

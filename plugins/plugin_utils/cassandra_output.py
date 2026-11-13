@@ -1982,11 +1982,14 @@ def seed_target(nodes, racks):
     return min(nodes, SEEDS_MAX, max(SEEDS_MIN, racks))
 
 
-def pick_seeds(racks, target):
-    """target nodes of a datacenter, one rack after the other, its seeds first
-    (racks holding a seed first: well placed seeds stay)."""
-    order = sorted(racks, key=lambda r: not any(n["seed"] for n in racks[r]))
-    queues = dict((r, sorted(racks[r], key=lambda n: not n["seed"])) for r in order)
+def pick_seeds(racks, target, running=None):
+    """target nodes of a datacenter, one rack after the other, its running
+    nodes first (running: their names, None: not known), then its seeds (racks
+    holding one first: well placed seeds stay)."""
+    def rank(n):
+        return (running is not None and n["name"] not in running, not n["seed"])
+    order = sorted(racks, key=lambda r: min(rank(n) for n in racks[r]))
+    queues = dict((r, sorted(racks[r], key=rank)) for r in order)
     picked = []
     while len(picked) < target and any(queues.values()):
         for rack in order:
@@ -2001,7 +2004,8 @@ def seed_layout(nodes, up=None):
     datacenter of more than one node) or none is a warning, more than 3 a
     note. nodes: [{name, address, dc, rack, seed}] in inventory order; up: the
     names of the nodes seen running (None: not known): a suggestion picks
-    among them in a datacenter that has some (one with none, a new one: any).
+    them first in a datacenter that has some, then tops up from its other nodes
+    to follow the rule (one with none running, a new one: any).
     Returns {lines: one per datacenter ("Seeds  dc1  node1 (rack_a), node3
     (rack_b)  ok", a warning's "WARNING  Seeds  dc2  ..."), dcs: [{dc, level
     ok|note|warning, text}], problems: the warnings' texts, notes, suggested: a seed list that follows the rule
@@ -2042,8 +2046,7 @@ def seed_layout(nodes, up=None):
         keep = seeds
         if level == "warning":
             running = [n["name"] for n in members if n["name"] in (up or [])]
-            eligible = dict((r, [n for n in rack if n["name"] in running]) for r, rack in racks.items()) if running else racks
-            keep = pick_seeds(eligible, seed_target(len(members), len(racks)))
+            keep = pick_seeds(racks, seed_target(len(members), len(racks)), running or None)
         suggested += [n["address"] for n in keep]
     result["suggested"] = suggested if result["problems"] else []
     return result
