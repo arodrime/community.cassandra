@@ -326,7 +326,8 @@ def test_remote_jmx_lines_in_its_branch_are_carried(tmp_path):
     files = node_files("50x", remote_jmx())
     cmdline = launch(files, "17", tmp_path)
     inventory, layout, node = imported(files, "50x", "17", cmdline)
-    assert node["hand_edits"] == []
+    assert node["hand_edits"] == [] and node["moved"] == []
+    assert [n for n in node["normalized"] if n.startswith("cassandra-env.sh: lines at another place")]  # (no effect)
     rendered, variables = role_files(inventory, layout, files)
     assert variables["cassandra_jmx_rmi_hostname"] == IPV4 and variables["cassandra_local_jmx"] is False
     assert [u["name"] for u in variables["cassandra_jmx_users"]] == ["monitor"]

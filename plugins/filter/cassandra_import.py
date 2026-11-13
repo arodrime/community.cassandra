@@ -1978,6 +1978,9 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     hand, normalized, comments = _leftovers(env, cassandra_version, files, render, live_files, rejected,
                                             moved["shown"])
     normalized += log_dir_note
+    if jvm_args.ENV in moved["rewritten"] and not moved["moved"]:  # its lines at other places only: the same JVM
+        normalized.append("cassandra-env.sh: lines at another place than the role writes them (e.g. in the remote JMX"
+                          " branch): the same arguments for the JVM (worked out from the running JVM's), no effect")
     changed.update(exporter["vars"])
     rewritten = moved["rewritten"] + [f for f in _exporter_rewritten(env, cassandra_version, render, exporter,
                                                                      live_as_found) if f not in moved["rewritten"]]
