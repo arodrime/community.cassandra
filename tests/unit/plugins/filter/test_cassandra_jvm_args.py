@@ -306,6 +306,52 @@ def test_the_rmi_hostname_line_elsewhere_is_its_variable(tmp_path, edit):
     assert "cassandra_jmx_rmi_hostname" not in imported(files, "50x", "17", launch(files, "17", tmp_path))[2]["vars"]
 
 
+def test_a_hand_edit_of_an_options_file_does_not_stop_a_move(tmp_path):
+    # a stock line removed from jvm-server.options (said as a hand edit, the role puts it back): the JVM_OPTS line
+    # of cassandra-env.sh is moved all the same, the self-check says that line only
+    files = node_files("50x", before_extra('JVM_OPTS="$JVM_OPTS -Dfoo=1"'))
+    files["jvm-server.options"] = files["jvm-server.options"].replace("-Dchronicle.analytics.disable=true\n", "")
+    cmdline = launch(files, "17", tmp_path)
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    assert node["vars"]["cassandra_jvm17_extra_options"] == ["-Dfoo=1"]
+    assert [line for line in node["hand_edits"] if line.startswith("  ")] == ["  - -Dchronicle.analytics.disable=true"]
+    out = check(files, "50x", java="17", cmdline=cmdline)
+    assert out["differences"] == ["jvm-server.options: -Dchronicle.analytics.disable: node has nothing, import would"
+                                  " write '-Dchronicle.analytics.disable=true'"]
+    assert [n for n in out["notes"] if n.endswith("but for -Dchronicle.analytics.disable, above")]
+    # the hand edit in the file the move goes to: not moved
+    files = node_files("50x", before_extra('JVM_OPTS="$JVM_OPTS -Dfoo=1"'))
+    files["jvm17-server.options"] = files["jvm17-server.options"].replace("-Djdk.attach.allowAttachSelf=true\n", "")
+    assert imported(files, "50x", "17", launch(files, "17", tmp_path))[2]["moved"] == []
+
+
+def test_a_node_with_the_files_of_an_older_release(tmp_path):
+    # (2026-11-13, a 5.0.9 cluster on RPM) its jvm17 G1 block without the tuning lines, the heap in their place,
+    # -Xss1024M for -Xss256k, the rmi hostname at the end of cassandra-env.sh, the exporter's agent in an if ... fi
+    # block, the chronicle line not there: everything carried but that line, said on its own
+    agent = "-javaagent:/opt/jmx_exporter/jmx_prometheus_javaagent-1.7.0.jar=9404:/etc/cassandra/jmx_exporter.yml"
+
+    def edit(files):
+        files["cassandra-env.sh"] += '\n%s\n\nif [ -n "$CASSANDRA_CONF" ]; then\n    JVM_OPTS="$JVM_OPTS %s"\nfi\n' % (
+            RMI, agent)
+        files["jvm-server.options"] = files["jvm-server.options"].replace("-Xss256k", "-Xss1024M").replace(
+            "-Dchronicle.analytics.disable=true\n", "") + "-XX:-UseBiasedLocking\n"
+        text = files["jvm17-server.options"].replace("-XX:MaxTenuringThreshold=2", "-Xms31G\n-Xmx31G")
+        files["jvm17-server.options"] = "\n".join(line for line in text.split("\n") if line not in G1_TUNING)
+    files = node_files("50x", edit)
+    cmdline = launch(files, "17", tmp_path)
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    assert [line for line in node["hand_edits"] if line.startswith("  ")] == ["  - -Dchronicle.analytics.disable=true"]
+    variables = role_files(inventory, layout, files)[1]
+    assert variables["cassandra_jmx_rmi_hostname"] == IPV4 and variables["cassandra_jvm17_gc"] == "custom"
+    assert variables["cassandra_jvm17_extra_options"] == ["-XX:+UseG1GC", "-XX:+ParallelRefProcEnabled",
+                                                          "-XX:MaxGCPauseMillis=300", "-Xms31G", "-Xmx31G"]
+    assert variables["cassandra_jvm_extra_options"] == ["-Xss1024M", "-XX:-UseBiasedLocking"]
+    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == [
+        "jvm-server.options: -Dchronicle.analytics.disable: node has nothing, import would write"
+        " '-Dchronicle.analytics.disable=true'"]
+
+
 @pytest.mark.parametrize("case, series, java, edit", NOT_MOVED, ids=[c[0] for c in NOT_MOVED])
 def test_hand_edits_not_moved_stay_hand_edits(tmp_path, case, series, java, edit):
     files = node_files(series, edit)

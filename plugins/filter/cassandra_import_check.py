@@ -549,28 +549,34 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
                      " e.g. the heap moved between the unit and cassandra-env.sh, or a line going on to the next)" % name]
         by_file[name] = found
         differences += found
-    rewritten = _jvm_rewritten(rendered, live, by_file, heap, node_environment, role_environment, java, running or {})
+    rewritten, apart = _jvm_rewritten(rendered, live, by_file, heap, node_environment, role_environment, java,
+                                      running or {})
     if rewritten:
-        differences = [d for d in differences if not any(d in by_file.get(name, []) for name in rewritten)]
+        # but for the options files' own hand edits, said as they are
+        differences = [d for d in differences if not any(d in by_file.get(name, []) for name in rewritten)
+                       or any(d.startswith("%s: %s:" % (f, k)) for k, f in apart.items())]
         notes.append("%s: cassandra_config rewrites %s in its own layout; the JVM gets the same arguments from them at"
-                     " its next restart (worked out from the running JVM's)" % (
-                         ", ".join(rewritten), "it" if len(rewritten) == 1 else "them"))
+                     " its next restart (worked out from the running JVM's)%s" % (
+                         ", ".join(rewritten), "it" if len(rewritten) == 1 else "them",
+                         ", but for %s, above" % ", ".join(sorted(apart)) if apart else ""))
         heap = []
     return {"differences": differences + heap, "notes": notes}
 
 
 def _jvm_rewritten(rendered, live, by_file, heap, node_environment, role_environment, java, running):
     """The JVM's files (cassandra-env.sh, the options files the running Java reads) that differ when the JVM gets
-    the same arguments from the roles' ones (the heap is among them); [] otherwise."""
+    the same arguments from the roles' ones (the heap is among them), but for the settings the options files'
+    own hand edits change -> (files, {setting: its file}); ([], {}) otherwise."""
     series = running.get("series")
     group = [jvm_args.ENV, jvm_args.COMMON, jvm_args.options_file(series, java)]
     differing = [name for name in group if by_file.get(name)]
     if not running.get("cmdline") or set(running.get("newer") or []) & set(group) or not (differing or heap) \
             or not all(f in rendered and f in live for f in group):
-        return []
+        return [], {}
+    apart = jvm_args.options_edits(live, rendered, series, java)
     same, dummy = jvm_args.cassandra_jvm_args_same(running["cmdline"], live, rendered, series, java, node_environment,
-                                                   role_environment)
-    return (differing or [jvm_args.ENV]) if same else []
+                                                   role_environment, apart)
+    return ((differing or [jvm_args.ENV]), apart) if same else ([], {})
 
 
 class FilterModule(object):

@@ -2292,7 +2292,7 @@ def _jvm_moves(env, series, files, ctx, render, live_files, running):
         live_files, others, role, series, running.get("java"), cmdline, moved=bool(adopted))
         if ": ".join(line.split(": ", 2)[:2]) not in said]
     return {"vars": found, "moved": adopted["moved"] if adopted else [], "rewritten": rewritten, "cleanup": cleanup,
-            "shown": jvm_files if adopted else [], "not_moved": why}
+            "shown": [f for f in jvm_files if f not in adopted["apart"]] if adopted else [], "not_moved": why}
 
 
 def _logback(text):

@@ -34,7 +34,7 @@ import difflib
 import re
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
-    JVM_ENV_GREPS, JVM_LISTS, JVM_UNLOCK, shell_words)
+    JVM_ENV_GREPS, JVM_LISTS, JVM_UNLOCK, jvm_options_settings, shell_words)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_prometheus as prometheus
@@ -472,10 +472,26 @@ def _launch(cmdline, live, role, series, java, node_env, role_env):
     return args, args[:start] + role_words + first + [rest[i] for i in sorted(rest)] + args[end:]
 
 
-def cassandra_jvm_args_same(cmdline, live, role, series, java, node_env=None, role_env=None):
+def options_edits(live, role, series, java):
+    """The settings the options files the running Java reads set otherwise on the node (live: {file: text}) than in
+    the role's (role), none of them in either cassandra-env.sh: hand edits of those files, said on their own (the
+    roles put them back) -> {name: file}."""
+    in_env = set(jvm.option_name(w) for text in (live.get(ENV, ""), role.get(ENV, ""))
+                 for w in re.split(r"[\s\"'=]+", text) if w.startswith("-"))
+    found = {}
+    for name in (COMMON, options_file(series, java)):
+        if name in live and name in role:
+            a, b = jvm_options_settings(live[name]), jvm_options_settings(role[name])
+            found.update((k, name) for k in set(a) | set(b)
+                         if a.get(k) != b.get(k) and not k.startswith("(") and k not in in_env)
+    return found
+
+
+def cassandra_jvm_args_same(cmdline, live, role, series, java, node_env=None, role_env=None, apart=()):
     """Whether the role's files (role: {file: text}) give the JVM the same arguments as the node's (live) did
     (cmdline: its /proc/<pid>/cmdline; node_env, role_env: the environment the unit gives Cassandra now, and with
-    the roles) -> (True, '') or (False, why)."""
+    the roles; apart: the names of the settings that differ by hand edits of the options files, not counted)
+    -> (True, '') or (False, why)."""
     for name in ("JVM_OPTS", "JVM_EXTRA_OPTS"):
         if (node_env or {}).get(name) != (role_env or {}).get(name):
             return False, "the unit would give Cassandra another %s" % name
@@ -485,7 +501,7 @@ def cassandra_jvm_args_same(cmdline, live, role, series, java, node_env=None, ro
         return False, str(exc)
     if args != after and any(IN_PLACE.match(o) for o in args + after):
         return False, "an option reads a file of options where it is (-XX:VMOptionsFile, -XX:Flags, @file)"
-    names = differences(args[1:], after[1:])
+    names = [n for n in differences(args[1:], after[1:]) if n not in apart]
     if names:  # their names only (-Xlog:file=<path>: -Xlog, -Xmaxjitcodesize240M: -Xmaxjitcodesize)
         names = sorted(set(re.sub(r"(?<=^-X[a-z])([a-z]*?)\d.*$", r"\1", re.split(r"[:=]", n)[0]) for n in names))
         return False, "the JVM would get other values of %s" % ", ".join(out.mask(n) for n in names)
@@ -523,8 +539,9 @@ def cassandra_jvm_args_adopt(cmdline, live, render, variables, series, java, nod
     """The variables that move the node's hand edits of cassandra-env.sh (its JVM_OPTS lines, its heap set
     elsewhere) to where the role writes them, when the JVM gets the same arguments from the role's files.
     render(variables): {file: text} the role writes; variables: the ones imported so far; node_env: the
-    environment the unit gives Cassandra. -> {vars, moved, dropped: report lines}; {why: the reason, names only}
-    when there are such edits but the same arguments cannot be shown; None when there are none."""
+    environment the unit gives Cassandra. -> {vars, moved, dropped: report lines, apart: the options files with hand
+    edits of their own (said as such, not counted)}; {why: the reason, names only} when there are such edits but the
+    same arguments cannot be shown; None when there are none."""
     dep = options_file(series, java)
     if not cmdline or dep is None or ENV not in live:
         return None
@@ -538,6 +555,11 @@ def cassandra_jvm_args_adopt(cmdline, live, render, variables, series, java, nod
     if not info["added"] and not info["heap_lines"] \
             and [line["text"] for line in info["live_lines"]] == [line["text"] for line in info["role_lines"]]:
         return None
+    # the options files' own hand edits: said on their own, not in the way of the move (unless the file the lines go
+    # to has some: its hand edits would mix with them)
+    apart = options_edits(live, role, series, java)
+    if dep in apart.values():
+        apart = {}
     end = info["end"]
     # the heap cassandra-env.sh gets, set where the role writes it
     heap_vars = {}
@@ -560,16 +582,16 @@ def cassandra_jvm_args_adopt(cmdline, live, render, variables, series, java, nod
                 continue
             found[extras_var] = list(variables.get(extras_var) or []) + lines
         same, why = cassandra_jvm_args_same(cmdline, live, render(dict(variables, **found)), series, java,
-                                            node_env, node_env)
+                                            node_env, node_env, apart)
         if same:
             moved = _moved(info, found, options, extras_var)
             # the files are rewritten: their own extra options set again later are left out too
             tidy, gone = _without_dead(args, info, variables, found, live, series, java)
             if gone and cassandra_jvm_args_same(cmdline, live, render(dict(variables, **dict(found, **tidy))), series,
-                                                java, node_env, node_env)[0]:
+                                                java, node_env, node_env, apart)[0]:
                 found.update(tidy)
                 dropped += gone
-            return {"vars": found, "moved": moved, "dropped": dropped}
+            return {"vars": found, "moved": moved, "dropped": dropped, "apart": sorted(set(apart.values()))}
     return {"why": why}
 
 
