@@ -2053,11 +2053,11 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
                                                        found, str(java or ""), keep_unread_jvm_options, cmdline)
     # (not with a JVM file kept as it is: cassandra-env.sh, jvm-server.options where the role writes it, the options
     # file the heap is in; not with a heap of cassandra-env.sh's own: a line not the stock file's that sets
-    # MAX_HEAP_SIZE or HEAP_NEWSIZE, or has an -Xms, -Xmx or -Xmn, however written)
+    # MAX_HEAP_SIZE or HEAP_NEWSIZE (=, :=), or has an -Xms, -Xmx or -Xmn, however written)
     jvm_files = {jvm_args.ENV, jvm_args.COMMON, jvm.options_file(cassandra_version, str(java or ""))}
     stock_env = set(line.strip() for line in _render(env, cassandra_version, jvm_args.ENV, ctx)[1])
     env_heap = [line for line in live_files.get(jvm_args.ENV, "").split("\n") if line.strip() not in stock_env
-                and re.search(r"^[^#]*(\b(MAX_HEAP_SIZE|HEAP_NEWSIZE)=|-Xm[sxn])", line)]
+                and re.search(r"^[^#]*(\b(MAX_HEAP_SIZE|HEAP_NEWSIZE):?=|-Xm[sxn])", line)]
     if cmdline and not set(running.get("newer") or []) & {jvm_args.ENV, jvm_args.COMMON} \
             and not (keep is True or set(keep) & jvm_files) and not env_heap:
         heap_moved = _heap_in_options(found, cassandra_version, str(java or ""), live_files)

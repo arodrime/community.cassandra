@@ -1483,7 +1483,7 @@ files the running Java reads (with an ``-Xmn`` too when the node does not run G1
 only with Cassandra running and its arguments showing the JVM gets the same, no JVM file kept as it is
 (``cassandra-env.sh``, ``jvm-server.options``, the options file its Java reads), and ``cassandra-env.sh`` setting no heap
 of its own: no line of it the stock file has not that sets ``MAX_HEAP_SIZE`` or ``HEAP_NEWSIZE``, or has an ``-Xms``,
-``-Xmx`` or ``-Xmn``, however written (indented, through a variable); with one, the pair stays in the extra options
+``-Xmx`` or ``-Xmn``, however written (indented, through a variable, a default ``${MAX_HEAP_SIZE:=8G}``); with one, the pair stays in the extra options
 where the node has it. A stock line a later release added that the node's file
 predates (5.0's ``-Dchronicle.analytics.disable=true`` of ``jvm-server.options``, CASSANDRA-19656) is no difference:
 ``apply_config`` adds it, the report says so under WORTH A LOOK; any other stock line the node lacks is one.

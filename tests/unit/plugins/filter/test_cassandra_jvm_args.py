@@ -353,10 +353,13 @@ def test_a_cms_heap_in_the_jvm_options_the_role_takes(tmp_path, xmn):
         assert _assert(_task("roles/cassandra_config/tasks/checks.yml", name), **simple) is True
 
 
-def test_a_heap_of_cassandra_env_however_written_keeps_the_heap_as_it_is(tmp_path):
-    # (audit r6) -Xmx through a variable in cassandra-env.sh: the pair left in the extra options
-    files = node_files("50x", both(before_extra('JVM_OPTS="$JVM_OPTS -Xmx$MYHEAP"'), on_top("MYHEAP=16G"),
-                                   add_to("jvm-server.options", "-Xms16G\n-Xmx16G")))
+@pytest.mark.parametrize("edit", [
+    both(before_extra('JVM_OPTS="$JVM_OPTS -Xmx$MYHEAP"'), on_top("MYHEAP=16G")),
+    on_top(": ${MAX_HEAP_SIZE:=16G}")], ids=["-Xmx through a variable", "MAX_HEAP_SIZE given a default"])
+def test_a_heap_of_cassandra_env_however_written_keeps_the_heap_as_it_is(tmp_path, edit):
+    # (audit r6) -Xmx through a variable in cassandra-env.sh, (audit r7) MAX_HEAP_SIZE given a default (:=): the pair
+    # left in the extra options
+    files = node_files("50x", both(edit, add_to("jvm-server.options", "-Xms16G\n-Xmx16G")))
     node = imported(files, "50x", "17", launch(files, "17", tmp_path))[2]
     assert "cassandra_heap_in_jvm_options" not in node["vars"]
     assert node["vars"]["cassandra_jvm_extra_options"] == ["-Xms16G", "-Xmx16G"]
