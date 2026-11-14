@@ -35,6 +35,16 @@
       - ansible_facts['os_family'] == 'RedHat'
       - ansible_facts['distribution_major_version'] == '10'
 
+  # chronyd steps the clock with adjtimex, which some container hosts refuse even to a privileged container
+  # ("adjtimex(0x8001) failed : Operation not permitted", seen on Rocky 9): -x leaves the clock alone. Written
+  # before chrony is installed (its own file then lands as .rpmnew). Test scaffolding only.
+  - name: chronyd without control of the clock (containers)
+    ansible.builtin.copy:
+      content: "OPTIONS=\"-x\"\n"
+      dest: /etc/sysconfig/chronyd
+      mode: "0644"
+    when: ansible_facts['os_family'] == 'RedHat'
+
   - name: Clean package manager cache
     ansible.builtin.shell: dnf clean all || yum clean all
     when: ansible_facts['os_family'] == 'RedHat'
