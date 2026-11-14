@@ -345,7 +345,6 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
         -e import_adopt=true                  adopts an earlier import's files (default: false)
         -e import_allow_unread=true           accepts unread ring nodes (default: false)
         -e import_keep_hand_edits=true        keeps hand edits, parts (=<names>) (default: false)
-        -e import_take_over=<parts>           gives kept parts back to Ansible (default: none)
         -e import_carry_exporter_config=true  carries the exporter's config file (default: false)
         -e import_report_shareable=false      no anonymised report copy to share (default: true)
 

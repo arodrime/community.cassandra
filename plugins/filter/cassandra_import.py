@@ -2324,7 +2324,7 @@ def keep_files_option(value):
     return True if "true" in names else [n for n in names if CONFIG_FILE.match(n)]
 
 
-# the switches an import before rc10 wrote for a part set up another way (now a part kept by hand): {switch: part}
+# the switches an import before rc10 wrote for a part set up another way: {switch: part}
 OLD_KEPT_SWITCHES = {"cassandra_linux_manage": "os", "cassandra_service_unit_manage": "unit",
                      "cassandra_repository_manage": "repo", "cassandra_cqlsh_python_manage": "cqlsh",
                      "cassandra_firewall_manage": "firewall"}
@@ -2332,84 +2332,35 @@ OLD_KEPT_SWITCHES = {"cassandra_linux_manage": "os", "cassandra_service_unit_man
 _OLD_NOT_READ = ("cassandra_java_set_default", "cassandra_install_tools", "cassandra_install_jemalloc")
 
 
-def _take_over_option(value):
-    """import_take_over: the parts given back to Ansible, names separated by commas (none: none) -> [parts]."""
-    given = [p.strip() for p in re.sub(r"[\[\]'\"]", "", str(value or "")).split(",") if p.strip() not in ("", "none")]
-    wrong = [p for p in given if p not in KEPT_PARTS]
-    if wrong:
-        raise AnsibleFilterError("import_take_over: %s: not a part (%s)" % (", ".join(wrong), ", ".join(KEPT_PARTS)))
-    return given
-
-
 def _covered(part, parts):
     """part is kept by parts: named, or a finer part of os."""
     return part in parts or (part in OS_PARTS and "os" in parts)
 
 
-def _option_again(keep_hand_edits, parts):
-    """The import_keep_hand_edits value that keeps what this one does and these parts too."""
-    names = _keep_names(keep_hand_edits)
-    names = ["true"] if names is True else [] if names is False else [n for n in names if n not in KEPT_PARTS]
-    return ",".join(names + [p for p in KEPT_PARTS if p in parts])
-
-
-def cassandra_import_kept_before(texts, keep_hand_edits=False, take_over="none"):
-    """texts: {path in the inventory: text} of the files there (an earlier import's among them); keep_hand_edits,
-    take_over: this import's options (take_over: the parts given back to Ansible, names separated by commas) ->
-    {stop: [the lines of the stop when a part an earlier import kept by hand (KEPT_PARTS_VAR) is neither kept again
-    nor given back, or a file of the import cannot be read], kept: {host: [parts]} an import before rc10 left aside
-    (its *_manage: false in that host's host_vars, OLD_KEPT_SWITCHES; not on a node it could not read): kept again,
-    said; given: [parts] given back}."""
+def cassandra_import_kept_last(texts, keep_hand_edits=False):
+    """texts: {path in the inventory: text} of the files there (an earlier import's among them); keep_hand_edits:
+    this import's option -> {host: [parts]} the last import left as that node had them (its KEPT_PARTS_VAR, or the
+    *_manage: false of an import before rc10 on a node it read, OLD_KEPT_SWITCHES) that this one does not name: it
+    imports them (a part is kept only when the run names it, as a file), the report says so."""
     now = keep_parts_option(keep_hand_edits)
-    given = _take_over_option(take_over)
-    both = [p for p in given if _covered(p, now)]
-    if both:
-        return {"stop": ["import_take_over and import_keep_hand_edits both name %s: give %s back to Ansible, or keep"
-                         " %s, not both." % (", ".join(both), "it" if len(both) == 1 else "them",
-                                             "it" if len(both) == 1 else "them")], "kept": {}, "given": given}
-    before, old, unreadable = {}, {}, []
+    out = {}
     for path, text in sorted((texts or {}).items()):
-        if not re.match(r"^(group_vars|host_vars)/", path):
-            continue
-        if str(text).startswith("$ANSIBLE_VAULT"):
-            # (the import vaults secrets.yml alone: its main.yml vaulted cannot be read here)
-            if path.endswith("/main.yml"):
-                unreadable.append(path)
+        m = re.match(r"^host_vars/([^/]+)/main\.yml$", path)
+        if not m or IMPORT_MARK not in str(text):
             continue
         try:
             data = yaml.safe_load(text) or {}
         except yaml.YAMLError:
-            if IMPORT_MARK in str(text) or KEPT_PARTS_VAR in str(text):  # (the import's: its parts unknown)
-                unreadable.append(path)
-            continue
+            continue  # (vaulted, or broken: rewritten all the same)
         if not isinstance(data, dict):
             continue
-        for part in data.get(KEPT_PARTS_VAR) or []:
-            before.setdefault(str(part), []).append(path)
-        m = re.match(r"^host_vars/([^/]+)/", path)
-        if m and IMPORT_MARK in str(text) and KEPT_PARTS_VAR not in data \
-                and not all(data.get(k) is False for k in list(OLD_KEPT_SWITCHES) + list(_OLD_NOT_READ)):
-            parts = [part for k, part in OLD_KEPT_SWITCHES.items() if data.get(k) is False and part not in given]
-            if parts:
-                old[m.group(1)] = parts
-    if unreadable:
-        them = "it" if len(unreadable) == 1 else "them"
-        return {"stop": ["%s: written by an earlier import, cannot be read as YAML: the parts it kept by hand are not"
-                         " known. Decrypt it (ansible-vault decrypt), fix or remove %s, then import again."
-                         % (", ".join(unreadable), them)],
-                "kept": {}, "given": given}
-    dropped = [p for p in KEPT_PARTS if p in before and not _covered(p, now) and p not in given]
-    if not dropped:
-        return {"stop": [], "kept": old, "given": given}
-    it = "it" if len(dropped) == 1 else "them"
-    files = ", ".join(sorted(set(f for p in dropped for f in before[p])))
-    again = _option_again(keep_hand_edits, now + dropped)
-    head = "%s kept by hand by the last import (%s): this import does not name %s." % (", ".join(dropped), files, it)
-    return {"stop": [head,
-                     "Keep %s: import again with -e import_keep_hand_edits=%s." % (it, again),
-                     "Give %s to Ansible: import again with -e import_take_over=%s (first with --check --diff: it shows"
-                     " what the roles would change)." % (it, ",".join(dropped))],
-            "kept": old, "given": given}
+        last = [str(p) for p in data.get(KEPT_PARTS_VAR) or []]
+        if KEPT_PARTS_VAR not in data and not all(data.get(k) is False for k in list(OLD_KEPT_SWITCHES) + list(_OLD_NOT_READ)):
+            last = [part for k, part in OLD_KEPT_SWITCHES.items() if data.get(k) is False]
+        dropped = [p for p in KEPT_PARTS if p in last and not _covered(p, now)]
+        if dropped:
+            out[m.group(1)] = dropped
+    return out
 
 
 def keep_parts_option(value):
@@ -4506,7 +4457,6 @@ SAFE_REASONS = [
     # the user's own -e value
     (re.compile(r"(import_keep_hand_edits: [^\n]*?: neither a config file of cassandra_config \([^)]*\) nor a part"
                 r" \([^)]*\); or true \(every hand-edited file\), false)"), r"\1"),
-    (re.compile(r"(import_take_over: [^\n]*?: not a part \([^)]*\))"), r"\1"),
     (re.compile(r"(cassandra_config_import: cannot read [\w, ]+ from cassandra\.yaml \([^)]*\))"), r"\1"),
     (re.compile(r"(cassandra_config_import: cassandra\.yaml is not valid YAML(?: \(line \d+\))?)"), r"\1"),
     (re.compile(r"(?:object'?|object of type '\w+') has no attribute '(\w+)'(?:\.|$)"), r"missing field '\1'"),
@@ -4583,7 +4533,7 @@ class FilterModule(object):
             "cassandra_config_import": cassandra_config_import,
             "cassandra_jmx_files": cassandra_jmx_files,
             "cassandra_inventory_layout": cassandra_inventory_layout,
-            "cassandra_import_kept_before": cassandra_import_kept_before,
+            "cassandra_import_kept_last": cassandra_import_kept_last,
             "cassandra_import_keep_parts": keep_parts_option,
             "cassandra_inventory_layout_over": cassandra_inventory_layout_over,
             "cassandra_inventory_user_files": cassandra_inventory_user_files,

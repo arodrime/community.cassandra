@@ -1252,10 +1252,10 @@ def _kept_parts_lines(report):
         option = unbreakable("import_keep_hand_edits=" + ",".join(parts))
         lines += fill_text("%s (%s)   %s" % (", ".join(parts), option, unbreakable(_who(report, members))),
                            report.width, "    ", "  ")
-        lines += fill_text("the roles leave %s as they are; to give %s to Ansible: import again without %s and with %s"
-                           " (with --check --diff first: it shows what the roles would change)" % (
+        lines += fill_text("the roles leave %s as they are; to give %s to Ansible: import again without %s in"
+                           " import_keep_hand_edits (the self-check then says what the roles would change)" % (
                                "; ".join(KEPT_PART_WORDS[p] for p in parts), "them" if len(parts) > 1 else "it",
-                               "them" if len(parts) > 1 else "it", unbreakable("-e import_take_over=" + ",".join(parts))),
+                               "them" if len(parts) > 1 else "it"),
                            report.width, "      ", "  ")
     return lines
 

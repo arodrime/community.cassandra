@@ -3,6 +3,6 @@ minor_changes:
     import_cluster - ``-e import_keep_hand_edits`` also names parts of the nodes to keep by hand (``os``, ``sysctl``,
     ``limits``, ``thp``, ``swap``, ``timesync``, ``disks``, ``unit``, ``repo``, ``cqlsh``, ``firewall``), with the
     config files: each gets the finest switch that leaves it as the nodes have it, ``cassandra_import_kept`` lists
-    them, the report says them under ``KEPT BY HAND (your choice)``, and the self-check's ways out name them. A
-    re-import that no longer names a part kept by the last one stops with both ways out; ``-e import_take_over=<parts>``
-    gives it back to Ansible.
+    them, the report says them under ``KEPT BY HAND (your choice)``, and the self-check's ways out name them. As for
+    files, each run keeps only what it names: a part the last import kept and this one does not name is imported
+    (checked by the self-check), the report says so.

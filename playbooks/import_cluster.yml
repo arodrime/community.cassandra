@@ -1981,28 +1981,16 @@
         _results: >-
           {{ (import_cluster_existing_read.stdout | from_json).vars if import_cluster_existing_read is not skipped else [] }}
 
-    # A part an earlier import kept by hand (import_keep_hand_edits=<parts>: cassandra_import_kept in its files) is
-    # given back to Ansible only when asked (-e import_take_over=<parts>): the same command never changes its meaning.
-    # The *_manage: false an import before rc10 wrote for a part set up another way: kept the same, said
-    - name: Read the parts the last import kept by hand
-      ansible.builtin.set_fact:
-        _kept_before: >-
-          {{ import_cluster_existing_text | default({}) | community.cassandra.cassandra_import_kept_before(
-               import_keep_hand_edits | default(false), import_take_over | default('none')) }}
-
-    - name: Stop rather than give a part kept by hand back to Ansible unasked
-      ansible.builtin.fail:
-        msg: "{{ _kept_before.stop | join(_nl) }}"
-      when: _kept_before.stop | length > 0
-      vars:
-        cassandra_output: true  # a verdict: its msg as is (ops callback)
-        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
-
-    - name: Keep the parts an earlier import left as the nodes had them
+    # A part is kept by hand only when this run names it (import_keep_hand_edits), as a file: one the last import
+    # kept (cassandra_import_kept, or the *_manage: false of an import before rc10) is imported, the report says so
+    - name: Say the parts the last import kept by hand that this one imports
       no_log: "{{ not import_debug | default(false) | bool }}"
       ansible.builtin.set_fact:
-        _nodes: "{{ _nodes | community.cassandra.cassandra_import_kept_again(_kept_before.kept) }}"
-      when: _kept_before.kept | length > 0
+        _nodes: "{{ _nodes | community.cassandra.cassandra_import_kept_last_notes(_kept_last) }}"
+      vars:
+        _kept_last: >-
+          {{ import_cluster_existing_text | default({}) | community.cassandra.cassandra_import_kept_last(
+               import_keep_hand_edits | default(false)) }}
 
     # import_set_ansible_host: true; false leaves ansible_host out. Not given, a re-import keeps how the
     # inventory there reaches its hosts: one it reaches without ansible_host (imported with

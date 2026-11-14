@@ -219,7 +219,6 @@ OPERATIONS = [
                  ("-e import_adopt=true", "adopts an earlier import's files", "false"),
                  ("-e import_allow_unread=true", "accepts unread ring nodes", "false"),
                  ("-e import_keep_hand_edits=true", "keeps hand edits, parts (=<names>)", "false"),
-                 ("-e import_take_over=<parts>", "gives kept parts back to Ansible", "none"),
                  ("-e import_carry_exporter_config=true", "carries the exporter's config file",
                   "false"),
                  ("-e import_report_shareable=false", "no anonymised report copy to share", "true")]},

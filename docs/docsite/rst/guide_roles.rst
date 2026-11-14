@@ -1617,13 +1617,11 @@ parts of the nodes to keep by hand, comma-separated: ``os`` (all the OS settings
 ``-e import_keep_hand_edits=logback.xml,thp,unit``). A name that is neither stops the run, listing both kinds. Each part
 kept gets the finest switch that leaves it as the node has it in ``host_vars`` (``cassandra_linux_manage: false``,
 ``cassandra_linux_thp_enabled`` and ``_defrag: keep``, ``cassandra_service_unit_manage: false``...), with
-``cassandra_import_kept: [<parts>]``, and the report lists it under ``KEPT BY HAND (your choice)``. The next import reads
-``cassandra_import_kept`` back: when it no longer names a part, it stops before writing anything, with both ways out
-(name it again, or give it back to Ansible with ``-e import_take_over=<parts>``, after a ``--check --diff``), so the
-same command never changes its meaning. An inventory of an earlier import without ``cassandra_import_kept`` (a 2.1.0 release candidate): the
-``*_manage: false`` it wrote in the ``host_vars`` of a node it read (the repositories, cqlsh, OS settings, unit) are
-kept as they are, the report says so for each node, with the way out to give them to Ansible (``-e
-import_take_over=<parts>``). The report starts with ``SELF-CHECK PASSED``, or with ``SELF-CHECK
+``cassandra_import_kept: [<parts>]``, and the report lists it under ``KEPT BY HAND (your choice)``. One rule for
+files and parts: each run keeps only what it names, everything else is imported and checked by the self-check. A part
+the last import kept (its ``cassandra_import_kept``, or the ``*_manage: false`` a 2.1.0 release candidate wrote for a
+node it read) and this run does not name is imported, with one line in the report (e.g. ``firewall: kept by hand by
+the last import, now imported``): name it again to keep it. The report starts with ``SELF-CHECK PASSED``, or with ``SELF-CHECK
 FAILED`` and the differences: the inventory is then marked ``# NOT VALID`` in its hosts file and the playbook fails
 (``-e import_strict=false`` writes the same files without failing, to inspect them: not safe to apply). The run
 ends with a short ``SELF-CHECK FAILED`` block: what differs, one line per setting or file with its nodes, grouped by

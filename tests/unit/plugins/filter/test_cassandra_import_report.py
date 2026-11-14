@@ -1319,7 +1319,7 @@ def test_parts_kept_by_hand_listed_with_the_way_to_give_them_back():
     at = lines.index("KEPT BY HAND (your choice)")
     flat = " ".join(" ".join(line.split()) for line in lines[at + 1:at + 5])
     assert flat.startswith("thp, unit (import_keep_hand_edits=thp,unit) all - node3 (2 nodes)")
-    assert "to give them to Ansible: import again without them and with -e import_take_over=thp,unit" in flat
+    assert "to give them to Ansible: import again without them in import_keep_hand_edits" in flat
 
 
 def test_one_merged_keep_option_in_every_way_out():

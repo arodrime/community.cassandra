@@ -170,17 +170,17 @@ def _kept_parts(node, parts):
 
 
 @values_hidden
-def cassandra_import_kept_again(nodes, kept):
-    """nodes: cassandra_import_nodes'; kept: {node name: [parts]} an import before rc10 left as the node had them
-    (cassandra_import_kept_before's kept) -> the nodes with those parts kept again, said in their notes."""
+def cassandra_import_kept_last_notes(nodes, last):
+    """nodes: cassandra_import_nodes'; last: {node name: [parts]} the last import kept by hand that this one does not
+    name (cassandra_import_kept_last's) -> the nodes with a note saying they are imported now (the self-check
+    compares them)."""
     out = []
     for n in nodes or []:
-        parts = (kept or {}).get(n.get("name")) or []
+        parts = (last or {}).get(n.get("name")) or []
         if parts and _bool(n.get("read", False)):
-            n = _kept_parts(n, parts)
             n = dict(n, notes=list(n.get("notes") or []) + [
-                "kept as the last import left it (%s): give %s to Ansible with -e import_take_over=%s" % (
-                    ", ".join(parts), "it" if len(parts) == 1 else "them", ",".join(parts))])
+                "%s: kept by hand by the last import, now imported (import_keep_hand_edits does not name %s)" % (
+                    ", ".join(parts), "it" if len(parts) == 1 else "them")])
         out.append(n)
     return out
 
@@ -502,6 +502,6 @@ class FilterModule(object):
     def filters(self):
         return {
             "cassandra_import_host_vars": cassandra_import_host_vars,
-            "cassandra_import_kept_again": cassandra_import_kept_again,
+            "cassandra_import_kept_last_notes": cassandra_import_kept_last_notes,
             "cassandra_import_nodes": cassandra_import_nodes,
         }

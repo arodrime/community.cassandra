@@ -364,72 +364,55 @@ def test_part_tables_agree():
     assert all(v in linux for p in OS_PARTS for v in KEPT_PART_VARS[p])
 
 
-def test_reimport_stop_task_runs_before_any_write():
+def test_reimport_says_the_parts_kept_last_time_it_now_imports():
+    """One rule for files and parts: each run keeps only what it names; no stop, no option to give them back."""
     with open(os.path.join(ROOT, "playbooks", "import_cluster.yml"), encoding="utf-8") as f:
-        play = next(p for p in yaml.safe_load(f) if p["name"] == "Write the inventory")
+        text = f.read()
+    assert "import_take_over" not in text
+    play = next(p for p in yaml.safe_load(text) if p["name"] == "Write the inventory")
     names = [t.get("name") for t in play["tasks"]]
-    stop = names.index("Stop rather than give a part kept by hand back to Ansible unasked")
-    assert names.index("Read the parts the last import kept by hand") < stop
-    assert names.index("Keep the files already there") < stop < names.index("Write the hosts file")
-    assert names.index("Keep the parts an earlier import left as the nodes had them") < names.index(
-        "Lay out again over your own variables")
-    task = play["tasks"][stop]
-    assert task["ansible.builtin.fail"]["msg"] == "{{ _kept_before.stop | join(_nl) }}" and task["vars"]["_nl"] == "\n"
-    read = play["tasks"][names.index("Read the parts the last import kept by hand")]["ansible.builtin.set_fact"]
-    assert "import_keep_hand_edits" in read["_kept_before"] and "import_take_over" in read["_kept_before"]
+    said = names.index("Say the parts the last import kept by hand that this one imports")
+    assert names.index("Keep the files already there") < said < names.index("Lay out again over your own variables")
+    task = play["tasks"][said]
+    assert "import_keep_hand_edits" in task["vars"]["_kept_last"]
+    assert not [t for t in play["tasks"] if "ansible.builtin.fail" in t and "_kept" in str(t)]
 
 
-def test_reimport_without_a_kept_part_stops_with_both_ways_out():
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_import_kept_before
-    texts = {"host_vars/n1/main.yml": "cassandra_import_kept: [os, unit]\ncassandra_linux_manage: false\n",
-             "host_vars/n2/main.yml": "cassandra_import_kept: [os]\n", "group_vars/all/local.yml": "x: 1\n"}
-    assert cassandra_import_kept_before(texts, "os,unit")["stop"] == []
-    assert cassandra_import_kept_before(texts, "os", "unit")["stop"] == []  # given back to Ansible
-    # the files kept too stay in the way out
-    assert cassandra_import_kept_before(texts, "logback.xml")["stop"] == [
-        "os, unit kept by hand by the last import (host_vars/n1/main.yml, host_vars/n2/main.yml): this import does not"
-        " name them.",
-        "Keep them: import again with -e import_keep_hand_edits=logback.xml,os,unit.",
-        "Give them to Ansible: import again with -e import_take_over=os,unit (first with --check --diff: it shows what"
-        " the roles would change)."]
-    assert "import_keep_hand_edits=true,os,unit." in cassandra_import_kept_before(texts, "true")["stop"][1]
-    with pytest.raises(AnsibleFilterError):
-        cassandra_import_kept_before(texts, "os", "kernel")
-    # os keeps the finer parts
-    assert cassandra_import_kept_before({"host_vars/n1/main.yml": "cassandra_import_kept: [thp]\n"}, "os")["stop"] == []
-    # one part both kept and given back: refused
-    assert "both name thp" in cassandra_import_kept_before(texts, "os,thp", "thp")["stop"][0]
-    # a file of the import that does not read: stop
-    bad = {"host_vars/n1/main.yml": "# Written by community.cassandra.import_cluster for c\ncassandra_import_kept: [os\n"}
-    assert "cannot be read as YAML" in cassandra_import_kept_before(bad, "os")["stop"][0]
-    # its main.yml vaulted (the import vaults secrets.yml alone): its parts unknown, stop with the way out
-    vaulted = {"host_vars/n1/main.yml": "$ANSIBLE_VAULT;1.1;AES256\n6162\n", "host_vars/n1/secrets.yml": "$ANSIBLE_VAULT;1.1"}
-    assert cassandra_import_kept_before(vaulted, "os")["stop"] == [
-        "host_vars/n1/main.yml: written by an earlier import, cannot be read as YAML: the parts it kept by hand are not"
-        " known. Decrypt it (ansible-vault decrypt), fix or remove it, then import again."]
-    assert cassandra_import_kept_before({"host_vars/n1/secrets.yml": "$ANSIBLE_VAULT;1.1"}, "os")["stop"] == []
+MARK = "# Written by community.cassandra.import_cluster for c: the next import replaces it.\n"
 
 
-def test_rc9_switches_kept_as_parts():
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_import_kept_before
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import cassandra_import_kept_again
-    mark = "# Written by community.cassandra.import_cluster for c: the next import replaces it.\n"
-    texts = {"host_vars/n1/main.yml": mark + "cassandra_linux_manage: false\ncassandra_firewall_manage: false\n",
+def test_parts_kept_last_time_and_not_named_now_are_imported():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_import_kept_last
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import (
+        cassandra_import_kept_last_notes)
+    texts = {"host_vars/n1/main.yml": MARK + "cassandra_import_kept: [os, unit]\ncassandra_linux_manage: false\n",
+             "host_vars/n2/main.yml": MARK + "cassandra_import_kept: [thp]\n", "group_vars/all/local.yml": "x: 1\n",
+             "host_vars/n3/local.yml": "cassandra_import_kept: [unit]\n"}  # (yours: not the import's)
+    assert cassandra_import_kept_last(texts, "os,unit") == {}  # named again: kept (os covers thp)
+    assert cassandra_import_kept_last(texts, "logback.xml") == {"n1": ["os", "unit"], "n2": ["thp"]}
+    assert cassandra_import_kept_last(texts, "os") == {"n1": ["unit"]}
+    # unreadable (vaulted, broken): rewritten all the same, nothing to say
+    assert cassandra_import_kept_last({"host_vars/n1/main.yml": "$ANSIBLE_VAULT;1.1;AES256\n6162\n"}, False) == {}
+    assert cassandra_import_kept_last({"host_vars/n1/main.yml": MARK + "cassandra_import_kept: [os\n"}, False) == {}
+    # one report line per node, info only: the parts are imported (no switch kept)
+    nodes = [dict(base_node("n1"), read=True), dict(base_node("n2"), read=False)]
+    out = cassandra_import_kept_last_notes(nodes, {"n1": ["os", "unit"], "n2": ["thp"]})
+    assert out[0]["notes"] == ["os, unit: kept by hand by the last import, now imported (import_keep_hand_edits does"
+                               " not name them)"]
+    assert out[0]["keep"] == {} and out[1]["notes"] == []
+
+
+def test_rc9_switches_are_imported_and_said():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_import_kept_last
+    texts = {"host_vars/n1/main.yml": MARK + "cassandra_linux_manage: false\ncassandra_firewall_manage: false\n",
              # a node that import could not read: every switch, not a choice
-             "host_vars/n2/main.yml": mark + "".join("%s: false\n" % k for k in (
+             "host_vars/n2/main.yml": MARK + "".join("%s: false\n" % k for k in (
                  "cassandra_repository_manage", "cassandra_linux_manage", "cassandra_cqlsh_python_manage",
                  "cassandra_service_unit_manage", "cassandra_java_set_default", "cassandra_firewall_manage",
                  "cassandra_install_tools", "cassandra_install_jemalloc")),
              "host_vars/n3/local.yml": "cassandra_linux_manage: false\n"}  # (yours: not the import's)
-    out = cassandra_import_kept_before(texts, False)
-    assert out == {"stop": [], "kept": {"n1": ["os", "firewall"]}, "given": []}
-    assert cassandra_import_kept_before(texts, False, "firewall")["kept"] == {"n1": ["os"]}
-    nodes = [dict(base_node("n1"), read=True), dict(base_node("n2"), read=True)]
-    again = cassandra_import_kept_again(nodes, out["kept"])
-    assert again[0]["keep"]["cassandra_import_kept"] == ["os", "firewall"]
-    assert again[0]["notes"][-1] == "kept as the last import left it (os, firewall): give them to Ansible with" \
-        " -e import_take_over=os,firewall"
-    assert "cassandra_import_kept" not in again[1]["keep"]
+    assert cassandra_import_kept_last(texts, False) == {"n1": ["os", "firewall"]}
+    assert cassandra_import_kept_last(texts, "firewall") == {"n1": ["os"]}
 
 
 def base_node(name):
