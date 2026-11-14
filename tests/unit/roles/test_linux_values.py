@@ -170,3 +170,44 @@ def test_cqlsh_source_and_install_method():
     for t in load_tasks(repo):
         if t.get("name") in ("Configure the Cassandra repository", "Remove the Cassandra repositories (packages)"):
             assert not when(t, cassandra_repository_manage=True, cassandra_install_method="system")
+
+
+# --- rc10 audit round 1 ---
+
+def role_task(role, name, path):
+    todo = load_tasks(os.path.join(ROLE, "..", role, "tasks", path))
+    while todo:
+        t = todo.pop(0)
+        if t.get("name") == name:
+            return t
+        todo[0:0] = t.get("block", [])
+    raise KeyError(name)
+
+
+def test_limits_block_left_with_no_limits():
+    t = task("Remove the block earlier versions of the role wrote to limits.conf", "os.yml")
+    assert not when(t, cassandra_linux_limits={}) and when(t, cassandra_linux_limits={"nofile": 1})
+
+
+def test_package_script_refused_without_the_sysv_generator():
+    look = role_task("cassandra_service", "Look for the SysV generator (package_script)", "main.yml")
+    assert look["check_mode"] is False and when(look, cassandra_service_start="package_script")
+    refuse = role_task("cassandra_service", "Refuse the package's init script where systemd cannot start it", "main.yml")
+    a = refuse["ansible.builtin.assert"]
+    assert not render("{{ %s }}" % a["that"], cassandra_service_sysv_generator={"stdout": ""})
+    assert "Set cassandra_service_start: unit" in " ".join(render(a["fail_msg"], inventory_hostname="n1").split())
+
+
+def test_init_script_boot_state_asked_to_the_init_system():
+    keep = role_task("cassandra_service", "Keep the snapshot", "main.yml")["ansible.builtin.set_fact"]
+    enabled = keep["_cassandra_service_before"]["enabled"]
+    status = {"LoadState": "loaded", "UnitFileState": "generated"}
+    assert render(enabled, _status=status, cassandra_service_sysv_enabled={"stdout": "enabled\n"}) == "enabled"
+    assert render(enabled, _status=dict(status, UnitFileState="disabled"), cassandra_service_sysv_enabled={}) == "disabled"
+
+
+def test_replace_way_out_for_the_init_script():
+    t = role_task("cassandra_operation", "The replacement gets the role's unit", "action_replace.yml")
+    msg = " ".join(render(t["ansible.builtin.assert"]["fail_msg"], cassandra_service_unit_manage=True,
+                          cassandra_service_start="package_script", inventory_hostname="n9").split())
+    assert "set cassandra_service_start: unit in the host_vars of n9" in msg

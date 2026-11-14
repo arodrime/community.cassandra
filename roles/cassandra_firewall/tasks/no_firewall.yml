@@ -15,7 +15,8 @@
     {% else %}
     command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active' && echo "active|active" \
       || echo "active|inactive"
-    command -v ufw >/dev/null 2>&1 && echo "enabled|installed" || echo "enabled|absent"
+    # (at boot: ufw.conf ENABLED, yes or no)
+    echo "enabled|$(sed -n 's/^ENABLED=//p' /etc/ufw/ufw.conf 2>/dev/null | grep . || echo absent)"
     {% endif %}
   register: cassandra_firewall_snapshot
   changed_when: false

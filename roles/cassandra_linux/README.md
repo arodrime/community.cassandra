@@ -117,7 +117,8 @@ Role Variables
   (and live when they differ): `always`, `madvise` or `never` (defrag also
   `defer`, `defer+madvise`). Default `never` for both. `kernel` does not set
   it (both `kernel`: the role's unit is removed); `keep` leaves it as it is,
-  and the role's unit too.
+  and the role's unit too. E.g. `cassandra_linux_thp_enabled: kernel` with
+  `cassandra_linux_thp_defrag: never`: the unit writes defrag only.
 * `cassandra_sysfs_block_root`: sysfs directory the disk tuning reads and
   writes. Defaults to `/sys/block`; only meant to be overridden by tests,
   to point at a fake tree instead of the host's real disks.

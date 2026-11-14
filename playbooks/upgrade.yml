@@ -93,7 +93,7 @@
       check_mode: false
       when:
         - _phase in ['preflight', 'prepare', 'canary', 'rolling']
-        - not cassandra_repository_manage | default(true) | bool
+        - not cassandra_repository_manage | default(true) | bool or cassandra_install_method == 'system'
         - not cassandra_offline | default(false) | bool
         - cassandra_install_method in ['repository', 'system']
 
@@ -101,10 +101,11 @@
       ansible.builtin.assert:
         that: _missing | length == 0
         fail_msg: >-
-          cassandra_repository_manage is false on {{ _missing | join(', ') }} (repositories set up another way, e.g.
-          found so by import_cluster) and they have no cassandra {{ cassandra_package_version }}: add the target
-          series' repository there, or remove cassandra_repository_manage from their host_vars so that the upgrade
-          adds it. Nothing was done.
+          {{ _missing | join(', ') }} install Cassandra from repositories the roles do not manage
+          (cassandra_repository_manage false, or cassandra_install_method system) and those offer no cassandra
+          {{ cassandra_package_version }}: add the target series to them (your mirror or Satellite), or let the roles
+          add the Apache repository (cassandra_install_method: repository, cassandra_repository_manage: true).
+          Nothing was done.
         quiet: true
       vars:
         _missing: >-

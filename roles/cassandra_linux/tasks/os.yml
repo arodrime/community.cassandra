@@ -170,6 +170,7 @@
     marker: "#<!-- {mark} ANSIBLE MANAGED BLOCK -->"
     state: absent
   register: cassandra_linux_limits_old
+  when: cassandra_linux_limits | length > 0  # ({}: the limits files left as they are)
 
 - name: Extra Limit for RH Derived Distros
   ansible.builtin.lineinfile:

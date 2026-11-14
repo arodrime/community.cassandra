@@ -5,7 +5,7 @@
   ansible.builtin.import_tasks: drain.yml
   # a kept unit, or the package's init script, may not drain
   when: >-
-    cassandra_operation_drain | bool or not cassandra_service_unit_manage | bool
+    cassandra_operation_drain | bool or not cassandra_service_unit_manage | default(true) | bool
     or cassandra_service_start | default('unit') != 'unit'
   vars:
     _cassandra_service_drain_then: rebooted

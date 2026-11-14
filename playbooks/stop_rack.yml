@@ -247,7 +247,7 @@
       ignore_errors: true  # the timeout below
       timeout: "{{ cassandra_service_drain_timeout | int }}"
       when: >-
-        cassandra_operation_drain | bool or not cassandra_service_unit_manage | bool
+        cassandra_operation_drain | bool or not cassandra_service_unit_manage | default(true) | bool
         or cassandra_service_start | default('unit') != 'unit'
 
     - name: Say the drain did not work

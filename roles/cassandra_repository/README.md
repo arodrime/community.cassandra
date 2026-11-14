@@ -4,7 +4,8 @@ cassandra_repository
 Configures a repository for Cassandra on Debian and RedHat based platforms.
 With `cassandra_install_method: packages`, configures none (and removes the
 ones it configured before): `cassandra_install` then downloads the package
-files themselves.
+files themselves. With `cassandra_install_method: system`, configures and
+removes none: the packages come from the repositories the node has already.
 
 Requirements
 ------------
@@ -39,6 +40,8 @@ cassandra_install_method:
     `cassandra_install_url`, a plain directory (e.g. a generic folder of a
     repository manager). This role adds no repository, and removes the
     `cassandra-<series>` repositories it added before.
+  - `system`: the repositories the node has already (a Satellite, a site
+    mirror): this role adds and removes none.
   - Same variable as in `cassandra_install`.
 
 cassandra_install_url:

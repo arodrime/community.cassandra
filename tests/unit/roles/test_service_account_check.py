@@ -113,7 +113,7 @@ def test_missing_group():
 
 def test_kept_unit_said_so():
     passes, msg = check(DEFAULT, cassandra_group="dbgrp", cassandra_service_unit_manage=False)
-    assert not passes and msg.startswith("Cassandra runs (its own unit, kept) as cassandra:cassandra")
+    assert not passes and msg.startswith("Cassandra runs (the unit it starts with, not the one of the role) as cassandra:cassandra")
 
 
 SETTINGS = {"owner": "root", "group": "dbgrp", "mode": "0640", "public_mode": "0644", "files": {},

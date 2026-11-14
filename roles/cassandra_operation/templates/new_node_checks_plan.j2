@@ -52,7 +52,7 @@
 {%-     set f = cassandra_install_package_file | replace('{name}', p) | replace('{version}', cassandra_package_version) -%}
 {%-     set _ = urls.append({'name': 'Cassandra package file ' ~ f, 'auth': 'repository', 'headers': {'Range': 'bytes=0-0'}, 'url': base ~ '/' ~ f}) -%}
 {%-   endfor -%}
-{%- elif cassandra_repository_manage | bool and not files_method -%}
+{%- elif cassandra_repository_manage | bool and not files_method and cassandra_install_method != 'system' -%}
 {%-   if debian -%}
 {%-     set _ = urls.append({'name': 'Cassandra repository', 'auth': 'repository',
                              'url': base ~ '/dists/' ~ cassandra_version ~ '/InRelease'}) -%}
@@ -67,7 +67,8 @@
                                      | community.cassandra.cassandra_same_origin(cassandra_install_url) else 'none'}) -%}
 {%-   endif -%}
 {%- endif -%}
-{%- if offline or not (cassandra_repository_manage | bool or files_method) -%}
+{#- (system: the repositories the node has must offer it) -#}
+{%- if offline or not (cassandra_repository_manage | bool or files_method) or cassandra_install_method == 'system' -%}
 {%-   set _ = packages.append({'name': 'cassandra', 'why': 'Cassandra', 'mode': 'installed' if offline else 'either',
                                'version': cassandra_package_version}) -%}
 {%- endif -%}
@@ -81,7 +82,9 @@
                       'fallback': 'the deadsnakes PPA' if ansible_facts['distribution'] == 'Ubuntu' and cassandra_cqlsh_python_repo_uri != '' else ''} -%}
 {#- set when cassandra_install adds the PPA (it installs python3.11 for cqlsh) -#}
 {%- set ppa = namespace(added=false) -%}
-{%- if cassandra_cqlsh_python == '/usr/bin/python3.11' and not have.get('/usr/bin/python3.11', false) -%}
+{%- if cassandra_cqlsh_source | default('package') != 'package' -%}
+{#-   another cqlsh (cassandra_cqlsh_command): nothing for the package's -#}
+{%- elif cassandra_cqlsh_python == '/usr/bin/python3.11' and not have.get('/usr/bin/python3.11', false) -%}
 {%-   set _ = packages.append(dict(py311_need, why='cqlsh, cassandra_cqlsh_python')) -%}
 {%-   set ppa.added = cassandra_cqlsh_python_manage | bool and cassandra_cqlsh_source | default('package') == 'package' -%}
 {%- elif cassandra_cqlsh_python != '' -%}

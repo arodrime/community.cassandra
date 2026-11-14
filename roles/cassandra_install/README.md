@@ -27,7 +27,9 @@ Role Variables
   `file://...`). Default `false`.
 * `cassandra_version`: Cassandra series, same values as `cassandra_repository`
   (`40x`, `41x`, `50x`). Default `50x`.
-* `cassandra_install_method` (default `repository`): `packages` downloads the
+* `cassandra_install_method` (default `repository`): `system` installs from
+  the repositories the node has already (a Satellite, a site mirror), none
+  added or removed; `packages` downloads the
   package files from `cassandra_install_url`, a plain directory of files (no
   repository metadata, e.g. a generic folder of a repository manager), and
   installs them without their Java dependency (`rpm -U --nodeps` with
@@ -125,9 +127,12 @@ Role Variables
   are removed, only if the role wrote them. On the RedHat family the role stops
   when no repository offers `python3.11` (EL 10 with 4.x): set this then.
 * `cassandra_cqlsh_python_manage`: `false` leaves cqlsh's Python as it is on
-  this node (nothing above is added or removed). The `import_cluster`
-  playbook sets it on the nodes whose cqlsh has no wrapper of this role.
-  Default `true`.
+  this node (nothing above is added or removed; `import_cluster` writes it
+  with `-e import_keep_hand_edits=cqlsh`). Default `true`.
+* `cassandra_cqlsh_source`: `package` (default), the Cassandra package's
+  cqlsh, its Python set up as above; `external`, another cqlsh (e.g. a
+  virtualenv) named by `cassandra_cqlsh_command`, which must then be set:
+  nothing is written for the package's cqlsh.
 * `cassandra_cqlsh_python_repo_uri`: where python3.11 comes from on Ubuntu
   releases that don't ship it (default: the deadsnakes PPA, signed by the key
   shipped in `files/deadsnakes.asc`; empty to rely on the configured

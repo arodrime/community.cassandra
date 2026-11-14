@@ -63,6 +63,8 @@ AUDITED = {
     (S, "config_snapshot.yml", "Record the config Cassandra started with", "writer"): ("no change",),
     (S, "main.yml", "Read the current service state (change report)", "forced"): ("read",),
     (S, "main.yml", "Look for a running Cassandra JVM", "forced"): ("read",),
+    (S, "main.yml", "Read whether the init script starts at boot (change report)", "forced"): ("read",),
+    (S, "main.yml", "Look for the SysV generator (package_script)", "forced"): ("read",),
     (S, "main.yml", "Stop cassandra", "skipped"): ("report",),
     (S, "main.yml", "Enable cassandra at boot", "skipped"): ("report",),
     (S, "main.yml", "Start or restart this node", "skipped"): ("report",),
