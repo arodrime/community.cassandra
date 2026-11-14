@@ -77,7 +77,7 @@ def test_comments_are_not_variables():
 
 
 @pytest.mark.parametrize("name, close", [
-    ("import_cluster_keep_hand_edit", "import_cluster_keep_hand_edits"),  # a typo, silently ignored before
+    ("import_keep_hand_edit", "import_keep_hand_edits"),  # a typo, silently ignored before
     ("cassandra_target_node", "cassandra_target_nodes"),
     ("cassandra_rolling_resum", "cassandra_rolling_resume"),
     ("casandra_hosts", "cassandra_hosts"),  # a typo in the prefix too
@@ -88,7 +88,11 @@ def test_comments_are_not_variables():
     ("CASSANDRA_CLUSTER", "cassandra_hosts"),  # the environment variable given with -e
     ("Cassandra_target_nodes", "cassandra_target_nodes"),
     ("cassandra_frobnicate_level", ""),  # nothing close
-    ("import_cluster_xyzzy_level", ""),
+    ("import_xyzzy_level", ""),
+    ("import_forse", "import_force"),  # the import_ prefix is the collection's too
+    # (audit) words of the playbooks that are no variable: not known
+    ("import_tasks", ""), ("import_playbook", ""), ("import_role", ""), ("import_distribution", ""),
+    ("import_read_files", ""), ("import_given", ""),
 ])
 def test_unknown_extra_vars(name, close):
     from ansible_collections.community.cassandra.plugins.filter.cassandra_names import cassandra_unknown_extra_vars
@@ -98,8 +102,8 @@ def test_unknown_extra_vars(name, close):
 def test_known_extra_vars_pass():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_names import cassandra_unknown_extra_vars
     names = PLAYBOOK_VARIABLES + [
-        "import_cluster_keep_hand_edits", "import_cluster_force", "import_cluster_dir", "import_cluster_allow_unread",
-        "import_cluster_set_ansible_host", "import_cluster_vault_password_file", "import_cluster_medusa_path",
+        "import_keep_hand_edits", "import_force", "import_dir", "import_allow_unread",
+        "import_set_ansible_host", "import_vault_password_file", "import_medusa_path",
         "help_topic", "help_write", "help_runbook_dir", "help_inventory",
         "cassandra_version", "cassandra_jmx_username", "cassandra_operation_confirm", "cassandra_cleanup_jobs",
         "cassandra_rack_force", "cassandra_token_auto", "cassandra_medusa_config_user"]
@@ -109,7 +113,7 @@ def test_known_extra_vars_pass():
 def test_other_prefixes_and_former_names_left_alone():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_names import cassandra_unknown_extra_vars
     # other owners' variables, Ansible's own, and the former names (refused with their name now, not as unknown)
-    names = ["ansible_user", "my_cassandra_thing", "cassandrax", "helper_x", "import_clusters", "cassandra",
+    names = ["ansible_user", "my_cassandra_thing", "cassandrax", "helper_x", "importer_x", "cassandra",
              "cassandra_new_nodes", "cassandra_status_from"]
     assert cassandra_unknown_extra_vars(names, PLAYBOOK_VARIABLES) == {}
     assert cassandra_unknown_extra_vars(None, PLAYBOOK_VARIABLES) == {}

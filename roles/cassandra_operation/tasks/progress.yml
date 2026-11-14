@@ -22,7 +22,7 @@
         - cassandra_rolling_progress_dir | default('', true) == ''
         - inventory_dir | default('', true) not in ['', 'None']  # 'None' with -i host1,host2
 
-    # made absolute here, on the controller, like import_cluster_dir: a
+    # made absolute here, on the controller, like import_dir: a
     # relative path is from the dir the playbook is run from
     - name: Pick the progress dir
       ansible.builtin.set_fact:

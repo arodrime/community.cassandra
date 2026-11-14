@@ -44,7 +44,7 @@ def run(tmp_path, *args, **env_extra):
     env.pop("CASSANDRA_CLUSTER", None)
     env.update(env_extra)
     argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()",
-            "community.cassandra.import_cluster", "-e", "import_cluster_dir=%s" % (tmp_path / "out")] + list(args)
+            "community.cassandra.import_cluster", "-e", "import_dir=%s" % (tmp_path / "out")] + list(args)
     proc = subprocess.run(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                           check=False, cwd=str(tmp_path), timeout=300)
     return proc.returncode, proc.stdout.decode("utf-8", "replace")

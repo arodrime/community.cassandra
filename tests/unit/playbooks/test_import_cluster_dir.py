@@ -50,15 +50,15 @@ def picked(**variables):
 def test_relative_from_the_current_dir(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("PWD", "/elsewhere")
-    assert pick(import_cluster_dir="./inventories/X") == str(tmp_path.resolve() / "inventories" / "X")
-    assert pick(import_cluster_dir="inventories/X/") == str(tmp_path.resolve() / "inventories" / "X")
-    assert pick(import_cluster_dir="../X") == str(tmp_path.resolve().parent / "X")
+    assert pick(import_dir="./inventories/X") == str(tmp_path.resolve() / "inventories" / "X")
+    assert pick(import_dir="inventories/X/") == str(tmp_path.resolve() / "inventories" / "X")
+    assert pick(import_dir="../X") == str(tmp_path.resolve().parent / "X")
 
 
 def test_default_in_the_current_dir(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert pick() == str(tmp_path.resolve() / "inventories")
-    assert pick(import_cluster_dir="") == str(tmp_path.resolve() / "inventories")
+    assert pick(import_dir="") == str(tmp_path.resolve() / "inventories")
 
 
 def test_reached_through_a_symlink(tmp_path, monkeypatch):
@@ -67,7 +67,7 @@ def test_reached_through_a_symlink(tmp_path, monkeypatch):
     (tmp_path / "home" / "project").symlink_to(tmp_path / "data" / "project")
     monkeypatch.chdir(tmp_path / "home" / "project")
     monkeypatch.setenv("PWD", str(tmp_path / "home" / "project"))
-    assert pick(import_cluster_dir="inventories/X") == str(tmp_path.resolve() / "data" / "project" / "inventories" / "X")
+    assert pick(import_dir="inventories/X") == str(tmp_path.resolve() / "data" / "project" / "inventories" / "X")
 
 
 def test_report_dir(tmp_path, monkeypatch):
@@ -75,28 +75,28 @@ def test_report_dir(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert picked() == {"_dir": str(tmp_path.resolve() / "inventories"),
                         "_report_dir": str(tmp_path.resolve() / "reports" / "prod")}
-    assert picked(import_cluster_dir="a/inv/")["_report_dir"] == str(tmp_path.resolve() / "a" / "reports" / "prod")
-    assert picked(import_cluster_dir="/x/y/inventories/") == {"_dir": "/x/y/inventories", "_report_dir": "/x/y/reports/prod"}
-    assert picked(import_cluster_dir="/inv")["_report_dir"] == "/reports/prod"
-    assert picked(import_cluster_dir="/x/inv/.") == {"_dir": "/x/inv", "_report_dir": "/x/reports/prod"}
-    assert picked(import_cluster_dir="/x/y/../inv")["_report_dir"] == "/x/y/../reports/prod"  # kept as given, like _dir
+    assert picked(import_dir="a/inv/")["_report_dir"] == str(tmp_path.resolve() / "a" / "reports" / "prod")
+    assert picked(import_dir="/x/y/inventories/") == {"_dir": "/x/y/inventories", "_report_dir": "/x/y/reports/prod"}
+    assert picked(import_dir="/inv")["_report_dir"] == "/reports/prod"
+    assert picked(import_dir="/x/inv/.") == {"_dir": "/x/inv", "_report_dir": "/x/reports/prod"}
+    assert picked(import_dir="/x/y/../inv")["_report_dir"] == "/x/y/../reports/prod"  # kept as given, like _dir
     (tmp_path / "data" / "inv").mkdir(parents=True)
     (tmp_path / "inventories").symlink_to(tmp_path / "data" / "inv")  # next to the dir as given, not its target
     assert picked()["_report_dir"] == str(tmp_path.resolve() / "reports" / "prod")
-    assert picked(import_cluster_dir="/")["_report_dir"] == "/reports/prod"
-    assert picked(import_cluster_dir="inv", import_cluster_report_dir="~/r")["_report_dir"] == os.path.expanduser("~/r")
-    assert picked(import_cluster_dir="inv", import_cluster_report_dir="out/r")["_report_dir"] == str(tmp_path.resolve() / "out" / "r")
+    assert picked(import_dir="/")["_report_dir"] == "/reports/prod"
+    assert picked(import_dir="inv", import_report_dir="~/r")["_report_dir"] == os.path.expanduser("~/r")
+    assert picked(import_dir="inv", import_report_dir="out/r")["_report_dir"] == str(tmp_path.resolve() / "out" / "r")
 
 
 def test_absolute_kept(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    assert pick(import_cluster_dir="/srv/inv/../X") == "/srv/inv/../X"
+    assert pick(import_dir="/srv/inv/../X") == "/srv/inv/../X"
 
 
 def test_home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.chdir("/")
-    assert pick(import_cluster_dir="~/inventories/X") == str(tmp_path / "inventories" / "X")
+    assert pick(import_dir="~/inventories/X") == str(tmp_path / "inventories" / "X")
 
 
 TASKS = dict((t.get("name"), t) for play in PLAYS for t in play.get("tasks", []) + [
@@ -126,7 +126,7 @@ def test_vault_password_file_from_the_current_dir(tmp_path, monkeypatch):
     """Not from the playbook's dir, where lookup('file') looks for a relative path."""
     (tmp_path / "vp.txt").write_text("secret\n")
     monkeypatch.setattr(C, "DEFAULT_VAULT_PASSWORD_FILE", None)
-    variables, content = secret(tmp_path, monkeypatch, import_cluster_vault_password_file="./vp.txt")
+    variables, content = secret(tmp_path, monkeypatch, import_vault_password_file="./vp.txt")
     assert variables["_vault_secret"] == "secret"
     assert variables["_vault_file"] == str(tmp_path.resolve() / "vp.txt")  # the modules get an absolute path
     assert content.startswith("$ANSIBLE_VAULT;")
@@ -154,7 +154,7 @@ def test_no_vault_password_file(tmp_path, monkeypatch):
 def test_vault_password_script(tmp_path, monkeypatch):
     """An executable password file is run, its output is the password."""
     monkeypatch.setattr(C, "DEFAULT_VAULT_PASSWORD_FILE", None)
-    variables, content = secret(tmp_path, monkeypatch, import_cluster_vault_password_file="/bin/script",
+    variables, content = secret(tmp_path, monkeypatch, import_vault_password_file="/bin/script",
                                 import_cluster_vault_stat={"stat": {"executable": True}},
                                 import_cluster_vault_script={"stdout": "secret"})
     assert variables["_vault_secret"] == "secret"
@@ -171,7 +171,7 @@ def test_every_file_written_is_marked():
                                           ("/k/vault.sh", False), ("/k/client-vault", False)])
 def test_client_script_gets_the_vault_id(path, client):
     argv = render(TASKS["Run the vault password script"]["ansible.builtin.command"]["argv"], _vault_file=path,
-                  import_cluster_vault_id="prod")
+                  import_vault_id="prod")
     assert argv == ([path, "--vault-id", "prod"] if client else [path])
 
 
@@ -184,7 +184,7 @@ def test_files_in_dot_dirs_are_not_looked_at():
 
 
 def test_report_in_the_inventory_dir_not_a_leftover():
-    """import_cluster_report_dir in the inventory dir: its report is not listed as kept, it is written again."""
+    """import_report_dir in the inventory dir: its report is not listed as kept, it is written again."""
     task = TASKS["Sort out the files an earlier import wrote"]["vars"]
     files = [{"path": "/inv/notes"}, {"path": "/inv/report.txt"}, {"path": "/inv/reports/p/RUNBOOK.md"}]
     for report_dir, left in (("/inv", ["notes", "reports/p/RUNBOOK.md"]),
@@ -266,10 +266,10 @@ def test_files_known_by_their_layout_backed_up_before_removal():
 ])
 def test_stop_rather_than_overwrite(force, hosts_exists, passed):
     task = TASKS["Stop rather than overwrite an inventory"]["ansible.builtin.assert"]
-    variables = write_vars(import_cluster_force=force, import_cluster_hosts_stat={"stat": {"exists": hosts_exists}})
+    variables = write_vars(import_force=force, import_cluster_hosts_stat={"stat": {"exists": hosts_exists}})
     assert render("{{ %s }}" % task["that"], **variables) is passed
     assert render(task["fail_msg"], **variables).startswith(
-        "/inv/cluster_a.yml exists: this cluster is imported there already, set import_cluster_force=true")
+        "/inv/cluster_a.yml exists: this cluster is imported there already, set import_force=true")
 
 
 def test_files_read_and_written():
@@ -296,14 +296,14 @@ def test_stop_on_another_clusters_files():
     assert render("{{ %s }}" % task["that"], **conflicts) is False
     assert render(task["fail_msg"], **conflicts).startswith("node2: in cluster_b.yml too. Nothing written: in /inv,")
     assert render("{{ %s }}" % task["that"], _leftovers={"conflicts": []}, _dir="/inv") is True
-    assert "import_cluster_adopt" not in render(task["fail_msg"], **conflicts)
+    assert "import_adopt" not in render(task["fail_msg"], **conflicts)
     # files of an earlier import not known to be this cluster's: the switch that takes them over
     unknown = "group_vars/cluster_a/main.yml: written by an earlier import, not known to be cluster_a's"
     msg = render(task["fail_msg"], _dir="/inv", _leftovers={"conflicts": [unknown], "adoptable": [unknown]})
-    assert msg.endswith("If an earlier import of this cluster wrote them: -e import_cluster_adopt=true takes them"
+    assert msg.endswith("If an earlier import of this cluster wrote them: -e import_adopt=true takes them"
                         " over, each file replaced kept as <file>.<date>~")
     msg = render(task["fail_msg"], _dir="/inv", _leftovers={"conflicts": [unknown, "x"], "adoptable": [unknown]})
-    assert msg.endswith("-e import_cluster_adopt=true would take over 1 of them only")
+    assert msg.endswith("-e import_adopt=true would take over 1 of them only")
     # before any file is removed or written
     names = [t.get("name") for play in PLAYS for t in play.get("tasks", [])]
     assert names.index("Stop rather than write over another cluster's files") < names.index(
@@ -369,6 +369,52 @@ def test_check_diff_writes_nothing():
     assert TASKS["Show the summary"]["vars"]["cassandra_output"] is True
     assert TASKS["Stop on a failed self-check"]["vars"]["cassandra_output"] is True
     assert render(WRITE_VARS["_report_args"]["check"], ansible_check_mode=True) is True
+
+
+@pytest.mark.parametrize("check", [False, True])
+def test_a_re_import_leaves_every_report_file_alone(check):
+    # (audit) the report in the inventory dir (import_report_dir): none of its files taken for another's, the
+    # shareable copy and its key too (written by default); the key a .txt, which Ansible skips in an inventory dir
+    report = render(WRITE_VARS["_report_args"]["report_file"], ansible_check_mode=check, _report_dir="/inv")
+    stem = report[:-len(".txt")]
+    ours = set("/inv/" + f for f in render(TASKS["Sort out the files an earlier import wrote"]["vars"]["_report_files"],
+                                           _report_dir="/inv", _dir="/inv"))
+    shareable = TASKS["Write the shareable copy of the report"]
+    written = [report, stem + ".details.txt"] + [stem + ".shareable." + i["extension"] for i in shareable["loop"]
+                                                 if i["part"] == "text" or not check]
+    assert set(written) <= ours
+    assert all(name.endswith(".txt") for name in written)
+    key = TASKS["Make the key of the shareable copy readable by its owner only"]["ansible.builtin.file"]["path"]
+    assert key.endswith("'.shareable.key.txt' }}")
+
+
+def test_the_key_of_an_earlier_shareable_copy_is_removed():
+    # (round-2) report.shareable.map of a release candidate (real names; Ansible read it as inventory): the import's
+    # own, never another's file, removed with a line saying so
+    ours = render(TASKS["Sort out the files an earlier import wrote"]["vars"]["_report_files"], _report_dir="/inv",
+                  _dir="/inv")
+    assert "report.shareable.map" in ours
+    remove = TASKS["Remove the key of an earlier shareable copy"]
+    assert remove["ansible.builtin.file"]["state"] == "absent"
+    assert render(remove["ansible.builtin.file"]["path"], _report_args={"report_file": "/r/report.txt"}) == \
+        "/r/report.shareable.map"
+    said = TASKS["Say the key of an earlier shareable copy is removed"]
+    assert said["when"] == "import_cluster_old_key is changed"
+    old = {"path": "/r/report.shareable.map"}
+    assert render(said["ansible.builtin.debug"]["msg"], import_cluster_old_key=old) == (
+        "Removed /r/report.shareable.map: the key of an earlier import's shareable copy (it held the real names); this"
+        " import's is report.shareable.key.txt.")
+    # no copy this time: no key named
+    assert render(said["ansible.builtin.debug"]["msg"], import_cluster_old_key=old, import_report_shareable=False) == (
+        "Removed /r/report.shareable.map: the key of an earlier import's shareable copy (it held the real names).")
+
+
+def test_the_former_force_name_does_not_force():
+    # the option is import_force: the former import_cluster_force (refused by the -e check first) counts for nothing
+    task = TASKS["Stop rather than overwrite an inventory"]["ansible.builtin.assert"]
+    assert "import_force" in task["that"] and "import_cluster_force" not in task["that"]
+    variables = write_vars(import_cluster_force=True, import_cluster_hosts_stat={"stat": {"exists": True}})
+    assert render("{{ %s }}" % task["that"], **variables) is False
 
 
 def test_short_screen_at_the_end():

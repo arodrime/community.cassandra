@@ -58,7 +58,7 @@ def run(root, cwd=None, untrusted="", hint=""):
     assert TRUSTED in script
     script = script.replace(TRUSTED, 'trusted() { [ "$1" != "$UNTRUSTED" ]; }')
     env = {"ROOT": str(root), "PATH": "/usr/bin:/bin", "UNTRUSTED": untrusted and str(root / untrusted),
-           "IMPORT_CLUSTER_MEDUSA_PATH": hint and str(root / hint)}
+           "IMPORT_MEDUSA_PATH": hint and str(root / hint)}
     out = subprocess.run(["sh", "-c", script], env=env, cwd=str(cwd or root), capture_output=True, text=True,
                          check=True)
     return dict(line.split("=", 1) for line in out.stdout.splitlines())
@@ -183,7 +183,7 @@ def test_login_shell_leaving_a_process(tmp_path):
     script = AS_USER.sub(lambda m: stub, SCRIPT)
     script = AS_CASSANDRA.sub(lambda m: 'as_cassandra() { "$@"; }\n', script)
     script = re.sub(r"(?<=[\s\"'(=:])/(etc|opt|home|root|usr|srv|var)/", r"$ROOT/\1/", script)
-    env = {"ROOT": str(tmp_path), "PATH": "/usr/bin:/bin", "TMPDIR": str(tmp), "IMPORT_CLUSTER_MEDUSA_PATH": ""}
+    env = {"ROOT": str(tmp_path), "PATH": "/usr/bin:/bin", "TMPDIR": str(tmp), "IMPORT_MEDUSA_PATH": ""}
     out = subprocess.run(["sh", "-c", script], env=env, cwd=str(tmp_path), capture_output=True, text=True, timeout=15,
                          check=True)
     assert out.stdout == ""
@@ -207,7 +207,7 @@ def test_any_venv_under_opt(tmp_path):
 
 @pytest.mark.parametrize("hint", ["data/v", "data/v/bin", "data/v/bin/medusa"])
 def test_path_given(tmp_path, hint):
-    """import_cluster_medusa_path: the virtualenv or its medusa, before anything else."""
+    """import_medusa_path: the virtualenv or its medusa, before anything else."""
     venv(tmp_path / "data/v")
     venv(tmp_path / "opt/cassandra-medusa")
     found = run(tmp_path, hint=hint)
@@ -319,15 +319,15 @@ def test_profile_d_of_the_role_is_not_a_user_profile(tmp_path):
     assert "login" not in found
 
 
-NOTE = find_task(PLAYS, "Note a Medusa without medusa.ini, or an import_cluster_medusa_path without Medusa")
+NOTE = find_task(PLAYS, "Note a Medusa without medusa.ini, or an import_medusa_path without Medusa")
 
 
 @pytest.mark.parametrize("found, notes", [
     (["bin=/opt/m/bin/medusa", "version=0.30.1"], ["Medusa 0.30.1 in /opt/m/bin/medusa, but no /etc/medusa/medusa.ini: NOT imported"]),
-    (["hint_missing=/srv/x"], ["Medusa: no medusa in /srv/x (import_cluster_medusa_path) on this node"]),
+    (["hint_missing=/srv/x"], ["Medusa: no medusa in /srv/x (import_medusa_path) on this node"]),
     (["hint_missing=/srv/x", "bin=/opt/m/bin/medusa"],
      ["Medusa ? in /opt/m/bin/medusa, but no /etc/medusa/medusa.ini: NOT imported",
-      "Medusa: no medusa in /srv/x (import_cluster_medusa_path) on this node"]),
+      "Medusa: no medusa in /srv/x (import_medusa_path) on this node"]),
     (["ini=yes", "hint_missing=/srv/x"], None),
     ([], None),
 ])

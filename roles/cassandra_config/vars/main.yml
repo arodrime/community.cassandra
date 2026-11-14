@@ -84,12 +84,13 @@ _cassandra_config_gc_names: >-
   {{ [cassandra_jvm8_gc | default(cassandra_jvm_gc), cassandra_jvm11_gc | default(cassandra_jvm_gc)]
      if cassandra_version in ['40x', '41x']
      else [cassandra_jvm11_gc | default(cassandra_jvm_gc), cassandra_jvm17_gc | default(cassandra_jvm_gc)] }}
-# The GC of the jvm<N>-server.options file the node's Java reads (cassandra_java_version, cassandra_install's
-# default for the series when not set: 4.x reads jvm8 on Java 8, jvm11 after; 5.0 jvm11 on Java 11, jvm17 after);
+# The GC of the jvm<N>-server.options file the node's Java reads (cassandra_java_version, else cassandra_install's
+# cassandra_java_versions for the series, else its default: 4.x reads jvm8 on Java 8, jvm11 after; 5.0 jvm11 on Java 11, jvm17 after);
 # custom with -XX:+UseG1GC on in its extra options (the last of it there, after jvm-server.options'): G1
 # (cassandra-env.sh finds it, what holds for G1 holds)
 _cassandra_config_java_major: >-
-  {{ ((cassandra_java_version | default({'40x': '11', '41x': '11', '50x': '17'}[cassandra_version] | default('17')))
+  {{ ((cassandra_java_version | default((cassandra_java_versions | default({}))[cassandra_version]
+       | default({'40x': '11', '41x': '11', '50x': '17'}[cassandra_version] | default('17'))))
       | string).split('.') | reject('equalto', '1') | first | int }}
 _cassandra_config_gcs: >-
   {{ [_cassandra_config_gc_8 if _cassandra_config_java_major | int < 11 else _cassandra_config_gc_11]

@@ -227,7 +227,7 @@ def test_import_venv_from_a_login_profile():
 
 def test_import_path_given_not_found():
     out = cassandra_medusa_import("[storage]\nstorage_provider = s3\n", None, dict(FOUND, hint_missing="/srv/x"))
-    assert out["notes"][-1].startswith("Medusa: no medusa in /srv/x (import_cluster_medusa_path)")
+    assert out["notes"][-1].startswith("Medusa: no medusa in /srv/x (import_medusa_path)")
 
 
 def test_import_profile_d_of_the_role():

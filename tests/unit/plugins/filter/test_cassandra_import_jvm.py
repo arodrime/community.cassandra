@@ -2,8 +2,8 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 # import_cluster and the JVM options: a jvm<N>-server.options the running Java
-# does not read (its options not imported, the heap there included), an option
-# the role's template writes already, and the options worth a warning.
+# does not read (its options imported as they are), an option the role's
+# template writes already, and the options worth a warning.
 
 import os
 import sys
@@ -35,67 +35,26 @@ def heap_in_jvm11_on_java17():
     return node_files("50x", cassandra_jvm11_extra_options=["-Xms24G", "-Xmx24G"], cassandra_heap_size="31G")
 
 
-def test_options_of_a_file_the_java_does_not_read_are_dropped():
+def test_options_of_a_file_the_java_does_not_read_are_imported():
+    # the node's file as it is: the role writes it the same, the JVM keeps not reading it; nothing to say
     out = cassandra_config_import(heap_in_jvm11_on_java17(), "50x", FACTS, java="17", cmdline=CMDLINE)
-    assert "cassandra_jvm11_extra_options" not in out["vars"]
-    assert out["vars"]["cassandra_heap_size"] == "31G"  # the heap the JVM runs with
-    assert out["keep_files"] == ["jvm11-server.options"]  # the node's file left as it is: nothing to restart for
-    assert out["jvm_notes"] == [
-        "jvm11-server.options: -Xms24G, -Xmx24G not read by Java 17 (it reads jvm-server.options and"
-        " jvm17-server.options): not imported, nodes added later get the role's file. They stay in this node's file,"
-        " left as it is (cassandra_config_keep_files): they would apply on a move to the Java that reads it"
-        " (update_java and upgrade refuse it until the file is out of cassandra_config_keep_files). To import them anyway: -e"
-        " import_cluster_keep_unread_jvm_options=true",
-        "Heap: -Xms24G (jvm11-server.options), -Xmx24G (jvm11-server.options), in a file Java 17 does not read, is"
-        " not the one the JVM runs with (-Xms31G -Xmx31G): that comes from cassandra_heap_size 31G (cassandra-env.sh's"
-        " MAX_HEAP_SIZE)"]
-    assert out["jvm_warnings"] == []
-
-
-def test_the_heap_note_without_a_heap_in_cassandra_env_sh():
-    files = node_files("50x", cassandra_jvm11_extra_options=["-Xmx24G -Xms24G"])
-    out = cassandra_config_import(files, "50x", FACTS, java="17")
-    assert "cassandra_heap_size" not in out["vars"]
-    assert out["jvm_notes"][1] == (
-        "Heap: -Xmx24G (jvm11-server.options), -Xms24G (jvm11-server.options), in a file Java 17 does not read, is not"
-        " the one the JVM runs with: that comes from the unit's MAX_HEAP_SIZE if it sets one, else cassandra-env.sh's"
-        " automatic sizing (Java 17)")
-
-
-def test_the_heap_note_names_a_heap_in_a_file_the_java_reads():
-    # cassandra-env.sh adds MAX_HEAP_SIZE's only without an -Xmx in the options files read
-    files = node_files("50x", cassandra_jvm11_extra_options=["-Xmx24G"], cassandra_jvm17_extra_options=["-Xms16G",
-                       "-Xmx16G"], cassandra_heap_size="31G")
-    out = cassandra_config_import(files, "50x", FACTS, java="17")
-    assert out["jvm_notes"][1].endswith("that comes from -Xms16G (jvm17-server.options), -Xmx16G"
-                                        " (jvm17-server.options)")
-
-
-@pytest.mark.parametrize("read_heap", [["-Xmn2G"], ["-XX:MaxHeapSize=8g", "-XX:InitialHeapSize=8g"]])
-def test_the_heap_note_names_cassandra_env_sh_unless_both_xmx_and_xms_are_read(read_heap):
-    # cassandra-env.sh greps for Xmx and Xms: with only one of them, or the -XX spellings, it adds its own
-    files = node_files("50x", cassandra_jvm11_extra_options=["-Xmx24G"], cassandra_jvm17_extra_options=read_heap,
-                       cassandra_heap_size="31G")
-    out = cassandra_config_import(files, "50x", FACTS, java="17")
-    assert out["jvm_notes"][1].endswith("that comes from cassandra_heap_size 31G (cassandra-env.sh's MAX_HEAP_SIZE)")
-
-
-def test_the_heap_note_with_one_of_xmx_xms_read():
-    files = node_files("50x", cassandra_jvm11_extra_options=["-Xmx24G"], cassandra_jvm17_extra_options=["-Xmx8G"],
-                       cassandra_heap_size="31G")
-    out = cassandra_config_import(files, "50x", FACTS, java="17")
-    assert out["jvm_notes"][1].endswith("that comes from -Xmx8G (jvm17-server.options) with the other of -Xmx/-Xms"
-                                        " given another way (cassandra-env.sh refuses one of them alone in the options"
-                                        " files)")
-
-
-def test_options_of_a_file_the_java_does_not_read_kept_when_asked():
-    out = cassandra_config_import(heap_in_jvm11_on_java17(), "50x", FACTS, java="17", keep_unread_jvm_options=True)
     assert out["vars"]["cassandra_jvm11_extra_options"] == ["-Xms24G", "-Xmx24G"]
-    assert out["keep_files"] == []
-    assert out["jvm_notes"] == ["jvm11-server.options: -Xms24G, -Xmx24G not read by Java 17 (it reads"
-                                " jvm-server.options and jvm17-server.options): imported as"
-                                " cassandra_jvm11_extra_options all the same (import_cluster_keep_unread_jvm_options)"]
+    assert out["vars"]["cassandra_heap_size"] == "31G"  # the heap the JVM runs with
+    assert out["jvm_notes"] == [] and out["jvm_warnings"] == []
+    assert "keep_files" not in out
+
+
+def test_the_heap_imported_from_a_file_the_java_does_not_read_is_said_at_the_switch():
+    # (audit, owner) the move back to Java 11 would run that heap, the inventory's value: update_java says it in its
+    # plan (it starts: not refused)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_jvm_options import (
+        cassandra_jvm_switch_heap, cassandra_jvm_switch_refusals)
+    imported = cassandra_config_import(heap_in_jvm11_on_java17(), "50x", FACTS, java="17", cmdline=CMDLINE)["vars"]
+    assert cassandra_jvm_switch_refusals(imported, "50x", "11", "50x", "17") == []
+    assert cassandra_jvm_switch_heap(imported, "50x", "11", "50x", "17") == [
+        u"heap after the move: 24\xa0GiB (cassandra_jvm11_extra_options: -Xms24G -Xmx24G); inventory now: 31\xa0GiB"
+        " (cassandra_heap_size)"]
+    assert cassandra_jvm_switch_heap(imported, "50x", "21", "50x", "17") == []
 
 
 @pytest.mark.parametrize("series, java, read, unread", [
@@ -105,23 +64,18 @@ def test_options_of_a_file_the_java_does_not_read_kept_when_asked():
     # 4.x reads jvm11 on any Java after 8
     ("40x", "17", "cassandra_jvm11_extra_options", "cassandra_jvm8_extra_options"),
 ])
-def test_the_file_the_java_reads_is_imported(series, java, read, unread):
+def test_the_file_the_java_does_not_read_is_imported_too(series, java, read, unread):
     files = node_files(series, **{read: ["-Dread=1"], unread: ["-Dunread=1"]})
     out = cassandra_config_import(files, series, FACTS, java=java)
     assert out["vars"][read] == ["-Dread=1"]
-    assert unread not in out["vars"]
+    assert out["vars"][unread] == ["-Dunread=1"]
+    assert out["jvm_notes"] == []
 
 
 def test_without_the_java_every_file_is_imported_as_before():
     out = cassandra_config_import(heap_in_jvm11_on_java17(), "50x", FACTS)
     assert out["vars"]["cassandra_jvm11_extra_options"] == ["-Xms24G", "-Xmx24G"]
-    assert out["jvm_notes"] == [] and out["keep_files"] == []
-
-
-def test_a_secret_option_dropped_is_masked():
-    files = node_files("50x", cassandra_jvm11_extra_options=["-Djavax.net.ssl.keyStorePassword=S3cr3t"])
-    out = cassandra_config_import(files, "50x", FACTS, java="17")
-    assert "S3cr3t" not in "\n".join(out["jvm_notes"])
+    assert out["jvm_notes"] == []
 
 
 def test_a_stack_of_1024m_is_imported_with_a_warning():
@@ -229,16 +183,18 @@ def test_an_option_of_another_file_is_carried():
     assert out["vars"]["cassandra_jvm17_extra_options"] == ["-Xss256k"]
 
 
-def test_the_node_keeps_the_file_and_the_report_says_why():
+def test_the_node_does_not_keep_a_file_its_java_does_not_read():
+    # imported as it is: not left out of the role's files (cassandra_config_keep_files), no note
     config = cassandra_config_import(heap_in_jvm11_on_java17(), "50x", FACTS, java="17", cmdline=CMDLINE)
     hv = {"import_cluster_config": config, "import_cluster_series": "50x", "import_cluster_java": "17"}
     entry = import_node(hv)
-    assert entry["keep"]["cassandra_config_keep_files"] == ["jvm11-server.options"]
-    assert config["jvm_notes"][0] in entry["notes"]
-    # with the hand edits kept: both
+    assert "cassandra_config_keep_files" not in entry["keep"]
+    assert not [n for n in entry["notes"] if "jvm11-server.options" in n]
+    assert entry["vars"]["cassandra_jvm11_extra_options"] == ["-Xms24G", "-Xmx24G"]
+    # kept as hand edits only: the files import_keep_hand_edits names
     config_edits = dict(config, hand_edits=["cassandra.yaml, line 3:", "  + x: 1"] + config["hand_edits"])
     entry = import_node(dict(hv, import_cluster_config=config_edits), keep_hand_edits=True)
-    assert entry["keep"]["cassandra_config_keep_files"] == ["cassandra.yaml", "jvm11-server.options"]
+    assert entry["keep"]["cassandra_config_keep_files"] == ["cassandra.yaml"]
 
 
 def test_the_warnings_to_review_once_for_all_the_nodes():
@@ -263,3 +219,204 @@ def test_self_check_names_the_file_a_41_on_java_17_reads():
     out = _compare_files(rendered, {}, java="17", series="41x")
     assert out["differences"] == ["jvm11-server.options: not on the node, the roles would create it"]
     assert out["notes"] == ["jvm8-server.options: not on the node, the roles would create it (Java 17 does not read it)"]
+
+
+def kept_env(series, **changes):
+    """slurp's result of a kept cassandra-env.sh: the role's file of the series, rendered (heap variables given)."""
+    import base64
+    text = node_files(series, **changes)["cassandra-env.sh"]
+    return [{"item": "cassandra-env.sh", "content": base64.b64encode(text.encode()).decode()}]
+
+
+KEEP_ENV = {"cassandra_config_keep_files": ["cassandra-env.sh"]}
+
+
+@pytest.mark.parametrize("variables, series, java, now_series, now_java, env_series", [
+    # (round-4) the stock cassandra-env.sh kept as it is: no false refusal (its checks, its MAX_HEAP_SIZE lines)
+    ({}, "50x", "17", "50x", "11", "50x"),
+    ({}, "41x", "11", "41x", "8", "41x"),
+    ({}, "40x", "11", "40x", "8", "40x"),
+    ({}, "50x", "11", "41x", "11", "41x"),  # (4.1 -> 5.0: the 4.1 file stays)
+    ({"cassandra_jvm11_gc": "G1"}, "41x", "11", "41x", "8", "41x"),
+])
+def test_a_stock_kept_cassandra_env_sh_starts(variables, series, java, now_series, now_java, env_series):
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_jvm_options import cassandra_jvm_switch_refusals
+    assert cassandra_jvm_switch_refusals(dict(KEEP_ENV, **variables), series, java, now_series, now_java,
+                                         kept_env(env_series)) == []
+
+
+@pytest.mark.parametrize("variables, series, java, now_java, said", [
+    # (round-4) and the false passes, refused
+    ({"cassandra_jvm11_extra_options": ["-Xms8G"]}, "41x", "11", "8", "not the other"),
+    ({"cassandra_jvm11_extra_options": ["-Xmn1G"]}, "41x", "11", "8", "-Xmn without -Xmx"),
+    ({"cassandra_jvm17_gc": "CMS", "cassandra_jvm17_extra_options": ["-Xms8G"]}, "50x", "17", "11", "not the other"),
+])
+def test_a_stock_kept_cassandra_env_sh_and_options_that_stop_it(variables, series, java, now_java, said):
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_jvm_options import cassandra_jvm_switch_refusals
+    out = cassandra_jvm_switch_refusals(dict(KEEP_ENV, **variables), series, java, series, now_java, kept_env(series))
+    assert len(out) == 1 and said in out[0], out
+
+
+def test_cassandra_env_sh_s_own_heap_before_its_checks_only():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_jvm_options import _env_heap
+    text = node_files("50x", cassandra_heap_size="8G")["cassandra-env.sh"]
+    env = _env_heap(text)
+    assert env["heap"] == {"MAX_HEAP_SIZE": "8G", "HEAP_NEWSIZE": None}  # (not the calculated one its checks set)
+    assert not [w for w in env["words"] if w.startswith(("-Xms", "-Xmx", "-Xmn"))]  # (the ones it adds after its greps)
+    assert env["unfollowed"] == []  # (its JVM_OPTS lines in ifs: none with the letters it greps)
+    assert _env_heap("export MAX_HEAP_SIZE=4G\nexport HEAP_NEWSIZE='400M'\n")["heap"] == {
+        "MAX_HEAP_SIZE": "4G", "HEAP_NEWSIZE": "400M"}
+
+
+def test_a_kept_file_not_read_says_slurp_s_message():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_jvm_options import cassandra_jvm_switch_refusals
+    out = cassandra_jvm_switch_refusals(KEEP_ENV, "50x", "17", "50x", "11", [
+        {"item": "cassandra-env.sh", "failed": True, "msg": "Permission denied: /etc/cassandra/cassandra-env.sh"}])
+    assert out == ["Java 17 reads jvm17-server.options: cassandra-env.sh (kept as it is: cassandra_config_keep_files):"
+                   " not read (Permission denied: /etc/cassandra/cassandra-env.sh): what cassandra-env.sh finds is not"
+                   " checked. Make it readable by root, then run again."]
+    # (round-5) not on the node: the role writes its own there (cassandra_config_keep_files keeps a file a node has)
+    assert cassandra_jvm_switch_refusals(dict(KEEP_ENV, cassandra_jvm17_extra_options=["-Xms8G"]), "50x", "17", "50x",
+                                         "11", [{"item": "cassandra-env.sh", "failed": True,
+                                                 "msg": "file not found: /etc/cassandra/cassandra-env.sh"}])[0] \
+        .startswith("Java 17 reads jvm17-server.options: cassandra-env.sh stops: it finds one of Xmx and Xms")
+
+
+def test_the_heap_line_names_the_kept_cassandra_env_sh():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_jvm_options import cassandra_jvm_switch_heap
+    line = cassandra_jvm_switch_heap(dict(KEEP_ENV, cassandra_jvm17_extra_options=["-Xms24G", "-Xmx24G"]), "50x", "17",
+                                     "50x", "11", kept_env("50x", cassandra_heap_size="31G"))
+    assert line == [u"heap after the move: 24\xa0GiB (cassandra_jvm17_extra_options: -Xms24G -Xmx24G); node's file now:"
+                    u" 31\xa0GiB (MAX_HEAP_SIZE in cassandra-env.sh, kept as it is)"]
+
+
+def test_an_empty_kept_file_is_read_and_an_unknown_running_java_said():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_jvm_options import (
+        cassandra_jvm_switch_heap, cassandra_jvm_switch_refusals)
+    # (round-4) an empty kept jvm-server.options: read (its content ""), not "not read"
+    empty = [{"item": "jvm-server.options", "content": ""}]
+    out = cassandra_jvm_switch_refusals({"cassandra_config_keep_files": ["jvm-server.options"],
+                                         "cassandra_jvm17_extra_options": ["-Xms8G", "-Xmx8G"]}, "50x", "17", "50x", "11",
+                                        empty)
+    assert out == []
+    # the Java the node runs not read: its heap now not guessed
+    assert cassandra_jvm_switch_heap({"cassandra_heap_size": "31G", "cassandra_jvm17_extra_options": ["-Xms24G", "-Xmx24G"]},
+                                     "50x", "17", "50x", "") == [
+        u"heap after the move: 24\xa0GiB (cassandra_jvm17_extra_options: -Xms24G -Xmx24G); now: not known (the Java the"
+        " node runs was not read)"]
+
+
+def _env_runs(text, pre, java, tmp_path):
+    """Whether the cassandra-env.sh text runs through (sh, its JVM_OPTS from the options files: pre)."""
+    import subprocess
+    path = tmp_path / "cassandra-env.sh"
+    path.write_text(text)
+    for d in ("log", "dump"):
+        (tmp_path / d).mkdir(exist_ok=True)
+    env = {"PATH": "/usr/bin:/bin", "JVM_OPTS": " ".join(pre), "JAVA_VERSION": str(java), "CASSANDRA_CONF": str(tmp_path),
+           "CASSANDRA_HOME": str(tmp_path), "CASSANDRA_LOG_DIR": str(tmp_path / "log"), "JVM_ARCH": "64-Bit",
+           "JVM_VENDOR": "OpenJDK"}
+    result = subprocess.run(["/bin/sh", "-c", '. "$1"; echo "OPTS=$JVM_OPTS"', "x", str(path)], env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=60,
+                            check=False)
+    return "OPTS=" in result.stdout
+
+
+def _model_runs(text, pre):
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_jvm_args import stock_options
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_jvm_options import SWITCH_GREPS, _env_heap
+    env = _env_heap(text)
+    words = pre + env["words"]
+    return stock_options(dict((p, any(p in w for w in words)) for p in SWITCH_GREPS), env["heap"], []) is not None
+
+
+PRE = ([], ["-XX:+UseG1GC"], ["-XX:+UseConcMarkSweepGC"], ["-Xms8G", "-Xmx8G"], ["-Xmx8G"],
+       ["-Xmn1G", "-Xms8G", "-Xmx8G"], ["-XX:+UseG1GC", "-Xmn1G", "-Xms8G", "-Xmx8G"], ["-XX:+UseG1GC", "-Xms8G"])
+
+
+@pytest.mark.parametrize("series, java", [("40x", "11"), ("41x", "11"), ("50x", "17")])
+@pytest.mark.parametrize("heap", [{}, {"cassandra_heap_size": "8G"}, {"cassandra_heap_newsize": "800M"},
+                                  {"cassandra_heap_size": "8G", "cassandra_heap_newsize": "800M"},
+                                  {"cassandra_heap_size": "8G", "cassandra_heap_newsize": "800M",
+                                   "cassandra_heap_in_jvm_options": True}])
+def test_the_model_of_a_kept_cassandra_env_sh_is_the_shell_s(tmp_path, series, java, heap):
+    # (round-5) the role's own cassandra-env.sh, rendered, run by sh with options files' words: starts or stops as
+    # the model says, for each heap and each set of options
+    text = node_files(series, **heap)["cassandra-env.sh"]
+    for pre in PRE:
+        assert _model_runs(text, pre) is _env_runs(text, pre, java, tmp_path), (series, heap, pre)
+
+
+NONE = {"MAX_HEAP_SIZE": None, "HEAP_NEWSIZE": None}
+
+
+@pytest.mark.parametrize("lines, heap, words, unfollowed", [
+    # (round-5) the forms a kept cassandra-env.sh may have before its checks
+    ('export JVM_OPTS="$JVM_OPTS -Xmx8G"\nexport MAX_HEAP_SIZE="8G"; HEAP_NEWSIZE=800M\n',
+     {"MAX_HEAP_SIZE": "8G", "HEAP_NEWSIZE": "800M"}, ["-Xmx8G"], []),
+    ('if [ -n "$X" ]; then MAX_HEAP_SIZE=8G; fi\n', {"MAX_HEAP_SIZE": None, "HEAP_NEWSIZE": None}, [],
+     [("MAX_HEAP_SIZE", 1)]),
+    ('[ -n "$X" ] && JVM_OPTS="$JVM_OPTS -Xms8G"\n', {"MAX_HEAP_SIZE": None, "HEAP_NEWSIZE": None}, [],
+     [("JVM_OPTS", 1)]),
+    ('if true\nthen\n    HEAP_NEWSIZE=1G\nfi\n', {"MAX_HEAP_SIZE": None, "HEAP_NEWSIZE": None}, [], [("HEAP_NEWSIZE", 3)]),
+    ('if true; then JVM_OPTS="$JVM_OPTS -Dx=1"; fi\n# MAX_HEAP_SIZE=1G\n', {"MAX_HEAP_SIZE": None, "HEAP_NEWSIZE": None},
+     [], []),  # (a condition without the letters it greps, a comment: nothing to follow)
+    ('size() {\n    MAX_HEAP_SIZE=2G\n}\nMAX_HEAP_SIZE=4G # the heap\n', {"MAX_HEAP_SIZE": "4G", "HEAP_NEWSIZE": None},
+     [], []),  # (a function's, not called before the checks: its own computation)
+    # (round-6) what it cannot follow: said, never guessed
+    ('case "$X" in\n  x) MAX_HEAP_SIZE=8G ;;\nesac\n', NONE, [], [("MAX_HEAP_SIZE", 2)]),  # (a case arm)
+    ('{ MAX_HEAP_SIZE=8G; }\n', NONE, [], [("MAX_HEAP_SIZE", 1)]),  # (a brace group)
+    ('f() {\n  :\n} # end f\nMAX_HEAP_SIZE=8G\n', {"MAX_HEAP_SIZE": "8G", "HEAP_NEWSIZE": None}, [], []),
+    ('f() {\n  MAX_HEAP_SIZE=8G\n}\nf\n', NONE, [], [("f (a function that sets them)", 4)]),
+    ('MAX_HEAP_SIZE=\\\n8G\n', NONE, [], [("MAX_HEAP_SIZE", 1)]),  # (a backslash continuation)
+    ('JVM_OPTS="$JVM_OPTS\n -Xmn1G"\n', NONE, [], [("JVM_OPTS", 1)]),  # (an open quote)
+    ('. /etc/cassandra/heap.sh\n', NONE, [], [("a file it sources", 1)]),
+    ('X=-Xmn1G\nJVM_OPTS="$JVM_OPTS $X"\n', NONE, [], [("JVM_OPTS", 2)]),  # (a variable of its own)
+    ('readonly MAX_HEAP_SIZE=8G\n', NONE, [], [("MAX_HEAP_SIZE", 1)]),
+    (': ${MAX_HEAP_SIZE:=8G}\n', NONE, [], [("MAX_HEAP_SIZE", 1)]),
+    ('MAX_HEAP_SIZE=$(echo 8G)\n', NONE, [], [("MAX_HEAP_SIZE", 1)]),
+    ('cat >/dev/null <<EOF\nMAX_HEAP_SIZE=8G\nEOF\n', NONE, [], [("a here-document", 2)]),
+    ('function g {\n  :\n}\n', NONE, [], [("the function keyword (not every sh has it)", 1)]),
+    ('if true; then\n  :\n', NONE, [], [("a block left open (if, case, a loop, a function)", 5)]),
+])
+def test_cassandra_env_sh_forms(lines, heap, words, unfollowed):
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_jvm_options import _env_heap
+    env = _env_heap(lines + 'echo $JVM_OPTS | grep -q Xmn\nif [ "x$MAX_HEAP_SIZE" = "x" ]; then MAX_HEAP_SIZE=1G; fi\n')
+    assert (env["heap"], env["words"], env["unfollowed"]) == (heap, words, unfollowed)
+
+
+def test_a_kept_cassandra_env_sh_the_check_cannot_follow_is_refused():
+    import base64
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_jvm_options import cassandra_jvm_switch_refusals
+    text = node_files("50x")["cassandra-env.sh"].replace(
+        "\n# Check what parameters", '\nif [ -n "$BIG" ]; then MAX_HEAP_SIZE=31G; fi\n# Check what parameters', 1)
+    line = text.split("\n").index('if [ -n "$BIG" ]; then MAX_HEAP_SIZE=31G; fi') + 1
+    out = cassandra_jvm_switch_refusals(KEEP_ENV, "50x", "17", "50x", "11", [
+        {"item": "cassandra-env.sh", "content": base64.b64encode(text.encode()).decode()}])
+    assert out == ["Java 17 reads jvm17-server.options: cassandra-env.sh (kept as it is: cassandra_config_keep_files),"
+                   " line %d: sets MAX_HEAP_SIZE in a form this check cannot follow (a condition, a function called,"
+                   " another file...). Check that line by hand; for the check to follow it, set it with a plain"
+                   " assignment at the start of a line (or take cassandra-env.sh out of cassandra_config_keep_files: the"
+                   " role writes its own), then run again." % line]
+
+
+def test_the_heap_line_counts_the_options_cassandra_env_sh_adds_after_its_checks():
+    import base64
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_jvm_options import cassandra_jvm_switch_heap
+    text = node_files("50x")["cassandra-env.sh"] + '\nJVM_OPTS="$JVM_OPTS -Xms12G -Xmx12G"\n'
+    kept = [{"item": "cassandra-env.sh", "content": base64.b64encode(text.encode()).decode()}]
+    out = cassandra_jvm_switch_heap(dict(KEEP_ENV, cassandra_jvm17_extra_options=["-Xms24G", "-Xmx24G"]), "50x", "17",
+                                    "50x", "11", kept)
+    # the JVM takes cassandra-env.sh's last ones, 12G before and after: no line (24G in jvm17 does not win)
+    assert out == []
+
+
+def test_a_kept_options_file_of_the_new_java_is_read_as_the_node_has_it():
+    import base64
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_jvm_options import cassandra_jvm_switch_refusals
+    variables = {"cassandra_config_keep_files": ["jvm17-server.options"], "cassandra_jvm17_extra_options": ["-Xms8G"]}
+    kept = [{"item": "jvm17-server.options", "content": base64.b64encode(b"-XX:+UseG1GC\n-Xms8G\n-Xmx8G\n").decode()}]
+    assert cassandra_jvm_switch_refusals(variables, "50x", "17", "50x", "", kept) == []  # (its own pair, not the variable)
+    kept = [{"item": "jvm17-server.options", "content": base64.b64encode(b"-XX:+UseG1GC\n-Xmn2G\n-Xms8G\n-Xmx8G\n").decode()}]
+    out = cassandra_jvm_switch_refusals(variables, "50x", "17", "50x", "", kept)
+    assert len(out) == 1 and "-Xmn in jvm17-server.options (kept as it is: cassandra_config_keep_files)" in out[0], out

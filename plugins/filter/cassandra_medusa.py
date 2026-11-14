@@ -144,7 +144,7 @@ def cassandra_medusa_import(ini_text, credentials_text=None, found=None):
 
     keep = _install_vars(found, defaults, out, notes)
     if found.get("hint_missing"):
-        notes.append("Medusa: no medusa in %s (import_cluster_medusa_path) on this node, looked for it in the usual"
+        notes.append("Medusa: no medusa in %s (import_medusa_path) on this node, looked for it in the usual"
                      " places instead" % found["hint_missing"])
     return {"vars": out, "notes": notes, "keep": keep}
 

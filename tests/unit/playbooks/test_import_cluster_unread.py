@@ -2,7 +2,7 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 # import_cluster: a ring node it could not read fails the import (strict), unless
-# import_cluster_allow_unread: the roles would give it the group variables unchecked.
+# import_allow_unread: the roles would give it the group variables unchecked.
 
 import os
 
@@ -46,7 +46,7 @@ def ok(nodes, **extra):
 @pytest.mark.parametrize("nodes, extra, expected", [
     (NODES[:1], {}, True),
     (NODES, {}, False),  # n2 not read: not valid
-    (NODES, {"import_cluster_allow_unread": True}, True),
+    (NODES, {"import_allow_unread": True}, True),
 ])
 def test_unread_ring_node_fails_the_check(nodes, extra, expected):
     assert ok(nodes, **extra) is expected
@@ -59,7 +59,7 @@ def test_report_and_stop_name_them():
                         {"name": "n2", "read": False, "reason": "unreachable", "hand_edits": []}]}
     report_file = trust_as_template(WRITE["vars"]["_report_args"]["report_file"])
     variables = dict(_nodes=NODES, _layout=layout, _dir="/inv", _report_dir="/reports/c", ansible_check_mode=False,
-                     _self_check=CHECK, _newline="\n", import_cluster_allow_unread=False)
+                     _self_check=CHECK, _newline="\n", import_allow_unread=False)
     variables["_report_args"] = {"report_file": report_file, "allow_unread": False, "inventory": "", "hosts": "",
                                  "cwd": "",
                                  "check": trust_as_template(WRITE["vars"]["_report_args"]["check"])}
@@ -71,7 +71,7 @@ def test_report_and_stop_name_them():
     msg = render(STOP["ansible.builtin.fail"]["msg"], **variables).split("\n")
     assert "Details: /reports/c/report.check.txt, section SELF-CHECK" in msg and "(--check: the inventory not written)" in " ".join(msg[:2])
     assert "allow_unread=_report_args.allow_unread" in WRITE["vars"]["_report"]
-    assert "import_cluster_strict | default(true) | bool" in STOP["when"]
+    assert "import_strict | default(true) | bool" in STOP["when"]
 
 
 def test_air_gapped_node_noted():

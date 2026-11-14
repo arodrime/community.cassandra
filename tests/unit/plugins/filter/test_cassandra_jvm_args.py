@@ -245,15 +245,16 @@ NOT_MOVED = [  # bash would give the JVM other arguments from the role's files, 
 
 
 def test_heap_moved_with_a_heap_in_the_options_of_another_java(tmp_path):
-    # Java 17 reads no jvm11-server.options: its -Xmx/-Xms are not imported, that file is left as it is on the
-    # node; the heap at the top of cassandra-env.sh is moved
+    # Java 17 reads no jvm11-server.options: its -Xmx/-Xms are imported as they are (the role writes the file the
+    # same, no file kept); the heap at the top of cassandra-env.sh is moved
     files = node_files("50x", both(on_top("MAX_HEAP_SIZE=12G"), add_to("jvm11-server.options", "-Xmx4G\n-Xms4G")))
     cmdline = launch(files, "17", tmp_path)
     inventory, layout, node = imported(files, "50x", "17", cmdline)
-    assert node["moved"] and all(e.startswith(("jvm11-server.options", "  + -X")) for e in node["hand_edits"])
+    assert node["moved"] and node["hand_edits"] == []
     rendered, variables = role_files(inventory, layout, files)
-    assert variables.get("cassandra_heap_size") == "12G" and "cassandra_jvm11_extra_options" not in variables
-    assert variables.get("cassandra_config_keep_files") == ["jvm11-server.options"]
+    assert variables.get("cassandra_heap_size") == "12G"
+    assert variables.get("cassandra_jvm11_extra_options") == ["-Xmx4G", "-Xms4G"]
+    assert "cassandra_config_keep_files" not in variables
     assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
 
 
@@ -674,7 +675,7 @@ def test_the_way_out_of_an_options_file_hand_edit_keeps_it(tmp_path):
     nodes = [dict(node, name="n1", address="10.0.0.1")]
     lines = cassandra_import_report(cassandra_inventory_layout(nodes, "c"), ["c.yml", "."], "report.txt", {}, True,
                                     width=400, in_git=False)
-    assert [line for line in lines if "-e import_cluster_keep_hand_edits=cassandra-env.sh,jvm-server.options" in line]
+    assert [line for line in lines if "-e import_keep_hand_edits=cassandra-env.sh,jvm-server.options" in line]
     keep = ["cassandra-env.sh", "jvm-server.options"]
     jvm = {"cmdline": cmdline, "java": "17", "keep": ",".join(keep), "environment": {}, "newer": []}
     inventory, layout = import_node(files, "50x", jvm=jvm, keep={"cassandra_service_unit_manage": False,
@@ -697,7 +698,7 @@ def test_a_kept_jvm_file_keeps_the_exporter_s_agent(tmp_path, keep):
     nodes = [dict(imported(files, "50x", "17", cmdline)[2], name="n1", address="10.0.0.1")]
     lines = cassandra_import_report(cassandra_inventory_layout(nodes, "c"), ["c.yml", "."], "report.txt", {}, True,
                                     width=400, in_git=False)
-    assert [line for line in lines if "-e import_cluster_keep_hand_edits=cassandra-env.sh,jvm-server.options" in line]
+    assert [line for line in lines if "-e import_keep_hand_edits=cassandra-env.sh,jvm-server.options" in line]
     jvm = {"cmdline": cmdline, "java": "17", "keep": ",".join(keep), "environment": {}, "newer": []}
     inventory, layout = import_node(files, "50x", jvm=jvm, keep={"cassandra_service_unit_manage": False,
                                                                  "cassandra_config_keep_files": keep})
@@ -732,9 +733,9 @@ def test_the_owner_dev_node_in_full_sync(tmp_path):
     files = node_files("50x", owner_dev_node)
     # the JVM's log dir: the node's (the test's launch gives its own)
     cmdline = launch(files, "17", tmp_path).replace("-Dcassandra.logdir=/run/logs", "-Dcassandra.logdir=/data/cassandra/log")
-    out = cassandra_config_import(files, "50x", FACTS, keep_unread_jvm_options=True, jvm={
+    out = cassandra_config_import(files, "50x", FACTS, jvm={
         "cmdline": cmdline, "java": "17", "environment": {}, "newer": []})
-    assert out["hand_edits"] == [] and out["keep_files"] == []
+    assert out["hand_edits"] == [] and out["jvm_notes"] == []
     assert CHRONICLE in out["jvm_warnings"]
     inventory, layout, node = imported(files, "50x", "17", cmdline)
     rendered, variables = role_files(inventory, layout, files)
@@ -772,12 +773,17 @@ def test_the_exporter_s_agent_imported_unless_its_file_is_kept(tmp_path, where, 
 
 
 def test_the_exporter_s_agent_in_a_file_its_java_does_not_read(tmp_path):
-    # (audit r5) the agent in jvm11-server.options on Java 17: the JVM does not load it, not imported
+    # (audit r5) the agent in jvm11-server.options on Java 17: the JVM does not load it, no exporter imported; the
+    # line imported as it is, the file's other options (the role writes it the same, the JVM keeps not reading it)
     files = node_files("50x", add_to("jvm11-server.options", AGENT))
-    jvm = {"cmdline": launch(files, "17", tmp_path), "java": "17", "environment": {}, "newer": []}
+    cmdline = launch(files, "17", tmp_path)
+    jvm = {"cmdline": cmdline, "java": "17", "environment": {}, "newer": []}
     out = cassandra_config_import(files, "50x", FACTS, jvm=jvm)
     assert not [k for k in out["vars"] if k.startswith("cassandra_prometheus_exporter")]
-    assert out["keep_files"] == ["jvm11-server.options"]  # (its options not read: the file left as it is)
+    assert out["vars"]["cassandra_jvm11_extra_options"] == [AGENT]
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    assert "cassandra_config_keep_files" not in node["keep"]
+    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
 
 
 @pytest.mark.parametrize("case, series, java, edit", NOT_MOVED, ids=[c[0] for c in NOT_MOVED])
@@ -1049,8 +1055,8 @@ def test_why_not_moved_holds_names_only(tmp_path):
 
 @pytest.mark.parametrize("keep", [True, "true", "cassandra-env.sh", ["logback.xml", "cassandra-env.sh"],
                                   "jvm17-server.options"])
-def test_no_move_in_files_import_cluster_keep_hand_edits_keeps(tmp_path, keep):
-    # the files kept as they are: not rewritten, the hand edits left to import_cluster_keep_hand_edits
+def test_no_move_in_files_import_keep_hand_edits_keeps(tmp_path, keep):
+    # the files kept as they are: not rewritten, the hand edits left to import_keep_hand_edits
     files = node_files("50x", before_extra('JVM_OPTS="$JVM_OPTS -Dfoo=1"'))
     cmdline = launch(files, "17", tmp_path)
     dummy, dummy2, node = imported(files, "50x", "17", cmdline, keep=keep)
@@ -1062,7 +1068,7 @@ def test_no_move_in_files_import_cluster_keep_hand_edits_keeps(tmp_path, keep):
     assert node["moved"] and node["rewritten"]
 
 
-def test_a_wrong_name_of_import_cluster_keep_hand_edits_said(tmp_path):
+def test_a_wrong_name_of_import_keep_hand_edits_said(tmp_path):
     from ansible.errors import AnsibleFilterError
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_import_error
 
@@ -1071,7 +1077,7 @@ def test_a_wrong_name_of_import_cluster_keep_hand_edits_said(tmp_path):
         imported(files, "50x", "17", launch(files, "17", tmp_path), keep="logbak.xml")
     # the import's no_log tasks show it: the user's own value
     assert cassandra_import_error({"failed": True, "msg": "cassandra_config_import: %s" % raised.value}) == (
-        "import_cluster_keep_hand_edits: logbak.xml: not a config file of cassandra_config (true, false, or among"
+        "import_keep_hand_edits: logbak.xml: not a config file of cassandra_config (true, false, or among"
         " cassandra.yaml, cassandra-env.sh, jvm*-server.options, cassandra-rackdc.properties, logback.xml, jmxremote.password,"
         " jmxremote.access)")
 

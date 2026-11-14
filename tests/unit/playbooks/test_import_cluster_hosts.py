@@ -89,7 +89,7 @@ def test_host_names_option_checked():
     that = trust_as_template("{{ " + check["ansible.builtin.assert"]["that"] + " }}")
     assert Templar(loader=DataLoader(), variables={}).template(that) is True
     for value, ok in (("fqdn", True), ("ip", True), ("hostname", True), ("FQDN", False), ("name", False)):
-        assert Templar(loader=DataLoader(), variables={"import_cluster_host_names": value}).template(that) is ok
+        assert Templar(loader=DataLoader(), variables={"import_host_names": value}).template(that) is ok
 
 
 def test_hostname_given_to_the_layout():

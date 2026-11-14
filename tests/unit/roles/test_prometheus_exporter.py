@@ -1005,3 +1005,14 @@ def test_its_config_is_not_readable_by_others():
     # set apart like the other config files
     settings["files"] = {"jmx_prometheus.yml": {"mode": "0600"}}
     assert cassandra_file_permissions("jmx_prometheus.yml", settings)["mode"] == "0600"
+
+
+@pytest.mark.parametrize("java, wrong", [({"cassandra_java_version": "17"}, False),
+                                         ({"cassandra_java_version": "11"}, True),
+                                         ({"cassandra_java_versions": {"50x": "11"}}, True),  # (round-2: its override)
+                                         ({}, False)])  # (5.0's default: Java 17)
+def test_an_agent_in_a_file_the_java_does_not_read_is_not_a_second_one(java, wrong):
+    # (audit) an old agent in jvm11-server.options on Java 17, imported as the node has it: the JVM never loads it
+    agent = "-javaagent:/opt/old/jmx_prometheus_javaagent-0.20.0.jar=9404:/opt/old/old.yml"
+    out = refused(cassandra_jvm11_extra_options=[agent], **java)
+    assert bool([w for w in out if "the JVM would load two" in w]) is wrong, out

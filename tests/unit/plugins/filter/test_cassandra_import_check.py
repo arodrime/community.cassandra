@@ -77,9 +77,7 @@ def import_node(files, series, facts=None, tamper=None, storage_dir="/var/lib/ca
             "comments": imported["comments"], "notes": [], "moved": imported["moved"], "trusted": imported["trusted"],
             "rewritten": imported["rewritten"], "cleanup": imported["cleanup"], "not_moved": imported["not_moved"],
             # a unit set up another way
-            "keep": dict({"cassandra_service_unit_manage": False} if keep is None else keep,
-                         # a jvm<N> file its Java does not read: left as it is (cassandra_import_nodes)
-                         **({"cassandra_config_keep_files": imported["keep_files"]} if imported["keep_files"] else {}))}
+            "keep": {"cassandra_service_unit_manage": False} if keep is None else keep}
     layout = cassandra_inventory_layout([node], imported["vars"].get("cassandra_cluster_name", "c"))
     return cassandra_inventory_files(layout), layout
 
@@ -1383,7 +1381,7 @@ KEEP_THEM = {"cassandra_config_keep_files": ["cassandra.yaml", "cassandra-env.sh
 
 @pytest.mark.parametrize("value, keep", [
     ("|\n    LEAKA1\n    LEAKA2", None),
-    ("|\n    LEAKA1\n    LEAKA2", KEEP_THEM),  # (import_cluster_keep_hand_edits: the files left as they are)
+    ("|\n    LEAKA1\n    LEAKA2", KEEP_THEM),  # (import_keep_hand_edits: the files left as they are)
     (">-\n    LEAKA1\n\n    LEAKA2", None),
     ("\"LEAKA1\n    LEAKA2\"", KEEP_THEM),
     ("\"LEAKA1 \\\n  LEAKA2\"", None),

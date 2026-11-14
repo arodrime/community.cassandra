@@ -71,10 +71,10 @@ def test_decommission_node_says_reset_then_reimport(tmp_path, monkeypatch):
         " -e cassandra_target_nodes=node3",
         P, "  2. drop node3 from the inventory: re-import the cluster with its inventory, the changes shown first:",
         "     ansible-playbook -i inventories community.cassandra.import_cluster -e cassandra_hosts=my_cluster"
-        " -e import_cluster_force=true --check --diff",
+        " -e import_force=true --check --diff",
         P, "  3. then write them:",
         "     ansible-playbook -i inventories community.cassandra.import_cluster -e cassandra_hosts=my_cluster"
-        " -e import_cluster_force=true",
+        " -e import_force=true",
         P, "  4. commit it:",
         "     git add inventories && git commit -m 'Inventory: node3 removed' -- inventories"]
 
@@ -102,9 +102,9 @@ def test_topology_done_then_the_same_todo(tmp_path, monkeypatch):
         "  1. empty node3 before reusing the host (its data is left in place):",
         "     ansible-playbook -i inventories community.cassandra.reset_node -e cassandra_target_nodes=node3",
         P, "  2. drop node3, node9 from the inventory: re-import the cluster with its inventory, the changes shown first:",
-        "     ansible-playbook -i inventories community.cassandra.import_cluster -e import_cluster_force=true --check --diff",
+        "     ansible-playbook -i inventories community.cassandra.import_cluster -e import_force=true --check --diff",
         P, "  3. then write them:",
-        "     ansible-playbook -i inventories community.cassandra.import_cluster -e import_cluster_force=true"]
+        "     ansible-playbook -i inventories community.cassandra.import_cluster -e import_force=true"]
 
 
 def test_reset_node_takes_a_host_marked_absent():
@@ -143,7 +143,7 @@ def test_no_dash_i_when_the_inventory_is_ansible_cfgs(tmp_path, monkeypatch):
             variables["_stays"] = "node1"  # (from the inventory: its lookup)
         msg = render(template.replace(config, "_ansible_cfg_inventory"), **variables)
         assert "     ansible-playbook community.cassandra.reset_node -e cassandra_target_nodes=node3" in msg.splitlines()
-        assert "     ansible-playbook community.cassandra.import_cluster -e import_cluster_force=true" in msg.splitlines()
+        assert "     ansible-playbook community.cassandra.import_cluster -e import_force=true" in msg.splitlines()
         assert "-i inventories" not in msg
 
 

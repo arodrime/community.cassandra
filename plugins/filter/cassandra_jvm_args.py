@@ -293,30 +293,39 @@ def _greps(lines):
     return found
 
 
-def stock_options(greps, heap):
+# why cassandra-env.sh stops (stock_options' why), in its order
+STOPS_HEAP_PAIR, STOPS_XMX_PAIR, STOPS_XMN_XMX, STOPS_XMN_G1 = "heap pair", "xmx pair", "xmn xmx", "xmn g1"
+
+
+def stock_options(greps, heap, why=None):
     """The options cassandra-env.sh adds from what it found in JVM_OPTS (greps: {pattern: found}) and the heap
-    ({name: value}): {name: value, CALC or CORES when the node works it out}; None when it stops (exit 1)."""
+    ({name: value}): {name: value, CALC or CORES when the node works it out}; None when it stops (exit 1), why (a
+    list) then gets the STOPS_* it stops on."""
     def found(pattern):
         return greps.get(pattern, False)
+
+    def stops(reason):
+        if why is not None:
+            why.append(reason)
     g1, cms = found("+UseG1GC"), found("UseConcMarkSweepGC")
     heap_size, new_size = heap.get("MAX_HEAP_SIZE"), heap.get("HEAP_NEWSIZE")
     if heap_size is None and (new_size is None or g1):
         heap_size = new_size = CALC
     elif heap_size is None or (new_size is None and not g1):
-        return None  # "please set or unset MAX_HEAP_SIZE and HEAP_NEWSIZE in pairs"
+        return stops(STOPS_HEAP_PAIR)  # "please set or unset MAX_HEAP_SIZE and HEAP_NEWSIZE in pairs"
     added = {}
     if not found("Xmx") and not found("Xms"):
         added["-Xms"] = added["-Xmx"] = heap_size
     elif not (found("Xmx") and found("Xms")):
-        return None
+        return stops(STOPS_XMX_PAIR)
     if "MaxDirectMemorySize" in greps and not found("MaxDirectMemorySize"):
         added["MaxDirectMemorySize"] = heap.get("MAX_DIRECT_MEMORY_SIZE") or CALC
     if found("Xmn") and not found("Xmx"):
-        return None
+        return stops(STOPS_XMN_XMX)
     if not found("Xmn") and cms:
         added["-Xmn"] = new_size
     if found("Xmn") and g1:
-        return None
+        return stops(STOPS_XMN_G1)
     if "ParallelGCThreads" in greps and g1 and not found("ParallelGCThreads") and not found("ConcGCThreads"):
         added["ParallelGCThreads"] = added["ConcGCThreads"] = CORES
     return added

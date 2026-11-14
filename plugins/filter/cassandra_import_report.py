@@ -33,6 +33,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nod
 from ansible_collections.community.cassandra.plugins.filter.cassandra_suspicious import (
     LINES as SUSPICIOUS_LINES, REPLACE, finding_lines, suspicious)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import terminal_width
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 
@@ -445,7 +446,7 @@ SELF_CHECK_WIDTH = 110  # the report's SELF-CHECK section
 
 
 def _hand_files(read):
-    """{node: the config files with hand edits import_cluster_keep_hand_edits would keep as the node has them}."""
+    """{node: the config files with hand edits import_keep_hand_edits would keep as the node has them}."""
     files_of = {}
     for n in read:
         kept = (n.get("keep") or {}).get("cassandra_config_keep_files") or []
@@ -490,7 +491,7 @@ def _difference(text):
 def _self_check_items(read, self_check, theirs_win=None):
     """The self-check differences -> [{kind, file, setting, text, pairs: [(node, node's value, the roles')], lines:
     [(node, its difference)], wins: {node: its theirs_win entry}}], one per setting (or line, or file) of the same
-    kind, with the nodes that have it. Kind _HAND in a config file with hand edits import_cluster_keep_hand_edits
+    kind, with the nodes that have it. Kind _HAND in a config file with hand edits import_keep_hand_edits
     would keep (its owner, group and mode aside; not a file the node has not), _YOURS where a file of yours still
     wins over the import (theirs_win), else _OTHER. Values as the self-check gives them (secrets masked), masked
     again."""
@@ -502,7 +503,7 @@ def _self_check_items(read, self_check, theirs_win=None):
             f, setting, node_text, role_text = _difference(d)
             real = "cassandra-env.sh" if f == "heap" else f
             winner = _winner(name, setting, theirs_win) if setting else None
-            created = setting is None and node_text is None  # (not one import_cluster_keep_hand_edits keeps)
+            created = setting is None and node_text is None  # (not one import_keep_hand_edits keeps)
             if real in files_of.get(name, ()) and not d.startswith(f + ": owner") and not created:
                 kind = _HAND
             elif winner:
@@ -650,6 +651,17 @@ def fill_text(text, width, hang, more=""):
         break_on_hyphens=False) or [hang + text]]
 
 
+def unread_by(node, name):
+    """The major of the Java node runs when name is a jvm<N>-server.options it does not read (bin/cassandra reads
+    jvm-server.options and the one of its Java only) -> "11"; "" when it reads it, or when that is not known."""
+    if not re.match(r"^jvm\d+-server\.options$", name):
+        return ""
+    series = str((node.get("vars") or {}).get("cassandra_version") or "")
+    java = str((node.get("versions") or {}).get("java") or "")
+    read = jvm.options_file(series, java)
+    return str(jvm.java_major(java)) if read and read != name else ""
+
+
 def _hints(layout, items, read, unread, who, error="", report=False, report_file="", inventory="", hosts="",
            cwd=None):
     """HOW TO MAKE IT PASS: [(kind of difference, what to do)]."""
@@ -659,6 +671,15 @@ def _hints(layout, items, read, unread, who, error="", report=False, report_file
             f = "cassandra-env.sh" if item["file"] == "heap" else item["file"]
             hand.setdefault(f, [])
             hand[f] += [n for n in _item_nodes(item) if n not in hand[f]]
+    # the nodes whose Java does not read the file they edited (a jvm<N>-server.options): a hint of their own
+    not_read = {}  # {(file, Java major): [node]}
+    for f, names in sorted(hand.items()):
+        for n in read:
+            major = unread_by(n, f) if n["name"] in names else ""
+            if major:
+                not_read.setdefault((f, major), []).append(n["name"])
+                hand[f] = [m for m in hand[f] if m != n["name"]]
+    hand = dict((f, m) for f, m in hand.items() if m)
     if hand:
         hints.append(("hand edits", "to keep them as they are: import again with %s; these files are then not"
                       " managed by Ansible (kept as the node has them): %s. To bring them under Ansible: carry the"
@@ -667,8 +688,16 @@ def _hints(layout, items, read, unread, who, error="", report=False, report_file
                       " cassandra_extra_settings, ...) or give the file your own template"
                       " (cassandra_config_template_overrides), remove the file from cassandra_config_keep_files,"
                       " import again. To drop them instead: undo them on the node, then import again" % (
-                          unbreakable("-e import_cluster_keep_hand_edits=true"),
+                          unbreakable("-e import_keep_hand_edits=true"),
                           "; ".join("%s on %s" % (f, who(m)) for f, m in sorted(hand.items())))))
+    for (f, major), names in sorted(not_read.items()):
+        hints.append(("file not read", "%s %s Java %s, which does not read %s: its edits change nothing while %s"
+                      " that Java. Keep the file as %s it (%s), or undo them on %s, then import again" % (
+                          who(names), "runs" if len(names) == 1 else "run", major, f,
+                          "it runs" if len(names) == 1 else "they run",
+                          "the node has" if len(names) == 1 else "each node has",
+                          unbreakable("-e import_keep_hand_edits=" + f),
+                          "the node" if len(names) == 1 else "those nodes")))
     yours = {}  # (the file of yours, its variable): the nodes' values
     for item in items:
         for w in item["wins"].values():
@@ -682,14 +711,14 @@ def _hints(layout, items, read, unread, who, error="", report=False, report_file
         hints.append(("your files", "in %s, set %s to the node's value (%s) or remove the line, then import again" % (
             path, key, values[0] if len(values) == 1 and values[0] is not None
             else "see the DIFFERS FROM YOUR... section")))
-    if unread and not read:  # (no node checked: never valid, import_cluster_allow_unread or not)
+    if unread and not read:  # (no node checked: never valid, import_allow_unread or not)
         hints.append(("not read", "no node could be read: start Cassandra or fix the access on one of them at least,"
                       " then import again"))
     elif unread:
         hints.append(("not read", "start Cassandra or fix the access on %s, then import again; or accept %s"
                       " unchecked: %s" % (who([n["name"] for n in unread]), "it" if len(unread) == 1 else "them",
-                                          unbreakable("-e import_cluster_allow_unread=true"))))
-    debug = unbreakable("-e import_cluster_debug=true")
+                                          unbreakable("-e import_allow_unread=true"))))
+    debug = unbreakable("-e import_debug=true")
     if error:
         hints.append(("could not run", "import again with %s to see the error (it may show passwords), fix it, then"
                       " import again" % debug))
@@ -707,7 +736,7 @@ def _hints(layout, items, read, unread, who, error="", report=False, report_file
                                   extra=["--check", "--diff"], cwd=cwd)
         hints.append(("a change you want", "it is a planned change: import again with %s (it only writes the"
                       " inventory), then review with %s before applying"
-                      % (unbreakable("-e import_cluster_strict=false"), unbreakable(apply_check))))
+                      % (unbreakable("-e import_strict=false"), unbreakable(apply_check))))
     return hints or [("unknown", "import again with %s to see what failed (it may show passwords)" % debug)]
 
 
@@ -759,7 +788,7 @@ def cassandra_import_self_check_advice(layout, self_check, report_file="", error
                                        inventory="", hosts="", cwd=None, width=None):
     """layout: cassandra_inventory_layout's; self_check: {node: {differences, notes}}; report_file: the report
     (report.check.txt under --check); error: why the self-check could not run ('' : it ran); allow_unread:
-    import_cluster_allow_unread (the nodes not read pass); check: --check; inventory, hosts, cwd: the next
+    import_allow_unread (the nodes not read pass); check: --check; inventory, hosts, cwd: the next
     commands' -i, -e cassandra_hosts and current dir (cassandra_import_report's); width: the lines fit in it (the
     terminal's by default, SCREEN_MOST at most) -> the lines of the run's stop on a failed self-check:
     "SELF-CHECK FAILED  <cluster group>  ...", what differs grouped by what makes it pass, HOW TO MAKE IT PASS,
@@ -894,7 +923,7 @@ def _todo_steps(report, allow_unread, self_check_ok, self_check_error, check_ite
     layout = report.layout
     steps = []
     again = unbreakable(out.command("import_cluster", inventory=inventory or None, hosts=hosts or None,
-                                    extra=["-e import_cluster_force=true"], cwd=report.cwd))
+                                    extra=["-e import_force=true"], cwd=report.cwd))
     if report.unread and not allow_unread:
         names = [n["name"] for n in report.unread]
         them = "it" if len(names) == 1 else "them"
@@ -906,7 +935,7 @@ def _todo_steps(report, allow_unread, self_check_ok, self_check_error, check_ite
                 them, them, them, "its" if len(names) == 1 else "their", them),
             again,
             "the head of the new report says every node was read (to import without %s instead, add %s)" % (
-                them, unbreakable("-e import_cluster_allow_unread=true"))))
+                them, unbreakable("-e import_allow_unread=true"))))
     for (keys, release), members in _not_settings(report.read):
         one = len(keys) == 1
         steps.append(_Step(
@@ -949,15 +978,35 @@ def _todo_steps(report, allow_unread, self_check_ok, self_check_error, check_ite
             " remove it; if not, leave it",
             unbreakable("%s %s" % ("git rm" if git else "rm", paths)),
             "the next import no longer lists it"))
-    steps += [_Step(str(text), "", "", "") for text in more]
+    # (the playbook's own: a text, or a step {title, why, run, then} (why, run: a text or rows); in its texts
+    # {nodes:<name>} is the step's nodes[name] in their short form, {command:<name>} its commands[name]
+    # ({playbook, extra}) as the next playbooks are run, never cut)
+
+    def field(step, key):
+        value = step.get(key) or ""
+        rows = [str(v) for v in value] if isinstance(value, list) else [str(value)]
+        for name, members in (step.get("nodes") or {}).items():
+            rows = [r.replace("{nodes:%s}" % name, _who(report, list(members))) for r in rows]
+        for name, spec in (step.get("commands") or {}).items():
+            command = unbreakable(out.command(spec.get("playbook"), inventory=inventory or None, hosts=hosts or None,
+                                              extra=spec.get("extra") or [], cwd=report.cwd))
+            rows = [r.replace("{command:%s}" % name, command) for r in rows]
+        return rows if isinstance(value, list) else rows[0]
+    steps += [_Step(*[field(text, k) for k in _Step._fields]) if isinstance(text, dict)
+              else _Step(str(text), "", "", "") for text in more]
     return steps
 
 
 def _step_lines(number, step, width):
+    """A TO DO step: its title, why (rows: one each), what to run (several ways out: a row each, (a), (b)...), what
+    to check."""
     lines = fill_text("%d. %s" % (number, step.title), width, "  ", "   ")
-    for label, text in (("", step.why), ("run:    ", step.run), ("check:  ", step.then)):
+    whys = [("", text) for text in (step.why if isinstance(step.why, list) else [step.why])]
+    runs = [("run:    ", step.run)] if not isinstance(step.run, list) else [
+        ("run:    " if i == 0 else " " * 8, "(%s) %s" % ("abcdefgh"[i], text)) for i, text in enumerate(step.run)]
+    for label, text in whys + runs + [("check:  ", step.then)]:
         if text:
-            lines += fill_text(label + text, width, "     ", " " * len(label))
+            lines += fill_text(label + text, width, "     ", " " * (len(label) + (4 if text.startswith("(") else 0)))
     return lines
 
 
@@ -983,7 +1032,7 @@ DIFFERS = _Kind("setting that differs between nodes", "settings that differ betw
                 "the nodes do not all have the same value; often on purpose (machines of other sizes), sometimes a"
                 " leftover")
 UNREAD = _Kind("node not read", "nodes not read", "Nodes not read",
-               "accepted as they are (import_cluster_allow_unread): their settings are not in the inventory")
+               "accepted as they are (import_allow_unread): their settings are not in the inventory")
 
 
 def _entry(report, what, members, todo):
@@ -1021,7 +1070,7 @@ def _hand_entries(report, edits):
                 keep = _kept_with(report, f, members)
                 todo = "%sto keep %s: import again with %s (Ansible then leaves %s as each node has it%s)" % (
                     "" if setting else "the lines are under DETAILS, node by node; ", "it" if setting else "them",
-                    unbreakable("-e import_cluster_keep_hand_edits=" + ",".join(keep)), " and ".join(keep),
+                    unbreakable("-e import_keep_hand_edits=" + ",".join(keep)), " and ".join(keep),
                     "; cassandra-env.sh's lines moved to variables stay in it then" if len(keep) > 1 else "")
                 if f in SNIPPET_FILES and not setting:  # (lines no variable carries: your template, or a piece)
                     todo += ("; or carry them: your own template of %s (cassandra_config_template_overrides), or a"
@@ -1465,8 +1514,9 @@ def _info_blocks(report, data, leftovers, convergence):
         blocks.append((title, [line for labels, members in by_nodes for line in fill_text(
             "%s   %s" % (", ".join(labels), _who(report, members)), report.width, "    ", "    ")]))
     if data["tuning"]:
+        # (each value whole, on over lines: two disk groups cut alike could not be told apart)
         blocks.append(("OS tuning: the live value of each setting (and the collection's)", out.settings_lines(
-            [(name, [(_short(text), _who(report, members), "") for text, members in values])
+            [(name, [(text, _who(report, members), "") for text, members in values])
              for name, values in data["tuning"]], indent="    ", width=report.width)))
     cleanup = _by_value([(n["name"], ": ".join(line.split(": ", 2)[:2]), line.split(": ", 2)[2])
                          for n in report.read for line in n.get("cleanup") or [] if line.count(": ") >= 2])
@@ -1529,13 +1579,14 @@ def _head_lines(report, cluster, hosts_file, report_file, self_check_ok, same, s
 
 def _about_lines(report, cluster):
     """What this report is, in 3 lines, then the words it uses."""
-    lines = ["WHAT THIS REPORT IS"] + [cut_text(text, report.width) for text in (
+    lines = ["WHAT THIS REPORT IS"] + [line for text in (
         "  import_cluster read the nodes (the Cassandra servers) of %s and %s an Ansible inventory for them;"
         " nothing on the nodes was changed." % (cluster, "worked out (--check: not written)" if report.check
                                                 else "wrote"),
         "  %s says what to do and what is worth a look; this file holds the rest: the settings, the convergence,"
         " the OS, what was read on each node." % os.path.basename(report.report_name),
-        "  The cluster keeps running as it is while you read: nothing here is urgent for it.")]
+        "  The cluster keeps running as it is while you read: nothing here is urgent for it.")
+        for line in fill_text(text.strip(), report.width, "  ")]
     lines += ["", "WORDS"]
     for word, meaning in WORDS_USED:
         lines += fill_text("%s  %s" % (word, meaning), report.width, "  ", "    ")
@@ -1685,15 +1736,15 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     report_file: where report.txt goes (report.check.txt under --check); self_check: {node: {differences, notes}};
     self_check_ok; secrets_clear: the secrets.yml files written in clear; leftovers: cassandra_inventory_leftovers';
     check: --check; inventory: the -i of the next commands ('' : ansible.cfg's); hosts: their -e cassandra_hosts
-    ('' when the inventory holds this cluster alone); allow_unread: import_cluster_allow_unread; screen: the end
+    ('' when the inventory holds this cluster alone); allow_unread: import_allow_unread; screen: the end
     of the run (report.txt shorter: the differences and the files kept without their steps); cwd:
     paths shown relative to it; in_git: the inventory dir is in a git work tree (None: looked for); changes: what
     the run wrote or would write, {changed: [the files written that change], removed: [the files removed],
     existed: [the files there before]}, paths in the inventory dir (None: not known); todo: more TO DO steps (the
     CQL login); width: the lines fit in it (default: the terminal's for the screen, REPORT_WIDTH for the report);
-    strict: import_cluster_strict (the run stops on a failed self-check, its HOW TO MAKE IT PASS below the
+    strict: import_strict (the run stops on a failed self-check, its HOW TO MAKE IT PASS below the
     screen); convergence: the lines of the CONVERGENCE section (cassandra_import_convergence's), under FOR INFO;
-    shareable: import_cluster_report_shareable (the screen names the copy too); details: the lines of
+    shareable: import_report_shareable (the screen names the copy too); details: the lines of
     report.details.txt instead (the settings, versions, convergence, OS, what was read on each node). Returns the
     lines.
     e.g. -> ["IMPORT big_cluster  88 nodes  3 to act on: 3 hand edits", "  self-check passed: ...", ...]."""

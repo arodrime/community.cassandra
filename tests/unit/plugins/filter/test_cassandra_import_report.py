@@ -137,7 +137,7 @@ def test_sections_by_urgency_and_the_counts_in_the_head():
     # what importing without it means, the exact command, what to check
     assert ("the inventory has no settings of it, and a playbook run on it would give it the cluster's settings, not"
             " its own") in joined
-    assert "run: ansible-playbook community.cassandra.import_cluster -e import_cluster_force=true" in joined
+    assert "run: ansible-playbook community.cassandra.import_cluster -e import_force=true" in joined
     assert "check: the head of the new report says every node was read" in joined
     # paths from the current dir, no cd; the vault password said; a head -1 to check
     assert "run: ansible-vault encrypt inventories/group_vars/my_cluster/secrets.yml" in joined
@@ -230,7 +230,7 @@ def test_things_to_do_and_hand_edits():
     at = review.index("    cassandra.yaml (Cassandra's main settings file) concurrent_writes: 48   node1, node2 (2 nodes)")
     assert review[at:at + 4] == [  # (a blank line between entries)
         "    cassandra.yaml (Cassandra's main settings file) concurrent_writes: 48   node1, node2 (2 nodes)",
-        "      to keep it: import again with -e import_cluster_keep_hand_edits=cassandra.yaml (Ansible then leaves"
+        "      to keep it: import again with -e import_keep_hand_edits=cassandra.yaml (Ansible then leaves"
         " cassandra.yaml as each node has it)",
         "",
         "    jvm-server.options (Java's options) -Dcassandra.weird: 1   node3 (1 node)"]
@@ -481,7 +481,7 @@ def test_hand_edits_by_file_counted():
     assert lines[0] == "IMPORT my_cluster  5 nodes  4 entries to review: 4 hand-edit entries"  # (no TO DO)
     # one way to keep them: the file left as the node has it
     assert ("the lines are under DETAILS, node by node; to keep them: import again with"
-            " -e import_cluster_keep_hand_edits=logback.xml (Ansible then leaves logback.xml as each node has it)") in \
+            " -e import_keep_hand_edits=logback.xml (Ansible then leaves logback.xml as each node has it)") in \
         " ".join(" ".join(lines).split())
     # two sets of as many edits: told apart, numbered among them
     nodes = [node(1, hand=same), node(2, hand=other), node(3, hand=[line.replace("<c/>", "<d/>") for line in same])]
@@ -516,7 +516,7 @@ def test_a_logback_hand_edit_says_the_templates_of_yours():
     hand = ["logback.xml, line 90:", "  -     <file>${cassandra.logdir}/audit/audit.log</file>",
             "  +     <file>/data/audit/audit.log</file>"]
     text = " ".join(" ".join(section(report([node(1, hand=hand)]), "HAND EDITS")).split())
-    assert "-e import_cluster_keep_hand_edits=logback.xml (Ansible then leaves logback.xml as each node has it); or" \
+    assert "-e import_keep_hand_edits=logback.xml (Ansible then leaves logback.xml as each node has it); or" \
            " carry them: your own template of logback.xml (cassandra_config_template_overrides), or a template piece" \
            " for its end or for appenders before <root> (cassandra_config_template_snippets)" in text
     # a setting's row (a variable carries it, or a file of another kind): not said
@@ -539,7 +539,7 @@ def test_written_host_vars_counted_on_a_large_cluster():
 def test_the_screen_fits_the_terminal():
     nodes = [node(i, hand=["cassandra.yaml, line 10:", "  + setting_%d: 1" % i]) for i in range(1, 20)]
     for line in report(nodes, screen=True, width=80)[1:]:
-        assert len(line) <= 80 or "-e import_cluster_keep_hand_edits=" in line, line
+        assert len(line) <= 80 or "-e import_keep_hand_edits=" in line, line
 
 
 def test_a_secret_setting_of_a_hand_edit_is_never_shown():
@@ -566,7 +566,7 @@ def test_a_secret_value_on_several_lines_of_a_hand_edit_is_never_shown():
 
 
 def test_kept_files_left_as_is_to_review():
-    # a file with hand edits kept (import_cluster_keep_hand_edits): an entry of its own, its nodes
+    # a file with hand edits kept (import_keep_hand_edits): an entry of its own, its nodes
     hand = ["jmxremote.access: auditRole=readonly", "  + auditRole=readonly"]
     lines = report([node(1, hand=hand, keep={"cassandra_config_keep_files": ["jmxremote.access"]}), node(2)])
     review = section(lines, "LEFT AS THE NODES HAVE THEM")
@@ -678,6 +678,25 @@ def stop(nodes, checks, layout_extra=None, **kwargs):
     return cassandra_import_self_check_advice(layout, checks, **kwargs)
 
 
+def test_self_check_stop_says_a_hand_edited_file_its_java_does_not_read():
+    # (audit) jvm11-server.options edited by hand on 5.0 nodes on Java 17: never read, said so with the way out
+    jvm11 = ["jvm11-server.options, line 40:", "  + -XX:+UseFoo"]
+    checks = {"node1": {"differences": ["jvm11-server.options: UseFoo: node has '-XX:+UseFoo', import would write"
+                                        " nothing"]}}
+    java17 = {"versions": {"java": "17"}}
+    lines = stop([node(1, hand=jvm11, **java17), node(2, **java17)], checks, width=400)
+    assert ("  file not read       node1 (1 node) runs Java 17, which does not read jvm11-server.options: its edits"
+            " change nothing while it runs that Java. Keep the file as the node has it (-e"
+            " import_keep_hand_edits=jvm11-server.options), or undo them on the node, then import again") in lines
+    assert not [line for line in lines if line.startswith("  hand edits ")]  # (no second hint for that file)
+    # the file Java 17 reads, or a Java not known: no such line
+    jvm17 = [line.replace("jvm11", "jvm17") for line in jvm11]
+    checks17 = {"node1": {"differences": [checks["node1"]["differences"][0].replace("jvm11", "jvm17")]}}
+    assert not [line for line in stop([node(1, hand=jvm17, **java17), node(2)], checks17, width=400)
+                if "file not read" in line]
+    assert not [line for line in stop([node(1, hand=jvm11), node(2)], checks, width=400) if "file not read" in line]
+
+
 def test_self_check_stop_golden():
     # the verdict, what differs grouped by what makes it pass, how, where the details are; blank lines between
     assert stop(failed_nodes(), CHECKS, WINS) == [
@@ -704,24 +723,24 @@ def test_self_check_stop_golden():
         "  Not read, so not checked: node4 (unreachable)",
         "",
         "HOW TO MAKE IT PASS",
-        "  hand edits          to keep them as they are: import again with",
-        "                      -e import_cluster_keep_hand_edits=true; these files are then not managed by",
-        "                      Ansible (kept as the node has them): cassandra-env.sh on node1 (1 node);",
-        "                      jvm17-server.options on node2, node5 (2 nodes). To bring them under Ansible:",
-        "                      carry the edit in the inventory (cassandra_jvm*_extra_options, a template",
-        "                      piece of yours for lines at the end of cassandra-env.sh or logback.xml,",
-        "                      cassandra_config_template_snippets, cassandra_extra_settings, ...) or give the",
-        "                      file your own template (cassandra_config_template_overrides), remove the file",
-        "                      from cassandra_config_keep_files, import again. To drop them instead: undo",
-        "                      them on the node, then import again",
+        "  hand edits          to keep them as they are: import again with -e import_keep_hand_edits=true;",
+        "                      these files are then not managed by Ansible (kept as the node has them):",
+        "                      cassandra-env.sh on node1 (1 node); jvm17-server.options on node2, node5 (2",
+        "                      nodes). To bring them under Ansible: carry the edit in the inventory",
+        "                      (cassandra_jvm*_extra_options, a template piece of yours for lines at the end",
+        "                      of cassandra-env.sh or logback.xml, cassandra_config_template_snippets,",
+        "                      cassandra_extra_settings, ...) or give the file your own template",
+        "                      (cassandra_config_template_overrides), remove the file from",
+        "                      cassandra_config_keep_files, import again. To drop them instead: undo them on",
+        "                      the node, then import again",
         "  your files          in host_vars/node3/local.yml, set cassandra_concurrent_reads to the node's",
         "                      value (64) or remove the line, then import again",
         "  not read            start Cassandra or fix the access on node4 (1 node), then import again; or",
-        "                      accept it unchecked: -e import_cluster_allow_unread=true",
+        "                      accept it unchecked: -e import_allow_unread=true",
         "  other               not sorted out here: see the details (reports/my_cluster/report.txt, section",
         "                      SELF-CHECK); change the node, or take it as a planned change (below)",
-        "  a change you want   it is a planned change: import again with -e import_cluster_strict=false (it",
-        "                      only writes the inventory), then review with",
+        "  a change you want   it is a planned change: import again with -e import_strict=false (it only",
+        "                      writes the inventory), then review with",
         "                      ansible-playbook community.cassandra.apply_config --check --diff before",
         "                      applying",
         "",
@@ -753,14 +772,14 @@ def test_self_check_stop_lines_fit_the_width():
         uncut = r"apply_config --check --diff|keystore_password|host_vars/node3/local.yml|keep_hand_edits=true"
         assert long == [line for line in long if re.search(uncut, line)]
         text = "\n".join(lines)
-        for whole in ("-e import_cluster_keep_hand_edits=true", "-e import_cluster_allow_unread=true",
-                      "-e import_cluster_strict=false", "ansible-playbook community.cassandra.apply_config --check --diff"):
+        for whole in ("-e import_keep_hand_edits=true", "-e import_allow_unread=true",
+                      "-e import_strict=false", "ansible-playbook community.cassandra.apply_config --check --diff"):
             assert whole in text
         assert u"\xa0" not in text
 
 
 def test_self_check_stop_hand_edits_only():
-    # every difference in a file with hand edits: import_cluster_keep_hand_edits, then a change you want
+    # every difference in a file with hand edits: import_keep_hand_edits, then a change you want
     nodes = [node(1, hand=LOGBACK), node(2, hand=LOGBACK), node(3)]
     checks = dict((n, {"differences": ["logback.xml: node has /configuration/logger[level=\"DEBUG\" name=\"x\"],"
                                        " import would write nothing"]}) for n in ("node1", "node2"))
@@ -775,7 +794,7 @@ def test_self_check_stop_hand_edits_only():
 
 
 def test_self_check_stop_kept_files_are_not_hand_edits():
-    # import_cluster_keep_hand_edits already: a difference left in a kept file (its owner, group and mode) is
+    # import_keep_hand_edits already: a difference left in a kept file (its owner, group and mode) is
     # another kind, keep_hand_edits not offered again
     kept = {"cassandra_config_keep_files": ["logback.xml"]}
     nodes = [node(1, hand=LOGBACK, keep=kept), node(2)]
@@ -812,8 +831,8 @@ def test_self_check_stop_could_not_run_or_not_read():
                          "  (written for inspection only, marked NOT VALID)"]  # (said whole)
     assert lines[3] == '  The self-check could not run ("Render" failed): nothing says the variables reproduce the nodes'
     text = "\n".join(lines)
-    assert "-e import_cluster_debug=true to see the error (it may show passwords)" in " ".join(text.split())
-    assert "import_cluster_strict" not in text
+    assert "-e import_debug=true to see the error (it may show passwords)" in " ".join(text.split())
+    assert "import_strict" not in text
     # the nodes not read accepted: not said
     lines = stop(nodes, {}, allow_unread=True, error=error)
     assert lines[0].startswith("SELF-CHECK FAILED  my_cluster  it could not run (written")
@@ -828,7 +847,7 @@ def test_self_check_stop_could_not_run_or_not_read():
             in lines and "allow_unread" not in "\n".join(lines)
     # nothing known (no difference, every node read, no error): a hint all the same
     lines = stop([node(1)], {})
-    assert lines[lines.index("HOW TO MAKE IT PASS") + 1].startswith("  unknown   import again with -e import_cluster_debug")
+    assert lines[lines.index("HOW TO MAKE IT PASS") + 1].startswith("  unknown   import again with -e import_debug")
 
 
 def test_self_check_report_section():
@@ -853,7 +872,7 @@ def test_self_check_report_section():
     assert max(len(line) for line in part) <= 112
     assert "Details:" not in "\n".join(part)  # (it is the details)
     assert "  2. Make the self-check pass" in lines and lines.index("  2. Make the self-check pass") < at
-    # the screen: the step, the stop below it (import_cluster_strict) says how
+    # the screen: the step, the stop below it (import_strict) says how
     screen = report(failed_nodes(), ok=False, self_check=CHECKS, screen=True)
     assert "  2. Make the self-check pass" in screen and not [line for line in screen if "SELF-CHECK \u2014" in line]
     # passed: no section
@@ -1206,3 +1225,20 @@ def test_worth_a_look_says_which_nodes_get_the_change():
     small["vars"]["cassandra_heap_size"] = "1G"
     review = " ".join(" ".join(line.split()) for line in section(report([small], details=False), "WORTH A LOOK"))
     assert "these nodes get it at their next apply_config (a restart each), nodes added later too" in review
+
+
+def test_os_tuning_and_what_this_report_is_wrap_never_cut():
+    # (owner's report) two disk groups cut to the same text could not be told apart; the first paragraph was cut
+    disks = ["disks: /data/a, /data/b -> dm-3 (sdb, sdc), read_ahead_kb 4096 (8), scheduler none (none), SSD, %s" % x
+             for x in ("first group", "second group")]
+    nodes = [node(1, os={"lines": [disks[0]]}), node(2, os={"lines": [disks[1]]})]
+    lines = report(nodes, width=100)
+    at = lines.index("  OS tuning: the live value of each setting (and the collection's)")
+    block = lines[at + 1:lines.index("", at)]
+    text = " ".join(line.strip() for line in block)
+    assert "first group" in text and "second group" in text and "..." not in text
+    assert max(len(line) for line in block) <= 100
+    head = next(i for i, line in enumerate(lines) if line.startswith("==== WHAT THIS REPORT IS ="))
+    about = lines[head + 1:head + 6]
+    assert "nothing on the nodes was changed." in " ".join(line.strip() for line in about)
+    assert not [line for line in about if line.endswith("...")]

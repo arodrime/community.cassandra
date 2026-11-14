@@ -62,12 +62,12 @@ def test_nothing_unknown_passes():
 
 
 def test_typo_refused_with_its_close_name_and_the_bypass():
-    passed, msg = check(unknown={"import_cluster_keep_hand_edit": "import_cluster_keep_hand_edits"})
+    passed, msg = check(unknown={"import_keep_hand_edit": "import_keep_hand_edits"})
     assert passed is False
     assert msg.split("\n") == [
         "REFUSED  variable names  nothing was changed",
-        "  -e import_cluster_keep_hand_edit: not a variable of this collection, did you mean"
-        " import_cluster_keep_hand_edits?",
+        "  -e import_keep_hand_edit: not a variable of this collection, did you mean"
+        " import_keep_hand_edits?",
         "  Fix the name; for a variable of your own: -e cassandra_allow_unknown_variables=<name>[,<name>...] (or true)."]
 
 
@@ -164,7 +164,7 @@ def test_preflight_checks_again_where_limit_skips_localhost():
 # -e name=..., --extra-vars name=..., "-e name" in the help output and the TO DO lines (Python strings too)
 EXTRA_VAR = re.compile(r"""(?:-e|--extra-vars)[ =]+['"]?@?([A-Za-z_]\w*)""")
 # the typos shown on purpose: hosts_check.yml, the guide (and the unit tests', which are not read)
-TYPOS = {"cassandra_host", "import_cluster_keep_hand_edit"}
+TYPOS = {"cassandra_host", "import_keep_hand_edit"}
 
 
 def test_every_documented_extra_var_is_known():
@@ -181,24 +181,56 @@ def test_every_documented_extra_var_is_known():
                 with open(os.path.join(root, name), encoding="utf-8", errors="replace") as f:
                     for var in EXTRA_VAR.findall(f.read()):
                         found.setdefault(var, set()).add(name)
-    assert "import_cluster_keep_hand_edits" in found and "help_topic" in found  # the scan reads them
+    assert "import_keep_hand_edits" in found and "help_topic" in found  # the scan reads them
     unknown = cassandra_unknown_extra_vars(sorted(found), PLAYBOOK_VARIABLES)
     assert dict((k, sorted(found[k])) for k in unknown if k not in TYPOS) == {}
 
 
 def test_import_cluster_options_are_suggested():
-    # each import_cluster_* name in import_cluster's comments (its options) is a playbook variable, so the one
-    # suggested for a typo (not an internal fact or register of the import)
+    # each import_* name in import_cluster's comments (its options; not the playbook's name, its internal
+    # import_cluster_* facts or a file such as import_distribution.sh) is a playbook variable, so the one suggested
+    # for a typo
     with open(os.path.join(TOP, "playbooks", "import_cluster.yml"), encoding="utf-8") as f:
         comments = "\n".join(line for line in f if line.lstrip().startswith("#"))
-    options = set(re.findall(r"\b(import_cluster_\w+)", comments))
-    assert "import_cluster_vault_id" in options and "import_cluster_keep_hand_edits" in options
+    options = set(re.findall(r"\b(import_(?!cluster\b|cluster_)\w+)\b(?!\.\w)", comments))
+    assert "import_vault_id" in options and "import_keep_hand_edits" in options
     assert options - set(PLAYBOOK_VARIABLES) == set()
     # never an internal one (import_cluster_vault_stat, import_cluster_repo_files are registers of the import)
-    out = cassandra_unknown_extra_vars(["import_cluster_vault_pass", "import_cluster_repo_file", "import_cluster_vault_passwd_file"],
+    out = cassandra_unknown_extra_vars(["import_vault_pass", "import_cluster_repo_file", "import_vault_passwd_file"],
                                        PLAYBOOK_VARIABLES)
     assert set(out.values()) <= options | {""}
-    assert out["import_cluster_vault_passwd_file"] == "import_cluster_vault_password_file"
+    assert out["import_vault_passwd_file"] == "import_vault_password_file"
+
+
+@pytest.mark.parametrize("enabled", [True, False])  # import_cluster: False, its former names refused all the same
+def test_import_cluster_former_option_names_refused_with_their_name_now(enabled):
+    # the options are import_<x> now: an import_cluster_<x> on the command line counts for nothing, so the run
+    # stops, naming the option now (a re-import with -e import_cluster_force=true is not forced)
+    extra = ["import_cluster_force", "import_cluster_report_shareable", "cassandra_hosts"]
+    renamed = render(CHECK["vars"]["_renamed"], _extra=extra, _cassandra_variables_check_renamed=enabled)
+    assert renamed == {"import_cluster_force": "import_force", "import_cluster_report_shareable": "import_report_shareable"}
+    passed, msg = check(renamed=renamed)
+    assert passed is False
+    assert msg.split("\n") == [
+        "REFUSED  variable names  nothing was changed",
+        "  import_cluster_force is renamed import_force: use -e import_force=... instead.",
+        "  import_cluster_report_shareable is renamed import_report_shareable: use -e import_report_shareable=..."
+        " instead."]
+    assert not set(renamed) & set(PLAYBOOK_VARIABLES)
+
+
+@pytest.mark.parametrize("name", ["import_cluster_keep_unread_jvm_options"])
+def test_the_removed_unread_jvm_option_is_said_removed(name):
+    # (audit) gone, those options always imported now: the stop says so and to drop it (not "fix the name")
+    assert cassandra_unknown_extra_vars([name], PLAYBOOK_VARIABLES) == {}
+    renamed = render(CHECK["vars"]["_renamed"], _extra=[name], _cassandra_variables_check_renamed=False)
+    assert renamed == {name: ""}
+    passed, msg = check(renamed=renamed)
+    assert passed is False
+    assert msg.split("\n") == [
+        "REFUSED  variable names  nothing was changed",
+        "  %s is removed (the options of a jvm<N>-server.options the running Java does not read are always imported"
+        " now): remove -e %s from the command." % (name, name)]
 
 
 @pytest.mark.parametrize("name, file_name", [("cassandra_env_extra_lines", "cassandra-env.sh"),

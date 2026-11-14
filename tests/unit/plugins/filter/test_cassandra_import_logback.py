@@ -373,7 +373,7 @@ def test_a_pattern_with_two_dashes_and_the_audit_block_commented_out_is_not_carr
     assert ("logback.xml: its log pattern (%-5level [%thread] -- %msg%n) has a --, which the role's template would"
             " write in the audit appender it leaves commented out (cassandra_log_audit_file: false), where XML does"
             " not take it: not carried in cassandra_log_pattern. Write the pattern without -- on the nodes and import"
-            " again, or keep logback.xml as it is (-e import_cluster_keep_hand_edits=logback.xml)") in out["hand_edits"]
+            " again, or keep logback.xml as it is (-e import_keep_hand_edits=logback.xml)") in out["hand_edits"]
     dummy, layout = import_node(files, series)
     assert "its log pattern (%-5level [%thread] -- %msg%n) has a --" in " ".join(layout["report"].split())
 

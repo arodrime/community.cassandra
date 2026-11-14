@@ -1,5 +1,9 @@
 minor_changes:
   - >-
-    import_cluster - each node's cqlsh is started (``cqlsh --version``) at the read; where it does not start, the
-    report's TO DO says so with its last error line and, for a cqlshlib the Python cannot import (the Apache rpm on
-    EL9), how to fix it (``cassandra_cqlsh_python_manage`` back to the role, then ``create_cluster``).
+    import_cluster - each node's cqlsh is started (``--version``) at the read as the playbooks run it:
+    ``cassandra_cqlsh_command`` split as the ``cassandra_cqlsh`` module splits it (shlex, ``$VAR`` expanded with the
+    node's python3, else EL 8's platform-python), as root. Where it does not start (its last error line, not found, not executable, no answer in
+    30 seconds, no output), the report's TO DO has a step saying what ran on which nodes, with two ways out: a cqlsh
+    installed elsewhere (a virtualenv) as ``cassandra_cqlsh_command`` in group_vars, or
+    ``cassandra_cqlsh_python_manage: true`` in the nodes' host_vars, then ``create_cluster``. A value that does not
+    split (an unclosed quote) or is blank gets its own step: fix it.

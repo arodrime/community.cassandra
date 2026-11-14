@@ -213,17 +213,15 @@ OPERATIONS = [
                 " the inventory (its logins too), keeps the files it did not write, --check --diff shows its changes"
                 " first. A DataStax Enterprise or ScyllaDB node is refused: Apache Cassandra only. Its report:"
                 " report.txt (what to do, what is worth a look), report.details.txt (the rest).",
-     "options": [("-e import_cluster_dir=<dir>", "the inventory dir", "inventories"),
-                 ("-e import_cluster_report_dir=<dir>", "report.txt dir", "next to the inventory dir"),
-                 ("-e import_cluster_force=true", "re-import over this cluster's files", "false"),
-                 ("-e import_cluster_adopt=true", "adopts an earlier import's files", "false"),
-                 ("-e import_cluster_allow_unread=true", "accepts unread ring nodes", "false"),
-                 ("-e import_cluster_keep_hand_edits=true", "keeps hand-edited files (=<names>)", "false"),
-                 ("-e import_cluster_keep_unread_jvm_options=true", "imports unread jvm<N> options",
+     "options": [("-e import_dir=<dir>", "the inventory dir", "inventories"),
+                 ("-e import_report_dir=<dir>", "report.txt dir", "next to the inventory dir"),
+                 ("-e import_force=true", "re-import over this cluster's files", "false"),
+                 ("-e import_adopt=true", "adopts an earlier import's files", "false"),
+                 ("-e import_allow_unread=true", "accepts unread ring nodes", "false"),
+                 ("-e import_keep_hand_edits=true", "keeps hand-edited files (=<names>)", "false"),
+                 ("-e import_carry_exporter_config=true", "carries the exporter's config file",
                   "false"),
-                 ("-e import_cluster_carry_exporter_config=true", "carries the exporter's config file",
-                  "false"),
-                 ("-e import_cluster_report_shareable=true", "a report copy to share, anonymised", "false")]},
+                 ("-e import_report_shareable=false", "no anonymised report copy to share", "true")]},
 ]
 # an option's text and its default on one line from column 46 at 98 columns (a terminal of 100)
 OPTION_ROOM = 52
@@ -462,7 +460,7 @@ def _reimport_command(op, model, cluster, cwd, extra, markdown):
     and logins, vaulted ones too), the cluster named unless the import takes it alone: on screen, the one
     CASSANDRA_CLUSTER names, or the inventory holds its hosts only (without -e it reads every host)."""
     where = _path(_inventory_dir(model), cwd)
-    target = ([] if where == "inventories" else [_e("import_cluster_dir", where)]) + ["-e import_cluster_force=true"]
+    target = ([] if where == "inventories" else [_e("import_dir", where)]) + ["-e import_force=true"]
     sources = _sources_shown(model, markdown)
     alone = "all_hosts" in model and set(model["all_hosts"]) <= set(h["name"] for h in cluster.hosts)
     named = markdown or not (alone or model.get("env_cluster") == cluster.name)
@@ -482,7 +480,7 @@ def _import_command(model, cluster, cwd):
             user.append(option)
     if not cluster.hosts:  # no cluster named: one of its nodes, a dir of its own
         return " ".join(["ansible-playbook", "-i NODE,"] + user
-                        + ["community.cassandra.import_cluster", "-e import_cluster_dir=NEW_DIR"])
+                        + ["community.cassandra.import_cluster", "-e import_dir=NEW_DIR"])
     # (ansible_ssh_common_args, a bastion: from ansible.cfg only)
     host = (cluster.present or cluster.hosts)[0]
     v = host["vars"]
@@ -503,7 +501,7 @@ def _import_command(model, cluster, cwd):
     address = next((str(v[k]) for k in ("ansible_host", "cassandra_listen_address")
                     if _resolved(v.get(k)) and v[k] != "localhost"), host["name"])
     # a new cluster (not written by the import here): a dir of its own
-    target = ["-e import_cluster_dir=NEW_DIR"]
+    target = ["-e import_dir=NEW_DIR"]
     parts = (["ansible-playbook", "-i %s" % shlex.quote(address + ",")] + user
              + ["community.cassandra.import_cluster"] + target + jmx)
     return " ".join(p for p in parts if p)

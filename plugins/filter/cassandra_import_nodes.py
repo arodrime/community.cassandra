@@ -143,8 +143,8 @@ def _package_vars(hv, read, repo, package):
 
 
 def _hand_kept(config, read, keep_hand_edits):
-    """The config files left as they are on the node: the hand-edited ones keep_hand_edits names, its jvm<N> files
-    not imported -> {"cassandra_config_keep_files": [file]}, {} for none."""
+    """The config files left as they are on the node: the hand-edited ones keep_hand_edits names
+    -> {"cassandra_config_keep_files": [file]}, {} for none."""
     hand_kept = []
     for line in (config.get("hand_edits", []) if read else []):
         f = re.sub(r"[:,].*$", "", str(line))
@@ -152,9 +152,6 @@ def _hand_kept(config, read, keep_hand_edits):
             hand_kept.append(f)
     # keep_hand_edits: all the files with hand edits (True), or the ones named
     hand_kept = [f for f in hand_kept if keep_hand_edits is True or f in (keep_hand_edits or [])]
-    # a jvm<N> file its Java does not read, whose options are not imported: left as it is on the node
-    if read:
-        hand_kept += [f for f in config.get("keep_files") or [] if f not in hand_kept]
     return {"cassandra_config_keep_files": hand_kept} if hand_kept else {}
 
 
@@ -297,7 +294,7 @@ def _notes(item, host, hv, read, config, perms, medusa, repo, set_ansible_host, 
     notes += list(perms.get("notes", [])) + list(medusa.get("notes", []))
     notes += [CARRIED + line for line in (config.get("carried", []) if read else [])]
     if host != address and hv.get("ansible_host", address) != address and set_ansible_host:
-        notes.append("reached at %s, its hosts file has its ring address %s (import_cluster_set_ansible_host: false"
+        notes.append("reached at %s, its hosts file has its ring address %s (import_set_ansible_host: false"
                      " leaves ansible_host out)" % (hv.get("ansible_host"), address))
     if read and not repo["manage"]:
         notes.append("Cassandra repository files left as they are: %s" % repo["why"])
@@ -411,7 +408,7 @@ def cassandra_import_nodes(ring, data, given, found=None, jmx=None, java_default
     the given hosts, the ones found in the ring; jmx: the JMX login given for
     the import; java_default: {series: the Java the roles default to};
     host_names: hostname, fqdn or ip; set_ansible_host, keep_hand_edits: the
-    import_cluster_ options (keep_hand_edits: a bool, or the config
+    import_ options (keep_hand_edits: a bool, or the config
     files to keep) -> [node] for cassandra_inventory_layout.
     e.g. -> [{"name": "db1", "address": "10.0.0.1", "dc": "dc1", "rack": "r1", "read": True, "reason": ...,
     "vars": {"cassandra_version": "41x", ...}, "keep": {"cassandra_firewall_manage": False, ...}, "notes": [...],

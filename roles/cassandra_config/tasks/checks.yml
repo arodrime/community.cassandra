@@ -474,10 +474,15 @@
       {{ [cassandra_prometheus_exporter_tls_keystore, cassandra_prometheus_exporter_tls_keystore_password,
           cassandra_prometheus_exporter_tls_certificate_alias] | select | list | length }}
     _auth: "{{ [cassandra_prometheus_exporter_username, cassandra_prometheus_exporter_password] | select | list | length }}"
-    # the JVM options the inventory adds, and your snippet of cassandra-env.sh
+    # the JVM options the inventory adds to the files the node's Java reads (a jvm<N> file it does not read: as
+    # the node has it, never loaded), and your snippet of cassandra-env.sh
+    # (the node's Java: _cassandra_config_java_major)
+    _read_file: "{{ cassandra_version | community.cassandra.cassandra_jvm_options_file(_cassandra_config_java_major) }}"
     _options: >-
-      {{ (cassandra_jvm_extra_options + cassandra_jvm8_extra_options + cassandra_jvm11_extra_options
-          + cassandra_jvm17_extra_options + [_cassandra_config_snippet_env]) | map('string') | join(' ') }}
+      {{ (cassandra_jvm_extra_options
+          + (lookup('ansible.builtin.vars', _read_file | community.cassandra.cassandra_jvm_options_variable, default=[])
+             if _read_file else [])
+          + [_cassandra_config_snippet_env]) | map('string') | join(' ') }}
     _wrong: >-
       {%- set out = [] -%}
       {%- if cassandra_prometheus_exporter_version is not string

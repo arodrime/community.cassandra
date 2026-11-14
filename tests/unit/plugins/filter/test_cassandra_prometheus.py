@@ -251,7 +251,7 @@ def test_the_config_file_path_is_said_a_new_node_has_none(tmp_path):
     out = exporter_import(files, launch(files, "17", tmp_path), sha256="ab" * 32, config="rules: []\n")
     assert out["vars"]["cassandra_prometheus_exporter_config_file"] == CONF
     assert [n for n in out["jvm_notes"] if "a node added later has none" in n
-            and "-e import_cluster_carry_exporter_config=true" in n]
+            and "-e import_carry_exporter_config=true" in n]
 
 
 def test_its_config_carried_into_the_inventory(tmp_path):
@@ -290,7 +290,7 @@ def test_carry_asked_for_a_config_not_read(tmp_path, unread):
     assert out["vars"]["cassandra_prometheus_exporter_config_file"] == CONF
     assert [n for n in out["jvm_notes"] if "NOT carried" in n and "could not be read on the node" in n
             and "import again" in n]
-    assert not [n for n in out["jvm_notes"] if "-e import_cluster_carry_exporter_config=true" in n]  # (asked already)
+    assert not [n for n in out["jvm_notes"] if "-e import_carry_exporter_config=true" in n]  # (asked already)
 
 
 def test_a_reimport_of_the_roles_own_config():

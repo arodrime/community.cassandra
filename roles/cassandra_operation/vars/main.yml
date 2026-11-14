@@ -85,12 +85,11 @@ _cassandra_playbook_variables: [cassandra_hosts, cassandra_target_nodes, cassand
                                 cassandra_create_cluster_reset_confirm, cassandra_allow_unknown_variables,
                                 cassandra_storage_mode_running,
                                 # import_cluster's and help's options (their header)
-                                import_cluster_dir, import_cluster_report_dir, import_cluster_force, import_cluster_host_names,
-                                import_cluster_set_ansible_host, import_cluster_vault_password_file, import_cluster_vault_id,
-                                import_cluster_medusa_path, import_cluster_keep_hand_edits, import_cluster_allow_unread,
-                                import_cluster_keep_unread_jvm_options, import_cluster_carry_exporter_config,
-                                import_cluster_report_shareable,
-                                import_cluster_adopt, import_cluster_strict, import_cluster_debug,
+                                import_dir, import_report_dir, import_force, import_host_names,
+                                import_set_ansible_host, import_vault_password_file, import_vault_id,
+                                import_medusa_path, import_keep_hand_edits, import_allow_unread,
+                                import_carry_exporter_config, import_report_shareable, import_adopt, import_strict,
+                                import_debug,
                                 help_topic, help_write, help_runbook_dir, help_inventory]
 
 # storage_mode_read.yml's CQL read: the node's own address (its rpc_address, else its listen_address, else

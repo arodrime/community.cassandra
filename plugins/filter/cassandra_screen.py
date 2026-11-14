@@ -56,8 +56,10 @@ def _wrap(text, indent="", subsequent=None):
     for para in str(text).split("\n"):
         if not para.strip():
             continue
-        out.extend(textwrap.wrap(para.strip(), width=WIDTH, initial_indent=indent, subsequent_indent=subsequent,
-                                 break_long_words=False, break_on_hyphens=False))
+        # (a no-break space keeps its words together: a size and its unit)
+        out.extend(line.replace(u"\xa0", " ") for line in textwrap.wrap(
+            para.strip(), width=WIDTH, initial_indent=indent, subsequent_indent=subsequent, break_long_words=False,
+            break_on_hyphens=False))
     return out
 
 

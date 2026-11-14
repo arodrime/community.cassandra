@@ -7,7 +7,7 @@ does not know, each with the known variable it is close to (or "").
 cassandra_renamed_names: the variables set under a former name, each with its
 name now.
 cassandra_unknown_extra_vars: the -e variables under a prefix of the collection
-(cassandra_, import_cluster_, help_) that it does not know, each with the known
+(cassandra_, import_, help_) that it does not know, each with the known
 variable it is close to (or "")."""
 
 from __future__ import absolute_import, division, print_function
@@ -26,10 +26,12 @@ from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_role
 
 _ROLES = os.path.join(os.path.dirname(__file__), "..", "..", "roles")
 _PLAYBOOKS = os.path.join(os.path.dirname(__file__), "..", "..", "playbooks")
+# the names the roles and playbooks use: import_cluster's own facts (import_cluster_*), not every import_ word
+# (import_tasks, import_playbook, a file's name): its options are the playbook variables
 _NAME = re.compile(r"\b(?:cassandra|import_cluster|help)_\w+")
 # the prefixes of the collection's variables (cas+andra: a missing or doubled s, casandra_hosts, is ours too;
 # CASSANDRA_HOSTS too, a variable name being case-sensitive)
-_OURS = re.compile(r"(?:cas+andra|import_cluster|help)_", re.IGNORECASE)
+_OURS = re.compile(r"(?:cas+andra|import|help)_", re.IGNORECASE)
 # a comment: its names are examples (a typo shown, a module), not variables read (text after " #" in a
 # string goes too: a name only there is then unknown, never a typo let through)
 _COMMENT = re.compile(r"(?m)(?:^|\s)#.*$")
@@ -43,10 +45,17 @@ RENAMED = dict([(name, "cassandra_target_nodes") for name in (
     ("cassandra_repository_password", "cassandra_install_password"),
     ("cassandra_medusa_config_owner", "cassandra_medusa_config_user"),
     ("cassandra_medusa_key_file_owner", "cassandra_medusa_key_file_user"),
-    ("cassandra_config_owner", "cassandra_config_user")])
+    ("cassandra_config_owner", "cassandra_config_user")] + [
+    # import_cluster's options, import_<x> now (given with -e: variables_check.yml reads them from the -e ones)
+    ("import_cluster_" + name, "import_" + name) for name in (
+        "dir", "report_dir", "force", "host_names", "set_ansible_host", "vault_password_file", "vault_id", "medusa_path",
+        "keep_hand_edits", "allow_unread", "carry_exporter_config", "report_shareable", "adopt", "strict", "debug")])
 # variables of the 2.1.0 release candidates no longer read: {name: the file whose lines they gave}. An inventory that
 # still sets one is refused (its lines would be left out of the file, every node restarted without them)
 REMOVED = {"cassandra_env_extra_lines": "cassandra-env.sh", "cassandra_logback_extra_lines": "logback.xml"}
+# options of the 2.1.0 release candidates that are gone: {name: what is done instead}
+DROPPED = {"import_cluster_keep_unread_jvm_options":
+           "the options of a jvm<N>-server.options the running Java does not read are always imported now"}
 
 
 # the secrets import_cluster moves out of a config file's lines, which refer to them (a snippet's lines...)
@@ -123,7 +132,8 @@ def cassandra_renamed_names(names):
     those no longer read (REMOVED).
     Example:
     ["cassandra_new_nodes"] -> {"cassandra_new_nodes": "cassandra_target_nodes"}."""
-    return dict((name, RENAMED.get(name, "")) for name in names or [] if name in RENAMED or name in REMOVED)
+    return dict((name, RENAMED.get(name, "")) for name in names or []
+                if name in RENAMED or name in REMOVED or name in DROPPED)
 
 
 def cassandra_former_name_text(name, now="", where=None):
@@ -131,8 +141,12 @@ def cassandra_former_name_text(name, now="", where=None):
     inventory files that set it) -> text.
     Example:
     "cassandra_env_extra_lines", "", ["group_vars/prod/main.yml"] -> "is no longer read (...): re-import ..."."""
+    if now and name.startswith("import_cluster_"):  # (an option of import_cluster, given with -e)
+        return "is renamed %s: use -e %s=... instead." % (now, now)
     if now:
         return "is renamed %s: set %s instead." % (now, now)
+    if name in DROPPED:
+        return "is removed (%s): remove -e %s from the command." % (DROPPED[name], name)
     files = ", ".join(where or []) or "the inventory files that set it"
     return ("is no longer read: %s would be written without its lines. Re-import the cluster (import_cluster), which"
             " writes these lines into snippet files (cassandra_config_template_snippets), then remove %s from %s."
@@ -189,7 +203,7 @@ def cassandra_unknown_extra_vars(names, known, allow=False):
     allowed = _allowed(allow)
     if allowed is True:
         return {}
-    skip = set(known or []) | set(RENAMED) | (allowed or set())
+    skip = set(known or []) | set(RENAMED) | set(DROPPED) | (allowed or set())
     ours = [n for n in names or [] if _OURS.match(n) and n not in skip]
     # the usual run (-e cassandra_hosts=...): nothing to look up in the roles' files
     return cassandra_unknown_names(ours, known) if ours else {}

@@ -370,7 +370,8 @@ def test_change_seeds_and_upgrade_screens():
     assert "WARNING  seeds: dc2 would be left with no seed (node4 leaves the seed list): node3 (dc2/r1) made its" in text
     t, play = task("upgrade.yml", "Show the plan and confirm")
     text = screen({"cassandra_upgrade_from": "4.0.20", "cassandra_package_version": "4.1.5",
-                   "_cassandra_preflight": {"cassandra_cluster_name": "Orders"}}, t["vars"])
+                   "_cassandra_preflight": {"cassandra_cluster_name": "Orders"}, "ansible_play_hosts": ["n1"],
+                   "hostvars": {"n1": {}}}, t["vars"])
     assert text.startswith("UPGRADE  Orders 4.0.20 -> 4.1.5, phase prepare\n  Before the upgrade, check that:\n"
                            "    - backups are paused")
     assert text.endswith("\n\n  prepare now snapshots every node (pre-upgrade-4.0.20) and copies its config.")

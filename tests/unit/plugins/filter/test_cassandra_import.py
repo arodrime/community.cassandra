@@ -551,7 +551,7 @@ controlRole   readwrite \\
     ("# comment\nops Pa#ss\n", "ops readwrite\n",
      [{"name": "ops", "password": "Pa#ss", "access": "readwrite", "create_unregister": False}]),
     # hashed passwords (jmxremote.password.toHashes): not read back
-    # (rights only: the password file a hand edit, kept with import_cluster_keep_hand_edits)
+    # (rights only: the password file a hand edit, kept with import_keep_hand_edits)
     ("ops c2FsdA== aGFzaA== SHA3-512\n", "ops readwrite\n", [{"name": "ops", "access": "readwrite", "create_unregister": False}]),
     # a user without rights in the file
     ("ops s3cret\n", "", None),

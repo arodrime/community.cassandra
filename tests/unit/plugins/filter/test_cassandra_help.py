@@ -338,21 +338,15 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
                        DataStax Enterprise or ScyllaDB node is refused: Apache Cassandra only. Its
                        report: report.txt (what to do, what is worth a look), report.details.txt
                        (the rest).
-      $ ansible-playbook -i 192.0.2.11, community.cassandra.import_cluster \\
-          -e import_cluster_dir=NEW_DIR
-        -e import_cluster_dir=<dir>           the inventory dir (default: inventories)
-        -e import_cluster_report_dir=<dir>    report.txt dir (default: next to the inventory dir)
-        -e import_cluster_force=true          re-import over this cluster's files (default: false)
-        -e import_cluster_adopt=true          adopts an earlier import's files (default: false)
-        -e import_cluster_allow_unread=true   accepts unread ring nodes (default: false)
-        -e import_cluster_keep_hand_edits=true
-                                              keeps hand-edited files (=<names>) (default: false)
-        -e import_cluster_keep_unread_jvm_options=true
-                                              imports unread jvm<N> options (default: false)
-        -e import_cluster_carry_exporter_config=true
-                                              carries the exporter's config file (default: false)
-        -e import_cluster_report_shareable=true
-                                              a report copy to share, anonymised (default: false)
+      $ ansible-playbook -i 192.0.2.11, community.cassandra.import_cluster -e import_dir=NEW_DIR
+        -e import_dir=<dir>                   the inventory dir (default: inventories)
+        -e import_report_dir=<dir>            report.txt dir (default: next to the inventory dir)
+        -e import_force=true                  re-import over this cluster's files (default: false)
+        -e import_adopt=true                  adopts an earlier import's files (default: false)
+        -e import_allow_unread=true           accepts unread ring nodes (default: false)
+        -e import_keep_hand_edits=true        keeps hand-edited files (=<names>) (default: false)
+        -e import_carry_exporter_config=true  carries the exporter's config file (default: false)
+        -e import_report_shareable=false      no anonymised report copy to share (default: true)
 
 ==== Advice ========================================================================================
 
@@ -443,7 +437,7 @@ def documented(name):
     """The variables the playbook's comments (its header, the ones next to its tasks) give with -e."""
     with open(os.path.join(TOP, "playbooks", name + ".yml"), encoding="utf-8") as f:
         comments = [line.split("#", 1)[1] for line in f if "#" in line and line.lstrip().startswith("#")]
-    return set(re.findall(r"-e +'?\{?\"?((?:cassandra|import_cluster|help)_\w+)", "".join(comments)))
+    return set(re.findall(r"-e +'?\{?\"?((?:cassandra|import|help)_\w+)", "".join(comments)))
 
 
 def test_operation_variables_are_the_playbooks_own():
@@ -453,7 +447,7 @@ def test_operation_variables_are_the_playbooks_own():
         args = [o[0] for o in op.get("options") or []] + list((op.get("example") or ("", []))[1])
         for arg in args:
             if arg != "--check":
-                name = re.search(r"(?:cassandra|help|import_cluster)_\w+", arg).group(0)
+                name = re.search(r"(?:cassandra|help|import)_\w+", arg).group(0)
                 assert reads(op["name"], name), (op["name"], name)
 
 
@@ -812,7 +806,7 @@ def test_import_command_keeps_the_connection_and_jmx():
                             cassandra_jmx_password_file="/etc/cassandra/jmxremote.password")
     text = help_(model(hosts=hosts, options=["--ask-vault-pass"]), PLAYBOOKS, cwd=CWD)
     assert ("$ ansible-playbook -i 192.0.2.11, -u admin community.cassandra.import_cluster"
-            " -e import_cluster_dir=NEW_DIR"
+            " -e import_dir=NEW_DIR"
             " -e cassandra_jmx_username=monitor"
             " -e cassandra_jmx_password_file=/etc/cassandra/jmxremote.password") in text
 
@@ -826,7 +820,7 @@ def test_reimport_reads_the_inventory():
     text = help_(model(hosts=hosts, options=["--ask-vault-pass"], all_hosts=[h["name"] for h in hosts], **IMPORTED),
                  PLAYBOOKS, cwd=CWD)
     assert ("$ ansible-playbook -i inventories/orders.yml --ask-vault-pass community.cassandra.import_cluster"
-            " -e import_cluster_force=true\n") in text
+            " -e import_force=true\n") in text
     assert "-i 192.0.2.11," not in text and "JMX_USER" not in text and "cassandra_jmx" not in commands(text)
 
 
@@ -869,12 +863,12 @@ def test_password_authenticator_planning_operations():
 def test_reimport_only_into_an_inventory_the_import_wrote():
     for changed in (model(), model(imported=["billing"])):
         text = help_(changed, PLAYBOOKS, cwd=CWD)
-        assert "community.cassandra.import_cluster -e import_cluster_dir=NEW_DIR\n" in text
-        assert "import_cluster_force" not in commands(text)
+        assert "community.cassandra.import_cluster -e import_dir=NEW_DIR\n" in text
+        assert "import_force" not in commands(text)
 
 
 def test_reimport_into_the_inventory_dir(tmp_path):
-    """A cluster the import wrote (its <cluster>.yml): its re-import goes there again, import_cluster_dir left out
+    """A cluster the import wrote (its <cluster>.yml): its re-import goes there again, import_dir left out
     for the default inventories, read from the inventory; the cluster named unless the import takes it alone (the
     inventory holds its hosts only, or CASSANDRA_CLUSTER names it)."""
     (tmp_path / "inventories").mkdir()
@@ -885,28 +879,28 @@ def test_reimport_into_the_inventory_dir(tmp_path):
                    all_hosts=everyone)
     text = help_(shared, PLAYBOOKS, cwd=str(tmp_path))
     assert ("$ ansible-playbook -i inventories community.cassandra.import_cluster -e cassandra_hosts=orders"
-            " -e import_cluster_force=true\n") in text
-    assert ("$ ansible-playbook -i 192.0.2.19, community.cassandra.import_cluster -e import_cluster_dir=NEW_DIR\n") in text
+            " -e import_force=true\n") in text
+    assert ("$ ansible-playbook -i 192.0.2.19, community.cassandra.import_cluster -e import_dir=NEW_DIR\n") in text
     # help -e cassandra_hosts=orders: that cluster only shown, the others still in the inventory: named
     text = help_(model(sources=sources, imported=["orders"], all_hosts=everyone), PLAYBOOKS, cwd=str(tmp_path))
-    assert "community.cassandra.import_cluster -e cassandra_hosts=orders -e import_cluster_force=true\n" in text
+    assert "community.cassandra.import_cluster -e cassandra_hosts=orders -e import_force=true\n" in text
     # CASSANDRA_CLUSTER names it: not on screen, in RUNBOOK.md
     named = model(sources=sources, imported=["orders"], all_hosts=everyone, auto="", env_cluster="orders")
-    assert "$ ansible-playbook -i inventories community.cassandra.import_cluster -e import_cluster_force=true\n" in \
+    assert "$ ansible-playbook -i inventories community.cassandra.import_cluster -e import_force=true\n" in \
         help_(named, PLAYBOOKS, cwd=str(tmp_path))
-    assert "community.cassandra.import_cluster -e cassandra_hosts=orders -e import_cluster_force=true" in \
+    assert "community.cassandra.import_cluster -e cassandra_hosts=orders -e import_force=true" in \
         help_(named, PLAYBOOKS, cwd=str(tmp_path), markdown=True)
     alone = model(sources=sources, imported=["orders"], all_hosts=everyone[:5])
     text = help_(alone, PLAYBOOKS, cwd=str(tmp_path))
     assert "$ ansible-playbook -i inventories community.cassandra.status\n" in text  # alone there: not needed
-    assert "$ ansible-playbook -i inventories community.cassandra.import_cluster -e import_cluster_force=true\n" in text
+    assert "$ ansible-playbook -i inventories community.cassandra.import_cluster -e import_force=true\n" in text
     assert "-e cassandra_hosts" not in commands(text)
     assert "-e cassandra_hosts" not in commands(help_(model(), PLAYBOOKS, cwd=CWD))
     text = help_(shared, PLAYBOOKS, cwd=str(tmp_path))  # with another cluster: needed
     assert "$ ansible-playbook -i inventories community.cassandra.status -e cassandra_hosts=orders\n" in text
     # another dir: named
     text = help_(alone, PLAYBOOKS, cwd="/elsewhere")
-    assert ("community.cassandra.import_cluster -e import_cluster_dir=%s/inventories -e import_cluster_force=true"
+    assert ("community.cassandra.import_cluster -e import_dir=%s/inventories -e import_force=true"
             % tmp_path) in text
 
 
@@ -917,7 +911,7 @@ def test_import_command_placeholders_for_what_help_could_not_read():
     hosts[0]["names"] += ["cassandra_jmx_username", "cassandra_jmx_password"]
     text = help_(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
     assert ("$ ansible-playbook -i 192.0.2.11, -e ansible_port=2222 community.cassandra.import_cluster"
-            " -e import_cluster_dir=NEW_DIR"
+            " -e import_dir=NEW_DIR"
             " -e cassandra_jmx_username=JMX_USER -e cassandra_jmx_password_file=JMX_PASSWORD_FILE") in text
     assert "(vaulted)" not in text.split("1. The cluster", maxsplit=1)[0]
 
@@ -1176,7 +1170,7 @@ def test_no_cluster_named_the_help_of_any():
     assert "Clusters found: orders (3 nodes, dc1), billing (2 nodes, eu) Other groups: monitoring" in text
     assert "community.cassandra.rolling_restart -e cassandra_hosts=CLUSTER_GROUP" in text
     assert "community.cassandra.stop_rack -e cassandra_hosts=CLUSTER_GROUP -e cassandra_target_dc=DC -e cassandra_target_rack=RACK" in text
-    assert "ansible-playbook -i NODE, community.cassandra.import_cluster -e import_cluster_dir=NEW_DIR" in text
+    assert "ansible-playbook -i NODE, community.cassandra.import_cluster -e import_dir=NEW_DIR" in text
     assert "Name the cluster for the advice of its inventory." in text
     assert "Not for this cluster" not in text
     topic = " ".join(cassandra_help(model, topic="decommission_node", cwd="/", cut=False).split())

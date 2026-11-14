@@ -116,8 +116,9 @@ def test_former_names_used_nowhere():
         with open(path, encoding="utf-8", errors="replace") as f:
             for m in former.findall(f.read()):
                 found.setdefault(os.path.basename(path), []).append(m)
-    # the guide names each one once, as a former name
-    assert found == {"guide_roles.rst": sorted(RENAMED, key=list(RENAMED).index)}
+    # the guide names each one once, as a former name (import_cluster's options: their rule, import_<x>)
+    variables = [name for name in RENAMED if name.startswith("cassandra_")]
+    assert found == {"guide_roles.rst": variables + ["import_cluster_force"]}
 
 
 def test_former_names_refused_first():

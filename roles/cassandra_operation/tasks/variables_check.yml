@@ -1,12 +1,14 @@
 ---
 # Run first by every playbook of the collection (target_nodes_check.yml, the
-# first plays of import_cluster and help), once, on the controller: a -e
-# variable under a prefix of the collection (cassandra_, import_cluster_,
-# help_) that no role or playbook knows (a typo) would otherwise be silently
-# ignored, and so would a variable under a former name, or one no longer read
-# (cassandra_env_extra_lines...: the config would be written without its lines)
-# (inventory or -e; not for help and import_cluster, which read neither it nor
-# its name now; import_cluster writes those lines into snippets).
+# first plays of import_cluster and help), once, on the controller. It stops on:
+# - a -e variable under a prefix of the collection (cassandra_, import_, help_)
+#   that no role or playbook knows: a typo would otherwise be silently ignored;
+# - a variable under a former name, or one no longer read (cassandra_env_extra_lines...:
+#   the config would be written without its lines), inventory or -e; not for
+#   help and import_cluster, which read neither it nor its name now
+#   (import_cluster writes those lines into snippets);
+# - an import_cluster option given with -e under its former name
+#   (import_cluster_<x>: import_<x> now), or one removed, in every playbook.
 # Inventory variables are not checked for typos here (preflight warns about
 # them). -e cassandra_allow_unknown_variables=true lets the unknown ones through,
 # -e cassandra_allow_unknown_variables=<name>,<name> those ones only.
@@ -34,9 +36,10 @@
   vars:
     cassandra_output: true
     _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+    # (import_cluster's former and removed options: the -e ones, in import_cluster too)
     _renamed: >-
-      {{ query('ansible.builtin.varnames', '^cassandra_') | community.cassandra.cassandra_renamed_names
-         if _cassandra_variables_check_renamed | default(true) | bool else {} }}
+      {{ ((query('ansible.builtin.varnames', '^cassandra_') if _cassandra_variables_check_renamed | default(true) | bool
+           else []) + _extra | select('match', 'import_') | list) | community.cassandra.cassandra_renamed_names }}
     _extra: "{{ query('community.cassandra.cassandra_extra_vars') }}"
     # given with -e only: one in the inventory would turn the check off for every run
     _unknown: >-

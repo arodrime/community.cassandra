@@ -1,7 +1,7 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-# import_cluster_keep_hand_edits: the config files with hand edits no variable
+# import_keep_hand_edits: the config files with hand edits no variable
 # covers are left as they are on their node (cassandra_config_keep_files), not
 # written nor compared by cassandra_config and the self-check.
 
@@ -51,13 +51,13 @@ def test_files_with_hand_edits_kept_on_request():
 
 
 @pytest.mark.parametrize("keep, kept", [
-    ("logback.xml", ["logback.xml"]),  # -e import_cluster_keep_hand_edits=logback.xml
+    ("logback.xml", ["logback.xml"]),  # -e import_keep_hand_edits=logback.xml
     ("logback.xml, cassandra-env.sh", ["logback.xml", "cassandra-env.sh"]),
     (["cassandra-env.sh"], ["cassandra-env.sh"]),
     (["cassandra.yaml"], None),  # no hand edit there: nothing to keep
     ("false", None),
     ("yes", ["logback.xml", "cassandra-env.sh"]),
-    ('["logback.xml"]', ["logback.xml"]),  # -e 'import_cluster_keep_hand_edits=["logback.xml"]': a string
+    ('["logback.xml"]', ["logback.xml"]),  # -e 'import_keep_hand_edits=["logback.xml"]': a string
 ])
 def test_files_with_hand_edits_kept_by_name(keep, kept):
     hv = {"import_cluster_config": {"vars": {}, "hand_edits": HAND}}

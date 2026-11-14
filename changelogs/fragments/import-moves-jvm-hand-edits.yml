@@ -4,4 +4,4 @@ minor_changes:
   - >-
     import_cluster - ``logback.xml`` is read as logback reads it: its root level, the ``org.apache.cassandra`` level, ``debug.log`` and the console are imported however written (quotes, attribute order, a line left out).
   - >-
-    import_cluster - ``import_cluster_keep_hand_edits`` also takes the config files to keep (``-e import_cluster_keep_hand_edits=logback.xml``).
+    import_cluster - ``import_keep_hand_edits`` also takes the config files to keep (``-e import_keep_hand_edits=logback.xml``).

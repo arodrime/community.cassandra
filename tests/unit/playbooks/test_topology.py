@@ -100,9 +100,9 @@ def test_operator_messages_marked_for_the_ops_callback():
         "  1. empty n2 before reusing the host (its data is left in place):",
         "     ansible-playbook community.cassandra.reset_node -e cassandra_target_nodes=n2",
         P, "  2. drop n2 from the inventory: re-import the cluster with its inventory, the changes shown first:",
-        "     ansible-playbook community.cassandra.import_cluster -e import_cluster_force=true --check --diff",
+        "     ansible-playbook community.cassandra.import_cluster -e import_force=true --check --diff",
         P, "  3. then write them:",
-        "     ansible-playbook community.cassandra.import_cluster -e import_cluster_force=true"]
+        "     ansible-playbook community.cassandra.import_cluster -e import_force=true"]
 
 
 def test_check_mode_lines_up_nothing():

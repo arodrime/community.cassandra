@@ -2,7 +2,7 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 # A re-import keeps how the inventory there reaches its hosts: one reached without ansible_host (imported with
-# import_cluster_set_ansible_host=false, or taken out by hand) gets none again, unless the option is given; the
+# import_set_ansible_host=false, or taken out by hand) gets none again, unless the option is given; the
 # hosts file it writes then is the one there (a re-import over a full import changes nothing).
 
 import os
@@ -19,7 +19,7 @@ NAMES = {"10.0.0.1": "node1", "10.0.0.2": "node2", "10.0.0.3": "node3"}
 def node(i, **more):
     n = {"name": "node%d" % i, "address": "10.0.0.%d" % i, "ansible_host": "10.0.0.%d" % i, "dc": "dc1", "rack": "r1",
          "read": False, "vars": {}, "notes": ["reached at node%d.lan, its hosts file has its ring address 10.0.0.%d"
-                                              " (import_cluster_set_ansible_host: false leaves ansible_host out)" % (i, i)]}
+                                              " (import_set_ansible_host: false leaves ansible_host out)" % (i, i)]}
     n.update(more)
     return n
 
@@ -83,7 +83,7 @@ def hosts_text(nodes):
 
 
 def test_a_reimport_writes_the_hosts_file_there_again():
-    # first import with import_cluster_set_ansible_host=false: no ansible_host; the re-import (default true) writes
+    # first import with import_set_ansible_host=false: no ansible_host; the re-import (default true) writes
     # the same file
     first = hosts_text([node(i, ansible_host="") for i in (1, 2)])
     again = cassandra_import_kept_ansible_host([node(1), node(2)], {"prod.yml": first}, "prod.yml", "prod", NAMES)
@@ -98,7 +98,7 @@ def test_the_playbook_applies_it_unless_the_option_is_given():
         play = next(p for p in yaml.safe_load(f) if p["name"] == "Write the inventory")
     names = [t["name"] for t in play["tasks"]]
     step = play["tasks"][names.index("Leave ansible_host out where the inventory there has none")]
-    assert step["when"] == "import_cluster_set_ansible_host is not defined"
+    assert step["when"] == "import_set_ansible_host is not defined"
     assert "cassandra_import_kept_ansible_host(import_cluster_existing_text, _hosts_file" in step["ansible.builtin.set_fact"]["_nodes"]
     # once the files there are read, before the layout the hosts file is written from
     assert names.index("Keep the files already there") < names.index(step["name"]) < names.index(

@@ -12,12 +12,14 @@ cassandra_phase, cassandra_check_what: a phase line, preflight's check line.
 cassandra_prepare_lines, cassandra_left_system_warning: what the prepare of new nodes did.
 cassandra_command, cassandra_todo, cassandra_removed_todo, cassandra_seeds_todo, cassandra_seeds_reload_todo,
 cassandra_reimport_hosts: what is left to do, and the commands for it.
+cassandra_cqlsh_words: cassandra_cqlsh_command split as the cassandra_cqlsh module splits it.
 """
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import os
+import shlex
 
 from ansible.module_utils.parsing.convert_bool import boolean
 from ansible.utils.display import Display
@@ -134,6 +136,16 @@ def _same_sources(a, b):
     return norm(a) == norm(b)
 
 
+def cassandra_cqlsh_words(command):
+    """cassandra_cqlsh_command as the cassandra_cqlsh module splits it (shlex: the program, then its arguments) ->
+    [word], [] when it cannot be split (an unclosed quote).
+    Example: "env CQLSH_PYTHON=/x/bin/python /usr/bin/cqlsh" -> ["env", "CQLSH_PYTHON=/x/bin/python", "/usr/bin/cqlsh"]."""
+    try:
+        return shlex.split(str(command if command not in (None, "") else "cqlsh"))
+    except ValueError:
+        return []
+
+
 def cassandra_command(playbook, inventory=None, hosts=None, limit=None, extra=None, options=None, cwd=None,
                       default_inventory=None):
     """A playbook and the run's options -> the command line that runs it: 'rolling_restart' |
@@ -228,6 +240,7 @@ class FilterModule(object):
             "cassandra_progress_line": cassandra_progress_line,
             "cassandra_normal_wait_line": cassandra_normal_wait_line,
             "cassandra_command": cassandra_command,
+            "cassandra_cqlsh_words": cassandra_cqlsh_words,
             "cassandra_seeds_reload_todo": cassandra_seeds_reload_todo,
             "cassandra_todo": cassandra_todo,
             "cassandra_phase": cassandra_phase,

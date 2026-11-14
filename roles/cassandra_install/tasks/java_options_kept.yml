@@ -1,10 +1,10 @@
 ---
 # Before a move to another Java or series (update_java, upgrade): the options
 # file the node then reads (jvm<N>-server.options) must not be one
-# cassandra_config leaves as it is (cassandra_config_keep_files; import_cluster
-# keeps one the running Java does not read, its options not imported): it would
-# be read as it is, its options set by hand (a heap maybe, which wins over
-# cassandra_heap_size), or another series' file.
+# cassandra_config leaves as it is (cassandra_config_keep_files: kept by hand, or
+# by import_cluster's import_keep_hand_edits): it would be read as it is, its
+# options set by hand (a heap maybe, which wins over cassandra_heap_size), or
+# another series' file.
 #   vars: _cassandra_java_options_now: the file the node reads now ('': not
 #         known, or another series')
 - name: The options file of the new Java is the role's
@@ -13,11 +13,52 @@
       _file == '' or _file == _cassandra_java_options_now | default('')
       or _file not in cassandra_config_keep_files | default([])
     fail_msg: >-
-      {{ inventory_hostname }}: {{ _file }} is in cassandra_config_keep_files: left as it is, Cassandra
-      {{ cassandra_version }} on Java {{ cassandra_java_version }} would read it as it is (options set by hand, not
-      imported, e.g. a heap that wins over cassandra_heap_size). Take it out of cassandra_config_keep_files (host_vars)
-      so that the role writes it (its extra options: {{ _file | community.cassandra.cassandra_jvm_options_variable }}),
+      {{ inventory_hostname }}: {{ _file }} is in cassandra_config_keep_files: the role leaves it as it is, and
+      Cassandra {{ {'40x': '4.0', '41x': '4.1', '50x': '5.0'}[cassandra_version] | default(cassandra_version) }} on Java {{ cassandra_java_version }} would read it as it is (options set by
+      hand, e.g. a heap that wins over cassandra_heap_size). Take it out of cassandra_config_keep_files (host_vars) so
+      that the role writes it (its extra options: {{ _file | community.cassandra.cassandra_jvm_options_variable }}),
       then run again. Nothing was changed.
     quiet: true
   vars:
     _file: "{{ cassandra_version | community.cassandra.cassandra_jvm_options_file(cassandra_java_version) }}"
+
+# What the new Java reads with the role's files (import_cluster imports the extra options of a file the running
+# Java does not read as the node has them): refused only when cassandra-env.sh would stop on it (its own heap and GC
+# checks, fed with every option of those files) or the JVM would load the exporter's agent twice. A heap there that
+# is not the inventory's now is the inventory's value: lines of the plan (_cassandra_java_heap_lines), not refused.
+# Nothing to check when the node keeps its options file and its GC.
+#   vars: _cassandra_java_now_series, _cassandra_java_now_major: the series and the Java the node runs
+#         ('' : not known, then all is checked; the series: cassandra_version)
+# (the node's own jvm-server.options and cassandra-env.sh when cassandra_config keeps them: what the new Java reads)
+- name: Read the files the role keeps as they are that cassandra-env.sh's checks read
+  ansible.builtin.slurp:
+    src: "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}/{{ item }}"
+  loop: >-
+    {{ cassandra_config_keep_files | default([]) | select('in', ['jvm-server.options', 'cassandra-env.sh',
+         cassandra_version | community.cassandra.cassandra_jvm_options_file(cassandra_java_version)]) | list }}
+  register: _cassandra_java_kept
+  failed_when: false  # (not read: said by the check below)
+  check_mode: false  # read-only
+
+- name: The options file of the new Java starts the JVM
+  ansible.builtin.assert:
+    that: _refused | length == 0
+    fail_msg: "{{ (_refused | map('regex_replace', '^', inventory_hostname ~ ': ') | list + ['Nothing was changed.']) | join(_nl) }}"
+    quiet: true
+  vars:
+    cassandra_output: true  # one refusal a line, as is (the ops callback)
+    _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+    _refused: >-
+      {{ hostvars[inventory_hostname] | community.cassandra.cassandra_jvm_switch_refusals(cassandra_version,
+           cassandra_java_version, _cassandra_java_now_series | default(cassandra_version),
+           _cassandra_java_now_major | default(''), _cassandra_java_kept.results | default([])) }}
+
+# for the plan (update_java's, upgrade's prepare screen)
+#   vars: _cassandra_java_move: what the plan calls the move ("the upgrade"; default "the move")
+- name: Note the heap the new Java's options file gives
+  ansible.builtin.set_fact:
+    _cassandra_java_heap_lines: >-
+      {{ hostvars[inventory_hostname] | community.cassandra.cassandra_jvm_switch_heap(cassandra_version,
+           cassandra_java_version, _cassandra_java_now_series | default(cassandra_version),
+           _cassandra_java_now_major | default(''), _cassandra_java_kept.results | default([]),
+           _cassandra_java_move | default('the move')) }}

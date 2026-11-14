@@ -81,7 +81,7 @@
       vars:
         _running: "{{ cassandra_jvm.exe | default('', true) or 'not running' }}"
         _spec: >-
-          {{ cassandra_update_java_spec.stderr | default('') | regex_findall('java[.]specification[.]version = (\S+)')
+          {{ cassandra_update_java_spec.stderr | default('') | regex_findall('java[.]specification[.]version = ([0-9.]+)')
              | first | default('') }}
         _major: "{{ _spec.split('.')[1] if _spec.startswith('1.') else _spec }}"
 
@@ -325,6 +325,7 @@
       vars:
         _cassandra_java_options_now: >-
           {{ cassandra_version | community.cassandra.cassandra_jvm_options_file(cassandra_update_java_major) }}
+        _cassandra_java_now_major: "{{ cassandra_update_java_major }}"
       when: cassandra_update_java_todo | bool
 
     - name: Settings that only apply to another Java
@@ -400,7 +401,7 @@
         _blocks: >-
           {%- set l = [] -%}
           {%- for h in _todo -%}
-          {%-   set _ = l.append({'title': h | community.cassandra.cassandra_screen_title(hostvars[h]._cassandra_preflight | default({})), 'lines': ['runs ' ~ hostvars[h].cassandra_update_java_running]}) -%}
+          {%-   set _ = l.append({'title': h | community.cassandra.cassandra_screen_title(hostvars[h]._cassandra_preflight | default({})), 'lines': ['runs ' ~ hostvars[h].cassandra_update_java_running] + hostvars[h]._cassandra_java_heap_lines | default([])}) -%}
           {%- endfor -%}
           {{ l }}
         _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default((_cassandra_preflight | default({})).cassandra_cluster_name | default('')) }}"

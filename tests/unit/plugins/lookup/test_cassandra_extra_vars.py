@@ -27,9 +27,9 @@ def extra_vars(monkeypatch):
 def test_every_form(extra_vars, tmp_path):
     vars_file = tmp_path / "vars.yml"
     vars_file.write_text("help_topic: status\n")
-    assert extra_vars("cassandra_hosts=prod import_cluster_keep_hand_edit=true", '{"cassandra_target_nodes": "n1"}',
+    assert extra_vars("cassandra_hosts=prod import_keep_hand_edit=true", '{"cassandra_target_nodes": "n1"}',
                       "@%s" % vars_file) == [
-        "cassandra_hosts", "cassandra_target_nodes", "help_topic", "import_cluster_keep_hand_edit"]
+        "cassandra_hosts", "cassandra_target_nodes", "help_topic", "import_keep_hand_edit"]
 
 
 def test_none(extra_vars):

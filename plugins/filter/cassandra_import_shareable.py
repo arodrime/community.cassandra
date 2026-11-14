@@ -1,6 +1,6 @@
 # Copyright: Contributors to the community.cassandra collection
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
-"""A copy of the import's report that can be shared (import_cluster -e import_cluster_report_shareable=true).
+"""A copy of the import's report that can be shared (import_cluster writes it unless -e import_report_shareable=false).
 
 cassandra_import_shareable: the report's lines and the import's layout -> {text: the lines of the copy, map: the
     lines of its key}. In the copy the node names become n1, n2.. (in the order of their names), the clusters c1,
@@ -70,7 +70,9 @@ STOCK_WORDS = ("cassandra", "data", "main", "default", "all", "local", "node", "
                "group", "the", "on", "in", "of", "and", "or")
 # the values a copy masks as well, by the setting's name: Medusa's bucket, prefix and fqdn, the user names
 VALUED = re.compile(r"(?i)\b[\w.]*?(bucket_name|bucket|prefix|fqdn|_username|_user|superuser)\b(?:\s+\([^)]*\))?:\s+")
-SECRETS_MARK = re.compile(r"(?:[\w.-]+(?:\s+\([^)]*\))?:\s+)?(?:\(in secrets\.yml(?:, value \d+)?\)|\(in a vars file\))")
+# (and a secret's variable set empty, '': none, e.g. Medusa's nodetool password when a password file is used)
+SECRETS_MARK = re.compile(r"(?:[\w.-]+(?:\s+\([^)]*\))?:\s+)?(?:\(in secrets\.yml(?:, value \d+)?\)|\(in a vars file\)"
+                          r"|''(?=\s|$))")
 # a file mode under cassandra_config_file_permissions: never a secret (the masking below would take it for one)
 MODE_ROW = re.compile(r"cassandra_config_file_permissions\.[\w.-]+:\s+0?[0-7]{3,4}\b")
 
@@ -402,8 +404,9 @@ def _aligned(line, key):
 
 
 def _masked(line):
-    """A line masked again (a secret the report would have let through); a file mode and the report's own marks of a
-    secret (in secrets.yml) left as they are when nothing else in the line would be masked."""
+    """A line masked again (a secret the report would have let through); a file mode, the report's own marks of a
+    secret (in secrets.yml) and an empty value ('') left as they are when nothing else in the line would be
+    masked."""
     rest = SECRETS_MARK.sub("", MODE_ROW.sub("", line))
     return line if rest != line and out.mask(rest) == rest else out.mask(line)
 

@@ -6,7 +6,7 @@ cassandra_import_convergence: the import's layout -> the lines of the CONVERGENC
     INFO): how many settings every node shares, each other one with its values and
     their nodes, what to do to give every node the value most of them have (the files to edit, how many nodes
     change, whether apply_config restarts them, the command to check it), and the files the nodes keep as edited
-    by hand (import_cluster_keep_hand_edits): what differs from the template, which variable would carry it.
+    by hand (import_keep_hand_edits): what differs from the template, which variable would carry it.
     Read only: from what the import found; secrets never shown.
 """
 
@@ -23,8 +23,8 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_conf
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     JAVA_DEFAULT, KEEP, ROLE, SERIES, group_chains, hand_edits_kept, template_vars, undefined_name)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
-    ARROW_RIGHT, DASH, NOT_COUNTED, REPORT_WIDTH, aligned_rows, fill_text, report_sections, who_text, unbreakable)
-from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
+    ARROW_RIGHT, DASH, NOT_COUNTED, REPORT_WIDTH, aligned_rows, fill_text, report_sections, unbreakable, unread_by,
+    who_text)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 
@@ -322,17 +322,6 @@ def _template_text(name):
 OWN_ADDRESS = "<its address>"  # a node's own address in its hand edits
 
 
-def _unread_by(node, name):
-    """The major of the Java node runs when name is a jvm<N>-server.options it does not read (bin/cassandra reads
-    jvm-server.options and the one of its Java only) -> "11"; "" when it reads it, or when that is not known."""
-    if not re.match(r"^jvm\d+-server\.options$", name):
-        return ""
-    series = str((node.get("vars") or {}).get("cassandra_version") or "")
-    java = str((node.get("versions") or {}).get("java") or "")
-    read = jvm.options_file(series, java)
-    return str(jvm.java_major(java)) if read and read != name else ""
-
-
 def _with_yours(read, layout):
     """The nodes read, their variables with the values one of your files gives as they have them (left out of
     theirs: the layout's from_yours)."""
@@ -362,7 +351,7 @@ def _kept_files(read):
             # (the node's own address read as such: the same edit on every node, each with its address, is one)
             lines = tuple(re.sub(r"(?<![\w.:-])%s(?![\w:-]|\.\d)" % re.escape(address), OWN_ADDRESS, line)
                           if address else line for line in per_file.get(f) or ())
-            unread = _unread_by(n, f)
+            unread = unread_by(n, f)
             entry = next((e for e in found[f] if e[0] == lines and e[2] == unread), None)
             if entry is None:
                 found[f].append((lines, [n["name"]], unread))

@@ -1934,7 +1934,7 @@ def removed_todo(removed, reimport_from, inventory=None, hosts=None, inventory_d
     cluster's group for the re-import's -e cassandra_hosts ('': the import
     takes the cluster without it, CASSANDRA_CLUSTER or the inventory's only
     cluster; None: hosts); inventory_dir: where the cluster's inventory is
-    (import_cluster_dir, given when it is not the default inventories);
+    (import_dir, given when it is not the default inventories);
     unreachable: the ones not answering, left out of the reset (the
     re-import drops them too); imported: the inventory is import_cluster's
     (else: remove them from it by hand, no re-import); first: items said
@@ -1952,9 +1952,9 @@ def removed_todo(removed, reimport_from, inventory=None, hosts=None, inventory_d
         "command": command("reset_node", inventory=inventory, hosts=hosts, cwd=cwd,
                            extra={"cassandra_target_nodes": ",".join(reset)})}] if reset else first
     shown_dir = path_from(str(inventory_dir), cwd) if inventory_dir else ""
-    reimport = [extra_var("import_cluster_force", "true")]
+    reimport = [extra_var("import_force", "true")]
     if shown_dir and os.path.normpath(shown_dir) != "inventories":
-        reimport.append(extra_var("import_cluster_dir", shown_dir))
+        reimport.append(extra_var("import_dir", shown_dir))
     if not imported or not reimport_from:
         items.append("remove %s from the inventory (or leave %s marked cassandra_node_state: absent)" % (
             names, "it" if len(removed) == 1 else "them"))

@@ -108,7 +108,7 @@ before it reads them.
 
 Ansible reads the ``group_vars`` and ``host_vars`` next to an inventory source only: with ``inventory =
 ./inventories``, the ones of a subdirectory (``inventories/orders/group_vars``) are not read. Hence one flat
-directory, the one the import writes (``import_cluster_dir``, default ``inventories``): each cluster's hosts in
+directory, the one the import writes (``import_dir``, default ``inventories``): each cluster's hosts in
 ``<cluster>.yml``, every group's variables side by side in ``group_vars`` (``orders``, ``orders_dc1``... the import
 prefixes each group with the cluster's).
 
@@ -247,9 +247,11 @@ the cluster), with the one to set:
 (``cassandra_config_user``).
 
 Every playbook, ``help`` and ``import_cluster`` included, also stops before anything is done when a ``-e`` variable
-is named like one of the collection's (``cassandra_``, ``import_cluster_``, ``help_``, in any case, ``casandra_``
-too) but none of its roles or playbooks uses that name: a typo (``-e import_cluster_keep_hand_edit=true``) would otherwise be silently ignored. The message
-names the known variable it is close to, if any. A variable of your own under these names goes through with
+is named like one of the collection's (``cassandra_``, ``import_``, ``help_``, in any case, ``casandra_``
+too) but none of its roles or playbooks uses that name: a typo (``-e import_keep_hand_edit=true``) would otherwise be silently ignored. The message
+names the known variable it is close to, if any. An ``import_cluster`` option under its release candidates' name,
+``import_cluster_<x>``, stops the run with its name now, ``import_<x>`` (``-e import_cluster_force=true``: set
+``import_force``). A variable of your own under these names goes through with
 ``-e cassandra_allow_unknown_variables=<name>,<name>`` (``true`` for every name). Only the ``-e`` variables are
 checked this way: the ones set in the inventory get the ``preflight`` warning above. ``--start-at-task`` and
 ``--skip-tags always`` skip this check, as the other first checks.
@@ -523,7 +525,7 @@ next runs say so while the two differ. None of its nodes up: refused (a datacent
 leave a datacenter with fewer nodes than a keyspace has replicas there (it reads the replication with CQL: set ``cassandra_cql_username`` and ``cassandra_cql_password`` when
 authentication is on). The end says what is left, each with its command ready to paste: empty the hosts with
 ``reset_node`` (their data is left in place), drop them from the inventory with a re-import of the cluster read from
-the inventory, its logins included (``import_cluster -e cassandra_hosts=<cluster group> -e import_cluster_force=true``,
+the inventory, its logins included (``import_cluster -e cassandra_hosts=<cluster group> -e import_force=true``,
 ``--check --diff`` first), then commit the inventory
 when it is in a git work tree. ``topology`` ends the same way. Run again after an interruption, a node
 still leaving is waited for again, and one already decommissioned is only stopped and disabled. A failed
@@ -1203,7 +1205,7 @@ line of ``cassandra-env.sh``, or in a block of ``cassandra-env.sh`` (``if ... fi
 jar and config are readable and its port free). Its version (from the jar's name), directory, port, address and
 config file go to the variables, and the jar's sha256, read on the node, to ``cassandra_prometheus_exporter_checksum``.
 The config stays a file of the node (``cassandra_prometheus_exporter_config_file``, the role writes none): a node
-added later has none, and the report says so. ``-e import_cluster_carry_exporter_config=true`` carries its content
+added later has none, and the report says so. ``-e import_carry_exporter_config=true`` carries its content
 into ``cassandra_prometheus_exporter_config`` instead (its HTTPS and login settings into their variables, the
 passwords and an ``openTelemetry`` part with ``headers`` into ``secrets.yml``). The role's own
 ``<conf dir>/jmx_prometheus.yml`` is read back into its variables. An agent whose version the role does not take
@@ -1255,14 +1257,14 @@ Taking over an existing cluster
 
 ``import_cluster`` reads a running cluster into an inventory for the roles, without changing anything on the nodes.
 Give it any reachable nodes; it finds the others in the ring. It writes ``<cluster group>.yml`` (the hosts),
-``group_vars/`` and ``host_vars/`` to ``import_cluster_dir`` (default ``inventories``, the inventory of every cluster,
-see `Project setup`_), and a ``report.txt`` to ``import_cluster_report_dir`` (default ``reports/<cluster group>``
-next to ``import_cluster_dir``, out of the inventory) listing, per node, the Cassandra and Java versions, drift
+``group_vars/`` and ``host_vars/`` to ``import_dir`` (default ``inventories``, the inventory of every cluster,
+see `Project setup`_), and a ``report.txt`` to ``import_report_dir`` (default ``reports/<cluster group>``
+next to ``import_dir``, out of the inventory) listing, per node, the Cassandra and Java versions, drift
 between nodes and the hand edits no variable covers (``cassandra_config`` would revert them).
 
 In ``<cluster group>.yml`` every node is named by its hostname, the short one it reports, with ``ansible_host`` set to its
-address in the ring. ``import_cluster_host_names`` picks the name: ``hostname`` (default), ``fqdn`` or ``ip``;
-``import_cluster_set_ansible_host: false`` leaves ``ansible_host`` out, when the names resolve to the right address;
+address in the ring. ``import_host_names`` picks the name: ``hostname`` (default), ``fqdn`` or ``ip``;
+``import_set_ansible_host: false`` leaves ``ansible_host`` out, when the names resolve to the right address;
 a re-import without the option keeps it out of the hosts the inventory there reaches without it (the earlier choice).
 The nodes found in the ring are reached as the given one is: by the name the given node knows them by (``getent
 hosts`` there) when the controller can reach that name (it resolves it, or the ssh configuration gives it a
@@ -1380,12 +1382,18 @@ the hold (``cassandra_install_tools``, ``cassandra_install_jemalloc``, ``cassand
 ``cassandra_package_hold``); a dsbulk the role's way keeps its ``cassandra_dsbulk_version``. Remove a line to let the role take that part over,
 after a ``--check --diff``; a host rebuilt under the same name must lose them and ``cassandra_imported_host``
 (``add_node`` and ``replace_node`` refuse such a host with no Cassandra installed). The import also runs
-``cqlsh --version`` on each node: where cqlsh does not start, a TO DO says so with its last error line. With the
-Apache rpm on EL9 (``No module named 'cqlshlib'``: the package installs cqlshlib for python 3.6 only), remove
-``cassandra_cqlsh_python_manage: false`` from those nodes' ``host_vars`` and run ``create_cluster``: ``cassandra_install``
-links the package's cqlshlib into the Python cqlsh runs with (python3.11 and a wrapper only when that Python is out of
-the range cqlsh supports), and starts or restarts nothing on a running cluster; cqlsh then starts for root and the other
-users. The system java
+``cqlsh --version`` on each node, as the playbooks run it: ``cassandra_cqlsh_command`` (split into its program and
+arguments as the ``cassandra_cqlsh`` module splits it, e.g. ``env CQLSH_PYTHON=/opt/py/bin/python /usr/bin/cqlsh``,
+``$VAR`` and ``${VAR}`` in it expanded with the node's ``python3`` (else EL 8's ``/usr/libexec/platform-python``) as the
+module does, left as they are without one;
+run as root; ``cqlsh`` alone: ``/usr/local/bin`` first). Where it does not start (its last error line, not found, not
+executable, no answer in 30 seconds, no output), a TO DO step gives two ways out: a cqlsh installed elsewhere on the nodes (a virtualenv), set
+``cassandra_cqlsh_command`` to its full path in ``group_vars`` (a file only root can write: the playbooks run it as
+root); none, ``cassandra_cqlsh_python_manage: true`` in those nodes' ``host_vars`` (the import wrote ``false``), then
+``create_cluster --check --diff`` and ``create_cluster``. With the Apache rpm on EL9 (``No module named 'cqlshlib'``:
+the package installs cqlshlib for python 3.6 only), ``cassandra_install`` then links the package's cqlshlib into the
+Python cqlsh runs with (python3.11 and a wrapper only when that Python is out of the range cqlsh supports), and starts
+or restarts nothing on a running cluster; cqlsh then starts for root and the other users. The system java
 (``/usr/bin/java``, the one ``cassandra_install`` sets, resolved through its links) is compared with the binary the
 running Cassandra uses, by their Java homes (RHEL's Java 8 ``jre/bin/java`` and ``bin/java`` are one JDK): a node
 where it is another Java gets ``cassandra_java_set_default: false``, in ``group_vars`` of the cluster when every node
@@ -1447,7 +1455,7 @@ nothing on it; when those files do not hold them, the values in effect are carri
 
 A node of the ring the import could not read (down, unreachable, nodetool not found, or its running Java removed by
 an update since it started: restart it first) makes it fail: the roles would
-give it the group variables unchecked, and start it if it is down. ``-e import_cluster_allow_unread=true`` accepts it;
+give it the group variables unchecked, and start it if it is down. ``-e import_allow_unread=true`` accepts it;
 then keep it out of the runs (``--limit``) until an import reads it.
 
 A node that runs DataStax Enterprise or ScyllaDB (its process, its ``dse`` or ``scylla`` command and configuration
@@ -1511,7 +1519,7 @@ gets the same arguments from the role's files: worked out from the running JVM's
 arguments (``/proc/<pid>/cmdline``), what ``cassandra-env.sh`` adds by itself from what it finds in the options (the
 heap, the GC log, the GC threads) included, the last option of a name counting; an option set again later is left out.
 Not when Cassandra is not running or its files changed since it started, when JMX authenticates by JAAS, nor in the
-files ``import_cluster_keep_hand_edits`` keeps. An ``-javaagent`` added at the end stays a hand edit (moved, the JVM would
+files ``import_keep_hand_edits`` keeps. An ``-javaagent`` added at the end stays a hand edit (moved, the JVM would
 get it before the agent ``cassandra-env.sh`` adds). ``apply_config`` then rewrites those files in
 the role's layout (and restarts the nodes): the report says so (``MOVED``). The options the running JVM does not use
 (in the options file of another Java, set again later, ignored by its Java version) are listed under ``CLEANUP``.
@@ -1532,15 +1540,14 @@ does not matter), or give the file your own template, ``cassandra_config_templat
 ``{logback.xml: "{{ inventory_dir }}/templates/logback.xml.j2"}``), which ``cassandra_config`` and the self-check
 render instead of the role's (in its path the self-check resolves the inventory's variables and ``{{ inventory_dir }}``, no other magic
 variable); a re-import does not carry the end lines your template has itself. With
-``-e import_cluster_keep_hand_edits=true`` the files that have them are left as
+``-e import_keep_hand_edits=true`` the files that have them are left as
 they are on their node instead (``cassandra_config_keep_files`` in its ``host_vars``: ``cassandra_config`` neither
-writes nor compares them); or only the files named (``-e import_cluster_keep_hand_edits=logback.xml``); nodes added later get the role's files.
+writes nor compares them); or only the files named (``-e import_keep_hand_edits=logback.xml``); nodes added later get the role's files.
 
 The JVM options are imported as the running Java reads them: ``bin/cassandra`` passes on ``jvm-server.options`` and
 one ``jvm<N>-server.options`` (4.x: ``jvm8`` on Java 8, else ``jvm11``; 5.0: ``jvm11`` on Java 11, else ``jvm17``).
-The extra options of another one (a heap in ``jvm11-server.options`` on Java 17) are not imported: the report says so,
-and where the heap the JVM runs with comes from; that file is left as it is on its node (``cassandra_config_keep_files``),
-and ``-e import_cluster_keep_unread_jvm_options=true`` imports them all the same. An option worth a look (``-Xss``
+The extra options of another one (a heap in ``jvm11-server.options`` on Java 17) are imported as they are: the role
+writes that file the same, and the JVM keeps not reading it. An option worth a look (``-Xss``
 far from the usual 256k to 1m, ``-XX:-UseBiasedLocking`` on Java 17, an option set twice with another value: the
 JVM takes the last one, the other is never used) is imported as it is, under the report's TO REVIEW saying why and
 which variable to change; ``preflight`` warns the same way, and a Java change
@@ -1549,27 +1556,39 @@ which variable to change; ``preflight`` warns the same way, and a Java change
 ``cassandra_config_keep_files`` (it would be read as it is). Options given another way
 (``JVM_EXTRA_OPTS`` in ``cassandra_service_environment``) are not checked.
 
+Before anything changes, ``update_java`` and ``upgrade`` also follow what ``cassandra-env.sh`` will check with the
+options the new Java reads: the role's ``jvm-server.options`` and ``jvm<N>-server.options`` (or the node's own when
+``cassandra_config_keep_files`` keeps them, read on the node, with a kept ``cassandra-env.sh``), their GC and extra
+options, the heap. A move it would not start with is refused, naming the variable or kept file that holds the option
+and what to change: ``-Xmx`` or ``-Xms`` alone (it greps the letters: ``-XX:MaxHeapSize`` is no Xmx), ``-Xmn``
+without ``-Xmx``, ``-Xmn`` under G1 (a GC change with the series included), ``MAX_HEAP_SIZE`` without
+``HEAP_NEWSIZE`` under CMS, a Prometheus exporter agent in the new file while the role writes one. Nothing is checked
+when the node keeps its options file and its GC. A heap that changes with the options file (one the new file sets, or
+one the old file set that goes) is a line of ``update_java``'s plan under its node (``upgrade``: of the prepare
+phase), e.g. ``heap after the move: 24 GiB (cassandra_jvm11_extra_options: -Xms24G -Xmx24G); inventory now: 31 GiB
+(cassandra_heap_size)``; ``now: not known`` when the Java the node runs could not be read.
+
 Before writing anything, the import checks itself: for each node read, the files the roles would write with the
 imported variables (``cassandra.yaml``, ``cassandra-env.sh``, the JVM options, rackdc, logback, the JMX users' files,
 and the unit and ``medusa.ini`` when the roles manage them) are compared with the node's, setting by setting, as
 Cassandra, the JVM, bash and systemd read them; and the owner, group and mode ``cassandra_config`` would give the
 config and JMX files with the node's (one line per file that differs). The report starts with ``SELF-CHECK PASSED``, or with ``SELF-CHECK
 FAILED`` and the differences: the inventory is then marked ``# NOT VALID`` in its hosts file and the playbook fails
-(``-e import_cluster_strict=false`` writes the same files without failing, to inspect them: not safe to apply). The run
+(``-e import_strict=false`` writes the same files without failing, to inspect them: not safe to apply). The run
 ends with a short ``SELF-CHECK FAILED`` block: what differs, one line per setting or file with its nodes, grouped by
 what makes the self-check pass (hand edits no variable covers, a file of yours that still wins over the import, other
-differences, the nodes not read), then ``HOW TO MAKE IT PASS``: ``-e import_cluster_keep_hand_edits=true`` to keep the
+differences, the nodes not read), then ``HOW TO MAKE IT PASS``: ``-e import_keep_hand_edits=true`` to keep the
 hand edits (those files are then left as they are on their nodes), the value to set in your file (or the line to
-remove), ``-e import_cluster_allow_unread=true`` for the nodes not read, and for a change you want, a planned change:
-``-e import_cluster_strict=false`` only to write the inventory, then ``apply_config --check --diff`` before applying.
+remove), ``-e import_allow_unread=true`` for the nodes not read, and for a change you want, a planned change:
+``-e import_strict=false`` only to write the inventory, then ``apply_config --check --diff`` before applying.
 The report's ``SELF-CHECK`` section has the same, each node's differences under each line. The OS tuning, ``/etc/default/cassandra``, ``cassandra-topology.properties`` and the owner and mode of the unit
 and ``medusa.ini`` are not compared. An error while the inventory is written is not shown (the variables hold passwords):
-``-e import_cluster_debug=true`` shows it.
+``-e import_debug=true`` shows it.
 
 When a node has Cassandra Medusa and ``/etc/medusa/medusa.ini``, its version and settings are imported and
 ``cassandra_medusa_enabled`` is set, so nodes added later get the same Medusa, in the same virtualenv path
 (``cassandra_medusa_venv``), or without a virtualenv when the nodes' Medusa is in a system Python
-(``cassandra_medusa_venv: ""`` and that Python). Medusa is looked for at ``import_cluster_medusa_path`` when given (its
+(``cassandra_medusa_venv: ""`` and that Python). Medusa is looked for at ``import_medusa_path`` when given (its
 virtualenv or its ``medusa`` script, a full path on the nodes), else in the PATH, else in ``/opt/cassandra-medusa``,
 ``/opt/medusa`` or ``/usr/share/cassandra-medusa``, else in the PATH of a login shell of the ``cassandra`` user, then
 of root (``bash`` run as that user, without a terminal, stopped after 10 seconds), and last in any virtualenv under
@@ -1580,11 +1599,11 @@ is not run. A virtualenv found through a login profile is reported: the roles le
 Medusa installed by a package is not managed (the report says so).
 
 Passwords found in the configuration go to separate ``secrets.yml`` files, encrypted with ansible-vault as a whole
-with ``import_cluster_vault_password_file`` (and ``import_cluster_vault_id``) when given, else with Ansible's vault
+with ``import_vault_password_file`` (and ``import_vault_id``) when given, else with Ansible's vault
 password file (``vault_password_file`` in ``ansible.cfg``, see `Project setup`_, or ``ANSIBLE_VAULT_PASSWORD_FILE``).
 ``--vault-password-file`` and ``--vault-id`` on the command line, and ``vault_identity_list``, are not used: set the
 file in ``ansible.cfg`` instead. An executable password file is run, as Ansible does (a
-``<name>-client`` script with ``--vault-id <import_cluster_vault_id or default>``); an empty password is refused.
+``<name>-client`` script with ``--vault-id <import_vault_id or default>``); an empty password is refused.
 Without a password file, they are written in clear with mode ``0600``, and the report and the end of the run give the
 ``ansible-vault encrypt`` command to run; a vaulted ``secrets.yml`` already there is then never overwritten in clear
 (the import stops). A vaulted ``secrets.yml`` whose content has not changed is left as it is on a re-import.
@@ -1600,7 +1619,7 @@ a terminal, under ``--check`` or with ``-e cassandra_operation_confirm=false`` i
 to set them. No password is shown on the screen, in the report or in a log.
 
 Every file the import writes starts with ``# Written by community.cassandra.import_cluster for <cluster group>``. A
-cluster whose ``<cluster group>.yml`` is there already is refused unless ``import_cluster_force=true`` (the directory
+cluster whose ``<cluster group>.yml`` is there already is refused unless ``import_force=true`` (the directory
 itself may exist, with other clusters); then the import writes the files at its own paths (``<cluster group>.yml``,
 ``group_vars``/``host_vars`` ``main.yml`` and ``secrets.yml``), removes the files with its header for this cluster it
 no longer writes (the ``host_vars`` of a node gone from the ring; a vaulted one only when it decrypts with the
@@ -1610,7 +1629,7 @@ removed. The other clusters' files are neither removed nor written over: a host 
 already, a group your own inventory files there give hosts, children or vars, another cluster whose name makes the
 same group (``Prod A`` and ``prod-a``), or a hosts file of an earlier import into a directory of its own
 (``hosts.yml`` at the top, or any in a subdirectory: Ansible reads those too) stops the import, before anything is written
-(``import_cluster_host_names: fqdn`` or ``ip`` for host names). To bring such a directory in, import the cluster again
+(``import_host_names: fqdn`` or ``ip`` for host names). To bring such a directory in, import the cluster again
 with the defaults after moving the old directory out of ``inventories``. A cluster whose group would be ``all`` or
 ``ungrouped`` (cluster name ``All``) cannot be imported: Ansible takes those groups on its own. A file from an
 earlier release, whose first line names no cluster, is this cluster's when this cluster's hosts file alone names its
@@ -1621,7 +1640,7 @@ out as the import writes it (``---``, blank lines, then one of its block titles 
 ``# Cluster & topology``: an import from before that line) is an earlier import's too: this cluster's when its hosts
 file there, or else the one it writes, names its group or host; replaced, or removed when the import no longer writes
 it (a node named by its address then, by its hostname now), each kept as a backup. Files of an earlier import that no hosts file says are this cluster's stop the import;
-``-e import_cluster_adopt=true`` takes them over (the ones at the paths it writes, or in its groups' and hosts'
+``-e import_adopt=true`` takes them over (the ones at the paths it writes, or in its groups' and hosts'
 dirs), each file replaced kept as ``<file>.<date>~``. Never a file whose first line names another cluster. The report lists the files removed, the files
 kept (down to ``group_vars/<group>/``), and the files replaced at its paths that did not have its header, each kept
 as a ``<file>.<timestamp>~`` backup. A file of the import you edit by hand is replaced by the next import: put your own
@@ -1651,7 +1670,7 @@ hand edits, 1 file left as is``; ``3 entries to review: ...`` when there is noth
 self-check (``passed``, or ``not passed yet: TO DO step 2``), the files written and where the report is; then:
 
 - ``TO DO``: what to do before using the inventory, one numbered step each, with why, the command to copy (paths
-  from the current directory; the import command again with ``-e import_cluster_force=true``) and what to check
+  from the current directory; the import command again with ``-e import_force=true``) and what to check
   after: nodes not read (what importing without them means), settings their Cassandra rejects, a self-check that failed (its ``SELF-CHECK``
   and ``HOW TO MAKE IT PASS`` right under it), your files that still win over the import, passwords written in clear,
   files of an earlier import of unknown origin, the CQL login;
@@ -1661,7 +1680,7 @@ self-check (``passed``, or ``not passed yet: TO DO step 2``), the files written 
   Cassandra's unit, Medusa installed without its ``medusa.ini``), the Java options worth a look, your values the nodes
   do not have, what could not be compared;
 - ``HAND EDITS``: the lines changed by hand that ``apply_config`` would put back (keep a file with
-  ``-e import_cluster_keep_hand_edits=<its file>``), the ones moved to variables;
+  ``-e import_keep_hand_edits=<its file>``), the ones moved to variables;
 - ``DIFFERENT ON SOME NODES``: a table per setting, every value with its nodes, where each is set, and how to give
   every node one value: the files to edit, what then happens on the nodes (restart or not) and the command to check it
   first;
@@ -1689,7 +1708,7 @@ because of the file's name (``jmxremote.password: 0400``). The run ends with ``r
 kept by hand as its line, their steps in ``report.txt``) and where the report is; nothing else is printed under the
 ``community.cassandra.ops`` callback, which draws each section's rule.
 
-``-e import_cluster_report_shareable=true`` also writes ``report.shareable.txt`` next to the report, a copy of
+The import also writes ``report.shareable.txt`` next to the report (``-e import_report_shareable=false`` turns it off), a copy of
 ``report.txt`` and ``report.details.txt`` in one file to send to someone who helps (a colleague, a forum, an issue):
 the same sections, hand edits and their lines,
 versions and the import's own notes, with the node names as ``n1``, ``n2``... (in the order of their names, whatever
@@ -1701,7 +1720,7 @@ outside the stock Cassandra and OS directories (``/etc/cassandra``, ``/var/lib/c
 hosts, Medusa's bucket, prefix and fqdn values and the user names (``bucket1``, ``user1``); a name inside a file
 name, a stock path or a compound word too (``/etc/cassandra/ssl/n1.jks``, ``n1-old``); secrets stay masked, every
 line masked again. Common words (``cassandra``, ``data``, a rack ``a``, a cluster named ``cassandra``) are kept; a short host name that is not a
-node's may remain: read the copy before sharing it. Its key (``n1 = db-paris-01``...) is ``report.shareable.map``,
+node's may remain: read the copy before sharing it. Its key (``n1 = db-paris-01``...) is ``report.shareable.key.txt``,
 mode ``0600`` before anything is written in it, for you only, never in the copy; under ``--check`` only the copy is
 written.
 
@@ -1721,7 +1740,7 @@ node first, a version only upgraded to the newest (``upgrade``, ``update_java``)
 playbooks (``cassandra_jmx_password``...) which the nodes must accept first, a heap sized for the machine, a data
 directory moved by hand, the node stopped; the seeds go with ``change_seeds``, live), and the command that shows it
 before it is done (``apply_config --check --diff``, with ``--limit`` to the nodes that change when there are 10 at
-most, the whole cluster when a file of yours is named: it reaches other nodes too). Last, the files the nodes keep as edited by hand (``import_cluster_keep_hand_edits``): each edit with the
+most, the whole cluster when a file of yours is named: it reaches other nodes too). Last, the files the nodes keep as edited by hand (``import_keep_hand_edits``): each edit with the
 variable and the value that would carry it (or none), and how to give the file back to the roles (the variable in
 ``group_vars/<cluster group>/`` when every node has the same edits, else in the host_vars of these nodes, taken out of ``cassandra_config_keep_files``: ``apply_config`` then writes the file and
 restarts the node). Once the nodes have the new
@@ -1739,8 +1758,8 @@ without --check (2 new files; changed: ...; removed: ...)``); a re-import that w
 
 .. code-block:: console
 
-    $ ansible-playbook community.cassandra.import_cluster -e cassandra_hosts=orders -e import_cluster_force=true --check --diff
-    $ ansible-playbook community.cassandra.import_cluster -e cassandra_hosts=orders -e import_cluster_force=true
+    $ ansible-playbook community.cassandra.import_cluster -e cassandra_hosts=orders -e import_force=true --check --diff
+    $ ansible-playbook community.cassandra.import_cluster -e cassandra_hosts=orders -e import_force=true
 
 Then check what the roles would change:
 

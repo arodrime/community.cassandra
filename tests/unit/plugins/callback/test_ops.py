@@ -1257,7 +1257,7 @@ def test_a_failed_self_check_is_red_on_its_verdict_line_only():
     block = ["SELF-CHECK FAILED  my_cluster  the inventory would change 1 setting on 1 node", "  (written for inspection"
              " only)", "", "  Hand edits no variable covers (cassandra_config would revert them):",
              "    logback.xml   <logger>   hand edit on node1", "", "HOW TO MAKE IT PASS",
-             "  hand edits   to keep them as they are: import again with -e import_cluster_keep_hand_edits=true", "",
+             "  hand edits   to keep them as they are: import again with -e import_keep_hand_edits=true", "",
              "Details: reports/my_cluster/report.txt, section SELF-CHECK"]
     callback.v2_runner_on_failed(_Result(_Task(run_once=True), "localhost", "\n".join(block)))
     assert [line for line, dummy in said] == block  # no rule, the blank lines blank

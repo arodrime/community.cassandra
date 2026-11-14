@@ -334,14 +334,42 @@
         name: community.cassandra.cassandra_install
         tasks_from: java_check.yml
 
-    # another series reads its options file as it is when cassandra_config keeps it
+    # the Java the node runs (by its process, as update_java reads it): what its options file and GC are now (an
+    # upgrade in the same series may change the Java too)
+    - name: Find the running Cassandra and its java
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+        tasks_from: jvm_started.yml
+
+    - name: Read the Java version the running Cassandra uses
+      ansible.builtin.command:
+        argv: ["/proc/{{ cassandra_jvm.pid }}/exe", -XshowSettings:properties, -version]  # even replaced since
+      register: cassandra_upgrade_java_spec
+      changed_when: false
+      failed_when: false
+      check_mode: false  # read-only
+      when: cassandra_jvm.pid is defined
+
+    # the options file the target reads is the role's (another series reads it as it is when cassandra_config keeps
+    # it), and starts the JVM (java_options_kept.yml; nothing to check when the file and the GC stay)
     - name: The target reads an options file the role writes
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_install
         tasks_from: java_options_kept.yml
       vars:
-        _cassandra_java_options_now: ""
-      when: cassandra_upgrade_from_series != cassandra_version
+        _cassandra_java_now_series: "{{ cassandra_upgrade_from_series }}"
+        _cassandra_java_move: the upgrade
+        # '' when not running or not read: everything the target reads is checked
+        _cassandra_java_now_major: >-
+          {%- set spec = (cassandra_upgrade_java_spec | default({})).stderr | default('')
+                         | regex_findall('java[.]specification[.]version = ([0-9.]+)') | first | default('') -%}
+          {{ spec.split('.')[1] if spec.startswith('1.') else spec }}
+        # the file it reads now, for a kept one (another series: none is the same file; the same series, its Java not
+        # read: the inventory's, cassandra_java_version, which a patch upgrade keeps)
+        _cassandra_java_options_now: >-
+          {{ '' if cassandra_upgrade_from_series != cassandra_version
+             else cassandra_version | community.cassandra.cassandra_jvm_options_file(_cassandra_java_now_major
+                                                                                     or cassandra_java_version) }}
 
     - name: One version before the upgrade
       ansible.builtin.assert:
@@ -586,6 +614,14 @@
                 - "  - backups are paused (they would copy the snapshot and the new files twice),"
                 - "  - repairs are paused (streaming between versions is not supported),"
                 - "  - the schema is frozen (no CREATE/ALTER/DROP until the upgrade is over)."
+          # (java_options_kept.yml: the heap a node gets after the move when its new options file gives another)
+          blocks: >-
+            {%- set l = [] -%}
+            {%- for h in ansible_play_hosts if hostvars[h]._cassandra_java_heap_lines | default([]) -%}
+            {%-   set _ = l.append({'title': h | community.cassandra.cassandra_screen_title(hostvars[h]._cassandra_preflight | default({})),
+                                    'lines': hostvars[h]._cassandra_java_heap_lines}) -%}
+            {%- endfor -%}
+            {{ l }}
           after:
             - "prepare now snapshots every node (pre-upgrade-{{ cassandra_upgrade_from }}) and copies its config."
 

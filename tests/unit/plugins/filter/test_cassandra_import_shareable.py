@@ -1,11 +1,13 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-# The copy of an import's report to share (import_cluster_report_shareable): no node name, cluster, address, domain
+# The copy of an import's report to share (import_report_shareable): no node name, cluster, address, domain
 # or path of the site left in it, secrets masked; the sections, hand edits, versions and the import's notes kept;
 # the key (n1 = the real name) apart.
 
 import re
+
+import pytest
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import cassandra_import_report
@@ -339,3 +341,43 @@ def test_audit_2026_11_06_a_host_of_the_sites_domain_masked_whole():
     text = shared_text(["  + seed: a1.qxbank.internal", "chrony: server ntp1.qxbank.internal iburst"],
                        [{"name": "a1"}])
     assert "ntp1" not in text and "qxbank" not in text
+
+
+def test_a_secret_s_variable_set_empty_is_shown_empty():
+    # (owner's report) Medusa with a password file: cassandra_medusa_nodetool_password '' (no secret, in main.yml),
+    # shown as '' in the copy too, not as **** (which said a secret was there); a value there still masked
+    lines = ["    cassandra_medusa_nodetool_password:   ''                 all (2 nodes)",
+             "    cassandra_medusa_cql_password:        (in secrets.yml)   all (2 nodes)",
+             "    cassandra.yaml: password: hunter2"]
+    text = cassandra_import_shareable(lines, layout_of([{"name": "a1"}]))["text"][2:]
+    assert text[:2] == lines[:2]
+    assert "hunter2" not in text[2]
+
+
+ZORGLUB = {"cluster_group": "zorglub_prod", "cluster_name": "Zorglub Prod",
+           "nodes": [{"name": "zorglub-db1", "dc": "paris", "rack": "baie7", "hostname": "zorglub-db1.acme.example",
+                      "vars": {"cassandra_medusa_bucket_name": "billing_prod", "cassandra_cql_username": "orders_admin"}},
+                     {"name": "10.9.8.7", "dc": "paris", "rack": "baie7"}, {"name": "s1", "dc": "paris", "rack": "baie7"},
+                     {"name": "ip-10-2-3-4.ec2.internal", "dc": "paris"}],
+           "hosts": {"zorglub_prod": {"children": {"zorglub_prod_paris": {"hosts": {"zorglub-db1": {}}},
+                                                   "zorglub_prod_billing": {"hosts": {"s1": {}}}}}}}
+# what the site's names are made of: none may be left in the copy
+SITE = re.compile(r"(?i)zorglub|paris|baie7|acme|billing|orders|payroll|10\.\d|10-\d|\bs1\b|db1\b|10\.9\.8\.7")
+
+
+@pytest.mark.parametrize("line", [
+    # (round-2 and round-3 audits) lines with site names in them that the masking replaces
+    "    cassandra_log_levels.com.zorglub.auth.Kwyjibo:   DEBUG   all (1 node)",
+    "  -Dcom.zorglub.audit.enabled=true (cassandra_jvm_extra_options)",
+    "  -Dcom.zorglub-db1.audit=true -Dzorglub_prod.flag=1 -Dparis.x=1 -Dbaie7.rack=1 -Dfr.acmecorp.mode=x",
+    "  -XX:+zorglubflag -DZORGLUB_LICENSE=1",
+    "    cassandra_service_environment.ZORGLUB_LICENSE:   on   all",
+    "    cassandra_config_file_permissions.zorglub-db1_hosts:   0400   all (1 node)",
+    "  + data_file_directories: /srv/cassandra_zorglub/data",
+    "  cassandra_zorglub_prod is a group of yours; cassandra_payroll; group_vars/cassandra_payroll/main.yml",
+    "  -Dxx.10.4.5.6.flag -Dacme-db1.example.com",
+    "  -Djava.rmi.server.hostname=db7.acme.example -Djavax.net.ssl.keyStore=/srv/acme/ks.jks",
+])
+def test_no_site_name_left_in_a_name(line):
+    text = cassandra_import_shareable([line], ZORGLUB)["text"][2:]
+    assert not SITE.search(text[0]), text[0]

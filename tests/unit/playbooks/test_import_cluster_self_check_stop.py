@@ -92,8 +92,8 @@ def test_the_stop_under_the_ops_callback(tmp_path, check):
                  "  Not read, so not checked: node4 (unreachable)", "HOW TO MAKE IT PASS",
                  "Details: reports/my_cluster/report.txt, section SELF-CHECK"):
         assert line in lines, out
-    assert "-e import_cluster_keep_hand_edits=true" in text and "-e import_cluster_allow_unread=true" in text
-    assert "-e import_cluster_strict=false" in text
+    assert "-e import_keep_hand_edits=true" in text and "-e import_allow_unread=true" in text
+    assert "-e import_strict=false" in text
     assert "ansible-playbook community.cassandra.apply_config --check --diff" in text
     # blank lines between the groups, no rule, no task dump, no secret
     assert lines.count("") >= 3 and not [line for line in lines if re.match(r"^[-=]{4,}$", line)]
@@ -135,4 +135,4 @@ def test_the_stop_is_one_text_of_the_filter():
                   "inventory=_report_args.inventory", "hosts=_report_args.hosts", "cwd=_report_args.cwd"):
         assert given in msg
     assert STOP["vars"]["cassandra_output"] is True and STOP["run_once"] is True
-    assert "import_cluster_strict | default(true) | bool" in STOP["when"]
+    assert "import_strict | default(true) | bool" in STOP["when"]

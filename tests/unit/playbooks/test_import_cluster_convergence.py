@@ -64,7 +64,7 @@ def run(tmp_path, *extra, **kwargs):
 
 @pytest.mark.parametrize("check", [False, True])
 def test_the_report_and_the_end_of_the_run(tmp_path, check):
-    rc, out = run(tmp_path, *(["--check"] if check else []))
+    rc, out = run(tmp_path, "-e", "import_report_shareable=false", *(["--check"] if check else []))
     assert rc == 0, out
     lines = out.split("\n")
     head = next(i for i, line in enumerate(lines) if line.startswith("IMPORT big"))
@@ -81,7 +81,7 @@ def test_the_report_and_the_end_of_the_run(tmp_path, check):
     assert "    SETTINGS THAT DIFFER — the safest change first, then the fewest nodes" in report
     assert "    KEPT BY HAND " in report
     assert not (tmp_path / "reports" / "big" / ("report.txt" if check else "report.check.txt")).exists()
-    assert not list((tmp_path / "reports" / "big").glob("*shareable*"))  # (only when asked)
+    assert not list((tmp_path / "reports" / "big").glob("*shareable*"))  # (turned off)
     for secret in SECRETS:
         assert secret not in out and secret not in report
     assert "TASK [" not in out and "fatal:" not in out
@@ -95,10 +95,11 @@ def test_the_convergence_on_a_failed_self_check(tmp_path):
 
 @pytest.mark.parametrize("check", [False, True])
 def test_the_shareable_copy(tmp_path, check):
-    rc, out = run(tmp_path, "-e", "import_cluster_report_shareable=true", *(["--check"] if check else []))
+    # written by default (import_report_shareable: true)
+    rc, out = run(tmp_path, *(["--check"] if check else []))
     assert rc == 0, out
     stem = tmp_path / "reports" / "big" / ("report.check" if check else "report")
-    copy, key = stem.with_name(stem.name + ".shareable.txt"), stem.with_name(stem.name + ".shareable.map")
+    copy, key = stem.with_name(stem.name + ".shareable.txt"), stem.with_name(stem.name + ".shareable.key.txt")
     assert oct(copy.stat().st_mode & 0o777) == "0o644"
     if check:  # (the key of a copy not written: none)
         assert not key.exists()
@@ -118,7 +119,7 @@ def test_the_tasks_pass_the_section_on():
     assert "_convergence_screen" not in WRITE["vars"]
     shareable = next(t for t in WRITE["tasks"] if t["name"] == "Write the shareable copy of the report")
     assert [i["mode"] for i in shareable["loop"]] == ["0644", "0600"]
-    assert "import_cluster_report_shareable | default(false) | bool" in shareable["when"]
+    assert "import_report_shareable | default(true) | bool" in shareable["when"]
     # the key made 0600 before anything is written in it (no window where it is readable by others)
     names = [t["name"] for t in WRITE["tasks"]]
     touch = WRITE["tasks"][names.index("Make the key of the shareable copy readable by its owner only")]
