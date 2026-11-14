@@ -87,9 +87,9 @@ WORK_OUT_VARS = task("Work out the series and the conf dir")["vars"]
     # set up by the roles (a cluster they built): nothing left aside
     ({"own_repo": "yes", "own_os": "yes", "own_cqlsh": "yes", "own_unit": "yes"}, {}),
     # set up by hand: the roles leave each part as it is on this node (but the OS settings: imported, rc10)
-    ({}, {"cassandra_repository_manage": False, "cassandra_cqlsh_python_manage": False,
-          "cassandra_service_unit_manage": False}),
-    ({"own_os": "yes", "own_repo": "yes"}, {"cassandra_cqlsh_python_manage": False, "cassandra_service_unit_manage": False}),
+    # (the unit: compared by the self-check, or the package's script imported as the start method)
+    ({}, {"cassandra_repository_manage": False, "cassandra_cqlsh_python_manage": False}),
+    ({"own_os": "yes", "own_repo": "yes"}, {"cassandra_cqlsh_python_manage": False}),
 ])
 def test_what_the_roles_leave_as_it_is(marks, keep):
     assert render(WORK_OUT["import_cluster_keep"], _kv=marks) == keep
@@ -197,7 +197,7 @@ def test_os_baseline_is_the_roles_defaults_not_the_inventory():
     assert loaded["cassandra_linux_timesync"] is True  # the role's, not the play's
     assert "{{" not in str(wanted).replace("{{ _d.", "").replace("{{ _cfg.", "").replace(
         "{{ 'cassandra_", "").replace("{{ ansible_facts['os_family']", "").replace(
-        "{{ import_cluster_own_os", "")  # nothing else read from the play's vars (the node's own facts aside)
+        "{{ import_cluster_own_os", "").replace("{{ import_cluster_own_unit", "")  # nothing else read from the play's vars (the node's own facts aside)
 
 
 @pytest.mark.parametrize("kv, from_file", [
@@ -234,3 +234,35 @@ def test_install_method_of_a_package_installed_from_a_file(from_file, read, pkg)
     hv = {"import_cluster_package": "5.0.7-1", "import_cluster_package_from_file": from_file}
     out = node(hv, read=read)["vars"]
     assert dict((k, v) for k, v in out.items() if k in ("cassandra_package_version", "cassandra_install_method")) == pkg
+
+
+# --- rc10: the package's init script as installed is a start method (cassandra_service_start) ---
+
+SYSV = {"file": "/etc/rc.d/init.d/cassandra", "script": "/etc/rc.d/init.d/cassandra", "restart": "no", "boot": "enabled"}
+
+
+def test_package_script_as_installed_is_imported_as_the_start_method():
+    n = node({"import_cluster_unit": dict(SYSV, pkg_script="cassandra")})
+    assert n["vars"]["cassandra_service_start"] == "package_script"
+    assert "cassandra_service_unit_manage" not in n["keep"]
+    assert ("the init script of package cassandra, as installed: cassandra_service_start: package_script, new nodes"
+            " too") in n["notes"][1]
+    # modified since installed, or a script of no package: no start method imported, nothing kept by itself (the
+    # self-check compares, and stops with the way out)
+    for state in ("modified", ""):
+        n = node({"import_cluster_unit": dict(SYSV, pkg_script=state)})
+        assert "cassandra_service_start" not in n["vars"] and "cassandra_service_unit_manage" not in n["keep"]
+
+
+def test_unit_facts_read_the_script_and_its_package():
+    unit = WORK_OUT["import_cluster_unit"]
+    kv = {"unit_SourcePath": "/etc/rc.d/init.d/cassandra", "unit_FragmentPath": "/run/systemd/generator.late/cassandra.service",
+          "pkg_script": "cassandra"}
+    assert render(str(unit["script"]), _kv=kv) == "/etc/rc.d/init.d/cassandra"
+    assert render(str(unit["pkg_script"]), _kv=kv) == "cassandra"
+    assert render(str(unit["pkg_script"]), _kv={}) == ""
+
+
+def test_read_script_verifies_the_init_script():
+    script = task("Read the running Cassandra (conf dir, Cassandra and Java versions)")["ansible.builtin.shell"]
+    assert 'rpm -V' in script and 'dpkg --verify' in script and 'echo "pkg_script=modified"' in script

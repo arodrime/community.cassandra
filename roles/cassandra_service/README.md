@@ -46,6 +46,12 @@ Role Variables
   have no effect on it, and the playbooks drain the node with `nodetool`
   before stopping it (such a unit may not drain). Set on the nodes started
   another way. Default `true`.
+* `cassandra_service_start`: how Cassandra is started. `unit` (default): the
+  role's systemd unit. `package_script`: the init script of the Cassandra
+  package (SysV, through systemd's generator); the role writes no unit and
+  removes none, it manages the state and boot setting only, and the
+  playbooks drain the node before stopping it. `import_cluster` sets it on
+  the nodes started by the package's script as installed.
 * `cassandra_service_restart`: systemd `Restart=`. Default `no`; with
   `on-failure`, at most `cassandra_service_start_limit_burst` (3) restarts
   per `cassandra_service_start_limit_interval` (1800 s).

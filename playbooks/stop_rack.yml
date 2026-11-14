@@ -234,7 +234,8 @@
         public: true
       loop: [cassandra_service, cassandra_operation]
 
-    # Not left to the unit: one kept as found (cassandra_service_unit_manage: false) may not drain.
+    # Not left to the unit: one kept as found (cassandra_service_unit_manage: false), or the package's init script
+    # (cassandra_service_start: package_script), may not drain.
     # Best effort, like the unit's: a node that does not answer (down, JMX) is stopped all the
     # same (SIGTERM runs Cassandra's own drain on shutdown), never left drained and running.
     - name: Drain the node
@@ -245,7 +246,9 @@
       failed_when: false
       ignore_errors: true  # the timeout below
       timeout: "{{ cassandra_service_drain_timeout | int }}"
-      when: cassandra_operation_drain | bool or not cassandra_service_unit_manage | bool
+      when: >-
+        cassandra_operation_drain | bool or not cassandra_service_unit_manage | bool
+        or cassandra_service_start | default('unit') != 'unit'
 
     - name: Say the drain did not work
       ansible.builtin.debug:

@@ -39,8 +39,10 @@
       failed_when: false
       ignore_errors: true  # the timeout below
       timeout: "{{ cassandra_service_drain_timeout | int }}"
-      # a kept unit may not drain
-      when: cassandra_operation_drain | bool or not hostvars[item].cassandra_service_unit_manage | default(true) | bool
+      # a kept unit, or the package's init script, may not drain
+      when: >-
+        cassandra_operation_drain | bool or not hostvars[item].cassandra_service_unit_manage | default(true) | bool
+        or hostvars[item].cassandra_service_start | default('unit') != 'unit'
 
     # none answered (JMX not reached, its login refused): nothing was drained, nothing is restarted
     - name: Stop when no node of the rack answered

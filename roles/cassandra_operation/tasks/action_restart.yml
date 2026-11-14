@@ -13,7 +13,10 @@
 
 - name: Drain the node
   ansible.builtin.import_tasks: drain.yml
-  when: cassandra_operation_drain | bool or not cassandra_service_unit_manage | bool  # a kept unit may not drain
+  # a kept unit, or the package's init script, may not drain
+  when: >-
+    cassandra_operation_drain | bool or not cassandra_service_unit_manage | bool
+    or cassandra_service_start | default('unit') != 'unit'
   vars:
     _cassandra_service_drain_then: restarted
 

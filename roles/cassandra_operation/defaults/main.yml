@@ -8,6 +8,7 @@ cassandra_service_state: started
 cassandra_service_restart_on_change: false
 cassandra_service_allow_new_seed: false
 cassandra_service_unit_manage: true
+cassandra_service_start: unit  # or package_script (the init script of the package)
 cassandra_service_environment: {}  # extra Environment= lines, e.g. {JAVA_HOME: /usr/lib/jvm/java-17}
 cassandra_service_drain_timeout: 120  # seconds, below cassandra_service_timeout_stop
 cassandra_service_wait_for_normal: true

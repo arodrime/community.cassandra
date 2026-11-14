@@ -1288,3 +1288,13 @@ def test_self_check_stop_os_finest_switch_on_its_nodes():
     assert stop([node(1)], mixed, width=400)[0] == (
         "SELF-CHECK FAILED  my_cluster  the inventory would change 1 setting on 1 node; cassandra_linux would change 1"
         " OS setting on 1 node (written for inspection only, marked NOT VALID)")
+
+
+def test_self_check_stop_unit_way_out():
+    script = ("cassandra.service: the node starts Cassandra with the init script /etc/rc.d/init.d/cassandra (modified"
+              " since its package installed it), the roles would start it with their systemd unit from its next restart")
+    lines = stop([node(1), node(2)], {"node1": {"differences": [script]}}, width=400)
+    assert ("  unit                to keep how node1 (1 node) starts Cassandra (its own unit or init script):"
+            " cassandra_service_unit_manage: false in a file of yours, host_vars/<node>/local.yml of each of them,"
+            " then import again. To have the unit of the roles instead (from the next restart of each node): a"
+            " planned change, below") in lines

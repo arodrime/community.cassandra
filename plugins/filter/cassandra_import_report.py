@@ -732,6 +732,18 @@ def _hints(layout, items, read, unread, who, error="", report=False, report_file
     os_items = [i for i in items if i["kind"] == _OS]
     if os_items:
         hints.append(("OS settings", _os_hint(layout, os_items, read, who)))
+    unit_items = [i for i in items if i["file"] == "cassandra.service" and i["kind"] != _HAND]
+    if unit_items:
+        names = []
+        for i in unit_items:
+            names += [n for n in _item_nodes(i) if n not in names]
+        where = "group_vars/%s/local.yml" % layout["cluster_group"] if set(names) >= set(n["name"] for n in read) \
+            else "host_vars/<node>/local.yml of each of them"
+        verb = "starts" if len(names) == 1 else "start"
+        hints.append(("unit", "to keep how %s %s Cassandra (its own unit or init script): %s in a file of yours, %s,"
+                      " then import again. To have the unit of the roles instead (from the next restart of each node):"
+                      " a planned change, below"
+                      % (who(names), verb, unbreakable("cassandra_service_unit_manage: false"), where)))
     if unread and not read:  # (no node checked: never valid, import_allow_unread or not)
         hints.append(("not read", "no node could be read: start Cassandra or fix the access on one of them at least,"
                       " then import again"))

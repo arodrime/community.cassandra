@@ -501,6 +501,24 @@
         done
         # the unit of an init script is "generated": is-enabled asks the init system
         echo "unit_IsEnabled=$(systemctl is-enabled cassandra 2>/dev/null)"
+        # an init script: the package it comes from, as installed (rpm -V, dpkg --verify: not listed), else modified
+        src=$(systemctl show cassandra -p SourcePath --value 2>/dev/null)
+        if [ -n "$src" ] && [ -f "$src" ]; then
+          pkg=
+          # (not owned by any package: rpm -qf says so, rc 1)
+          if command -v rpm >/dev/null 2>&1 && out=$(rpm -qf --qf '%{NAME}\n' "$src" 2>/dev/null); then
+            pkg=$(echo "$out" | head -1) verify="rpm -V"
+          elif command -v dpkg >/dev/null 2>&1 && out=$(dpkg -S "$src" 2>/dev/null); then
+            pkg=$(echo "$out" | grep -v '^diversion' | head -1 | cut -d: -f1) verify="dpkg --verify"
+          fi
+          if [ -n "$pkg" ]; then
+            if $verify "$pkg" 2>/dev/null | awk '{print $NF}' | grep -qxF "$src"; then
+              echo "pkg_script=modified"
+            else
+              echo "pkg_script=$pkg"
+            fi
+          fi
+        fi
         # (a java replaced since it started, e.g. a JDK update: "<path> (deleted)", still run from /proc unless its
         # directory went too)
         bin=$(readlink /proc/$pid/exe | sed 's/ (deleted)$//')
@@ -754,10 +772,11 @@
         # values imported instead, cassandra_os_import)
         import_cluster_keep: >-
           {{ {} | combine({'cassandra_repository_manage': false} if _kv.own_repo is not defined else {},
-                          {'cassandra_cqlsh_python_manage': false} if _kv.own_cqlsh is not defined else {},
-                          {'cassandra_service_unit_manage': false} if _kv.own_unit is not defined else {}) }}
+                          {'cassandra_cqlsh_python_manage': false} if _kv.own_cqlsh is not defined else {}) }}
         # cassandra_linux's limits file with its mark: a node the roles set up
         import_cluster_own_os: "{{ _kv.own_os is defined }}"
+        # the unit of cassandra_service (its mark)
+        import_cluster_own_unit: "{{ _kv.own_unit is defined }}"
         import_cluster_unit:
           file: "{{ _kv.unit_SourcePath | default('') or _kv.unit_FragmentPath | default('') }}"
           restart: "{{ _kv.unit_Restart | default('') }}"
@@ -767,6 +786,9 @@
           # everything else the unit sets (e.g. LOCAL_JMX=no), and the files it reads variables from
           env: "{{ _kv.unit_Environment | default('') | community.cassandra.cassandra_unit_environment }}"
           env_files: "{{ _kv.unit_EnvironmentFiles | default('') }}"
+          # an init script (SysV): its path, the package it comes from as installed, or modified ('': not a package's)
+          script: "{{ _kv.unit_SourcePath | default('') }}"
+          pkg_script: "{{ _kv.pkg_script | default('') }}"
       vars:
         _kv: "{{ dict(import_cluster_running.stdout_lines | map('split', '=', 1)) }}"
         _pairs: "{{ _kv | dict2items | selectattr('key', 'match', 'installed_') | list }}"
@@ -809,7 +831,7 @@
              + ([['repo', 'content', _repo | zip(_repo) | list]] if import_cluster_repo_files | default([]) | length > 0 else [])
              + ([['unit', 'content', [['cassandra.service', import_cluster_unit.file]]]]
                 if _supported | bool and 'cassandra_service_unit_manage' not in import_cluster_keep
-                   and import_cluster_unit.file != '' else []) }}
+                   and import_cluster_unit.file != '' and import_cluster_unit.script | default('') == '' else []) }}
 
     - name: Keep what was read
       ansible.builtin.set_fact:
@@ -1495,7 +1517,7 @@
             - "{{ _cfg.cassandra_jmx_port | default(cassandra_jmx_port | default(7199)) }}/tcp"
           # the node has cassandra_linux's own files, or cassandra_service's unit: it keeps their values
           own: "{{ import_cluster_own_os | default(false) }}"
-          own_unit: "{{ 'cassandra_service_unit_manage' not in import_cluster_keep | default({}) }}"
+          own_unit: "{{ import_cluster_own_unit | default(false) }}"
       when: import_cluster_os_found is not skipped
 
 - name: Write the inventory

@@ -138,3 +138,13 @@ def test_chrony_servers():
     stop = task("Refuse time servers for another time sync than chrony", "timesync.yml")
     assert when(stop, _cassandra_timesync_service="systemd-timesyncd")
     assert not when(stop, _cassandra_timesync_service="chronyd")
+
+
+def test_service_start_method():
+    root = os.path.join(ROLE, "..", "cassandra_service")
+    with open(os.path.join(root, "defaults", "main.yml")) as f:
+        assert yaml.safe_load(f)["cassandra_service_start"] == "unit"
+    with open(os.path.join(root, "vars", "main.yml")) as f:
+        own = yaml.safe_load(f)["_cassandra_service_own_unit"]
+    for manage, start, written in ((True, "unit", True), (True, "package_script", False), (False, "unit", False)):
+        assert render(own, cassandra_service_unit_manage=manage, cassandra_service_start=start) is written

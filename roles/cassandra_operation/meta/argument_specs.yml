@@ -353,6 +353,12 @@ argument_specs:
         default: true
         description:
           - Read by these task files too, with the same default (see the C(cassandra_service) role).
+      cassandra_service_start:
+        type: str
+        default: unit
+        choices: [unit, package_script]
+        description:
+          - Read by these task files too, with the same default (see the C(cassandra_service) role).
       cassandra_service_environment:
         type: dict
         default: {}

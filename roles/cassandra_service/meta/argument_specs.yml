@@ -61,6 +61,15 @@ argument_specs:
         description:
           - V(false) keeps the node's own unit (or the package's init script) instead of writing the role's; the
             unit variables below then have no effect on it. Set on the nodes started another way.
+      cassandra_service_start:
+        type: str
+        default: unit
+        choices: [unit, package_script]
+        description:
+          - How Cassandra is started. V(unit), the role's systemd unit. V(package_script), the Cassandra package's
+            init script (SysV, through systemd's generator); the role writes no unit and removes none, it manages the
+            state and the boot setting only; the unit variables below have no effect on it (C(import_cluster) sets it
+            on the nodes started by the package's unmodified script).
       cassandra_service_restart:
         type: str
         default: "no"

@@ -284,12 +284,13 @@ def _defaults():
     return ctx
 
 
-def _render(variables, facts, live, conf_dir="", templates=None):
+def _render(variables, facts, live, conf_dir="", templates=None, script=None):
     """{file: text} the roles would write on a node with these variables: the
     cassandra_config files of its series, the JMX users' files, the unit when
     cassandra_service manages it (and the node's could be read), medusa.ini
     when Medusa is on. templates: {path in the inventory: text} of the ones
-    about to be written there (read from it, not from the disk)."""
+    about to be written there (read from it, not from the disk). script: (path, its package or modified or '') of the
+    init script the node starts Cassandra with, None when a unit."""
     ctx = _trusted(dict(_defaults(), **variables))
     ctx["ansible_facts"] = facts
     # the roles' templates rendered by Ansible itself (its template lookup, its filters and tests), with these
@@ -337,10 +338,17 @@ def _render(variables, facts, live, conf_dir="", templates=None):
     wanted += [(f, "cassandra_config/templates/%s.j2" % f) for f in jmx if not (f in keep and f in live)]
     if conf_dir and str(value("cassandra_conf_dir")).rstrip("/") != conf_dir.rstrip("/"):
         errors.append("config dir: node reads %s, the roles would write to %s" % (conf_dir, value("cassandra_conf_dir")))
-    unit_managed = str(value("cassandra_service_unit_manage | bool")) == "True"
+    # (cassandra_service_start package_script: the package's init script started, no unit written)
+    unit_managed = str(value("cassandra_service_unit_manage | bool and cassandra_service_start | default('unit')"
+                             " == 'unit'")) == "True"
     if unit_managed:
         if "cassandra.service" in live:
             wanted.append(("cassandra.service", "cassandra_service/templates/cassandra.service.j2"))
+        elif script:
+            errors.append("cassandra.service: the node starts Cassandra with the init script %s (%s), the roles would"
+                          " start it with their systemd unit from its next restart" % (
+                              script[0], "modified since its package installed it" if script[1] == "modified"
+                              else "of the package %s, as installed" % script[1] if script[1] else "of no package"))
         else:
             errors.append("cassandra.service: the roles would replace the unit, which could not be read")
     if str(value("cassandra_medusa_enabled | default(false) | bool")) == "True":
@@ -483,18 +491,19 @@ def _self_check_node(files_data, hosts, node, names, data, inventory_dir=""):
         hv.get("import_cluster_storage_dir", ""), hv.get("import_cluster_java", ""), hv["import_cluster_conf_dir"],
         (hv.get("import_cluster_perms") or {}).get("files"), (hv.get("import_cluster_config") or {}).get("release", ""),
         inventory_dir, running, hv.get("import_cluster_os_found") or {},
-        boolean(hv.get("import_cluster_own_os", False), strict=False))
+        boolean(hv.get("import_cluster_own_os", False), strict=False),
+        (unit["script"], unit.get("pkg_script", "")) if unit.get("script") else None)
 
 
 def _self_check(files_data, hosts, name, facts, live, node_environment, storage_dir, java, conf_dir, permissions,
-                release="", inventory_dir="", running=None, os_found=None, os_own=False):
+                release="", inventory_dir="", running=None, os_found=None, os_own=False, script=None):
     # the names Ansible gives the host, which a value of the import may follow ({{ inventory_hostname }}.x)
     variables = dict(_host_vars(files_data, hosts, name), inventory_hostname=name,
                      inventory_hostname_short=name.split(".")[0])
     if inventory_dir:
         variables["inventory_dir"] = inventory_dir
     rendered, errors, role_environment, wanted = _render(variables, facts, live, conf_dir,
-                                                         files_data.get(TEMPLATES) or {})
+                                                         files_data.get(TEMPLATES) or {}, script)
     if role_environment is None:  # the unit stays as it is
         role_environment = node_environment
     running = dict(running or {}, series=str(dict(_defaults(), **variables).get("cassandra_version")))

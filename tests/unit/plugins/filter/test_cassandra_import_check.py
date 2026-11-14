@@ -1456,3 +1456,37 @@ def test_os_not_read_fails_the_self_check():
     assert os_check("", rc=1)["differences"] == [
         "cassandra_linux: the OS settings could not be read on the node, the roles may change them"]
     assert os_check("", rc=1, keep=NOT_OS)["differences"] == []
+
+
+# --- rc10: how the node starts Cassandra (cassandra_service_start) ---
+
+def unit_check(unit, start=None, keep=None):
+    """The self-check of a node started by unit ({file, script, pkg_script}), its config as the roles write it."""
+    files = seeded(stock("50x"))
+    inventory, layout = import_node(files, "50x", keep=NOT_OS if keep is None else keep,
+                                    tamper={"cassandra_service_start": start} if start else None)
+    hv = {"import_cluster_slurp": slurped(files), "ansible_facts": FACTS, "import_cluster_conf_dir": "",
+          "import_cluster_storage_dir": "/var/lib/cassandra", "import_cluster_java": "17",
+          "import_cluster_unit": dict({"env": {}}, **unit), "import_cluster_perms": {"files": {}}}
+    out = cassandra_import_self_check_nodes(inventory, layout["hosts"], [{"address": "10.0.0.1", "host": "h1", "read": True}],
+                                            {"10.0.0.1": "n1"}, {"h1": hv})
+    return out["n1"]["differences"]
+
+
+SCRIPT = "/etc/rc.d/init.d/cassandra"
+
+
+def test_package_script_start_is_not_compared_with_a_unit():
+    assert unit_check({"file": SCRIPT, "script": SCRIPT, "pkg_script": "cassandra"}, start="package_script",
+                      keep={"cassandra_linux_manage": False}) == []
+
+
+def test_init_script_with_the_roles_unit_is_a_difference():
+    keep = {"cassandra_linux_manage": False}
+    assert unit_check({"file": SCRIPT, "script": SCRIPT, "pkg_script": "modified"}, keep=keep) == [
+        "cassandra.service: the node starts Cassandra with the init script /etc/rc.d/init.d/cassandra (modified since its"
+        " package installed it), the roles would start it with their systemd unit from its next restart"]
+    assert "(of no package)" in unit_check({"file": SCRIPT, "script": SCRIPT, "pkg_script": ""}, keep=keep)[0]
+    # kept by you (cassandra_service_unit_manage: false): nothing compared
+    assert unit_check({"file": SCRIPT, "script": SCRIPT, "pkg_script": "modified"},
+                      keep=dict(keep, cassandra_service_unit_manage=False)) == []

@@ -68,7 +68,7 @@
       takes over at the next restart.
   when:
     - cassandra_service_jvm.rc | default(1) == 0
-    - cassandra_service_unit_manage | bool
+    - _cassandra_service_own_unit | bool
   vars:
     cassandra_output: true
 

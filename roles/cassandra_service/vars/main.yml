@@ -13,6 +13,9 @@ _cassandra_stream_round_size: "{{ [24, [720, 21600 // ([1, cassandra_stream_chec
 
 _cassandra_wait_size: "{{ ((_cassandra_stream_round_size | int) ** 0.5) | round(0, 'ceil') | int }}"
 
+# the role writes its unit: managed, and the start method is the unit (not the package's init script)
+_cassandra_service_own_unit: "{{ cassandra_service_unit_manage | bool and cassandra_service_start == 'unit' }}"
+
 # Owner, group and mode cassandra_config gives the config files (its defaults
 # when it is not in the play), for the check that the account can read them
 _cassandra_service_config_perms:

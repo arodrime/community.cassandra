@@ -251,13 +251,15 @@ def _versions_note(hv, java_link):
         if hv.get("import_cluster_java_updated", "") else "")
 
 
-def _started_note(unit, keep, unit_env):
+def _started_note(unit, keep, unit_env, package_script=False):
     """The note on how Cassandra is started: its unit, restart policy, boot, what becomes of it -> text."""
     restart = unit.get("restart", "") or "?"
     return "started by %s, Restart=%s%s, at boot: %s%s%s%s)" % (
         unit.get("file", "") or "no systemd unit", restart,
         " (%s)" % RESTART_DOES[restart] if restart in RESTART_DOES else "", unit.get("boot", "") or "?",
-        " (kept on this node; new nodes get the unit of cassandra_service, with the restart policy"
+        " (the init script of package %s, as installed: cassandra_service_start: package_script, new nodes too"
+        % unit.get("pkg_script") if package_script
+        else " (kept on this node; new nodes get the unit of cassandra_service, with the restart policy"
         if "cassandra_service_unit_manage" in keep
         else " (cassandra_service replaces it with its own unit, keeping the restart policy",
         (", its Environment %s as cassandra_service_environment" % ", ".join(unit_env)) if unit_env else "",
@@ -335,17 +337,21 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
     conf = _place_vars(hv, read, unit, unit_env, os_family)
 
     config_vars = _d(config.get("vars"))
-    env_log_dir = _env_log_dir(read, keep, env, conf, config_vars)
+    # started by the package's init script as installed: the roles write no unit, they start that script
+    start = {"cassandra_service_start": "package_script"} \
+        if read and unit.get("pkg_script", "") not in ("", "modified") else {}
+    unit_kept = dict(keep, **({"cassandra_service_unit_manage": False} if start else {}))
+    env_log_dir = _env_log_dir(read, unit_kept, env, conf, config_vars)
     java_link = _java_link(hv, read)
     versions = _versions_note(hv, java_link)
-    started = _started_note(unit, keep, unit_env)
+    started = _started_note(unit, unit_kept, unit_env, bool(start))
     install = _install_note(hv, package)
     reason = _reason(item, hv)
 
     if read:
         tuning = _d(hv.get("import_cluster_os"))
         node_vars = _merged(config_vars, {"cassandra_version": series}, java_vars, pkg, conf, jmx,
-                            _d(perms.get("vars")), _d(medusa.get("vars")), _d(tuning.get("vars")))
+                            _d(perms.get("vars")), _d(medusa.get("vars")), _d(tuning.get("vars")), start)
         node_keep = _merged(keep, env_log_dir, java_link, {"cassandra_firewall_manage": False}, _d(medusa.get("keep")),
                             _d(tuning.get("keep")), {} if repo["manage"] else {"cassandra_repository_manage": False},
                             hand_kept, installed)

@@ -200,7 +200,9 @@
         exit 0
       environment:
         GIVEN: "{{ cassandra_service_environment.JAVA_HOME | default('') }}"
-        UNIT_KEPT: "{{ 'no' if cassandra_service_unit_manage | default(true) | bool else 'yes' }}"
+        UNIT_KEPT: >-
+          {{ 'no' if cassandra_service_unit_manage | default(true) | bool and cassandra_service_start | default('unit') == 'unit'
+             else 'yes' }}
         CASSANDRA_USER: "{{ cassandra_user | default('cassandra') }}"
       register: cassandra_update_java_given
       changed_when: false
@@ -219,7 +221,8 @@
         _home: "{{ _given[1] | default('') }}"
         _given_major: "{{ _given[2] | default('') | regex_replace('^1[.]', '') | regex_replace('[._+-].*$', '') }}"
         _wanted: "{{ cassandra_update_java_home.stdout | default('', true) or _cassandra_java_home }}"
-        _kept_unit: "{{ not cassandra_service_unit_manage | default(true) | bool }}"
+        _kept_unit: >-
+          {{ not cassandra_service_unit_manage | default(true) | bool or cassandra_service_start | default('unit') != 'unit' }}
         _from: "{{ _given[3] | default('') }}"
         _where: >-
           {{ 'its unit (kept: cassandra_service_unit_manage false; edit it by hand, systemctl edit cassandra)'

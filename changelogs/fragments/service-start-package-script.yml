@@ -1,0 +1,11 @@
+minor_changes:
+  - >-
+    cassandra_service - ``cassandra_service_start: package_script`` starts Cassandra with the package's init script
+    (no unit written nor removed, its state and boot setting managed; the playbooks drain the node before stopping it).
+    The default, ``unit``, is the role's systemd unit as before.
+  - >-
+    import_cluster - a node started by the Cassandra package's init script as installed (``rpm -V`` or ``dpkg
+    --verify``) gets ``cassandra_service_start: package_script`` instead of ``cassandra_service_unit_manage: false``.
+    Another unit, or a script modified or of no package, is compared with the roles' unit by the self-check, which
+    stops with the way out (keep it with ``cassandra_service_unit_manage: false`` in a file of yours, or let the
+    roles' unit take over at the next restart).

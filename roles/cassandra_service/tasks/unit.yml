@@ -14,7 +14,7 @@
   diff: false  # shown by the write
   register: cassandra_service_unit_planned
   when:
-    - cassandra_service_unit_manage | bool
+    - _cassandra_service_own_unit | bool
     - not ansible_check_mode
 
 - name: Record the config the running Cassandra started with
@@ -31,4 +31,4 @@
     dest: /etc/systemd/system/cassandra.service
     mode: "0644"
   register: cassandra_service_unit
-  when: cassandra_service_unit_manage | bool
+  when: _cassandra_service_own_unit | bool

@@ -16,6 +16,11 @@ cassandra_service_allow_new_seed: false
 # package's init script) is kept, not replaced by the role's (a node set up
 # another way)
 cassandra_service_unit_manage: true
+# How Cassandra is started: unit, the role's systemd unit; package_script, the
+# init script of the Cassandra package (SysV, through systemd): no unit written
+# nor removed, only its state and boot setting managed (the unit variables
+# below have no effect on it)
+cassandra_service_start: unit
 
 # The account Cassandra runs as: cassandra_user and cassandra_group drive the
 # unit, the config files' group and the directories and JMX files of
