@@ -27,7 +27,7 @@ from collections import namedtuple
 from ansible.module_utils.parsing.convert_bool import boolean
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    HEAP_MOVED, IDENTITY, KEEP, KEPT_PARTS, KEPT_PARTS_VAR, NODE_LEVEL, NOT_READ, PER_NODE, group_chains,
+    HEAP_MOVED, IDENTITY, KEEP, KEPT_PART_WORDS, KEPT_PARTS, KEPT_PARTS_VAR, NODE_LEVEL, NOT_READ, PER_NODE, group_chains,
     hand_edits_kept, _secret, vars_sort_key, values_hidden)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import HEAP_FILE
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import CONFIG_FILE, RESTART_DOES
@@ -39,7 +39,7 @@ from ansible_collections.community.cassandra.plugins.plugin_utils import cassand
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 
 # shown in the head, or the ring's (dc and rack): not among the settings
-_NOT_SETTINGS = ("cassandra_cluster_name", "cassandra_dc", "cassandra_rack")
+_NOT_SETTINGS = ("cassandra_cluster_name", "cassandra_dc", "cassandra_rack", KEPT_PARTS_VAR)
 # where a node keeps its data: another value is a move of the data by hand
 DATA_DIRS = ("cassandra_data_file_directories", "cassandra_commitlog_dir", "cassandra_hints_dir",
              "cassandra_saved_caches_dir", "cassandra_data_dir", "cassandra_conf_dir")
@@ -881,7 +881,7 @@ def report_sections(layout, self_check):
     kept, left_groups, kept_parts = [], {}, {}
     for n in nodes:
         order = list(KEEP_SHORT)
-        parts = list((n.get("keep") or {}).get(KEPT_PARTS_VAR) or [])
+        parts = list((n.get("vars") or {}).get(KEPT_PARTS_VAR) or (n.get("keep") or {}).get(KEPT_PARTS_VAR) or [])
         if parts:
             kept_parts.setdefault(tuple(parts), []).append(n["name"])
         # (the switches of the parts kept by hand: said with them)
@@ -1228,12 +1228,7 @@ def _left_kind(label):
     return "managed" if label in KEEP or label in KEEP_SHORT.values() else "value"
 
 
-# what each part kept by hand is (import_keep_hand_edits), for the report
-PART_WORDS = {"os": "the OS settings (kernel, limits, THP, swap, time sync, disks)", "sysctl": "the kernel settings",
-              "limits": "the limits files", "thp": "transparent huge pages", "swap": "swap",
-              "timesync": "time sync", "disks": "the tuning of the data devices",
-              "unit": "the unit (or init script) Cassandra is started by", "repo": "the package repositories",
-              "cqlsh": "cqlsh's Python", "firewall": "the firewall"}
+PART_WORDS = KEPT_PART_WORDS
 
 
 def _kept_parts_lines(report):
@@ -1250,6 +1245,18 @@ def _kept_parts_lines(report):
                                "them" if len(parts) > 1 else "it", unbreakable("-e import_take_over=" + ",".join(parts))),
                            report.width, "      ", "  ")
     return lines
+
+
+def _no_effect_lines(report, self_check):
+    """What the roles would write on the nodes with no effect on their values (the self-check's notes "no effect"):
+    apply_config says it changed them; one line per file or value and its nodes."""
+    found = {}
+    for name, check in sorted((self_check or {}).items()):
+        for note in check.get("notes") or []:
+            if note.endswith(", no effect (the node keeps the values it has now)"):
+                found.setdefault(note[:-len(", no effect (the node keeps the values it has now)")], []).append(name)
+    return [line for text, members in found.items()
+            for line in fill_text("%s   %s" % (text, unbreakable(_who(report, members))), report.width, "    ", "  ")]
 
 
 def _left_alone_lines(report):
@@ -1894,6 +1901,9 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     by_hand = _kept_parts_lines(report)
     if by_hand:
         lines += ["", "KEPT BY HAND (your choice)"] + by_hand
+    rewrites = _no_effect_lines(report, self_check)
+    if rewrites:
+        lines += ["", "APPLY_CONFIG WILL REWRITE (no effect)"] + rewrites
     left = _left_alone_lines(report)
     if KEPT in blocks or left:
         lines += ["", "LEFT AS THE NODES HAVE THEM"] + blocks.get(KEPT, []) + left

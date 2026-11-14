@@ -45,7 +45,8 @@ def _cqlsh_snippet(tmp_path, command="cqlsh"):
     from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_cqlsh_words
     script = _read_script()
     start = script.index("# cqlsh starts")
-    snippet = script[start:script.index("\nrf=\n", start) + 1].replace("/usr/local/bin/cqlsh", str(tmp_path / "none"))
+    end = script.index("# what cassandra_install sets up", start)
+    snippet = script[start:end].replace("/usr/local/bin/cqlsh", str(tmp_path / "none"))
     snippet = re.sub(r"(?m)^cmd=\{\{.*\}\}$", lambda m: "cmd=%s" % shlex.quote(command), snippet)
     snippet = re.sub(r"(?m)^set -- \{\{.*\}\}$",
                      lambda m: "set -- " + " ".join(shlex.quote(w) for w in cassandra_cqlsh_words(command)), snippet)
@@ -64,8 +65,10 @@ def _read(tmp_path, body, command="cqlsh"):
         cqlsh.write_text("#!/bin/sh\n" + body)
         cqlsh.chmod(0o755)
     env = dict(os.environ, PATH="%s:/usr/bin:/bin" % (tmp_path / "bin"))
-    return subprocess.run(["/bin/sh", "-c", _cqlsh_snippet(tmp_path, command)], env=env, stdout=subprocess.PIPE,
-                          universal_newlines=True, check=True).stdout
+    out = subprocess.run(["/bin/sh", "-c", _cqlsh_snippet(tmp_path, command)], env=env, stdout=subprocess.PIPE,
+                         universal_newlines=True, check=True).stdout
+    # (the cqlsh that ran: the self-check's, said apart)
+    return "".join(line for line in out.splitlines(True) if not line.startswith("cqlsh_ran="))
 
 
 def test_the_read_says_when_cqlsh_does_not_start(tmp_path):
@@ -135,30 +138,29 @@ def test_the_todo_names_the_nodes_and_the_way(tmp_path):
     play = next(p for p in PLAYS if p.get("name") == "Write the inventory")
     template = play["vars"]["_cqlsh_todo"]
 
-    def todo(errors, check=False, kept=()):
-        hostvars = dict((h, {"import_cluster_cqlsh_error": e, "import_cluster_keep": (
-            {"cassandra_cqlsh_python_manage": False} if h in kept else {})}) for h, e in errors.items())
+    def todo(errors, check=False, kept=False):
+        hostvars = dict((h, {"import_cluster_cqlsh_error": e}) for h, e in errors.items())
         variables = {"_nodes": [{"name": h} for h in errors], "hostvars": hostvars, "ansible_check_mode": check}
+        if kept:  # (cqlsh kept as it is: -e import_keep_hand_edits=cqlsh)
+            variables["import_keep_hand_edits"] = "logback.xml,cqlsh"
         return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
     lib = "cqlsh --version: ModuleNotFoundError: No module named 'cqlshlib'"
     assert todo({"n1": "", "n2": ""}) == []
     steps = todo({"n2": lib, "n1": lib, "n3": "", "n4": "cqlsh --version: exits 3 with no output",
-                  "n5": "cassandra_cqlsh_command ('x): an unclosed quote"}, kept=("n1", "n2"))
+                  "n5": "cassandra_cqlsh_command ('x): an unclosed quote"}, kept=True)
     assert [s["title"] for s in steps] == ["Make cqlsh start on {nodes:broken}",
                                            "Fix cassandra_cqlsh_command for {nodes:quoting}"]
     step = steps[0]
-    assert step["nodes"] == {"broken": ["n1", "n2", "n4"], "kept": ["n1", "n2"], "quoting": ["n5"],
+    assert step["nodes"] == {"broken": ["n1", "n2", "n4"], "kept": ["n1", "n2", "n4"], "quoting": ["n5"],
                              "e1": ["n1", "n2"], "e2": ["n4"], "e3": ["n5"]}
     assert step["why"] == ["{nodes:e1}: " + lib, "{nodes:e2}: cqlsh --version: exits 3 with no output",
                            "the playbooks that read the schema run cqlsh (cassandra_cqlsh_command, as root)"]
-    assert step["run"][1].startswith("no other cqlsh: in the host_vars of {nodes:kept}, set"
-                                     " cassandra_cqlsh_python_manage: true (this import wrote false), then run"
-                                     " {command:create}, then the same without --check --diff")
+    assert step["run"][1].startswith("no other cqlsh: import again without cqlsh in import_keep_hand_edits (this"
+                                     " import keeps it as it is on {nodes:kept}: cassandra_cqlsh_python_manage false),"
+                                     " then run {command:create}, then the same without --check --diff")
     assert step["commands"] == {"create": {"playbook": "create_cluster", "extra": ["--check", "--diff"]}}
     assert steps[1]["why"] == ["{nodes:e3}: cassandra_cqlsh_command ('x): an unclosed quote"]
     assert steps[1]["run"].startswith("fix its quoting or give it a value")
-    # --check: the host_vars are not written yet
-    assert "(this import would write false)" in todo({"n1": lib}, check=True, kept=("n1",))[0]["run"][1]
     # cqlsh's Python left to the role there: no host_vars to change
     assert todo({"n1": "cqlsh: not found in the PATH of root"})[0]["run"][1].startswith(
         "no other cqlsh: run {command:create}")

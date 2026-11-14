@@ -496,7 +496,7 @@
         [ -n "$uid" ] && echo "run_user=$(getent passwd "$uid" | cut -d: -f1 | grep . || echo "$uid")"
         [ -n "$gid" ] && echo "run_group=$(getent group "$gid" | cut -d: -f1 | grep . || echo "$gid")"
         # how it is started today: the unit (or the init script systemd wraps), its restart policy, at boot or not
-        for p in FragmentPath SourcePath Restart UnitFileState Environment EnvironmentFiles; do
+        for p in FragmentPath SourcePath Restart UnitFileState Environment EnvironmentFiles DropInPaths; do
           echo "unit_$p=$(systemctl show cassandra -p $p --value 2>/dev/null)"
         done
         # the unit of an init script is "generated": is-enabled asks the init system
@@ -512,7 +512,9 @@
             pkg=$(echo "$out" | grep -v '^diversion' | head -1 | cut -d: -f1) verify="dpkg --verify"
           fi
           if [ -n "$pkg" ]; then
-            if $verify "$pkg" 2>/dev/null | awk '{print $NF}' | grep -qxF "$src"; then
+            # (rpm -V names /etc/rc.d/init.d/x, systemd may say /etc/init.d/x: both, and the file itself)
+            real=$(readlink -f "$src")
+            if $verify "$pkg" 2>/dev/null | awk '{print $NF}' | grep -qxF -e "$src" -e "$real"; then
               echo "pkg_script=modified"
             else
               echo "pkg_script=$pkg"
@@ -653,6 +655,7 @@
           elif ! command -v "$c" >/dev/null 2>&1; then
             say "$c: not found in the PATH of root"
           else
+            echo "cqlsh_ran=$(command -v "$c")"
             v=$(timeout 30 "$c" "$@" --version 2>&1); rc=$?
             last=$(echo "$v" | grep -v '^[[:space:]]*$' | tail -1 | cut -c1-200)
             if [ $rc = 124 ]; then
@@ -661,6 +664,33 @@
               say "$cmd --version: ${last:-exits $rc with no output}"
             fi
           fi
+        fi
+        # what cassandra_install sets up for the cqlsh of the package (cqlsh_python.yml, cqlsh_links.yml), as the node has it:
+        # python3, python3.11, its wrapper and profile.d file (its mark, another file, none), the cqlshlib of python3
+        echo "cqlsh_py3=$(python3 -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>/dev/null)"
+        [ -x /usr/bin/python3.11 ] && echo "cqlsh_py311=yes"
+        for f in /usr/local/bin/cqlsh /etc/profile.d/cqlsh.sh; do
+          if [ ! -e "$f" ]; then s=absent; elif grep -qs 'Managed by Ansible (cassandra_install)' "$f"; then s=role; else s=other; fi
+          case $f in *.sh) echo "cqlsh_profile=$s" ;; *) echo "cqlsh_wrapper=$s" ;; esac
+        done
+        if [ -n "$lib" ]; then
+          if [ -L "$lib/cqlshlib" ]; then t=$(readlink "$lib/cqlshlib"); elif [ -e "$lib/cqlshlib" ]; then t=other; else t=absent; fi
+          echo "cqlsh_link=$t"
+        fi
+        # the package cqlsh with each Python the roles may give it (python3 with the cqlshlib link they add on RedHat,
+        # as a PYTHONPATH of its own; python3.11 when there): ok, else its last error line
+        if [ -x /usr/bin/cqlsh ]; then
+          for p in python3 /usr/bin/python3.11; do
+            command -v $p >/dev/null 2>&1 || continue
+            d=
+            if [ "$p" = python3 ] && [ -d /usr/lib/python3.6/site-packages/cqlshlib ] && [ ! -e "$lib/cqlshlib" ]; then
+              d=$(mktemp -d) && ln -s /usr/lib/python3.6/site-packages/cqlshlib "$d/cqlshlib"
+            fi
+            if out=$(PYTHONPATH="$d" CQLSH_PYTHON=$p timeout 30 /usr/bin/cqlsh --version 2>&1); then r=ok
+            else r=$(echo "$out" | grep -v '^[[:space:]]*$' | tail -1 | cut -c1-200); fi
+            [ -n "$d" ] && rm -f "$d/cqlshlib" && rmdir "$d"
+            case $p in *3.11) echo "cqlsh_test_py311=${r:-no output}" ;; *) echo "cqlsh_test_py3=${r:-no output}" ;; esac
+          done
         fi
         rf=
         for f in /etc/yum.repos.d/cassandra-*.repo /etc/apt/sources.list.d/cassandra-*.sources /etc/apt/sources.list.d/cassandra-*.list; do
@@ -776,6 +806,16 @@
         import_cluster_package_offered: "{{ _kv.pkg_repo is defined and _kv.pkg_query is defined }}"
         # cqlsh's Python set up by cassandra_install (its wrapper, or its cqlshlib link)
         import_cluster_own_cqlsh: "{{ _kv.own_cqlsh is defined }}"
+        # what cassandra_install sets up for the package's cqlsh, as the node has it (the read script says each)
+        import_cluster_cqlsh:
+          py3: "{{ _kv.cqlsh_py3 | default('') }}"
+          py311: "{{ _kv.cqlsh_py311 is defined }}"
+          wrapper: "{{ _kv.cqlsh_wrapper | default('absent') }}"
+          profile: "{{ _kv.cqlsh_profile | default('absent') }}"
+          link: "{{ _kv.cqlsh_link | default('') }}"
+          test_py3: "{{ _kv.cqlsh_test_py3 | default('') }}"
+          test_py311: "{{ _kv.cqlsh_test_py311 | default('') }}"
+          ran: "{{ _kv.cqlsh_ran | default('') }}"
         # the cqlsh the playbooks run (the inventory's, or -e)
         import_cluster_cqlsh_command: "{{ cassandra_cqlsh_command | default('cqlsh', true) }}"
         # cassandra_linux's limits file with its mark: a node the roles set up
@@ -793,6 +833,8 @@
           env_files: "{{ _kv.unit_EnvironmentFiles | default('') }}"
           # an init script (SysV): its path, the package it comes from as installed, or modified ('': not a package's)
           script: "{{ _kv.unit_SourcePath | default('') }}"
+          # drop-ins of the unit (cassandra.service.d): what they set holds only for a unit
+          dropins: "{{ _kv.unit_DropInPaths | default('') }}"
           pkg_script: "{{ _kv.pkg_script | default('') }}"
       vars:
         _kv: "{{ dict(import_cluster_running.stdout_lines | map('split', '=', 1)) }}"
@@ -1441,11 +1483,19 @@
                  /etc/systemd/timesyncd.conf.d/*.conf; do
           [ -f "$x" ] && grep -E '^[[:space:]]*(server|pool|peer|NTP=|FallbackNTP=)' "$x" | awk -v p="timesync_server|$x|" '{print p $0}'
         done
-        # firewall: firewalld, ufw, else iptables/nftables rules for the Cassandra ports
+        # firewall: firewalld, ufw, else iptables/nftables rules for the Cassandra ports; running or not, at boot or not
+        for s in firewalld ufw; do
+          b=$(systemctl is-enabled $s 2>/dev/null) && echo "fw_state|$s|$(systemctl is-active $s 2>/dev/null)|$b"
+        done
+        if command -v ufw >/dev/null; then
+          echo "fw_state|ufw-rules|$(ufw status 2>/dev/null | sed -n 's/^Status: //p')|$(sed -n 's/^ENABLED=//p' /etc/ufw/ufw.conf 2>/dev/null)"
+        fi
         if [ "$(systemctl is-active firewalld 2>/dev/null)" = active ] && command -v firewall-cmd >/dev/null; then
           echo "fw|firewalld|active|default zone $(firewall-cmd --get-default-zone 2>/dev/null)"
           for z in $(firewall-cmd --get-active-zones 2>/dev/null | grep -v '^[[:space:]]' | awk '{print $1}'); do
             l=$(firewall-cmd --zone="$z" --list-ports 2>/dev/null); [ -n "$l" ] && echo "fw_rule|zone $z|ports $l"
+            # (as after a reload or a boot: cassandra_firewall opens them both ways)
+            l=$(firewall-cmd --permanent --zone="$z" --list-ports 2>/dev/null); [ -n "$l" ] && echo "fw_rule|zone $z|permanent ports $l"
             for s in $(firewall-cmd --zone="$z" --list-services 2>/dev/null); do
               l=$(firewall-cmd --info-service="$s" 2>/dev/null | sed -n 's/^[[:space:]]*ports: *//p')
               [ -n "$l" ] && echo "fw_rule|zone $z|service $s: $l"
@@ -1581,7 +1631,7 @@
       {%-     set _ = quoting.append(h) -%}
       {%-   else -%}
       {%-     set _ = broken.append(h) -%}
-      {%-     if 'cassandra_cqlsh_python_manage' in hostvars[h].import_cluster_keep | default({}) -%}{%- set _ = kept.append(h) -%}{%- endif -%}
+      {%-     if 'cqlsh' in (import_keep_hand_edits | default('') | string).split(',') | map('trim') | list -%}{%- set _ = kept.append(h) -%}{%- endif -%}
       {%-   endif -%}
       {%- endfor -%}
       {%- set nodes, rows = {'broken': broken, 'kept': kept, 'quoting': quoting}, [] -%}
@@ -1600,10 +1650,9 @@
                                   'run': ['a cqlsh installed elsewhere on the nodes (e.g. a virtualenv): set'
                                           ~ ' cassandra_cqlsh_command: <its full path> in group_vars (the playbooks run it'
                                           ~ ' as root: a file only root can write)',
-                                          'no other cqlsh: ' ~ ('in the host_vars of {nodes:kept}, set'
-                                          ~ ' cassandra_cqlsh_python_manage: true (this import '
-                                          ~ ('would write' if ansible_check_mode | default(false) else 'wrote') ~ ' false),'
-                                          ~ ' then ' if kept else '') ~ 'run {command:create}, then the same without'
+                                          'no other cqlsh: ' ~ ('import again without cqlsh in import_keep_hand_edits'
+                                          ~ ' (this import keeps it as it is on {nodes:kept}: cassandra_cqlsh_python_manage'
+                                          ~ ' false), then ' if kept else '') ~ 'run {command:create}, then the same without'
                                           ~ ' --check --diff: on a running cluster it installs what is missing (a Python cqlsh'
                                           ~ ' runs with, the cqlshlib of the package linked into it) and writes what differs'
                                           ~ ' from the inventory, and starts or restarts no node that runs'],
@@ -1925,21 +1974,32 @@
         _results: >-
           {{ (import_cluster_existing_read.stdout | from_json).vars if import_cluster_existing_read is not skipped else [] }}
 
-    # import_set_ansible_host: true; false leaves ansible_host out. Not given, a re-import keeps how the
-    # inventory there reaches its hosts: one it reaches without ansible_host (imported with
-    # import_set_ansible_host=false, or taken out by hand) gets none again (the earlier choice kept)
     # A part an earlier import kept by hand (import_keep_hand_edits=<parts>: cassandra_import_kept in its files) is
-    # given back to Ansible only when asked (-e import_take_over=<parts>): the same command never changes its meaning
-    - name: Stop rather than give a part kept by hand back to Ansible unasked
-      ansible.builtin.fail:
-        msg: "{{ _stop | join(' ') }}"
-      when: _stop | length > 0
-      vars:
-        cassandra_output: true  # a verdict: its msg as is (ops callback)
-        _stop: >-
+    # given back to Ansible only when asked (-e import_take_over=<parts>): the same command never changes its meaning.
+    # The *_manage: false an import before rc10 wrote for a part set up another way: kept the same, said
+    - name: Read the parts the last import kept by hand
+      ansible.builtin.set_fact:
+        _kept_before: >-
           {{ import_cluster_existing_text | default({}) | community.cassandra.cassandra_import_kept_before(
                import_keep_hand_edits | default(false), import_take_over | default('none')) }}
 
+    - name: Stop rather than give a part kept by hand back to Ansible unasked
+      ansible.builtin.fail:
+        msg: "{{ _kept_before.stop | join(_nl) }}"
+      when: _kept_before.stop | length > 0
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+
+    - name: Keep the parts an earlier import left as the nodes had them
+      no_log: "{{ not import_debug | default(false) | bool }}"
+      ansible.builtin.set_fact:
+        _nodes: "{{ _nodes | community.cassandra.cassandra_import_kept_again(_kept_before.kept) }}"
+      when: _kept_before.kept | length > 0
+
+    # import_set_ansible_host: true; false leaves ansible_host out. Not given, a re-import keeps how the
+    # inventory there reaches its hosts: one it reaches without ansible_host (imported with
+    # import_set_ansible_host=false, or taken out by hand) gets none again (the earlier choice kept)
     - name: Leave ansible_host out where the inventory there has none
       no_log: "{{ not import_debug | default(false) | bool }}"
       ansible.builtin.set_fact:

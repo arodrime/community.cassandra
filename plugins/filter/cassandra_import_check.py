@@ -496,7 +496,8 @@ def _self_check_node(files_data, hosts, node, names, data, inventory_dir=""):
         (unit["script"], unit.get("pkg_script", "")) if unit.get("script") else None,
         {"repo": hv.get("import_cluster_repo") or {"manage": True}, "repo_files": hv.get("import_cluster_repo_files") or [],
          "series": hv.get("import_cluster_series", ""), "cqlsh_error": hv.get("import_cluster_cqlsh_error", ""),
-         "own_cqlsh": boolean(hv.get("import_cluster_own_cqlsh", False), strict=False)})
+         "own_cqlsh": boolean(hv.get("import_cluster_own_cqlsh", False), strict=False),
+         "cqlsh": hv.get("import_cluster_cqlsh") or {}})
 
 
 def _self_check(files_data, hosts, name, facts, live, node_environment, storage_dir, java, conf_dir, permissions,
@@ -518,7 +519,9 @@ def _self_check(files_data, hosts, name, facts, live, node_environment, storage_
     else:
         out["differences"] += permission_differences(wanted, permissions)
     if parts is not None:
-        out["differences"] += _parts_check(variables, facts, parts)
+        differences, notes = _parts_check(variables, facts, parts)
+        out["differences"] += differences
+        out["notes"] += notes
     if os_found is not None:
         for check in (_linux_check, _firewall_check):
             differences, notes = check(variables, facts, os_found, os_own)
@@ -594,13 +597,72 @@ def _firewall_check(variables, facts, found, own):
 
 
 REPOSITORY_VARS = (("manage", "cassandra_repository_manage | bool"), ("method", "cassandra_install_method"))
-CQLSH_VARS = (("manage", "cassandra_cqlsh_python_manage | bool"), ("source", "cassandra_cqlsh_source"))
+CQLSH_VARS = (("manage", "cassandra_cqlsh_python_manage | bool"), ("source", "cassandra_cqlsh_source"),
+              ("python", "cassandra_cqlsh_python"), ("supported", "cassandra_cqlsh_python_supported"),
+              ("series", "cassandra_version"), ("offline", "cassandra_offline | bool"),
+              ("command", "cassandra_cqlsh_command | default('cqlsh', true)"))
+PYTHON311 = "/usr/bin/python3.11"
+PACKAGE_CQLSHLIB = "/usr/lib/python3.6/site-packages/cqlshlib"
+
+
+def _version_in(version, bounds):
+    """version (3.9) within bounds ([3.6, 3.11])."""
+    try:
+        v = tuple(int(x) for x in str(version).split("."))
+        return tuple(int(x) for x in str(bounds[0]).split(".")) <= v <= tuple(int(x) for x in str(bounds[1]).split("."))
+    except (ValueError, IndexError, TypeError):
+        return False
+
+
+def _cqlsh_check(cqlsh, st, family, error):
+    """What cassandra_install would change for the package's cqlsh (cqlsh_python.yml, cqlsh_links.yml) on a node,
+    from what the import read there (st: import_cluster_cqlsh), and whether the cqlsh it sets up starts ->
+    (differences, notes)."""
+    out, notes = [], []
+    if not st:  # (not read: what the playbooks run, at least)
+        if error:
+            out.append("cassandra_install: cqlsh: node has %s, the roles would set a Python for the package's cqlsh"
+                       " (python3.11, the link of its cqlshlib, a wrapper, as it needs)" % error)
+        return out, notes
+    bounds = (cqlsh["supported"] or {}).get(str(cqlsh["series"]))
+    python = cqlsh["python"] or ("" if not bounds or _version_in(st.get("py3"), bounds) else PYTHON311)
+    if python == PYTHON311 and not boolean(st.get("py311", False), strict=False) and not cqlsh["offline"]:
+        out.append("cassandra_install: python3.11: node has none, the roles would set installed (python3 %s is outside"
+                   " %s, which the cqlsh of Cassandra %s runs on)"
+                   % (st.get("py3") or "?", "-".join(bounds or []), cqlsh["series"]))
+    for path, key, what in (("/usr/local/bin/cqlsh", "wrapper", "their wrapper (the package's cqlsh with %s)"),
+                            ("/etc/profile.d/cqlsh.sh", "profile", "CQLSH_PYTHON=%s")):
+        have = st.get(key, "absent")
+        if python and have != "role":
+            out.append("cassandra_install: %s: node has %s, the roles would set %s" % (
+                path, "another file" if have == "other" else "none", what % python))
+        elif not python and have == "role":
+            out.append("cassandra_install: %s: node has the roles' (an earlier run), the roles would set removed" % path)
+    link = st.get("link", "")
+    if family == "RedHat" and link != PACKAGE_CQLSHLIB:
+        if link in ("", "absent"):
+            notes.append("cassandra_install: cqlshlib of python3: none -> a link to the package's, no effect (the node"
+                         " keeps the values it has now)")
+        else:
+            out.append("cassandra_install: cqlshlib of python3: node has %s, the roles would set a link to %s"
+                       % ("its own" if link == "other" else "a link to " + link, PACKAGE_CQLSHLIB))
+    test = st.get("test_py311" if python == PYTHON311 else "test_py3", "")
+    if test and test != "ok" and (python != PYTHON311 or boolean(st.get("py311", False), strict=False)):
+        out.append("cassandra_install: cqlsh as the roles would set it up (the package's, with %s) does not start: %s"
+                   % (python or "python3", test))
+    ran = st.get("ran", "")
+    package = ("/usr/bin/cqlsh", "/usr/local/bin/cqlsh") if st.get("wrapper") in ("role", "absent") else ("/usr/bin/cqlsh",)
+    if ran and ran not in package and cqlsh["command"] == "cqlsh" and not error:
+        out.append("cassandra_install: cqlsh: node has %s (not the package's) for the playbooks, the roles would set"
+                   " the package's: name it (cassandra_cqlsh_command: %s, then cassandra_cqlsh_source external), or keep"
+                   " it as it is (-e import_keep_hand_edits=cqlsh)" % (ran, ran))
+    return out, notes
 
 
 def _parts_check(variables, facts, parts):
     """What cassandra_repository and cassandra_install (cqlsh) would change on the node with these variables, from what
-    the import read there (parts: {repo: cassandra_repository_import's, repo_files, series, cqlsh_error, own_cqlsh})
-    -> [difference]."""
+    the import read there (parts: {repo: cassandra_repository_import's, repo_files, series, cqlsh_error, own_cqlsh,
+    cqlsh: import_cluster_cqlsh}) -> (differences, notes)."""
     out = []
     repo, error = _role_values("cassandra_repository", REPOSITORY_VARS, variables, facts)
     if error:
@@ -617,12 +679,13 @@ def _parts_check(variables, facts, parts):
             out.append("cassandra_repository: Cassandra repository files: node has %s (%s), the roles would set"
                        " cassandra-%s as they write it" % (files, parts["repo"].get("why", ""), parts["series"]))
     cqlsh, error = _role_values("cassandra_install", CQLSH_VARS, variables, facts)
+    notes = []
     if error:
         out.append(error)
-    elif cqlsh["manage"] and cqlsh["source"] == "package" and parts["cqlsh_error"] and not parts["own_cqlsh"]:
-        out.append("cassandra_install: cqlsh: node has %s, the roles would set a Python for the package's cqlsh"
-                   " (python3.11, the link of its cqlshlib, a wrapper, as it needs)" % parts["cqlsh_error"])
-    return out
+    elif cqlsh["manage"] and cqlsh["source"] == "package" and (parts.get("cqlsh") or not parts["own_cqlsh"]):
+        found, notes = _cqlsh_check(cqlsh, parts.get("cqlsh") or {}, facts.get("os_family", ""), parts["cqlsh_error"])
+        out += found
+    return out, notes
 
 
 def _linux_check(variables, facts, found, own):

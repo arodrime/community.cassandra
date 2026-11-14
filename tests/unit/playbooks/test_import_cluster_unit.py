@@ -268,5 +268,9 @@ def test_cqlsh_of_the_inventory_is_external():
     assert "cassandra_cqlsh_source" not in node({"import_cluster_cqlsh_command": "cqlsh"})["vars"]
     # set up by the roles already: the package's
     assert "cassandra_cqlsh_source" not in node({"import_cluster_cqlsh_command": "/opt/c", "import_cluster_own_cqlsh": True})["vars"]
-    # never a path written by the import (the inventory's own)
-    assert "cassandra_cqlsh_command" not in node({"import_cluster_cqlsh_command": "/opt/cqlsh/bin/cqlsh"})["vars"]
+
+
+def test_named_cqlsh_written_with_its_source():
+    # (given by -e or the inventory: written with it, so the next runs do not stop on a source without its command)
+    assert node({"import_cluster_cqlsh_command": "/opt/cqlsh/bin/cqlsh"})["vars"]["cassandra_cqlsh_command"] == \
+        "/opt/cqlsh/bin/cqlsh"

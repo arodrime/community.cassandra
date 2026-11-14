@@ -1107,8 +1107,9 @@ def test_model_chrony_servers():
 
 # --- the firewall (rc10) ---
 
-FIREWALLD = ("fw|firewalld|active|default zone public\nfw_rule|zone public|ports 7000/tcp 9042/tcp 7199/tcp\n"
-             "fw_rule|zone public|service ssh: 22/tcp\n")
+FIREWALLD = ("fw_state|firewalld|active|enabled\n"
+             "fw|firewalld|active|default zone public\nfw_rule|zone public|ports 7000/tcp 9042/tcp 7199/tcp\n"
+             "fw_rule|zone public|permanent ports 7000/tcp 9042/tcp 7199/tcp\nfw_rule|zone public|service ssh: 22/tcp\n")
 
 
 def test_firewall_carried():
@@ -1145,8 +1146,32 @@ def test_firewall_model():
         {"what": "firewall firewalld", "now": "none", "would": "installed and started", "effect": "change"}]
     assert cassandra_firewall_changes("", fw(enabled=False), "RedHat", CASSANDRA_PORTS) == []
     assert cassandra_firewall_changes(FIREWALLD, fw(enabled=False), "RedHat", CASSANDRA_PORTS) == [
-        {"what": "firewall firewalld", "now": "active", "would": "stopped, disabled", "effect": "change"}]
+        {"what": "firewall firewalld", "now": "active, at boot enabled", "would": "stopped, disabled", "effect": "change"}]
     assert cassandra_firewall_changes(FIREWALLD, fw(manage=False), "RedHat", CASSANDRA_PORTS) == []
     ipt = "fw|iptables|INPUT policy DROP|\n"
     assert [c["what"] for c in cassandra_firewall_changes(ipt, fw(enabled=False), "RedHat", CASSANDRA_PORTS)] == [
         "firewall rule (not carried)"]
+
+
+def test_firewall_runtime_permanent_and_boot():
+    # open now only (not after a reload): not carried, a rule the roles would change
+    now_only = FIREWALLD.replace("permanent ports 7000/tcp 9042/tcp 7199/tcp", "permanent ports 7000/tcp 9042/tcp")
+    r = found(now_only)
+    assert r["vars"]["open_ports"] == ["7000/tcp", "9042/tcp"]
+    assert any("port 7199/tcp open now only" in c for c in r["carried"])
+    # running, not started at boot: cassandra_firewall would enable it
+    no_boot = FIREWALLD.replace("fw_state|firewalld|active|enabled", "fw_state|firewalld|active|disabled")
+    assert cassandra_firewall_changes(no_boot, fw(), "RedHat", CASSANDRA_PORTS) == [
+        {"what": "firewall firewalld at boot", "now": "disabled", "would": "enabled", "effect": "change"}]
+    # stopped, started at boot: "no firewall" would disable it
+    stopped = "fw_state|firewalld|inactive|enabled\n"
+    assert found(stopped)["vars"]["cassandra_firewall_enabled"] is False
+    assert cassandra_firewall_changes(stopped, fw(enabled=False), "RedHat", CASSANDRA_PORTS) == [
+        {"what": "firewall firewalld", "now": "inactive, at boot enabled", "would": "stopped, disabled",
+         "effect": "change"}]
+    assert cassandra_firewall_changes("fw_state|firewalld|inactive|disabled\n", fw(enabled=False), "RedHat",
+                                      CASSANDRA_PORTS) == []
+    # ufw: a port allowed for IPv4 only (the role allows both)
+    ufw = "fw|ufw|active|\nfw_rule|ufw|9042/tcp                   ALLOW       Anywhere\n"
+    r = found(ufw)
+    assert r["vars"]["open_ports"] == [] and any("9042/tcp allowed for IPv4 only" in c for c in r["carried"])

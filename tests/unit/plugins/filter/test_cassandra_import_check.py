@@ -1502,7 +1502,7 @@ def test_firewall_rule_not_carried_fails_the_self_check():
     assert [d for d in out["differences"] if d.startswith("cassandra_firewall")] == [
         'cassandra_firewall: firewall rule (not carried): node has zone public: rich rule rule family="ipv4" source'
         ' address="10.0.9.0/24" port port="7199" protocol="tcp" accept, the roles would set not written by the roles',
-        "cassandra_firewall: firewall firewalld: node has active, the roles would set stopped, disabled"]
+        "cassandra_firewall: firewall firewalld: node has active, at boot ?, the roles would set stopped, disabled"]
 
 
 # --- rc10: the repositories and cqlsh ---
@@ -1550,3 +1550,48 @@ def test_cqlsh_that_does_not_start_is_a_difference():
     assert parts_check("system", cqlsh_error=error, tamper={"cassandra_cqlsh_source": "external"}) == []
     assert parts_check("system", cqlsh_error=error, tamper={"cassandra_cqlsh_python_manage": False}) == []
     assert parts_check("system", cqlsh_error=error, own_cqlsh=True) == []
+
+
+def cqlsh_state(**changes):
+    """What the import read of cqlsh on a RedHat node with python3 3.9 and the package's cqlsh working."""
+    st = {"py3": "3.9", "py311": False, "wrapper": "absent", "profile": "absent",
+          "link": "/usr/lib/python3.6/site-packages/cqlshlib", "test_py3": "ok", "test_py311": "", "ran": "/usr/bin/cqlsh"}
+    st.update(changes)
+    return st
+
+
+def cqlsh_check(st, family="RedHat", **variables):
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import _cqlsh_check
+    cqlsh = dict({"manage": True, "source": "package", "python": "", "series": "50x", "offline": False, "command": "cqlsh",
+                  "supported": {"50x": ["3.8", "3.13"], "41x": ["3.6", "3.11"]}}, **variables)
+    return _cqlsh_check(cqlsh, st, family, "")
+
+
+def test_cqlsh_as_the_roles_set_it_up():
+    assert cqlsh_check(cqlsh_state()) == ([], [])
+    # its cqlshlib link missing: added, no effect; another cqlshlib there: a change
+    assert cqlsh_check(cqlsh_state(link="absent"))[1][0].startswith("cassandra_install: cqlshlib of python3: none ->")
+    assert cqlsh_check(cqlsh_state(link="other"))[0] == [
+        "cassandra_install: cqlshlib of python3: node has its own, the roles would set a link to"
+        " /usr/lib/python3.6/site-packages/cqlshlib"]
+    # python3 out of the range: python3.11, the wrapper over a pip cqlsh, profile.d
+    diffs = cqlsh_check(cqlsh_state(py3="3.12", wrapper="other", ran="/usr/local/bin/cqlsh"), series="41x")[0]
+    assert diffs[:3] == [
+        "cassandra_install: python3.11: node has none, the roles would set installed (python3 3.12 is outside 3.6-3.11,"
+        " which the cqlsh of Cassandra 41x runs on)",
+        "cassandra_install: /usr/local/bin/cqlsh: node has another file, the roles would set their wrapper (the"
+        " package's cqlsh with /usr/bin/python3.11)",
+        "cassandra_install: /etc/profile.d/cqlsh.sh: node has none, the roles would set CQLSH_PYTHON=/usr/bin/python3.11"]
+    # the package's cqlsh as the roles would set it up does not start
+    assert cqlsh_check(cqlsh_state(test_py3="ModuleNotFoundError: No module named 'six'"))[0] == [
+        "cassandra_install: cqlsh as the roles would set it up (the package's, with python3) does not start:"
+        " ModuleNotFoundError: No module named 'six'"]
+
+
+def test_cqlsh_found_in_the_path_not_named_stops_with_both_ways_out():
+    diffs = cqlsh_check(cqlsh_state(wrapper="other", ran="/usr/local/bin/cqlsh"))[0]
+    assert diffs == ["cassandra_install: cqlsh: node has /usr/local/bin/cqlsh (not the package's) for the playbooks, the"
+                     " roles would set the package's: name it (cassandra_cqlsh_command: /usr/local/bin/cqlsh, then"
+                     " cassandra_cqlsh_source external), or keep it as it is (-e import_keep_hand_edits=cqlsh)"]
+    # named by the inventory: the import writes it with cassandra_cqlsh_source external (nothing checked then)
+    assert parts_check("system", tamper={"cassandra_cqlsh_source": "external"}) == []

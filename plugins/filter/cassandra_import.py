@@ -2271,6 +2271,26 @@ KEPT_PARTS = {
 }
 # what the import writes with them: the parts kept (the next import reads it back)
 KEPT_PARTS_VAR = "cassandra_import_kept"
+# the variables the import carries for each part (left out when the part is kept as the node has it)
+_OS_VARS = {"sysctl": ("cassandra_linux_sysctl", "cassandra_linux_sysctl_file"),
+            "limits": ("cassandra_linux_limits", "cassandra_linux_nproc_all"),
+            "thp": ("cassandra_linux_thp_enabled", "cassandra_linux_thp_defrag"),
+            "swap": ("cassandra_linux_swap_off",),
+            "timesync": ("cassandra_linux_timesync", "cassandra_linux_timesync_servers"),
+            "disks": ("cassandra_data_readahead_kb", "cassandra_data_scheduler", "cassandra_data_lvm_readahead",
+                      "cassandra_data_disk_tuning")}
+KEPT_PART_VARS = dict(_OS_VARS, os=tuple(v for names in _OS_VARS.values() for v in names),
+                      unit=("cassandra_service_start",), repo=(),
+                      cqlsh=("cassandra_cqlsh_source", "cassandra_cqlsh_command"),
+                      firewall=("open_ports", "cassandra_firewall_enabled"))
+# the finer parts os keeps too
+OS_PARTS = tuple(_OS_VARS)
+# what each part is, for the report and the stops
+KEPT_PART_WORDS = {"os": "the OS settings (kernel, limits, THP, swap, time sync, disks)",
+                   "sysctl": "the kernel settings", "limits": "the limits files", "thp": "transparent huge pages",
+                   "swap": "swap", "timesync": "time sync", "disks": "the tuning of the data devices",
+                   "unit": "the unit (or init script) Cassandra is started by", "repo": "the package repositories",
+                   "cqlsh": "cqlsh's Python", "firewall": "the firewall"}
 
 
 def _keep_names(value):
@@ -2282,11 +2302,14 @@ def _keep_names(value):
     if not isinstance(value, (list, tuple)):
         return boolean(value, strict=False)
     names = [str(v).strip() for v in value if str(v).strip()]
-    wrong = [n for n in names if not CONFIG_FILE.match(n) and n not in KEPT_PARTS]
+    # (true among parts: every hand-edited config file, with them)
+    names = ["true" if n.lower() in ("true", "yes") else n for n in names]
+    wrong = [n for n in names if not CONFIG_FILE.match(n) and n not in KEPT_PARTS and n != "true"]
     if wrong:
         raise AnsibleFilterError("import_keep_hand_edits: %s: neither a config file of cassandra_config (cassandra.yaml,"
                                  " cassandra-env.sh, jvm*-server.options, cassandra-rackdc.properties, logback.xml,"
-                                 " jmxremote.password, jmxremote.access) nor a part (%s); or true, false"
+                                 " jmxremote.password, jmxremote.access) nor a part (%s); or true (every hand-edited"
+                                 " file), false"
                                  % (", ".join(wrong), ", ".join(KEPT_PARTS)))
     return names
 
@@ -2298,40 +2321,90 @@ def keep_files_option(value):
     names = _keep_names(value)
     if names is True or names is False:
         return names or []
-    return [n for n in names if CONFIG_FILE.match(n)]
+    return True if "true" in names else [n for n in names if CONFIG_FILE.match(n)]
 
 
-def cassandra_import_kept_before(texts, keep_hand_edits=False, take_over=""):
+# the switches an import before rc10 wrote for a part set up another way (now a part kept by hand): {switch: part}
+OLD_KEPT_SWITCHES = {"cassandra_linux_manage": "os", "cassandra_service_unit_manage": "unit",
+                     "cassandra_repository_manage": "repo", "cassandra_cqlsh_python_manage": "cqlsh",
+                     "cassandra_firewall_manage": "firewall"}
+# every one of them, and these, on a node it could not read (not a choice: that node is imported now)
+_OLD_NOT_READ = ("cassandra_java_set_default", "cassandra_install_tools", "cassandra_install_jemalloc")
+IMPORT_MARK = "# Written by community.cassandra.import_cluster"
+
+
+def _take_over_option(value):
+    """import_take_over: the parts given back to Ansible, names separated by commas (none: none) -> [parts]."""
+    given = [p.strip() for p in re.sub(r"[\[\]'\"]", "", str(value or "")).split(",") if p.strip() not in ("", "none")]
+    wrong = [p for p in given if p not in KEPT_PARTS]
+    if wrong:
+        raise AnsibleFilterError("import_take_over: %s: not a part (%s)" % (", ".join(wrong), ", ".join(KEPT_PARTS)))
+    return given
+
+
+def _covered(part, parts):
+    """part is kept by parts: named, or a finer part of os."""
+    return part in parts or (part in OS_PARTS and "os" in parts)
+
+
+def _option_again(keep_hand_edits, parts):
+    """The import_keep_hand_edits value that keeps what this one does and these parts too."""
+    names = _keep_names(keep_hand_edits)
+    names = ["true"] if names is True else [] if names is False else [n for n in names if n not in KEPT_PARTS]
+    return ",".join(names + [p for p in KEPT_PARTS if p in parts])
+
+
+def cassandra_import_kept_before(texts, keep_hand_edits=False, take_over="none"):
     """texts: {path in the inventory: text} of the files there (an earlier import's among them); keep_hand_edits,
-    take_over: this import's options (take_over: the parts given back to Ansible, names separated by commas) -> the
-    lines of the stop when a part an earlier import kept by hand (KEPT_PARTS_VAR in its group_vars or host_vars) is
-    neither kept again nor given back, [] otherwise."""
-    before = {}
+    take_over: this import's options (take_over: the parts given back to Ansible, names separated by commas) ->
+    {stop: [the lines of the stop when a part an earlier import kept by hand (KEPT_PARTS_VAR) is neither kept again
+    nor given back, or a file of the import cannot be read], kept: {host: [parts]} an import before rc10 left aside
+    (its *_manage: false in that host's host_vars, OLD_KEPT_SWITCHES; not on a node it could not read): kept again,
+    said; given: [parts] given back}."""
+    now = keep_parts_option(keep_hand_edits)
+    given = _take_over_option(take_over)
+    both = [p for p in given if _covered(p, now)]
+    if both:
+        return {"stop": ["import_take_over and import_keep_hand_edits both name %s: give %s back to Ansible, or keep"
+                         " %s, not both." % (", ".join(both), "it" if len(both) == 1 else "them",
+                                             "it" if len(both) == 1 else "them")], "kept": {}, "given": given}
+    before, old, unreadable = {}, {}, []
     for path, text in sorted((texts or {}).items()):
-        if not re.match(r"^(group_vars|host_vars)/", path) or KEPT_PARTS_VAR not in str(text):
+        if not re.match(r"^(group_vars|host_vars)/", path) or str(text).startswith("$ANSIBLE_VAULT"):
             continue
         try:
             data = yaml.safe_load(text) or {}
         except yaml.YAMLError:
+            if IMPORT_MARK in str(text) or KEPT_PARTS_VAR in str(text):
+                unreadable.append(path)
             continue
-        for part in (data.get(KEPT_PARTS_VAR) or []) if isinstance(data, dict) else []:
+        if not isinstance(data, dict):
+            continue
+        for part in data.get(KEPT_PARTS_VAR) or []:
             before.setdefault(str(part), []).append(path)
-    now = keep_parts_option(keep_hand_edits)
-    given = [p.strip() for p in re.sub(r"[\[\]'\"]", "", str(take_over or "")).split(",")
-             if p.strip() not in ("", "none")]
-    wrong = [p for p in given if p not in KEPT_PARTS]
-    if wrong:
-        raise AnsibleFilterError("import_take_over: %s: not a part (%s)" % (", ".join(wrong), ", ".join(KEPT_PARTS)))
-    dropped = [p for p in KEPT_PARTS if p in before and p not in now and p not in given]
+        m = re.match(r"^host_vars/([^/]+)/", path)
+        if m and IMPORT_MARK in str(text) and KEPT_PARTS_VAR not in data \
+                and not all(data.get(k) is False for k in list(OLD_KEPT_SWITCHES) + list(_OLD_NOT_READ)):
+            parts = [part for k, part in OLD_KEPT_SWITCHES.items() if data.get(k) is False and part not in given]
+            if parts:
+                old[m.group(1)] = parts
+    if unreadable:
+        them = "it" if len(unreadable) == 1 else "them"
+        return {"stop": ["%s: written by an earlier import, cannot be read as YAML: the parts it kept by hand are not"
+                         " known. Fix or remove %s, then import again." % (", ".join(unreadable), them)],
+                "kept": {}, "given": given}
+    dropped = [p for p in KEPT_PARTS if p in before and not _covered(p, now) and p not in given]
     if not dropped:
-        return []
+        return {"stop": [], "kept": old, "given": given}
     it = "it" if len(dropped) == 1 else "them"
     files = ", ".join(sorted(set(f for p in dropped for f in before[p])))
-    again = ",".join([p for p in KEPT_PARTS if p in now or p in dropped])
-    return ["%s kept by hand by the last import (%s): this import does not name %s." % (", ".join(dropped), files, it),
-            "Keep %s: import again with -e import_keep_hand_edits=%s." % (it, again),
-            "Give %s to Ansible: import again with -e import_take_over=%s (first with --check --diff: it shows what the"
-            " roles would change)." % (it, ",".join(dropped))]
+    again = _option_again(keep_hand_edits, now + dropped)
+    head = "%s kept by hand by the last import (%s): this import does not name %s." % (", ".join(dropped), files, it)
+    return {"stop": [head,
+                     "Keep %s: import again with -e import_keep_hand_edits=%s." % (it, again),
+                     "Give %s to Ansible: import again with -e import_take_over=%s (first with --check --diff: it shows"
+                     " what the roles would change)." % (it, ",".join(dropped))],
+            "kept": old, "given": given}
 
 
 def keep_parts_option(value):
@@ -4425,7 +4498,7 @@ SAFE_REASONS = [
     (re.compile(r"(cassandra_config_import: unsupported series \w+)"), r"\1"),
     # the user's own -e value
     (re.compile(r"(import_keep_hand_edits: [^\n]*?: neither a config file of cassandra_config \([^)]*\) nor a part"
-                r" \([^)]*\); or true, false)"), r"\1"),
+                r" \([^)]*\); or true \(every hand-edited file\), false)"), r"\1"),
     (re.compile(r"(import_take_over: [^\n]*?: not a part \([^)]*\))"), r"\1"),
     (re.compile(r"(cassandra_config_import: cannot read [\w, ]+ from cassandra\.yaml \([^)]*\))"), r"\1"),
     (re.compile(r"(cassandra_config_import: cassandra\.yaml is not valid YAML(?: \(line \d+\))?)"), r"\1"),

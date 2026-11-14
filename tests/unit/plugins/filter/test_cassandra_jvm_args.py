@@ -1079,7 +1079,8 @@ def test_a_wrong_name_of_import_keep_hand_edits_said(tmp_path):
     assert cassandra_import_error({"failed": True, "msg": "cassandra_config_import: %s" % raised.value}) == (
         "import_keep_hand_edits: logbak.xml: neither a config file of cassandra_config (cassandra.yaml, cassandra-env.sh,"
         " jvm*-server.options, cassandra-rackdc.properties, logback.xml, jmxremote.password, jmxremote.access) nor a"
-        " part (os, sysctl, limits, thp, swap, timesync, disks, unit, repo, cqlsh, firewall); or true, false")
+        " part (os, sysctl, limits, thp, swap, timesync, disks, unit, repo, cqlsh, firewall); or true (every"
+        " hand-edited file), false")
 
 
 def test_no_move_when_jmx_authenticates_by_jaas(tmp_path):

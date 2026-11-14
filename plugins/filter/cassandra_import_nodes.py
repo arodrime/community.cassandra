@@ -22,7 +22,8 @@ import re
 from ansible.errors import AnsibleFilterError
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    CARRIED, CONFIG_FILE, KEPT_PARTS, KEPT_PARTS_VAR, keep_files_option, keep_parts_option, values_hidden)  # (CONFIG_FILE: the report's too)
+    CARRIED, CONFIG_FILE, KEPT_PART_VARS, KEPT_PARTS, KEPT_PARTS_VAR, keep_files_option, keep_parts_option,
+    values_hidden)  # (CONFIG_FILE: the report's too)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_java import cassandra_java_supported
 from ansible_collections.community.cassandra.plugins.filter import cassandra_node_standing as standing
 
@@ -35,7 +36,7 @@ KEYS = ("ansible_facts", "ansible_host", "import_cluster_address", "import_clust
         "import_cluster_jmx_slurp", "import_cluster_jvm_cmdline",
         "import_cluster_keep", "import_cluster_log_dir", "import_cluster_medusa",
         "import_cluster_medusa_ini", "import_cluster_newer_files", "import_cluster_os", "import_cluster_os_found",
-        "import_cluster_own_os", "import_cluster_own_cqlsh", "import_cluster_cqlsh_command",
+        "import_cluster_own_os", "import_cluster_own_cqlsh", "import_cluster_cqlsh", "import_cluster_cqlsh_command",
         "import_cluster_cqlsh_error", "import_cluster_package_offered", "import_cluster_repo_files",
         "import_cluster_package",
         "import_cluster_package_from_file", "import_cluster_packages", "import_cluster_perms", "import_cluster_repo",
@@ -151,36 +152,47 @@ def _package_vars(hv, read, repo, package):
     return pkg
 
 
-# the variables the import carries for each part (dropped when the part is kept as the node has it)
-PART_VARS = {"os": re.compile(r"^cassandra_(linux_|data_)"), "sysctl": re.compile(r"^cassandra_linux_sysctl"),
-             "limits": re.compile(r"^cassandra_linux_(limits|nproc_all)"), "thp": re.compile(r"^cassandra_linux_thp_"),
-             "swap": re.compile(r"^cassandra_linux_swap_off$"), "timesync": re.compile(r"^cassandra_linux_timesync"),
-             "disks": re.compile(r"^cassandra_data_(readahead_kb|scheduler|lvm_readahead)$"),
-             "unit": re.compile(r"^cassandra_service_start$"), "repo": re.compile(r"^$"),
-             "cqlsh": re.compile(r"^cassandra_cqlsh_source$"),
-             "firewall": re.compile(r"^(open_ports|cassandra_firewall_enabled)$")}
-
-
 def _kept_parts(node, parts):
-    """A node read, the parts import_keep_hand_edits keeps (KEPT_PARTS): their switches in its keep (host_vars), with
-    the list of them (KEPT_PARTS_VAR, read back by the next import), the values carried for them dropped."""
+    """A node read, the parts import_keep_hand_edits keeps (KEPT_PARTS): their switches with the node's variables
+    (the cluster's group_vars when every node has them), with the list of them (KEPT_PARTS_VAR, read back by the next
+    import), the values carried for them dropped."""
     if not parts or not _bool(node.get("read", False)):
         return node
+    parts = [p for p in KEPT_PARTS if p in set(parts) | set(node["vars"].get(KEPT_PARTS_VAR) or [])]
     node = dict(node, vars=dict(node["vars"]), keep=dict(node["keep"]))
     for part in parts:
-        node["vars"] = dict((k, v) for k, v in node["vars"].items() if not PART_VARS[part].match(k))
-        node["keep"].update(KEPT_PARTS[part])
-    node["keep"][KEPT_PARTS_VAR] = list(parts)
+        node["vars"] = dict((k, v) for k, v in node["vars"].items() if k not in KEPT_PART_VARS[part])
+        node["keep"] = dict((k, v) for k, v in node["keep"].items() if k not in KEPT_PART_VARS[part])
+    for part in parts:
+        node["vars"].update(KEPT_PARTS[part])
+    node["vars"][KEPT_PARTS_VAR] = parts
     return node
 
 
+@values_hidden
+def cassandra_import_kept_again(nodes, kept):
+    """nodes: cassandra_import_nodes'; kept: {node name: [parts]} an import before rc10 left as the node had them
+    (cassandra_import_kept_before's kept) -> the nodes with those parts kept again, said in their notes."""
+    out = []
+    for n in nodes or []:
+        parts = (kept or {}).get(n.get("name")) or []
+        if parts and _bool(n.get("read", False)):
+            n = _kept_parts(n, parts)
+            n = dict(n, notes=list(n.get("notes") or []) + [
+                "kept as the last import left it (%s): give %s to Ansible with -e import_take_over=%s" % (
+                    ", ".join(parts), "it" if len(parts) == 1 else "them", ",".join(parts))])
+        out.append(n)
+    return out
+
+
 def _cqlsh_vars(hv):
-    """The playbooks run a cqlsh of the inventory's (cassandra_cqlsh_command), the package's not set up by the roles
-    on this node: an external one -> {"cassandra_cqlsh_source": "external"} (the command itself is the inventory's:
-    never written by the import), {} otherwise."""
+    """The playbooks run a cqlsh the import was given (cassandra_cqlsh_command, of the inventory or -e), the package's
+    not set up by the roles on this node: an external one -> {"cassandra_cqlsh_source": "external",
+    "cassandra_cqlsh_command": it} (a cqlsh found in the PATH, not named: never written, the self-check says it),
+    {} otherwise."""
     command = str(hv.get("import_cluster_cqlsh_command", "") or "cqlsh")
     if command != "cqlsh" and not _bool(hv.get("import_cluster_own_cqlsh", False)):
-        return {"cassandra_cqlsh_source": "external"}
+        return {"cassandra_cqlsh_source": "external", "cassandra_cqlsh_command": command}
     return {}
 
 
@@ -378,8 +390,9 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
 
     config_vars = _d(config.get("vars"))
     # started by the package's init script as installed: the roles write no unit, they start that script
+    # (not with drop-ins: what they set, e.g. a JAVA_HOME, would not hold for the script of a node added later)
     start = {"cassandra_service_start": "package_script"} \
-        if read and unit.get("pkg_script", "") not in ("", "modified") else {}
+        if read and unit.get("pkg_script", "") not in ("", "modified") and not unit.get("dropins", "").strip() else {}
     unit_kept = dict(keep, **({"cassandra_service_unit_manage": False} if start else {}))
     env_log_dir = _env_log_dir(read, unit_kept, env, conf, config_vars)
     java_link = _java_link(hv, read)
@@ -483,5 +496,6 @@ class FilterModule(object):
     def filters(self):
         return {
             "cassandra_import_host_vars": cassandra_import_host_vars,
+            "cassandra_import_kept_again": cassandra_import_kept_again,
             "cassandra_import_nodes": cassandra_import_nodes,
         }

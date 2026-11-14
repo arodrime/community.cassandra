@@ -766,7 +766,8 @@ def _timesync(recs, wanted):
 
 
 FW_PORTS = re.compile(r"^ports\s+(.*)$")
-UFW_ALLOW = re.compile(r"^(\d+(?::\d+)?/(?:tcp|udp))\s+ALLOW(?:\s+IN)?\s+Anywhere(?:\s+\(v6\))?\s*$")
+FW_PERMANENT = re.compile(r"^permanent ports\s+(.*)$")
+UFW_ALLOW = re.compile(r"^(\d+(?::\d+)?/(?:tcp|udp))(?:\s+\(v6\))?\s+ALLOW(?:\s+IN)?\s+Anywhere(?:\s+\(v6\))?\s*$")
 
 
 def _firewall_read(recs, cassandra_ports=()):
@@ -782,18 +783,32 @@ def _firewall_read(recs, cassandra_ports=()):
     name = next((n for n, state, extra in fws if n in ("firewalld", "ufw")), "")
     zone = next((extra[len("default zone "):] for n, state, extra in fws if n == "firewalld"
                  and extra.startswith("default zone ")), "")
-    ports, other = [], []
+    ports, permanent, v4, v6, other = [], [], [], [], []
     for where, line in rules:
         line = _norm(line)
         m = FW_PORTS.match(line)
+        perm = FW_PERMANENT.match(line)
         u = UFW_ALLOW.match(line)
         if name == "firewalld" and where == "zone %s" % zone and m:
             ports += [p for p in m.group(1).split() if p not in ports]
+        elif name == "firewalld" and where == "zone %s" % zone and perm:
+            permanent += perm.group(1).split()
+        elif perm:
+            continue  # (another zone's: its runtime line says it)
         elif name == "ufw" and where == "ufw" and u:
-            if u.group(1) not in ports:
-                ports.append(u.group(1))
+            (v6 if "(v6)" in line else v4).append(u.group(1))
         elif cassandra(line):  # (a rich rule, a service, another zone, ufw from a source, iptables, nftables)
             other.append((where, line))
+    if name == "firewalld":
+        # open now and after a reload or a boot (cassandra_firewall opens both): else not carried
+        other += [("zone %s" % zone, "port %s open %s only" % (p, "now" if p in ports else "from the next reload"))
+                  for p in ports + permanent if (p in ports) != (p in permanent) and cassandra(p)]
+        ports = [p for p in ports if p in permanent]
+    elif name == "ufw":
+        # (cassandra_firewall allows a port for IPv4 and IPv6 both)
+        other += [("ufw", "%s allowed for IPv%s only" % (p, "4" if p in v4 else "6"))
+                  for p in sorted(set(v4) ^ set(v6)) if cassandra(p)]
+        ports = [p for p in v4 if p in v6]
     # (iptables' own INPUT policy other than ACCEPT: a rule of its own)
     other += [(n, state) for n, state, extra in fws if n not in ("firewalld", "ufw")]
     return name, zone, ports, other
@@ -806,7 +821,9 @@ def _firewall(recs, wanted):
     if not fws and not rules:
         return (["firewall: none active (firewalld, ufw), no iptables/nftables rule for the Cassandra ports"],
                 {"cassandra_firewall_enabled": False},
-                ["cassandra_firewall_enabled: false, these nodes run no firewall: cassandra_firewall installs none"])
+                ["cassandra_firewall_enabled: false, these nodes run no firewall: cassandra_firewall installs none;"
+                 " with cassandra_manage_firewall, it stops and disables the one a node added later has (RHEL starts"
+                 " firewalld by default)"])
     lines = ["firewall: %s %s%s" % (name, state, (", " + extra) if extra else "") for name, state, extra in fws]
     lines += ["firewall %s: %s" % (where, _norm(line)) for where, line in rules]
     opened = [p for p in ports
@@ -821,7 +838,9 @@ def _firewall(recs, wanted):
                      % (", ".join(open_ports) or "none", "the default zone %s" % zone if name == "firewalld" else "ufw"))
     else:
         out["cassandra_firewall_enabled"] = False
-        notes.append("cassandra_firewall_enabled: false, these nodes run neither firewalld nor ufw")
+        notes.append("cassandra_firewall_enabled: false, these nodes run neither firewalld nor ufw; with"
+                     " cassandra_manage_firewall, cassandra_firewall stops and disables the one a node added later"
+                     " has (RHEL starts firewalld by default)")
     notes += ["NOT carried: %s %s (cassandra_firewall does not write it; new nodes would not get it)" % rule
               for rule in other]
     return lines, out, notes
@@ -838,13 +857,20 @@ def cassandra_firewall_changes(text, fw, family="", cassandra_ports=()):
     name, zone, ports, other = _firewall_read(recs, cassandra_ports)
     svc = "firewalld" if family == "RedHat" else "ufw" if family == "Debian" else name or "firewalld"
     items = [_item("firewall rule (not carried)", "%s: %s" % rule, "not written by the roles") for rule in other]
+    # (running, started at boot: firewalld's unit; ufw's rules, ENABLED in ufw.conf)
+    state = dict((n, (active, boot)) for n, active, boot in (_fields(rest, 3) for kind, rest in recs if kind == "fw_state"))
+    active, boot = state.get("ufw-rules" if svc == "ufw" else svc, ("", ""))
+    running, at_boot = active in ("active", "active (running)"), boot in ENABLED or boot == "yes"
     if not boolean(fw.get("enabled", True), strict=False):
-        if name:
-            items.append(_item("firewall %s" % name, "active", "stopped, disabled"))
+        if name or running or (at_boot and svc == "firewalld"):
+            items.append(_item("firewall %s" % svc, "%s, at boot %s" % (active or "active", boot or "?"),
+                               "stopped, disabled"))
         return items
     if name != svc:
         items.append(_item("firewall %s" % svc, ("%s active" % name) if name else "none", "installed and started"))
         return items
+    if state and not at_boot:
+        items.append(_item("firewall %s at boot" % svc, boot or "?", "enabled"))
     sources = fw.get("port_sources") or {}
     items += [_item("port %s" % p, "closed", "open") for p in fw.get("open_ports") or []
               if str(p) not in sources and str(p) not in ports]
@@ -971,7 +997,7 @@ def _limits_changes(recs, linux, own, family):
         after = [e for e in after if e[0] != target] + [[target, line] for line in wanted]
         files.append(_item(target, "; ".join(there) or "absent", "; ".join(wanted)))
     block = [rest for kind, rest in recs if kind == "limits_block"]
-    if any(kind == "limits_block_found" for kind, dummy in recs):
+    if role and any(kind == "limits_block_found" for kind, dummy in recs):
         for line in block:
             gone = next((e for e in after if e[0] == LIMITS_CONF and e[1] == line), None)
             if gone:

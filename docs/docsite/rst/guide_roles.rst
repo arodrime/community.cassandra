@@ -1401,8 +1401,12 @@ module does, left as they are without one;
 run as root; ``cqlsh`` alone: ``/usr/local/bin`` first). Where it does not start (its last error line, not found, not
 executable, no answer in 30 seconds, no output), a TO DO step gives two ways out: a cqlsh installed elsewhere on the nodes (a virtualenv), set
 ``cassandra_cqlsh_command`` to its full path in ``group_vars`` (a file only root can write: the playbooks run it as
-root); none, ``cassandra_cqlsh_python_manage: true`` in those nodes' ``host_vars`` (the import wrote ``false``), then
-``create_cluster --check --diff`` and ``create_cluster``. With the Apache rpm on EL9 (``No module named 'cqlshlib'``:
+root; the next import writes it with ``cassandra_cqlsh_source: external``); none: import again without ``cqlsh`` in
+``import_keep_hand_edits`` if you named it there, then ``create_cluster --check --diff`` and ``create_cluster``. The
+self-check also works out what ``cassandra_install`` would do for the package's cqlsh (python3.11, its wrapper and
+``profile.d`` file, the cqlshlib link on RedHat), tests the package's cqlsh with the Python the roles would give it,
+and stops on another cqlsh found in the ``PATH`` the inventory does not name (its way out: name it in
+``cassandra_cqlsh_command``, or ``-e import_keep_hand_edits=cqlsh``). With the Apache rpm on EL9 (``No module named 'cqlshlib'``:
 the package installs cqlshlib for python 3.6 only), ``cassandra_install`` then links the package's cqlshlib into the
 Python cqlsh runs with (python3.11 and a wrapper only when that Python is out of the range cqlsh supports), and starts
 or restarts nothing on a running cluster; cqlsh then starts for root and the other users. The system java
@@ -1490,8 +1494,9 @@ The Cassandra repository files of a node (``cassandra-<series>`` in ``/etc/yum.r
 ``/etc/apt/sources.list.d``, and ``/etc/apt/auth.conf.d/cassandra.conf``) are taken over only when
 ``cassandra_repository`` would write them as they are: then their mirror URL, credentials (``secrets.yml``) and key
 path are imported. Files written another way (other keys or names, other signing keys, an apt credentials file without
-the role's header, another series' file, or any file when the package came from a file) get
-``cassandra_repository_manage: false`` on that node, and the report says why.
+the role's header, another series' file) give ``cassandra_install_method: system`` (the roles leave them, install from
+them), and the report says why; files next to a package installed from a file (``packages`` would remove them) stop the
+self-check, with its way out (``-e import_keep_hand_edits=repo``).
 
 The lines a node has at the end of ``cassandra-env.sh`` (an ``export``, a ``JVM_OPTS="$JVM_OPTS -javaagent:..."``)
 or of ``logback.xml``'s ``<configuration>`` (a ``<logger>``) are carried in a template piece next to the inventory,
@@ -1624,8 +1629,10 @@ hand edits (those files are then left as they are on their nodes), the value to 
 remove), ``-e import_allow_unread=true`` for the nodes not read, and for a change you want, a planned change:
 ``-e import_strict=false`` only to write the inventory, then ``apply_config --check --diff`` before applying.
 The report's ``SELF-CHECK`` section has the same, each node's differences under each line. The OS tuning of a node left
-as it is (``cassandra_linux_manage: false``), the firewall, ``/etc/default/cassandra``, ``cassandra-topology.properties`` and the owner and mode of the unit
-and ``medusa.ini`` are not compared. An error while the inventory is written is not shown (the variables hold passwords):
+as it is (``cassandra_linux_manage: false``), ``/etc/default/cassandra``, ``cassandra-topology.properties`` and the owner
+and mode of the unit and ``medusa.ini`` are not compared. A file the roles would write with no effect on the node's values
+(the self-check's notes "no effect") is listed in the report under ``APPLY_CONFIG WILL REWRITE (no effect)``:
+``apply_config`` says it changed them. An error while the inventory is written is not shown (the variables hold passwords):
 ``-e import_debug=true`` shows it.
 
 When a node has Cassandra Medusa and ``/etc/medusa/medusa.ini``, its version and settings are imported and
