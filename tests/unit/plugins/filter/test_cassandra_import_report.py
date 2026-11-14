@@ -1260,10 +1260,10 @@ def test_self_check_stop_os_golden():
         "        node madvise, cassandra_linux never",
         "",
         "HOW TO MAKE IT PASS",
-        "  node parts          to keep them as all (2 nodes) have them: cassandra_linux_manage: false (every",
-        "                      OS setting) in a file of yours, group_vars/my_cluster/local.yml, then import",
-        "                      again. Or change the nodes as the roles would (the lines above), then import",
-        "                      again",
+        "  node parts          to keep them as all (2 nodes) have them: import again with",
+        "                      -e import_keep_hand_edits=thp (the roles then leave transparent huge pages as",
+        "                      they are). Or change the nodes as the roles would (the lines above), then",
+        "                      import again",
         "  a change you want   it is a planned change: import again with -e import_strict=false (it only",
         "                      writes the inventory), then review with",
         "                      ansible-playbook community.cassandra.apply_config --check --diff before",
@@ -1274,15 +1274,14 @@ def test_self_check_stop_os_golden():
 
 def test_self_check_stop_os_finest_switch_on_its_nodes():
     lines = stop([node(1), node(2)], {"node1": {"differences": [READ_AHEAD]}}, width=400)
-    assert ("  node parts          to keep them as node1 (1 node) has them: cassandra_data_disk_tuning: false (the data"
-            " devices only) in a file of yours, host_vars/<node>/local.yml of each of them, then import again. Or"
-            " change the nodes as the roles would (the lines above), then import again") in lines
+    assert ("  node parts          to keep them as node1 (1 node) has them: import again with -e"
+            " import_keep_hand_edits=disks (the roles then leave the tuning of the data devices as they are). Or change"
+            " the nodes as the roles would (the lines above), then import again") in lines
     # time sync alone: its own switch; THP and the disks: the switch of every OS setting
     sync = "cassandra_linux: time sync chronyd: node has inactive, the roles would set started"
-    assert "cassandra_linux_timesync: false (time sync only)" in "\n".join(
-        stop([node(1)], {"node1": {"differences": [sync]}}, width=400))
+    assert "-e import_keep_hand_edits=timesync" in "\n".join(stop([node(1)], {"node1": {"differences": [sync]}}, width=400))
     both = "\n".join(stop([node(1)], {"node1": {"differences": [THP, READ_AHEAD]}}, width=400))
-    assert "cassandra_linux_manage: false (every OS setting)" in both and "cassandra_data_disk_tuning" not in both
+    assert "-e import_keep_hand_edits=thp,disks" in both
     # with differences of the inventory too: both counted
     mixed = {"node1": {"differences": [THP, "cassandra.yaml: concurrent_reads: node has '64', import would write '16'"]}}
     assert stop([node(1)], mixed, width=400)[0] == (
@@ -1294,7 +1293,6 @@ def test_self_check_stop_unit_way_out():
     script = ("cassandra.service: the node starts Cassandra with the init script /etc/rc.d/init.d/cassandra (modified"
               " since its package installed it), the roles would start it with their systemd unit from its next restart")
     lines = stop([node(1), node(2)], {"node1": {"differences": [script]}}, width=400)
-    assert ("  unit                to keep how node1 (1 node) starts Cassandra (its own unit or init script):"
-            " cassandra_service_unit_manage: false in a file of yours, host_vars/<node>/local.yml of each of them,"
-            " then import again. To have the unit of the roles instead (from the next restart of each node): a"
-            " planned change, below") in lines
+    assert ("  unit                to keep how node1 (1 node) starts Cassandra (its own unit or init script): import"
+            " again with -e import_keep_hand_edits=unit. To have the unit of the roles instead (from the next restart"
+            " of each node): a planned change, below") in lines

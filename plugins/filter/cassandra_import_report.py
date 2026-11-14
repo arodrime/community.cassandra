@@ -27,7 +27,8 @@ from collections import namedtuple
 from ansible.module_utils.parsing.convert_bool import boolean
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    HEAP_MOVED, IDENTITY, KEEP, NODE_LEVEL, NOT_READ, PER_NODE, group_chains, hand_edits_kept, _secret, vars_sort_key, values_hidden)
+    HEAP_MOVED, IDENTITY, KEEP, KEPT_PARTS, KEPT_PARTS_VAR, NODE_LEVEL, NOT_READ, PER_NODE, group_chains,
+    hand_edits_kept, _secret, vars_sort_key, values_hidden)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import HEAP_FILE
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import CONFIG_FILE, RESTART_DOES
 from ansible_collections.community.cassandra.plugins.filter.cassandra_suspicious import (
@@ -444,13 +445,13 @@ _KINDS = ((_HAND, "Hand edits no variable covers (cassandra_config would revert 
 # the OS model's differences (cassandra_import_check's): "cassandra_linux: <what>: node has <now>, the roles would set ..."
 _OS_FILES = ("cassandra_linux", "cassandra_firewall", "cassandra_repository", "cassandra_install")
 # the switch that keeps a part as the nodes have it, by the file of the difference (cassandra_linux: _OS_SWITCHES)
-_PART_SWITCHES = {"cassandra_firewall": ("cassandra_firewall_manage: false", "the firewall"),
-                  "cassandra_repository": ("cassandra_repository_manage: false", "the repositories"),
-                  "cassandra_install": ("cassandra_cqlsh_python_manage: false", "cqlsh's Python")}
-# the switches that keep a part of the OS settings as the nodes have it, by the OS difference's start
-_OS_SWITCHES = (("time sync", "cassandra_linux_timesync: false", "time sync only"),
-                (("read_ahead_kb", "IO scheduler", "LVM read-ahead", "/etc/udev/", "tuned profiles", "data devices"),
-                 "cassandra_data_disk_tuning: false", "the data devices only"))
+# the part (import_keep_hand_edits) of a difference: by its role, else (cassandra_linux) by its start
+_PART_OF_FILE = {"cassandra_firewall": "firewall", "cassandra_repository": "repo", "cassandra_install": "cqlsh"}
+_OS_PARTS = ((("time sync", "chrony"), "timesync"),
+             (("read_ahead_kb", "IO scheduler", "LVM read-ahead", "/etc/udev/", "tuned profiles", "data devices"), "disks"),
+             (("transparent_hugepage", "/etc/systemd/system/disable-thp", "disable-thp"), "thp"),
+             ("swap", "swap"), ("sysctl", "sysctl"),
+             (("limits", "/etc/security/", "the block earlier versions"), "limits"))
 SCREEN_VALUE = 50  # a value longer than this is cut on the screen (whole in the report)
 SCREEN_MOST = 100  # the stop's lines at most (the ops callback's rules)
 SELF_CHECK_WIDTH = 110  # the report's SELF-CHECK section
@@ -741,13 +742,10 @@ def _hints(layout, items, read, unread, who, error="", report=False, report_file
         names = []
         for i in unit_items:
             names += [n for n in _item_nodes(i) if n not in names]
-        where = "group_vars/%s/local.yml" % layout["cluster_group"] if set(names) >= set(n["name"] for n in read) \
-            else "host_vars/<node>/local.yml of each of them"
         verb = "starts" if len(names) == 1 else "start"
-        hints.append(("unit", "to keep how %s %s Cassandra (its own unit or init script): %s in a file of yours, %s,"
-                      " then import again. To have the unit of the roles instead (from the next restart of each node):"
-                      " a planned change, below"
-                      % (who(names), verb, unbreakable("cassandra_service_unit_manage: false"), where)))
+        hints.append(("unit", "to keep how %s %s Cassandra (its own unit or init script): import again with %s."
+                      " To have the unit of the roles instead (from the next restart of each node): a planned change,"
+                      " below" % (who(names), verb, unbreakable("-e import_keep_hand_edits=unit"))))
     if unread and not read:  # (no node checked: never valid, import_allow_unread or not)
         hints.append(("not read", "no node could be read: start Cassandra or fix the access on one of them at least,"
                       " then import again"))
@@ -777,30 +775,27 @@ def _hints(layout, items, read, unread, who, error="", report=False, report_file
     return hints or [("unknown", "import again with %s to see what failed (it may show passwords)" % debug)]
 
 
+def _part_of(item):
+    """The part (import_keep_hand_edits) a difference of the roles' parts belongs to: the finest one."""
+    if item["file"] in _PART_OF_FILE:
+        return _PART_OF_FILE[item["file"]]
+    setting = item["setting"] or ""
+    return next((part for start, part in _OS_PARTS if setting.startswith(start)), "os")
+
+
 def _os_hint(layout, items, read, who):
-    """The way out of the OS differences: the switch that keeps them as the nodes have them (the finest one that
-    covers them all), in a file of yours (the cluster's when every node read has them, else each node's); or the
-    nodes changed first."""
-    names = []
+    """The way out of the differences of the nodes' parts: keep the parts as the nodes have them (the finest ones,
+    import_keep_hand_edits), or change the nodes first."""
+    names, parts = [], []
     for i in items:
         names += [n for n in _item_nodes(i) if n not in names]
-    switches = []
-    for i in items:
-        found = _PART_SWITCHES[i["file"]] if i["file"] in _PART_SWITCHES else next(
-            ((switch, part) for start, switch, part in _OS_SWITCHES if (i["setting"] or "").startswith(start)),
-            ("cassandra_linux_manage: false", "every OS setting"))
-        if found not in switches:
-            switches.append(found)
-    others = [sw for sw in switches if sw in _PART_SWITCHES.values()]
-    if len(switches) - len(others) > 1:
-        switches = [("cassandra_linux_manage: false", "every OS setting")] + others
-    switch = " and ".join(unbreakable(sw[0]) for sw in switches)
-    part = " and ".join(sw[1] for sw in switches)
-    where = "group_vars/%s/local.yml" % layout["cluster_group"] if set(names) >= set(n["name"] for n in read) \
-        else "host_vars/<node>/local.yml of each of them"
-    return ("to keep them as %s %s them: %s (%s) in a file of yours, %s, then import again. Or change the nodes as"
-            " the roles would (the lines above), then import again" % (
-                who(names), "has" if len(names) == 1 else "have", switch, part, where))
+        if _part_of(i) not in parts:
+            parts.append(_part_of(i))
+    parts = [p for p in KEPT_PARTS if p in parts]
+    return ("to keep them as %s %s them: import again with %s (the roles then leave %s as they are). Or change the"
+            " nodes as the roles would (the lines above), then import again" % (
+                who(names), "has" if len(names) == 1 else "have",
+                unbreakable("-e import_keep_hand_edits=" + ",".join(parts)), "; ".join(PART_WORDS[p] for p in parts)))
 
 
 def _self_check_lines(layout, self_check, who, width, report_file="", error="", allow_unread=False,
@@ -883,11 +878,18 @@ def report_sections(layout, self_check):
     from_yours = layout.get("from_yours") or {}
     keys = sorted({k for n in read for k in n.get("vars") or {} if k not in _NOT_SETTINGS}, key=vars_sort_key)
     pairs, variable = _settings_pairs(read, keys, from_yours)
-    kept, left_groups = [], {}
+    kept, left_groups, kept_parts = [], {}, {}
     for n in nodes:
         order = list(KEEP_SHORT)
+        parts = list((n.get("keep") or {}).get(KEPT_PARTS_VAR) or [])
+        if parts:
+            kept_parts.setdefault(tuple(parts), []).append(n["name"])
+        # (the switches of the parts kept by hand: said with them)
+        by_hand = set(k for part in parts for k in KEPT_PARTS.get(part, {})) | set([KEPT_PARTS_VAR])
         for k, v in sorted((n.get("keep") or {}).items(),
                            key=lambda kv: (order.index(kv[0]) if kv[0] in order else 99, kv[0])):
+            if k in by_hand:
+                continue
             if k == "cassandra_config_keep_files":
                 kept += [(n["name"], f) for f in v]
             elif k in KEEP:
@@ -897,7 +899,7 @@ def report_sections(layout, self_check):
     tuning = _by_value([(n["name"],) + _os_pair(line) for n in read
                         for line in (n.get("os") or {}).get("lines") or []])
     return {"settings": _by_value(pairs), "variable": variable, "edits": _by_value(_hand_edit_rows(read)),
-            "kept": kept, "left_groups": left_groups, "tuning": tuning,
+            "kept": kept, "left_groups": left_groups, "kept_parts": kept_parts, "tuning": tuning,
             "check_items": _self_check_items(read, self_check, layout.get("theirs_win")),
             # ("all" is every node of the cluster: a list of the nodes read says "all - n4" when n4 was not read)
             "groups": named_groups(nodes), "everyone": [n["name"] for n in nodes]}
@@ -1224,6 +1226,30 @@ def _left_kind(label):
     if label.startswith("cassandra_package_hold"):
         return "hold"
     return "managed" if label in KEEP or label in KEEP_SHORT.values() else "value"
+
+
+# what each part kept by hand is (import_keep_hand_edits), for the report
+PART_WORDS = {"os": "the OS settings (kernel, limits, THP, swap, time sync, disks)", "sysctl": "the kernel settings",
+              "limits": "the limits files", "thp": "transparent huge pages", "swap": "swap",
+              "timesync": "time sync", "disks": "the tuning of the data devices",
+              "unit": "the unit (or init script) Cassandra is started by", "repo": "the package repositories",
+              "cqlsh": "cqlsh's Python", "firewall": "the firewall"}
+
+
+def _kept_parts_lines(report):
+    """The parts import_keep_hand_edits kept as the nodes have them, one entry per set of parts and nodes: what the
+    roles leave, how to give them to Ansible."""
+    lines = []
+    for parts, members in sorted(report_sections(report.layout, {})["kept_parts"].items()):
+        option = unbreakable("import_keep_hand_edits=" + ",".join(parts))
+        lines += fill_text("%s (%s)   %s" % (", ".join(parts), option, unbreakable(_who(report, members))),
+                           report.width, "    ", "  ")
+        lines += fill_text("the roles leave %s as they are; to give %s to Ansible: import again without %s and with %s"
+                           " (with --check --diff first: it shows what the roles would change)" % (
+                               "; ".join(PART_WORDS[p] for p in parts), "them" if len(parts) > 1 else "it",
+                               "them" if len(parts) > 1 else "it", unbreakable("-e import_take_over=" + ",".join(parts))),
+                           report.width, "      ", "  ")
+    return lines
 
 
 def _left_alone_lines(report):
@@ -1865,6 +1891,9 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
         if screen:
             lines += fill_text("where each value is set, and how to give every node one: %s"
                                % out.path_from(report_file, cwd), width, "  ", "  ")
+    by_hand = _kept_parts_lines(report)
+    if by_hand:
+        lines += ["", "KEPT BY HAND (your choice)"] + by_hand
     left = _left_alone_lines(report)
     if KEPT in blocks or left:
         lines += ["", "LEFT AS THE NODES HAVE THEM"] + blocks.get(KEPT, []) + left

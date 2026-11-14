@@ -1373,7 +1373,7 @@ How Cassandra is started is imported: the init script of the Cassandra package, 
 -V`` or ``dpkg --verify`` does not list it), gives ``cassandra_service_start: package_script`` (the roles start that
 script, write no unit). A unit of the roles is kept as theirs. Any other unit, or an init script modified or of no
 package, is compared with the unit the roles would write (the self-check): what differs stops the import, with the way
-out (``cassandra_service_unit_manage: false`` in a file of yours keeps it as the nodes have it; else the roles' unit
+out (``-e import_keep_hand_edits=unit`` keeps it as the nodes have it; else the roles' unit
 takes over at each node's next restart, a planned change). So are the repositories: the role's repository file as it
 writes it keeps ``cassandra_install_method: repository`` (with its URL and credentials); a package installed from a
 file gives ``packages``; a Cassandra a configured repository offers, or repository files of the node's own, give
@@ -1381,8 +1381,8 @@ file gives ``packages``; a Cassandra a configured repository offers, or reposito
 ``cassandra_cqlsh_command`` of the inventory (another cqlsh, e.g. a virtualenv) gives ``cassandra_cqlsh_source:
 external`` (nothing written for the package's cqlsh; the import never writes a cqlsh path), a cqlsh of the roles stays
 theirs. What the roles would still change (a repository file to add or remove, a cqlsh that does not start, which
-they would give a Python) stops the self-check, with the way out (``cassandra_repository_manage: false`` or
-``cassandra_cqlsh_python_manage: false`` in a file of yours keeps it as the nodes have it). The system java of a
+they would give a Python) stops the self-check, with the way out (``-e import_keep_hand_edits=repo`` or ``cqlsh``
+keeps it as the nodes have it). The system java of a
 node is left as it is when it is another Java than the running one (below). Every node that could not be read gets
 ``cassandra_repository_manage``, ``cassandra_cqlsh_python_manage``, ``cassandra_linux_manage`` and
 ``cassandra_service_unit_manage`` false in its ``host_vars``, never in ``group_vars``: nodes added later get
@@ -1469,8 +1469,7 @@ inventory, so that nodes added later get the same tuning as the existing ones (w
   ``open_ports``, the ports open to everyone in firewalld's default zone (or ufw's ``ALLOW Anywhere``), which
   ``cassandra_firewall`` opens there (it runs with ``cassandra_manage_firewall: true``). A rule on a Cassandra port it
   does not write (a rich rule, a service, another zone, ufw from a source, iptables or nftables) is not carried: the
-  self-check stops on it, ``cassandra_firewall_manage: false`` in a file of yours keeps the firewall as the nodes have
-  it.
+  self-check stops on it, ``-e import_keep_hand_edits=firewall`` keeps the firewall as the nodes have it.
 
 ``tuned`` is only reported. A node the role set up keeps the values of the role's own files (its sysctl file,
 ``limits.d/cassandra.conf``, the unit it wrote, not its drop-ins). With these values ``cassandra_linux`` changes nothing
@@ -1603,10 +1602,19 @@ block its earlier versions wrote in ``limits.conf`` and RedHat's ``90-nproc.conf
 ``disable-thp.service``, time sync and chrony's servers, and the data devices (read-ahead, scheduler, LVM read-ahead, its udev rule,
 tuned's profiles). Each change is a difference, under its own heading; a file the role would write that leaves the
 node's values as they are now (e.g. ``90-nproc.conf`` where the cassandra user's limit stays the same) is not, the
-report notes it as "no effect". The way out keeps the part as the nodes have it, in a file of yours
-(``group_vars/<cluster>/local.yml``, or ``host_vars/<node>/local.yml``): ``cassandra_linux_manage: false`` for every OS
-setting, ``cassandra_data_disk_tuning: false`` for the data devices only, ``cassandra_linux_timesync: false`` for time
-sync only; or change the nodes as ``cassandra_linux`` would, then import again. The report starts with ``SELF-CHECK PASSED``, or with ``SELF-CHECK
+report notes it as "no effect". The way out keeps the part as the nodes have it (below), or changes the nodes as the
+roles would, then imports again.
+
+``-e import_keep_hand_edits`` names the config files to keep as they are (``true``: every hand-edited one) and the
+parts of the nodes to keep by hand, comma-separated: ``os`` (all the OS settings), or finer ``sysctl``, ``limits``,
+``thp``, ``swap``, ``timesync``, ``disks``; ``unit``, ``repo``, ``cqlsh``, ``firewall`` (e.g.
+``-e import_keep_hand_edits=logback.xml,thp,unit``). A name that is neither stops the run, listing both kinds. Each part
+kept gets the finest switch that leaves it as the node has it in ``host_vars`` (``cassandra_linux_manage: false``,
+``cassandra_linux_thp_enabled`` and ``_defrag: keep``, ``cassandra_service_unit_manage: false``...), with
+``cassandra_import_kept: [<parts>]``, and the report lists it under ``KEPT BY HAND (your choice)``. The next import reads
+``cassandra_import_kept`` back: when it no longer names a part, it stops before writing anything, with both ways out
+(name it again, or give it back to Ansible with ``-e import_take_over=<parts>``, after a ``--check --diff``), so the
+same command never changes its meaning. The report starts with ``SELF-CHECK PASSED``, or with ``SELF-CHECK
 FAILED`` and the differences: the inventory is then marked ``# NOT VALID`` in its hosts file and the playbook fails
 (``-e import_strict=false`` writes the same files without failing, to inspect them: not safe to apply). The run
 ends with a short ``SELF-CHECK FAILED`` block: what differs, one line per setting or file with its nodes, grouped by

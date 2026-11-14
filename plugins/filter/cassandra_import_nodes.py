@@ -22,7 +22,7 @@ import re
 from ansible.errors import AnsibleFilterError
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    CARRIED, CONFIG_FILE, keep_files_option, values_hidden)  # (CONFIG_FILE: the report's too)
+    CARRIED, CONFIG_FILE, KEPT_PARTS, KEPT_PARTS_VAR, keep_files_option, keep_parts_option, values_hidden)  # (CONFIG_FILE: the report's too)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_java import cassandra_java_supported
 from ansible_collections.community.cassandra.plugins.filter import cassandra_node_standing as standing
 
@@ -149,6 +149,29 @@ def _package_vars(hv, read, repo, package):
     elif read and (_bool(hv.get("import_cluster_package_offered", False)) or files):
         pkg["cassandra_install_method"] = "system"
     return pkg
+
+
+# the variables the import carries for each part (dropped when the part is kept as the node has it)
+PART_VARS = {"os": re.compile(r"^cassandra_(linux_|data_)"), "sysctl": re.compile(r"^cassandra_linux_sysctl"),
+             "limits": re.compile(r"^cassandra_linux_(limits|nproc_all)"), "thp": re.compile(r"^cassandra_linux_thp_"),
+             "swap": re.compile(r"^cassandra_linux_swap_off$"), "timesync": re.compile(r"^cassandra_linux_timesync"),
+             "disks": re.compile(r"^cassandra_data_(readahead_kb|scheduler|lvm_readahead)$"),
+             "unit": re.compile(r"^cassandra_service_start$"), "repo": re.compile(r"^$"),
+             "cqlsh": re.compile(r"^cassandra_cqlsh_source$"),
+             "firewall": re.compile(r"^(open_ports|cassandra_firewall_enabled)$")}
+
+
+def _kept_parts(node, parts):
+    """A node read, the parts import_keep_hand_edits keeps (KEPT_PARTS): their switches in its keep (host_vars), with
+    the list of them (KEPT_PARTS_VAR, read back by the next import), the values carried for them dropped."""
+    if not parts or not _bool(node.get("read", False)):
+        return node
+    node = dict(node, vars=dict(node["vars"]), keep=dict(node["keep"]))
+    for part in parts:
+        node["vars"] = dict((k, v) for k, v in node["vars"].items() if not PART_VARS[part].match(k))
+        node["keep"].update(KEPT_PARTS[part])
+    node["keep"][KEPT_PARTS_VAR] = list(parts)
+    return node
 
 
 def _cqlsh_vars(hv):
@@ -441,13 +464,14 @@ def cassandra_import_nodes(ring, data, given, found=None, jmx=None, java_default
     ...}]."""
     ordered = list(given) + list(found or [])
     keep_files = keep_files_option(keep_hand_edits)
+    parts = keep_parts_option(keep_hand_edits)
     out = []
     for item in ring:
         host = _match(item["address"], data, ordered)
         error = None
         try:
-            out.append(_node(item, host, data.get(host, {}), given, jmx or {}, java_default or {}, host_names,
-                             _bool(set_ansible_host), keep_files))
+            out.append(_kept_parts(_node(item, host, data.get(host, {}), given, jmx or {}, java_default or {},
+                                         host_names, _bool(set_ansible_host), keep_files), parts))
         except (KeyError, TypeError, AttributeError, ValueError) as exc:
             error = AnsibleFilterError("cassandra_import_nodes: %s: %s" % (item.get("address"), type(exc).__name__))
         if error:

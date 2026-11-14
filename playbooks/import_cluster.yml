@@ -1928,6 +1928,18 @@
     # import_set_ansible_host: true; false leaves ansible_host out. Not given, a re-import keeps how the
     # inventory there reaches its hosts: one it reaches without ansible_host (imported with
     # import_set_ansible_host=false, or taken out by hand) gets none again (the earlier choice kept)
+    # A part an earlier import kept by hand (import_keep_hand_edits=<parts>: cassandra_import_kept in its files) is
+    # given back to Ansible only when asked (-e import_take_over=<parts>): the same command never changes its meaning
+    - name: Stop rather than give a part kept by hand back to Ansible unasked
+      ansible.builtin.fail:
+        msg: "{{ _stop | join(' ') }}"
+      when: _stop | length > 0
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _stop: >-
+          {{ import_cluster_existing_text | default({}) | community.cassandra.cassandra_import_kept_before(
+               import_keep_hand_edits | default(false), import_take_over | default('none')) }}
+
     - name: Leave ansible_host out where the inventory there has none
       no_log: "{{ not import_debug | default(false) | bool }}"
       ansible.builtin.set_fact:

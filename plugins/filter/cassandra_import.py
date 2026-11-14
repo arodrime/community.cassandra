@@ -2254,22 +2254,90 @@ def _move_secrets(variables):
     return variables, trusted, said
 
 
-def keep_files_option(value):
-    """import_keep_hand_edits: true/false, or the config files to keep (a list, or names separated by
-    commas: -e import_keep_hand_edits=logback.xml) -> True, or [names]; a name not of a config file fails."""
+# The parts of a node import_keep_hand_edits keeps as the node has them (besides config files): {part: the values that
+# leave it so}, the finest switch of each (os: all of cassandra_linux)
+KEPT_PARTS = {
+    "os": {"cassandra_linux_manage": False},
+    "sysctl": {"cassandra_linux_sysctl": {}},
+    "limits": {"cassandra_linux_limits": {}, "cassandra_linux_nproc_all": False},
+    "thp": {"cassandra_linux_thp_enabled": "keep", "cassandra_linux_thp_defrag": "keep"},
+    "swap": {"cassandra_linux_swap_off": False},
+    "timesync": {"cassandra_linux_timesync": False},
+    "disks": {"cassandra_data_disk_tuning": False},
+    "unit": {"cassandra_service_unit_manage": False},
+    "repo": {"cassandra_repository_manage": False},
+    "cqlsh": {"cassandra_cqlsh_python_manage": False},
+    "firewall": {"cassandra_firewall_manage": False},
+}
+# what the import writes with them: the parts kept (the next import reads it back)
+KEPT_PARTS_VAR = "cassandra_import_kept"
+
+
+def _keep_names(value):
+    """import_keep_hand_edits -> True/False, or [names]."""
     if isinstance(value, str) and value.strip().lower() in ("", "yes", "no", "on", "off", "true", "false", "1", "0"):
-        return boolean(value.strip(), strict=False) or []
+        return boolean(value.strip(), strict=False)
     if isinstance(value, str):
         value = re.sub(r"[\[\]'\"]", "", value).split(",")
     if not isinstance(value, (list, tuple)):
-        return boolean(value, strict=False) or []
+        return boolean(value, strict=False)
     names = [str(v).strip() for v in value if str(v).strip()]
-    wrong = [n for n in names if not CONFIG_FILE.match(n)]
+    wrong = [n for n in names if not CONFIG_FILE.match(n) and n not in KEPT_PARTS]
     if wrong:
-        raise AnsibleFilterError("import_keep_hand_edits: %s: not a config file of cassandra_config (true,"
-                                 " false, or among cassandra.yaml, cassandra-env.sh, jvm*-server.options,"
-                                 " cassandra-rackdc.properties, logback.xml, jmxremote.password, jmxremote.access)" % ", ".join(wrong))
+        raise AnsibleFilterError("import_keep_hand_edits: %s: neither a config file of cassandra_config (cassandra.yaml,"
+                                 " cassandra-env.sh, jvm*-server.options, cassandra-rackdc.properties, logback.xml,"
+                                 " jmxremote.password, jmxremote.access) nor a part (%s); or true, false"
+                                 % (", ".join(wrong), ", ".join(KEPT_PARTS)))
     return names
+
+
+def keep_files_option(value):
+    """import_keep_hand_edits: true/false, or the config files and parts to keep (a list, or names separated by
+    commas: -e import_keep_hand_edits=logback.xml,os) -> True, or [the config files named]; a name neither a config
+    file nor a part (KEPT_PARTS) fails. true keeps the hand-edited config files only."""
+    names = _keep_names(value)
+    if names is True or names is False:
+        return names or []
+    return [n for n in names if CONFIG_FILE.match(n)]
+
+
+def cassandra_import_kept_before(texts, keep_hand_edits=False, take_over=""):
+    """texts: {path in the inventory: text} of the files there (an earlier import's among them); keep_hand_edits,
+    take_over: this import's options (take_over: the parts given back to Ansible, names separated by commas) -> the
+    lines of the stop when a part an earlier import kept by hand (KEPT_PARTS_VAR in its group_vars or host_vars) is
+    neither kept again nor given back, [] otherwise."""
+    before = {}
+    for path, text in sorted((texts or {}).items()):
+        if not re.match(r"^(group_vars|host_vars)/", path) or KEPT_PARTS_VAR not in str(text):
+            continue
+        try:
+            data = yaml.safe_load(text) or {}
+        except yaml.YAMLError:
+            continue
+        for part in (data.get(KEPT_PARTS_VAR) or []) if isinstance(data, dict) else []:
+            before.setdefault(str(part), []).append(path)
+    now = keep_parts_option(keep_hand_edits)
+    given = [p.strip() for p in re.sub(r"[\[\]'\"]", "", str(take_over or "")).split(",")
+             if p.strip() not in ("", "none")]
+    wrong = [p for p in given if p not in KEPT_PARTS]
+    if wrong:
+        raise AnsibleFilterError("import_take_over: %s: not a part (%s)" % (", ".join(wrong), ", ".join(KEPT_PARTS)))
+    dropped = [p for p in KEPT_PARTS if p in before and p not in now and p not in given]
+    if not dropped:
+        return []
+    it = "it" if len(dropped) == 1 else "them"
+    files = ", ".join(sorted(set(f for p in dropped for f in before[p])))
+    again = ",".join([p for p in KEPT_PARTS if p in now or p in dropped])
+    return ["%s kept by hand by the last import (%s): this import does not name %s." % (", ".join(dropped), files, it),
+            "Keep %s: import again with -e import_keep_hand_edits=%s." % (it, again),
+            "Give %s to Ansible: import again with -e import_take_over=%s (first with --check --diff: it shows what the"
+            " roles would change)." % (it, ",".join(dropped))]
+
+
+def keep_parts_option(value):
+    """import_keep_hand_edits -> [the parts named (KEPT_PARTS)], in their order there; true or false: none."""
+    names = _keep_names(value)
+    return [] if names is True or names is False else [n for n in KEPT_PARTS if n in names]
 
 
 def _exporter_import(live_files, cmdline, ctx, read=None, conf_dirs=(), java_files=None):
@@ -3685,6 +3753,7 @@ BLOCKS = [
         "cassandra_medusa_python", "cassandra_medusa_storage_provider", "cassandra_medusa_bucket_name",
         "cassandra_medusa_region", "cassandra_medusa_host", "cassandra_medusa_port", "cassandra_medusa_base_path",
         "cassandra_medusa_prefix", "cassandra_medusa_key_file", "cassandra_medusa_fqdn"]),
+    ("Kept by hand (import_keep_hand_edits): the roles leave these parts as the node has them", [KEPT_PARTS_VAR]),
     ("Left as it is on this node (set up another way)", [k for k in KEEP if k not in SET_UP_BY_THE_ROLES] + [IMPORTED]),
     ("Left as it is on this node (set up by the roles)", list(SET_UP_BY_THE_ROLES)),
     ("Other", []),
@@ -4355,7 +4424,9 @@ SAFE_REASONS = [
     (re.compile(r"(cassandra_import_nodes: [0-9A-Fa-f.:]+: \w+)"), r"\1"),
     (re.compile(r"(cassandra_config_import: unsupported series \w+)"), r"\1"),
     # the user's own -e value
-    (re.compile(r"(import_keep_hand_edits: [^\n]*?: not a config file of cassandra_config \([^)]*\))"), r"\1"),
+    (re.compile(r"(import_keep_hand_edits: [^\n]*?: neither a config file of cassandra_config \([^)]*\) nor a part"
+                r" \([^)]*\); or true, false)"), r"\1"),
+    (re.compile(r"(import_take_over: [^\n]*?: not a part \([^)]*\))"), r"\1"),
     (re.compile(r"(cassandra_config_import: cannot read [\w, ]+ from cassandra\.yaml \([^)]*\))"), r"\1"),
     (re.compile(r"(cassandra_config_import: cassandra\.yaml is not valid YAML(?: \(line \d+\))?)"), r"\1"),
     (re.compile(r"(?:object'?|object of type '\w+') has no attribute '(\w+)'(?:\.|$)"), r"missing field '\1'"),
@@ -4432,6 +4503,7 @@ class FilterModule(object):
             "cassandra_config_import": cassandra_config_import,
             "cassandra_jmx_files": cassandra_jmx_files,
             "cassandra_inventory_layout": cassandra_inventory_layout,
+            "cassandra_import_kept_before": cassandra_import_kept_before,
             "cassandra_inventory_layout_over": cassandra_inventory_layout_over,
             "cassandra_inventory_user_files": cassandra_inventory_user_files,
             "cassandra_inventory_files": cassandra_inventory_files,

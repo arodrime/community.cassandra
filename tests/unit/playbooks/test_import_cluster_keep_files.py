@@ -66,7 +66,7 @@ def test_files_with_hand_edits_kept_by_name(keep, kept):
 
 @pytest.mark.parametrize("keep", ["logback", "cassandra.yml", ["jmxremote.secret"], "logback.xml,cassandra.yml"])
 def test_keep_by_name_refuses_what_is_not_a_config_file(keep):
-    with pytest.raises(AnsibleFilterError, match="not a config file"):
+    with pytest.raises(AnsibleFilterError, match="neither a config file"):
         node({"import_cluster_config": {"vars": {}, "hand_edits": HAND}}, keep_hand_edits=keep)
 
 
@@ -321,3 +321,54 @@ def test_users_left_out_are_hand_edits_of_the_files():
     assert imported["hand_edits"] == ["jmxremote.password: none", "  + none ****",
                                       "jmxremote.access: bad", "  + bad readonly create a.*"]
     assert "n0ne-secret" not in str(check(files, {}, permissions))
+
+
+# --- rc10: parts kept by hand (import_keep_hand_edits=<parts>) ---
+
+def test_parts_named_with_the_files():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import keep_files_option, keep_parts_option
+    assert keep_files_option("logback.xml,os,unit") == ["logback.xml"]
+    assert keep_parts_option("logback.xml,unit,os") == ["os", "unit"]  # (in the order of the parts)
+    assert keep_parts_option("true") == [] and keep_files_option("true") is True  # true: the hand-edited files only
+    with pytest.raises(AnsibleFilterError) as err:
+        keep_parts_option("os,kernel")
+    assert "kernel: neither a config file of cassandra_config" in str(err.value) and "nor a part (os, sysctl," in str(err.value)
+
+
+def test_kept_parts_written_and_their_carried_values_dropped():
+    from ansible_collections.community.cassandra.tests.unit.import_nodes import node as import_node
+    hv = {"import_cluster_os": {"vars": {"cassandra_linux_thp_enabled": "kernel", "cassandra_linux_swap_off": False}},
+          "import_cluster_unit": {"pkg_script": "cassandra", "script": "/etc/init.d/cassandra", "file": "/etc/init.d/cassandra"}}
+    n = import_node(hv, keep_hand_edits="thp,unit")
+    assert n["keep"]["cassandra_import_kept"] == ["thp", "unit"]
+    assert n["keep"]["cassandra_linux_thp_enabled"] == "keep" and n["keep"]["cassandra_service_unit_manage"] is False
+    assert "cassandra_linux_thp_enabled" not in n["vars"] and "cassandra_service_start" not in n["vars"]
+    assert n["vars"]["cassandra_linux_swap_off"] is False  # (not kept: carried)
+    assert "cassandra_import_kept" not in import_node(hv)["keep"]
+
+
+def test_reimport_without_a_kept_part_stops_with_both_ways_out():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_import_kept_before
+    texts = {"host_vars/n1/main.yml": "cassandra_import_kept: [os, unit]\ncassandra_linux_manage: false\n",
+             "host_vars/n2/main.yml": "cassandra_import_kept: [os]\n", "group_vars/all/local.yml": "x: 1\n"}
+    assert cassandra_import_kept_before(texts, "os,unit") == []
+    assert cassandra_import_kept_before(texts, "os", "unit") == []  # given back to Ansible
+    assert cassandra_import_kept_before(texts, "logback.xml") == [
+        "os, unit kept by hand by the last import (host_vars/n1/main.yml, host_vars/n2/main.yml): this import does not"
+        " name them.",
+        "Keep them: import again with -e import_keep_hand_edits=os,unit.",
+        "Give them to Ansible: import again with -e import_take_over=os,unit (first with --check --diff: it shows what"
+        " the roles would change)."]
+    with pytest.raises(AnsibleFilterError):
+        cassandra_import_kept_before(texts, "os", "kernel")
+
+
+def test_kept_parts_in_the_report():
+    base = {"dc": "dc1", "rack": "r1", "read": True, "vars": {"cassandra_cluster_name": "c"}, "hand_edits": [],
+            "normalized": [], "notes": []}
+    keep = {"cassandra_import_kept": ["os"], "cassandra_linux_manage": False}
+    layout = cassandra_inventory_layout([dict(base, name="n1", address="10.0.0.1", keep=keep),
+                                         dict(base, name="n2", address="10.0.0.2", keep=keep)], "c")
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import report_sections
+    assert report_sections(layout, {})["kept_parts"] == {("os",): ["n1", "n2"]}
+    assert "OS settings" not in str(report_sections(layout, {})["left_groups"])  # (said with the parts kept)

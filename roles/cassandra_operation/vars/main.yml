@@ -87,7 +87,7 @@ _cassandra_playbook_variables: [cassandra_hosts, cassandra_target_nodes, cassand
                                 # import_cluster's and help's options (their header)
                                 import_dir, import_report_dir, import_force, import_host_names,
                                 import_set_ansible_host, import_vault_password_file, import_vault_id,
-                                import_medusa_path, import_keep_hand_edits, import_allow_unread,
+                                import_medusa_path, import_keep_hand_edits, import_take_over, import_allow_unread,
                                 import_carry_exporter_config, import_report_shareable, import_adopt, import_strict,
                                 import_debug,
                                 help_topic, help_write, help_runbook_dir, help_inventory]

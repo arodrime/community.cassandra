@@ -36,6 +36,13 @@ argument_specs:
         description:
           - Written by C(import_cluster) in the host_vars of a node next to the C(*_manage) switches it sets
             there. The new host checks use it to tell those switches from the operator's own.
+      cassandra_import_kept:
+        type: list
+        elements: str
+        description:
+          - Written by C(import_cluster) with C(-e import_keep_hand_edits=<parts>), next to the switches that keep those
+            parts of the node as it has them (os, sysctl, limits, thp, swap, timesync, disks, unit, repo, cqlsh,
+            firewall). The next import reads it back, and stops when a part is no longer named.
       cassandra_settings_kept_on_purpose:
         type: list
         elements: str
