@@ -138,11 +138,12 @@ def test_the_todo_names_the_nodes_and_the_way(tmp_path):
     play = next(p for p in PLAYS if p.get("name") == "Write the inventory")
     template = play["vars"]["_cqlsh_todo"]
 
-    def todo(errors, check=False, kept=False):
+    def todo(errors, check=False, kept=False, kept_before=()):
         hostvars = dict((h, {"import_cluster_cqlsh_error": e}) for h, e in errors.items())
-        variables = {"_nodes": [{"name": h} for h in errors], "hostvars": hostvars, "ansible_check_mode": check}
-        if kept:  # (cqlsh kept as it is: -e import_keep_hand_edits=cqlsh)
-            variables["import_keep_hand_edits"] = "logback.xml,cqlsh"
+        variables = {"_nodes": [{"name": h, "keep": {"cassandra_import_kept": ["cqlsh"]} if h in kept_before else {}}
+                                for h in errors], "hostvars": hostvars, "ansible_check_mode": check}
+        if kept:  # (cqlsh kept as it is: -e import_keep_hand_edits=cqlsh, a string or a list)
+            variables["import_keep_hand_edits"] = "logback.xml,cqlsh" if kept is True else kept
         return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
     lib = "cqlsh --version: ModuleNotFoundError: No module named 'cqlshlib'"
     assert todo({"n1": "", "n2": ""}) == []
@@ -161,6 +162,10 @@ def test_the_todo_names_the_nodes_and_the_way(tmp_path):
     assert step["commands"] == {"create": {"playbook": "create_cluster", "extra": ["--check", "--diff"]}}
     assert steps[1]["why"] == ["{nodes:e3}: cassandra_cqlsh_command ('x): an unclosed quote"]
     assert steps[1]["run"].startswith("fix its quoting or give it a value")
+    # the option as a list, or cqlsh kept by the last import (kept again on this node): kept the same
+    lib_errors = {"n1": lib, "n2": lib}
+    assert todo(lib_errors, kept=["logback.xml", "cqlsh"])[0]["nodes"]["kept"] == ["n1", "n2"]
+    assert todo(lib_errors, kept_before=["n2"])[0]["nodes"]["kept"] == ["n2"]
     # cqlsh's Python left to the role there: no host_vars to change
     assert todo({"n1": "cqlsh: not found in the PATH of root"})[0]["run"][1].startswith(
         "no other cqlsh: run {command:create}")

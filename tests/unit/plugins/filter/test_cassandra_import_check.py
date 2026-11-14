@@ -1552,10 +1552,14 @@ def test_cqlsh_that_does_not_start_is_a_difference():
     assert parts_check("system", cqlsh_error=error, own_cqlsh=True) == []
 
 
-def cqlsh_state(**changes):
+LIB39 = "/usr/lib/python3.9/site-packages"
+PKG_LIB = "/usr/lib/python3.6/site-packages/cqlshlib"
+
+
+def cqlsh_state(link=PKG_LIB, test="ok", pythons=None, **changes):
     """What the import read of cqlsh on a RedHat node with python3 3.9 and the package's cqlsh working."""
-    st = {"py3": "3.9", "py311": False, "wrapper": "absent", "profile": "absent",
-          "link": "/usr/lib/python3.6/site-packages/cqlshlib", "test_py3": "ok", "test_py311": "", "ran": "/usr/bin/cqlsh"}
+    st = {"py3": "3.9", "py311": False, "wrapper": "absent", "profile": "absent", "ran": "/usr/bin/cqlsh",
+          "pythons": pythons if pythons is not None else ["python3|%s|%s|%s" % (LIB39, link, test)]}
     st.update(changes)
     return st
 
@@ -1574,6 +1578,9 @@ def test_cqlsh_as_the_roles_set_it_up():
     assert cqlsh_check(cqlsh_state(link="other"))[0] == [
         "cassandra_install: cqlshlib of python3: node has its own, the roles would set a link to"
         " /usr/lib/python3.6/site-packages/cqlshlib"]
+    # EL 8: python3 is 3.6, the package's site-packages: nothing linked (as cqlsh_links.yml skips it)
+    el8 = cqlsh_state(py3="3.6", pythons=["python3|/usr/lib/python3.6/site-packages|other|ok"])
+    assert cqlsh_check(el8, series="41x") == ([], [])
     # python3 out of the range: python3.11, the wrapper over a pip cqlsh, profile.d
     diffs = cqlsh_check(cqlsh_state(py3="3.12", wrapper="other", ran="/usr/local/bin/cqlsh"), series="41x")[0]
     assert diffs[:3] == [
@@ -1582,16 +1589,27 @@ def test_cqlsh_as_the_roles_set_it_up():
         "cassandra_install: /usr/local/bin/cqlsh: node has another file, the roles would set their wrapper (the"
         " package's cqlsh with /usr/bin/python3.11)",
         "cassandra_install: /etc/profile.d/cqlsh.sh: node has none, the roles would set CQLSH_PYTHON=/usr/bin/python3.11"]
+    # python3.11 there: its cqlshlib link too (cqlsh_links.yml links both)
+    both = cqlsh_state(py3="3.12", py311=True, wrapper="role", profile="role", pythons=[
+        "python3|/usr/lib/python3.12/site-packages|%s|x" % PKG_LIB, "/usr/bin/python3.11|/usr/lib/python3.11/site-packages|other|ok"])
+    assert cqlsh_check(both, series="41x")[0] == [
+        "cassandra_install: cqlshlib of /usr/bin/python3.11: node has its own, the roles would set a link to " + PKG_LIB]
     # the package's cqlsh as the roles would set it up does not start
-    assert cqlsh_check(cqlsh_state(test_py3="ModuleNotFoundError: No module named 'six'"))[0] == [
+    assert cqlsh_check(cqlsh_state(test="ModuleNotFoundError: No module named 'six'"))[0] == [
         "cassandra_install: cqlsh as the roles would set it up (the package's, with python3) does not start:"
         " ModuleNotFoundError: No module named 'six'"]
+    # a cassandra_cqlsh_python of the inventory: that one tested
+    custom = cqlsh_state(pythons=["python3|%s|%s|ok" % (LIB39, PKG_LIB), "/opt/py/bin/python|/opt/py/lib|absent|no cqlshlib"],
+                         wrapper="role", profile="role")
+    assert cqlsh_check(custom, python="/opt/py/bin/python")[0] == [
+        "cassandra_install: cqlsh as the roles would set it up (the package's, with /opt/py/bin/python) does not start:"
+        " no cqlshlib"]
 
 
 def test_cqlsh_found_in_the_path_not_named_stops_with_both_ways_out():
     diffs = cqlsh_check(cqlsh_state(wrapper="other", ran="/usr/local/bin/cqlsh"))[0]
     assert diffs == ["cassandra_install: cqlsh: node has /usr/local/bin/cqlsh (not the package's) for the playbooks, the"
-                     " roles would set the package's: name it (cassandra_cqlsh_command: /usr/local/bin/cqlsh, then"
-                     " cassandra_cqlsh_source external), or keep it as it is (-e import_keep_hand_edits=cqlsh)"]
+                     " roles would set the package's: set cassandra_cqlsh_command: /usr/local/bin/cqlsh in group_vars and"
+                     " import again (it writes cassandra_cqlsh_source: external), or -e import_keep_hand_edits=cqlsh"]
     # named by the inventory: the import writes it with cassandra_cqlsh_source external (nothing checked then)
     assert parts_check("system", tamper={"cassandra_cqlsh_source": "external"}) == []

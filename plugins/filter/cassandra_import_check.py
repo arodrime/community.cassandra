@@ -55,7 +55,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     Unsafe, error_without_message, log_dir_of, logback_as_log_dir, undefined_name, values_hidden)
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
 from ansible_collections.community.cassandra.plugins.filter.cassandra_os import (
-    NO_EFFECT, cassandra_firewall_changes, cassandra_linux_changes)
+    NO_EFFECT, NO_EFFECT_NOTE, cassandra_firewall_changes, cassandra_linux_changes)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import (
     cassandra_file_permissions, permission_differences)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
@@ -568,8 +568,7 @@ def _changes_lines(role, items):
     differences, notes = [], []
     for item in items:
         if item["effect"] == NO_EFFECT:
-            notes.append("%s: %s: %s -> %s, no effect (the node keeps the values it has now)"
-                         % (role, item["what"], item["now"], item["would"]))
+            notes.append("%s: %s: %s -> %s%s" % (role, item["what"], item["now"], item["would"], NO_EFFECT_NOTE))
         else:
             differences.append("%s: %s: node has %s, the roles would set %s" % (role, item["what"], item["now"], item["would"]))
     return differences, notes
@@ -638,24 +637,33 @@ def _cqlsh_check(cqlsh, st, family, error):
                 path, "another file" if have == "other" else "none", what % python))
         elif not python and have == "role":
             out.append("cassandra_install: %s: node has the roles' (an earlier run), the roles would set removed" % path)
-    link = st.get("link", "")
-    if family == "RedHat" and link != PACKAGE_CQLSHLIB:
-        if link in ("", "absent"):
-            notes.append("cassandra_install: cqlshlib of python3: none -> a link to the package's, no effect (the node"
-                         " keeps the values it has now)")
-        else:
-            out.append("cassandra_install: cqlshlib of python3: node has %s, the roles would set a link to %s"
-                       % ("its own" if link == "other" else "a link to " + link, PACKAGE_CQLSHLIB))
-    test = st.get("test_py311" if python == PYTHON311 else "test_py3", "")
-    if test and test != "ok" and (python != PYTHON311 or boolean(st.get("py311", False), strict=False)):
+    # each Python the role reads (cqlsh_links.yml): path|site-packages|cqlshlib|test
+    pythons = {}
+    for entry in st.get("pythons") or []:
+        path, purelib, link, test = (str(entry).split("|", 3) + ["", "", ""])[:4]
+        pythons.setdefault(path, {"purelib": purelib, "link": link, "test": test})
+    used = python or "python3"
+    if family == "RedHat":
+        for path in [p for i, p in enumerate(["python3", python]) if p and p not in ["python3", python][:i]]:
+            have = pythons.get(path)
+            # (not there, or the package's own site-packages: nothing linked)
+            if not have or not have["purelib"] or have["purelib"] == os.path.dirname(PACKAGE_CQLSHLIB):
+                continue
+            if have["link"] in ("", "absent"):
+                notes.append("cassandra_install: cqlshlib of %s: none -> a link to the package's%s" % (path, NO_EFFECT_NOTE))
+            elif have["link"] != PACKAGE_CQLSHLIB:
+                out.append("cassandra_install: cqlshlib of %s: node has %s, the roles would set a link to %s" % (
+                    path, "its own" if have["link"] == "other" else "a link to " + have["link"], PACKAGE_CQLSHLIB))
+    test = (pythons.get(used) or {}).get("test", "")
+    if test and test != "ok":
         out.append("cassandra_install: cqlsh as the roles would set it up (the package's, with %s) does not start: %s"
-                   % (python or "python3", test))
+                   % (used, test))
     ran = st.get("ran", "")
     package = ("/usr/bin/cqlsh", "/usr/local/bin/cqlsh") if st.get("wrapper") in ("role", "absent") else ("/usr/bin/cqlsh",)
     if ran and ran not in package and cqlsh["command"] == "cqlsh" and not error:
         out.append("cassandra_install: cqlsh: node has %s (not the package's) for the playbooks, the roles would set"
-                   " the package's: name it (cassandra_cqlsh_command: %s, then cassandra_cqlsh_source external), or keep"
-                   " it as it is (-e import_keep_hand_edits=cqlsh)" % (ran, ran))
+                   " the package's: set cassandra_cqlsh_command: %s in group_vars and import again (it writes"
+                   " cassandra_cqlsh_source: external), or -e import_keep_hand_edits=cqlsh" % (ran, ran))
     return out, notes
 
 

@@ -1370,17 +1370,18 @@ hints, saved caches and log directories not owned by that account (``cassandra_c
 as they are, and creates the missing ones ``cassandra_user:cassandra_group`` mode ``0750``).
 
 How Cassandra is started is imported: the init script of the Cassandra package, as the package installed it (``rpm
--V`` or ``dpkg --verify`` does not list it), gives ``cassandra_service_start: package_script`` (the roles start that
-script, write no unit). A unit of the roles is kept as theirs. Any other unit, or an init script modified or of no
+-V`` or ``dpkg --verify`` does not list it) and with no drop-in of its own (``cassandra.service.d``), gives
+``cassandra_service_start: package_script`` (the roles start that script, write no unit; they stop on a systemd without
+its SysV generator, ``systemd-sysv-generator``, with the way out). A unit of the roles is kept as theirs. Any other unit, or an init script modified or of no
 package, is compared with the unit the roles would write (the self-check): what differs stops the import, with the way
 out (``-e import_keep_hand_edits=unit`` keeps it as the nodes have it; else the roles' unit
 takes over at each node's next restart, a planned change). So are the repositories: the role's repository file as it
 writes it keeps ``cassandra_install_method: repository`` (with its URL and credentials); a package installed from a
 file gives ``packages``; a Cassandra a configured repository offers, or repository files of the node's own, give
 ``system`` (the roles add or remove no repository, they install from what dnf or apt offers). And cqlsh: a
-``cassandra_cqlsh_command`` of the inventory (another cqlsh, e.g. a virtualenv) gives ``cassandra_cqlsh_source:
-external`` (nothing written for the package's cqlsh; the import never writes a cqlsh path), a cqlsh of the roles stays
-theirs. What the roles would still change (a repository file to add or remove, a cqlsh that does not start, which
+``cassandra_cqlsh_command`` of the inventory or ``-e`` (another cqlsh) gives ``cassandra_cqlsh_source: external``
+and that command in the node's settings (nothing written for the package's cqlsh; a cqlsh found in the PATH but not
+named is never written, the self-check says it), a cqlsh of the roles stays theirs. What the roles would still change (a repository file to add or remove, a cqlsh that does not start, which
 they would give a Python) stops the self-check, with the way out (``-e import_keep_hand_edits=repo`` or ``cqlsh``
 keeps it as the nodes have it). The system java of a
 node is left as it is when it is another Java than the running one (below). Every node that could not be read gets
@@ -1619,7 +1620,10 @@ kept gets the finest switch that leaves it as the node has it in ``host_vars`` (
 ``cassandra_import_kept: [<parts>]``, and the report lists it under ``KEPT BY HAND (your choice)``. The next import reads
 ``cassandra_import_kept`` back: when it no longer names a part, it stops before writing anything, with both ways out
 (name it again, or give it back to Ansible with ``-e import_take_over=<parts>``, after a ``--check --diff``), so the
-same command never changes its meaning. The report starts with ``SELF-CHECK PASSED``, or with ``SELF-CHECK
+same command never changes its meaning. An inventory of an earlier import without ``cassandra_import_kept`` (a 2.1.0 release candidate): the
+``*_manage: false`` it wrote in the ``host_vars`` of a node it read (the repositories, cqlsh, OS settings, unit) are
+kept as they are, the report says so for each node, with the way out to give them to Ansible (``-e
+import_take_over=<parts>``). The report starts with ``SELF-CHECK PASSED``, or with ``SELF-CHECK
 FAILED`` and the differences: the inventory is then marked ``# NOT VALID`` in its hosts file and the playbook fails
 (``-e import_strict=false`` writes the same files without failing, to inspect them: not safe to apply). The run
 ends with a short ``SELF-CHECK FAILED`` block: what differs, one line per setting or file with its nodes, grouped by

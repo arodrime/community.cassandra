@@ -2330,7 +2330,6 @@ OLD_KEPT_SWITCHES = {"cassandra_linux_manage": "os", "cassandra_service_unit_man
                      "cassandra_firewall_manage": "firewall"}
 # every one of them, and these, on a node it could not read (not a choice: that node is imported now)
 _OLD_NOT_READ = ("cassandra_java_set_default", "cassandra_install_tools", "cassandra_install_jemalloc")
-IMPORT_MARK = "# Written by community.cassandra.import_cluster"
 
 
 def _take_over_option(value):
@@ -2370,12 +2369,17 @@ def cassandra_import_kept_before(texts, keep_hand_edits=False, take_over="none")
                                              "it" if len(both) == 1 else "them")], "kept": {}, "given": given}
     before, old, unreadable = {}, {}, []
     for path, text in sorted((texts or {}).items()):
-        if not re.match(r"^(group_vars|host_vars)/", path) or str(text).startswith("$ANSIBLE_VAULT"):
+        if not re.match(r"^(group_vars|host_vars)/", path):
+            continue
+        if str(text).startswith("$ANSIBLE_VAULT"):
+            # (the import vaults secrets.yml alone: its main.yml vaulted cannot be read here)
+            if path.endswith("/main.yml"):
+                unreadable.append(path)
             continue
         try:
             data = yaml.safe_load(text) or {}
         except yaml.YAMLError:
-            if IMPORT_MARK in str(text) or KEPT_PARTS_VAR in str(text):
+            if IMPORT_MARK in str(text) or KEPT_PARTS_VAR in str(text):  # (the import's: its parts unknown)
                 unreadable.append(path)
             continue
         if not isinstance(data, dict):
@@ -2391,7 +2395,8 @@ def cassandra_import_kept_before(texts, keep_hand_edits=False, take_over="none")
     if unreadable:
         them = "it" if len(unreadable) == 1 else "them"
         return {"stop": ["%s: written by an earlier import, cannot be read as YAML: the parts it kept by hand are not"
-                         " known. Fix or remove %s, then import again." % (", ".join(unreadable), them)],
+                         " known. Decrypt it (ansible-vault decrypt), fix or remove %s, then import again."
+                         % (", ".join(unreadable), them)],
                 "kept": {}, "given": given}
     dropped = [p for p in KEPT_PARTS if p in before and not _covered(p, now) and p not in given]
     if not dropped:
@@ -3175,7 +3180,7 @@ def cassandra_inventory_layout(nodes, cluster_name):
         keep = dict((k, v) for k, v in (n.get("keep") or {}).items() if k not in grouped)
         if keep:
             host_vars.setdefault(n["name"], {}).update(keep)
-        if any(k in IMPORTED_FOR for k in keep):
+        if any(k in IMPORTED_FOR for k in keep) or keep.get(KEPT_PARTS_VAR):
             host_vars[n["name"]][IMPORTED] = True
     for n in read:
         report += _node_report(n, grouped)
@@ -4002,6 +4007,8 @@ def cassandra_inventory_files(layout):
 GENERATED = "# Written by community.cassandra.import_cluster for %s: the next import replaces it. Your own settings: other files."
 # the line of the releases before it named the cluster
 GENERATED_UNNAMED = "# Written by community.cassandra.import_cluster: the next import replaces it. Your own settings: other files."
+# what both start with: a file an import wrote
+IMPORT_MARK = os.path.commonprefix([GENERATED, GENERATED_UNNAMED])
 # (a template's: in a Jinja comment, {# ... #})
 _HEADER = re.compile(r"\{?# Written by community[.]cassandra[.]import_cluster(?: for ([^\s:]+))?: ")
 _OWNABLE = re.compile(r"^(?:group_vars|host_vars)/[^/]+/(?:main\.yml|secrets\.yml|[^/]+\.j2)$")
@@ -4577,6 +4584,7 @@ class FilterModule(object):
             "cassandra_jmx_files": cassandra_jmx_files,
             "cassandra_inventory_layout": cassandra_inventory_layout,
             "cassandra_import_kept_before": cassandra_import_kept_before,
+            "cassandra_import_keep_parts": keep_parts_option,
             "cassandra_inventory_layout_over": cassandra_inventory_layout_over,
             "cassandra_inventory_user_files": cassandra_inventory_user_files,
             "cassandra_inventory_files": cassandra_inventory_files,

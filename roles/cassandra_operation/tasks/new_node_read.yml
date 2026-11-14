@@ -187,7 +187,9 @@
       - >-
         {{ {'cassandra_linux_manage': cassandra_linux_manage | default(true),
             'cassandra_cqlsh_python_manage': cassandra_cqlsh_python_manage,
-            'cassandra_service_unit_manage': cassandra_service_unit_manage}
+            'cassandra_service_unit_manage': cassandra_service_unit_manage,
+            'cassandra_firewall_manage': cassandra_firewall_manage | default(true),
+            'cassandra_import_kept': cassandra_import_kept | default([])}
            | community.cassandra.cassandra_new_node_kept_setup(
                'cassandra' in ansible_facts['packages'] | default({})
                or cassandra_new_node_paths.results | selectattr('item', 'in', _cassandra_new_node_units)

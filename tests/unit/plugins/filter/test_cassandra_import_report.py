@@ -1296,3 +1296,39 @@ def test_self_check_stop_unit_way_out():
     assert ("  unit                to keep how node1 (1 node) starts Cassandra (its own unit or init script): import"
             " again with -e import_keep_hand_edits=unit. To have the unit of the roles instead (from the next restart"
             " of each node): a planned change, below") in lines
+
+
+def test_files_written_with_no_effect_listed_apart_once_with_their_nodes():
+    """The self-check's "no effect" notes: one line per file or value, with the nodes it would be rewritten on."""
+    note = "cassandra_linux: 90-nproc.conf: absent -> cassandra nproc 32768, no effect (the node keeps the values it" \
+           " has now)"
+    checks = {"node1": {"differences": [], "notes": [note, "something else"]},
+              "node2": {"differences": [], "notes": [note]}, "node3": {"differences": [], "notes": []}}
+    lines = report([node(1), node(2), node(3)], self_check=checks, details=False)
+    at = lines.index("APPLY_CONFIG WILL REWRITE (no effect)")
+    flat = " ".join(" ".join(line.split()) for line in lines[at + 1:at + 3])
+    assert flat.startswith("cassandra_linux: 90-nproc.conf: absent -> cassandra nproc 32768 all - node3 (2 nodes)")
+    assert "something else" not in " ".join(lines)
+    # none: no such section
+    assert "APPLY_CONFIG WILL REWRITE (no effect)" not in report([node(1)], details=False)
+
+
+def test_parts_kept_by_hand_listed_with_the_way_to_give_them_back():
+    kept = [node(i, keep={"cassandra_import_kept": ["thp", "unit"]}) for i in (1, 2)]
+    lines = report(kept + [node(3)], details=False)
+    at = lines.index("KEPT BY HAND (your choice)")
+    flat = " ".join(" ".join(line.split()) for line in lines[at + 1:at + 5])
+    assert flat.startswith("thp, unit (import_keep_hand_edits=thp,unit) all - node3 (2 nodes)")
+    assert "to give them to Ansible: import again without them and with -e import_take_over=thp,unit" in flat
+
+
+def test_one_merged_keep_option_in_every_way_out():
+    """The way out names what this import keeps already with the new names: running it keeps them all (no loop)."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import _keep_option
+    layout = {"nodes": [{"keep": {"cassandra_config_keep_files": ["logback.xml"], "cassandra_import_kept": ["unit"]}},
+                        {"keep": {"cassandra_import_kept": ["thp"]}}, {}]}
+    option = _keep_option(layout, "cqlsh", "logback.xml").replace(u" ", " ")
+    assert option == "-e import_keep_hand_edits=logback.xml,thp,unit,cqlsh"
+    # every hand-edited file: true stands for the files, the parts stay named
+    assert _keep_option(layout, "true").replace(u" ", " ") == "-e import_keep_hand_edits=true,thp,unit"
+    assert _keep_option({}, "os").replace(u" ", " ") == "-e import_keep_hand_edits=os"

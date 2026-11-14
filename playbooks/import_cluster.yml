@@ -666,32 +666,36 @@
           fi
         fi
         # what cassandra_install sets up for the cqlsh of the package (cqlsh_python.yml, cqlsh_links.yml), as the node has it:
-        # python3, python3.11, its wrapper and profile.d file (its mark, another file, none), the cqlshlib of python3
+        # python3, python3.11, its wrapper and profile.d file (its mark, another file, none)
         echo "cqlsh_py3=$(python3 -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>/dev/null)"
         [ -x /usr/bin/python3.11 ] && echo "cqlsh_py311=yes"
         for f in /usr/local/bin/cqlsh /etc/profile.d/cqlsh.sh; do
           if [ ! -e "$f" ]; then s=absent; elif grep -qs 'Managed by Ansible (cassandra_install)' "$f"; then s=role; else s=other; fi
           case $f in *.sh) echo "cqlsh_profile=$s" ;; *) echo "cqlsh_wrapper=$s" ;; esac
         done
-        if [ -n "$lib" ]; then
-          if [ -L "$lib/cqlshlib" ]; then t=$(readlink "$lib/cqlshlib"); elif [ -e "$lib/cqlshlib" ]; then t=other; else t=absent; fi
-          echo "cqlsh_link=$t"
-        fi
-        # the package cqlsh with each Python the roles may give it (python3 with the cqlshlib link they add on RedHat,
-        # as a PYTHONPATH of its own; python3.11 when there): ok, else its last error line
-        if [ -x /usr/bin/cqlsh ]; then
-          for p in python3 /usr/bin/python3.11; do
-            command -v $p >/dev/null 2>&1 || continue
+        # each Python the roles may give the package cqlsh (python3; python3.11; the inventory cassandra_cqlsh_python):
+        # its site-packages, what cqlshlib is there (a link and its target, another, none), and whether the package
+        # cqlsh starts with it (with the cqlshlib link the roles add on RedHat, as a PYTHONPATH of its own when
+        # missing): path|site-packages|cqlshlib|ok or its last error line
+        n=0
+        for p in python3 /usr/bin/python3.11 {{ cassandra_cqlsh_python | default('', true) | quote }}; do
+          [ -n "$p" ] && command -v "$p" >/dev/null 2>&1 || continue
+          n=$((n + 1))
+          pl=$("$p" -c "import sysconfig; print(sysconfig.get_paths()['purelib'])" 2>/dev/null)
+          if [ -z "$pl" ]; then t=; elif [ -L "$pl/cqlshlib" ]; then t=$(readlink "$pl/cqlshlib")
+          elif [ -e "$pl/cqlshlib" ]; then t=other; else t=absent; fi
+          r=
+          if [ -x /usr/bin/cqlsh ]; then
             d=
-            if [ "$p" = python3 ] && [ -d /usr/lib/python3.6/site-packages/cqlshlib ] && [ ! -e "$lib/cqlshlib" ]; then
+            if [ "$t" = absent ] && [ -d /usr/lib/python3.6/site-packages/cqlshlib ]; then
               d=$(mktemp -d) && ln -s /usr/lib/python3.6/site-packages/cqlshlib "$d/cqlshlib"
             fi
             if out=$(PYTHONPATH="$d" CQLSH_PYTHON=$p timeout 30 /usr/bin/cqlsh --version 2>&1); then r=ok
-            else r=$(echo "$out" | grep -v '^[[:space:]]*$' | tail -1 | cut -c1-200); fi
+            else r=$(echo "$out" | grep -v '^[[:space:]]*$' | tail -1 | tr '|' '/' | cut -c1-200); r=${r:-no output}; fi
             [ -n "$d" ] && rm -f "$d/cqlshlib" && rmdir "$d"
-            case $p in *3.11) echo "cqlsh_test_py311=${r:-no output}" ;; *) echo "cqlsh_test_py3=${r:-no output}" ;; esac
-          done
-        fi
+          fi
+          echo "cqlsh_python_$n=$p|$pl|$t|$r"
+        done
         rf=
         for f in /etc/yum.repos.d/cassandra-*.repo /etc/apt/sources.list.d/cassandra-*.sources /etc/apt/sources.list.d/cassandra-*.list; do
           [ -e "$f" ] && rf="$rf $f"
@@ -812,9 +816,8 @@
           py311: "{{ _kv.cqlsh_py311 is defined }}"
           wrapper: "{{ _kv.cqlsh_wrapper | default('absent') }}"
           profile: "{{ _kv.cqlsh_profile | default('absent') }}"
-          link: "{{ _kv.cqlsh_link | default('') }}"
-          test_py3: "{{ _kv.cqlsh_test_py3 | default('') }}"
-          test_py311: "{{ _kv.cqlsh_test_py311 | default('') }}"
+          # path|site-packages|cqlshlib|ok or its last error line, of each Python the roles may give it
+          pythons: "{{ _kv | dict2items | selectattr('key', 'match', '^cqlsh_python_') | map(attribute='value') | list }}"
           ran: "{{ _kv.cqlsh_ran | default('') }}"
         # the cqlsh the playbooks run (the inventory's, or -e)
         import_cluster_cqlsh_command: "{{ cassandra_cqlsh_command | default('cqlsh', true) }}"
@@ -1484,8 +1487,10 @@
           [ -f "$x" ] && grep -E '^[[:space:]]*(server|pool|peer|NTP=|FallbackNTP=)' "$x" | awk -v p="timesync_server|$x|" '{print p $0}'
         done
         # firewall: firewalld, ufw, else iptables/nftables rules for the Cassandra ports; running or not, at boot or not
+        # (is-enabled exits 1 for disabled: its output says it; none, or not-found: not installed)
         for s in firewalld ufw; do
-          b=$(systemctl is-enabled $s 2>/dev/null) && echo "fw_state|$s|$(systemctl is-active $s 2>/dev/null)|$b"
+          b=$(systemctl is-enabled $s 2>/dev/null)
+          case $b in ''|not-found) ;; *) echo "fw_state|$s|$(systemctl is-active $s 2>/dev/null)|$b" ;; esac
         done
         if command -v ufw >/dev/null; then
           echo "fw_state|ufw-rules|$(ufw status 2>/dev/null | sed -n 's/^Status: //p')|$(sed -n 's/^ENABLED=//p' /etc/ufw/ufw.conf 2>/dev/null)"
@@ -1631,7 +1636,9 @@
       {%-     set _ = quoting.append(h) -%}
       {%-   else -%}
       {%-     set _ = broken.append(h) -%}
-      {%-     if 'cqlsh' in (import_keep_hand_edits | default('') | string).split(',') | map('trim') | list -%}{%- set _ = kept.append(h) -%}{%- endif -%}
+      {%-     if 'cqlsh' in import_keep_hand_edits | default(false) | community.cassandra.cassandra_import_keep_parts
+             or 'cqlsh' in (_nodes | selectattr('name', 'equalto', h) | map(attribute='keep') | first | default({}))
+                           .get('cassandra_import_kept', []) -%}{%- set _ = kept.append(h) -%}{%- endif -%}
       {%-   endif -%}
       {%- endfor -%}
       {%- set nodes, rows = {'broken': broken, 'kept': kept, 'quoting': quoting}, [] -%}

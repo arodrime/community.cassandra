@@ -312,6 +312,7 @@ KEPT_SETUP = (
     ("cassandra_linux_manage", "no OS tuning"),
     ("cassandra_cqlsh_python_manage", "no Python for cqlsh"),
     ("cassandra_service_unit_manage", "no systemd unit"),
+    ("cassandra_firewall_manage", "its firewall as the image has it"),
 )
 
 
@@ -325,16 +326,19 @@ def cassandra_new_node_kept_setup(switches, installed, imported=False, allow=Fal
     are theirs. allow: the operator sets that host up another way.
     -> {problems, warnings, info}: the switches of a host rebuilt under an imported node's name."""
     off = [(name, what) for name, what in KEPT_SETUP if not boolean(switches.get(name, True))]
+    # the parts import_keep_hand_edits kept (cassandra_import_kept): each left as that node had it
+    kept = [p for p in switches.get("cassandra_import_kept") or [] if p not in ("os", "unit", "cqlsh", "firewall")]
+    off += [("cassandra_import_kept", "%s left as the node had it" % ", ".join(kept))] if kept else []
     if not off:
         return _result()
     names = ", ".join(name for name, what in off)
     if installed or not boolean(imported) or boolean(allow):
         return _result(info=["left as it is on this host (false): %s" % names])
     return _result(problems=[
-        "%s %s false on a host with the host_vars import_cluster wrote for the node that had this name"
-        " (cassandra_imported_host), but no Cassandra is installed on this host: the roles would leave it with %s. For a host rebuilt under that"
-        " name, remove these lines and cassandra_imported_host from its host_vars; if this host is set up another"
-        " way, set cassandra_new_node_allow_kept_setup: true"
+        "%s %s set on a host with the host_vars import_cluster wrote for the node that had this name"
+        " (cassandra_imported_host), but no Cassandra is installed on this host: the roles would leave it with %s. For"
+        " a host rebuilt under that name, remove these lines and cassandra_imported_host from its host_vars; if this"
+        " host is set up another way, set cassandra_new_node_allow_kept_setup: true"
         % (names, "is" if len(off) == 1 else "are", ", ".join(what for name, what in off))])
 
 

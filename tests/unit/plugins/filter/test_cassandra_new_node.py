@@ -368,11 +368,30 @@ def test_kept_setup_on_a_blank_host():
     out = cassandra_new_node_kept_setup(KEPT, installed=False, imported=True)
     assert len(out["problems"]) == 1
     assert out["problems"][0].startswith("cassandra_linux_manage, cassandra_cqlsh_python_manage, cassandra_service_unit_manage"
-                                         " are false on a host with the host_vars import_cluster wrote")
+                                         " are set on a host with the host_vars import_cluster wrote")
     assert "no OS tuning, no Python for cqlsh, no systemd unit" in out["problems"][0]
     assert "remove these lines and cassandra_imported_host from its host_vars" in out["problems"][0]
     one = cassandra_new_node_kept_setup({"cassandra_service_unit_manage": "false"}, installed=False, imported="true")
-    assert one["problems"][0].startswith("cassandra_service_unit_manage is false on a host with the host_vars")
+    assert one["problems"][0].startswith("cassandra_service_unit_manage is set on a host with the host_vars")
+
+
+def test_kept_parts_on_a_blank_host():
+    # rc10: parts kept by hand (import_keep_hand_edits) in the host_vars of the node that had this name
+    out = cassandra_new_node_kept_setup({"cassandra_firewall_manage": False, "cassandra_import_kept": ["thp", "firewall"]},
+                                        installed=False, imported=True)
+    assert out["problems"][0].startswith("cassandra_firewall_manage, cassandra_import_kept are set on a host")
+    assert "its firewall as the image has it, thp left as the node had it" in out["problems"][0]
+    # the import writes the marker with them (cassandra_imported_host) and keeps them in host_vars
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
+        cassandra_inventory_layout)
+    base = {"dc": "dc1", "rack": "r1", "read": True, "vars": {"cassandra_cluster_name": "c"}, "hand_edits": [],
+            "normalized": [], "notes": []}
+    keep = {"cassandra_import_kept": ["thp"], "cassandra_linux_thp_enabled": "keep", "cassandra_linux_thp_defrag": "keep"}
+    layout = cassandra_inventory_layout([dict(base, name="n1", address="10.0.0.1", keep=keep),
+                                         dict(base, name="n2", address="10.0.0.2", keep=keep)], "c")
+    assert layout["host_vars"]["n1"]["cassandra_imported_host"] is True
+    assert layout["host_vars"]["n1"]["cassandra_import_kept"] == ["thp"]
+    assert "cassandra_import_kept" not in layout["group_vars"]["c"]
 
 
 def test_kept_setup_accepted():

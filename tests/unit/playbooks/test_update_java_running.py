@@ -232,6 +232,10 @@ WHERE_KEPT = "its unit (kept: cassandra_service_unit_manage false; edit it by ha
     (dict(TARBALL, **dict(KEPT, **given("/opt/java/jdk-11", "/opt/java/jdk-11", "11.0.21"))),
      "JAVA_HOME=/opt/java/jdk-11 in " + WHERE_KEPT + " is not the new Java (/opt/java/jdk-17.0.9)"),
     (dict(TARBALL, **dict(KEPT, **given("/opt/java/jdk-17.0.9", "/opt/java/jdk-17.0.9", "17.0.9"))), ""),
+    # started by the package's init script: its environment, by hand
+    (dict(TARBALL, cassandra_service_start="package_script", **given("/opt/java/jdk-11", "/opt/java/jdk-11", "11.0.21")),
+     "JAVA_HOME=/opt/java/jdk-11 in the init script of the package (cassandra_service_start: package_script; its"
+     " environment, edit it by hand) is not the new Java (/opt/java/jdk-17.0.9)"),
     # a package: JAVA_HOME a Java 17 installed here
     (given("/usr/lib/jvm/java-17", "/usr/lib/jvm/java-17-openjdk", "17.0.9"), ""),
     (given("/usr/lib/jvm/java-11", "/usr/lib/jvm/java-11-openjdk", "11.0.21"),
@@ -364,8 +368,10 @@ def test_refused_before_any_restart_when_the_system_java_is_kept():
     assert names.index("Note what this node needs") < names.index(read["name"]) < names.index(note["name"]) \
         < names.index(check["name"]) < names.index("Show the plan and confirm the run")
     assert read["environment"]["GIVEN"] == "{{ cassandra_service_environment.JAVA_HOME | default('') }}"
-    for manage, kept in ((False, "yes"), (True, "no"), ("false", "yes")):
-        assert Templar(loader=DataLoader(), variables={"cassandra_service_unit_manage": manage}).template(
+    for manage, start, kept in ((False, "unit", "yes"), (True, "unit", "no"), ("false", "unit", "yes"),
+                                (True, "package_script", "yes")):
+        assert Templar(loader=DataLoader(), variables={"cassandra_service_unit_manage": manage,
+                                                       "cassandra_service_start": start}).template(
             trust_as_template(read["environment"]["UNIT_KEPT"])) == kept
     assert check["run_once"] is True
     hosts = {"n1": {"cassandra_update_java_kept": "no JAVA_HOME in cassandra_service_environment"}, "n2": {},

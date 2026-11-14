@@ -873,6 +873,13 @@ def test_limits_block_of_earlier_versions_removed():
                                               "effect": "change"}]
 
 
+def test_no_limits_leaves_the_limits_files_as_they_are():
+    """cassandra_linux_limits: {} -> the role writes no limits file and leaves the earlier block (os.yml's when)."""
+    other = role_built().replace("cassandra - nofile 1048576", "cassandra - nofile 4096")
+    block = "limits_block_found|\nlimits_block|cassandra - rss 1000\nlimits|/etc/security/limits.conf|cassandra - rss 1000\n"
+    assert changes(other + block, limits={}) == []
+
+
 def test_sysctl_live_and_file_changes():
     swappiness = role_built().replace("sysctl_live|vm.swappiness|1", "sysctl_live|vm.swappiness|60")
     assert changes(swappiness) == [

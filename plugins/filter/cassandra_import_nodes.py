@@ -153,19 +153,19 @@ def _package_vars(hv, read, repo, package):
 
 
 def _kept_parts(node, parts):
-    """A node read, the parts import_keep_hand_edits keeps (KEPT_PARTS): their switches with the node's variables
-    (the cluster's group_vars when every node has them), with the list of them (KEPT_PARTS_VAR, read back by the next
-    import), the values carried for them dropped."""
+    """A node read, the parts import_keep_hand_edits keeps (KEPT_PARTS): their switches in its keep (its host_vars,
+    with cassandra_imported_host: a host rebuilt under its name is refused, not half set up), with the list of them
+    (KEPT_PARTS_VAR, read back by the next import), the values carried for them dropped."""
     if not parts or not _bool(node.get("read", False)):
         return node
-    parts = [p for p in KEPT_PARTS if p in set(parts) | set(node["vars"].get(KEPT_PARTS_VAR) or [])]
+    parts = [p for p in KEPT_PARTS if p in set(parts) | set(node["keep"].get(KEPT_PARTS_VAR) or [])]
     node = dict(node, vars=dict(node["vars"]), keep=dict(node["keep"]))
     for part in parts:
         node["vars"] = dict((k, v) for k, v in node["vars"].items() if k not in KEPT_PART_VARS[part])
         node["keep"] = dict((k, v) for k, v in node["keep"].items() if k not in KEPT_PART_VARS[part])
     for part in parts:
-        node["vars"].update(KEPT_PARTS[part])
-    node["vars"][KEPT_PARTS_VAR] = parts
+        node["keep"].update(KEPT_PARTS[part])
+    node["keep"][KEPT_PARTS_VAR] = parts
     return node
 
 
@@ -183,6 +183,12 @@ def cassandra_import_kept_again(nodes, kept):
                     ", ".join(parts), "it" if len(parts) == 1 else "them", ",".join(parts))])
         out.append(n)
     return out
+
+
+def _own_dropins(unit):
+    """The drop-ins of the cassandra unit itself (cassandra.service.d), not the ones the distribution puts on every
+    service (service.d) -> [path]."""
+    return [p for p in str(unit.get("dropins", "")).split() if "/cassandra.service.d/" in p]
 
 
 def _cqlsh_vars(hv):
@@ -392,7 +398,7 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
     # started by the package's init script as installed: the roles write no unit, they start that script
     # (not with drop-ins: what they set, e.g. a JAVA_HOME, would not hold for the script of a node added later)
     start = {"cassandra_service_start": "package_script"} \
-        if read and unit.get("pkg_script", "") not in ("", "modified") and not unit.get("dropins", "").strip() else {}
+        if read and unit.get("pkg_script", "") not in ("", "modified") and not _own_dropins(unit) else {}
     unit_kept = dict(keep, **({"cassandra_service_unit_manage": False} if start else {}))
     env_log_dir = _env_log_dir(read, unit_kept, env, conf, config_vars)
     java_link = _java_link(hv, read)

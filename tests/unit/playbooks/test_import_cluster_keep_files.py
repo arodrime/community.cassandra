@@ -342,16 +342,16 @@ def test_kept_parts_written_and_their_carried_values_dropped():
                                          "cassandra_data_dir": "/data/cassandra"}},
           "import_cluster_unit": {"pkg_script": "cassandra", "script": "/etc/init.d/cassandra", "file": "/etc/init.d/cassandra"}}
     n = import_node(hv, keep_hand_edits="thp,unit")
-    # (with the variables: in the cluster's group_vars when every node keeps them)
-    assert n["vars"]["cassandra_import_kept"] == ["thp", "unit"]
-    assert n["vars"]["cassandra_linux_thp_enabled"] == "keep" and n["vars"]["cassandra_service_unit_manage"] is False
+    # (in its host_vars, with cassandra_imported_host: a host rebuilt under that name is refused)
+    assert n["keep"]["cassandra_import_kept"] == ["thp", "unit"]
+    assert n["keep"]["cassandra_linux_thp_enabled"] == "keep" and n["keep"]["cassandra_service_unit_manage"] is False
     assert "cassandra_service_start" not in n["vars"]
     assert n["vars"]["cassandra_linux_swap_off"] is False  # (not kept: carried)
-    assert "cassandra_import_kept" not in import_node(hv)["vars"]
+    assert "cassandra_import_kept" not in import_node(hv)["keep"]
     # os: its variables only, not the data directories of cassandra_config (an outage under import_strict=false)
     n = import_node(hv, keep_hand_edits="os")
     assert n["vars"]["cassandra_data_dir"] == "/data/cassandra" and "cassandra_linux_swap_off" not in n["vars"]
-    assert n["vars"]["cassandra_linux_manage"] is False
+    assert n["keep"]["cassandra_linux_manage"] is False
 
 
 def test_part_tables_agree():
@@ -402,6 +402,12 @@ def test_reimport_without_a_kept_part_stops_with_both_ways_out():
     # a file of the import that does not read: stop
     bad = {"host_vars/n1/main.yml": "# Written by community.cassandra.import_cluster for c\ncassandra_import_kept: [os\n"}
     assert "cannot be read as YAML" in cassandra_import_kept_before(bad, "os")["stop"][0]
+    # its main.yml vaulted (the import vaults secrets.yml alone): its parts unknown, stop with the way out
+    vaulted = {"host_vars/n1/main.yml": "$ANSIBLE_VAULT;1.1;AES256\n6162\n", "host_vars/n1/secrets.yml": "$ANSIBLE_VAULT;1.1"}
+    assert cassandra_import_kept_before(vaulted, "os")["stop"] == [
+        "host_vars/n1/main.yml: written by an earlier import, cannot be read as YAML: the parts it kept by hand are not"
+        " known. Decrypt it (ansible-vault decrypt), fix or remove it, then import again."]
+    assert cassandra_import_kept_before({"host_vars/n1/secrets.yml": "$ANSIBLE_VAULT;1.1"}, "os")["stop"] == []
 
 
 def test_rc9_switches_kept_as_parts():
@@ -420,10 +426,10 @@ def test_rc9_switches_kept_as_parts():
     assert cassandra_import_kept_before(texts, False, "firewall")["kept"] == {"n1": ["os"]}
     nodes = [dict(base_node("n1"), read=True), dict(base_node("n2"), read=True)]
     again = cassandra_import_kept_again(nodes, out["kept"])
-    assert again[0]["vars"]["cassandra_import_kept"] == ["os", "firewall"]
+    assert again[0]["keep"]["cassandra_import_kept"] == ["os", "firewall"]
     assert again[0]["notes"][-1] == "kept as the last import left it (os, firewall): give them to Ansible with" \
         " -e import_take_over=os,firewall"
-    assert "cassandra_import_kept" not in again[1]["vars"]
+    assert "cassandra_import_kept" not in again[1]["keep"]
 
 
 def base_node(name):
@@ -433,11 +439,12 @@ def base_node(name):
 def test_kept_parts_in_the_report():
     base = {"dc": "dc1", "rack": "r1", "read": True, "vars": {"cassandra_cluster_name": "c"}, "hand_edits": [],
             "normalized": [], "notes": []}
-    kept = dict(base["vars"], cassandra_import_kept=["os"], cassandra_linux_manage=False)
-    layout = cassandra_inventory_layout([dict(base, name="n1", address="10.0.0.1", vars=kept, keep={}),
-                                         dict(base, name="n2", address="10.0.0.2", vars=kept, keep={})], "c")
+    keep = {"cassandra_import_kept": ["os"], "cassandra_linux_manage": False}
+    layout = cassandra_inventory_layout([dict(base, name="n1", address="10.0.0.1", keep=keep),
+                                         dict(base, name="n2", address="10.0.0.2", keep=keep)], "c")
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import report_sections
     assert report_sections(layout, {})["kept_parts"] == {("os",): ["n1", "n2"]}
-    # the same on every node: the cluster's group_vars
-    assert layout["group_vars"]["c"]["cassandra_import_kept"] == ["os"]
-    assert layout["group_vars"]["c"]["cassandra_linux_manage"] is False
+    # in each node's host_vars, with the marker (never group_vars: a node added later gets the roles' setup)
+    assert layout["host_vars"]["n1"]["cassandra_import_kept"] == ["os"]
+    assert layout["host_vars"]["n1"]["cassandra_imported_host"] is True
+    assert "OS settings" not in str(report_sections(layout, {})["left_groups"])  # (said with the parts kept)

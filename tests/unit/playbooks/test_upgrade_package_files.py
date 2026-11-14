@@ -70,3 +70,49 @@ def test_preflight_shows_the_target_config_with_the_former_series_installed():
             return
         todo += t.get("block", [])
     raise AssertionError("series check not found")
+
+
+AVAILABLE = next(t for play in PLAYS for t in play.get("tasks", [])
+                 if t.get("name") == "The target packages are available")
+LOOK = next(t for play in PLAYS for t in play.get("tasks", [])
+            if t.get("name") == "Look for the target packages in the repositories the roles don't manage")
+
+
+def template(text, **variables):
+    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(text))
+
+
+def looked(**node):
+    base = {"_phase": "rolling", "cassandra_install_method": "repository", "cassandra_repository_manage": True}
+    base.update(node)
+    return all(template("{{ %s }}" % w, **base) for w in LOOK["when"])
+
+
+def test_target_looked_for_in_repositories_the_roles_do_not_manage():
+    assert looked(cassandra_install_method="system")
+    assert looked(cassandra_repository_manage=False)
+    assert not looked()  # the roles add the target series' repository themselves
+    assert not looked(cassandra_install_method="system", cassandra_offline=True)
+    assert not looked(cassandra_install_method="packages", cassandra_repository_manage=False)
+
+
+def available_message(family):
+    hostvars = {"n1": {"inventory_hostname": "n1", "cassandra_upgrade_available": {"rc": 1}},
+                "n2": {"inventory_hostname": "n2", "cassandra_upgrade_available": {"rc": 0}},
+                "n3": {"inventory_hostname": "n3", "cassandra_upgrade_available": {"skipped": True}}}
+    variables = dict(hostvars=hostvars, ansible_play_hosts_all=list(hostvars), cassandra_package_version="5.0.6",
+                     ansible_facts={"os_family": family})
+    variables["_missing"] = template(AVAILABLE["vars"]["_missing"], **variables)
+    variables["_lines"] = [template(line, **variables) for line in AVAILABLE["vars"]["_lines"]]
+    assert variables["_missing"] == ["n1"]
+    return template(AVAILABLE["ansible.builtin.assert"]["fail_msg"],
+                    _nl="\n", **{k: v for k, v in variables.items() if k != "_nl"}).split("\n")
+
+
+def test_target_not_offered_stops_one_fact_per_line_with_the_way_out():
+    lines = available_message("RedHat")
+    assert lines[0] == ("n1: their repositories offer no cassandra 5.0.6 (repositories the roles do not manage:"
+                        " cassandra_repository_manage false, or cassandra_install_method system). Nothing was done.")
+    assert lines[1].startswith("Way out: add the target series to them (your mirror or Satellite); or let the roles")
+    # apt answers from its cached lists: refresh them
+    assert "then apt-get update on them (apt reads its cached lists)" in available_message("Debian")[1]

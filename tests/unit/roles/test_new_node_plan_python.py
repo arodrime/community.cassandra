@@ -134,3 +134,20 @@ def test_signing_keys_get_the_mirror_credentials_on_the_mirror_only():
     for url in ("https://downloads.apache.org/cassandra/KEYS", "http://mirror.example.com/keys/KEYS",
                 "https://mirror.example.com:8443/keys/KEYS"):
         assert auth(url) == "none", url
+
+
+def test_system_install_checks_no_repository_url_and_needs_the_package_offered():
+    out = plan("3.12", cassandra_install_method="system", cassandra_repository_manage=True)
+    assert not [u for u in out["urls"] if u["name"].startswith("Cassandra repository")]
+    assert needs(out)["cassandra"]["mode"] == "either"  # the repositories the node has must offer it
+    # the roles' repository: its URL checked, the package comes from it
+    out = plan("3.12", cassandra_repository_manage=True)
+    assert [u["name"] for u in out["urls"] if u["name"].startswith("Cassandra")] == ["Cassandra repository"]
+    assert "cassandra" not in needs(out)
+
+
+def test_external_cqlsh_needs_no_python_for_the_package_cqlsh():
+    # python3 3.14 outside the series' range: python3.11 for the package's cqlsh, none for another cqlsh
+    assert "python3.11" in needs(plan("3.14", cassandra_medusa_enabled=False))
+    out = plan("3.14", cassandra_medusa_enabled=False, cassandra_cqlsh_source="external")
+    assert "python3.11" not in needs(out) and out["problems"] == []

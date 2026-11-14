@@ -100,14 +100,19 @@
     - name: The target packages are available
       ansible.builtin.assert:
         that: _missing | length == 0
-        fail_msg: >-
-          {{ _missing | join(', ') }} install Cassandra from repositories the roles do not manage
-          (cassandra_repository_manage false, or cassandra_install_method system) and those offer no cassandra
-          {{ cassandra_package_version }}: add the target series to them (your mirror or Satellite), or let the roles
-          add the Apache repository (cassandra_install_method: repository, cassandra_repository_manage: true).
-          Nothing was done.
+        fail_msg: "{{ _lines | join(_nl) }}"
         quiet: true
       vars:
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _lines:
+          - >-
+            {{ _missing | join(', ') }}: their repositories offer no cassandra {{ cassandra_package_version }}
+            (repositories the roles do not manage: cassandra_repository_manage false, or cassandra_install_method
+            system). Nothing was done.
+          - >-
+            Way out: add the target series to them (your mirror or Satellite){{ ', then apt-get update on them (apt
+            reads its cached lists)' if ansible_facts['os_family'] == 'Debian' else '' }}; or let the roles add the
+            Apache repository (cassandra_install_method: repository, cassandra_repository_manage: true).
         _missing: >-
           {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('cassandra_upgrade_available', 'defined')
              | selectattr('cassandra_upgrade_available.rc', 'defined') | rejectattr('cassandra_upgrade_available.rc', 'equalto', 0)

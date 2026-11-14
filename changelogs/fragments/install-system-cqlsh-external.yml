@@ -9,6 +9,6 @@ minor_changes:
     import_cluster - the repositories and cqlsh are imported instead of left aside (no more
     ``cassandra_repository_manage: false`` or ``cassandra_cqlsh_python_manage: false`` on nodes set up another way):
     ``system`` for a Cassandra a configured repository offers or repository files of the node's own,
-    ``cassandra_cqlsh_source: external`` when the inventory names another cqlsh (its path never written by the
-    import). The self-check stops on a repository file the roles would add or remove, and on a cqlsh that does not
+    ``cassandra_cqlsh_source: external`` and that ``cassandra_cqlsh_command`` when the inventory or ``-e`` names
+    another cqlsh (a cqlsh found in the PATH but not named is never written). The self-check stops on a repository file the roles would add or remove, and on a cqlsh that does not
     start (the roles would give it a Python), with the way out.

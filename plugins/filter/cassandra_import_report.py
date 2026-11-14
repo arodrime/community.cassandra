@@ -31,6 +31,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     hand_edits_kept, _secret, vars_sort_key, values_hidden)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import HEAP_FILE
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import CONFIG_FILE, RESTART_DOES
+from ansible_collections.community.cassandra.plugins.filter.cassandra_os import NO_EFFECT_NOTE
 from ansible_collections.community.cassandra.plugins.filter.cassandra_suspicious import (
     LINES as SUSPICIOUS_LINES, REPLACE, finding_lines, suspicious)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import terminal_width
@@ -685,6 +686,21 @@ def unread_by(node, name):
     return str(jvm.java_major(java)) if read and read != name else ""
 
 
+def _keep_option(layout, *names):
+    """The one -e import_keep_hand_edits for the way out: what this import keeps already (its nodes' kept config files
+    and parts) and names, merged -> "-e import_keep_hand_edits=logback.xml,os,unit" (unbreakable)."""
+    files, parts = [], []
+    for n in layout.get("nodes") or []:
+        keep = n.get("keep") or {}
+        files += [f for f in keep.get("cassandra_config_keep_files") or [] if f not in files]
+        parts += [p for p in keep.get(KEPT_PARTS_VAR) or [] if p not in parts]
+    files += [f for f in names if f not in KEPT_PARTS and f not in files]
+    parts += [p for p in names if p in KEPT_PARTS and p not in parts]
+    if "true" in files:
+        files = ["true"]
+    return unbreakable("-e import_keep_hand_edits=" + ",".join(files + [p for p in KEPT_PARTS if p in parts]))
+
+
 def _hints(layout, items, read, unread, who, error="", report=False, report_file="", inventory="", hosts="",
            cwd=None):
     """HOW TO MAKE IT PASS: [(kind of difference, what to do)]."""
@@ -711,7 +727,7 @@ def _hints(layout, items, read, unread, who, error="", report=False, report_file
                       " cassandra_extra_settings, ...) or give the file your own template"
                       " (cassandra_config_template_overrides), remove the file from cassandra_config_keep_files,"
                       " import again. To drop them instead: undo them on the node, then import again" % (
-                          unbreakable("-e import_keep_hand_edits=true"),
+                          _keep_option(layout, "true"),
                           "; ".join("%s on %s" % (f, who(m)) for f, m in sorted(hand.items())))))
     for (f, major), names in sorted(not_read.items()):
         hints.append(("file not read", "%s %s Java %s, which does not read %s: its edits change nothing while %s"
@@ -719,7 +735,7 @@ def _hints(layout, items, read, unread, who, error="", report=False, report_file
                           who(names), "runs" if len(names) == 1 else "run", major, f,
                           "it runs" if len(names) == 1 else "they run",
                           "the node has" if len(names) == 1 else "each node has",
-                          unbreakable("-e import_keep_hand_edits=" + f),
+                          _keep_option(layout, f),
                           "the node" if len(names) == 1 else "those nodes")))
     yours = {}  # (the file of yours, its variable): the nodes' values
     for item in items:
@@ -745,7 +761,7 @@ def _hints(layout, items, read, unread, who, error="", report=False, report_file
         verb = "starts" if len(names) == 1 else "start"
         hints.append(("unit", "to keep how %s %s Cassandra (its own unit or init script): import again with %s."
                       " To have the unit of the roles instead (from the next restart of each node): a planned change,"
-                      " below" % (who(names), verb, unbreakable("-e import_keep_hand_edits=unit"))))
+                      " below" % (who(names), verb, _keep_option(layout, "unit"))))
     if unread and not read:  # (no node checked: never valid, import_allow_unread or not)
         hints.append(("not read", "no node could be read: start Cassandra or fix the access on one of them at least,"
                       " then import again"))
@@ -795,7 +811,7 @@ def _os_hint(layout, items, read, who):
     return ("to keep them as %s %s them: import again with %s (the roles then leave %s as they are). Or change the"
             " nodes as the roles would (the lines above), then import again" % (
                 who(names), "has" if len(names) == 1 else "have",
-                unbreakable("-e import_keep_hand_edits=" + ",".join(parts)), "; ".join(PART_WORDS[p] for p in parts)))
+                _keep_option(layout, *parts), "; ".join(KEPT_PART_WORDS[p] for p in parts)))
 
 
 def _self_check_lines(layout, self_check, who, width, report_file="", error="", allow_unread=False,
@@ -881,7 +897,7 @@ def report_sections(layout, self_check):
     kept, left_groups, kept_parts = [], {}, {}
     for n in nodes:
         order = list(KEEP_SHORT)
-        parts = list((n.get("vars") or {}).get(KEPT_PARTS_VAR) or (n.get("keep") or {}).get(KEPT_PARTS_VAR) or [])
+        parts = list((n.get("keep") or {}).get(KEPT_PARTS_VAR) or [])
         if parts:
             kept_parts.setdefault(tuple(parts), []).append(n["name"])
         # (the switches of the parts kept by hand: said with them)
@@ -1135,7 +1151,7 @@ def _hand_entries(report, edits):
                 keep = _kept_with(report, f, members)
                 todo = "%sto keep %s: import again with %s (Ansible then leaves %s as each node has it%s)" % (
                     "" if setting else "the lines are under DETAILS, node by node; ", "it" if setting else "them",
-                    unbreakable("-e import_keep_hand_edits=" + ",".join(keep)), " and ".join(keep),
+                    _keep_option(report.layout, *keep), " and ".join(keep),
                     "; cassandra-env.sh's lines moved to variables stay in it then" if len(keep) > 1 else "")
                 if f in SNIPPET_FILES and not setting:  # (lines no variable carries: your template, or a piece)
                     todo += ("; or carry them: your own template of %s (cassandra_config_template_overrides), or a"
@@ -1228,9 +1244,6 @@ def _left_kind(label):
     return "managed" if label in KEEP or label in KEEP_SHORT.values() else "value"
 
 
-PART_WORDS = KEPT_PART_WORDS
-
-
 def _kept_parts_lines(report):
     """The parts import_keep_hand_edits kept as the nodes have them, one entry per set of parts and nodes: what the
     roles leave, how to give them to Ansible."""
@@ -1241,7 +1254,7 @@ def _kept_parts_lines(report):
                            report.width, "    ", "  ")
         lines += fill_text("the roles leave %s as they are; to give %s to Ansible: import again without %s and with %s"
                            " (with --check --diff first: it shows what the roles would change)" % (
-                               "; ".join(PART_WORDS[p] for p in parts), "them" if len(parts) > 1 else "it",
+                               "; ".join(KEPT_PART_WORDS[p] for p in parts), "them" if len(parts) > 1 else "it",
                                "them" if len(parts) > 1 else "it", unbreakable("-e import_take_over=" + ",".join(parts))),
                            report.width, "      ", "  ")
     return lines
@@ -1253,8 +1266,8 @@ def _no_effect_lines(report, self_check):
     found = {}
     for name, check in sorted((self_check or {}).items()):
         for note in check.get("notes") or []:
-            if note.endswith(", no effect (the node keeps the values it has now)"):
-                found.setdefault(note[:-len(", no effect (the node keeps the values it has now)")], []).append(name)
+            if note.endswith(NO_EFFECT_NOTE):
+                found.setdefault(note[:-len(NO_EFFECT_NOTE)], []).append(name)
     return [line for text, members in found.items()
             for line in fill_text("%s   %s" % (text, unbreakable(_who(report, members))), report.width, "    ", "  ")]
 

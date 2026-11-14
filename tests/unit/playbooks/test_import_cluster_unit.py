@@ -249,6 +249,18 @@ def test_package_script_as_installed_is_imported_as_the_start_method():
         assert "cassandra_service_start" not in n["vars"] and "cassandra_service_unit_manage" not in n["keep"]
 
 
+@pytest.mark.parametrize("dropins, imported", [
+    # a drop-in of its own: what it sets would not hold for a node added later, the self-check compares instead
+    ("/etc/systemd/system/cassandra.service.d/override.conf", False),
+    ("/run/systemd/generator/cassandra.service.d/x.conf /etc/systemd/system/cassandra.service.d/java.conf", False),
+    # the distribution's drop-ins for every service are not the node's own
+    ("/usr/lib/systemd/system/service.d/10-timeout-abort.conf", True),
+    ("", True)])
+def test_package_script_with_drop_ins_of_its_own_is_not_imported(dropins, imported):
+    n = node({"import_cluster_unit": dict(SYSV, pkg_script="cassandra", dropins=dropins)})
+    assert ("cassandra_service_start" in n["vars"]) is imported
+
+
 def test_unit_facts_read_the_script_and_its_package():
     unit = WORK_OUT["import_cluster_unit"]
     kv = {"unit_SourcePath": "/etc/rc.d/init.d/cassandra", "unit_FragmentPath": "/run/systemd/generator.late/cassandra.service",

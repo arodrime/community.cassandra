@@ -888,6 +888,8 @@ NPROC_MATCH = re.compile(r"^\* - nproc 32768")  # cassandra_linux's lineinfile r
 # what systemctl is-enabled says of a unit that starts at boot (or cannot be enabled: static)
 ENABLED = ("enabled", "enabled-runtime", "static", "alias", "indirect", "generated")
 CHANGE, NO_EFFECT = "change", "no effect"
+# the end of the self-check's note for such a file (the report lists them apart)
+NO_EFFECT_NOTE = ", no effect (the node keeps the values it has now)"
 
 
 def _item(what, now, would, effect=CHANGE):
