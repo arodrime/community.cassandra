@@ -1506,6 +1506,8 @@
               [ -n "$l" ] && echo "fw_rule|zone $z|service $s: $l"
             done
             firewall-cmd --zone="$z" --list-rich-rules 2>/dev/null | awk -v p="fw_rule|zone $z|" '{print p "rich rule " $0}'
+            firewall-cmd --permanent --zone="$z" --list-rich-rules 2>/dev/null \
+              | awk -v p="fw_rule|zone $z|" '{print p "permanent rich rule " $0}'
           done
         elif command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q '^Status: active'; then
           echo "fw|ufw|active|"

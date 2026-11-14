@@ -6,5 +6,5 @@ minor_changes:
     import_cluster - the firewall is imported instead of left aside (no more ``cassandra_firewall_manage: false`` on
     every node read): ``cassandra_firewall_enabled: false`` where none runs, else ``open_ports``, the ports firewalld's
     default zone or ufw opens to everyone. The self-check works out what ``cassandra_firewall`` would change and stops
-    on a rule on a Cassandra port it does not write (rich rule, service, other zone, ufw source, iptables, nftables),
-    with the way out (``cassandra_firewall_manage: false`` in a file of yours).
+    on a rule on a Cassandra port it does not write (service, other zone, iptables, nftables...), with the way out
+    (``-e import_keep_hand_edits=firewall``).

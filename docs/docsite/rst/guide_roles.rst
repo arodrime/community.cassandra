@@ -1472,9 +1472,14 @@ inventory, so that nodes added later get the same tuning as the existing ones (w
 
 * the firewall: ``cassandra_firewall_enabled: false`` on nodes that run neither firewalld nor ufw; else
   ``open_ports``, the ports open to everyone in firewalld's default zone (or ufw's ``ALLOW Anywhere``), which
-  ``cassandra_firewall`` opens there (it runs with ``cassandra_manage_firewall: true``). A rule on a Cassandra port it
-  does not write (a rich rule, a service, another zone, ufw from a source, iptables or nftables) is not carried: the
-  self-check stops on it, ``-e import_keep_hand_edits=firewall`` keeps the firewall as the nodes have it.
+  ``cassandra_firewall`` opens there (it runs with ``cassandra_manage_firewall: true``). A Cassandra port open to some
+  sources only, as the role writes it, gives ``cassandra_firewall_port_sources`` (``{"7199/tcp": ["10.0.9.0/24"]}``):
+  a rich rule of the default zone ``rule family="ipv4" source address="10.0.9.0/24" port port="7199" protocol="tcp"
+  accept``, there now and after a reload, or ufw's ``allow from 10.0.9.0/24 to any port 7199 proto tcp``. The
+  self-check models what the role would then change: a port open to everyone and to sources is closed to everyone. A
+  rule on a Cassandra port it does not write (another action, logging, other elements, a service, another zone, a
+  rule there now only or after a reload only, iptables or nftables) is not carried: the self-check stops on it,
+  ``-e import_keep_hand_edits=firewall`` keeps the firewall as the nodes have it.
 
 ``tuned`` is only reported. A node the role set up keeps the values of the role's own files (its sysctl file,
 ``limits.d/cassandra.conf``, the unit it wrote, not its drop-ins). With these values ``cassandra_linux`` changes nothing

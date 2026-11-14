@@ -577,7 +577,10 @@ def _changes_lines(role, items):
 # cassandra_firewall's (run by create_cluster and add_node with cassandra_manage_firewall: checked whatever it says,
 # for the day it is set)
 FIREWALL_VARS = (("manage", "cassandra_firewall_manage | bool"), ("enabled", "cassandra_firewall_enabled | bool"),
-                 ("open_ports", "open_ports"), ("port_sources", "cassandra_firewall_port_sources"),
+                 ("open_ports", "open_ports"),
+                 # (the role's, the Prometheus exporter's port to its sources added)
+                 ("port_sources", role_file("cassandra_firewall", "vars")["_cassandra_firewall_port_sources"]
+                  .strip()[2:-2]),
                  ("ports", "[cassandra_storage_port | default(7000), cassandra_native_transport_port | default(9042),"
                            " cassandra_jmx_port | default(7199)]"))
 

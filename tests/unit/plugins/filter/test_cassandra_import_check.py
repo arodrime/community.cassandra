@@ -1499,10 +1499,23 @@ def test_firewall_rule_not_carried_fails_the_self_check():
     rich = ('fw|firewalld|active|default zone public\n'
             'fw_rule|zone public|rich rule rule family="ipv4" source address="10.0.9.0/24" port port="7199" protocol="tcp" accept\n')
     out = os_check(rich)
+    # (not in the permanent configuration: gone at the next reload)
     assert [d for d in out["differences"] if d.startswith("cassandra_firewall")] == [
-        'cassandra_firewall: firewall rule (not carried): node has zone public: rich rule rule family="ipv4" source'
-        ' address="10.0.9.0/24" port port="7199" protocol="tcp" accept, the roles would set not written by the roles',
+        "cassandra_firewall: firewall rule (not carried): node has zone public: port 7199/tcp open to 10.0.9.0/24 now"
+        " only, the roles would set not written by the roles",
         "cassandra_firewall: firewall firewalld: node has active, at boot ?, the roles would set stopped, disabled"]
+
+
+def test_firewall_sources_as_the_role_reads_them():
+    """The role's own: cassandra_firewall_port_sources, the Prometheus exporter's port to its sources added."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import (
+        FIREWALL_VARS, _role_values)
+    variables = {"cassandra_firewall_port_sources": {"7199/tcp": ["10.0.9.0/24"]}}
+    assert _role_values("cassandra_firewall", FIREWALL_VARS, variables, FACTS)[0]["port_sources"] == variables[
+        "cassandra_firewall_port_sources"]
+    variables.update(cassandra_prometheus_exporter_enabled=True, cassandra_prometheus_exporter_sources=["10.0.20.5"])
+    assert _role_values("cassandra_firewall", FIREWALL_VARS, variables, FACTS)[0]["port_sources"] == {
+        "7199/tcp": ["10.0.9.0/24"], "9404/tcp": ["10.0.20.5"]}
 
 
 # --- rc10: the repositories and cqlsh ---

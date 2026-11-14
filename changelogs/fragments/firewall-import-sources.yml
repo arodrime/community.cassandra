@@ -1,0 +1,7 @@
+minor_changes:
+  - >-
+    import_cluster - a Cassandra port open to some sources only, as ``cassandra_firewall`` writes it, is imported into
+    ``cassandra_firewall_port_sources``: a firewalld rich rule of the default zone (``rule family=ipv4|ipv6 source
+    address=X port port=P protocol=tcp accept``, in the runtime and permanent configurations both), or ufw's ``allow
+    from X to any port P proto tcp``. The self-check models what the role would change (a port open to everyone and to
+    sources is closed to everyone); any other rule still stops it, with the way out.
