@@ -108,8 +108,7 @@ def test_written_in_the_host_vars():
     # this node's: nodes added later get cassandra-tools, jemalloc and the hold
     out = node({"import_cluster_packages": {"cassandra": "4.1.5", "jemalloc": "3.6.0"}, "import_cluster_package": "4.1.5",
                 "import_cluster_dsbulk": "/usr/share/dsbulk-1.11.2/bin/dsbulk"})
-    assert out["keep"] == {"cassandra_firewall_manage": False, "cassandra_install_tools": False,
-                           "cassandra_dsbulk_version": "1.11.2"}
+    assert out["keep"] == {"cassandra_install_tools": False, "cassandra_dsbulk_version": "1.11.2"}
     assert not set(INSTALLED) & set(out["vars"])
 
 

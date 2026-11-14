@@ -1419,7 +1419,8 @@ def os_check(records="", keep=None, rc=0, without=""):
     added, without some), as import_cluster calls it."""
     from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_os import role_built
     files = seeded(stock("50x"))
-    inventory, layout = import_node(files, "50x", keep=keep)
+    # (no firewall there, as the import carries it)
+    inventory, layout = import_node(files, "50x", keep=keep, tamper={"cassandra_firewall_enabled": False})
     hv = {"import_cluster_slurp": slurped(files), "ansible_facts": dict(FACTS, os_family="RedHat"),
           "import_cluster_conf_dir": "", "import_cluster_storage_dir": "/var/lib/cassandra", "import_cluster_java": "17",
           "import_cluster_unit": {"env": {}}, "import_cluster_perms": {"files": {}},
@@ -1490,3 +1491,13 @@ def test_init_script_with_the_roles_unit_is_a_difference():
     # kept by you (cassandra_service_unit_manage: false): nothing compared
     assert unit_check({"file": SCRIPT, "script": SCRIPT, "pkg_script": "modified"},
                       keep=dict(keep, cassandra_service_unit_manage=False)) == []
+
+
+def test_firewall_rule_not_carried_fails_the_self_check():
+    rich = ('fw|firewalld|active|default zone public\n'
+            'fw_rule|zone public|rich rule rule family="ipv4" source address="10.0.9.0/24" port port="7199" protocol="tcp" accept\n')
+    out = os_check(rich)
+    assert [d for d in out["differences"] if d.startswith("cassandra_firewall")] == [
+        'cassandra_firewall: firewall rule (not carried): node has zone public: rich rule rule family="ipv4" source'
+        ' address="10.0.9.0/24" port port="7199" protocol="tcp" accept, the roles would set not written by the roles',
+        "cassandra_firewall: firewall firewalld: node has active, the roles would set stopped, disabled"]

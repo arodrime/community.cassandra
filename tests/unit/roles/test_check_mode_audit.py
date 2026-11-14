@@ -76,6 +76,7 @@ AUDITED = {
     (F, "firewall.yml", "Ensure ports for cassandra open (RedHat)", "skipped"): ("report",),
     (F, "firewall.yml", "Ensure ports for cassandra open (Debian)", "skipped"): ("report",),
     (F, "firewall.yml", "Ports open to some sources only", "skipped"): ("gap",),
+    (F, "no_firewall.yml", "Read the firewall state (change report)", "forced"): ("read",),
     (R, "no_repository.yml", "Under --check, the repositories dnf leaves out", "skipped"): ("no change",),
     (R, "no_repository.yml", "Update the apt cache (Debian & Ubuntu)", "forced"): ("side effect",),
     (R, "remove_apt_credentials.yml", "Look for the mark of this role in the apt credentials file", "forced"): ("read",),

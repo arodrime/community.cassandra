@@ -2,7 +2,16 @@
 # tasks file for cassandra_firewall
 - name: Set up the firewall
   ansible.builtin.include_tasks: firewall.yml
-  when: cassandra_firewall_manage | bool
+  when:
+    - cassandra_firewall_manage | bool
+    - cassandra_firewall_enabled | bool
+
+# cassandra_firewall_enabled: false, e.g. imported from nodes that run none
+- name: Leave the node without a firewall
+  ansible.builtin.include_tasks: no_firewall.yml
+  when:
+    - cassandra_firewall_manage | bool
+    - not cassandra_firewall_enabled | bool
 
 # e.g. imported: the node has no firewall the role manages, or its own rules
 - name: Say the firewall is left as it is

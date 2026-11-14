@@ -169,8 +169,7 @@ def test_boot_setting_read(kv, boot):
 
 def test_medusa_kept_on_the_node():
     hv = {"import_cluster_keep": {}, "import_cluster_medusa": {"keep": {"cassandra_medusa_link_dir": ""}}}
-    assert node(hv)["keep"] == {"cassandra_firewall_manage": False, "cassandra_medusa_link_dir": "",
-                                "cassandra_dsbulk_install": False}
+    assert node(hv)["keep"] == {"cassandra_medusa_link_dir": "", "cassandra_dsbulk_install": False}
 
 
 def test_disk_tuning_kept_on_the_node():

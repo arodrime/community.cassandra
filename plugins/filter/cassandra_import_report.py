@@ -439,10 +439,10 @@ _CREATED = re.compile(r"^([^:\s]+): not on the node, the roles would create it$"
 _HAND, _YOURS, _OS, _OTHER = "hand", "yours", "os", "other"
 _KINDS = ((_HAND, "Hand edits no variable covers (cassandra_config would revert them)"),
           (_YOURS, "Your inventory files override the import (Ansible will apply your value)"),
-          (_OS, "OS settings cassandra_linux would change (apply_config runs it)"),
+          (_OS, "OS settings the roles would change (cassandra_linux, which apply_config runs; cassandra_firewall)"),
           (_OTHER, "Other differences"))
 # the OS model's differences (cassandra_import_check's): "cassandra_linux: <what>: node has <now>, the roles would set ..."
-_OS_FILE = "cassandra_linux"
+_OS_FILES = ("cassandra_linux", "cassandra_firewall")
 # the switches that keep a part of the OS settings as the nodes have it, by the OS difference's start
 _OS_SWITCHES = (("time sync", "cassandra_linux_timesync: false", "time sync only"),
                 (("read_ahead_kb", "IO scheduler", "LVM read-ahead", "/etc/udev/", "tuned profiles", "data devices"),
@@ -513,7 +513,7 @@ def _self_check_items(read, self_check, theirs_win=None):
             created = setting is None and node_text is None  # (not one import_keep_hand_edits keeps)
             if real in files_of.get(name, ()) and not d.startswith(f + ": owner") and not created:
                 kind = _HAND
-            elif f == _OS_FILE:
+            elif f in _OS_FILES:
                 kind = _OS
             elif winner:
                 kind = _YOURS
@@ -593,7 +593,7 @@ def _item_lines(item, who, width, room=None):
     "-XX:+UseFoo (not in the inventory)"), a line per value when the nodes differ ("node3: node 128, ..."), where a
     file of yours sets it; room: a value or a line cut to it (the screen), a sentence never."""
     # (what the OS model says the roles would set: cassandra_linux's, not a value of the inventory)
-    theirs = "cassandra_linux" if item["kind"] == _OS else "inventory"
+    theirs = item["file"] if item["kind"] == _OS else "inventory"
 
     def value(node_text, role_text):
         if role_text is None:
@@ -782,18 +782,22 @@ def _os_hint(layout, items, read, who):
         names += [n for n in _item_nodes(i) if n not in names]
     switches = []
     for i in items:
-        found = next(((switch, part) for start, switch, part in _OS_SWITCHES if (i["setting"] or "").startswith(start)),
-                     ("cassandra_linux_manage: false", "every OS setting"))
+        found = ("cassandra_firewall_manage: false", "the firewall") if i["file"] == "cassandra_firewall" else next(
+            ((switch, part) for start, switch, part in _OS_SWITCHES if (i["setting"] or "").startswith(start)),
+            ("cassandra_linux_manage: false", "every OS setting"))
         if found not in switches:
             switches.append(found)
-    if len(switches) > 1:
-        switches = [("cassandra_linux_manage: false", "every OS setting")]
-    switch, part = switches[0]
+    linux = [sw for sw in switches if not sw[0].startswith("cassandra_firewall")]
+    if len(linux) > 1:
+        switches = [("cassandra_linux_manage: false", "every OS setting")] + [
+            sw for sw in switches if sw[0].startswith("cassandra_firewall")]
+    switch = " and ".join(unbreakable(sw[0]) for sw in switches)
+    part = " and ".join(sw[1] for sw in switches)
     where = "group_vars/%s/local.yml" % layout["cluster_group"] if set(names) >= set(n["name"] for n in read) \
         else "host_vars/<node>/local.yml of each of them"
     return ("to keep them as %s %s them: %s (%s) in a file of yours, %s, then import again. Or change the nodes as"
-            " cassandra_linux would (the lines above), then import again" % (
-                who(names), "has" if len(names) == 1 else "have", unbreakable(switch), part, where))
+            " the roles would (the lines above), then import again" % (
+                who(names), "has" if len(names) == 1 else "have", switch, part, where))
 
 
 def _self_check_lines(layout, self_check, who, width, report_file="", error="", allow_unread=False,

@@ -54,7 +54,8 @@ except ImportError:  # before, any string not marked unsafe
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     Unsafe, error_without_message, log_dir_of, logback_as_log_dir, undefined_name, values_hidden)
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
-from ansible_collections.community.cassandra.plugins.filter.cassandra_os import NO_EFFECT, cassandra_linux_changes
+from ansible_collections.community.cassandra.plugins.filter.cassandra_os import (
+    NO_EFFECT, cassandra_firewall_changes, cassandra_linux_changes)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import (
     cassandra_file_permissions, permission_differences)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
@@ -514,9 +515,10 @@ def _self_check(files_data, hosts, name, facts, live, node_environment, storage_
     else:
         out["differences"] += permission_differences(wanted, permissions)
     if os_found is not None:
-        differences, notes = _linux_check(variables, facts, os_found, os_own)
-        out["differences"] += differences
-        out["notes"] += notes
+        for check in (_linux_check, _firewall_check):
+            differences, notes = check(variables, facts, os_found, os_own)
+            out["differences"] += differences
+            out["notes"] += notes
     return {"differences": errors + out["differences"], "notes": out["notes"]}
 
 
@@ -537,34 +539,68 @@ LINUX_VARS = (("manage", "cassandra_linux_manage | bool"), ("apply_live", "cassa
               ("sysfs_block_root", "cassandra_sysfs_block_root"))
 
 
-def _linux_check(variables, facts, found, own):
-    """What cassandra_linux would change on the node with these variables (apply_config runs it) -> (differences,
-    notes): a change is a difference, a file it writes with no effect on the node's values a note."""
-    ctx = _trusted(dict(role_file("cassandra_linux"), **variables))
+def _role_values(role, exprs, variables, facts):
+    """The values of exprs [(key, expression)] as the role reads them with these variables over its defaults ->
+    ({key: value}, None), or (None, the difference saying which one cannot be read)."""
+    ctx = _trusted(dict(_defaults(), **dict(role_file(role), **variables)))
     ctx["ansible_facts"] = facts
     templar = Templar(loader=DataLoader(), variables=ctx)
-    linux = {}
-    for key, expr in LINUX_VARS:
+    out = {}
+    for key, expr in exprs:
         try:
             value = templar.template(trust_as_template("{{ %s }}" % expr))
         except Exception as exc:  # pylint: disable=broad-except  # a template error: said by its type (no value)
-            return ["cassandra_linux: %s cannot be read with these variables (%s)" % (expr.split()[0], type(exc).__name__)], []
-        linux[key] = str(value) == "True" if expr.endswith("| bool") else value
+            return None, "%s: %s cannot be read with these variables (%s)" % (role, expr.split()[0], type(exc).__name__)
+        out[key] = str(value) == "True" if expr.endswith("| bool") else value
+    return out, None
+
+
+def _changes_lines(role, items):
+    """The model's items -> (differences, notes): a change is a difference, a file written with no effect a note."""
+    differences, notes = [], []
+    for item in items:
+        if item["effect"] == NO_EFFECT:
+            notes.append("%s: %s: %s -> %s, no effect (the node keeps the values it has now)"
+                         % (role, item["what"], item["now"], item["would"]))
+        else:
+            differences.append("%s: %s: node has %s, the roles would set %s" % (role, item["what"], item["now"], item["would"]))
+    return differences, notes
+
+
+# cassandra_firewall's (run by create_cluster and add_node with cassandra_manage_firewall: checked whatever it says,
+# for the day it is set)
+FIREWALL_VARS = (("manage", "cassandra_firewall_manage | bool"), ("enabled", "cassandra_firewall_enabled | bool"),
+                 ("open_ports", "open_ports"), ("port_sources", "cassandra_firewall_port_sources"),
+                 ("ports", "[cassandra_storage_port | default(7000), cassandra_native_transport_port | default(9042),"
+                           " cassandra_jmx_port | default(7199)]"))
+
+
+def _firewall_check(variables, facts, found, own):
+    """What cassandra_firewall would change on the node with these variables, and the rules it does not write ->
+    (differences, notes)."""
+    fw, error = _role_values("cassandra_firewall", FIREWALL_VARS, variables, facts)
+    if error:
+        return [error], []
+    if not fw["manage"] or found.get("rc", 1) != 0 or "stdout" not in found:
+        return [], []  # (not read: the OS check says it)
+    ports = ["%s/tcp" % p for p in fw["ports"]]
+    items = cassandra_firewall_changes(found["stdout"], fw, facts.get("os_family", ""), ports)
+    return _changes_lines("cassandra_firewall", items)
+
+
+def _linux_check(variables, facts, found, own):
+    """What cassandra_linux would change on the node with these variables (apply_config runs it) -> (differences,
+    notes): a change is a difference, a file it writes with no effect on the node's values a note."""
+    linux, error = _role_values("cassandra_linux", LINUX_VARS, variables, facts)
+    if error:
+        return [error], []
     if not linux["manage"]:
         return [], []
     if found.get("rc", 1) != 0 or "stdout" not in found:
         return ["cassandra_linux: the OS settings could not be read on the node, the roles may change them"], []
     if str(linux["sysfs_block_root"]) != "/sys/block":
         return ["cassandra_linux: cassandra_sysfs_block_root is not /sys/block, the import does not work out its disks"], []
-    differences, notes = [], []
-    for item in cassandra_linux_changes(found["stdout"], linux, facts, own):
-        if item["effect"] == NO_EFFECT:
-            notes.append("cassandra_linux: %s: %s -> %s, no effect (the node keeps the values it has now)"
-                         % (item["what"], item["now"], item["would"]))
-        else:
-            differences.append("cassandra_linux: %s: node has %s, the roles would set %s"
-                               % (item["what"], item["now"], item["would"]))
-    return differences, notes
+    return _changes_lines("cassandra_linux", cassandra_linux_changes(found["stdout"], linux, facts, own))
 
 
 def _rejected(live, rendered, release):

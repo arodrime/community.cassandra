@@ -2,7 +2,8 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 # cassandra_firewall_manage: false leaves the firewall as it is (nothing
-# installed, started or opened); import_cluster sets it for the nodes it imports.
+# installed, started or opened); cassandra_firewall_enabled: false leaves the node without one. import_cluster
+# carries the firewall of the nodes it reads (rc10), and keeps it as it is on the nodes it could not read.
 
 import os
 
@@ -19,16 +20,19 @@ def test_role_does_nothing_when_not_managed():
         main = yaml.safe_load(f)
     setup = next(t for t in main if t["name"] == "Set up the firewall")
     assert setup["ansible.builtin.include_tasks"] == "firewall.yml"
-    assert setup["when"] == "cassandra_firewall_manage | bool"
-    # every change is in firewall.yml
-    assert [t for t in main if t is not setup and set(t) & {"ansible.builtin.package", "ansible.builtin.service"}] == []
+    assert setup["when"] == ["cassandra_firewall_manage | bool", "cassandra_firewall_enabled | bool"]
+    none = next(t for t in main if t["name"] == "Leave the node without a firewall")
+    assert none["when"] == ["cassandra_firewall_manage | bool", "not cassandra_firewall_enabled | bool"]
+    # every change is in firewall.yml or no_firewall.yml
+    assert [t for t in main if set(t) & {"ansible.builtin.package", "ansible.builtin.service"}] == []
     with open(os.path.join(ROOT, "roles", "cassandra_firewall", "defaults", "main.yml")) as f:
-        assert yaml.safe_load(f)["cassandra_firewall_manage"] is True
+        defaults = yaml.safe_load(f)
+    assert defaults["cassandra_firewall_manage"] is True and defaults["cassandra_firewall_enabled"] is True
 
 
-def test_import_keeps_the_firewall_of_every_node():
+def test_import_keeps_the_firewall_of_the_nodes_not_read():
     hv = {"import_cluster_keep": {}, "import_cluster_medusa": {}}
-    assert node(hv)["keep"] == {"cassandra_firewall_manage": False, "cassandra_dsbulk_install": False}
+    assert node(hv)["keep"] == {"cassandra_dsbulk_install": False}  # read: carried (cassandra_os)
     assert node({}, read=False)["keep"]["cassandra_firewall_manage"] is False
     base = {"dc": "dc1", "rack": "r1", "read": True, "vars": {"cassandra_cluster_name": "c"}, "hand_edits": [],
             "normalized": [], "notes": []}

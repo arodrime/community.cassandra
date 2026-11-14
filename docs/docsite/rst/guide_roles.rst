@@ -1375,13 +1375,13 @@ script, write no unit). A unit of the roles is kept as theirs. Any other unit, o
 package, is compared with the unit the roles would write (the self-check): what differs stops the import, with the way
 out (``cassandra_service_unit_manage: false`` in a file of yours keeps it as the nodes have it; else the roles' unit
 takes over at each node's next restart, a planned change). What the roles would replace on a node that was set up
-another way is left as it is there: the package repositories, cqlsh's Python, the system java and the firewall. A part
+another way is left as it is there: the package repositories, cqlsh's Python and the system java. A part
 that has no mark of the roles (their repository file or ``Managed by Ansible`` header), and every node that could not
 be read, gets the matching switch set to false in its ``host_vars`` (``cassandra_repository_manage``,
 ``cassandra_cqlsh_python_manage``, with ``cassandra_imported_host: true`` for the last one; a node not read gets
 ``cassandra_linux_manage: false`` and ``cassandra_service_unit_manage: false`` too), never in ``group_vars``: nodes added later get
-the roles' full setup. The OS settings of a node read are imported instead (below). The same goes for the firewall
-(``cassandra_firewall_manage: false`` on every imported node), the tuning of the data devices when ``cassandra_linux``
+the roles' full setup. The OS settings and the firewall of a node read are imported instead (below). The same goes
+for the tuning of the data devices when ``cassandra_linux``
 would still change it with the imported values (a read-ahead no variable gives, tuned's profiles, an udev rule of an
 earlier version on devices that differ; ``cassandra_data_disk_tuning: false``) and the packages a node lacks: ``cassandra-tools``, jemalloc, dsbulk and, on Debian and Ubuntu,
 the hold (``cassandra_install_tools``, ``cassandra_install_jemalloc``, ``cassandra_dsbulk_install``,
@@ -1459,9 +1459,14 @@ inventory, so that nodes added later get the same tuning as the existing ones (w
   ``cassandra_linux_timesync_servers``: chrony's server, pool and peer lines of its ``chrony.conf`` (in a
   ``chrony.d`` file: not carried, listed).
 
-``tuned`` and the firewall are only reported: the role only opens the firewall with ``cassandra_manage_firewall:
-true``; the imported nodes get ``cassandra_firewall_manage: false`` (their firewall, or none, is left as it is; nodes
-added later get the role's). A node the role set up keeps the values of the role's own files (its sysctl file,
+* the firewall: ``cassandra_firewall_enabled: false`` on nodes that run neither firewalld nor ufw; else
+  ``open_ports``, the ports open to everyone in firewalld's default zone (or ufw's ``ALLOW Anywhere``), which
+  ``cassandra_firewall`` opens there (it runs with ``cassandra_manage_firewall: true``). A rule on a Cassandra port it
+  does not write (a rich rule, a service, another zone, ufw from a source, iptables or nftables) is not carried: the
+  self-check stops on it, ``cassandra_firewall_manage: false`` in a file of yours keeps the firewall as the nodes have
+  it.
+
+``tuned`` is only reported. A node the role set up keeps the values of the role's own files (its sysctl file,
 ``limits.d/cassandra.conf``, the unit it wrote, not its drop-ins). With these values ``cassandra_linux`` changes nothing
 on the nodes: the self-check makes sure of it (below).
 

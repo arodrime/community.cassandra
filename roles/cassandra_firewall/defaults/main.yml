@@ -1,8 +1,11 @@
 ---
 # defaults file for cassandra_firewall
 # false: the firewall is left as it is on this node (nothing installed,
-# started or opened); import_cluster sets it for the nodes it imports
+# started or opened)
 cassandra_firewall_manage: true
+# false: no firewall on this node (none installed; firewalld or ufw stopped
+# and disabled where it runs)
+cassandra_firewall_enabled: true
 open_ports:
   - 22/tcp  # ssh
   - 7199/tcp  # jmx

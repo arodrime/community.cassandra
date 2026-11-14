@@ -765,20 +765,92 @@ def _timesync(recs, wanted):
     return lines, out, notes
 
 
+FW_PORTS = re.compile(r"^ports\s+(.*)$")
+UFW_ALLOW = re.compile(r"^(\d+(?::\d+)?/(?:tcp|udp))\s+ALLOW(?:\s+IN)?\s+Anywhere(?:\s+\(v6\))?\s*$")
+
+
+def _firewall_read(recs, cassandra_ports=()):
+    """The firewall records -> (the one running: firewalld, ufw or '', its default zone, the ports open to everyone
+    (as cassandra_firewall opens them: the default zone's ports, ufw's ALLOW Anywhere), [the rules on the Cassandra
+    ports (port/proto) the role does not write: (where, rule)])."""
+    numbers = [str(p).split("/", maxsplit=1)[0] for p in cassandra_ports]
+
+    def cassandra(line):
+        return any(re.search(r"(?<![\d-])%s(?!\d)" % re.escape(n), line) for n in numbers)
+    fws = [_fields(rest, 3) for kind, rest in recs if kind == "fw"]
+    rules = [_fields(rest, 2) for kind, rest in recs if kind == "fw_rule"]
+    name = next((n for n, state, extra in fws if n in ("firewalld", "ufw")), "")
+    zone = next((extra[len("default zone "):] for n, state, extra in fws if n == "firewalld"
+                 and extra.startswith("default zone ")), "")
+    ports, other = [], []
+    for where, line in rules:
+        line = _norm(line)
+        m = FW_PORTS.match(line)
+        u = UFW_ALLOW.match(line)
+        if name == "firewalld" and where == "zone %s" % zone and m:
+            ports += [p for p in m.group(1).split() if p not in ports]
+        elif name == "ufw" and where == "ufw" and u:
+            if u.group(1) not in ports:
+                ports.append(u.group(1))
+        elif cassandra(line):  # (a rich rule, a service, another zone, ufw from a source, iptables, nftables)
+            other.append((where, line))
+    # (iptables' own INPUT policy other than ACCEPT: a rule of its own)
+    other += [(n, state) for n, state, extra in fws if n not in ("firewalld", "ufw")]
+    return name, zone, ports, other
+
+
 def _firewall(recs, wanted):
     ports = [str(p) for p in wanted.get("ports") or []]
     fws = [_fields(rest, 3) for kind, rest in recs if kind == "fw"]
     rules = [_fields(rest, 2) for kind, rest in recs if kind == "fw_rule"]
     if not fws and not rules:
-        return ["firewall: none active (firewalld, ufw), no iptables/nftables rule for the Cassandra ports"]
+        return (["firewall: none active (firewalld, ufw), no iptables/nftables rule for the Cassandra ports"],
+                {"cassandra_firewall_enabled": False},
+                ["cassandra_firewall_enabled: false, these nodes run no firewall: cassandra_firewall installs none"])
     lines = ["firewall: %s %s%s" % (name, state, (", " + extra) if extra else "") for name, state, extra in fws]
     lines += ["firewall %s: %s" % (where, _norm(line)) for where, line in rules]
     opened = [p for p in ports
               if any(re.search(r"(?<![\d-])%s(?!\d)" % re.escape(p.split("/")[0]), line) for dummy, line in rules)]
-    lines.append("firewall: Cassandra ports open: %s; not seen open: %s (new nodes need the same: from your image,"
-                 " or cassandra_manage_firewall: true and open_ports, which cassandra_firewall opens in the default"
-                 " zone)" % (", ".join(opened) or "none", ", ".join(p for p in ports if p not in opened) or "none"))
-    return lines
+    lines.append("firewall: Cassandra ports open: %s; not seen open: %s" % (
+        ", ".join(opened) or "none", ", ".join(p for p in ports if p not in opened) or "none"))
+    name, zone, open_ports, other = _firewall_read(recs, ports)
+    out, notes = {}, []
+    if name:
+        out["open_ports"] = open_ports
+        notes.append("open_ports: %s, open to everyone in %s on these nodes (cassandra_firewall opens them there)"
+                     % (", ".join(open_ports) or "none", "the default zone %s" % zone if name == "firewalld" else "ufw"))
+    else:
+        out["cassandra_firewall_enabled"] = False
+        notes.append("cassandra_firewall_enabled: false, these nodes run neither firewalld nor ufw")
+    notes += ["NOT carried: %s %s (cassandra_firewall does not write it; new nodes would not get it)" % rule
+              for rule in other]
+    return lines, out, notes
+
+
+def cassandra_firewall_changes(text, fw, family="", cassandra_ports=()):
+    """What cassandra_firewall, run on the node, would change there, and the rules it does not write (new nodes would
+    not get them): text, the import's records; fw: {manage, enabled, open_ports, port_sources} as the inventory gives
+    them; family: the node's os_family; cassandra_ports: its storage, native and JMX ports (port/proto).
+    -> [{what, now, would, effect}] (as cassandra_linux_changes)."""
+    if not boolean(fw.get("manage", True), strict=False):
+        return []
+    recs = _records(text)
+    name, zone, ports, other = _firewall_read(recs, cassandra_ports)
+    svc = "firewalld" if family == "RedHat" else "ufw" if family == "Debian" else name or "firewalld"
+    items = [_item("firewall rule (not carried)", "%s: %s" % rule, "not written by the roles") for rule in other]
+    if not boolean(fw.get("enabled", True), strict=False):
+        if name:
+            items.append(_item("firewall %s" % name, "active", "stopped, disabled"))
+        return items
+    if name != svc:
+        items.append(_item("firewall %s" % svc, ("%s active" % name) if name else "none", "installed and started"))
+        return items
+    sources = fw.get("port_sources") or {}
+    items += [_item("port %s" % p, "closed", "open") for p in fw.get("open_ports") or []
+              if str(p) not in sources and str(p) not in ports]
+    if sources:
+        items.append(_item("ports open to some sources", "not read by the import", "open to %s only" % ", ".join(sources)))
+    return items
 
 
 # --- what cassandra_linux would change on a node (the import's self-check) ---
@@ -1081,7 +1153,7 @@ def cassandra_os_import(text, wanted):
     own = boolean(wanted.get("own", False), strict=False)
     for part in (_sysctl(recs, wanted, own), _limits(recs, wanted, own), _unit_limits(recs, wanted),
                  _thp(recs, wanted), _disks(recs, wanted), (_tuned(recs, wanted), {}, []), _swap(recs),
-                 _timesync(recs, wanted), (_firewall(recs, wanted), {}, [])):
+                 _timesync(recs, wanted), _firewall(recs, wanted)):
         lines += part[0]
         out.update(part[1])
         notes += part[2]

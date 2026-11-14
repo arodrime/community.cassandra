@@ -13,6 +13,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_os import 
     _records,
     _sysctl_line,
     _sysctl_order,
+    cassandra_firewall_changes,
     cassandra_linux_changes,
     cassandra_os_import,
     thp_unit,
@@ -499,7 +500,8 @@ def test_firewall():
 def test_nothing_found_is_nothing_set():
     # nothing read sets the role's settings: the role sets none (time sync: none runs, none started)
     r = found("")
-    assert r["vars"] == {"cassandra_linux_sysctl": {}, "cassandra_linux_limits": {}, "cassandra_linux_timesync": False}
+    assert r["vars"] == {"cassandra_linux_sysctl": {}, "cassandra_linux_limits": {}, "cassandra_linux_timesync": False,
+                         "cassandra_firewall_enabled": False}
 
 
 # --- the report ---
@@ -1101,3 +1103,50 @@ def test_model_chrony_servers():
          "effect": "change"},
         {"what": "chrony server line", "now": "absent", "would": "server ntp1.example.org iburst", "effect": "change"}]
     assert changes(role_built() + servers) == []  # none listed: chrony.conf left as it is
+
+
+# --- the firewall (rc10) ---
+
+FIREWALLD = ("fw|firewalld|active|default zone public\nfw_rule|zone public|ports 7000/tcp 9042/tcp 7199/tcp\n"
+             "fw_rule|zone public|service ssh: 22/tcp\n")
+
+
+def test_firewall_carried():
+    r = found(FIREWALLD)
+    assert part(r, "open_ports", "cassandra_firewall") == {"open_ports": ["7000/tcp", "9042/tcp", "7199/tcp"]}
+    assert not [c for c in r["carried"] if c.startswith("NOT carried")]  # (ssh: not a Cassandra port)
+    # a rich rule on a Cassandra port: not carried, said
+    rich = FIREWALLD + 'fw_rule|zone public|rich rule rule family="ipv4" source address="10.0.9.0/24" port port="7199" protocol="tcp" accept\n'
+    assert any(c.startswith("NOT carried: zone public rich rule") for c in found(rich)["carried"])
+    ufw = "fw|ufw|active|\nfw_rule|ufw|9042/tcp                   ALLOW       Anywhere\nfw_rule|ufw|9042/tcp (v6)              ALLOW       Anywhere (v6)\n"
+    assert found(ufw)["vars"]["open_ports"] == ["9042/tcp"]
+    # iptables only (no firewalld nor ufw): none the role runs, its rules not carried
+    ipt = "fw|iptables|INPUT policy DROP|\nfw_rule|iptables|-A INPUT -p tcp --dport 9042 -j ACCEPT\n"
+    r = found(ipt)
+    assert r["vars"]["cassandra_firewall_enabled"] is False
+    assert len([c for c in r["carried"] if c.startswith("NOT carried")]) == 2
+
+
+def fw(**changes):
+    v = {"manage": True, "enabled": True, "open_ports": ["7000/tcp", "9042/tcp", "7199/tcp"], "port_sources": {}}
+    v.update(changes)
+    return v
+
+
+CASSANDRA_PORTS = ["7000/tcp", "9042/tcp", "7199/tcp"]
+
+
+def test_firewall_model():
+    assert cassandra_firewall_changes(FIREWALLD, fw(), "RedHat", CASSANDRA_PORTS) == []
+    assert cassandra_firewall_changes(FIREWALLD, fw(open_ports=["7000/tcp", "9042/tcp", "7001/tcp"]), "RedHat",
+                                      CASSANDRA_PORTS) == [
+        {"what": "port 7001/tcp", "now": "closed", "would": "open", "effect": "change"}]
+    assert cassandra_firewall_changes("", fw(), "RedHat", CASSANDRA_PORTS) == [
+        {"what": "firewall firewalld", "now": "none", "would": "installed and started", "effect": "change"}]
+    assert cassandra_firewall_changes("", fw(enabled=False), "RedHat", CASSANDRA_PORTS) == []
+    assert cassandra_firewall_changes(FIREWALLD, fw(enabled=False), "RedHat", CASSANDRA_PORTS) == [
+        {"what": "firewall firewalld", "now": "active", "would": "stopped, disabled", "effect": "change"}]
+    assert cassandra_firewall_changes(FIREWALLD, fw(manage=False), "RedHat", CASSANDRA_PORTS) == []
+    ipt = "fw|iptables|INPUT policy DROP|\n"
+    assert [c["what"] for c in cassandra_firewall_changes(ipt, fw(enabled=False), "RedHat", CASSANDRA_PORTS)] == [
+        "firewall rule (not carried)"]

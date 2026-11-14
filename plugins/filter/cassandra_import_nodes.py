@@ -352,7 +352,7 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
         tuning = _d(hv.get("import_cluster_os"))
         node_vars = _merged(config_vars, {"cassandra_version": series}, java_vars, pkg, conf, jmx,
                             _d(perms.get("vars")), _d(medusa.get("vars")), _d(tuning.get("vars")), start)
-        node_keep = _merged(keep, env_log_dir, java_link, {"cassandra_firewall_manage": False}, _d(medusa.get("keep")),
+        node_keep = _merged(keep, env_log_dir, java_link, _d(medusa.get("keep")),
                             _d(tuning.get("keep")), {} if repo["manage"] else {"cassandra_repository_manage": False},
                             hand_kept, installed)
     else:
@@ -419,7 +419,7 @@ def cassandra_import_nodes(ring, data, given, found=None, jmx=None, java_default
     import_ options (keep_hand_edits: a bool, or the config
     files to keep) -> [node] for cassandra_inventory_layout.
     e.g. -> [{"name": "db1", "address": "10.0.0.1", "dc": "dc1", "rack": "r1", "read": True, "reason": ...,
-    "vars": {"cassandra_version": "41x", ...}, "keep": {"cassandra_firewall_manage": False, ...}, "notes": [...],
+    "vars": {"cassandra_version": "41x", ...}, "keep": {"cassandra_java_set_default": False, ...}, "notes": [...],
     ...}]."""
     ordered = list(given) + list(found or [])
     keep_files = keep_files_option(keep_hand_edits)
