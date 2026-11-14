@@ -201,3 +201,25 @@ def test_the_cqlshlib_link_of_the_role_is_its_own(tmp_path):
     assert run() == ""
     (lib / "cqlshlib").symlink_to(pkg / "cqlshlib")
     assert run() == "own_cqlsh=yes\n"
+
+
+def test_the_python_the_roles_wrapper_names_is_read(tmp_path):
+    """The wrapper and profile.d file as cassandra_install writes them (cqlsh_links.yml): their Python read back."""
+    links = os.path.join(os.path.dirname(PLAYBOOK), "..", "roles", "cassandra_install", "tasks", "cqlsh_links.yml")
+    with open(links, encoding="utf-8") as f:
+        task = next(t for t in yaml.safe_load(f) if t.get("name") == "Point cqlsh at its Python")
+    script = _read_script()
+    start = script.index("for f in /usr/local/bin/cqlsh /etc/profile.d/cqlsh.sh; do")
+    loop = script[start:script.index("done", start) + 4]
+    paths = {}
+    for item in task["loop"]:
+        content = Templar(loader=DataLoader(), variables={"_cassandra_cqlsh_python": "/usr/bin/python3.11"}).template(
+            trust_as_template(item["content"]))
+        path = tmp_path / os.path.basename(item["dest"])
+        path.write_text(content)
+        paths[item["dest"]] = str(path)
+    for dest, path in paths.items():
+        loop = loop.replace(dest, path)
+    out = subprocess.run(["/bin/sh", "-c", loop], stdout=subprocess.PIPE, universal_newlines=True, check=True).stdout
+    assert out.splitlines() == ["cqlsh_wrapper=role", "cqlsh_wrapper_py=/usr/bin/python3.11", "cqlsh_profile=role",
+                                "cqlsh_profile_py=/usr/bin/python3.11"]

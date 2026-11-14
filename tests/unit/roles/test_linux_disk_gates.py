@@ -114,7 +114,8 @@ def summed(**changes):
 
 def test_summary_of_a_node_with_nothing_to_say():
     s = summed()
-    assert s["name"] == "node1" and s["kb"] == 4 and s["changed"] is False
+    # (a string with ansible-core 2.16, which renders an expression to text; read as one)
+    assert s["name"] == "node1" and str(s["kb"]) == "4" and s["changed"] in (False, "False")
     assert s["warnings"] == s["info"] == s["notes"] == []
 
 

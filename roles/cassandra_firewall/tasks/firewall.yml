@@ -159,7 +159,10 @@
          + ([{'item': _cassandra_firewall_service, 'before': _cassandra_firewall_before.active or 'absent', 'after': 'active'}]
             if _cassandra_firewall_before.active != 'active' else [])
          + ([{'item': _cassandra_firewall_service ~ ' at boot', 'before': _cassandra_firewall_before.enabled or 'absent', 'after': 'enabled'}]
-            if _cassandra_firewall_before.enabled != 'enabled' else []) }}
+            if _cassandra_firewall_before.enabled not in _started_at_boot else []) }}
+  vars:
+    # what systemctl is-enabled says of a unit that starts at boot
+    _started_at_boot: [enabled, enabled-runtime, static, alias, indirect, generated]
 
 - name: Add the ports to open
   ansible.builtin.set_fact:

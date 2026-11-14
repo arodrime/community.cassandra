@@ -1125,12 +1125,12 @@ def test_firewall_carried():
     assert not [c for c in r["carried"] if c.startswith("NOT carried")]  # (ssh: not a Cassandra port)
     # a port open to a source as the role writes it: carried, now and after a reload; else said
     rule = 'rule family="ipv4" source address="10.0.9.0/24" port port="7199" protocol="tcp" accept'
-    rich = FIREWALLD + "fw_rule|zone public|rich rule %s\n" % rule
+    rich = FIREWALLD.replace(" 7199/tcp", "") + "fw_rule|zone public|rich rule %s\n" % rule
     assert any(c.startswith("NOT carried: zone public port 7199/tcp open to 10.0.9.0/24 now only")
                for c in found(rich)["carried"])
     both = rich + "fw_rule|zone public|permanent rich rule %s\n" % rule
     assert found(both)["vars"]["cassandra_firewall_port_sources"] == {"7199/tcp": ["10.0.9.0/24"]}
-    logged = FIREWALLD + "fw_rule|zone public|rich rule %s\n" % rule.replace(" accept", ' log prefix="jmx" accept')
+    logged = FIREWALLD.replace(" 7199/tcp", "") + "fw_rule|zone public|rich rule %s\n" % rule.replace(" accept", ' log prefix="jmx" accept')
     assert any(c.startswith("NOT carried: zone public rich rule") for c in found(logged)["carried"])
     ufw = "fw|ufw|active|\nfw_rule|ufw|9042/tcp                   ALLOW       Anywhere\nfw_rule|ufw|9042/tcp (v6)              ALLOW       Anywhere (v6)\n"
     assert found(ufw)["vars"]["open_ports"] == ["9042/tcp"]
@@ -1171,7 +1171,7 @@ def test_firewall_runtime_permanent_and_boot():
     now_only = FIREWALLD.replace("permanent ports 7000/tcp 9042/tcp 7199/tcp", "permanent ports 7000/tcp 9042/tcp")
     r = found(now_only)
     assert r["vars"]["open_ports"] == ["7000/tcp", "9042/tcp"]
-    assert any("port 7199/tcp open now only" in c for c in r["carried"])
+    assert any("port 7199/tcp open to everyone now only" in c for c in r["carried"])
     # running, not started at boot: cassandra_firewall would enable it
     no_boot = FIREWALLD.replace("fw_state|firewalld|active|enabled", "fw_state|firewalld|active|disabled")
     assert cassandra_firewall_changes(no_boot, fw(), "RedHat", CASSANDRA_PORTS) == [
@@ -1187,4 +1187,4 @@ def test_firewall_runtime_permanent_and_boot():
     # ufw: a port allowed for IPv4 only (the role allows both)
     ufw = "fw|ufw|active|\nfw_rule|ufw|9042/tcp                   ALLOW       Anywhere\n"
     r = found(ufw)
-    assert r["vars"]["open_ports"] == [] and any("9042/tcp allowed for IPv4 only" in c for c in r["carried"])
+    assert r["vars"]["open_ports"] == [] and any("9042/tcp open to everyone for IPv4 only" in c for c in r["carried"])

@@ -574,13 +574,20 @@ def _changes_lines(role, items):
     return differences, notes
 
 
+def _role_expression(role, name):
+    """The expression of a variable in a role's vars/main.yml ("{{ expression }}", alone), to template it here."""
+    m = re.match(r"^\{\{(.*)\}\}$", str(role_file(role, "vars")[name]).strip(), re.S)
+    if not m:
+        raise ValueError("%s: %s is not one {{ expression }}" % (role, name))
+    return m.group(1).strip()
+
+
 # cassandra_firewall's (run by create_cluster and add_node with cassandra_manage_firewall: checked whatever it says,
 # for the day it is set)
 FIREWALL_VARS = (("manage", "cassandra_firewall_manage | bool"), ("enabled", "cassandra_firewall_enabled | bool"),
                  ("open_ports", "open_ports"),
                  # (the role's, the Prometheus exporter's port to its sources added)
-                 ("port_sources", role_file("cassandra_firewall", "vars")["_cassandra_firewall_port_sources"]
-                  .strip()[2:-2]),
+                 ("port_sources", _role_expression("cassandra_firewall", "_cassandra_firewall_port_sources")),
                  ("ports", "[cassandra_storage_port | default(7000), cassandra_native_transport_port | default(9042),"
                            " cassandra_jmx_port | default(7199)]"))
 
@@ -591,8 +598,10 @@ def _firewall_check(variables, facts, found, own):
     fw, error = _role_values("cassandra_firewall", FIREWALL_VARS, variables, facts)
     if error:
         return [error], []
-    if not fw["manage"] or found.get("rc", 1) != 0 or "stdout" not in found:
-        return [], []  # (not read: the OS check says it)
+    if not fw["manage"]:
+        return [], []
+    if found.get("rc", 1) != 0 or "stdout" not in found:
+        return ["cassandra_firewall: the firewall could not be read on the node, the roles may change it"], []
     ports = ["%s/tcp" % p for p in fw["ports"]]
     items = cassandra_firewall_changes(found["stdout"], fw, facts.get("os_family", ""), ports)
     return _changes_lines("cassandra_firewall", items)
@@ -632,12 +641,18 @@ def _cqlsh_check(cqlsh, st, family, error):
         out.append("cassandra_install: python3.11: node has none, the roles would set installed (python3 %s is outside"
                    " %s, which the cqlsh of Cassandra %s runs on)"
                    % (st.get("py3") or "?", "-".join(bounds or []), cqlsh["series"]))
+    # (offline without python3.11 the role leaves them as they are rather than point cqlsh at nothing)
+    left = python == PYTHON311 and cqlsh["offline"] and not boolean(st.get("py311", False), strict=False)
     for path, key, what in (("/usr/local/bin/cqlsh", "wrapper", "their wrapper (the package's cqlsh with %s)"),
                             ("/etc/profile.d/cqlsh.sh", "profile", "CQLSH_PYTHON=%s")):
         have = st.get(key, "absent")
-        if python and have != "role":
+        named = st.get(key + "_py", "")
+        if python and not left and have != "role":
             out.append("cassandra_install: %s: node has %s, the roles would set %s" % (
                 path, "another file" if have == "other" else "none", what % python))
+        elif python and not left and named != python:
+            out.append("cassandra_install: %s: node has %s, the roles would set %s" % (
+                path, what % (named or "?"), what % python))
         elif not python and have == "role":
             out.append("cassandra_install: %s: node has the roles' (an earlier run), the roles would set removed" % path)
     # each Python the role reads (cqlsh_links.yml): path|site-packages|cqlshlib|test

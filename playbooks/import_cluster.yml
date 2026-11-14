@@ -666,12 +666,16 @@
           fi
         fi
         # what cassandra_install sets up for the cqlsh of the package (cqlsh_python.yml, cqlsh_links.yml), as the node has it:
-        # python3, python3.11, its wrapper and profile.d file (its mark, another file, none)
+        # python3, python3.11, its wrapper and profile.d file (its mark, another file, none; of the role: the Python
+        # it names)
         echo "cqlsh_py3=$(python3 -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>/dev/null)"
         [ -x /usr/bin/python3.11 ] && echo "cqlsh_py311=yes"
         for f in /usr/local/bin/cqlsh /etc/profile.d/cqlsh.sh; do
           if [ ! -e "$f" ]; then s=absent; elif grep -qs 'Managed by Ansible (cassandra_install)' "$f"; then s=role; else s=other; fi
-          case $f in *.sh) echo "cqlsh_profile=$s" ;; *) echo "cqlsh_wrapper=$s" ;; esac
+          case $f in
+            *.sh) echo "cqlsh_profile=$s"; [ $s = role ] && echo "cqlsh_profile_py=$(sed -n 's/^export CQLSH_PYTHON=//p' "$f" | head -1)" ;;
+            *) echo "cqlsh_wrapper=$s"; [ $s = role ] && echo "cqlsh_wrapper_py=$(sed -n 's/.*CQLSH_PYTHON:-\([^}]*\)}.*/\1/p' "$f" | head -1)" ;;
+          esac
         done
         # each Python the roles may give the package cqlsh (python3; python3.11; the inventory cassandra_cqlsh_python):
         # its site-packages, what cqlshlib is there (a link and its target, another, none), and whether the package
@@ -816,6 +820,9 @@
           py311: "{{ _kv.cqlsh_py311 is defined }}"
           wrapper: "{{ _kv.cqlsh_wrapper | default('absent') }}"
           profile: "{{ _kv.cqlsh_profile | default('absent') }}"
+          # the Python each of them names, when the role wrote it
+          wrapper_py: "{{ _kv.cqlsh_wrapper_py | default('') }}"
+          profile_py: "{{ _kv.cqlsh_profile_py | default('') }}"
           # path|site-packages|cqlshlib|ok or its last error line, of each Python the roles may give it
           pythons: "{{ _kv | dict2items | selectattr('key', 'match', '^cqlsh_python_') | map(attribute='value') | list }}"
           ran: "{{ _kv.cqlsh_ran | default('') }}"
@@ -1496,22 +1503,24 @@
           echo "fw_state|ufw-rules|$(ufw status 2>/dev/null | sed -n 's/^Status: //p')|$(sed -n 's/^ENABLED=//p' /etc/ufw/ufw.conf 2>/dev/null)"
         fi
         if [ "$(systemctl is-active firewalld 2>/dev/null)" = active ] && command -v firewall-cmd >/dev/null; then
-          echo "fw|firewalld|active|default zone $(firewall-cmd --get-default-zone 2>/dev/null)"
-          for z in $(firewall-cmd --get-active-zones 2>/dev/null | grep -v '^[[:space:]]' | awk '{print $1}'); do
-            l=$(firewall-cmd --zone="$z" --list-ports 2>/dev/null); [ -n "$l" ] && echo "fw_rule|zone $z|ports $l"
-            # (as after a reload or a boot: cassandra_firewall opens them both ways)
-            l=$(firewall-cmd --permanent --zone="$z" --list-ports 2>/dev/null); [ -n "$l" ] && echo "fw_rule|zone $z|permanent ports $l"
-            for s in $(firewall-cmd --zone="$z" --list-services 2>/dev/null); do
-              l=$(firewall-cmd --info-service="$s" 2>/dev/null | sed -n 's/^[[:space:]]*ports: *//p')
-              [ -n "$l" ] && echo "fw_rule|zone $z|service $s: $l"
+          d=$(firewall-cmd --get-default-zone 2>/dev/null)
+          echo "fw|firewalld|active|default zone $d"
+          # every rule of the default zone and of the active ones, now and after a reload (permanent)
+          for z in $( { echo "$d"; firewall-cmd --get-active-zones 2>/dev/null | grep -v '^[[:space:]]' | awk '{print $1}'; } | sort -u); do
+            for c in "" "--permanent"; do
+              w=${c:+permanent }
+              l=$(firewall-cmd $c --zone="$z" --list-ports 2>/dev/null); [ -n "$l" ] && echo "fw_rule|zone $z|${w}ports $l"
+              for s in $(firewall-cmd $c --zone="$z" --list-services 2>/dev/null); do
+                l=$(firewall-cmd $c --info-service="$s" 2>/dev/null | sed -n 's/^[[:space:]]*ports: *//p')
+                [ -n "$l" ] && echo "fw_rule|zone $z|${w}service $s: $l"
+              done
+              firewall-cmd $c --zone="$z" --list-rich-rules 2>/dev/null | awk -v p="fw_rule|zone $z|${w}rich rule " '{print p $0}'
             done
-            firewall-cmd --zone="$z" --list-rich-rules 2>/dev/null | awk -v p="fw_rule|zone $z|" '{print p "rich rule " $0}'
-            firewall-cmd --permanent --zone="$z" --list-rich-rules 2>/dev/null \
-              | awk -v p="fw_rule|zone $z|" '{print p "permanent rich rule " $0}'
           done
         elif command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q '^Status: active'; then
           echo "fw|ufw|active|"
-          ufw status 2>/dev/null | grep ALLOW | awk '{print "fw_rule|ufw|" $0}'
+          # every rule (ALLOW, DENY, REJECT, LIMIT), under the header
+          ufw status 2>/dev/null | awk 'r && NF {print "fw_rule|ufw|" $0} /^--/ {r=1}'
         else
           # only when their tables are there already (listing them would load the kernel modules)
           if grep -qsx filter /proc/net/ip_tables_names || { [ -e /sys/module/nf_tables ] && iptables -V 2>/dev/null | grep -q nf_tables; }; then
@@ -1538,8 +1547,11 @@
           {{ [_cfg.cassandra_hints_dir | default('/var/lib/cassandra/hints'),
               _cfg.cassandra_saved_caches_dir | default('/var/lib/cassandra/saved_caches')] }}
         _ports: >-
-          {{ [_cfg.cassandra_storage_port | default(7000), _cfg.cassandra_native_transport_port | default(9042),
-              _cfg.cassandra_jmx_port | default(cassandra_jmx_port | default(7199))] | map('string') | select('match', '^[0-9]+$') | list }}
+          {{ ([_cfg.cassandra_storage_port | default(7000), _cfg.cassandra_native_transport_port | default(9042),
+               _cfg.cassandra_jmx_port | default(cassandra_jmx_port | default(7199))]
+              + ([_cfg.cassandra_prometheus_exporter_port | default(9404)]
+                 if _cfg.cassandra_prometheus_exporter_enabled | default(false) | bool else []))
+             | map('string') | select('match', '^[0-9]+$') | list }}
       register: import_cluster_os_found
       changed_when: false
       failed_when: false
@@ -1577,6 +1589,10 @@
             - "{{ _cfg.cassandra_storage_port | default(7000) }}/tcp"
             - "{{ _cfg.cassandra_native_transport_port | default(9042) }}/tcp"
             - "{{ _cfg.cassandra_jmx_port | default(cassandra_jmx_port | default(7199)) }}/tcp"
+          # the Prometheus exporter's, where it runs: its sources carried (cassandra_prometheus_exporter_sources)
+          exporter_port: >-
+            {{ _cfg.cassandra_prometheus_exporter_port | default(9404)
+               if _cfg.cassandra_prometheus_exporter_enabled | default(false) | bool else '' }}
           # the node has cassandra_linux's own files, or cassandra_service's unit: it keeps their values
           own: "{{ import_cluster_own_os | default(false) }}"
           own_unit: "{{ import_cluster_own_unit | default(false) }}"

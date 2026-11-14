@@ -34,7 +34,7 @@
   register: cassandra_firewall_stopped
   when:
     - ansible_facts['os_family'] == 'RedHat'
-    # (what systemctl is-enabled says of a unit started at boot)
+    # (systemctl is-enabled of a unit that starts at boot, a static or generated one too)
     - >-
       _cassandra_firewall_before.active == 'active'
       or _cassandra_firewall_before.enabled in ['enabled', 'enabled-runtime', 'static', 'alias', 'indirect', 'generated']

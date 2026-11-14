@@ -1472,12 +1472,15 @@ inventory, so that nodes added later get the same tuning as the existing ones (w
 
 * the firewall: ``cassandra_firewall_enabled: false`` on nodes that run neither firewalld nor ufw; else
   ``open_ports``, the ports open to everyone in firewalld's default zone (or ufw's ``ALLOW Anywhere``), which
-  ``cassandra_firewall`` opens there (it runs with ``cassandra_manage_firewall: true``). A Cassandra port open to some
-  sources only, as the role writes it, gives ``cassandra_firewall_port_sources`` (``{"7199/tcp": ["10.0.9.0/24"]}``):
-  a rich rule of the default zone ``rule family="ipv4" source address="10.0.9.0/24" port port="7199" protocol="tcp"
-  accept``, there now and after a reload, or ufw's ``allow from 10.0.9.0/24 to any port 7199 proto tcp``. The
-  self-check models what the role would then change: a port open to everyone and to sources is closed to everyone. A
-  rule on a Cassandra port it does not write (another action, logging, other elements, a service, another zone, a
+  ``cassandra_firewall`` opens there (it runs with ``cassandra_manage_firewall: true``). One rule: for every port the
+  role would touch (the Cassandra ports, the Prometheus exporter's, the ports open to everyone), every rule on it is
+  read (firewalld: ports, services and rich rules of every active zone, now and after a reload; ufw: every rule,
+  ``ALLOW``, ``DENY``, ``REJECT`` or ``LIMIT``), and only what the role writes, the same now and after a reload (ufw:
+  for IPv4 and IPv6), is carried. A port open to some sources only gives ``cassandra_firewall_port_sources``
+  (``{"7199/tcp": ["10.0.9.0/24"]}``; the exporter's port: ``cassandra_prometheus_exporter_sources``): a rich rule of
+  the default zone ``rule family="ipv4" source address="10.0.9.0/24" port port="7199" protocol="tcp" accept``, or
+  ufw's ``allow from 10.0.9.0/24 to any port 7199 proto tcp``. A source rule on a port open to everyone changes
+  nothing: one note, not carried. Anything else (another action, logging, other elements, a service, another zone, a
   rule there now only or after a reload only, iptables or nftables) is not carried: the self-check stops on it,
   ``-e import_keep_hand_edits=firewall`` keeps the firewall as the nodes have it.
 
@@ -1626,7 +1629,10 @@ kept gets the finest switch that leaves it as the node has it in ``host_vars`` (
 files and parts: each run keeps only what it names, everything else is imported and checked by the self-check. A part
 the last import kept (its ``cassandra_import_kept``, or the ``*_manage: false`` a 2.1.0 release candidate wrote for a
 node it read) and this run does not name is imported, with one line in the report (e.g. ``firewall: kept by hand by
-the last import, now imported``): name it again to keep it. The report starts with ``SELF-CHECK PASSED``, or with ``SELF-CHECK
+the last import, now imported``, with the option that keeps it). A ``host_vars/<node>/main.yml`` of the last
+import that cannot be read (vaulted, or not YAML) gets a line too: the parts it kept, if any, are imported. The
+``host_vars`` of a 2.1.0 release candidate have no ``cassandra_imported_host`` mark: until the next import writes it,
+add_node and replace_node do not see that a node there was imported. The report starts with ``SELF-CHECK PASSED``, or with ``SELF-CHECK
 FAILED`` and the differences: the inventory is then marked ``# NOT VALID`` in its hosts file and the playbook fails
 (``-e import_strict=false`` writes the same files without failing, to inspect them: not safe to apply). The run
 ends with a short ``SELF-CHECK FAILED`` block: what differs, one line per setting or file with its nodes, grouped by

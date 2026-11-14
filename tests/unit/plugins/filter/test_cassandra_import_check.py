@@ -915,7 +915,7 @@ def slurped(files):
 
 
 # (their OS settings left as they are: checked by the tests of the OS model below)
-NOT_OS = {"cassandra_service_unit_manage": False, "cassandra_linux_manage": False}
+NOT_OS = {"cassandra_service_unit_manage": False, "cassandra_linux_manage": False, "cassandra_firewall_manage": False}
 
 
 def test_self_check_of_the_nodes_is_the_check_of_each_read_node():
@@ -1457,7 +1457,8 @@ def test_os_file_with_no_effect_is_a_note():
 
 def test_os_not_read_fails_the_self_check():
     assert os_check("", rc=1)["differences"] == [
-        "cassandra_linux: the OS settings could not be read on the node, the roles may change them"]
+        "cassandra_linux: the OS settings could not be read on the node, the roles may change them",
+        "cassandra_firewall: the firewall could not be read on the node, the roles may change it"]
     assert os_check("", rc=1, keep=NOT_OS)["differences"] == []
 
 
@@ -1481,11 +1482,11 @@ SCRIPT = "/etc/rc.d/init.d/cassandra"
 
 def test_package_script_start_is_not_compared_with_a_unit():
     assert unit_check({"file": SCRIPT, "script": SCRIPT, "pkg_script": "cassandra"}, start="package_script",
-                      keep={"cassandra_linux_manage": False}) == []
+                      keep={"cassandra_linux_manage": False, "cassandra_firewall_manage": False}) == []
 
 
 def test_init_script_with_the_roles_unit_is_a_difference():
-    keep = {"cassandra_linux_manage": False}
+    keep = {"cassandra_linux_manage": False, "cassandra_firewall_manage": False}
     assert unit_check({"file": SCRIPT, "script": SCRIPT, "pkg_script": "modified"}, keep=keep) == [
         "cassandra.service: the node starts Cassandra with the init script /etc/rc.d/init.d/cassandra (modified since its"
         " package installed it), the roles would start it with their systemd unit from its next restart"]
@@ -1504,6 +1505,14 @@ def test_firewall_rule_not_carried_fails_the_self_check():
         "cassandra_firewall: firewall rule (not carried): node has zone public: port 7199/tcp open to 10.0.9.0/24 now"
         " only, the roles would set not written by the roles",
         "cassandra_firewall: firewall firewalld: node has active, at boot ?, the roles would set stopped, disabled"]
+
+
+def test_firewall_not_read_is_a_difference_of_its_own():
+    """The OS read failed and the OS settings kept by hand (no cassandra_linux difference to say it): the firewall
+    still says it could not be read."""
+    out = os_check(rc=1, keep={"cassandra_linux_manage": False})
+    assert "cassandra_firewall: the firewall could not be read on the node, the roles may change it" in out["differences"]
+    assert not [d for d in out["differences"] if d.startswith("cassandra_linux")]
 
 
 def test_firewall_sources_as_the_role_reads_them():
@@ -1603,7 +1612,7 @@ def test_cqlsh_as_the_roles_set_it_up():
         " package's cqlsh with /usr/bin/python3.11)",
         "cassandra_install: /etc/profile.d/cqlsh.sh: node has none, the roles would set CQLSH_PYTHON=/usr/bin/python3.11"]
     # python3.11 there: its cqlshlib link too (cqlsh_links.yml links both)
-    both = cqlsh_state(py3="3.12", py311=True, wrapper="role", profile="role", pythons=[
+    both = cqlsh_state(py3="3.12", py311=True, wrapper="role", profile="role", wrapper_py=PY311, profile_py=PY311, pythons=[
         "python3|/usr/lib/python3.12/site-packages|%s|x" % PKG_LIB, "/usr/bin/python3.11|/usr/lib/python3.11/site-packages|other|ok"])
     assert cqlsh_check(both, series="41x")[0] == [
         "cassandra_install: cqlshlib of /usr/bin/python3.11: node has its own, the roles would set a link to " + PKG_LIB]
@@ -1613,10 +1622,32 @@ def test_cqlsh_as_the_roles_set_it_up():
         " ModuleNotFoundError: No module named 'six'"]
     # a cassandra_cqlsh_python of the inventory: that one tested
     custom = cqlsh_state(pythons=["python3|%s|%s|ok" % (LIB39, PKG_LIB), "/opt/py/bin/python|/opt/py/lib|absent|no cqlshlib"],
-                         wrapper="role", profile="role")
+                         wrapper="role", profile="role", wrapper_py="/opt/py/bin/python",
+                         profile_py="/opt/py/bin/python")
     assert cqlsh_check(custom, python="/opt/py/bin/python")[0] == [
         "cassandra_install: cqlsh as the roles would set it up (the package's, with /opt/py/bin/python) does not start:"
         " no cqlshlib"]
+
+
+PY311 = "/usr/bin/python3.11"
+
+
+def test_cqlsh_wrapper_of_the_roles_naming_another_python_is_rewritten():
+    st = cqlsh_state(py3="3.12", py311=True, wrapper="role", profile="role", wrapper_py="/opt/py/bin/python",
+                     profile_py=PY311, pythons=["python3|/usr/lib/python3.12/site-packages|%s|x" % PKG_LIB,
+                                                "%s|/usr/lib/python3.11/site-packages|%s|ok" % (PY311, PKG_LIB)])
+    assert cqlsh_check(st, series="41x")[0] == [
+        "cassandra_install: /usr/local/bin/cqlsh: node has their wrapper (the package's cqlsh with /opt/py/bin/python),"
+        " the roles would set their wrapper (the package's cqlsh with /usr/bin/python3.11)"]
+    assert cqlsh_check(dict(st, wrapper_py=PY311), series="41x")[0] == []
+
+
+def test_cqlsh_offline_without_python311_left_as_it_is():
+    """cqlsh_links.yml: offline, python3.11 needed and not installed: no wrapper written (not to point at nothing)."""
+    st = cqlsh_state(py3="3.12", pythons=["python3|/usr/lib/python3.12/site-packages|%s|x" % PKG_LIB])
+    assert not [d for d in cqlsh_check(st, series="41x", offline=True)[0] if "/usr/local/bin/cqlsh" in d
+                or "profile.d" in d]
+    assert [d for d in cqlsh_check(st, series="41x")[0] if "/usr/local/bin/cqlsh" in d]
 
 
 def test_cqlsh_found_in_the_path_not_named_stops_with_both_ways_out():

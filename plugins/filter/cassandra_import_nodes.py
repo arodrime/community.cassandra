@@ -171,16 +171,22 @@ def _kept_parts(node, parts):
 
 @values_hidden
 def cassandra_import_kept_last_notes(nodes, last):
-    """nodes: cassandra_import_nodes'; last: {node name: [parts]} the last import kept by hand that this one does not
-    name (cassandra_import_kept_last's) -> the nodes with a note saying they are imported now (the self-check
-    compares them)."""
+    """nodes: cassandra_import_nodes'; last: cassandra_import_kept_last's ({node name: {parts, again} or
+    {unreadable}}) -> the nodes with a note saying the parts the last import kept by hand are imported now (the
+    self-check compares them), with the option that keeps them; or that its file could not be read."""
     out = []
     for n in nodes or []:
-        parts = (last or {}).get(n.get("name")) or []
-        if parts and _bool(n.get("read", False)):
-            n = dict(n, notes=list(n.get("notes") or []) + [
-                "%s: kept by hand by the last import, now imported (import_keep_hand_edits does not name %s)" % (
-                    ", ".join(parts), "it" if len(parts) == 1 else "them")])
+        said = (last or {}).get(n.get("name")) or {}
+        if said and _bool(n.get("read", False)):
+            if said.get("unreadable"):
+                note = ("host_vars/%s/main.yml of the last import cannot be read (vaulted, or not YAML): the parts it"
+                        " kept by hand, if any, are imported now" % n.get("name"))
+            else:
+                them = "it" if len(said["parts"]) == 1 else "them"
+                note = ("%s: kept by hand by the last import, now imported (import_keep_hand_edits does not name %s)."
+                        " To keep %s: import again with -e import_keep_hand_edits=%s" % (
+                            ", ".join(said["parts"]), them, them, said["again"]))
+            n = dict(n, notes=list(n.get("notes") or []) + [note])
         out.append(n)
     return out
 

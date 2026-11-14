@@ -765,80 +765,94 @@ def _timesync(recs, wanted):
     return lines, out, notes
 
 
-FW_PORTS = re.compile(r"^ports\s+(.*)$")
-FW_PERMANENT = re.compile(r"^permanent ports\s+(.*)$")
-UFW_ALLOW = re.compile(r"^(\d+(?::\d+)?/(?:tcp|udp))(?:\s+\(v6\))?\s+ALLOW(?:\s+IN)?\s+Anywhere(?:\s+\(v6\))?\s*$")
-# a port open to one source, as cassandra_firewall writes it (cassandra_firewall_port_sources): firewalld's rich
-# rule (runtime, or permanent), ufw's "allow from X to any port P proto tcp" in ufw status
-FW_SOURCE = re.compile(r'^(permanent )?rich rule rule family="(ipv4|ipv6)" source address="([0-9a-fA-F.:/]+)"'
+# --- the firewall: what cassandra_firewall writes, read back ---
+# One rule: for every port the role would touch (the Cassandra ports, the exporter's, open_ports, the keys of
+# cassandra_firewall_port_sources), every rule on it is read (firewalld: ports, services, rich rules of every zone,
+# now and after a reload; ufw: every rule, IPv4 and IPv6; iptables, nftables). Only what the role writes, the same
+# in both sets (firewalld: now and after a reload; ufw: IPv4 and IPv6 for a port open to everyone), is carried;
+# anything else is "other": not carried, the self-check stops on it.
+FW_PORTS = re.compile(r"^(permanent )?ports\s+(.*)$")
+# a port open to one source, as cassandra_firewall writes it (cassandra_firewall_port_sources): firewalld's rich rule
+FW_SOURCE = re.compile(r'^rule family="(ipv4|ipv6)" source address="([0-9a-fA-F.:/]+)"'
                        r' port port="(\d+)" protocol="(tcp|udp)" accept$')
-UFW_SOURCE = re.compile(r"^(\d+/(?:tcp|udp))(?:\s+\(v6\))?\s+ALLOW(?:\s+IN)?\s+([0-9a-fA-F.:/]+)\s*$")
+FW_RICH = re.compile(r"^(permanent )?rich rule (.*)$")
+# ufw status: a port open to everyone (IPv4, or IPv6: "(v6)"), or to one source ("allow from X to any port P proto P")
+UFW_ALLOW = re.compile(r"^(\d+/(?:tcp|udp))(\s+\(v6\))?\s+ALLOW(?:\s+IN)?\s+Anywhere(?:\s+\(v6\))?$")
+UFW_SOURCE = re.compile(r"^(\d+/(?:tcp|udp))(?:\s+\(v6\))?\s+ALLOW(?:\s+IN)?\s+([0-9a-fA-F.:/]+)$")
 
 
-def _firewall_read(recs, cassandra_ports=()):
-    """The firewall records -> (the one running: firewalld, ufw or '', its default zone, the ports open to everyone
-    (as cassandra_firewall opens them: the default zone's ports, ufw's ALLOW Anywhere), [the rules on the Cassandra
-    ports (port/proto) the role does not write: (where, rule)], {port/proto: [sources]} the ports open to some
-    sources as the role opens them (FW_SOURCE, in the default zone now and after a reload; UFW_SOURCE), any port)."""
-    numbers = [str(p).split("/", maxsplit=1)[0] for p in cassandra_ports]
+# a port, or a range of ports (7000-7001, 7000:7001), in a rule: not a part of an address (10.0.9.0/24, 2001:db8::1)
+PORT_NAMED = re.compile(r"(?<![\w.:/])(\d{1,5})(?:[-:](\d{1,5}))?(?![\w.])(?!:[0-9a-fA-F]*:)")
 
-    def cassandra(line):
-        return any(re.search(r"(?<![\d-])%s(?!\d)" % re.escape(n), line) for n in numbers)
+
+def _names_port(text, numbers):
+    """text names one of the port numbers, alone or in a range."""
+    return any(int(lo) <= int(n) <= int(hi or lo) for lo, hi in PORT_NAMED.findall(text) for n in numbers)
+
+
+def _firewall_read(recs, touched=()):
+    """The firewall records -> {name: the firewall running (firewalld, ufw, ''), zone: firewalld's default zone,
+    open: [port/proto open to everyone as the role opens them, in both sets], sources: {port/proto: [source]} (the
+    same, to some sources), redundant: [(port, source)] a source rule on a port open to everyone (it changes nothing),
+    other: [(where, rule)] the rules on a touched port the role does not write, or in one set only}. touched: the
+    ports the role would touch besides the ones open to everyone (those are carried, so touched too)."""
     fws = [_fields(rest, 3) for kind, rest in recs if kind == "fw"]
-    rules = [_fields(rest, 2) for kind, rest in recs if kind == "fw_rule"]
+    rules = [(where, _norm(line)) for where, line in (_fields(rest, 2) for kind, rest in recs if kind == "fw_rule")]
     name = next((n for n, state, extra in fws if n in ("firewalld", "ufw")), "")
     zone = next((extra[len("default zone "):] for n, state, extra in fws if n == "firewalld"
                  and extra.startswith("default zone ")), "")
-    ports, permanent, v4, v6, other = [], [], [], [], []
-    now, later, sources = [], [], []  # ((port/proto, source)): the rich rules now, after a reload; ufw's
+    home = "zone %s" % zone if name == "firewalld" else "ufw"
+    # (port/proto or (port/proto, source)) -> the sets it is in: now, later (firewalld), v4, v6 (ufw)
+    found, rest = {}, []  # rest: (where, rule) of other forms
     for where, line in rules:
-        line = _norm(line)
-        m = FW_PORTS.match(line)
-        perm = FW_PERMANENT.match(line)
-        u = UFW_ALLOW.match(line)
-        r = FW_SOURCE.match(line)
-        f = UFW_SOURCE.match(line)
-        if name == "firewalld" and where == "zone %s" % zone and r and (r.group(2) == "ipv6") == (":" in r.group(3)):
-            (later if r.group(1) else now).append(("%s/%s" % (r.group(4), r.group(5)), r.group(3)))
-        elif line.startswith("permanent rich rule "):
-            continue  # (another zone's, or not as the role writes it: its runtime line says it)
-        elif name == "ufw" and where == "ufw" and f:
-            sources.append((f.group(1), f.group(2)))
-        elif name == "firewalld" and where == "zone %s" % zone and m:
-            ports += [p for p in m.group(1).split() if p not in ports]
-        elif name == "firewalld" and where == "zone %s" % zone and perm:
-            permanent += perm.group(1).split()
-        elif perm:
-            continue  # (another zone's: its runtime line says it)
-        elif name == "ufw" and where == "ufw" and u:
-            (v6 if "(v6)" in line else v4).append(u.group(1))
-        elif cassandra(line):  # (a rich rule, a service, another zone, ufw from a source, iptables, nftables)
-            other.append((where, line))
-    if name == "firewalld":
-        # open now and after a reload or a boot (cassandra_firewall opens both): else not carried
-        other += [("zone %s" % zone, "port %s open %s only" % (p, "now" if p in ports else "from the next reload"))
-                  for p in ports + permanent if (p in ports) != (p in permanent) and cassandra(p)]
-        ports = [p for p in ports if p in permanent]
-        other += [("zone %s" % zone, "port %s open to %s %s only" % (p, a, "now" if (p, a) in now else
-                                                                     "from the next reload"))
-                  for p, a in now + later if ((p, a) in now) != ((p, a) in later) and cassandra(p)]
-        sources = [k for k in now if k in later]
-    elif name == "ufw":
-        # (cassandra_firewall allows a port for IPv4 and IPv6 both)
-        other += [("ufw", "%s allowed for IPv%s only" % (p, "4" if p in v4 else "6"))
-                  for p in sorted(set(v4) ^ set(v6)) if cassandra(p)]
-        ports = [p for p in v4 if p in v6]
+        p = FW_PORTS.match(line) if where == home else None
+        rich = FW_RICH.match(line) if where == home else None
+        src = FW_SOURCE.match(rich.group(2)) if rich else None
+        if src and (src.group(1) == "ipv6") != (":" in src.group(2)):
+            src = None  # (the family the role gives that address: not this one)
+        everyone = UFW_ALLOW.match(line) if where == home else None
+        one = UFW_SOURCE.match(line) if where == home else None
+        if name == "firewalld" and p:
+            for port in p.group(2).split():
+                found.setdefault(port, set()).add("later" if p.group(1) else "now")
+        elif name == "firewalld" and src:
+            found.setdefault(("%s/%s" % (src.group(3), src.group(4)), src.group(2)), set()).add(
+                "later" if rich.group(1) else "now")
+        elif name == "ufw" and everyone:
+            found.setdefault(everyone.group(1), set()).add("v6" if everyone.group(2) else "v4")
+        elif name == "ufw" and one:
+            found.setdefault((one.group(1), one.group(2)), set()).update(("v4", "v6"))  # (one family: its own)
+        else:
+            rest.append((where, line))
+    both = ("now", "later") if name == "firewalld" else ("v4", "v6")
+    whole = [k for k, sets in found.items() if all(s in sets for s in both)]
+    open_ = [k for k in whole if isinstance(k, str)]
+    numbers = set(str(p).split("/", maxsplit=1)[0] for p in list(touched) + open_)
+    # (a source rule on a port open to everyone changes nothing, in one set or both)
+    redundant = [k for k in found if isinstance(k, tuple) and k[0] in open_]
+    other = []
+    for k, sets in found.items():
+        if k in whole or k in redundant or (k if isinstance(k, str) else k[0]).split("/")[0] not in numbers:
+            continue
+        what = ("port %s open to everyone" % k) if isinstance(k, str) else ("port %s open to %s" % k)
+        when = {"now": "now", "later": "from the next reload", "v4": "for IPv4", "v6": "for IPv6"}[sorted(sets)[0]]
+        other.append((home, "%s %s only" % (what, when)))
+    # (a rule there now and after a reload: said once)
+    other += [(where, line) for where, line in rest if _names_port(line, numbers)
+              and not (line.startswith("permanent ") and (where, line[len("permanent "):]) in rest)]
     # (iptables' own INPUT policy other than ACCEPT: a rule of its own)
     other += [(n, state) for n, state, extra in fws if n not in ("firewalld", "ufw")]
-    by_port = {}
-    for p, a in sources:
-        if a not in by_port.setdefault(p, []):
-            by_port[p].append(a)
-    return name, zone, ports, other, by_port
+    sources = {}
+    for k in whole:
+        if isinstance(k, tuple) and k not in redundant and k[0].split("/")[0] in numbers:
+            sources.setdefault(k[0], []).append(k[1])
+    return {"name": name, "zone": zone, "open": open_, "sources": sources, "redundant": redundant, "other": other}
 
 
 def _firewall(recs, wanted):
     ports = [str(p) for p in wanted.get("ports") or []]
+    exporter = str(wanted.get("exporter_port") or "")
+    exporter = ("%s/tcp" % exporter) if exporter else ""
     fws = [_fields(rest, 3) for kind, rest in recs if kind == "fw"]
     rules = [_fields(rest, 2) for kind, rest in recs if kind == "fw_rule"]
     if not fws and not rules:
@@ -853,65 +867,84 @@ def _firewall(recs, wanted):
               if any(re.search(r"(?<![\d-])%s(?!\d)" % re.escape(p.split("/")[0]), line) for dummy, line in rules)]
     lines.append("firewall: Cassandra ports open: %s; not seen open: %s" % (
         ", ".join(opened) or "none", ", ".join(p for p in ports if p not in opened) or "none"))
-    name, zone, open_ports, other, sources = _firewall_read(recs, ports)
+    fw = _firewall_read(recs, ports + ([exporter] if exporter else []))
     out, notes = {}, []
-    if name:
-        out["open_ports"] = open_ports
+    if fw["name"]:
+        where = "the default zone %s" % fw["zone"] if fw["name"] == "firewalld" else "ufw"
+        out["open_ports"] = fw["open"]
         notes.append("open_ports: %s, open to everyone in %s on these nodes (cassandra_firewall opens them there)"
-                     % (", ".join(open_ports) or "none", "the default zone %s" % zone if name == "firewalld" else "ufw"))
-        mine = dict((p, a) for p, a in sources.items() if p in ports)
+                     % (", ".join(fw["open"]) or "none", where))
+        mine = dict((p, a) for p, a in fw["sources"].items() if p in ports)
         if mine:
             out["cassandra_firewall_port_sources"] = mine
-            notes.append("cassandra_firewall_port_sources: %s, open to these sources only on these nodes (%s)" % (
-                "; ".join("%s from %s" % (p, ", ".join(a)) for p, a in mine.items()),
-                "rich rules of the default zone" if name == "firewalld" else "ufw allow from"))
+            notes.append("cassandra_firewall_port_sources: %s, open to these sources only in %s on these nodes"
+                         % ("; ".join("%s from %s" % (p, ", ".join(a)) for p, a in mine.items()), where))
+        if exporter in fw["sources"]:
+            out["cassandra_prometheus_exporter_sources"] = fw["sources"][exporter]
+            notes.append("cassandra_prometheus_exporter_sources: %s, the Prometheus exporter's port %s open to them"
+                         " only in %s on these nodes" % (", ".join(fw["sources"][exporter]), exporter, where))
+        notes += ["port %s open to everyone: its rule for %s changes nothing, not carried" % k for k in fw["redundant"]]
     else:
         out["cassandra_firewall_enabled"] = False
         notes.append("cassandra_firewall_enabled: false, these nodes run neither firewalld nor ufw; with"
                      " cassandra_manage_firewall, cassandra_firewall stops and disables the one a node added later"
                      " has (RHEL starts firewalld by default)")
     notes += ["NOT carried: %s %s (cassandra_firewall does not write it; new nodes would not get it)" % rule
-              for rule in other]
+              for rule in fw["other"]]
     return lines, out, notes
 
 
 def cassandra_firewall_changes(text, fw, family="", cassandra_ports=()):
     """What cassandra_firewall, run on the node, would change there, and the rules it does not write (new nodes would
-    not get them): text, the import's records; fw: {manage, enabled, open_ports, port_sources} as the inventory gives
-    them; family: the node's os_family; cassandra_ports: its storage, native and JMX ports (port/proto).
-    -> [{what, now, would, effect}] (as cassandra_linux_changes)."""
+    not get them): text, the import's records; fw: {manage, enabled, open_ports, port_sources} as the role reads them
+    (port_sources: the Prometheus exporter's port to its sources included); family: the node's os_family;
+    cassandra_ports: its storage, native and JMX ports (port/proto). -> [{what, now, would, effect}]
+    (as cassandra_linux_changes)."""
     if not boolean(fw.get("manage", True), strict=False):
         return []
     recs = _records(text)
-    name, zone, ports, other, read = _firewall_read(recs, cassandra_ports)
-    svc = "firewalld" if family == "RedHat" else "ufw" if family == "Debian" else name or "firewalld"
-    items = [_item("firewall rule (not carried)", "%s: %s" % rule, "not written by the roles") for rule in other]
-    # (running, started at boot: firewalld's unit; ufw's rules, ENABLED in ufw.conf)
+    open_ports = [str(p) for p in fw.get("open_ports") or []]
+    sources = dict((str(p), [str(a) for a in a_list or []]) for p, a_list in (fw.get("port_sources") or {}).items())
+    read = _firewall_read(recs, [str(p) for p in cassandra_ports] + open_ports + list(sources))
+    svc = "firewalld" if family == "RedHat" else "ufw" if family == "Debian" else read["name"] or "firewalld"
+    items = [_item("firewall rule (not carried)", "%s: %s" % rule, "not written by the roles") for rule in read["other"]]
+    # firewalld: its unit, running and at boot. ufw: its rules active (ufw status) and ufw.conf's ENABLED at boot,
+    # and its unit (the one the role starts and enables)
     state = dict((n, (active, boot)) for n, active, boot in (_fields(rest, 3) for kind, rest in recs if kind == "fw_state"))
-    active, boot = state.get("ufw-rules" if svc == "ufw" else svc, ("", ""))
-    running, at_boot = active in ("active", "active (running)"), boot in ENABLED or boot == "yes"
+    unit_active, unit_boot = state.get(svc, ("", ""))
+    rules_active, rules_boot = state.get("ufw-rules", ("", "")) if svc == "ufw" else (unit_active, unit_boot)
+    running = rules_active == "active" or read["name"] == svc
+    at_boot = unit_boot in ENABLED and (svc != "ufw" or rules_boot == "yes")
     if not boolean(fw.get("enabled", True), strict=False):
-        if name or running or (at_boot and svc == "firewalld"):
-            items.append(_item("firewall %s" % svc, "%s, at boot %s" % (active or "active", boot or "?"),
+        if svc == "ufw" and running:
+            items.append(_item("firewall ufw", "active", "disabled (ufw disable)"))
+        elif svc == "ufw" and at_boot:
+            items.append(_item("firewall ufw", "inactive, active from the next boot (ufw.conf ENABLED=yes)",
+                               "left as it is: cassandra_firewall disables ufw only where it is active"))
+        elif svc == "firewalld" and (running or at_boot):
+            items.append(_item("firewall firewalld", "%s, at boot %s" % (unit_active or "active", unit_boot or "?"),
                                "stopped, disabled"))
         return items
-    if name != svc:
-        items.append(_item("firewall %s" % svc, ("%s active" % name) if name else "none", "installed and started"))
+    if read["name"] != svc:
+        items.append(_item("firewall %s" % svc, ("%s active" % read["name"]) if read["name"] else "none",
+                           "installed and started"))
         return items
-    if state and not at_boot:
-        items.append(_item("firewall %s at boot" % svc, boot or "?", "enabled"))
-    sources = dict((str(p), [str(a) for a in a_list or []]) for p, a_list in (fw.get("port_sources") or {}).items())
-    items += [_item("port %s" % p, "closed", "open") for p in fw.get("open_ports") or []
-              if str(p) not in sources and str(p) not in ports]
+    if unit_boot not in ENABLED:
+        items.append(_item("firewall %s at boot" % svc, unit_boot or "?", "enabled"))
+    if svc == "ufw" and rules_boot != "yes":
+        items.append(_item("firewall ufw rules at boot (ufw.conf ENABLED)", rules_boot or "?",
+                           "left as it is: ufw starts with no rule active"))
+    items += [_item("port %s" % p, "closed", "open") for p in open_ports if p not in sources and p not in read["open"]]
     # its tasks for cassandra_firewall_port_sources: close each port to everyone, open it to each source
     for p, wanted in sources.items():
-        if p in ports:
+        if p in read["open"]:
             items.append(_item("port %s" % p, "open to everyone", "closed to everyone (open to %s only)" % ", ".join(wanted)))
-        items += [_item("port %s from %s" % (p, a), "closed", "open") for a in wanted if a not in read.get(p, [])]
-    # (it removes no source rule: one of a Cassandra port it does not write stays, new nodes would not get it)
+        have = read["sources"].get(p, []) + [a for q, a in read["redundant"] if q == p]
+        items += [_item("port %s from %s" % (p, a), "closed", "open") for a in wanted if a not in have]
+    # (it removes no source rule: one it does not write stays, new nodes would not get it; on a port it leaves open to
+    # everyone, it changes nothing)
     items += [_item("firewall rule (not carried)", "port %s open to %s" % (p, a), "not written by the roles")
-              for p, a_list in read.items() if p in [str(c) for c in cassandra_ports]
-              for a in a_list if a not in sources.get(p, [])]
+              for p, a_list in read["sources"].items() for a in a_list if a not in sources.get(p, [])]
     return items
 
 

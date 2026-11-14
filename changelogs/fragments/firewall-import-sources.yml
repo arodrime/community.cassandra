@@ -1,7 +1,10 @@
 minor_changes:
   - >-
-    import_cluster - a Cassandra port open to some sources only, as ``cassandra_firewall`` writes it, is imported into
-    ``cassandra_firewall_port_sources``: a firewalld rich rule of the default zone (``rule family=ipv4|ipv6 source
-    address=X port port=P protocol=tcp accept``, in the runtime and permanent configurations both), or ufw's ``allow
-    from X to any port P proto tcp``. The self-check models what the role would change (a port open to everyone and to
-    sources is closed to everyone); any other rule still stops it, with the way out.
+    import_cluster - for every port ``cassandra_firewall`` would touch, every rule is read (firewalld: ports, services,
+    rich rules of every active zone, now and after a reload; ufw: every rule, IPv4 and IPv6), and only what the role
+    writes, the same in both, is carried. A port open to some sources only is imported into
+    ``cassandra_firewall_port_sources`` (the Prometheus exporter's port: ``cassandra_prometheus_exporter_sources``):
+    a firewalld rich rule of the default zone ``rule family="ipv4" source address="10.0.9.0/24" port port="7199"
+    protocol="tcp" accept``, or ufw's ``allow from 10.0.9.0/24 to any port 7199 proto tcp``. A source rule on a port
+    open to everyone changes nothing: a note, not carried. Any other rule stops the self-check, with the way out
+    (``-e import_keep_hand_edits=firewall``).

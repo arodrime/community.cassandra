@@ -2282,7 +2282,8 @@ _OS_VARS = {"sysctl": ("cassandra_linux_sysctl", "cassandra_linux_sysctl_file"),
 KEPT_PART_VARS = dict(_OS_VARS, os=tuple(v for names in _OS_VARS.values() for v in names),
                       unit=("cassandra_service_start",), repo=(),
                       cqlsh=("cassandra_cqlsh_source", "cassandra_cqlsh_command"),
-                      firewall=("open_ports", "cassandra_firewall_enabled"))
+                      firewall=("open_ports", "cassandra_firewall_enabled", "cassandra_firewall_port_sources",
+                                "cassandra_prometheus_exporter_sources"))
 # the finer parts os keeps too
 OS_PARTS = tuple(_OS_VARS)
 # what each part is, for the report and the stops
@@ -2337,29 +2338,40 @@ def _covered(part, parts):
     return part in parts or (part in OS_PARTS and "os" in parts)
 
 
+def keep_option_with(keep_hand_edits, parts):
+    """The import_keep_hand_edits value that keeps what this one does and these parts too (in KEPT_PARTS' order)."""
+    names = _keep_names(keep_hand_edits)
+    names = ["true"] if names is True else [] if names is False else [str(n) for n in names]
+    return ",".join(names + [p for p in KEPT_PARTS if p in parts and p not in names])
+
+
 def cassandra_import_kept_last(texts, keep_hand_edits=False):
     """texts: {path in the inventory: text} of the files there (an earlier import's among them); keep_hand_edits:
-    this import's option -> {host: [parts]} the last import left as that node had them (its KEPT_PARTS_VAR, or the
-    *_manage: false of an import before rc10 on a node it read, OLD_KEPT_SWITCHES) that this one does not name: it
-    imports them (a part is kept only when the run names it, as a file), the report says so."""
+    this import's option -> {host: {parts: [the parts the last import left as that node had them (its
+    KEPT_PARTS_VAR, or the *_manage: false of an import before rc10 on a node it read, OLD_KEPT_SWITCHES) that this
+    one does not name: it imports them (a part is kept only when the run names it, as a file)], again: the option
+    that keeps them} or {unreadable: True} (its host_vars main.yml, written by the import, does not read as YAML:
+    vaulted, or broken)}: the report says each."""
     now = keep_parts_option(keep_hand_edits)
     out = {}
     for path, text in sorted((texts or {}).items()):
         m = re.match(r"^host_vars/([^/]+)/main\.yml$", path)
-        if not m or IMPORT_MARK not in str(text):
+        vaulted = str(text).startswith("$ANSIBLE_VAULT")
+        if not m or not (vaulted or IMPORT_MARK in str(text)):
             continue
         try:
-            data = yaml.safe_load(text) or {}
+            data = {} if vaulted else (yaml.safe_load(text) or {})
         except yaml.YAMLError:
-            continue  # (vaulted, or broken: rewritten all the same)
-        if not isinstance(data, dict):
+            data = None
+        if vaulted or not isinstance(data, dict):
+            out[m.group(1)] = {"unreadable": True}
             continue
         last = [str(p) for p in data.get(KEPT_PARTS_VAR) or []]
         if KEPT_PARTS_VAR not in data and not all(data.get(k) is False for k in list(OLD_KEPT_SWITCHES) + list(_OLD_NOT_READ)):
             last = [part for k, part in OLD_KEPT_SWITCHES.items() if data.get(k) is False]
         dropped = [p for p in KEPT_PARTS if p in last and not _covered(p, now)]
         if dropped:
-            out[m.group(1)] = dropped
+            out[m.group(1)] = {"parts": dropped, "again": keep_option_with(keep_hand_edits, now + dropped)}
     return out
 
 
