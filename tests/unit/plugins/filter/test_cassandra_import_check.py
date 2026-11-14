@@ -72,7 +72,9 @@ def import_node(files, series, facts=None, tamper=None, storage_dir="/var/lib/ca
     facts = facts or FACTS
     imported = cassandra_config_import(files, series, facts, "", storage_dir, jvm=jvm)
     node = {"name": "n1", "address": "10.0.0.1", "hostname": "n1", "dc": "dc1", "rack": "r1", "read": True,
-            "vars": dict(imported["vars"], cassandra_version=series, **(tamper or {})),
+            # (installed from the repositories the node has, as the import writes it when they offer Cassandra)
+            "vars": dict(imported["vars"], cassandra_version=series,
+                         **dict({"cassandra_install_method": "system"}, **(tamper or {}))),
             "hand_edits": imported["hand_edits"], "normalized": imported["normalized"],
             "comments": imported["comments"], "notes": [], "moved": imported["moved"], "trusted": imported["trusted"],
             "rewritten": imported["rewritten"], "cleanup": imported["cleanup"], "not_moved": imported["not_moved"],
@@ -1501,3 +1503,50 @@ def test_firewall_rule_not_carried_fails_the_self_check():
         'cassandra_firewall: firewall rule (not carried): node has zone public: rich rule rule family="ipv4" source'
         ' address="10.0.9.0/24" port port="7199" protocol="tcp" accept, the roles would set not written by the roles',
         "cassandra_firewall: firewall firewalld: node has active, the roles would set stopped, disabled"]
+
+
+# --- rc10: the repositories and cqlsh ---
+
+def parts_check(method=None, files=(), repo=None, cqlsh_error="", own_cqlsh=False, tamper=None):
+    """The self-check's differences of the repositories and cqlsh, the node's install method as the import wrote it."""
+    files_ = seeded(stock("50x"))
+    variables = dict(tamper or {})
+    if method:
+        variables["cassandra_install_method"] = method
+    inventory, layout = import_node(files_, "50x", keep=NOT_OS, tamper=variables)
+    hv = {"import_cluster_slurp": slurped(files_), "ansible_facts": FACTS, "import_cluster_conf_dir": "",
+          "import_cluster_storage_dir": "/var/lib/cassandra", "import_cluster_java": "17",
+          "import_cluster_unit": {"env": {}}, "import_cluster_perms": {"files": {}}, "import_cluster_series": "50x",
+          "import_cluster_repo": repo or {"manage": True, "vars": {}, "why": ""}, "import_cluster_repo_files": list(files),
+          "import_cluster_cqlsh_error": cqlsh_error, "import_cluster_own_cqlsh": own_cqlsh}
+    out = cassandra_import_self_check_nodes(inventory, layout["hosts"], [{"address": "10.0.0.1", "host": "h1", "read": True}],
+                                            {"10.0.0.1": "n1"}, {"h1": hv})
+    return [d for d in out["n1"]["differences"] if d.startswith(("cassandra_repository", "cassandra_install"))]
+
+
+def test_repositories_the_role_would_change():
+    repo = ["/etc/yum.repos.d/cassandra-50x.repo"]
+    assert parts_check("system", repo) == []
+    assert parts_check("packages", repo) == [
+        "cassandra_repository: Cassandra repository files: node has /etc/yum.repos.d/cassandra-50x.repo, the roles would"
+        " set removed (cassandra_install_method packages)"]
+    assert parts_check("repository") == [
+        "cassandra_repository: Cassandra repository files: node has none, the roles would set cassandra-50x"
+        " (cassandra_install_method repository)"]
+    assert parts_check("repository", repo, {"manage": False, "why": "a gpgkey of its own"}) == [
+        "cassandra_repository: Cassandra repository files: node has /etc/yum.repos.d/cassandra-50x.repo (a gpgkey of its"
+        " own), the roles would set cassandra-50x as they write it"]
+    assert parts_check("repository", repo) == []  # as the role writes it
+    # kept by you: nothing
+    assert parts_check("repository", tamper={"cassandra_repository_manage": False}) == []
+
+
+def test_cqlsh_that_does_not_start_is_a_difference():
+    error = "ModuleNotFoundError: No module named 'cqlshlib'"
+    assert parts_check("system", cqlsh_error=error) == [
+        "cassandra_install: cqlsh: node has ModuleNotFoundError: No module named 'cqlshlib', the roles would set a Python"
+        " for the package's cqlsh (python3.11, the link of its cqlshlib, a wrapper, as it needs)"]
+    # another cqlsh named by the inventory (external), kept by you, or set up by the roles already: nothing
+    assert parts_check("system", cqlsh_error=error, tamper={"cassandra_cqlsh_source": "external"}) == []
+    assert parts_check("system", cqlsh_error=error, tamper={"cassandra_cqlsh_python_manage": False}) == []
+    assert parts_check("system", cqlsh_error=error, own_cqlsh=True) == []

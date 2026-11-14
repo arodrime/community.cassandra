@@ -1374,12 +1374,18 @@ How Cassandra is started is imported: the init script of the Cassandra package, 
 script, write no unit). A unit of the roles is kept as theirs. Any other unit, or an init script modified or of no
 package, is compared with the unit the roles would write (the self-check): what differs stops the import, with the way
 out (``cassandra_service_unit_manage: false`` in a file of yours keeps it as the nodes have it; else the roles' unit
-takes over at each node's next restart, a planned change). What the roles would replace on a node that was set up
-another way is left as it is there: the package repositories, cqlsh's Python and the system java. A part
-that has no mark of the roles (their repository file or ``Managed by Ansible`` header), and every node that could not
-be read, gets the matching switch set to false in its ``host_vars`` (``cassandra_repository_manage``,
-``cassandra_cqlsh_python_manage``, with ``cassandra_imported_host: true`` for the last one; a node not read gets
-``cassandra_linux_manage: false`` and ``cassandra_service_unit_manage: false`` too), never in ``group_vars``: nodes added later get
+takes over at each node's next restart, a planned change). So are the repositories: the role's repository file as it
+writes it keeps ``cassandra_install_method: repository`` (with its URL and credentials); a package installed from a
+file gives ``packages``; a Cassandra a configured repository offers, or repository files of the node's own, give
+``system`` (the roles add or remove no repository, they install from what dnf or apt offers). And cqlsh: a
+``cassandra_cqlsh_command`` of the inventory (another cqlsh, e.g. a virtualenv) gives ``cassandra_cqlsh_source:
+external`` (nothing written for the package's cqlsh; the import never writes a cqlsh path), a cqlsh of the roles stays
+theirs. What the roles would still change (a repository file to add or remove, a cqlsh that does not start, which
+they would give a Python) stops the self-check, with the way out (``cassandra_repository_manage: false`` or
+``cassandra_cqlsh_python_manage: false`` in a file of yours keeps it as the nodes have it). The system java of a
+node is left as it is when it is another Java than the running one (below). Every node that could not be read gets
+``cassandra_repository_manage``, ``cassandra_cqlsh_python_manage``, ``cassandra_linux_manage`` and
+``cassandra_service_unit_manage`` false in its ``host_vars``, never in ``group_vars``: nodes added later get
 the roles' full setup. The OS settings and the firewall of a node read are imported instead (below). The same goes
 for the tuning of the data devices when ``cassandra_linux``
 would still change it with the imported values (a read-ahead no variable gives, tuned's profiles, an udev rule of an

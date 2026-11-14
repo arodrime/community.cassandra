@@ -3,6 +3,9 @@
 # defaults/main.yml or fixed. Role vars, so an inventory or play variable of the same name does not
 # override them by accident.
 
+# cqlsh's Python set up by this role: managed, and the package's cqlsh is the one used
+_cassandra_cqlsh_managed: "{{ cassandra_cqlsh_python_manage | bool and cassandra_cqlsh_source == 'package' }}"
+
 _cassandra_packages: >-
   {{ ([cassandra_packages] | flatten + (['cassandra-tools'] if cassandra_install_tools | bool else [])) | unique }}
 

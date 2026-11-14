@@ -770,9 +770,14 @@
           group: "{{ _kv.run_group | default('') }}"
         # set up another way (no mark of the roles): the roles leave it as it is on this node (the OS settings: their
         # values imported instead, cassandra_os_import)
-        import_cluster_keep: >-
-          {{ {} | combine({'cassandra_repository_manage': false} if _kv.own_repo is not defined else {},
-                          {'cassandra_cqlsh_python_manage': false} if _kv.own_cqlsh is not defined else {}) }}
+        # (rc10: nothing any more; the parts are imported, the self-check stops on what they cannot express)
+        import_cluster_keep: {}
+        # a configured repository offers the cassandra package (the query answered)
+        import_cluster_package_offered: "{{ _kv.pkg_repo is defined and _kv.pkg_query is defined }}"
+        # cqlsh's Python set up by cassandra_install (its wrapper, or its cqlshlib link)
+        import_cluster_own_cqlsh: "{{ _kv.own_cqlsh is defined }}"
+        # the cqlsh the playbooks run (the inventory's, or -e)
+        import_cluster_cqlsh_command: "{{ cassandra_cqlsh_command | default('cqlsh', true) }}"
         # cassandra_linux's limits file with its mark: a node the roles set up
         import_cluster_own_os: "{{ _kv.own_os is defined }}"
         # the unit of cassandra_service (its mark)

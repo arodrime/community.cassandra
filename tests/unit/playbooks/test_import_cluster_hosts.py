@@ -116,7 +116,8 @@ def test_a_node_that_fails_is_named_in_the_error():
     hv = {"ansible_facts": {"hostname": "node1", "all_ipv4_addresses": ["10.0.0.1"]},
           "import_cluster_config": {"vars": {}}, "import_cluster_series": "41x", "import_cluster_version": "4.1.5",
           "import_cluster_running": {"rc": 0}, "import_cluster_java": "11", "import_cluster_conf_dir": "/etc/cassandra",
-          "import_cluster_repo": {"manage": True, "why": "hunter2"}}
+          "import_cluster_repo": {"manage": True, "why": "hunter2"},
+          "import_cluster_repo_files": ["/etc/yum.repos.d/cassandra-41x.repo"]}
     ring = [{"address": "10.0.0.1", "dc": "dc1", "rack": "r1"}]
     with pytest.raises(AnsibleFilterError) as err:
         cassandra_import_nodes(ring, {"node1": hv}, ["node1"], [], {}, {})

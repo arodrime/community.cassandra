@@ -1255,12 +1255,12 @@ def test_self_check_stop_os_golden():
         "SELF-CHECK FAILED  my_cluster  cassandra_linux would change 1 OS setting on 2 nodes",
         "  (written for inspection only, marked NOT VALID)",
         "",
-        "  OS settings the roles would change (cassandra_linux, which apply_config runs; cassandra_firewall):",
+        "  Parts of the nodes the roles would change (OS, firewall, repositories, cqlsh):",
         "    - cassandra_linux transparent_hugepage enabled (live), on all (2 nodes):",
         "        node madvise, cassandra_linux never",
         "",
         "HOW TO MAKE IT PASS",
-        "  OS settings         to keep them as all (2 nodes) have them: cassandra_linux_manage: false (every",
+        "  node parts          to keep them as all (2 nodes) have them: cassandra_linux_manage: false (every",
         "                      OS setting) in a file of yours, group_vars/my_cluster/local.yml, then import",
         "                      again. Or change the nodes as the roles would (the lines above), then import",
         "                      again",
@@ -1274,7 +1274,7 @@ def test_self_check_stop_os_golden():
 
 def test_self_check_stop_os_finest_switch_on_its_nodes():
     lines = stop([node(1), node(2)], {"node1": {"differences": [READ_AHEAD]}}, width=400)
-    assert ("  OS settings         to keep them as node1 (1 node) has them: cassandra_data_disk_tuning: false (the data"
+    assert ("  node parts          to keep them as node1 (1 node) has them: cassandra_data_disk_tuning: false (the data"
             " devices only) in a file of yours, host_vars/<node>/local.yml of each of them, then import again. Or"
             " change the nodes as the roles would (the lines above), then import again") in lines
     # time sync alone: its own switch; THP and the disks: the switch of every OS setting

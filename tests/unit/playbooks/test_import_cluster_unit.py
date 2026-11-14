@@ -83,18 +83,14 @@ WORK_OUT = task("Work out the series and the conf dir")["ansible.builtin.set_fac
 WORK_OUT_VARS = task("Work out the series and the conf dir")["vars"]
 
 
-@pytest.mark.parametrize("marks, keep", [
-    # set up by the roles (a cluster they built): nothing left aside
-    ({"own_repo": "yes", "own_os": "yes", "own_cqlsh": "yes", "own_unit": "yes"}, {}),
-    # set up by hand: the roles leave each part as it is on this node (but the OS settings: imported, rc10)
-    # (the unit: compared by the self-check, or the package's script imported as the start method)
-    ({}, {"cassandra_repository_manage": False, "cassandra_cqlsh_python_manage": False}),
-    ({"own_os": "yes", "own_repo": "yes"}, {"cassandra_cqlsh_python_manage": False}),
-])
-def test_what_the_roles_leave_as_it_is(marks, keep):
-    assert render(WORK_OUT["import_cluster_keep"], _kv=marks) == keep
+@pytest.mark.parametrize("marks", [
+    {"own_repo": "yes", "own_os": "yes", "own_cqlsh": "yes", "own_unit": "yes"}, {}, {"own_os": "yes", "own_repo": "yes"}])
+def test_what_the_roles_leave_as_it_is(marks):
+    # rc10: nothing left aside by the import itself (the parts are imported, the self-check stops on what cannot be)
+    assert render(str(WORK_OUT["import_cluster_keep"]), _kv=marks) in ({}, "{}")
     # whether cassandra_linux set it up (its limits file's mark): how its OS settings are imported
     assert render(WORK_OUT["import_cluster_own_os"], _kv=marks) in (("own_os" in marks), str("own_os" in marks))
+    assert render(WORK_OUT["import_cluster_own_cqlsh"], _kv=marks) in (("own_cqlsh" in marks), str("own_cqlsh" in marks))
 
 
 def test_where_the_config_really_is():
@@ -265,3 +261,12 @@ def test_unit_facts_read_the_script_and_its_package():
 def test_read_script_verifies_the_init_script():
     script = task("Read the running Cassandra (conf dir, Cassandra and Java versions)")["ansible.builtin.shell"]
     assert 'rpm -V' in script and 'dpkg --verify' in script and 'echo "pkg_script=modified"' in script
+
+
+def test_cqlsh_of_the_inventory_is_external():
+    assert node({"import_cluster_cqlsh_command": "/opt/cqlsh/bin/cqlsh"})["vars"]["cassandra_cqlsh_source"] == "external"
+    assert "cassandra_cqlsh_source" not in node({"import_cluster_cqlsh_command": "cqlsh"})["vars"]
+    # set up by the roles already: the package's
+    assert "cassandra_cqlsh_source" not in node({"import_cluster_cqlsh_command": "/opt/c", "import_cluster_own_cqlsh": True})["vars"]
+    # never a path written by the import (the inventory's own)
+    assert "cassandra_cqlsh_command" not in node({"import_cluster_cqlsh_command": "/opt/cqlsh/bin/cqlsh"})["vars"]

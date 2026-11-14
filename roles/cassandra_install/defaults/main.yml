@@ -109,9 +109,13 @@ cassandra_java_package: >-
 # next to it. python3 itself is never changed.
 cassandra_cqlsh_python: ""
 # false: cqlsh's Python is left as it is on this node (no python3.11, cqlshlib
-# link or wrapper added or removed); import_cluster sets it on the nodes whose
-# cqlsh has no wrapper of this role
+# link or wrapper added or removed)
 cassandra_cqlsh_python_manage: true
+# Which cqlsh the playbooks run: package, the one of the Cassandra package
+# (its Python set up as above); external, one installed another way (a
+# virtualenv), named by cassandra_cqlsh_command: nothing written for the
+# package's cqlsh
+cassandra_cqlsh_source: package
 cassandra_cqlsh_python_supported:  # [min, max]
   40x: ["3.6", "3.11"]  # bundled six/driver break on 3.12
   41x: ["3.6", "3.11"]

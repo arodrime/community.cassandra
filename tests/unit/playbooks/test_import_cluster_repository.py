@@ -54,10 +54,15 @@ def test_key_paths_read_from_the_files():
 def test_verdict_written():
     left = {"manage": False, "vars": {}, "why": "x"}
     taken = {"manage": True, "vars": {"cassandra_install_url": "https://m/"}, "why": ""}
-    out = node({"import_cluster_repo": left})
-    assert out["keep"]["cassandra_repository_manage"] is False
-    assert "Cassandra repository files left as they are: x" in out["notes"]
-    out = node({"import_cluster_repo": taken, "import_cluster_package": ""})
+    # files of its own: installed from the repositories the node has (the roles add or remove none), no switch
+    files = ["/etc/yum.repos.d/cassandra-41x.repo"]
+    out = node({"import_cluster_repo": left, "import_cluster_repo_files": files})
+    assert "cassandra_repository_manage" not in out["keep"] and out["vars"]["cassandra_install_method"] == "system"
+    assert "Cassandra repository files not as cassandra_repository writes them: x" in out["notes"]
+    # no file, a configured repository offers it: system; nothing known: the default (the self-check says it)
+    assert node({"import_cluster_package_offered": True})["vars"]["cassandra_install_method"] == "system"
+    assert "cassandra_install_method" not in node({})["vars"]
+    out = node({"import_cluster_repo": taken, "import_cluster_package": "", "import_cluster_repo_files": files})
     assert "cassandra_repository_manage" not in out["keep"]
     assert out["vars"] == {"cassandra_version": "41x", "cassandra_java_tarballs": {}, "cassandra_install_url": "https://m/"}
 

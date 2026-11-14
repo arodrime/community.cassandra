@@ -35,7 +35,8 @@ KEYS = ("ansible_facts", "ansible_host", "import_cluster_address", "import_clust
         "import_cluster_jmx_slurp", "import_cluster_jvm_cmdline",
         "import_cluster_keep", "import_cluster_log_dir", "import_cluster_medusa",
         "import_cluster_medusa_ini", "import_cluster_newer_files", "import_cluster_os", "import_cluster_os_found",
-        "import_cluster_own_os",
+        "import_cluster_own_os", "import_cluster_own_cqlsh", "import_cluster_cqlsh_command",
+        "import_cluster_cqlsh_error", "import_cluster_package_offered", "import_cluster_repo_files",
         "import_cluster_package",
         "import_cluster_package_from_file", "import_cluster_packages", "import_cluster_perms", "import_cluster_repo",
         "import_cluster_repos_answer", "import_cluster_running", "import_cluster_series", "import_cluster_slurp",
@@ -133,15 +134,31 @@ def _java_vars(hv, facts, read, series, java_default):
 
 
 def _package_vars(hv, read, repo, package):
-    """The install variables of a node read: its package version and method, its repository's -> {variable: value}."""
+    """The install variables of a node read: its package version and method, its repository's -> {variable: value}.
+    The method: packages for a package installed from a file; repository when the node has the role's repository
+    file as the role writes it; else system when a configured repository offers it, or the node has repository files
+    of its own (the roles then add or remove none); else the default (the self-check says what the role would add)."""
     pkg = {}
     if read and package:
         pkg["cassandra_package_version"] = re.sub(r"^([0-9]+\.[0-9]+\.[0-9]+).*$", r"\1", str(package))
+    files = bool(hv.get("import_cluster_repo_files"))
     if read and package and _bool(hv.get("import_cluster_package_from_file", False)):
         pkg["cassandra_install_method"] = "packages"
-    if read:
+    elif read and repo["manage"] and files:
         pkg.update(repo["vars"])
+    elif read and (_bool(hv.get("import_cluster_package_offered", False)) or files):
+        pkg["cassandra_install_method"] = "system"
     return pkg
+
+
+def _cqlsh_vars(hv):
+    """The playbooks run a cqlsh of the inventory's (cassandra_cqlsh_command), the package's not set up by the roles
+    on this node: an external one -> {"cassandra_cqlsh_source": "external"} (the command itself is the inventory's:
+    never written by the import), {} otherwise."""
+    command = str(hv.get("import_cluster_cqlsh_command", "") or "cqlsh")
+    if command != "cqlsh" and not _bool(hv.get("import_cluster_own_cqlsh", False)):
+        return {"cassandra_cqlsh_source": "external"}
+    return {}
 
 
 def _hand_kept(config, read, keep_hand_edits):
@@ -301,7 +318,7 @@ def _notes(item, host, hv, read, config, perms, medusa, repo, set_ansible_host, 
         notes.append("reached at %s, its hosts file has its ring address %s (import_set_ansible_host: false"
                      " leaves ansible_host out)" % (hv.get("ansible_host"), address))
     if read and not repo["manage"]:
-        notes.append("Cassandra repository files left as they are: %s" % repo["why"])
+        notes.append("Cassandra repository files not as cassandra_repository writes them: %s" % repo["why"])
     if read and not _bool(hv.get("import_cluster_repos_answer", True)):
         notes.append("no repository answered the package query (an air-gapped host?): set cassandra_offline: true"
                      " (group_vars) unless the roles may download from the mirror")
@@ -351,9 +368,10 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
     if read:
         tuning = _d(hv.get("import_cluster_os"))
         node_vars = _merged(config_vars, {"cassandra_version": series}, java_vars, pkg, conf, jmx,
-                            _d(perms.get("vars")), _d(medusa.get("vars")), _d(tuning.get("vars")), start)
+                            _d(perms.get("vars")), _d(medusa.get("vars")), _d(tuning.get("vars")), start,
+                            _cqlsh_vars(hv))
         node_keep = _merged(keep, env_log_dir, java_link, _d(medusa.get("keep")),
-                            _d(tuning.get("keep")), {} if repo["manage"] else {"cassandra_repository_manage": False},
+                            _d(tuning.get("keep")),
                             hand_kept, installed)
     else:
         node_vars, node_keep = {}, dict(NOT_READ_KEEP)

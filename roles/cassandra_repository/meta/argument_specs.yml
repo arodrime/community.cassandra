@@ -27,6 +27,9 @@ argument_specs:
             Java tarball). No repository is added, and the
             ones C(cassandra_repository) added earlier are removed.
             C(cassandra_package_version) is required.
+          - V(system), from the repositories the node has already (a Satellite, a mirror of the site); no
+            repository added or removed, the packages installed from what dnf or apt offers. C(import_cluster) sets
+            it for nodes whose Cassandra a configured repository offers.
       cassandra_install_url:
         type: str
         description:

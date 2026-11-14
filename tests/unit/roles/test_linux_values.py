@@ -148,3 +148,25 @@ def test_service_start_method():
         own = yaml.safe_load(f)["_cassandra_service_own_unit"]
     for manage, start, written in ((True, "unit", True), (True, "package_script", False), (False, "unit", False)):
         assert render(own, cassandra_service_unit_manage=manage, cassandra_service_start=start) is written
+
+
+def test_cqlsh_source_and_install_method():
+    root = os.path.join(ROLE, "..", "cassandra_install")
+    with open(os.path.join(root, "defaults", "main.yml")) as f:
+        assert yaml.safe_load(f)["cassandra_cqlsh_source"] == "package"
+    with open(os.path.join(root, "vars", "main.yml")) as f:
+        managed = yaml.safe_load(f)["_cassandra_cqlsh_managed"]
+    for manage, source, done in ((True, "package", True), (True, "external", False), (False, "package", False)):
+        assert render(managed, cassandra_cqlsh_python_manage=manage, cassandra_cqlsh_source=source) is done
+    check = next(t for t in load_tasks(os.path.join(root, "tasks", "install.yml")) if t.get("name") == "Check cassandra_cqlsh_source")
+    a = check["ansible.builtin.assert"]
+    ok = dict(cassandra_cqlsh_source="external", cassandra_cqlsh_command="/opt/c/bin/cqlsh")
+    assert all(render("{{ %s }}" % c, **ok) for c in a["that"])
+    bad = {"cassandra_cqlsh_source": "external", "cassandra_cqlsh_command": "cqlsh"}
+    assert not all(render("{{ %s }}" % c, **bad) for c in a["that"])
+    assert "set cassandra_cqlsh_command to the full path" in render(a["fail_msg"], **bad)
+    # system: the repositories of the node, none added nor removed
+    repo = os.path.join(ROLE, "..", "cassandra_repository", "tasks", "main.yml")
+    for t in load_tasks(repo):
+        if t.get("name") in ("Configure the Cassandra repository", "Remove the Cassandra repositories (packages)"):
+            assert not when(t, cassandra_repository_manage=True, cassandra_install_method="system")

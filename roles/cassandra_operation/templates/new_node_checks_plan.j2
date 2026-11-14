@@ -83,7 +83,7 @@
 {%- set ppa = namespace(added=false) -%}
 {%- if cassandra_cqlsh_python == '/usr/bin/python3.11' and not have.get('/usr/bin/python3.11', false) -%}
 {%-   set _ = packages.append(dict(py311_need, why='cqlsh, cassandra_cqlsh_python')) -%}
-{%-   set ppa.added = cassandra_cqlsh_python_manage | bool -%}
+{%-   set ppa.added = cassandra_cqlsh_python_manage | bool and cassandra_cqlsh_source | default('package') == 'package' -%}
 {%- elif cassandra_cqlsh_python != '' -%}
 {%-   if not have.get(cassandra_cqlsh_python, false) -%}
 {%-     set _ = problems.append('cassandra_cqlsh_python ' ~ cassandra_cqlsh_python ~ ' does not exist: cqlsh would not run') -%}
@@ -95,7 +95,7 @@
 {%-     set _ = info.append('cqlsh: python3 ' ~ py3 ~ ' does not fit, runs on /usr/bin/python3.11') -%}
 {%-   else -%}
 {%-     set _ = packages.append(dict(py311_need, why='cqlsh, python3 ' ~ py3 ~ ' is outside ' ~ range | join('-'))) -%}
-{%-     set ppa.added = cassandra_cqlsh_python_manage | bool -%}
+{%-     set ppa.added = cassandra_cqlsh_python_manage | bool and cassandra_cqlsh_source | default('package') == 'package' -%}
 {%-   endif -%}
 {%- else -%}
 {%-   set _ = info.append('cqlsh: python3 ' ~ py3) -%}

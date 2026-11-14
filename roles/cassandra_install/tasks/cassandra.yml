@@ -30,7 +30,7 @@
   when:
     - ansible_check_mode
     - not cassandra_offline | bool
-    - cassandra_install_method == 'repository'
+    - cassandra_install_method in ['repository', 'system']
     - _cassandra_packages | reject('in', _cassandra_install_before) | list | length > 0
 
 - name: Check the installed version against cassandra_package_version
@@ -80,7 +80,7 @@
         state: present
       retries: 3
       when:
-        - cassandra_install_method == 'repository'
+        - cassandra_install_method in ['repository', 'system']
         - not (_cassandra_install_upgrade | default(false) and ansible_facts['os_family'] == 'Debian')
         - _cassandra_java_home == '' or ansible_facts['os_family'] == 'Debian'
         - _cassandra_install_names | reject('in', _cassandra_install_before) | list | length > 0
@@ -90,7 +90,7 @@
     # runs with. (Debian: a local package provides Java, see java_tarball.yml.)
     - name: Install the Cassandra packages without a Java package (cassandra_java_home)
       when:
-        - cassandra_install_method == 'repository'
+        - cassandra_install_method in ['repository', 'system']
         - _cassandra_java_home != ''
         - ansible_facts['os_family'] == 'RedHat'
         - >-
@@ -216,7 +216,7 @@
         allow_change_held_packages: true
       retries: 3
       when:
-        - cassandra_install_method == 'repository'
+        - cassandra_install_method in ['repository', 'system']
         - _cassandra_install_upgrade | default(false) and ansible_facts['os_family'] == 'Debian'
 
     - name: Hold the pinned packages (Debian)

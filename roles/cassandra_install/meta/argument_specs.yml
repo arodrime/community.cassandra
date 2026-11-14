@@ -49,6 +49,9 @@ argument_specs:
             Java tarball). No repository is added, and the
             ones C(cassandra_repository) added earlier are removed.
             C(cassandra_package_version) is required.
+          - V(system), from the repositories the node has already (a Satellite, a mirror of the site); no
+            repository added or removed, the packages installed from what dnf or apt offers. C(import_cluster) sets
+            it for nodes whose Cassandra a configured repository offers.
       cassandra_install_url:
         type: str
         description:
@@ -137,7 +140,15 @@ argument_specs:
         default: true
         description:
           - V(false) leaves cqlsh's Python as it is on this node (no python3.11, cqlshlib link or wrapper added or
-            removed). The C(import_cluster) playbook sets it on the nodes whose cqlsh has no wrapper of this role.
+            removed). Set it on the nodes whose cqlsh's Python you keep as it is.
+      cassandra_cqlsh_source:
+        type: str
+        default: package
+        choices: [package, external]
+        description:
+          - Which cqlsh the playbooks run. V(package), the Cassandra package's (its Python set up as
+            O(cassandra_cqlsh_python_manage) says). V(external), one installed another way (a virtualenv), named by
+            C(cassandra_cqlsh_command), which must then be set; nothing is written for the package's cqlsh.
       cassandra_cqlsh_python_supported:
         type: dict
         default: {40x: ["3.6", "3.11"], 41x: ["3.6", "3.11"], 50x: ["3.8", "3.13"]}

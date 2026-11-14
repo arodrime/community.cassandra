@@ -47,7 +47,7 @@
           versions cqlsh supports): Cassandra runs, cqlsh won't until python3.11 is installed from your image or mirror.
           cqlsh is left as it is (not pointed at the missing python3.11).
       when:
-        - cassandra_cqlsh_python_manage | bool
+        - _cassandra_cqlsh_managed | bool
         - _cassandra_cqlsh_python == '/usr/bin/python3.11'
         - "'python3.11' not in ansible_facts['packages']"
       vars:
@@ -67,7 +67,7 @@
 
 - name: Install python3.11 for cqlsh
   when:
-    - cassandra_cqlsh_python_manage | bool
+    - _cassandra_cqlsh_managed | bool
     - _cassandra_cqlsh_python == '/usr/bin/python3.11'
     - not cassandra_offline | bool
   block:

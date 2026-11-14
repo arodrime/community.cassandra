@@ -439,10 +439,14 @@ _CREATED = re.compile(r"^([^:\s]+): not on the node, the roles would create it$"
 _HAND, _YOURS, _OS, _OTHER = "hand", "yours", "os", "other"
 _KINDS = ((_HAND, "Hand edits no variable covers (cassandra_config would revert them)"),
           (_YOURS, "Your inventory files override the import (Ansible will apply your value)"),
-          (_OS, "OS settings the roles would change (cassandra_linux, which apply_config runs; cassandra_firewall)"),
+          (_OS, "Parts of the nodes the roles would change (OS, firewall, repositories, cqlsh)"),
           (_OTHER, "Other differences"))
 # the OS model's differences (cassandra_import_check's): "cassandra_linux: <what>: node has <now>, the roles would set ..."
-_OS_FILES = ("cassandra_linux", "cassandra_firewall")
+_OS_FILES = ("cassandra_linux", "cassandra_firewall", "cassandra_repository", "cassandra_install")
+# the switch that keeps a part as the nodes have it, by the file of the difference (cassandra_linux: _OS_SWITCHES)
+_PART_SWITCHES = {"cassandra_firewall": ("cassandra_firewall_manage: false", "the firewall"),
+                  "cassandra_repository": ("cassandra_repository_manage: false", "the repositories"),
+                  "cassandra_install": ("cassandra_cqlsh_python_manage: false", "cqlsh's Python")}
 # the switches that keep a part of the OS settings as the nodes have it, by the OS difference's start
 _OS_SWITCHES = (("time sync", "cassandra_linux_timesync: false", "time sync only"),
                 (("read_ahead_kb", "IO scheduler", "LVM read-ahead", "/etc/udev/", "tuned profiles", "data devices"),
@@ -731,7 +735,7 @@ def _hints(layout, items, read, unread, who, error="", report=False, report_file
             else "see the DIFFERS FROM YOUR... section")))
     os_items = [i for i in items if i["kind"] == _OS]
     if os_items:
-        hints.append(("OS settings", _os_hint(layout, os_items, read, who)))
+        hints.append(("node parts", _os_hint(layout, os_items, read, who)))
     unit_items = [i for i in items if i["file"] == "cassandra.service" and i["kind"] != _HAND]
     if unit_items:
         names = []
@@ -782,15 +786,14 @@ def _os_hint(layout, items, read, who):
         names += [n for n in _item_nodes(i) if n not in names]
     switches = []
     for i in items:
-        found = ("cassandra_firewall_manage: false", "the firewall") if i["file"] == "cassandra_firewall" else next(
+        found = _PART_SWITCHES[i["file"]] if i["file"] in _PART_SWITCHES else next(
             ((switch, part) for start, switch, part in _OS_SWITCHES if (i["setting"] or "").startswith(start)),
             ("cassandra_linux_manage: false", "every OS setting"))
         if found not in switches:
             switches.append(found)
-    linux = [sw for sw in switches if not sw[0].startswith("cassandra_firewall")]
-    if len(linux) > 1:
-        switches = [("cassandra_linux_manage: false", "every OS setting")] + [
-            sw for sw in switches if sw[0].startswith("cassandra_firewall")]
+    others = [sw for sw in switches if sw in _PART_SWITCHES.values()]
+    if len(switches) - len(others) > 1:
+        switches = [("cassandra_linux_manage: false", "every OS setting")] + others
     switch = " and ".join(unbreakable(sw[0]) for sw in switches)
     part = " and ".join(sw[1] for sw in switches)
     where = "group_vars/%s/local.yml" % layout["cluster_group"] if set(names) >= set(n["name"] for n in read) \

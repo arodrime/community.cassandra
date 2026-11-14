@@ -493,11 +493,14 @@ def _self_check_node(files_data, hosts, node, names, data, inventory_dir=""):
         (hv.get("import_cluster_perms") or {}).get("files"), (hv.get("import_cluster_config") or {}).get("release", ""),
         inventory_dir, running, hv.get("import_cluster_os_found") or {},
         boolean(hv.get("import_cluster_own_os", False), strict=False),
-        (unit["script"], unit.get("pkg_script", "")) if unit.get("script") else None)
+        (unit["script"], unit.get("pkg_script", "")) if unit.get("script") else None,
+        {"repo": hv.get("import_cluster_repo") or {"manage": True}, "repo_files": hv.get("import_cluster_repo_files") or [],
+         "series": hv.get("import_cluster_series", ""), "cqlsh_error": hv.get("import_cluster_cqlsh_error", ""),
+         "own_cqlsh": boolean(hv.get("import_cluster_own_cqlsh", False), strict=False)})
 
 
 def _self_check(files_data, hosts, name, facts, live, node_environment, storage_dir, java, conf_dir, permissions,
-                release="", inventory_dir="", running=None, os_found=None, os_own=False, script=None):
+                release="", inventory_dir="", running=None, os_found=None, os_own=False, script=None, parts=None):
     # the names Ansible gives the host, which a value of the import may follow ({{ inventory_hostname }}.x)
     variables = dict(_host_vars(files_data, hosts, name), inventory_hostname=name,
                      inventory_hostname_short=name.split(".")[0])
@@ -514,6 +517,8 @@ def _self_check(files_data, hosts, name, facts, live, node_environment, storage_
         out["differences"].append("owner, group and mode: not read on the node, the roles may change them")
     else:
         out["differences"] += permission_differences(wanted, permissions)
+    if parts is not None:
+        out["differences"] += _parts_check(variables, facts, parts)
     if os_found is not None:
         for check in (_linux_check, _firewall_check):
             differences, notes = check(variables, facts, os_found, os_own)
@@ -586,6 +591,38 @@ def _firewall_check(variables, facts, found, own):
     ports = ["%s/tcp" % p for p in fw["ports"]]
     items = cassandra_firewall_changes(found["stdout"], fw, facts.get("os_family", ""), ports)
     return _changes_lines("cassandra_firewall", items)
+
+
+REPOSITORY_VARS = (("manage", "cassandra_repository_manage | bool"), ("method", "cassandra_install_method"))
+CQLSH_VARS = (("manage", "cassandra_cqlsh_python_manage | bool"), ("source", "cassandra_cqlsh_source"))
+
+
+def _parts_check(variables, facts, parts):
+    """What cassandra_repository and cassandra_install (cqlsh) would change on the node with these variables, from what
+    the import read there (parts: {repo: cassandra_repository_import's, repo_files, series, cqlsh_error, own_cqlsh})
+    -> [difference]."""
+    out = []
+    repo, error = _role_values("cassandra_repository", REPOSITORY_VARS, variables, facts)
+    if error:
+        out.append(error)
+    elif repo["manage"]:
+        files = ", ".join(parts["repo_files"]) or "none"
+        if repo["method"] == "packages" and parts["repo_files"]:
+            out.append("cassandra_repository: Cassandra repository files: node has %s, the roles would set removed"
+                       " (cassandra_install_method packages)" % files)
+        elif repo["method"] == "repository" and not parts["repo_files"]:
+            out.append("cassandra_repository: Cassandra repository files: node has none, the roles would set"
+                       " cassandra-%s (cassandra_install_method repository)" % parts["series"])
+        elif repo["method"] == "repository" and not (parts["repo"] or {}).get("manage", True):
+            out.append("cassandra_repository: Cassandra repository files: node has %s (%s), the roles would set"
+                       " cassandra-%s as they write it" % (files, parts["repo"].get("why", ""), parts["series"]))
+    cqlsh, error = _role_values("cassandra_install", CQLSH_VARS, variables, facts)
+    if error:
+        out.append(error)
+    elif cqlsh["manage"] and cqlsh["source"] == "package" and parts["cqlsh_error"] and not parts["own_cqlsh"]:
+        out.append("cassandra_install: cqlsh: node has %s, the roles would set a Python for the package's cqlsh"
+                   " (python3.11, the link of its cqlshlib, a wrapper, as it needs)" % parts["cqlsh_error"])
+    return out
 
 
 def _linux_check(variables, facts, found, own):

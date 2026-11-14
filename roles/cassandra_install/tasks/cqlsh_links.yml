@@ -10,7 +10,7 @@
   loop: "{{ (['python3', _cassandra_cqlsh_python] | select | unique) }}"
   when:
     - ansible_facts['os_family'] == 'RedHat'
-    - cassandra_cqlsh_python_manage | bool
+    - _cassandra_cqlsh_managed | bool
 
 - name: Ensure those site-packages exist (RedHat)
   ansible.builtin.file:
@@ -22,7 +22,7 @@
     label: "{{ item.stdout | default('') }}"
   when:
     - ansible_facts['os_family'] == 'RedHat'
-    - cassandra_cqlsh_python_manage | bool
+    - _cassandra_cqlsh_managed | bool
     - item.rc == 0
     - item.stdout != '/usr/lib/python3.6/site-packages'
 
@@ -43,7 +43,7 @@
     label: "{{ item.stdout | default('') }}"
   when:
     - ansible_facts['os_family'] == 'RedHat'
-    - cassandra_cqlsh_python_manage | bool
+    - _cassandra_cqlsh_managed | bool
     - cassandra_cqlshlib_src.stat.exists or not ansible_check_mode
     - item.rc == 0
     - item.stdout != '/usr/lib/python3.6/site-packages'
@@ -73,7 +73,7 @@
     label: "{{ item.dest }}"
   register: cassandra_cqlsh_wrapper
   when:
-    - cassandra_cqlsh_python_manage | bool
+    - _cassandra_cqlsh_managed | bool
     - _cassandra_cqlsh_python != ''
     # offline without python3.11: leave cqlsh as it is rather than point it at nothing
     - not (cassandra_offline | bool and _cassandra_cqlsh_python == '/usr/bin/python3.11'
@@ -89,7 +89,7 @@
   failed_when: false
   check_mode: false  # read-only
   when:
-    - cassandra_cqlsh_python_manage | bool
+    - _cassandra_cqlsh_managed | bool
     - _cassandra_cqlsh_python == ''
 
 - name: Remove the cqlsh Python pointers when not needed
@@ -98,5 +98,5 @@
     state: absent
   loop: "{{ cassandra_cqlsh_pointers.stdout_lines | default([]) }}"
   when:
-    - cassandra_cqlsh_python_manage | bool
+    - _cassandra_cqlsh_managed | bool
     - _cassandra_cqlsh_python == ''

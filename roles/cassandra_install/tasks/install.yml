@@ -11,12 +11,13 @@
 - name: Check the install method
   ansible.builtin.assert:
     that:
-      - cassandra_install_method in ['repository', 'packages']
+      - cassandra_install_method in ['repository', 'packages', 'system']
       - cassandra_install_method != 'packages' or cassandra_package_version != ''
     fail_msg: >-
       {{ ('cassandra_install_method is ' ~ cassandra_install_method ~ ': '
-          ~ ('not supported yet' if cassandra_install_method == 'tarball' else 'unknown') ~ ', use repository or packages.')
-         if cassandra_install_method not in ['repository', 'packages']
+          ~ ('not supported yet' if cassandra_install_method == 'tarball' else 'unknown')
+          ~ ', use repository, packages or system.')
+         if cassandra_install_method not in ['repository', 'packages', 'system']
          else 'cassandra_install_method packages needs cassandra_package_version (e.g. "5.0.7"): it names the files to download.' }}
     quiet: true
 
@@ -36,6 +37,19 @@
 
 - name: Cassandra's packages and jemalloc
   ansible.builtin.import_tasks: cassandra.yml
+
+# (a typo would leave the package's cqlsh set up, or not, without a word)
+- name: Check cassandra_cqlsh_source
+  ansible.builtin.assert:
+    that:
+      - cassandra_cqlsh_source in ['package', 'external']
+      - cassandra_cqlsh_source == 'package' or cassandra_cqlsh_command | default('cqlsh', true) != 'cqlsh'
+    fail_msg: >-
+      {{ 'cassandra_cqlsh_source must be package or external, not ' ~ cassandra_cqlsh_source
+         if cassandra_cqlsh_source not in ['package', 'external']
+         else 'cassandra_cqlsh_source is external: set cassandra_cqlsh_command to the full path of that cqlsh (a file only'
+              ~ ' root can write, the playbooks run it as root), or set cassandra_cqlsh_source to package' }}
+    quiet: true
 
 - name: The Python cqlsh runs with
   ansible.builtin.import_tasks: cqlsh_python.yml

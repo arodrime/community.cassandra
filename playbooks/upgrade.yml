@@ -95,7 +95,7 @@
         - _phase in ['preflight', 'prepare', 'canary', 'rolling']
         - not cassandra_repository_manage | default(true) | bool
         - not cassandra_offline | default(false) | bool
-        - cassandra_install_method == 'repository'
+        - cassandra_install_method in ['repository', 'system']
 
     - name: The target packages are available
       ansible.builtin.assert:

@@ -95,7 +95,8 @@ def role_permissions(files):
 def check(files, keep, permissions=None):
     imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
     node = {"name": "n1", "address": "10.0.0.1", "hostname": "n1", "dc": "dc1", "rack": "r1", "read": True,
-            "vars": dict(imported["vars"], cassandra_version="50x"), "hand_edits": imported["hand_edits"],
+            "vars": dict(imported["vars"], cassandra_version="50x", cassandra_install_method="system"),
+            "hand_edits": imported["hand_edits"],
             "normalized": imported["normalized"], "comments": imported["comments"], "notes": [],
             "keep": dict({"cassandra_service_unit_manage": False}, **keep)}
     layout = cassandra_inventory_layout([node], "c")

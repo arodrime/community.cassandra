@@ -10,14 +10,16 @@
 
 - name: Check the install method
   ansible.builtin.assert:
-    that: cassandra_install_method in ['repository', 'packages']
+    that: cassandra_install_method in ['repository', 'packages', 'system']
     fail_msg: >-
       cassandra_install_method is {{ cassandra_install_method }}:
-      {{ 'not supported yet' if cassandra_install_method == 'tarball' else 'unknown' }}, use repository or packages.
+      {{ 'not supported yet' if cassandra_install_method == 'tarball' else 'unknown' }}, use repository, packages or
+      system.
     quiet: true
 
 # Nothing to do where the repositories are managed by other means (a
-# Satellite/Foreman, an image, a local mirror already configured)
+# Satellite/Foreman, an image, a local mirror already configured; also
+# cassandra_install_method system: the repositories the node has already)
 - name: Configure the Cassandra repository
   ansible.builtin.include_tasks: repository.yml
   when:
@@ -40,7 +42,7 @@
   ansible.builtin.set_fact:
     _cassandra_repository_outcome: >-
       {{ 'off' if not cassandra_repository_manage | bool
-         else 'packages' if cassandra_install_method == 'packages'
+         else cassandra_install_method if cassandra_install_method in ['packages', 'system']
          else 'set' if [_cassandra_repository_yum | default({}), _cassandra_repository_apt | default({}),
                         _cassandra_repository_old | default({}), _cassandra_repository_one_line | default({}),
                         _cassandra_repository_credentials | default({}), _cassandra_repository_key_shipped | default({}),
