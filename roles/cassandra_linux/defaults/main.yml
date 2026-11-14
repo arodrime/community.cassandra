@@ -34,7 +34,17 @@ cassandra_data_tune_os_volumes: true
 # Read-ahead in KB for those devices (queue/read_ahead_kb, not blockdev --setra
 # sectors). 4, the practical minimum: read-ahead brings nothing to
 # Cassandra's random reads and fills the page cache with unneeded data.
+# kernel: no read-ahead set, none kept by the role's udev rule or LVM (the
+# kernel's, or what something else sets, stays).
 cassandra_data_readahead_kb: 4
+# The IO scheduler of the SSD/NVMe devices among them: none. keep: left as
+# it is (the rotational ones always are).
+cassandra_data_scheduler: none
+# The read-ahead LVM keeps in the metadata of the LVM volumes among them
+# (lvchange --readahead): "" for cassandra_data_readahead_kb (in sectors),
+# auto for LVM's own (the read-ahead of the devices under the volume; the
+# udev rule then keeps the volume's).
+cassandra_data_lvm_readahead: ""
 
 # When the profiles tuned runs would set the read-ahead or IO scheduler of
 # the Cassandra devices (RHEL's default ones: readahead=>4096), have it run
@@ -87,19 +97,40 @@ cassandra_linux_sysctl:
   net.ipv4.tcp_rmem: "4096 87380 16777216"
   net.ipv4.tcp_wmem: "4096 65536 16777216"
 
-# Limits of the cassandra user (/etc/security/limits.d/cassandra.conf), for
-# tools run by hand as cassandra; the service gets its own from its systemd unit
-# (cassandra_service_limit_*), same values by default
+# Limits of the cassandra user (in cassandra_linux_limits_file), for tools
+# run by hand as cassandra; the service gets its own from its systemd unit
+# (cassandra_service_limit_*), same values by default. {}: no file written
+# (the limits the node's other files give stay).
 cassandra_linux_limits:
   memlock: unlimited
   nofile: 1048576
   nproc: 32768
   as: unlimited
+cassandra_linux_limits_file: /etc/security/limits.d/cassandra.conf
+# RedHat and derivatives: "* - nproc 32768" in
+# /etc/security/limits.d/90-nproc.conf, for every user. false: not written.
+cassandra_linux_nproc_all: true
+
+# Swap turned off (live, when what it holds fits in memory) and its lines
+# taken out of /etc/fstab. false: swap left as it is.
+cassandra_linux_swap_off: true
+
+# Transparent huge pages, set by the role's unit disable-thp.service at each
+# boot (and now, when they differ): always, madvise or never (defrag also
+# defer, defer+madvise). kernel: not set (the role's unit removed when
+# neither is set); keep: left as it is, and its unit too.
+cassandra_linux_thp_enabled: never
+cassandra_linux_thp_defrag: never
 
 # Install and start time sync (chrony, or systemd-timesyncd on Debian/Ubuntu
 # when chrony is not installed). false: the host's time sync is left alone,
 # e.g. managed by other means with the site's NTP servers.
 cassandra_linux_timesync: true
+# chrony's servers: the server/pool/peer lines of its chrony.conf, whole, with
+# their options (e.g. "server ntp1.example.com iburst"). Set: the lines
+# not listed are commented out, the missing ones added, chrony restarted.
+# []: chrony.conf left as it is.
+cassandra_linux_timesync_servers: []
 
 # Download nothing (see the air-gapped section of the guide): the time sync
 # package is not installed, only started when present.

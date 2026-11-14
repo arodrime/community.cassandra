@@ -3198,7 +3198,10 @@ _READ_BLOCKS = ("Cluster & topology", "Directories", "Account & file owners", "N
 # Medusa's install, read with its version; the OS tuning the import reads (not where the role writes it)
 _MEDUSA_INSTALL = ("cassandra_medusa_enabled", "cassandra_medusa_version", "cassandra_medusa_venv",
                    "cassandra_medusa_link_dir", "cassandra_medusa_profile_d", "cassandra_medusa_python")
-_OS_READ = ("cassandra_linux_sysctl", "cassandra_linux_limits", "cassandra_data_readahead_kb", "cassandra_linux_timesync")
+_OS_READ = ("cassandra_linux_sysctl", "cassandra_linux_limits", "cassandra_data_readahead_kb", "cassandra_linux_timesync",
+            "cassandra_linux_timesync_servers", "cassandra_linux_thp_enabled", "cassandra_linux_thp_defrag",
+            "cassandra_linux_swap_off", "cassandra_linux_nproc_all", "cassandra_data_scheduler",
+            "cassandra_data_lvm_readahead")
 _MEDUSA_INI = []
 
 
@@ -3670,8 +3673,10 @@ BLOCKS = [
     ("Template pieces next to the inventory (hand edits the import carried)", [SNIPPETS]),
     ("Secrets of the lines above (hand edits the import carried)", []),
     ("OS tuning (found on the nodes, for the nodes added later)", [
-        "cassandra_linux_sysctl_file", "cassandra_linux_sysctl", "cassandra_linux_limits", "cassandra_data_readahead_kb",
-        "cassandra_linux_timesync"]),
+        "cassandra_linux_sysctl_file", "cassandra_linux_sysctl", "cassandra_linux_limits", "cassandra_linux_nproc_all",
+        "cassandra_linux_swap_off", "cassandra_linux_thp_enabled", "cassandra_linux_thp_defrag",
+        "cassandra_data_readahead_kb", "cassandra_data_scheduler", "cassandra_data_lvm_readahead",
+        "cassandra_linux_timesync", "cassandra_linux_timesync_servers"]),
     ("systemd unit & service", [
         "cassandra_service_restart", "cassandra_service_environment", "cassandra_service_limit_nofile",
         "cassandra_service_limit_nproc", "cassandra_service_limit_memlock", "cassandra_service_limit_as"]),

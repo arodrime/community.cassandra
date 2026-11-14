@@ -16,14 +16,14 @@
 - name: Add swap to the change list
   ansible.builtin.set_fact:
     _cassandra_linux_items: "{{ _cassandra_linux_items + [{'item': 'swap', 'before': 'on', 'after': 'off'}] }}"
-  when: _cassandra_linux_live and _cassandra_linux_swapoff | bool
+  when: _cassandra_linux_live and _cassandra_linux_swapoff | bool and cassandra_linux_swap_off | bool
 
 - name: Add the swap entries of /etc/fstab to the change list
   ansible.builtin.set_fact:
     _cassandra_linux_items: >-
       {{ _cassandra_linux_items
          + [{'item': 'swap entries in /etc/fstab', 'before': _cassandra_linux_before['swap|fstab'] | int, 'after': 0}] }}
-  when: _cassandra_linux_before['swap|fstab'] | int > 0
+  when: _cassandra_linux_before['swap|fstab'] | int > 0 and cassandra_linux_swap_off | bool
 
 - name: Add the THP unit to the change list
   ansible.builtin.set_fact:
@@ -33,25 +33,30 @@
              'before': _cassandra_linux_before['thp|unit']
                        ~ (', another unit file' if thp is changed and _cassandra_linux_before['thp|unit'] != 'absent' else ''),
              'after': 'enabled' if _cassandra_linux_boot else 'installed'}] }}
-  when: thp is changed or (_cassandra_linux_boot and _cassandra_linux_before['thp|unit'] != 'enabled')
+  when:
+    - _cassandra_linux_thp_set | length > 0
+    - thp is changed or (_cassandra_linux_boot and _cassandra_linux_before['thp|unit'] != 'enabled')
 
+- name: Add the THP unit removed to the change list
+  ansible.builtin.set_fact:
+    _cassandra_linux_items: >-
+      {{ _cassandra_linux_items + [{'item': 'disable-thp.service', 'before': _cassandra_linux_before['thp|unit'],
+                                    'after': 'absent'}] }}
+  when: cassandra_linux_thp_disabled | default({}) is changed or cassandra_linux_thp_removed | default({}) is changed
+
+# (the unit writes both when it starts: started while one differs)
 - name: Add transparent_hugepage to the change list
   ansible.builtin.set_fact:
     _cassandra_linux_items: >-
-      {{ _cassandra_linux_items
-         + [{'item': 'transparent_hugepage', 'before': _cassandra_linux_before['thp|enabled'], 'after': 'never'}] }}
-  when: _cassandra_linux_live and _cassandra_linux_before['thp|enabled'] not in ['never', '']
-
-# (written by the same unit, started while THP is on)
-- name: Add the THP defrag to the change list
-  ansible.builtin.set_fact:
-    _cassandra_linux_items: >-
-      {{ _cassandra_linux_items
-         + [{'item': 'transparent_hugepage defrag', 'before': _cassandra_linux_before['thp|defrag'], 'after': 'never'}] }}
+      {{ _cassandra_linux_items + [{'item': 'transparent_hugepage' ~ ('' if item == 'enabled' else ' ' ~ item),
+                                    'before': _cassandra_linux_before['thp|' ~ item],
+                                    'after': _cassandra_linux_thp_set[item]}] }}
+  loop: [enabled, defrag]
   when:
     - _cassandra_linux_live
-    - _cassandra_linux_before['thp|enabled'] not in ['never', '']
-    - _cassandra_linux_before['thp|defrag'] | default('') not in ['never', '']
+    - _cassandra_linux_before['thp|enabled'] != ''
+    - item in _cassandra_linux_thp_set
+    - _cassandra_linux_before['thp|' ~ item] | default('') != _cassandra_linux_thp_set[item]
 
 # (left to apply_config's restart window, _cassandra_linux_timesync_later: what an earlier run registered is
 # not this one's)
@@ -78,6 +83,20 @@
           and _cassandra_linux_before['timesync|service'] != 'active'
           and cassandra_linux_timesync | bool
           and not (cassandra_offline | bool and cassandra_timesync_unit.rc | default(1) != 0))
+
+- name: Add the time servers of chrony to the change list
+  ansible.builtin.set_fact:
+    _cassandra_linux_items: >-
+      {%- set out = [] -%}
+      {%- for r in (cassandra_linux_chrony_commented | default({})).results | default([]) if r is changed -%}
+      {%-   set _ = out.append({'item': 'chrony server line', 'before': r.item, 'after': '#' ~ r.item, 'timesync': true}) -%}
+      {%- endfor -%}
+      {%- for r in (cassandra_linux_chrony_added | default({})).results | default([]) if r is changed -%}
+      {%-   set _ = out.append({'item': 'chrony server line', 'before': 'absent or commented out', 'after': r.item,
+                                'timesync': true}) -%}
+      {%- endfor -%}
+      {{ _cassandra_linux_items + out }}
+  when: not _cassandra_linux_timesync_later | default(false) | bool
 
 - name: Add the nproc limit to the change list
   ansible.builtin.set_fact:

@@ -70,37 +70,45 @@ def _has_scheduler(state):
     return choices.isdigit() and int(choices) > 1
 
 
-def cassandra_disk_changes(devices, state, read_back, lvm=True):
+def _set(value):
+    """A read-ahead to set: not "" nor kernel (cassandra_data_readahead_kb kernel: none set)."""
+    return str(value) not in ("", "kernel", "None")
+
+
+def cassandra_disk_changes(devices, state, read_back, lvm=True, scheduler="none", lvm_readahead=""):
     """What is to change on the devices to tune: [{kname, what (lvm, ra or
     scheduler), item, before, after}], also the change report's items.
-    read_back: the read-ahead in KB as the kernel keeps it (whole pages);
-    lvm: LVM volumes are set with lvchange.
+    read_back: the read-ahead in KB as the kernel keeps it (whole pages), "" or kernel: none set;
+    lvm: LVM volumes are set with lvchange; scheduler: none (SSD/NVMe), keep: left as it is;
+    lvm_readahead: auto for LVM's own read-ahead (cassandra_data_lvm_readahead), else read_back's.
     e.g. ([{kname: sdb, kind: disk, label: sdb}], {sdb: {ra: "4096", rot: "1"}}, 4) -> [{kname: "sdb", what: "ra",
     item: "read_ahead_kb sdb", before: "4096", after: "4", report: True}] (rotational: its scheduler kept)."""
     out = []
-    read_back = int(read_back)
+    ra = _set(read_back)
+    read_back = int(read_back) if ra else None
+    lv_target = "auto" if lvm_readahead == "auto" else cassandra_disk_lv_read_ahead(read_back) if ra else None
     for d in devices or []:
         s = state.get(d["kname"]) or {}
         # an OS volume is not reloaded: kept by the udev rule
-        by_lvm = d.get("kind") == "lvm" and not d.get("os") and boolean(lvm, strict=False) \
-            and d.get("lv_read_ahead") != str(read_back * 2)
+        by_lvm = d.get("kind") == "lvm" and not d.get("os") and boolean(lvm, strict=False) and lv_target is not None \
+            and d.get("lv_read_ahead") != lv_target
         if by_lvm:
             out.append({"kname": d["kname"], "what": "lvm", "lv": d["lv"], "item": "LVM read-ahead %s (sectors)" % d["lv"],
-                        "before": d.get("lv_read_ahead"), "after": cassandra_disk_lv_read_ahead(read_back)})
-        if s.get("ra") not in (None, str(read_back)):
+                        "before": d.get("lv_read_ahead"), "after": lv_target})
+        if ra and s.get("ra") not in (None, str(read_back)):
             # also written when lvchange sets it (in case it fails), reported once
             out.append({"kname": d["kname"], "what": "ra", "item": "read_ahead_kb %s" % d["label"],
                         "before": s["ra"], "after": str(read_back), "report": not by_lvm})
-        if s.get("rot", "1") == "0" and _has_scheduler(s) and s.get("sched", "none") != "none":
+        if scheduler != "keep" and s.get("rot", "1") == "0" and _has_scheduler(s) and s.get("sched", "none") != "none":
             out.append({"kname": d["kname"], "what": "scheduler", "item": "IO scheduler %s" % d["label"],
                         "before": s["sched"], "after": "none"})
     return out
 
 
-def cassandra_disk_udev_rules(devices, state, udev_info, readahead_kb, by_lvm=None, by_name=False):
+def cassandra_disk_udev_rules(devices, state, udev_info, readahead_kb, by_lvm=None, by_name=False, scheduler="none"):
     """The rule lines for the devices to tune but the LVM volumes LVM keeps
-    the read-ahead of (by_lvm: their knames): the read-ahead, and the
-    scheduler none when not rotational, for a disk or a dm device with a
+    the read-ahead of (by_lvm: their knames): the read-ahead (not when kernel), and the
+    scheduler none when not rotational (not when scheduler is keep), for a disk or a dm device with a
     scheduler to choose (multipath). A device with no stable id gets a comment, no rule. Paths of
     a multipath device sharing one id give one rule. by_name: see udev_match.
     A device-mapper device is left alone while suspended (a scheduler
@@ -113,9 +121,10 @@ def cassandra_disk_udev_rules(devices, state, udev_info, readahead_kb, by_lvm=No
                  for r in loop_results(udev_info))
     lines, by_lvm = [], by_lvm or []
     for d in devices or []:
-        if d["kname"] in by_lvm:
-            continue
         s = state.get(d["kname"]) or {}
+        sched = scheduler != "keep" and (d.get("kind") == "disk" or _has_scheduler(s))
+        if (d["kname"] in by_lvm or not _set(readahead_kb)) and not sched:
+            continue
         match = udev_match(d, props.get(d["kname"]) or {}, s, by_name=boolean(by_name, strict=False))
         if not match:
             lines.append("# %s: no stable id to match it by, not kept across reboots" % (d.get("label") or d["kname"]))
@@ -123,9 +132,9 @@ def cassandra_disk_udev_rules(devices, state, udev_info, readahead_kb, by_lvm=No
         head = 'ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", %s' % match
         if match.startswith('KERNEL=="dm-*"'):
             head += ', ENV{DM_UDEV_DISABLE_OTHER_RULES_FLAG}!="1", ENV{DM_SUSPENDED}!="1"'
-        for line in ['%s, ATTR{queue/read_ahead_kb}="%d"' % (head, int(readahead_kb))] + (
-                ['%s, ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="none"' % head]
-                if d.get("kind") == "disk" or _has_scheduler(s) else []):
+        for line in (['%s, ATTR{queue/read_ahead_kb}="%d"' % (head, int(readahead_kb))]
+                     if _set(readahead_kb) and d["kname"] not in by_lvm else []) + (
+                ['%s, ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="none"' % head] if sched else []):
             if line not in lines:
                 lines.append(line)
     return lines
@@ -409,7 +418,12 @@ def _summary_head(nodes, kbs, check):
         head = "already set (nothing changed)"
     else:
         head = "nothing to tune"
-    return "Data disks: %s%s" % ("read-ahead %s KB, " % kbs[0] if len(kbs) == 1 and (changed or tuned) else "", head)
+    return "Data disks: %s%s" % ("%s, " % _ra_text(kbs[0]) if len(kbs) == 1 and (changed or tuned) else "", head)
+
+
+def _ra_text(kb):
+    """read-ahead 4 KB; read-ahead the kernel's (cassandra_data_readahead_kb kernel)."""
+    return "read-ahead the kernel's" if kb == "kernel" else "read-ahead %s KB" % kb
 
 
 def _disk_groups(nodes, kbs, verbose):
@@ -427,7 +441,7 @@ def _disk_groups(nodes, kbs, verbose):
             group[1].append(n["name"])
     lines = []
     for (kb, shown), names in groups:
-        who = out.nodes(names) + (" (read-ahead %s KB)" % kb if kb else "")
+        who = out.nodes(names) + (" (%s)" % _ra_text(kb) if kb else "")
         if shown:
             lines.append("  %s:" % who)
             lines += ["    " + x for x in shown]

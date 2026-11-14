@@ -19,6 +19,38 @@
     fail_msg: "cassandra_linux_apply_live must be auto, true or false, not {{ cassandra_linux_apply_live | default('') }}"
     quiet: true
 
+# (a typo would otherwise be written as it is, or taken as another value)
+- name: Check the values of the THP and disk settings
+  ansible.builtin.assert:
+    that: item.value | string in item.allowed
+    fail_msg: >-
+      {{ item.name }} must be {{ item.allowed[:-1] | map('regex_replace', '^$', '""') | join(', ') }} or
+      {{ item.allowed[-1] }}, not {{ item.value }}
+    quiet: true
+  loop:
+    - {name: cassandra_linux_thp_enabled, value: "{{ cassandra_linux_thp_enabled }}",
+       allowed: [always, madvise, never, kernel, keep]}
+    - {name: cassandra_linux_thp_defrag, value: "{{ cassandra_linux_thp_defrag }}",
+       allowed: [always, defer, defer+madvise, madvise, never, kernel, keep]}
+    - {name: cassandra_data_scheduler, value: "{{ cassandra_data_scheduler }}", allowed: [none, keep]}
+    - {name: cassandra_data_lvm_readahead, value: "{{ cassandra_data_lvm_readahead }}", allowed: ["", auto]}
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Check cassandra_data_readahead_kb
+  ansible.builtin.assert:
+    that: cassandra_data_readahead_kb | string is match('^([0-9]+|kernel)$')
+    fail_msg: "cassandra_data_readahead_kb must be a number of KB or kernel, not {{ cassandra_data_readahead_kb }}"
+    quiet: true
+
+# what disable-thp.service writes ({} : no unit), and whether the role's unit is removed (kernel, no keep)
+- name: Decide how THP is set
+  ansible.builtin.set_fact:
+    _cassandra_linux_thp_set: >-
+      {{ dict([('enabled', cassandra_linux_thp_enabled), ('defrag', cassandra_linux_thp_defrag)]
+              | rejectattr(1, 'in', ['kernel', 'keep'])) }}
+    _cassandra_linux_thp_unset: "{{ cassandra_linux_thp_enabled == 'kernel' and cassandra_linux_thp_defrag == 'kernel' }}"
+
 - name: Detect a container
   ansible.builtin.set_fact:
     _cassandra_linux_container: >-
@@ -55,6 +87,7 @@
   when:
     - _cassandra_linux_live
     - _cassandra_linux_swapoff | bool
+    - cassandra_linux_swap_off | bool
 
 - name: Say swap is left on
   ansible.builtin.debug:
@@ -66,6 +99,7 @@
     - _cassandra_linux_live
     - _cassandra_linux_before['swap|active'] | int > 0
     - not _cassandra_linux_swapoff | bool
+    - cassandra_linux_swap_off | bool
     - not _cassandra_linux_swap_said | default(false) | bool  # (apply_config: in its plan)
   vars:
     cassandra_output: true
@@ -76,6 +110,7 @@
     path: /etc/fstab
     regexp: '^\s*[^#\s]\S*\s+\S+\s+swap(\s|$)'
     state: absent
+  when: cassandra_linux_swap_off | bool
 
 # Absent on minimal images
 - name: Directory of the kernel settings file
@@ -125,8 +160,9 @@
       {% for name, value in cassandra_linux_limits.items() %}
       cassandra - {{ name }} {{ value }}
       {% endfor %}
-    dest: /etc/security/limits.d/cassandra.conf
+    dest: "{{ cassandra_linux_limits_file }}"
     mode: "0644"
+  when: cassandra_linux_limits | length > 0
 
 - name: Remove the block earlier versions of the role wrote to limits.conf
   ansible.builtin.blockinfile:
@@ -141,15 +177,19 @@
     regexp: "^\\* - nproc 32768"
     line: "* - nproc 32768"
     create: yes
-  when: ansible_facts['os_family'] == "RedHat"
+  when:
+    - ansible_facts['os_family'] == "RedHat"
+    - cassandra_linux_nproc_all | bool
   register: cassandra_linux_nproc
 
+# (its name kept from when it only turned THP off: the units of earlier runs are this one)
 - name: Ensure disable-thp service file exists
-  ansible.builtin.copy:
-    src: disable-thp.service
-    dest: /etc/systemd/system/
+  ansible.builtin.template:
+    src: disable-thp.service.j2
+    dest: /etc/systemd/system/disable-thp.service
     mode: "0644"
   register: thp
+  when: _cassandra_linux_thp_set | length > 0
 
 - name: Ensure service to disable THP is enabled at boot
   ansible.builtin.systemd:
@@ -157,18 +197,40 @@
     daemon_reload: "{{ thp.changed }}"
     enabled: true
   when:
+    - _cassandra_linux_thp_set | length > 0
     - _cassandra_linux_boot | bool
     - not (_cassandra_linux_check and thp is changed)  # the unit file only exists once really copied
 
-# The unit exits once THP is off: started again only while THP is still on
+# The unit exits once it has written them: started again only while THP differs (not there: nothing to set)
 - name: Ensure service to disable THP is started
   ansible.builtin.systemd:
     name: disable-thp
     state: started
   when:
+    - _cassandra_linux_thp_set | length > 0
     - _cassandra_linux_live | bool
-    - _cassandra_linux_before['thp|enabled'] not in ['never', '']
+    - _cassandra_linux_before['thp|enabled'] != ''
+    - >-
+      _cassandra_linux_thp_set.enabled | default(_cassandra_linux_before['thp|enabled']) != _cassandra_linux_before['thp|enabled']
+      or _cassandra_linux_thp_set.defrag | default(_cassandra_linux_before['thp|defrag']) != _cassandra_linux_before['thp|defrag']
     - not (_cassandra_linux_check and thp is changed)
+
+# THP left to the kernel (cassandra_linux_thp_* kernel): the role's unit of earlier runs no longer set them at boot
+- name: Remove the THP unit (THP left to the kernel)
+  when: _cassandra_linux_thp_unset | bool
+  block:
+    - name: Disable the THP unit
+      ansible.builtin.systemd:
+        name: disable-thp
+        enabled: false
+      register: cassandra_linux_thp_disabled
+      when: _cassandra_linux_before['thp|unit'] not in ['absent', 'not-found', '']
+
+    - name: Remove the THP unit file
+      ansible.builtin.file:
+        path: /etc/systemd/system/disable-thp.service
+        state: absent
+      register: cassandra_linux_thp_removed
 
 - name: Disk tuning
   ansible.builtin.include_tasks: disks.yml

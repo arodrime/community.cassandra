@@ -21,7 +21,12 @@
 # first on the PATH: driven as real ones, never on the real /sys/block)
 - name: Decide whether the disks are tuned here
   ansible.builtin.set_fact:
-    _cassandra_data_tuned_here: "{{ cassandra_data_disk_tuning | bool and (_cassandra_linux_boot or cassandra_sysfs_block_root != '/sys/block') }}"
+    # (kernel and keep together, LVM's read-ahead left as it is: nothing to set on them, as with
+    # cassandra_data_disk_tuning false)
+    _cassandra_data_tuned_here: >-
+      {{ cassandra_data_disk_tuning | bool and (_cassandra_linux_boot or cassandra_sysfs_block_root != '/sys/block')
+         and not (cassandra_data_readahead_kb | string == 'kernel' and cassandra_data_scheduler == 'keep'
+                  and cassandra_data_lvm_readahead != 'auto') }}
     _cassandra_data_live_here: "{{ _cassandra_linux_live or cassandra_sysfs_block_root != '/sys/block' }}"
     # tuned and LVM act on the real devices: only live (or the tests' stand-ins on a fake tree)
     _cassandra_data_tuned_lvm_here: >-
@@ -252,7 +257,15 @@
 # The kernel keeps whole pages: 4 KB reads back as 0 with 64 KB pages
 - name: Keep the devices found under sysfs, and the read-ahead the kernel reads back
   ansible.builtin.set_fact:
-    _cassandra_readahead_read_back: "{{ cassandra_data_readahead_kb | int // _page_kb | int * _page_kb | int }}"
+    # ("": cassandra_data_readahead_kb kernel, none set)
+    _cassandra_readahead_read_back: >-
+      {{ '' if cassandra_data_readahead_kb | string == 'kernel'
+         else cassandra_data_readahead_kb | int // _page_kb | int * _page_kb | int }}
+    # what lvchange keeps in the LVM volumes' metadata ("": nothing)
+    _cassandra_lv_readahead: >-
+      {{ 'auto' if cassandra_data_lvm_readahead == 'auto'
+         else '' if cassandra_data_readahead_kb | string == 'kernel'
+         else ((cassandra_data_readahead_kb | int // _page_kb | int * _page_kb | int * 2) or 'none') | string }}
     _cassandra_disk_devices: >-
       {{ _cassandra_disk_plan.devices
          | selectattr('kname', 'in', cassandra_data_disk_stat.results | selectattr('stat.exists') | map(attribute='item') | list)

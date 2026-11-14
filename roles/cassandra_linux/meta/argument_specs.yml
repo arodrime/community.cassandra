@@ -67,11 +67,30 @@ argument_specs:
             of the OS is tuned too, but under the commitlog alone.
           - V(false) leaves them alone, with a note (shown with C(-v)).
       cassandra_data_readahead_kb:
-        type: int
+        type: raw
         default: 4
         description:
           - Read-ahead of the data devices, in KB. The IO scheduler is set to none
             on SSD/NVMe only.
+          - V(kernel) sets none, and keeps none in the role's udev rule or the LVM metadata (the kernel's, or what
+            something else sets, stays); tuned is then left as it is.
+      cassandra_data_scheduler:
+        type: str
+        default: none
+        choices: [none, keep]
+        description:
+          - The IO scheduler of the SSD/NVMe data devices (the rotational ones are left as they are).
+          - V(keep) leaves it as it is. With O(cassandra_data_readahead_kb=kernel) and
+            O(cassandra_data_lvm_readahead) empty, the data devices are left as with
+            O(cassandra_data_disk_tuning=false).
+      cassandra_data_lvm_readahead:
+        type: str
+        default: ""
+        choices: ["", auto]
+        description:
+          - The read-ahead C(lvchange --readahead) keeps in the metadata of the LVM data volumes. Empty, the one
+            of O(cassandra_data_readahead_kb) (in sectors); V(auto), LVM's own (taken from the devices under the
+            volume), the volume's read-ahead then kept by the udev rule.
       cassandra_linux_tuned_manage:
         type: bool
         default: true
@@ -104,6 +123,15 @@ argument_specs:
         default: /sys/block
         description:
           - sysfs block root used for the disk tuning. Only meant for tests.
+      cassandra_linux_timesync_servers:
+        type: list
+        elements: str
+        default: []
+        description:
+          - The server, pool and peer lines of chrony's C(chrony.conf), whole, with their options (for example
+            C(server ntp1.example.com iburst)). Set, the lines not listed are commented out (never removed), the
+            missing ones added (or uncommented), and chrony restarted; refused where the role runs
+            systemd-timesyncd. Empty leaves C(chrony.conf) as it is.
       cassandra_linux_timesync:
         type: bool
         default: true
@@ -161,9 +189,42 @@ argument_specs:
         type: dict
         default: {memlock: unlimited, nofile: 1048576, nproc: 32768, as: unlimited}
         description:
-          - Limits of the cassandra user, in C(/etc/security/limits.d/cassandra.conf),
+          - Limits of the cassandra user, in O(cassandra_linux_limits_file),
             for tools run by hand as cassandra. The service gets its own limits from
             its systemd unit (C(cassandra_service_limit_*)).
+          - V({}) writes no file (the limits the node's other files give stay).
+      cassandra_linux_limits_file:
+        type: path
+        default: /etc/security/limits.d/cassandra.conf
+        description:
+          - The file O(cassandra_linux_limits) is written to.
+      cassandra_linux_nproc_all:
+        type: bool
+        default: true
+        description:
+          - RedHat and derivatives, C(* - nproc 32768) in C(/etc/security/limits.d/90-nproc.conf), for every user.
+            V(false) does not write it.
+      cassandra_linux_swap_off:
+        type: bool
+        default: true
+        description:
+          - Turn swap off (live, when what it holds fits twice in the memory available) and take its lines out of
+            C(/etc/fstab). V(false) leaves swap as it is.
+      cassandra_linux_thp_enabled:
+        type: str
+        default: never
+        choices: [always, madvise, never, kernel, keep]
+        description:
+          - Transparent huge pages, set by the role's unit C(disable-thp.service) at each boot (and live when they
+            differ).
+          - V(kernel) does not set them; with O(cassandra_linux_thp_defrag=kernel) too, the role's unit is removed.
+            V(keep) leaves them as they are, and the role's unit too.
+      cassandra_linux_thp_defrag:
+        type: str
+        default: never
+        choices: [always, defer, defer+madvise, madvise, never, kernel, keep]
+        description:
+          - The defrag setting of transparent huge pages, as O(cassandra_linux_thp_enabled).
       cassandra_data_block_devices:
         type: list
         elements: str

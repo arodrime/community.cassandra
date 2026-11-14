@@ -86,13 +86,15 @@ WORK_OUT_VARS = task("Work out the series and the conf dir")["vars"]
 @pytest.mark.parametrize("marks, keep", [
     # set up by the roles (a cluster they built): nothing left aside
     ({"own_repo": "yes", "own_os": "yes", "own_cqlsh": "yes", "own_unit": "yes"}, {}),
-    # set up by hand: the roles leave each part as it is on this node
-    ({}, {"cassandra_repository_manage": False, "cassandra_linux_manage": False,
-          "cassandra_cqlsh_python_manage": False, "cassandra_service_unit_manage": False}),
+    # set up by hand: the roles leave each part as it is on this node (but the OS settings: imported, rc10)
+    ({}, {"cassandra_repository_manage": False, "cassandra_cqlsh_python_manage": False,
+          "cassandra_service_unit_manage": False}),
     ({"own_os": "yes", "own_repo": "yes"}, {"cassandra_cqlsh_python_manage": False, "cassandra_service_unit_manage": False}),
 ])
 def test_what_the_roles_leave_as_it_is(marks, keep):
     assert render(WORK_OUT["import_cluster_keep"], _kv=marks) == keep
+    # whether cassandra_linux set it up (its limits file's mark): how its OS settings are imported
+    assert render(WORK_OUT["import_cluster_own_os"], _kv=marks) in (("own_os" in marks), str("own_os" in marks))
 
 
 def test_where_the_config_really_is():
@@ -190,11 +192,12 @@ def test_os_baseline_is_the_roles_defaults_not_the_inventory():
     templar = Templar(loader=DataLoader(), variables={"playbook_dir": os.path.dirname(PLAYBOOK),
                                                       "cassandra_linux_timesync": False})
     loaded = templar.template(trust_as_template(load["ansible.builtin.set_fact"]["import_cluster_os_defaults"]))
-    assert len(used) == 9 and all(v[3:] in loaded for v in used)
+    assert len(used) == 13 and all(v[3:] in loaded for v in used)
     assert loaded == dict((k, v) for k, v in defaults.items() if k in loaded)
     assert loaded["cassandra_linux_timesync"] is True  # the role's, not the play's
     assert "{{" not in str(wanted).replace("{{ _d.", "").replace("{{ _cfg.", "").replace(
-        "{{ 'cassandra_", "")  # nothing else read from the play's vars
+        "{{ 'cassandra_", "").replace("{{ ansible_facts['os_family']", "").replace(
+        "{{ import_cluster_own_os", "")  # nothing else read from the play's vars (the node's own facts aside)
 
 
 @pytest.mark.parametrize("kv, from_file", [

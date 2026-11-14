@@ -396,3 +396,38 @@ def test_summary_of_nodes_with_nothing_to_tune():
         "Data disks: read-ahead 4 KB, set now on 1 node"
     assert cassandra_disk_summary([node("node1"), node("node2", brief=[])])[0] == \
         "Data disks: read-ahead 4 KB, already set (nothing changed)"
+
+
+# --- rc10: the read-ahead the kernel's, the scheduler kept, LVM's own read-ahead ---
+
+def test_changes_with_kernel_keep_auto():
+    devices = [{"kname": "dm-2", "kind": "lvm", "label": "vg1-cassandra (dm-2)", "lv": "vg1/cassandra", "lv_read_ahead": "auto"},
+               {"kname": "sdb", "kind": "disk", "label": "sdb", "lv": "", "lv_read_ahead": ""}]
+    state = {"dm-2": {"ra": "4096"}, "sdb": {"ra": "4096", "rot": "0", "sched": "mq-deadline", "choices": "4"}}
+    # the kernel's read-ahead: none set, LVM left too
+    assert [c["what"] for c in cassandra_disk_changes(devices, state, "kernel")] == ["scheduler"]
+    assert [c["what"] for c in cassandra_disk_changes(devices, state, "")] == ["scheduler"]
+    # the scheduler kept
+    assert [c["what"] for c in cassandra_disk_changes(devices, state, 4, scheduler="keep")] == ["lvm", "ra", "ra"]
+    # LVM's own: auto already, nothing; else lvchange --readahead auto
+    assert cassandra_disk_changes(devices, state, "kernel", scheduler="keep", lvm_readahead="auto") == []
+    sectors = [dict(devices[0], lv_read_ahead="256")]
+    assert [(c["what"], c["after"]) for c in cassandra_disk_changes(sectors, state, "kernel", lvm_readahead="auto")] == [
+        ("lvm", "auto")]
+
+
+def test_udev_rules_with_kernel_and_keep():
+    devices = [{"kname": "dm-2", "kind": "lvm", "label": "vg1-cassandra (dm-2)"}, {"kname": "sdb", "kind": "disk", "label": "sdb"}]
+    state = cassandra_disk_state(READ)
+    # the kernel's read-ahead: the scheduler line only
+    assert cassandra_disk_udev_rules(devices, state, UDEV, "kernel") == [
+        HEAD + 'ENV{ID_SERIAL}=="36000c29a", ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="none"']
+    # the scheduler kept: the read-ahead lines only
+    assert cassandra_disk_udev_rules(devices, state, UDEV, 4, ["dm-2"], scheduler="keep") == [
+        HEAD + 'ENV{ID_SERIAL}=="36000c29a", ATTR{queue/read_ahead_kb}="4"']
+    assert cassandra_disk_udev_rules(devices, state, UDEV, "kernel", scheduler="keep") == []
+
+
+def test_summary_says_the_kernels_read_ahead():
+    nodes = [{"name": "n1", "kb": "kernel", "changed": False, "brief": ["/data -> sdb"]}]
+    assert cassandra_disk_summary(nodes)[0] == "Data disks: read-ahead the kernel's, already set (nothing changed)"

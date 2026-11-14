@@ -750,12 +750,14 @@
         import_cluster_account:
           user: "{{ _kv.run_user | default('') }}"
           group: "{{ _kv.run_group | default('') }}"
-        # set up another way (no mark of the roles): the roles leave it as it is on this node
+        # set up another way (no mark of the roles): the roles leave it as it is on this node (the OS settings: their
+        # values imported instead, cassandra_os_import)
         import_cluster_keep: >-
           {{ {} | combine({'cassandra_repository_manage': false} if _kv.own_repo is not defined else {},
-                          {'cassandra_linux_manage': false} if _kv.own_os is not defined else {},
                           {'cassandra_cqlsh_python_manage': false} if _kv.own_cqlsh is not defined else {},
                           {'cassandra_service_unit_manage': false} if _kv.own_unit is not defined else {}) }}
+        # cassandra_linux's limits file with its mark: a node the roles set up
+        import_cluster_own_os: "{{ _kv.own_os is defined }}"
         import_cluster_unit:
           file: "{{ _kv.unit_SourcePath | default('') or _kv.unit_FragmentPath | default('') }}"
           restart: "{{ _kv.unit_Restart | default('') }}"
@@ -1269,7 +1271,9 @@
         import_cluster_os_defaults: >-
           {{ (lookup('ansible.builtin.file', playbook_dir ~ '/../roles/cassandra_linux/defaults/main.yml') | from_yaml
               | combine(lookup('ansible.builtin.file', playbook_dir ~ '/../roles/cassandra_service/defaults/main.yml') | from_yaml))
-             | dict2items | selectattr('key', 'match', '^cassandra_(linux_(sysctl|sysctl_file|limits|timesync)|data_readahead_kb|service_limit_.*)$')
+             | dict2items
+             | selectattr('key', 'match', '^cassandra_(linux_(sysctl|sysctl_file|limits|timesync|thp_enabled|thp_defrag)'
+                                          ~ '|data_(readahead_kb|scheduler|lvm_readahead)|service_limit_.*)$')
              | items2dict }}
       when: import_cluster_config is defined
 
@@ -1474,7 +1478,12 @@
           sysctl_file: "{{ _d.cassandra_linux_sysctl_file }}"
           limits: "{{ _d.cassandra_linux_limits }}"
           readahead_kb: "{{ _d.cassandra_data_readahead_kb }}"
+          scheduler: "{{ _d.cassandra_data_scheduler }}"
+          lvm_readahead: "{{ _d.cassandra_data_lvm_readahead }}"
+          thp_enabled: "{{ _d.cassandra_linux_thp_enabled }}"
+          thp_defrag: "{{ _d.cassandra_linux_thp_defrag }}"
           timesync: "{{ _d.cassandra_linux_timesync }}"
+          os_family: "{{ ansible_facts['os_family'] }}"
           service_limits:
             nofile: "{{ _d.cassandra_service_limit_nofile }}"
             nproc: "{{ _d.cassandra_service_limit_nproc }}"
@@ -1485,7 +1494,7 @@
             - "{{ _cfg.cassandra_native_transport_port | default(9042) }}/tcp"
             - "{{ _cfg.cassandra_jmx_port | default(cassandra_jmx_port | default(7199)) }}/tcp"
           # the node has cassandra_linux's own files, or cassandra_service's unit: it keeps their values
-          own: "{{ 'cassandra_linux_manage' not in import_cluster_keep | default({}) }}"
+          own: "{{ import_cluster_own_os | default(false) }}"
           own_unit: "{{ 'cassandra_service_unit_manage' not in import_cluster_keep | default({}) }}"
       when: import_cluster_os_found is not skipped
 

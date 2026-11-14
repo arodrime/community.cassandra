@@ -93,7 +93,7 @@ def test_switch_timed_out_is_a_failure():
 
 
 SUMMED = dict(
-    inventory_hostname="node1", _cassandra_readahead_read_back=4, _cassandra_disk_items=[],
+    inventory_hostname="node1", _cassandra_readahead_read_back=4, _cassandra_lv_readahead="8", _cassandra_disk_items=[],
     _cassandra_disk_plan={"brief": ["/data/c/{data,commitlog} \u2192 vg-data \u2192 sdb"], "stacks": ["full"],
                           "warnings": [], "info": [], "notes": []},
     _cassandra_disk_lvm_failed=[], _cassandra_disk_tuned={}, _cassandra_disk_tuned_deferred=False,
@@ -316,7 +316,7 @@ def test_lvchange_left_to_the_restart_window(lvm_here, now, window, restart, exp
                {"kname": "dm-3", "kind": "lvm", "os": False, "lv_read_ahead": "8", "lv": "vg/done"},
                {"kname": "dm-4", "kind": "lvm", "os": True, "lv_read_ahead": "auto", "lv": "rhel/root"},
                {"kname": "sdb", "kind": "disk", "os": False}]
-    variables = dict(_cassandra_disk_devices=devices, _cassandra_readahead_read_back=4, _cassandra_data_lvm_here=lvm_here,
+    variables = dict(_cassandra_disk_devices=devices, _cassandra_readahead_read_back=4, _cassandra_lv_readahead="8", _cassandra_data_lvm_here=lvm_here,
                      _cassandra_data_lvchange_now=now, cassandra_data_lvchange_restart=restart, _cassandra_disk_refused=[])
     if window:
         variables["_cassandra_linux_restart_window"] = True
@@ -329,7 +329,7 @@ def _items(**variables):
                 _cassandra_disk_tuned=TUNED, _cassandra_disk_tuned_deferred=True, _cassandra_disk_tuned_window=True,
                 _cassandra_linux_check=True, _cassandra_disk_tuned_dir="/etc/tuned",
                 cassandra_data_tuned_switch={"skipped": True}, cassandra_data_disk_udev={"changed": False},
-                _cassandra_readahead_read_back=4, _cassandra_disk_tuned_reload=False)
+                _cassandra_readahead_read_back=4, _cassandra_lv_readahead="8", _cassandra_disk_tuned_reload=False)
     base.update(variables)
     return render(items, **base)
 
@@ -343,7 +343,7 @@ def test_compared_with_the_reason_of_the_restart():
                     "restart": "tuned profile"},
                    {"item": "LVM read-ahead vg/data (sectors)", "before": "auto", "after": "8", "restart": "LVM read-ahead"}]
     # 64 KB pages: 4 KB reads back as 0, LVM's "none" (cassandra_disk_lv_read_ahead)
-    zero = _items(_cassandra_readahead_read_back=0, _cassandra_disk_lvm_window=[{"lv": "vg/data", "lv_read_ahead": "auto"}])
+    zero = _items(_cassandra_readahead_read_back=0, _cassandra_lv_readahead="none", _cassandra_disk_lvm_window=[{"lv": "vg/data", "lv_read_ahead": "auto"}])
     assert zero[-1]["after"] == "none"
     # the real run, Cassandra running: not done, not reported (the window reports them)
     assert _items(_cassandra_linux_check=False, cassandra_data_tuned_file={"changed": False},
@@ -452,7 +452,7 @@ def test_the_window_notes_what_it_refused():
     lvm = task("Note the LVM volumes left to the restart window")["ansible.builtin.set_fact"]["_cassandra_disk_lvm_window"]
     devices = [{"kname": "dm-2", "kind": "lvm", "os": False, "lv_read_ahead": "auto", "lv": "vg/data"},
                {"kname": "dm-3", "kind": "lvm", "os": False, "lv_read_ahead": "auto", "lv": "vg/other"}]
-    left = render(lvm, _cassandra_disk_devices=devices, _cassandra_readahead_read_back=4, _cassandra_data_lvm_here=True,
+    left = render(lvm, _cassandra_disk_devices=devices, _cassandra_readahead_read_back=4, _cassandra_lv_readahead="8", _cassandra_data_lvm_here=True,
                   _cassandra_data_lvchange_now=False, cassandra_data_lvchange_restart=True,
                   _cassandra_linux_restart_window=True, _cassandra_disk_refused=["lvm vg/data"])
     assert [d["lv"] for d in left] == ["vg/other"]

@@ -18,7 +18,7 @@
     echo "thp|unit|${unit:-absent}|"
     echo "timesync|service|$(systemctl is-active {{ _cassandra_timesync_service }} 2>/dev/null)|"
     for l in {{ cassandra_linux_limits.keys() | join(' ') }}; do
-      echo "limit|$l|$(awk -v l="$l" '$1=="cassandra" && $3==l {v=$4} END {print v}' /etc/security/limits.d/cassandra.conf 2>/dev/null)|"
+      echo "limit|$l|$(awk -v l="$l" '$1=="cassandra" && $3==l {v=$4} END {print v}' {{ cassandra_linux_limits_file | quote }} 2>/dev/null)|"
     done
   register: cassandra_linux_snapshot
   changed_when: false

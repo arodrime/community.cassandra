@@ -56,6 +56,9 @@ AUDITED = {
     (L, "timesync.yml", "Look for the time sync service (offline)", "forced"): ("read",),
     (L, "timesync.yml", "Refuse a time sync that is not installed (offline)", "skipped"): ("no change",),
     (L, "timesync.yml", "Ensure timesync service starts", "skipped"): ("report", "model"),
+    (L, "timesync.yml", "Read the server lines of chrony", "forced"): ("read",),
+    # (chrony not installed yet under --check: its config not there; the package install is listed)
+    (L, "timesync.yml", "Time servers (chrony)", "skipped"): ("report", "model"),
     (S, "account_check.yml", "Read the account Cassandra runs as", "forced"): ("read",),
     (S, "config_snapshot.yml", "Record the config Cassandra started with", "writer"): ("no change",),
     (S, "main.yml", "Read the current service state (change report)", "forced"): ("read",),

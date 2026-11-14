@@ -95,3 +95,62 @@
   register: cassandra_timesync_service_result
   tags:
   - molecule-idempotence-notest # Ubuntu 2404 timesyncd issue
+
+# chrony's servers (cassandra_linux_timesync_servers): its server, pool and peer lines are the ones listed, the
+# others commented out (never removed), the missing ones added at the end (or uncommented), then chrony restarted
+- name: Time servers (chrony)
+  when:
+    - cassandra_linux_timesync | bool
+    - cassandra_linux_timesync_servers | length > 0
+    - not (_cassandra_linux_check and cassandra_timesync_install | default({}) is changed)  # not installed yet
+  vars:
+    _chrony_conf: "{{ '/etc/chrony/chrony.conf' if ansible_facts['os_family'] == 'Debian' else '/etc/chrony.conf' }}"
+    # (compared word by word: the spaces between them do not count)
+    _wanted: "{{ cassandra_linux_timesync_servers | map('split') | map('join', ' ') | list }}"
+  block:
+    - name: Refuse time servers for another time sync than chrony
+      ansible.builtin.fail:
+        msg: >-
+          cassandra_linux_timesync_servers sets the servers of chrony, but {{ inventory_hostname }} runs
+          {{ _cassandra_timesync_service }} (chrony is not installed there): install chrony (the role then keeps it),
+          or set cassandra_linux_timesync_servers to [] to leave its servers as they are.
+      when: _cassandra_timesync_service not in ['chronyd', 'chrony']
+
+    - name: Read the server lines of chrony
+      ansible.builtin.command:
+        argv: [grep, -E, '^[[:space:]]*(server|pool|peer)[[:space:]]', "{{ _chrony_conf }}"]
+      register: cassandra_linux_chrony_lines
+      changed_when: false
+      failed_when: cassandra_linux_chrony_lines.rc > 1
+      check_mode: false  # read-only
+
+    - name: Comment out the server lines not listed
+      ansible.builtin.lineinfile:
+        path: "{{ _chrony_conf }}"
+        regexp: "^{{ item | regex_escape }}$"
+        line: "#{{ item }}"
+      loop: >-
+        {{ cassandra_linux_chrony_lines.stdout_lines | reject('in', _found_wanted) | unique | list }}
+      vars:
+        _found_wanted: >-
+          {{ cassandra_linux_chrony_lines.stdout_lines
+             | zip(cassandra_linux_chrony_lines.stdout_lines | map('split') | map('join', ' ') | list)
+             | selectattr(1, 'in', _wanted) | map(attribute=0) | list }}
+      register: cassandra_linux_chrony_commented
+
+    # (a line there word for word is left as it is; commented out there: uncommented)
+    - name: Add the server lines listed
+      ansible.builtin.lineinfile:
+        path: "{{ _chrony_conf }}"
+        regexp: "^\\s*#?\\s*{{ item.split() | map('regex_escape') | join('\\s+') }}\\s*$"
+        line: "{{ item }}"
+      loop: "{{ cassandra_linux_timesync_servers | zip(_wanted) | rejectattr(1, 'in', _found) | map(attribute=0) | list }}"
+      vars:
+        _found: "{{ cassandra_linux_chrony_lines.stdout_lines | map('split') | map('join', ' ') | list }}"
+      register: cassandra_linux_chrony_added
+
+    - name: Restart chrony with its servers
+      ansible.builtin.service:
+        name: "{{ _cassandra_timesync_service }}"
+        state: restarted
+      when: cassandra_linux_chrony_commented is changed or cassandra_linux_chrony_added is changed

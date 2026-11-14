@@ -483,7 +483,7 @@ def _self_check_node(files_data, hosts, node, names, data, inventory_dir=""):
         hv.get("import_cluster_storage_dir", ""), hv.get("import_cluster_java", ""), hv["import_cluster_conf_dir"],
         (hv.get("import_cluster_perms") or {}).get("files"), (hv.get("import_cluster_config") or {}).get("release", ""),
         inventory_dir, running, hv.get("import_cluster_os_found") or {},
-        "cassandra_linux_manage" not in (hv.get("import_cluster_keep") or {}))
+        boolean(hv.get("import_cluster_own_os", False), strict=False))
 
 
 def _self_check(files_data, hosts, name, facts, live, node_environment, storage_dir, java, conf_dir, permissions,
@@ -516,8 +516,12 @@ def _self_check(files_data, hosts, name, facts, live, node_environment, storage_
 LINUX_VARS = (("manage", "cassandra_linux_manage | bool"), ("apply_live", "cassandra_linux_apply_live"),
               ("container_types", "cassandra_linux_container_types"), ("sysctl", "cassandra_linux_sysctl"),
               ("sysctl_file", "cassandra_linux_sysctl_file"), ("limits", "cassandra_linux_limits"),
-              ("timesync", "cassandra_linux_timesync | bool"), ("offline", "cassandra_offline | bool"),
-              ("disk_tuning", "cassandra_data_disk_tuning | bool"), ("readahead_kb", "cassandra_data_readahead_kb | int"),
+              ("limits_file", "cassandra_linux_limits_file"), ("nproc_all", "cassandra_linux_nproc_all | bool"),
+              ("swap_off", "cassandra_linux_swap_off | bool"), ("thp_enabled", "cassandra_linux_thp_enabled"),
+              ("thp_defrag", "cassandra_linux_thp_defrag"), ("timesync", "cassandra_linux_timesync | bool"),
+              ("timesync_servers", "cassandra_linux_timesync_servers"), ("offline", "cassandra_offline | bool"),
+              ("disk_tuning", "cassandra_data_disk_tuning | bool"), ("readahead_kb", "cassandra_data_readahead_kb"),
+              ("scheduler", "cassandra_data_scheduler"), ("lvm_readahead", "cassandra_data_lvm_readahead"),
               ("block_device", "cassandra_data_block_device"), ("block_devices", "cassandra_data_block_devices"),
               ("tuned_manage", "cassandra_linux_tuned_manage | bool"),
               ("tune_os_volumes", "cassandra_data_tune_os_volumes | bool"),

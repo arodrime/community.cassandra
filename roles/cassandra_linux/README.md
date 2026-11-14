@@ -18,6 +18,11 @@ Role Variables
 * `cassandra_linux_timesync`: install and start time sync (chrony, kept when
   already installed, or systemd-timesyncd on Debian/Ubuntu). `false` leaves the
   host's time sync alone. Default `true`.
+* `cassandra_linux_timesync_servers`: chrony's server, pool and peer lines,
+  whole, with their options (e.g. `server ntp1.example.com iburst`). Set, the
+  lines of `chrony.conf` not listed are commented out (never removed), the
+  missing ones added (or uncommented) and chrony restarted; refused where the
+  role runs systemd-timesyncd. Default `[]`: `chrony.conf` left as it is.
 * `cassandra_offline`: `true` on air-gapped hosts: the time sync package is
   not installed, only started when present. Default `false`.
 * `cassandra_data_disk_tuning`: tune the read-ahead and IO scheduler of the
@@ -50,7 +55,17 @@ Role Variables
   (`queue/read_ahead_kb`, not `blockdev --setra` sectors). Defaults to `4`,
   the practical minimum: read-ahead brings nothing to Cassandra's random
   reads and fills the page cache with data it doesn't need. The kernel
-  rounds it down to whole memory pages (0 with 64 KB pages).
+  rounds it down to whole memory pages (0 with 64 KB pages). `kernel`: no
+  read-ahead set, none kept by the role's udev rule or LVM (tuned is then
+  left as it is).
+* `cassandra_data_scheduler`: `none` (default) on the SSD/NVMe devices;
+  `keep` leaves their scheduler as it is. With `cassandra_data_readahead_kb:
+  kernel` and no `cassandra_data_lvm_readahead`, the devices are left as with
+  `cassandra_data_disk_tuning: false`.
+* `cassandra_data_lvm_readahead`: what `lvchange --readahead` keeps in the
+  LVM volumes' metadata: `""` (default) the read-ahead above in sectors,
+  `auto` LVM's own (from the devices under the volume; the udev rule then
+  keeps the volume's read-ahead).
 * `cassandra_linux_tuned_manage`: when the profiles tuned runs would set the
   read-ahead or IO scheduler of the Cassandra devices (RHEL's default ones
   do), have it run a profile of the role's after them that leaves those
@@ -89,9 +104,20 @@ Role Variables
   (default `/etc/sysctl.d/60-cassandra.conf`). The same keys are removed from
   `/etc/sysctl.conf`, which is read last and would win.
 * `cassandra_linux_limits`: limits of the cassandra user, in
-  `/etc/security/limits.d/cassandra.conf`, for tools run by hand as
+  `cassandra_linux_limits_file` (default
+  `/etc/security/limits.d/cassandra.conf`), for tools run by hand as
   cassandra (the service gets its own from its systemd unit). Same values as
-  the unit by default.
+  the unit by default. `{}`: no file written.
+* `cassandra_linux_nproc_all`: on RedHat and derivatives, `* - nproc 32768`
+  in `/etc/security/limits.d/90-nproc.conf` for every user. Default `true`.
+* `cassandra_linux_swap_off`: turn swap off and take it out of `/etc/fstab`.
+  Default `true`; `false` leaves swap as it is.
+* `cassandra_linux_thp_enabled`, `cassandra_linux_thp_defrag`: transparent
+  huge pages, written by the role's unit `disable-thp.service` at each boot
+  (and live when they differ): `always`, `madvise` or `never` (defrag also
+  `defer`, `defer+madvise`). Default `never` for both. `kernel` does not set
+  it (both `kernel`: the role's unit is removed); `keep` leaves it as it is,
+  and the role's unit too.
 * `cassandra_sysfs_block_root`: sysfs directory the disk tuning reads and
   writes. Defaults to `/sys/block`; only meant to be overridden by tests,
   to point at a fake tree instead of the host's real disks.

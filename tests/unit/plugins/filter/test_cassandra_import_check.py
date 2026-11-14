@@ -1424,7 +1424,7 @@ def os_check(records="", keep=None, rc=0, without=""):
           "import_cluster_conf_dir": "", "import_cluster_storage_dir": "/var/lib/cassandra", "import_cluster_java": "17",
           "import_cluster_unit": {"env": {}}, "import_cluster_perms": {"files": {}},
           "import_cluster_os_found": {"rc": rc, "stdout": role_built().replace(without, "") + records},
-          "import_cluster_keep": keep or {}}
+          "import_cluster_keep": keep or {}, "import_cluster_own_os": True}  # (its limits file has the role's mark)
     out = cassandra_import_self_check_nodes(inventory, layout["hosts"], [{"address": "10.0.0.1", "host": "h1", "read": True}],
                                             {"10.0.0.1": "n1"}, {"h1": hv})
     return out["n1"]

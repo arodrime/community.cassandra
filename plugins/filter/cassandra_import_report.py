@@ -1335,17 +1335,26 @@ def _os_findings(report):
 
     for n in report.read:
         lines = (n.get("os") or {}).get("lines") or []
-        # (cassandra_linux_manage: false, as the import writes for a node it reads: Ansible leaves its OS settings)
+        # (cassandra_linux_manage: false, a node not read or kept by you: Ansible leaves its OS settings; else the
+        # import wrote what the node has, kept by cassandra_linux)
         left = "cassandra_linux_manage" in (n.get("keep") or {})
-        who = ("; these nodes: Ansible leaves their OS settings (cassandra_linux_manage: false), change it on them by"
-               " hand; nodes added later: cassandra_linux sets it") if left else \
-            "; these nodes get it at their next run of cassandra_linux, nodes added later too"
+        node_vars = n.get("vars") or {}
+
+        def who(variable, value):
+            if left:
+                return ("; these nodes: Ansible leaves their OS settings (cassandra_linux_manage: false), change it on"
+                        " them by hand; nodes added later: cassandra_linux sets it")
+            if variable in node_vars or variable in (n.get("keep") or {}):
+                return ("; the inventory keeps it as these nodes have it (%s), nodes added later too; to change it:"
+                        " %s, then apply_config" % (variable, value))
+            return "; these nodes get it at their next run of cassandra_linux, nodes added later too"
         thp = next((m.group(1) for m in map(_THP_ON.match, lines) if m), "")
         if thp:
             script = next((m.group(1) for m in map(_THP_BY.match, lines) if m), "")
             add("transparent huge pages enabled %s%s" % (
                 thp, ", set by %s, which is not executable" % script if script else ""),
-                "Cassandra wants them off (never), as cassandra_linux sets them" + who, n["name"])
+                "Cassandra wants them off (never), as cassandra_linux sets them"
+                + who("cassandra_linux_thp_enabled", "cassandra_linux_thp_enabled: never"), n["name"])
         ahead = sorted(set(int(m.group(1)) for m in map(_READAHEAD.match, lines) if m and int(m.group(1)) > READAHEAD_MOST))
         if ahead:
             tuned = next((m for m in map(_TUNED_DISK.match, lines) if m), None)
@@ -1355,7 +1364,9 @@ def _os_findings(report):
                 ", and tuned (profile %s) sets readahead=>%s at each start" % (profile, tuned.group(2))
                 if tuned and profile else ""),
                 "a large read-ahead fills the page cache with data no read asked for" + (
-                    "; tuned would set it again: a tuned profile of your own without it" if tuned else "") + who,
+                    "; tuned would set it again: a tuned profile of your own without it" if tuned else "")
+                + who("cassandra_data_readahead_kb" if "cassandra_data_readahead_kb" in node_vars
+                      else "cassandra_data_disk_tuning", "cassandra_data_readahead_kb: 4"),
                 n["name"])
         restart = _restart_finding(n, report.layout.get("from_yours"))
         if restart:

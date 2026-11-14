@@ -15,6 +15,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_os import 
     _sysctl_order,
     cassandra_linux_changes,
     cassandra_os_import,
+    thp_unit,
 )
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout
 
@@ -89,6 +90,11 @@ def found(text, **changes):
     return cassandra_os_import(text, wanted(**changes))
 
 
+def part(r, *prefixes):
+    """r's variables of these parts (the records of a test leave the others out)."""
+    return dict((k, v) for k, v in r["vars"].items() if k.startswith(prefixes))
+
+
 def sysctl_vars(r):
     return dict((k, v) for k, v in r["vars"].items() if k.startswith("cassandra_linux_sysctl"))
 
@@ -123,13 +129,12 @@ def test_records_keep_pipes_in_the_last_field():
 
 def test_sysctl_site_file_carried_into_its_file():
     r = found(VENDOR_SYSCTL + SITE_SYSCTL + SYSCTL_CONF + "sysctl_live|vm.swappiness|60\nsysctl_live|vm.max_map_count|1048575\n")
-    sysctl = r["vars"]["cassandra_linux_sysctl"]
-    assert sysctl["vm.swappiness"] == 10  # the site file, read after the vendor's 50-default.conf
-    assert sysctl["net.core.somaxconn"] == 4096  # a key of a Cassandra file, the role has none
-    assert sysctl["net.ipv4.tcp_keepalive_time"] == 300
-    assert sysctl["net.core.rmem_max"] == 33554432  # /etc/sysctl.conf, read last
-    assert sysctl["vm.zone_reclaim_mode"] == 0  # role default kept
-    assert "kernel.sysrq" not in sysctl  # not Cassandra's
+    # exactly the keys of the file the role is to write in (the role then adds nor moves none)
+    assert r["vars"]["cassandra_linux_sysctl"] == {"vm.max_map_count": 1048575, "vm.swappiness": 10,
+                                                   "net.core.somaxconn": 4096, "net.ipv4.tcp_keepalive_time": 300}
+    # /etc/sysctl.conf, read last: not moved
+    assert any(c.startswith("NOT carried: net.core.rmem_max, set in other files than /etc/sysctl.d/99-cassandra.conf")
+               for c in r["carried"])
     assert r["vars"]["cassandra_linux_sysctl_file"] == "/etc/sysctl.d/99-cassandra.conf"
     lines = r["lines"]
     assert "sysctl /etc/sysctl.d/99-cassandra.conf: vm.swappiness = 10 (cassandra_linux: 1)" in lines
@@ -145,7 +150,8 @@ def test_sysctl_site_file_carried_into_its_file():
 def test_sysctl_vendor_values_not_carried():
     """/usr/lib belongs to packages: shown, not carried."""
     r = found(VENDOR_SYSCTL + "sysctl_live|vm.swappiness|30\n")
-    assert r["vars"] == {}
+    # (none of the role's keys written: none of the admin's files sets them)
+    assert part(r, "cassandra_linux_sysctl") == {"cassandra_linux_sysctl": {}}
     assert "sysctl /usr/lib/sysctl.d/50-default.conf: vm.swappiness = 30 (cassandra_linux: 1)" in r["lines"]
 
 
@@ -153,13 +159,16 @@ def test_sysctl_untuned_live_value():
     r = found("sysctl_live|vm.max_map_count|65530\nsysctl_live|vm.swappiness|1\n")
     assert r["lines"][0] == "sysctl live: vm.max_map_count = 65530 (no file sets it; cassandra_linux: 1048575)"
     assert not any("vm.swappiness" in line for line in r["lines"])
-    assert r["vars"] == {}
+    assert part(r, "cassandra_linux_sysctl") == {"cassandra_linux_sysctl": {}}
 
 
 def test_sysctl_same_values_still_name_the_file():
     """Same values as the role, in another file: the role writes into that file (not a second one it overrides)."""
     r = found(file_records("sysctl", "/etc/sysctl.d/99-db.conf", text="vm.max_map_count = 1048575\nvm.swappiness = 1\n"))
-    assert r["vars"] == {"cassandra_linux_sysctl_file": "/etc/sysctl.d/99-db.conf"}
+    assert part(r, "cassandra_linux_sysctl") == {
+        "cassandra_linux_sysctl_file": "/etc/sysctl.d/99-db.conf",
+        # its keys only (the role's others not added)
+        "cassandra_linux_sysctl": {"vm.max_map_count": 1048575, "vm.swappiness": 1}}
 
 
 def test_sysctl_own_file_keeps_its_values():
@@ -188,13 +197,22 @@ def test_sysctl_most_keys_file_wins_the_name():
 
 # --- limits ---
 
-def test_limits_user_entries_carried():
+def test_limits_not_the_roles_file_none_written():
+    # (a file the role writes would be a change: the package's limits.d/cassandra.conf rewritten, a later one...)
     r = found(NPROC + SITE_LIMITS + "groups|cassandra cassandra_admins\n")
+    assert part(r, "cassandra_linux_limits") == {"cassandra_linux_limits": {}}
+    assert any(c.startswith("cassandra_linux_limits: {}, the cassandra user's limits come from the files") for c in r["carried"])
+    assert part(found(""), "cassandra_linux_limits") == {"cassandra_linux_limits": {}}
+
+
+def test_limits_user_entries_carried():
+    # a node the role set up, without its file: the limits in effect
+    r = found(NPROC + SITE_LIMITS + "groups|cassandra cassandra_admins\n", own=True)
     limits = r["vars"]["cassandra_linux_limits"]
     assert limits["nofile"] == 500000
     assert limits["nproc"] == 65536  # the user's entry wins over "*"
     assert limits["memlock"] == "unlimited"  # from its group
-    assert limits["as"] == "unlimited"  # soft and hard differ: the role default kept
+    assert "as" not in limits  # soft and hard differ
     assert any("NOT carried: the cassandra user's as" in c for c in r["carried"])
     assert ("limits /etc/security/limits.d/95-cassandra-limits.conf: cassandra nofile = 500000"
             " (cassandra_linux: 1048576)") in r["lines"]
@@ -203,15 +221,15 @@ def test_limits_user_entries_carried():
 
 
 def test_limits_group_not_member_ignored():
-    r = found(SITE_LIMITS + "groups|cassandra\n")
+    r = found(SITE_LIMITS + "groups|cassandra\n", own=True)
     assert "memlock" not in [line.split()[3] for line in r["lines"] if line.startswith("limits")]
-    assert r["vars"]["cassandra_linux_limits"]["memlock"] == "unlimited"  # role default
+    assert "memlock" not in r["vars"]["cassandra_linux_limits"]
 
 
 def test_limits_wildcard_shown_not_carried():
     """A distro's "*" entry applies to cassandra but is not Cassandra tuning."""
-    r = found(NPROC)
-    assert r["vars"] == {}
+    r = found(NPROC, own=True)
+    assert part(r, "cassandra_linux_limits") == {"cassandra_linux_limits": {}}
     assert "limits /etc/security/limits.d/20-nproc.conf: * soft nproc = 4096 (cassandra_linux: 32768)" in r["lines"]
 
 
@@ -219,7 +237,7 @@ def test_limits_later_file_same_rank_wins_and_limits_conf_first():
     recs = _records(file_records("limits", "/etc/security/limits.d/10-a.conf", text="cassandra - nofile 1000\n")
                     + file_records("limits", "/etc/security/limits.d/90-b.conf", text="cassandra - nofile 2000\n")
                     + file_records("limits", "/etc/security/limits.conf", text="cassandra - nofile 3000\n"))
-    dummy, out, dummy2 = _limits(recs, wanted(), False)
+    dummy, out, dummy2 = _limits(recs, wanted(), True)
     assert out["cassandra_linux_limits"]["nofile"] == 2000
 
 
@@ -227,13 +245,13 @@ def test_limits_user_beats_later_group_and_wildcard():
     recs = _records(file_records("limits", "/etc/security/limits.d/10-a.conf", text="cassandra - nofile 1000\n")
                     + file_records("limits", "/etc/security/limits.d/90-b.conf", text="@cassandra - nofile 2000\n* - nofile 3000\n")
                     + "groups|cassandra\n")
-    dummy, out, dummy2 = _limits(recs, wanted(), False)
+    dummy, out, dummy2 = _limits(recs, wanted(), True)
     assert out["cassandra_linux_limits"]["nofile"] == 1000
 
 
 def test_limits_same_as_role_nothing_carried():
-    r = found(file_records("limits", "/etc/security/limits.d/cassandra.conf",
-                           text="cassandra - memlock unlimited\ncassandra - nofile 1048576\n"))
+    role_file = "".join("cassandra - %s %s\n" % kv for kv in LINUX["cassandra_linux_limits"].items())
+    r = found(file_records("limits", "/etc/security/limits.d/cassandra.conf", text=role_file), own=True)
     assert "cassandra_linux_limits" not in r["vars"]
 
 
@@ -245,7 +263,7 @@ def test_unit_limits_last_wins_and_carried():
             "unit|/etc/systemd/system/cassandra.service.d/limits.conf|LimitNOFILE=200000\n"
             "proc_limit|Max open files|200000|200000\nproc_limit|Max locked memory|unlimited|unlimited\n")
     r = found(text)
-    assert r["vars"] == {"cassandra_service_limit_nofile": 200000}
+    assert part(r, "cassandra_service") == {"cassandra_service_limit_nofile": 200000}
     assert "unit /etc/systemd/system/cassandra.service.d/limits.conf: LimitNOFILE=200000 (cassandra_service: 1048576)" in r["lines"]
     assert "unit /etc/systemd/system/cassandra.service: LimitMEMLOCK=infinity (same as cassandra_service)" in r["lines"]
     assert not any(line.startswith("running Cassandra: nofile") for line in r["lines"])  # as its unit says
@@ -256,7 +274,7 @@ def test_unit_limits_last_wins_and_carried():
 
 def test_udev_readahead_carried():
     r = found(UDEV.splitlines()[0] + "\n" + SDB1_SSD)
-    assert r["vars"] == {"cassandra_data_readahead_kb": 8}
+    assert part(r, "cassandra_data") == {"cassandra_data_readahead_kb": 8}
     assert any(line.startswith("udev /etc/udev/rules.d/99-readahead.rules: read_ahead_kb 8 (cassandra_linux: 4),"
                                " scheduler none") for line in r["lines"])
     assert "disk sdb (/data/c, SSD): read_ahead_kb 8 (cassandra_linux: 4), scheduler none (same as cassandra_linux)" in r["lines"]
@@ -264,27 +282,29 @@ def test_udev_readahead_carried():
 
 def test_udev_several_readaheads_not_carried():
     r = found(UDEV)  # 8, and --setra 16 sectors = 8 KB... same
-    assert r["vars"] == {"cassandra_data_readahead_kb": 8}
+    assert part(r, "cassandra_data") == {"cassandra_data_readahead_kb": 8}
     r = found(UDEV + "udev|/etc/udev/rules.d/70-os.rules|ACTION==\"add\", KERNEL==\"sda\", ATTR{queue/read_ahead_kb}=\"128\"\n")
-    assert r["vars"] == {}
+    assert part(r, "cassandra_data") == {}
     assert any("several read-aheads (8, 128)" in c for c in r["carried"])
 
 
 def test_udev_rule_not_the_live_value_not_carried():
     r = found(UDEV.splitlines()[0] + "\n" + SDB_HDD)
-    assert r["vars"] == {}
+    assert part(r, "cassandra_data") == {}
+    # its read-ahead left as it is on this node (host_vars)
+    assert r["keep"] == {"cassandra_data_disk_tuning": False}
     assert any("NOT carried: read_ahead_kb 8" in c and "128" in c for c in r["carried"])
     assert "disk sdb (/data/c, rotational): read_ahead_kb 128 (cassandra_linux: 4), scheduler mq-deadline" in r["lines"]
 
 
 def test_udev_match_is_not_an_assignment():
     r = found('udev|/etc/udev/rules.d/1.rules|ATTR{queue/read_ahead_kb}=="8", ATTR{queue/read_ahead_kb}="64"\n')
-    assert r["vars"] == {"cassandra_data_readahead_kb": 64}
+    assert part(r, "cassandra_data") == {"cassandra_data_readahead_kb": 64}
 
 
 def test_udev_vendor_rule_not_carried():
     r = found('udev|/usr/lib/udev/rules.d/60-block-scheduler.rules|ATTR{queue/scheduler}="bfq"\n')
-    assert r["vars"] == {}
+    assert part(r, "cassandra_data") == {}
     assert any("scheduler bfq" in line for line in r["lines"])
 
 
@@ -310,11 +330,17 @@ def test_own_node_on_lvm_keeps_its_devices_as_found():
     disks = disk_records([blk("sdb", "sdb", "8:16", "disk", 4096, True, "mq-deadline", children=[lv])],
                          [("/data/c/data", "253:2", "/data", "xfs")], lvs=["253|2|vg1|cassandra|auto"])
     r = found(disks, own=True)
-    # on this node only (host_vars): nodes added later are tuned
+    # nothing keeps a read-ahead there, LVM's is auto: the role sets none, as on the node
+    assert part(r, "cassandra_data") == {"cassandra_data_readahead_kb": "kernel", "cassandra_data_lvm_readahead": "auto"}
+    assert r["keep"] == {}
+    assert part(found(disks), "cassandra_data") == part(r, "cassandra_data")  # the same on a node set up another way
+    # an udev rule of the admin's with another value: the devices left as they are on this node (host_vars), nodes
+    # added later tuned
+    rule = 'udev|/etc/udev/rules.d/90-ra.rules|KERNEL=="sdb", ATTR{queue/read_ahead_kb}="8"\n'
+    r = found(disks + rule, own=True)
     assert r["keep"] == {"cassandra_data_disk_tuning": False} and "cassandra_data_disk_tuning" not in r["vars"]
     assert any(n.startswith("cassandra_data_disk_tuning: false on this node (host_vars), its data devices left as they are"
-                            " (cassandra_linux would change read_ahead_kb 4096 of vg1-cassandra (dm-2)") for n in r["carried"])
-    assert found(disks)["keep"] == {}  # not the role's node: cassandra_linux_manage false
+                            " (cassandra_linux would change") for n in r["carried"])
     # tuned by this version already: nothing to keep
     lv = blk("vg1-cassandra", "dm-2", "253:2", "lvm", 4, True, "", "/data")
     done = disk_records([blk("sdb", "sdb", "8:16", "disk", 4, True, "mq-deadline", children=[lv])],
@@ -328,7 +354,7 @@ def test_own_node_on_lvm_keeps_its_devices_as_found():
              "tuned_conf|/usr/lib/tuned/throughput-performance/tuned.conf|[disk]\n"
              "tuned_conf|/usr/lib/tuned/throughput-performance/tuned.conf|readahead=>4096\n")
     r = found(done + tuned, own=True)
-    assert r["keep"] == {"cassandra_data_disk_tuning": False} and any("the profiles tuned runs" in n for n in r["carried"])
+    assert r["keep"] == {"cassandra_data_disk_tuning": False} and any("tuned profiles" in n for n in r["carried"])
     # tuned running the role's profile already, or not running: nothing the role would do
     assert found(done + tuned.replace("virtual-guest|active", "virtual-guest cassandra-disks|active"), own=True)["keep"] == {}
     assert found(done + tuned.replace("|active", "|inactive"), own=True)["keep"] == {}
@@ -340,8 +366,12 @@ def test_own_node_with_the_old_rule_and_data_on_the_os_filesystem():
         blk("vda1", "vda1", "252:1", "part", 4, True, "mq-deadline", "/")])
     rule = 'udev|/etc/udev/rules.d/61-cassandra-data-disk.rules|ENV{ID_PATH}=="pci-0000:00:05.0", ATTR{queue/read_ahead_kb}="4"\n'
     r = found(rule + disk_records([root], [("/var/lib/cassandra/data", "252:1", "/", "ext4")]), own=True)
+    # its value kept: the rule replaced by the role's (no effect: the disk has it already)
+    assert r["keep"] == {} and "cassandra_data_readahead_kb" not in r["vars"]
+    # the disk with another value now: left as it is on this node
+    r = found(rule + disk_records([dict(root, ra=128)], [("/var/lib/cassandra/data", "252:1", "/", "ext4")]),
+              own=True)
     assert r["keep"] == {"cassandra_data_disk_tuning": False}
-    assert any("its rule of earlier versions, /etc/udev/rules.d/61-cassandra-data-disk.rules" in n for n in r["carried"])
 
 
 def test_own_node_os_volume_needs_the_udev_rule():
@@ -349,7 +379,8 @@ def test_own_node_os_volume_needs_the_udev_rule():
     root = blk("rhel-root", "dm-0", "253:0", "lvm", 4, True, "", "/")
     r = found(disk_records([blk("sda", "sda", "8:0", "disk", 128, True, "mq-deadline", children=[root])],
                            [("/var/lib/cassandra/data", "253:0", "/", "xfs")], lvs=["253|0|rhel|root|8"]), own=True)
-    assert r["keep"] == {"cassandra_data_disk_tuning": False}
+    # no rule keeps a read-ahead: the kernel's (the role sets none there)
+    assert r["keep"] == {} and r["vars"]["cassandra_data_readahead_kb"] == "kernel"
 
 
 def test_commitlog_alone_on_the_os_filesystem_is_no_change():
@@ -417,24 +448,38 @@ def test_swap():
 
 def test_timesync_ntpd_turns_it_off():
     r = found("timesync|ntpd|active|enabled\ntimesync_server|/etc/ntp.conf|server ntp1.example.net iburst\n")
-    assert r["vars"] == {"cassandra_linux_timesync": False}
+    assert part(r, "cassandra_linux_timesync") == {"cassandra_linux_timesync": False}
     assert "time sync: ntpd active (at boot: enabled)" in r["lines"]
     assert "time sync /etc/ntp.conf: server ntp1.example.net iburst" in r["lines"]
-    assert found("timesync|ntpd|active|enabled\n", timesync=False)["vars"] == {}  # already off
+    assert part(found("timesync|ntpd|active|enabled\n", timesync=False), "cassandra_linux_timesync") == {}  # already off
 
 
 def test_own_node_without_time_sync_not_given_chrony():
     """A node cassandra_linux set up (it stays managed) with no time sync running: the role run
     again must not install and start chrony there."""
     assert found("", own=True)["vars"]["cassandra_linux_timesync"] is False
-    assert "cassandra_linux_timesync" not in found("")["vars"]  # not managed: left as it is anyway
+    assert found("")["vars"]["cassandra_linux_timesync"] is False  # the same on a node set up another way
     assert "cassandra_linux_timesync" not in found("timesync|chronyd|active|enabled\n", own=True)["vars"]
+    # running, not started at boot (or another than the one the role picks): the role would change it
+    stopped = ("timesync|chronyd|active|disabled\ntimesync_own|chronyd|active|disabled\n"
+               "timesync_own|chrony|inactive|\ntimesync_own|systemd-timesyncd|inactive|\n")
+    assert found(stopped, os_family="RedHat")["vars"]["cassandra_linux_timesync"] is False
+    assert "cassandra_linux_timesync" not in found(stopped.replace("disabled", "enabled"), os_family="RedHat")["vars"]
 
 
 def test_timesync_chrony_kept():
     r = found("timesync|chronyd|active|enabled\ntimesync_server|/etc/chrony.conf|server 10.0.0.5 iburst\n")
-    assert r["vars"] == {}
-    assert any(c.startswith("time sync servers: cassandra_linux does not write them") for c in r["carried"])
+    # its servers, for the nodes added later (the role writes them as they are: no change)
+    assert part(r, "cassandra_linux_timesync") == {"cassandra_linux_timesync_servers": ["server 10.0.0.5 iburst"]}
+    # some in a chrony.d file: not carried, said
+    r = found("timesync|chronyd|active|enabled\ntimesync_server|/etc/chrony.conf|server 10.0.0.5 iburst\n"
+              "timesync_server|/etc/chrony.d/site.conf|pool pool.example.net iburst\n")
+    assert part(r, "cassandra_linux_timesync") == {}
+    assert any(c.startswith("NOT carried: the time servers in /etc/chrony.d/site.conf") for c in r["carried"])
+    # Debian's path
+    r = found("timesync|chrony|active|enabled\nchrony_installed|\ntimesync_server|/etc/chrony/chrony.conf|pool 2.debian.pool.ntp.org iburst\n",
+              os_family="Debian")
+    assert r["vars"]["cassandra_linux_timesync_servers"] == ["pool 2.debian.pool.ntp.org iburst"]
     assert "time sync: none active (cassandra_linux starts chrony, or systemd-timesyncd on Debian/Ubuntu)" in found("")["lines"]
 
 
@@ -451,9 +496,10 @@ def test_firewall():
     assert lines[-1].startswith("firewall: Cassandra ports open: 7000/tcp, 9042/tcp; not seen open: 7199/tcp")
 
 
-def test_nothing_found_is_all_defaults():
+def test_nothing_found_is_nothing_set():
+    # nothing read sets the role's settings: the role sets none (time sync: none runs, none started)
     r = found("")
-    assert r["vars"] == {} and r["carried"] == []
+    assert r["vars"] == {"cassandra_linux_sysctl": {}, "cassandra_linux_limits": {}, "cassandra_linux_timesync": False}
 
 
 # --- the report ---
@@ -485,9 +531,9 @@ def test_report_section_and_round_trip():
     gv = layout["group_vars"]["c"]
     assert gv["cassandra_linux_sysctl"]["vm.swappiness"] == 10
     assert gv["cassandra_linux_sysctl_file"] == "/etc/sysctl.d/99-cassandra.conf"
-    assert gv["cassandra_linux_limits"]["nofile"] == 500000
+    assert gv["cassandra_linux_limits"] == {}  # (none written: the nodes' own files give them)
     assert layout["host_vars"]["n1"]["cassandra_linux_manage"] is False
-    assert "  none" in layout["differences"]
+    assert "cassandra_linux_swap_off: (role default) on n2; false on n1" in layout["differences"]
 
 
 def test_report_os_differences_between_nodes():
@@ -508,7 +554,7 @@ def test_package_file_under_etc_not_carried():
     """Ubuntu's procps ships /etc/sysctl.d/10-map-count.conf: a distro default, not the admin's."""
     text = file_records("sysctl", "/etc/sysctl.d/10-map-count.conf", text="vm.max_map_count=1048576\n")
     r = found(text + "owner|/etc/sysctl.d/10-map-count.conf|procps\n")
-    assert r["vars"] == {}
+    assert part(r, "cassandra_linux_sysctl") == {"cassandra_linux_sysctl": {}}
     assert ("sysctl /etc/sysctl.d/10-map-count.conf (package procps): vm.max_map_count = 1048576"
             " (cassandra_linux: 1048575)") in r["lines"]
     # /etc/sysctl.conf is a package's too, but the admin's file
@@ -533,7 +579,9 @@ def test_own_node_without_its_sysctl_file_keeps_what_it_has():
     there; the role's keys an admin file sets are carried in that file, the others not at all."""
     r = found(file_records("sysctl", "/etc/sysctl.d/99-db.conf", text="vm.swappiness = 5\nnet.core.somaxconn = 4096\n"),
               own=True)
-    assert sysctl_vars(r) == {"cassandra_linux_sysctl": {"vm.swappiness": 5}, "cassandra_linux_sysctl_file": "/etc/sysctl.d/99-db.conf"}
+    # (that file's keys, all of them: the role writes them as they are)
+    assert sysctl_vars(r) == {"cassandra_linux_sysctl": {"vm.swappiness": 5, "net.core.somaxconn": 4096},
+                              "cassandra_linux_sysctl_file": "/etc/sysctl.d/99-db.conf"}
     # an older role's /etc/sysctl.conf (read at boot through its link)
     conf = file_records("sysctl", "/etc/sysctl.conf", text="vm.max_map_count = 262144\nvm.swappiness = 10\n")
     r = found(conf + "sysctl_link|/etc/sysctl.d/99-sysctl.conf\n", own=True)
@@ -577,10 +625,10 @@ def test_limits_order_kept_in_the_vars_file():
 def test_own_unit_ignores_drop_ins_and_resets():
     text = ("unit|/etc/systemd/system/cassandra.service|LimitNOFILE=1048576\n"
             "unit|/etc/systemd/system/cassandra.service.d/override.conf|LimitNOFILE=500000\n")
-    assert found(text, own_unit=True)["vars"] == {}
-    assert found(text, own_unit=False)["vars"] == {"cassandra_service_limit_nofile": 500000}
+    assert part(found(text, own_unit=True), "cassandra_service") == {}
+    assert part(found(text, own_unit=False), "cassandra_service") == {"cassandra_service_limit_nofile": 500000}
     reset = text + "unit|/etc/systemd/system/cassandra.service.d/zz.conf|LimitNOFILE=\n"
-    assert found(reset)["vars"] == {}  # back to systemd's default: nothing carried
+    assert part(found(reset), "cassandra_service") == {}  # back to systemd's default: nothing carried
 
 
 # --- sysctl.conf, masks (audit) ---
@@ -590,14 +638,17 @@ def test_sysctl_conf_at_its_link_place():
     zz = file_records("sysctl", "/etc/sysctl.d/99-zz.conf", text="vm.swappiness = 7\n")
     r = found(conf + zz + "sysctl_link|/etc/sysctl.d/99-sysctl.conf\n")
     assert r["vars"]["cassandra_linux_sysctl"]["vm.swappiness"] == 7  # 99-zz after 99-sysctl
-    r = found(conf + zz)  # no link: sysctl --system reads it last
-    assert r["vars"]["cassandra_linux_sysctl"]["vm.swappiness"] == 5
+    # no link: sysctl --system reads it last, systemd-sysctl not at all: not a file the role writes in, nothing
+    # carried (the role would move it)
+    r = found(conf + zz)
+    assert r["vars"]["cassandra_linux_sysctl"] == {}
 
 
 def test_sysctl_conf_without_link_never_the_file():
     r = found(file_records("sysctl", "/etc/sysctl.conf", text="vm.swappiness = 5\n"))
-    assert r["vars"]["cassandra_linux_sysctl"]["vm.swappiness"] == 5
+    assert r["vars"]["cassandra_linux_sysctl"] == {}
     assert "cassandra_linux_sysctl_file" not in r["vars"]
+    assert any(c.startswith("NOT carried: vm.swappiness, set in other files") for c in r["carried"])
     assert any("systemd-sysctl does not read it at boot" in line for line in r["lines"])
 
 
@@ -622,14 +673,14 @@ def test_own_node_sysctl_file_with_fewer_keys():
 
 def test_vendor_readahead_rule_not_carried():
     r = found('udev|/usr/lib/udev/rules.d/60-ra.rules|ATTR{queue/read_ahead_kb}="128"\n')
-    assert r["vars"] == {}
+    assert part(r, "cassandra_data") == {}
     r = found('udev|/etc/udev/rules.d/60-ra.rules|ATTR{queue/read_ahead_kb}="128"\nowner|/etc/udev/rules.d/60-ra.rules|x\n')
-    assert r["vars"] == {}
+    assert part(r, "cassandra_data") == {}
 
 
 def test_wildcard_both_kinds_not_carried():
-    r = found(file_records("limits", "/etc/security/limits.d/90-all.conf", text="* - nofile 65536\n"))
-    assert r["vars"] == {}
+    r = found(file_records("limits", "/etc/security/limits.d/90-all.conf", text="* - nofile 65536\n"), own=True)
+    assert part(r, "cassandra_linux_limits") == {"cassandra_linux_limits": {}}
 
 
 def test_masked_name_does_not_hide_sysctl_conf_link():
@@ -663,7 +714,7 @@ def test_limits_order_differs_between_nodes():
 
 def test_rpm_limits_file_labelled_and_zero_padded_kept():
     rpm = file_records("limits", "/etc/security/limits.d/cassandra.conf", text="cassandra - nofile 0100\n")
-    r = found(rpm + "owner|/etc/security/limits.d/cassandra.conf|cassandra\n")
+    r = found(rpm + "owner|/etc/security/limits.d/cassandra.conf|cassandra\n", own=True)
     assert r["vars"]["cassandra_linux_limits"]["nofile"] == "0100"
     assert r["lines"][0].startswith("limits /etc/security/limits.d/cassandra.conf (package cassandra): cassandra nofile")
 
@@ -680,7 +731,8 @@ def test_limits_overridden_lines_shown():
     r = found(site + rpm + "owner|/etc/security/limits.d/cassandra.conf|cassandra\n")
     assert ("limits /etc/security/limits.d/95-local.conf: cassandra - nofile = 500000, overridden by"
             " /etc/security/limits.d/cassandra.conf (package cassandra)") in r["lines"]
-    assert r["vars"]["cassandra_linux_limits"]["nofile"] == 100000
+    # (the package's file: not rewritten by the role, none written)
+    assert r["vars"]["cassandra_linux_limits"] == {}
 
 
 def test_own_node_fallback_carries_only_the_target_files_keys():
@@ -719,8 +771,7 @@ def test_own_node_readahead_from_its_own_rule():
 
 RHEL = {"os_family": "RedHat"}
 DEBIAN = {"os_family": "Debian"}
-with open(os.path.join(ROLES, "cassandra_linux", "files", "disable-thp.service"), "rb") as _unit:
-    THP_SUM = hashlib.sha1(_unit.read()).hexdigest()
+THP_SUM = hashlib.sha1(thp_unit({"enabled": "never", "defrag": "never"}).encode()).hexdigest()
 
 
 def linux(**changes):
@@ -886,3 +937,167 @@ def test_lvm_read_ahead_auto_is_a_change():
         ("LVM read-ahead vg1/cassandra (sectors) (lvchange, Cassandra stopped)", "auto", "8"),
         # (meanwhile the udev rule keeps it)
         ("/etc/udev/rules.d/64-cassandra-data-disk.rules", "absent", "written")]
+
+
+# --- rc10: the import carries what the node has, so that cassandra_linux changes nothing there ---
+
+def owner_like():
+    """A RHEL 9 node set up by hand (built from scratch for the test): the package from a file, its limits file,
+    an admin's sysctl file, THP always/madvise from the kernel, chronyd with the site's servers, the data on LVM
+    (read-ahead auto) over an SSD running mq-deadline, no swap, no udev rule."""
+    out = file_records("sysctl", "/etc/sysctl.d/90_cassandra.conf",
+                       text="vm.max_map_count = 1048575\nvm.swappiness = 1\nnet.core.somaxconn = 4096\n")
+    out += file_records("sysctl", "/etc/sysctl.d/99-image.conf", text="kernel.panic = 10\n")
+    live = (("vm.max_map_count", 1048575), ("vm.swappiness", 1), ("net.core.somaxconn", 4096), ("vm.zone_reclaim_mode", 0))
+    out += "".join("sysctl_live|%s|%s\n" % kv for kv in live)
+    out += file_records("limits", "/etc/security/limits.d/cassandra.conf",
+                        text="cassandra - memlock unlimited\ncassandra - nofile 100000\ncassandra - nproc 32768\n")
+    out += "owner|/etc/security/limits.d/cassandra.conf|cassandra\n"
+    out += file_records("limits", "/etc/security/limits.d/92-cassandra.conf", text="cassandra - nofile 1048576\n")
+    out += "groups|cassandra\n"
+    out += "thp|enabled|[always] madvise never\nthp|defrag|always defer defer+madvise [madvise] never\n"
+    out += "cmdline|BOOT_IMAGE=/vmlinuz root=/dev/mapper/rhel-root ro quiet\nthp_own|boot|\n"
+    out += "timesync|chronyd|active|enabled\nchrony_installed|\ntimesync_own|chronyd|active|enabled\n"
+    out += "timesync_own|chrony|active|alias\ntimesync_own|systemd-timesyncd|inactive|\n"
+    out += "timesync_server|/etc/chrony.conf|server ntp1.example.org iburst\n"
+    out += "timesync_server|/etc/chrony.conf|server ntp2.example.org iburst prefer\n"
+    lv = blk("datavg-data", "dm-3", "253:3", "lvm", 128, False, "", "/data")
+    out += disk_records([blk("sdb", "sdb", "8:16", "disk", 128, False, "mq-deadline", children=[lv])],
+                        [("/data/cassandra/data", "253:3", "/data", "xfs")], lvs=["253|3|datavg|data|auto"])
+    return out
+
+
+def would_be(found_vars):
+    """cassandra_linux's variables after the import: its defaults, then what the import wrote."""
+    v = linux()
+    names = {"cassandra_linux_sysctl": "sysctl", "cassandra_linux_sysctl_file": "sysctl_file",
+             "cassandra_linux_limits": "limits", "cassandra_linux_nproc_all": "nproc_all",
+             "cassandra_linux_swap_off": "swap_off", "cassandra_linux_thp_enabled": "thp_enabled",
+             "cassandra_linux_thp_defrag": "thp_defrag", "cassandra_linux_timesync": "timesync",
+             "cassandra_linux_timesync_servers": "timesync_servers", "cassandra_data_readahead_kb": "readahead_kb",
+             "cassandra_data_scheduler": "scheduler", "cassandra_data_lvm_readahead": "lvm_readahead",
+             "cassandra_data_disk_tuning": "disk_tuning"}
+    v.update((names[k], val) for k, val in found_vars.items() if k in names)
+    return v
+
+
+def test_owner_like_node_is_a_no_op_with_the_roles():
+    r = found(owner_like(), os_family="RedHat")
+    assert part(r, "cassandra_linux", "cassandra_data") == {
+        "cassandra_linux_sysctl": {"vm.max_map_count": 1048575, "vm.swappiness": 1, "net.core.somaxconn": 4096},
+        "cassandra_linux_sysctl_file": "/etc/sysctl.d/90_cassandra.conf",
+        "cassandra_linux_limits": {}, "cassandra_linux_nproc_all": False,
+        "cassandra_linux_thp_enabled": "kernel", "cassandra_linux_thp_defrag": "kernel",
+        "cassandra_linux_timesync_servers": ["server ntp1.example.org iburst", "server ntp2.example.org iburst prefer"],
+        "cassandra_data_readahead_kb": "kernel", "cassandra_data_scheduler": "keep",
+        "cassandra_data_lvm_readahead": "auto"}
+    assert r["keep"] == {}
+    # cassandra_linux_manage true: nothing the role would change, not even with no effect
+    assert cassandra_linux_changes(owner_like(), would_be(r["vars"]), RHEL, False) == []
+    # with the stock defaults instead: far from a no-op
+    assert len(cassandra_linux_changes(owner_like(), linux(), RHEL, False)) > 5
+
+
+def test_thp_carried():
+    # nothing sets it: the kernel's
+    r = found("thp|enabled|[always] madvise never\nthp|defrag|always [madvise] never\n")
+    assert part(r, "cassandra_linux_thp") == {"cassandra_linux_thp_enabled": "kernel", "cassandra_linux_thp_defrag": "kernel"}
+    # something sets it at boot (a unit, the kernel command line, tuned): its values, which the role's unit writes
+    unit = "thp_unit|/etc/systemd/system/thp.service|enabled\n"
+    r = found("thp|enabled|always [madvise] never\nthp|defrag|always [madvise] never\n" + unit)
+    assert part(r, "cassandra_linux_thp") == {"cassandra_linux_thp_enabled": "madvise", "cassandra_linux_thp_defrag": "madvise"}
+    tuned = "tuned_conf|/etc/tuned/db/tuned.conf|[vm]\ntuned_conf|/etc/tuned/db/tuned.conf|transparent_hugepages=madvise\n"
+    assert part(found("thp|enabled|always [madvise] never\nthp|defrag|always madvise [never]\n" + tuned),
+                "cassandra_linux_thp") == {"cassandra_linux_thp_enabled": "madvise"}
+    # the role's unit, THP off: the defaults, nothing written
+    r = found("thp|enabled|always madvise [never]\nthp|defrag|always madvise [never]\n"
+              "thp_unit|/etc/systemd/system/disable-thp.service|enabled\n", own=True)
+    assert part(r, "cassandra_linux_thp") == {}
+
+
+def test_swap_carried():
+    r = found("swap_on|/dev/dm-1 partition 2097148K\n")
+    assert r["vars"]["cassandra_linux_swap_off"] is False
+    assert "cassandra_linux_swap_off" not in found("")["vars"]
+
+
+def test_nproc_all_carried_on_redhat():
+    assert found("", os_family="RedHat")["vars"]["cassandra_linux_nproc_all"] is False
+    there = "limits|/etc/security/limits.d/90-nproc.conf|* - nproc 32768\n"
+    assert "cassandra_linux_nproc_all" not in found(there, os_family="RedHat")["vars"]
+    assert "cassandra_linux_nproc_all" not in found("", os_family="Debian")["vars"]
+
+
+def test_scheduler_and_lvm_carried():
+    ssd = SDB1_SSD.replace('"sched": "none"', '"sched": "mq-deadline"')
+    r = found(ssd)
+    assert part(r, "cassandra_data") == {"cassandra_data_readahead_kb": "kernel", "cassandra_data_scheduler": "keep"}
+    assert part(found(SDB1_SSD), "cassandra_data") == {"cassandra_data_readahead_kb": "kernel"}
+
+
+# --- the model with the variables of rc10 ---
+
+def test_thp_unit_template_writes_the_unit_of_earlier_versions():
+    # never/never: the very file earlier versions copied (no rewrite on the nodes they set up)
+    assert hashlib.sha1(thp_unit({"enabled": "never", "defrag": "never"}).encode()).hexdigest() == \
+        "0eb0320872bcba95824374ce4a88b902a9827fea"
+    assert "echo 'madvise' > /sys/kernel/mm/transparent_hugepage/defrag\"" in thp_unit({"defrag": "madvise"})
+    assert "enabled" not in thp_unit({"defrag": "madvise"}).split("ExecStart")[1]
+
+
+def test_model_thp_values():
+    # the role's unit with madvise where the node has never: the unit rewritten, THP changed live
+    assert [(c["what"], c["effect"]) for c in changes(role_built(), thp_enabled="madvise")] == [
+        ("/etc/systemd/system/disable-thp.service", "change"), ("transparent_hugepage enabled (live)", "change")]
+    # keep: nothing, whatever the node has
+    assert changes(role_built(thp="always"), thp_enabled="keep", thp_defrag="keep") == []
+    # kernel on both: its unit removed (what THP is at the next boot: the kernel's, not known here)
+    assert changes(role_built(), thp_enabled="kernel", thp_defrag="kernel") == [{
+        "what": "/etc/systemd/system/disable-thp.service", "now": "enabled",
+        "would": "removed (THP left to the kernel at boot)", "effect": "change"}]
+    no_unit = role_built().replace("thp_own|sum|%s\nthp_own|boot|enabled\n" % THP_SUM, "thp_own|boot|\n")
+    assert changes(no_unit, thp_enabled="kernel", thp_defrag="kernel") == []
+
+
+def test_model_swap_limits_nproc_switches():
+    swap = role_built() + "swap_on|/dev/dm-1 partition 2097148K\nswap_fstab|/dev/x none swap defaults 0 0\n"
+    assert changes(swap, swap_off=False) == []
+    other = role_built(limits={"nofile": 100000})
+    assert changes(other, limits={}) == []
+    # another file of the role's: written there (the cassandra user's limits the same: no effect)
+    assert [(c["what"], c["effect"]) for c in changes(role_built(), limits_file="/etc/security/limits.d/92-c.conf")] \
+        == [("/etc/security/limits.d/92-c.conf", "no effect")]
+    no_nproc = role_built().replace("limits|/etc/security/limits.d/90-nproc.conf|* - nproc 32768\n", "")
+    assert changes(no_nproc, nproc_all=False) == []
+
+
+def test_model_disk_variables():
+    by_hand = SSD_TUNED.replace('"ra": 4', '"ra": 128').replace('"sched": "none"', '"sched": "mq-deadline"')
+    # the kernel's read-ahead, the scheduler kept: nothing to set on them
+    assert changes(role_built() + by_hand, readahead_kb="kernel", scheduler="keep") == []
+    # the scheduler kept, the read-ahead set
+    assert [c["what"] for c in changes(role_built() + by_hand, scheduler="keep") if c["effect"] == "change"] == [
+        "read_ahead_kb sdb (live)", "/etc/udev/rules.d/64-cassandra-data-disk.rules"]
+    # the role's rule there while nothing is to be kept: removed (no effect on the devices now)
+    rule = 'udev|/etc/udev/rules.d/64-cassandra-data-disk.rules|ENV{ID_SERIAL}=="x", ATTR{queue/read_ahead_kb}="4"\n'
+    assert changes(role_built() + by_hand + rule, readahead_kb="kernel", scheduler="keep", lvm_readahead="auto") == [
+        {"what": "/etc/udev/rules.d/64-cassandra-data-disk.rules", "now": "present", "would": "removed",
+         "effect": "no effect"}]
+    lv = blk("vg1-cassandra", "dm-2", "253:2", "lvm", 128, True, "", "/data")
+    disks = disk_records([blk("sdb", "sdb", "8:16", "disk", 128, True, "mq-deadline", children=[lv])],
+                         [("/data/c/data", "253:2", "/data", "xfs")], lvs=["253|2|vg1|cassandra|256"])
+    # LVM's own read-ahead asked for, the volume has 256 sectors: lvchange
+    assert [(c["what"], c["would"]) for c in changes(role_built() + disks, readahead_kb="kernel", lvm_readahead="auto")] \
+        == [("LVM read-ahead vg1/cassandra (sectors) (lvchange, Cassandra stopped)", "auto"),
+            # (its scheduler line: the rule says none for an SSD it is put on)
+            ("/etc/udev/rules.d/64-cassandra-data-disk.rules", "written")]
+
+
+def test_model_chrony_servers():
+    servers = "timesync_server|/etc/chrony.conf|pool 2.rhel.pool.ntp.org iburst\n"
+    assert changes(role_built() + servers, timesync_servers=["pool 2.rhel.pool.ntp.org   iburst"]) == []
+    assert changes(role_built() + servers, timesync_servers=["server ntp1.example.org iburst"]) == [
+        {"what": "chrony server line", "now": "pool 2.rhel.pool.ntp.org iburst", "would": "commented out",
+         "effect": "change"},
+        {"what": "chrony server line", "now": "absent", "would": "server ntp1.example.org iburst", "effect": "change"}]
+    assert changes(role_built() + servers) == []  # none listed: chrony.conf left as it is

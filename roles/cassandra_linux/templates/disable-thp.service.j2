@@ -1,0 +1,9 @@
+[Unit]
+Description={{ 'Disable' if _cassandra_linux_thp_set.values() | unique | list == ['never'] else 'Set' }} Transparent Huge Pages (THP)
+
+[Service]
+Type=simple
+ExecStart=/bin/sh -c "{% for name, value in _cassandra_linux_thp_set.items() %}{{ ' && ' if not loop.first else '' }}echo '{{ value }}' > /sys/kernel/mm/transparent_hugepage/{{ name }}{% endfor %}"
+
+[Install]
+WantedBy=multi-user.target

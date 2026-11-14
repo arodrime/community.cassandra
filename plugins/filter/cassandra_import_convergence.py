@@ -99,7 +99,8 @@ def _kind(key):
         return "restart"
     if key == "cassandra_rpm_conf_alternative":  # (apply_config moves the config to it, then restarts)
         return "restart"
-    if key.startswith("cassandra_linux_") or key in ("cassandra_data_readahead_kb", "cassandra_data_disk_tuning"):
+    if key.startswith("cassandra_linux_") or key in ("cassandra_data_readahead_kb", "cassandra_data_disk_tuning",
+                                                     "cassandra_data_scheduler", "cassandra_data_lvm_readahead"):
         return "os"
     if key in ("cassandra_config_template_snippets", "cassandra_config_template_overrides"):  # (a config file's text)
         return "restart"

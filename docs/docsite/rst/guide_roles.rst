@@ -1370,14 +1370,15 @@ hints, saved caches and log directories not owned by that account (``cassandra_c
 as they are, and creates the missing ones ``cassandra_user:cassandra_group`` mode ``0750``).
 
 What the roles would replace on a node that was set up another way is left as it is there: the package repositories,
-the OS settings (kernel, limits, THP, swap, time sync, disks), cqlsh's Python, the systemd unit (or init script)
-Cassandra is started by, the system java and the firewall. A part that has no mark of the roles (their repository file or ``Managed by Ansible`` header), and every node that could not be read, gets the matching switch set to false in its
-``host_vars`` (``cassandra_repository_manage``, ``cassandra_linux_manage``, ``cassandra_cqlsh_python_manage``,
-``cassandra_service_unit_manage``, with ``cassandra_imported_host: true`` for the last three), never in
-``group_vars``: nodes added later get the roles' full setup. The same goes for the firewall (``cassandra_firewall_manage: false`` on
-every imported node), the tuning of the data devices of a node the roles set up when ``cassandra_linux`` would change
-it now (read-ahead, scheduler, its udev rule, tuned's profiles: its earlier versions did not tune LVM, md or dm-crypt,
-and named their udev rule otherwise; ``cassandra_data_disk_tuning: false``) and the packages a node lacks: ``cassandra-tools``, jemalloc, dsbulk and, on Debian and Ubuntu,
+cqlsh's Python, the systemd unit (or init script) Cassandra is started by, the system java and the firewall. A part
+that has no mark of the roles (their repository file or ``Managed by Ansible`` header), and every node that could not
+be read, gets the matching switch set to false in its ``host_vars`` (``cassandra_repository_manage``,
+``cassandra_cqlsh_python_manage``, ``cassandra_service_unit_manage``, with ``cassandra_imported_host: true`` for the
+last two; a node not read gets ``cassandra_linux_manage: false`` too), never in ``group_vars``: nodes added later get
+the roles' full setup. The OS settings of a node read are imported instead (below). The same goes for the firewall
+(``cassandra_firewall_manage: false`` on every imported node), the tuning of the data devices when ``cassandra_linux``
+would still change it with the imported values (a read-ahead no variable gives, tuned's profiles, an udev rule of an
+earlier version on devices that differ; ``cassandra_data_disk_tuning: false``) and the packages a node lacks: ``cassandra-tools``, jemalloc, dsbulk and, on Debian and Ubuntu,
 the hold (``cassandra_install_tools``, ``cassandra_install_jemalloc``, ``cassandra_dsbulk_install``,
 ``cassandra_package_hold``); a dsbulk the role's way keeps its ``cassandra_dsbulk_version``. Remove a line to let the role take that part over,
 after a ``--check --diff``; a host rebuilt under the same name must lose them and ``cassandra_imported_host``
@@ -1431,27 +1432,33 @@ settings for these; swap; the time sync service and its servers; the firewall (f
 rules for the Cassandra ports). Lines every node read has are shown once. What a variable covers is then carried into the
 inventory, so that nodes added later get the same tuning as the existing ones (which stay as they are):
 
-* ``cassandra_linux_sysctl``: the values the admin's files set (files under ``/etc`` that no package ships, apart
-  from ``/etc/sysctl.conf``), for the role's keys and every key of a file named for Cassandra; and
-  ``cassandra_linux_sysctl_file``, the file that sets most of them (not ``/etc/sysctl.conf`` when no link in
-  ``/etc/sysctl.d`` has systemd-sysctl read it at boot). The role then writes its keys in that same file,
-  line by line, keeping its other lines, rather than in a second file where one of the two would silently
-  override the other.
-* ``cassandra_linux_limits``: the ``cassandra`` user's own limits (its user or group lines; soft and hard must be the
-  same, the role sets both). The role keeps its own file, ``limits.d/cassandra.conf``, which it writes whole.
+* ``cassandra_linux_sysctl``: the keys of the admin's file that sets most of the role's (files under ``/etc`` that
+  no package ships, apart from ``/etc/sysctl.conf``), exactly the keys of that file; and ``cassandra_linux_sysctl_file``,
+  that file (not ``/etc/sysctl.conf`` when no link in ``/etc/sysctl.d`` has systemd-sysctl read it at boot). The role
+  then writes its keys in that same file, line by line, keeping its other lines, and adds or moves none. No such file:
+  ``cassandra_linux_sysctl: {}`` (the role sets none); a key of the role's set elsewhere is listed, not carried.
+* ``cassandra_linux_limits: {}``: the role writes no limits file (a file of its own would change the limits the
+  node's files give, e.g. rewrite the package's ``limits.d/cassandra.conf``); on a node the role set up, the values of
+  its own file. ``cassandra_linux_nproc_all: false`` on RedHat without the role's ``* - nproc 32768`` line.
 * ``cassandra_service_limit_*``: the unit's ``Limit*`` lines.
+* ``cassandra_linux_thp_enabled``, ``cassandra_linux_thp_defrag``: the values the node has now when something sets
+  them at boot (the role's unit or another, a kernel argument, grub, tuned): the role's unit then writes those; else
+  ``kernel`` (nothing found that sets them: the role sets none, and says what the node has now).
+* ``cassandra_linux_swap_off: false`` on a node with swap (active or in ``/etc/fstab``).
 * ``cassandra_data_readahead_kb``: the read-ahead of the udev rules, when they all set one value and the data disks
-  have it. The role keeps its own rule file, which it writes whole, for the data disks only.
-* ``cassandra_linux_timesync: false`` when the nodes keep their time with a service other than chrony or
-  systemd-timesyncd (ntpd): the role would install chrony, whose unit stops it.
+  have it (the role keeps its own rule file, which it writes whole, for the data disks only); ``kernel`` when no
+  udev rule sets one. ``cassandra_data_scheduler: keep`` when an SSD runs another scheduler than none,
+  ``cassandra_data_lvm_readahead: auto`` when the data's LVM volumes have LVM's own read-ahead.
+* ``cassandra_linux_timesync: false`` when the service the role would start (chronyd; chrony, else systemd-timesyncd
+  on Debian and Ubuntu) is not the one running and started at boot (ntpd, nothing, chrony stopped...);
+  ``cassandra_linux_timesync_servers``: chrony's server, pool and peer lines of its ``chrony.conf`` (in a
+  ``chrony.d`` file: not carried, listed).
 
-THP, swap, ``tuned``, the time servers and the firewall are only reported: the role disables THP and swap the same
-way whatever the nodes use (swap only when what it holds fits easily in the memory available), does not write time servers, and only opens the firewall with
-``cassandra_manage_firewall: true``; the imported nodes get ``cassandra_firewall_manage: false`` (their firewall, or
-none, is left as it is; nodes added later get the role's). A node the role set up keeps the values of the role's own files (its sysctl
-file, ``limits.d/cassandra.conf``, the unit it wrote, not its drop-ins), so that running the roles again changes
-nothing on it; when those files do not hold them, the values in effect are carried, and a node without time sync gets
-``cassandra_linux_timesync: false`` rather than a chrony it does not have.
+``tuned`` and the firewall are only reported: the role only opens the firewall with ``cassandra_manage_firewall:
+true``; the imported nodes get ``cassandra_firewall_manage: false`` (their firewall, or none, is left as it is; nodes
+added later get the role's). A node the role set up keeps the values of the role's own files (its sysctl file,
+``limits.d/cassandra.conf``, the unit it wrote, not its drop-ins). With these values ``cassandra_linux`` changes nothing
+on the nodes: the self-check makes sure of it (below).
 
 A node of the ring the import could not read (down, unreachable, nodetool not found, or its running Java removed by
 an update since it started: restart it first) makes it fail: the roles would
@@ -1573,10 +1580,11 @@ imported variables (``cassandra.yaml``, ``cassandra-env.sh``, the JVM options, r
 and the unit and ``medusa.ini`` when the roles manage them) are compared with the node's, setting by setting, as
 Cassandra, the JVM, bash and systemd read them; and the owner, group and mode ``cassandra_config`` would give the
 config and JMX files with the node's (one line per file that differs). On a node whose ``cassandra_linux_manage`` stays
-true (one the roles set up), what ``cassandra_linux`` would change there is worked out from what the import read:
+true (every node read, unless a file of yours sets it false), what ``cassandra_linux`` would change there is worked
+out from what the import read:
 the kernel settings (live and in their files, the same keys out of ``/etc/sysctl.conf``), swap, its limits file, the
 block its earlier versions wrote in ``limits.conf`` and RedHat's ``90-nproc.conf`` line, THP and its
-``disable-thp.service``, time sync, and the data devices (read-ahead, scheduler, LVM read-ahead, its udev rule,
+``disable-thp.service``, time sync and chrony's servers, and the data devices (read-ahead, scheduler, LVM read-ahead, its udev rule,
 tuned's profiles). Each change is a difference, under its own heading; a file the role would write that leaves the
 node's values as they are now (e.g. ``90-nproc.conf`` where the cassandra user's limit stays the same) is not, the
 report notes it as "no effect". The way out keeps the part as the nodes have it, in a file of yours

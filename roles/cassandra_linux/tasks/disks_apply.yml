@@ -24,7 +24,8 @@
         _cassandra_disk_tuned: >-
           {{ cassandra_data_tuned.stdout_lines | default([]) | community.cassandra.cassandra_disk_tuned_profile(
                _cassandra_disk_devices, _cassandra_disk_state, cassandra_data_udev_info, _cassandra_readahead_read_back)
-             if cassandra_linux_tuned_manage | bool and _cassandra_data_tuned_lvm_here | bool else {} }}
+             if cassandra_linux_tuned_manage | bool and _cassandra_data_tuned_lvm_here | bool
+                and _cassandra_readahead_read_back | string != '' else {} }}
         # the profile switch left for later: Cassandra runs
         _cassandra_disk_tuned_deferred: >-
           {{ _cassandra_data_running | default(false) | bool and not cassandra_linux_tuned_switch_running | bool }}
@@ -109,7 +110,7 @@
           when:
             - cassandra_data_tuned_switch is not skipped
             - not _cassandra_linux_check
-            - thp is defined  # the unit os.yml installs
+            - _cassandra_linux_thp_set | default({}) | length > 0  # the unit os.yml installs
             - _cassandra_linux_boot | bool
           changed_when: false
 
@@ -167,7 +168,7 @@
         _cassandra_disk_udev_lines: >-
           {{ _cassandra_disk_devices | community.cassandra.cassandra_disk_udev_rules(
                _cassandra_disk_state, cassandra_data_udev_info, cassandra_data_readahead_kb, _by_lvm,
-               cassandra_sysfs_block_root != '/sys/block') }}
+               cassandra_sysfs_block_root != '/sys/block', cassandra_data_scheduler) }}
       vars:
         _lvm_failed: >-
           {{ (cassandra_data_lvchange.results | default([]) | selectattr('rc', 'defined') | rejectattr('rc', 'equalto', 0) | list
@@ -180,9 +181,9 @@
               | reject('in', _lvm_failed | map(attribute='kname') | list) | list
               if _cassandra_data_lvchange_now | bool else
               _cassandra_disk_devices | selectattr('kind', 'equalto', 'lvm') | rejectattr('os')
-              | selectattr('lv_read_ahead', 'equalto', (_cassandra_readahead_read_back | int * 2) | string)
+              | selectattr('lv_read_ahead', 'equalto', _cassandra_lv_readahead)
               | map(attribute='kname') | list)
-             if _cassandra_data_lvm_here | bool else [] }}
+             if _cassandra_data_lvm_here | bool and _cassandra_lv_readahead not in ['', 'auto'] else [] }}
 
     - name: Keep the settings across reboots (udev rule)
       ansible.builtin.template:
@@ -219,9 +220,9 @@
   ansible.builtin.set_fact:
     _cassandra_disk_lvm_window: >-
       {{ _cassandra_disk_devices | selectattr('kind', 'equalto', 'lvm') | rejectattr('os')
-         | rejectattr('lv_read_ahead', 'equalto', (_cassandra_readahead_read_back | int * 2) | string)
+         | rejectattr('lv_read_ahead', 'equalto', _cassandra_lv_readahead)
          | rejectattr('lv', 'in', _cassandra_disk_refused | select('match', '^lvm ') | map('regex_replace', '^lvm ', '') | list)
          | list
-         if _cassandra_data_lvm_here | bool and not _cassandra_data_lvchange_now | bool
+         if _cassandra_data_lvm_here | bool and not _cassandra_data_lvchange_now | bool and _cassandra_lv_readahead != ''
             and _cassandra_linux_restart_window | default(false) | bool and cassandra_data_lvchange_restart | bool
          else [] }}

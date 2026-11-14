@@ -1,0 +1,16 @@
+minor_changes:
+  - >-
+    cassandra_linux - new variables to keep a node's own OS settings, their defaults the role's behaviour so far:
+    ``cassandra_linux_thp_enabled`` and ``cassandra_linux_thp_defrag`` (``never``; ``always``, ``madvise``,
+    ``defer``..., ``kernel`` to set none, ``keep``), ``cassandra_linux_swap_off`` (``true``),
+    ``cassandra_linux_limits_file`` and ``cassandra_linux_limits: {}`` to write no limits file,
+    ``cassandra_linux_nproc_all`` (``true``, RedHat's ``90-nproc.conf`` line), ``cassandra_data_scheduler``
+    (``none``, or ``keep``), ``cassandra_data_lvm_readahead`` (``""``, or ``auto``), ``cassandra_data_readahead_kb:
+    kernel``, and ``cassandra_linux_timesync_servers`` (chrony's server lines, none written by default). A value
+    outside the listed ones stops the role, naming them.
+  - >-
+    import_cluster - the OS settings of the nodes read are imported instead of left aside: no more
+    ``cassandra_linux_manage: false`` for a node set up another way. Their THP, swap, limits (none written over the
+    node's own files), the RedHat nproc line, the data devices' read-ahead, scheduler and LVM read-ahead, time sync and
+    chrony's servers become the variables above, and the sysctl keys of the file the role would write in, exactly; so
+    ``cassandra_linux`` run on them changes nothing, which the self-check verifies.

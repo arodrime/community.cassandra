@@ -174,6 +174,50 @@
           - cassandra_timesync_install is skipped
           - cassandra_timesync_unit.rc == 0 or ansible_check_mode  # not installed yet under molecule's check step
 
+    # the values import_cluster writes for a node set up another way: nothing touched
+    - name: Run cassandra_linux leaving THP, swap, limits and the disks as they are
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_linux
+      vars:
+        cassandra_linux_thp_enabled: keep
+        cassandra_linux_thp_defrag: keep
+        cassandra_linux_swap_off: false
+        cassandra_linux_limits: {}
+        cassandra_linux_nproc_all: false
+        cassandra_data_readahead_kb: kernel
+        cassandra_data_scheduler: keep
+        cassandra_data_block_device: /dev/sdz
+        cassandra_sysfs_block_root: /tmp/fake-sys/block
+
+    - name: Check none of them was written
+      ansible.builtin.assert:
+        that:
+          - thp is skipped
+          - cassandra_linux_nproc is skipped
+          - _cassandra_data_tuned_here is false
+
+    # (under check: the stock values stay for the idempotence and verify steps)
+    - name: Run cassandra_linux with THP left to the kernel and chrony servers, under check
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_linux
+        apply:
+          check_mode: true
+      vars:
+        _cassandra_linux_compare: true
+        cassandra_linux_thp_enabled: kernel
+        cassandra_linux_thp_defrag: kernel
+        # (chrony on the RedHat family; systemd-timesyncd on Debian refuses servers)
+        cassandra_linux_timesync_servers: "{{ ['server 192.0.2.10 iburst'] if ansible_facts['os_family'] != 'Debian' else [] }}"
+      tags: molecule-idempotence-notest  # (check mode: what it would change, reported as changed)
+
+    - name: Check the THP unit would be removed and the server added
+      ansible.builtin.assert:
+        that:
+          - cassandra_linux_thp_removed is changed
+          - ansible_facts['os_family'] == 'Debian' or cassandra_linux_chrony_added is changed
+      when: not ansible_check_mode  # (molecule's check step: nothing installed yet)
+      tags: molecule-idempotence-notest
+
     # ansible.posix (firewalld in cassandra_firewall) resolves
     - name: Regression check - ansible.posix.mount must resolve
       ansible.posix.mount:

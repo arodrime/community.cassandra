@@ -38,19 +38,29 @@ def when(t, **variables):
     return all(render("{{ %s }}" % c, **variables) in (True, "True") for c in t["when"])
 
 
-def test_thp_defrag_in_the_change_list():
+def test_thp_in_the_change_list():
     snapshot = task("cassandra_linux", "Read the current OS settings", "snapshot.yml")
     assert "/sys/kernel/mm/transparent_hugepage/defrag" in snapshot["ansible.builtin.shell"]
-    t = task("cassandra_linux", "Add the THP defrag to the change list", "report.yml")
+    t = task("cassandra_linux", "Add transparent_hugepage to the change list", "report.yml")
     before = {"thp|enabled": "always", "thp|defrag": "madvise"}
-    assert when(t, _cassandra_linux_live=True, _cassandra_linux_before=before)
-    items = render(t["ansible.builtin.set_fact"]["_cassandra_linux_items"], _cassandra_linux_items=[],
-                   _cassandra_linux_before=before)
-    assert items == [{"item": "transparent_hugepage defrag", "before": "madvise", "after": "never"}]
-    # THP off already (the unit is not started), defrag never, or not live: nothing
-    for b, live in ((dict(before, **{"thp|enabled": "never"}), True), (dict(before, **{"thp|defrag": "never"}), True),
-                    (before, False)):
-        assert not when(t, _cassandra_linux_live=live, _cassandra_linux_before=b)
+    wanted = {"enabled": "never", "defrag": "never"}
+
+    def items(**variables):
+        out = []
+        for item in t["loop"]:
+            v = dict(dict(_cassandra_linux_live=True, _cassandra_linux_before=before, _cassandra_linux_thp_set=wanted,
+                          _cassandra_linux_items=[]), item=item, **variables)
+            if when(t, **v):
+                out += render(t["ansible.builtin.set_fact"]["_cassandra_linux_items"], **v)
+        return out
+    assert items() == [{"item": "transparent_hugepage", "before": "always", "after": "never"},
+                       {"item": "transparent_hugepage defrag", "before": "madvise", "after": "never"}]
+    # the values the inventory gives (kernel or keep: not set), not live, no THP: none
+    assert items(_cassandra_linux_thp_set={"defrag": "madvise"}) == []
+    assert items(_cassandra_linux_thp_set={"enabled": "madvise"}) == [
+        {"item": "transparent_hugepage", "before": "always", "after": "madvise"}]
+    assert items(_cassandra_linux_live=False) == []
+    assert items(_cassandra_linux_before={"thp|enabled": "", "thp|defrag": ""}) == []
 
 
 def test_unit_left_active_with_no_cassandra_shown_under_check():

@@ -34,7 +34,7 @@
       {%- endif -%}
       {%- for d in _cassandra_disk_lvm_window if _cassandra_linux_check -%}
       {%-   set _ = out.append({'item': 'LVM read-ahead ' ~ d.lv ~ ' (sectors)', 'before': d.lv_read_ahead,
-                               'after': ((_cassandra_readahead_read_back | int * 2) or 'none') | string,
+                               'after': _cassandra_lv_readahead,
                                'restart': 'LVM read-ahead'}) -%}
       {%- endfor -%}
       {%- if cassandra_data_disk_udev is changed -%}
@@ -53,7 +53,7 @@
   ansible.builtin.set_fact:
     _cassandra_disk_summary:
       name: "{{ inventory_hostname }}"
-      kb: "{{ _cassandra_readahead_read_back }}"
+      kb: "{{ _cassandra_readahead_read_back if _cassandra_readahead_read_back | string != '' else 'kernel' }}"
       changed: "{{ _cassandra_disk_items | length > 0 }}"
       brief: "{{ _cassandra_disk_plan.brief | default([]) }}"
       stacks: "{{ _cassandra_disk_plan.stacks | default([]) }}"
@@ -108,15 +108,15 @@
               if _lvm_by_udev | length > 0 and not _cassandra_data_lvm_here | bool else [])
            + (['LVM volumes of the OS kept by the udev rule (never reloaded with lvchange): LVM may set them back'
                ' when it activates them'] if _cassandra_disk_devices | selectattr('kind', 'equalto', 'lvm') | selectattr('os')
-               | rejectattr('lv_read_ahead', 'equalto', (_cassandra_readahead_read_back | int * 2) | string) | list
-               | length > 0 else [])
+               | rejectattr('lv_read_ahead', 'equalto', _cassandra_lv_readahead) | list
+               | length > 0 and _cassandra_lv_readahead not in ['', 'auto'] else [])
            + (['tuned: ' ~ ('would run' if _cassandra_linux_check else 'runs') ~ ' ' ~ _cassandra_disk_tuned.profiles | join(' ')
                ~ ' (' ~ _cassandra_disk_tuned.name ~ ': nothing set on the Cassandra devices)'] if _tuned_ok | bool else []) }}
   vars:
     # LVM volumes (not the OS's) whose read-ahead LVM doesn't keep yet: the udev rule does
     _lvm_by_udev: >-
-      {{ [] if _cassandra_data_lvchange_now | bool else _cassandra_disk_devices | selectattr('kind', 'equalto', 'lvm')
-         | rejectattr('os') | rejectattr('lv_read_ahead', 'equalto', (_cassandra_readahead_read_back | int * 2) | string)
+      {{ [] if _cassandra_data_lvchange_now | bool or _cassandra_lv_readahead in ['', 'auto'] else _cassandra_disk_devices | selectattr('kind', 'equalto', 'lvm')
+         | rejectattr('os') | rejectattr('lv_read_ahead', 'equalto', _cassandra_lv_readahead)
          | list }}
     # (no rc: a timeout)
     _tuned_failed: >-
@@ -130,10 +130,12 @@
     _lvm_refused: >-
       {{ _lvm_by_udev | selectattr('lv', 'in', _cassandra_disk_refused | select('match', '^lvm ')
                                                 | map('regex_replace', '^lvm ', '') | list) | list }}
-    _lv_sectors: "{{ ((_cassandra_readahead_read_back | int * 2) or 'none') | string }}"
+    _lv_sectors: "{{ _cassandra_lv_readahead }}"
     _tuned_ok: "{{ _cassandra_disk_tuned.name is defined and not _tuned_failed | bool and not _tuned_deferred | bool }}"
+    # (the read-ahead left to the kernel: tuned's is not the role's business)
     _tuned_warn: >-
-      {{ cassandra_data_tuned.stdout_lines | default([]) | community.cassandra.cassandra_disk_tuned_conflict(
+      {{ '' if _cassandra_readahead_read_back | string == '' else
+         cassandra_data_tuned.stdout_lines | default([]) | community.cassandra.cassandra_disk_tuned_conflict(
            _cassandra_readahead_read_back, _cassandra_disk_devices, _cassandra_disk_state | default({}),
            cassandra_data_udev_info | default({}), cassandra_linux_tuned_manage | bool, _cassandra_linux_live | bool) }}
   when: _cassandra_data_tuned_here | bool

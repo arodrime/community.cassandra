@@ -1,0 +1,140 @@
+from __future__ import (absolute_import, division, print_function)
+__metaclass__ = type
+
+# cassandra_linux's values that leave a node's settings as they are (rc10): THP (values, kernel, keep), swap,
+# limits, the RedHat nproc line, chrony's servers; their stock defaults unchanged.
+
+import os
+
+import pytest
+import yaml
+from ansible.parsing.dataloader import DataLoader
+from ansible.template import Templar
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
+
+try:  # ansible-core 2.19+ renders trusted templates only
+    from ansible.template import trust_as_template
+except ImportError:
+    def trust_as_template(template):
+        return template
+
+ROLE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_linux")
+
+
+def defaults():
+    with open(os.path.join(ROLE, "defaults", "main.yml")) as f:
+        return yaml.safe_load(f)
+
+
+def task(name, path):
+    todo = load_tasks(os.path.join(ROLE, "tasks", path))
+    while todo:
+        t = todo.pop(0)
+        if t.get("name") == name:
+            return t
+        todo[0:0] = t.get("block", [])
+    raise KeyError(name)
+
+
+def block(name, path):
+    return next(t for t in load_tasks(os.path.join(ROLE, "tasks", path)) if t.get("name") == name)
+
+
+def render(template, **variables):
+    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
+    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
+
+
+def when(t, **variables):
+    conditions = t["when"] if isinstance(t["when"], list) else [t["when"]]
+    return all(render("{{ %s }}" % c, **variables) in (True, "True") for c in conditions)
+
+
+def test_stock_defaults_unchanged():
+    d = defaults()
+    assert (d["cassandra_linux_thp_enabled"], d["cassandra_linux_thp_defrag"]) == ("never", "never")
+    assert d["cassandra_linux_swap_off"] is True and d["cassandra_linux_nproc_all"] is True
+    assert d["cassandra_linux_limits_file"] == "/etc/security/limits.d/cassandra.conf"
+    assert d["cassandra_linux_timesync_servers"] == []
+    assert (d["cassandra_data_readahead_kb"], d["cassandra_data_scheduler"], d["cassandra_data_lvm_readahead"]) == (4, "none", "")
+
+
+@pytest.mark.parametrize("enabled, defrag, unit, unset", [
+    ("never", "never", {"enabled": "never", "defrag": "never"}, False),
+    ("madvise", "kernel", {"enabled": "madvise"}, False),
+    ("keep", "always", {"defrag": "always"}, False),
+    ("kernel", "kernel", {}, True),  # its unit removed
+    ("kernel", "keep", {}, False),  # (keep: nothing touched)
+    ("keep", "keep", {}, False)])
+def test_thp_unit_values(enabled, defrag, unit, unset):
+    t = task("Decide how THP is set", "os.yml")["ansible.builtin.set_fact"]
+    v = {"cassandra_linux_thp_enabled": enabled, "cassandra_linux_thp_defrag": defrag}
+    assert render(t["_cassandra_linux_thp_set"], **v) == unit
+    assert render(t["_cassandra_linux_thp_unset"], **v) in (unset, str(unset))
+
+
+def test_thp_unit_started_while_a_value_differs():
+    t = task("Ensure service to disable THP is started", "os.yml")
+    base = {"_cassandra_linux_live": True, "_cassandra_linux_check": False, "thp": {"changed": False}}
+    for wanted, before, started in (({"enabled": "never", "defrag": "never"}, ("always", "never"), True),
+                                    ({"enabled": "never", "defrag": "never"}, ("never", "madvise"), True),
+                                    ({"enabled": "never", "defrag": "never"}, ("never", "never"), False),
+                                    ({"defrag": "madvise"}, ("always", "madvise"), False),
+                                    ({"enabled": "madvise"}, ("always", "never"), True),
+                                    ({"enabled": "never"}, ("", ""), False)):  # no THP there
+        v = dict(base, _cassandra_linux_thp_set=wanted,
+                 _cassandra_linux_before={"thp|enabled": before[0], "thp|defrag": before[1]})
+        assert when(t, **v) is started, (wanted, before)
+
+
+@pytest.mark.parametrize("name, variable", [
+    ("Disable Swap", "cassandra_linux_swap_off"), ("Remove swap partitions", "cassandra_linux_swap_off"),
+    ("Extra Limit for RH Derived Distros", "cassandra_linux_nproc_all")])
+def test_switches_off_skip_their_task(name, variable):
+    t = task(name, "os.yml")
+    assert any(variable in str(c) for c in (t["when"] if isinstance(t["when"], list) else [t["when"]]))
+
+
+def test_limits_file_and_none():
+    t = task("Limits of the cassandra user", "os.yml")
+    assert t["ansible.builtin.copy"]["dest"] == "{{ cassandra_linux_limits_file }}"
+    assert not when(t, cassandra_linux_limits={})
+    assert when(t, cassandra_linux_limits={"nofile": 1})
+
+
+def test_value_typo_refused_naming_the_values():
+    t = task("Check the values of the THP and disk settings", "os.yml")
+    item = {"name": "cassandra_linux_thp_enabled", "value": "alwyas", "allowed": ["always", "madvise", "never", "kernel", "keep"]}
+    assert render("{{ %s }}" % t["ansible.builtin.assert"]["that"], item=item) is False
+    assert " ".join(render(t["ansible.builtin.assert"]["fail_msg"], item=item).split()) == (
+        "cassandra_linux_thp_enabled must be always, madvise, never, kernel or keep, not alwyas")
+    lvm = {"name": "cassandra_data_lvm_readahead", "value": "x", "allowed": ["", "auto"]}
+    assert " ".join(render(t["ansible.builtin.assert"]["fail_msg"], item=lvm).split()) == (
+        'cassandra_data_lvm_readahead must be "" or auto, not x')
+    ra = task("Check cassandra_data_readahead_kb", "os.yml")["ansible.builtin.assert"]["that"]
+    assert [render("{{ %s }}" % ra, cassandra_data_readahead_kb=v) for v in (4, "kernel", "4k")] == [True, True, False]
+
+
+def chrony(lines, servers):
+    """The loops of the chrony tasks: (lines commented out, lines added)."""
+    v = {"cassandra_linux_chrony_lines": {"stdout_lines": lines}, "cassandra_linux_timesync_servers": servers}
+    v["_wanted"] = render(block("Time servers (chrony)", "timesync.yml")["vars"]["_wanted"], **v)
+    comment = task("Comment out the server lines not listed", "timesync.yml")
+    add = task("Add the server lines listed", "timesync.yml")
+    v1 = dict(v, _found_wanted=render(comment["vars"]["_found_wanted"], **v))
+    v2 = dict(v, _found=render(add["vars"]["_found"], **v))
+    return render(comment["loop"], **v1), render(add["loop"], **v2)
+
+
+def test_chrony_servers():
+    stock = ["pool 2.rhel.pool.ntp.org iburst"]
+    assert chrony(stock, ["server ntp1.example.org iburst"]) == (stock, ["server ntp1.example.org iburst"])
+    # the same words, other spaces: nothing to do
+    assert chrony(["server  ntp1.example.org   iburst"], ["server ntp1.example.org iburst"]) == ([], [])
+    t = task("Add the server lines listed", "timesync.yml")["ansible.builtin.lineinfile"]
+    # (a commented-out one is uncommented in its place)
+    regexp = render(t["regexp"], item="server ntp1.example.org iburst")
+    assert regexp == r"^\s*#?\s*server\s+ntp1\.example\.org\s+iburst\s*$"
+    stop = task("Refuse time servers for another time sync than chrony", "timesync.yml")
+    assert when(stop, _cassandra_timesync_service="systemd-timesyncd")
+    assert not when(stop, _cassandra_timesync_service="chronyd")
