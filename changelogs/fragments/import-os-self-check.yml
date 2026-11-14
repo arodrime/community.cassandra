@@ -1,0 +1,9 @@
+bugfixes:
+  - >-
+    import_cluster - the self-check now covers the OS settings of a node whose ``cassandra_linux_manage`` stays true
+    (a node the roles set up): what ``cassandra_linux`` would change there (kernel settings live and in their files,
+    swap, its limits file and 90-nproc.conf, THP and its unit, time sync, the data devices' read-ahead, scheduler,
+    LVM read-ahead, udev rule and tuned profiles) fails it, under its own heading, with the switch that keeps it as
+    the nodes have it (``cassandra_linux_manage``, ``cassandra_data_disk_tuning`` or ``cassandra_linux_timesync``
+    false in a file of yours). It passed before while ``apply_config`` would have set THP back to ``never``. A file
+    the role would write with no effect on the node's values passes, said as "no effect" in the report's notes.

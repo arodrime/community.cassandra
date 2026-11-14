@@ -1,6 +1,7 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
+import hashlib
 import json
 import os
 import re
@@ -12,6 +13,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_os import 
     _records,
     _sysctl_line,
     _sysctl_order,
+    cassandra_linux_changes,
     cassandra_os_import,
 )
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout
@@ -711,3 +713,176 @@ def test_own_node_readahead_from_its_own_rule():
                  'udev|/etc/udev/rules.d/70-other.rules|KERNEL=="sdc", ATTR{queue/read_ahead_kb}="128"\n' % own)
         assert found(rules, own=True)["vars"].get("cassandra_data_readahead_kb") == 8
         assert "cassandra_data_readahead_kb" not in found(rules)["vars"]  # not the role's node: several values
+
+
+# --- what cassandra_linux would change on a node (the import's self-check) ---
+
+RHEL = {"os_family": "RedHat"}
+DEBIAN = {"os_family": "Debian"}
+with open(os.path.join(ROLES, "cassandra_linux", "files", "disable-thp.service"), "rb") as _unit:
+    THP_SUM = hashlib.sha1(_unit.read()).hexdigest()
+
+
+def linux(**changes):
+    """cassandra_linux's variables as the self-check hands them over: its defaults."""
+    v = {"sysctl": LINUX["cassandra_linux_sysctl"], "sysctl_file": LINUX["cassandra_linux_sysctl_file"],
+         "limits": LINUX["cassandra_linux_limits"], "timesync": True, "offline": False, "apply_live": "auto",
+         "container_types": LINUX["cassandra_linux_container_types"], "disk_tuning": True, "readahead_kb": 4,
+         "block_device": "", "block_devices": [], "tuned_manage": True, "tune_os_volumes": True}
+    v.update(changes)
+    return v
+
+
+def chosen(values, value):
+    """A sysfs choice file: always [madvise] never."""
+    return " ".join("[%s]" % v if v == value else v for v in values)
+
+
+def role_built(thp="never", defrag="never", limits=None):
+    """The records of a node cassandra_linux set up (RedHat, chronyd), everything as it sets it."""
+    out = "".join("sysctl|/etc/sysctl.d/60-cassandra.conf|%s = %s\nsysctl_live|%s|%s\n" % (k, v, k, v)
+                  for k, v in LINUX["cassandra_linux_sysctl"].items())
+    out += "".join("limits|/etc/security/limits.d/cassandra.conf|cassandra - %s %s\n" % kv
+                   for kv in (limits or LINUX["cassandra_linux_limits"]).items())
+    out += "limits|/etc/security/limits.d/90-nproc.conf|* - nproc 32768\n"
+    out += "thp|enabled|%s\nthp|defrag|%s\n" % (chosen(["always", "madvise", "never"], thp),
+                                                chosen(["always", "defer", "defer+madvise", "madvise", "never"], defrag))
+    out += "thp_own|sum|%s\nthp_own|boot|enabled\n" % THP_SUM
+    out += "chrony_installed|\ntimesync_own|chronyd|active|enabled\ntimesync_own|chrony|inactive|\n"
+    out += "timesync_own|systemd-timesyncd|inactive|\n"
+    return out
+
+
+def changes(text, facts=None, own=True, **variables):
+    return cassandra_linux_changes(text, linux(**variables), facts or RHEL, own)
+
+
+def test_role_built_node_as_the_role_sets_it_changes_nothing():
+    assert changes(role_built()) == []
+
+
+def test_thp_on_a_role_built_node_is_a_change():
+    # the false pass of rc9: THP set back to madvise by hand on a node the roles set up
+    assert changes(role_built(thp="madvise", defrag="madvise")) == [
+        {"what": "transparent_hugepage enabled (live)", "now": "madvise", "would": "never", "effect": "change"},
+        {"what": "transparent_hugepage defrag (live)", "now": "madvise", "would": "never", "effect": "change"}]
+    # in a container nothing is applied live (the host's /sys)
+    assert changes(role_built(thp="madvise"), dict(RHEL, virtualization_type="podman")) == []
+
+
+def test_thp_unit_written_where_thp_is_off_has_no_effect():
+    no_unit = role_built().replace("thp_own|sum|%s\nthp_own|boot|enabled" % THP_SUM, "thp_own|boot|")
+    assert [(c["what"], c["effect"]) for c in changes(no_unit)] == [
+        ("/etc/systemd/system/disable-thp.service", "no effect"), ("disable-thp.service at boot", "no effect")]
+    # THP on: the unit changes it at the next boot (and now)
+    madvise = no_unit.replace("always madvise [never]", "always [madvise] never")
+    assert [c["effect"] for c in changes(madvise)] == ["change", "change", "change"]
+
+
+def test_swap_is_a_change():
+    swap = role_built() + "swap_on|/dev/dm-1 partition 2097148K\nswap_fstab|/dev/mapper/rhel-swap none swap defaults 0 0\n"
+    assert changes(swap) == [
+        {"what": "swap (live)", "now": "on: /dev/dm-1", "would": "off (swapoff -a)", "effect": "change"},
+        {"what": "swap in /etc/fstab", "now": "/dev/mapper/rhel-swap none swap defaults 0 0", "would": "removed",
+         "effect": "change"}]
+
+
+def test_nproc_file_added_with_no_effect_on_the_cassandra_user():
+    no_nproc = role_built().replace("limits|/etc/security/limits.d/90-nproc.conf|* - nproc 32768\n", "")
+    assert changes(no_nproc) == [{"what": "/etc/security/limits.d/90-nproc.conf", "now": "no line * - nproc 32768",
+                                  "would": "* - nproc 32768 added", "effect": "no effect"}]
+    assert not [c for c in changes(no_nproc, DEBIAN) if "nproc" in c["what"]]  # RedHat only
+
+
+def test_limits_file_rewritten_with_other_values_is_a_change():
+    other = role_built(limits={"memlock": "unlimited", "nofile": 100000, "nproc": 32768, "as": "unlimited"})
+    assert changes(other) == [{
+        "what": "limits of the cassandra user: nofile (its logins)",
+        "now": "100000 (/etc/security/limits.d/cassandra.conf)",
+        "would": "1048576 (/etc/security/limits.d/cassandra.conf)", "effect": "change"}]
+    # the same lines without the role's mark: rewritten, no effect
+    assert changes(role_built(), own=False) == [{
+        "what": "/etc/security/limits.d/cassandra.conf",
+        "now": "cassandra - memlock unlimited; cassandra - nofile 1048576; cassandra - nproc 32768; cassandra - as unlimited",
+        "would": "cassandra - memlock unlimited; cassandra - nofile 1048576; cassandra - nproc 32768; cassandra - as"
+                 " unlimited", "effect": "no effect"}]
+
+
+def test_limits_block_of_earlier_versions_removed():
+    block = "limits_block_found|\nlimits_block|cassandra - nofile 100000\nlimits|/etc/security/limits.conf|cassandra - nofile 100000\n"
+    # limits.conf is read first: the role's file wins already, no effect
+    assert [(c["what"], c["effect"]) for c in changes(role_built() + block)] == [
+        ("the block earlier versions wrote in /etc/security/limits.conf", "no effect")]
+    # a key only the block sets: the cassandra user loses it
+    block = block.replace("nofile 100000", "rss 1000")
+    assert changes(role_built() + block) == [{"what": "limits of the cassandra user: rss (its logins)",
+                                              "now": "1000 (/etc/security/limits.conf)", "would": "not set",
+                                              "effect": "change"}]
+
+
+def test_sysctl_live_and_file_changes():
+    swappiness = role_built().replace("sysctl_live|vm.swappiness|1", "sysctl_live|vm.swappiness|60")
+    assert changes(swappiness) == [
+        {"what": "sysctl vm.swappiness (live)", "now": "60", "would": "1", "effect": "change"}]
+    # a key missing in the file, the node has the value live: written, no effect
+    missing = role_built().replace("sysctl|/etc/sysctl.d/60-cassandra.conf|vm.swappiness = 1\n", "")
+    assert changes(missing) == [{"what": "sysctl vm.swappiness (/etc/sysctl.d/60-cassandra.conf)", "now": "not set",
+                                 "would": "1", "effect": "no effect"}]
+    # a role key in /etc/sysctl.conf: removed (the role's file then decides at boot)
+    conf = role_built() + "sysctl|/etc/sysctl.conf|vm.swappiness = 10\n"
+    assert changes(conf) == [{"what": "sysctl vm.swappiness (/etc/sysctl.conf)", "now": "10", "would": "removed",
+                              "effect": "no effect"}]
+    # its file target: the file of the inventory
+    assert changes(role_built(), sysctl={"vm.swappiness": 1}) == []
+    assert changes(role_built(), sysctl={"vm.swappiness": 5})[0] == {
+        "what": "sysctl vm.swappiness (live)", "now": "1", "would": "5", "effect": "change"}
+
+
+def test_time_sync_changes():
+    stopped = role_built().replace("timesync_own|chronyd|active|enabled", "timesync_own|chronyd|inactive|disabled")
+    assert changes(stopped) == [
+        {"what": "time sync chronyd", "now": "inactive", "would": "started", "effect": "change"},
+        {"what": "time sync chronyd at boot", "now": "disabled", "would": "enabled", "effect": "change"}]
+    assert changes(stopped, timesync=False) == []
+    # Debian without chrony: systemd-timesyncd, installed if missing; offline: nothing downloaded, a warning only
+    debian = role_built().replace("chrony_installed|\n", "")
+    assert changes(debian, DEBIAN) == [
+        {"what": "time sync systemd-timesyncd", "now": "inactive, not installed", "would": "installed and started",
+         "effect": "change"},
+        {"what": "time sync systemd-timesyncd at boot", "now": "not found", "would": "enabled", "effect": "change"}]
+    assert changes(debian, DEBIAN, offline=True) == []
+    assert changes(role_built().replace("timesync_own|chrony|inactive|", "timesync_own|chrony|active|enabled"), DEBIAN) == []
+
+
+SSD_TUNED = disk_records([blk("sdb", "sdb", "8:16", "disk", 4, False, "none", "/data")],
+                         [("/data/c/data", "8:16", "/data", "xfs")])
+
+
+def test_disk_changes():
+    rule = 'udev|/etc/udev/rules.d/64-cassandra-data-disk.rules|ENV{ID_SERIAL}=="x", ATTR{queue/read_ahead_kb}="4"\n'
+    assert changes(role_built() + SSD_TUNED + rule) == []
+    # no rule: written, the devices keep what they have now
+    assert changes(role_built() + SSD_TUNED) == [{"what": "/etc/udev/rules.d/64-cassandra-data-disk.rules",
+                                                  "now": "absent", "would": "written", "effect": "no effect"}]
+    # a read-ahead and a scheduler set by hand: changes
+    by_hand = SSD_TUNED.replace('"ra": 4', '"ra": 128').replace('"sched": "none"', '"sched": "mq-deadline"')
+    assert [(c["what"], c["now"], c["would"], c["effect"]) for c in changes(role_built() + by_hand + rule)] == [
+        ("read_ahead_kb sdb (live)", "128", "4", "change"), ("IO scheduler sdb (live)", "mq-deadline", "none", "change")]
+    # the inventory's read-ahead: its rule rewritten (no effect while the disks have it)
+    assert changes(role_built() + SSD_TUNED.replace('"ra": 4', '"ra": 8') + rule, readahead_kb=8) == [
+        {"what": "/etc/udev/rules.d/64-cassandra-data-disk.rules", "now": "read_ahead_kb 4", "would": "read_ahead_kb 8",
+         "effect": "no effect"}]
+    assert changes(role_built() + by_hand, disk_tuning=False) == []
+    assert changes(role_built() + SSD_TUNED + rule, block_devices=["/dev/sdb"]) == [{
+        "what": "data devices", "now": "set by cassandra_data_block_device(s)",
+        "would": "tuned (the import does not work out which devices)", "effect": "change"}]
+
+
+def test_lvm_read_ahead_auto_is_a_change():
+    lv = blk("vg1-cassandra", "dm-2", "253:2", "lvm", 4, True, "", "/data")
+    disks = disk_records([blk("sdb", "sdb", "8:16", "disk", 4, True, "mq-deadline", children=[lv])],
+                         [("/data/c/data", "253:2", "/data", "xfs")], lvs=["253|2|vg1|cassandra|auto"])
+    assert [(c["what"], c["now"], c["would"]) for c in changes(role_built() + disks) if c["effect"] == "change"] == [
+        ("LVM read-ahead vg1/cassandra (sectors) (lvchange, Cassandra stopped)", "auto", "8"),
+        # (meanwhile the udev rule keeps it)
+        ("/etc/udev/rules.d/64-cassandra-data-disk.rules", "absent", "written")]

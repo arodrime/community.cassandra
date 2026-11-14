@@ -461,9 +461,10 @@
         cassandra_output: true
         _forks: "{{ ansible_forks | default(lookup('ansible.builtin.config', 'DEFAULT_FORKS')) | int }}"  # (-f too)
 
+    # (virtual: whether cassandra_linux applies its settings live there, a container's are the host's)
     - name: Gather facts
       ansible.builtin.setup:
-        gather_subset: [network, distribution]
+        gather_subset: [network, distribution, virtual]
 
     # No module reads a running JVM: its command line and its java binary
     - name: Read the running Cassandra (conf dir, Cassandra and Java versions)
@@ -1314,6 +1315,10 @@
         done
         # limits of the cassandra user, of the unit, of the running Cassandra
         seen=; f limits /etc/security/limits.conf /etc/security/limits.d/*.conf
+        # the block earlier versions of cassandra_linux wrote in limits.conf (it removes it)
+        awk '/^#<!-- BEGIN ANSIBLE MANAGED BLOCK -->/ {b = 1; print "limits_block_found|"; next}
+             /^#<!-- END ANSIBLE MANAGED BLOCK -->/ {b = 0}
+             b && !/^[[:space:]]*([#;]|$)/ {print "limits_block|" $0}' /etc/security/limits.conf 2>/dev/null
         echo "groups|$(id -Gn cassandra 2>/dev/null)"
         systemctl cat cassandra 2>/dev/null | awk '/^# \// {p=$2}
           /^[[:space:]]*Limit(NOFILE|NPROC|MEMLOCK|AS)=/ {sub(/^[[:space:]]*/, ""); print "unit|" p "|" $0}'
@@ -1339,6 +1344,10 @@
           esac
           echo "thp_unit|$x|$s"
         done
+        # the unit of cassandra_linux: its content (as the copy module compares it) and its state at boot
+        u=/etc/systemd/system/disable-thp.service
+        [ -f "$u" ] && echo "thp_own|sum|$(sha1sum < "$u" | cut -d' ' -f1)"
+        echo "thp_own|boot|$(systemctl is-enabled disable-thp 2>/dev/null)"
         # tuned: the active profile(s), and the profiles they include
         if [ -f /etc/tuned/active_profile ]; then
           todo=$(cat /etc/tuned/active_profile)
@@ -1390,6 +1399,11 @@
           id=$(systemctl show -p Id --value $s 2>/dev/null); id=${id%.service}; id=${id:-$s}  # no --value before systemd 230
           case " $ids " in *" $id "*) continue ;; esac; ids="$ids $id"
           echo "timesync|$id|active|$(systemctl is-enabled $s 2>/dev/null)"
+        done
+        # the services cassandra_linux picks from (chronyd; on Debian chrony where installed, else systemd-timesyncd)
+        [ -x /usr/sbin/chronyd ] && echo "chrony_installed|"
+        for s in chronyd chrony systemd-timesyncd; do
+          echo "timesync_own|$s|$(systemctl is-active $s 2>/dev/null)|$(systemctl is-enabled $s 2>/dev/null)"
         done
         for x in /etc/chrony.conf /etc/chrony/chrony.conf /etc/chrony.d/*.conf /etc/chrony/conf.d/*.conf \
                  /etc/chrony/sources.d/*.sources /etc/ntp.conf /etc/ntpsec/ntp.conf /etc/systemd/timesyncd.conf \

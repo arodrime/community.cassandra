@@ -912,9 +912,13 @@ def slurped(files):
     return {"results": [{"item": k, "content": base64.b64encode(v.encode()).decode()} for k, v in files.items()]}
 
 
+# (their OS settings left as they are: checked by the tests of the OS model below)
+NOT_OS = {"cassandra_service_unit_manage": False, "cassandra_linux_manage": False}
+
+
 def test_self_check_of_the_nodes_is_the_check_of_each_read_node():
     files = seeded(stock("41x"))
-    inventory, layout = import_node(files, "41x")
+    inventory, layout = import_node(files, "41x", keep=NOT_OS)
     hv = {"import_cluster_slurp": slurped(files), "ansible_facts": FACTS, "import_cluster_conf_dir": "",
           "import_cluster_storage_dir": "/var/lib/cassandra", "import_cluster_java": "11",
           "import_cluster_unit": {"env": {}}, "import_cluster_perms": {"files": {}}}
@@ -1341,7 +1345,7 @@ def test_self_check_of_the_nodes_judges_by_each_nodes_release():
     # import_cluster's one call: the release the node's config was imported by (import_cluster_config.release)
     files = seeded(stock("41x"))
     files["cassandra.yaml"] += "fake_option: 42\n"
-    inventory, layout = import_node(files, "41x")
+    inventory, layout = import_node(files, "41x", keep=NOT_OS)
     hv = {"import_cluster_slurp": slurped(files), "ansible_facts": FACTS, "import_cluster_conf_dir": "",
           "import_cluster_storage_dir": "/var/lib/cassandra", "import_cluster_java": "11",
           "import_cluster_unit": {"env": {}}, "import_cluster_perms": {"files": {}},
@@ -1406,3 +1410,49 @@ def test_a_secret_on_several_lines_is_never_shown(value, keep):
     assert re.search(r"cassandra-env.sh, line \d+:", "\n".join(node["hand_edits"]))
     assert "  + export TRUSTSTORE_PASSWORD=****" in node["hand_edits"] and "  + ****" in node["hand_edits"]
     assert "  + ldap_password=****" in node["hand_edits"] and "  + trust.password=****" in node["hand_edits"]
+
+
+# --- the OS settings cassandra_linux would change (apply_config runs it) ---
+
+def os_check(records="", keep=None, rc=0, without=""):
+    """The self-check of one node whose OS settings were read (a RedHat node the roles set up, with records
+    added, without some), as import_cluster calls it."""
+    from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_os import role_built
+    files = seeded(stock("50x"))
+    inventory, layout = import_node(files, "50x", keep=keep)
+    hv = {"import_cluster_slurp": slurped(files), "ansible_facts": dict(FACTS, os_family="RedHat"),
+          "import_cluster_conf_dir": "", "import_cluster_storage_dir": "/var/lib/cassandra", "import_cluster_java": "17",
+          "import_cluster_unit": {"env": {}}, "import_cluster_perms": {"files": {}},
+          "import_cluster_os_found": {"rc": rc, "stdout": role_built().replace(without, "") + records},
+          "import_cluster_keep": keep or {}}
+    out = cassandra_import_self_check_nodes(inventory, layout["hosts"], [{"address": "10.0.0.1", "host": "h1", "read": True}],
+                                            {"10.0.0.1": "n1"}, {"h1": hv})
+    return out["n1"]
+
+
+def test_os_as_the_role_sets_it_passes():
+    assert os_check("") == {"differences": [], "notes": []}
+
+
+def test_os_change_on_a_role_built_node_fails_the_self_check():
+    # the false pass of rc9: THP madvise where the roles set it up, cassandra_linux_manage true
+    madvise = "thp|enabled|always [madvise] never\n"
+    out = os_check(madvise)
+    assert out["differences"] == ["cassandra_linux: transparent_hugepage enabled (live): node has madvise, the roles"
+                                  " would set never"]
+    # kept as the node has it (cassandra_linux_manage: false): nothing to check
+    assert os_check(madvise, keep=NOT_OS) == {"differences": [], "notes": []}
+
+
+def test_os_file_with_no_effect_is_a_note():
+    # (owner, Q2: a file the roles add with no effect on the node's values passes, said as no effect)
+    out = os_check(without="limits|/etc/security/limits.d/90-nproc.conf|* - nproc 32768\n")
+    assert out == {"differences": [], "notes": [
+        "cassandra_linux: /etc/security/limits.d/90-nproc.conf: no line * - nproc 32768 -> * - nproc 32768 added, no"
+        " effect (the node keeps the values it has now)"]}
+
+
+def test_os_not_read_fails_the_self_check():
+    assert os_check("", rc=1)["differences"] == [
+        "cassandra_linux: the OS settings could not be read on the node, the roles may change them"]
+    assert os_check("", rc=1, keep=NOT_OS)["differences"] == []

@@ -432,14 +432,21 @@ def _host_dirs(with_vars, full):
 # import would write <value>", "<file>: node has <line>, import would write <line>" for a file compared line by line,
 # "<file>: not on the node, the roles would create it", else a line of its own (an error)
 _LINES = re.compile(r"^(cassandra-env\.sh|[^:\s]+\.xml): node has (.*), import would write (.*)$", re.S)
-_SETTING_DIFFERENCE = re.compile(r"^(%s|[^:\s]+): (.+?): node has (.*), import would write (.*)$" % re.escape(HEAP_FILE),
-                                 re.S)
+_SETTING_DIFFERENCE = re.compile(r"^(%s|[^:\s]+): (.+?): node has (.*), (?:import would write|the roles would set) (.*)$"
+                                 % re.escape(HEAP_FILE), re.S)
 _CREATED = re.compile(r"^([^:\s]+): not on the node, the roles would create it$")
 # the kinds of differences, by what makes the self-check pass, in the order shown
-_HAND, _YOURS, _OTHER = "hand", "yours", "other"
+_HAND, _YOURS, _OS, _OTHER = "hand", "yours", "os", "other"
 _KINDS = ((_HAND, "Hand edits no variable covers (cassandra_config would revert them)"),
           (_YOURS, "Your inventory files override the import (Ansible will apply your value)"),
+          (_OS, "OS settings cassandra_linux would change (apply_config runs it)"),
           (_OTHER, "Other differences"))
+# the OS model's differences (cassandra_import_check's): "cassandra_linux: <what>: node has <now>, the roles would set ..."
+_OS_FILE = "cassandra_linux"
+# the switches that keep a part of the OS settings as the nodes have it, by the OS difference's start
+_OS_SWITCHES = (("time sync", "cassandra_linux_timesync: false", "time sync only"),
+                (("read_ahead_kb", "IO scheduler", "LVM read-ahead", "/etc/udev/", "tuned profiles", "data devices"),
+                 "cassandra_data_disk_tuning: false", "the data devices only"))
 SCREEN_VALUE = 50  # a value longer than this is cut on the screen (whole in the report)
 SCREEN_MOST = 100  # the stop's lines at most (the ops callback's rules)
 SELF_CHECK_WIDTH = 110  # the report's SELF-CHECK section
@@ -506,6 +513,8 @@ def _self_check_items(read, self_check, theirs_win=None):
             created = setting is None and node_text is None  # (not one import_keep_hand_edits keeps)
             if real in files_of.get(name, ()) and not d.startswith(f + ": owner") and not created:
                 kind = _HAND
+            elif f == _OS_FILE:
+                kind = _OS
             elif winner:
                 kind = _YOURS
             else:
@@ -563,9 +572,15 @@ def _item_nodes(item):
 
 
 def _changes(items):
-    """the inventory would change 3 settings on 2 nodes."""
-    on = set(n for i in items for n in _item_nodes(i))
-    return "the inventory would change %s on %s" % (out.plural(len(items), "setting"), out.plural(len(on), "node"))
+    """the inventory would change 3 settings on 2 nodes; cassandra_linux would change 1 OS setting on 1 node."""
+    parts = []
+    for mine, text in (([i for i in items if i["kind"] != _OS], "the inventory would change %s on %s"),
+                       ([i for i in items if i["kind"] == _OS], "cassandra_linux would change %s on %s")):
+        on = set(n for i in mine for n in _item_nodes(i))
+        if mine:
+            parts.append(text % (out.plural(len(mine), "OS setting" if text.startswith("cassandra_linux") else "setting"),
+                                 out.plural(len(on), "node")))
+    return "; ".join(parts)
 
 
 def cut_text(text, room):
@@ -577,12 +592,15 @@ def _item_lines(item, who, width, room=None):
     """An item: "- <name>, on <nodes>:", then what differs under it ("node 64, inventory 32", the line the node has,
     "-XX:+UseFoo (not in the inventory)"), a line per value when the nodes differ ("node3: node 128, ..."), where a
     file of yours sets it; room: a value or a line cut to it (the screen), a sentence never."""
+    # (what the OS model says the roles would set: cassandra_linux's, not a value of the inventory)
+    theirs = "cassandra_linux" if item["kind"] == _OS else "inventory"
+
     def value(node_text, role_text):
         if role_text is None:
             return "%s (not in the inventory)" % cut_text(node_text, room)
         if node_text is None:
-            return "not on the node, inventory %s" % cut_text(role_text, room)
-        return "node %s, inventory %s" % (cut_text(node_text, room), cut_text(role_text, room))
+            return "not on the node, %s %s" % (theirs, cut_text(role_text, room))
+        return "node %s, %s %s" % (cut_text(node_text, room), theirs, cut_text(role_text, room))
 
     if item["setting"]:
         values = []
@@ -711,6 +729,9 @@ def _hints(layout, items, read, unread, who, error="", report=False, report_file
         hints.append(("your files", "in %s, set %s to the node's value (%s) or remove the line, then import again" % (
             path, key, values[0] if len(values) == 1 and values[0] is not None
             else "see the DIFFERS FROM YOUR... section")))
+    os_items = [i for i in items if i["kind"] == _OS]
+    if os_items:
+        hints.append(("OS settings", _os_hint(layout, os_items, read, who)))
     if unread and not read:  # (no node checked: never valid, import_allow_unread or not)
         hints.append(("not read", "no node could be read: start Cassandra or fix the access on one of them at least,"
                       " then import again"))
@@ -738,6 +759,29 @@ def _hints(layout, items, read, unread, who, error="", report=False, report_file
                       " inventory), then review with %s before applying"
                       % (unbreakable("-e import_strict=false"), unbreakable(apply_check))))
     return hints or [("unknown", "import again with %s to see what failed (it may show passwords)" % debug)]
+
+
+def _os_hint(layout, items, read, who):
+    """The way out of the OS differences: the switch that keeps them as the nodes have them (the finest one that
+    covers them all), in a file of yours (the cluster's when every node read has them, else each node's); or the
+    nodes changed first."""
+    names = []
+    for i in items:
+        names += [n for n in _item_nodes(i) if n not in names]
+    switches = []
+    for i in items:
+        found = next(((switch, part) for start, switch, part in _OS_SWITCHES if (i["setting"] or "").startswith(start)),
+                     ("cassandra_linux_manage: false", "every OS setting"))
+        if found not in switches:
+            switches.append(found)
+    if len(switches) > 1:
+        switches = [("cassandra_linux_manage: false", "every OS setting")]
+    switch, part = switches[0]
+    where = "group_vars/%s/local.yml" % layout["cluster_group"] if set(names) >= set(n["name"] for n in read) \
+        else "host_vars/<node>/local.yml of each of them"
+    return ("to keep them as %s %s them: %s (%s) in a file of yours, %s, then import again. Or change the nodes as"
+            " cassandra_linux would (the lines above), then import again" % (
+                who(names), "has" if len(names) == 1 else "have", unbreakable(switch), part, where))
 
 
 def _self_check_lines(layout, self_check, who, width, report_file="", error="", allow_unread=False,

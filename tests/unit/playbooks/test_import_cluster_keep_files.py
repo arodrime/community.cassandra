@@ -187,7 +187,7 @@ def test_self_check_of_every_node_read():
     # the import's one call: each node read checked as on its own, with its files as read (base64), its unit's
     # environment; a node not read left out
     files = stock()
-    out, layout = check(files, {})
+    out, layout = check(files, {"cassandra_linux_manage": False})  # (its OS settings not checked here)
     nodes = [{"address": "10.0.0.1", "host": "h1", "read": True}, {"address": "10.0.0.2", "host": "h2", "read": False}]
     slurped = [{"item": name, "content": base64.b64encode(text.encode()).decode()} for name, text in files.items()]
     data = {"h1": {"ansible_facts": FACTS, "import_cluster_slurp": {"results": slurped + [{"item": "x", "failed": True}]},

@@ -14,12 +14,14 @@ are (comments and blank lines left out), and the live values.
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import hashlib
 import os
 import re
 
 from ansible.module_utils.parsing.convert_bool import boolean
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_disks import cassandra_disk_tuned_conflict
+from ansible_collections.community.cassandra.plugins.filter.cassandra_disks import (
+    cassandra_disk_changes, cassandra_disk_tuned_conflict)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_disks import plan
 
 # Read in this order by sysctl --system (and systemd-sysctl): a file name
@@ -482,15 +484,7 @@ def _disks(recs, wanted):
     with their read-ahead and scheduler now."""
     role_ra = wanted.get("readahead_kb")
     lines, live = [], []
-    text = next((rest for kind, rest in recs if kind == "lsblk"), "")
-    mounts = []
-    for kind, rest in recs:
-        if kind == "mnt":
-            what, d, out = _fields(rest, 3)
-            mounts.append({"item": {"dir": d, "tune": what != "other", "commitlog": what == "commitlog"},
-                           "rc": 0 if out.strip() else 1, "stdout": out})
-    lvs = [rest for kind, rest in recs if kind == "lvs"]
-    found = plan(text, mounts, lvs=lvs)
+    found = _disk_plan(recs)
     lines += ["disks: %s" % s for s in found["stacks"] + found["warnings"] + found["info"] + found["notes"]]
     for d in found["devices"]:
         live.append(d["ra"])
@@ -525,6 +519,19 @@ def _disks(recs, wanted):
             notes.append("cassandra_data_disk_tuning: false on this node (host_vars), its data devices left as they are"
                          " (cassandra_linux would change %s): remove it to have them tuned" % "; ".join(changes))
     return lines, out, notes
+
+
+def _disk_plan(recs, tune_os=True):
+    """plan() of the devices under the data and commitlog dirs, from the records."""
+    text = next((rest for kind, rest in recs if kind == "lsblk"), "")
+    mounts = []
+    for kind, rest in recs:
+        if kind == "mnt":
+            what, d, out = _fields(rest, 3)
+            mounts.append({"item": {"dir": d, "tune": what != "other", "commitlog": what == "commitlog"},
+                           "rc": 0 if out.strip() else 1, "stdout": out})
+    lvs = [rest for kind, rest in recs if kind == "lvs"]
+    return plan(text, mounts, lvs=lvs, tune_os=tune_os)
 
 
 def _device_line(d, role_ra):
@@ -574,13 +581,29 @@ def _disk_changes(recs, devices, kb):
             out.append("read_ahead_kb %s of %s" % (d["ra"], d["label"]))
         if d["rota"] == "0" and d["sched"] not in ("", "none"):
             out.append("the scheduler %s of %s" % (d["sched"], d["label"]))
-    rules = set(rest.split("|", 1)[0] for kind, rest in recs if kind == "udev")
-    for old in OWN_UDEV_RULES[1:] + ("/etc/udev/rules.d/60-cassandra-data-disk.rules",):
-        if old in rules:
-            out.append("its rule of earlier versions, %s" % old)
-    if OWN_UDEV_RULES[0] not in rules and any(
-            d["kind"] != "lvm" or d.get("os") or d["lv_read_ahead"] != str(kb * 2) for d in devices):
+    out += ["its rule of earlier versions, %s" % old for old in _old_rules(recs)]
+    if _rule_missing(recs, devices, kb):
         out.append("its udev rule, %s" % OWN_UDEV_RULES[0])
+    if _tuned_switch(recs, devices, kb):
+        out.append("the profiles tuned runs (it adds cassandra-disks)")
+    return out
+
+
+def _old_rules(recs):
+    """The udev rules of earlier versions of cassandra_linux on the node (it removes them)."""
+    rules = set(rest.split("|", 1)[0] for kind, rest in recs if kind == "udev")
+    return [old for old in OWN_UDEV_RULES[1:] + ("/etc/udev/rules.d/60-cassandra-data-disk.rules",) if old in rules]
+
+
+def _rule_missing(recs, devices, kb):
+    """cassandra_linux would write its udev rule: none there, and a device LVM does not keep at kb."""
+    rules = set(rest.split("|", 1)[0] for kind, rest in recs if kind == "udev")
+    return OWN_UDEV_RULES[0] not in rules and any(
+        d["kind"] != "lvm" or d.get("os") or d["lv_read_ahead"] != str(kb * 2) for d in devices)
+
+
+def _tuned_switch(recs, devices, kb):
+    """cassandra_linux would add its cassandra-disks profile to the ones tuned runs."""
     # tuned: the records of its profiles, as cassandra_linux reads them
     lines, profiles = [], {}
     for kind, rest in recs:
@@ -603,10 +626,8 @@ def _disk_changes(recs, devices, kb):
     active = next((line[len("active|"):].split() for line in lines if line.startswith("active|")), [])
     # the role switches tuned only when it runs, and not again once it runs its profile (whose
     # udev ids the import can't match here)
-    if "state|active" in lines and active and active[-1] != "cassandra-disks" \
-            and cassandra_disk_tuned_conflict(lines, kb, devices, state, None, managed=False):
-        out.append("the profiles tuned runs (it adds cassandra-disks)")
-    return out
+    return bool("state|active" in lines and active and active[-1] != "cassandra-disks"
+                and cassandra_disk_tuned_conflict(lines, kb, devices, state, None, managed=False))
 
 
 TUNED_KEYS = {"vm": re.compile(r"^transparent_huge_?pages?$"), "disk": re.compile(r"^(readahead|elevator)$"),
@@ -683,6 +704,230 @@ def _firewall(recs, wanted):
                  " or cassandra_manage_firewall: true and open_ports, which cassandra_firewall opens in the default"
                  " zone)" % (", ".join(opened) or "none", ", ".join(p for p in ports if p not in opened) or "none"))
     return lines
+
+
+# --- what cassandra_linux would change on a node (the import's self-check) ---
+
+ROLE_THP_UNIT = "/etc/systemd/system/disable-thp.service"
+NPROC_FILE = "/etc/security/limits.d/90-nproc.conf"
+NPROC_LINE = "* - nproc 32768"
+NPROC_MATCH = re.compile(r"^\* - nproc 32768")  # cassandra_linux's lineinfile regexp
+# what systemctl is-enabled says of a unit that starts at boot (or cannot be enabled: static)
+ENABLED = ("enabled", "enabled-runtime", "static", "alias", "indirect", "generated")
+CHANGE, NO_EFFECT = "change", "no effect"
+
+
+def _item(what, now, would, effect=CHANGE):
+    return {"what": what, "now": _norm(now), "would": _norm(would), "effect": effect}
+
+
+def _role_thp_sum():
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "cassandra_linux", "files",
+                           "disable-thp.service"), "rb") as f:
+        return hashlib.sha1(f.read()).hexdigest()
+
+
+def _live_boot(linux, facts):
+    """(kernel settings applied live, what runs at boot set up), as cassandra_linux decides them (os.yml)."""
+    container = "container" in (facts.get("virtualization_tech_guest") or []) \
+        or facts.get("virtualization_type", "") in (linux.get("container_types") or [])
+    mode = str(linux.get("apply_live", "auto")).lower()
+    live = not container if mode == "auto" else boolean(mode, strict=False)
+    return live, live or not container
+
+
+def _sysctl_changes(recs, linux, live):
+    """cassandra_linux's sysctl module: each key in its file (and set live), the same keys out of /etc/sysctl.conf.
+    A file line is no effect when the value read at boot stays the one the node has now."""
+    wanted = [(_sysctl_key(str(k)), _norm(v)) for k, v in (linux.get("sysctl") or {}).items()]
+    target = linux.get("sysctl_file") or "/etc/sysctl.d/60-cassandra.conf"
+    files, now, link, dummy, dummy2 = _sysctl_read(recs)
+    masked = {os.path.basename(rest) for kind, rest in recs if kind == "masked" and "/sysctl.d/" in rest}
+    after = dict((p, list(lines)) for p, lines in files.items())
+    edits = []  # (key, file, its value there now, its value after: None removed)
+    for key, value in wanted:
+        lines = after.setdefault(target, [])
+        has = [v for k, v in lines if k == key]
+        if not has or has[-1] != value:
+            edits.append((key, target, has[-1] if has else None, value))
+            after[target] = [(k, value if k == key else v) for k, v in lines] + ([] if has else [(key, value)])
+        if target != SYSCTL_CONF and any(k == key for k, dummy in after.get(SYSCTL_CONF, [])):
+            edits.append((key, SYSCTL_CONF, [v for k, v in after[SYSCTL_CONF] if k == key][-1], None))
+            after[SYSCTL_CONF] = [(k, v) for k, v in after[SYSCTL_CONF] if k != key]
+    at_boot = {}
+    for path in _sysctl_order(list(after), link, masked):
+        for k, v in after[path]:
+            at_boot[k] = v
+    items = []
+    if live:
+        # the module sets each key, and loads its whole file again when it changed it
+        set_live = dict(after.get(target, [])) if any(path == target for dummy, path, dummy2, dummy3 in edits) else {}
+        set_live.update(wanted)
+        for key, value in set_live.items():
+            if _norm(now.get(key, "")) != value:
+                items.append(_item("sysctl %s (live)" % key, now.get(key) or "not read", value))
+    for key, path, before, value in edits:
+        effect = NO_EFFECT if key in now and _norm(at_boot.get(key, "")) == _norm(now[key]) else CHANGE
+        items.append(_item("sysctl %s (%s)" % (key, path), "not set" if before is None else before,
+                           "removed" if value is None else value, effect))
+    return items
+
+
+def _swap_changes(recs, live):
+    """swapoff -a (live), the swap lines of /etc/fstab removed."""
+    items = []
+    active = [rest.split()[0] for kind, rest in recs if kind == "swap_on" and rest.split()]
+    if live and active:
+        items.append(_item("swap (live)", "on: %s" % ", ".join(active), "off (swapoff -a)"))
+    items += [_item("swap in /etc/fstab", rest, "removed") for kind, rest in recs if kind == "swap_fstab"]
+    return items
+
+
+def _limit_value(effective, item):
+    soft, hard = effective.get((item, "soft")), effective.get((item, "hard"))
+    if not soft and not hard:
+        return "not set"
+    if soft and hard and soft[1:3] == hard[1:3]:
+        return "%s (%s)" % (soft[1], soft[2])
+    return ", ".join("%s %s (%s)" % (k, e[1], e[2]) for k, e in (("soft", soft), ("hard", hard)) if e)
+
+
+def _limits_changes(recs, linux, own, family):
+    """cassandra_linux's limits file (its mark: own), the block earlier versions wrote in limits.conf, RedHat's
+    90-nproc.conf line: no effect when the limits the cassandra user gets stay the same."""
+    role = linux.get("limits") or {}
+    groups = set()
+    for kind, rest in recs:
+        if kind == "groups":
+            groups.update(rest.split())
+    entries = [_fields(rest, 2) for kind, rest in recs if kind == "limits"]
+    after, files = list(entries), []
+    wanted = ["cassandra - %s %s" % (k, v) for k, v in role.items()]
+    there = [line for path, line in entries if path == LIMITS_OWN]
+    if not (own and there == wanted):
+        after = [e for e in after if e[0] != LIMITS_OWN] + [[LIMITS_OWN, line] for line in wanted]
+        files.append(_item(LIMITS_OWN, "; ".join(there) or "absent", "; ".join(wanted) or "the mark only"))
+    block = [rest for kind, rest in recs if kind == "limits_block"]
+    if any(kind == "limits_block_found" for kind, dummy in recs):
+        for line in block:
+            gone = next((e for e in after if e[0] == LIMITS_CONF and e[1] == line), None)
+            if gone:
+                after.remove(gone)
+        files.append(_item("the block earlier versions wrote in %s" % LIMITS_CONF, "; ".join(block) or "empty",
+                           "removed"))
+    if family == "RedHat":
+        matches = [e for e in after if e[0] == NPROC_FILE and NPROC_MATCH.match(e[1])]
+        if not matches:
+            after.append([NPROC_FILE, NPROC_LINE])
+            files.append(_item(NPROC_FILE, "no line %s" % NPROC_LINE, "%s added" % NPROC_LINE))
+        elif matches[-1][1] != NPROC_LINE:  # (lineinfile replaces the last line its regexp finds)
+            files.append(_item(NPROC_FILE, matches[-1][1], NPROC_LINE))
+            after[after.index(matches[-1])] = [NPROC_FILE, NPROC_LINE]
+
+    def effective(es):
+        return _limits_effective(sorted(es, key=lambda e: (e[0] != LIMITS_CONF, os.path.basename(e[0]))), groups)
+
+    before, then = effective(entries), effective(after)
+    changed = []
+    for item, dummy in sorted(set(before) | set(then)):
+        if item not in changed and any((before.get((item, k)) or (None, None))[1] != (then.get((item, k)) or (None, None))[1]
+                                       for k in ("soft", "hard")):
+            changed.append(item)
+    if not changed:
+        return [dict(f, effect=NO_EFFECT) for f in files]
+    return [_item("limits of the cassandra user: %s (its logins)" % item, _limit_value(before, item),
+                  _limit_value(then, item)) for item in changed]
+
+
+def _thp_changes(recs, live, boot):
+    """disable-thp.service (never, never) written, enabled at boot, started while THP is on. Written or enabled: no
+    effect when the node has never and never now (or no THP)."""
+    now = dict(_fields(rest, 2) for kind, rest in recs if kind == "thp")
+    enabled, defrag = _bracketed(now.get("enabled", "")), _bracketed(now.get("defrag", ""))
+    unit = dict(_fields(rest, 2) for kind, rest in recs if kind == "thp_own")
+    at_boot = NO_EFFECT if not enabled or (enabled == "never" and defrag in ("never", "")) else CHANGE
+    items = []
+    if unit.get("sum") != _role_thp_sum():
+        items.append(_item(ROLE_THP_UNIT, "another content" if unit.get("sum") else "absent",
+                           "the role's (THP never at boot)", at_boot))
+    if boot and unit.get("boot") not in ENABLED:
+        items.append(_item("disable-thp.service at boot", unit.get("boot") or "not found", "enabled", at_boot))
+    if live and enabled not in ("never", ""):
+        items.append(_item("transparent_hugepage enabled (live)", enabled, "never"))
+        if defrag not in ("never", ""):
+            items.append(_item("transparent_hugepage defrag (live)", defrag, "never"))
+    return items
+
+
+def _timesync_changes(recs, linux, family):
+    """The time sync service cassandra_linux picks (timesync.yml), installed, started and enabled."""
+    if not boolean(linux.get("timesync", True), strict=False):
+        return []
+    chrony = any(kind == "chrony_installed" for kind, dummy in recs)
+    svc = "chronyd" if family != "Debian" else "chrony" if chrony else "systemd-timesyncd"
+    state = dict((name, (active, boot)) for name, active, boot in
+                 (_fields(rest, 3) for kind, rest in recs if kind == "timesync_own"))
+    active, boot = state.get(svc, ("", ""))
+    missing = boot in ("", "not-found")
+    if boolean(linux.get("offline", False), strict=False) and missing:
+        return []  # nothing downloaded: a warning only
+    items = []
+    if active != "active":
+        items.append(_item("time sync %s" % svc, (active or "inactive") + (", not installed" if missing else ""),
+                           "installed and started" if missing else "started"))
+    if boot not in ENABLED:
+        items.append(_item("time sync %s at boot" % svc, boot or "not found", "enabled"))
+    return items
+
+
+def _disk_changes_of(recs, linux, live, boot):
+    """The data devices (disks_apply.yml): read-ahead, scheduler and LVM read-ahead (live), the udev rule (no
+    effect when the devices keep what they have now), tuned's profiles."""
+    if not boolean(linux.get("disk_tuning", True), strict=False) or not boot:
+        return []
+    if linux.get("block_devices") or linux.get("block_device"):
+        return [_item("data devices", "set by cassandra_data_block_device(s)",
+                      "tuned (the import does not work out which devices)")]
+    devices = _disk_plan(recs, boolean(linux.get("tune_os_volumes", True), strict=False))["devices"]
+    kb = int(linux.get("readahead_kb", 4))
+    state = dict((d["kname"], {"ra": d["ra"] or None, "rot": d["rota"], "sched": d["sched"] or "none",
+                               "choices": "2" if d["kind"] == "disk" else "1"}) for d in devices)
+    items = []
+    if live:
+        for c in cassandra_disk_changes(devices, state, kb, lvm=True):
+            items.append(_item(c["item"] + (" (lvchange, Cassandra stopped)" if c["what"] == "lvm" else " (live)"),
+                               c["before"], c["after"]))
+    rule = NO_EFFECT if not items else CHANGE
+    items += [_item(old, "present", "removed", rule) for old in _old_rules(recs)]
+    if _rule_missing(recs, devices, kb):
+        items.append(_item(OWN_UDEV_RULES[0], "absent", "written", rule))
+    else:
+        set_by_it = set(int(v) for kind, rest in recs if kind == "udev" and rest.startswith(OWN_UDEV_RULES[0] + "|")
+                        for v in READAHEAD.findall(rest))
+        if set_by_it - set([kb]):
+            items.append(_item(OWN_UDEV_RULES[0], "read_ahead_kb %s" % ", ".join(str(v) for v in sorted(set_by_it)),
+                               "read_ahead_kb %d" % kb, rule))
+    if live and boolean(linux.get("tuned_manage", True), strict=False) and _tuned_switch(recs, devices, kb):
+        active = next((_fields(rest, 2)[0] for kind, rest in recs if kind == "tuned"), "")
+        items.append(_item("tuned profiles", active, "%s cassandra-disks (applied again, Cassandra stopped)" % active))
+    return items
+
+
+def cassandra_linux_changes(text, linux, facts=None, own=False):
+    """What cassandra_linux, run on a node, would change there: text, the records import_cluster's script printed on
+    it; linux: the role's variables for that node {sysctl, sysctl_file, limits, timesync, offline, apply_live,
+    container_types, disk_tuning, readahead_kb, block_device, block_devices, tuned_manage, tune_os_volumes} (a
+    missing one: the role's default); facts: its ansible_facts (os_family, virtualization); own: its limits file has
+    the role's mark. -> [{what, now, would, effect}], effect "change" or "no effect" (a file the role writes that
+    leaves the node's values as they are now). e.g. THP madvise on a node the role set up -> [{what:
+    "transparent_hugepage enabled (live)", now: "madvise", would: "never", effect: "change"}]."""
+    recs = _records(text)
+    facts = facts or {}
+    live, boot = _live_boot(linux, facts)
+    family = facts.get("os_family", "")
+    return (_sysctl_changes(recs, linux, live) + _swap_changes(recs, live) + _limits_changes(recs, linux, own, family)
+            + _thp_changes(recs, live, boot) + _timesync_changes(recs, linux, family)
+            + _disk_changes_of(recs, linux, live, boot))
 
 
 def cassandra_os_import(text, wanted):

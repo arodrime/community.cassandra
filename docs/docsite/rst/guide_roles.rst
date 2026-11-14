@@ -1572,16 +1572,27 @@ Before writing anything, the import checks itself: for each node read, the files
 imported variables (``cassandra.yaml``, ``cassandra-env.sh``, the JVM options, rackdc, logback, the JMX users' files,
 and the unit and ``medusa.ini`` when the roles manage them) are compared with the node's, setting by setting, as
 Cassandra, the JVM, bash and systemd read them; and the owner, group and mode ``cassandra_config`` would give the
-config and JMX files with the node's (one line per file that differs). The report starts with ``SELF-CHECK PASSED``, or with ``SELF-CHECK
+config and JMX files with the node's (one line per file that differs). On a node whose ``cassandra_linux_manage`` stays
+true (one the roles set up), what ``cassandra_linux`` would change there is worked out from what the import read:
+the kernel settings (live and in their files, the same keys out of ``/etc/sysctl.conf``), swap, its limits file, the
+block its earlier versions wrote in ``limits.conf`` and RedHat's ``90-nproc.conf`` line, THP and its
+``disable-thp.service``, time sync, and the data devices (read-ahead, scheduler, LVM read-ahead, its udev rule,
+tuned's profiles). Each change is a difference, under its own heading; a file the role would write that leaves the
+node's values as they are now (e.g. ``90-nproc.conf`` where the cassandra user's limit stays the same) is not, the
+report notes it as "no effect". The way out keeps the part as the nodes have it, in a file of yours
+(``group_vars/<cluster>/local.yml``, or ``host_vars/<node>/local.yml``): ``cassandra_linux_manage: false`` for every OS
+setting, ``cassandra_data_disk_tuning: false`` for the data devices only, ``cassandra_linux_timesync: false`` for time
+sync only; or change the nodes as ``cassandra_linux`` would, then import again. The report starts with ``SELF-CHECK PASSED``, or with ``SELF-CHECK
 FAILED`` and the differences: the inventory is then marked ``# NOT VALID`` in its hosts file and the playbook fails
 (``-e import_strict=false`` writes the same files without failing, to inspect them: not safe to apply). The run
 ends with a short ``SELF-CHECK FAILED`` block: what differs, one line per setting or file with its nodes, grouped by
-what makes the self-check pass (hand edits no variable covers, a file of yours that still wins over the import, other
-differences, the nodes not read), then ``HOW TO MAKE IT PASS``: ``-e import_keep_hand_edits=true`` to keep the
+what makes the self-check pass (hand edits no variable covers, a file of yours that still wins over the import, the OS
+settings ``cassandra_linux`` would change, other differences, the nodes not read), then ``HOW TO MAKE IT PASS``: ``-e import_keep_hand_edits=true`` to keep the
 hand edits (those files are then left as they are on their nodes), the value to set in your file (or the line to
 remove), ``-e import_allow_unread=true`` for the nodes not read, and for a change you want, a planned change:
 ``-e import_strict=false`` only to write the inventory, then ``apply_config --check --diff`` before applying.
-The report's ``SELF-CHECK`` section has the same, each node's differences under each line. The OS tuning, ``/etc/default/cassandra``, ``cassandra-topology.properties`` and the owner and mode of the unit
+The report's ``SELF-CHECK`` section has the same, each node's differences under each line. The OS tuning of a node left
+as it is (``cassandra_linux_manage: false``), the firewall, ``/etc/default/cassandra``, ``cassandra-topology.properties`` and the owner and mode of the unit
 and ``medusa.ini`` are not compared. An error while the inventory is written is not shown (the variables hold passwords):
 ``-e import_debug=true`` shows it.
 

@@ -54,6 +54,7 @@ except ImportError:  # before, any string not marked unsafe
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     Unsafe, error_without_message, log_dir_of, logback_as_log_dir, undefined_name, values_hidden)
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
+from ansible_collections.community.cassandra.plugins.filter.cassandra_os import NO_EFFECT, cassandra_linux_changes
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import (
     cassandra_file_permissions, permission_differences)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
@@ -411,7 +412,8 @@ def _snippets(variables, ctx, value, templar, keep, overrides, templates):
 
 @values_hidden
 def cassandra_import_self_check(files, hosts, name, facts, live, node_environment=None, storage_dir="", java="",
-                                conf_dir="", permissions=None, release="", inventory_dir="", jvm=None):
+                                conf_dir="", permissions=None, release="", inventory_dir="", jvm=None, os_found=None,
+                                os_own=False):
     """files, hosts, name: the inventory files, the hosts file's data and the node's
     name there (the variables it gets: cassandra_inventory_host_vars); facts: its ansible_facts;
     live: {file: text the node has}; node_environment: what the node's unit
@@ -426,9 +428,11 @@ def cassandra_import_self_check(files, hosts, name, facts, live, node_environmen
     inventory is (a value may follow it: {{ inventory_dir }}/templates/...); jvm: {cmdline: the running
     JVM's /proc/<pid>/cmdline, newer: the config files written since it started}: the JVM's files the roles
     would rewrite pass when the JVM gets the same arguments from them (a note).
+    os_found: what import_cluster's read of the OS printed on the node ({rc, stdout}; {}: not read), None: the OS
+    settings not checked; os_own: its limits file has cassandra_linux's mark.
     -> {'differences', 'notes'}."""
     return _self_check(_read_files(files), hosts, name, facts, live, node_environment, storage_dir, java, conf_dir,
-                       permissions, release, inventory_dir, jvm)
+                       permissions, release, inventory_dir, jvm, os_found, os_own)
 
 
 @values_hidden
@@ -478,11 +482,12 @@ def _self_check_node(files_data, hosts, node, names, data, inventory_dir=""):
         files_data, hosts, name, hv["ansible_facts"], live, unit.get("env", {}),
         hv.get("import_cluster_storage_dir", ""), hv.get("import_cluster_java", ""), hv["import_cluster_conf_dir"],
         (hv.get("import_cluster_perms") or {}).get("files"), (hv.get("import_cluster_config") or {}).get("release", ""),
-        inventory_dir, running)
+        inventory_dir, running, hv.get("import_cluster_os_found") or {},
+        "cassandra_linux_manage" not in (hv.get("import_cluster_keep") or {}))
 
 
 def _self_check(files_data, hosts, name, facts, live, node_environment, storage_dir, java, conf_dir, permissions,
-                release="", inventory_dir="", running=None):
+                release="", inventory_dir="", running=None, os_found=None, os_own=False):
     # the names Ansible gives the host, which a value of the import may follow ({{ inventory_hostname }}.x)
     variables = dict(_host_vars(files_data, hosts, name), inventory_hostname=name,
                      inventory_hostname_short=name.split(".")[0])
@@ -499,7 +504,54 @@ def _self_check(files_data, hosts, name, facts, live, node_environment, storage_
         out["differences"].append("owner, group and mode: not read on the node, the roles may change them")
     else:
         out["differences"] += permission_differences(wanted, permissions)
+    if os_found is not None:
+        differences, notes = _linux_check(variables, facts, os_found, os_own)
+        out["differences"] += differences
+        out["notes"] += notes
     return {"differences": errors + out["differences"], "notes": out["notes"]}
+
+
+# cassandra_linux's variables the model of what it would change reads (cassandra_os.cassandra_linux_changes), as the
+# role reads them
+LINUX_VARS = (("manage", "cassandra_linux_manage | bool"), ("apply_live", "cassandra_linux_apply_live"),
+              ("container_types", "cassandra_linux_container_types"), ("sysctl", "cassandra_linux_sysctl"),
+              ("sysctl_file", "cassandra_linux_sysctl_file"), ("limits", "cassandra_linux_limits"),
+              ("timesync", "cassandra_linux_timesync | bool"), ("offline", "cassandra_offline | bool"),
+              ("disk_tuning", "cassandra_data_disk_tuning | bool"), ("readahead_kb", "cassandra_data_readahead_kb | int"),
+              ("block_device", "cassandra_data_block_device"), ("block_devices", "cassandra_data_block_devices"),
+              ("tuned_manage", "cassandra_linux_tuned_manage | bool"),
+              ("tune_os_volumes", "cassandra_data_tune_os_volumes | bool"),
+              ("sysfs_block_root", "cassandra_sysfs_block_root"))
+
+
+def _linux_check(variables, facts, found, own):
+    """What cassandra_linux would change on the node with these variables (apply_config runs it) -> (differences,
+    notes): a change is a difference, a file it writes with no effect on the node's values a note."""
+    ctx = _trusted(dict(role_file("cassandra_linux"), **variables))
+    ctx["ansible_facts"] = facts
+    templar = Templar(loader=DataLoader(), variables=ctx)
+    linux = {}
+    for key, expr in LINUX_VARS:
+        try:
+            value = templar.template(trust_as_template("{{ %s }}" % expr))
+        except Exception as exc:  # pylint: disable=broad-except  # a template error: said by its type (no value)
+            return ["cassandra_linux: %s cannot be read with these variables (%s)" % (expr.split()[0], type(exc).__name__)], []
+        linux[key] = str(value) == "True" if expr.endswith("| bool") else value
+    if not linux["manage"]:
+        return [], []
+    if found.get("rc", 1) != 0 or "stdout" not in found:
+        return ["cassandra_linux: the OS settings could not be read on the node, the roles may change them"], []
+    if str(linux["sysfs_block_root"]) != "/sys/block":
+        return ["cassandra_linux: cassandra_sysfs_block_root is not /sys/block, the import does not work out its disks"], []
+    differences, notes = [], []
+    for item in cassandra_linux_changes(found["stdout"], linux, facts, own):
+        if item["effect"] == NO_EFFECT:
+            notes.append("cassandra_linux: %s: %s -> %s, no effect (the node keeps the values it has now)"
+                         % (item["what"], item["now"], item["would"]))
+        else:
+            differences.append("cassandra_linux: %s: node has %s, the roles would set %s"
+                               % (item["what"], item["now"], item["would"]))
+    return differences, notes
 
 
 def _rejected(live, rendered, release):
