@@ -37,6 +37,7 @@
     src: /usr/lib/python3.6/site-packages/cqlshlib
     dest: "{{ item.stdout }}/cqlshlib"
     state: link
+  register: cassandra_cqlshlib_links
   loop: "{{ cassandra_cqlsh_purelibs.results | default([]) }}"
   loop_control:
     label: "{{ item.stdout | default('') }}"

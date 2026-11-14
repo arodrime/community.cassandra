@@ -13,6 +13,7 @@
     awk '/^SwapTotal:/ {t = $2} /^SwapFree:/ {f = $2} /^MemAvailable:/ {a = $2}
          END {print "swap|used|" t - f "|"; print "mem|available|" a "|"}' /proc/meminfo
     echo "thp|enabled|$(sed -n 's/.*\[\(.*\)\].*/\1/p' /sys/kernel/mm/transparent_hugepage/enabled 2>/dev/null)|"
+    echo "thp|defrag|$(sed -n 's/.*\[\(.*\)\].*/\1/p' /sys/kernel/mm/transparent_hugepage/defrag 2>/dev/null)|"
     unit=$(systemctl is-enabled disable-thp 2>/dev/null)
     echo "thp|unit|${unit:-absent}|"
     echo "timesync|service|$(systemctl is-active {{ _cassandra_timesync_service }} 2>/dev/null)|"

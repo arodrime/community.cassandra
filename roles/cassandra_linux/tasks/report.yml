@@ -42,6 +42,17 @@
          + [{'item': 'transparent_hugepage', 'before': _cassandra_linux_before['thp|enabled'], 'after': 'never'}] }}
   when: _cassandra_linux_live and _cassandra_linux_before['thp|enabled'] not in ['never', '']
 
+# (written by the same unit, started while THP is on)
+- name: Add the THP defrag to the change list
+  ansible.builtin.set_fact:
+    _cassandra_linux_items: >-
+      {{ _cassandra_linux_items
+         + [{'item': 'transparent_hugepage defrag', 'before': _cassandra_linux_before['thp|defrag'], 'after': 'never'}] }}
+  when:
+    - _cassandra_linux_live
+    - _cassandra_linux_before['thp|enabled'] not in ['never', '']
+    - _cassandra_linux_before['thp|defrag'] | default('') not in ['never', '']
+
 # (left to apply_config's restart window, _cassandra_linux_timesync_later: what an earlier run registered is
 # not this one's)
 - name: Add the time sync package to the change list

@@ -79,6 +79,16 @@
     _cassandra_install_items: "{{ _cassandra_install_items | default([]) + [{'item': 'cqlsh Python', 'before': 'python3', 'after': _cassandra_cqlsh_python}] }}"
   when: cassandra_cqlsh_wrapper is changed
 
+# (--check on a host without the package yet: its cqlshlib to link is not there, the link is not compared)
+- name: Add the cqlshlib links to the change list
+  ansible.builtin.set_fact:
+    _cassandra_install_items: >-
+      {{ _cassandra_install_items | default([]) + [{'item': item.dest | default(item.path | default('')), 'before': 'absent or another',
+                                                    'after': 'link to /usr/lib/python3.6/site-packages/cqlshlib'}] }}
+  loop: "{{ cassandra_cqlshlib_links.results | default([]) | select('changed') | list }}"
+  loop_control:
+    label: "{{ item.dest | default('') }}"
+
 - name: Add dsbulk to the change list
   ansible.builtin.set_fact:
     _cassandra_install_items: "{{ _cassandra_install_items | default([]) + [_cassandra_install_dsbulk_change] }}"

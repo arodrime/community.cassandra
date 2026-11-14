@@ -47,6 +47,7 @@
   ansible.builtin.command: pgrep -f org.apache.cassandra.service.CassandraDaemon
   register: cassandra_service_jvm
   changed_when: false
+  check_mode: false  # a read: --check shows the reset below
   failed_when: cassandra_service_jvm.rc > 1
   when:
     - cassandra_service_unit_state.status.ActiveState == 'active'
@@ -245,5 +246,8 @@
          + ([{'item': 'cassandra', 'before': _cassandra_service_before.active or 'unknown',
               'after': ('would restart' if ansible_check_mode else 'restarted') if cassandra_service_state == 'restarted' else _would ~ _want_active}]
             if cassandra_service_state == 'restarted' or _cassandra_service_before.active != _want_active else [])
+         + ([{'item': 'cassandra', 'before': 'active, no Cassandra running', 'after': _would ~ 'started again'}]
+            if cassandra_service_jvm.rc | default(0) == 1 and cassandra_service_state == 'started'
+               and _cassandra_service_before.active == _want_active else [])
          + ([{'item': 'cassandra at boot', 'before': _cassandra_service_before.enabled or 'unknown', 'after': _would ~ ('enabled' if cassandra_service_enabled else 'disabled')}]
             if (_cassandra_service_before.enabled == 'enabled') != (cassandra_service_enabled | bool) else []) }}
