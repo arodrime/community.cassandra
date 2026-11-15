@@ -58,7 +58,7 @@ def firewall_records(tmp_path, enabled="disabled", active="active", permanent="9
                      verbose="Default: deny (incoming), allow (outgoing), disabled (routed)"):
     """What the read's firewall lines print on a node whose firewalld runs (stand-ins for systemctl, firewall-cmd),
     rich: its rich rules (as firewall-cmd lists them), the same after a reload unless rich_permanent says; answers:
-    {firewall-cmd arguments: output, False: it fails} more (another zone...); or whose ufw runs, ufw: the lines of
+    {firewall-cmd arguments: output, False: it fails, (standard error, exit status)} more (another zone...); or whose ufw runs, ufw: the lines of
     ufw status (False: it fails), rules_enabled: ufw.conf ENABLED, ipv6: /etc/default/ufw IPV6."""
     text = script()
     snippet = text[text.index("# firewall: firewalld, ufw"):text.index("exit 0", text.index("# firewall: firewalld, ufw"))]
@@ -72,8 +72,14 @@ def firewall_records(tmp_path, enabled="disabled", active="active", permanent="9
             "--zone=public --list-rich-rules": "\n".join(rich),
             "--permanent --zone=public --list-rich-rules": "\n".join(rich_permanent)}
     said.update(answers or {})
-    cases = "".join('  "%s") exit 1 ;;\n' % k if v is False else '  "%s") cat <<\'END\'\n%s\nEND\n  ;;\n' % (k, v)
-                    for k, v in said.items() if v or v is False)
+
+    def case(k, v):
+        if v is False:
+            return '  "%s") exit 1 ;;\n' % k
+        if isinstance(v, tuple):  # (its standard error, its exit status)
+            return '  "%s") cat >&2 <<\'END\'\n%s\nEND\n  exit %d ;;\n' % (k, v[0], v[1])
+        return '  "%s") cat <<\'END\'\n%s\nEND\n  ;;\n' % (k, v)
+    cases = "".join(case(k, v) for k, v in said.items() if v or v is False)
     stubs = {
         "systemctl": """#!/bin/sh
 case "$1 $2" in
@@ -745,3 +751,34 @@ def test_a_policy_list_firewall_cmd_cannot_give_stops(tmp_path):
     r, changes = imported_and_checked(out)
     assert [c["now"] for c in changes if c["what"] == "firewall rules (not read)"] == [
         "policy p: policy could not be listed", "firewalld: permanent policies could not be listed"]
+
+
+# firewalld before 0.9 (RHEL 7, 8.0-8.2, Debian 10): no policies, --get-policies unknown to its argument parser
+FIREWALLD_08_GET_POLICIES = ("usage: see firewall-cmd man page\n"
+                             "firewall-cmd: error: unrecognized arguments: --get-policies", 2)
+
+
+def test_a_firewalld_without_policies_says_nothing_of_them(tmp_path):
+    answers = {"--get-policies": FIREWALLD_08_GET_POLICIES, "--permanent --get-policies": FIREWALLD_08_GET_POLICIES}
+    out = firewall_records(tmp_path / "old", enabled="enabled", answers=answers)
+    assert "polic" not in out
+    assert imported_and_checked(out)[1] == []
+    # another failure of the same call: said
+    answers["--get-policies"] = ("Error: COMMAND_FAILED", 252)
+    r, changes = imported_and_checked(firewall_records(tmp_path / "failed", enabled="enabled", answers=answers))
+    assert [c["now"] for c in changes] == ["firewalld: policies could not be listed"]
+
+
+@pytest.mark.parametrize("extra", ["  helpers: ftp", "  icmp-block-inversion: yes", "  masquerade: yes",
+                                   "  some-later-setting: x"])
+def test_a_policy_setting_that_is_not_known_inert_stops(tmp_path, extra):
+    """Only the settings known to let nothing in (name, priority, target, zones, disable, masquerade no,
+    icmp-block-inversion no) leave a policy silent: any other one with a value stops, a later firewalld's too."""
+    info = info_policy("p") + "\n" + extra
+    answers = {"--get-policies": "p", "--permanent --get-policies": "p", "--info-policy=p": info,
+               "--permanent --info-policy=p": info}
+    r, changes = imported_and_checked(firewall_records(tmp_path, enabled="enabled", answers=answers))
+    assert [c["now"].split(":")[0] for c in changes] == ["policy p", "policy p"], changes
+    # the same policy without it: silent
+    answers["--info-policy=p"] = answers["--permanent --info-policy=p"] = info_policy("p")
+    assert imported_and_checked(firewall_records(tmp_path / "plain", enabled="enabled", answers=answers))[1] == []

@@ -886,8 +886,10 @@ def _ufw_role_form(line):
 STOCK_ALLOW_HOST_IPV6 = set('rule family="ipv6" icmp-type name="%s" accept' % t for t in (
     "neighbour-advertisement", "neighbour-solicitation", "router-advertisement", "redirect", "mld-listener-done",
     "mld-listener-query", "mld-listener-report", "mld2-listener-report"))
-# what --info-policy lists besides its name, target, priority and zones: empty in a policy that lets nothing in
-_POLICY_SETTINGS = ("services", "ports", "protocols", "forward-ports", "source-ports", "icmp-blocks", "rich rules")
+# what --info-policy lists that lets nothing in by itself: any other setting with a value (a port, a service, a
+# helper, a field of a later firewalld) may
+_POLICY_INERT = {"priority": None, "target": None, "ingress-zones": None, "egress-zones": None, "masquerade": "no",
+                 "disable": None, "icmp-block-inversion": "no"}
 
 
 def _policies(recs):
@@ -917,13 +919,15 @@ def _policy_lets_in(name, policy):
     allow-host-ipv6 as shipped (not modelled: the import stops on it, quoted)."""
     if "HOST" not in policy.get("egress-zones", "").split():
         return False
-    empty = all(not policy.get(k) for k in _POLICY_SETTINGS) and policy.get("masquerade", "no") in ("", "no")
-    if policy.get("target") == "CONTINUE" and empty:
+
+    def inert(but=()):
+        return all(not v or (k in _POLICY_INERT and _POLICY_INERT[k] in (None, v))
+                   for k, v in policy.items() if not k.startswith("_") and k not in but)
+    if policy.get("target") == "CONTINUE" and inert():
         return False
     stock = name.split()[-1] == "allow-host-ipv6" and policy.get("target") == "CONTINUE" \
         and policy.get("ingress-zones") == "ANY" and set(policy["rich rules"]) == STOCK_ALLOW_HOST_IPV6 \
-        and all(not policy.get(k) for k in _POLICY_SETTINGS if k != "rich rules") \
-        and policy.get("masquerade", "no") in ("", "no")
+        and inert(but=("rich rules",))
     return not stock
 
 
@@ -1027,8 +1031,8 @@ def _ufw_other_form_kind(line, ports, open_, services):
 
 def _firewalld_other_form_kind(where, line, home, ports, open_, services):
     """_other_form_kind of a firewalld line (of any zone)."""
-    # the settings of a zone (or a policy to this host): an ACCEPT target, a whole protocol, a source port (traffic
-    # from it reaches every port) let every port in: said; a forward port on a touched port: "other"
+    # the settings of a zone: an ACCEPT target, a whole protocol, a source port (traffic from it reaches every port) let
+    # every port in: said; a forward port on a touched port: "other"
     zone_setting = re.match(r"^(?:permanent )?(target|protocols|source-ports|forward-ports) (.*)$", line)
     if zone_setting and zone_setting.group(1) == "target":
         return "every_port" if zone_setting.group(2) == "ACCEPT" else ""

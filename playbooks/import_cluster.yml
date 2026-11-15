@@ -1566,7 +1566,11 @@
           # stops on one to this host, egress HOST, but an empty CONTINUE one or the RHEL allow-host-ipv6 as shipped)
           for c in "" "--permanent"; do
             w=${c:+permanent }
-            q=$(firewall-cmd $c --get-policies 2>/dev/null) || { echo "fw_unread|firewalld|${w}policies"; continue; }
+            # (before firewalld 0.9 there are none: the option is unknown, nothing to say; any other failure: said)
+            if ! q=$(firewall-cmd $c --get-policies 2>&1); then
+              echo "$q" | grep -q 'unrecognized arguments' || echo "fw_unread|firewalld|${w}policies"
+              continue
+            fi
             for y in $q; do
               if i=$(firewall-cmd $c --info-policy="$y" 2>/dev/null); then
                 echo "$i" | awk -v p="fw_policy|${w}$y|" '{print p $0}'
