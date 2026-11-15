@@ -1727,7 +1727,7 @@ WORDS_USED = (
 
 
 def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, changes, changed, removed, same, moves,
-                inventory, hosts):
+                inventory, hosts, rewrites=False):
     """WHAT TO DO NEXT: the next steps, numbered, the commands to copy -> [line]."""
     items = []
     if steps:
@@ -1752,8 +1752,10 @@ def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, ch
         items.append("Check that the inventory changes nothing on the nodes (these two commands only look, they"
                      " change nothing): %s %s expect %s; %s %s expect nothing to do." % (
                          unbreakable(apply_check), ARROW_RIGHT,
-                         "%s rewritten: %sthe same JVM arguments, nothing else" % (", ".join(moves), (
-                             "the heap moves to jvm-server.options, " if heap_moved else "")) if moves
+                         "%s rewritten: %sthe same JVM arguments, %s" % (", ".join(moves), (
+                             "the heap moves to jvm-server.options, " if heap_moved else ""), (
+                             "and the rewrites under APPLY_CONFIG WILL REWRITE" if rewrites else "nothing else"))
+                         if moves else "only the rewrites under APPLY_CONFIG WILL REWRITE (no effect)" if rewrites
                          else "nothing to apply", unbreakable(topology), ARROW_RIGHT))
     if not items:
         items.append("Nothing: the inventory matches the nodes.")
@@ -1926,7 +1928,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     if UNREAD in blocks:
         lines += ["", "NODES NOT READ"] + blocks[UNREAD]
     lines += [""] + _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, changes, changed,
-                                removed, same, moves, inventory, hosts)
+                                removed, same, moves, inventory, hosts, rewrites=bool(rewrites))
     details_file = re.sub(r"\.txt$", "", report_file) + ".details.txt"
     if screen:
         lines += ["", "details: %s" % out.path_from(details_file, cwd),

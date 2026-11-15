@@ -1309,8 +1309,14 @@ def test_files_written_with_no_effect_listed_apart_once_with_their_nodes():
     flat = " ".join(" ".join(line.split()) for line in lines[at + 1:at + 3])
     assert flat.startswith("cassandra_linux: 90-nproc.conf: absent -> cassandra nproc 32768 all - node3 (2 nodes)")
     assert "something else" not in " ".join(lines)
-    # none: no such section
-    assert "APPLY_CONFIG WILL REWRITE (no effect)" not in report([node(1)], details=False)
+    # the next step does not promise "nothing to apply": apply_config --check shows them
+    steps = " ".join(" ".join(line.split()) for line in section(lines, "WHAT TO DO NEXT"))
+    assert "expect only the rewrites under APPLY_CONFIG WILL REWRITE (no effect)" in steps
+    assert "expect nothing to apply" not in steps
+    # none: no such section, nothing to apply
+    lines = report([node(1)], details=False)
+    assert "APPLY_CONFIG WILL REWRITE (no effect)" not in lines
+    assert "expect nothing to apply" in " ".join(" ".join(line.split()) for line in lines)
 
 
 def test_parts_kept_by_hand_listed_with_the_way_to_give_them_back():
