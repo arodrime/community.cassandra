@@ -326,14 +326,18 @@ def test_a_list_firewall_cmd_cannot_give_is_never_no_rule(tmp_path, failing):
     what = failing.replace("--zone=public --list-", "").replace("--permanent ", "permanent ").replace("-", " ")
     assert "fw_unread|zone public|%s\n" % what in out
     r, changes = imported_and_checked(out)
-    assert "NOT read: zone public %s could not be listed: its rules are not known, none carried" % what in r["carried"]
+    assert ("NOT read: zone public %s could not be listed: its rules are not known, not carried; import again once"
+            " firewall-cmd answers, or keep the firewall as the nodes have it (-e import_keep_hand_edits=firewall)"
+            % what) in r["carried"]
     assert changes == [{"what": "firewall rules (not read)", "now": "zone public: %s could not be listed" % what,
-                        "would": "not known: the roles may change them", "effect": "change"}]
+                        "would": "not known: the roles may change them; import again once firewall-cmd answers, or"
+                                 " keep the firewall as the nodes have it (-e import_keep_hand_edits=firewall)",
+                        "effect": "change"}]
 
 
 def test_ufw_status_failing_is_never_no_firewall(tmp_path):
     out = firewall_records(tmp_path, enabled="enabled", ufw=False)
-    assert "fw|ufw|active|\nfw_unread|ufw|ufw status\n" in out
+    assert "fw|ufw|status unknown|\nfw_unread|ufw|ufw status\n" in out
     r, changes = imported_and_checked(out, "Debian")
     assert "cassandra_firewall_enabled" not in r["vars"]
     assert [c["what"] for c in changes] == ["firewall rules (not read)"]
@@ -370,3 +374,95 @@ def test_direct_rules_on_a_cassandra_port_are_said(tmp_path):
     r = cassandra_os_import(out, {"ports": PORTS})
     assert ("firewalld direct rule naming a port cassandra_firewall opens, not compared (it writes none): ipv4 filter"
             " INPUT 0 -p tcp --dport 9042 -j DROP") in r["carried"]
+
+
+def test_a_port_range_open_in_both_sets_with_the_ssh_service(tmp_path):
+    """A range open to everyone now and after a reload: carried as such, the import and the self-check compare by
+    bounds (no error), and RHEL's ssh service on 22/tcp changes nothing."""
+    answers = {"--zone=public --list-ports": "22/tcp 7000-7001/tcp 9042/tcp",
+               "--permanent --zone=public --list-ports": "22/tcp 7000-7001/tcp 9042/tcp",
+               "--zone=public --list-services": "ssh", "--permanent --zone=public --list-services": "ssh",
+               "--info-service=ssh": "ssh\n  ports: 22/tcp", "--permanent --info-service=ssh": "ssh\n  ports: 22/tcp"}
+    out = firewall_records(tmp_path, enabled="enabled", answers=answers)
+    r, changes = imported_and_checked(out)
+    assert r["vars"]["open_ports"] == ["22/tcp", "7000-7001/tcp", "9042/tcp"]
+    assert changes == [] and not [c for c in r["carried"] if c.startswith("NOT")]
+    # a range in open_ports, compared by the self-check: open, nothing to do; a port of it closed: opened
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_os import cassandra_firewall_changes
+    fw = {"manage": True, "enabled": True, "open_ports": ["7000-7001/tcp", "9042/tcp", "7199/tcp"], "port_sources": {}}
+    assert cassandra_firewall_changes(out, fw, "RedHat", PORTS) == [
+        {"what": "port 7199/tcp", "now": "closed", "would": "open", "effect": "change"}]
+
+
+@pytest.mark.parametrize("answers, said", [
+    # another protocol than the one open: a rule of its own
+    ({"--zone=public --list-services": "x", "--permanent --zone=public --list-services": "x",
+      "--info-service=x": "x\n  ports: 7000/udp", "--permanent --info-service=x": "x\n  ports: 7000/udp"},
+     "zone public: service x: 7000/udp"),
+    # a range wider than the ports open
+    ({"--zone=public --list-services": "x", "--permanent --zone=public --list-services": "x",
+      "--info-service=x": "x\n  ports: 7000-7001/tcp", "--permanent --info-service=x": "x\n  ports: 7000-7001/tcp"},
+     "zone public: service x: 7000-7001/tcp"),
+    # a service of another zone
+    ({"--get-active-zones": "public\n  interfaces: eth0\ninternal\n  interfaces: eth1",
+      "--zone=internal --list-services": "x", "--permanent --zone=internal --list-services": "x",
+      "--info-service=x": "x\n  ports: 7000/tcp", "--permanent --info-service=x": "x\n  ports: 7000/tcp"},
+     "zone internal: service x: 7000/tcp")])
+def test_a_service_opening_more_than_the_ports_open_to_everyone_stops(tmp_path, answers, said):
+    r, changes = imported_and_checked(firewall_records(tmp_path, enabled="enabled", answers=answers))
+    assert [c for c in changes if said in c["now"]], changes
+
+
+@pytest.mark.parametrize("rule", [
+    "22                         ALLOW       Anywhere",  # (no protocol: udp too)
+    "9042/tcp on eth1           ALLOW       Anywhere",  # (one interface)
+    "9042/tcp                   ALLOW OUT   Anywhere"])  # (outgoing)
+def test_ufw_rules_not_opening_only_the_ports_open_stop(tmp_path, rule):
+    rules = ["9042/tcp                   ALLOW       Anywhere", "9042/tcp (v6)              ALLOW       Anywhere (v6)",
+             "22/tcp                     ALLOW       Anywhere", "22/tcp (v6)                ALLOW       Anywhere (v6)"]
+    r, changes = imported_and_checked(firewall_records(tmp_path, enabled="enabled", ufw=rules + [rule]), "Debian")
+    assert [c for c in changes if c["what"] == "firewall rule (not carried)"], changes
+    # the same port with its protocol, allowed again: changes nothing
+    r, changes = imported_and_checked(firewall_records(tmp_path / "same", enabled="enabled", ufw=rules + [
+        "9042/tcp                   ALLOW IN    Anywhere"]), "Debian")
+    assert changes == []
+
+
+@pytest.mark.parametrize("failing, what", [
+    ("--get-default-zone", "firewalld the default zone"), ("--get-active-zones", "firewalld the active zones"),
+    ("--info-service=x", "zone public service x")])
+def test_the_zones_and_services_firewall_cmd_cannot_give_stop(tmp_path, failing, what):
+    answers = {"--zone=public --list-services": "x", failing: False}
+    out = firewall_records(tmp_path, enabled="enabled", answers=answers)
+    r, changes = imported_and_checked(out)
+    assert [c for c in r["carried"] if c.startswith("NOT read: %s could not be listed" % what)
+            and c.endswith("import again once firewall-cmd answers, or keep the firewall as the nodes have it"
+                           " (-e import_keep_hand_edits=firewall)")], r["carried"]
+    assert [c for c in changes if c["what"] == "firewall rules (not read)"]
+
+
+def test_the_exporter_port_in_one_set_only_stops_the_self_check(tmp_path):
+    """The self-check touches the exporter's port as the import does (firewall_touched): its rule now only stops."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_os import cassandra_firewall_changes
+    rule = 'rule family="ipv4" source address="10.0.20.5" port port="9404" protocol="tcp" accept'
+    out = firewall_records(tmp_path, enabled="enabled", rich=[rule], rich_permanent=[])
+    fw = {"manage": True, "enabled": True, "open_ports": ["9042/tcp", "7000/tcp"], "port_sources": {},
+          "exporter_port": "9404"}
+    assert cassandra_firewall_changes(out, fw, "RedHat", PORTS) == [
+        {"what": "firewall rule (not carried)", "now": "zone public: port 9404/tcp open to 10.0.20.5 now only",
+         "would": "not written by the roles", "effect": "change"}]
+    assert cassandra_firewall_changes(out, dict(fw, exporter_port=""), "RedHat", PORTS) == []
+
+
+def test_sources_let_in_on_every_port_are_said(tmp_path):
+    out = firewall_records(tmp_path, enabled="enabled", answers={
+        "--get-active-zones": "public\n  interfaces: eth0\ntrusted\n  sources: 10.0.5.0/24",
+        "--zone=public --list-rich-rules": 'rule family="ipv4" source address="10.0.6.0/24" accept',
+        "--permanent --zone=public --list-rich-rules": 'rule family="ipv4" source address="10.0.6.0/24" accept'})
+    r, changes = imported_and_checked(out)
+    said = [c for c in r["carried"] if "lets that source in on every port" in c]
+    assert said == ["firewalld zone trusted: sources 10.0.5.0/24: lets that source in on every port, Cassandra's too;"
+                    " not compared (cassandra_firewall writes none)",
+                    'firewalld zone public: rich rule rule family="ipv4" source address="10.0.6.0/24" accept lets that'
+                    " source in on every port, Cassandra's too; not compared (cassandra_firewall writes none)"]
+    assert changes == []

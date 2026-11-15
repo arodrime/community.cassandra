@@ -317,6 +317,15 @@ KEPT_SETUP = (
 )
 
 
+def cassandra_import_kept_switches(parts):
+    """cassandra_import_kept (the parts import_keep_hand_edits kept) -> [the switches import_cluster wrote for them]:
+    the lines to remove from the host_vars of a host rebuilt under that node's name."""
+    out = []
+    for part in parts or []:
+        out += [name for name in KEPT_PARTS.get(str(part), {}) if name not in out]
+    return out
+
+
 def cassandra_new_node_kept_setup(switches, installed, imported=False, allow=False):
     """switches: {name: value} of the *_manage switches in KEPT_SETUP;
     installed: Cassandra found on the host (its package or a unit);
@@ -332,8 +341,8 @@ def cassandra_new_node_kept_setup(switches, installed, imported=False, allow=Fal
     off += [(KEPT_PARTS_VAR, "%s left as the node had it" % ", ".join(kept))] if kept else []
     if not off:
         return _result()
-    names = ", ".join([name for name, what in off]
-                      + [v for p in kept if p in KEPT_PARTS for v in KEPT_PARTS[p] if v not in [n for n, w in off]])
+    lines = [name for name, what in off]
+    names = ", ".join(lines + [v for v in cassandra_import_kept_switches(kept) if v not in lines])
     if installed or not boolean(imported) or boolean(allow):
         return _result(info=["left as it is on this host (false): %s" % names])
     return _result(problems=[
@@ -363,5 +372,6 @@ class FilterModule(object):
             "cassandra_new_node_network": cassandra_new_node_network,
             "cassandra_new_node_urls": cassandra_new_node_urls,
             "cassandra_new_node_kept_setup": cassandra_new_node_kept_setup,
+            "cassandra_import_kept_switches": cassandra_import_kept_switches,
             "cassandra_new_node_notes": cassandra_new_node_notes,
         }

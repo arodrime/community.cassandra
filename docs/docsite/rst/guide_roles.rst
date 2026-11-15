@@ -1481,9 +1481,11 @@ inventory, so that nodes added later get the same tuning as the existing ones (w
   (``{"7199/tcp": ["10.0.9.0/24"]}``; the exporter's port: ``cassandra_prometheus_exporter_sources``): a rich rule of
   the default zone ``rule family="ipv4" source address="10.0.9.0/24" port port="7199" protocol="tcp" accept``, or
   ufw's ``allow from 10.0.9.0/24 to any port 7199 proto tcp``. A source rule on a port open to everyone, or a
-  service of the default zone (RHEL's ``ssh``) or a ufw ``ALLOW`` that opens only such ports, changes nothing: one
-  note, not carried. A list ``firewall-cmd`` or ``ufw`` cannot give (D-Bus down, starting) stops the self-check: its
-  rules are not known. ufw with ``IPV6=no`` (``/etc/default/ufw``) writes IPv4 rules only, the role's too. Anything else (another action, logging, other elements, a service, another zone, a
+  service of the default zone (RHEL's ``ssh``) or a ufw ``ALLOW`` that opens only such ports (protocol by protocol),
+  changes nothing: one note, not carried. When ``firewall-cmd`` or ``ufw`` fails to list rules (D-Bus down, firewalld
+  starting), the self-check stops: those rules are not known (import again once it answers, or keep the firewall).
+  ufw with ``IPV6=no`` (``/etc/default/ufw``) writes IPv4 rules only, the role's too. firewalld direct rules on these
+  ports, zones bound to sources and rich rules letting a source in on every port get a note, not compared. Anything else (another action, logging, other elements, a service, another zone, a
   rule there now only or after a reload only, iptables or nftables) is not carried: the self-check stops on it,
   ``-e import_keep_hand_edits=firewall`` keeps the firewall as the nodes have it.
 

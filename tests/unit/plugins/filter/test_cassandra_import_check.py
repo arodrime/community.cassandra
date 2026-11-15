@@ -1649,6 +1649,18 @@ def test_cqlsh_wrapper_of_the_roles_naming_another_python_is_rewritten():
         " edited or of an earlier version (content or mode), the roles would set it as they write it"]
 
 
+def test_cqlsh_pointers_as_the_role_writes_them():
+    """The files as cassandra_install writes them (their text, its final newline, their mode), not only as rendered."""
+    import hashlib
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import _cqlsh_pointers
+    wrapper = ("#!/bin/sh\n# Managed by Ansible (cassandra_install): run the package's cqlsh with a Python it supports\n"
+               'CQLSH_PYTHON="${CQLSH_PYTHON:-/usr/bin/python3.11}" exec /usr/bin/cqlsh "$@"\n')
+    profile = "# Managed by Ansible (cassandra_install)\nexport CQLSH_PYTHON=/usr/bin/python3.11\n"
+    assert _cqlsh_pointers(PY311) == {
+        "/usr/local/bin/cqlsh": hashlib.sha1(wrapper.encode()).hexdigest() + "|755",
+        "/etc/profile.d/cqlsh.sh": hashlib.sha1(profile.encode()).hexdigest() + "|644"}
+
+
 def test_cqlsh_offline_without_python311_left_as_it_is():
     """cqlsh_links.yml: offline, python3.11 needed and not installed: no wrapper written (not to point at nothing)."""
     st = cqlsh_state(py3="3.12", pythons=["python3|/usr/lib/python3.12/site-packages|%s|x" % PKG_LIB])

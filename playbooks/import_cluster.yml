@@ -1535,17 +1535,18 @@
               else echo "fw_unread|zone $z|${w}rich rules"; fi
             done
           done
-          # direct rules (said when they name a Cassandra port: not compared)
+          # zones bound to sources (they let them in by their own rules: said, not compared)
+          echo "$a" | awk '/^[^[:space:]]/ {z=$1} /^[[:space:]]+sources:/ {sub(/^[[:space:]]+sources: */, ""); print "fw_zone|zone " z "|sources " $0}'
+          # direct rules (said when they name a Cassandra port, not compared; none said when they cannot be listed)
           for c in "" "--permanent"; do
             firewall-cmd $c --direct --get-all-rules 2>/dev/null | awk -v p="fw_direct|${c:+permanent }" '{print p $0}'
           done
-        elif command -v ufw >/dev/null && [ "$(systemctl is-active ufw 2>/dev/null)" = active ] \
-            && ! u=$(ufw status 2>/dev/null); then
-          echo "fw|ufw|active|"
+        elif command -v ufw >/dev/null && ! ufw status >/dev/null 2>&1; then
+          echo "fw|ufw|status unknown|"
           echo "fw_unread|ufw|ufw status"
         elif command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q '^Status: active'; then
           # (IPV6=no in /etc/default/ufw: its rules, the role ones too, are IPv4 only)
-          echo "fw|ufw|active|$(grep -qs '^IPV6=no' /etc/default/ufw && echo IPV6=no)"
+          echo "fw|ufw|active|$(grep -Eqs '^IPV6=("no"|no)[[:space:]]*$' /etc/default/ufw && echo IPV6=no)"
           # every rule (ALLOW, DENY, REJECT, LIMIT), under the header
           ufw status 2>/dev/null | awk 'r && NF {print "fw_rule|ufw|" $0} /^--/ {r=1}'
         else
