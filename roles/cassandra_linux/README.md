@@ -14,7 +14,8 @@ Role Variables
 
 * `cassandra_linux_manage`: `false` leaves this node's OS settings as they
   are (the role changes nothing on it). The `import_cluster` playbook sets it
-  on the nodes it finds set up by other means. Default `true`.
+  on the nodes it could not read, and with `-e import_keep_hand_edits=os`.
+  Default `true`.
 * `cassandra_linux_timesync`: install and start time sync (chrony, kept when
   already installed, or systemd-timesyncd on Debian/Ubuntu). `false` leaves the
   host's time sync alone. Default `true`.

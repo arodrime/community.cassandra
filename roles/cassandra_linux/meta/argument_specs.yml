@@ -14,7 +14,8 @@ argument_specs:
         default: true
         description:
           - V(false) leaves the OS settings of this node as they are, the role changes nothing on it.
-            The C(import_cluster) playbook sets it on the nodes it finds set up by other means.
+            The C(import_cluster) playbook sets it on the nodes it could not read, and with
+            C(-e import_keep_hand_edits=os).
       cassandra_data_disk_tuning:
         type: bool
         default: true

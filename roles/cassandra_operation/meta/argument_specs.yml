@@ -28,8 +28,9 @@ argument_specs:
         description:
           - The new host checks refuse a host with no Cassandra installed yet that still has the host_vars
             C(import_cluster) wrote for the node that had its name (C(cassandra_imported_host=true) with
-            C(cassandra_linux_manage), C(cassandra_cqlsh_python_manage) or C(cassandra_service_unit_manage)
-            V(false)), as the roles would leave it half set up. The same switches set by the operator are not
+            C(cassandra_linux_manage), C(cassandra_cqlsh_python_manage), C(cassandra_service_unit_manage) or
+            C(cassandra_firewall_manage) V(false), or C(cassandra_import_kept) and the switches of those parts), as the
+            roles would leave it half set up. The same switches set by the operator are not
             refused. V(true) accepts it, when that host is set up another way.
       cassandra_imported_host:
         type: bool
@@ -42,7 +43,8 @@ argument_specs:
         description:
           - Written by C(import_cluster) with C(-e import_keep_hand_edits=<parts>), next to the switches that keep those
             parts of the node as it has them (os, sysctl, limits, thp, swap, timesync, disks, unit, repo, cqlsh,
-            firewall). The next import reads it back, and stops when a part is no longer named.
+            firewall). A record (each import keeps only the parts it names); the next one says the parts it no longer
+            keeps (now imported).
       cassandra_settings_kept_on_purpose:
         type: list
         elements: str

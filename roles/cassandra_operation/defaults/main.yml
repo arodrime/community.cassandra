@@ -35,8 +35,10 @@ cassandra_new_node_min_free_gb: 0
 # The checks refuse a new host with no Cassandra yet that has the *_manage:
 # false switches import_cluster wrote for the node the host had before
 # (cassandra_linux_manage, cassandra_cqlsh_python_manage,
-# cassandra_service_unit_manage, with cassandra_imported_host: true in its
-# host_vars). true accepts it: its setup is done another way.
+# cassandra_service_unit_manage, cassandra_firewall_manage, or
+# cassandra_import_kept and the switches of those parts, with
+# cassandra_imported_host: true in its host_vars). true accepts it: its setup
+# is done another way.
 cassandra_new_node_allow_kept_setup: false
 
 # Streaming operations (add_node, replace_node, decommission_node,

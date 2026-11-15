@@ -211,3 +211,15 @@ def test_replace_way_out_for_the_init_script():
     msg = " ".join(render(t["ansible.builtin.assert"]["fail_msg"], cassandra_service_unit_manage=True,
                           cassandra_service_start="package_script", inventory_hostname="n9").split())
     assert "set cassandra_service_start: unit in the host_vars of n9" in msg
+    # the stop itself: the init script refused, the role's unit accepted
+    that = t["ansible.builtin.assert"]["that"]
+
+    def holds(**variables):
+        return all(render("{{ %s }}" % c, **variables) for c in that)
+    assert not holds(cassandra_service_unit_manage=True, cassandra_service_start="package_script")
+    assert holds(cassandra_service_unit_manage=True, cassandra_service_start="unit")
+    assert not holds(cassandra_service_unit_manage=False, cassandra_service_start="unit")
+    # the kept parts' lines named in the way out
+    msg = " ".join(render(t["ansible.builtin.assert"]["fail_msg"], cassandra_service_unit_manage=False,
+                          cassandra_service_start="unit", inventory_hostname="n9").split())
+    assert "cassandra_import_kept and the switches of the parts it names" in msg

@@ -121,9 +121,10 @@ Set in the inventory, as any role variable.
 * `cassandra_new_node_allow_kept_setup`: the checks refuse a new host with no
   Cassandra installed that still has the host_vars `import_cluster` wrote for
   the node that had its name (`cassandra_imported_host: true` with
-  `cassandra_linux_manage`, `cassandra_cqlsh_python_manage` or
-  `cassandra_service_unit_manage` false): the roles would leave it half set
-  up. Those switches set by the operator (no marker) are not refused. `true`
+  `cassandra_linux_manage`, `cassandra_cqlsh_python_manage`,
+  `cassandra_service_unit_manage` or `cassandra_firewall_manage` false, or
+  `cassandra_import_kept` and the switches of those parts): the roles would
+  leave it half set up. Those switches set by the operator (no marker) are not refused. `true`
   accepts it, when the host is set up another way. Default `false`.
 * `cassandra_service_health_timeout` (default 600) and
   `cassandra_service_health_force` (default `false`): the cluster health

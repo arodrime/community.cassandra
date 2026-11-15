@@ -1385,8 +1385,9 @@ named is never written, the self-check says it), a cqlsh of the roles stays thei
 they would give a Python) stops the self-check, with the way out (``-e import_keep_hand_edits=repo`` or ``cqlsh``
 keeps it as the nodes have it). The system java of a
 node is left as it is when it is another Java than the running one (below). Every node that could not be read gets
-``cassandra_repository_manage``, ``cassandra_cqlsh_python_manage``, ``cassandra_linux_manage`` and
-``cassandra_service_unit_manage`` false in its ``host_vars``, never in ``group_vars``: nodes added later get
+``cassandra_repository_manage``, ``cassandra_cqlsh_python_manage``, ``cassandra_linux_manage``,
+``cassandra_service_unit_manage``, ``cassandra_firewall_manage`` and ``cassandra_java_set_default`` false in its
+``host_vars``, never in ``group_vars``: nodes added later get
 the roles' full setup. The OS settings and the firewall of a node read are imported instead (below). The same goes
 for the tuning of the data devices when ``cassandra_linux``
 would still change it with the imported values (a read-ahead no variable gives, tuned's profiles, an udev rule of an
@@ -1479,8 +1480,10 @@ inventory, so that nodes added later get the same tuning as the existing ones (w
   for IPv4 and IPv6), is carried. A port open to some sources only gives ``cassandra_firewall_port_sources``
   (``{"7199/tcp": ["10.0.9.0/24"]}``; the exporter's port: ``cassandra_prometheus_exporter_sources``): a rich rule of
   the default zone ``rule family="ipv4" source address="10.0.9.0/24" port port="7199" protocol="tcp" accept``, or
-  ufw's ``allow from 10.0.9.0/24 to any port 7199 proto tcp``. A source rule on a port open to everyone changes
-  nothing: one note, not carried. Anything else (another action, logging, other elements, a service, another zone, a
+  ufw's ``allow from 10.0.9.0/24 to any port 7199 proto tcp``. A source rule on a port open to everyone, or a
+  service of the default zone (RHEL's ``ssh``) or a ufw ``ALLOW`` that opens only such ports, changes nothing: one
+  note, not carried. A list ``firewall-cmd`` or ``ufw`` cannot give (D-Bus down, starting) stops the self-check: its
+  rules are not known. ufw with ``IPV6=no`` (``/etc/default/ufw``) writes IPv4 rules only, the role's too. Anything else (another action, logging, other elements, a service, another zone, a
   rule there now only or after a reload only, iptables or nftables) is not carried: the self-check stops on it,
   ``-e import_keep_hand_edits=firewall`` keeps the firewall as the nodes have it.
 

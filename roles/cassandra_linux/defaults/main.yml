@@ -1,6 +1,6 @@
 ---
 # false: the role leaves this node's OS settings as they are (import_cluster
-# sets it on the nodes it finds set up by other means)
+# sets it on the nodes it could not read, and with -e import_keep_hand_edits=os)
 cassandra_linux_manage: true
 
 # Tune the read-ahead and IO scheduler of the devices under the Cassandra

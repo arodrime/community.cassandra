@@ -1,0 +1,2 @@
+fw_state|ufw|active|enabled
+fw_state|ufw-rules|inactive|no

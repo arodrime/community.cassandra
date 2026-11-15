@@ -1,0 +1,12 @@
+fw_state|firewalld|active|enabled
+fw|firewalld|active|default zone public
+fw_rule|zone public|ports 22/tcp 7000/tcp 7001/tcp 9042/tcp
+fw_rule|zone public|service cockpit: 9090/tcp
+fw_rule|zone public|service dhcpv6-client: 546/udp
+fw_rule|zone public|service ssh: 22/tcp
+fw_rule|zone public|rich rule rule family="ipv4" source address="10.0.9.0/24" port port="7199" protocol="tcp" accept
+fw_rule|zone public|permanent ports 22/tcp 7000/tcp 7001/tcp 9042/tcp
+fw_rule|zone public|permanent service cockpit: 9090/tcp
+fw_rule|zone public|permanent service dhcpv6-client: 546/udp
+fw_rule|zone public|permanent service ssh: 22/tcp
+fw_rule|zone public|permanent rich rule rule family="ipv4" source address="10.0.9.0/24" port port="7199" protocol="tcp" accept

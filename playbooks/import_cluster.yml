@@ -672,10 +672,16 @@
         [ -x /usr/bin/python3.11 ] && echo "cqlsh_py311=yes"
         for f in /usr/local/bin/cqlsh /etc/profile.d/cqlsh.sh; do
           if [ ! -e "$f" ]; then s=absent; elif grep -qs 'Managed by Ansible (cassandra_install)' "$f"; then s=role; else s=other; fi
-          case $f in
-            *.sh) echo "cqlsh_profile=$s"; [ $s = role ] && echo "cqlsh_profile_py=$(sed -n 's/^export CQLSH_PYTHON=//p' "$f" | head -1)" ;;
-            *) echo "cqlsh_wrapper=$s"; [ $s = role ] && echo "cqlsh_wrapper_py=$(sed -n 's/.*CQLSH_PYTHON:-\([^}]*\)}.*/\1/p' "$f" | head -1)" ;;
-          esac
+          case $f in *.sh) k=cqlsh_profile ;; *) k=cqlsh_wrapper ;; esac
+          echo "$k=$s"
+          if [ $s = role ]; then
+            case $f in
+              *.sh) echo "${k}_py=$(sed -n 's/^export CQLSH_PYTHON=//p' "$f" | head -1)" ;;
+              *) echo "${k}_py=$(sed -n 's/.*CQLSH_PYTHON:-\([^}]*\)}.*/\1/p' "$f" | head -1)" ;;
+            esac
+            # (its content and mode, as the copy module compares them)
+            echo "${k}_sum=$(sha1sum < "$f" | cut -d' ' -f1)|$(stat -c %a "$f")"
+          fi
         done
         # each Python the roles may give the package cqlsh (python3; python3.11; the inventory cassandra_cqlsh_python):
         # its site-packages, what cqlshlib is there (a link and its target, another, none), and whether the package
@@ -823,6 +829,8 @@
           # the Python each of them names, when the role wrote it
           wrapper_py: "{{ _kv.cqlsh_wrapper_py | default('') }}"
           profile_py: "{{ _kv.cqlsh_profile_py | default('') }}"
+          wrapper_sum: "{{ _kv.cqlsh_wrapper_sum | default('') }}"
+          profile_sum: "{{ _kv.cqlsh_profile_sum | default('') }}"
           # path|site-packages|cqlshlib|ok or its last error line, of each Python the roles may give it
           pythons: "{{ _kv | dict2items | selectattr('key', 'match', '^cqlsh_python_') | map(attribute='value') | list }}"
           ran: "{{ _kv.cqlsh_ran | default('') }}"
@@ -1502,23 +1510,42 @@
         if command -v ufw >/dev/null; then
           echo "fw_state|ufw-rules|$(ufw status 2>/dev/null | sed -n 's/^Status: //p')|$(sed -n 's/^ENABLED=//p' /etc/ufw/ufw.conf 2>/dev/null)"
         fi
+        # a list firewall-cmd or ufw cannot give (D-Bus down, starting) is said (fw_unread), never read as no rule
         if [ "$(systemctl is-active firewalld 2>/dev/null)" = active ] && command -v firewall-cmd >/dev/null; then
-          d=$(firewall-cmd --get-default-zone 2>/dev/null)
+          d=$(firewall-cmd --get-default-zone 2>/dev/null) || echo "fw_unread|firewalld|the default zone"
           echo "fw|firewalld|active|default zone $d"
+          a=$(firewall-cmd --get-active-zones 2>/dev/null) || echo "fw_unread|firewalld|the active zones"
           # every rule of the default zone and of the active ones, now and after a reload (permanent)
-          for z in $( { echo "$d"; firewall-cmd --get-active-zones 2>/dev/null | grep -v '^[[:space:]]' | awk '{print $1}'; } | sort -u); do
+          for z in $( { echo "$d"; echo "$a" | grep -v '^[[:space:]]' | awk '{print $1}'; } | grep . | sort -u); do
             for c in "" "--permanent"; do
               w=${c:+permanent }
-              l=$(firewall-cmd $c --zone="$z" --list-ports 2>/dev/null); [ -n "$l" ] && echo "fw_rule|zone $z|${w}ports $l"
-              for s in $(firewall-cmd $c --zone="$z" --list-services 2>/dev/null); do
-                l=$(firewall-cmd $c --info-service="$s" 2>/dev/null | sed -n 's/^[[:space:]]*ports: *//p')
-                [ -n "$l" ] && echo "fw_rule|zone $z|${w}service $s: $l"
-              done
-              firewall-cmd $c --zone="$z" --list-rich-rules 2>/dev/null | awk -v p="fw_rule|zone $z|${w}rich rule " '{print p $0}'
+              if l=$(firewall-cmd $c --zone="$z" --list-ports 2>/dev/null); then
+                [ -n "$l" ] && echo "fw_rule|zone $z|${w}ports $l"
+              else echo "fw_unread|zone $z|${w}ports"; fi
+              if v=$(firewall-cmd $c --zone="$z" --list-services 2>/dev/null); then
+                for s in $v; do
+                  if l=$(firewall-cmd $c --info-service="$s" 2>/dev/null); then
+                    l=$(echo "$l" | sed -n 's/^[[:space:]]*ports: *//p')
+                    [ -n "$l" ] && echo "fw_rule|zone $z|${w}service $s: $l"
+                  else echo "fw_unread|zone $z|${w}service $s"; fi
+                done
+              else echo "fw_unread|zone $z|${w}services"; fi
+              if l=$(firewall-cmd $c --zone="$z" --list-rich-rules 2>/dev/null); then
+                echo "$l" | grep . | awk -v p="fw_rule|zone $z|${w}rich rule " '{print p $0}'
+              else echo "fw_unread|zone $z|${w}rich rules"; fi
             done
           done
-        elif command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q '^Status: active'; then
+          # direct rules (said when they name a Cassandra port: not compared)
+          for c in "" "--permanent"; do
+            firewall-cmd $c --direct --get-all-rules 2>/dev/null | awk -v p="fw_direct|${c:+permanent }" '{print p $0}'
+          done
+        elif command -v ufw >/dev/null && [ "$(systemctl is-active ufw 2>/dev/null)" = active ] \
+            && ! u=$(ufw status 2>/dev/null); then
           echo "fw|ufw|active|"
+          echo "fw_unread|ufw|ufw status"
+        elif command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q '^Status: active'; then
+          # (IPV6=no in /etc/default/ufw: its rules, the role ones too, are IPv4 only)
+          echo "fw|ufw|active|$(grep -qs '^IPV6=no' /etc/default/ufw && echo IPV6=no)"
           # every rule (ALLOW, DENY, REJECT, LIMIT), under the header
           ufw status 2>/dev/null | awk 'r && NF {print "fw_rule|ufw|" $0} /^--/ {r=1}'
         else
@@ -1654,9 +1681,9 @@
       {%-     set _ = quoting.append(h) -%}
       {%-   else -%}
       {%-     set _ = broken.append(h) -%}
-      {%-     if 'cqlsh' in import_keep_hand_edits | default(false) | community.cassandra.cassandra_import_keep_parts
-             or 'cqlsh' in (_nodes | selectattr('name', 'equalto', h) | map(attribute='keep') | first | default({}))
-                           .get('cassandra_import_kept', []) -%}{%- set _ = kept.append(h) -%}{%- endif -%}
+      {%-     if 'cqlsh' in import_keep_hand_edits | default(false) | community.cassandra.cassandra_import_keep_parts -%}
+      {%-       set _ = kept.append(h) -%}
+      {%-     endif -%}
       {%-   endif -%}
       {%- endfor -%}
       {%- set nodes, rows = {'broken': broken, 'kept': kept, 'quoting': quoting}, [] -%}

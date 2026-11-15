@@ -155,10 +155,10 @@ def _package_vars(hv, read, repo, package):
 def _kept_parts(node, parts):
     """A node read, the parts import_keep_hand_edits keeps (KEPT_PARTS): their switches in its keep (its host_vars,
     with cassandra_imported_host: a host rebuilt under its name is refused, not half set up), with the list of them
-    (KEPT_PARTS_VAR, read back by the next import), the values carried for them dropped."""
+    (KEPT_PARTS_VAR, the next import says the ones it no longer keeps), the values carried for them dropped."""
     if not parts or not _bool(node.get("read", False)):
         return node
-    parts = [p for p in KEPT_PARTS if p in set(parts) | set(node["keep"].get(KEPT_PARTS_VAR) or [])]
+    parts = [p for p in KEPT_PARTS if p in parts]
     node = dict(node, vars=dict(node["vars"]), keep=dict(node["keep"]))
     for part in parts:
         node["vars"] = dict((k, v) for k, v in node["vars"].items() if k not in KEPT_PART_VARS[part])
@@ -178,9 +178,12 @@ def cassandra_import_kept_last_notes(nodes, last):
     for n in nodes or []:
         said = (last or {}).get(n.get("name")) or {}
         if said and _bool(n.get("read", False)):
-            if said.get("unreadable"):
-                note = ("host_vars/%s/main.yml of the last import cannot be read (vaulted, or not YAML): the parts it"
-                        " kept by hand, if any, are imported now" % n.get("name"))
+            if said.get("unreadable") == "vaulted":
+                note = ("host_vars/%s/main.yml cannot be read (vaulted): if the last import wrote it, the parts it kept"
+                        " by hand, if any, are imported now" % n.get("name"))
+            elif said.get("unreadable"):
+                note = ("host_vars/%s/main.yml of the last import cannot be read (not YAML): the parts it kept by hand,"
+                        " if any, are imported now" % n.get("name"))
             else:
                 them = "it" if len(said["parts"]) == 1 else "them"
                 note = ("%s: kept by hand by the last import, now imported (import_keep_hand_edits does not name %s)."

@@ -26,6 +26,7 @@ __metaclass__ = type
 import configparser
 import difflib
 import functools
+import hashlib
 import json
 import os
 import re
@@ -64,7 +65,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_settings i
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as _out
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_prometheus as prometheus
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import ROLES, role_file
 
 ROLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles")
 SERIES = {"40x": "4.0", "41x": "4.1", "50x": "5.0"}
@@ -588,6 +589,8 @@ FIREWALL_VARS = (("manage", "cassandra_firewall_manage | bool"), ("enabled", "ca
                  ("open_ports", "open_ports"),
                  # (the role's, the Prometheus exporter's port to its sources added)
                  ("port_sources", _role_expression("cassandra_firewall", "_cassandra_firewall_port_sources")),
+                 ("exporter_port", "cassandra_prometheus_exporter_port | default(9404)"
+                                   " if cassandra_prometheus_exporter_enabled | default(false) | bool else ''"),
                  ("ports", "[cassandra_storage_port | default(7000), cassandra_native_transport_port | default(9042),"
                            " cassandra_jmx_port | default(7199)]"))
 
@@ -625,6 +628,20 @@ def _version_in(version, bounds):
         return False
 
 
+@functools.lru_cache(maxsize=None)
+def _cqlsh_pointers(python):
+    """cassandra_install's wrapper and profile.d file for this Python as cqlsh_links.yml writes them -> {path:
+    "sha1|mode"} (as the read gives them)."""
+    with open(os.path.join(ROLES, "cassandra_install", "tasks", "cqlsh_links.yml"), encoding="utf-8") as f:
+        task = next(t for t in yaml.safe_load(f) if t.get("name") == "Point cqlsh at its Python")
+    templar = Templar(loader=DataLoader(), variables={"_cassandra_cqlsh_python": python})
+    out = {}
+    for item in task["loop"]:
+        content = str(templar.template(trust_as_template(item["content"])))
+        out[item["dest"]] = "%s|%s" % (hashlib.sha1(content.encode()).hexdigest(), str(item["mode"]).lstrip("0"))
+    return out
+
+
 def _cqlsh_check(cqlsh, st, family, error):
     """What cassandra_install would change for the package's cqlsh (cqlsh_python.yml, cqlsh_links.yml) on a node,
     from what the import read there (st: import_cluster_cqlsh), and whether the cqlsh it sets up starts ->
@@ -653,6 +670,9 @@ def _cqlsh_check(cqlsh, st, family, error):
         elif python and not left and named != python:
             out.append("cassandra_install: %s: node has %s, the roles would set %s" % (
                 path, what % (named or "?"), what % python))
+        elif python and not left and st.get(key + "_sum") and st.get(key + "_sum") != _cqlsh_pointers(python)[path]:
+            out.append("cassandra_install: %s: node has %s, edited or of an earlier version (content or mode), the roles"
+                       " would set it as they write it" % (path, what % python))
         elif not python and have == "role":
             out.append("cassandra_install: %s: node has the roles' (an earlier run), the roles would set removed" % path)
     # each Python the role reads (cqlsh_links.yml): path|site-packages|cqlshlib|test

@@ -2350,8 +2350,8 @@ def cassandra_import_kept_last(texts, keep_hand_edits=False):
     this import's option -> {host: {parts: [the parts the last import left as that node had them (its
     KEPT_PARTS_VAR, or the *_manage: false of an import before rc10 on a node it read, OLD_KEPT_SWITCHES) that this
     one does not name: it imports them (a part is kept only when the run names it, as a file)], again: the option
-    that keeps them} or {unreadable: True} (its host_vars main.yml, written by the import, does not read as YAML:
-    vaulted, or broken)}: the report says each."""
+    that keeps them} or {unreadable: "vaulted", or "not YAML" (written by the import)} (its host_vars main.yml cannot
+    be read)}: the report says each."""
     now = keep_parts_option(keep_hand_edits)
     out = {}
     for path, text in sorted((texts or {}).items()):
@@ -2364,7 +2364,8 @@ def cassandra_import_kept_last(texts, keep_hand_edits=False):
         except yaml.YAMLError:
             data = None
         if vaulted or not isinstance(data, dict):
-            out[m.group(1)] = {"unreadable": True}
+            # (vaulted: whose it is not known, the import vaults secrets.yml alone)
+            out[m.group(1)] = {"unreadable": "vaulted" if vaulted else "not YAML"}
             continue
         last = [str(p) for p in data.get(KEPT_PARTS_VAR) or []]
         if KEPT_PARTS_VAR not in data and not all(data.get(k) is False for k in list(OLD_KEPT_SWITCHES) + list(_OLD_NOT_READ)):

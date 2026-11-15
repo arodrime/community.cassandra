@@ -5,6 +5,7 @@ minor_changes:
     writes, the same in both, is carried. A port open to some sources only is imported into
     ``cassandra_firewall_port_sources`` (the Prometheus exporter's port: ``cassandra_prometheus_exporter_sources``):
     a firewalld rich rule of the default zone ``rule family="ipv4" source address="10.0.9.0/24" port port="7199"
-    protocol="tcp" accept``, or ufw's ``allow from 10.0.9.0/24 to any port 7199 proto tcp``. A source rule on a port
-    open to everyone changes nothing: a note, not carried. Any other rule stops the self-check, with the way out
+    protocol="tcp" accept``, or ufw's ``allow from 10.0.9.0/24 to any port 7199 proto tcp``. A source rule, a service
+    (RHEL's ``ssh``) or a ufw ``ALLOW`` that opens only ports open to everyone changes nothing: a note, not carried. A
+    list ``firewall-cmd`` or ``ufw`` cannot give stops the self-check (never read as no rule). Any other rule stops the self-check, with the way out
     (``-e import_keep_hand_edits=firewall``).

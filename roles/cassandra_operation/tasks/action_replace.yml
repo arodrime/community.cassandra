@@ -10,7 +10,8 @@
       - cassandra_service_start | default('unit') == 'unit'
     fail_msg: >-
       {{ ('cassandra_service_unit_manage is false for ' ~ inventory_hostname ~ ', but the replace flag goes into the'
-          ~ " role's unit: remove it (and the other *_manage: false lines the dead node had) from its host_vars.")
+          ~ " role's unit: remove it (and the other *_manage: false lines the dead node had, cassandra_import_kept and"
+          ~ " the switches of the parts it names) from its host_vars.")
          if not cassandra_service_unit_manage | bool
          else ('cassandra_service_start is package_script for ' ~ inventory_hostname ~ ', but the replace flag goes into'
                ~ " the role's unit: set cassandra_service_start: unit in the host_vars of " ~ inventory_hostname

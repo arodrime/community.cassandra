@@ -52,11 +52,11 @@ def test_limits_block_of_earlier_versions_read(tmp_path):
 
 
 def firewall_records(tmp_path, enabled="disabled", active="active", permanent="9042/tcp 7000/tcp", rich=(),
-                     rich_permanent=None, ufw=None, answers=None, rules_enabled="yes"):
+                     rich_permanent=None, ufw=None, answers=None, rules_enabled="yes", ipv6="yes"):
     """What the read's firewall lines print on a node whose firewalld runs (stand-ins for systemctl, firewall-cmd),
     rich: its rich rules (as firewall-cmd lists them), the same after a reload unless rich_permanent says; answers:
-    {firewall-cmd arguments: output} more (another zone...); or whose ufw runs, ufw: the lines of ufw status,
-    rules_enabled: ufw.conf ENABLED."""
+    {firewall-cmd arguments: output, False: it fails} more (another zone...); or whose ufw runs, ufw: the lines of
+    ufw status (False: it fails), rules_enabled: ufw.conf ENABLED, ipv6: /etc/default/ufw IPV6."""
     text = script()
     snippet = text[text.index("# firewall: firewalld, ufw"):text.index("exit 0", text.index("# firewall: firewalld, ufw"))]
     assert "{{" not in snippet
@@ -69,7 +69,8 @@ def firewall_records(tmp_path, enabled="disabled", active="active", permanent="9
             "--zone=public --list-rich-rules": "\n".join(rich),
             "--permanent --zone=public --list-rich-rules": "\n".join(rich_permanent)}
     said.update(answers or {})
-    cases = "".join('  "%s") cat <<\'END\'\n%s\nEND\n  ;;\n' % (k, v) for k, v in said.items() if v)
+    cases = "".join('  "%s") exit 1 ;;\n' % k if v is False else '  "%s") cat <<\'END\'\n%s\nEND\n  ;;\n' % (k, v)
+                    for k, v in said.items() if v or v is False)
     stubs = {
         "systemctl": """#!/bin/sh
 case "$1 $2" in
@@ -79,7 +80,10 @@ case "$1 $2" in
 esac
 """ % (svc, enabled, enabled, svc, active, active),
         "firewall-cmd": '#!/bin/sh\ncase "$*" in\n%sesac\n' % cases}
-    if ufw is not None:
+    if ufw is False:
+        del stubs["firewall-cmd"]
+        stubs["ufw"] = "#!/bin/sh\nexit 1\n"
+    elif ufw is not None:
         del stubs["firewall-cmd"]
         stubs["ufw"] = """#!/bin/sh
 cat <<'END'
@@ -97,7 +101,10 @@ END
     # (ufw.conf: read from a copy here)
     conf = tmp_path / "ufw.conf"
     conf.write_text("ENABLED=%s\n" % rules_enabled)
-    return subprocess.run(["/bin/sh", "-c", "ports='7000|9042|7199'\n" + snippet.replace("/etc/ufw/ufw.conf", str(conf))],
+    default = tmp_path / "default-ufw"
+    default.write_text("IPV6=%s\n" % ipv6)
+    snippet = snippet.replace("/etc/ufw/ufw.conf", str(conf)).replace("/etc/default/ufw", str(default))
+    return subprocess.run(["/bin/sh", "-c", "ports='7000|9042|7199'\n" + snippet],
                           env=env, stdout=subprocess.PIPE, universal_newlines=True, check=True).stdout
 
 
@@ -129,7 +136,8 @@ def imported_and_checked(out, family="RedHat"):
     from ansible_collections.community.cassandra.plugins.filter.cassandra_os import (
         cassandra_firewall_changes, cassandra_os_import)
     r = cassandra_os_import(out, {"ports": PORTS})
-    fw = {"manage": True, "enabled": True, "open_ports": r["vars"].get("open_ports", []),
+    fw = {"manage": True, "enabled": r["vars"].get("cassandra_firewall_enabled", True),
+          "open_ports": r["vars"].get("open_ports", []),
           "port_sources": r["vars"].get("cassandra_firewall_port_sources", {})}
     return r, cassandra_firewall_changes(out, fw, family, PORTS)
 
@@ -227,8 +235,8 @@ def other_rules(out, family="RedHat", exporter=""):
     ({"--get-active-zones": "public\n  interfaces: eth0\ninternal\n  sources: 10.0.0.0/8",
       "--zone=internal --list-ports": "7199/tcp"}, "zone internal ports 7199/tcp"),
     # a service on a Cassandra port
-    ({"--zone=public --list-services": "cassandra", "--info-service=cassandra": "cassandra\n  ports: 9042/tcp"},
-     "zone public service cassandra: 9042/tcp")])
+    ({"--zone=public --list-services": "cassandra", "--info-service=cassandra": "cassandra\n  ports: 7199/tcp"},
+     "zone public service cassandra: 7199/tcp")])
 def test_every_rule_on_a_port_the_role_touches_is_read(tmp_path, answers, said):
     out = firewall_records(tmp_path, enabled="enabled", answers=answers)
     r, other = other_rules(out)
@@ -285,3 +293,80 @@ def test_ufw_boot_is_the_unit_the_role_enables(tmp_path):
         {"what": "firewall ufw", "now": "inactive, active from the next boot (ufw.conf ENABLED=yes)",
          "would": "left as it is: cassandra_firewall disables ufw only where it is active", "effect": "change"}]
     assert cassandra_firewall_changes(stopped.replace("|yes", "|no"), dict(fw, enabled=False), "Debian", PORTS) == []
+
+
+FIXTURES = os.path.join(os.path.dirname(__file__), "..", "plugins", "filter", "fixtures")
+
+
+@pytest.mark.parametrize("platform, family", [("rockylinux9", "RedHat"), ("ubuntu2404", "Debian")])
+def test_a_node_as_the_roles_molecule_converge_leaves_it_imports_without_a_stop(platform, family):
+    """The firewall read (this script) of the containers cassandra_firewall's molecule scenario converged (with
+    7199/tcp open to 10.0.9.0/24): imported, the self-check has nothing to say (RHEL's stock ssh service on 22/tcp,
+    open to everyone by the role too, changes nothing). On Ubuntu the role starts ufw.service but enables no rule
+    (ufw status inactive): no firewall, as the node is."""
+    with open(os.path.join(FIXTURES, "firewall_read_role_built_%s.txt" % platform), encoding="utf-8") as f:
+        out = f.read()
+    r, changes = imported_and_checked(out, family)
+    assert changes == []
+    assert not [c for c in r["carried"] if c.startswith(("NOT carried", "NOT read"))]
+    if family == "RedHat":
+        assert r["vars"]["open_ports"] == ["22/tcp", "7000/tcp", "7001/tcp", "9042/tcp"]
+        assert r["vars"]["cassandra_firewall_port_sources"] == {"7199/tcp": ["10.0.9.0/24"]}
+        assert "zone public: service ssh: 22/tcp opens only ports open to everyone, changes nothing (not carried)" \
+            in r["carried"]
+    else:
+        assert r["vars"]["cassandra_firewall_enabled"] is False
+
+
+@pytest.mark.parametrize("failing", [
+    "--permanent --zone=public --list-ports", "--zone=public --list-rich-rules", "--zone=public --list-services"])
+def test_a_list_firewall_cmd_cannot_give_is_never_no_rule(tmp_path, failing):
+    """firewall-cmd failing (D-Bus down, firewalld starting): said, the self-check stops; never read as no rule."""
+    out = firewall_records(tmp_path, enabled="enabled", answers={failing: False})
+    what = failing.replace("--zone=public --list-", "").replace("--permanent ", "permanent ").replace("-", " ")
+    assert "fw_unread|zone public|%s\n" % what in out
+    r, changes = imported_and_checked(out)
+    assert "NOT read: zone public %s could not be listed: its rules are not known, none carried" % what in r["carried"]
+    assert changes == [{"what": "firewall rules (not read)", "now": "zone public: %s could not be listed" % what,
+                        "would": "not known: the roles may change them", "effect": "change"}]
+
+
+def test_ufw_status_failing_is_never_no_firewall(tmp_path):
+    out = firewall_records(tmp_path, enabled="enabled", ufw=False)
+    assert "fw|ufw|active|\nfw_unread|ufw|ufw status\n" in out
+    r, changes = imported_and_checked(out, "Debian")
+    assert "cassandra_firewall_enabled" not in r["vars"]
+    assert [c["what"] for c in changes] == ["firewall rules (not read)"]
+
+
+def test_ufw_without_ipv6_writes_ipv4_rules_only(tmp_path):
+    rules = ["9042/tcp                   ALLOW       Anywhere"]
+    out = firewall_records(tmp_path, enabled="enabled", ufw=rules, ipv6="no")
+    assert "fw|ufw|active|IPV6=no\n" in out
+    r, changes = imported_and_checked(out, "Debian")
+    assert r["vars"]["open_ports"] == ["9042/tcp"] and changes == []
+    # with IPv6 on: IPv4 only is a rule in one set
+    r, changes = imported_and_checked(firewall_records(tmp_path / "v6", enabled="enabled", ufw=rules), "Debian")
+    assert r["vars"]["open_ports"] == [] and changes
+
+
+def test_a_range_in_one_set_only_is_read(tmp_path):
+    out = firewall_records(tmp_path, enabled="enabled", permanent="9042/tcp 7000/tcp 6990-7010/tcp")
+    assert [c for c in imported_and_checked(out)[0]["carried"] if "port 6990-7010/tcp open to everyone from the next"
+            " reload only" in c]
+
+
+def test_the_import_and_its_self_check_touch_the_same_ports():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_os import firewall_touched
+    assert firewall_touched(PORTS, "9404") == PORTS + ["9404/tcp"]
+    assert firewall_touched(PORTS, "", ["22/tcp", "9042/tcp"], {"9404/tcp": ["10.0.20.5"]}) == PORTS + [
+        "22/tcp", "9404/tcp"]
+
+
+def test_direct_rules_on_a_cassandra_port_are_said(tmp_path):
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_os import cassandra_os_import
+    out = firewall_records(tmp_path, enabled="enabled", answers={
+        "--direct --get-all-rules": "ipv4 filter INPUT 0 -p tcp --dport 9042 -j DROP"})
+    r = cassandra_os_import(out, {"ports": PORTS})
+    assert ("firewalld direct rule naming a port cassandra_firewall opens, not compared (it writes none): ipv4 filter"
+            " INPUT 0 -p tcp --dport 9042 -j DROP") in r["carried"]

@@ -396,18 +396,23 @@ def test_parts_kept_last_time_and_not_named_now_are_imported():
     assert cassandra_import_kept_last(texts, "os") == {"n1": {"parts": ["unit"], "again": "os,unit"}}
     assert cassandra_import_kept_last(texts, True)["n2"]["again"] == "true,thp"
     # unreadable (vaulted, broken): said, its parts (if any) imported
-    for text in ("$ANSIBLE_VAULT;1.1;AES256\n6162\n", MARK + "cassandra_import_kept: [os\n"):
-        assert cassandra_import_kept_last({"host_vars/n1/main.yml": text}, False) == {"n1": {"unreadable": True}}
+    for text, why in (("$ANSIBLE_VAULT;1.1;AES256\n6162\n", "vaulted"), (MARK + "cassandra_import_kept: [os\n", "not YAML")):
+        assert cassandra_import_kept_last({"host_vars/n1/main.yml": text}, False) == {"n1": {"unreadable": why}}
     # one report line per node, info only: the parts are imported (no switch kept)
-    nodes = [dict(base_node("n1"), read=True), dict(base_node("n2"), read=False), dict(base_node("n3"), read=True)]
+    nodes = [dict(base_node("n1"), read=True), dict(base_node("n2"), read=False), dict(base_node("n3"), read=True),
+             dict(base_node("n4"), read=True)]
     out = cassandra_import_kept_last_notes(nodes, {"n1": {"parts": ["os", "unit"], "again": "logback.xml,os,unit"},
-                                                   "n2": {"parts": ["thp"], "again": "thp"}, "n3": {"unreadable": True}})
+                                                   "n2": {"parts": ["thp"], "again": "thp"},
+                                                   "n3": {"unreadable": "not YAML"}, "n4": {"unreadable": "vaulted"}})
     assert out[0]["notes"] == ["os, unit: kept by hand by the last import, now imported (import_keep_hand_edits does"
                                " not name them). To keep them: import again with"
                                " -e import_keep_hand_edits=logback.xml,os,unit"]
     assert out[0]["keep"] == {} and out[1]["notes"] == []
-    assert out[2]["notes"] == ["host_vars/n3/main.yml of the last import cannot be read (vaulted, or not YAML): the"
-                               " parts it kept by hand, if any, are imported now"]
+    assert out[2]["notes"] == ["host_vars/n3/main.yml of the last import cannot be read (not YAML): the parts it kept"
+                               " by hand, if any, are imported now"]
+    # vaulted: whose it is not known (the import vaults secrets.yml alone)
+    assert out[3]["notes"] == ["host_vars/n4/main.yml cannot be read (vaulted): if the last import wrote it, the parts"
+                               " it kept by hand, if any, are imported now"]
 
 
 def test_rc9_switches_are_imported_and_said():

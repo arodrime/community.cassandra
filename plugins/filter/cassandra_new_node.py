@@ -25,6 +25,7 @@ import os
 import re
 
 from ansible.module_utils.parsing.convert_bool import boolean
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import import KEPT_PARTS, KEPT_PARTS_VAR
 from ansible_collections.community.cassandra.plugins.filter.cassandra_url import cassandra_url_masked
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import (
     parse_size, size as _size, sizes as _sizes)
@@ -312,7 +313,7 @@ KEPT_SETUP = (
     ("cassandra_linux_manage", "no OS tuning"),
     ("cassandra_cqlsh_python_manage", "no Python for cqlsh"),
     ("cassandra_service_unit_manage", "no systemd unit"),
-    ("cassandra_firewall_manage", "its firewall as the image has it"),
+    ("cassandra_firewall_manage", "its firewall as the node had it"),
 )
 
 
@@ -326,12 +327,13 @@ def cassandra_new_node_kept_setup(switches, installed, imported=False, allow=Fal
     are theirs. allow: the operator sets that host up another way.
     -> {problems, warnings, info}: the switches of a host rebuilt under an imported node's name."""
     off = [(name, what) for name, what in KEPT_SETUP if not boolean(switches.get(name, True))]
-    # the parts import_keep_hand_edits kept (cassandra_import_kept): each left as that node had it
-    kept = [p for p in switches.get("cassandra_import_kept") or [] if p not in ("os", "unit", "cqlsh", "firewall")]
-    off += [("cassandra_import_kept", "%s left as the node had it" % ", ".join(kept))] if kept else []
+    # the parts import_keep_hand_edits kept (cassandra_import_kept): each left as that node had it, by its switches
+    kept = [p for p in switches.get(KEPT_PARTS_VAR) or [] if p not in ("os", "unit", "cqlsh", "firewall")]
+    off += [(KEPT_PARTS_VAR, "%s left as the node had it" % ", ".join(kept))] if kept else []
     if not off:
         return _result()
-    names = ", ".join(name for name, what in off)
+    names = ", ".join([name for name, what in off]
+                      + [v for p in kept if p in KEPT_PARTS for v in KEPT_PARTS[p] if v not in [n for n, w in off]])
     if installed or not boolean(imported) or boolean(allow):
         return _result(info=["left as it is on this host (false): %s" % names])
     return _result(problems=[

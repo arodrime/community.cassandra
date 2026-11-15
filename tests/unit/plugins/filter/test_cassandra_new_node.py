@@ -379,8 +379,10 @@ def test_kept_parts_on_a_blank_host():
     # rc10: parts kept by hand (import_keep_hand_edits) in the host_vars of the node that had this name
     out = cassandra_new_node_kept_setup({"cassandra_firewall_manage": False, "cassandra_import_kept": ["thp", "firewall"]},
                                         installed=False, imported=True)
-    assert out["problems"][0].startswith("cassandra_firewall_manage, cassandra_import_kept are set on a host")
-    assert "its firewall as the image has it, thp left as the node had it" in out["problems"][0]
+    # the way out names every line to remove: the switches of each part kept, not only the list of them
+    assert out["problems"][0].startswith("cassandra_firewall_manage, cassandra_import_kept, cassandra_linux_thp_enabled,"
+                                         " cassandra_linux_thp_defrag are set on a host")
+    assert "its firewall as the node had it, thp left as the node had it" in out["problems"][0]
     # the import writes the marker with them (cassandra_imported_host) and keeps them in host_vars
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
         cassandra_inventory_layout)

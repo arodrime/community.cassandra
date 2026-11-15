@@ -1640,6 +1640,13 @@ def test_cqlsh_wrapper_of_the_roles_naming_another_python_is_rewritten():
         "cassandra_install: /usr/local/bin/cqlsh: node has their wrapper (the package's cqlsh with /opt/py/bin/python),"
         " the roles would set their wrapper (the package's cqlsh with /usr/bin/python3.11)"]
     assert cqlsh_check(dict(st, wrapper_py=PY311), series="41x")[0] == []
+    # the roles' file for that Python, edited (or of an earlier version): rewritten
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import _cqlsh_pointers
+    same = dict(st, wrapper_py=PY311, wrapper_sum=_cqlsh_pointers(PY311)["/usr/local/bin/cqlsh"])
+    assert cqlsh_check(same, series="41x")[0] == []
+    assert cqlsh_check(dict(same, wrapper_sum="0" * 40 + "|755"), series="41x")[0] == [
+        "cassandra_install: /usr/local/bin/cqlsh: node has their wrapper (the package's cqlsh with /usr/bin/python3.11),"
+        " edited or of an earlier version (content or mode), the roles would set it as they write it"]
 
 
 def test_cqlsh_offline_without_python311_left_as_it_is():

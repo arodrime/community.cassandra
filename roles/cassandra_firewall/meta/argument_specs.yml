@@ -10,8 +10,9 @@ argument_specs:
         default: true
         description:
           - V(false) leaves the firewall as it is on this node, nothing installed, started or opened.
-          - Set it for the nodes whose firewall you keep as it is (C(import_cluster) carries the nodes' firewall,
-            or none, instead).
+          - Set it for the nodes whose firewall you keep as it is. C(import_cluster) writes it with
+            C(-e import_keep_hand_edits=firewall), and on the nodes it could not read; else it carries the nodes'
+            firewall, or none.
       cassandra_firewall_enabled:
         type: bool
         default: true
