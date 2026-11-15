@@ -245,6 +245,9 @@ def test_a_node_as_the_roles_molecule_converge_leaves_it_imports_without_a_stop(
         assert r["vars"]["cassandra_firewall_port_sources"] == {"7199/tcp": ["10.0.9.0/24"]}
         assert "zone public: service ssh: 22/tcp opens only ports open to everyone, changes nothing (not carried)" \
             in r["carried"]
+        # (its zone target and RHEL's allow-host-ipv6 policy, ICMP only, as read now: nothing to say)
+        assert "fw_rule|zone public|permanent target default" in out and "policy allow-host-ipv6|rich rule" in out
+        assert not [c for c in r["carried"] if "target" in c or "allow-host-ipv6" in c]
     else:
         assert r["vars"]["cassandra_firewall_enabled"] is False
 
@@ -494,13 +497,16 @@ def test_sources_let_in_on_every_port_are_said(tmp_path):
      "zone public: target ACCEPT", False),
     ({"--info-zone=public": "public\n  target: default", "--permanent --info-zone=public": "public\n  target: default"},
      None, False),
-    ({"--info-zone=public": "public\n  protocols: tcp", "--permanent --info-zone=public": "public\n  protocols: tcp"},
+    # (as firewall-cmd --list-protocols, --list-source-ports, --list-forward-ports print them)
+    ({"--zone=public --list-protocols": "tcp", "--permanent --zone=public --list-protocols": "tcp"},
      "zone public: protocols tcp", False),
-    # source and forward ports on a Cassandra port: a stop
-    ({"--info-zone=public": "public\n  source-ports: 7000/tcp",
-      "--permanent --info-zone=public": "public\n  source-ports: 7000/tcp"}, "zone public: source-ports 7000/tcp", True),
-    ({"--info-zone=public": "public\n  forward-ports: port=9042:proto=tcp:toport=19042:toaddr=",
-      "--permanent --info-zone=public": "public\n  forward-ports: port=9042:proto=tcp:toport=19042:toaddr="},
+    # a source port: traffic from it reaches every port, said
+    ({"--zone=public --list-source-ports": "7000/tcp", "--permanent --zone=public --list-source-ports": "7000/tcp"},
+     "zone public: source-ports 7000/tcp", False),
+    # forward ports, one per line: on a Cassandra port, a stop
+    ({"--zone=public --list-forward-ports": "port=80:proto=tcp:toport=8080:toaddr=\nport=9042:proto=tcp:toport=19042:toaddr=",
+      "--permanent --zone=public --list-forward-ports":
+      "port=80:proto=tcp:toport=8080:toaddr=\nport=9042:proto=tcp:toport=19042:toaddr="},
      "forward-ports port=9042", True),
     # what a service opens besides its ports
     ({"--zone=public --list-services": "x", "--permanent --zone=public --list-services": "x",
@@ -660,3 +666,55 @@ def test_ufw_source_port_rule_stops_both_paths():
     r, changes = imported_and_checked(out, "Debian")
     assert changes == [] and "ufw ufw: Anywhere ALLOW 10.0.9.0/24, for that source on every port, Cassandra's too; not" \
         " compared (cassandra_firewall writes none)" in r["carried"]
+
+
+# --- round 8: source ports, ICMP, policies to this host, ports as firewalld writes them ---
+
+@pytest.mark.parametrize("answers, said, stop", [
+    # a rich rule for a source port: every destination port reachable, said; dropping stops
+    ({"--zone=public --list-rich-rules": 'rule family="ipv4" source-port port="7000" protocol="tcp" accept'},
+     "source-port", False),
+    ({"--zone=public --list-rich-rules": 'rule family="ipv4" source-port port="7000" protocol="tcp" drop'},
+     "source-port", True),
+    # a service's source port: said
+    ({"--zone=public --list-services": "x", "--info-service=x": "x\n  ports: \n  source-ports: 7000/tcp"},
+     "service x source-ports: 7000/tcp", False),
+    # a port written with a leading zero, a port out of range: not the role's form, a stop
+    ({"--zone=public --list-ports": "9042/tcp 07000/tcp"}, "ports 9042/tcp 07000/tcp", True),
+    ({"--zone=public --list-rich-rules": 'rule family="ipv4" source address="10.0.9.0/24" port port="70000"'
+                                         ' protocol="tcp" accept'}, 'port="70000"', True)])
+def test_source_ports_and_ports_not_written_as_the_role_writes_them(tmp_path, answers, said, stop):
+    both = dict(answers, **{"--permanent " + k: v for k, v in answers.items()})
+    r, changes = imported_and_checked(firewall_records(tmp_path, enabled="enabled", answers=both))
+    stops = [c for c in changes if said in c["now"]]
+    notes = [c for c in r["carried"] if said in c and "not compared" in c]
+    assert (stops and not notes) if stop else (notes and not changes), (r["carried"], changes)
+
+
+def test_icmp_rich_rules_concern_no_port(tmp_path):
+    rule = 'rule family="ipv6" icmp-type name="neighbour-advertisement" accept'
+    answers = {"--zone=public --list-rich-rules": rule, "--permanent --zone=public --list-rich-rules": rule}
+    r, changes = imported_and_checked(firewall_records(tmp_path, enabled="enabled", answers=answers))
+    assert changes == [] and not [c for c in r["carried"] if "icmp" in c]
+
+
+def test_policies_to_this_host_are_read(tmp_path):
+    """firewalld 0.9+: a policy whose egress is HOST lets traffic in by its own rules (RHEL's allow-host-ipv6: ICMP
+    only, nothing said); one on a Cassandra port stops, an ACCEPT one is said; one to other zones is not read."""
+    host = "{}\n  target: {}\n  ingress-zones: ANY\n  egress-zones: HOST"
+    answers = {"--get-policies": "allow-host-ipv6 jmx-in everything to-lan"}
+    for set_ in ("", "--permanent "):
+        answers.update({
+            set_ + "--info-policy=allow-host-ipv6": host.format("allow-host-ipv6", "CONTINUE"),
+            set_ + "--policy=allow-host-ipv6 --list-rich-rules":
+                'rule family="ipv6" icmp-type name="neighbour-advertisement" accept',
+            set_ + "--info-policy=jmx-in": host.format("jmx-in", "CONTINUE"),
+            set_ + "--policy=jmx-in --list-ports": "7199/tcp",
+            set_ + "--info-policy=everything": host.format("everything", "ACCEPT"),
+            set_ + "--info-policy=to-lan": "to-lan\n  target: ACCEPT\n  ingress-zones: HOST\n  egress-zones: internal"})
+    out = firewall_records(tmp_path, enabled="enabled", answers=answers)
+    assert "policy to-lan" not in out and "policy allow-host-ipv6|rich rule" in out
+    r, changes = imported_and_checked(out)
+    assert [c["now"] for c in changes] == ["policy jmx-in: ports 7199/tcp"]
+    assert [c for c in r["carried"] if c.startswith("firewalld policy everything: target ACCEPT")]
+    assert not [c for c in r["carried"] if "allow-host-ipv6" in c]

@@ -1524,13 +1524,20 @@
               if l=$(firewall-cmd $c --zone="$z" --list-ports 2>/dev/null); then
                 [ -n "$l" ] && echo "fw_rule|zone $z|${w}ports $l"
               else echo "fw_unread|zone $z|${w}ports"; fi
-              # the zone itself: its target (ACCEPT lets every port in), whole protocols, source and forward ports
+              # the zone itself: its target (ACCEPT lets every port in; one line of --info-zone), whole protocols,
+              # source ports, forward ports (one per line)
               if l=$(firewall-cmd $c --info-zone="$z" 2>/dev/null); then
-                for f in target protocols source-ports forward-ports; do
-                  v=$(echo "$l" | sed -n "s/^[[:space:]]*$f: *//p")
-                  [ -n "$v" ] && echo "fw_rule|zone $z|${w}$f $v"
-                done
-              else echo "fw_unread|zone $z|${w}zone settings"; fi
+                v=$(echo "$l" | sed -n 's/^[[:space:]]*target: *//p')
+                [ -n "$v" ] && echo "fw_rule|zone $z|${w}target $v"
+              else echo "fw_unread|zone $z|${w}target"; fi
+              for f in protocols source-ports forward-ports; do
+                if l=$(firewall-cmd $c --zone="$z" --list-$f 2>/dev/null); then
+                  case $f in
+                    forward-ports) echo "$l" | grep . | awk -v p="fw_rule|zone $z|${w}$f " '{print p $0}' ;;
+                    *) [ -n "$l" ] && echo "fw_rule|zone $z|${w}$f $l" ;;
+                  esac
+                else echo "fw_unread|zone $z|${w}$f"; fi
+              done
               if v=$(firewall-cmd $c --zone="$z" --list-services 2>/dev/null); then
                 for s in $v; do
                   if l=$(firewall-cmd $c --info-service="$s" 2>/dev/null); then
@@ -1555,6 +1562,24 @@
               else echo "fw_unread|zone $z|${w}rich rules"; fi
             done
           done
+          # policies to this host (firewalld 0.9+; egress HOST): their target, ports, services, rich rules
+          if q=$(firewall-cmd --get-policies 2>/dev/null); then
+            for y in $q; do
+              for c in "" "--permanent"; do
+                w=${c:+permanent }
+                i=$(firewall-cmd $c --info-policy="$y" 2>/dev/null) || { echo "fw_unread|policy $y|${w}policy"; continue; }
+                echo "$i" | grep -Eq '^[[:space:]]*egress-zones:.*\bHOST\b' || continue
+                v=$(echo "$i" | sed -n 's/^[[:space:]]*target: *//p')
+                [ -n "$v" ] && echo "fw_rule|policy $y|${w}target $v"
+                l=$(firewall-cmd $c --policy="$y" --list-ports 2>/dev/null) && [ -n "$l" ] && echo "fw_rule|policy $y|${w}ports $l"
+                for s in $(firewall-cmd $c --policy="$y" --list-services 2>/dev/null); do
+                  l=$(firewall-cmd $c --info-service="$s" 2>/dev/null | sed -n 's/^[[:space:]]*ports: *//p')
+                  [ -n "$l" ] && echo "fw_rule|policy $y|${w}service $s: $l"
+                done
+                firewall-cmd $c --policy="$y" --list-rich-rules 2>/dev/null | grep . | awk -v p="fw_rule|policy $y|${w}rich rule " '{print p $0}'
+              done
+            done
+          fi
           # zones bound to sources (they let them in by their own rules: said, not compared)
           echo "$a" | awk '/^[^[:space:]]/ {z=$1} /^[[:space:]]+sources:/ {sub(/^[[:space:]]+sources: */, ""); print "fw_zone|zone " z "|sources " $0}'
           # direct rules (said when they name a Cassandra port, not compared; none said when they cannot be listed)

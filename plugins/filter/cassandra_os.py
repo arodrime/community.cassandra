@@ -794,9 +794,11 @@ def _range(lo, hi):
 
 def _port(value):
     """A port spec -> (lo, hi, {protocols}, the range's separator) (no protocol: tcp and udp), or None: a name, an
-    empty field, a number out of range."""
+    empty field, a number out of range or written with a leading zero."""
     m = PORT_SPEC.match(str(value).strip())
-    bounds = _range(m.group(1), m.group(3)) if m else None
+    # (as firewalld and ufw write a port: no leading zero)
+    leading_zero = m and any(re.match(r"^0\d", g or "") for g in (m.group(1), m.group(3)))
+    bounds = _range(m.group(1), m.group(3)) if m and not leading_zero else None
     if not bounds:
         return None
     return bounds[0], bounds[1], {m.group(4)} if m.group(4) else {"tcp", "udp"}, m.group(2) or ""
@@ -827,10 +829,11 @@ def _ufw_ports(to):
 
 
 def _names_port(text, ports):
-    """text names one of the ports (port/proto, a range too), alone or in a range of its own."""
+    """text names one of the ports (port/proto, a range too), alone or in a range of its own; or a number out of the
+    port numbers where a port goes (what it means is not known: it may)."""
     spans = _ports(ports)
-    named = [b for b in (_range(lo, hi) for lo, dummy, hi in PORT_IN_TEXT.findall(text)) if b]
-    return any(lo <= b and a <= hi for lo, hi in named for a, b, dummy, dummy2 in spans)
+    named = [_range(lo, hi) for lo, dummy, hi in PORT_IN_TEXT.findall(text)]
+    return any(b is None for b in named) or any(lo <= b and a <= hi for lo, hi in named for a, b, dummy, dummy2 in spans)
 
 
 def _opens_only(ports, open_):
@@ -973,20 +976,20 @@ def _ufw_other_form_kind(line, ports, open_, services):
 
 def _firewalld_other_form_kind(where, line, home, ports, open_, services):
     """_other_form_kind of a firewalld line (of any zone)."""
-    # the zone's own settings: an ACCEPT target or a whole protocol lets every port in (said); source and forward ports
+    # the settings of a zone (or a policy to this host): an ACCEPT target, a whole protocol, a source port (traffic
+    # from it reaches every port) let every port in: said; a forward port on a touched port: "other"
     zone_setting = re.match(r"^(?:permanent )?(target|protocols|source-ports|forward-ports) (.*)$", line)
     if zone_setting and zone_setting.group(1) == "target":
         return "every_port" if zone_setting.group(2) == "ACCEPT" else ""
-    if zone_setting and zone_setting.group(1) == "protocols":
+    if zone_setting and zone_setting.group(1) in ("protocols", "source-ports"):
         return "every_port"
     if zone_setting:
         return "other" if _names_port(zone_setting.group(2), ports) else ""
-    # what else a service opens: a whole protocol (every port), source ports, services it includes (not read here)
+    # what else a service opens: a whole protocol, a source port (every port, said); services it includes (not read
+    # here: "other", whatever their ports)
     extra = re.match(r"^(?:permanent )?service \S+ (protocols|source-ports|includes): (.*)$", line)
-    if extra and extra.group(1) == "protocols":
+    if extra and extra.group(1) in ("protocols", "source-ports"):
         return "every_port"
-    if extra and extra.group(1) == "source-ports":
-        return "other" if _names_port(extra.group(2), ports) else ""
     if extra:
         return "other"
     service = re.match(r"^(permanent )?service [^:]+:\s*(.*)$", line)
@@ -998,9 +1001,12 @@ def _firewalld_other_form_kind(where, line, home, ports, open_, services):
             return ""
         return "no_effect" if where == home and _opens_only(specs, open_) else "other"
     rich = FW_RICH.match(line)
+    if rich and re.search(r" icmp-(type|block) ", rich.group(2)):
+        return ""  # (ICMP: no port)
     named = re.search(r' service name="([^"]*)"', rich.group(2)) if rich else None
-    if rich and not named and not re.search(r"\b(port|forward-port|source-port) ", rich.group(2)):
-        # no port in it: it reaches every port, Cassandra's too; letting in is said, anything else stops
+    if rich and not named and not re.search(r'(?<![\w-])port port=|forward-port ', rich.group(2)):
+        # no destination port in it (none, or a source port): it reaches every port, Cassandra's too; letting in is
+        # said, anything else stops
         return "every_port" if re.search(r" accept$", rich.group(2)) else "other"
     if named:
         # (the ports of that service as the read listed them in that set: on a touched port, or not known: "other")
