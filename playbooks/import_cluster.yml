@@ -1503,6 +1503,8 @@
         done
         # firewall: firewalld, ufw, else iptables/nftables rules for the Cassandra ports; running or not, at boot or not
         # (is-enabled exits 1 for disabled: its output says it; none, or not-found: not installed)
+        # (their English output is read below)
+        LC_ALL=C; export LC_ALL
         for s in firewalld ufw; do
           b=$(systemctl is-enabled $s 2>/dev/null)
           case $b in ''|not-found) ;; *) echo "fw_state|$s|$(systemctl is-active $s 2>/dev/null)|$b" ;; esac
@@ -1522,19 +1524,33 @@
               if l=$(firewall-cmd $c --zone="$z" --list-ports 2>/dev/null); then
                 [ -n "$l" ] && echo "fw_rule|zone $z|${w}ports $l"
               else echo "fw_unread|zone $z|${w}ports"; fi
+              # the zone itself: its target (ACCEPT lets every port in), whole protocols, source and forward ports
+              if l=$(firewall-cmd $c --info-zone="$z" 2>/dev/null); then
+                for f in target protocols source-ports forward-ports; do
+                  v=$(echo "$l" | sed -n "s/^[[:space:]]*$f: *//p")
+                  [ -n "$v" ] && echo "fw_rule|zone $z|${w}$f $v"
+                done
+              else echo "fw_unread|zone $z|${w}zone settings"; fi
               if v=$(firewall-cmd $c --zone="$z" --list-services 2>/dev/null); then
                 for s in $v; do
                   if l=$(firewall-cmd $c --info-service="$s" 2>/dev/null); then
-                    l=$(echo "$l" | sed -n 's/^[[:space:]]*ports: *//p')
-                    [ -n "$l" ] && echo "fw_rule|zone $z|${w}service $s: $l"
+                    p=$(echo "$l" | sed -n 's/^[[:space:]]*ports: *//p')
+                    [ -n "$p" ] && echo "fw_rule|zone $z|${w}service $s: $p"
+                    # (what else a service may open: whole protocols, source ports, other services)
+                    for f in protocols source-ports includes; do
+                      p=$(echo "$l" | sed -n "s/^[[:space:]]*$f: *//p")
+                      [ -n "$p" ] && echo "fw_rule|zone $z|${w}service $s $f: $p"
+                    done
                   else echo "fw_unread|zone $z|${w}service $s"; fi
                 done
               else echo "fw_unread|zone $z|${w}services"; fi
               if l=$(firewall-cmd $c --zone="$z" --list-rich-rules 2>/dev/null); then
                 echo "$l" | grep . | awk -v p="fw_rule|zone $z|${w}rich rule " '{print p $0}'
-                # the ports of the services they name
+                # the ports of the services they name (now, or after a reload: as each set defines them)
                 for s in $(echo "$l" | sed -n 's/.* service name="\([^"]*\)".*/\1/p' | sort -u); do
-                  p=$(firewall-cmd $c --info-service="$s" 2>/dev/null) && echo "fw_svc|$s|$(echo "$p" | sed -n 's/^[[:space:]]*ports: *//p')"
+                  if p=$(firewall-cmd $c --info-service="$s" 2>/dev/null); then
+                    echo "fw_svc|${w}$s|$(echo "$p" | sed -n 's/^[[:space:]]*ports: *//p')"
+                  else echo "fw_unread|zone $z|${w}service $s (named by a rich rule)"; fi
                 done
               else echo "fw_unread|zone $z|${w}rich rules"; fi
             done
@@ -1551,8 +1567,9 @@
         elif command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q '^Status: active'; then
           # (IPV6=no in /etc/default/ufw: its rules, the role ones too, are IPv4 only)
           echo "fw|ufw|active|$(grep -Eqs '^IPV6=("no"|no)[[:space:]]*$' /etc/default/ufw && echo IPV6=no)"
-          # every rule (ALLOW, DENY, REJECT, LIMIT), under the header
+          # every rule (ALLOW, DENY, REJECT, LIMIT), under the header; what comes in by default
           ufw status 2>/dev/null | awk 'r && NF {print "fw_rule|ufw|" $0} /^--/ {r=1}'
+          ufw status verbose 2>/dev/null | sed -n 's/^Default: \([a-z]*\) (incoming).*/fw_rule|ufw|default incoming \1/p'
           # the ports of its app profiles (a rule may name one)
           ufw app list 2>/dev/null | sed -n 's/^  *//p' | while IFS= read -r a; do
             echo "fw_svc|ufw app $a|$(ufw app info "$a" 2>/dev/null | sed -n '/^Ports*:/,$p' | tail -n +2 | tr -d ' ' | tr '\n' ' ')"

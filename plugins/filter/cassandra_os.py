@@ -866,8 +866,9 @@ def _firewall_read(recs, touched=()):
     same, to some sources), redundant: [(port, source)] a source rule on a port open to everyone (it changes nothing),
     other: [(where, rule)] the rules on a touched port the role does not write, or in one set only, unread: [(where,
     what)] the lists firewall-cmd or ufw could not give, also: [(where, rule)] a rule of another form that opens only
-    ports open to everyone (e.g. the ssh service): it changes nothing}. touched: firewall_touched's (the ports open to
-    everyone are touched too)."""
+    ports open to everyone (e.g. the ssh service): it changes nothing, every: [(where, rule)] a rule or setting that
+    lets a source in on every port (said, not compared), state: the state of the firewall running, as read}. touched:
+    firewall_touched's (the ports open to everyone are touched too)."""
     fws = [_fields(rest, 3) for kind, rest in recs if kind == "fw"]
     rules = [(where, _norm(line)) for where, line in (_fields(rest, 2) for kind, rest in recs if kind == "fw_rule")]
     name = next((n for n, state, extra in fws if n in ("firewalld", "ufw")), "")
@@ -921,13 +922,16 @@ def _firewall_read(recs, touched=()):
         when = {"now": "now", "later": "from the next reload", "v4": "for IPv4", "v6": "for IPv6"}[sorted(sets)[0]]
         other.append((home, "%s %s only" % (what, when)))
     every = []
+    kinds = {}
     for where, line in rest:
-        if line.startswith("permanent ") and (where, line[len("permanent "):]) in rest:
-            continue  # (a rule there now and after a reload: said once)
         try:
-            kind = _rest_kind(where, line, name, home, ports, open_, services)
+            kinds[(where, line)] = _rest_kind(where, line, name, home, ports, open_, services)
         except Exception:  # pylint: disable=broad-except  # (whatever the line: said as it is, never an error)
-            kind = "other"
+            kinds[(where, line)] = "other"
+    for (where, line), kind in kinds.items():
+        twin = (where, line[len("permanent "):])
+        if line.startswith("permanent ") and kinds.get(twin) == kind:
+            continue  # (the same rule now and after a reload, read alike: said once)
         {"other": other, "also": also, "every": every}.get(kind, []).append((where, line))
     # (iptables' own INPUT policy other than ACCEPT: a rule of its own)
     other += [(n, state) for n, state, extra in fws if n not in ("firewalld", "ufw")]
@@ -946,12 +950,16 @@ def _rest_kind(where, line, name, home, ports, open_, services):
     everyone, protocol by protocol: changes nothing), "every" (it lets a source in, or keeps it out, on every port:
     said, not compared), "" (on no port the role touches)."""
     if name == "ufw" and where == "ufw":
+        default = re.match(r"^default incoming (\S+)$", line)
+        if default:
+            return "every" if default.group(1) == "allow" else ""  # (allow: every port comes in)
         m = UFW_RULE.match(line)
         if not m:
             return "other"
         if m.group("to") == "Anywhere":
-            # (a source port, an app profile as From: the ports are not known here)
-            if re.match(r"^[0-9a-fA-F.:/]+$", m.group("src")) and not m.group("on"):
+            # a source let in on every port (said); one kept out, a source port, an app profile as From: "other"
+            if re.match(r"^[0-9a-fA-F.:/]+$", m.group("src")) and not m.group("on") and m.group("action") == "ALLOW" \
+                    and m.group("dir") in (None, "IN"):
                 return "every"
             return "other"
         # (an app profile: its ports, as ufw app info gives them)
@@ -964,6 +972,22 @@ def _rest_kind(where, line, name, home, ports, open_, services):
         lets_in = m.group("action") == "ALLOW" and m.group("dir") in (None, "IN") and not m.group("on") \
             and m.group("src") == "Anywhere"
         return "also" if lets_in and _opens_only(specs, open_) else "other"
+    # the zone's own settings: an ACCEPT target or a whole protocol lets every port in (said); source and forward ports
+    zone_setting = re.match(r"^(?:permanent )?(target|protocols|source-ports|forward-ports) (.*)$", line)
+    if zone_setting and zone_setting.group(1) == "target":
+        return "every" if zone_setting.group(2) == "ACCEPT" else ""
+    if zone_setting and zone_setting.group(1) == "protocols":
+        return "every"
+    if zone_setting:
+        return "other" if _names_port(zone_setting.group(2), ports) else ""
+    # what else a service opens: a whole protocol (every port), source ports, services it includes (not read here)
+    extra = re.match(r"^(?:permanent )?service \S+ (protocols|source-ports|includes): (.*)$", line)
+    if extra and extra.group(1) == "protocols":
+        return "every"
+    if extra and extra.group(1) == "source-ports":
+        return "other" if _names_port(extra.group(2), ports) else ""
+    if extra:
+        return "other"
     service = re.match(r"^(permanent )?service [^:]+:\s*(.*)$", line)
     if service:
         specs = service.group(2).split()
@@ -973,12 +997,14 @@ def _rest_kind(where, line, name, home, ports, open_, services):
             return ""
         return "also" if where == home and _opens_only(specs, open_) else "other"
     rich = FW_RICH.match(line)
-    if rich and re.match(r"^rule( family=\S+)? source address=\S+ (accept|drop|reject)$", rich.group(2)):
-        return "every"
     named = re.search(r' service name="([^"]*)"', rich.group(2)) if rich else None
+    if rich and not named and not re.search(r"\b(port|forward-port|source-port) ", rich.group(2)):
+        # no port in it: it reaches every port, Cassandra's too; letting in is said, anything else stops
+        return "every" if re.search(r" accept$", rich.group(2)) else "other"
     if named:
-        # (the ports of that service, as the read listed them: on a port the role touches, or not known, "other")
-        known = services.get(named.group(1))
+        # (the ports of that service, as the read listed them in that set: on a port the role touches, or not known,
+        # "other")
+        known = services.get((rich.group(1) or "") + named.group(1))
         if known is None:
             return "other"
         for spec in known.split():
@@ -1005,12 +1031,14 @@ def _firewall(recs, wanted):
                  " firewalld by default)"])
     lines = ["firewall: %s %s%s" % (name, state, (", " + extra) if extra else "") for name, state, extra in fws]
     lines += ["firewall %s: %s" % (where, _norm(line)) for where, line in rules]
-    opened = [p for p in ports
-              if any(re.search(r"(?<![\d-])%s(?!\d)" % re.escape(p.split("/")[0]), line) for dummy, line in rules)]
-    lines.append("firewall: Cassandra ports open: %s; not seen open: %s" % (
-        ", ".join(opened) or "none", ", ".join(p for p in ports if p not in opened) or "none"))
     touched = firewall_touched(ports, exporter.split("/", maxsplit=1)[0])
     fw = _firewall_read(recs, touched)
+    # (as the read gives them: the forms cassandra_firewall writes)
+    to_all = [p for p in ports if _opens_only([p], fw["open"])]
+    to_some = [p for p in ports if p not in to_all and p in fw["sources"]]
+    lines.append("firewall: Cassandra ports open to everyone: %s; to some sources only: %s; neither: %s" % (
+        ", ".join(to_all) or "none", ", ".join(to_some) or "none",
+        ", ".join(p for p in ports if p not in to_all + to_some) or "none"))
     out, notes = {}, []
     if fw["name"]:
         where = "the default zone %s" % fw["zone"] if fw["name"] == "firewalld" else "ufw"
@@ -1051,8 +1079,9 @@ def _firewall(recs, wanted):
 
 def cassandra_firewall_changes(text, fw, family="", cassandra_ports=()):
     """What cassandra_firewall, run on the node, would change there, and the rules it does not write (new nodes would
-    not get them): text, the import's records; fw: {manage, enabled, open_ports, port_sources} as the role reads them
-    (port_sources: the Prometheus exporter's port to its sources included); family: the node's os_family;
+    not get them): text, the import's records; fw: {manage, enabled, open_ports, port_sources, exporter_port} as the
+    role reads them (port_sources: the Prometheus exporter's port to its sources included; exporter_port: its port
+    where it runs, else ''); family: the node's os_family;
     cassandra_ports: its storage, native and JMX ports (port/proto). -> [{what, now, would, effect}]
     (as cassandra_linux_changes)."""
     if not boolean(fw.get("manage", True), strict=False):

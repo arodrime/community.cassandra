@@ -486,15 +486,23 @@ def test_timesync_chrony_kept():
 
 def test_firewall():
     text = ("fw|firewalld|active|default zone public\nfw_rule|zone public|ports 9042/tcp 17000/tcp\n"
-            "fw_rule|zone public|service cassandra-gossip: 7000/tcp\n")
+            "fw_rule|zone public|permanent ports 9042/tcp 17000/tcp\n"
+            "fw_rule|zone public|service cassandra-gossip: 7000/tcp\n"
+            'fw_rule|zone public|rich rule rule family="ipv4" source address="10.0.9.0/24" port port="7199" protocol="tcp"'
+            " accept\n"
+            'fw_rule|zone public|permanent rich rule rule family="ipv4" source address="10.0.9.0/24" port port="7199"'
+            ' protocol="tcp" accept\n')
     lines = found(text)["lines"]
     assert "firewall: firewalld active, default zone public" in lines
     assert "firewall zone public: ports 9042/tcp 17000/tcp" in lines
-    assert lines[-1].startswith("firewall: Cassandra ports open: 7000/tcp, 9042/tcp; not seen open: 7199/tcp")
+    # as carried (the forms the role writes, now and after a reload): a service, a rule now only, are not
+    assert lines[-1] == ("firewall: Cassandra ports open to everyone: 9042/tcp; to some sources only: 7199/tcp; neither:"
+                         " 7000/tcp")
     assert found("")["lines"][-1] == "firewall: none active (firewalld, ufw), no iptables/nftables rule for the Cassandra ports"
     lines = found("fw|iptables|INPUT policy DROP|\nfw_rule|iptables|-A INPUT -p tcp -m multiport --dports 7000,9042 -j ACCEPT\n")["lines"]
     assert "firewall: iptables INPUT policy DROP" in lines
-    assert lines[-1].startswith("firewall: Cassandra ports open: 7000/tcp, 9042/tcp; not seen open: 7199/tcp")
+    assert lines[-1] == ("firewall: Cassandra ports open to everyone: none; to some sources only: none; neither:"
+                         " 7000/tcp, 9042/tcp, 7199/tcp")
 
 
 def test_nothing_found_is_nothing_set():

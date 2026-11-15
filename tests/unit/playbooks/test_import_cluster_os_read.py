@@ -52,7 +52,8 @@ def test_limits_block_of_earlier_versions_read(tmp_path):
 
 
 def firewall_records(tmp_path, enabled="disabled", active="active", permanent="9042/tcp 7000/tcp", rich=(),
-                     rich_permanent=None, ufw=None, answers=None, rules_enabled="yes", ipv6="yes", apps=None):
+                     rich_permanent=None, ufw=None, answers=None, rules_enabled="yes", ipv6="yes", apps=None,
+                     verbose="Default: deny (incoming), allow (outgoing), disabled (routed)"):
     """What the read's firewall lines print on a node whose firewalld runs (stand-ins for systemctl, firewall-cmd),
     rich: its rich rules (as firewall-cmd lists them), the same after a reload unless rich_permanent says; answers:
     {firewall-cmd arguments: output, False: it fails} more (another zone...); or whose ufw runs, ufw: the lines of
@@ -91,6 +92,7 @@ esac
         stubs["ufw"] = """#!/bin/sh
 case "$*" in
   "app list") printf 'Available applications:\\n%s' ;;
+  "status verbose") printf 'Status: active\\n%s\\n' ;;
 %s  *) cat <<'END'
 Status: active
 
@@ -100,7 +102,7 @@ To                         Action      From
 END
   ;;
 esac
-""" % (listed.replace("\n", "\\n"), infos, "\n".join(ufw))
+""" % (listed.replace("\n", "\\n"), verbose, infos, "\n".join(ufw))
     for name, body in stubs.items():
         (bin_dir / name).write_text(body)
         (bin_dir / name).chmod(0o755)
@@ -556,3 +558,81 @@ def test_ufw_app_profiles_read_by_their_ports(tmp_path):
     r, changes = imported_and_checked(firewall_records(tmp_path / "u", enabled="enabled", ufw=rules), "Debian")
     assert [c["now"] for c in changes] == ["ufw: OpenSSH ALLOW Anywhere", "ufw: OpenSSH (v6) ALLOW Anywhere (v6)",
                                            "ufw: Apache Full ALLOW Anywhere"]
+
+
+# --- rules that reach every port, zone settings, service extras (round 7) ---
+
+@pytest.mark.parametrize("answers, said, stop", [
+    # the zone lets every port in: said
+    ({"--info-zone=public": "public\n  target: ACCEPT", "--permanent --info-zone=public": "public\n  target: ACCEPT"},
+     "zone public: target ACCEPT", False),
+    ({"--info-zone=public": "public\n  target: default", "--permanent --info-zone=public": "public\n  target: default"},
+     None, False),
+    ({"--info-zone=public": "public\n  protocols: tcp", "--permanent --info-zone=public": "public\n  protocols: tcp"},
+     "zone public: protocols tcp", False),
+    # source and forward ports on a Cassandra port: a stop
+    ({"--info-zone=public": "public\n  source-ports: 7000/tcp",
+      "--permanent --info-zone=public": "public\n  source-ports: 7000/tcp"}, "zone public: source-ports 7000/tcp", True),
+    ({"--info-zone=public": "public\n  forward-ports: port=9042:proto=tcp:toport=19042:toaddr=",
+      "--permanent --info-zone=public": "public\n  forward-ports: port=9042:proto=tcp:toport=19042:toaddr="},
+     "forward-ports port=9042", True),
+    # what a service opens besides its ports
+    ({"--zone=public --list-services": "x", "--permanent --zone=public --list-services": "x",
+      "--info-service=x": "x\n  ports: 22/tcp\n  includes: y", "--permanent --info-service=x": "x\n  ports: 22/tcp\n  includes: y"},
+     "service x includes: y", True),
+    ({"--zone=public --list-services": "x", "--permanent --zone=public --list-services": "x",
+      "--info-service=x": "x\n  protocols: udp", "--permanent --info-service=x": "x\n  protocols: udp"},
+     "service x protocols: udp", False),
+    # a rich rule with no port: letting in is said, anything else stops
+    ({"--zone=public --list-rich-rules": 'rule family="ipv4" source NOT address="10.0.0.0/8" accept',
+      "--permanent --zone=public --list-rich-rules": 'rule family="ipv4" source NOT address="10.0.0.0/8" accept'},
+     "source NOT address", False),
+    ({"--zone=public --list-rich-rules": 'rule family="ipv4" source ipset="bad" drop',
+      "--permanent --zone=public --list-rich-rules": 'rule family="ipv4" source ipset="bad" drop'},
+     'source ipset="bad" drop', True)])
+def test_zone_settings_service_extras_and_portless_rich_rules(tmp_path, answers, said, stop):
+    r, changes = imported_and_checked(firewall_records(tmp_path, enabled="enabled", answers=answers))
+    if said is None:
+        assert changes == [] and not [c for c in r["carried"] if "target" in c]
+        return
+    stops = [c for c in changes if said in c["now"]]
+    notes = [c for c in r["carried"] if said in c and "not compared" in c]
+    assert (stops and not notes) if stop else (notes and not changes), (r["carried"], changes)
+
+
+def test_a_rich_rule_service_read_in_its_own_set(tmp_path):
+    rule = 'rule family="ipv4" source address="10.0.9.0/24" service name="x" accept'
+    # 22/tcp now, 7000/tcp after a reload: the permanent rule names a Cassandra port
+    answers = {"--zone=public --list-rich-rules": rule, "--permanent --zone=public --list-rich-rules": rule,
+               "--info-service=x": "x\n  ports: 22/tcp", "--permanent --info-service=x": "x\n  ports: 7000/tcp"}
+    out = firewall_records(tmp_path / "a", enabled="enabled", answers=answers)
+    assert "fw_svc|x|22/tcp\n" in out and "fw_svc|permanent x|7000/tcp\n" in out
+    r, changes = imported_and_checked(out)
+    assert [c["now"] for c in changes] == ["zone public: permanent rich rule " + rule]
+    # its definition could not be read: said, with the way out
+    answers["--permanent --info-service=x"] = False
+    r, changes = imported_and_checked(firewall_records(tmp_path / "b", enabled="enabled", answers=answers))
+    assert [c for c in changes if c["now"] == "zone public: permanent service x (named by a rich rule) could not be listed"]
+
+
+@pytest.mark.parametrize("rule, stop", [
+    ("Anywhere                   DENY        10.0.9.5", True), ("Anywhere                   ALLOW OUT   10.0.9.5", True),
+    ("Anywhere                   ALLOW IN    10.0.9.5", False)])
+def test_ufw_rules_for_a_source_on_every_port(tmp_path, rule, stop):
+    rules = ["9042/tcp                   ALLOW       Anywhere", "9042/tcp (v6)              ALLOW       Anywhere (v6)"]
+    r, changes = imported_and_checked(firewall_records(tmp_path, enabled="enabled", ufw=rules + [rule]), "Debian")
+    assert bool(changes) is stop
+
+
+def test_ufw_default_incoming_allow_is_said(tmp_path):
+    rules = ["9042/tcp                   ALLOW       Anywhere", "9042/tcp (v6)              ALLOW       Anywhere (v6)"]
+    out = firewall_records(tmp_path, enabled="enabled", ufw=rules, verbose="Default: allow (incoming), allow (outgoing)")
+    assert "fw_rule|ufw|default incoming allow\n" in out
+    r, changes = imported_and_checked(out, "Debian")
+    assert changes == [] and [c for c in r["carried"] if "default incoming allow" in c and "every port" in c]
+
+
+def test_the_read_runs_in_the_c_locale():
+    text = script()
+    snippet = text[text.index("# firewall: firewalld, ufw"):]
+    assert "LC_ALL=C; export LC_ALL" in snippet.split("\n", 4)[3]
