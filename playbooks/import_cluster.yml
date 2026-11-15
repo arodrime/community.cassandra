@@ -1570,7 +1570,7 @@
           # every rule (ALLOW, DENY, REJECT, LIMIT), under the header; what comes in by default
           ufw status 2>/dev/null | awk 'r && NF {print "fw_rule|ufw|" $0} /^--/ {r=1}'
           ufw status verbose 2>/dev/null | sed -n 's/^Default: \([a-z]*\) (incoming).*/fw_rule|ufw|default incoming \1/p'
-          # the ports of its app profiles (a rule may name one)
+          # the ports of its app profiles (a rule may name one): the lines under Port(s), their indent dropped
           ufw app list 2>/dev/null | sed -n 's/^  *//p' | while IFS= read -r a; do
             echo "fw_svc|ufw app $a|$(ufw app info "$a" 2>/dev/null | sed -n '/^Ports*:/,$p' | tail -n +2 | tr -d ' ' | tr '\n' ' ')"
           done

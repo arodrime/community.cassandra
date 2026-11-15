@@ -1471,26 +1471,31 @@ inventory, so that nodes added later get the same tuning as the existing ones (w
   ``cassandra_linux_timesync_servers``: chrony's server, pool and peer lines of its ``chrony.conf`` (in a
   ``chrony.d`` file: not carried, listed).
 
-* the firewall: ``cassandra_firewall_enabled: false`` on nodes that run neither firewalld nor ufw; else
-  ``open_ports``, the ports open to everyone in firewalld's default zone (or ufw's ``ALLOW Anywhere``), which
-  ``cassandra_firewall`` opens there (it runs with ``cassandra_manage_firewall: true``). One rule: for every port the
-  role would touch (the Cassandra ports, the Prometheus exporter's, the ports open to everyone), every rule on it is
-  read (firewalld: ports, services and rich rules of every active zone, now and after a reload; ufw: every rule,
-  ``ALLOW``, ``DENY``, ``REJECT`` or ``LIMIT``), and only what the role writes, the same now and after a reload (ufw:
-  for IPv4 and IPv6), is carried. A port open to some sources only gives ``cassandra_firewall_port_sources``
-  (``{"7199/tcp": ["10.0.9.0/24"]}``; the exporter's port: ``cassandra_prometheus_exporter_sources``): a rich rule of
-  the default zone ``rule family="ipv4" source address="10.0.9.0/24" port port="7199" protocol="tcp" accept``, or
-  ufw's ``allow from 10.0.9.0/24 to any port 7199 proto tcp``. A source rule on a port open to everyone, or a
-  service of the default zone (RHEL's ``ssh``) or a ufw ``ALLOW`` that opens only such ports (protocol by protocol),
-  changes nothing: one note, not carried. When ``firewall-cmd`` or ``ufw`` fails to list rules (D-Bus down, firewalld
-  starting), the self-check stops: those rules are not known (import again once it answers, or keep the firewall).
-  Only the forms the role writes are carried: any other line on these ports (an app profile on them, a source port, a
-  name, a field that does not read) stops the self-check, quoted as it is; ufw app profiles (Ubuntu's ``OpenSSH``)
-  and the services rich rules name are read by their ports.
-  ufw with ``IPV6=no`` (``/etc/default/ufw``) writes IPv4 rules only, the role's too. firewalld direct rules on these
-  ports, zones bound to sources and rich rules letting a source in on every port get a note, not compared. Anything else (another action, logging, other elements, a service, another zone, a
-  rule there now only or after a reload only, iptables or nftables) is not carried: the self-check stops on it,
-  ``-e import_keep_hand_edits=firewall`` keeps the firewall as the nodes have it.
+* the firewall: ``cassandra_firewall_enabled: false`` on nodes that run neither firewalld nor ufw. Else one rule:
+  for every port ``cassandra_firewall`` would touch (the Cassandra ports, the Prometheus exporter's, the ports open to
+  everyone), every rule on it is read (firewalld: the default zone and the active ones, now and after a reload; ufw:
+  every rule, IPv4 and IPv6), and a rule is carried only when it is in a form the role writes, the same in both
+  (``cassandra_firewall`` runs with ``cassandra_manage_firewall: true``):
+
+  * a port open to everyone gives ``open_ports``: firewalld's ``ports`` of the default zone, ufw's
+    ``7000/tcp ALLOW Anywhere`` (with ``IPV6=no`` in ``/etc/default/ufw``, IPv4 alone, as the role writes it);
+  * a port open to some sources gives ``cassandra_firewall_port_sources`` (``{"7199/tcp": ["10.0.9.0/24"]}``; the
+    exporter's port: ``cassandra_prometheus_exporter_sources``): firewalld's rich rule of the default zone
+    ``rule family="ipv4" source address="10.0.9.0/24" port port="7199" protocol="tcp" accept``, ufw's
+    ``allow from 10.0.9.0/24 to any port 7199 proto tcp``.
+
+  Said in a note, not carried: what changes nothing, a source rule on a port open to everyone, a service (RHEL's
+  ``ssh``) or a ufw ``ALLOW`` (Ubuntu's ``OpenSSH`` profile, read by its ports) that opens only ports open to everyone,
+  protocol by protocol; and what concerns every port, not compared: a zone bound to sources or with the ``ACCEPT``
+  target, a whole protocol, a rule letting a source in on every port (firewalld's rich rule, ufw's ``Anywhere ALLOW
+  10.0.9.0/24``), ufw's default ``allow (incoming)``, firewalld's direct rules on these ports.
+
+  Anything else on these ports stops the self-check, quoted as it is: another action, logging, a source or forward
+  port, another zone, a service or app profile on a Cassandra port, a name or a field that does not read, a rule now
+  only or after a reload only, iptables or nftables rules; so does a list ``firewall-cmd`` or ``ufw`` fails to give
+  (D-Bus down, firewalld starting), never read as no rule. The way out: change the nodes as the role would, or
+  ``-e import_keep_hand_edits=firewall`` keeps the firewall as the nodes have it (for a list not given: import again
+  once it answers).
 
 ``tuned`` is only reported. A node the role set up keeps the values of the role's own files (its sysctl file,
 ``limits.d/cassandra.conf``, the unit it wrote, not its drop-ins). With these values ``cassandra_linux`` changes nothing
