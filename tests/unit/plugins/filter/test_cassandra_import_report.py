@@ -1319,6 +1319,18 @@ def test_files_written_with_no_effect_listed_apart_once_with_their_nodes():
     assert "expect nothing to apply" in " ".join(" ".join(line.split()) for line in lines)
 
 
+def test_parts_kept_said_in_one_sentence():
+    """sysctl,firewall: "the kernel settings and the firewall", not joined by a semicolon (hostile S15)."""
+    sysctl = "cassandra_linux: sysctl vm.swappiness (/etc/sysctl.conf): node has 10, the roles would set removed"
+    rule = "cassandra_firewall: firewall rule (not carried): node has iptables: -A INPUT, the roles would set not written"
+    flat = " ".join(" ".join(stop([node(1)], {"node1": {"differences": [sysctl, rule]}}, width=400)).split())
+    assert "(the roles then leave the kernel settings and the firewall as they are)" in flat
+    kept = [node(i, keep={"cassandra_import_kept": ["sysctl", "swap", "firewall"]}) for i in (1, 2)]
+    flat = " ".join(" ".join(report(kept, details=False)).split())
+    assert "the roles leave the kernel settings, swap and the firewall as they are" in flat
+    assert "; the firewall" not in flat
+
+
 def test_parts_kept_by_hand_listed_with_the_way_to_give_them_back():
     kept = [node(i, keep={"cassandra_import_kept": ["thp", "unit"]}) for i in (1, 2)]
     lines = report(kept + [node(3)], details=False)

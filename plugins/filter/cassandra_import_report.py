@@ -811,7 +811,7 @@ def _os_hint(layout, items, read, who):
     return ("to keep them as %s %s them: import again with %s (the roles then leave %s as they are). Or change the"
             " nodes as the roles would (the lines above), then import again" % (
                 who(names), "has" if len(names) == 1 else "have",
-                _keep_option(layout, *parts), "; ".join(KEPT_PART_WORDS[p] for p in parts)))
+                _keep_option(layout, *parts), _part_words(parts)))
 
 
 def _self_check_lines(layout, self_check, who, width, report_file="", error="", allow_unread=False,
@@ -1244,6 +1244,12 @@ def _left_kind(label):
     return "managed" if label in KEEP or label in KEEP_SHORT.values() else "value"
 
 
+def _part_words(parts):
+    """The parts kept, in words: "the kernel settings and the firewall", "swap, time sync and the firewall"."""
+    words = [KEPT_PART_WORDS[p] for p in parts]
+    return " and ".join([", ".join(words[:-1]), words[-1]] if len(words) > 1 else words)
+
+
 def _kept_parts_lines(report):
     """The parts import_keep_hand_edits kept as the nodes have them, one entry per set of parts and nodes: what the
     roles leave, how to give them to Ansible."""
@@ -1254,7 +1260,7 @@ def _kept_parts_lines(report):
                            report.width, "    ", "  ")
         lines += fill_text("the roles leave %s as they are; to give %s to Ansible: import again without %s in"
                            " import_keep_hand_edits (the self-check then says what the roles would change)" % (
-                               "; ".join(KEPT_PART_WORDS[p] for p in parts), "them" if len(parts) > 1 else "it",
+                               _part_words(parts), "them" if len(parts) > 1 else "it",
                                "them" if len(parts) > 1 else "it"),
                            report.width, "      ", "  ")
     return lines
