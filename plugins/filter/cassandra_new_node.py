@@ -321,7 +321,7 @@ def cassandra_import_kept_switches(parts):
     """cassandra_import_kept (the parts import_keep_hand_edits kept) -> [the switches import_cluster wrote for them]:
     the lines to remove from the host_vars of a host rebuilt under that node's name."""
     out = []
-    for part in parts or []:
+    for part in [parts] if isinstance(parts, str) else parts or []:  # (one name given as a string: that part)
         out += [name for name in KEPT_PARTS.get(str(part), {}) if name not in out]
     return out
 

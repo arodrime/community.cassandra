@@ -783,26 +783,70 @@ UFW_SOURCE = re.compile(r"^(\d+/(?:tcp|udp))(?:\s+\(v6\))?\s+ALLOW(?:\s+IN)?\s+(
 
 # a port, or a range of ports (7000-7001, 7000:7001), in a rule: not a part of an address (10.0.9.0/24, 2001:db8::1)
 PORT_NAMED = re.compile(r"(?<![\w.:/])(\d{1,5})(?:[-:](\d{1,5}))?(?![\w.])(?!:[0-9a-fA-F]*:)")
-# ufw status: a rule that lets in (ALLOW, ALLOW IN: not OUT, FWD), on no interface -> its To (port[/proto])
-UFW_LETS_IN = re.compile(r"^(\S+)(?:\s+\(v6\))?\s+ALLOW(?:\s+IN)?\s+(?!(?:OUT|FWD)\b)(?!.*\bon\b)")
+# a port or a range with its protocol, as firewalld and ufw list them; no protocol: tcp and udp
+PORT_SPEC = re.compile(r"^(\d{1,5})(?:[-:](\d{1,5}))?(?:/(tcp|udp|sctp|dccp))?$")
+# a line of ufw status: To (a port list, an app profile, Anywhere; "on <interface>"), the action and its direction,
+# From (an address, Anywhere; a source port, an app profile)
+UFW_RULE = re.compile(r"^(?P<to>.+?)(?: \(v6\))?(?: on (?P<on>\S+))? (?P<action>ALLOW|DENY|REJECT|LIMIT)"
+                      r"(?: (?P<dir>IN|OUT|FWD))? (?P<src>.+?)(?: \(v6\))?(?: on \S+)?$")
+
+
+class _NotTheRolesForm(ValueError):
+    """A rule line that is not one of the forms the role writes: "other", said as it is."""
 
 
 def _span(port):
-    """A port, or a range, with its protocols: "7000-7001/tcp" -> (7000, 7001, {"tcp"}); no protocol: tcp and udp."""
-    number, dummy, proto = str(port).partition("/")
-    lo, dummy, hi = number.replace(":", "-").partition("-")
-    return int(lo), int(hi or lo), {proto} if proto else {"tcp", "udp"}
+    """A port, or a range, with its protocols: "7000-7001/tcp" -> (7000, 7001, {"tcp"}); no protocol: tcp and udp;
+    a reversed range as the same one. Anything else (a name, an empty field): _NotTheRolesForm."""
+    m = PORT_SPEC.match(str(port).strip())
+    if not m:
+        raise _NotTheRolesForm(port)
+    a, b = int(m.group(1)), int(m.group(2) or m.group(1))
+    if max(a, b) > 65535:
+        raise _NotTheRolesForm(port)
+    return min(a, b), max(a, b), {m.group(3)} if m.group(3) else {"tcp", "udp"}
+
+
+def _is_port(port):
+    """port is a port spec (_span), not a name, an empty field, a number out of range."""
+    return len(_spans([port])) == 1
+
+
+def _in_order(port):
+    """A port spec with its range in order (firewalld 7000-7001, ufw 7000:7001), as given otherwise."""
+    m = re.match(r"^(\d+)([-:])(\d+)(/.*)?$", str(port))
+    if not m or int(m.group(1)) <= int(m.group(3)):
+        return str(port)
+    return "%s%s%s%s" % (m.group(3), m.group(2), m.group(1), m.group(4) or "")
+
+
+def _ufw_ports(to):
+    """ufw's To as port specs: "7000,9042/tcp" (the protocol of a list applies to each), "7000:7001/tcp", "22"."""
+    numbers, slash, proto = to.partition("/")
+    return ["%s%s%s" % (n, slash, proto) for n in numbers.split(",")]
+
+
+def _spans(ports):
+    """The ports as spans (_span), those that are not ports left out (a value of the inventory, say)."""
+    out = []
+    for p in ports:
+        try:
+            out.append(_span(p))
+        except _NotTheRolesForm:
+            continue
+    return out
 
 
 def _names_port(text, ports):
     """text names one of the ports (port/proto, a range too), alone or in a range of its own."""
-    spans = [_span(p) for p in ports]
-    return any(int(lo) <= b and a <= int(hi or lo) for lo, hi in PORT_NAMED.findall(text) for a, b, dummy in spans)
+    spans = _spans(ports)
+    return any(min(int(lo), int(hi or lo)) <= b and a <= max(int(lo), int(hi or lo))
+               for lo, hi in PORT_NAMED.findall(text) for a, b, dummy in spans)
 
 
 def _opens_only(ports, open_):
     """ports (port[/proto] each, a range too) are all inside ports open to everyone (open_), protocol by protocol."""
-    spans = [_span(p) for p in open_]
+    spans = _spans(open_)
     return bool(ports) and all(any(a <= lo and hi <= b and proto in protos for a, b, protos in spans)
                                for lo, hi, wanted in (_span(p) for p in ports) for proto in wanted)
 
@@ -835,24 +879,30 @@ def _firewall_read(recs, touched=()):
     # (a list firewall-cmd or ufw could not give: not known, never "no rule"; the sets there are not compared)
     unread = [tuple(_fields(r, 2)) for kind, r in recs if kind == "fw_unread"]
     home_unread = any(where in (home, name) for where, what in unread)
+    # the ports of the services firewalld rich rules name, of ufw's app profiles ("ufw app <name>") ({name: ports})
+    services = dict(_fields(r, 2) for kind, r in recs if kind == "fw_svc")
     # (port/proto or (port/proto, source)) -> the sets it is in: now, later (firewalld), v4, v6 (ufw)
     found, rest = {}, []  # rest: (where, rule) of other forms
     for where, line in rules:
         p = FW_PORTS.match(line) if where == home else None
         rich = FW_RICH.match(line) if where == home else None
         src = FW_SOURCE.match(rich.group(2)) if rich else None
-        if src and (src.group(1) == "ipv6") != (":" in src.group(2)):
+        if src and ((src.group(1) == "ipv6") != (":" in src.group(2)) or not _is_port(src.group(3))):
             src = None  # (the family the role gives that address: not this one)
         everyone = UFW_ALLOW.match(line) if where == home else None
         one = UFW_SOURCE.match(line) if where == home else None
-        if name == "firewalld" and p:
+        if everyone and not _is_port(everyone.group(1)):
+            everyone = None
+        if one and not _is_port(one.group(1)):
+            one = None
+        if name == "firewalld" and p and all(_is_port(port) for port in p.group(2).split()):
             for port in p.group(2).split():
-                found.setdefault(port, set()).add("later" if p.group(1) else "now")
+                found.setdefault(_in_order(port), set()).add("later" if p.group(1) else "now")
         elif name == "firewalld" and src:
             found.setdefault(("%s/%s" % (src.group(3), src.group(4)), src.group(2)), set()).add(
                 "later" if rich.group(1) else "now")
         elif name == "ufw" and everyone:
-            found.setdefault(everyone.group(1), set()).add("v6" if everyone.group(2) else "v4")
+            found.setdefault(_in_order(everyone.group(1)), set()).add("v6" if everyone.group(2) else "v4")
         elif name == "ufw" and one:
             found.setdefault((one.group(1), one.group(2)), set()).update(("v4", "v6"))  # (one family: its own)
         else:
@@ -870,26 +920,71 @@ def _firewall_read(recs, touched=()):
         what = ("port %s open to everyone" % k) if isinstance(k, str) else ("port %s open to %s" % k)
         when = {"now": "now", "later": "from the next reload", "v4": "for IPv4", "v6": "for IPv6"}[sorted(sets)[0]]
         other.append((home, "%s %s only" % (what, when)))
+    every = []
     for where, line in rest:
-        if not _names_port(line, ports) or (line.startswith("permanent ") and (where, line[len("permanent "):]) in rest):
+        if line.startswith("permanent ") and (where, line[len("permanent "):]) in rest:
             continue  # (a rule there now and after a reload: said once)
-        # a service of the default zone, or a ufw rule letting in, that opens only ports open to everyone (protocol
-        # by protocol): changes nothing
-        service = re.match(r"^(permanent )?service [^:]+:\s*(.*)$", line) if where == home else None
-        lets_in = UFW_LETS_IN.match(line) if name == "ufw" else None
-        opened = service.group(2).split() if service else lets_in.group(1).split(",") if lets_in else []
-        if _opens_only(opened, open_):
-            also.append((where, line))
-        else:
-            other.append((where, line))
+        try:
+            kind = _rest_kind(where, line, name, home, ports, open_, services)
+        except Exception:  # pylint: disable=broad-except  # (whatever the line: said as it is, never an error)
+            kind = "other"
+        {"other": other, "also": also, "every": every}.get(kind, []).append((where, line))
     # (iptables' own INPUT policy other than ACCEPT: a rule of its own)
     other += [(n, state) for n, state, extra in fws if n not in ("firewalld", "ufw")]
     sources = {}
     for k in whole:
         if isinstance(k, tuple) and k not in redundant and _names_port(k[0], ports):
             sources.setdefault(k[0], []).append(k[1])
+    state = next((s for n, s, extra in fws if n == name), "")
     return {"name": name, "zone": zone, "open": open_, "sources": sources, "redundant": redundant, "other": other,
-            "also": also, "unread": unread}
+            "also": also, "unread": unread, "every": every, "state": state}
+
+
+def _rest_kind(where, line, name, home, ports, open_, services):
+    """A rule line of no form the role writes (a whitelist: anything not matched below is "other" when it may concern
+    a port the role touches) -> "other" (not carried: the self-check stops), "also" (it opens only ports open to
+    everyone, protocol by protocol: changes nothing), "every" (it lets a source in, or keeps it out, on every port:
+    said, not compared), "" (on no port the role touches)."""
+    if name == "ufw" and where == "ufw":
+        m = UFW_RULE.match(line)
+        if not m:
+            return "other"
+        if m.group("to") == "Anywhere":
+            # (a source port, an app profile as From: the ports are not known here)
+            if re.match(r"^[0-9a-fA-F.:/]+$", m.group("src")) and not m.group("on"):
+                return "every"
+            return "other"
+        # (an app profile: its ports, as ufw app info gives them)
+        app = services.get("ufw app %s" % m.group("to"))
+        specs = [p for token in app.split() for p in _ufw_ports(token)] if app else _ufw_ports(m.group("to"))
+        for spec in specs:
+            _span(spec)  # (an app profile, a name, an empty field: _NotTheRolesForm, "other")
+        if not _names_port(" ".join(specs), ports) and not _names_port(m.group("src"), ports):
+            return ""
+        lets_in = m.group("action") == "ALLOW" and m.group("dir") in (None, "IN") and not m.group("on") \
+            and m.group("src") == "Anywhere"
+        return "also" if lets_in and _opens_only(specs, open_) else "other"
+    service = re.match(r"^(permanent )?service [^:]+:\s*(.*)$", line)
+    if service:
+        specs = service.group(2).split()
+        for spec in specs:
+            _span(spec)  # (a name, an empty field: _NotTheRolesForm, "other")
+        if not specs or not _names_port(" ".join(specs), ports):
+            return ""
+        return "also" if where == home and _opens_only(specs, open_) else "other"
+    rich = FW_RICH.match(line)
+    if rich and re.match(r"^rule( family=\S+)? source address=\S+ (accept|drop|reject)$", rich.group(2)):
+        return "every"
+    named = re.search(r' service name="([^"]*)"', rich.group(2)) if rich else None
+    if named:
+        # (the ports of that service, as the read listed them: on a port the role touches, or not known, "other")
+        known = services.get(named.group(1))
+        if known is None:
+            return "other"
+        for spec in known.split():
+            _span(spec)
+        return "other" if _names_port(known, ports) else ""
+    return "other" if _names_port(line, ports) else ""
 
 
 UNREAD_WAY_OUT = ("import again once %s answers, or keep the firewall as the nodes have it (-e"
@@ -946,14 +1041,11 @@ def _firewall(recs, wanted):
     ports_now = touched + fw["open"]
     notes += ["firewalld direct rule naming a port cassandra_firewall opens, not compared (it writes none): %s"
               % _norm(rest) for kind, rest in recs if kind == "fw_direct" and _names_port(rest, ports_now)]
-    # (a rule or a zone letting a source in on every port, Cassandra's too: not compared)
-    notes += ["firewalld %s: lets that source in on every port, Cassandra's too; not compared (cassandra_firewall"
-              " writes none)" % _norm(rest).replace("|", ": ", 1) for kind, rest in recs if kind == "fw_zone"]
-    every = [(where, _norm(line)) for where, line in (_fields(rest, 2) for kind, rest in recs if kind == "fw_rule")
-             if re.match(r"^(permanent )?rich rule rule( family=\S+)? source address=\S+ accept$", _norm(line))]
-    notes += ["firewalld %s: %s lets that source in on every port, Cassandra's too; not compared (cassandra_firewall"
-              " writes none)" % (where, line) for where, line in every
-              if not (line.startswith("permanent ") and (where, line[len("permanent "):]) in every)]
+    # (a zone bound to sources, a rule for a source on every port, Cassandra's too: not compared)
+    notes += ["firewalld %s: that source is handled by the zone's own rules, not compared (cassandra_firewall writes"
+              " none)" % _norm(rest).replace("|", ": ", 1) for kind, rest in recs if kind == "fw_zone"]
+    notes += ["%s %s: %s, for that source on every port, Cassandra's too; not compared (cassandra_firewall writes none)"
+              % (fw["name"], where, line) for where, line in fw["every"]]
     return lines, out, notes
 
 
@@ -983,7 +1075,7 @@ def cassandra_firewall_changes(text, fw, family="", cassandra_ports=()):
     at_boot = unit_boot in ENABLED and (svc != "ufw" or rules_boot == "yes")
     if not boolean(fw.get("enabled", True), strict=False):
         if svc == "ufw" and running:
-            items.append(_item("firewall ufw", "active", "disabled (ufw disable)"))
+            items.append(_item("firewall ufw", read["state"] or "active", "disabled (ufw disable)"))
         elif svc == "ufw" and at_boot:
             items.append(_item("firewall ufw", "inactive, active from the next boot (ufw.conf ENABLED=yes)",
                                "left as it is: cassandra_firewall disables ufw only where it is active"))

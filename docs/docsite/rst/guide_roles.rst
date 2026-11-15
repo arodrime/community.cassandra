@@ -1484,6 +1484,9 @@ inventory, so that nodes added later get the same tuning as the existing ones (w
   service of the default zone (RHEL's ``ssh``) or a ufw ``ALLOW`` that opens only such ports (protocol by protocol),
   changes nothing: one note, not carried. When ``firewall-cmd`` or ``ufw`` fails to list rules (D-Bus down, firewalld
   starting), the self-check stops: those rules are not known (import again once it answers, or keep the firewall).
+  Only the forms the role writes are carried: any other line on these ports (an app profile on them, a source port, a
+  name, a field that does not read) stops the self-check, quoted as it is; ufw app profiles (Ubuntu's ``OpenSSH``)
+  and the services rich rules name are read by their ports.
   ufw with ``IPV6=no`` (``/etc/default/ufw``) writes IPv4 rules only, the role's too. firewalld direct rules on these
   ports, zones bound to sources and rich rules letting a source in on every port get a note, not compared. Anything else (another action, logging, other elements, a service, another zone, a
   rule there now only or after a reload only, iptables or nftables) is not carried: the self-check stops on it,

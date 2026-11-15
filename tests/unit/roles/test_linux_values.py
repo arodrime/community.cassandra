@@ -225,3 +225,7 @@ def test_replace_way_out_for_the_init_script():
                           cassandra_import_kept=["unit", "thp"]).split())
     assert ("the other *_manage: false lines the dead node had, cassandra_import_kept, cassandra_linux_thp_enabled,"
             " cassandra_linux_thp_defrag) from its host_vars") in msg
+    # only the unit kept: no empty list left in the line
+    msg = " ".join(render(t["ansible.builtin.assert"]["fail_msg"], cassandra_service_unit_manage=False,
+                          cassandra_service_start="unit", inventory_hostname="n9", cassandra_import_kept=["unit"]).split())
+    assert "the dead node had, cassandra_import_kept) from its host_vars" in msg

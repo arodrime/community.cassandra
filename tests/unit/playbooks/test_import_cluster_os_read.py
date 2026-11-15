@@ -52,7 +52,7 @@ def test_limits_block_of_earlier_versions_read(tmp_path):
 
 
 def firewall_records(tmp_path, enabled="disabled", active="active", permanent="9042/tcp 7000/tcp", rich=(),
-                     rich_permanent=None, ufw=None, answers=None, rules_enabled="yes", ipv6="yes"):
+                     rich_permanent=None, ufw=None, answers=None, rules_enabled="yes", ipv6="yes", apps=None):
     """What the read's firewall lines print on a node whose firewalld runs (stand-ins for systemctl, firewall-cmd),
     rich: its rich rules (as firewall-cmd lists them), the same after a reload unless rich_permanent says; answers:
     {firewall-cmd arguments: output, False: it fails} more (another zone...); or whose ufw runs, ufw: the lines of
@@ -85,15 +85,22 @@ esac
         stubs["ufw"] = "#!/bin/sh\nexit 1\n"
     elif ufw is not None:
         del stubs["firewall-cmd"]
+        infos = "".join('  "app info %s") cat <<\'END\'\nProfile: %s\n\n%s\nEND\n  ;;\n' % (a, a, v)
+                        for a, v in (apps or {}).items())
+        listed = "".join("  %s\n" % a for a in apps or {})
         stubs["ufw"] = """#!/bin/sh
-cat <<'END'
+case "$*" in
+  "app list") printf 'Available applications:\\n%s' ;;
+%s  *) cat <<'END'
 Status: active
 
 To                         Action      From
 --                         ------      ----
 %s
 END
-""" % "\n".join(ufw)
+  ;;
+esac
+""" % (listed.replace("\n", "\\n"), infos, "\n".join(ufw))
     for name, body in stubs.items():
         (bin_dir / name).write_text(body)
         (bin_dir / name).chmod(0o755)
@@ -460,9 +467,92 @@ def test_sources_let_in_on_every_port_are_said(tmp_path):
         "--zone=public --list-rich-rules": 'rule family="ipv4" source address="10.0.6.0/24" accept',
         "--permanent --zone=public --list-rich-rules": 'rule family="ipv4" source address="10.0.6.0/24" accept'})
     r, changes = imported_and_checked(out)
-    said = [c for c in r["carried"] if "lets that source in on every port" in c]
-    assert said == ["firewalld zone trusted: sources 10.0.5.0/24: lets that source in on every port, Cassandra's too;"
-                    " not compared (cassandra_firewall writes none)",
-                    'firewalld zone public: rich rule rule family="ipv4" source address="10.0.6.0/24" accept lets that'
-                    " source in on every port, Cassandra's too; not compared (cassandra_firewall writes none)"]
+    said = [c for c in r["carried"] if "not compared (cassandra_firewall writes none)" in c]
+    assert said == ["firewalld zone trusted: sources 10.0.5.0/24: that source is handled by the zone's own rules, not"
+                    " compared (cassandra_firewall writes none)",
+                    'firewalld zone public: rich rule rule family="ipv4" source address="10.0.6.0/24" accept, for that'
+                    " source on every port, Cassandra's too; not compared (cassandra_firewall writes none)"]
     assert changes == []
+
+
+ODD_UFW = [
+    "Anywhere                   ALLOW       10.0.0.1 7000/tcp",  # a source port
+    "Anywhere (v6)              ALLOW       2001:db8::1 7000/tcp",
+    "Cassandra                  ALLOW       Anywhere",  # an app profile
+    "Anywhere                   ALLOW       Cassandra",
+    "7000,9042/tcp              ALLOW       Anywhere",  # multiport: tcp for both
+    "7001:7000/tcp              ALLOW       Anywhere",  # a reversed range
+    "7000/tcp                   DENY        Anywhere",
+    "7000/tcp                   ALLOW       Anywhere # a comment",
+    "7000/tcp ALLOW",  # fields missing
+    "/tcp                       ALLOW       Anywhere",
+    "ssh/tcp                    ALLOW       Anywhere",
+    "99999/tcp                  ALLOW       Anywhere"]
+ODD_FIREWALLD = [
+    "ports 7000/tcp ssh/tcp", "ports /tcp", "ports 7001-7000/tcp", "service x: ", "service x: cassandra/tcp",
+    'rich rule rule family="ipv4" source address="10.0.9.0/24" service name="cassandra" accept',
+    'rich rule rule family="ipv4" source address="10.0.9.0/24" source-port port="7000" protocol="tcp" accept',
+    'rich rule rule family="ipv4" forward-port port="7000" protocol="tcp" to-port="7001"', "rich rule ", "ports"]
+
+
+@pytest.mark.parametrize("line", ODD_UFW)
+def test_odd_ufw_lines_never_raise_nor_slip_through(line):
+    """A ufw line of any form: carried only when it is one the role writes; else said (a note, or a stop), never an
+    error and never dropped when it may concern a Cassandra port."""
+    base = ("fw_state|ufw|active|enabled\nfw_state|ufw-rules|active|yes\nfw|ufw|active|\n"
+            "fw_rule|ufw|9042/tcp                   ALLOW       Anywhere\n"
+            "fw_rule|ufw|9042/tcp (v6)              ALLOW       Anywhere (v6)\n")
+    out = base + "fw_rule|ufw|%s\n" % line
+    r, changes = imported_and_checked(out, "Debian")
+    said = [c for c in r["carried"] if " ".join(line.split()) in c]
+    assert said or line.startswith("7000,9042/tcp"), r["carried"]
+    if line.startswith("7000,9042/tcp"):  # (opens 7000/tcp too, not open to everyone in both families: a stop)
+        assert [c for c in changes if "7000,9042/tcp" in c["now"]]
+
+
+@pytest.mark.parametrize("line", ODD_FIREWALLD)
+def test_odd_firewalld_lines_never_raise_nor_slip_through(line):
+    base = ("fw_state|firewalld|active|enabled\nfw|firewalld|active|default zone public\n"
+            "fw_rule|zone public|ports 9042/tcp\nfw_rule|zone public|permanent ports 9042/tcp\n")
+    out = base + "fw_rule|zone public|%s\n" % line
+    r, changes = imported_and_checked(out)
+    flat = " ".join(line.split())
+    named = any(n in line for n in ("7000", "7001", "cassandra", "ssh"))
+    shown = flat.replace("ports 7001-7000/tcp", "port 7000-7001/tcp")  # (a reversed range: said in order)
+    assert not named or [c for c in r["carried"] if shown in c] or [c for c in changes if shown in c["now"]], r["carried"]
+
+
+def test_ufw_source_port_rule_stops_both_paths():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_os import cassandra_firewall_changes
+    out = ("fw_state|ufw|active|enabled\nfw_state|ufw-rules|active|yes\nfw|ufw|active|\n"
+           "fw_rule|ufw|Anywhere                   ALLOW       10.0.0.1 7000/tcp\n")
+    r, changes = imported_and_checked(out, "Debian")
+    assert "NOT carried: ufw Anywhere ALLOW 10.0.0.1 7000/tcp (cassandra_firewall does not write it; new nodes would" \
+        " not get it)" in r["carried"]
+    fw = {"manage": True, "enabled": True, "open_ports": [], "port_sources": {}}
+    assert [c["now"] for c in cassandra_firewall_changes(out, fw, "Debian", PORTS)] == [
+        "ufw: Anywhere ALLOW 10.0.0.1 7000/tcp"]
+    # an allow-all from a source (no port): said, not a stop
+    out = out.replace("10.0.0.1 7000/tcp", "10.0.9.0/24")
+    r, changes = imported_and_checked(out, "Debian")
+    assert changes == [] and "ufw ufw: Anywhere ALLOW 10.0.9.0/24, for that source on every port, Cassandra's too; not" \
+        " compared (cassandra_firewall writes none)" in r["carried"]
+
+
+def test_ufw_app_profiles_read_by_their_ports(tmp_path):
+    """Ubuntu's OpenSSH profile on 22/tcp, open to everyone: changes nothing; a profile on a Cassandra port: a stop;
+    a profile of no ports read: a stop."""
+    rules = ["9042/tcp                   ALLOW       Anywhere", "9042/tcp (v6)              ALLOW       Anywhere (v6)",
+             "OpenSSH                    ALLOW       Anywhere", "OpenSSH (v6)               ALLOW       Anywhere (v6)",
+             "Apache Full                ALLOW       Anywhere"]
+    apps = {"OpenSSH": "Port:\n  22/tcp", "Apache Full": "Ports:\n  80,443/tcp"}
+    out = firewall_records(tmp_path, enabled="enabled", ufw=rules, apps=apps)
+    assert "fw_svc|ufw app OpenSSH|22/tcp \n" in out and "fw_svc|ufw app Apache Full|80,443/tcp \n" in out
+    r, changes = imported_and_checked(out, "Debian")
+    assert changes == []  # (22/tcp not touched, 80 and 443 neither)
+    apps["OpenSSH"] = "Port:\n  7000/tcp"
+    r, changes = imported_and_checked(firewall_records(tmp_path / "c", enabled="enabled", ufw=rules, apps=apps), "Debian")
+    assert [c["now"] for c in changes] == ["ufw: OpenSSH ALLOW Anywhere", "ufw: OpenSSH (v6) ALLOW Anywhere (v6)"]
+    r, changes = imported_and_checked(firewall_records(tmp_path / "u", enabled="enabled", ufw=rules), "Debian")
+    assert [c["now"] for c in changes] == ["ufw: OpenSSH ALLOW Anywhere", "ufw: OpenSSH (v6) ALLOW Anywhere (v6)",
+                                           "ufw: Apache Full ALLOW Anywhere"]

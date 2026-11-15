@@ -11,8 +11,9 @@
     fail_msg: >-
       {{ ('cassandra_service_unit_manage is false for ' ~ inventory_hostname ~ ', but the replace flag goes into the'
           ~ " role's unit: remove it (and the other *_manage: false lines the dead node had"
-          ~ ((', cassandra_import_kept, ' ~ (cassandra_import_kept | community.cassandra.cassandra_import_kept_switches
-                                            | reject('equalto', 'cassandra_service_unit_manage') | join(', ')))
+          ~ ((', ' ~ (['cassandra_import_kept'] + (cassandra_import_kept | community.cassandra.cassandra_import_kept_switches
+                                                     | reject('equalto', 'cassandra_service_unit_manage') | list))
+                        | join(', '))
              if cassandra_import_kept | default([]) | length > 0 else '')
           ~ ") from its host_vars.")
          if not cassandra_service_unit_manage | bool

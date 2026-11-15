@@ -8,6 +8,8 @@ minor_changes:
     protocol="tcp" accept``, or ufw's ``allow from 10.0.9.0/24 to any port 7199 proto tcp``. A source rule, a service
     (RHEL's ``ssh``) or a ufw ``ALLOW`` that opens only ports open to everyone (protocol by protocol) changes nothing:
     a note, not carried. When ``firewall-cmd`` or ``ufw`` fails to list rules, the self-check stops (never read as no
-    rule), with the way out. ufw with ``IPV6=no`` writes IPv4 rules only, the role's too. firewalld direct rules on
+    rule), with the way out. Only the forms the role writes are carried; any other line on these ports (an app profile
+    on them, a source port, a name, a field that does not read) stops the self-check, quoted. ufw app profiles are
+    read by their ports. ufw with ``IPV6=no`` writes IPv4 rules only, the role's too. firewalld direct rules on
     these ports, zones bound to sources and rich rules letting a source in on every port get a note (not compared). Any other rule stops the self-check, with the way out
     (``-e import_keep_hand_edits=firewall``).

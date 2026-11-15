@@ -1532,6 +1532,10 @@
               else echo "fw_unread|zone $z|${w}services"; fi
               if l=$(firewall-cmd $c --zone="$z" --list-rich-rules 2>/dev/null); then
                 echo "$l" | grep . | awk -v p="fw_rule|zone $z|${w}rich rule " '{print p $0}'
+                # the ports of the services they name
+                for s in $(echo "$l" | sed -n 's/.* service name="\([^"]*\)".*/\1/p' | sort -u); do
+                  p=$(firewall-cmd $c --info-service="$s" 2>/dev/null) && echo "fw_svc|$s|$(echo "$p" | sed -n 's/^[[:space:]]*ports: *//p')"
+                done
               else echo "fw_unread|zone $z|${w}rich rules"; fi
             done
           done
@@ -1549,6 +1553,10 @@
           echo "fw|ufw|active|$(grep -Eqs '^IPV6=("no"|no)[[:space:]]*$' /etc/default/ufw && echo IPV6=no)"
           # every rule (ALLOW, DENY, REJECT, LIMIT), under the header
           ufw status 2>/dev/null | awk 'r && NF {print "fw_rule|ufw|" $0} /^--/ {r=1}'
+          # the ports of its app profiles (a rule may name one)
+          ufw app list 2>/dev/null | sed -n 's/^  *//p' | while IFS= read -r a; do
+            echo "fw_svc|ufw app $a|$(ufw app info "$a" 2>/dev/null | sed -n '/^Ports*:/,$p' | tail -n +2 | tr -d ' ' | tr '\n' ' ')"
+          done
         else
           # only when their tables are there already (listing them would load the kernel modules)
           if grep -qsx filter /proc/net/ip_tables_names || { [ -e /sys/module/nf_tables ] && iptables -V 2>/dev/null | grep -q nf_tables; }; then
