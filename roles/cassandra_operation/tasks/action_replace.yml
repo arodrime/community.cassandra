@@ -1,26 +1,8 @@
 ---
 # Prepares a blank node and starts it in place of a dead one: it takes over the
 # dead node's tokens and streams their data from the replicas. The replace
-# flag is only in the unit for that first start.
-# e.g. host_vars that import_cluster wrote for the dead node, left under its name
-- name: The replacement gets the role's unit
-  ansible.builtin.assert:
-    that:
-      - cassandra_service_unit_manage | bool
-      - cassandra_service_start | default('unit') == 'unit'
-    fail_msg: >-
-      {{ ('cassandra_service_unit_manage is false for ' ~ inventory_hostname ~ ', but the replace flag goes into the'
-          ~ " role's unit: remove it (and the other *_manage: false lines the dead node had"
-          ~ ((', ' ~ (['cassandra_import_kept'] + (cassandra_import_kept | community.cassandra.cassandra_import_kept_switches
-                                                     | reject('equalto', 'cassandra_service_unit_manage') | list))
-                        | join(', '))
-             if cassandra_import_kept | default([]) | length > 0 else '')
-          ~ ") from its host_vars.")
-         if not cassandra_service_unit_manage | bool
-         else ('cassandra_service_start is package_script for ' ~ inventory_hostname ~ ', but the replace flag goes into'
-               ~ " the role's unit: set cassandra_service_start: unit in the host_vars of " ~ inventory_hostname
-               ~ ' (the other nodes keep the init script).') }}
-    quiet: true
+# flag is only in the unit for that first start
+# (replace_unit_check.yml, before the question: the replacement gets the role's unit).
 
 # Computed first: a var can't be defined from itself (recursive template)
 - name: Add the replace flag to the unit environment

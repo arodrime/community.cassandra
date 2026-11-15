@@ -18,7 +18,8 @@ except ImportError:
     def trust_as_template(template):
         return template
 
-ROLE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_linux")
+COLLECTION = os.path.join(os.path.dirname(__file__), "..", "..", "..")
+ROLE = os.path.join(COLLECTION, "roles", "cassandra_linux")
 
 
 def defaults():
@@ -207,7 +208,7 @@ def test_init_script_boot_state_asked_to_the_init_system():
 
 
 def test_replace_way_out_for_the_init_script():
-    t = role_task("cassandra_operation", "The replacement gets the role's unit", "action_replace.yml")
+    t = role_task("cassandra_operation", "The replacement gets the role's unit", "replace_unit_check.yml")
     msg = " ".join(render(t["ansible.builtin.assert"]["fail_msg"], cassandra_service_unit_manage=True,
                           cassandra_service_start="package_script", inventory_hostname="n9").split())
     assert "set cassandra_service_start: unit in the host_vars of n9" in msg
@@ -229,3 +230,22 @@ def test_replace_way_out_for_the_init_script():
     msg = " ".join(render(t["ansible.builtin.assert"]["fail_msg"], cassandra_service_unit_manage=False,
                           cassandra_service_start="unit", inventory_hostname="n9", cassandra_import_kept=["unit"]).split())
     assert "the dead node had, cassandra_import_kept) from its host_vars" in msg
+
+
+def test_replace_unit_checked_before_the_question():
+    """The init script refused in the checks, before the question and the reset (hostile S16: it came after both)."""
+    with open(os.path.join(COLLECTION, "playbooks", "replace_node.yml")) as f:
+        plays = yaml.safe_load(f)
+    check = next(p for p in plays if p.get("name") == "Check the replacement")
+    names = []
+
+    def walk(tasks):
+        for task in tasks:
+            names.append((task.get("name"), (task.get("ansible.builtin.include_role") or {}).get("tasks_from")))
+            walk(task.get("block") or [])
+    walk(check["tasks"])
+    at = names.index(("The replacement gets the role's unit", "replace_unit_check.yml"))
+    assert at < names.index(("Show the plan and confirm the replacement", "screen.yml"))
+    assert at < names.index(("Reset the host first (cassandra_replace_node_reset)", "reset_node.yml"))
+    with open(os.path.join(COLLECTION, "roles", "cassandra_operation", "tasks", "action_replace.yml")) as f:
+        assert "cassandra_service_start" not in f.read()

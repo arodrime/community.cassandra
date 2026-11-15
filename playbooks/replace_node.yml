@@ -91,6 +91,11 @@
               tokens without its data. Take it out of cassandra_seeds, replace, then make it a seed with change_seeds.
             quiet: true
 
+        - name: The replacement gets the role's unit
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_operation
+            tasks_from: replace_unit_check.yml
+
         - name: Where the new host stands
           ansible.builtin.include_role:
             name: community.cassandra.cassandra_operation
