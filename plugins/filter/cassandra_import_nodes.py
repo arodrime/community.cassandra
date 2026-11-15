@@ -380,8 +380,9 @@ def _notes(item, host, hv, read, config, perms, medusa, repo, set_ansible_host, 
     return notes
 
 
-def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host, keep_hand_edits):
-    """The entry of the ring node item, read on host (hv: its variables, {} when none)."""
+def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host, keep_hand_edits, unit_by_hand=False):
+    """The entry of the ring node item, read on host (hv: its variables, {} when none); unit_by_hand: the unit part
+    kept (import_keep_hand_edits=unit), its environment then still sets the log directory."""
     facts = _d(hv.get("ansible_facts"))
     read = "import_cluster_config" in hv
     config = _d(hv.get("import_cluster_config"))
@@ -408,7 +409,7 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
     # (not with drop-ins: what they set, e.g. a JAVA_HOME, would not hold for the script of a node added later)
     start = {"cassandra_service_start": "package_script"} \
         if read and unit.get("pkg_script", "") not in ("", "modified") and not _own_dropins(unit) else {}
-    unit_kept = dict(keep, **({"cassandra_service_unit_manage": False} if start else {}))
+    unit_kept = dict(keep, **({"cassandra_service_unit_manage": False} if start or unit_by_hand else {}))
     env_log_dir = _env_log_dir(read, unit_kept, env, conf, config_vars)
     java_link = _java_link(hv, read)
     versions = _versions_note(hv, java_link)
@@ -499,7 +500,7 @@ def cassandra_import_nodes(ring, data, given, found=None, jmx=None, java_default
         error = None
         try:
             out.append(_kept_parts(_node(item, host, data.get(host, {}), given, jmx or {}, java_default or {},
-                                         host_names, _bool(set_ansible_host), keep_files), parts))
+                                         host_names, _bool(set_ansible_host), keep_files, "unit" in parts), parts))
         except (KeyError, TypeError, AttributeError, ValueError) as exc:
             error = AnsibleFilterError("cassandra_import_nodes: %s: %s" % (item.get("address"), type(exc).__name__))
         if error:

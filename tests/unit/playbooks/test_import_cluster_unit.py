@@ -153,6 +153,21 @@ def test_log_dir_of_a_kept_unit(keep, env, config_vars, expected):
     assert kept == expected
 
 
+@pytest.mark.parametrize("keep_hand_edits, expected", [
+    # the unit kept by name: its CASSANDRA_LOG_DIR still wins, cassandra-env.sh keeps its stock fallback
+    # (hostile/import-noop: the role's cassandra-env.sh would get the unit's directory, a self-check stop)
+    ("unit", {"cassandra_log_dir": "/var/log/cassandra"}),
+    ("cqlsh,unit", {"cassandra_log_dir": "/var/log/cassandra"}),
+    ("cqlsh", {}),
+    (False, {}),
+])
+def test_log_dir_of_a_unit_kept_by_name(keep_hand_edits, expected):
+    hv = {"import_cluster_unit": {"env": {"CASSANDRA_LOG_DIR": "/data/log"}}, "import_cluster_log_dir": "/data/log"}
+    kept = dict((k, v) for k, v in node(hv, keep_hand_edits=keep_hand_edits)["keep"].items()
+                if k == "cassandra_log_dir")
+    assert kept == expected
+
+
 @pytest.mark.parametrize("kv, boot", [
     ({"unit_UnitFileState": "enabled", "unit_IsEnabled": "enabled"}, "enabled"),
     # the package's init script: systemd only has a generated unit, the init system answers
