@@ -1487,15 +1487,16 @@ inventory, so that nodes added later get the same tuning as the existing ones (w
   Said in a note, not carried: what changes nothing, a source rule on a port open to everyone, a service (RHEL's
   ``ssh``) or a ufw ``ALLOW`` (Ubuntu's ``OpenSSH`` profile, read by its ports) that opens only ports open to everyone,
   protocol by protocol; and what concerns every port, not compared: a zone bound to sources or with the ``ACCEPT``
-  target (a policy to this host too), a whole protocol, a source port (traffic from it reaches every port), a rule
+  target, a whole protocol, a source port (traffic from it reaches every port), a rule
   letting a source in on every port (firewalld's rich rule, ufw's ``Anywhere ALLOW 10.0.9.0/24``), ufw's default
   ``allow (incoming)``, firewalld's direct rules on these ports. ICMP rules concern no port.
 
   Anything else on these ports stops the self-check, quoted as it is: another action, logging, a forward port,
-  another zone or a policy to this host, a service or app profile on a Cassandra port, a name, a leading zero or a
+  another zone, a service or app profile on a Cassandra port, a name, a leading zero or a
   field that does not read, a rule now only or after a reload only, iptables or nftables rules (and iptables' INPUT
   policy other than ``ACCEPT``); whatever their ports, so do a service including other services and a rule for a
-  source port that is not let in. So does a list ``firewall-cmd`` or ``ufw`` fails to give
+  source port that is not let in, and any firewalld policy to this host (egress ``HOST``, now or after a reload)
+  but an empty ``CONTINUE`` one or RHEL's ``allow-host-ipv6`` as shipped (policies are not compared). So does a list ``firewall-cmd`` or ``ufw`` fails to give
   (D-Bus down, firewalld starting), never read as no rule. The way out: change the nodes as the role would, or
   ``-e import_keep_hand_edits=firewall`` keeps the firewall as the nodes have it (for a list not given: import again
   once it answers).

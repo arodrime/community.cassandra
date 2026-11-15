@@ -1562,24 +1562,17 @@
               else echo "fw_unread|zone $z|${w}rich rules"; fi
             done
           done
-          # policies to this host (firewalld 0.9+; egress HOST): their target, ports, services, rich rules
-          if q=$(firewall-cmd --get-policies 2>/dev/null); then
+          # policies (firewalld 0.9+), now and after a reload: each one as --info-policy prints it (the import
+          # stops on one to this host, egress HOST, but an empty CONTINUE one or the RHEL allow-host-ipv6 as shipped)
+          for c in "" "--permanent"; do
+            w=${c:+permanent }
+            q=$(firewall-cmd $c --get-policies 2>/dev/null) || { echo "fw_unread|firewalld|${w}policies"; continue; }
             for y in $q; do
-              for c in "" "--permanent"; do
-                w=${c:+permanent }
-                i=$(firewall-cmd $c --info-policy="$y" 2>/dev/null) || { echo "fw_unread|policy $y|${w}policy"; continue; }
-                echo "$i" | grep -Eq '^[[:space:]]*egress-zones:.*\bHOST\b' || continue
-                v=$(echo "$i" | sed -n 's/^[[:space:]]*target: *//p')
-                [ -n "$v" ] && echo "fw_rule|policy $y|${w}target $v"
-                l=$(firewall-cmd $c --policy="$y" --list-ports 2>/dev/null) && [ -n "$l" ] && echo "fw_rule|policy $y|${w}ports $l"
-                for s in $(firewall-cmd $c --policy="$y" --list-services 2>/dev/null); do
-                  l=$(firewall-cmd $c --info-service="$s" 2>/dev/null | sed -n 's/^[[:space:]]*ports: *//p')
-                  [ -n "$l" ] && echo "fw_rule|policy $y|${w}service $s: $l"
-                done
-                firewall-cmd $c --policy="$y" --list-rich-rules 2>/dev/null | grep . | awk -v p="fw_rule|policy $y|${w}rich rule " '{print p $0}'
-              done
+              if i=$(firewall-cmd $c --info-policy="$y" 2>/dev/null); then
+                echo "$i" | awk -v p="fw_policy|${w}$y|" '{print p $0}'
+              else echo "fw_unread|policy $y|${w}policy"; fi
             done
-          fi
+          done
           # zones bound to sources (they let them in by their own rules: said, not compared)
           echo "$a" | awk '/^[^[:space:]]/ {z=$1} /^[[:space:]]+sources:/ {sub(/^[[:space:]]+sources: */, ""); print "fw_zone|zone " z "|sources " $0}'
           # direct rules (said when they name a Cassandra port, not compared; none said when they cannot be listed)

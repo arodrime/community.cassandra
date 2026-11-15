@@ -882,6 +882,51 @@ def _ufw_role_form(line):
     return None
 
 
+# RHEL's firewalld policy allow-host-ipv6 as shipped: ICMPv6 to this host, its rich rules
+STOCK_ALLOW_HOST_IPV6 = set('rule family="ipv6" icmp-type name="%s" accept' % t for t in (
+    "neighbour-advertisement", "neighbour-solicitation", "router-advertisement", "redirect", "mld-listener-done",
+    "mld-listener-query", "mld-listener-report", "mld2-listener-report"))
+# what --info-policy lists besides its name, target, priority and zones: empty in a policy that lets nothing in
+_POLICY_SETTINGS = ("services", "ports", "protocols", "forward-ports", "source-ports", "icmp-blocks", "rich rules")
+
+
+def _policies(recs):
+    """The policies firewall-cmd --info-policy printed ("fw_policy" records: "[permanent ]name", a line) ->
+    {"[permanent ]name": {setting: value}} (the lines under a setting, a tab first, are its values: rich rules
+    [rule], forward ports)."""
+    out = {}
+    for name, line in (_fields(r, 2) for kind, r in recs if kind == "fw_policy"):
+        policy = out.setdefault(name, {"rich rules": []})
+        setting = re.match(r"^\s+([a-z -]+):\s*(.*)$", line)
+        last = policy.get("_last")
+        if line.startswith("\t") and last == "rich rules":
+            policy["rich rules"].append(_norm(line))
+        elif line.startswith("\t") and last:  # (one per line: forward ports)
+            policy[last] = _norm("%s %s" % (policy.get(last, ""), line))
+        elif setting:
+            policy["_last"] = setting.group(1)
+            if setting.group(1) != "rich rules":
+                policy[setting.group(1)] = _norm(setting.group(2))
+            elif setting.group(2).strip():
+                policy["rich rules"].append(_norm(setting.group(2)))
+    return out
+
+
+def _policy_lets_in(name, policy):
+    """A policy to this host (egress HOST) that may let traffic in: not an empty CONTINUE one, nor RHEL's
+    allow-host-ipv6 as shipped (not modelled: the import stops on it, quoted)."""
+    if "HOST" not in policy.get("egress-zones", "").split():
+        return False
+    empty = all(not policy.get(k) for k in _POLICY_SETTINGS) and policy.get("masquerade", "no") in ("", "no")
+    if policy.get("target") == "CONTINUE" and empty:
+        return False
+    stock = name.split()[-1] == "allow-host-ipv6" and policy.get("target") == "CONTINUE" \
+        and policy.get("ingress-zones") == "ANY" and set(policy["rich rules"]) == STOCK_ALLOW_HOST_IPV6 \
+        and all(not policy.get(k) for k in _POLICY_SETTINGS if k != "rich rules") \
+        and policy.get("masquerade", "no") in ("", "no")
+    return not stock
+
+
 def _firewall_read(recs, touched=()):
     """The firewall records -> {name: the firewall running (firewalld, ufw, ''), zone: firewalld's default zone,
     state: the state read of the one running, states: the "fw" records, rules: (where, rule) the rules read,
@@ -943,6 +988,12 @@ def _firewall_read(recs, touched=()):
         {"other": other, "no_effect": no_effect, "every_port": every_port}.get(kind, []).append((where, line))
     # (iptables' own INPUT policy other than ACCEPT: a rule of its own)
     other += [(n, state) for n, state, extra in states if n not in ("firewalld", "ufw")]
+    # firewalld's policies to this host: not modelled, each one that may let traffic in is "other", as read
+    other += [("policy %s" % name.split()[-1], "%spolicy to this host: %s" % (
+        "permanent " if name.startswith("permanent ") else "",
+        "; ".join("%s %s" % (k, ", ".join(v) if isinstance(v, list) else v) for k, v in policy.items()
+                  if not k.startswith("_") and v)))
+              for name, policy in _policies(recs).items() if _policy_lets_in(name, policy)]
     sources = {}
     for k in in_both_sets:
         if isinstance(k, tuple) and k not in redundant and _names_port(k[0], ports):
@@ -1001,7 +1052,8 @@ def _firewalld_other_form_kind(where, line, home, ports, open_, services):
             return ""
         return "no_effect" if where == home and _opens_only(specs, open_) else "other"
     rich = FW_RICH.match(line)
-    if rich and re.search(r" icmp-(type|block) ", rich.group(2)):
+    if rich and re.match(r'^rule(?: family="ipv[46]")?(?: source (?:NOT )?address="[^"]+")? icmp-(?:type|block)'
+                         r' name="[^"]+"(?: (?:accept|drop|reject))?$', rich.group(2)):
         return ""  # (ICMP: no port)
     named = re.search(r' service name="([^"]*)"', rich.group(2)) if rich else None
     if rich and not named and not re.search(r'(?<![\w-])port port=|forward-port ', rich.group(2)):

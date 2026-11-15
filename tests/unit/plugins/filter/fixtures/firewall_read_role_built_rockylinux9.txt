@@ -12,21 +12,45 @@ fw_rule|zone public|permanent service cockpit: 9090/tcp
 fw_rule|zone public|permanent service dhcpv6-client: 546/udp
 fw_rule|zone public|permanent service ssh: 22/tcp
 fw_rule|zone public|permanent rich rule rule family="ipv4" source address="10.0.9.0/24" port port="7199" protocol="tcp" accept
-fw_rule|policy allow-host-ipv6|target CONTINUE
-fw_rule|policy allow-host-ipv6|rich rule rule family="ipv6" icmp-type name="neighbour-advertisement" accept
-fw_rule|policy allow-host-ipv6|rich rule rule family="ipv6" icmp-type name="neighbour-solicitation" accept
-fw_rule|policy allow-host-ipv6|rich rule rule family="ipv6" icmp-type name="router-advertisement" accept
-fw_rule|policy allow-host-ipv6|rich rule rule family="ipv6" icmp-type name="redirect" accept
-fw_rule|policy allow-host-ipv6|rich rule rule family="ipv6" icmp-type name="mld-listener-done" accept
-fw_rule|policy allow-host-ipv6|rich rule rule family="ipv6" icmp-type name="mld-listener-query" accept
-fw_rule|policy allow-host-ipv6|rich rule rule family="ipv6" icmp-type name="mld-listener-report" accept
-fw_rule|policy allow-host-ipv6|rich rule rule family="ipv6" icmp-type name="mld2-listener-report" accept
-fw_rule|policy allow-host-ipv6|permanent target CONTINUE
-fw_rule|policy allow-host-ipv6|permanent rich rule rule family="ipv6" icmp-type name="neighbour-advertisement" accept
-fw_rule|policy allow-host-ipv6|permanent rich rule rule family="ipv6" icmp-type name="neighbour-solicitation" accept
-fw_rule|policy allow-host-ipv6|permanent rich rule rule family="ipv6" icmp-type name="router-advertisement" accept
-fw_rule|policy allow-host-ipv6|permanent rich rule rule family="ipv6" icmp-type name="redirect" accept
-fw_rule|policy allow-host-ipv6|permanent rich rule rule family="ipv6" icmp-type name="mld-listener-done" accept
-fw_rule|policy allow-host-ipv6|permanent rich rule rule family="ipv6" icmp-type name="mld-listener-query" accept
-fw_rule|policy allow-host-ipv6|permanent rich rule rule family="ipv6" icmp-type name="mld-listener-report" accept
-fw_rule|policy allow-host-ipv6|permanent rich rule rule family="ipv6" icmp-type name="mld2-listener-report" accept
+fw_policy|allow-host-ipv6|allow-host-ipv6 (active)
+fw_policy|allow-host-ipv6|  priority: -15000
+fw_policy|allow-host-ipv6|  target: CONTINUE
+fw_policy|allow-host-ipv6|  ingress-zones: ANY
+fw_policy|allow-host-ipv6|  egress-zones: HOST
+fw_policy|allow-host-ipv6|  services: 
+fw_policy|allow-host-ipv6|  ports: 
+fw_policy|allow-host-ipv6|  protocols: 
+fw_policy|allow-host-ipv6|  masquerade: no
+fw_policy|allow-host-ipv6|  forward-ports: 
+fw_policy|allow-host-ipv6|  source-ports: 
+fw_policy|allow-host-ipv6|  icmp-blocks: 
+fw_policy|allow-host-ipv6|  rich rules: 
+fw_policy|allow-host-ipv6|	rule family="ipv6" icmp-type name="neighbour-advertisement" accept
+fw_policy|allow-host-ipv6|	rule family="ipv6" icmp-type name="neighbour-solicitation" accept
+fw_policy|allow-host-ipv6|	rule family="ipv6" icmp-type name="router-advertisement" accept
+fw_policy|allow-host-ipv6|	rule family="ipv6" icmp-type name="redirect" accept
+fw_policy|allow-host-ipv6|	rule family="ipv6" icmp-type name="mld-listener-done" accept
+fw_policy|allow-host-ipv6|	rule family="ipv6" icmp-type name="mld-listener-query" accept
+fw_policy|allow-host-ipv6|	rule family="ipv6" icmp-type name="mld-listener-report" accept
+fw_policy|allow-host-ipv6|	rule family="ipv6" icmp-type name="mld2-listener-report" accept
+fw_policy|permanent allow-host-ipv6|allow-host-ipv6 (active)
+fw_policy|permanent allow-host-ipv6|  priority: -15000
+fw_policy|permanent allow-host-ipv6|  target: CONTINUE
+fw_policy|permanent allow-host-ipv6|  ingress-zones: ANY
+fw_policy|permanent allow-host-ipv6|  egress-zones: HOST
+fw_policy|permanent allow-host-ipv6|  services: 
+fw_policy|permanent allow-host-ipv6|  ports: 
+fw_policy|permanent allow-host-ipv6|  protocols: 
+fw_policy|permanent allow-host-ipv6|  masquerade: no
+fw_policy|permanent allow-host-ipv6|  forward-ports: 
+fw_policy|permanent allow-host-ipv6|  source-ports: 
+fw_policy|permanent allow-host-ipv6|  icmp-blocks: 
+fw_policy|permanent allow-host-ipv6|  rich rules: 
+fw_policy|permanent allow-host-ipv6|	rule family="ipv6" icmp-type name="neighbour-advertisement" accept
+fw_policy|permanent allow-host-ipv6|	rule family="ipv6" icmp-type name="neighbour-solicitation" accept
+fw_policy|permanent allow-host-ipv6|	rule family="ipv6" icmp-type name="router-advertisement" accept
+fw_policy|permanent allow-host-ipv6|	rule family="ipv6" icmp-type name="redirect" accept
+fw_policy|permanent allow-host-ipv6|	rule family="ipv6" icmp-type name="mld-listener-done" accept
+fw_policy|permanent allow-host-ipv6|	rule family="ipv6" icmp-type name="mld-listener-query" accept
+fw_policy|permanent allow-host-ipv6|	rule family="ipv6" icmp-type name="mld-listener-report" accept
+fw_policy|permanent allow-host-ipv6|	rule family="ipv6" icmp-type name="mld2-listener-report" accept

@@ -246,7 +246,8 @@ def test_a_node_as_the_roles_molecule_converge_leaves_it_imports_without_a_stop(
         assert "zone public: service ssh: 22/tcp opens only ports open to everyone, changes nothing (not carried)" \
             in r["carried"]
         # (its zone target and RHEL's allow-host-ipv6 policy, ICMP only, as read now: nothing to say)
-        assert "fw_rule|zone public|permanent target default" in out and "policy allow-host-ipv6|rich rule" in out
+        assert "fw_rule|zone public|permanent target default" in out
+        assert 'fw_policy|permanent allow-host-ipv6|\trule family="ipv6" icmp-type name="redirect" accept' in out
         assert not [c for c in r["carried"] if "target" in c or "allow-host-ipv6" in c]
     else:
         assert r["vars"]["cassandra_firewall_enabled"] is False
@@ -698,23 +699,49 @@ def test_icmp_rich_rules_concern_no_port(tmp_path):
     assert changes == [] and not [c for c in r["carried"] if "icmp" in c]
 
 
-def test_policies_to_this_host_are_read(tmp_path):
-    """firewalld 0.9+: a policy whose egress is HOST lets traffic in by its own rules (RHEL's allow-host-ipv6: ICMP
-    only, nothing said); one on a Cassandra port stops, an ACCEPT one is said; one to other zones is not read."""
-    host = "{}\n  target: {}\n  ingress-zones: ANY\n  egress-zones: HOST"
-    answers = {"--get-policies": "allow-host-ipv6 jmx-in everything to-lan"}
-    for set_ in ("", "--permanent "):
-        answers.update({
-            set_ + "--info-policy=allow-host-ipv6": host.format("allow-host-ipv6", "CONTINUE"),
-            set_ + "--policy=allow-host-ipv6 --list-rich-rules":
-                'rule family="ipv6" icmp-type name="neighbour-advertisement" accept',
-            set_ + "--info-policy=jmx-in": host.format("jmx-in", "CONTINUE"),
-            set_ + "--policy=jmx-in --list-ports": "7199/tcp",
-            set_ + "--info-policy=everything": host.format("everything", "ACCEPT"),
-            set_ + "--info-policy=to-lan": "to-lan\n  target: ACCEPT\n  ingress-zones: HOST\n  egress-zones: internal"})
+def info_policy(name, target="CONTINUE", ingress="ANY", egress="HOST", rich=(), **settings):
+    """A policy as firewall-cmd --info-policy prints it (firewalld 1.x)."""
+    lines = ["%s (active)" % name, "  priority: -15000", "  target: %s" % target, "  ingress-zones: %s" % ingress,
+             "  egress-zones: %s" % egress]
+    for key in ("services", "ports", "protocols", "masquerade", "forward-ports", "source-ports", "icmp-blocks"):
+        lines.append("  %s: %s" % (key, settings.get(key.replace("-", "_"), "no" if key == "masquerade" else "")))
+    lines.append("  rich rules: ")
+    lines += ["\t" + r for r in rich]
+    return "\n".join(lines)
+
+
+STOCK_IPV6 = ['rule family="ipv6" icmp-type name="%s" accept' % t for t in (
+    "neighbour-advertisement", "neighbour-solicitation", "router-advertisement", "redirect", "mld-listener-done",
+    "mld-listener-query", "mld-listener-report", "mld2-listener-report")]
+
+
+@pytest.mark.parametrize("policies, stops", [
+    # RHEL's allow-host-ipv6 as shipped, an empty CONTINUE one, one to other zones: nothing said
+    ({"allow-host-ipv6": info_policy("allow-host-ipv6", rich=STOCK_IPV6), "empty": info_policy("empty"),
+      "to-lan": info_policy("to-lan", target="ACCEPT", ingress="HOST", egress="internal", ports="7000/tcp")}, []),
+    # anything else to this host stops: not modelled
+    ({"jmx-in": info_policy("jmx-in", ports="7199/tcp")}, ["jmx-in"]),
+    ({"everything": info_policy("everything", target="ACCEPT")}, ["everything"]),
+    ({"drop-in": info_policy("drop-in", target="DROP")}, ["drop-in"]),
+    ({"fwd": info_policy("fwd", forward_ports="\n\tport=9042:proto=tcp:toport=19042:toaddr=")}, ["fwd"]),
+    ({"allow-host-ipv6": info_policy("allow-host-ipv6", rich=STOCK_IPV6 + [JMX_FROM[0].replace("ipv4", "ipv6")])},
+     ["allow-host-ipv6"])])
+def test_policies_to_this_host_stop_unless_empty_or_as_shipped(tmp_path, policies, stops):
+    answers = {"--get-policies": " ".join(policies), "--permanent --get-policies": " ".join(policies)}
+    for name, info in policies.items():
+        answers["--info-policy=%s" % name] = answers["--permanent --info-policy=%s" % name] = info
     out = firewall_records(tmp_path, enabled="enabled", answers=answers)
-    assert "policy to-lan" not in out and "policy allow-host-ipv6|rich rule" in out
     r, changes = imported_and_checked(out)
-    assert [c["now"] for c in changes] == ["policy jmx-in: ports 7199/tcp"]
-    assert [c for c in r["carried"] if c.startswith("firewalld policy everything: target ACCEPT")]
-    assert not [c for c in r["carried"] if "allow-host-ipv6" in c]
+    said = sorted(set(c["now"].split(":")[0] for c in changes))
+    assert said == ["policy %s" % name for name in stops], changes
+    assert all(c["now"].startswith(("policy %s: policy to this host" % n, "policy %s: permanent policy" % n))
+               for c in changes for n in stops if c["now"].startswith("policy %s:" % n))
+
+
+def test_a_policy_list_firewall_cmd_cannot_give_stops(tmp_path):
+    out = firewall_records(tmp_path, enabled="enabled", answers={
+        "--get-policies": "p", "--permanent --get-policies": False, "--info-policy=p": False})
+    assert "fw_unread|firewalld|permanent policies\n" in out and "fw_unread|policy p|policy\n" in out
+    r, changes = imported_and_checked(out)
+    assert [c["now"] for c in changes if c["what"] == "firewall rules (not read)"] == [
+        "policy p: policy could not be listed", "firewalld: permanent policies could not be listed"]
