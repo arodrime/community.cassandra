@@ -371,6 +371,13 @@ Role Variables
   Rotation, the stock values by default: `cassandra_log_system_*`,
   `cassandra_log_debug_*`, `cassandra_log_audit_*` with `max_file_size` (50MB),
   `max_history` (7 days; the audit's 30) and `total_size_cap` (5GB).
+  `cassandra_log_compress` (default `true`, the stock `.zip`): the rolled
+  files of `system.log` and `debug.log` zipped; `false` leaves them as they
+  are. `cassandra_log_audit_compress` (default `true`): the same for the
+  audit file's.
+  `cassandra_log_jmx_configurator`: logback's JMX MBean (`<jmxConfigurator />`,
+  to change the log levels over JMX); the series' stock file by default, on
+  in 4.x, off in 5.0 (which dropped it). Cassandra 3.x's stock file had it too.
   `cassandra_log_audit_file`: audit events in `audit/audit.log` of the log
   dir (the stock `AUDIT` appender and its `org.apache.cassandra.audit` logger,
   commented out in the stock file, uncommented); on by default with

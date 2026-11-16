@@ -1583,7 +1583,9 @@ the role's layout (and restarts the nodes): the report says so (``MOVED``). The 
 console, the stock ``AUDIT`` appender and its logger uncommented (``cassandra_log_audit_file``, written only when it is
 not its default: on with ``FileAuditLogger``) and the dir of its file (``cassandra_log_audit_dir``), the log dir
 written as itself where it is the one Cassandra gives logback (``${cassandra.logdir}``), 5.0's ``CQLLOG`` appender named by ``<root>``
-(``cassandra_log_cql_table`` and its level), the rotation of each file (``cassandra_log_<system|debug|audit>_*``), the
+(``cassandra_log_cql_table`` and its level), the rotation of each file (``cassandra_log_<system|debug|audit>_*``), its
+rolled files zipped or not (``cassandra_log_compress`` for ``system.log`` and ``debug.log`` when both agree,
+``cassandra_log_audit_compress``), logback's JMX MBean (``<jmxConfigurator />``, ``cassandra_log_jmx_configurator``), the
 pattern of the log lines (``cassandra_log_pattern``, when every encoder has the same), the appenders ``<root>`` names besides the stock ones
 (``cassandra_logback_root_extra_refs``), the loggers that only set a level (``cassandra_log_levels``), however written
 and wherever they are. logback (1.2, as in Cassandra 4.x and 5.0) reads its ``<appender>`` and ``<logger>`` elements

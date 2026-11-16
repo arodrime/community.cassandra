@@ -1563,6 +1563,23 @@ argument_specs:
         default: 5GB
         description:
         - 'Rotation of C(audit/audit.log) (C(AUDIT), with O(cassandra_log_audit_file)): the size of all its files at most.'
+      cassandra_log_compress:
+        type: bool
+        default: true
+        description:
+        - The rolled files of C(system.log) and C(debug.log) zipped (their C(fileNamePattern) in C(logback.xml) ending
+          in C(.zip), the stock one); V(false) leaves them as they are.
+      cassandra_log_audit_compress:
+        type: bool
+        default: true
+        description:
+        - The rolled files of the audit file (O(cassandra_log_audit_file)) zipped, as O(cassandra_log_compress).
+      cassandra_log_jmx_configurator:
+        type: bool
+        description:
+        - Logback's JMX MBean in C(logback.xml) (C(<jmxConfigurator />), to change the log levels over JMX).
+        - Default the series' stock file, on in 4.x, off in 5.0 (which dropped it); Cassandra 3.x's stock file had
+          it too.
       cassandra_log_audit_file:
         type: bool
         description:

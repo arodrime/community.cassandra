@@ -426,6 +426,15 @@ cassandra_log_debug_total_size_cap: 5GB
 cassandra_log_audit_max_file_size: 50MB
 cassandra_log_audit_max_history: 30
 cassandra_log_audit_total_size_cap: 5GB
+# Rolled files zipped (fileNamePattern ending in .zip, the stock one); false:
+# left as they are. cassandra_log_compress: system.log's and debug.log's,
+# cassandra_log_audit_compress: audit.log's (cassandra_log_audit_file).
+cassandra_log_compress: true
+cassandra_log_audit_compress: true
+# logback's JMX MBean (<jmxConfigurator />, to change the log levels over
+# JMX): the series' stock file by default, on in 4.x, off in 5.0 (which
+# dropped it). Cassandra 3.x's stock file had it too.
+cassandra_log_jmx_configurator: "{{ cassandra_version != '50x' }}"
 # Audit events in a file of their own, audit/audit.log of the log dir: the
 # stock AUDIT appender and its org.apache.cassandra.audit logger, commented out
 # in the stock file, uncommented. On by default with Cassandra's

@@ -367,3 +367,31 @@ def test_the_heap_in_the_jvm_options():
     lines = _render(env, "41x", "jvm-server.options", on)[1]
     assert "-Xms8G" in lines and "-Xmx8G" in lines and "-Xmn800M" in lines and "#-Xms4G" not in lines
     assert "#-Xms4G" in _render(env, "41x", "jvm-server.options", dict(ctx, cassandra_heap_size="8G"))[1]
+
+
+def rolled(text):
+    """{appender: its fileNamePattern} of the live appenders."""
+    return dict((a.get("name"), a.find("rollingPolicy/fileNamePattern").text) for a in ET.fromstring(text).findall("appender")
+                if a.find("rollingPolicy/fileNamePattern") is not None)
+
+
+@pytest.mark.parametrize("series", sorted(VERSIONS))
+def test_the_rolled_files_zipped_or_not(series):
+    zipped = rolled(logback(series, cassandra_log_audit_file=True))
+    assert sorted(zipped) == ["AUDIT", "DEBUGLOG", "SYSTEMLOG"] and all(p.endswith(".%i.zip") for p in zipped.values())
+    off = rolled(logback(series, cassandra_log_audit_file=True, cassandra_log_compress=False))
+    assert off["SYSTEMLOG"].endswith("/system.log.%d{yyyy-MM-dd}.%i") and off["DEBUGLOG"].endswith(".%i")
+    assert off["AUDIT"].endswith(".%i.zip")
+    off = rolled(logback(series, cassandra_log_audit_file=True, cassandra_log_audit_compress=False))
+    assert off["AUDIT"].endswith("/audit.log.%d{yyyy-MM-dd}.%i") and off["SYSTEMLOG"].endswith(".%i.zip")
+
+
+@pytest.mark.parametrize("series, stock", [("4.0", True), ("4.1", True), ("5.0", False)])
+def test_the_jmx_configurator(series, stock):
+    # the series' stock file by default; on: right after <configuration>, where Cassandra 3.x had it
+    def tags(**variables):
+        return [child.tag for child in ET.fromstring(logback(series, **variables))]
+    assert ("jmxConfigurator" in tags()) is stock
+    assert tags(cassandra_log_jmx_configurator=True)[0] == "jmxConfigurator"
+    assert "jmxConfigurator" not in tags(cassandra_log_jmx_configurator=False)
+    assert logback(series, cassandra_log_jmx_configurator=True).count("jmxConfigurator") == 1

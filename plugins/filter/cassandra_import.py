@@ -2579,13 +2579,26 @@ def _logback(text):
     found["cassandra_log_audit_file"] = bool(
         [a for a in conf.findall("appender") if a.get("name") == "AUDIT"]
         and audit and "AUDIT" in [r.get("ref") for r in audit[0].findall("appender-ref")])
-    # the dir of its file: the same for audit.log and its rolled files (the stock names)
+    # the dir of its file: the same for audit.log and its rolled files (the stock names), zipped or not
     appender = next((a for a in conf.findall("appender") if a.get("name") == "AUDIT"), None)
     if appender is not None:
         path = (appender.findtext("file") or "").strip()
         pattern = (appender.findtext("rollingPolicy/fileNamePattern") or "").strip()
-        if path.endswith("/audit.log") and pattern == path + ".%d{yyyy-MM-dd}.%i.zip":
+        if path.endswith("/audit.log") and pattern in (path + ROLLED, path + ROLLED + ".zip"):
             found["cassandra_log_audit_dir"] = path[:-len("/audit.log")]
+            found["cassandra_log_audit_compress"] = pattern.endswith(".zip")
+    # system.log's and debug.log's rolled files (their stock names), zipped or not: one variable for both, read when
+    # they agree (else the line that differs: a hand edit)
+    zipped = set()
+    for name, kind in (("SYSTEMLOG", "system"), ("DEBUGLOG", "debug")):
+        pattern = next(((a.findtext("rollingPolicy/fileNamePattern") or "").strip() for a in conf.findall("appender")
+                        if a.get("name") == name), "")
+        if pattern in ("${cassandra.logdir}/%s.log%s" % (kind, ROLLED), "${cassandra.logdir}/%s.log%s.zip" % (kind, ROLLED)):
+            zipped.add(pattern.endswith(".zip"))
+    if len(zipped) == 1:
+        found["cassandra_log_compress"] = zipped.pop()
+    # logback's JMX MBean, under <configuration>
+    found["cassandra_log_jmx_configurator"] = conf.find("jmxConfigurator") is not None
     refs = [r.get("ref") for r in roots[0].findall("appender-ref")] if len(roots) == 1 else []
     # 5.0's system_views.system_logs table: the stock CQLLOG appender live, <root> naming it
     cql = "CQLLOG" in refs and [a for a in conf.findall("appender") if a.get("name") == "CQLLOG"]
@@ -2607,6 +2620,8 @@ def _logback(text):
     return found
 
 
+# the end of a rolled log file's stock name (fileNamePattern), before its .zip
+ROLLED = ".%d{yyyy-MM-dd}.%i"
 # logback's levels (cassandra_log_levels takes only these)
 LOG_LEVELS = ("TRACE", "DEBUG", "INFO", "WARN", "ERROR", "OFF", "ALL")
 # the loggers of logback.xml a variable of its own sets (cassandra_log_levels may not take them)
@@ -3779,7 +3794,8 @@ BLOCKS = [
     ("cassandra.yaml settings no variable covers", ["cassandra_extra_settings"]),
     ("Logging (logback.xml)", [
         "cassandra_log_level", "cassandra_log_level_cassandra", "cassandra_debug_log_enabled", "cassandra_log_console",
-        "cassandra_log_audit_file", "cassandra_log_audit_dir"]),
+        "cassandra_log_audit_file", "cassandra_log_audit_dir", "cassandra_log_compress", "cassandra_log_audit_compress",
+        "cassandra_log_jmx_configurator"]),
     ("Template pieces next to the inventory (hand edits the import carried)", [SNIPPETS]),
     ("Secrets of the lines above (hand edits the import carried)", []),
     ("OS tuning (found on the nodes, for the nodes added later)", [

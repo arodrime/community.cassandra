@@ -186,6 +186,11 @@ def in_block(element, old, new):
     return (element, old, new)
 
 
+def zipped(var):
+    """The end of a rolled file's name (fileNamePattern): .zip with var on (logback then zips it)."""
+    return "{{ '.zip' if %s | bool else '' }}" % var
+
+
 # the stock audit appender (FileAuditLogger's audit.log) and its logger, commented out: on with cassandra_log_audit_file
 AUDIT_ON = "{{ '' if cassandra_log_audit_file else '<!-- ' }}"
 AUDIT_OFF = "{{ '' if cassandra_log_audit_file else ' -->' }}"
@@ -198,8 +203,10 @@ AUDIT_FILE = [
     # its dir (cassandra_log_audit_dir: the log dir's audit/ by default)
     in_block("AUDIT", "    <file>${cassandra.logdir}/audit/audit.log</file>",
              "    <file>{{ cassandra_log_audit_dir }}/audit.log</file>"),
+    # (its rolled files zipped with cassandra_log_audit_compress)
     in_block("AUDIT", "      <!-- %s -->" % AUDIT_PATTERN, "      " + AUDIT_ON + AUDIT_PATTERN.replace(
-        "${cassandra.logdir}/audit/", "{{ cassandra_log_audit_dir }}/") + AUDIT_OFF),
+        "${cassandra.logdir}/audit/", "{{ cassandra_log_audit_dir }}/").replace(".%i.zip", ".%i" + zipped(
+            "cassandra_log_audit_compress")) + AUDIT_OFF),
     in_block("AUDIT", "      <!-- <maxFileSize>50MB</maxFileSize>",
              "      " + AUDIT_ON + "<maxFileSize>{{ cassandra_log_audit_max_file_size }}</maxFileSize>"),
     in_block("AUDIT", "      <maxHistory>30</maxHistory>", "      <maxHistory>{{ cassandra_log_audit_max_history }}</maxHistory>"),
@@ -218,6 +225,19 @@ ROTATION = [in_block(appender, "      <%s>%s</%s>" % (tag, stock, tag),
             for appender, kind in (("SYSTEMLOG", "system"), ("DEBUGLOG", "debug"))
             for tag, stock, var in (("maxFileSize", "50MB", "max_file_size"), ("maxHistory", "7", "max_history"),
                                     ("totalSizeCap", "5GB", "total_size_cap"))]
+# their rolled files zipped with cassandra_log_compress
+ROTATION += [in_block(appender, "      <fileNamePattern>${cassandra.logdir}/%s.log.%%d{yyyy-MM-dd}.%%i.zip</fileNamePattern>" % kind,
+                      "      <fileNamePattern>${cassandra.logdir}/%s.log.%%d{yyyy-MM-dd}.%%i%s</fileNamePattern>"
+                      % (kind, zipped("cassandra_log_compress")))
+             for appender, kind in (("SYSTEMLOG", "system"), ("DEBUGLOG", "debug"))]
+
+# logback's JMX MBean (cassandra_log_jmx_configurator): 4.x's stock line, commented out when off; none in 5.0's stock
+# file, written after <configuration> when on
+CONFIGURATION = '<configuration scan="true" scanPeriod="60 seconds">'
+JMX_CONFIGURATOR_4X = ("  <jmxConfigurator />", "  {{ '' if cassandra_log_jmx_configurator | bool else '<!-- ' }}"
+                       "<jmxConfigurator />{{ '' if cassandra_log_jmx_configurator | bool else ' -->' }}")
+JMX_CONFIGURATOR_50 = (CONFIGURATION, CONFIGURATION
+                       + "{{ '\\n  <jmxConfigurator />' if cassandra_log_jmx_configurator | bool else '' }}")
 
 # one pattern for every encoder (SYSTEMLOG, DEBUGLOG, STDOUT, AUDIT): the series' stock one by default
 PATTERNS = {"4.0": "%-5level [%thread] %date{ISO8601} %F:%L - %msg%n", "4.1": "%-5level [%thread] %date{ISO8601} %F:%L - %msg%n",
@@ -326,7 +346,7 @@ def rules_4x(pause, tenuring_and_region):
 
 RULES = {
     "5.0": dict(COMMON, **{
-        "logback.xml": COMMON["logback.xml"] + pattern_rules("5.0") + CQL_TABLE,
+        "logback.xml": COMMON["logback.xml"] + pattern_rules("5.0") + CQL_TABLE + [JMX_CONFIGURATOR_50],
         "jvm-server.options": [
             ("#-Dcassandra.expiration_date_overflow_policy=REJECT",
              "#-Dcassandra.expiration_date_overflow_policy=REJECT" + JVM_HEAP_50 + append_list("cassandra_jvm_extra_options")
@@ -346,7 +366,7 @@ RULES = {
     "4.0": rules_4x("500", False),
 }
 for _series in ("4.0", "4.1"):
-    RULES[_series]["logback.xml"] = COMMON["logback.xml"] + pattern_rules(_series)
+    RULES[_series]["logback.xml"] = COMMON["logback.xml"] + pattern_rules(_series) + [JMX_CONFIGURATOR_4X]
 
 
 def sync_mode(mode, key, var, example=None):

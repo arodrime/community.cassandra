@@ -1,0 +1,2 @@
+minor_changes:
+  - 'cassandra_config role - ``cassandra_log_compress`` and ``cassandra_log_audit_compress`` (default ``true``, the stock ``.zip``): ``false`` leaves the rolled files of ``system.log`` and ``debug.log`` (of the audit file) not zipped; ``cassandra_log_jmx_configurator``: logback''s JMX MBean (``<jmxConfigurator />``), the series'' stock file by default (on in 4.x, off in 5.0), true restores the line Cassandra 3.x''s stock file had; import_cluster reads them back.'

@@ -23,7 +23,7 @@ In order to disable debug.log, comment-out the ASYNCDEBUGLOG
 appender reference in the root level section below.
 -->
 
-<configuration scan="true" scanPeriod="60 seconds">
+<configuration scan="true" scanPeriod="60 seconds">{{ '\n  <jmxConfigurator />' if cassandra_log_jmx_configurator | bool else '' }}
   <!-- No shutdown hook; we run it ourselves in StorageService after shutdown -->
 
   <!-- SYSTEMLOG rolling file appender to system.log (INFO level) -->
@@ -35,7 +35,7 @@ appender reference in the root level section below.
     <file>${cassandra.logdir}/system.log</file>
     <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
       <!-- rollover daily -->
-      <fileNamePattern>${cassandra.logdir}/system.log.%d{yyyy-MM-dd}.%i.zip</fileNamePattern>
+      <fileNamePattern>${cassandra.logdir}/system.log.%d{yyyy-MM-dd}.%i{{ '.zip' if cassandra_log_compress | bool else '' }}</fileNamePattern>
       <!-- each file should be at most 50MB, keep 7 days worth of history, but at most 5GB -->
       <maxFileSize>{{ cassandra_log_system_max_file_size }}</maxFileSize>
       <maxHistory>{{ cassandra_log_system_max_history }}</maxHistory>
@@ -52,7 +52,7 @@ appender reference in the root level section below.
     <file>${cassandra.logdir}/debug.log</file>
     <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
       <!-- rollover daily -->
-      <fileNamePattern>${cassandra.logdir}/debug.log.%d{yyyy-MM-dd}.%i.zip</fileNamePattern>
+      <fileNamePattern>${cassandra.logdir}/debug.log.%d{yyyy-MM-dd}.%i{{ '.zip' if cassandra_log_compress | bool else '' }}</fileNamePattern>
       <!-- each file should be at most 50MB, keep 7 days worth of history, but at most 5GB -->
       <maxFileSize>{{ cassandra_log_debug_max_file_size }}</maxFileSize>
       <maxHistory>{{ cassandra_log_debug_max_history }}</maxHistory>
@@ -90,7 +90,7 @@ appender reference in the root level section below.
     <file>{{ cassandra_log_audit_dir }}/audit.log</file>
     <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">{{ '' if cassandra_log_audit_file else ' -->' }}
       <!-- rollover daily -->
-      {{ '' if cassandra_log_audit_file else '<!-- ' }}<fileNamePattern>{{ cassandra_log_audit_dir }}/audit.log.%d{yyyy-MM-dd}.%i.zip</fileNamePattern>{{ '' if cassandra_log_audit_file else ' -->' }}
+      {{ '' if cassandra_log_audit_file else '<!-- ' }}<fileNamePattern>{{ cassandra_log_audit_dir }}/audit.log.%d{yyyy-MM-dd}.%i{{ '.zip' if cassandra_log_audit_compress | bool else '' }}</fileNamePattern>{{ '' if cassandra_log_audit_file else ' -->' }}
       <!-- each file should be at most 50MB, keep 30 days worth of history, but at most 5GB -->
       {{ '' if cassandra_log_audit_file else '<!-- ' }}<maxFileSize>{{ cassandra_log_audit_max_file_size }}</maxFileSize>
       <maxHistory>{{ cassandra_log_audit_max_history }}</maxHistory>

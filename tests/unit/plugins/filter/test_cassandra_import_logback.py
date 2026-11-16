@@ -478,3 +478,94 @@ def test_the_heap_switch_and_g1_values_are_listed_with_the_jvm():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _block
     assert _block("cassandra_heap_in_jvm_options") == _block("cassandra_jvm_g1_rset_updating_pause_time_percent") \
         == "JVM & heap (cassandra-env.sh, jvm*-server.options)"
+
+
+def unzipped(*kinds):
+    """The rolled files of these logs (system, debug, audit) without their .zip."""
+    def edit(text):
+        for kind in kinds:
+            old = "/%s.log.%%d{yyyy-MM-dd}.%%i.zip</fileNamePattern>" % kind
+            assert old in text, old
+            text = text.replace(old, "/%s.log.%%d{yyyy-MM-dd}.%%i</fileNamePattern>" % kind, 1)
+        return text
+    return edit
+
+
+def jmx_configurator(on):
+    """logback's JMX MBean added right after <configuration> (Cassandra 3.x's place), or 4.x's stock one removed."""
+    def edit(text):
+        if on:
+            return text.replace('<configuration scan="true" scanPeriod="60 seconds">',
+                                '<configuration scan="true" scanPeriod="60 seconds">\n  <jmxConfigurator/>', 1)
+        assert "  <jmxConfigurator />\n" in text
+        return text.replace("  <jmxConfigurator />\n", "", 1)
+    return edit
+
+
+def production(text):
+    """(2026-11-16, 4 of 24 5.0.9 nodes) the audit file on, its rolled files not zipped, written with the log dir
+    as itself, and logback's JMX MBean right after <configuration>."""
+    text = unzipped("audit")(audit_on(text)).replace("${cassandra.logdir}/audit/", "/var/log/cassandra/audit/")
+    return jmx_configurator(True)(text)
+
+
+@pytest.mark.parametrize("series", SERIES)
+def test_the_rolled_files_not_zipped(series):
+    variables, snippets, check = imported(node_files(series, unzipped("system", "debug")), series)
+    assert variables["cassandra_log_compress"] is False and "cassandra_log_audit_compress" not in variables
+    assert check["differences"] == []
+    variables, snippets, check = imported(node_files(series, lambda t: unzipped("audit")(audit_on(t)), True), series)
+    assert variables["cassandra_log_audit_compress"] is False and "cassandra_log_compress" not in variables
+    assert check["differences"] == []
+
+
+@pytest.mark.parametrize("series", SERIES)
+def test_system_and_debug_zipped_one_way_each_stay_a_hand_edit(series):
+    files = node_files(series, unzipped("debug"))
+    out = cassandra_config_import(files, series, FACTS)
+    assert "cassandra_log_compress" not in out["vars"]
+    assert [line for line in out["hand_edits"] if "debug.log.%d{yyyy-MM-dd}.%i<" in line]
+    assert imported(files, series)[2]["differences"]
+
+
+@pytest.mark.parametrize("series, on", [("40x", False), ("41x", False), ("50x", True)])
+def test_the_jmx_configurator_against_its_series_default(series, on):
+    # 4.x's stock file has it, 5.0's has not: written only when the node's is not its series' stock
+    variables, snippets, check = imported(node_files(series, jmx_configurator(on)), series)
+    assert variables["cassandra_log_jmx_configurator"] is on
+    assert check["differences"] == []
+
+
+def test_the_production_shape_passes_the_self_check():
+    files = node_files("50x", production, auditing=True)
+    out = cassandra_config_import(files, "50x", FACTS)
+    assert out["hand_edits"] == []
+    variables, snippets, check = imported(files, "50x")
+    assert variables["cassandra_log_audit_compress"] is False and variables["cassandra_log_jmx_configurator"] is True
+    assert not [k for k in variables if k in ("cassandra_log_compress", "cassandra_log_audit_dir", "cassandra_log_audit_file")]
+    assert check["differences"] == []
+
+
+def test_four_nodes_of_twenty_four_in_host_vars():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout
+    shaped = cassandra_config_import(node_files("50x", production, auditing=True), "50x", FACTS)
+    plain = cassandra_config_import(node_files("50x", audit_on, auditing=True), "50x", FACTS)
+    nodes = []
+    for i in range(24):
+        config = shaped if i % 6 == 0 else plain  # (one node of each rack of 6)
+        nodes.append({"name": "n%d" % i, "address": "10.0.0.%d" % i, "hostname": "n%d" % i, "dc": "dc1",
+                      "rack": "r%d" % (i // 6), "read": True, "vars": dict(config["vars"], cassandra_version="50x"),
+                      "hand_edits": [], "normalized": [], "comments": [], "notes": []})
+    layout = cassandra_inventory_layout(nodes, "c")
+    for name, values in layout["host_vars"].items():
+        on = int(name[1:]) % 6 == 0
+        assert (values.get("cassandra_log_audit_compress"), values.get("cassandra_log_jmx_configurator")) == (
+            (False, True) if on else (None, None)), name
+    assert not [k for values in layout["group_vars"].values() for k in values
+                if k in ("cassandra_log_audit_compress", "cassandra_log_jmx_configurator")]
+
+
+def test_the_compression_and_jmx_are_listed_with_the_logging():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _block
+    assert _block("cassandra_log_compress") == _block("cassandra_log_audit_compress") \
+        == _block("cassandra_log_jmx_configurator") == "Logging (logback.xml)"
