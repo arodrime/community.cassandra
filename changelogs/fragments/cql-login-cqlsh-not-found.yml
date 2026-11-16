@@ -4,3 +4,7 @@ bugfixes:
     (rc 127, or the error names the program of ``cassandra_cqlsh_command``); a cqlsh that ran and failed (a file it
     needs missing, a Python module missing, another error) is said as ``cqlsh failed on <node>``, with the command to
     run as root to see its error (still never quoted: it could hold the login).
+  - >-
+    import_cluster - the CQL login check runs cqlsh on the node it names, not on the controller: the import's play
+    is local, and a node with no ``ansible_connection`` of its own took it (a cqlsh outside the controller's PATH
+    was then said not found).

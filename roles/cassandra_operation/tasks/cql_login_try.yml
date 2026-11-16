@@ -12,6 +12,10 @@
     password: "{{ _cassandra_cql_try_password }}"
     debug: true  # its error, to tell a refused login from a node cqlsh can't reach
   delegate_to: "{{ _cassandra_cql_login_from }}"
+  # on that node: the import's play is connection: local, which a node with no ansible_connection of its own
+  # would inherit (cqlsh then run on the controller)
+  vars:
+    ansible_connection: "{{ hostvars[_cassandra_cql_login_from].ansible_connection | default('ssh') }}"
   run_once: true
   register: _cassandra_cql_try
   failed_when: false

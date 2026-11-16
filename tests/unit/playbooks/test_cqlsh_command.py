@@ -120,3 +120,13 @@ def test_every_cqlsh_call_takes_the_node_s_port():
         step = next(t for play in yaml.safe_load(f) for t in play.get("tasks", [])
                     if t.get("name") == "Check the CQL login, or ask for one")
     assert step["vars"]["_cassandra_cql_login_port"] == "{{ _cql_vars.cassandra_native_transport_port | default(9042) }}"
+
+
+def test_the_cql_login_runs_on_the_node():
+    # The import checks the login from a connection: local play: a node with no ansible_connection of its own
+    # would inherit it, and cqlsh would run on the controller (seen: "<cqlsh> not found on <node>").
+    with open(os.path.join(ROOT, "roles", "cassandra_operation", "tasks", "cql_login_try.yml")) as f:
+        task = next(t for t in yaml.safe_load(f) if MODULE in t)
+    assert task["delegate_to"] == "{{ _cassandra_cql_login_from }}"
+    assert task["vars"]["ansible_connection"] == (
+        "{{ hostvars[_cassandra_cql_login_from].ansible_connection | default('ssh') }}")
