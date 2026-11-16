@@ -165,7 +165,8 @@ def cassandra_stop_block(results, node, failure, operation="", action="", cluste
         first_cause = "%s: %s" % (task, first_cause) + (" (%s)" % detail[-1] if detail and _GENERIC.match(first_cause) else "")
     head = ["%s at %s: %s" % (verdict, node, first_cause)]
     head += ["  " + line for line in cause[1:]]
-    head[-1] += ("" if head[-1].endswith((".", "!", "?")) else ".") + " " + touched
+    head[-1] += "" if head[-1].endswith((".", "!", "?")) else "."
+    head.append("  " + touched)  # (a line of its own: the cause alone on the first)
     table = out.recap(operation, str(cluster or ""), outcomes, check=check, head=False, causes=False)
     command = ""
     if resume and not hint:  # --check wrote no progress file: the same check again, not a resume
@@ -182,10 +183,10 @@ def cassandra_stop_block(results, node, failure, operation="", action="", cluste
     first = way_out[0]
     if command and not first.endswith(":"):
         first += ":"
-    lines = [WAY_OUT + first] + (["  " + command] if command else []) + ["  " + line for line in way_out[1:]]
-    if command and progress_file and not check:
+    lines = [WAY_OUT + first] + (["  " + command] if command else [])
+    if command and progress_file and not check:  # (under the command it is for, before the other ways out)
         lines.append("  progress: %s" % (out.path_from(str(progress_file), cwd) if cwd else progress_file))
-    return head + ([""] + table if table else []) + [""] + lines
+    return head + ([""] + table if table else []) + [""] + lines + ["  " + line for line in way_out[1:]]
 
 
 def cassandra_reset_recap(nodes, check=False, cluster="", add_command=""):

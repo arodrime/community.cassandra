@@ -1,2 +1,3 @@
 bugfixes:
   - "rolling operations (rolling_restart, apply_config, add_node...) - the table of a stopped run no longer says ``not done`` for the node it stopped at when that node was touched: its row says what was done to it (``restarted, then stopped: cluster unhealthy``, ``restart started, not finished: ...``, or ``not touched: ...`` when the check before its action stopped the run)."
+  - "rolling operations - the head of a stopped run says its cause alone on the first line, ``No node after it was touched.`` on the next; the progress file comes right under the resume command, before the other ways out."
