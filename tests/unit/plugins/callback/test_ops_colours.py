@@ -51,7 +51,7 @@ def test_import_verdict():
     assert colour("IMPORT my_cluster (--check, nothing written)  4 nodes  nothing to act on") == C.COLOR_OK
     assert colour("IMPORT my_cluster  4 nodes  2 entries to act on: 1 TO DO, 1 hand edit") is None
     assert colour("IMPORT my_cluster  4 nodes  SELF-CHECK FAILED  3 entries to act on: 1 TO DO, 2 hand edits") == C.COLOR_ERROR
-    assert colour("SELF-CHECK FAILED  my_cluster  the inventory would change 3 settings on 2 nodes") == C.COLOR_ERROR
+    assert colour(u"SELF-CHECK FAILED \u2014 the inventory does not reproduce 2 nodes yet") == C.COLOR_ERROR
     assert colour("  Hand edits no variable covers (cassandra_config would revert them):") is None
 
 

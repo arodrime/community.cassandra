@@ -1254,11 +1254,11 @@ def test_a_failed_self_check_is_red_on_its_verdict_line_only():
     said = []
     callback._display = type("D", (), {"verbosity": 0, "columns": 80,
                                        "display": lambda self, line, color=None, **kw: said.append((line, color))})()
-    block = ["SELF-CHECK FAILED  my_cluster  the inventory would change 1 setting on 1 node", "  (written for inspection"
-             " only)", "", "  Hand edits no variable covers (cassandra_config would revert them):",
-             "    logback.xml   <logger>   hand edit on node1", "", "HOW TO MAKE IT PASS",
-             "  hand edits   to keep them as they are: import again with -e import_keep_hand_edits=true", "",
-             "Details: reports/my_cluster/report.txt, section SELF-CHECK"]
+    block = [u"SELF-CHECK FAILED \u2014 the inventory does not reproduce 1 node yet",
+             "  1 setting on this node has no inventory variable: apply_config would change it.", "",
+             "  logback.xml    node1", "    jmxConfigurator", "      Node     present", "      Ansible  absent", "",
+             "  To pass:", "    keep logback.xml as this node has it   -e import_keep_hand_edits=logback.xml", "",
+             "  Evidence (full paths, lines): reports/my_cluster/report.details.txt, SELF-CHECK"]
     callback.v2_runner_on_failed(_Result(_Task(run_once=True), "localhost", "\n".join(block)))
     assert [line for line, dummy in said] == block  # no rule, the blank lines blank
     coloured = dict((line, color) for line, color in said if line.strip() and not re.match(r"^[-=]{4,}$", line))

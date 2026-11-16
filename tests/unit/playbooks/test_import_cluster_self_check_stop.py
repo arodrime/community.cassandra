@@ -72,7 +72,7 @@ def run(tmp_path, *extra, **env):
 def block(out):
     """The stop's lines under the ops callback: from its verdict."""
     lines = out.rstrip("\n").split("\n")
-    at = next(i for i, line in enumerate(lines) if line.startswith("SELF-CHECK FAILED"))
+    at = next(i for i, line in enumerate(lines) if line.startswith("SELF-CHECK FAILED"))  # (to its end)
     return [line for line in lines[at:] if not re.match(r"^\s*(PLAY RECAP|localhost\s+:)", line)]
 
 
@@ -83,22 +83,23 @@ def test_the_stop_under_the_ops_callback(tmp_path, check):
     assert rc == 2, out
     lines = block(out)
     text = "\n".join(lines)
-    assert lines[:2] == ["SELF-CHECK FAILED  my_cluster  the inventory would change 4 settings on 3",
-                         "  nodes; 1 node not read %s" % ("(--check: the inventory not written)" if check
-                                                          else "(written for inspection only, marked NOT VALID)")]
-    for line in ("  Hand edits no variable covers (cassandra_config would revert them):",
-                 "    - jvm17-server.options, on node2 (1 node):", "        -XX:+UseFoo (not in the inventory)",
-                 "  Your inventory files override the import (Ansible will apply your value):",
-                 "  Not read, so not checked: node4 (unreachable)", "HOW TO MAKE IT PASS",
-                 "Details: reports/my_cluster/report.txt, section SELF-CHECK"):
+    assert lines[:3] == [u"SELF-CHECK FAILED \u2014 the inventory does not reproduce 3 nodes yet",
+                         "  2 settings on these nodes have no inventory variable: apply_config would",
+                         "  change them."]
+    for line in ("  jvm17-server.options    node2", "    -XX:+UseFoo", "      Node     present", "      Ansible  absent",
+                 "  1 setting: a file of yours gives another value: apply_config would write it.",
+                 "      Ansible  16   (cassandra_concurrent_reads = 16)",
+                 "  1 node not read, so not checked: node4 (unreachable).", "  To pass:",
+                 "  --check: the inventory not written" if check
+                 else "  The inventory: written for inspection only, marked NOT VALID",
+                 "    reports/my_cluster/report.details.txt, SELF-CHECK"):
         assert line in lines, out
-    assert "-e import_keep_hand_edits=true" in text and "-e import_allow_unread=true" in text
-    assert "-e import_strict=false" in text
-    assert "ansible-playbook community.cassandra.apply_config --check --diff" in text
+    assert "-e import_keep_hand_edits=cassandra-env.sh,jvm17-server.options" in text
+    assert "-e import_allow_unread=true" in text and "-e import_strict=false" in text
     # blank lines between the groups, no rule, no task dump, no secret
     assert lines.count("") >= 3 and not [line for line in lines if re.match(r"^[-=]{4,}$", line)]
     assert "fatal:" not in out and "TASK [" not in out and SECRET not in out
-    assert max(len(line) for line in lines if "apply_config --check --diff" not in line) <= 79
+    assert max(len(line) for line in lines) <= 80
 
 
 def test_the_stop_in_colour_red_on_its_verdict_only(tmp_path):
@@ -106,9 +107,9 @@ def test_the_stop_in_colour_red_on_its_verdict_only(tmp_path):
     assert rc == 2, out
     red = [line for line in out.split("\n") if "\x1b[0;31m" in line]
     assert [re.sub(r"\x1b\[[0-9;]*m", "", line) for line in red] == [
-        "SELF-CHECK FAILED  my_cluster  the inventory would change 4 settings on 3",
-        "  nodes; 1 node not read (written for inspection only, marked NOT VALID)"]
-    assert "\x1b" not in [line for line in out.split("\n") if "HOW TO MAKE IT PASS" in line][0]
+        u"SELF-CHECK FAILED \u2014 the inventory does not reproduce 3 nodes yet",
+        "  2 settings on these nodes have no inventory variable: apply_config would", "  change them."]
+    assert "\x1b" not in [line for line in out.split("\n") if "To pass:" in line][0]
     assert SECRET not in out
 
 
@@ -119,12 +120,14 @@ def test_the_stop_under_the_default_callback(tmp_path, result_format):
                   ANSIBLE_CALLBACK_RESULT_FORMAT=result_format)
     assert rc == 2, out
     assert SECRET not in out
-    plain = re.search(r"^HOW TO MAKE IT PASS$", out, re.M) or re.search(r"^ +HOW TO MAKE IT PASS$", out, re.M)
+    plain = re.search(r"^ +To pass:$", out, re.M)
     if result_format == "yaml":
-        assert plain and re.search(r"^ *msg: \|-?\n *SELF-CHECK FAILED  my_cluster  ", out, re.M), out
+        assert plain and re.search(r"^ *msg: \|-?\n *SELF-CHECK FAILED \u2014 the inventory does not reproduce", out,
+                                   re.M), out
     else:
-        assert '"msg": "SELF-CHECK FAILED  my_cluster  the inventory would change 4 settings' in out
-        assert "\\nHOW TO MAKE IT PASS\\n" in out
+        assert u'"msg": "SELF-CHECK FAILED \u2014 the inventory does not reproduce 3 nodes yet' in out or \
+            '"msg": "SELF-CHECK FAILED \\u2014 the inventory does not reproduce 3 nodes yet' in out, out
+        assert "\\n  To pass:\\n" in out
 
 
 def test_the_stop_is_one_text_of_the_filter():

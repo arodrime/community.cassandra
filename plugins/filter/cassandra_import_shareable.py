@@ -118,12 +118,12 @@ class _Key(object):
         self.order.append(real)
         return given
 
-    def inside(self, word):
-        """word with the names of nodes, clusters, data centers, racks and domains in it replaced, each a whole part
-        of it (between -, _, ., / or its ends): db1-old, payments.yml, cass-pay-01.keystore."""
+    def inside(self, word, kinds=("n", "c", "dc", "r", "domain")):
+        """word with the names of nodes, clusters, data centers, racks and domains (kinds) in it replaced, each a
+        whole part of it (between -, _, ., / or its ends): db1-old, payments.yml, cass-pay-01.keystore."""
         for real in sorted(self.order, key=len, reverse=True):
             lower = real.lower()
-            if (self.kinds.get(lower, "").rstrip("_g") in ("n", "c", "dc", "r", "domain") and lower not in self.quiet
+            if (self.kinds.get(lower, "").rstrip("_g") in kinds and lower not in self.quiet
                     and len(real) >= 3 and not ADDRESS.match(real) and lower in word.lower()):
                 word = re.sub(r"(?i)(?<![A-Za-z0-9])%s(?![A-Za-z0-9])" % re.escape(real), self.names[lower], word)
         return word
@@ -312,9 +312,53 @@ def _unknown_words(text, key):
     return UNKNOWN.sub(word, text)
 
 
+# the setting of a self-check difference ("<file>: <setting>: node has ..."), in its file's own words: never masked
+# (but for a node's or a cluster's name in it), as on the self-check's own lines (locator)
+DIFFERENCE_SETTING = re.compile(r"\.(?:yaml|xml|ini|options|properties|access|password): (?P<held>[^\s:][^:]*?): node has ")
+_HELD = re.compile(u"\ue000(\\d+)\ue001")
+
+
+def _held(text, key, spans):
+    """text with each span of spans (regexes) put aside (its names of nodes and clusters replaced), the others
+    as they are -> (text, [the spans put aside, by their number])."""
+    held = []
+
+    def hold(m):
+        at = m.span("held") if "held" in m.re.groupindex else m.span()
+        held.append(key.inside(m.string[at[0]:at[1]], ("n", "c", "dc", "r")))
+        return u"%s\ue000%d\ue001%s" % (m.string[m.start():at[0]], len(held) - 1, m.string[at[1]:m.end()])
+    for span in spans:
+        text = span.sub(hold, text)
+    return text, held
+
+
+def _back(text, held):
+    return _HELD.sub(lambda m: held[int(m.group(1))], text)
+
+
+VALUES = re.compile(r"^\s+Node {2,}\S")
+
+
+def _indent(line):
+    return len(line) - len(line.lstrip())
+
+
+def locator(text, key):
+    """A setting named in a file's own words (a line of the self-check's: AUDIT / rollingPolicy, -Dx.y,
+    client_encryption_options.enabled): as it is, but for the names of nodes and clusters in it, an address."""
+    return IPV4.sub("IP", key.inside(text, ("n", "c", "dc", "r")))
+
+
 def _line(text, key):
     """A line of the report (_valued already) with the names of the key replaced, the addresses, the URLs and the
-    paths of the site masked (each found a name of the key); the addresses first (a file named by one: IP.jks)."""
+    paths of the site masked (each found a name of the key); the addresses first (a file named by one: IP.jks); the
+    setting of a self-check difference kept (DIFFERENCE_SETTING)."""
+    text, held = _held(text, key, (DIFFERENCE_SETTING,))
+    return _back(_masked_names(text, key), held)
+
+
+def _masked_names(text, key):
+    """_line's passes."""
     text = re.sub(r"(?i)\bip-\d{1,3}-\d{1,3}-\d{1,3}-\d{1,3}\b(?!\.\w)", "IP", text)  # (a host named by its address)
     for real in sorted((r for r in key.order if ADDRESS.match(r)), key=len, reverse=True):  # (a node named by its IP)
         text = re.sub(r"(?<![\d.:])%s(?!\.?\d|:\w)" % re.escape(real), key.name(real), text)
@@ -425,7 +469,11 @@ def cassandra_import_shareable(lines, layout, written=None, report_file="", cwd=
             " names, domains, URLs, paths, buckets and user names replaced (domain1, url1, path1, bucket1, user1..),"
             " secrets masked. A short host name that is not a node's may remain: check before sharing. Its key"
             " stays with whoever ran the import.", ""]
-    text += [_masked(_aligned(str(line), key)) for line in lines]
+    lines = [str(line) for line in lines]
+    # a self-check's setting, on its own line above its values (Node, Ansible): in the file's own words
+    named = set(i for i in range(len(lines) - 1) if lines[i].strip() and VALUES.match(lines[i + 1])
+                and _indent(lines[i]) < _indent(lines[i + 1]))
+    text += [out.mask(locator(line, key)) if i in named else _masked(_aligned(line, key)) for i, line in enumerate(lines)]
     head = ["# The key of report.shareable.txt: what each name of it stands for. Keep it to yourself.",
             "# Addresses are all shown as IP: not listed."]
     return {"text": text, "map": head + key.lines()}

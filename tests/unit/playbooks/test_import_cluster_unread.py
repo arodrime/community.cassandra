@@ -64,12 +64,12 @@ def test_report_and_stop_name_them():
                                  "cwd": "",
                                  "check": trust_as_template(WRITE["vars"]["_report_args"]["check"])}
     msg = render(STOP["ansible.builtin.fail"]["msg"], **variables).split("\n")
-    assert msg[0].startswith("SELF-CHECK FAILED  c  1 node not read")
-    assert "  Not read, so not checked: n2 (unreachable)" in msg
-    assert "Details: /reports/c/report.txt, section SELF-CHECK" in msg
-    variables["ansible_check_mode"] = True  # --check writes its report as report.check.txt
+    assert msg[0] == u"SELF-CHECK FAILED \u2014 1 node not read, so not checked"
+    assert "  1 node not read, so not checked: n2 (unreachable)." in msg
+    assert "  The inventory: written for inspection only, marked NOT VALID" in msg
+    variables["ansible_check_mode"] = True
     msg = render(STOP["ansible.builtin.fail"]["msg"], **variables).split("\n")
-    assert "Details: /reports/c/report.check.txt, section SELF-CHECK" in msg and "(--check: the inventory not written)" in " ".join(msg[:2])
+    assert "  --check: the inventory not written" in msg
     assert "allow_unread=_report_args.allow_unread" in WRITE["vars"]["_report"]
     assert "import_strict | default(true) | bool" in STOP["when"]
 

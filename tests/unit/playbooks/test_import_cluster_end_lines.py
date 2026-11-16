@@ -17,7 +17,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     ENV_END, LOGBACK_END, cassandra_config_import, cassandra_inventory_files, cassandra_inventory_layout)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import cassandra_import_self_check
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
-    cassandra_import_self_check_advice)
+    cassandra_import_report, cassandra_import_self_check_advice)
 from ansible_collections.community.cassandra.tests.unit.import_nodes import node
 from ansible_collections.community.cassandra.tests.unit.playbooks.test_import_cluster_keep_files import (
     FACTS, role_permissions, stock)
@@ -116,9 +116,14 @@ def test_a_line_in_the_middle_stays_a_hand_edit_and_the_hint_says_how():
     layout = cassandra_inventory_layout([n], "c")
     check = self_check(files, layout)
     assert check["differences"]
-    advice = " ".join(cassandra_import_self_check_advice(layout, {"n1": check}, width=400))
-    assert "cassandra_config_template_snippets" in advice and "cassandra_config_template_overrides" in advice
-    assert "a template piece of yours for lines at the end of cassandra-env.sh or logback.xml" in " ".join(advice.split())
+    advice = cassandra_import_self_check_advice(layout, {"n1": check}, width=400)
+    assert "    FOO" in advice and "-e import_keep_hand_edits=cassandra-env.sh" in " ".join(advice)
+    # how to carry it: the report's HAND EDITS
+    report = " ".join(" ".join(cassandra_import_report(layout, ["/p/c.yml", "/p"], "/p/reports/c/report.txt",
+                                                       {"n1": check}, False, cwd="/p", in_git=True)).split())
+    assert ("to carry them in the inventory instead: a template piece for the end of cassandra-env.sh"
+            " (cassandra_config_template_snippets), or your own template of the file"
+            " (cassandra_config_template_overrides)") in report
 
 
 def logback(text):
@@ -428,7 +433,7 @@ def test_your_template_and_the_end_lines(tmp_path, name, text, has_it):
     differences = self_check(files, layout, extra_files=[yours], inventory_dir=str(tmp_path))["differences"]
     assert (differences == []) is has_it
     if not has_it:
-        assert len(differences) == 1 and differences[0].startswith(name + ": node has ")
+        assert len(differences) == 1 and differences[0].startswith(name + ": ")
 
 
 @pytest.mark.parametrize("name, lines, in_yours", [

@@ -10,14 +10,15 @@ cassandra_import_report: the import's outcome -> the lines of report.txt, with d
     go, FOR INFO (nothing to do), the DETAILS (the lines every node has once, then each node's own). Node lists
     in their shortest exact form, with their count: "all (12 nodes)", "dc1 - n3 + n9 (6 nodes)". A long value
     summarised ("20 lines (first: ...)"), whole in the files written. Secrets never shown.
-cassandra_import_self_check_advice: the end of the run on a failed self-check: what differs, grouped by what
-    makes it pass, and how (report.txt has the same under TO DO, each node's differences under it).
+cassandra_import_self_check_advice: the end of the run on a failed self-check: why the inventory does not reproduce
+    the nodes yet, what differs by what the import establishes of its cause, each setting in its file's own words
+    with both values, the ways out with their options (report.txt has the same under TO DO, report.details.txt
+    each difference as the self-check found it).
 """
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
-import ast
 import json
 import os
 import re
@@ -29,13 +30,13 @@ from ansible.module_utils.parsing.convert_bool import boolean
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     HEAP_MOVED, IDENTITY, KEEP, KEPT_PART_WORDS, KEPT_PARTS, KEPT_PARTS_VAR, NODE_LEVEL, NOT_READ, PER_NODE, group_chains,
     hand_edits_kept, _secret, vars_sort_key, values_hidden)
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import HEAP_FILE
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import CONFIG_FILE, RESTART_DOES
 from ansible_collections.community.cassandra.plugins.filter.cassandra_os import NO_EFFECT_NOTE
 from ansible_collections.community.cassandra.plugins.filter.cassandra_suspicious import (
     LINES as SUSPICIOUS_LINES, REPLACE, finding_lines, suspicious)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import terminal_width
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_differences as differences
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 
@@ -432,210 +433,9 @@ def _host_dirs(with_vars, full):
     return "host_vars/<node>/ (%s)" % listed if len(listed) <= 40 else "host_vars/<node>/ of %d nodes" % len(with_vars)
 
 
-# a self-check difference (cassandra_import_check's, values masked there): "<file>: <setting>: node has <value>,
-# import would write <value>", "<file>: node has <line>, import would write <line>" for a file compared line by line,
-# "<file>: not on the node, the roles would create it", else a line of its own (an error)
-_LINES = re.compile(r"^(cassandra-env\.sh|[^:\s]+\.xml): node has (.*), import would write (.*)$", re.S)
-_SETTING_DIFFERENCE = re.compile(r"^(%s|[^:\s]+): (.+?): node has (.*), (?:import would write|the roles would set) (.*)$"
-                                 % re.escape(HEAP_FILE), re.S)
-_CREATED = re.compile(r"^([^:\s]+): not on the node, the roles would create it$")
-# the kinds of differences, by what makes the self-check pass, in the order shown
-_HAND, _YOURS, _OS, _OTHER = "hand", "yours", "os", "other"
-_KINDS = ((_HAND, "Hand edits no variable covers (cassandra_config would revert them)"),
-          (_YOURS, "Your inventory files override the import (Ansible will apply your value)"),
-          (_OS, "Parts of the nodes the roles would change (OS, firewall, repositories, cqlsh)"),
-          (_OTHER, "Other differences"))
-# the OS model's differences (cassandra_import_check's): "cassandra_linux: <what>: node has <now>, the roles would set ..."
-_OS_FILES = ("cassandra_linux", "cassandra_firewall", "cassandra_repository", "cassandra_install")
-# the switch that keeps a part as the nodes have it, by the file of the difference (cassandra_linux: _OS_SWITCHES)
-# the part (import_keep_hand_edits) of a difference: by its role, else (cassandra_linux) by its start
-_PART_OF_FILE = {"cassandra_firewall": "firewall", "cassandra_repository": "repo", "cassandra_install": "cqlsh"}
-_OS_PARTS = ((("time sync", "chrony"), "timesync"),
-             (("read_ahead_kb", "IO scheduler", "LVM read-ahead", "/etc/udev/", "tuned profiles", "data devices"), "disks"),
-             (("transparent_hugepage", "/etc/systemd/system/disable-thp", "disable-thp"), "thp"),
-             ("swap", "swap"), ("sysctl", "sysctl"),
-             (("limits", "/etc/security/", "the block earlier versions"), "limits"))
-SCREEN_VALUE = 50  # a value longer than this is cut on the screen (whole in the report)
-SCREEN_MOST = 100  # the stop's lines at most (the ops callback's rules)
-SELF_CHECK_WIDTH = 110  # the report's SELF-CHECK section
-
-
-def _hand_files(read):
-    """{node: the config files with hand edits import_keep_hand_edits would keep as the node has them}."""
-    files_of = {}
-    for n in read:
-        kept = (n.get("keep") or {}).get("cassandra_config_keep_files") or []
-        heads = [re.split(r"[:,]", line, maxsplit=1)[0] for line in n.get("hand_edits") or []
-                 if not line.startswith(" ")]
-        files_of[n["name"]] = set(f for f in heads if CONFIG_FILE.match(f) and f not in kept)
-    return files_of
-
-
-def _letters(text):
-    return re.sub(r"[^a-z0-9]", "", str(text).lower())
-
-
-def _winner(name, setting, theirs_win):
-    """The file of yours that still wins for a node's setting ({node, key, path} of the layout's theirs_win): the
-    variable named as the setting, or its last part (cassandra_concurrent_reads: concurrent_reads,
-    cassandra_service_limit_nofile: [Service] LimitNOFILE), else None."""
-    names = set([_letters(setting), _letters(re.split(r"[.\]]", setting)[-1])]) - set([""])
-    return next((w for w in theirs_win or []
-                 if w["node"] == name and _letters(re.sub(r"^cassandra_", "", w["key"])) in names), None)
-
-
-def _difference(text):
-    """A self-check difference -> (file, setting, node's value, the roles' value): setting "" for a line of a file
-    compared line by line (cassandra-env.sh, logback.xml); None for a file the roles would create (no values), or
-    another line (an error: what comes after its file, or its first ": ", as the node's value)."""
-    found = _LINES.match(text)
-    if found:
-        return found.group(1), "", found.group(2), found.group(3)
-    found = _SETTING_DIFFERENCE.match(text)
-    if found:
-        f, setting, node_text, role_text = found.groups()
-        return ("heap" if f == HEAP_FILE else f), setting, node_text, role_text
-    found = _CREATED.match(text)
-    if found:
-        return found.group(1), None, None, None
-    head, sep, rest = text.partition(": ")  # "cassandra.yaml: cannot be read...", "owner, group and mode: not read..."
-    return (head, None, rest, None) if sep else ("", None, text, None)
-
-
-@values_hidden
-def _self_check_items(read, self_check, theirs_win=None):
-    """The self-check differences -> [{kind, file, setting, text, pairs: [(node, node's value, the roles')], lines:
-    [(node, its difference)], wins: {node: its theirs_win entry}}], one per setting (or line, or file) of the same
-    kind, with the nodes that have it. Kind _HAND in a config file with hand edits import_keep_hand_edits
-    would keep (its owner, group and mode aside; not a file the node has not), _YOURS where a file of yours still
-    wins over the import (theirs_win), else _OTHER. Values as the self-check gives them (secrets masked), masked
-    again."""
-    files_of = _hand_files(read)
-    items, found = [], {}
-    addresses = dict((n["name"], n.get("address")) for n in read)
-    for name, c in sorted((self_check or {}).items()):
-        for d in c.get("differences") or []:
-            f, setting, node_text, role_text = _difference(d)
-            real = "cassandra-env.sh" if f == "heap" else f
-            winner = _winner(name, setting, theirs_win) if setting else None
-            created = setting is None and node_text is None  # (not one import_keep_hand_edits keeps)
-            if real in files_of.get(name, ()) and not d.startswith(f + ": owner") and not created:
-                kind = _HAND
-            elif f in _OS_FILES:
-                kind = _OS
-            elif winner:
-                kind = _YOURS
-            else:
-                kind = _OTHER
-            if created:
-                text = "not on the node, the roles would create it"
-            elif setting is None:
-                text = node_text
-            elif setting:
-                text = ""
-            elif node_text != "nothing":
-                text = node_text
-            else:
-                text = "not on the node: " + role_text
-            if not setting:  # a line of a file (a setting's values below): each node's own address as one
-                text = _its_address(text, addresses.get(name))
-            key = (kind, f, setting, text)
-            if key not in found:
-                found[key] = {"kind": kind, "file": f, "setting": setting, "text": out.mask(text), "pairs": [],
-                              "lines": [], "wins": {}}
-                items.append(found[key])
-            item = found[key]
-            if setting:
-                node_text, role_text = [None if v is None else _its_address(v, addresses.get(name))
-                                        for v in (_unquoted(node_text), _unquoted(role_text))]
-                secret = _secret(setting, node_text) or _secret(setting, role_text)
-                item["pairs"].append(tuple([name] + [None if v is None else out.MASK if secret else out.mask(v)
-                                                     for v in (node_text, role_text)]))
-            item["lines"].append((name, out.mask(d)))
-            if winner:
-                item["wins"][name] = winner
-    order = [k for k, dummy in _KINDS]
-    return sorted(items, key=lambda i: order.index(i["kind"]))
-
-
-def _unquoted(text):
-    """A value as the self-check quotes a string ('64') -> 64, '' as is; "nothing" (none on that side) -> None."""
-    if text == "nothing":
-        return None
-    if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
-        try:
-            value = ast.literal_eval(text)
-        except (ValueError, SyntaxError):
-            return text
-        return (value or "''") if isinstance(value, str) else text
-    return text
-
-
-def _item_nodes(item):
-    names = []
-    for name, dummy in item["lines"]:
-        if name not in names:
-            names.append(name)
-    return names
-
-
-def _changes(items):
-    """the inventory would change 3 settings on 2 nodes; cassandra_linux would change 1 OS setting on 1 node."""
-    parts = []
-    for mine, text in (([i for i in items if i["kind"] != _OS], "the inventory would change %s on %s"),
-                       ([i for i in items if i["kind"] == _OS], "cassandra_linux would change %s on %s")):
-        on = set(n for i in mine for n in _item_nodes(i))
-        if mine:
-            parts.append(text % (out.plural(len(mine), "OS setting" if text.startswith("cassandra_linux") else "setting"),
-                                 out.plural(len(on), "node")))
-    return "; ".join(parts)
-
-
 def cut_text(text, room):
     text = str(text)
     return text if not room or len(text) <= room else text[:room - 3].rstrip() + "..."
-
-
-def _item_lines(item, who, width, room=None):
-    """An item: "- <name>, on <nodes>:", then what differs under it ("node 64, inventory 32", the line the node has,
-    "-XX:+UseFoo (not in the inventory)"), a line per value when the nodes differ ("node3: node 128, ..."), where a
-    file of yours sets it; room: a value or a line cut to it (the screen), a sentence never."""
-    # (what the OS model says the roles would set: cassandra_linux's, not a value of the inventory)
-    theirs = item["file"] if item["kind"] == _OS else "inventory"
-
-    def value(node_text, role_text):
-        if role_text is None:
-            return "%s (not in the inventory)" % cut_text(node_text, room)
-        if node_text is None:
-            return "not on the node, %s %s" % (theirs, cut_text(role_text, room))
-        return "node %s, %s %s" % (cut_text(node_text, room), theirs, cut_text(role_text, room))
-
-    if item["setting"]:
-        values = []
-        for name, node_text, role_text in item["pairs"]:
-            entry = next((v for v in values if v[0] == (node_text, role_text)), None)
-            if entry is None:
-                values.append(((node_text, role_text), [name]))
-            elif name not in entry[1]:
-                entry[1].append(name)
-        details = [value(*pair) for pair, names in values] if len(values) == 1 else \
-            ["%s: %s" % (who(names), value(*pair)) for pair, names in values]
-    else:
-        details = [cut_text(item["text"], room if item["setting"] == "" else None)]
-    wins = sorted(set(w["path"] for w in item["wins"].values()))
-    if wins:
-        details[-1] += " (set in %s)" % ", ".join(wins)
-    lines = fill_text("- %s, on %s:" % (_item_name(item), who(_item_nodes(item))), width, "    ", "    ")
-    for detail in details:
-        lines += fill_text(detail, width, "        ", "  ")
-    return lines
-
-
-def _item_name(item):
-    """cassandra.yaml concurrent_reads; a JVM option's file alone when its values name it (-XX:+UseFoo; not ****)."""
-    named = item["setting"] and not (item["file"].endswith(".options") and all(
-        v is None or v.startswith("-") for dummy, n, r in item["pairs"] for v in (n, r)))
-    return out.mask("%s %s" % (item["file"], item["setting"]) if named else item["file"] or "?")
 
 
 def name_column(names, most=40):
@@ -703,160 +503,319 @@ def _keep_option(layout, *names):
     return unbreakable("-e import_keep_hand_edits=" + ",".join(files + [p for p in KEPT_PARTS if p in parts]))
 
 
-def _hints(layout, items, read, unread, who, error="", report=False, report_file="", inventory="", hosts="",
-           cwd=None):
-    """HOW TO MAKE IT PASS: [(kind of difference, what to do)]."""
-    hints, hand = [], {}
+# --- a failed self-check, as the stop and the report show it -----------------------------------------------------
+# (each difference read by cassandra_differences: its file, the setting in the file's own words, each side's value)
+
+# the kinds of differences, by what the import establishes of their cause, in the order shown
+_HAND, _UNREAD_FILE, _YOURS, _PARTS, _LAYOUT, _OTHER = "hand", "unread file", "yours", "parts", "layout", "other"
+_ORDER = (_HAND, _UNREAD_FILE, _YOURS, _PARTS, _LAYOUT, _OTHER)
+# a file's own attributes: not its content, never kept by import_keep_hand_edits
+_FILE_ATTRIBUTES = ("owner", "group", "mode", "owner:group mode", "the file")
+# the part (import_keep_hand_edits) of a difference outside the config files: by its role or file, else
+# (cassandra_linux) by what it names
+_PART_OF_FILE = {differences.PARTS["cassandra_firewall"]: "firewall", differences.PARTS["cassandra_repository"]: "repo",
+                 differences.PARTS["cassandra_install"]: "cqlsh", "cassandra.service": "unit"}
+_OS_PARTS = ((("time sync", "chrony"), "timesync"),
+             (("read_ahead_kb", "IO scheduler", "LVM read-ahead", "/etc/udev/", "tuned profiles", "data devices"), "disks"),
+             (("transparent_hugepage", "/etc/systemd/system/disable-thp", "disable-thp"), "thp"),
+             ("swap", "swap"), ("sysctl", "sysctl"),
+             (("limits", "/etc/security/", "the block earlier versions"), "limits"))
+SCREEN_MOST = 100  # the stop's lines at most (the ops callback's rules)
+SELF_CHECK_WIDTH = 100  # the report's SELF-CHECK section
+VALUE_LABELS = ("Node", "Ansible")  # each side's value, in a column
+_TAKE = ("take the change (apply_config writes it)", "-e import_strict=false")
+
+
+def _hand_files(read):
+    """{node: the config files with hand edits import_keep_hand_edits would keep as the node has them}."""
+    files_of = {}
+    for n in read:
+        kept = (n.get("keep") or {}).get("cassandra_config_keep_files") or []
+        heads = [re.split(r"[:,]", line, maxsplit=1)[0] for line in n.get("hand_edits") or []
+                 if not line.startswith(" ")]
+        files_of[n["name"]] = set(f for f in heads if CONFIG_FILE.match(f) and f not in kept)
+    return files_of
+
+
+def _letters(text):
+    return re.sub(r"[^a-z0-9]", "", str(text).lower())
+
+
+def _winner(name, setting, theirs_win):
+    """The file of yours that still wins for a node's setting ({node, key, path} of the layout's theirs_win): the
+    variable named as the setting, or its last part (cassandra_concurrent_reads: concurrent_reads,
+    cassandra_service_limit_nofile: [Service] LimitNOFILE), else None."""
+    names = set([_letters(setting), _letters(re.split(r"[.\]]", setting)[-1])]) - set([""])
+    return next((w for w in theirs_win or []
+                 if w["node"] == name and _letters(re.sub(r"^cassandra_", "", w["key"])) in names), None)
+
+
+def _real(name):
+    """The file a difference is in (the heap's: cassandra-env.sh, where import_keep_hand_edits keeps it)."""
+    return "cassandra-env.sh" if name == differences.HEAP_FILE else name
+
+
+def _kind(finding, node, hand_files, winner):
+    """What the import establishes of a difference's cause (see _ORDER)."""
+    real = _real(finding.file)
+    if finding.sentence == differences.LAYOUT:
+        return _LAYOUT
+    if real in hand_files and finding.where not in _FILE_ATTRIBUTES:
+        return _UNREAD_FILE if unread_by(node, real) else _HAND
+    if winner:
+        return _YOURS
+    return _PARTS if finding.file in differences.PARTS.values() or finding.file == "cassandra.service" else _OTHER
+
+
+@values_hidden
+def _self_check_items(read, self_check, theirs_win=None):
+    """The self-check differences -> [{kind, file, where, node, ansible, sentence, nodes, lines: [(node, its
+    difference as the self-check says it)], wins: {node: its theirs_win entry}}], one per setting and values (or
+    sentence) of the same kind, with the nodes that have it, in the order of _ORDER: a node's own address in its
+    values as <its address>, a secret's values masked."""
+    hand_files = _hand_files(read)
+    by_name = dict((n["name"], n) for n in read)
+    items, found = [], {}
+    for name, c in sorted((self_check or {}).items()):
+        address = (by_name.get(name) or {}).get("address")
+        for d in c.get("differences") or []:
+            for f in differences.read(d):
+                winner = _winner(name, f.where, theirs_win) if f.where and f.sentence is None else None
+                kind = _kind(f, by_name.get(name) or {}, hand_files.get(name, ()), winner)
+                shown = [None if v is None else _its_address(v, address) for v in (f.node, f.ansible)]
+                if f.where and any(_secret(f.where, v) for v in shown if v not in (None, differences.ABSENT)):
+                    shown = [v if v in (None, differences.ABSENT, differences.PRESENT) else out.MASK for v in shown]
+                key = (kind, f.file, f.where) + tuple(None if v is None else out.mask(v) for v in shown) + (
+                    None if f.sentence is None else out.mask(_its_address(f.sentence, address)),)
+                if key not in found:
+                    found[key] = dict(zip(("kind", "file", "where", "node", "ansible", "sentence"), key),
+                                      nodes=[], lines=[], wins={})
+                    items.append(found[key])
+                item = found[key]
+                if name not in item["nodes"]:
+                    item["nodes"].append(name)
+                if (name, out.mask(d)) not in item["lines"]:
+                    item["lines"].append((name, out.mask(d)))
+                if winner:
+                    item["wins"][name] = winner
+    return sorted(items, key=lambda i: _ORDER.index(i["kind"]))
+
+
+def _groups(items):
+    """Items -> [(file, nodes, [items])]: one per file and set of nodes, in the order they come."""
+    groups = []
     for item in items:
-        if item["kind"] == _HAND:
-            f = "cassandra-env.sh" if item["file"] == "heap" else item["file"]
-            hand.setdefault(f, [])
-            hand[f] += [n for n in _item_nodes(item) if n not in hand[f]]
-    # the nodes whose Java does not read the file they edited (a jvm<N>-server.options): a hint of their own
-    not_read = {}  # {(file, Java major): [node]}
-    for f, names in sorted(hand.items()):
-        for n in read:
-            major = unread_by(n, f) if n["name"] in names else ""
-            if major:
-                not_read.setdefault((f, major), []).append(n["name"])
-                hand[f] = [m for m in hand[f] if m != n["name"]]
-    hand = dict((f, m) for f, m in hand.items() if m)
-    if hand:
-        hints.append(("hand edits", "to keep them as they are: import again with %s; these files are then not"
-                      " managed by Ansible (kept as the node has them): %s. To bring them under Ansible: carry the"
-                      " edit in the inventory (cassandra_jvm*_extra_options, a template piece of yours for lines at"
-                      " the end of cassandra-env.sh or logback.xml, cassandra_config_template_snippets,"
-                      " cassandra_extra_settings, ...) or give the file your own template"
-                      " (cassandra_config_template_overrides), remove the file from cassandra_config_keep_files,"
-                      " import again. To drop them instead: undo them on the node, then import again" % (
-                          _keep_option(layout, "true"),
-                          "; ".join("%s on %s" % (f, who(m)) for f, m in sorted(hand.items())))))
-    for (f, major), names in sorted(not_read.items()):
-        hints.append(("file not read", "%s %s Java %s, which does not read %s: its edits change nothing while %s"
-                      " that Java. Keep the file as %s it (%s), or undo them on %s, then import again" % (
-                          who(names), "runs" if len(names) == 1 else "run", major, f,
-                          "it runs" if len(names) == 1 else "they run",
-                          "the node has" if len(names) == 1 else "each node has",
-                          _keep_option(layout, f),
-                          "the node" if len(names) == 1 else "those nodes")))
-    yours = {}  # (the file of yours, its variable): the nodes' values
+        nodes = _sorted(item["nodes"])
+        entry = next((g for g in groups if g[0] == item["file"] and g[1] == nodes), None)
+        if entry is None:
+            groups.append((item["file"], nodes, [item]))
+        else:
+            entry[2].append(item)
+    return groups
+
+
+def _counted(items, word="setting"):
+    """How many settings the items are: one per file and setting (a sentence one each)."""
+    return out.plural(len(set((i["file"], i["where"] or i["sentence"]) for i in items)), word)
+
+
+def _value_lines(label, text, width, suffix=""):
+    """A side's value under its setting: its label in a column, the value wrapped under itself (never cut), a
+    suffix after it (or under it when it does not fit)."""
+    head = "      %s" % label.ljust(max(len(v) for v in VALUE_LABELS) + 2)
+    room = max(20, width - len(head))
+    lines = []
+    for part in str(text).split("\n"):
+        lines += textwrap.wrap(part, room, break_long_words=True, break_on_hyphens=False) or [part]
+    lines = [(head if i == 0 else " " * len(head)) + line for i, line in enumerate(lines)]
+    if suffix:
+        if len(lines[-1]) + 3 + len(suffix) <= width:
+            lines[-1] += "   " + suffix
+        else:
+            lines += fill_text(suffix, width, " " * len(head))
+    return lines
+
+
+def _suffix(layout, item):
+    """What a file of yours gives instead, after Ansible's value: (cassandra_concurrent_reads = 16); its file in the
+    way out."""
+    shown = []
+    for w in item["wins"].values():
+        mine = next((y for y in layout.get("yours") or [] if y["node"] == w["node"] and y["key"] == w["key"]), None)
+        text = "%s, in %s" % (w["key"], w["path"]) if mine is None or "yours" not in mine else "%s = %s" % (
+            w["key"], out.MASK if _secret(w["key"], mine["yours"]) else _plain(mine["yours"]))
+        if text not in shown:
+            shown.append(text)
+    return "(%s)" % "; ".join(shown) if shown else ""
+
+
+def _group_lines(layout, group, who, width):
+    """A file and its nodes, then each setting that differs and its two values -> [line]."""
+    name, nodes, items = group
+    listed = re.sub(r" \(\d+ nodes?\)$", "", who(nodes))
+    lines = fill_text("%s    %s" % (unbreakable(name or "?"), listed), width, "  ", "      ")
+    for item in items:
+        if item["sentence"] is not None and item["kind"] == _LAYOUT:
+            continue  # (the section says it)
+        if item["sentence"] is not None:
+            lines += fill_text(item["sentence"], width, "    ", "  ")
+            continue
+        lines.append("    " + item["where"])
+        lines += _value_lines(VALUE_LABELS[0], item["node"], width)
+        lines += _value_lines(VALUE_LABELS[1], item["ansible"], width, _suffix(layout, item))
+    return lines
+
+
+def _ways_out(rows, width):
+    """To pass: what to do, the option for it in a column (on its own line when it does not fit)."""
+    column = max(len(text) for text, option in rows) + 2
+    aligned = all(4 + column + len(option) <= width for text, option in rows if option)
+    lines = ["  To pass:"]
+    for text, option in rows:
+        option = option.replace(out.NBSP, " ")
+        if option and aligned:
+            lines.append("    " + text.ljust(column) + option)
+        else:
+            lines += fill_text(text, width, "    ", "  ") + (["      " + option] if option else [])
+    return lines
+
+
+def _with_moved(read, f, members):
+    """The files to keep for the hand edits of f on these nodes: f, and cassandra-env.sh with a JVM options file
+    when cassandra-env.sh's lines were moved to variables (a JVM file kept, nothing of it is moved: they would be
+    lost) -> [file]."""
+    moved = [n for n in read if n["name"] in members and (n.get("moved") or n.get("rewritten"))]
+    if moved and re.match(r"^jvm\d*-server\.options$", f):
+        return ["cassandra-env.sh", f]
+    return [f]
+
+
+def _section(layout, kind, items, read, who, width):
+    """A kind of differences: what it means and what apply_config would do, the files and their nodes with what
+    differs, the ways out with their options -> [line]."""
+    them = "it" if len(set((i["file"], i["where"] or i["sentence"]) for i in items)) == 1 else "them"
+    nodes = []
+    for i in items:
+        nodes += [n for n in i["nodes"] if n not in nodes]
+    files = []
+    for i in items:
+        files += [f for f in _with_moved(read, _real(i["file"]), i["nodes"]) if f not in files]
+    has = "has" if them == "it" else "have"
+    these = "this node" if len(nodes) == 1 else "these nodes"
+    if kind == _HAND:
+        said = "%s on %s %s no inventory variable: apply_config would change %s." % (
+            _counted(items), these, has, them)
+        rows = [("keep %s as %s %s" % (", ".join(files), these, _have(nodes, files)),
+                 _keep_option(layout, *files)), _TAKE]
+    elif kind == _UNREAD_FILE:
+        majors = sorted(set(unread_by(n, f) for n in read if n["name"] in nodes for f in files) - set([""]))
+        said = ("%s in %s, which Java %s on %s does not read: no effect while %s that Java, but apply_config"
+                " would change %s." % (_counted(items), ", ".join(files), " and ".join(majors), these,
+                                       "it runs" if len(nodes) == 1 else "they run", them))
+        rows = [("keep %s as %s %s" % (", ".join(files), these, _have(nodes, files)), _keep_option(layout, *files)),
+                ("or undo the edits on %s, then import again" % these, ""), _TAKE]
+    elif kind == _YOURS:
+        said = "%s: a file of yours gives another value: apply_config would write it." % _counted(items)
+        rows = []
+        for (path, key), shown in sorted(_yours_values(layout, items).items()):
+            rows.append(("in %s: %s: %s, or remove that line, then import again" % (
+                path, key, shown[0] if len(shown) == 1 and shown[0] is not None else "the node's value"), ""))
+        rows.append(_TAKE)
+    elif kind == _PARTS:
+        parts = [p for p in KEPT_PARTS if p in set(_part_of(i) for i in items)]
+        said = "%s outside the config files: the roles would change %s." % (_counted(items), them)
+        rows = [("keep %s as %s %s" % (_part_words(parts), these, _have(nodes, parts)),
+                 _keep_option(layout, *parts)), ("take the change (the roles make it)", "-e import_strict=false")]
+    elif kind == _LAYOUT:
+        said = "%s: the same settings in another layout (no effect); apply_config would rewrite %s." % (
+            _counted(items, "file"), them)
+        rows = [("take the change (apply_config rewrites %s)" % them, "-e import_strict=false")]
+    else:
+        said = "%s that the import does not explain:" % _counted(items, "other difference")
+        rows = [("change %s as the inventory has %s, then import again" % (these, "it" if len(nodes) == 1 else "them"),
+                 ""), _TAKE]
+    lines = fill_text(said, width, "  ") + [""]
+    for group in _groups(items):
+        lines += _group_lines(layout, group, who, width) + [""]
+    return lines + _ways_out(rows, width)
+
+
+def _have(nodes, things):
+    """this node has it, these nodes have them..."""
+    return "%s %s" % ("has" if len(nodes) == 1 else "have", "it" if len(things) == 1 else "them")
+
+
+def _yours_values(layout, items):
+    """{(your file, its variable): [the nodes' values]} of the differences a file of yours makes."""
+    yours = {}
     for item in items:
         for w in item["wins"].values():
-            value = next((y["value"] for y in layout.get("yours") or []
+            found = next((y["value"] for y in layout.get("yours") or []
                           if y["node"] == w["node"] and y["key"] == w["key"]), None)
-            shown = None if value is None else out.MASK if _secret(w["key"], value) else _plain(value)
+            shown = None if found is None else out.MASK if _secret(w["key"], found) else _plain(found)
             entry = yours.setdefault((w["path"], w["key"]), [])
             if shown not in entry:
                 entry.append(shown)
-    for (path, key), values in sorted(yours.items()):
-        hints.append(("your files", "in %s, set %s to the node's value (%s) or remove the line, then import again" % (
-            path, key, values[0] if len(values) == 1 and values[0] is not None
-            else "see the DIFFERS FROM YOUR... section")))
-    os_items = [i for i in items if i["kind"] == _OS]
-    if os_items:
-        hints.append(("node parts", _os_hint(layout, os_items, read, who)))
-    unit_items = [i for i in items if i["file"] == "cassandra.service" and i["kind"] != _HAND]
-    if unit_items:
-        names = []
-        for i in unit_items:
-            names += [n for n in _item_nodes(i) if n not in names]
-        verb = "starts" if len(names) == 1 else "start"
-        hints.append(("unit", "to keep how %s %s Cassandra (its own unit or init script): import again with %s."
-                      " To have the unit of the roles instead (from the next restart of each node): a planned change,"
-                      " below" % (who(names), verb, _keep_option(layout, "unit"))))
-    if unread and not read:  # (no node checked: never valid, import_allow_unread or not)
-        hints.append(("not read", "no node could be read: start Cassandra or fix the access on one of them at least,"
-                      " then import again"))
-    elif unread:
-        hints.append(("not read", "start Cassandra or fix the access on %s, then import again; or accept %s"
-                      " unchecked: %s" % (who([n["name"] for n in unread]), "it" if len(unread) == 1 else "them",
-                                          unbreakable("-e import_allow_unread=true"))))
-    debug = unbreakable("-e import_debug=true")
-    if error:
-        hints.append(("could not run", "import again with %s to see the error (it may show passwords), fix it, then"
-                      " import again" % debug))
-    if any(i["kind"] == _OTHER for i in items):
-        if report:
-            where = "each node's lines above"
-        elif report_file:
-            where = "the details (%s, section SELF-CHECK)" % out.path_from(report_file, cwd)
-        else:
-            where = "the report's SELF-CHECK section"
-        hints.append(("other", "not sorted out here: see %s; change the node, or take it as a planned change"
-                      " (below)" % where))
-    if items:
-        apply_check = out.command("apply_config", inventory=inventory or None, hosts=hosts or None,
-                                  extra=["--check", "--diff"], cwd=cwd)
-        hints.append(("a change you want", "it is a planned change: import again with %s (it only writes the"
-                      " inventory), then review with %s before applying"
-                      % (unbreakable("-e import_strict=false"), unbreakable(apply_check))))
-    return hints or [("unknown", "import again with %s to see what failed (it may show passwords)" % debug)]
+    return yours
 
 
 def _part_of(item):
     """The part (import_keep_hand_edits) a difference of the roles' parts belongs to: the finest one."""
     if item["file"] in _PART_OF_FILE:
         return _PART_OF_FILE[item["file"]]
-    setting = item["setting"] or ""
+    setting = item["where"] or ""
     return next((part for start, part in _OS_PARTS if setting.startswith(start)), "os")
 
 
-def _os_hint(layout, items, read, who):
-    """The way out of the differences of the nodes' parts: keep the parts as the nodes have them (the finest ones,
-    import_keep_hand_edits), or change the nodes first."""
-    names, parts = [], []
+def _differing(items):
+    """The nodes the items are on."""
+    nodes = []
     for i in items:
-        names += [n for n in _item_nodes(i) if n not in names]
-        if _part_of(i) not in parts:
-            parts.append(_part_of(i))
-    parts = [p for p in KEPT_PARTS if p in parts]
-    return ("to keep them as %s %s them: import again with %s (the roles then leave %s as they are). Or change the"
-            " nodes as the roles would (the lines above), then import again" % (
-                who(names), "has" if len(names) == 1 else "have",
-                _keep_option(layout, *parts), _part_words(parts)))
+        nodes += [n for n in i["nodes"] if n not in nodes]
+    return nodes
 
 
-def _self_check_lines(layout, self_check, who, width, report_file="", error="", allow_unread=False,
-                      inventory="", hosts="", cwd=None, report=False):
-    """A failed self-check -> (its verdict, [paragraphs of lines]): what differs, grouped by what makes it pass
-    (report: each node's differences under each item, the values whole), then HOW TO MAKE IT PASS."""
+def _self_check_lines(layout, self_check, who, width, report_file="", error="", allow_unread=False, cwd=None):
+    """A failed self-check -> (its verdict, [blocks of lines]): the differences by what the import establishes of
+    their cause, each kind with what it means, its files and nodes, what differs, its ways out; the nodes not read;
+    where the evidence is (report_file: report.txt, its details next to it)."""
     nodes = layout.get("nodes") or []
     read = [n for n in nodes if boolean(n.get("read", False), strict=False)]
     unread = [n for n in nodes if n not in read] if not allow_unread or not read else []
     items = _self_check_items(read, self_check, layout.get("theirs_win"))
-    parts = [_changes(items)] if items else []
+    differing = _differing(items)
+    if differing:
+        verdict = "the inventory does not reproduce %s yet" % out.plural(len(differing), "node")
+    elif error:
+        verdict = "it could not run"
+    elif unread:
+        verdict = "no node read" if not read else "%s not read, so not checked" % out.plural(len(unread), "node")
+    else:
+        verdict = "nothing says the inventory reproduces the nodes"
+    blocks = []
+    debug = "-e import_debug=true"
     if error:
-        parts.append("it could not run")
-    if unread:
-        parts.append("no node read" if not read else "%s not read" % out.plural(len(unread), "node"))
-    verdict = "; ".join(parts) or "nothing says the inventory reproduces the nodes"
-    room = None if report else SCREEN_VALUE
-    differs = []
-    if error:
-        differs += fill_text(error[0].upper() + error[1:], width, "  ")
-    for kind, title in _KINDS:
+        blocks.append(fill_text(error[0].upper() + error[1:], width, "  ", "  ") + [""] + _ways_out(
+            [("see the error (it may show passwords), fix it, then import again", debug)], width))
+    for kind in _ORDER:
         mine = [i for i in items if i["kind"] == kind]
-        if not mine:
-            continue
-        differs += fill_text("%s:" % title, width, "  ", "  ")
-        for item in mine:
-            differs += _item_lines(item, who, width, room)
-            if report:  # each node's line, the same line once for its nodes
-                same = {}
-                for name, d in item["lines"]:
-                    if name not in same.setdefault(d, []):
-                        same[d].append(name)
-                for d, names in same.items():
-                    differs += fill_text("%s: %s" % (who(names), d), width, "          ", "  ")
+        if mine:
+            blocks.append(_section(layout, kind, mine, read, who, width))
     if unread:
-        differs += fill_text("Not read, so not checked: %s" % ", ".join(
-            "%s (%s)" % (n["name"], n.get("reason") or "unreachable") for n in unread), width, "  ")
-    hints = _hints(layout, items, read, unread, who, error=error, report=report, report_file=report_file,
-                   inventory=inventory, hosts=hosts, cwd=cwd)
-    paragraphs = [differs, ["HOW TO MAKE IT PASS"] + aligned_rows(hints, "  ", width)]
-    if not report and report_file:
-        paragraphs.append(["Details: %s, section SELF-CHECK" % out.path_from(report_file, cwd)])
-    return verdict, paragraphs
+        rows = [("start Cassandra or fix the access there, then import again", "")]
+        if read:
+            rows.append(("accept %s unchecked" % ("it" if len(unread) == 1 else "them"), "-e import_allow_unread=true"))
+        names = ", ".join("%s (%s)" % (n["name"], n.get("reason") or "unreachable") for n in unread)
+        said = "%s not read, so not checked: %s." % (out.plural(len(unread), "node"), names)
+        blocks.append(fill_text(said, width, "  ", "  ") + [""] + _ways_out(rows, width))
+    if not blocks:
+        blocks.append(_ways_out([("import again to see what failed (it may show passwords)", debug)], width))
+    evidence = []
+    if report_file and items:
+        details = re.sub(r"\.txt$", "", report_file) + ".details.txt"
+        evidence = fill_text("Evidence (full paths, lines): %s" % unbreakable(
+            "%s, SELF-CHECK" % out.path_from(details, cwd)), width, "  ", "  ")
+    return verdict, blocks, evidence
 
 
 @values_hidden
@@ -864,27 +823,24 @@ def cassandra_import_self_check_advice(layout, self_check, report_file="", error
                                        inventory="", hosts="", cwd=None, width=None):
     """layout: cassandra_inventory_layout's; self_check: {node: {differences, notes}}; report_file: the report
     (report.check.txt under --check); error: why the self-check could not run ('' : it ran); allow_unread:
-    import_allow_unread (the nodes not read pass); check: --check; inventory, hosts, cwd: the next
-    commands' -i, -e cassandra_hosts and current dir (cassandra_import_report's); width: the lines fit in it (the
-    terminal's by default, SCREEN_MOST at most) -> the lines of the run's stop on a failed self-check:
-    "SELF-CHECK FAILED  <cluster group>  ...", what differs grouped by what makes it pass, HOW TO MAKE IT PASS,
-    where the details are; node lists by node_list (ranges). Blank lines between them. Secrets never shown.
-    e.g. -> ["SELF-CHECK FAILED  my_cluster  the inventory would change 1 setting on 2 nodes ...", "", ...]."""
+    import_allow_unread (the nodes not read pass); check: --check; inventory, hosts: unused (the commands of the
+    report's); cwd: paths from it; width: the lines fit in it (the terminal's by default, SCREEN_MOST at most) ->
+    the lines of the run's stop on a failed self-check: "SELF-CHECK FAILED — the inventory does not reproduce 4
+    nodes yet", then each kind of differences (what it means, its files and nodes, what differs, To pass: the
+    options), what was written, where the evidence is; node lists by node_list (ranges). Blank lines between them.
+    Secrets never shown."""
     width = int(width) if width else min(terminal_width(), SCREEN_MOST)
     data = report_sections(layout, self_check)  # (the report's node lists)
     groups, everyone = data["groups"], data["everyone"]
-    verdict, paragraphs = _self_check_lines(
+    verdict, blocks, evidence = _self_check_lines(
         layout, self_check, lambda m: who_text(m, everyone, groups, False), width, report_file=report_file, error=error,
-        allow_unread=boolean(allow_unread, strict=False), inventory=inventory, hosts=hosts, cwd=cwd)
-    head = "SELF-CHECK FAILED  %s  %s %s" % (layout["cluster_group"], verdict, unbreakable(
-        "(--check: the inventory not written)" if boolean(check, strict=False)
-        else "(written for inspection only, marked NOT VALID)"))
-    head = [line.replace(out.NBSP, " ") for line in out.fit([head], width)]
-    blocks = [head] + paragraphs
-    lines = []
-    for block in blocks:
-        lines += ([""] if lines else []) + block
-    return lines
+        allow_unread=boolean(allow_unread, strict=False), cwd=cwd)
+    lines = fill_text("SELF-CHECK FAILED %s %s" % (DASH, verdict), width, "", "  ")
+    for i, block in enumerate(blocks):
+        lines += ([] if i == 0 else [""]) + block
+    return lines + [""] + fill_text("--check: the inventory not written" if boolean(check, strict=False)
+                                    else "The inventory: written for inspection only, marked NOT VALID",
+                                    width, "  ", "  ") + evidence
 
 
 def report_sections(layout, self_check):
@@ -998,7 +954,7 @@ _Step = namedtuple("_Step", "title why run then")
 
 
 def _todo_steps(report, allow_unread, self_check_ok, self_check_error, check_items, secrets_clear, leftovers,
-                inventory_dir, more, in_git, inventory, hosts):
+                inventory_dir, more, in_git, inventory, hosts, strict=False):
     """The TO DO steps, the most urgent first: the nodes not read, the settings their Cassandra rejects, the self-check
     that failed, your files that still win, the secrets written in clear, the files of an earlier import of an
     unknown cluster, the playbook's own (more: the CQL login) -> [_Step]. Paths from the current dir; inventory,
@@ -1030,11 +986,13 @@ def _todo_steps(report, allow_unread, self_check_ok, self_check_error, check_ite
                 "line" if one else "lines", ", ".join(keys)),
             "the next import no longer lists %s" % ("it" if one else "them")))
     if not self_check_ok and (self_check_error or check_items):
+        where = "SELF-CHECK, right below" if not report.screen else \
+            "the SELF-CHECK FAILED block at the end of the run" if strict else "%s, SELF-CHECK" % report.report_name
         steps.append(_Step(
             "Make the self-check pass",
-            "the self-check works out the files the inventory would write for each node and compares them with the"
-            " node's: %s, so the inventory does not reproduce the nodes yet" % (self_check_error or _changes(check_items)),
-            "what SELF-CHECK and HOW TO MAKE IT PASS say, right below",
+            self_check_error or "the inventory does not reproduce %s yet; what differs and why: %s" % (
+                out.plural(len(_differing(check_items)), "node"), where),
+            "choose one of the ways out it gives (To pass)" if check_items else "what %s says" % where,
             "the head of the next report says self-check passed"))
     if layout.get("theirs_win"):
         steps.append(_Step(
@@ -1130,39 +1088,69 @@ def _entry(report, what, members, todo):
 SNIPPET_FILES = ("cassandra-env.sh", "logback.xml")
 
 
-def _kept_with(report, f, members):
-    """The files to keep for the hand edits of f on these nodes: f, and cassandra-env.sh with a JVM options file
-    when cassandra-env.sh's lines were moved to variables (a JVM file kept, nothing of it is moved: they would be
-    lost) -> [file]."""
-    moved = [n for n in report.read if n["name"] in members and (n.get("moved") or n.get("rewritten"))]
-    if moved and re.match(r"^jvm\d*-server\.options$", f):
-        return ["cassandra-env.sh", f]
-    return [f]
-
-
-def _hand_entries(report, edits):
-    """Hand edits: a setting edited (its value), a file's other edits counted -> [entry lines]; the one way to keep
-    them, the file left as the node has it."""
-    entries = []
+def _hand_entries(report, edits, check_items, below):
+    """Hand edits: one entry per file, its nodes, then what differs (the self-check's settings and values, else the
+    edit's setting and value, or its count); below: the self-check's lines are in this output already (then
+    named, not shown again); then the ways to keep, carry or drop them, once -> (how many entries, [line])."""
+    files, replace = [], []
     for name, values in edits:
         f, dummy, setting = name.partition(" ")
         for text, members in values:
             if REPLACE.search(text):  # (never to keep: under Settings to review)
-                todo = "a replace flag: remove it, see Settings to review"
-            else:
-                keep = _kept_with(report, f, members)
-                todo = "%sto keep %s: import again with %s (Ansible then leaves %s as each node has it%s)" % (
-                    "" if setting else "the lines are under DETAILS, node by node; ", "it" if setting else "them",
-                    _keep_option(report.layout, *keep), " and ".join(keep),
-                    "; cassandra-env.sh's lines moved to variables stay in it then" if len(keep) > 1 else "")
-                if f in SNIPPET_FILES and not setting:  # (lines no variable carries: your template, or a piece)
-                    todo += ("; or carry them: your own template of %s (cassandra_config_template_overrides), or a"
-                             " template piece for %s (cassandra_config_template_snippets)"
-                             % (f, "its end or for appenders before <root>" if f == "logback.xml" else "lines at its end"))
-            shown = "%s %s: %s" % (_say(report, f), setting, _short(text)) if setting else "%s: %s" % (
-                _say(report, f), _short(text))
-            entries += _entry(report, shown, members, todo)
-    return entries
+                replace.append(("%s %s: %s" % (_say(report, f), setting, _short(text)) if setting else
+                                "%s: %s" % (_say(report, f), _short(text)), members))
+                continue
+            entry = next((e for e in files if e[0] == f), None)
+            if entry is None:
+                entry = (f, [], [])
+                files.append(entry)
+            entry[1].extend(m for m in members if m not in entry[1])
+            entry[2].append(("%s: %s" % (setting, _short(text)) if setting else _short(text), members))
+    lines = []
+    for what, members in replace:
+        lines += _entry(report, what, members, "a replace flag: remove it, see Settings to review")
+    where = "SELF-CHECK, under TO DO" if not report.screen else "the SELF-CHECK FAILED block, at the end of the run"
+    for f, members, texts in files:
+        found = [i for i in check_items if i["kind"] in (_HAND, _UNREAD_FILE) and _real(i["file"]) == f]
+        lines += fill_text("%s    %s" % (_say(report, f), unbreakable(re.sub(r" \(\d+ nodes?\)$", "", _who(report, members)))),
+                           report.width, "    ", "    ")
+        if found and below:
+            lines += fill_text("%s no variable carries: %s" % (_counted(found), where), report.width, "      ")
+        elif found:
+            for group in _groups(found):
+                lines += ["  " + line for line in _group_lines(report.layout, group, lambda m: _who(report, m),
+                                                               report.width)[1:]]
+        else:
+            for text, nodes in texts:
+                lines += fill_text("%s   %s" % (text, unbreakable(_who(report, nodes))) if len(texts) > 1 else text,
+                                   report.width, "      ", "  ")
+        lines.append("")
+    if files:
+        names = [g for f, members, dummy in files for g in _with_moved(report.read, f, members)]
+        snippets = [f for f, dummy, dummy2 in files if f in SNIPPET_FILES]
+        everyone = set(m for dummy, members, dummy2 in files for m in members)
+        lines += _ways_out([("to keep them as %s %s them" % ("this node" if len(everyone) == 1 else "the nodes",
+                                                             "has" if len(everyone) == 1 else "have"),
+                             _keep_option(report.layout, *names))], report.width)[1:]
+        names_of = [f for f, dummy, dummy2 in files]
+        ways = []
+        if snippets:
+            ways.append("a template piece for the end of %s%s (cassandra_config_template_snippets), or your own"
+                        " template of the file (cassandra_config_template_overrides)" % (
+                            " or ".join(snippets), " or for appenders before <root>" if "logback.xml" in snippets else ""))
+        if any(re.match(r"^jvm\d*-server\.options$", f) for f in names_of):
+            ways.append("cassandra_jvm*_extra_options for a JVM option")
+        if "cassandra.yaml" in names_of:
+            ways.append("cassandra_extra_settings for a cassandra.yaml setting")
+        ways = ways or ["a variable of yours, or your own template of the file (cassandra_config_template_overrides)"]
+        lines += fill_text("to carry them in the inventory instead: %s; then import again" % "; ".join(ways),
+                           report.width, "    ", "  ")
+        lines += fill_text("to drop them: undo them on %s, then import again" % (
+            "this node" if len(everyone) == 1 else "the nodes"), report.width, "    ", "  ")
+        lines += fill_text("their lines, node by node: %s, DETAILS" % unbreakable(
+            re.sub(r"\.txt$", "", report.report_name) + ".details.txt"), report.width, "    ", "  ")
+        lines.append("")
+    return len(files) + len(replace), lines
 
 
 def _hand_extra(report):
@@ -1572,11 +1560,12 @@ def _where_lines(report, settings):
     return [line for a, b in rows for line in fill_text(a.ljust(room) + b, report.width, "", " " * (room + 2))]
 
 
-def _review_blocks(report, data, differs, allow_unread, look=None):
+def _review_blocks(report, data, differs, allow_unread, look=None, below=False):
     """TO REVIEW: [(kind, how many, its entry lines)], the kinds with entries only; look: more things worth a look,
-    [(what, what to do)] (the run's own: an inventory not read)."""
-    blocks = [(HAND, sum(len(v) for dummy, v in data["edits"]), _hand_entries(report, data["edits"])
-               + _hand_extra(report)),
+    [(what, what to do)] (the run's own: an inventory not read); below: the self-check's differences are shown in this
+    output (report.txt's SELF-CHECK, the stop at the end of the run)."""
+    count, hand = _hand_entries(report, data["edits"], data["check_items"], below)
+    blocks = [(HAND, count, hand + _hand_extra(report)),
               (KEPT, len(set(f for dummy, f in data["kept"])), _kept_entries(report, data["kept"])),
               (MOVED, len(_by_value([(n["name"], line, "") for n in report.read for line in n.get("moved") or []
                                      if " -> " in line])), _moved_entries(report))]
@@ -1891,7 +1880,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     the run wrote or would write, {changed: [the files written that change], removed: [the files removed],
     existed: [the files there before]}, paths in the inventory dir (None: not known); todo: more TO DO steps (the
     CQL login); width: the lines fit in it (default: the terminal's for the screen, REPORT_WIDTH for the report);
-    strict: import_strict (the run stops on a failed self-check, its HOW TO MAKE IT PASS below the
+    strict: import_strict (the run stops on a failed self-check, its ways out below the
     screen); convergence: the lines of the CONVERGENCE section (cassandra_import_convergence's), under FOR INFO;
     shareable: import_report_shareable (the screen names the copy too); details: the lines of
     report.details.txt instead (the settings, versions, convergence, OS, what was read on each node); look: more
@@ -1917,17 +1906,18 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
         return _finished(_details_report(report, data, layout, self_check, leftovers, convergence, cluster), width,
                          False)
     steps = _todo_steps(report, allow_unread, self_check_ok, self_check_error, data["check_items"], secrets_clear,
-                        leftovers, inventory_dir, list(todo or []), in_git, inventory, hosts)
+                        leftovers, inventory_dir, list(todo or []), in_git, inventory, hosts,
+                        boolean(strict, strict=False))
     differs = _differs(report, data["settings"])
-    reviews = _review_blocks(report, data, differs, allow_unread, look)
+    reviews = _review_blocks(report, data, differs, allow_unread, look,
+                             below=not self_check_ok and (not screen or boolean(strict, strict=False)))
     lines = _head_lines(report, cluster, hosts_file, report_file, self_check_ok, same, steps, reviews)
     if steps:
         lines += ["", "TO DO"]
         for i, step in enumerate(steps):
             lines += _step_lines(i + 1, step, width)
         if not self_check_ok and not screen:
-            lines += [""] + _self_check_section(report, self_check, report_file, self_check_error, allow_unread,
-                                                inventory, hosts)
+            lines += [""] + _self_check_section(report, self_check, report_file, self_check_error, allow_unread)
     blocks = dict((kind, entries) for kind, dummy, entries in reviews)
     if TO_CHECK in blocks:
         lines += ["", "WORTH A LOOK"] + blocks[TO_CHECK]
@@ -1985,6 +1975,10 @@ def _details_report(report, data, layout, self_check, leftovers, convergence, cl
     convergence and OS (FOR INFO), then what was read on each node (DETAILS) -> [line]."""
     lines = ["IMPORT %s%s  the details of %s" % (cluster, " (--check, inventory not written)" if report.check else "",
                                                  os.path.basename(report.report_name)), ""] + _about_lines(report, cluster)
+    evidence = _evidence_lines(report, self_check)
+    if evidence:  # (what the stop and report.txt's SELF-CHECK show, as the self-check found it)
+        lines += ["", "SELF-CHECK  (each difference as the self-check found it: full paths, both values as written; the"
+                  " hand edits' lines: DETAILS)"] + evidence
     where = _where_lines(report, data["settings"])
     if where:
         lines += ["", "WHERE THE SETTINGS GO  (the inventory's files; a value set in yours is not written again)"] + where
@@ -1994,17 +1988,41 @@ def _details_report(report, data, layout, self_check, leftovers, convergence, cl
     return lines + [""] + _details_lines(layout, self_check)
 
 
-def _self_check_section(report, self_check, report_file, self_check_error, allow_unread, inventory, hosts):
-    """SELF-CHECK (of a failed one, under TO DO): what the roles would change, grouped by what makes it pass, each
-    node's differences under it -> [line]."""
-    verdict, paragraphs = _self_check_lines(
+def _self_check_section(report, self_check, report_file, self_check_error, allow_unread):
+    """SELF-CHECK (of a failed one, under TO DO): the stop's lines, the node lists whole -> [line]."""
+    verdict, blocks, evidence = _self_check_lines(
         report.layout, self_check, lambda m: _who(report, m), min(report.width, SELF_CHECK_WIDTH),
-        report_file=report_file, error=self_check_error, allow_unread=allow_unread, inventory=inventory,
-        hosts=hosts, cwd=report.cwd, report=True)
+        report_file=report_file, error=self_check_error, allow_unread=allow_unread, cwd=report.cwd)
     lines = ["  SELF-CHECK %s %s" % (DASH, verdict)]
-    for p in paragraphs:
-        lines += ["  " + line if line else "" for line in p] + [""]
+    for block in blocks + [evidence]:
+        lines += ["  " + line if line else "" for line in block] + [""]
     return lines[:-1]
+
+
+def _evidence_lines(report, self_check):
+    """SELF-CHECK in report.details.txt: each difference as the self-check found it (a file's full paths, each
+    side's value as written), under the nodes that have it, one heading per set of nodes -> [line]."""
+    found = []
+    for name, check in sorted((self_check or {}).items()):
+        for d in check.get("differences") or []:
+            entry = next((e for e in found if e[0] == out.mask(d)), None)
+            if entry is None:
+                found.append((out.mask(d), [name]))
+            elif name not in entry[1]:
+                entry[1].append(name)
+    by_nodes = []
+    for d, members in found:
+        entry = next((e for e in by_nodes if e[0] == members), None)
+        if entry is None:
+            by_nodes.append((members, [d]))
+        else:
+            entry[1].append(d)
+    lines = []
+    for members, texts in by_nodes:
+        lines += fill_text(_who(report, members), report.width, "  ")
+        for d in texts:
+            lines += fill_text(d, report.width, "    ", "  ")
+    return lines
 
 
 class FilterModule(object):

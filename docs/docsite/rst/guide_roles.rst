@@ -1658,13 +1658,18 @@ import that cannot be read (vaulted, or not YAML) gets a line too: the parts it 
 add_node and replace_node do not see that a node there was imported. The report starts with ``SELF-CHECK PASSED``, or with ``SELF-CHECK
 FAILED`` and the differences: the inventory is then marked ``# NOT VALID`` in its hosts file and the playbook fails
 (``-e import_strict=false`` writes the same files without failing, to inspect them: not safe to apply). The run
-ends with a short ``SELF-CHECK FAILED`` block: what differs, one line per setting or file with its nodes, grouped by
-what makes the self-check pass (hand edits no variable covers, a file of yours that still wins over the import, the OS
-settings ``cassandra_linux`` would change, other differences, the nodes not read), then ``HOW TO MAKE IT PASS``: ``-e import_keep_hand_edits=true`` to keep the
-hand edits (those files are then left as they are on their nodes), the value to set in your file (or the line to
-remove), ``-e import_allow_unread=true`` for the nodes not read, and for a change you want, a planned change:
-``-e import_strict=false`` only to write the inventory, then ``apply_config --check --diff`` before applying.
-The report's ``SELF-CHECK`` section has the same, each node's differences under each line. The OS tuning of a node left
+ends with a short ``SELF-CHECK FAILED`` block, which says why the inventory does not reproduce the nodes yet: the
+differences by what the import establishes of their cause (settings no inventory variable sets, a file of yours that
+gives another value, parts of the nodes outside the config files, the same settings in another layout, others), each
+with what ``apply_config`` would do; under each, the files and their nodes, each setting in the file's own words (a
+YAML key, a JVM option, a variable of ``cassandra-env.sh``, logback's elements: ``AUDIT / rollingPolicy /
+fileNamePattern``) with the node's value and Ansible's (``absent``, ``present``, ``(empty)``); then ``To pass:``, each
+way out with its option: ``-e import_keep_hand_edits=<files or parts>`` to keep them as the nodes have them, the value
+to set in your file (or the line to remove), ``-e import_allow_unread=true`` for the nodes not read, and
+``-e import_strict=false`` to take the change (it only writes the inventory: ``apply_config --check --diff`` before
+applying). The report's ``SELF-CHECK`` (under ``TO DO``) has the same; ``report.details.txt``'s ``SELF-CHECK`` has
+each difference as the self-check found it (full XPaths, both values as written), and its ``DETAILS`` the lines of
+the hand edits. The OS tuning of a node left
 as it is (``cassandra_linux_manage: false``), ``/etc/default/cassandra``, ``cassandra-topology.properties`` and the owner
 and mode of the unit and ``medusa.ini`` are not compared. A file the roles would write with no effect on the node's values
 (the self-check's notes "no effect") is listed in the report under ``APPLY_CONFIG WILL REWRITE (no effect)``:
@@ -1758,7 +1763,7 @@ self-check (``passed``, or ``not passed yet: TO DO step 2``), the files written 
 - ``TO DO``: what to do before using the inventory, one numbered step each, with why, the command to copy (paths
   from the current directory; the import command again with ``-e import_force=true``) and what to check
   after: nodes not read (what importing without them means), settings their Cassandra rejects, a self-check that failed (its ``SELF-CHECK``
-  and ``HOW TO MAKE IT PASS`` right under it), your files that still win over the import, passwords written in clear,
+  right under it), your files that still win over the import, passwords written in clear,
   files of an earlier import of unknown origin, the CQL login;
 - ``WORTH A LOOK``: what was seen that weakens the cluster or deserves a look, each with what to do: the settings of
   the checks ``health_check`` makes too (``cassandra_settings_kept_on_purpose``), what the import saw on the nodes

@@ -8,17 +8,21 @@ IMPORT big_cluster  88 nodes  9 entries to review: 3 hand-edit entries, 6 settin
 
   Hand edits: lines changed by hand in a config file that no inventory variable carries; apply_config (the playbook that writes the config files) would put the
   file back as the collection writes it (nothing changes on the nodes until it runs)
-    cassandra.yaml (Cassandra's main settings file) concurrent_writes: 48   db111 (1 node)
-      to keep it: import again with -e import_keep_hand_edits=cassandra.yaml (Ansible then leaves cassandra.yaml as each node has it)
+    cassandra.yaml (Cassandra's main settings file)    db111
+      concurrent_writes: 48
 
-    logback.xml (the logging settings): 10 edits   all (88 nodes)
-      the lines are under DETAILS, node by node; to keep them: import again with -e import_keep_hand_edits=logback.xml (Ansible then leaves logback.xml as each
-      node has it); or carry them: your own template of logback.xml (cassandra_config_template_overrides), or a template piece for its end or for appenders
-      before <root> (cassandra_config_template_snippets)
+    logback.xml (the logging settings)    all
+      10 edits
 
-    jvm11-server.options (Java's options, Java 11 only): 5 edits   dc2 (30 nodes)
-      the lines are under DETAILS, node by node; to keep them: import again with -e import_keep_hand_edits=jvm11-server.options (Ansible then leaves
-      jvm11-server.options as each node has it)
+    jvm11-server.options (Java's options, Java 11 only)    dc2
+      5 edits
+
+    to keep them as the nodes have them  -e import_keep_hand_edits=cassandra.yaml,logback.xml,jvm11-server.options
+    to carry them in the inventory instead: a template piece for the end of logback.xml or for appenders before <root> (cassandra_config_template_snippets), or
+      your own template of the file (cassandra_config_template_overrides); cassandra_jvm*_extra_options for a JVM option; cassandra_extra_settings for a
+      cassandra.yaml setting; then import again
+    to drop them: undo them on the nodes, then import again
+    their lines, node by node: reports/big/report.details.txt, DETAILS
 
 
 ==== DIFFERENT ON SOME NODES =======================================================================

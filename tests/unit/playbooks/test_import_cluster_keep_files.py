@@ -138,12 +138,12 @@ def test_the_stop_reads_the_self_checks_own_differences():
     out["differences"].append(out["differences"][0])  # (the same difference twice: one item)
     heap = [d for d in check_heap() if d.startswith("heap")]
     lines = cassandra_import_self_check_advice(layout, {"n1": {"differences": out["differences"] + heap}}, width=160)
-    at = lines.index("  Hand edits no variable covers (cassandra_config would revert them):")
-    assert lines[at + 1] == "    - logback.xml, on all (1 node):" and lines[at + 2].startswith("        /configuration")
-    at = lines.index("    - heap MAX_HEAP_SIZE, on all (1 node):")
-    assert lines[at + 1] == "        node 4G, inventory 8G"
-    assert lines[lines.index("    - heap HEAP_NEWSIZE, on all (1 node):") + 1] == "        800M (not in the inventory)"
-    assert lines[0].startswith("SELF-CHECK FAILED  c  the inventory would change 3 settings on 1 node")
+    assert lines[:5] == [u"SELF-CHECK FAILED \u2014 the inventory does not reproduce 1 node yet",
+                         "  1 setting on this node has no inventory variable: apply_config would change it.", "",
+                         "  logback.xml    all", "    root / appender-ref SYSTEMLOG (2)"]
+    at = lines.index("  heap (cassandra-env.sh, else the unit's Environment)    all")
+    assert lines[at + 1:at + 7] == ["    HEAP_NEWSIZE", "      Node     800M", "      Ansible  absent", "    MAX_HEAP_SIZE",
+                                    "      Node     4G", "      Ansible  8G"]
 
 
 def check_heap():
@@ -269,9 +269,10 @@ def test_jmx_entry_no_variable_expresses_is_a_hand_edit_kept_on_request():
     out, layout = check(files, {}, permissions)
     assert out["differences"] == ["jmxremote.access: auditRole=readonly: node has '', import would write nothing"]
     lines = cassandra_import_self_check_advice(layout, {"n1": out}, width=160)
-    at = lines.index("  Hand edits no variable covers (cassandra_config would revert them):")
-    assert lines[at + 1] == "    - jmxremote.access auditRole=readonly, on all (1 node):"
-    assert "Other differences:" not in "\n".join(lines)
+    assert lines[1:7] == ["  1 setting on this node has no inventory variable: apply_config would change it.", "",
+                          "  jmxremote.access    all", "    auditRole=readonly", "      Node     (empty)",
+                          "      Ansible  absent"]
+    assert "other difference" not in "\n".join(lines)
     keep = node({"import_cluster_config": imported}, keep_hand_edits=True)["keep"]
     assert keep["cassandra_config_keep_files"] == ["jmxremote.access"]
     out, layout = check(files, {"cassandra_config_keep_files": ["jmxremote.access"]}, permissions)
@@ -306,8 +307,7 @@ def test_hashed_passwords_a_hand_edit_of_the_password_file_kept_on_request():
     out, layout = check(files, {}, permissions)
     assert out["differences"] == ["jmxremote.password: cassandra: node has ****, import would write nothing"]
     lines = cassandra_import_self_check_advice(layout, {"n1": out}, width=160)
-    assert lines[lines.index("  Hand edits no variable covers (cassandra_config would revert them):") + 1] == \
-        "    - jmxremote.password cassandra, on all (1 node):"
+    assert lines[3:7] == ["  jmxremote.password    all", "    cassandra", "      Node     ****", "      Ansible  absent"]
     assert "aGFzaGVk" not in "\n".join(lines) + layout["report"]
     keep = node({"import_cluster_config": imported}, keep_hand_edits=True)["keep"]
     assert keep["cassandra_config_keep_files"] == ["jmxremote.password"]

@@ -20,7 +20,6 @@ import json
 import re
 from collections import namedtuple
 
-from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 
 # the heap's differences are named so (the self-check compares MAX_HEAP_SIZE and HEAP_NEWSIZE wherever they are set)
 HEAP_FILE = "heap (cassandra-env.sh, else the unit's Environment)"

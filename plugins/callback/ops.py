@@ -17,7 +17,7 @@ description:
     task's own C(vars)). Its C(msg) is printed as plain text, a line per list item. When such a task fails (an
     M(ansible.builtin.assert) or M(ansible.builtin.fail) written as a verdict), its C(msg) is printed the same way,
     once for a C(run_once) task that runs again with the same C(msg) (a rescue some hosts reach later); in red,
-    or coloured by its lines when it is a block of its own (C(REFUSED  ...), C(FAILED  ...), C(SELF-CHECK FAILED  ...)).
+    or coloured by its lines when it is a block of its own (C(REFUSED  ...), C(FAILED  ...), C(SELF-CHECK FAILED ...)).
     A marked task that fails on its own template (the error core gives instead of its C(msg)) is printed as the
     default callback does.
     A marked M(ansible.builtin.assert) that passes prints its C(success_msg), nothing without one.
@@ -203,7 +203,7 @@ _HEADED = re.compile(r"(PLAN|REFUSED|READY|NOTHING TO DO|%s)  |IMPORT \S+ " % "|
 _HEAVY = re.compile(r"(?:==== (\S.*?) )?={4,}$")  # a rule of = inside a screen, a title in it or not: its heavy rule
 _RECAP = re.compile(r"(DONE|FAILED|CHECK|HEALTHY|NOT HEALTHY|NOTHING TO DO|WAY OUT)  |(STOPPED|FAILED) at ")
 # a verdict block without rules, coloured by its lines (its blank lines blank): import_cluster's failed self-check
-_BLOCK = re.compile(r"SELF-CHECK FAILED  ")
+_BLOCK = re.compile(u"SELF-CHECK FAILED \u2014 ")
 # a progress line: a step of a rolling operation ("[2/5] node2  restart  ..."), or a wait outside one (_WAIT); the
 # other lines of its message, indented, are the other ends of its streams
 _STEP = re.compile(r"\[\d+/\d+\] \S+  ")
