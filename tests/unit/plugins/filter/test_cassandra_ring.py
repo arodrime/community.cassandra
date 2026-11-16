@@ -320,8 +320,9 @@ def test_the_time_the_ring_was_seen_with_its_zone():
     lines = cassandra_ring_report(ring(node("10.0.0.1")), {"n1": ["10.0.0.1"]}, cluster="prod", seen_from="n1",
                                   seen_at=str(seen))
     from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import clock
-    assert lines[1] == "  prod  seen from n1 at " + clock(seen)
-    assert re.match(r"^  prod  seen from n1 at \d\d:\d\d [A-Z+-]", lines[1]), lines[1]
+    assert lines[1] == "  prod  seen from n1 at " + clock(seen, date=True)
+    # (review 3) the date always, today's too
+    assert re.match(r"^  prod  seen from n1 at \d{4}-\d\d-\d\d \d\d:\d\d [A-Z+-]", lines[1]), lines[1]
 
 
 def test_host_ids_cut_to_fit_say_where_they_are_whole():

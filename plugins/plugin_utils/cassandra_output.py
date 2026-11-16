@@ -143,16 +143,16 @@ def duration(seconds, short=False):
     return "%ds" % seconds
 
 
-def clock(epoch, now=None):
+def clock(epoch, now=None, date=False):
     """The controller's local time of epoch with its zone, the date too when it
-    is not today: "19:03 CEST", "2026-10-07 04:26 CEST"."""
+    is not today, or always with date: "19:03 CEST", "2026-10-07 04:26 CEST"."""
     now = time.time() if now is None else now
     when = time.localtime(epoch)
     zone = time.strftime("%Z", when)
     if not zone or zone[0] in "+-":  # no abbreviation for this zone: its offset
         offset = time.strftime("%z", when)
         zone = offset[:3] + ":" + offset[3:]
-    return time.strftime("%H:%M" if when[:3] == time.localtime(now)[:3] else "%Y-%m-%d %H:%M", when) + " " + zone
+    return time.strftime("%H:%M" if when[:3] == time.localtime(now)[:3] and not date else "%Y-%m-%d %H:%M", when) + " " + zone
 
 
 def count(number):

@@ -89,10 +89,10 @@ def _summaries(rows):
 
 
 def _header(cluster, seen_from, matches, members, total, seen_at=None):
-    """The lines under the verdict: "  my_cluster  seen from node1 at 14:02 CET" (seen_at: when nodetool status
+    """The lines under the verdict: "  my_cluster  seen from node1 at 2026-11-16 14:02 CET" (seen_at: when nodetool status
     answered there, the controller's clock), "  ring and inventory: the same 3 nodes"."""
     where = ("seen from %s" % seen_from if seen_from else "") + (
-        (" at " if seen_from else "seen at ") + out.clock(float(seen_at)) if seen_at not in (None, "") else "")
+        (" at " if seen_from else "seen at ") + out.clock(float(seen_at), date=True) if seen_at not in (None, "") else "")
     lines = ["  " + "  ".join(x for x in [cluster, where] if x)] if cluster or where else []
     return lines + ["  " + (("ring and %s: the same %s" % (members, out.plural(total, "node"))) if matches
                             else "ring and %s differ (below), %s in the ring" % (members, out.plural(total, "node")))]

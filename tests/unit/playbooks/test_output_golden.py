@@ -105,8 +105,8 @@ RING = [
     " node1  UN  10.100.100.3  94.39 MiB  16      64.7%  76108dea...  rack_a",
 ]
 CUT = "Host IDs cut: whole with -e cassandra_status_raw=true (nodetool's own output)"
-# when the ring was read (the controller's clock, its zone): "at HH:MM ZONE"
-SEEN = "  my_cluster  seen from node1 at HH:MM"
+# when the ring was read (the controller's clock, its date and zone): "at 2026-11-16 14:02 CET"
+SEEN = "  my_cluster  seen from node1 at YYYY-MM-DD HH:MM"
 # the run's first line (no version: these playbooks read none); not repeated at the end
 CLUSTER = "my_cluster  3 nodes  1 DC (dc1)"
 
@@ -150,8 +150,8 @@ def test_status_all_up(tmp_path):
 
 def ruled(output):
     """The lines (the blank ones at the end left out), each rule (as wide as the terminal) as 4 of its characters,
-    the time the ring was seen as HH:MM (its zone checked: a name or an offset)."""
-    return [re.sub(r" at \d\d:\d\d (?:[A-Z]{2,5}|[+-]\d\d:\d\d)$", " at HH:MM",
+    the time the ring was seen as YYYY-MM-DD HH:MM (its zone checked: a name or an offset)."""
+    return [re.sub(r" at \d{4}-\d\d-\d\d \d\d:\d\d (?:[A-Z]{2,5}|[+-]\d\d:\d\d)$", " at YYYY-MM-DD HH:MM",
                    re.sub(r"^([-=])\1{3,}$", lambda m: m.group(1) * 4, line)) for line in output.rstrip("\n").splitlines()]
 
 
