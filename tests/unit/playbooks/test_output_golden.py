@@ -96,13 +96,17 @@ def run(tmp_path, playbook, down=True, *args, **answers_given):
     return proc.returncode, proc.stdout.decode("utf-8", "replace")
 
 
+# (not a terminal: 79 columns, the Host IDs cut to fit, a line says where they are whole)
 RING = [
     "Datacenter: dc1",
     "",
-    " Node   --  Address       Load       Tokens  Owns   Host ID                               Rack",
-    " node3  UN  10.100.100.5  71.84 MiB  16      76.0%  ca0e3575-b45a-487b-a323-2c021fbc16a3  rack_c",
-    " node1  UN  10.100.100.3  94.39 MiB  16      64.7%  76108dea-c527-4c5d-afff-1055bfa15b3f  rack_a",
+    " Node   --  Address       Load       Tokens  Owns   Host ID      Rack",
+    " node3  UN  10.100.100.5  71.84 MiB  16      76.0%  ca0e3575...  rack_c",
+    " node1  UN  10.100.100.3  94.39 MiB  16      64.7%  76108dea...  rack_a",
 ]
+CUT = "Host IDs cut: whole with -e cassandra_status_raw=true (nodetool's own output)"
+# when the ring was read (the controller's clock, its zone): "at HH:MM ZONE"
+SEEN = "  my_cluster  seen from node1 at HH:MM"
 # the run's first line (no version: these playbooks read none); not repeated at the end
 CLUSTER = "my_cluster  3 nodes  1 DC (dc1)"
 
@@ -117,33 +121,38 @@ def test_status_with_a_node_down(tmp_path):
         "====",
         "",
         "1 NODE DOWN: node2 (dc1/rack_b)",
-        "  my_cluster  seen from node1  ring and inventory: the same 3 nodes",
+        SEEN,
+        "  ring and inventory: the same 3 nodes",
         "",
         "====",  # then the tables (a blank line each side of a rule)
         ""] + RING + [
-        u" node2  DN  10.100.100.4  94.41 MiB  16      59.3%  4fbaaa06-f1fc-4bb1-98e5-3fbe3fdb8e51  rack_b  \u2190 down",
+        u" node2  DN  10.100.100.4  94.41 MiB  16      59.3%  4fbaaa06...  rack_b  \u2190 down",
         "",
         "  rack_a   1 node    1 up           load  94.4 MiB",
         "  rack_b   1 node    0 up, 1 down   load  94.4 MiB",
         "  rack_c   1 node    1 up           load  71.8 MiB",
         "  dc1      3 nodes   2 up, 1 down   load 260.6 MiB",
         "",
+        CUT,
+        "",
         "====",
     ]
+    assert all(len(line) <= 80 for line in output.splitlines()), output
 
 
 def test_status_all_up(tmp_path):
     rc, output = run(tmp_path, "status", False)
     assert rc == 0, output
     lines = ruled(output)
-    assert lines[:6] == [CLUSTER, "", "====", "", "ALL 3 NODES UP",
-                         "  my_cluster  seen from node1  ring and inventory: the same 3 nodes"]
-    assert lines[-3:] == ["  dc1      3 nodes   3 up   load 260.6 MiB", "", "===="]
+    assert lines[:7] == [CLUSTER, "", "====", "", "ALL 3 NODES UP", SEEN, "  ring and inventory: the same 3 nodes"]
+    assert lines[-5:] == ["  dc1      3 nodes   3 up   load 260.6 MiB", "", CUT, "", "===="]
 
 
 def ruled(output):
-    """The lines (the blank ones at the end left out), each rule (as wide as the terminal) as 4 of its characters."""
-    return [re.sub(r"^([-=])\1{3,}$", lambda m: m.group(1) * 4, line) for line in output.rstrip("\n").splitlines()]
+    """The lines (the blank ones at the end left out), each rule (as wide as the terminal) as 4 of its characters,
+    the time the ring was seen as HH:MM (its zone checked: a name or an offset)."""
+    return [re.sub(r" at \d\d:\d\d (?:[A-Z]{2,5}|[+-]\d\d:\d\d)$", " at HH:MM",
+                   re.sub(r"^([-=])\1{3,}$", lambda m: m.group(1) * 4, line)) for line in output.rstrip("\n").splitlines()]
 
 
 # (the clocks left out: this host's time sync is not the test's; test_health_check_clocks shows the CLOCKS block)

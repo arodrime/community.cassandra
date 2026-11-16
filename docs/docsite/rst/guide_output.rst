@@ -173,24 +173,29 @@ Conventions
   run needed them). An inventory change is followed by its commit only when the inventory is in a git work tree.
 - The marker ``←`` points at what needs a look (``← down``, ``← differs``, ``← slow``).
 - **Status** (the ``status`` playbook): the verdict first, alone on its line, then the cluster, the node the ring
-  is seen from and whether the ring and the inventory match; per datacenter the ``nodetool status`` table, each node
-  by its inventory name first, and a summary table of its racks and the datacenter; then where the ring and the
-  inventory differ, blank lines between the blocks::
+  is seen from (the node ``nodetool status`` ran on) and when (the controller's clock when it answered, with its time
+  zone), and whether the ring and the inventory match; per datacenter the ``nodetool status`` table, each node by its
+  inventory name first, and a summary table of its racks and the datacenter; then where the ring and the inventory
+  differ, blank lines between the blocks. A table wider than the terminal has its Host IDs cut to their first 8
+  characters, and a line says where they are whole (``-e cassandra_status_raw=true``: nodetool's own output)::
 
     1 NODE DOWN: node1 (dc1/rack3)
-      my_cluster  seen from node3  ring and inventory: the same 5 nodes
+      my_cluster  seen from node3 at 14:02 CET
+      ring and inventory: the same 5 nodes
 
     Datacenter: dc1
 
-     Node   --  Address   Load      Tokens  Owns   Host ID  Rack
-     node5  UN  10.0.0.9  6.88 GiB  16      28.0%  1c7a...  rack2
-     node1  DN  10.0.0.5  5.25 GiB  16      22.5%  1e96...  rack3  ← down
+     Node   --  Address   Load      Tokens  Owns   Host ID      Rack
+     node5  UN  10.0.0.9  6.88 GiB  16      28.0%  1c7a52d0...  rack2
+     node1  DN  10.0.0.5  5.25 GiB  16      22.5%  1e96f0b3...  rack3  ← down
      ...
 
       rack1   1 node    1 up           load  5.0 GiB
       rack2   2 nodes   2 up           load  9.1 GiB
       rack3   2 nodes   1 up, 1 down   load  9.1 GiB
       dc1     5 nodes   4 up, 1 down   load 23.2 GiB
+
+    Host IDs cut: whole with -e cassandra_status_raw=true (nodetool's own output)
 
   The verdict: ``ALL 5 NODES UP`` (green under the ops callback), or ``1 NODE DOWN: ...`` (red); then, after
   ``—``, the nodes joining, leaving or moving (``ALL 6 NODES UP — 1 JOINING: node6``, yellow). Under it, a second

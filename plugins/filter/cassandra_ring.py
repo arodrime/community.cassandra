@@ -4,8 +4,8 @@
 have it; nodetool prints it in full), anything else as is.
 
 cassandra_ring_report: the cassandra_status module's cluster_status as
-readable lines for the status playbook: a header line (the cluster, the node
-the ring is seen from), the nodes per datacenter as nodetool status shows them
+readable lines for the status playbook: header lines (the cluster, the node
+the ring is seen from and when), the nodes per datacenter as nodetool status shows them
 (the ones not UN marked; with names, a node by its name and address), a
 summary table of its racks and the datacenter, where the inventory and the
 ring differ, and last the verdict (the nodes down, joining, leaving or moving;
@@ -18,6 +18,7 @@ __metaclass__ = type
 import re
 import socket
 
+from ansible_collections.community.cassandra.plugins.filter.cassandra_output import terminal_width
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_status import compressed_address as _ip
 
@@ -87,12 +88,14 @@ def _summaries(rows):
         for name, count, states, load, unknown in rows]
 
 
-def _header(cluster, seen_from, matches, members, total):
-    """The line under the verdict: "  my_cluster  seen from node1  ring and inventory: the same 3 nodes"."""
-    where = ["seen from %s" % seen_from] if seen_from else []
-    where.append(("ring and %s: the same %s" % (members, out.plural(total, "node"))) if matches
-                 else "ring and %s differ (below), %s in the ring" % (members, out.plural(total, "node")))
-    return "  " + "  ".join(x for x in [cluster] + where if x)
+def _header(cluster, seen_from, matches, members, total, seen_at=None):
+    """The lines under the verdict: "  my_cluster  seen from node1 at 14:02 CET" (seen_at: when nodetool status
+    answered there, the controller's clock), "  ring and inventory: the same 3 nodes"."""
+    where = ("seen from %s" % seen_from if seen_from else "") + (
+        (" at " if seen_from else "seen at ") + out.clock(float(seen_at)) if seen_at not in (None, "") else "")
+    lines = ["  " + "  ".join(x for x in [cluster, where] if x)] if cluster or where else []
+    return lines + ["  " + (("ring and %s: the same %s" % (members, out.plural(total, "node"))) if matches
+                            else "ring and %s differ (below), %s in the ring" % (members, out.plural(total, "node")))]
 
 
 def _verdict(nodes, differ, unreached=()):
@@ -177,21 +180,36 @@ def _sort_nodes(cluster_status, owner, elsewhere, guessed, absent, names=None):
     return in_ring, stray, known, leaving, named
 
 
-def _dc_block(dc, nodes, owner, guessed, names=None):
-    """A datacenter, its ring nodes, {address: host}, the guesses, {address: name} -> its lines: the nodes as
-    nodetool status shows them (the ones not UN marked, each by its name and address when it has a name), then the
-    summary of its racks and of the datacenter."""
+# a Host ID cut to this many characters when the table is wider than the screen (its whole value: CUT_HOST_IDS)
+HOST_ID_SHOWN = 8
+CUT_HOST_IDS = "Host IDs cut: whole with -e cassandra_status_raw=true (nodetool's own output)"
+
+
+def _dc_rows(nodes, owner, guessed, names, cut):
     rows = [["Node", "--", "Address", "Load", "Tokens", "Owns", "Host ID", "Rack", ""]]
     for n in nodes:
         mark = "" if n["status"] + n["state"] == "UN" else out.ARROW + " " + (
             "down" if n["status"] == "D" else dict(_STATES).get(n["state"], n["status"] + n["state"]))
+        host_id = n["host_id"][:HOST_ID_SHOWN] + "..." if cut and len(n["host_id"]) > HOST_ID_SHOWN + 3 else n["host_id"]
         rows.append([_shown_name(n, owner, guessed) or "-", n["status"] + n["state"], _shown_address(n, names),
-                     n["load"] or "?", n["tokens"] or "", n["owns"] or "", n["host_id"], n["rack"], mark])
+                     n["load"] or "?", n["tokens"] or "", n["owns"] or "", host_id, n["rack"], mark])
+    return rows
+
+
+def _dc_block(dc, nodes, owner, guessed, names=None, width=None):
+    """A datacenter, its ring nodes, {address: host}, the guesses, {address: name} -> (its lines: the nodes as
+    nodetool status shows them, the ones not UN marked, each by its name and address when it has a name, then the
+    summary of its racks and of the datacenter; whether its Host IDs were cut: a row wider than width has them cut to
+    their first characters)."""
+    table = [" " + line for line in _table(_dc_rows(nodes, owner, guessed, names, False))]
+    cut = bool(width) and max(len(line) for line in table) > width
+    if cut:
+        table = [" " + line for line in _table(_dc_rows(nodes, owner, guessed, names, True))]
     lines = ["", "Datacenter: %s" % dc, ""]
-    lines.extend(" " + line for line in _table(rows))
+    lines.extend(table)
     racks = sorted(set(n["rack"] for n in nodes))
     summary = [_summary(rack, [n for n in nodes if n["rack"] == rack]) for rack in racks] if len(racks) > 1 else []
-    return lines + [""] + _summaries(summary + [_summary(dc, nodes)])
+    return lines + [""] + _summaries(summary + [_summary(dc, nodes)]), cut
 
 
 def _differences(missing, known, leaving, stray, guessed, unreachable, run, outside):
@@ -214,7 +232,8 @@ def _differences(missing, known, leaving, stray, guessed, unreachable, run, outs
 
 
 def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=False, group="the inventory",
-                          outside=None, absent=None, cluster="", seen_from="", places=None, names=None):
+                          outside=None, absent=None, cluster="", seen_from="", places=None, names=None, seen_at=None,
+                          width=None):
     """cluster_status: the cassandra_status module's. inventory: {host:
     [addresses and names it is known by]} of the hosts of the run. unreachable:
     the hosts Ansible could not reach. limited: the play runs on part of the
@@ -229,9 +248,12 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
     no host has in its place (marked "host?"). names: {address: its name}
     (resolved on the node the ring was read from): a node shown by its name
     and address, its address alone without one; matched by address all the
-    same. Returns the report as a list of lines.
+    same. seen_at: when the ring was read (epoch, the controller's clock),
+    said with its time zone after seen_from. width: a table wider than this
+    ("terminal": the terminal's) has its Host IDs cut, a line saying where
+    they are whole. Returns the report as a list of lines.
     e.g. (node1 to node3 of dc1/r1, node3 DN; inventory {node1: ["10.0.0.1"], ...}, cluster="my_cluster",
-    seen_from="node1") -> ["1 NODE DOWN: node3 (dc1/r1)", "  my_cluster  seen from node1  ring and inventory: the
+    seen_from="node1") -> ["1 NODE DOWN: node3 (dc1/r1)", "  my_cluster  seen from node1", "  ring and inventory: the
     same 3 nodes", "", "Datacenter: dc1", "", " Node   --  Address   Load ...", " node1  UN  10.0.0.1  1 GiB  16  h1
     r1", ..., " node3  DN  10.0.0.3  ...  \u2190 down", "", "  dc1   3 nodes   2 up, 1 down   load 3.0 GiB"]: the
     verdict first, alone on its line, then the cluster, the nodes by their inventory name first."""
@@ -244,15 +266,21 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
     owner.update(guessed)
     names = dict((_ip(a), name) for a, name in (names or {}).items() if name)
     in_ring, stray, known, leaving, named = _sort_nodes(cluster_status, owner, elsewhere, guessed, absent, names)
-    lines = []
+    if str(width) == "terminal":
+        width = terminal_width()
+    lines, cut = [], False
     for dc in sorted(cluster_status):
-        lines.extend(_dc_block(dc, cluster_status[dc].get("nodes", []), owner, guessed, names))
+        block, cut_here = _dc_block(dc, cluster_status[dc].get("nodes", []), owner, guessed, names, width)
+        lines.extend(block)
+        cut = cut or cut_here
+    if cut:
+        lines += ["", CUT_HOST_IDS]
     missing = [h for h in inventory if h not in in_ring]
     run = "this run (--limit)" if limited else group
     notes = _differences(missing, known, leaving, stray, guessed, unreachable, run, outside)
     matches = not missing and not known and not leaving and not stray and not guessed  # a guess is no match
     members = "inventory" if run == group else run
-    head = [_header(cluster, seen_from, matches, members, len(named))] if cluster or seen_from else []
+    head = _header(cluster, seen_from, matches, members, len(named), seen_at) if cluster or seen_from else []
     if not head and matches:
         notes.append("The ring and %s match (%s)" % (run, out.plural(len(inventory), "node")))
     if notes:

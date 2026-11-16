@@ -147,6 +147,12 @@
         - inventory_hostname == _from
         - inventory_hostname in _reached
 
+    # when the ring was observed (the controller's clock, right after nodetool status answered): said with the view
+    - name: Note when the ring was read from {{ _from }}
+      ansible.builtin.set_fact:
+        cassandra_status_read_at: "{{ now().timestamp() }}"
+      when: cassandra_status_ring is not skipped
+
     - name: Read the ring from the other nodes ({{ _from }} did not answer)
       community.cassandra.cassandra_status:
         down: 10000
@@ -164,6 +170,11 @@
         - inventory_hostname in _asked
         - inventory_hostname in _reached
 
+    - name: Note when the ring was read from the other nodes
+      ansible.builtin.set_fact:
+        cassandra_status_read_at: "{{ now().timestamp() }}"
+      when: cassandra_status_ring_other is not skipped
+
     - name: Keep the first answer
       ansible.builtin.set_fact:
         cassandra_status_views: >-
@@ -173,7 +184,8 @@
                         else (hostvars[h].cassandra_status_ring if h == _from else hostvars[h].cassandra_status_ring_other)
                              | default({}) -%}
           {%-   if not r.skipped | default(false) and r != {} -%}
-          {%-     set _ = out.append({'from': h, 'result': r | dict2items
+          {%-     set _ = out.append({'from': h, 'at': hostvars[h].cassandra_status_read_at | default(''),
+                                  'result': r | dict2items
                                   | selectattr('key', 'in', ['cluster_status', 'msg', 'stderr_list', 'stdout_list'])
                                   | items2dict}) -%}
           {%-   endif -%}
@@ -237,8 +249,8 @@
       when: cassandra_status_raw | default(false) | bool
       run_once: true
 
-    # a header line (the node it is seen from, whether the ring and the group
-    # match), then per datacenter the nodetool table (a node not UN marked
+    # header lines (the node it is seen from and when, whether the ring and the
+    # group match), then per datacenter the nodetool table (a node not UN marked
     # "<- down", "<- joining"...) and a summary per rack and datacenter (nodes
     # up, down, joining, leaving, moving, total load), where the group and the
     # ring differ (a ring node that is another host of the inventory is named),
@@ -254,7 +266,7 @@
                group='group ' ~ lookup('community.cassandra.cassandra_hosts'), outside=_outside,
                absent=query('community.cassandra.cassandra_nodes', state='absent'),
                cluster=lookup('community.cassandra.cassandra_hosts'), seen_from=_view.from, places=_places,
-               names=_names) }}
+               names=_names, seen_at=_view.at | default(''), width='terminal') }}
       vars:
         cassandra_output: true
         # {address: its name}: getent's lines (the address, its name, its aliases); none with -e status_resolve_ip=false

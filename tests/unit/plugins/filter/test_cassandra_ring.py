@@ -2,12 +2,13 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 import os
+import re
 import socket
 
 import pytest
 
 from ansible_collections.community.cassandra.plugins.filter import cassandra_ring
-from ansible_collections.community.cassandra.plugins.filter.cassandra_ring import cassandra_ring_report
+from ansible_collections.community.cassandra.plugins.filter.cassandra_ring import CUT_HOST_IDS as CUT, cassandra_ring_report
 from ansible_collections.community.cassandra.plugins.modules.cassandra_status import cluster_up_down
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "..", "modules", "fixtures")
@@ -87,7 +88,7 @@ def test_an_unreachable_host_known_by_no_address_taken_for_the_one_ring_node_no_
     lines = cassandra_ring_report(status, inventory, unreachable=["h3"], cluster="c", seen_from="h1",
                                   places={"h3": ["dc1", "r1"]})
     # never ALL 3 NODES UP while one is not reached; a guess is no match
-    assert lines[:2] == ["1 NODE NOT REACHED: h3", "  c  seen from h1  ring and inventory differ (below), 3 nodes in the ring"]
+    assert lines[:3] == ["1 NODE NOT REACHED: h3", "  c  seen from h1", "  ring and inventory differ (below), 3 nodes in the ring"]
     assert " h3?   UN  10.0.0.4  1.0 GiB  16      33.3%  id-10.0.0.4  r1" in lines
     assert lines[-1] == ("h3 not reached by Ansible: taken for 10.0.0.4, the only node of the ring no host has (its"
                          " ansible_host or cassandra_listen_address in the inventory would say for sure)")
@@ -245,7 +246,8 @@ def test_header_marks_rack_table_and_verdict():
         group="group my_cluster", cluster="my_cluster", seen_from="node1")
     assert lines == [
         '1 NODE DOWN: node2 (dc1/rack_b)',
-        '  my_cluster  seen from node1  ring and inventory: the same 3 nodes',
+        '  my_cluster  seen from node1',
+        '  ring and inventory: the same 3 nodes',
         '',
         'Datacenter: dc1',
         '',
@@ -263,15 +265,15 @@ def test_header_marks_rack_table_and_verdict():
 def test_header_and_verdict_states_and_mismatch():
     lines = cassandra_ring_report(ring(node("10.0.0.1"), node("10.0.0.2")), {"n1": ["10.0.0.1"], "n2": ["10.0.0.2"]},
                                   cluster="prod")
-    assert lines[:2] == ["ALL 2 NODES UP", "  prod  ring and inventory: the same 2 nodes"]
+    assert lines[:3] == ["ALL 2 NODES UP", "  prod", "  ring and inventory: the same 2 nodes"]
     assert lines[-2:] == [
         '',
         '  dc1   2 nodes   2 up   load 2.0 GiB']
     lines = cassandra_ring_report(ring(node("10.0.0.1", state="J"), node("10.0.0.2", state="L"), node("10.0.0.9")),
                                   {"n1": ["10.0.0.1"], "n2": ["10.0.0.2"], "n3": ["10.0.0.3"]}, cluster="prod",
                                   seen_from="n1", limited=True)
-    assert lines[1] == "  prod  seen from n1  ring and this run (--limit) differ (below), 3 nodes in the ring"
-    assert lines[7].endswith("← joining") and lines[8].endswith("← leaving")
+    assert lines[1:3] == ["  prod  seen from n1", "  ring and this run (--limit) differ (below), 3 nodes in the ring"]
+    assert lines[8].endswith("← joining") and lines[9].endswith("← leaving")
     assert lines[-6:] == [
         ' -     UN  10.0.0.9  1.0 GiB  16      33.3%  id-10.0.0.9  r1',
         '',
@@ -309,3 +311,26 @@ def test_names_shown_matching_by_address():
     plain = cassandra_ring_report(ring(node("10.0.0.1")), {"n1": ["10.0.0.1"]})
     assert plain == cassandra_ring_report(ring(node("10.0.0.1")), {"n1": ["10.0.0.1"]}, names={})
     assert " n1    UN  10.0.0.1  1.0 GiB  16      33.3%  id-10.0.0.1  r1" in plain
+
+
+def test_the_time_the_ring_was_seen_with_its_zone():
+    # (B4 review) when nodetool status answered on the node named, the controller's clock with its time zone
+    import time
+    seen = time.time()
+    lines = cassandra_ring_report(ring(node("10.0.0.1")), {"n1": ["10.0.0.1"]}, cluster="prod", seen_from="n1",
+                                  seen_at=str(seen))
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import clock
+    assert lines[1] == "  prod  seen from n1 at " + clock(seen)
+    assert re.match(r"^  prod  seen from n1 at \d\d:\d\d [A-Z+-]", lines[1]), lines[1]
+
+
+def test_host_ids_cut_to_fit_say_where_they_are_whole():
+    # (B4 review) a table wider than the screen: the Host IDs cut, one line says where they are whole
+    long_id = "4fbaaa06-f1fc-4bb1-98e5-3fbe3fdb8e51"
+    status = ring(node("10.100.100.4", "D", load="94.41 MiB", rack="rack_b"))
+    status["dc1"]["nodes"][0]["host_id"] = long_id
+    wide = cassandra_ring_report(status, {"node2": ["10.100.100.4"]}, cluster="c", seen_from="node1", width=200)
+    assert any(long_id in line for line in wide) and CUT not in wide
+    narrow = cassandra_ring_report(status, {"node2": ["10.100.100.4"]}, cluster="c", seen_from="node1", width=79)
+    assert not any(long_id in line for line in narrow) and any("4fbaaa06... " in line for line in narrow)
+    assert narrow[-1] == CUT and all(len(line) <= 79 for line in narrow), narrow
