@@ -762,6 +762,9 @@ def test_self_check_stop_golden():
         "  To pass:",
         "    change these nodes as the inventory has them, then import again",
         "    take the change (apply_config writes it)                         -e import_strict=false",
+        "      then review it before applying:",
+        "        ansible-playbook community.cassandra.apply_config -e cassandra_hosts=my_cluster --check \\",
+        "            --diff",
         "",
         "  1 node not read, so not checked: node4 (unreachable).",
         "",
@@ -815,7 +818,8 @@ def test_self_check_stop_hand_edits_only():
                          "  logback.xml    all - node3", "    x", "      Node     present (level DEBUG)",
                          "      Ansible  absent", ""]
     assert "  --check: the inventory not written" in lines
-    assert [line.strip().split("  ", maxsplit=1)[0] for line in lines if line.startswith("    ") and "-e " in line] == [
+    assert [line.strip().split("  ", maxsplit=1)[0] for line in lines if line.startswith("    ") and "-e " in line
+            and "ansible-playbook" not in line] == [
         "keep logback.xml as these nodes have it", "take the change (apply_config writes it)"]
 
 
@@ -1298,6 +1302,9 @@ def test_self_check_stop_os_golden():
         "  To pass:",
         "    keep transparent huge pages as these nodes have it  -e import_keep_hand_edits=thp",
         "    take the change (the roles make it)                 -e import_strict=false",
+        "      then review it before applying:",
+        "        ansible-playbook community.cassandra.apply_config -e cassandra_hosts=my_cluster --check \\",
+        "            --diff",
         "",
         "  The inventory: written for inspection only, marked NOT VALID",
         "  Evidence (full paths, lines): reports/my_cluster/report.details.txt, SELF-CHECK"]

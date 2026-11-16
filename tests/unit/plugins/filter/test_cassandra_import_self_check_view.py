@@ -195,10 +195,25 @@ def test_the_stop_golden():
         "      -e import_keep_hand_edits=logback.xml",
         "    take the change (apply_config writes it)",
         "      -e import_strict=false",
+        "      then review it before applying:",
+        "        ansible-playbook community.cassandra.apply_config \\",
+        "            -e cassandra_hosts=my_cluster --check --diff",
         "",
         "  The inventory: written for inspection only, marked NOT VALID",
         "  Evidence (full paths, lines):",
         "    reports/my_cluster/report.details.txt, SELF-CHECK"]
+
+
+def test_the_stop_says_the_review_command_after_import_strict_false():
+    # (owner, 2026-11-16) taking the change: the command that shows it before applying, with the run's inventory
+    nodes = [node(1, hand=LOGBACK_EDIT), node(2)]
+    lines = stop(nodes, logback_checks(["node1"]), inventory="inventories/prod.yml", hosts="prod", width=110)
+    at = [i for i, line in enumerate(lines) if line.endswith("-e import_strict=false")][0]
+    assert lines[at + 1:at + 4] == [
+        "      then review it before applying:",
+        "        ansible-playbook -i inventories/prod.yml community.cassandra.apply_config -e cassandra_hosts=prod \\",
+        "            --check --diff"]
+    assert sum("then review it before applying:" in line for line in lines) == 1
 
 
 def test_the_stop_groups_by_file_and_nodes():

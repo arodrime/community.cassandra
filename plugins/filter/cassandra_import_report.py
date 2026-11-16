@@ -666,8 +666,9 @@ def _group_lines(layout, group, who, width):
     return lines
 
 
-def _ways_out(rows, width):
-    """To pass: what to do, the option for it in a column (on its own line when it does not fit)."""
+def _ways_out(rows, width, review=""):
+    """To pass: what to do, the option for it in a column (on its own line when it does not fit); under the row of
+    -e import_strict=false, the command that reviews the change before applying it (review)."""
     column = max(len(text) for text, option in rows) + 2
     aligned = all(4 + column + len(option) <= width for text, option in rows if option)
     lines = ["  To pass:"]
@@ -677,7 +678,22 @@ def _ways_out(rows, width):
             lines.append("    " + text.ljust(column) + option)
         else:
             lines += fill_text(text, width, "    ", "  ") + (["      " + option] if option else [])
+        if review and option == _TAKE[1]:
+            lines += ["      then review it before applying:"] + command_lines(review, width, "        ")
     return lines
+
+
+def command_lines(command, width, indent):
+    """A command to paste at indent: on one line when it fits, else cut between two arguments (an option and its
+    value together), each line but the last ending with a backslash, the next ones 4 columns further in."""
+    lines, line = [], indent
+    words = out.command_words(command)
+    for i, word in enumerate(words):
+        if line.strip() and len(line) + 1 + len(word) + (2 if i < len(words) - 1 else 0) > width:
+            lines.append(line + " \\")
+            line = indent + "    "
+        line += (" " if line.strip() else "") + word
+    return lines + [line]
 
 
 def _with_moved(read, f, members):
@@ -690,7 +706,7 @@ def _with_moved(read, f, members):
     return [f]
 
 
-def _section(layout, kind, items, read, who, width):
+def _section(layout, kind, items, read, who, width, review=""):
     """A kind of differences: what it means and what apply_config would do, the files and their nodes with what
     differs, the ways out with their options -> [line]."""
     them = "it" if len(set((i["file"], i["where"] or i["sentence"]) for i in items)) == 1 else "them"
@@ -737,7 +753,7 @@ def _section(layout, kind, items, read, who, width):
     lines = fill_text(said, width, "  ") + [""]
     for group in _groups(items):
         lines += _group_lines(layout, group, who, width) + [""]
-    return lines + _ways_out(rows, width)
+    return lines + _ways_out(rows, width, review)
 
 
 def _have(nodes, things):
@@ -775,10 +791,12 @@ def _differing(items):
     return nodes
 
 
-def _self_check_lines(layout, self_check, who, width, report_file="", error="", allow_unread=False, cwd=None):
+def _self_check_lines(layout, self_check, who, width, report_file="", error="", allow_unread=False, cwd=None,
+                      inventory="", hosts=""):
     """A failed self-check -> (its verdict, [blocks of lines]): the differences by what the import establishes of
     their cause, each kind with what it means, its files and nodes, what differs, its ways out; the nodes not read;
-    where the evidence is (report_file: report.txt, its details next to it)."""
+    where the evidence is (report_file: report.txt, its details next to it); inventory, hosts: the review command's
+    (apply_config --check --diff, under -e import_strict=false)."""
     nodes = layout.get("nodes") or []
     read = [n for n in nodes if boolean(n.get("read", False), strict=False)]
     unread = [n for n in nodes if n not in read] if not allow_unread or not read else []
@@ -794,13 +812,15 @@ def _self_check_lines(layout, self_check, who, width, report_file="", error="", 
         verdict = "nothing says the inventory reproduces the nodes"
     blocks = []
     debug = "-e import_debug=true"
+    review = out.command("apply_config", inventory=inventory or None, hosts=hosts or layout.get("cluster_group"),
+                         extra=["--check", "--diff"], cwd=cwd)
     if error:
         blocks.append(fill_text(error[0].upper() + error[1:], width, "  ", "  ") + [""] + _ways_out(
             [("see the error (it may show passwords), fix it, then import again", debug)], width))
-    for kind in _ORDER:
+    kinds = [kind for kind in _ORDER if any(i["kind"] == kind for i in items)]
+    for kind in kinds:  # (the review command once: in the last kind's ways out)
         mine = [i for i in items if i["kind"] == kind]
-        if mine:
-            blocks.append(_section(layout, kind, mine, read, who, width))
+        blocks.append(_section(layout, kind, mine, read, who, width, review if kind == kinds[-1] else ""))
     if unread:
         rows = [("start Cassandra or fix the access there, then import again", "")]
         if read:
@@ -823,8 +843,9 @@ def cassandra_import_self_check_advice(layout, self_check, report_file="", error
                                        inventory="", hosts="", cwd=None, width=None):
     """layout: cassandra_inventory_layout's; self_check: {node: {differences, notes}}; report_file: the report
     (report.check.txt under --check); error: why the self-check could not run ('' : it ran); allow_unread:
-    import_allow_unread (the nodes not read pass); check: --check; inventory, hosts: unused (the commands of the
-    report's); cwd: paths from it; width: the lines fit in it (the terminal's by default, SCREEN_MOST at most) ->
+    import_allow_unread (the nodes not read pass); check: --check; inventory, hosts: the review command's
+    (apply_config --check --diff, under -e import_strict=false); cwd: paths from it; width: the lines fit in it (the
+    terminal's by default, SCREEN_MOST at most) ->
     the lines of the run's stop on a failed self-check: "SELF-CHECK FAILED — the inventory does not reproduce 4
     nodes yet", then each kind of differences (what it means, its files and nodes, what differs, To pass: the
     options), what was written, where the evidence is; node lists by node_list (ranges). Blank lines between them.
@@ -834,7 +855,7 @@ def cassandra_import_self_check_advice(layout, self_check, report_file="", error
     groups, everyone = data["groups"], data["everyone"]
     verdict, blocks, evidence = _self_check_lines(
         layout, self_check, lambda m: who_text(m, everyone, groups, False), width, report_file=report_file, error=error,
-        allow_unread=boolean(allow_unread, strict=False), cwd=cwd)
+        allow_unread=boolean(allow_unread, strict=False), cwd=cwd, inventory=inventory, hosts=hosts)
     lines = fill_text("SELF-CHECK FAILED %s %s" % (DASH, verdict), width, "", "  ")
     for i, block in enumerate(blocks):
         lines += ([] if i == 0 else [""]) + block
@@ -1992,7 +2013,8 @@ def _self_check_section(report, self_check, report_file, self_check_error, allow
     """SELF-CHECK (of a failed one, under TO DO): the stop's lines, the node lists whole -> [line]."""
     verdict, blocks, evidence = _self_check_lines(
         report.layout, self_check, lambda m: _who(report, m), min(report.width, SELF_CHECK_WIDTH),
-        report_file=report_file, error=self_check_error, allow_unread=allow_unread, cwd=report.cwd)
+        report_file=report_file, error=self_check_error, allow_unread=allow_unread, cwd=report.cwd,
+        inventory=report.inventory, hosts=report.hosts)
     lines = ["  SELF-CHECK %s %s" % (DASH, verdict)]
     for block in blocks + [evidence]:
         lines += ["  " + line if line else "" for line in block] + [""]

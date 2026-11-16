@@ -313,8 +313,20 @@ def _unknown_words(text, key):
 
 
 # the setting of a self-check difference ("<file>: <setting>: node has ..."), in its file's own words: never masked
-# (but for a node's or a cluster's name in it), as on the self-check's own lines (locator)
+# (but for a node's or a cluster's name in it), as on the self-check's own lines (locator); a JVM option of another
+# prefix than JVM_KNOWN masked as in any line (a site's own: -Dcom.<company>.x)
 DIFFERENCE_SETTING = re.compile(r"\.(?:yaml|xml|ini|options|properties|access|password): (?P<held>[^\s:][^:]*?): node has ")
+# the JVM options whose names are the JVM's, Cassandra's or a stock library's: their names never masked (owner's
+# decision, 2026-11-16); any other -D name may be the site's, masked
+JVM_KNOWN = ("-XX:", "-Dcassandra.", "-Djava.", "-Djdk.", "-Dcom.sun.", "-Dlog4j2.", "-Dchronicle.", "-Dio.netty.")
+JVM_NAME = re.compile(r"(?<![\w.-])(?:%s)[+-]?[\w.-]*[\w]" % "|".join(re.escape(k) for k in JVM_KNOWN))
+
+
+def _site_option(text):
+    """Whether text is a JVM option (-D..., -XX:...) whose name may be the site's (not of JVM_KNOWN)."""
+    return bool(re.match(r"^-(D|XX:)", text)) and not text.startswith(JVM_KNOWN)
+
+
 _HELD = re.compile(u"\ue000(\\d+)\ue001")
 
 
@@ -325,6 +337,8 @@ def _held(text, key, spans):
 
     def hold(m):
         at = m.span("held") if "held" in m.re.groupindex else m.span()
+        if _site_option(m.string[at[0]:at[1]]):
+            return m.group(0)
         held.append(key.inside(m.string[at[0]:at[1]], ("n", "c", "dc", "r")))
         return u"%s\ue000%d\ue001%s" % (m.string[m.start():at[0]], len(held) - 1, m.string[at[1]:m.end()])
     for span in spans:
@@ -353,7 +367,7 @@ def _line(text, key):
     """A line of the report (_valued already) with the names of the key replaced, the addresses, the URLs and the
     paths of the site masked (each found a name of the key); the addresses first (a file named by one: IP.jks); the
     setting of a self-check difference kept (DIFFERENCE_SETTING)."""
-    text, held = _held(text, key, (DIFFERENCE_SETTING,))
+    text, held = _held(text, key, (DIFFERENCE_SETTING, JVM_NAME))
     return _back(_masked_names(text, key), held)
 
 
@@ -473,7 +487,8 @@ def cassandra_import_shareable(lines, layout, written=None, report_file="", cwd=
     # a self-check's setting, on its own line above its values (Node, Ansible): in the file's own words
     named = set(i for i in range(len(lines) - 1) if lines[i].strip() and VALUES.match(lines[i + 1])
                 and _indent(lines[i]) < _indent(lines[i + 1]))
-    text += [out.mask(locator(line, key)) if i in named else _masked(_aligned(line, key)) for i, line in enumerate(lines)]
+    text += [out.mask(locator(line, key)) if i in named and not _site_option(line.strip())
+             else _masked(_aligned(line, key)) for i, line in enumerate(lines)]
     head = ["# The key of report.shareable.txt: what each name of it stands for. Keep it to yourself.",
             "# Addresses are all shown as IP: not listed."]
     return {"text": text, "map": head + key.lines()}

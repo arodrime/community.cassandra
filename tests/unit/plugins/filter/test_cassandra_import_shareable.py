@@ -377,7 +377,7 @@ SITE = re.compile(r"(?i)zorglub|paris|baie7|acme|billing|orders|payroll|10\.\d|1
     "    cassandra_log_levels.com.zorglub.auth.Kwyjibo:   DEBUG   all (1 node)",
     "  -Dcom.zorglub.audit.enabled=true (cassandra_jvm_extra_options)",
     "  -Dcom.zorglub-db1.audit=true -Dzorglub_prod.flag=1 -Dparis.x=1 -Dbaie7.rack=1 -Dfr.acmecorp.mode=x",
-    "  -XX:+zorglubflag -DZORGLUB_LICENSE=1",
+    "  -XX:HeapDumpPath=/srv/zorglub/dumps -DZORGLUB_LICENSE=1",
     "    cassandra_service_environment.ZORGLUB_LICENSE:   on   all",
     "    cassandra_config_file_permissions.zorglub-db1_hosts:   0400   all (1 node)",
     "  + data_file_directories: /srv/cassandra_zorglub/data",
@@ -388,3 +388,26 @@ SITE = re.compile(r"(?i)zorglub|paris|baie7|acme|billing|orders|payroll|10\.\d|1
 def test_no_site_name_left_in_a_name(line):
     text = cassandra_import_shareable([line], ZORGLUB)["text"][2:]
     assert not SITE.search(text[0]), text[0]
+
+
+@pytest.mark.parametrize("name", ["-XX:+UseZGC", "-XX:HeapDumpPath", "-Dcassandra.ring_delay_ms", "-Djava.net.preferIPv4Stack",
+                                  "-Djdk.attach.allowAttachSelf", "-Dcom.sun.management.jmxremote.port",
+                                  "-Dlog4j2.formatMsgNoLookups", "-Dchronicle.analytics.disable",
+                                  "-Dio.netty.tryReflectionSetAccessible"])
+def test_a_known_jvm_option_name_stays_in_clear_everywhere(name):
+    # (owner, 2026-11-16) the JVM's, Cassandra's and stock libraries' option names: in prose, in a difference, and
+    # as a self-check setting's own line
+    lines = ["  %s=1 (cassandra_jvm_extra_options)" % name,
+             "  jvm17-server.options: %s: node has '%s=1', import would write nothing" % (name, name),
+             "  cassandra-env.sh    zorglub-db1", "    " + name, "      Node     1"]
+    text = cassandra_import_shareable(lines, ZORGLUB)["text"][2:]
+    assert text[0].startswith("  %s=" % name) and ": %s: node has" % name in text[1], text
+    assert text[3] == "    " + name
+
+
+def test_a_site_jvm_option_name_masked_everywhere():
+    # any other -D name may be the site's: masked in prose, in a difference and on a self-check setting's line
+    lines = ["  jvm17-server.options: -Dcom.zorglub.audit: node has '-Dcom.zorglub.audit=1', import would write"
+             " nothing", "  cassandra-env.sh    zorglub-db1", "    -Dcom.zorglub.audit", "      Node     1"]
+    text = cassandra_import_shareable(lines, ZORGLUB)["text"][2:]
+    assert not [line for line in text if SITE.search(line)], text
