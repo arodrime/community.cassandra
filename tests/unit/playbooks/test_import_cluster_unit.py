@@ -264,6 +264,18 @@ def test_package_script_as_installed_is_imported_as_the_start_method():
         assert "cassandra_service_start" not in n["vars"] and "cassandra_service_unit_manage" not in n["keep"]
 
 
+@pytest.mark.parametrize("hv", [
+    {"import_cluster_unit": dict(SYSV, pkg_script="cassandra")},  # the package's script, the unit kept by name
+    {"import_cluster_unit": {"file": "/etc/systemd/system/cassandra.service", "restart": "always", "boot": "enabled"}},
+])
+def test_started_note_of_a_unit_kept_by_name(hv):
+    # no start method imported (cassandra_service_unit_manage: false): new nodes get the role's unit
+    n = node(hv, keep_hand_edits="unit")
+    assert "cassandra_service_start" not in n["vars"] and n["keep"]["cassandra_service_unit_manage"] is False
+    assert "package_script" not in n["notes"][1]
+    assert "(kept on this node; new nodes get the unit of cassandra_service" in n["notes"][1]
+
+
 @pytest.mark.parametrize("dropins, imported", [
     # a drop-in of its own: what it sets would not hold for a node added later, the self-check compares instead
     ("/etc/systemd/system/cassandra.service.d/override.conf", False),

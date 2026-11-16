@@ -413,7 +413,8 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
     env_log_dir = _env_log_dir(read, unit_kept, env, conf, config_vars)
     java_link = _java_link(hv, read)
     versions = _versions_note(hv, java_link)
-    started = _started_note(unit, unit_kept, unit_env, bool(start))
+    # the unit kept by name: no start method imported (_kept_parts), new nodes get the role's unit
+    started = _started_note(unit, unit_kept, unit_env, bool(start) and not unit_by_hand)
     install = _install_note(hv, package)
     reason = _reason(item, hv)
 
