@@ -670,33 +670,45 @@
           {{ out }}
         _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default((_cassandra_preflight | default({})).cassandra_cluster_name | default('')) }}"
         _up_to_date: "{{ ansible_play_hosts | reject('in', _todo) | list }}"
-        # the nodes it restarts: the question and the summary name the restart (the most disruptive effect)
-        _restarts: >-
-          {%- set out = [] -%}
-          {%- for h in _todo if hostvars[h].cassandra_apply_config_then | default('') == 'restart' -%}
-          {%-   set _ = out.append(h) -%}
+        # the question and the head name the most disruptive effect: a Cassandra restart (the OS settings done with
+        # Cassandra stopped are done in that restart), else a start of a Cassandra not running, else no restart
+        _restarts: "{{ _todo | select('in', _then_nodes['restart'] | default([])) | list }}"
+        _starts: "{{ _todo | select('in', _then_nodes['start'] | default([])) | list }}"
+        _then_nodes: >-
+          {%- set out = {} -%}
+          {%- for h in _todo -%}
+          {%-   set _ = out.setdefault(hostvars[h].cassandra_apply_config_then | default(''), []).append(h) -%}
           {%- endfor -%}
           {{ out }}
-        _restart_words: >-
-          {{ '' if not _restarts
-             else (' and restart ' ~ ('it' if _todo | length == 1 else 'them')) if _restarts | length == _todo | length
-             else (' and restart ' ~ _restarts | community.cassandra.cassandra_node_list ~ ' ('
-                   ~ _restarts | length ~ ' ' ~ ('node' if _restarts | length == 1 else 'nodes') ~ ')') }}
+        # (all the nodes to do the same: "Apply changes and restart Cassandra on node1 of prod?")
         cassandra_screen_question: >-
-          Apply the {{ _what }} on {{ _todo | community.cassandra.cassandra_node_list }} of {{ _cluster }}{{ _restart_words }}?
+          {%- set nodes = _todo | community.cassandra.cassandra_node_list ~ ' of ' ~ _cluster -%}
+          {%- if _restarts | length == _todo | length -%} Apply changes and restart Cassandra on {{ nodes }}?
+          {%- elif _starts | length == _todo | length -%} Apply changes and start Cassandra on {{ nodes }}?
+          {%- else -%} Apply changes on {{ nodes }}
+          {%-   for verb, them in [('restart', _restarts), ('start', _starts)] if them -%}
+                , {{ verb }} Cassandra on {{ them | community.cassandra.cassandra_node_list }} ({{ them | length }}
+                {{- ' node' if them | length == 1 else ' nodes' }})
+          {%-   else -%}, no Cassandra restart
+          {%-   endfor -%}?
+          {%- endif -%}
         cassandra_screen:
           operation: apply_config
           summary: >-
-            {{ _todo | length }} {{ 'node' if _todo | length == 1 else 'nodes' }} of {{ _cluster }} {{ 'would apply' if ansible_check_mode else 'to apply' }}
-            the {{ _what }}{{ (' and restart' if _restarts | length == _todo | length else ', '
-                                ~ _restarts | length ~ ' with a restart') if _restarts else '' }}{{
-            (', ' ~ _up_to_date | length ~ ' up to date') if _up_to_date else '' }}
+            {{ _todo | length }} {{ 'node' if _todo | length == 1 else 'nodes' }} of {{ _cluster }} to change ({{ _what }}){{
+               (': Cassandra restarts' ~ ('' if _restarts | length == _todo | length else ' on ' ~ _restarts | length))
+               if _restarts else (': Cassandra starts' ~ ('' if _starts | length == _todo | length else ' on ' ~ _starts | length))
+               if _starts else ', no Cassandra restart' }}{{ (', ' ~ _up_to_date | length ~ ' up to date') if _up_to_date else '' }}
           # (B19) the order, one line: the table below says what each node gets
           intro:
             - >-
-              {{ 'Order: live changes on their nodes at once, then the restarts, one node at a time.'
-                 if _restarts and (_os_nodes or _config_nodes | length > _restarts | length)
-                 else 'The restarts one node at a time.' if _restarts else 'Live changes, no restart.' }}
+              {%- set serial = ('restarts and starts' if _restarts and _starts else 'restarts' if _restarts else 'starts') -%}
+              {%- if (_restarts or _starts) and (_os_nodes or _todo | reject('in', _restarts + _starts) | list) -%}
+                Order: live changes on their nodes at once, then the Cassandra {{ serial }}, one node at a time.
+              {%- elif _restarts or _starts -%} Cassandra {{ serial }} one node at a time.
+              {%- elif _then_nodes['write'] | default([]) -%} No Cassandra restart; a Cassandra stopped stays stopped.
+              {%- else -%} Live changes, no restart.
+              {%- endif -%}
           # a real run: the settings that differ before its question (--check: in the recap, no question)
           sections:
             - "{{ [] if ansible_check_mode else [{'pre': cassandra_apply_config_diff | default([])}] }}"

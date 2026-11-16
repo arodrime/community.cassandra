@@ -960,8 +960,8 @@ nested one as ``parent.key``), the lines of the JVM options files and ``cassandr
 inventory's in aligned columns (the fixed words ``absent``, ``present``; the read-ahead in KB; passwords as ``****``, a
 changed one ``**** (another)``); a row too wide for the terminal has its nodes on the next line, a value is never cut.
 Then what each node gets, the nodes with the same outcome on one line (``node2, node4  would apply, then restart``).
-A real run shows them before its question (which names the restart: ``Apply the config on node1 of prod and restart
-it?``) and ends with what each node got; ``--check`` shows no plan: its recap is the plan, said once (the verdict
+A real run shows them before its question (which names the most disruptive effect: ``Apply changes and restart
+Cassandra on node1 of prod?``) and ends with what each node got; ``--check`` shows no plan: its recap is the plan, said once (the verdict
 with the restarts first, ``nothing was changed (--check)``, ``WHAT CHANGES``, ``WHAT HAPPENS``, the warnings).
 
 ``apply_config`` covers the OS settings of ``cassandra_linux`` too (kernel settings, limits, transparent huge pages,

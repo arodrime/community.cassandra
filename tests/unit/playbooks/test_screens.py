@@ -331,19 +331,28 @@ def test_apply_config_and_update_java_screens():
     # a real run: the settings that differ, then what each node gets, before its question
     text = screen(dict(cluster, ansible_play_hosts=["node1", "node2"], hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS,
                        cassandra_apply_config_diff=APPLY_DIFF), t["vars"], play["vars"])
-    assert text == ("APPLY CONFIG  1 node of Orders to apply the config and restart, 1 up to date\n"
-                    "  The restarts one node at a time.\n\n"
+    assert text == ("APPLY CONFIG  1 node of Orders to change (config): Cassandra restarts, 1 up to date\n"
+                    "  Cassandra restarts one node at a time.\n\n"
                     "  " + APPLY_DIFF[0] + "\n\n"
                     "  node1  write + restart\n  node2  up to date")
     question = Templar(loader=DataLoader(), variables=dict(trust(t["vars"]), **trust(play["vars"]), ansible_play_hosts=hosts,
                                                            hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS, **cluster))
-    assert question.template(trust_as_template(t["vars"]["cassandra_screen_question"])) == \
-        "Apply the config on node1, node3..node5 of Orders and restart node1 (1 node)?"
-    # (UX audit A2) every node to do restarted: the question says so; none: no restart named
+    # (UX audit A2) the question names the most disruptive effect, on which nodes: a Cassandra restart, a start
+    assert question.template(trust_as_template(t["vars"]["cassandra_screen_question"])) == (
+        "Apply changes on node1, node3..node5 of Orders, restart Cassandra on node1 (1 node),"
+        " start Cassandra on node4 (1 node)?")
     one = dict(variables_of(t, play, cluster), ansible_play_hosts=["node1", "node2"])
-    assert render_question(t, one) == "Apply the config on node1 of Orders and restart it?"
+    assert render_question(t, one) == "Apply changes and restart Cassandra on node1 of Orders?"
+    assert render_question(t, dict(one, ansible_play_hosts=["node4"])) == "Apply changes and start Cassandra on node4 of Orders?"
     one = dict(one, ansible_play_hosts=["node3", "node2"])
-    assert render_question(t, one) == "Apply the config on node3 of Orders?"
+    assert render_question(t, one) == "Apply changes on node3 of Orders, no Cassandra restart?"
+    # the head line says the same as the question
+    for hosts, head in ((["node1", "node4"], "APPLY CONFIG  2 nodes of Orders to change (config): Cassandra restarts on 1"),
+                        (["node4"], "APPLY CONFIG  1 node of Orders to change (config): Cassandra starts"),
+                        (["node5"], "APPLY CONFIG  1 node of Orders to change (config), no Cassandra restart")):
+        text = screen(dict(cluster, ansible_play_hosts=hosts, hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS,
+                           cassandra_apply_config_diff=APPLY_DIFF), t["vars"], play["vars"])
+        assert text.split("\n")[0] == head
     t, play = task("update_java.yml", "Show the plan and confirm the run")
     text = screen(dict(cluster, groups={"cassandra_update_java_True": ["node2"]}, cassandra_java_version=17,
                        hostvars={"node2": {"cassandra_update_java_running": "Java 11"}}), t["vars"], play.get("vars"))

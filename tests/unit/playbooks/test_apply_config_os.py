@@ -260,16 +260,21 @@ def test_swap_left_on_said_under_the_node_once(live, swapoff, said):
     assert "not _cassandra_linux_swap_said | default(false) | bool" in role_says["when"]
 
 
-@pytest.mark.parametrize("config, os_nodes, restarts, said", [
-    (["n1"], [], ["n1"], "The restarts one node at a time."),
-    ([], ["n1"], [], "Live changes, no restart."),
-    (["n1"], ["n2"], ["n1"], "Order: live changes on their nodes at once, then the restarts, one node at a time."),
-    (["n1", "n2"], [], ["n1"], "Order: live changes on their nodes at once, then the restarts, one node at a time.")])
-def test_the_intro_says_the_order_in_one_line(config, os_nodes, restarts, said):
+@pytest.mark.parametrize("todo, os_nodes, restarts, starts, write, said", [
+    (["n1"], [], ["n1"], [], [], "Cassandra restarts one node at a time."),
+    (["n1"], ["n1"], [], [], [], "Live changes, no restart."),
+    (["n1", "n2"], ["n2"], ["n1"], [], [], "Order: live changes on their nodes at once, then the Cassandra restarts, one node at a time."),
+    (["n1", "n2"], [], ["n1"], [], [], "Order: live changes on their nodes at once, then the Cassandra restarts, one node at a time."),
+    # (A2 review) a start is one node at a time too, never "live"; a Cassandra stopped and left so is no live change
+    (["n1", "n2"], [], ["n1"], ["n2"], [], "Cassandra restarts and starts one node at a time."),
+    (["n2"], [], [], ["n2"], [], "Cassandra starts one node at a time."),
+    (["n3"], [], [], [], ["n3"], "No Cassandra restart; a Cassandra stopped stays stopped.")])
+def test_the_intro_says_the_order_in_one_line(todo, os_nodes, restarts, starts, write, said):
     # (UX audit B19) one line, not a paragraph: the table below says what each node gets
     screen = FIND["tasks"][TASKS.index("Show the plan and confirm the run")]
     intro = screen["vars"]["cassandra_screen"]["intro"]
-    variables = {"_config_nodes": config, "_os_nodes": os_nodes, "_restarts": restarts}
+    variables = {"_todo": todo, "_os_nodes": os_nodes, "_restarts": restarts, "_starts": starts,
+                 "_then_nodes": {"write": write} if write else {}}
     assert [" ".join(render(i, variables).split()) for i in intro] == [said]
 
 
