@@ -8,6 +8,7 @@ __metaclass__ = type
 import os
 
 import pytest
+import yaml
 
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
@@ -86,6 +87,29 @@ def test_dirs_whose_owner_and_mode_are_checked(tmp_path):
     assert [r["item"] for r in found] == request["dir_stats"]
     assert found[0]["stat"]["isdir"] is True and found[0]["stat"]["mode"] == "0750" and found[0]["stat"]["islnk"] is False
     assert found[1]["stat"] == {"exists": False}
+
+
+def test_log_dir_of_the_role_unit_created(tmp_path):
+    # the role's unit sets CASSANDRA_LOG_DIR (a kept unit's, carried by the import): created with cassandra_log_dir
+    # (cassandra-env.sh's mkdir -p as the service user fails under a root-owned parent); not for a unit the role leaves
+    with open(os.path.join(os.path.dirname(TASKS), "..", "vars", "main.yml"), encoding="utf-8") as f:
+        role_vars = yaml.safe_load(f)
+
+    def dirs(**variables):
+        variables = dict({"cassandra_service_environment": {"CASSANDRA_LOG_DIR": "/srv/log"},
+                          "_cassandra_config_plain_path": role_vars["_cassandra_config_plain_path"]}, **variables)
+        unit_log_dir = render(role_vars["_cassandra_config_unit_log_dir"], **variables).strip()
+        return render(task(READ)["vars"]["_request"]["dirs"], cassandra_data_file_directories=["/d1"], cassandra_commitlog_dir="/cl",
+                      cassandra_saved_caches_dir="", cassandra_hints_dir="", cassandra_log_dir="/var/log/cassandra",
+                      _cassandra_config_unit_log_dir=unit_log_dir, _cassandra_config_more_dirs=[])
+
+    assert dirs() == ["/d1", "/cl", "/var/log/cassandra", "/srv/log"]
+    assert dirs(cassandra_service_unit_manage=False) == ["/d1", "/cl", "/var/log/cassandra"]
+    assert dirs(cassandra_service_start="sysv") == ["/d1", "/cl", "/var/log/cassandra"]
+    assert dirs(cassandra_service_environment={}) == ["/d1", "/cl", "/var/log/cassandra"]
+    assert dirs(cassandra_service_environment={"CASSANDRA_LOG_DIR": "$HOME/log"}) == ["/d1", "/cl", "/var/log/cassandra"]
+    # missing ones: created by apply.yml, owned by the service user, as the log dir
+    assert task("Create the missing ones")["ansible.builtin.file"]["mode"] == "0750"
 
 
 def test_dir_owner_and_mode_set_on_the_top_level_only():

@@ -3,7 +3,7 @@
 # directory would cost a round trip each): files/config_read.py, whose
 # results are shaped as the stat, slurp and command tasks would register
 # them. The package creates the stock directories only: others (a data
-# disk, a log dir) must exist, owned by the service user, before the node
+# disk, a log dir, the one of the role's unit) must exist, owned by the service user, before the node
 # first starts (created in apply.yml, their missing parents root-owned, 0755).
 # The live cassandra.yaml: read for the paths it holds (an initialized
 # node). The owner and mode of the live files (the JMX users' files when
@@ -24,7 +24,7 @@
       step: node
       dirs: >-
         {{ (cassandra_data_file_directories + [cassandra_commitlog_dir, cassandra_saved_caches_dir,
-            cassandra_hints_dir, cassandra_log_dir] + _cassandra_config_more_dirs | map(attribute=1) | flatten)
+            cassandra_hints_dir, cassandra_log_dir, _cassandra_config_unit_log_dir] + _cassandra_config_more_dirs | map(attribute=1) | flatten)
            | select | unique | list }}
       yaml: "{{ cassandra_conf_dir }}/cassandra.yaml"
       conf_target: "{{ '/etc/cassandra/conf' if ansible_facts['os_family'] == 'RedHat' and cassandra_rpm_conf_alternative != '' else '' }}"

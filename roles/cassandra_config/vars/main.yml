@@ -180,6 +180,15 @@ _cassandra_config_more_dirs: >-
                                                   | regex_replace('(?<=.)/+$', '')) ~ '/cdc_raw']]]
       if cassandra_cdc_raw_dir or cassandra_cdc_enabled | bool else [])
      + ([['heap dump dir', [cassandra_heap_dump_dir]]] if cassandra_heap_dump_dir is match(_cassandra_config_plain_path) else []) }}
+# The log dir of the role's unit (cassandra_service) when its environment sets one: it wins over cassandra-env.sh's
+# (cassandra_log_dir), created as that one (cassandra-env.sh's mkdir -p, as the service user, fails under a root-owned
+# parent); none when the node starts otherwise (a unit kept: its own log dir is there)
+_cassandra_config_unit_log_dir: >-
+  {{ (cassandra_service_environment | default({})).CASSANDRA_LOG_DIR | default('')
+     if cassandra_service_unit_manage | default(true) | bool and cassandra_service_start | default('unit') == 'unit'
+        and cassandra_service_environment | default({}) is mapping
+        and (cassandra_service_environment | default({})).CASSANDRA_LOG_DIR | default('') | string is match(_cassandra_config_plain_path)
+     else '' }}
 # Variables of keys Cassandra has from a series or a patch release on: {variable: [its key, that series or release]}
 # (the role refuses them set for an earlier release, _cassandra_config_release: Cassandra would not start, or the
 # series' template has no line for them)
