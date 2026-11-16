@@ -1,0 +1,6 @@
+minor_changes:
+  - >-
+    import_cluster - run with ``-i <node>,`` while ansible.cfg (or ``ANSIBLE_INVENTORY``) names an inventory on disk,
+    the report says under ``WORTH A LOOK`` that this inventory was not read, so its variables (e.g.
+    ``cassandra_cqlsh_command`` in its group_vars) did not apply to the run, and the way out: run without ``-i``,
+    with ``-e cassandra_hosts=<cluster group>``.

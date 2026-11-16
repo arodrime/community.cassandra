@@ -1802,6 +1802,20 @@
     # what the playbooks are run with on this inventory: no -i when it is ansible.cfg's, no -e cassandra_hosts
     # when it holds this cluster alone (no other inventory file at its top)
     _next_inventory: "{{ '' if lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') | map('realpath') | list == [_dir] else _dir }}"
+    # -i <node>, while ansible.cfg (or ANSIBLE_INVENTORY) names an inventory on disk: that one was not read, its
+    # variables (e.g. cassandra_cqlsh_command in its group_vars) did not apply to this run (/etc/ansible/hosts, the
+    # stock default: not named)
+    _inventory_unread: >-
+      {{ lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') | select('exists') | map('realpath')
+         | reject('equalto', '/etc/ansible/hosts')
+         | reject('in', ansible_inventory_sources | select('exists') | map('realpath') | list) | list
+         if ansible_inventory_sources | reject('exists') | list | length > 0 else [] }}
+    _look: >-
+      {{ [] if not _inventory_unread else
+         [['the inventory of ansible.cfg (' ~ _inventory_unread | join(', ') ~ ') was not read: this run had -i '
+           ~ ansible_inventory_sources | reject('exists') | join(' '),
+           'its variables did not apply to this run (e.g. cassandra_cqlsh_command in its group_vars); to import with'
+           ~ ' them: run without -i, with -e cassandra_hosts=' ~ _layout.cluster_group]] }}
     _next_hosts: >-
       {{ _layout.cluster_group if import_cluster_existing.files | default([]) | map(attribute='path') | map('relpath', _dir)
                                   | reject('match', '(group_vars|host_vars)/') | reject('match', '(.*/)?[.]')
@@ -1833,6 +1847,7 @@
       cwd: "{{ lookup('ansible.builtin.env', 'PWD') }}"
       allow_unread: "{{ import_allow_unread | default(false) | bool }}"
       todo: "{{ _cql_todo + _cqlsh_todo }}"
+      look: "{{ _look }}"
     _report: >-
       {{ _layout | community.cassandra.cassandra_import_report(_report_args.written, _report_args.report_file,
            _self_check | default({}), _self_check_ok | bool, secrets_clear=_report_args.secrets_clear,
@@ -1840,6 +1855,7 @@
            inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
            allow_unread=_report_args.allow_unread | bool,
            self_check_error=_self_check_error | default(''), changes=_changes, todo=_report_args.todo,
+           look=_report_args.look,
            convergence=_convergence) | join(_newline) }}
     # report.details.txt: what report.txt leaves out (the settings, versions, convergence, OS, each node's lines)
     _report_details: >-
@@ -1849,6 +1865,7 @@
            inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
            allow_unread=_report_args.allow_unread | bool,
            self_check_error=_self_check_error | default(''), changes=_changes, todo=_report_args.todo,
+           look=_report_args.look,
            convergence=_convergence, details=true) | join(_newline) }}
     # CONVERGENCE (report.txt, FOR INFO): how far the cluster is from one group, every setting in group_vars (what to
     # change, and how); output only: the inventory is written as it is
@@ -2462,6 +2479,7 @@
                inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
                allow_unread=_report_args.allow_unread | bool,
                self_check_error=_self_check_error | default(''), changes=_changes, todo=_report_args.todo,
+               look=_report_args.look,
                screen=true, strict=import_strict | default(true) | bool,
                shareable=import_report_shareable | default(true) | bool) }}
       vars:

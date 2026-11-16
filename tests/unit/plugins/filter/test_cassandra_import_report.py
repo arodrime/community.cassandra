@@ -1362,3 +1362,16 @@ def test_one_merged_keep_option_in_every_way_out():
     # every hand-edited file: true stands for the files, the parts stay named
     assert _keep_option(layout, "true").replace(u" ", " ") == "-e import_keep_hand_edits=true,thp,unit"
     assert _keep_option({}, "os").replace(u" ", " ") == "-e import_keep_hand_edits=os"
+
+
+def test_an_entry_of_the_run_worth_a_look():
+    # the playbook's own (the inventory of ansible.cfg a -i <node>, run did not read): an entry as the others
+    look = [("the inventory of ansible.cfg (/p/inventories) was not read: this run had -i node1,",
+             "its variables did not apply to this run")]
+    lines = report([node(i) for i in range(1, 4)], details=False, look=look)
+    assert section(lines, "WORTH A LOOK") == [
+        "    the inventory of ansible.cfg (/p/inventories) was not read: this run had -i node1,",
+        "      its variables did not apply to this run"]
+    assert lines[0].endswith("1 entry to review: 1 thing worth a look")
+    assert section(report([node(i) for i in range(1, 4)], screen=True, look=look), "WORTH A LOOK")[0] == lines[
+        heading(lines, "WORTH A LOOK") + 2]

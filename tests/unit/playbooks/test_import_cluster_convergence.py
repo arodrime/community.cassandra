@@ -44,7 +44,7 @@ def playbook(tmp_path, self_check_ok=True):
                       "written": [str(tmp_path / "inventories" / "big.yml"), str(tmp_path / "inventories")],
                       "report_file": report_dir + "{{ '/report.check.txt' if ansible_check_mode else '/report.txt' }}",
                       "secrets_clear": [], "check": "{{ ansible_check_mode }}", "inventory": "", "hosts": "",
-                      "cwd": str(tmp_path), "allow_unread": True, "todo": []}}}] + TASKS}]
+                      "cwd": str(tmp_path), "allow_unread": True, "todo": [], "look": []}}}] + TASKS}]
     (tmp_path / "summary.yml").write_text(yaml.safe_dump(plays, sort_keys=False))
 
 

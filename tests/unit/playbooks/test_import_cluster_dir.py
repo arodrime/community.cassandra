@@ -497,3 +497,27 @@ def test_dirs_there_left_alone(stat, created):
     task = TASKS["Create the dirs"]
     item = {"item": "host_vars/n1"} if stat is None else {"item": "host_vars/n1", "stat": stat}
     assert render("{{ %s }}" % task["when"], item=item) is created
+
+
+def test_a_configured_inventory_not_read_is_worth_a_look(tmp_path):
+    # -i <node>, while ansible.cfg names an inventory on disk: its variables did not apply, the report says so
+    configured = tmp_path / "inventories"
+    (configured / "group_vars" / "all").mkdir(parents=True)
+
+    def look(sources, default_list):
+        variables = dict(_layout={"cluster_group": "prod"}, ansible_inventory_sources=sources, default_list=default_list)
+        variables["_inventory_unread"] = render(WRITE_VARS["_inventory_unread"].replace(
+            "lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST')", "default_list"), **variables)
+        return render(WRITE_VARS["_look"], **variables)
+
+    found = look(["node1,"], [str(configured)])
+    assert found == [["the inventory of ansible.cfg (%s) was not read: this run had -i node1," % configured.resolve(),
+                      "its variables did not apply to this run (e.g. cassandra_cqlsh_command in its group_vars); to"
+                      " import with them: run without -i, with -e cassandra_hosts=prod"]]
+    assert look([str(configured)], [str(configured)]) == []  # read: nothing to say
+    assert look([str(configured), "node1,"], [str(configured)]) == []
+    assert look(["node1,"], [str(tmp_path / "absent")]) == []  # none on disk
+    assert look(["node1,"], ["/etc/ansible/hosts"]) == []  # the stock default
+    assert look([str(tmp_path)], [str(configured)]) == []  # another inventory of files: your choice
+    assert WRITE_VARS["_report_args"]["look"] == "{{ _look }}"
+    assert all(t.count("look=_report_args.look") for t in [WRITE_VARS["_report"], WRITE_VARS["_report_details"]])

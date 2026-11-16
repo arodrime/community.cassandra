@@ -1570,14 +1570,19 @@ def _where_lines(report, settings):
     return [line for a, b in rows for line in fill_text(a.ljust(room) + b, report.width, "", " " * (room + 2))]
 
 
-def _review_blocks(report, data, differs, allow_unread):
-    """TO REVIEW: [(kind, how many, its entry lines)], the kinds with entries only."""
+def _review_blocks(report, data, differs, allow_unread, look=None):
+    """TO REVIEW: [(kind, how many, its entry lines)], the kinds with entries only; look: more things worth a look,
+    [(what, what to do)] (the run's own: an inventory not read)."""
     blocks = [(HAND, sum(len(v) for dummy, v in data["edits"]), _hand_entries(report, data["edits"])
                + _hand_extra(report)),
               (KEPT, len(set(f for dummy, f in data["kept"])), _kept_entries(report, data["kept"])),
               (MOVED, len(_by_value([(n["name"], line, "") for n in report.read for line in n.get("moved") or []
                                      if " -> " in line])), _moved_entries(report))]
-    blocks.append((TO_CHECK,) + _to_check_entries(report))
+    count, entries = _to_check_entries(report)
+    for what, todo in look or []:
+        count += 1
+        entries += _entry(report, what, None, todo)
+    blocks.append((TO_CHECK, count, entries))
     blocks.append((DIFFERS, len(differs), _differs_entries(report, differs)))
     if report.unread and allow_unread:
         blocks.append((UNREAD, len(report.unread), _entry(
@@ -1873,7 +1878,7 @@ def _ruled(lines, width, screen):
 def cassandra_import_report(layout, written, report_file, self_check, self_check_ok, secrets_clear=None,
                             leftovers=None, check=False, inventory="", hosts="", allow_unread=False, screen=False,
                             self_check_error="", cwd=None, in_git=None, changes=None, todo=None, width=None,
-                            strict=False, convergence=None, shareable=False, details=False):
+                            strict=False, convergence=None, shareable=False, details=False, look=None):
     """layout: cassandra_inventory_layout's (its nodes); written: [the hosts file, the inventory dir];
     report_file: where report.txt goes (report.check.txt under --check); self_check: {node: {differences, notes}};
     self_check_ok; secrets_clear: the secrets.yml files written in clear; leftovers: cassandra_inventory_leftovers';
@@ -1887,7 +1892,8 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     strict: import_strict (the run stops on a failed self-check, its HOW TO MAKE IT PASS below the
     screen); convergence: the lines of the CONVERGENCE section (cassandra_import_convergence's), under FOR INFO;
     shareable: import_report_shareable (the screen names the copy too); details: the lines of
-    report.details.txt instead (the settings, versions, convergence, OS, what was read on each node). Returns the
+    report.details.txt instead (the settings, versions, convergence, OS, what was read on each node); look: more
+    WORTH A LOOK entries, [(what, what to do)] (the configured inventory a -i <node>, run did not read). Returns the
     lines.
     e.g. -> ["IMPORT big_cluster  88 nodes  3 to act on: 3 hand edits", "  self-check passed: ...", ...]."""
     cluster = layout["cluster_group"]
@@ -1911,7 +1917,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     steps = _todo_steps(report, allow_unread, self_check_ok, self_check_error, data["check_items"], secrets_clear,
                         leftovers, inventory_dir, list(todo or []), in_git, inventory, hosts)
     differs = _differs(report, data["settings"])
-    reviews = _review_blocks(report, data, differs, allow_unread)
+    reviews = _review_blocks(report, data, differs, allow_unread, look)
     lines = _head_lines(report, cluster, hosts_file, report_file, self_check_ok, same, steps, reviews)
     if steps:
         lines += ["", "TO DO"]
