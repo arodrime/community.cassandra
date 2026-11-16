@@ -1732,6 +1732,24 @@ WORDS_USED = (
 )
 
 
+# the section of the files apply_config rewrites with no effect (the self-check's notes)
+REWRITES = "APPLY_CONFIG WILL REWRITE (no effect)"
+
+
+def _apply_config_expects(moves, heap_moved, rewrites):
+    """What apply_config --check --diff shows on the nodes imported: the files the JVM arguments move in (moves; the
+    heap among them: heap_moved), the rewrites with no effect (rewrites) -> text."""
+    if not moves:
+        return "only the rewrites under %s" % REWRITES if rewrites else "nothing to apply"
+    text = "%s rewritten: " % ", ".join(moves)
+    if heap_moved:
+        text += "the heap moves to jvm-server.options, "
+    text += "the same JVM arguments, "
+    if rewrites:
+        return text + "and the rewrites under %s" % REWRITES
+    return text + "nothing else"
+
+
 def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, changes, changed, removed, same, moves,
                 inventory, hosts, rewrites=False):
     """WHAT TO DO NEXT: the next steps, numbered, the commands to copy -> [line]."""
@@ -1757,12 +1775,8 @@ def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, ch
                                cwd=report.cwd)
         items.append("Check that the inventory changes nothing on the nodes (these two commands only look, they"
                      " change nothing): %s %s expect %s; %s %s expect nothing to do." % (
-                         unbreakable(apply_check), ARROW_RIGHT,
-                         "%s rewritten: %sthe same JVM arguments, %s" % (", ".join(moves), (
-                             "the heap moves to jvm-server.options, " if heap_moved else ""), (
-                             "and the rewrites under APPLY_CONFIG WILL REWRITE" if rewrites else "nothing else"))
-                         if moves else "only the rewrites under APPLY_CONFIG WILL REWRITE (no effect)" if rewrites
-                         else "nothing to apply", unbreakable(topology), ARROW_RIGHT))
+                         unbreakable(apply_check), ARROW_RIGHT, _apply_config_expects(moves, bool(heap_moved), rewrites),
+                         unbreakable(topology), ARROW_RIGHT))
     if not items:
         items.append("Nothing: the inventory matches the nodes.")
     lines = ["WHAT TO DO NEXT"]
@@ -1924,7 +1938,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
         lines += ["", "KEPT BY HAND (your choice)"] + by_hand
     rewrites = _no_effect_lines(report, self_check)
     if rewrites:
-        lines += ["", "APPLY_CONFIG WILL REWRITE (no effect)"] + rewrites
+        lines += ["", REWRITES] + rewrites
     left = _left_alone_lines(report)
     if KEPT in blocks or left:
         lines += ["", "LEFT AS THE NODES HAVE THEM"] + blocks.get(KEPT, []) + left

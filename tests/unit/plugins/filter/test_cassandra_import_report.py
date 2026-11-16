@@ -1319,6 +1319,18 @@ def test_files_written_with_no_effect_listed_apart_once_with_their_nodes():
     assert "expect nothing to apply" in " ".join(" ".join(line.split()) for line in lines)
 
 
+def test_next_step_with_files_moved_and_rewrites_names_the_section():
+    """JVM arguments moved and files rewritten with no effect: the next step names the section as it is titled."""
+    note = "cassandra_linux: 90-nproc.conf: absent -> cassandra nproc 32768, no effect (the node keeps the values it" \
+           " has now)"
+    lines = report([node(1, rewritten=["cassandra-env.sh"])], self_check={"node1": {"differences": [], "notes": [note]}},
+                   details=False)
+    assert "APPLY_CONFIG WILL REWRITE (no effect)" in lines
+    steps = " ".join(" ".join(line.split()) for line in section(lines, "WHAT TO DO NEXT"))
+    assert ("expect cassandra-env.sh rewritten: the same JVM arguments, and the rewrites under APPLY_CONFIG WILL REWRITE"
+            " (no effect);") in steps
+
+
 def test_parts_kept_said_in_one_sentence():
     """sysctl,firewall: "the kernel settings and the firewall", not joined by a semicolon (hostile S15)."""
     sysctl = "cassandra_linux: sysctl vm.swappiness (/etc/sysctl.conf): node has 10, the roles would set removed"
