@@ -1,0 +1,2 @@
+bugfixes:
+  - "CQL login check (import_cluster) - exit code 127 alone no longer reports ``no cqlsh in the PATH of root``: a cause is said only from cqlsh's matched error text (cqlsh not found, ``/usr/bin/env`` missing its interpreter, a host not reached, a file or module missing); otherwise the exit code and the command to run as root on the node to see the error."

@@ -77,7 +77,11 @@ def _why(err="", msg="", rc=1, command=None):
 
 def test_not_found_only_when_cqlsh_itself_is_missing():
     no_path = "no cqlsh in the PATH of root on n1: cassandra_cqlsh_command gives the full path of one"
-    assert _why(rc=127) == no_path
+    # (UX audit A3) exit code 127 alone is no cause (a cqlsh script whose interpreter is missing gives it too)
+    see_default = "; to see its error, run as root on n1: cqlsh 10.0.0.1 9142 -u alice"
+    assert _why(rc=127, err="/usr/bin/env: 'python3': No such file or directory") == (
+        "cqlsh failed on n1: no python3 for its first line (#! /usr/bin/env python3)" + see_default)
+    assert _why(rc=127, err="something else") == "cqlsh failed on n1 (exit code 127)" + see_default
     assert _why(rc=2, msg="[Errno 2] No such file or directory: b'cqlsh'") == no_path
     assert _why(err="sudo: cqlsh: command not found") == no_path
     venv = "/opt/cqlsh/bin/cqlsh"
@@ -92,7 +96,7 @@ def test_not_found_only_when_cqlsh_itself_is_missing():
     assert secret not in why
     assert _why(err="ModuleNotFoundError: No module named 'cassandra'", command=venv) == (
         "cqlsh failed on n1: its Python could not load a module it needs" + see)
-    assert _why(err="something else " + secret, command=venv) == "cqlsh failed on n1" + see
+    assert _why(err="something else " + secret, command=venv) == "cqlsh failed on n1 (exit code 1)" + see
     reach = "cqlsh could not reach 10.0.0.1 port 9142 from n1"
     assert _why(err="Connection error: ('Unable to connect to any servers', ...)") == reach
     # (production: refused at the address, with a file named missing in the same text): the connection says why
