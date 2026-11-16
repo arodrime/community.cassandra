@@ -51,7 +51,7 @@ description:
     node's state, down as an error, joining, leaving or moving as a change. The messages themselves stay plain text.
   - Rules mark the blocks out. A heavy one (C(=====)) above a plan or a screen (its first line C(REFUSED  ...),
     C(READY  ...), C(IMPORT <cluster> ...), or a plan's title, the operation in capitals (C(ADD NODE  ...)))
-    and around a recap (C(DONE  ...), C(FAILED  ...), C(STOPPED at ...), C(WAY OUT  ...), C(CHECK  ...), C(NOTHING TO DO  ...),
+    and around a recap (C(DONE  ...), C(FAILED  ...), C(STOPPED  ...), C(WAY OUT  ...), C(CHECK  ...), C(NOTHING TO DO  ...),
     C(HEALTHY  ...), C(NOT HEALTHY  ...)), around the C(status) playbook's verdict, its first lines (and the
     warning under it), and under its tables. A light one (C(-----)) for each empty line inside them (the blank lines of the status
     report stay blank), under a plan's first line and above a question; a heavy one for a line of C(=) inside them,
@@ -197,11 +197,11 @@ PROGRESS_COLOR = "cyan"  # the progress, phase and NOTE lines (option progress_c
 _OPERATIONS = ("add_node", "replace_node", "decommission_node", "remove_dead_node", "reset_node", "move_node", "stop_rack",
                "start_rack", "change_seeds", "apply_config", "update_java", "sync_clocks", "add_datacenter",
                "remove_datacenter", "create_cluster", "upgrade", "cleanup", "topology", "rolling_restart", "rolling_reboot")
-# a plan or a screen (its first line), a recap (a stop block: "STOPPED at node2: ...", "WAY OUT  ..." too)
+# a plan or a screen (its first line), a recap (a stop block: "STOPPED  rolling_restart  prod  at node2", "WAY OUT  ..." too)
 _HEADED = re.compile(r"(PLAN|REFUSED|READY|NOTHING TO DO|%s)  |IMPORT \S+ " % "|".join(
     operation.replace("_", " ").upper() for operation in _OPERATIONS))
 _HEAVY = re.compile(r"(?:==== (\S.*?) )?={4,}$")  # a rule of = inside a screen, a title in it or not: its heavy rule
-_RECAP = re.compile(r"(DONE|FAILED|CHECK|HEALTHY|NOT HEALTHY|NOTHING TO DO|WAY OUT)  |(STOPPED|FAILED) at ")
+_RECAP = re.compile(r"(DONE|FAILED|STOPPED|CHECK|HEALTHY|NOT HEALTHY|NOTHING TO DO|WAY OUT)  |(STOPPED|FAILED) at ")
 # a verdict block without rules, coloured by its lines (its blank lines blank): import_cluster's failed self-check
 _BLOCK = re.compile(u"SELF-CHECK FAILED \u2014 ")
 # a progress line: a step of a rolling operation ("[2/5] node2  restart  ..."), or a wait outside one (_WAIT); the
@@ -725,7 +725,7 @@ class CallbackModule(DefaultCallback):
 
     def _verdict(self, result):
         """The verdict lines; the host first when the task runs on each host, unless the verdict names
-        it already ("STOPPED at node2: ..."). A run_once verdict the same task gave already is not printed
+        it already ("STOPPED  rolling_restart  prod  at node2"). A run_once verdict the same task gave already is not printed
         again (ansible-core 2.15 and 2.16 run a run_once task of a rescue again for the hosts
         any_errors_fatal sends there later)."""
         msg = lines(_result(result)["msg"])

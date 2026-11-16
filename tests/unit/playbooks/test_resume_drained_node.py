@@ -161,13 +161,28 @@ def test_a_failed_node_s_stage_is_recorded_for_its_row():
     assert start["ansible.builtin.set_fact"]["_cassandra_op_stage"] == "before"
     at = names.index("Run the action")
     assert OPERATION["block"][at - 1]["ansible.builtin.set_fact"] == {"_cassandra_op_stage": "during"}
-    assert OPERATION["block"][at + 1]["ansible.builtin.set_fact"] == {"_cassandra_op_stage": "after"}
+    after = OPERATION["block"][at + 1]["ansible.builtin.set_fact"]["_cassandra_op_stage"]
+    # (A1 review) "after" (its row says "restarted") only once the node was seen NORMAL again (wait_normal.yml)
+    assert render(after, cassandra_service_node_action="restart", _cassandra_op_to_normal="42") == "after"
+    assert render(after, cassandra_service_node_action="restart", _cassandra_op_to_normal="") == "unconfirmed"
+    assert render(after, cassandra_service_node_action="reboot") == "unconfirmed"
+    assert render(after, cassandra_service_node_action="decommission", _cassandra_op_to_normal="") == "after"
     results = load("roles", "cassandra_operation", "vars", "main.yml")["_cassandra_op_results"]
     hostvars = {"n1": {"cassandra_op_result": "restart done in 3s", "_cassandra_op_stage": "after"},
-                "n2": {"cassandra_op_result": "restart FAILED after 9s: cluster unhealthy", "_cassandra_op_stage": "after"},
+                "n2": {"cassandra_op_result": "restart FAILED after 9s: cluster health check failed", "_cassandra_op_stage": "after"},
                 "n3": {}}
     # (groups, cassandra_hosts: ansible-core 2.16 renders the default's lookup too)
     rendered = render(results, hostvars=hostvars, cassandra_service_summary_hosts=HOSTS, ansible_play_hosts_all=HOSTS,
                       groups={"prod": HOSTS}, cassandra_hosts="prod")
-    assert rendered[1] == {"node": "n2", "result": "restart FAILED after 9s: cluster unhealthy", "stage": "after"}
+    assert rendered[1] == {"node": "n2", "result": "restart FAILED after 9s: cluster health check failed", "stage": "after"}
     assert rendered[2] == {"node": "n3", "result": "not reached", "stage": ""}
+
+
+def test_a_node_the_run_did_not_get_to_is_not_said_not_reached():
+    # (A1 review) a node still in the play with no result: the run stopped before it ("not touched"), not
+    # "not reached" (said of a host Ansible did not reach); one out of the play (unreachable) stays "not reached"
+    results = load("roles", "cassandra_operation", "vars", "main.yml")["_cassandra_op_results"]
+    rendered = render(results, hostvars={"n1": {"cassandra_op_result": "restart done in 3s"}, "n2": {}, "n3": {}},
+                      cassandra_service_summary_hosts=HOSTS, ansible_play_hosts_all=HOSTS, ansible_play_hosts=["n1", "n2"],
+                      groups={"prod": HOSTS}, cassandra_hosts="prod")
+    assert [r["result"] for r in rendered] == ["restart done in 3s", "not run yet", "not reached"]

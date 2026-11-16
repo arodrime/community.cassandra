@@ -144,7 +144,7 @@
 # node_operation.yml says both once, with the command to resume
 - name: Name the stop for the table of the stop block
   ansible.builtin.set_fact:
-    _cassandra_stop_word: cluster unhealthy
+    _cassandra_stop_word: cluster health check failed
   when:
     - cassandra_health_problems | length > 0
     - not cassandra_service_health_force | bool
@@ -153,10 +153,10 @@
 - name: Stop on an unhealthy cluster
   ansible.builtin.fail:
     msg: >-
-      {{ [cassandra_health_problems | join('; ')
-          ~ ((', ' ~ (now().timestamp() | int - _cassandra_health_wait_start | int) | community.cassandra.cassandra_duration
-              ~ ' waited (cassandra_service_health_timeout ' ~ cassandra_service_health_timeout ~ 's).')
-             if _cassandra_health_waited | default(false) | bool else '.')]
+      {{ cassandra_health_problems
+         + (['waited ' ~ (now().timestamp() | int - _cassandra_health_wait_start | int) | community.cassandra.cassandra_duration
+             ~ ' (cassandra_service_health_timeout: ' ~ cassandra_service_health_timeout ~ 's)']
+            if _cassandra_health_waited | default(false) | bool else [])
          + (['Not counted, marked cassandra_node_state: absent: ' ~ _absent | join(', ')
              ~ '. Still in the ring? The playbook topology removes them.']
             if _absent and cassandra_health_problems | select('search', '^the ring has ') | list else [])
@@ -176,7 +176,7 @@
       {%- for p in cassandra_health_problems | select('search', ' is D[NLJM],') | unique -%}
       {%-   set name = p | regex_replace(' \(.*$', '') -%}
       {%-   set address = (p | regex_findall('^\S+ \(([^,)]+)') + [name]) | first -%}
-      {%-   set _ = out.extend(['if ' ~ name ~ ' is lost for good, replace it (NEW_NODE: the host that takes its place):',
+      {%-   set _ = out.extend(['if ' ~ name ~ ' is lost for good, replace it (NEW_NODE: the new host):',
                                 '  ' ~ 'replace_node' | community.cassandra.cassandra_command(
                                    extra=['-e cassandra_target_nodes=NEW_NODE', '-e cassandra_replace_address=' ~ address],
                                    **_cassandra_run_command_args),

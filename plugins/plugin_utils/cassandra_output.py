@@ -1653,7 +1653,7 @@ def recap(operation, cluster, outcomes, check=False, seconds=None, extra=None, f
     after, versions...). full: every name (-v). head: False for the table
     alone (the STOPPED block says the verdict); causes: False when the cause
     of a failure is said elsewhere (that block): its row reads what was done
-    to the node (row: "restarted, then stopped: cluster unhealthy"), else
+    to the node (row: "restarted; cluster health check failed"), else
     "not done" and the reason as a word on it, no line under."""
     outcomes = list(outcomes or [])
     for item in outcomes:
@@ -1675,10 +1675,14 @@ def recap(operation, cluster, outcomes, check=False, seconds=None, extra=None, f
     for word, members in groups.items():
         rows += _recap_done_rows(word, members, check, full, slow_factor)
     # a failure's reason on its own line under its row: the columns are not sized on it
-    under = {}
+    under, spans = {}, {}
     for o in failed:
-        if not causes:  # what was done to it (row), else "not done" and its reason
-            rows.append([o["node"], o["row"], ""] if o.get("row") else [o["node"], "not done", o.get("reason") or ""])
+        if not causes:  # what was done to it (row: the columns are not sized on it), else "not done" and its reason
+            if o.get("row"):
+                spans[len(rows)] = o["row"]
+                rows.append([o["node"]])
+            else:
+                rows.append([o["node"], "not done", o.get("reason") or ""])
             continue
         if o.get("reason"):
             under[len(rows)] = "    %s" % (o["reason"][len("refused: "):] if refused else o["reason"])
@@ -1688,7 +1692,9 @@ def recap(operation, cluster, outcomes, check=False, seconds=None, extra=None, f
         reasons.setdefault(o.get("reason") or "", []).append(o["node"])
     for reason, names in reasons.items():
         rows.append([nodes(names, keep_order=True, full=full), "not touched" + (" (%s)" % reason if reason else ""), ""])
+    first = max(len(str(r[0])) for r in rows) if rows else 0
     for i, line in enumerate(table(rows, "  ")):
+        line = "  %s  %s" % (str(rows[i][0]).ljust(first), spans[i]) if i in spans else line
         lines += [line] + ([under[i]] if i in under else [])
     if extra:
         lines += [""] + list(extra)

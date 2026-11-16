@@ -196,7 +196,7 @@ RESTART_LOOP = {"failed": True, "msg": "One or more items failed", "results": [
     ("n2", RESTART_LOOP, "restart FAILED: Unable to restart service cassandra"),
     ("n1", RESTART_LOOP, "restart not finished: the rack stopped at n2"),  # not counted as failed by the recap
     # one of our stops (its WAY OUT line): a word for the table, the cause is in the stop block
-    ("n1", {"failed": True, "msg": ["n4 (10.0.0.4, r1) is DN, seen from n1.", "WAY OUT  start n4"]}, "restart FAILED: cluster unhealthy"),
+    ("n1", {"failed": True, "msg": ["n4 (10.0.0.4, r1) is DN, seen from n1.", "WAY OUT  start n4"]}, "restart FAILED: cluster health check failed"),
     ("n1", {"failed": True, "msg": "boom"}, "restart FAILED: a task failed"),
     # the wait for Mode NORMAL out of retries: netstats' own result, no msg
     ("n3", {"failed": True, "msg": "One or more items failed",
@@ -205,7 +205,7 @@ RESTART_LOOP = {"failed": True, "msg": "One or more items failed", "results": [
 ])
 def test_rack_failure_names_the_node_that_failed(node, failure, said):
     record = next(t for t in RACK["rescue"] if t["name"] == "Record the failure")
-    word = "cluster unhealthy" if "WAY OUT" in str(failure) else ""  # the health check's stop names itself (cluster_health.yml)
+    word = "cluster health check failed" if "WAY OUT" in str(failure) else ""  # the health check's stop names itself (cluster_health.yml)
     assert render(record["ansible.builtin.set_fact"]["cassandra_op_result"], item=node, ansible_failed_result=failure,
                   _cassandra_stop_word=word, **record.get("vars", {})) == said
 
@@ -482,3 +482,18 @@ def test_dead_node_checked_once_the_ring_is_read(target, ok):
 def test_one_dead_node_per_run(target, ok):
     variables = dict(REMOVE["vars"], cassandra_target_nodes=target)
     assert all(render("{{ %s }}" % c, **variables) for c in REQUEST["that"]) is ok
+
+
+def test_the_rack_s_nodes_say_how_far_they_went():
+    # (A1 review) a rack stopped by the health check before it: its nodes "not touched"; once drained (some node
+    # answered), "restart started, not finished": never "not done" for a node restarted but not back in time
+    names = [t["name"] for t in RACK["block"]]
+    stages = dict((t["name"], t["ansible.builtin.set_fact"]["_cassandra_op_stage"]) for t in RACK["block"]
+                  if "_cassandra_op_stage" in t.get("ansible.builtin.set_fact", {}))
+    assert stages == {"Note the rack's nodes not touched yet": "before", "Note that the rack's restart has started": "during"}
+    assert (names.index("Note the rack's nodes not touched yet") < names.index("Check the cluster before the rack")
+            < names.index("Stop when no node of the rack answered") < names.index("Note that the rack's restart has started")
+            < names.index("Restart them"))
+    for name in stages:
+        task = RACK["block"][names.index(name)]
+        assert task["delegate_to"] == "{{ item }}" and task["delegate_facts"] is True and task["loop"] == "{{ _todo }}"

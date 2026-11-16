@@ -41,9 +41,24 @@ def test_a_node_lost_for_good_gets_full_commands():
     # (UX audit B17) each way out a command to paste, not a playbook's name
     lines = said(False, ["n4 (10.0.0.4, r1) is DN, seen from n1"])
     assert lines[2:] == [
-        "if n4 is lost for good, replace it (NEW_NODE: the host that takes its place):",
+        "if n4 is lost for good, replace it (NEW_NODE: the new host):",
         "  ansible-playbook -i hosts.yml community.cassandra.replace_node -e cassandra_hosts=prod"
         " -e cassandra_target_nodes=NEW_NODE -e cassandra_replace_address=10.0.0.4",
         "as a last resort only, remove it from the ring:",
         "  ansible-playbook -i hosts.yml community.cassandra.remove_dead_node -e cassandra_hosts=prod"
         " -e cassandra_target_nodes=10.0.0.4"]
+
+
+def test_each_problem_and_the_wait_on_a_line_of_their_own():
+    # (UX audit A1) the stop block says the cause one fact per line under its Why: (80 columns)
+    with open(PATH, encoding="utf-8") as f:
+        stop = next(t for t in yaml.safe_load(f) if t.get("name") == "Stop on an unhealthy cluster")
+    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in stop["vars"].items() if k != "_absent")
+    variables.update(_absent=[], ansible_check_mode=False, cassandra_service_health_timeout=600,
+                     cassandra_health_problems=["n4 (10.0.0.4, r1) is DN, seen from n1", "the schema differs"],
+                     _cassandra_health_waited=True, _cassandra_health_wait_start=0,
+                     _cassandra_run_command_args={"hosts": "prod"})
+    lines = Templar(loader=DataLoader(), variables=variables).template(trust_as_template(stop["ansible.builtin.fail"]["msg"]))
+    assert lines[:2] == ["n4 (10.0.0.4, r1) is DN, seen from n1", "the schema differs"]
+    assert lines[2].startswith("waited ") and lines[2].endswith(" (cassandra_service_health_timeout: 600s)")
+    assert lines[3] == "WAY OUT  start n4 (the server, then Cassandra), then resume"

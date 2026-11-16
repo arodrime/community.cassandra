@@ -7,9 +7,10 @@ cassandra_op_recap: [{node, result}] (each node's cassandra_op_result) ->
 cassandra_reset_recap: [{node, delete, stop, disable}] (reset_node's plan of
     each node) -> "DONE  reset_node  my_cluster  node4 emptied ..." and what
     is left to do.
-cassandra_stop_block: the end of a run that stopped at a node: "STOPPED at
-    node2: <the cause>" (FAILED when a task failed, not one of our stops), the
-    nodes' table, then "WAY OUT  ..." with the command to copy, each said once.
+cassandra_stop_block: the end of a run that stopped at a node: "STOPPED
+    rolling_restart  prod  at node2" (FAILED when a task failed, not one of
+    our stops), the cause under it, the nodes' table, then WAY OUT with the
+    command to copy, each said once, 80 columns at most.
 cassandra_differs: {node: value} of a setting that must be the same on every
     node -> why the run stops, and where to fix it.
 """
@@ -18,6 +19,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import re
+import textwrap
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_command
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
@@ -56,22 +58,28 @@ STARTED = {"add": "bootstrap", "decommission": "decommission", "replace": "repla
            "upgradesstables": "SSTables upgrade", "apply_config": "config write"}
 
 
-def _failed_row(action, stage, reason):
+def _failed_row(action, stage, reason, check=False):
     """What a failed node's row says was done to it (stage: node_operation's _cassandra_op_stage), its reason after;
-    "" when the stage is not known."""
+    "" when the stage is not known. "after": its action done and its end confirmed (a restart: the node NORMAL
+    again); "unconfirmed": its action ran, its end not waited for (cassandra_service_wait_for_normal false). Under
+    check nothing was changed, whatever the stage."""
+    reason = reason or "a check after it failed"
+    if check and stage:
+        return "nothing changed (--check); %s" % reason
     if stage == "before":
-        return "not touched: %s" % reason if reason else "not touched"
+        return "not touched; %s" % reason
     if stage == "during":
-        return "%s started, not finished" % STARTED.get(action, action.replace("_", " ")) + (
-            ": %s" % reason if reason else "")
+        return "%s started, not finished; %s" % (STARTED.get(action, action.replace("_", " ")), reason)
+    if stage == "unconfirmed":
+        return "%s run, not waited for; %s" % (STARTED.get(action, action.replace("_", " ")), reason)
     if stage == "after":
-        return "%s, then stopped: %s" % (DONE.get(action, action + " done"), reason or "a check after it failed")
+        return "%s; %s" % (DONE.get(action, action + " done"), reason)
     return ""
 
 
-def outcome(node, result, stage=""):
-    """A node's cassandra_op_result (stage: how far its action went, node_operation's) -> (the recap's outcome, its
-    action or "")."""
+def outcome(node, result, stage="", check=False):
+    """A node's cassandra_op_result (stage: how far its action went, node_operation's; check: a --check run) -> (the
+    recap's outcome, its action or "")."""
     text = " ".join(str(result or "").split())
     m = _DONE.match(text)
     if m:
@@ -84,7 +92,7 @@ def outcome(node, result, stage=""):
     m = _FAILED.match(text)
     if m:
         return ({"node": node, "status": "failed", "reason": m.group("reason").strip(),
-                 "row": _failed_row(m.group("action"), stage, m.group("reason").strip()),
+                 "row": _failed_row(m.group("action"), stage, m.group("reason").strip(), check),
                  "seconds": int(m.group("seconds")) if m.group("seconds") else None}, m.group("action"))
     m = _REFUSED.match(text)
     if m:
@@ -94,15 +102,16 @@ def outcome(node, result, stage=""):
         said = ("not finished (%s)" % m.group("reason")) if m.group("unfinished") else m.group("reason")
         return {"node": node, "said": said}, m.group("action")
     # not reached, not in this run (--limit), already in the ring / on that version, nothing to apply...
-    reason = {"not in this run (--limit)": "left out by --limit"}.get(text, text or "not reached")
+    # (not run yet: the run stopped before it, plain "not touched")
+    reason = {"not in this run (--limit)": "left out by --limit", "not run yet": ""}.get(text, text or "not reached")
     return {"node": node, "status": "skipped", "reason": reason}, ""
 
 
-def _outcomes(results, operation, action):
+def _outcomes(results, operation, action, check=False):
     """(the recap's outcomes, the playbook's name) of the results."""
     outcomes, actions = [], []
     for item in results or []:
-        said, done = outcome(item.get("node"), item.get("result"), item.get("stage") or "")
+        said, done = outcome(item.get("node"), item.get("result"), item.get("stage") or "", check)
         outcomes.append(said)
         if done:
             actions.append(done)
@@ -141,52 +150,96 @@ def _cause_and_way_out(failure):
     return lines, []
 
 
+# the width of a stop block: 80 columns, whatever prints it (a terminal, a pipe, a log file)
+STOP_WIDTH = 80
+_COMMAND_LINE = re.compile(r"^(\s*)(ansible-playbook|ansible) ")
+_THEN = re.compile(r"^(?P<first>.+?),? then (?P<again>resume|check again):?$")
+
+
+def _wrapped(text, indent, hang, width=STOP_WIDTH):
+    """text from column indent, its next lines from column hang, cut between words (a word longer stays whole); a
+    command (ansible-playbook ...) cut between its arguments, an option and its value together, each line but the
+    last ending with " \\" (it pastes as one command), the next ones 2 columns further in."""
+    if not _COMMAND_LINE.match(text):
+        return textwrap.wrap(text, width, initial_indent=" " * indent, subsequent_indent=" " * hang,
+                             break_long_words=False, break_on_hyphens=False) or [" " * indent]
+    first, rest = " " * indent, " " * (indent + 2)
+    words = out.command_words(text)
+    lines, line = [], first
+    for i, word in enumerate(words):
+        if line.strip() and len(line) + 1 + len(word) + (2 if i < len(words) - 1 else 0) > width:
+            lines.append(line + " \\")
+            line = rest
+        line += (" " if line.strip() else "") + word
+    return lines + [line]
+
+
+def _way_out_lines(lines, indent):
+    """Lines of a way out (their own indent kept, from indent on), each wrapped at the stop block's width."""
+    said = []
+    for line in lines:
+        text = line.lstrip()
+        said += _wrapped(text, indent + len(line) - len(text), indent + len(line) - len(text) + 2)
+    return said
+
+
 def cassandra_stop_block(results, node, failure, operation="", action="", cluster="", check=False, hint="",
                          resume=True, progress_file="", inventory=None, default_inventory=None, hosts="", cwd=None,
                          batch=False, task="", stderr=""):
-    """The end of a run that stopped at node: results, the nodes' results (cassandra_op_result, as cassandra_op_recap);
-    failure, the failed task's msg: its cause, and its way out from its WAY OUT line on when it has one (one of our
-    stops: the block says STOPPED), else FAILED, and the way out is hint (cassandra_service_resume_hint) or, with
-    resume, the run's command plus -e cassandra_rolling_resume=true (inventory, default_inventory, hosts, cwd: see
-    cassandra_command), the progress file's path under it; batch: the nodes done at the same time; task, stderr: the
-    failed task's name and stderr, said in a FAILED head when the cause is Ansible's generic one ("non-zero return
-    code"); a hint stays under the failure's own WAY OUT (add_node has no resume: "run add_node again").
-    -> lines: ["STOPPED at node2: node4 (10.0.0.4, r1) is DN, seen from node1 and node2, 10m29s waited
-    (cassandra_service_health_timeout 600s). No node after it was touched.", "", "  node1  restarted  1m50s", "  node2
-    restarted, then stopped: cluster unhealthy", "  node3..node5  not touched", "", "WAY OUT  start node4 (the server, then
-    Cassandra), then resume:", "  ansible-playbook community.cassandra.rolling_restart -e cassandra_rolling_resume=true"]."""
-    outcomes, operation = _outcomes(results, operation, action)
+    """The end of a run that stopped at node: results, the nodes' results (cassandra_op_result, as cassandra_op_recap,
+    with stage: how far each node's action went); failure, the failed task's msg: its cause, and its way out from its
+    WAY OUT line on when it has one (one of our stops: the block says STOPPED), else FAILED, and the way out is hint
+    (cassandra_service_resume_hint) or, with resume, the run's command plus -e cassandra_rolling_resume=true
+    (inventory, default_inventory, hosts, cwd: see cassandra_command), the progress file's path under it; batch: the
+    nodes done at the same time; task, stderr: the failed task's name and stderr, said in a FAILED cause when it is
+    Ansible's generic one ("non-zero return code"); a hint stays under the failure's own WAY OUT (add_node has no
+    resume: "run add_node again"). The verdict first, the cause on its own lines under it (Why:), the nodes' table,
+    then WAY OUT, its steps numbered when the failure's way out ends "then resume"; 80 columns at most (a command cut
+    between its arguments, " \\" at the end of each line but its last).
+    -> lines: ["STOPPED  rolling_restart  prod  at node2", "  Why:  node4 (10.0.0.4, r1) is DN, seen from node1 and
+    node2", "        waited 10m29s (cassandra_service_health_timeout: 600s)", "  node1         restarted  1m50s",
+    "  node2         restarted; cluster health check failed", "  node3..node5  not touched", "WAY OUT", "  1. start
+    node4 (the server, then Cassandra)", "  2. resume:", "     ansible-playbook community.cassandra.rolling_restart \\",
+    "       -e cassandra_rolling_resume=true", "     progress: .cassandra_progress/..."]."""
+    outcomes, operation = _outcomes(results, operation, action, check)
     cause, way_out = _cause_and_way_out(failure)
     verdict = "STOPPED" if way_out else "FAILED"
-    touched = ("The nodes done at the same time: as in the table." if batch else "No node after it was touched.")
     first_cause = cause[0] if cause else "a task failed (see above)"
     if not way_out and task:
         detail = [line.strip() for line in str(stderr or "").split("\n") if line.strip()]
         first_cause = "%s: %s" % (task, first_cause) + (" (%s)" % detail[-1] if detail and _GENERIC.match(first_cause) else "")
-    head = ["%s at %s: %s" % (verdict, node, first_cause)]
-    head += ["  " + line for line in cause[1:]]
-    head[-1] += "" if head[-1].endswith((".", "!", "?")) else "."
-    head.append("  " + touched)  # (a line of its own: the cause alone on the first)
+    head = ["  ".join(x for x in [verdict, operation, str(cluster or ""), "at %s" % node] if x)]
+    for i, line in enumerate([first_cause] + cause[1:]):
+        head += _wrapped(("Why:  " if i == 0 else "") + line.strip(), 2 if i == 0 else 8, 8)
     table = out.recap(operation, str(cluster or ""), outcomes, check=check, head=False, causes=False)
+    if not table:  # (the table says which nodes were touched)
+        head.append("  " + ("The nodes done at the same time were not finished." if batch else "No node after it was touched."))
     command = ""
     if resume and not hint:  # --check wrote no progress file: the same check again, not a resume
         command = cassandra_command(operation, inventory=inventory, hosts=hosts, cwd=cwd, default_inventory=default_inventory,
                                     extra=["--check"] if check else ["-e cassandra_rolling_resume=true"])
     again = "check again" if check else "resume"
     if not way_out:
-        way_out = [hint.strip() if hint else ("fix it, then %s:" % again if command else
+        way_out = [hint.strip() if hint else ("fix it, then %s" % again if command else
                    "fix it, then check where the cluster stands (the status playbook) before running it again")]
     elif hint and not command:  # the failure's own way out ends "then resume": the hint says how
         way_out = [re.sub(r",? then resume:?$", ", then:", way_out[0])] + way_out[1:] + [hint.strip()]
     elif check:
         way_out = [re.sub(r"then resume(:?)$", r"then check again\1", way_out[0])] + way_out[1:]
-    first = way_out[0]
-    if command and not first.endswith(":"):
-        first += ":"
-    lines = [WAY_OUT + first] + (["  " + command] if command else [])
+    lines = ["WAY OUT"]
+    steps = _THEN.match(way_out[0]) if command else None
+    if steps:  # 1. what to fix, 2. the command that goes on (the progress file under it)
+        lines += _wrapped("1. " + steps.group("first"), 2, 5) + ["  2. %s:" % steps.group("again")]
+        lines += _wrapped(command, 5, 7)
+        indent = 5
+    else:
+        lines += _wrapped(way_out[0] + (":" if command and not way_out[0].endswith(":") else ""), 2, 4)
+        lines += _wrapped(command, 4, 6) if command else []
+        indent = 4
     if command and progress_file and not check:  # (under the command it is for, before the other ways out)
-        lines.append("  progress: %s" % (out.path_from(str(progress_file), cwd) if cwd else progress_file))
-    return head + ([""] + table if table else []) + [""] + lines + ["  " + line for line in way_out[1:]]
+        lines += _wrapped("progress: %s" % (out.path_from(str(progress_file), cwd) if cwd else progress_file),
+                          indent, indent + 2)
+    return head + table + lines + _way_out_lines(way_out[1:], 2)
 
 
 def cassandra_reset_recap(nodes, check=False, cluster="", add_command=""):

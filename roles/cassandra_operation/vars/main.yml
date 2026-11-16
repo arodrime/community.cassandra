@@ -16,12 +16,14 @@ _cassandra_service_would:
   upgradesstables: upgrade the SSTables
 
 # The results of the nodes of the run (summary.yml, the stop block of node_operation.yml): a node without result
-# was not reached when it was in the run (stopped before it, or unreachable), else left out of the run (--limit)
+# still in the play was not run yet (the run stopped before it); out of the play (unreachable, failed earlier):
+# not reached; not in it at all: left out of the run (--limit)
 _cassandra_op_results: >-
   {%- set out = [] -%}
   {%- for h in cassandra_service_summary_hosts | default(query('community.cassandra.cassandra_nodes')) -%}
   {%-   set _ = out.append({'node': h, 'result': hostvars[h].cassandra_op_result
-                              | default('not reached' if h in ansible_play_hosts_all else 'not in this run (--limit)'),
+                              | default('not run yet' if h in ansible_play_hosts | default([])
+                                        else 'not reached' if h in ansible_play_hosts_all else 'not in this run (--limit)'),
                               'stage': hostvars[h]._cassandra_op_stage | default('')}) -%}
   {%- endfor -%}
   {{ out }}

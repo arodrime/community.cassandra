@@ -540,7 +540,8 @@ def test_the_plan_title_and_the_stop_block_are_blocks_of_their_own():
                   "TOPOLOGY  3 steps of prod", "APPLY CONFIG  2 nodes of prod", "UPGRADE  prod to 5.0.9",
                   "DECOMMISSION NODE  remove node7", "REFUSED  import_cluster  nothing was written"):
         assert _HEADED.match(title) and not _RECAP.match(title), title
-    for head in ("STOPPED at node2: node4 is DN", "FAILED at node2: a task failed", "WAY OUT  fix it, then resume:",
+    for head in ("STOPPED  rolling_restart  prod  at node2", "FAILED  rolling_restart  prod  at node2",
+                 "STOPPED at node2: node4 is DN", "FAILED at node2: a task failed", "WAY OUT  fix it, then resume:",
                  "DONE  rolling_restart  prod  5 restarted  11m30s", "NOT HEALTHY  prod  3 nodes checked, 1 problem"):
         assert _RECAP.match(head) and not _HEADED.match(head), head
     assert colour("STOPPED at node2: node4 is DN") == C.COLOR_ERROR and colour("WAY OUT  start node4") is None
@@ -570,6 +571,16 @@ def test_the_plan_title_and_the_stop_block_are_blocks_of_their_own():
     shown = printed(callback)
     assert [line[0] for line, dummy in shown if rule(line)] == ["=", "-", "-", "="]
     assert [x for x in shown if not rule(x[0])] == [(stop[0], C.COLOR_ERROR)] + [(line, None) for line in stop[2:5] + stop[6:]]
+    # (UX audit A1) the stop block as it is now: its verdict first, no blank line in it: a heavy rule above and under
+    stop = ["STOPPED  rolling_restart  prod  at node2", "  Why:  node4 (10.0.0.4, r1) is DN, seen from node1",
+            "  node1         restarted  1m50s", "  node2         restarted; cluster health check failed",
+            "  node3..node5  not touched", "WAY OUT", "  1. start node4 (the server, then Cassandra)", "  2. resume:",
+            "     ansible-playbook community.cassandra.rolling_restart -e cassandra_rolling_resume=true"]
+    callback = quiet_callback(tty=False)
+    callback._print(stop)
+    shown = printed(callback)
+    assert [line[0] for line, dummy in shown if rule(line)] == ["=", "="]
+    assert [x for x in shown if not rule(x[0])] == [(stop[0], C.COLOR_ERROR)] + [(line, None) for line in stop[1:]]
 
 
 def test_a_stalled_peer_line_red_the_others_as_the_progress_line():

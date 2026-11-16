@@ -13,6 +13,14 @@
       ansible.builtin.set_fact:
         _cassandra_restart_start: "{{ now().timestamp() | int }}"
 
+    # how far each node of the rack went (the stop block's row of a failed node): before the drain, then during
+    - name: Note the rack's nodes not touched yet
+      ansible.builtin.set_fact:
+        _cassandra_op_stage: before
+      delegate_to: "{{ item }}"
+      delegate_facts: true
+      loop: "{{ _todo }}"
+
     - name: Say what the batch does
       ansible.builtin.debug:
         msg: >-
@@ -59,6 +67,14 @@
         - _tried | map(attribute='msg', default='') | select('search', 'expected time frame|Timed out after') | list | length == 0
       vars:
         _tried: "{{ cassandra_restart_drain.results | default([]) | rejectattr('skipped', 'defined') | list }}"
+
+    # (after the stop above: a rack none of whose nodes answered the drain was not touched)
+    - name: Note that the rack's restart has started
+      ansible.builtin.set_fact:
+        _cassandra_op_stage: during
+      delegate_to: "{{ item }}"
+      delegate_facts: true
+      loop: "{{ _todo }}"
 
     - name: Say the drains that did not work
       ansible.builtin.debug:

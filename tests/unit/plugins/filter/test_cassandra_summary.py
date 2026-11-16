@@ -102,11 +102,14 @@ def test_the_operation_given_wins():
         "DONE  remove_datacenter  1 decommissioned  1m05s"
 
 
-RESULTS = [("node1", "restart done in 110s"), ("node2", "restart FAILED after 629s: cluster unhealthy"),
-           ("node3", None), ("node4", "not reached"), ("node5", "not in this run (--limit)")]
-HEALTH = ["node4 (10.0.0.4, r1) is DN, seen from node1 and node2, 10m29s waited (cassandra_service_health_timeout 600s).",
+RESULTS = [("node1", "restart done in 110s"), ("node2", "restart FAILED after 629s: cluster health check failed"),
+           ("node3", "not run yet"), ("node4", "not reached"), ("node5", "not in this run (--limit)")]
+HEALTH = ["node4 (10.0.0.4, r1) is DN, seen from node1 and node2",
+          "waited 10m29s (cassandra_service_health_timeout: 600s)",
           "WAY OUT  start node4 (the server, then Cassandra), then resume",
-          "if the server is lost: replace_node; remove_dead_node only as a last resort"]
+          "if node4 is lost for good, replace it (NEW_NODE: the new host):",
+          "  ansible-playbook -i hosts.yml community.cassandra.replace_node -e cassandra_hosts=prod"
+          " -e cassandra_target_nodes=NEW_NODE -e cassandra_replace_address=10.0.0.4"]
 
 
 def stop(failure, stage="", **kwargs):
@@ -115,66 +118,97 @@ def stop(failure, stage="", **kwargs):
 
 
 @pytest.mark.parametrize("stage, row", [
-    # (UX audit A1) the row of the node it stopped at says what was done to it, never "not done" for a node touched
-    ("after", "  node2         restarted, then stopped: cluster unhealthy"),
-    ("during", "  node2         restart started, not finished: cluster unhealthy"),
-    ("before", "  node2         not touched: cluster unhealthy"),
-    ("", "  node2         not done                           cluster unhealthy")])
+    # (UX audit A1) the row of the node it stopped at says what was done to it, never "not done" for a node touched;
+    # "restarted" only once its restart was confirmed (the node NORMAL again)
+    ("after", "  node2  restarted; cluster health check failed"),
+    ("unconfirmed", "  node2  restart run, not waited for; cluster health check failed"),
+    ("during", "  node2  restart started, not finished; cluster health check failed"),
+    ("before", "  node2  not touched; cluster health check failed"),
+    ("", "  node2  not done                           cluster health check failed")])
 def test_the_stopped_node_s_row_says_what_was_done_to_it(stage, row):
     assert stop(HEALTH, stage=stage)[4] == row
 
 
+def test_under_check_the_stopped_node_s_row_says_nothing_changed():
+    # --check restarted nothing, whatever the stage reached
+    for stage in ("before", "during", "after", "unconfirmed"):
+        assert stop(HEALTH, stage=stage, check=True)[4] == "  node2  nothing changed (--check); cluster health check failed"
+
+
 def test_a_stop_on_purpose_says_the_cause_the_table_and_the_way_out_once():
-    # the failing task's message: its cause, then its WAY OUT lines; the table one word per node; the resume command
-    assert stop(HEALTH, resume=True, progress_file="/inv/.cassandra_progress/x", inventory=["/inv/hosts.yml"], hosts="prod",
-                cwd="/inv") == [
-        "STOPPED at node2: node4 (10.0.0.4, r1) is DN, seen from node1 and node2, 10m29s waited"
-        " (cassandra_service_health_timeout 600s).",
-        "  No node after it was touched.",
-        "",
-        "  node1         restarted                          1m50s",
-        "  node2         not done                           cluster unhealthy",
-        "  node3, node4  not touched (not reached)",
-        "  node5         not touched (left out by --limit)",
-        "",
-        "WAY OUT  start node4 (the server, then Cassandra), then resume:",
-        "  ansible-playbook -i hosts.yml community.cassandra.rolling_restart -e cassandra_hosts=prod -e cassandra_rolling_resume=true",
-        "  progress: .cassandra_progress/x",  # (under the command it is for)
-        "  if the server is lost: replace_node; remove_dead_node only as a last resort"]
+    # (UX audit A1) the verdict first, the cause on its own lines, the table, the way out in numbered steps, the
+    # commands cut between their arguments: 80 columns at most
+    lines = stop(HEALTH, stage="after", resume=True, progress_file="/inv/.cassandra_progress/x", inventory=["/inv/hosts.yml"],
+                 hosts="prod", cwd="/inv")
+    assert lines == [
+        "STOPPED  rolling_restart  prod  at node2",
+        "  Why:  node4 (10.0.0.4, r1) is DN, seen from node1 and node2",
+        "        waited 10m29s (cassandra_service_health_timeout: 600s)",
+        "  node1  restarted                          1m50s",
+        "  node2  restarted; cluster health check failed",
+        "  node3  not touched",
+        "  node4  not touched (not reached)",
+        "  node5  not touched (left out by --limit)",
+        "WAY OUT",
+        "  1. start node4 (the server, then Cassandra)",
+        "  2. resume:",
+        "     ansible-playbook -i hosts.yml community.cassandra.rolling_restart \\",
+        "       -e cassandra_hosts=prod -e cassandra_rolling_resume=true",
+        "     progress: .cassandra_progress/x",  # (under the command it is for)
+        "  if node4 is lost for good, replace it (NEW_NODE: the new host):",
+        "    ansible-playbook -i hosts.yml community.cassandra.replace_node \\",
+        "      -e cassandra_hosts=prod -e cassandra_target_nodes=NEW_NODE \\",
+        "      -e cassandra_replace_address=10.0.0.4"]
+    assert max(len(line) for line in lines) <= 80
+
+
+def test_a_long_cause_is_wrapped_under_its_why():
+    lines = stop(["x " * 60 + "end", "WAY OUT  fix it"], resume=False)
+    assert lines[1].startswith("  Why:  x x") and lines[2].startswith("        x x")
+    assert max(len(line) for line in lines) <= 80
 
 
 def test_the_hint_stays_under_the_failures_own_way_out():
     # add_node has no resume: the health check's "then resume" becomes "then:" and the hint says how
     lines = stop(HEALTH, resume=False, hint="run add_node again, the same command: the nodes already in the ring are only checked")
-    assert lines[-3:] == ["WAY OUT  start node4 (the server, then Cassandra), then:",
-                          "  if the server is lost: replace_node; remove_dead_node only as a last resort",
-                          "  run add_node again, the same command: the nodes already in the ring are only checked"]
+    assert lines[-8:] == [
+        "WAY OUT",
+        "  start node4 (the server, then Cassandra), then:",
+        "  if node4 is lost for good, replace it (NEW_NODE: the new host):",
+        "    ansible-playbook -i hosts.yml community.cassandra.replace_node \\",
+        "      -e cassandra_hosts=prod -e cassandra_target_nodes=NEW_NODE \\",
+        "      -e cassandra_replace_address=10.0.0.4",
+        "  run add_node again, the same command: the nodes already in the ring are only",
+        "    checked"]
 
 
 def test_a_failed_command_is_named_with_the_last_line_of_its_stderr():
     # Ansible's generic words for a failed command: the task's name and its stderr say what happened
     lines = stop("non-zero return code", resume=True, task="Find the running Cassandra JVM",
                  stderr="pgrep: no such option\nusage: pgrep [options]")
-    assert lines[:2] == ["FAILED at node2: Find the running Cassandra JVM: non-zero return code (usage: pgrep [options]).",
-                         "  No node after it was touched."]
+    assert lines[:3] == ["FAILED  rolling_restart  prod  at node2",
+                         "  Why:  Find the running Cassandra JVM: non-zero return code (usage: pgrep",
+                         "        [options])"]
     # a message of its own: the task's name only
-    assert stop("Timeout waiting for NORMAL", resume=False, task="Wait")[0] == (
-        "FAILED at node2: Wait: Timeout waiting for NORMAL.")
+    assert stop("Timeout waiting for NORMAL", resume=False, task="Wait")[1] == "  Why:  Wait: Timeout waiting for NORMAL"
 
 
 def test_a_task_that_failed_is_failed_with_the_hint_or_the_resume():
     # not one of our stops (no WAY OUT line): FAILED, the way out is the hint given, else the resume, else the status
     lines = stop("Timeout waiting for NORMAL", resume=False, hint="Once fixed, run move_node again.")
-    assert lines[:2] == ["FAILED at node2: Timeout waiting for NORMAL.", "  No node after it was touched."]
-    assert lines[-1] == "WAY OUT  Once fixed, run move_node again."
+    assert lines[:2] == ["FAILED  rolling_restart  prod  at node2", "  Why:  Timeout waiting for NORMAL"]
+    assert lines[-2:] == ["WAY OUT", "  Once fixed, run move_node again."]
     lines = stop("boom", resume=True)
-    assert lines[-2:] == ["WAY OUT  fix it, then resume:",
-                          "  ansible-playbook community.cassandra.rolling_restart -e cassandra_rolling_resume=true"]
-    status = "WAY OUT  fix it, then check where the cluster stands (the status playbook) before running it again"
-    assert stop("boom", resume=False)[-1] == status
-    # the nodes done at the same time (a batch)
-    assert stop("boom", resume=False, batch=True)[:2] == ["FAILED at node2: boom.",
-                                                          "  The nodes done at the same time: as in the table."]
+    assert lines[-5:] == ["WAY OUT", "  1. fix it", "  2. resume:",
+                          "     ansible-playbook community.cassandra.rolling_restart \\",
+                          "       -e cassandra_rolling_resume=true"]
+    status = "  fix it, then check where the cluster stands (the status playbook) before"
+    assert stop("boom", resume=False)[-2:] == [status, "    running it again"]
+    # no table to say it (no node's result): which nodes were touched said on a line
+    assert cassandra_stop_block([], "node2", "boom", resume=False)[:3] == [
+        "FAILED  at node2", "  Why:  boom", "  No node after it was touched."]
+    assert cassandra_stop_block([], "node2", "boom", resume=False, batch=True)[2] == (
+        "  The nodes done at the same time were not finished.")
 
 
 NODES = [{"node": "node4", "delete": ["a", "b"], "stop": True, "disable": True},
@@ -266,10 +300,9 @@ def test_none_and_empty_differ_as_the_assert_sees_them():
 def test_under_check_no_resume_nor_progress_file():
     # --check wrote no progress file: the way out is the same check again, no .done file named
     lines = stop("boom", resume=True, check=True, progress_file="/inv/.cassandra_progress/x", cwd="/inv")
-    assert lines[-2:] == ["WAY OUT  fix it, then check again:", "  ansible-playbook community.cassandra.rolling_restart --check"]
+    assert lines[-3:] == ["  1. fix it", "  2. check again:", "     ansible-playbook community.cassandra.rolling_restart --check"]
     assert not any("progress:" in line or "cassandra_rolling_resume" in line for line in lines)
     # a stop's own way out ending "then resume"
-    lines = stop(HEALTH, resume=True, check=True, progress_file="/inv/.cassandra_progress/x", cwd="/inv")
-    assert lines[-3:] == ["WAY OUT  start node4 (the server, then Cassandra), then check again:",
-                          "  ansible-playbook community.cassandra.rolling_restart --check",
-                          "  if the server is lost: replace_node; remove_dead_node only as a last resort"]
+    lines = stop(HEALTH[:3], resume=True, check=True, progress_file="/inv/.cassandra_progress/x", cwd="/inv")
+    assert lines[-4:] == ["WAY OUT", "  1. start node4 (the server, then Cassandra)", "  2. check again:",
+                          "     ansible-playbook community.cassandra.rolling_restart --check"]
