@@ -543,8 +543,9 @@ def _prepare(node, verbose=False):
     return {"name": str(node.get("name")), "diffs": diffs, "perms": perms, "dirs": dirs, "other": other, "wholes": wholes,
             "texts": _live_texts(node), "stats": _stats(node.get("stats"), _file_key),
             "dir_stats": _stats(node.get("dir_stats"), _dir_key),
-            "os": [(_os_item(i.get("item"), verbose), "unknown" if i.get("before") is None else str(i.get("before")),
-                    str(i.get("after"))) for i in node.get("os") or []]}
+            "os": [(("service " if i.get("service") else "") + _os_item(i.get("item"), verbose),
+                    "unknown" if i.get("before") is None else str(i.get("before")), str(i.get("after")))
+                   for i in node.get("os") or []]}
 
 
 def _os_item(item, verbose=False):
@@ -613,12 +614,13 @@ def cassandra_apply_config_diff(nodes, width=None, verbose=False, margin=0):
     return _named(entries, all_nodes, width)
 
 
-TABLE_HEAD = ("Setting", "Node", "Inventory", "Nodes")
+# (no word over the first column: each row's own label says what it is, a file, a setting, a service, a package)
+TABLE_HEAD = ("", "Node", "Inventory", "Nodes")
 
 
 def _named(entries, all_nodes, width=None):
     """The entries (a file's name, then its (setting, rows); a line of its own starts with a space) as one table:
-    a head row (Setting, Node, Inventory, Nodes), each file on a row of its own, its settings under it (2 columns
+    a head row (Node, Inventory, Nodes: no word over the labels), each file on a row of its own, its settings under it (2 columns
     in), each with the node's value and the inventory's in aligned columns, the nodes last. The node lists as text:
     on a large cluster by node groups (defined first, "NODE GROUPS"), "all" for every node; else as
     cassandra_output's nodes() names them. -> the lines, fitting in width: when a row does not, the nodes of every
@@ -890,8 +892,8 @@ def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, d
     named it, no --limit): after a real run, a TO DO with it, for the nodes
     whose read-ahead was set live. more: other warnings to say with the nodes' ([{label, text}], an empty text
     left out: the plan's own, under --check where no plan is shown).
-    Under check, the plan said once: the verdict, "nothing was changed (--check)", WHAT CHANGES (the diff's table),
-    WHAT HAPPENS (each node's outcome), the warnings.
+    Under check, the plan said once: the verdict, "nothing was changed (--check)", DIFFERENCES FOUND (the diff's
+    table: what was observed), WOULD DO (each node's outcome in a real run), the warnings.
     e.g. (those nodes, check=True, cluster="my_cluster", seconds=12, diff=<the diff's lines>) ->
     ["CHECK  apply_config  my_cluster  1 would apply, 1 nothing to apply (12s)", "", <the diff's lines>, "",
     "node2  would apply, then restart", "node1  nothing to apply", "", "WARNING  node2: node2's data dirs belong to root"]."""
@@ -900,8 +902,9 @@ def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, d
     shown = [_recap_verdict(counts, check, cluster, out.number(seconds))]  # (text before ansible-core 2.19)
     if check:  # the plan, once: what changes (the settings), then what happens to each node
         shown += ["  nothing was changed (--check)"]
-        shown += (["", "WHAT CHANGES"] + ["  " + line if line else "" for line in diff] if diff else [])
-        lines = ["", "WHAT HAPPENS"] + ["  " + line for line in lines]
+        # what was found (each node's value against the inventory's), apart from what a real run would do
+        shown += (["", "DIFFERENCES FOUND"] + ["  " + line if line else "" for line in diff] if diff else [])
+        lines = ["", "WOULD DO"] + ["  " + line for line in lines]
     lines = lines + _recap_warnings(nodes, check, refused, planned, width, more)
     return shown + lines + ([] if check else _read_ahead_todo(nodes, restart_command, _width(width)))
 

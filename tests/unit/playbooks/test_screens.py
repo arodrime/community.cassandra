@@ -493,14 +493,14 @@ def test_apply_config_recap():
         return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(t["ansible.builtin.debug"]["msg"]))
 
     variables["cassandra_cluster_name"] = "my_cluster"
-    # (UX audit B1) the plan once: the verdict naming the restart, WHAT CHANGES, WHAT HAPPENS
+    # (UX audit B1) the plan once: the verdict naming the restart, DIFFERENCES FOUND, WOULD DO
     assert recap(True) == [
         "CHECK  apply_config  my_cluster  1 would restart, 1 would apply, 1 up to date, 1 not reached, 1 not in this run",
         "  nothing was changed (--check)",
         "",
-        "WHAT CHANGES"] + ["  " + line for line in APPLY_DIFF] + [
+        "DIFFERENCES FOUND"] + ["  " + line for line in APPLY_DIFF] + [
         "",
-        "WHAT HAPPENS",
+        "WOULD DO",
         "  node2  would apply, then restart",
         "    restart pending (jvm11-server.options changed since the running Cassandra started)",
         "  node1  would apply, no restart",
@@ -557,7 +557,7 @@ def test_apply_config_reads_every_node_and_puts_the_settings_side_by_side():
     assert templar.template(trust_as_template(listed["ansible.builtin.set_fact"]["_cassandra_apply_config_differ"])) == ["cassandra.yaml"]
     templar = Templar(loader=DataLoader(), variables=dict(variables, **trust(side["vars"])))
     lines = templar.template(trust_as_template(side["ansible.builtin.set_fact"]["cassandra_apply_config_diff"]))
-    assert lines == ["Setting             Node  Inventory",
+    assert lines == ["                    Node  Inventory",
                      "cassandra.yaml  on node1",
                      "  concurrent_reads  48    32"]
 

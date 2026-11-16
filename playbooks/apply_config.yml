@@ -219,7 +219,7 @@
         cassandra_apply_config_why: "{{ _os_why }}"
         # (said in the plan and the recap: that, else the JMX access file alone, read at start)
         cassandra_apply_config_restart_why: >-
-          {{ _os_why or ('jmxremote.access: read at start'
+          {{ _os_shown or ('jmxremote.access: read at start'
              if _running | bool and _rights | length > 0 and _files | reject('in', _as_started) | list | length == 0
                 and not _pending | bool
              else 'the exporter HTTPS, authentication or openTelemetry: read at start'
@@ -373,6 +373,16 @@
         _disks_window: "{{ _os | selectattr('restart', 'defined') | list if _running | bool else [] }}"
         _os_why: >-
           {{ ((['time sync'] if _timesync | bool else []) + _disks_window | map(attribute='restart') | unique | list) | join(', ') }}
+        # (the plan and the recap) what is done while Cassandra is stopped, by name: which service starts, what is set
+        _os_shown: >-
+          {%- set ts = _ts_items | map(attribute='item') | list -%}
+          {%- set service = ts | reject('match', 'package ') | reject('equalto', 'chrony server line') | first | default('') -%}
+          {%- set parts = ([(service ~ (' installed and started' if ts | select('match', 'package ') | list else ' started')
+                             if service else 'time sync set up') ~ ', its clock let sync'] if _timesync | bool else [])
+                          + _disks_window | map(attribute='restart') | unique
+                            | map('replace', 'tuned profile', 'tuned profile switched or reloaded')
+                            | map('replace', 'LVM read-ahead', 'LVM read-ahead set') | list -%}
+          {{ ('with Cassandra stopped: ' ~ parts | join('; ')) if parts else '' }}
         # a time sync unit that cannot run here (its condition): left out, said
         _no_unit: "{{ _os | selectattr('timesync', 'defined') | list if _clock.condition | default('') == 'no' else [] }}"
         _todo: >-

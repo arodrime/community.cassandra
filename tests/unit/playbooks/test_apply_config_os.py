@@ -393,6 +393,11 @@ def test_the_restart_window_reuses_the_restart():
     # the change report without apply_config's mark
     items = [t for t in report if t.get("name") == "Report"][0]["vars"]["cassandra_change_report_items"]
     assert render(items, {"_cassandra_linux_items": [TIMESYNC]}) == [{"item": "chronyd", "before": "inactive", "after": "active"}]
+    assert render(items, {"_cassandra_linux_items": [dict(TIMESYNC, service=True)]}) == [
+        {"item": "chronyd", "before": "inactive", "after": "active"}]
+    # the service's item marked as one (apply_config's view labels it "service chronyd")
+    service = [t for t in report if t.get("name") == "Add the time sync service to the change list"][0]
+    assert "'timesync': true, 'service': true}" in service["ansible.builtin.set_fact"]["_cassandra_linux_items"]
 
 
 def test_a_time_sync_that_cannot_start_or_only_to_enable_is_no_restart():
@@ -658,3 +663,16 @@ def test_a_node_stopped_in_its_window_is_not_restarted_for_os_settings_alone():
     facts = note([TIMESYNC], running=False, clock=["mark=yes", "mark_timesync=yes"], resume=True, full=True)
     assert facts["cassandra_apply_config_then"] == "start"
     assert facts["cassandra_apply_config_os_window_only"] in (False, "False")
+
+
+def test_the_restart_reason_says_what_is_done_with_cassandra_stopped():
+    # (B1 review) not "restart (time sync)": which service starts, that Cassandra is stopped meanwhile
+    facts = note([TIMESYNC], full=True)
+    assert facts["cassandra_apply_config_restart_why"] == "with Cassandra stopped: chronyd started, its clock let sync"
+    package = {"item": "package chrony", "before": "absent", "after": "present", "timesync": True}
+    assert note([package, TIMESYNC], full=True)["cassandra_apply_config_restart_why"] == (
+        "with Cassandra stopped: chronyd installed and started, its clock let sync")
+    assert note([TUNED, LVM], full=True)["cassandra_apply_config_restart_why"] == (
+        "with Cassandra stopped: tuned profile switched or reloaded; LVM read-ahead set")
+    # the mark and the messages of the window keep their short reason
+    assert note([TIMESYNC], full=True)["cassandra_apply_config_why"] == "time sync"
