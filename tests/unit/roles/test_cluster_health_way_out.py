@@ -31,8 +31,8 @@ def said(check, problems):
 
 def test_the_way_out_under_check():
     down = ["n4 (10.0.0.4, r1) is DN, seen from n1"]
-    assert said(False, down)[1] == "WAY OUT  start n4 (the server, then Cassandra), then resume"
-    assert said(True, down)[1] == "WAY OUT  start n4 (the server, then Cassandra), then check again"
+    assert said(False, down)[1] == "WAY OUT  start Cassandra on n4, then resume"
+    assert said(True, down)[1] == "WAY OUT  start Cassandra on n4, then check again"
     assert said(True, ["the schema differs"])[1] == "WAY OUT  fix it (the lines above say what), then check again"
     assert said(False, ["the schema differs"])[1] == "WAY OUT  fix it (the lines above say what), then resume"
 
@@ -61,4 +61,4 @@ def test_each_problem_and_the_wait_on_a_line_of_their_own():
     lines = Templar(loader=DataLoader(), variables=variables).template(trust_as_template(stop["ansible.builtin.fail"]["msg"]))
     assert lines[:2] == ["n4 (10.0.0.4, r1) is DN, seen from n1", "the schema differs"]
     assert lines[2].startswith("waited ") and lines[2].endswith(" (cassandra_service_health_timeout: 600s)")
-    assert lines[3] == "WAY OUT  start n4 (the server, then Cassandra), then resume"
+    assert lines[3] == "WAY OUT  start Cassandra on n4, then resume"

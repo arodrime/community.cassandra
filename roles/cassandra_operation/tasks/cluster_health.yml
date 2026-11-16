@@ -160,7 +160,7 @@
          + (['Not counted, marked cassandra_node_state: absent: ' ~ _absent | join(', ')
              ~ '. Still in the ring? The playbook topology removes them.']
             if _absent and cassandra_health_problems | select('search', '^the ring has ') | list else [])
-         + (['WAY OUT  start ' ~ _down | join(', ') ~ ' (the server, then Cassandra), then ' ~ _again] + _lost
+         + (['WAY OUT  start Cassandra on ' ~ _down | join(', ') ~ ', then ' ~ _again] + _lost
             if _down else ['WAY OUT  fix it (the lines above say what), then ' ~ _again]) }}
   vars:
     cassandra_output: true

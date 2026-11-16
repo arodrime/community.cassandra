@@ -199,7 +199,7 @@ def cassandra_stop_block(results, node, failure, operation="", action="", cluste
     -> lines: ["STOPPED  rolling_restart  prod  at node2", "  Why:  node4 (10.0.0.4, r1) is DN, seen from node1 and
     node2", "        waited 10m29s (cassandra_service_health_timeout: 600s)", "  node1         restarted  1m50s",
     "  node2         restarted; cluster health check failed", "  node3..node5  not touched", "WAY OUT", "  1. start
-    node4 (the server, then Cassandra)", "  2. resume:", "     ansible-playbook community.cassandra.rolling_restart \\",
+    Cassandra on node4", "  2. resume:", "     ansible-playbook community.cassandra.rolling_restart \\",
     "       -e cassandra_rolling_resume=true", "     progress: .cassandra_progress/..."]."""
     outcomes, operation = _outcomes(results, operation, action, check)
     cause, way_out = _cause_and_way_out(failure)

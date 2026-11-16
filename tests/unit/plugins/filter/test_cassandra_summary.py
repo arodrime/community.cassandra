@@ -106,7 +106,7 @@ RESULTS = [("node1", "restart done in 110s"), ("node2", "restart FAILED after 62
            ("node3", "not run yet"), ("node4", "not reached"), ("node5", "not in this run (--limit)")]
 HEALTH = ["node4 (10.0.0.4, r1) is DN, seen from node1 and node2",
           "waited 10m29s (cassandra_service_health_timeout: 600s)",
-          "WAY OUT  start node4 (the server, then Cassandra), then resume",
+          "WAY OUT  start Cassandra on node4, then resume",
           "if node4 is lost for good, replace it (NEW_NODE: the new host):",
           "  ansible-playbook -i hosts.yml community.cassandra.replace_node -e cassandra_hosts=prod"
           " -e cassandra_target_nodes=NEW_NODE -e cassandra_replace_address=10.0.0.4"]
@@ -150,7 +150,7 @@ def test_a_stop_on_purpose_says_the_cause_the_table_and_the_way_out_once():
         "  node4  not touched (not reached)",
         "  node5  not touched (left out by --limit)",
         "WAY OUT",
-        "  1. start node4 (the server, then Cassandra)",
+        "  1. start Cassandra on node4",
         "  2. resume:",
         "     ansible-playbook -i hosts.yml community.cassandra.rolling_restart \\",
         "       -e cassandra_hosts=prod -e cassandra_rolling_resume=true",
@@ -173,7 +173,7 @@ def test_the_hint_stays_under_the_failures_own_way_out():
     lines = stop(HEALTH, resume=False, hint="run add_node again, the same command: the nodes already in the ring are only checked")
     assert lines[-8:] == [
         "WAY OUT",
-        "  start node4 (the server, then Cassandra), then:",
+        "  start Cassandra on node4, then:",
         "  if node4 is lost for good, replace it (NEW_NODE: the new host):",
         "    ansible-playbook -i hosts.yml community.cassandra.replace_node \\",
         "      -e cassandra_hosts=prod -e cassandra_target_nodes=NEW_NODE \\",
@@ -304,5 +304,5 @@ def test_under_check_no_resume_nor_progress_file():
     assert not any("progress:" in line or "cassandra_rolling_resume" in line for line in lines)
     # a stop's own way out ending "then resume"
     lines = stop(HEALTH[:3], resume=True, check=True, progress_file="/inv/.cassandra_progress/x", cwd="/inv")
-    assert lines[-4:] == ["WAY OUT", "  1. start node4 (the server, then Cassandra)", "  2. check again:",
+    assert lines[-4:] == ["WAY OUT", "  1. start Cassandra on node4", "  2. check again:",
                           "     ansible-playbook community.cassandra.rolling_restart --check"]

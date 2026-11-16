@@ -139,7 +139,7 @@ Conventions
       node2         restarted; cluster health check failed
       node3..node5  not touched
     WAY OUT
-      1. start node4 (the server, then Cassandra)
+      1. start Cassandra on node4
       2. resume:
          ansible-playbook community.cassandra.rolling_restart \
            -e cassandra_hosts=prod -e cassandra_rolling_resume=true

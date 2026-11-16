@@ -564,7 +564,7 @@ def test_the_plan_title_and_the_stop_block_are_blocks_of_their_own():
                                                     (plan[4], C.COLOR_WARN)]
     stop = ["STOPPED at node2: node4 is DN, seen from node1. No node after it was touched.", "",
             "  node1  restarted  1m50s", "  node2  not done  cluster unhealthy", "  node3..node5  not touched", "",
-            "WAY OUT  start node4 (the server, then Cassandra), then resume:",
+            "WAY OUT  start Cassandra on node4, then resume:",
             "  ansible-playbook community.cassandra.rolling_restart -e cassandra_rolling_resume=true"]
     callback = quiet_callback(tty=False)
     callback._print(stop)
@@ -574,7 +574,7 @@ def test_the_plan_title_and_the_stop_block_are_blocks_of_their_own():
     # (UX audit A1) the stop block as it is now: its verdict first, no blank line in it: a heavy rule above and under
     stop = ["STOPPED  rolling_restart  prod  at node2", "  Why:  node4 (10.0.0.4, r1) is DN, seen from node1",
             "  node1         restarted  1m50s", "  node2         restarted; cluster health check failed",
-            "  node3..node5  not touched", "WAY OUT", "  1. start node4 (the server, then Cassandra)", "  2. resume:",
+            "  node3..node5  not touched", "WAY OUT", "  1. start Cassandra on node4", "  2. resume:",
             "     ansible-playbook community.cassandra.rolling_restart -e cassandra_rolling_resume=true"]
     callback = quiet_callback(tty=False)
     callback._print(stop)
