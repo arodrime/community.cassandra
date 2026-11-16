@@ -61,8 +61,9 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_permission
     cassandra_file_permissions, permission_differences)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
     compared, jvm_options_settings, properties_settings, same_settings, same_yaml_value, shell_lines,
-    without_later_stock, xml_settings, yaml_settings, yaml_rejected)
+    without_later_stock, xml_differences, xml_settings, yaml_settings, yaml_rejected)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as _out
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_differences import HEAP_FILE
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_prometheus as prometheus
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import ROLES, role_file
@@ -72,8 +73,6 @@ SERIES = {"40x": "4.0", "41x": "4.1", "50x": "5.0"}
 # import may move them from one to the other, so they are compared on their own
 HEAP_ENV = ("MAX_HEAP_SIZE", "HEAP_NEWSIZE")
 ASSIGN = re.compile(r"^(\w+)=(.*)$")
-# the heap's differences are named so (the report reads them back)
-HEAP_FILE = "heap (cassandra-env.sh, else the unit's Environment)"
 # the files cassandra_config writes, left as they are when their settings are the same
 CONFIG_FILES = set(f for files in role_file("cassandra_config", "vars")["_cassandra_config_files"].values() for f in files)
 
@@ -259,6 +258,10 @@ def _compare(name, node, role, storage_dir="", left_out=()):
         return _dict_diff(name, dict(("[%s] %s" % k, " / ".join(v)) for k, v in node_u.items()),
                           dict(("[%s] %s" % k, " / ".join(v)) for k, v in role_u.items()))
     if name.endswith(".xml"):
+        found = xml_differences(node, role)
+        if found:  # (else the same elements in another order: the lines below)
+            return ["%s: %s: node has %s, import would write %s" % (name, path, _xml_shown(path, a), _xml_shown(path, b))
+                    for path, a, b in found]
         a, b = xml_settings(node), xml_settings(role)
     else:  # shell: cassandra-env.sh
         # the heap is compared on its own (see _heap)
@@ -269,10 +272,52 @@ def _compare(name, node, role, storage_dir="", left_out=()):
     # masked as in the whole file: a line of a secret's value (a quote left open) without its key in the block
     shown_a, shown_b = _out.mask_lines(a), _out.mask_lines(b)
     for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
-        if op != "equal":
+        if op == "equal":
+            continue
+        if name.endswith(".xml"):
             out.append("%s: node has %s, import would write %s"
                        % (name, " | ".join(shown_a[i1:i2]) or "nothing", " | ".join(shown_b[j1:j2]) or "nothing"))
+            continue
+        for x, y in _env_pairs(a[i1:i2], b[j1:j2]):  # a line each: its setting's, the other side's
+            out.append("%s: node has %s, import would write %s" % (
+                name, "nothing" if x is None else shown_a[i1 + x], "nothing" if y is None else shown_b[j1 + y]))
     return out
+
+
+def _xml_shown(path, value):
+    """An XML difference's value as the self-check says it: a text or an attribute as a value (a secret by its
+    element's or attribute's name), an element alone on one side as its tag and attributes (its text too, when it has
+    no element inside), none as nothing."""
+    if value is None:
+        return "nothing"
+    if isinstance(value, str):
+        return _shown(re.split(r"[/@]", path)[-1], value)
+    text = (value.text or "").strip() if not len(value) else ""
+    return _out.mask("<%s%s>%s" % (value.tag, "".join(' %s="%s"' % kv for kv in sorted(value.attrib.items())),
+                                   "%s</%s>" % (text, value.tag) if text else ""))
+
+
+def _env_setting(line):
+    """What a line of cassandra-env.sh sets: a variable (MAX_HEAP_SIZE), the option a JVM_OPTS line adds (-Xss,
+    -Dx, UseG1GC), else None."""
+    m = re.match(r"^(?:export\s+)?(\w+)=(.*)$", line)
+    if not m:
+        return None
+    added = re.match(r'^"\$JVM_OPTS (\S+)"$', m.group(2)) if m.group(1) == "JVM_OPTS" else None
+    return (jvm.option_name(added.group(1)) or added.group(1)) if added else m.group(1)
+
+
+def _env_pairs(a, b):
+    """The lines of cassandra-env.sh that differ (a: the node's, b: the role's) -> [(index in a, index in b)], a line
+    with the line of the other side that sets the same (else None), the node's order, then the role's other lines."""
+    pairs, taken = [], set()
+    for i, line in enumerate(a):
+        setting = _env_setting(line)
+        j = next((j for j, other in enumerate(b) if j not in taken and setting and _env_setting(other) == setting), None)
+        if j is not None:
+            taken.add(j)
+        pairs.append((i, j))
+    return pairs + [(None, j) for j in range(len(b)) if j not in taken]
 
 
 @functools.lru_cache(maxsize=None)

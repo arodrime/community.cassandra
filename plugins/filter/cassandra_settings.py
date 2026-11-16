@@ -428,6 +428,61 @@ def xml_settings(text):
     return out
 
 
+def _xml_key(el):
+    """What tells an element from its siblings: its tag and name= (an appender, a logger), else its ref= (an
+    appender-ref), else its tag alone (then its place among the siblings of that tag)."""
+    for attr in ("name", "ref"):
+        if el.get(attr) is not None:
+            return (el.tag, attr, el.get(attr))
+    return (el.tag, None, None)
+
+
+def _xml_step(key, index, many):
+    """An element's step in an XPath: appender[@name="AUDIT"], appender-ref[@ref="ASYNC"], filter, pattern[2] (its
+    place among the siblings with the same key, when there are several)."""
+    tag, attr, value = key
+    return ('%s[@%s="%s"]' % (tag, attr, value) if attr else tag) + ("[%d]" % (index + 1) if many else "")
+
+
+def xml_differences(node, role):
+    """Where two XML texts differ, element by element as xml_settings reads them (comments out, a level in any case),
+    the siblings matched by name=, else ref=, else their place among those of their tag -> [(XPath, the node's,
+    the role's)]: an attribute (/configuration/root/@level) or an element's text (.../rollingPolicy/fileNamePattern)
+    as a str, an element one side has alone as that element (the other side None). [] when the elements are the
+    same, in another order or not."""
+    out = []
+
+    def attrs(el):
+        return dict((k, v.upper() if k == "level" else v) for k, v in el.attrib.items())
+
+    def walk(a, b, path):
+        own = _xml_key(a)[1]
+        mine, theirs = attrs(a), attrs(b)
+        out.extend(("%s/@%s" % (path, k), mine.get(k), theirs.get(k)) for k in sorted(set(mine) | set(theirs))
+                   if k != own and mine.get(k) != theirs.get(k))
+        if (a.text or "").strip() != (b.text or "").strip():
+            out.append((path, (a.text or "").strip(), (b.text or "").strip()))
+        keys = []
+        for child in list(a) + list(b):
+            if _xml_key(child) not in keys:
+                keys.append(_xml_key(child))
+        for key in keys:
+            mine, theirs = [c for c in a if _xml_key(c) == key], [c for c in b if _xml_key(c) == key]
+            count = max(len(mine), len(theirs))
+            for i in range(count):
+                here = "%s/%s" % (path, _xml_step(key, i, count > 1))
+                if i < len(mine) and i < len(theirs):
+                    walk(mine[i], theirs[i], here)
+                else:
+                    out.append((here, mine[i] if i < len(mine) else None, theirs[i] if i < len(theirs) else None))
+
+    a, b = ET.fromstring(node), ET.fromstring(role)
+    if a.tag != b.tag:
+        return [("/" + a.tag, a, None), ("/" + b.tag, None, b)]
+    walk(a, b, "/" + a.tag)
+    return out
+
+
 def _logback_tag(el):
     """An element's name as logback reads it: any case, without its namespace."""
     return str(el.tag).rsplit("}", 1)[-1].lower()

@@ -240,8 +240,12 @@ def test_a_difference_after_an_element_text_of_several_lines_is_the_right_one():
     node = "<configuration><appender name='A'><pattern>%d\n%msg</pattern></appender><root level='INFO'/>" \
            "<logger name='x' level='DEBUG'/></configuration>"
     out = _compare_files({"logback.xml": node.replace("DEBUG", "WARN")}, {"logback.xml": node})["differences"]
-    assert out == ['logback.xml: node has /configuration/logger[level="DEBUG" name="x"], import would write'
-                   ' /configuration/logger[level="WARN" name="x"]']
+    assert out == ['logback.xml: /configuration/logger[@name="x"]/@level: node has \'DEBUG\', import would write'
+                   " 'WARN'"]
+    # an element's text of several lines: said as it is, masked on its own
+    out = _compare_files({"logback.xml": node.replace("%d\n%msg", "%d\n%m")}, {"logback.xml": node})["differences"]
+    assert out == ['logback.xml: /configuration/appender[@name="A"]/pattern: node has \'%d\\n%msg\', import would'
+                   " write '%d\\n%m'"]
 
 
 # --- how each file is read --------------------------------------------------

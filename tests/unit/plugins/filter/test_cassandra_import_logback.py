@@ -391,8 +391,9 @@ def test_a_pattern_with_two_dashes_and_the_audit_block_commented_out_is_not_carr
     variables, snippets, check = imported(files, series)
     assert "cassandra_log_pattern" not in variables
     # (its lines, as for any hand edit: no longer "cannot be read as its program reads it")
-    assert check["differences"] and all(re.match(r"logback\.xml: node has .*/encoder/pattern = %-5level \[%thread\] -- "
-                                                 r"%msg%n, import would write ", d) for d in check["differences"])
+    assert check["differences"] and all(re.match(r"logback\.xml: /configuration/appender\[@name=\"\w+\"\]/encoder/pattern:"
+                                                 r" node has '%-5level \[%thread\] -- %msg%n', import would write ", d)
+                                        for d in check["differences"])
     out = cassandra_config_import(files, series, FACTS, "", "/var/lib/cassandra")
     assert ("logback.xml: its log pattern (%-5level [%thread] -- %msg%n) has a --, which the role's template would"
             " write in the audit appender it leaves commented out (cassandra_log_audit_file: false), where XML does"
