@@ -101,9 +101,19 @@ HEALTH = ["node4 (10.0.0.4, r1) is DN, seen from node1 and node2, 10m29s waited 
           "if the server is lost: replace_node; remove_dead_node only as a last resort"]
 
 
-def stop(failure, **kwargs):
-    return cassandra_stop_block([{"node": n, "result": r} for n, r in RESULTS], "node2", failure, cluster="prod",
-                                action="restart", **kwargs)
+def stop(failure, stage="", **kwargs):
+    return cassandra_stop_block([{"node": n, "result": r, "stage": stage if n == "node2" else ""} for n, r in RESULTS],
+                                "node2", failure, cluster="prod", action="restart", **kwargs)
+
+
+@pytest.mark.parametrize("stage, row", [
+    # (UX audit A1) the row of the node it stopped at says what was done to it, never "not done" for a node touched
+    ("after", "  node2         restarted, then stopped: cluster unhealthy"),
+    ("during", "  node2         restart started, not finished: cluster unhealthy"),
+    ("before", "  node2         not touched: cluster unhealthy"),
+    ("", "  node2         not done                           cluster unhealthy")])
+def test_the_stopped_node_s_row_says_what_was_done_to_it(stage, row):
+    assert stop(HEALTH, stage=stage)[3] == row
 
 
 def test_a_stop_on_purpose_says_the_cause_the_table_and_the_way_out_once():

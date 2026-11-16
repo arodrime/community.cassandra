@@ -21,7 +21,8 @@ _cassandra_op_results: >-
   {%- set out = [] -%}
   {%- for h in cassandra_service_summary_hosts | default(query('community.cassandra.cassandra_nodes')) -%}
   {%-   set _ = out.append({'node': h, 'result': hostvars[h].cassandra_op_result
-                              | default('not reached' if h in ansible_play_hosts_all else 'not in this run (--limit)')}) -%}
+                              | default('not reached' if h in ansible_play_hosts_all else 'not in this run (--limit)'),
+                              'stage': hostvars[h]._cassandra_op_stage | default('')}) -%}
   {%- endfor -%}
   {{ out }}
 

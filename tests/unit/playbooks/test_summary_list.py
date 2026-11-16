@@ -43,8 +43,9 @@ def test_operation_summary_is_a_recap():
                      _seconds=None)
     defaults = load("roles", "cassandra_operation", "vars", "main.yml")  # the results list: a role var (lazy)
     variables["_cassandra_op_results"] = render(defaults["_cassandra_op_results"], **variables)
-    assert variables["_cassandra_op_results"] == [{"node": "n1", "result": "add done in 5s"}, {"node": "n2", "result": "not reached"},
-                                                  {"node": "n3", "result": "not in this run (--limit)"}]
+    assert variables["_cassandra_op_results"] == [{"node": "n1", "result": "add done in 5s", "stage": ""},
+                                                  {"node": "n2", "result": "not reached", "stage": ""},
+                                                  {"node": "n3", "result": "not in this run (--limit)", "stage": ""}]
     variables["_cluster"] = render(task["vars"]["_cluster"], **variables)
     # a verdict, the nodes grouped (a list: a line each under any callback)
     lines = [" ".join(line.split()) for line in render(task["ansible.builtin.debug"]["msg"], **variables)]

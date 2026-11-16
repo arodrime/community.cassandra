@@ -54,6 +54,8 @@
         _cassandra_op_start: "{{ now().timestamp() | int }}"
         _cassandra_op_to_normal: ""  # set once the node is NORMAL again (wait_normal.yml): the step's time
         _cassandra_stop_word: ""  # set by a stop that names itself (cluster_health.yml)
+        # how far it went (the stop block's row of a failed node): before its action, during it, after it
+        _cassandra_op_stage: before
 
     # what it says if another one fails first, stopping the run
     - name: Note a node of a batch as not finished
@@ -125,8 +127,16 @@
         cassandra_service_health_joining_ok: "{{ cassandra_service_joining_before | default([]) }}"
         cassandra_service_health_leaving_ok: "{{ cassandra_service_leaving_before | default([]) }}"
 
+    - name: Note that the action starts
+      ansible.builtin.set_fact:
+        _cassandra_op_stage: during
+
     - name: Run the action
       ansible.builtin.include_tasks: "action_{{ cassandra_service_node_action }}.yml"
+
+    - name: Note that the action is done
+      ansible.builtin.set_fact:
+        _cassandra_op_stage: after
 
     - name: Say the cluster is waited for
       ansible.builtin.debug:

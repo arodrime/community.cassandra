@@ -51,8 +51,27 @@ _REFUSED = re.compile(r"^(?P<action>\w+) refused: (?P<reason>.*)$", re.S)
 _SKIPPED = re.compile(r"^(?P<action>\w+) (?:skipped, |(?P<unfinished>not finished): )(?P<reason>.*)$")
 
 
-def outcome(node, result):
-    """A node's cassandra_op_result -> (the recap's outcome, its action or "")."""
+# what was started on a node, when its action failed midway ("restart started, not finished")
+STARTED = {"add": "bootstrap", "decommission": "decommission", "replace": "replacement", "update_java": "Java update",
+           "upgradesstables": "SSTables upgrade", "apply_config": "config write"}
+
+
+def _failed_row(action, stage, reason):
+    """What a failed node's row says was done to it (stage: node_operation's _cassandra_op_stage), its reason after;
+    "" when the stage is not known."""
+    if stage == "before":
+        return "not touched: %s" % reason if reason else "not touched"
+    if stage == "during":
+        return "%s started, not finished" % STARTED.get(action, action.replace("_", " ")) + (
+            ": %s" % reason if reason else "")
+    if stage == "after":
+        return "%s, then stopped: %s" % (DONE.get(action, action + " done"), reason or "a check after it failed")
+    return ""
+
+
+def outcome(node, result, stage=""):
+    """A node's cassandra_op_result (stage: how far its action went, node_operation's) -> (the recap's outcome, its
+    action or "")."""
     text = " ".join(str(result or "").split())
     m = _DONE.match(text)
     if m:
@@ -65,6 +84,7 @@ def outcome(node, result):
     m = _FAILED.match(text)
     if m:
         return ({"node": node, "status": "failed", "reason": m.group("reason").strip(),
+                 "row": _failed_row(m.group("action"), stage, m.group("reason").strip()),
                  "seconds": int(m.group("seconds")) if m.group("seconds") else None}, m.group("action"))
     m = _REFUSED.match(text)
     if m:
@@ -82,7 +102,7 @@ def _outcomes(results, operation, action):
     """(the recap's outcomes, the playbook's name) of the results."""
     outcomes, actions = [], []
     for item in results or []:
-        said, done = outcome(item.get("node"), item.get("result"))
+        said, done = outcome(item.get("node"), item.get("result"), item.get("stage") or "")
         outcomes.append(said)
         if done:
             actions.append(done)
@@ -133,7 +153,7 @@ def cassandra_stop_block(results, node, failure, operation="", action="", cluste
     code"); a hint stays under the failure's own WAY OUT (add_node has no resume: "run add_node again").
     -> lines: ["STOPPED at node2: node4 (10.0.0.4, r1) is DN, seen from node1 and node2, 10m29s waited
     (cassandra_service_health_timeout 600s). No node after it was touched.", "", "  node1  restarted  1m50s", "  node2
-    not done  cluster unhealthy", "  node3..node5  not touched", "", "WAY OUT  start node4 (the server, then
+    restarted, then stopped: cluster unhealthy", "  node3..node5  not touched", "", "WAY OUT  start node4 (the server, then
     Cassandra), then resume:", "  ansible-playbook community.cassandra.rolling_restart -e cassandra_rolling_resume=true"]."""
     outcomes, operation = _outcomes(results, operation, action)
     cause, way_out = _cause_and_way_out(failure)

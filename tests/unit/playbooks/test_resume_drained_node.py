@@ -152,3 +152,22 @@ def test_preflight_lets_a_resumed_run_pass_a_member_seed_down():
     # not a member of the ring: refused, resumed or not
     variables["_all"] = ["10.0.0.1"]
     assert render(condition, cassandra_rolling_resume=True, **variables) is False
+
+
+def test_a_failed_node_s_stage_is_recorded_for_its_row():
+    # (UX audit A1) the stop block says what was done to the node it stopped at: before, during or after its action
+    names = [t["name"] for t in OPERATION["block"]]
+    start = [t for t in OPERATION["block"] if t["name"] == "Note the start time"][0]
+    assert start["ansible.builtin.set_fact"]["_cassandra_op_stage"] == "before"
+    at = names.index("Run the action")
+    assert OPERATION["block"][at - 1]["ansible.builtin.set_fact"] == {"_cassandra_op_stage": "during"}
+    assert OPERATION["block"][at + 1]["ansible.builtin.set_fact"] == {"_cassandra_op_stage": "after"}
+    results = load("roles", "cassandra_operation", "vars", "main.yml")["_cassandra_op_results"]
+    hostvars = {"n1": {"cassandra_op_result": "restart done in 3s", "_cassandra_op_stage": "after"},
+                "n2": {"cassandra_op_result": "restart FAILED after 9s: cluster unhealthy", "_cassandra_op_stage": "after"},
+                "n3": {}}
+    # (groups, cassandra_hosts: ansible-core 2.16 renders the default's lookup too)
+    rendered = render(results, hostvars=hostvars, cassandra_service_summary_hosts=HOSTS, ansible_play_hosts_all=HOSTS,
+                      groups={"prod": HOSTS}, cassandra_hosts="prod")
+    assert rendered[1] == {"node": "n2", "result": "restart FAILED after 9s: cluster unhealthy", "stage": "after"}
+    assert rendered[2] == {"node": "n3", "result": "not reached", "stage": ""}

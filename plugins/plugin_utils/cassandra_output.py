@@ -1652,8 +1652,9 @@ def recap(operation, cluster, outcomes, check=False, seconds=None, extra=None, f
     reason on the line under it) and the skipped ones, with the reason. extra: lines added after (the ring
     after, versions...). full: every name (-v). head: False for the table
     alone (the STOPPED block says the verdict); causes: False when the cause
-    of a failure is said elsewhere (that block): its row reads "not done"
-    and the reason as a word on it, no line under."""
+    of a failure is said elsewhere (that block): its row reads what was done
+    to the node (row: "restarted, then stopped: cluster unhealthy"), else
+    "not done" and the reason as a word on it, no line under."""
     outcomes = list(outcomes or [])
     for item in outcomes:
         item.setdefault("status", "ok")
@@ -1674,8 +1675,8 @@ def recap(operation, cluster, outcomes, check=False, seconds=None, extra=None, f
     # a failure's reason on its own line under its row: the columns are not sized on it
     under = {}
     for o in failed:
-        if not causes:
-            rows.append([o["node"], "not done", o.get("reason") or ""])
+        if not causes:  # what was done to it (row), else "not done" and its reason
+            rows.append([o["node"], o["row"], ""] if o.get("row") else [o["node"], "not done", o.get("reason") or ""])
             continue
         if o.get("reason"):
             under[len(rows)] = "    %s" % o["reason"]
