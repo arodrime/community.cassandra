@@ -61,6 +61,7 @@ OPERATIONS = [
      "summary": "The ring as nodetool status shows it from one node, per datacenter; a down node is shown, not an"
                 " error.",
      "options": [("-e cassandra_target_nodes=<nodes>", "nodes to read from", "the first that answers"),
+                 ("-e status_resolve_ip=false", "addresses only, not their names", "true"),
                  ("-e cassandra_status_raw=true", "also prints nodetool's own output", "false")],
      "example": ("from one node", ["-e cassandra_target_nodes=<node>"])},
     {"name": "health_check", "theme": "read-only", "guide": "Operation playbooks",

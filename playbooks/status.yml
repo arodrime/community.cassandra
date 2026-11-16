@@ -4,8 +4,9 @@
 #   ansible-playbook community.cassandra.status
 #
 # Read from the first node that answers: each datacenter's nodes with their
-# state and load, where the inventory and the ring differ, then the verdict
-# (ALL 5 NODES UP, 1 NODE DOWN: node1...).
+# state and load (each by its name and address: -e status_resolve_ip=false for
+# the addresses alone), where the inventory and the ring differ, then the
+# verdict (ALL 5 NODES UP, 1 NODE DOWN: node1...).
 #
 # A down node is shown, not an error (health_check is the check): it fails
 # only when no node answers.
@@ -203,6 +204,30 @@
           {{ out }}
       run_once: true
 
+    # the ring is read by address (matched with the inventory by address); -e status_resolve_ip=true, the default,
+    # also shows each node by its name: its address resolved on the node the ring was read from (getent, the
+    # resolver nodetool status --resolve-ip uses), 3 s at most per address, 16 at a time, the task 60 s at most; an
+    # address that does not resolve shows alone. A site without reverse DNS: -e status_resolve_ip=false
+    - name: Resolve the addresses of the ring on {{ _view.from }}
+      ansible.builtin.shell: >-
+        printf '%s\n' {{ _ring | map('quote') | join(' ') }} | xargs -r -n 1 -P 16 timeout 3 getent hosts
+      vars:
+        _ring: >-
+          {%- set out = [] -%}
+          {%- for dc in _view.result.cluster_status.values() -%}
+          {%-   for n in dc.nodes | default([]) -%}{%- set _ = out.append(n.address) -%}{%- endfor -%}
+          {%- endfor -%}
+          {{ out }}
+      delegate_to: "{{ _view.from }}"
+      register: cassandra_status_names
+      changed_when: false
+      failed_when: false  # an address with no name (getent: 2) is shown alone
+      check_mode: false  # a read
+      timeout: 60
+      ignore_errors: true  # (the timeout): the addresses alone then
+      run_once: true
+      when: status_resolve_ip | default(true) | bool
+
     # -e cassandra_status_raw=true prints nodetool's own output too
     - name: Show nodetool's output
       ansible.builtin.debug:
@@ -228,9 +253,17 @@
                ansible_play_hosts_all | reject('in', _reached) | list, ansible_limit is defined,
                group='group ' ~ lookup('community.cassandra.cassandra_hosts'), outside=_outside,
                absent=query('community.cassandra.cassandra_nodes', state='absent'),
-               cluster=lookup('community.cassandra.cassandra_hosts'), seen_from=_view.from, places=_places) }}
+               cluster=lookup('community.cassandra.cassandra_hosts'), seen_from=_view.from, places=_places,
+               names=_names) }}
       vars:
         cassandra_output: true
+        # {address: its name}: getent's lines (the address, its name, its aliases); none with -e status_resolve_ip=false
+        _names: >-
+          {%- set out = {} -%}
+          {%- for line in cassandra_status_names.stdout_lines | default([]) if line.split() | length > 1 -%}
+          {%-   set _ = out.update({line.split()[0]: line.split()[1]}) -%}
+          {%- endfor -%}
+          {{ out }}
         # the other hosts of the inventory, by the addresses it gives them
         _outside: >-
           {%- set out = {} -%}

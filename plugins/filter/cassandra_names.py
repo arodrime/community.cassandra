@@ -7,7 +7,7 @@ does not know, each with the known variable it is close to (or "").
 cassandra_renamed_names: the variables set under a former name, each with its
 name now.
 cassandra_unknown_extra_vars: the -e variables under a prefix of the collection
-(cassandra_, import_, help_) that it does not know, each with the known
+(cassandra_, import_, help_, status_) that it does not know, each with the known
 variable it is close to (or "")."""
 
 from __future__ import absolute_import, division, print_function
@@ -31,7 +31,7 @@ _PLAYBOOKS = os.path.join(os.path.dirname(__file__), "..", "..", "playbooks")
 _NAME = re.compile(r"\b(?:cassandra|import_cluster|help)_\w+")
 # the prefixes of the collection's variables (cas+andra: a missing or doubled s, casandra_hosts, is ours too;
 # CASSANDRA_HOSTS too, a variable name being case-sensitive)
-_OURS = re.compile(r"(?:cas+andra|import|help)_", re.IGNORECASE)
+_OURS = re.compile(r"(?:cas+andra|import|help|status)_", re.IGNORECASE)
 # a comment: its names are examples (a typo shown, a module), not variables read (text after " #" in a
 # string goes too: a name only there is then unknown, never a typo let through)
 _COMMENT = re.compile(r"(?m)(?:^|\s)#.*$")

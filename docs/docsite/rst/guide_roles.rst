@@ -297,7 +297,9 @@ a verdict), then the warnings of the cluster; a clock not in sync, or not read, 
          ansible-playbook -i inventory community.cassandra.sync_clocks
 ``status`` only shows the ring as one node sees it (the first that answers, of ``cassandra_target_nodes`` if given), per
 datacenter with the nodes up, down, joining, leaving and moving, the total load, and the hosts the inventory and the
-ring do not share; a down node is shown, not an error. ``cassandra_status_raw: true`` adds nodetool's own output.
+ring do not share; a down node is shown, not an error. Each node is shown by its name and address (its address
+resolved on the node the ring is read from; one with no name by its address alone): ``status_resolve_ip: false`` shows
+the addresses only (a site without reverse DNS). ``cassandra_status_raw: true`` adds nodetool's own output.
 
 Risky operations show one plan first, the same layout for each: the title (the operation in capitals, then what it
 does to whom, where: ``ADD NODE  node4, node5 into dc1 of orders``), how it does it, a table of the nodes concerned

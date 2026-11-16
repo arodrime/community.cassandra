@@ -273,3 +273,24 @@ def test_header_and_verdict_states_and_mismatch():
     ("192.0.2.3", "192.0.2.3"), ("node3.example", "node3.example")])
 def test_cassandra_ip_one_spelling_per_address(address, expected):
     assert cassandra_ring.FilterModule().filters()["cassandra_ip"](address) == expected
+
+
+def test_names_shown_matching_by_address():
+    # names (resolved on the node read): each node by its name and address; one with no name by its address;
+    # the inventory still matched by address, the verdict and the notes unchanged for the hosts it has
+    # (nodetool prints IPv6 in full, getent compressed)
+    names = {"10.0.0.1": "db1.example", "::3": "db3.example", "10.0.0.7": "stray7.example"}
+    lines = cassandra_ring_report(ring(node("10.0.0.1"), node("10.0.0.2", "D"), node("0:0:0:0:0:0:0:3"), node("10.0.0.7")),
+                                  {"n1": ["10.0.0.1"], "n2": ["10.0.0.2"], "n3": ["::3"]}, names=names)
+    assert [" ".join(line.split()) for line in lines[2:7]] == [
+        "-- Address Load Tokens Owns Host ID Rack Inventory",
+        "UN db1.example (10.0.0.1) 1.0 GiB 16 33.3% id-10.0.0.1 r1 n1",
+        u"DN 10.0.0.2 1.0 GiB 16 33.3% id-10.0.0.2 r1 n2 \u2190 down",
+        "UN db3.example (0:0:0:0:0:0:0:3) 1.0 GiB 16 33.3% id-0:0:0:0:0:0:0:3 r1 n3",
+        "UN stray7.example (10.0.0.7) 1.0 GiB 16 33.3% id-10.0.0.7 r1 -"]
+    assert "In the ring, not in the inventory: 10.0.0.7 (stray7.example, dc1, UN)" in lines
+    assert lines[-2:] == ["1 NODE DOWN: n2 (dc1/r1)", "WARNING  ring and inventory differ"]
+    # without names: as before
+    plain = cassandra_ring_report(ring(node("10.0.0.1")), {"n1": ["10.0.0.1"]})
+    assert plain == cassandra_ring_report(ring(node("10.0.0.1")), {"n1": ["10.0.0.1"]}, names={})
+    assert " UN  10.0.0.1  1.0 GiB  16      33.3%  id-10.0.0.1  r1    n1" in plain

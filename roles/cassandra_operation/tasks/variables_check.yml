@@ -1,7 +1,7 @@
 ---
 # Run first by every playbook of the collection (target_nodes_check.yml, the
 # first plays of import_cluster and help), once, on the controller. It stops on:
-# - a -e variable under a prefix of the collection (cassandra_, import_, help_)
+# - a -e variable under a prefix of the collection (cassandra_, import_, help_, status_)
 #   that no role or playbook knows: a typo would otherwise be silently ignored;
 # - a variable under a former name, or one no longer read (cassandra_env_extra_lines...:
 #   the config would be written without its lines), inventory or -e; not for

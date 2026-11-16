@@ -91,6 +91,7 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
                        node is shown, not an error.
       $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.status
         -e cassandra_target_nodes=<nodes>     nodes to read from (default: the first that answers)
+        -e status_resolve_ip=false            addresses only, not their names (default: true)
         -e cassandra_status_raw=true          also prints nodetool's own output (default: false)
       Example (from one node):
       $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.status \\
@@ -447,7 +448,7 @@ def test_operation_variables_are_the_playbooks_own():
         args = [o[0] for o in op.get("options") or []] + list((op.get("example") or ("", []))[1])
         for arg in args:
             if arg != "--check":
-                name = re.search(r"(?:cassandra|help|import)_\w+", arg).group(0)
+                name = re.search(r"(?:cassandra|help|import|status)_\w+", arg).group(0)
                 assert reads(op["name"], name), (op["name"], name)
 
 

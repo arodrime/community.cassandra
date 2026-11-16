@@ -1,0 +1,7 @@
+minor_changes:
+  - >-
+    status - each node is shown by its name and address (``db1.example (10.0.0.1)``), its address resolved on the
+    node the ring is read from (3 s at most per address, the whole lookup 60 s at most); an address with no name is
+    shown alone. The ring is still read and matched with the inventory by address. ``-e status_resolve_ip=false``
+    shows the addresses only (a site without reverse DNS). A misspelt ``status_*`` option given with ``-e`` stops the
+    run, as the ``cassandra_*``, ``import_*`` and ``help_*`` ones do.
