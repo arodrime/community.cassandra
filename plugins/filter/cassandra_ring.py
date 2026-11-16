@@ -88,11 +88,11 @@ def _summaries(rows):
 
 
 def _header(cluster, seen_from, matches, members, total):
-    """"my_cluster  (seen from node1, ring = inventory, 3 nodes)"."""
+    """The line under the verdict: "  my_cluster  seen from node1  ring and inventory: the same 3 nodes"."""
     where = ["seen from %s" % seen_from] if seen_from else []
-    where.append(("ring = %s" % members) if matches else "ring and %s differ" % members)
-    where.append(out.plural(total, "node"))
-    return "  ".join(x for x in [cluster, "(%s)" % ", ".join(where)] if x)
+    where.append(("ring and %s: the same %s" % (members, out.plural(total, "node"))) if matches
+                 else "ring and %s differ (below), %s in the ring" % (members, out.plural(total, "node")))
+    return "  " + "  ".join(x for x in [cluster] + where if x)
 
 
 def _verdict(nodes, differ, unreached=()):
@@ -181,12 +181,12 @@ def _dc_block(dc, nodes, owner, guessed, names=None):
     """A datacenter, its ring nodes, {address: host}, the guesses, {address: name} -> its lines: the nodes as
     nodetool status shows them (the ones not UN marked, each by its name and address when it has a name), then the
     summary of its racks and of the datacenter."""
-    rows = [["--", "Address", "Load", "Tokens", "Owns", "Host ID", "Rack", "Inventory", ""]]
+    rows = [["Node", "--", "Address", "Load", "Tokens", "Owns", "Host ID", "Rack", ""]]
     for n in nodes:
         mark = "" if n["status"] + n["state"] == "UN" else out.ARROW + " " + (
             "down" if n["status"] == "D" else dict(_STATES).get(n["state"], n["status"] + n["state"]))
-        rows.append([n["status"] + n["state"], _shown_address(n, names), n["load"] or "?", n["tokens"] or "",
-                     n["owns"] or "", n["host_id"], n["rack"], _shown_name(n, owner, guessed) or "-", mark])
+        rows.append([_shown_name(n, owner, guessed) or "-", n["status"] + n["state"], _shown_address(n, names),
+                     n["load"] or "?", n["tokens"] or "", n["owns"] or "", n["host_id"], n["rack"], mark])
     lines = ["", "Datacenter: %s" % dc, ""]
     lines.extend(" " + line for line in _table(rows))
     racks = sorted(set(n["rack"] for n in nodes))
@@ -231,9 +231,10 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
     and address, its address alone without one; matched by address all the
     same. Returns the report as a list of lines.
     e.g. (node1 to node3 of dc1/r1, node3 DN; inventory {node1: ["10.0.0.1"], ...}, cluster="my_cluster",
-    seen_from="node1") -> ["my_cluster  (seen from node1, ring = inventory, 3 nodes)", "", "Datacenter: dc1", "", " --
-    Address   Load ...", " UN  10.0.0.1  1 GiB  16            h1       r1    node1", ..., " DN  10.0.0.3  ...  node3
-    \u2190 down", "", "  dc1   3 nodes   2 up, 1 down   load 3.0 GiB", "", "1 NODE DOWN: node3 (dc1/r1)"]."""
+    seen_from="node1") -> ["1 NODE DOWN: node3 (dc1/r1)", "  my_cluster  seen from node1  ring and inventory: the
+    same 3 nodes", "", "Datacenter: dc1", "", " Node   --  Address   Load ...", " node1  UN  10.0.0.1  1 GiB  16  h1
+    r1", ..., " node3  DN  10.0.0.3  ...  \u2190 down", "", "  dc1   3 nodes   2 up, 1 down   load 3.0 GiB"]: the
+    verdict first, alone on its line, then the cluster, the nodes by their inventory name first."""
     cluster_status = cluster_status or {}
     ring = [(dc, n) for dc in cluster_status for n in cluster_status[dc].get("nodes", [])]
     owner = hosts_by_address(inventory, [_ip(n["address"]) for dc, n in ring])
@@ -251,15 +252,17 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
     notes = _differences(missing, known, leaving, stray, guessed, unreachable, run, outside)
     matches = not missing and not known and not leaving and not stray and not guessed  # a guess is no match
     members = "inventory" if run == group else run
-    if cluster or seen_from:
-        lines.insert(0, _header(cluster, seen_from, matches, members, len(named)))
-    elif matches:
+    head = [_header(cluster, seen_from, matches, members, len(named))] if cluster or seen_from else []
+    if not head and matches:
         notes.append("The ring and %s match (%s)" % (run, out.plural(len(inventory), "node")))
     if notes:
         lines.extend([""] + notes)
-    if named:
+    if named:  # the verdict first, alone, the cluster and where it was seen from under it, then the tables
         # a ring node that is another host of the inventory: expected under --limit or a sub-group, not a problem
-        lines.extend([""] + _verdict(named, bool(missing or stray or leaving), [h for h in inventory if h in unreachable]))
+        verdict = _verdict(named, bool(missing or stray or leaving), [h for h in inventory if h in unreachable])
+        lines = verdict[:1] + head + verdict[1:] + lines
+    else:
+        lines = head + lines
     return lines[1:] if lines[:1] == [""] else lines
 
 

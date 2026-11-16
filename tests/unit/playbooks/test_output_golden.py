@@ -99,12 +99,10 @@ def run(tmp_path, playbook, down=True, *args, **answers_given):
 RING = [
     "Datacenter: dc1",
     "",
-    " --  Address       Load       Tokens  Owns   Host ID                               Rack    Inventory",
-    " UN  10.100.100.5  71.84 MiB  16      76.0%  ca0e3575-b45a-487b-a323-2c021fbc16a3  rack_c  node3",
-    " UN  10.100.100.3  94.39 MiB  16      64.7%  76108dea-c527-4c5d-afff-1055bfa15b3f  rack_a  node1",
+    " Node   --  Address       Load       Tokens  Owns   Host ID                               Rack",
+    " node3  UN  10.100.100.5  71.84 MiB  16      76.0%  ca0e3575-b45a-487b-a323-2c021fbc16a3  rack_c",
+    " node1  UN  10.100.100.3  94.39 MiB  16      64.7%  76108dea-c527-4c5d-afff-1055bfa15b3f  rack_a",
 ]
-
-
 # the run's first line (no version: these playbooks read none); not repeated at the end
 CLUSTER = "my_cluster  3 nodes  1 DC (dc1)"
 
@@ -112,23 +110,23 @@ CLUSTER = "my_cluster  3 nodes  1 DC (dc1)"
 def test_status_with_a_node_down(tmp_path):
     rc, output = run(tmp_path, "status")
     assert rc == 0, output
+    # (UX audit B4) the verdict first, alone, between heavy rules, the cluster under it; the nodes by their name first
     assert ruled(output) == [
         CLUSTER,
         "",
-        "====",  # a screen: a heavy rule above, blank lines between its blocks
+        "====",
         "",
-        "my_cluster  (seen from node1, ring = inventory, 3 nodes)",
+        "1 NODE DOWN: node2 (dc1/rack_b)",
+        "  my_cluster  seen from node1  ring and inventory: the same 3 nodes",
+        "",
+        "====",  # then the tables (a blank line each side of a rule)
         ""] + RING + [
-        u" DN  10.100.100.4  94.41 MiB  16      59.3%  4fbaaa06-f1fc-4bb1-98e5-3fbe3fdb8e51  rack_b  node2      \u2190 down",
+        u" node2  DN  10.100.100.4  94.41 MiB  16      59.3%  4fbaaa06-f1fc-4bb1-98e5-3fbe3fdb8e51  rack_b  \u2190 down",
         "",
         "  rack_a   1 node    1 up           load  94.4 MiB",
         "  rack_b   1 node    0 up, 1 down   load  94.4 MiB",
         "  rack_c   1 node    1 up           load  71.8 MiB",
         "  dc1      3 nodes   2 up, 1 down   load 260.6 MiB",
-        "",
-        "====",  # the verdict last, between heavy rules (a blank line each side of a rule)
-        "",
-        "1 NODE DOWN: node2 (dc1/rack_b)",
         "",
         "====",
     ]
@@ -138,8 +136,9 @@ def test_status_all_up(tmp_path):
     rc, output = run(tmp_path, "status", False)
     assert rc == 0, output
     lines = ruled(output)
-    assert lines[:5] == [CLUSTER, "", "====", "", "my_cluster  (seen from node1, ring = inventory, 3 nodes)"]
-    assert lines[-7:] == ["  dc1      3 nodes   3 up   load 260.6 MiB", "", "====", "", "ALL 3 NODES UP", "", "===="]
+    assert lines[:6] == [CLUSTER, "", "====", "", "ALL 3 NODES UP",
+                         "  my_cluster  seen from node1  ring and inventory: the same 3 nodes"]
+    assert lines[-3:] == ["  dc1      3 nodes   3 up   load 260.6 MiB", "", "===="]
 
 
 def ruled(output):

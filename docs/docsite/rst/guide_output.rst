@@ -160,18 +160,19 @@ Conventions
 - **TO DO**: numbered, each with its full command, ready to paste (``-i`` and ``-e cassandra_hosts`` only when the
   run needed them). An inventory change is followed by its commit only when the inventory is in a git work tree.
 - The marker ``←`` points at what needs a look (``← down``, ``← differs``, ``← slow``).
-- **Status** (the ``status`` playbook): a view, read top to bottom, so its verdict comes last. A header line (the
-  cluster, the node the ring is seen from, whether the ring and the inventory match, the node count), per datacenter the ``nodetool status`` table and a summary table of
-  its racks and the datacenter, where the ring and the inventory differ, then the verdict, blank lines between
-  the blocks::
+- **Status** (the ``status`` playbook): the verdict first, alone on its line, then the cluster, the node the ring
+  is seen from and whether the ring and the inventory match; per datacenter the ``nodetool status`` table, each node
+  by its inventory name first, and a summary table of its racks and the datacenter; then where the ring and the
+  inventory differ, blank lines between the blocks::
 
-    my_cluster  (seen from node3, ring = inventory, 5 nodes)
+    1 NODE DOWN: node1 (dc1/rack3)
+      my_cluster  seen from node3  ring and inventory: the same 5 nodes
 
     Datacenter: dc1
 
-     --  Address   Load      Tokens  Owns   Host ID  Rack   Inventory
-     UN  10.0.0.9  6.88 GiB  16      28.0%  1c7a...  rack2  node5
-     DN  10.0.0.5  5.25 GiB  16      22.5%  1e96...  rack3  node1      ← down
+     Node   --  Address   Load      Tokens  Owns   Host ID  Rack
+     node5  UN  10.0.0.9  6.88 GiB  16      28.0%  1c7a...  rack2
+     node1  DN  10.0.0.5  5.25 GiB  16      22.5%  1e96...  rack3  ← down
      ...
 
       rack1   1 node    1 up           load  5.0 GiB
@@ -179,14 +180,12 @@ Conventions
       rack3   2 nodes   1 up, 1 down   load  9.1 GiB
       dc1     5 nodes   4 up, 1 down   load 23.2 GiB
 
-    1 NODE DOWN: node1 (dc1/rack3)
-
   The verdict: ``ALL 5 NODES UP`` (green under the ops callback), or ``1 NODE DOWN: ...`` (red); then, after
   ``—``, the nodes joining, leaving or moving (``ALL 6 NODES UP — 1 JOINING: node6``, yellow). Under it, a second
   line ``WARNING  ring and inventory differ`` (the warning colour) when a host of the run is missing from the ring,
   or a ring node is unknown to the inventory or marked absent (not a ring node that is another host of the inventory, as under
-  ``--limit``); the lines above it say which. The ops callback puts the report under a heavy rule and the verdict
-  (both lines) between two, and colours the table rows by the node's state: down red, joining, leaving or moving yellow.
+  ``--limit``); the lines below say which. The ops callback puts the verdict (with its lines) between two heavy
+  rules, the tables under them, a heavy rule under the tables, and colours the table rows by the node's state: down red, joining, leaving or moving yellow.
 
 Where a node stands
 -------------------

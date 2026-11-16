@@ -47,13 +47,13 @@ description:
     a C(FAILED) or C(STOPPED) recap do not keep its colour (the nodes done stay plain). The C(status)
     playbook's verdict, C(ALL 5 NODES UP), as ok, followed by nodes joining, leaving or moving (C(1 JOINING))
     as a change, C(1 NODE DOWN), C(1 NODE NOT REACHED) as an error; a ring that differs from the inventory, a
-    C(WARNING  ...) line under the verdict, as a warning; the rows of its table (C( DN  10.0.0.5 ...)) by the
+    C(WARNING  ...) line under the verdict, as a warning; the rows of its table (C( node1  DN  10.0.0.5 ...)) by the
     node's state, down as an error, joining, leaving or moving as a change. The messages themselves stay plain text.
   - Rules mark the blocks out. A heavy one (C(=====)) above a plan or a screen (its first line C(REFUSED  ...),
     C(READY  ...), C(IMPORT <cluster> ...), or a plan's title, the operation in capitals (C(ADD NODE  ...)))
     and around a recap (C(DONE  ...), C(FAILED  ...), C(STOPPED at ...), C(WAY OUT  ...), C(CHECK  ...), C(NOTHING TO DO  ...),
-    C(HEALTHY  ...), C(NOT HEALTHY  ...)), above the C(status) playbook's report and around its
-    verdict, its last line (and the warning under it). A light one (C(-----)) for each empty line inside them (the blank lines of the status
+    C(HEALTHY  ...), C(NOT HEALTHY  ...)), around the C(status) playbook's verdict, its first lines (and the
+    warning under it), and under its tables. A light one (C(-----)) for each empty line inside them (the blank lines of the status
     report stay blank), under a plan's first line and above a question; a heavy one for a line of C(=) inside them,
     with its title (C(==== TO REVIEW ====)) when it has one (the sections of the C(import_cluster) screen). As wide as the terminal, 100 columns at most, a
     blank line above and under each one. A line with only a space inside them separates two paragraphs of a block,
@@ -217,7 +217,7 @@ LOG_EVERY = 300  # seconds between two lines of a step going on, in a log or a p
 _RING_VERDICT = re.compile(r"ALL \d+ NODES? UP\b|\d+ NODES? (DOWN|NOT REACHED): ")
 _RING_DIFFER = re.compile(r"WARNING  ring and inventory differ$")
 # a row of the status playbook's nodetool table: its colour by the node's state
-_RING_ROW = re.compile(r" ([UD])([NJLM])  \S")
+_RING_ROW = re.compile(r" (?:\S+ +)?([UD])([NJLM])  \S")  # (its node name first, since the next release)
 # the help playbook's text: a rule naming a section, an operation (its key), a command
 _HELP_RULE = re.compile(r"(====|----) (\S.*?) [=-]{4,}$")
 _HELP_COMMAND = re.compile(r"\s*\$ ")
@@ -225,7 +225,18 @@ _HELP_COMMAND = re.compile(r"\s*\$ ")
 
 def _ring_verdict(texts):
     """(the lines above, the verdict lines) of the status playbook's report, its verdict last (its warning
-    under it), the blank lines around them left out; (texts, []) for any other message."""
+    under it), the blank lines around them left out; (texts, []) for any other message. Its verdict first (the
+    status report since the next release: the verdict, the cluster's line, a warning): (["", the rest], the verdict
+    lines), the rest printed after them (_print)."""
+    first = [t for t in texts if t.strip()][:1]
+    if first and _RING_VERDICT.match(first[0]) and texts[0] == first[0]:
+        size = 1
+        while size < len(texts) and texts[size].strip() and (texts[size].startswith("  ") or _RING_DIFFER.match(texts[size])):
+            size += 1
+        rest = list(texts[size:])
+        while rest and not rest[0].strip():
+            rest.pop(0)
+        return [None] + rest, list(texts[:size])
     shown = list(texts)
     while shown and not shown[-1].strip():
         shown.pop()
@@ -525,7 +536,7 @@ class CallbackModule(DefaultCallback):
         first = next((t for t in texts if t.strip()), "")
         headed, recap = _HEADED.match(first), _RECAP.match(first)
         phase = sum(1 for t in texts if t.strip()) == 1 and _PHASE.match(first)  # a blank line above and under it
-        texts, ring = _ring_verdict(texts)  # the status report: a screen, its verdict last, printed between rules
+        texts, ring = _ring_verdict(texts)  # the status report: a screen, its verdict printed between rules
         if ring:
             headed = recap = phase = None  # its first line is the cluster's name, whatever that name is
         if headed or recap or ring:
@@ -533,6 +544,13 @@ class CallbackModule(DefaultCallback):
         elif self._gap or phase:
             self._line("")
         self._gap = False
+        if ring and texts[:1] == [None]:  # its verdict first: between rules, then its tables, a rule under them
+            for line in ring:
+                self._line(line, color=color or colour(line, None, self._progress, self._warning))
+            self._rule(heavy=True)
+            self._print_lines(texts[1:], first, headed, recap, color, info)
+            self._rule(heavy=True)
+            return None
         self._print_lines(texts, first, headed, recap, color, info)
         if ring:
             self._rule(heavy=True)
