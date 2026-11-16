@@ -363,3 +363,47 @@ def test_login_written_vaulted_unless_yours():
               "content": "cassandra_cql_username: alice\ncassandra_cql_password: %s\n" % GOOD}]
     files = cassandra_inventory_files(cassandra_inventory_layout_over(nodes, "Prod", yours))
     assert not [f for f in files if "cassandra_cql" in f["content"]]
+
+
+# As import_cluster checks it: from its connection: local play, on a node named by a fact of localhost (_nodes).
+# The delegated task's connection is templated in that node's variables, where localhost's facts are undefined
+# (seen: the login task failed, "'_nodes' is undefined", hidden by no_log).
+FROM_A_NODE = """
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_become: false
+  tasks:
+    - ansible.builtin.set_fact:
+        _nodes: [{host: node1}]
+    - ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: cql_login.yml
+      vars:
+        _cql_node: "{{ _nodes | first }}"
+        _cassandra_cql_login_from: "{{ _cql_node.host }}"
+        _cassandra_cql_login_host: 127.0.0.1
+        _cassandra_cql_login_given: {user: alice, password: "%s"}
+        _cassandra_cql_login_ask: false
+    - ansible.builtin.debug:
+        msg: "STATE={{ cassandra_cql_login.state }}"
+""" % GOOD
+
+
+@pytest.mark.parametrize("node, expected", [
+    # a node with a connection of its own: the login runs there
+    ("node1 ansible_connection=local", "STATE=ok"),
+    # none of its own: over ssh (Ansible's default), not the play's local; nothing listens on port 1
+    ("node1 ansible_host=127.0.0.1 ansible_port=1 ansible_ssh_common_args='-o ConnectTimeout=5'", "UNREACHABLE"),
+])
+def test_the_login_runs_on_the_node_the_import_names(tmp_path, node, expected):
+    env = env_for(tmp_path, callback="default")
+    (tmp_path / "from_a_node.yml").write_text(FROM_A_NODE)
+    (tmp_path / "hosts").write_text(node + "\n")
+    proc = subprocess.run([sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", "hosts",
+                           "from_a_node.yml"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                          stdin=subprocess.DEVNULL, check=False, cwd=str(tmp_path), timeout=300)
+    output = proc.stdout.decode("utf-8", "replace")
+    assert expected in output, output
+    assert "is undefined" not in output and GOOD not in output, output

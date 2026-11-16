@@ -128,5 +128,6 @@ def test_the_cql_login_runs_on_the_node():
     with open(os.path.join(ROOT, "roles", "cassandra_operation", "tasks", "cql_login_try.yml")) as f:
         task = next(t for t in yaml.safe_load(f) if MODULE in t)
     assert task["delegate_to"] == "{{ _cassandra_cql_login_from }}"
-    assert task["vars"]["ansible_connection"] == (
+    assert "vars" not in task  # templated in the node's variables, without localhost's facts
+    assert task["connection"] == (
         "{{ hostvars[_cassandra_cql_login_from].ansible_connection | default('ssh') }}")
