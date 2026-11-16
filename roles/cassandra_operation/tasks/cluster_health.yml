@@ -160,7 +160,8 @@
          + (['Not counted, marked cassandra_node_state: absent: ' ~ _absent | join(', ')
              ~ '. Still in the ring? The playbook topology removes them.']
             if _absent and cassandra_health_problems | select('search', '^the ring has ') | list else [])
-         + (['WAY OUT  start Cassandra on ' ~ _down | join(', ') ~ ', then ' ~ _again] + _lost
+         + (['WAY OUT  bring ' ~ _down | join(', ') ~ ' back to UN (' ~ ('its' if _down | length == 1 else 'their')
+             ~ ' host and/or Cassandra), then ' ~ _again] + _lost
             if _down else ['WAY OUT  fix it (the lines above say what), then ' ~ _again]) }}
   vars:
     cassandra_output: true
@@ -170,17 +171,21 @@
     # the nodes down, as the problems name them ("node4 (10.0.0.4, r1) is DN, seen from node1")
     _down: >-
       {{ cassandra_health_problems | select('search', ' is D[NLJM],') | map('regex_replace', ' \(.*$', '') | unique | list }}
-    # (UX audit B17) a node lost for good: the full commands, replace_node first, remove_dead_node last
+    # (UX audit B17) a node lost for good, apart from the resume (a block of its own in the stop block): the full
+    # commands with the conditions their playbooks state, replace_node first, remove_dead_node last
     _lost: >-
       {%- set out = [] -%}
       {%- for p in cassandra_health_problems | select('search', ' is D[NLJM],') | unique -%}
       {%-   set name = p | regex_replace(' \(.*$', '') -%}
       {%-   set address = (p | regex_findall('^\S+ \(([^,)]+)') + [name]) | first -%}
-      {%-   set _ = out.extend(['if ' ~ name ~ ' is lost for good, replace it (NEW_NODE: the new host):',
+      {%-   set _ = out.extend(['IF ' ~ name ~ ' IS LOST FOR GOOD',
+                                'replace it: NEW_NODE a blank host, ' ~ name ~ ' out of the inventory',
+                                '(a seed: out of cassandra_seeds first, with change_seeds)',
                                 '  ' ~ 'replace_node' | community.cassandra.cassandra_command(
                                    extra=['-e cassandra_target_nodes=NEW_NODE', '-e cassandra_replace_address=' ~ address],
                                    **_cassandra_run_command_args),
-                                'as a last resort only, remove it from the ring:',
+                                'last resort, no replacement: ' ~ name ~ ' out of the inventory first; the other replicas'
+                                ~ ' rebuild its data (removenode)',
                                 '  ' ~ 'remove_dead_node' | community.cassandra.cassandra_command(
                                    extra=['-e cassandra_target_nodes=' ~ address],
                                    **_cassandra_run_command_args)]) -%}

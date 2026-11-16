@@ -279,7 +279,7 @@ def test_each_read_is_one_read_the_wait_reads_again_with_a_progress_line():
     # the stop says how long it waited
     stop = next(t for t in HEALTH if t["name"] == "Stop on an unhealthy cluster")
     assert "['waited ' ~" in stop["ansible.builtin.fail"]["msg"] and "(cassandra_service_health_timeout: " in stop["ansible.builtin.fail"]["msg"]
-    assert "WAY OUT  start " in stop["ansible.builtin.fail"]["msg"]  # the way out, from its WAY OUT line on
+    assert "WAY OUT  bring " in stop["ansible.builtin.fail"]["msg"]  # the way out, from its WAY OUT line on
 
 
 def check_task(name):

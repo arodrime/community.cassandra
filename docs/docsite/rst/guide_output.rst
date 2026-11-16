@@ -127,10 +127,11 @@ Conventions
     NEXT  once the cluster is fine, clean up the nodes that handed data over (dc1: the whole datacenter):
       ansible-playbook community.cassandra.cleanup --limit node1,node2,node3,node4 -e cassandra_cleanup_mode=sequential -e cassandra_cleanup_jobs=2
 
-- **Stop**: a run that stops at a node ends with one block (``cassandra_stop_block``), 80 columns at most: the
+- **Stop**: a run that stops at a node ends with one block (``cassandra_stop_block``), 79 columns at most: the
   verdict first, the cause under it (``Why:``, one fact per line), the nodes' table with what was done to each, then
   the way out, last, in numbered steps with the command to copy (cut between its arguments, ``\`` at the end of each
-  line but the last). A node down that several nodes see is said once, with all of them::
+  line but the last). A node down that several nodes see is said once, with all of them. What to do if that node
+  is lost for good comes in a block of its own, after the way out, with the conditions its playbooks set::
 
     STOPPED  rolling_restart  prod  at node2
       Why:  node4 (10.0.0.4, r1) is DN, seen from node1 and node2
@@ -138,16 +139,21 @@ Conventions
       node1         restarted    1m50s
       node2         restarted; cluster health check failed
       node3..node5  not touched
+
     WAY OUT
-      1. start Cassandra on node4
+      1. bring node4 back to UN (its host and/or Cassandra)
       2. resume:
          ansible-playbook community.cassandra.rolling_restart \
            -e cassandra_hosts=prod -e cassandra_rolling_resume=true
          progress: .cassandra_progress/rolling_restart-prod.done
-      if node4 is lost for good, replace it (NEW_NODE: the new host):
+
+    IF node4 IS LOST FOR GOOD
+      replace it: NEW_NODE a blank host, node4 out of the inventory
+      (a seed: out of cassandra_seeds first, with change_seeds)
         ansible-playbook community.cassandra.replace_node -e cassandra_hosts=prod \
           -e cassandra_target_nodes=NEW_NODE -e cassandra_replace_address=10.0.0.4
-      as a last resort only, remove it from the ring:
+      last resort, no replacement: node4 out of the inventory first; the other
+      replicas rebuild its data (removenode)
         ansible-playbook community.cassandra.remove_dead_node \
           -e cassandra_hosts=prod -e cassandra_target_nodes=10.0.0.4
 
@@ -180,7 +186,7 @@ Conventions
   characters, and a line says where they are whole (``-e cassandra_status_raw=true``: nodetool's own output)::
 
     1 NODE DOWN: node1 (dc1/rack3)
-      my_cluster  seen from node3 at 14:02 CET
+      my_cluster  seen from node3 at 2026-11-16 14:02 CET
       ring and inventory: the same 5 nodes
 
     Datacenter: dc1

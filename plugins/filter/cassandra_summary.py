@@ -10,7 +10,7 @@ cassandra_reset_recap: [{node, delete, stop, disable}] (reset_node's plan of
 cassandra_stop_block: the end of a run that stopped at a node: "STOPPED
     rolling_restart  prod  at node2" (FAILED when a task failed, not one of
     our stops), the cause under it, the nodes' table, then WAY OUT with the
-    command to copy, each said once, 80 columns at most.
+    command to copy, each said once, 79 columns at most.
 cassandra_differs: {node: value} of a setting that must be the same on every
     node -> why the run stops, and where to fix it.
 """
@@ -150,8 +150,8 @@ def _cause_and_way_out(failure):
     return lines, []
 
 
-# the width of a stop block: 80 columns, whatever prints it (a terminal, a pipe, a log file)
-STOP_WIDTH = 80
+# the width of a stop block: 79 columns (an 80-column terminal), whatever prints it (a terminal, a pipe, a log file)
+STOP_WIDTH = 79
 _COMMAND_LINE = re.compile(r"^(\s*)(ansible-playbook|ansible) ")
 _THEN = re.compile(r"^(?P<first>.+?),? then (?P<again>resume|check again):?$")
 
@@ -174,12 +174,20 @@ def _wrapped(text, indent, hang, width=STOP_WIDTH):
     return lines + [line]
 
 
+_LOST = re.compile(r"^IF .+ IS LOST FOR GOOD$")  # the block of the ways out of a node lost for good (cluster_health)
+
+
 def _way_out_lines(lines, indent):
-    """Lines of a way out (their own indent kept, from indent on), each wrapped at the stop block's width."""
+    """Lines of a way out (their own indent kept, from indent on), each wrapped at the stop block's width; a
+    heading "IF node4 IS LOST FOR GOOD" starts a block of its own (a blank line above it, not indented): its lines
+    are no next step of the way out."""
     said = []
     for line in lines:
         text = line.lstrip()
-        said += _wrapped(text, indent + len(line) - len(text), indent + len(line) - len(text) + 2)
+        if _LOST.match(text):
+            said += ["", text]
+            continue
+        said += _wrapped(text, indent + len(line) - len(text), indent + len(line) - len(text))
     return said
 
 
@@ -194,7 +202,7 @@ def cassandra_stop_block(results, node, failure, operation="", action="", cluste
     nodes done at the same time; task, stderr: the failed task's name and stderr, said in a FAILED cause when it is
     Ansible's generic one ("non-zero return code"); a hint stays under the failure's own WAY OUT (add_node has no
     resume: "run add_node again"). The verdict first, the cause on its own lines under it (Why:), the nodes' table,
-    then WAY OUT, its steps numbered when the failure's way out ends "then resume"; 80 columns at most (a command cut
+    then WAY OUT, its steps numbered when the failure's way out ends "then resume"; 79 columns at most (a command cut
     between its arguments, " \\" at the end of each line but its last).
     -> lines: ["STOPPED  rolling_restart  prod  at node2", "  Why:  node4 (10.0.0.4, r1) is DN, seen from node1 and
     node2", "        waited 10m29s (cassandra_service_health_timeout: 600s)", "  node1         restarted  1m50s",
@@ -223,7 +231,7 @@ def cassandra_stop_block(results, node, failure, operation="", action="", cluste
         way_out = [hint.strip() if hint else ("fix it, then %s" % again if command else
                    "fix it, then check where the cluster stands (the status playbook) before running it again")]
     elif hint and not command:  # the failure's own way out ends "then resume": the hint says how
-        way_out = [re.sub(r",? then resume:?$", ", then:", way_out[0])] + way_out[1:] + [hint.strip()]
+        way_out = [re.sub(r",? then resume:?$", ", then:", way_out[0]), hint.strip()] + way_out[1:]
     elif check:
         way_out = [re.sub(r"then resume(:?)$", r"then check again\1", way_out[0])] + way_out[1:]
     lines = ["WAY OUT"]
@@ -239,7 +247,7 @@ def cassandra_stop_block(results, node, failure, operation="", action="", cluste
     if command and progress_file and not check:  # (under the command it is for, before the other ways out)
         lines += _wrapped("progress: %s" % (out.path_from(str(progress_file), cwd) if cwd else progress_file),
                           indent, indent + 2)
-    return head + table + lines + _way_out_lines(way_out[1:], 2)
+    return head + table + [""] + lines + _way_out_lines(way_out[1:], 2)
 
 
 def cassandra_reset_recap(nodes, check=False, cluster="", add_command=""):
