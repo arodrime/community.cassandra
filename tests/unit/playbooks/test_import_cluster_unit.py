@@ -276,6 +276,20 @@ def test_started_note_of_a_unit_kept_by_name(hv):
     assert "(kept on this node; new nodes get the unit of cassandra_service" in n["notes"][1]
 
 
+@pytest.mark.parametrize("hv, keep_hand_edits", [
+    ({"import_cluster_unit": {"env": {"CASSANDRA_LOG_DIR": "/data/log", "LOCAL_JMX": "no"}}}, "unit"),
+    ({"import_cluster_unit": dict(SYSV, pkg_script="cassandra",
+                                  env={"CASSANDRA_LOG_DIR": "/data/log", "LOCAL_JMX": "no"})}, False),
+])
+def test_log_dir_of_a_kept_unit_carried_for_the_role_unit(hv, keep_hand_edits):
+    # cassandra-env.sh keeps its fallback (host_vars): the role's unit (a node replaced once the unit lines are removed,
+    # or started by unit) gets the unit's CASSANDRA_LOG_DIR and logs where its peers do
+    n = node(dict(hv, import_cluster_log_dir="/data/log"), keep_hand_edits=keep_hand_edits)
+    assert n["keep"]["cassandra_log_dir"] == "/var/log/cassandra"
+    assert n["vars"]["cassandra_service_environment"] == {"CASSANDRA_LOG_DIR": "/data/log", "LOCAL_JMX": "no"}
+    assert "its Environment CASSANDRA_LOG_DIR, LOCAL_JMX as cassandra_service_environment" in n["notes"][1]
+
+
 @pytest.mark.parametrize("dropins, imported", [
     # a drop-in of its own: what it sets would not hold for a node added later, the self-check compares instead
     ("/etc/systemd/system/cassandra.service.d/override.conf", False),

@@ -246,7 +246,8 @@ def _installed(hv, read, package, os_family):
 
 
 def _unit_env(hv, read, env):
-    """The unit's Environment carried (its CASSANDRA_LOG_DIR left out when it is the log directory) -> {name: value}."""
+    """The unit's Environment carried (its CASSANDRA_LOG_DIR left out when it is the log directory: cassandra_log_dir
+    gives it, but for a unit kept, _node) -> {name: value}."""
     if not read:
         return {}
     drop = "CASSANDRA_LOG_DIR" if env.get("CASSANDRA_LOG_DIR", "") == hv.get("import_cluster_log_dir", "") else ""
@@ -411,6 +412,11 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
         if read and unit.get("pkg_script", "") not in ("", "modified") and not _own_dropins(unit) else {}
     unit_kept = dict(keep, **({"cassandra_service_unit_manage": False} if start or unit_by_hand else {}))
     env_log_dir = _env_log_dir(read, unit_kept, env, conf, config_vars)
+    if env_log_dir:
+        # cassandra-env.sh keeps its fallback, the unit's CASSANDRA_LOG_DIR wins: carried, the role's unit (a node
+        # replaced, a host rebuilt under this name) then logs where this node does
+        unit_env = dict(env)
+        conf = dict(conf, cassandra_service_environment=unit_env)
     java_link = _java_link(hv, read)
     versions = _versions_note(hv, java_link)
     # the unit kept by name: no start method imported (_kept_parts), new nodes get the role's unit
