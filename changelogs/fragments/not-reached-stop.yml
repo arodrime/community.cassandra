@@ -1,0 +1,4 @@
+bugfixes:
+  - "preflight (every playbook that changes the cluster) - a node Ansible did not reach no longer gets the advice to restart its server or replace it: the stop (``REFUSED  node3 not reached by Ansible  nothing was changed``) says only what was observed, the command that shows all of Ansible's error (``ansible node3 -m ping -vvv``) and the option to go on without it."
+minor_changes:
+  - "ops callback - an unreachable host is shown on one line, whether the play goes on without it or not: the first sentence of Ansible's error, then the command that shows all of it, never Ansible's raw dump."

@@ -136,6 +136,29 @@ def _same_sources(a, b):
     return norm(a) == norm(b)
 
 
+def cassandra_not_reached(hosts, inventory=None, default_inventory=None, cwd=None):
+    """The hosts Ansible did not reach at the start of a run (preflight) -> the lines of its refusal: only what was
+    observed (Ansible did not reach them: its error is the UNREACHABLE line above, the ops callback's), the command
+    that shows all of the error, the option to go on without them. No guessed cause (the server down...): the
+    server and Cassandra may well run (a remote tmp dir, a key, sudo)."""
+    hosts = [str(h) for h in hosts or []]
+    if default_inventory and _same_sources(inventory, default_inventory):
+        inventory = None
+    sources = [inventory] if isinstance(inventory, str) else list(inventory or [])
+    ping = " ".join(["ansible"] + ["-i %s" % shlex.quote(out.path_from(i, cwd)) for i in sources if i]
+                    + [shlex.quote(",".join(hosts)), "-m ping -vvv"])
+    head = "%s not reached by Ansible" % (hosts[0] if len(hosts) == 1 else out.plural(len(hosts), "node"))
+    lines = ["REFUSED  %s  nothing was changed" % head]
+    lines += ["  %s" % h for h in hosts] if len(hosts) > 1 else []
+    labels = ["all of the error:", "to go on without %s:" % ("it" if len(hosts) == 1 else "them")]
+    column = max(len(label) for label in labels) + 2
+    lines += ["  Ansible's error: the UNREACHABLE line%s above" % ("" if len(hosts) == 1 else "s"), "",
+              "  " + labels[0].ljust(column) + ping,
+              "  " + labels[1].ljust(column) + "-e cassandra_allow_down_nodes=true",
+              "  " + " " * column + "(the cluster health checks then need -e cassandra_service_health_force=true)"]
+    return lines
+
+
 def cassandra_cqlsh_words(command):
     """cassandra_cqlsh_command as the cassandra_cqlsh module splits it (shlex: the program, then its arguments) ->
     [word], [] when it cannot be split (an unclosed quote).
@@ -240,6 +263,7 @@ class FilterModule(object):
             "cassandra_progress_line": cassandra_progress_line,
             "cassandra_normal_wait_line": cassandra_normal_wait_line,
             "cassandra_command": cassandra_command,
+            "cassandra_not_reached": cassandra_not_reached,
             "cassandra_cqlsh_words": cassandra_cqlsh_words,
             "cassandra_seeds_reload_todo": cassandra_seeds_reload_todo,
             "cassandra_todo": cassandra_todo,

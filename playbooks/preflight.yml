@@ -104,15 +104,16 @@
     - name: Every node answers
       ansible.builtin.assert:
         that: _unreachable | length == 0 or cassandra_allow_down_nodes | default(false) | bool
+        # what was observed only (Ansible did not reach them), never a guessed cause: the server and Cassandra may run
         fail_msg: >-
-          {{ _unreachable | join(', ') }} did not answer: the playbook stops here, nothing was done. Restart it first (the server, then Cassandra). If the server can't be recovered, replace
-          the node (replace_node); removing it for good (remove_dead_node) is the rare last resort.
-          -e cassandra_allow_down_nodes=true goes on without it (the cluster health checks then need
-          cassandra_service_health_force too).
+          {{ _unreachable | community.cassandra.cassandra_not_reached(
+               inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+               cwd=lookup('ansible.builtin.env', 'PWD')) | join(_nl) }}
         quiet: true
       vars:
         cassandra_output: true  # a verdict: its msg as is (ops callback)
         _unreachable: "{{ ansible_play_hosts_all | difference(ansible_play_hosts) }}"
+        _nl: "\n"
       run_once: true
 
     - name: Check the run has root on the nodes
@@ -127,7 +128,7 @@
       vars:
         _note: >-
           WARNING  {{ ansible_play_hosts_all | difference(ansible_play_hosts) | community.cassandra.cassandra_node_list }}
-          did not answer, going on without them (cassandra_allow_down_nodes). Fewer replicas are up: QUORUM reads and
+          not reached by Ansible, going on without them (cassandra_allow_down_nodes). Fewer replicas are up: QUORUM reads and
           writes may fail.
       when: ansible_play_hosts_all | difference(ansible_play_hosts) | length > 0
 

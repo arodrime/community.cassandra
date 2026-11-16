@@ -205,8 +205,11 @@ def test_unreachable_hosts(tmp_path):
     rc, output = run(tmp_path, playbook, INVENTORY=str(inventory), PATH="%s:%s" % (bin_dir, os.environ.get("PATH", "")))
     assert rc != 0
     lines = output.splitlines()
-    assert any(line.startswith("UNREACHABLE  node3  ") for line in lines), output  # ignored: one line
-    assert "TASK [Ping again]" in output and "fatal: [node3]: UNREACHABLE!" in output, output  # not ignored: in full
+    # (UX audit B6) ignored or not: one form, the error's first sentence, the command that shows all of it; no dump
+    found = [line for line in lines if line.startswith("UNREACHABLE  node3  ")]
+    assert len(found) == 2 and "Connection refused" in found[0] and "Task failed" not in found[0], output  # (a task each)
+    assert lines[lines.index(found[0]) + 1] == "             all of the error:  ansible node3 -m ping -vvv", output
+    assert "fatal: [node3]: UNREACHABLE!" not in output and "=> {" not in output, output
 
 
 def test_diff_is_shown(tmp_path):

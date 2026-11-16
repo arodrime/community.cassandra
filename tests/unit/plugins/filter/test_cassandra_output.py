@@ -75,3 +75,32 @@ def test_the_normal_wait_line():
         "[1/5] node1  restarted  NORMAL after 30s  1m50s"
     assert module.cassandra_normal_wait_line("NORMAL", done=True, waited=30, node="node1", operation="write_config") == \
         "node1  config written  NORMAL after 30s"
+
+
+def test_not_reached_says_only_what_was_observed():
+    # (UX audit A4) Ansible did not reach the host: never "restart the server" nor "replace the node" (the server
+    # and Cassandra may well run); the command that shows all of the error, the option to go on
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_not_reached
+    lines = cassandra_not_reached(["h-n3"], inventory=["/inv/hosts.yml"], default_inventory="/etc/ansible/hosts",
+                                  cwd="/inv")
+    assert lines == ["REFUSED  h-n3 not reached by Ansible  nothing was changed",
+                     "  Ansible's error: the UNREACHABLE line above",
+                     "",
+                     "  all of the error:     ansible -i hosts.yml h-n3 -m ping -vvv",
+                     "  to go on without it:  -e cassandra_allow_down_nodes=true",
+                     "                        (the cluster health checks then need -e cassandra_service_health_force=true)"]
+    two = cassandra_not_reached(["n3", "n4"], inventory=["/etc/ansible/hosts"], default_inventory="/etc/ansible/hosts")
+    assert two[:3] == ["REFUSED  2 nodes not reached by Ansible  nothing was changed", "  n3", "  n4"]
+    assert "  all of the error:       ansible n3,n4 -m ping -vvv" in two
+    text = " ".join(lines + two).lower()
+    assert "restart" not in text and "replace" not in text and "server" not in text
+
+
+def test_preflight_stops_on_a_node_not_reached_with_that_text():
+    import os
+    import yaml
+    root = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
+    with open(os.path.join(root, "playbooks", "preflight.yml")) as f:
+        tasks = [t for play in yaml.safe_load(f) for t in play.get("tasks", [])]
+    answers = next(t for t in tasks if t["name"] == "Every node answers")["ansible.builtin.assert"]["fail_msg"]
+    assert "cassandra_not_reached(" in answers and "Restart" not in answers and "replace" not in answers

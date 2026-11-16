@@ -21,9 +21,9 @@ description:
     A marked task that fails on its own template (the error core gives instead of its C(msg)) is printed as the
     default callback does.
     A marked M(ansible.builtin.assert) that passes prints its C(success_msg), nothing without one.
-  - A failed task that is not ignored (C(ignore_errors)) and an unreachable host are printed as the default
-    callback prints them, task name included; a host unreachable where the play goes on without it
-    (C(ignore_unreachable)) on one line. A failure the playbook handles (a task of a block with a C(rescue)) on
+  - A failed task that is not ignored (C(ignore_errors)) is printed as the default callback prints it, task name
+    included; an unreachable host on one line (C(UNREACHABLE  node3  <the first sentence of the error>)), the
+    command that shows all of the error under it (C(ansible node3 -m ping -vvv)). A failure the playbook handles (a task of a block with a C(rescue)) on
     one line too, its host, task and the first line of its message; nothing when that block sets the variable
     C(cassandra_output_rescued) to C(true) (its rescue says what failed). Diffs (C(--diff)) too.
   - The warnings of the tasks are printed too.
@@ -774,12 +774,18 @@ class CallbackModule(DefaultCallback):
         return self._default("v2_runner_item_on_failed", result)
 
     def v2_runner_on_unreachable(self, result):
-        if self._verbose() or not _task(result).ignore_unreachable:
+        if self._verbose():
             return self._default("v2_runner_on_unreachable", result)
-        # the playbook goes on without the host (ignore_unreachable): one line, never silent
+        # one form, whether the play goes on without the host or not: the first sentence of Ansible's error, then
+        # the command that shows all of it (never Ansible's raw dump, never silent)
         msg = lines(_result(result).get("msg") or "")
         host = getattr(result, "host", None) or result._host
-        self._display.display("UNREACHABLE  %s  %s" % (host.get_name(), msg[0] if msg else ""), color=C.COLOR_UNREACHABLE)
+        name = host.get_name()
+        first = re.split(r"(?<=[^.\d])\.(?:\s|$)", msg[0], maxsplit=1)[0].strip() if msg else ""
+        first = re.sub(r"^Task failed: ", "", first)  # (ansible-core 2.19+'s own words before the error)
+        self._display.display("UNREACHABLE  %s  %s" % (name, first), color=C.COLOR_UNREACHABLE)
+        self._display.display("%s  all of the error:  ansible %s -m ping -vvv" % (" " * len("UNREACHABLE"), name),
+                              color=C.COLOR_UNREACHABLE)
         self._shown()
         return None
 
