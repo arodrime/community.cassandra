@@ -1,0 +1,2 @@
+bugfixes:
+  - "cassandra_linux role, apply_config playbook - an ``lvchange --readahead`` that failed in a node's restart window no longer says ``once the volume group is fixed``, a cause nothing established: it says how to retry (``to retry: that command, as root on the node``)."

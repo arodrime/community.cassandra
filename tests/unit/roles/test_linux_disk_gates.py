@@ -416,9 +416,9 @@ def test_what_a_window_refused_said_not_restarted_for_again():
     # lvchange failed there: said with its command, not the "nothing to do" line
     lv = [{"kname": "dm-2", "kind": "lvm", "os": False, "lv_read_ahead": "auto", "lv": "vg/data"}]
     out = summed(_cassandra_disk_devices=lv, _cassandra_data_lvchange_now=False, _cassandra_disk_refused=["lvm vg/data"])
+    # (UX audit B18) no guessed cause ("once the volume group is fixed"): only how to retry
     assert out["warnings"] == ["lvchange --readahead 8 vg/data failed in its restart window (this boot): its read-ahead kept"
-                               " by the udev rule, no restart for it again; once the volume group is fixed, run it on the"
-                               " node"]
+                               " by the udev rule, no restart for it again; to retry: that command, as root on the node"]
     assert out["info"] == []
 
 

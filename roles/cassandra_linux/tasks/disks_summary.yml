@@ -81,7 +81,7 @@
               if _tuned_deferred | bool and not _cassandra_disk_tuned_window | default(false) | bool else [])
            + (_lvm_refused | map(attribute='lv') | map('regex_replace', '^', 'lvchange --readahead ' ~ _lv_sectors ~ ' ')
               | map('regex_replace', '$', ' failed in its restart window (this boot): its read-ahead kept by the udev rule, no'
-                                          ' restart for it again; once the volume group is fixed, run it on the node') | list)
+                                          ' restart for it again; to retry: that command, as root on the node') | list)
            + ([_tuned_warn | regex_replace('^WARNING  ', '')] if _tuned_warn and not _tuned_ok | bool and not _tuned_deferred | bool
               else []) }}
       # (Cassandra not looked for, both *_running true: taken as running, the restart said; not when
