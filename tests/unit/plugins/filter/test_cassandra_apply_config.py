@@ -628,16 +628,15 @@ def test_the_nodes_moving_storage_compatibility_mode_to_none(tmp_path):
 def test_a_service_has_its_own_label_and_check_separates_found_from_would_do():
     # (B1 review) a service by what it is, no generic header word over it; --check: what was found (the node's
     # value against the inventory's) apart from what a real run would do; nothing claimed done
-    nodes = [{"name": "h-n2", "items": [], "os": [{"item": "chronyd", "before": "inactive", "after": "active",
-                                                    "timesync": True, "service": True}]}]
+    chronyd = {"item": "chronyd", "before": "inactive", "after": "active", "timesync": True, "service": True}
+    nodes = [{"name": "h-n2", "items": [], "os": [chronyd]}]
     diff = cassandra_apply_config_diff(nodes)
     assert diff == ["                   Node      Inventory", "OS settings  on h-n2", "  service chronyd  inactive  active"]
     recap = cassandra_apply_config_recap(
         [{"name": "h-n1", "todo": False, "result": "nothing to apply"},
          {"name": "h-n2", "todo": True, "done": True, "then": "restart",
           "why": "with Cassandra stopped: chronyd started, its clock let sync"}], check=True, cluster="c", diff=diff)
-    assert recap == ["CHECK  apply_config  c  1 would restart, 1 up to date", "  nothing was changed (--check)", "",
-                     "DIFFERENCES FOUND"] + ["  " + line for line in diff] + [
-                     "", "WOULD DO",
-                     "  h-n2  would apply, then restart (with Cassandra stopped: chronyd started, its clock let sync)",
-                     "  h-n1  up to date"]
+    head = ["CHECK  apply_config  c  1 would restart, 1 up to date", "  nothing was changed (--check)", ""]
+    would = ["", "WOULD DO", "  h-n2  would apply, then restart (with Cassandra stopped: chronyd started, its clock let sync)",
+             "  h-n1  up to date"]
+    assert recap == head + ["DIFFERENCES FOUND"] + ["  " + line for line in diff] + would
