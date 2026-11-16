@@ -1,0 +1,45 @@
+---
+# The unit rewritten under a running Cassandra with a change that JVM does not need (replace_node taking out the
+# replace flag, read at the first boot only): the record of the config it started with (config_snapshot.yml) gets
+# the new unit, so that no restart is said pending for it (apply_config). Only when the record has that JVM and the
+# unit as it was before the rewrite (_cassandra_service_unit_before: its sha1): then that change is the only one.
+- name: Record the rewritten unit as the running Cassandra's (no restart needed for it)
+  ansible.builtin.command:
+    argv:
+      - "{{ _cassandra_config_python | default(ansible_facts['python']['executable'] | default('/usr/bin/python3')) }}"
+      - -c
+      - "{{ _record }}"
+      - /etc/systemd/system/cassandra.service
+      - "{{ _cassandra_service_config_snapshot }}"
+      - "{{ _cassandra_service_unit_before }}"
+  register: _cassandra_service_unit_recorded
+  changed_when: _cassandra_service_unit_recorded.stdout | trim == 'recorded'
+  when: not ansible_check_mode
+  vars:
+    _record: |
+      import hashlib, json, os, sys, tempfile
+      unit, record, before = sys.argv[1:4]
+      try:
+          with open(record) as f:
+              started = json.load(f)
+      except (IOError, OSError, ValueError):
+          print("no record")
+          sys.exit(0)
+      if "_jvm" not in started or started.get(unit) != before:
+          print("kept")
+          sys.exit(0)
+      digest = hashlib.sha1()
+      with open(unit, "rb") as f:
+          for block in iter(lambda: f.read(65536), b""):
+              digest.update(block)
+      started[unit] = digest.hexdigest()
+      fd, tmp = tempfile.mkstemp(dir=os.path.dirname(record) or ".", prefix=".ansible_config_at_start.")
+      try:
+          os.fchmod(fd, 0o600)
+          with os.fdopen(fd, "w") as f:
+              json.dump(started, f, indent=4, sort_keys=True)
+          os.rename(tmp, record)
+      except BaseException:
+          os.unlink(tmp)
+          raise
+      print("recorded")
