@@ -331,7 +331,7 @@ def test_apply_config_and_update_java_screens():
     # a real run: the settings that differ, then what each node gets, before its question
     text = screen(dict(cluster, ansible_play_hosts=["node1", "node2"], hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS,
                        cassandra_apply_config_diff=APPLY_DIFF), t["vars"], play["vars"])
-    assert text == ("APPLY CONFIG  1 node of Orders to change (config): Cassandra restarts, 1 up to date\n"
+    assert text == ("APPLY CONFIG  Orders  Cassandra restarts on 1 node, 1 up to date\n"
                     "  Cassandra restarts one node at a time.\n\n"
                     "  " + APPLY_DIFF[0] + "\n\n"
                     "  node1  write + restart\n  node2  up to date")
@@ -347,9 +347,11 @@ def test_apply_config_and_update_java_screens():
     one = dict(one, ansible_play_hosts=["node3", "node2"])
     assert render_question(t, one) == "Apply changes on node3 of Orders, no Cassandra restart?"
     # the head line says the same as the question
-    for hosts, head in ((["node1", "node4"], "APPLY CONFIG  2 nodes of Orders to change (config): Cassandra restarts on 1"),
-                        (["node4"], "APPLY CONFIG  1 node of Orders to change (config): Cassandra starts"),
-                        (["node5"], "APPLY CONFIG  1 node of Orders to change (config), no Cassandra restart")):
+    for hosts, head in ((["node1", "node4"], "APPLY CONFIG  Orders  Cassandra restarts on 1 node, starts on 1"),
+                        (["node4"], "APPLY CONFIG  Orders  Cassandra starts on 1 node"),
+                        (["node5"], "APPLY CONFIG  Orders  1 node with no Cassandra restart"),
+                        (["node1", "node3", "node2"],
+                         "APPLY CONFIG  Orders  Cassandra restarts on 1 node, 1 with no restart, 1 up to date")):
         text = screen(dict(cluster, ansible_play_hosts=hosts, hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS,
                            cassandra_apply_config_diff=APPLY_DIFF), t["vars"], play["vars"])
         assert text.split("\n")[0] == head

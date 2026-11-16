@@ -235,15 +235,6 @@ def test_the_result_said_if_a_node_fails_later(todo, check, before, expected):
                                                 "cassandra_op_result": before}) == expected
 
 
-@pytest.mark.parametrize("config, os_nodes, ts_nodes, ts_any, what", [
-    (["n1"], [], [], [], "config"), ([], ["n1"], [], [], "OS settings"), (["n1"], ["n2"], [], [], "config and OS settings"),
-    (["n1"], [], ["n1"], ["n1"], "OS settings"), (["n1", "n2"], [], ["n1"], ["n1"], "config and OS settings"),
-    (["n1"], [], [], ["n1"], "config and OS settings")])
-def test_the_question_names_what_is_applied(config, os_nodes, ts_nodes, ts_any, what):
-    variables = {"_config_nodes": config, "_os_nodes": os_nodes, "_window_only": ts_nodes, "_window_any": ts_any}
-    assert render(FIND["vars"]["_what"], variables) == what
-
-
 @pytest.mark.parametrize("live, swapoff, said", [(True, False, True), (True, True, False), (None, None, False)])
 def test_swap_left_on_said_under_the_node_once(live, swapoff, said):
     notes = NOTE["ansible.builtin.set_fact"]["cassandra_apply_config_notes"]
@@ -263,8 +254,8 @@ def test_swap_left_on_said_under_the_node_once(live, swapoff, said):
 @pytest.mark.parametrize("todo, os_nodes, restarts, starts, write, said", [
     (["n1"], [], ["n1"], [], [], "Cassandra restarts one node at a time."),
     (["n1"], ["n1"], [], [], [], "Live changes, no restart."),
-    (["n1", "n2"], ["n2"], ["n1"], [], [], "Order: live changes on their nodes at once, then the Cassandra restarts, one node at a time."),
-    (["n1", "n2"], [], ["n1"], [], [], "Order: live changes on their nodes at once, then the Cassandra restarts, one node at a time."),
+    (["n1", "n2"], ["n2"], ["n1"], [], [], "Order: live changes at once, then Cassandra restarts one node at a time."),
+    (["n1", "n2"], [], ["n1"], [], [], "Order: live changes at once, then Cassandra restarts one node at a time."),
     # (A2 review) a start is one node at a time too, never "live"; a Cassandra stopped and left so is no live change
     (["n1", "n2"], [], ["n1"], ["n2"], [], "Cassandra restarts and starts one node at a time."),
     (["n2"], [], [], ["n2"], [], "Cassandra starts one node at a time."),
@@ -287,9 +278,7 @@ def test_time_sync_under_a_running_cassandra_is_a_restart():
     facts = note([TIMESYNC, SYSCTL], clock=["ahead=-0.25", "source=chronyd -Q"], full=True)
     assert facts["cassandra_apply_config_todo"] in (True, "True") and facts["cassandra_apply_config_then"] == "restart"
     assert facts["cassandra_apply_config_timesync"] in (True, "True")
-    assert facts["cassandra_apply_config_os_window_only"] in (True, "True")
     assert facts["cassandra_apply_config_why"] == "time sync"
-    assert note([TIMESYNC], changes=["cassandra.yaml"], full=True)["cassandra_apply_config_os_window_only"] in (False, "False")
     # shown with the others, applied live but the time sync
     assert facts["cassandra_apply_config_os"] == [TIMESYNC, SYSCTL]
     assert facts["cassandra_apply_config_os_live"] == [SYSCTL]
@@ -511,7 +500,6 @@ def test_a_tuned_profile_or_lvm_left_to_the_restart_is_a_restart_with_its_reason
     facts = note([TUNED_FILE, TUNED, SYSCTL], full=True)
     assert facts["cassandra_apply_config_todo"] in (True, "True") and facts["cassandra_apply_config_then"] == "restart"
     assert facts["cassandra_apply_config_why"] == "tuned profile"
-    assert facts["cassandra_apply_config_os_window_only"] in (True, "True")
     # shown with the others, applied live but the switch (the restart window does it)
     assert facts["cassandra_apply_config_os"] == [TUNED_FILE, TUNED, SYSCTL]
     assert facts["cassandra_apply_config_os_live"] == [TUNED_FILE, SYSCTL]
@@ -521,8 +509,6 @@ def test_a_tuned_profile_or_lvm_left_to_the_restart_is_a_restart_with_its_reason
     both = note([LVM, TIMESYNC, TUNED], full=True)
     assert both["cassandra_apply_config_why"] == "time sync, LVM read-ahead, tuned profile"
     assert both["cassandra_apply_config_os_live"] == []
-    # with the config's changes: a restart for both, not for OS settings alone
-    assert note([LVM], changes=["cassandra.yaml"], full=True)["cassandra_apply_config_os_window_only"] in (False, "False")
     # live changes alone (the opt-out leaves no reason: the role says it in a WARNING): not restarted
     assert note([RA, SYSCTL])[:2] == (False, "none")
 
@@ -645,24 +631,16 @@ def test_a_refusal_for_a_node_down_names_the_opt_outs_for_a_disk_restart():
     assert render(task["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"], variables)[1].endswith("then run again.")
 
 
-def test_a_node_restarted_for_its_tuned_profile_alone_named_in_the_question():
-    facts = note([TUNED], full=True)
-    groups = dict((t["name"], t["ansible.builtin.group_by"]["key"]) for t in FIND["tasks"] if "ansible.builtin.group_by" in t)
-    variables = dict((k, v) for k, v in facts.items())
-    assert render(groups["Group the nodes with OS settings done in their restart window"], variables) \
-        == "cassandra_apply_config_os_window_any_True"
-    assert render(groups["Group the nodes restarted for OS settings alone"], variables) \
-        == "cassandra_apply_config_os_window_only_True"
+def test_a_start_that_waits_for_the_clock_only_says_time_sync():
     # a start that waits for the clock only (no reason given): its mark and messages say time sync
     win = load("roles", "cassandra_operation", "tasks", "os_window.yml")[0]
     assert render(win["vars"]["_why"], {"cassandra_apply_config_why": ""}) == "time sync"
 
 
-def test_a_node_stopped_in_its_window_is_not_restarted_for_os_settings_alone():
-    # (started by the resumed run: the question names the config too)
+def test_a_node_stopped_in_its_window_is_started_by_the_resumed_run():
+    # (the question says it: "start Cassandra on")
     facts = note([TIMESYNC], running=False, clock=["mark=yes", "mark_timesync=yes"], resume=True, full=True)
     assert facts["cassandra_apply_config_then"] == "start"
-    assert facts["cassandra_apply_config_os_window_only"] in (False, "False")
 
 
 def test_the_restart_reason_says_what_is_done_with_cassandra_stopped():

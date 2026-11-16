@@ -225,9 +225,6 @@
              else 'the exporter HTTPS, authentication or openTelemetry: read at start'
              if _running | bool and _exporter_restart | bool and _files | reject('in', _as_started) | list | length == 0
                 and not _pending | bool else '') }}
-        cassandra_apply_config_os_window_only: >-
-          {{ (_timesync | bool or _disks_window | length > 0)
-             and not ((_files + _perms + _dirs + _jmx) | length > 0 or _pending | bool or _stopped | bool) }}
         # stopped by an interrupted run in its window for its time sync: its clock let sync before the start
         cassandra_apply_config_resumed_stop: "{{ _stopped | bool and _clock.mark_timesync is defined }}"
         cassandra_apply_config_timesync_items: "{{ _os | selectattr('timesync', 'defined') | list }}"
@@ -601,17 +598,6 @@
         key: "cassandra_apply_config_{{ cassandra_apply_config_todo | bool }}"
       changed_when: false
 
-    # (what the question names)
-    - name: Group the nodes with OS settings done in their restart window
-      ansible.builtin.group_by:
-        key: "cassandra_apply_config_os_window_any_{{ cassandra_apply_config_why | length > 0 }}"
-      changed_when: false
-
-    - name: Group the nodes restarted for OS settings alone
-      ansible.builtin.group_by:
-        key: "cassandra_apply_config_os_window_only_{{ cassandra_apply_config_os_window_only | bool }}"
-      changed_when: false
-
     - name: Group the nodes whose OS settings differ
       ansible.builtin.group_by:
         key: "cassandra_apply_config_os_{{ cassandra_apply_config_os_live | length > 0 }}"
@@ -704,17 +690,25 @@
           {%- endif -%}
         cassandra_screen:
           operation: apply_config
+          # (the effects first, the most disruptive first, then the nodes up to date: "prod  Cassandra restarts on
+          # 1 node, 2 up to date"; the table below says what each node gets)
           summary: >-
-            {{ _todo | length }} {{ 'node' if _todo | length == 1 else 'nodes' }} of {{ _cluster }} to change ({{ _what }}){{
-               (': Cassandra restarts' ~ ('' if _restarts | length == _todo | length else ' on ' ~ _restarts | length))
-               if _restarts else (': Cassandra starts' ~ ('' if _starts | length == _todo | length else ' on ' ~ _starts | length))
-               if _starts else ', no Cassandra restart' }}{{ (', ' ~ _up_to_date | length ~ ' up to date') if _up_to_date else '' }}
-          # (B19) the order, one line: the table below says what each node gets
+            {%- set live = _todo | reject('in', _restarts + _starts) | list -%}
+            {%- set said = (['Cassandra restarts on ' ~ _restarts | length ~ (' node' if _restarts | length == 1 else ' nodes')]
+                            if _restarts else [])
+                           + ([('starts on ' if _restarts else 'Cassandra starts on ') ~ _starts | length
+                               ~ ('' if _restarts else (' node' if _starts | length == 1 else ' nodes'))] if _starts else [])
+                           + ([live | length ~ (' with no restart' if _restarts or _starts
+                                                else (' node' if live | length == 1 else ' nodes') ~ ' with no Cassandra restart')]
+                              if live else [])
+                           + ([_up_to_date | length ~ ' up to date'] if _up_to_date else []) -%}
+            {{ _cluster }}  {{ said | join(', ') }}
+          # (B19) the order, one line
           intro:
             - >-
               {%- set serial = ('restarts and starts' if _restarts and _starts else 'restarts' if _restarts else 'starts') -%}
               {%- if (_restarts or _starts) and (_os_nodes or _todo | reject('in', _restarts + _starts) | list) -%}
-                Order: live changes on their nodes at once, then the Cassandra {{ serial }}, one node at a time.
+                Order: live changes at once, then Cassandra {{ serial }} one node at a time.
               {%- elif _restarts or _starts -%} Cassandra {{ serial }} one node at a time.
               {%- elif _then_nodes['write'] | default([]) -%} No Cassandra restart; a Cassandra stopped stays stopped.
               {%- else -%} Live changes, no restart.
@@ -770,11 +764,6 @@
     _os_nodes: "{{ ansible_play_hosts | select('in', groups['cassandra_apply_config_os_True'] | default([])) | list }}"
     _config_nodes: "{{ ansible_play_hosts | select('in', groups['cassandra_apply_config_True'] | default([])) | list }}"
     _todo: "{{ ansible_play_hosts | select('in', _config_nodes + _os_nodes) | list }}"
-    _what: >-
-      {{ 'config' if (_os_nodes + _window_any) | length == 0
-         else 'OS settings' if _config_nodes | reject('in', _window_only) | list | length == 0 else 'config and OS settings' }}
-    _window_only: "{{ ansible_play_hosts | select('in', groups['cassandra_apply_config_os_window_only_True'] | default([])) | list }}"
-    _window_any: "{{ ansible_play_hosts | select('in', groups['cassandra_apply_config_os_window_any_True'] | default([])) | list }}"
 
 - name: Set up the progress file
   hosts: "{{ query('community.cassandra.cassandra_nodes') | select('in', groups['cassandra_apply_config_True'] | default([])) | list }}"
