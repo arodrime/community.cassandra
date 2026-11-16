@@ -314,6 +314,14 @@ APPLY_GROUPS = {"cassandra_apply_config_True": [h for h, v in sorted(APPLY_HOSTV
 APPLY_DIFF = ["cassandra.yaml  concurrent_reads  48 -> 32  node1"]
 
 
+def variables_of(t, play, cluster):
+    return dict(trust(t["vars"]), **trust(play["vars"]), hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS, **cluster)
+
+
+def render_question(t, variables):
+    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(t["vars"]["cassandra_screen_question"]))
+
+
 def test_apply_config_and_update_java_screens():
     t, play = task("apply_config.yml", "Show the plan and confirm the run")
     hosts = ["node1", "node2", "node3", "node4", "node5"]
@@ -321,7 +329,7 @@ def test_apply_config_and_update_java_screens():
     text = screen(dict(cluster, ansible_play_hosts=hosts, hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS,
                        cassandra_apply_config_diff=APPLY_DIFF), t["vars"], play["vars"], check=True)
     # --check: what each node would get; the settings that differ in the recap (no question)
-    assert text == ("APPLY CONFIG  4 nodes of Orders would apply the config, 1 up to date\n"
+    assert text == ("APPLY CONFIG  4 nodes of Orders would apply the config, 1 with a restart, 1 up to date\n"
                     "  A real run would write the nodes not restarted at once, then each other node in turn, restarting\n"
                     "  or starting it as said below; the settings that differ are in the recap at the end.\n\n"
                     "  node1  would apply, then restart\n"
@@ -335,7 +343,7 @@ def test_apply_config_and_update_java_screens():
     # a real run: the settings that differ, then what each node gets, before its question
     text = screen(dict(cluster, ansible_play_hosts=["node1", "node2"], hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS,
                        cassandra_apply_config_diff=APPLY_DIFF), t["vars"], play["vars"])
-    assert text == ("APPLY CONFIG  1 node of Orders to apply the config, 1 up to date\n"
+    assert text == ("APPLY CONFIG  1 node of Orders to apply the config and restart, 1 up to date\n"
                     "  Writes the config on the nodes not restarted at once, then on the others one node at a time,\n"
                     "  restarting or starting each as said below.\n\n"
                     "  " + APPLY_DIFF[0] + "\n\n"
@@ -343,7 +351,12 @@ def test_apply_config_and_update_java_screens():
     question = Templar(loader=DataLoader(), variables=dict(trust(t["vars"]), **trust(play["vars"]), ansible_play_hosts=hosts,
                                                            hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS, **cluster))
     assert question.template(trust_as_template(t["vars"]["cassandra_screen_question"])) == \
-        "Apply the config on node1, node3..node5 of Orders?"
+        "Apply the config on node1, node3..node5 of Orders and restart node1 (1 node)?"
+    # (UX audit A2) every node to do restarted: the question says so; none: no restart named
+    one = dict(variables_of(t, play, cluster), ansible_play_hosts=["node1", "node2"])
+    assert render_question(t, one) == "Apply the config on node1 of Orders and restart it?"
+    one = dict(one, ansible_play_hosts=["node3", "node2"])
+    assert render_question(t, one) == "Apply the config on node3 of Orders?"
     t, play = task("update_java.yml", "Show the plan and confirm the run")
     text = screen(dict(cluster, groups={"cassandra_update_java_True": ["node2"]}, cassandra_java_version=17,
                        hostvars={"node2": {"cassandra_update_java_running": "Java 11"}}), t["vars"], play.get("vars"))

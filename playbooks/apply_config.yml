@@ -663,12 +663,27 @@
           {{ out }}
         _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default((_cassandra_preflight | default({})).cassandra_cluster_name | default('')) }}"
         _up_to_date: "{{ ansible_play_hosts | reject('in', _todo) | list }}"
-        cassandra_screen_question: "Apply the {{ _what }} on {{ _todo | community.cassandra.cassandra_node_list }} of {{ _cluster }}?"
+        # the nodes it restarts: the question and the summary name the restart (the most disruptive effect)
+        _restarts: >-
+          {%- set out = [] -%}
+          {%- for h in _todo if hostvars[h].cassandra_apply_config_then | default('') == 'restart' -%}
+          {%-   set _ = out.append(h) -%}
+          {%- endfor -%}
+          {{ out }}
+        _restart_words: >-
+          {{ '' if not _restarts
+             else (' and restart ' ~ ('it' if _todo | length == 1 else 'them')) if _restarts | length == _todo | length
+             else (' and restart ' ~ _restarts | community.cassandra.cassandra_node_list ~ ' ('
+                   ~ _restarts | length ~ ' ' ~ ('node' if _restarts | length == 1 else 'nodes') ~ ')') }}
+        cassandra_screen_question: >-
+          Apply the {{ _what }} on {{ _todo | community.cassandra.cassandra_node_list }} of {{ _cluster }}{{ _restart_words }}?
         cassandra_screen:
           operation: apply_config
           summary: >-
             {{ _todo | length }} {{ 'node' if _todo | length == 1 else 'nodes' }} of {{ _cluster }} {{ 'would apply' if ansible_check_mode else 'to apply' }}
-            the {{ _what }}{{ (', ' ~ _up_to_date | length ~ ' up to date') if _up_to_date else '' }}
+            the {{ _what }}{{ (' and restart' if _restarts | length == _todo | length else ', '
+                                ~ _restarts | length ~ ' with a restart') if _restarts else '' }}{{
+            (', ' ~ _up_to_date | length ~ ' up to date') if _up_to_date else '' }}
           intro:
             - >-
               {{ '' if _config_nodes | length == 0
