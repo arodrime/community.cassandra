@@ -1,0 +1,2 @@
+bugfixes:
+  - "replace_node, add_node and the other rolling operations - a refusal before any change (a check of the node, e.g. replace_node's unit check) is shown as ``REFUSED  replace_node  prod  nothing was changed``, the node ``REFUSED`` with its reason once under it, instead of ``FAILED  ... 1 failed`` with the reason said twice (replace_node no longer prints its check's failure before the summary)."

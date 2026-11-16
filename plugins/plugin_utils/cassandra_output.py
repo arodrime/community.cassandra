@@ -1668,7 +1668,9 @@ def recap(operation, cluster, outcomes, check=False, seconds=None, extra=None, f
     groups = {}
     for o in done:
         groups.setdefault(said(o), []).append(o)
-    lines = [_recap_verdict(operation, cluster, groups, failed, skipped, check, seconds)] if head else []
+    # every failure a refusal (a check before any change) and no node done: REFUSED, nothing was changed
+    refused = bool(failed) and not done and all(str(o.get("reason") or "").startswith("refused: ") for o in failed)
+    lines = [_recap_verdict(operation, cluster, groups, failed, skipped, check, seconds, refused)] if head else []
     rows = []
     for word, members in groups.items():
         rows += _recap_done_rows(word, members, check, full, slow_factor)
@@ -1679,8 +1681,8 @@ def recap(operation, cluster, outcomes, check=False, seconds=None, extra=None, f
             rows.append([o["node"], o["row"], ""] if o.get("row") else [o["node"], "not done", o.get("reason") or ""])
             continue
         if o.get("reason"):
-            under[len(rows)] = "    %s" % o["reason"]
-        rows.append([o["node"], "FAILED", ""])
+            under[len(rows)] = "    %s" % (o["reason"][len("refused: "):] if refused else o["reason"])
+        rows.append([o["node"], "REFUSED" if refused else "FAILED", ""])
     reasons = {}
     for o in skipped:
         reasons.setdefault(o.get("reason") or "", []).append(o["node"])
@@ -1693,9 +1695,12 @@ def recap(operation, cluster, outcomes, check=False, seconds=None, extra=None, f
     return lines
 
 
-def _recap_verdict(operation, cluster, groups, failed, skipped, check, seconds):
+def _recap_verdict(operation, cluster, groups, failed, skipped, check, seconds, refused=False):
     """The recap's first line: verdict, operation, cluster, the counts by outcome (groups: {outcome as said:
-    [outcomes]}), the run's duration; under check, that nothing was changed."""
+    [outcomes]}), the run's duration; under check, that nothing was changed. refused: every failure a refusal,
+    nothing done: "REFUSED  op  cluster  nothing was changed"."""
+    if refused:
+        return "  ".join(x for x in ["REFUSED", operation, cluster, "nothing was changed"] if x)
     if check:
         counts = [("%s on %s" if len(word.split()) > 2 and word != "would clean up" else "%s %s") % (word, plural(len(members), "node"))
                   for word, members in groups.items()]

@@ -70,6 +70,8 @@
       loop: [cassandra_service, cassandra_operation]
 
     - name: Check this node
+      vars:
+        cassandra_output_rescued: true  # the rescue says why (the summary: REFUSED), once
       block:
         - name: One replacement at a time
           ansible.builtin.assert:

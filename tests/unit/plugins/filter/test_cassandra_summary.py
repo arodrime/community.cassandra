@@ -79,12 +79,20 @@ def test_nodes_not_touched_say_why(result, reason):
 
 
 @pytest.mark.parametrize("result, reason", [
-    ("add refused: node4 holds data", "refused: node4 holds data"),
     ("add FAILED while preparing it: the repository can't be reached", "while preparing it: the repository can't be reached"),
     ("restart FAILED: One or more items failed", "One or more items failed"),
 ])
-def test_refusals_and_failures(result, reason):
+def test_failures(result, reason):
     assert recap([("node4", result)], cluster="c")[1:] == ["  node4  FAILED", "    %s" % reason]
+
+
+def test_a_refusal_with_nothing_done_is_refused_not_failed():
+    # (UX audit B7) a check before any change: REFUSED, nothing was changed, the reason once
+    assert recap([("node4", "replace refused: node4 holds data")], cluster="c") == [
+        "REFUSED  replace_node  c  nothing was changed", "  node4  REFUSED", "    node4 holds data"]
+    # a node done before it: something changed, FAILED
+    lines = recap([("node3", "add done in 5s"), ("node4", "add refused: node4 holds data")], cluster="c")
+    assert lines[0].startswith("FAILED") and "  node4  FAILED" in lines
 
 
 def test_the_operation_given_wins():
