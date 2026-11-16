@@ -1,0 +1,2 @@
+minor_changes:
+  - "import_cluster playbook - the head line of report.txt, report.details.txt (and so of the shareable copy) and of the screen carries the time of the run with its date and time zone (``IMPORT prod  2026-11-16 14:02 CET  5 nodes ...``): a report rewritten by a run that found the same is rewritten all the same and says it is new. The inventory files carry no date (a re-import that finds the same still writes nothing there)."

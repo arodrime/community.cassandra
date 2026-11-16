@@ -905,7 +905,7 @@ def report_sections(layout, self_check):
 # relative to it), the values of yours that differ and whether they all are in group_vars/all (standard), the
 # names already said in plain words (said, filled as the report goes)
 _Report = namedtuple("_Report", "layout read unread names everyone groups chains full width screen check cwd"
-                                " yours standard said report_name inventory hosts")
+                                " yours standard said report_name inventory hosts when")
 
 
 def _who(report, members, full=None):
@@ -1703,8 +1703,9 @@ def _head_lines(report, cluster, hosts_file, report_file, self_check_ok, same, s
         " (%d read)" % len(report.read) if report.unread else "")
     verdict = "%s to %s: %s" % (out.plural(acted, "entry", "entries"), "act on" if steps else "review", ", ".join(counts)) \
         if acted else "nothing to act on"
-    lines = fill_text("IMPORT %s%s  %s  %s" % (cluster, " (--check, inventory not written)" if report.check else "", nodes,
-                                               verdict), report.width, "", "  ")
+    lines = fill_text("IMPORT %s%s  %s%s  %s" % (cluster, " (--check, inventory not written)" if report.check else "",
+                                                 report.when + "  " if report.when else "", nodes, verdict),
+                      report.width, "", "  ")
     check_step = next((i + 1 for i, step in enumerate(steps) if step.title == "Make the self-check pass"), None)
     lines += fill_text("self-check %s" % (
         "passed: the inventory gives every node that was read the settings it has now" if self_check_ok
@@ -1890,7 +1891,8 @@ def _ruled(lines, width, screen):
 def cassandra_import_report(layout, written, report_file, self_check, self_check_ok, secrets_clear=None,
                             leftovers=None, check=False, inventory="", hosts="", allow_unread=False, screen=False,
                             self_check_error="", cwd=None, in_git=None, changes=None, todo=None, width=None,
-                            strict=False, convergence=None, shareable=False, details=False, look=None):
+                            strict=False, convergence=None, shareable=False, details=False, look=None,
+                            run_time=None):
     """layout: cassandra_inventory_layout's (its nodes); written: [the hosts file, the inventory dir];
     report_file: where report.txt goes (report.check.txt under --check); self_check: {node: {differences, notes}};
     self_check_ok; secrets_clear: the secrets.yml files written in clear; leftovers: cassandra_inventory_leftovers';
@@ -1905,8 +1907,9 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     screen); convergence: the lines of the CONVERGENCE section (cassandra_import_convergence's), under FOR INFO;
     shareable: import_report_shareable (the screen names the copy too); details: the lines of
     report.details.txt instead (the settings, versions, convergence, OS, what was read on each node); look: more
-    WORTH A LOOK entries, [(what, what to do)] (the configured inventory a -i <node>, run did not read). Returns the
-    lines.
+    WORTH A LOOK entries, [(what, what to do)] (the configured inventory a -i <node>, run did not read); run_time:
+    when the run started (epoch seconds), on the head line with its date and zone (a report rewritten by a run
+    that found the same says so: its time is new). Returns the lines.
     e.g. -> ["IMPORT big_cluster  88 nodes  3 to act on: 3 hand edits", "  self-check passed: ...", ...]."""
     cluster = layout["cluster_group"]
     nodes = layout.get("nodes") or []
@@ -1919,7 +1922,8 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     yours = layout.get("yours") or []
     report = _Report(layout, read, [n for n in nodes if n not in read], [n["name"] for n in read], data["everyone"],
                      data["groups"], group_chains(layout.get("hosts") or {}), not screen, width, screen, check, cwd,
-                     yours, _standard(yours), set(), out.path_from(report_file, cwd), inventory, hosts)
+                     yours, _standard(yours), set(), out.path_from(report_file, cwd), inventory, hosts,
+                     out.clock(float(run_time), now=0) if run_time not in (None, "") else "")
     changed, removed, same = _inventory_changes(changes)
     moves = sorted({f for n in read for f in n.get("rewritten") or []})
 
@@ -1994,8 +1998,9 @@ def _finished(lines, width, screen):
 def _details_report(report, data, layout, self_check, leftovers, convergence, cluster):
     """report.details.txt: what the report is and its words, where the settings go, the settings, versions,
     convergence and OS (FOR INFO), then what was read on each node (DETAILS) -> [line]."""
-    lines = ["IMPORT %s%s  the details of %s" % (cluster, " (--check, inventory not written)" if report.check else "",
-                                                 os.path.basename(report.report_name)), ""] + _about_lines(report, cluster)
+    lines = ["IMPORT %s%s  %sthe details of %s" % (
+        cluster, " (--check, inventory not written)" if report.check else "", report.when + "  " if report.when else "",
+        os.path.basename(report.report_name)), ""] + _about_lines(report, cluster)
     evidence = _evidence_lines(report, self_check)
     if evidence:  # (what the stop and report.txt's SELF-CHECK show, as the self-check found it)
         lines += ["", "SELF-CHECK  (each difference as the self-check found it: full paths, both values as written; the"

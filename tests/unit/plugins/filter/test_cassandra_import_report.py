@@ -4,6 +4,7 @@ __metaclass__ = type
 # The import's report and the screen that ends the run: by urgency (a head with the verdict and its counts, TO DO,
 # TO REVIEW, FOR INFO, what to do next), for a reader who may be new to Cassandra and to the collection.
 
+import os
 import re
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout
@@ -1416,3 +1417,32 @@ def test_an_entry_of_the_run_worth_a_look():
     assert lines[0].endswith("1 entry to review: 1 thing worth a look")
     assert section(report([node(i) for i in range(1, 4)], screen=True, look=look), "WORTH A LOOK")[0] == lines[
         heading(lines, "WORTH A LOOK") + 2]
+
+
+def test_the_run_time_with_its_zone_heads_every_report(monkeypatch):
+    # (UX audit A6) a report rewritten by a run that found the same says it is new: its time on the head line of
+    # report.txt, report.details.txt and the screen, with the date and the zone
+    monkeypatch.setenv("TZ", "Europe/Paris")
+    import time
+    time.tzset()
+    try:
+        nodes = [node(1), node(2)]
+        when = 1794834120  # 2026-11-16 14:02 CET
+        lines = report(nodes, run_time=str(when))
+        heads = [line for line in lines if line.startswith("IMPORT my_cluster")]
+        assert len(heads) == 2 and all("  2026-11-16 14:02 CET  " in h for h in heads), heads
+        screen = report(nodes, run_time=when, screen=True)
+        assert screen[0].startswith("IMPORT my_cluster  2026-11-16 14:02 CET  2 nodes")
+        assert "CET" not in report(nodes)[0]  # (no time given: none said)
+    finally:
+        monkeypatch.delenv("TZ")
+        time.tzset()
+
+
+def test_import_cluster_notes_the_run_time_once():
+    import yaml
+    with open(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "playbooks", "import_cluster.yml")) as f:
+        plays = yaml.safe_load(f)
+    write = next(p for p in plays if p["name"] == "Write the inventory")
+    assert write["tasks"][0]["ansible.builtin.set_fact"] == {"_import_run_time": "{{ now().timestamp() }}"}
+    assert "_import_run_time" in write["vars"]["_report_args"]["run_time"]

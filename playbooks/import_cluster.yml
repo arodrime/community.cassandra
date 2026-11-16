@@ -1848,6 +1848,7 @@
       allow_unread: "{{ import_allow_unread | default(false) | bool }}"
       todo: "{{ _cql_todo + _cqlsh_todo }}"
       look: "{{ _look }}"
+      run_time: "{{ _import_run_time | default('') }}"  # (the head of each report: rewritten at each run)
     _report: >-
       {{ _layout | community.cassandra.cassandra_import_report(_report_args.written, _report_args.report_file,
            _self_check | default({}), _self_check_ok | bool, secrets_clear=_report_args.secrets_clear,
@@ -1855,7 +1856,7 @@
            inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
            allow_unread=_report_args.allow_unread | bool,
            self_check_error=_self_check_error | default(''), changes=_changes, todo=_report_args.todo,
-           look=_report_args.look,
+           look=_report_args.look, run_time=_report_args.run_time | default(''),
            convergence=_convergence) | join(_newline) }}
     # report.details.txt: what report.txt leaves out (the settings, versions, convergence, OS, each node's lines)
     _report_details: >-
@@ -1865,7 +1866,7 @@
            inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
            allow_unread=_report_args.allow_unread | bool,
            self_check_error=_self_check_error | default(''), changes=_changes, todo=_report_args.todo,
-           look=_report_args.look,
+           look=_report_args.look, run_time=_report_args.run_time | default(''),
            convergence=_convergence, details=true) | join(_newline) }}
     # CONVERGENCE (report.txt, FOR INFO): how far the cluster is from one group, every setting in group_vars (what to
     # change, and how); output only: the inventory is written as it is
@@ -1887,6 +1888,11 @@
     # (a newline: in a folded block, '\n' would stay a backslash and an n)
     _newline: "\n"
   tasks:
+    # the time on the head of the reports and the screen: once, the same everywhere
+    - name: Note the time of the run
+      ansible.builtin.set_fact:
+        _import_run_time: "{{ now().timestamp() }}"
+
     # the first play had no host: a group that matches nothing (or only hosts marked absent), a --limit
     - name: Stop when no node was given
       ansible.builtin.assert:
@@ -2476,7 +2482,7 @@
                inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
                allow_unread=_report_args.allow_unread | bool,
                self_check_error=_self_check_error | default(''), changes=_changes, todo=_report_args.todo,
-               look=_report_args.look,
+               look=_report_args.look, run_time=_report_args.run_time | default(''),
                screen=true, strict=import_strict | default(true) | bool,
                shareable=import_report_shareable | default(true) | bool) }}
       vars:
