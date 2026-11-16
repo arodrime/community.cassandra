@@ -953,15 +953,15 @@ restarted too. A node whose files only need another owner, group or mode gets th
 its config when it starts). A node where Cassandra is not running gets its config too: started once written when its
 unit failed (e.g. Cassandra could not read its config, or it crashed), left stopped when it was stopped (a stop that
 ended in a failed unit too). Each node's health check needs another node up to read the ring from: a cluster with
-no node running is not handled. The settings that differ come in one table (``Node``, ``Inventory``, ``Nodes``; each
+no node running is not handled. The settings that differ come in one table (``Item``, ``Node``, ``Inventory``, ``Nodes``; each
 row labelled by what it is: a file, a setting, ``service chronyd``, ``package chrony``), per file (its nodes on its row when all its settings change on the same ones): ``cassandra.yaml`` keys (a
 nested one as ``parent.key``), the lines of the JVM options files and ``cassandra-env.sh`` (``-Xmx``, ``-Dname``,
 ``NAME=``), the owner, group and mode of a file or a directory as one setting, each with the node's value and the
 inventory's in aligned columns (the fixed words ``absent``, ``present``; the read-ahead in KB; passwords as ``****``, a
 changed one ``**** (another)``); a row too wide for the terminal has its nodes on the next line, a value is never cut.
-Then what each node gets, the nodes with the same outcome on one line (``node2, node4  would apply, then restart``).
+Then what each node gets, the nodes with the same outcome on one line (``node2, node4  would write the config, drain and restart Cassandra``).
 A real run shows them before its question (which names the most disruptive effect: ``Apply changes and restart
-Cassandra on node1 of prod?``) and ends with what each node got; ``--check`` shows no plan: its recap is the plan, said once (the verdict
+Cassandra on node1?``) and ends with what each node got; ``--check`` shows no plan: its recap is the plan, said once (the verdict
 with the restarts first, ``nothing was changed (--check)``, ``DIFFERENCES FOUND`` (what was observed), ``WOULD DO`` (what a real run would do), the warnings).
 
 ``apply_config`` covers the OS settings of ``cassandra_linux`` too (kernel settings, limits, transparent huge pages,
@@ -971,7 +971,7 @@ under ``OS settings``, each value with the nodes that differ; a real run applies
 The files a running Cassandra has open keep their read-ahead until it restarts (said under the node).
 What is not done under a running Cassandra is a restart of that node, its reason named in the plan and the recap, one
 node at a time with the config restarts (drained, Cassandra stopped, done, Cassandra started): a ``tuned`` profile
-switch or the reload of the role's profile (``would apply, then restart (tuned profile)``; tuned applies all its
+switch or the reload of the role's profile (``would drain and stop Cassandra, switch the tuned profile, start Cassandra``; tuned applies all its
 settings again, live), the read-ahead LVM keeps in a volume's metadata (``(LVM read-ahead)``; ``lvchange`` reloads the
 volume, the udev rule keeping the read-ahead until then), a time sync to install or start (below). A node with only
 live changes is not restarted. ``cassandra_linux_tuned_switch_restart: false`` and ``cassandra_data_lvchange_restart:
@@ -979,7 +979,7 @@ false`` leave the first two for later, as the role does outside ``apply_config``
 command; LVM: the udev rule keeps the read-ahead). What ``tuned-adm`` or ``lvchange`` refuses in the window (a missing
 PV, a shared VG) is said, and does not cause another restart before the next boot.
 A time sync (chrony, systemd-timesyncd) to install or start on a node where Cassandra runs is not done live: it is a
-restart of that node (``would apply, then restart (with Cassandra stopped: chronyd started, its clock let sync)``), one node at a time with the config restarts: drained,
+restart of that node (``would drain and stop Cassandra, start chronyd, wait up to 2m for clock sync, start Cassandra``), one node at a time with the config restarts: drained,
 Cassandra stopped, the time sync started and the clock let sync, Cassandra started. The plan says the node's clock
 offset to its time source when it can be read, and warns when the clock is ahead (writes made with future timestamps
 can mask later writes until real time passes them). A node the run starts (its unit failed and its config written, a resumed run)

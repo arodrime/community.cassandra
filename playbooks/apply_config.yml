@@ -218,13 +218,10 @@
         # why it is restarted when not for its config alone (said with the restart, in the plan and the recap)
         cassandra_apply_config_why: "{{ _os_why }}"
         # (said in the plan and the recap: that, else the JMX access file alone, read at start)
-        cassandra_apply_config_restart_why: >-
-          {{ _os_shown or ('jmxremote.access: read at start'
-             if _running | bool and _rights | length > 0 and _files | reject('in', _as_started) | list | length == 0
-                and not _pending | bool
-             else 'the exporter HTTPS, authentication or openTelemetry: read at start'
-             if _running | bool and _exporter_restart | bool and _files | reject('in', _as_started) | list | length == 0
-                and not _pending | bool else '') }}
+        cassandra_apply_config_restart_why: "{{ _os_why or _restart_why }}"
+        # (the plan and the --check recap) what a real run does to it, in the order it does it: its intentions,
+        # never their outcome; [] for a node not restarted nor started (its usual words)
+        cassandra_apply_config_steps: "{{ _steps }}"
         # stopped by an interrupted run in its window for its time sync: its clock let sync before the start
         cassandra_apply_config_resumed_stop: "{{ _stopped | bool and _clock.mark_timesync is defined }}"
         cassandra_apply_config_timesync_items: "{{ _os | selectattr('timesync', 'defined') | list }}"
@@ -370,16 +367,6 @@
         _disks_window: "{{ _os | selectattr('restart', 'defined') | list if _running | bool else [] }}"
         _os_why: >-
           {{ ((['time sync'] if _timesync | bool else []) + _disks_window | map(attribute='restart') | unique | list) | join(', ') }}
-        # (the plan and the recap) what is done while Cassandra is stopped, by name: which service starts, what is set
-        _os_shown: >-
-          {%- set ts = _ts_items | map(attribute='item') | list -%}
-          {%- set service = ts | reject('match', 'package ') | reject('equalto', 'chrony server line') | first | default('') -%}
-          {%- set parts = ([(service ~ (' installed and started' if ts | select('match', 'package ') | list else ' started')
-                             if service else 'time sync set up') ~ ', its clock let sync'] if _timesync | bool else [])
-                          + _disks_window | map(attribute='restart') | unique
-                            | map('replace', 'tuned profile', 'tuned profile switched or reloaded')
-                            | map('replace', 'LVM read-ahead', 'LVM read-ahead set') | list -%}
-          {{ ('with Cassandra stopped: ' ~ parts | join('; ')) if parts else '' }}
         # a time sync unit that cannot run here (its condition): left out, said
         _no_unit: "{{ _os | selectattr('timesync', 'defined') | list if _clock.condition | default('') == 'no' else [] }}"
         _todo: >-
@@ -393,6 +380,50 @@
                             or _timesync | bool or _disks_window | length > 0 or _exporter_restart | bool
               else 'none') if _running | bool
              else 'start' if _starts | bool else 'write' }}
+        # a restart for a file read at start alone (no setting of the config changes)
+        _restart_why: >-
+          {{ 'jmxremote.access: read at start'
+             if _running | bool and _rights | length > 0 and _files | reject('in', _as_started) | list | length == 0
+                and not _pending | bool
+             else 'the exporter HTTPS, authentication or openTelemetry: read at start'
+             if _running | bool and _exporter_restart | bool and _files | reject('in', _as_started) | list | length == 0
+                and not _pending | bool else '' }}
+        # what a real run does, in its order (action_apply_config.yml, action_restart.yml, os_window.yml, the
+        # cassandra_linux tasks it runs there): the config written; drained (as action_restart.yml decides) and
+        # stopped; the disk settings left to the window (disks.yml); the time sync installed, started, its chrony
+        # servers set (timesync.yml), the clock waited for (2 minutes at most: Cassandra starts all the same); started
+        _steps: >-
+          {%- set ts = _ts_items | map(attribute='item') | list -%}
+          {%- set window = (_timesync | bool or _disks_window | length > 0) -%}
+          {%- set drain = cassandra_operation_drain | default(true) | bool or not cassandra_service_unit_manage | default(true) | bool
+                          or cassandra_service_start | default('unit') != 'unit' -%}
+          {%- set reason = '' if _os_why else _restart_why -%}
+          {%- set os = [] -%}
+          {%- for d in _disks_window -%}
+          {%-   set _ = os.append('switch the tuned profile' if d.item == 'tuned profiles'
+                                  else 'reload the tuned profile' if d.item is match('tuned profile ')
+                                  else 'set the LVM read-ahead (lvchange)') -%}
+          {%- endfor -%}
+          {%- if _timesync | bool -%}
+          {%-   for i in ts if i is match('package ') -%}{%- set _ = os.append('install ' ~ i[8:]) -%}{%- endfor -%}
+          {%-   for i in ts if i is not match('package ') and i != 'chrony server line' -%}
+          {%-     set _ = os.append('start ' ~ i) -%}
+          {%-   endfor -%}
+          {%-   if 'chrony server line' in ts -%}{%- set _ = os.append("set chrony's servers, restart chrony") -%}{%- endif -%}
+          {%- endif -%}
+          {%- if _timesync | bool or (_then == 'start' and _stopped | bool and _clock.mark_timesync is defined) -%}
+          {%-   set _ = os.append('wait up to 2m for clock sync') -%}
+          {%- endif -%}
+          {%- set write = ['write the config'] if (_files + _perms + _dirs + _jmx + _exporter) | length > 0 else [] -%}
+          {%- if _then == 'restart' and window -%}
+          {{ write + [('drain and stop' if drain else 'stop') ~ ' Cassandra'] + os | unique | list + ['start Cassandra'] }}
+          {%- elif _then == 'restart' -%}
+          {{ write + [('drain and restart' if drain else 'restart') ~ ' Cassandra' ~ (' (' ~ reason ~ ')' if reason else '')] }}
+          {%- elif _then == 'start' -%}
+          {{ write + os | unique | list + ['start Cassandra'] }}
+          {%- else -%}
+          {{ [] }}
+          {%- endif -%}
 
     # 5.0: a node not running that this run starts (its unit failed, or an interrupted run stopped it): the mode it
     # last ran against the one it starts with (back, two steps on, into NONE unread), before the plan (the compare
@@ -657,6 +688,7 @@
           {%-   set _ = out.append({'name': h, 'todo': v.cassandra_apply_config_todo | default(false) | bool,
                                     'os': v.cassandra_apply_config_os | default([]) | length > 0,
                                     'why': v.cassandra_apply_config_restart_why | default(''),
+                                    'steps': v.cassandra_apply_config_steps | default([]),
                                     'then': v.cassandra_apply_config_then | default(''),
                                     'result': v.cassandra_op_result | default('nothing to apply'),
                                     'notes': v.cassandra_apply_config_notes | default([]),
@@ -676,18 +708,28 @@
           {%-   set _ = out.setdefault(hostvars[h].cassandra_apply_config_then | default(''), []).append(h) -%}
           {%- endfor -%}
           {{ out }}
-        # (all the nodes to do the same: "Apply changes and restart Cassandra on node1 of prod?")
+        # the most disruptive effect, on which nodes ("Apply changes and restart Cassandra on node1?"; the cluster
+        # is the head's): 61 columns at most, " Answer yes or no:" after it fitting 79; too long, the counts (the
+        # plan's rows above name the nodes), the starts left out last
         cassandra_screen_question: >-
-          {%- set nodes = _todo | community.cassandra.cassandra_node_list ~ ' of ' ~ _cluster -%}
-          {%- if _restarts | length == _todo | length -%} Apply changes and restart Cassandra on {{ nodes }}?
-          {%- elif _starts | length == _todo | length -%} Apply changes and start Cassandra on {{ nodes }}?
-          {%- else -%} Apply changes on {{ nodes }}
-          {%-   for verb, them in [('restart', _restarts), ('start', _starts)] if them -%}
-                , {{ verb }} Cassandra on {{ them | community.cassandra.cassandra_node_list }} ({{ them | length }}
-                {{- ' node' if them | length == 1 else ' nodes' }})
-          {%-   else -%}, no Cassandra restart
-          {%-   endfor -%}?
-          {%- endif -%}
+          {%- set n = _todo | length -%}
+          {%- set count = n ~ (' node' if n == 1 else ' nodes') -%}
+          {%- set ask = [] -%}
+          {%- for nodes, r, s in [(_todo | community.cassandra.cassandra_node_list, _restarts | community.cassandra.cassandra_node_list,
+                                   _starts | community.cassandra.cassandra_node_list),
+                                  (count, _restarts | length, _starts | length), (count, _restarts | length, '')] -%}
+          {%-   if _restarts | length == n -%}{%- set q = 'Apply changes and restart Cassandra on ' ~ nodes ~ '?' -%}
+          {%-   elif _starts | length == n -%}{%- set q = 'Apply changes and start Cassandra on ' ~ nodes ~ '?' -%}
+          {%-   else -%}
+          {%-     set q = 'Apply changes on ' ~ nodes ~ (', restart Cassandra on ' ~ r if _restarts else '')
+                          ~ ((', start it on ' if _restarts else ', start Cassandra on ') ~ s if _starts and s != '' else '')
+                          ~ (', no Cassandra restart' if not _restarts and not _starts else '') ~ '?' -%}
+          {%-   endif -%}
+          {%-   set _ = ask.append(q) -%}
+          {%- endfor -%}
+          {%- set fit = [] -%}
+          {%- for q in ask if q | length <= 61 -%}{%- set _ = fit.append(q) -%}{%- endfor -%}
+          {{ (fit + ask[-1:]) | first }}
         cassandra_screen:
           operation: apply_config
           # (the effects first, the most disruptive first, then the nodes up to date: "prod  Cassandra restarts on
@@ -1033,6 +1075,7 @@
           {%-   set _ = out.append({'name': h, 'todo': v.cassandra_apply_config_todo | default(false) | bool,
                                     'os': v.cassandra_apply_config_os | default([]) | length > 0,
                                     'why': v.cassandra_apply_config_restart_why | default(''),
+                                    'steps': v.cassandra_apply_config_steps | default([]),
                                     'os_done': v.cassandra_apply_config_os_done | default(false),
                                     'done': v.cassandra_op_done | default(false), 'then': v.cassandra_apply_config_then | default(''),
                                     'result': v.cassandra_op_result | default('not reached' if h in ansible_play_hosts_all

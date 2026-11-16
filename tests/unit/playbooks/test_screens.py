@@ -338,14 +338,18 @@ def test_apply_config_and_update_java_screens():
     question = Templar(loader=DataLoader(), variables=dict(trust(t["vars"]), **trust(play["vars"]), ansible_play_hosts=hosts,
                                                            hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS, **cluster))
     # (UX audit A2) the question names the most disruptive effect, on which nodes: a Cassandra restart, a start
+    # (review 3) no cluster (the head names it), 61 columns at most (" Answer yes or no:" after it fits 79): too
+    # long, the counts (the plan's rows name the nodes), the starts left out before the restarts
     assert question.template(trust_as_template(t["vars"]["cassandra_screen_question"])) == (
-        "Apply changes on node1, node3..node5 of Orders, restart Cassandra on node1 (1 node),"
-        " start Cassandra on node4 (1 node)?")
+        "Apply changes on 4 nodes, restart Cassandra on 1?")
     one = dict(variables_of(t, play, cluster), ansible_play_hosts=["node1", "node2"])
-    assert render_question(t, one) == "Apply changes and restart Cassandra on node1 of Orders?"
-    assert render_question(t, dict(one, ansible_play_hosts=["node4"])) == "Apply changes and start Cassandra on node4 of Orders?"
+    assert render_question(t, one) == "Apply changes and restart Cassandra on node1?"
+    assert render_question(t, dict(one, ansible_play_hosts=["node4"])) == "Apply changes and start Cassandra on node4?"
     one = dict(one, ansible_play_hosts=["node3", "node2"])
-    assert render_question(t, one) == "Apply changes on node3 of Orders, no Cassandra restart?"
+    assert render_question(t, one) == "Apply changes on node3, no Cassandra restart?"
+    # short enough: the nodes named
+    assert render_question(t, dict(one, ansible_play_hosts=["node1", "node3"])) == (
+        "Apply changes on node1, node3, restart Cassandra on node1?")
     # the head line says the same as the question
     for hosts, head in ((["node1", "node4"], "APPLY CONFIG  Orders  Cassandra restarts on 1 node, starts on 1"),
                         (["node4"], "APPLY CONFIG  Orders  Cassandra starts on 1 node"),
@@ -559,7 +563,7 @@ def test_apply_config_reads_every_node_and_puts_the_settings_side_by_side():
     assert templar.template(trust_as_template(listed["ansible.builtin.set_fact"]["_cassandra_apply_config_differ"])) == ["cassandra.yaml"]
     templar = Templar(loader=DataLoader(), variables=dict(variables, **trust(side["vars"])))
     lines = templar.template(trust_as_template(side["ansible.builtin.set_fact"]["cassandra_apply_config_diff"]))
-    assert lines == ["                    Node  Inventory",
+    assert lines == ["Item                Node  Inventory",
                      "cassandra.yaml  on node1",
                      "  concurrent_reads  48    32"]
 

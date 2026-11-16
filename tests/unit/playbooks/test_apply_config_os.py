@@ -643,14 +643,30 @@ def test_a_node_stopped_in_its_window_is_started_by_the_resumed_run():
     assert facts["cassandra_apply_config_then"] == "start"
 
 
-def test_the_restart_reason_says_what_is_done_with_cassandra_stopped():
-    # (B1 review) not "restart (time sync)": which service starts, that Cassandra is stopped meanwhile
-    facts = note([TIMESYNC], full=True)
-    assert facts["cassandra_apply_config_restart_why"] == "with Cassandra stopped: chronyd started, its clock let sync"
+def test_the_plan_says_what_a_real_run_does_in_its_order():
+    # (review 3) the plan and --check name each action in the order a real run does them (action_restart.yml: drain;
+    # os_window.yml: stop, the disks, the time sync, the wait for the clock; then the start), never an outcome
     package = {"item": "package chrony", "before": "absent", "after": "present", "timesync": True}
-    assert note([package, TIMESYNC], full=True)["cassandra_apply_config_restart_why"] == (
-        "with Cassandra stopped: chronyd installed and started, its clock let sync")
-    assert note([TUNED, LVM], full=True)["cassandra_apply_config_restart_why"] == (
-        "with Cassandra stopped: tuned profile switched or reloaded; LVM read-ahead set")
-    # the mark and the messages of the window keep their short reason
-    assert note([TIMESYNC], full=True)["cassandra_apply_config_why"] == "time sync"
+    assert note([TIMESYNC], full=True)["cassandra_apply_config_steps"] == [
+        "drain and stop Cassandra", "start chronyd", "wait up to 2m for clock sync", "start Cassandra"]
+    assert note([package, TIMESYNC], changes=["cassandra.yaml"], full=True)["cassandra_apply_config_steps"] == [
+        "write the config", "drain and stop Cassandra", "install chrony", "start chronyd", "wait up to 2m for clock sync",
+        "start Cassandra"]
+    assert note([TUNED, LVM, TIMESYNC], full=True)["cassandra_apply_config_steps"] == [
+        "drain and stop Cassandra", "switch the tuned profile", "set the LVM read-ahead (lvchange)", "start chronyd",
+        "wait up to 2m for clock sync", "start Cassandra"]
+    # a config change alone: the restart as action_restart.yml does it (drained first)
+    assert note([], changes=["cassandra.yaml"], full=True)["cassandra_apply_config_steps"] == [
+        "write the config", "drain and restart Cassandra"]
+    # no restart, no start: the usual words
+    assert note([RA], full=True)["cassandra_apply_config_steps"] == []
+    # the order of os_window.yml itself: the disks, then the time sync, then the wait (its own timeout: 24 x 5 s)
+    win = load("roles", "cassandra_operation", "tasks", "os_window.yml")[0]["block"]
+    names = [t["name"] for t in win]
+    assert (names.index("Stop Cassandra") < names.index("Apply the disk settings left to the restart")
+            < names.index("Install and start the time sync") < names.index("Let the clock sync"))
+    wait = win[names.index("Let the clock sync")]
+    assert "seq 1 24" in wait["ansible.builtin.shell"] and "sleep 5" in wait["ansible.builtin.shell"]
+    assert "chronyc -n waitsync" in wait["ansible.builtin.shell"]
+    # the restart's reason, for the recap after a real run: short
+    assert note([TIMESYNC], full=True)["cassandra_apply_config_restart_why"] == "time sync"

@@ -80,7 +80,7 @@ def test_the_four_drifts_per_file_from_to_the_nodes_last(tmp_path):
     # one table: the file on its first row, the setting, its change, the nodes that change (not the ones on the
     # inventory's value); the owner alone when the mode is the same
     assert view(*nodes) == [
-        '                   Node       Inventory',
+        'Item               Node       Inventory',
         'cassandra.yaml  on node4',
         '  max_hint_window  6h         3h',
         'cassandra-env.sh  on node4',
@@ -98,7 +98,7 @@ def test_every_other_value_with_its_nodes_and_a_value_the_inventory_adds(tmp_pat
               Node(tmp_path, "node5", files={"cassandra.yaml": YAML.replace("reads: 32", "reads: 48")})]
     lines = view(*nodes)
     assert lines == [
-        '                    Node  Inventory  Nodes',
+        'Item                Node  Inventory  Nodes',
         'cassandra.yaml',
         '  concurrent_reads  64    32         node3',
         '                    48    32         node4, node5']
@@ -107,7 +107,7 @@ def test_every_other_value_with_its_nodes_and_a_value_the_inventory_adds(tmp_pat
     lines = view(Node(tmp_path, "node1", files={"jvm-server.options": added}, targets={"jvm-server.options": added}),
                  Node(tmp_path, "node2", targets={"jvm-server.options": added}))
     assert lines == [
-        '                                   Node    Inventory',
+        'Item                               Node    Inventory',
         'jvm-server.options  on node2',
         '  -Dcassandra.ring_delay_ms=30000  absent  present']
 
@@ -117,7 +117,7 @@ def test_jvm_options_and_env_lines_as_settings(tmp_path):
                  Node(tmp_path, "node2", files={"jvm-server.options": JVM.replace("256k", "512k"),
                                                 "cassandra-env.sh": ENV.replace("8G", "16G")}))
     assert lines == [
-        '                 Node   Inventory',
+        'Item             Node   Inventory',
         'cassandra-env.sh  on node2',
         '  MAX_HEAP_SIZE  "16G"  "8G"',
         'jvm-server.options  on node2',
@@ -132,7 +132,7 @@ def test_a_value_set_per_node_lists_no_node_on_it(tmp_path):
                   targets={"cassandra.yaml": yml("10.0.0.%d" % i)}) for i in (1, 2)]
     nodes.append(Node(tmp_path, "node3", files={"cassandra.yaml": yml("10.0.0.9")}, targets={"cassandra.yaml": yml("10.0.0.3")}))
     assert view(*nodes) == [
-        '                  Node      Inventory',
+        'Item              Node      Inventory',
         'cassandra.yaml  on node3',
         '  listen_address  10.0.0.9  10.0.0.3']
 
@@ -150,7 +150,7 @@ def test_secrets_masked_a_changed_password_still_said(tmp_path):
         assert secret not in text
     # a changed secret said, its values masked on both sides
     assert lines == [
-        '                                               Node  Inventory       Nodes',
+        'Item                                           Node  Inventory       Nodes',
         'cassandra.yaml',
         '  client_encryption_options.keystore_password  ****  **** (another)  node2',
         '  ssl_private_key                              ****  **** (another)  node3',
@@ -164,7 +164,7 @@ def test_nested_keys_lists_and_layout_only(tmp_path):
     nodes = [Node(tmp_path, "node1", targets={"cassandra.yaml": target}),
              Node(tmp_path, "node2", targets={"cassandra.yaml": YAML.replace("# reads", "# the reads")})]
     assert view(*nodes) == [
-        '                                     Node                     Inventory                        Nodes',
+        'Item                                 Node                     Inventory                        Nodes',
         'cassandra.yaml',
         '  client_encryption_options.enabled  false                    true                             node1',
         '  seed_provider.parameters.seeds     10.0.0.1:7000            10.0.0.1:7000,10.0.0.2:7000      node1',
@@ -182,7 +182,7 @@ def test_a_new_file_a_line_ending_and_a_file_changed_since_compared(tmp_path):
     lines = view(*(nodes + [stale]))
     # a node not read: a line of its own, not a row of the table
     assert lines == [
-        '                 Node    Inventory',
+        'Item             Node    Inventory',
         'cassandra.yaml  node4: not read, or changed since it was compared: run apply_config again',
         'cassandra-env.sh  on node2',
         '  MAX_HEAP_SIZE  "8G"\\r  "8G"',
@@ -205,7 +205,7 @@ def test_nothing_differs():
 def test_the_conf_dir_alternative():
     items = [{"item": "/etc/cassandra/conf", "before": "/etc/cassandra/default.conf", "after": "/etc/cassandra/site"}]
     assert cassandra_apply_config_diff([{"name": "node1", "items": items}]) == [
-        '             Node                         Inventory',
+        'Item         Node                         Inventory',
         '/etc/cassandra/conf  on node1',
         '  points to  /etc/cassandra/default.conf  /etc/cassandra/site']
 
@@ -216,7 +216,7 @@ def test_a_change_next_to_a_secret_on_several_lines_is_read(tmp_path):
         return YAML + "sse_c_key: abc\nldap_password: |\n  LINE1\n  LINE2\nnum_tokens: %d\n" % tokens
     lines = view(Node(tmp_path, "node1", files={"cassandra.yaml": yml(16)}, targets={"cassandra.yaml": yml(8)}))
     assert lines == [
-        '              Node  Inventory',
+        'Item          Node  Inventory',
         'cassandra.yaml  on node1',
         '  num_tokens  16    8']
     assert not [line for line in lines if "abc" in line or "LINE" in line]
@@ -403,7 +403,7 @@ def test_a_large_cluster_by_node_groups(tmp_path):
         '  G1 = db11..db16, db21..db26 (12 nodes)',
         '  G2 = db071..db073, db075, db076 (5 nodes)',
         '',
-        '                    Node  Inventory  Nodes',
+        'Item                Node  Inventory  Nodes',
         'cassandra.yaml',
         '  concurrent_reads  64    32         G1 + db074',
         '  max_hint_window   6h    3h         G2 + db074']
@@ -421,7 +421,7 @@ def test_the_os_settings_that_differ_after_the_config(tmp_path):
     node2["os"] = [{"item": "read_ahead_kb vg_data/cassandra", "before": "256", "after": "4"}]
     node3 = Node(tmp_path, "node3").data()
     assert cassandra_apply_config_diff([node1, node2, node3]) == [
-        '                                                          Node    Inventory  Nodes',
+        'Item                                                      Node    Inventory  Nodes',
         'cassandra.yaml                                                               node1',
         '  max_hint_window                                         6h      3h',
         'OS settings',
@@ -457,7 +457,7 @@ def test_an_os_value_unknown_before():
     change = {"item": "LVM read-ahead vg/lv (sectors)", "before": None, "after": "8"}
     lines = cassandra_apply_config_diff([{"name": "node1", "os": [change]}])
     assert lines == [
-        '                        Node     Inventory',
+        'Item                    Node     Inventory',
         'OS settings  on node1',
         '  LVM read-ahead vg/lv  unknown  4 KB']
 
@@ -469,7 +469,7 @@ def test_a_key_added_by_hand_alone_is_a_difference_and_not_kept(tmp_path):
     live = YAML + "fake_option: 42\n"
     assert not cassandra_same_settings(live, YAML, "cassandra.yaml")
     assert view(Node(tmp_path, "node1", files={"cassandra.yaml": live}), Node(tmp_path, "node2")) == [
-        '               Node  Inventory',
+        'Item           Node  Inventory',
         'cassandra.yaml  on node1',
         '  fake_option  42    absent']
 
@@ -492,7 +492,7 @@ def test_os_settings_by_the_stable_device_name_at_the_terminal_width():
     nodes = "db-node-1.example.net..db-node-3.example.net, db-node-5.example.net"
     udev = "/etc/udev/rules.d/64-cassandra-data-disk.rules"
     assert cassandra_apply_config_diff(os_nodes(), width=200) == [
-        " " * (len(udev) + 4) + "Node                 Inventory",
+        "Item" + " " * len(udev) + "Node                 Inventory",
         "OS settings  on " + nodes,
         "  %s  4096 KB              4 KB" % "read-ahead sdb".ljust(len(udev)),
         "  %s  4096 KB              4 KB" % "read-ahead vgdata-lvdata".ljust(len(udev)),
@@ -511,7 +511,7 @@ def test_rows_too_wide_have_their_nodes_under_the_node_value_every_row_the_same(
              {"name": "h-n2", "items": [], "os": [{"item": swappiness, "before": "60", "after": "1"}]}]
     at = 2 + len(swappiness) + 2
     assert cassandra_apply_config_diff(nodes, width=80) == [
-        " " * at + "Node    Inventory",
+        "Item".ljust(at) + "Node    Inventory",
         "OS settings",
         "  %s  128 KB  4 KB" % "read-ahead sdz".ljust(len(swappiness)), " " * at + "h-n1",
         "  %s  60      1" % swappiness, " " * at + "h-n2"]
@@ -565,7 +565,7 @@ def test_auto_bootstrap_true_on_the_node_is_the_default_the_role_leaves_out(tmp_
     # rewritten for another key: auto_bootstrap: true not shown as a difference, false is
     live = YAML + "auto_bootstrap: true\nfake_option: 42\n"
     assert view(Node(tmp_path, "node1", files={"cassandra.yaml": live})) == [
-        '               Node  Inventory',
+        'Item           Node  Inventory',
         'cassandra.yaml  on node1',
         '  fake_option  42    absent']
     live = YAML + "auto_bootstrap: false\n"
@@ -631,12 +631,24 @@ def test_a_service_has_its_own_label_and_check_separates_found_from_would_do():
     chronyd = {"item": "chronyd", "before": "inactive", "after": "active", "timesync": True, "service": True}
     nodes = [{"name": "h-n2", "items": [], "os": [chronyd]}]
     diff = cassandra_apply_config_diff(nodes)
-    assert diff == ["                   Node      Inventory", "OS settings  on h-n2", "  service chronyd  inactive  active"]
+    assert diff == ["Item               Node      Inventory", "OS settings  on h-n2", "  service chronyd  inactive  active"]
     recap = cassandra_apply_config_recap(
         [{"name": "h-n1", "todo": False, "result": "nothing to apply"},
-         {"name": "h-n2", "todo": True, "done": True, "then": "restart",
-          "why": "with Cassandra stopped: chronyd started, its clock let sync"}], check=True, cluster="c", diff=diff)
+         {"name": "h-n2", "todo": True, "done": True, "then": "restart", "why": "time sync",
+          "steps": ["drain and stop Cassandra", "start chronyd", "wait up to 2m for clock sync", "start Cassandra"]}],
+        check=True, cluster="c", diff=diff)
     head = ["CHECK  apply_config  c  1 would restart, 1 up to date", "  nothing was changed (--check)", ""]
-    would = ["", "WOULD DO", "  h-n2  would apply, then restart (with Cassandra stopped: chronyd started, its clock let sync)",
+    would = ["", "WOULD DO", "  h-n2  would drain and stop Cassandra, start chronyd, wait up to 2m for clock sync, start Cassandra",
              "  h-n1  up to date"]
     assert recap == head + ["DIFFERENCES FOUND"] + ["  " + line for line in diff] + would
+
+
+def test_the_plan_and_the_check_say_the_steps_the_recap_what_was_done():
+    # (review 3) the steps a real run takes, its intentions: in the plan as they are, under --check "would ...";
+    # after a real run, what was done ("applied, restarted"), the steps not said again
+    node = {"name": "h-n1", "todo": True, "then": "restart", "why": "time sync",
+            "steps": ["drain and stop Cassandra", "start chronyd", "wait up to 2m for clock sync", "start Cassandra"]}
+    assert cassandra_apply_config_outcomes([node], plan=True) == [
+        "h-n1  drain and stop Cassandra, start chronyd, wait up to 2m for clock sync, start Cassandra"]
+    assert cassandra_apply_config_outcomes([dict(node, done=True)], check=True)[0].startswith("h-n1  would drain and stop Cassandra, ")
+    assert cassandra_apply_config_recap([dict(node, done=True)])[1] == "h-n1  applied, restarted (time sync)"

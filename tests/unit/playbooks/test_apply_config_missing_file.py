@@ -399,7 +399,7 @@ def test_other_jmx_rights_restart_the_node(tmp_path):
     facts, plan, view = jmx_apply(role)
     assert facts["cassandra_apply_config_then"] == "restart"
     assert plan == ["n2  write + restart (jmxremote.access: read at start)", "n1  up to date"]
-    assert view == ["        Node                   Inventory",
+    assert view == ["Item    Node                   Inventory",
                     "jmxremote.password  on n2",
                     "  file  other users or rights  written whole",
                     "jmxremote.access  on n2",

@@ -614,13 +614,13 @@ def cassandra_apply_config_diff(nodes, width=None, verbose=False, margin=0):
     return _named(entries, all_nodes, width)
 
 
-# (no word over the first column: each row's own label says what it is, a file, a setting, a service, a package)
-TABLE_HEAD = ("", "Node", "Inventory", "Nodes")
+# (Item: each row's own label says what it is, a file, a setting, a service, a package)
+TABLE_HEAD = ("Item", "Node", "Inventory", "Nodes")
 
 
 def _named(entries, all_nodes, width=None):
     """The entries (a file's name, then its (setting, rows); a line of its own starts with a space) as one table:
-    a head row (Node, Inventory, Nodes: no word over the labels), each file on a row of its own, its settings under it (2 columns
+    a head row (Item, Node, Inventory, Nodes), each file on a row of its own, its settings under it (2 columns
     in), each with the node's value and the inventory's in aligned columns, the nodes last. The node lists as text:
     on a large cluster by node groups (defined first, "NODE GROUPS"), "all" for every node; else as
     cassandra_output's nodes() names them. -> the lines, fitting in width: when a row does not, the nodes of every
@@ -711,7 +711,10 @@ def _outcome(node, check, plan):
             word = "would restart" if check else "will restart" if plan else "restarted"
         if plan and not check:  # the plan's own words: "write + restart", "write, no restart"
             text = PLANNED.get(then, word)
-        if then == "restart" and node.get("why"):  # not for new settings alone: a restart for this too
+        steps = node.get("steps") if (plan or check) and then in ("restart", "start") else None
+        if steps:  # what a real run does, in its order (apply_config.yml's _steps): its intentions, no outcome
+            text = ("would " if check else "") + ", ".join(steps)
+        elif then == "restart" and node.get("why"):  # not for new settings alone: a restart for this too
             text += " (%s)" % node["why"]
         # a file written back as the running Cassandra started with it: its note says why, not "an owner... only"
         written_back = any(_WRITTEN_BACK in str(n) for n in node.get("notes") or [])
