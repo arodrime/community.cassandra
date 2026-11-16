@@ -953,12 +953,16 @@ restarted too. A node whose files only need another owner, group or mode gets th
 its config when it starts). A node where Cassandra is not running gets its config too: started once written when its
 unit failed (e.g. Cassandra could not read its config, or it crashed), left stopped when it was stopped (a stop that
 ended in a failed unit too). Each node's health check needs another node up to read the ring from: a cluster with
-no node running is not handled. The settings that differ come per file, each with the inventory's value and the
-nodes already on it, then the value of each node to change, with its nodes (``← differs``): ``cassandra.yaml`` keys (a nested one as
-``parent.key``), the lines of the JVM options files and ``cassandra-env.sh`` (``-Xmx``, ``-Dname``, ``NAME=``), the
-owner, group and mode of a file or a directory as one setting; passwords as ``****``. Then what each node gets, the
-nodes with the same outcome on one line (``node2, node4  would apply, then restart``). A real run shows them before
-its question and ends with what each node got; ``--check`` shows them in the recap at the end.
+no node running is not handled. The settings that differ come in one table (``Setting``, ``Node``, ``Inventory``,
+``Nodes``), per file (its nodes on its row when all its settings change on the same ones): ``cassandra.yaml`` keys (a
+nested one as ``parent.key``), the lines of the JVM options files and ``cassandra-env.sh`` (``-Xmx``, ``-Dname``,
+``NAME=``), the owner, group and mode of a file or a directory as one setting, each with the node's value and the
+inventory's in aligned columns (the fixed words ``absent``, ``present``; the read-ahead in KB; passwords as ``****``, a
+changed one ``**** (another)``); a row too wide for the terminal has its nodes on the next line, a value is never cut.
+Then what each node gets, the nodes with the same outcome on one line (``node2, node4  would apply, then restart``).
+A real run shows them before its question (which names the restart: ``Apply the config on node1 of prod and restart
+it?``) and ends with what each node got; ``--check`` shows no plan: its recap is the plan, said once (the verdict
+with the restarts first, ``nothing was changed (--check)``, ``WHAT CHANGES``, ``WHAT HAPPENS``, the warnings).
 
 ``apply_config`` covers the OS settings of ``cassandra_linux`` too (kernel settings, limits, transparent huge pages,
 swap, time sync, the read-ahead and IO scheduler of the data devices), except on a node with ``cassandra_linux_manage:

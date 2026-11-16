@@ -260,20 +260,17 @@ def test_swap_left_on_said_under_the_node_once(live, swapoff, said):
     assert "not _cassandra_linux_swap_said | default(false) | bool" in role_says["when"]
 
 
-@pytest.mark.parametrize("config, os_nodes, check, first, second", [
-    (["n1"], [], False, "Writes the config", ""),
-    ([], ["n1"], False, "", "The OS settings that differ are applied on their nodes at once: live, no restart for them."),
-    ([], ["n1"], True, "", "The OS settings that differ would be applied on their nodes at once: live, no restart for"
-                           " them; they are in the recap at the end."),
-    (["n1"], ["n2"], False, "Writes the config", "The OS settings that differ are applied first, on their nodes at once:"
-                                                 " live, no restart for them.")])
-def test_the_intro_says_what_is_done(config, os_nodes, check, first, second):
+@pytest.mark.parametrize("config, os_nodes, restarts, said", [
+    (["n1"], [], ["n1"], "The restarts one node at a time."),
+    ([], ["n1"], [], "Live changes, no restart."),
+    (["n1"], ["n2"], ["n1"], "Order: live changes on their nodes at once, then the restarts, one node at a time."),
+    (["n1", "n2"], [], ["n1"], "Order: live changes on their nodes at once, then the restarts, one node at a time.")])
+def test_the_intro_says_the_order_in_one_line(config, os_nodes, restarts, said):
+    # (UX audit B19) one line, not a paragraph: the table below says what each node gets
     screen = FIND["tasks"][TASKS.index("Show the plan and confirm the run")]
     intro = screen["vars"]["cassandra_screen"]["intro"]
-    variables = {"_config_nodes": config, "_os_nodes": os_nodes, "ansible_check_mode": check}
-    one, two = [" ".join(render(i, variables).split()) for i in intro]
-    assert one.startswith(first) if first else one == ""
-    assert two == second
+    variables = {"_config_nodes": config, "_os_nodes": os_nodes, "_restarts": restarts}
+    assert [" ".join(render(i, variables).split()) for i in intro] == [said]
 
 
 # time sync (chrony, timesyncd) installed or started under a running Cassandra: a restart, its window
@@ -649,17 +646,6 @@ def test_a_node_restarted_for_its_tuned_profile_alone_named_in_the_question():
     # a start that waits for the clock only (no reason given): its mark and messages say time sync
     win = load("roles", "cassandra_operation", "tasks", "os_window.yml")[0]
     assert render(win["vars"]["_why"], {"cassandra_apply_config_why": ""}) == "time sync"
-
-
-def test_the_intro_says_what_needs_cassandra_stopped():
-    intro = FIND["tasks"][TASKS.index("Show the plan and confirm the run")]["vars"]["cassandra_screen"]["intro"][1]
-    variables = {"_config_nodes": ["n1"], "_os_nodes": ["n1"], "ansible_check_mode": False, "_window_any": ["n1"]}
-    assert " ".join(render(intro, variables).split()) == (
-        "The OS settings that differ are applied first, on their nodes at once: live, no restart for them. What needs"
-        " Cassandra stopped is done in the restart of its node, as said below.")
-    # its only OS settings to do in that restart: that line alone
-    variables["_os_nodes"] = []
-    assert " ".join(render(intro, variables).split()) == "What needs Cassandra stopped is done in the restart of its node, as said below."
 
 
 def test_a_node_stopped_in_its_window_is_not_restarted_for_os_settings_alone():

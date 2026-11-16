@@ -326,26 +326,13 @@ def test_apply_config_and_update_java_screens():
     t, play = task("apply_config.yml", "Show the plan and confirm the run")
     hosts = ["node1", "node2", "node3", "node4", "node5"]
     cluster = {"_cassandra_preflight": {"cassandra_cluster_name": "Orders"}}
-    text = screen(dict(cluster, ansible_play_hosts=hosts, hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS,
-                       cassandra_apply_config_diff=APPLY_DIFF), t["vars"], play["vars"], check=True)
-    # --check: what each node would get; the settings that differ in the recap (no question)
-    assert text == ("APPLY CONFIG  4 nodes of Orders would apply the config, 1 with a restart, 1 up to date\n"
-                    "  A real run would write the nodes not restarted at once, then each other node in turn, restarting\n"
-                    "  or starting it as said below; the settings that differ are in the recap at the end.\n\n"
-                    "  node1  would apply, then restart\n"
-                    "  node3  would apply, no restart (owner or mode only, read at start)\n"
-                    "  node4  would apply, then start (Cassandra not running: started once written (down over"
-                    " max_hint_window? repair it))\n"
-                    "  node5  would apply, left stopped (Cassandra stopped: left stopped, reads its config when it starts)\n"
-                    "  node2  nothing to apply\n\n"
-                    "WARNING  node3: data dir /srv/data: not owned by cassandra: /srv/data/ks1\n\n"
-                    "--check: nothing will be changed")
+    # (UX audit B1) --check: no plan, the recap at the end is the plan, said once
+    assert "not ansible_check_mode" in t["when"]
     # a real run: the settings that differ, then what each node gets, before its question
     text = screen(dict(cluster, ansible_play_hosts=["node1", "node2"], hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS,
                        cassandra_apply_config_diff=APPLY_DIFF), t["vars"], play["vars"])
     assert text == ("APPLY CONFIG  1 node of Orders to apply the config and restart, 1 up to date\n"
-                    "  Writes the config on the nodes not restarted at once, then on the others one node at a time,\n"
-                    "  restarting or starting each as said below.\n\n"
+                    "  The restarts one node at a time.\n\n"
                     "  " + APPLY_DIFF[0] + "\n\n"
                     "  node1  write + restart\n  node2  up to date")
     question = Templar(loader=DataLoader(), variables=dict(trust(t["vars"]), **trust(play["vars"]), ansible_play_hosts=hosts,
@@ -497,27 +484,32 @@ def test_apply_config_recap():
         return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(t["ansible.builtin.debug"]["msg"]))
 
     variables["cassandra_cluster_name"] = "my_cluster"
+    # (UX audit B1) the plan once: the verdict naming the restart, WHAT CHANGES, WHAT HAPPENS
     assert recap(True) == [
-        "CHECK  apply_config  my_cluster  2 would apply, 1 nothing to apply, 1 not reached, 1 not in this run", ""] + APPLY_DIFF + [
+        "CHECK  apply_config  my_cluster  1 would restart, 1 would apply, 1 up to date, 1 not reached, 1 not in this run",
+        "  nothing was changed (--check)",
         "",
-        "node1  would apply, no restart",
-        "node2  would apply, then restart",
-        "  restart pending (jvm11-server.options changed since the running Cassandra started)",
-        "node3  nothing to apply",
-        "node4  not reached",
-        "node5  not in this run (--limit)"]
+        "WHAT CHANGES"] + ["  " + line for line in APPLY_DIFF] + [
+        "",
+        "WHAT HAPPENS",
+        "  node2  would apply, then restart",
+        "    restart pending (jvm11-server.options changed since the running Cassandra started)",
+        "  node1  would apply, no restart",
+        "  node3  up to date",
+        "  node4  not reached",
+        "  node5  not in this run (--limit)"]
     # a real run showed the settings in its plan, before its question: the outcomes here (node2 restarted by
     # this run: no restart pending left)
     assert recap(False) == [
-        "DONE  apply_config  my_cluster  2 applied, 1 nothing to apply, 1 not reached, 1 not in this run",
-        "node1  applied, no restart",
+        "DONE  apply_config  my_cluster  1 restarted, 1 applied, 1 up to date, 1 not reached, 1 not in this run",
         "node2  applied, restarted",
-        "node3  nothing to apply",
+        "node1  applied, no restart",
+        "node3  up to date",
         "node4  not reached",
         "node5  not in this run (--limit)"]
     # how long the run took, from its start (the first play)
     hostvars["node3"]["_cassandra_apply_config_start"] = 1000  # an epoch (0 would read as no start)
-    assert re.match(r"^DONE  apply_config  my_cluster  2 applied, .* not in this run  [0-9dhms]+$", recap(False)[0])
+    assert re.match(r"^DONE  apply_config  my_cluster  1 restarted, .* not in this run  [0-9dhms]+$", recap(False)[0])
     # the read-ahead set live on node1, node3 (no restart): the rolling restart to take it, optional, for the cluster
     # as the run named it
     from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import READ_AHEAD_LIVE
@@ -556,7 +548,9 @@ def test_apply_config_reads_every_node_and_puts_the_settings_side_by_side():
     assert templar.template(trust_as_template(listed["ansible.builtin.set_fact"]["_cassandra_apply_config_differ"])) == ["cassandra.yaml"]
     templar = Templar(loader=DataLoader(), variables=dict(variables, **trust(side["vars"])))
     lines = templar.template(trust_as_template(side["ansible.builtin.set_fact"]["cassandra_apply_config_diff"]))
-    assert lines == ["cassandra.yaml  concurrent_reads  48 -> 32  node1"]
+    assert lines == ["Setting             Node  Inventory",
+                     "cassandra.yaml  on node1",
+                     "  concurrent_reads  48    32"]
 
 
 # node_operation.yml and restart_batch.yml: test_check_mode_results.py

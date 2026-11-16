@@ -160,9 +160,9 @@ def test_the_plan_says_a_failed_unit_left_stopped_is_not_stopped_on_purpose():
     nodes = render(t["vars"]["_nodes"], dict(hostvars=hostvars, ansible_play_hosts=sorted(hostvars)))
     assert [n["unit_failed"] for n in nodes] == [False, False, False, False, True]
     assert cassandra_apply_config_outcomes(nodes, plan=True)[1:] == [
-        "node5  write, left stopped (Cassandra stopped: left stopped, reads its config when it starts)",
-        "node7  write, left stopped (its cassandra unit failed: left as it is)",
-        "node3  up to date"]
+        "node5         write, left stopped (Cassandra stopped: left stopped, reads its config when it starts)",
+        "node7         write, left stopped (its cassandra unit failed: left as it is)",
+        "node3         up to date"]
 
 
 def test_a_real_run_refuses_before_any_change_check_goes_on():
@@ -197,11 +197,11 @@ def test_the_check_recap_ends_with_the_refusal():
                      ansible_play_hosts_all=HOSTS, cassandra_cluster_name="c", ansible_check_mode=True)
     # no plan shown (a later play stopped first): the recap says it, last
     lines = render(t["ansible.builtin.debug"]["msg"], variables)
-    assert lines[0] == "CHECK  apply_config  c  3 would apply, 1 nothing to apply"
+    assert lines[0] == "CHECK  apply_config  c  2 would restart, 1 would apply, 1 up to date"
     warning = lines.index("WARNING  a real run is refused, before changing anything: " + REASON)
     assert lines[warning - 1] == "" and " ".join(line.strip() for line in lines[warning + 1:]) == WAY  # (laid out)
     # the nodes' outcomes are all there, before it
-    assert "node1, node2  would apply, then restart" in lines
+    assert "  node1, node2  would apply, then restart" in lines
     # the plan said it: said once, the recap points at it
     for h in hostvars:
         hostvars[h]["_cassandra_apply_config_planned"] = HOSTS
@@ -212,7 +212,7 @@ def test_the_check_recap_ends_with_the_refusal():
 
 def test_the_recap_says_no_refusal_after_a_real_run():
     nodes = [{"name": "node1", "todo": True, "done": True, "then": "restart", "result": "", "notes": []}]
-    assert cassandra_apply_config_recap(nodes, refused=[REASON, WAY]) == ["DONE  apply_config  1 applied", "node1  applied, restarted"]
+    assert cassandra_apply_config_recap(nodes, refused=[REASON, WAY]) == ["DONE  apply_config  1 restarted", "node1  applied, restarted"]
 
 
 def test_the_check_plan_says_it_too():

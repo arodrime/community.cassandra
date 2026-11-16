@@ -51,7 +51,7 @@ _YAML_ITEM = re.compile(r"^( *)- +(.*?)[ \t]*$")
 _ASSIGN = re.compile(r"^(?:export[ \t]+)?([A-Za-z_][\w.\-]*)[ \t]*=(.*)$")
 _HEAP = re.compile(r"^(-X(?:mx|ms|mn|ss))(.+)$")
 _PERMS = " (owner:group mode)"
-ABSENT = "not set"
+ABSENT = "absent"
 PRESENT = "present"  # a line of one form (a JVM option): there or not
 # a device-mapper device's kernel name after its stable one in an OS item ("read_ahead_kb vg-lv (dm-3)"): dm-N
 # differs from node to node, the item is the same setting (said with -v)
@@ -300,26 +300,23 @@ def _one_line(text):
     return "%s ... (%d lines, %s)" % (text.split("\n", 1)[0], text.count("\n") + 1, digest)
 
 
+# a masked value the inventory changes (the same **** on both sides): the inventory's side says it differs
+OTHER_SECRET = out.MASK + " (another)"
+
+
 def _change(live, target):
-    """A node's live value and the inventory's -> the change as the table says it: "3h -> 6h", "not set -> 6h", a
-    key the inventory drops "6h -> removed (not in the inventory)"; a line of one form there or not: "added", "removed (not in
-    the inventory)"; a masked value the diff writes: "**** -> **** (masked)", "changed (masked)" for a line."""
-    if live == PRESENT and target == PRESENT:
-        return "changed (masked)"  # the same masked line on both sides: a secret in it changed
-    if live == PRESENT or target == PRESENT:
-        return "added" if live == ABSENT else "removed (not in the inventory)"
-    if target == ABSENT:
-        return "%s -> removed (not in the inventory)" % live
-    if live == ABSENT:
-        return "not set -> %s" % target
-    if live == target:
-        return "%s -> %s (masked)" % (live, target)
-    return "%s -> %s" % (live, target)
+    """A node's live value and the inventory's -> (the node's, the inventory's) as the table says them, with the
+    fixed words absent, present, (empty): ("3h", "6h"), ("absent", "6h"), a key the inventory drops ("6h",
+    "absent"); a line of one form there or not: ("absent", "present"); a masked value the diff writes: ("****",
+    "**** (another)")."""
+    if live == target or (live == PRESENT and target == PRESENT):  # a masked value: a secret in it changed
+        return (out.MASK if live == PRESENT else live), OTHER_SECRET
+    return live, target
 
 
 def _rows(records, shown_of, all_nodes):
-    """records: {node: (live, target, changing)} of one setting -> its rows (the change, the nodes, ""): for each
-    inventory value, each live value of the nodes to change to it, "live -> target" (_change)."""
+    """records: {node: (live, target, changing)} of one setting -> its rows (the node's value, the inventory's, the
+    nodes): for each inventory value, each live value of the nodes to change to it (_change)."""
     order = [n for n in all_nodes if n in records]
     changing = [n for n in order if records[n][2]]
     targets = []
@@ -339,7 +336,7 @@ def _rows(records, shown_of, all_nodes):
                 lives.append((live, [n]))
             else:
                 group[1].append(n)
-        rows += [(_change(live, target), names, "") for live, names in lives]
+        rows += [_change(live, target) + (names,) for live, names in lives]
     return rows
 
 
@@ -443,10 +440,10 @@ def _whole_rows(name, nodes, new_file, all_nodes):
     shown: missing, or other content (said, not shown)."""
     wholes = [(node["name"], node["wholes"][name]) for node in nodes if name in node["wholes"]]
     absent = [n for n, d in new_file] + [n for n, before in wholes if before in (ABSENT, "absent")]
-    rows = [("%s -> written whole" % before, [n for n, b in wholes if b == before], "")
+    rows = [(before, "written whole", [n for n, b in wholes if b == before])
             for before in sorted(set(b for n, b in wholes if b not in (ABSENT, "absent")))]
     if absent:
-        rows.insert(0, ("missing -> written whole", [n for n in all_nodes if n in absent], ""))
+        rows.insert(0, (ABSENT, "written whole", [n for n in all_nodes if n in absent]))
     return rows
 
 
@@ -460,7 +457,7 @@ def _file_entries(name, nodes, all_nodes):
     yaml = name.endswith((".yaml", ".yml"))
     entries = [_setting_entry(key, per_node, changed, all_nodes, yaml) for key in keys]
     if layout_only:
-        entries.append(("comments or layout", [("differ (no setting changes)", layout_only, "")]))
+        entries.append(("comments or layout", [("other", "the role's (no setting changes)", layout_only)]))
     rows = _whole_rows(name, nodes, new_file, all_nodes)
     if rows:
         entries.append(("file", rows))
@@ -470,17 +467,39 @@ def _file_entries(name, nodes, all_nodes):
     return entries, lines
 
 
-def _os_rows(changes):
+def _os_rows(changes, unit=None):
     """[(node, before, after)] of one OS setting -> its rows: each value the role sets, from each value of the
-    nodes it changes ("128 -> 4"), with those nodes (only the nodes that differ are known)."""
+    nodes it changes (the node's, the inventory's), with those nodes (only the nodes that differ are known); unit:
+    a number shown with it (a function of the value)."""
     rows = []
     for after in OrderedDict.fromkeys(c[2] for c in changes):
         befores = OrderedDict()
         for node, before, value in changes:
             if value == after:
                 befores.setdefault(before, []).append(node)
-        rows.extend(("%s -> %s" % (before, after), nodes, "") for before, nodes in befores.items())
+        rows.extend(((unit or str)(before), (unit or str)(after), nodes) for before, nodes in befores.items())
     return rows
+
+
+def _kb(value):
+    """A read-ahead in KB: "4096" -> "4096 KB"; another word (auto, none) as it is."""
+    return "%s KB" % value if re.match(r"^\d+$", str(value)) else str(value)
+
+
+def _sectors_kb(value):
+    """An LVM read-ahead in 512-byte sectors, in KB as the others: "8192" -> "4096 KB"."""
+    return _kb(int(value) // 2) if re.match(r"^\d+$", str(value)) else str(value)
+
+
+def _os_setting(name):
+    """An OS item's name and the unit of its values: read-ahead in KB (LVM's sectors too), else as they are."""
+    m = re.match(r"^LVM read-ahead (.*) \(sectors\)$", name)
+    if m:
+        return "LVM read-ahead %s" % m.group(1), _sectors_kb
+    m = re.match(r"^read_ahead_kb (.*)$", name)
+    if m:
+        return "read-ahead %s" % m.group(1), _kb
+    return name, None
 
 
 def _perm_entries(key, nodes, all_nodes, field):
@@ -524,7 +543,7 @@ def _prepare(node, verbose=False):
     return {"name": str(node.get("name")), "diffs": diffs, "perms": perms, "dirs": dirs, "other": other, "wholes": wholes,
             "texts": _live_texts(node), "stats": _stats(node.get("stats"), _file_key),
             "dir_stats": _stats(node.get("dir_stats"), _dir_key),
-            "os": [(_os_item(i.get("item"), verbose), "(none)" if i.get("before") is None else str(i.get("before")),
+            "os": [(_os_item(i.get("item"), verbose), "unknown" if i.get("before") is None else str(i.get("before")),
                     str(i.get("after"))) for i in node.get("os") or []]}
 
 
@@ -588,23 +607,32 @@ def cassandra_apply_config_diff(nodes, width=None, verbose=False, margin=0):
     if os_items:
         entries.append("OS settings")
     for name in os_items:
-        entries.append((name, _os_rows([(n["name"], i[1], i[2]) for n in prepared for i in n["os"] if i[0] == name])))
+        label, unit = _os_setting(name)
+        entries.append((label, _os_rows([(n["name"], i[1], i[2]) for n in prepared for i in n["os"] if i[0] == name],
+                                        unit)))
     return _named(entries, all_nodes, width)
+
+
+TABLE_HEAD = ("Setting", "Node", "Inventory", "Nodes")
 
 
 def _named(entries, all_nodes, width=None):
     """The entries (a file's name, then its (setting, rows); a line of its own starts with a space) as one table:
-    the file on its first row, the setting on the first row of its rows, the change, the nodes. The node lists as
-    text: on a large cluster by node groups (defined first, "NODE GROUPS"), "all" for every node; else as
-    cassandra_output's nodes() names them. -> the lines, fitting in width."""
+    a head row (Setting, Node, Inventory, Nodes), each file on a row of its own, its settings under it (2 columns
+    in), each with the node's value and the inventory's in aligned columns, the nodes last. The node lists as text:
+    on a large cluster by node groups (defined first, "NODE GROUPS"), "all" for every node; else as
+    cassandra_output's nodes() names them. -> the lines, fitting in width: when a row does not, the nodes of every
+    row go on the next line, under the node's value (a value is never cut)."""
     rows = [row for e in entries if not isinstance(e, str) for row in e[1]]
-    groups = out.node_groups([r[1] for r in rows], all_nodes)
+    groups = out.node_groups([r[2] for r in rows], all_nodes)
 
     def named(names):
         return out.who(names, all_nodes, groups) if groups else out.nodes(names)
 
-    shown, cells, heading = [], [], ""  # shown: a row of cells, or a line of its own (a node not read)
-    for entry in entries:
+    # shown: a row of cells, a file's row (its nodes in the last cell when all its settings change on the same
+    # nodes, else ""), or a line of its own (a node not read)
+    shown, cells, heading = [], [], ""
+    for at, entry in enumerate(entries):
         if isinstance(entry, str) and entry.startswith(" "):
             shown.append(("%s  %s" % (heading, entry.strip())) if heading else entry.strip())
             heading = ""
@@ -612,33 +640,59 @@ def _named(entries, all_nodes, width=None):
             heading = entry
         else:
             label, found = entry
-            for change, names, dummy in found:
-                cells.append([heading, label, change, named(names)])
+            if heading:  # (its settings: the entries up to the next file)
+                mine = []
+                for e in entries[at:]:
+                    if isinstance(e, str):
+                        break
+                    mine += [tuple(r[2]) for r in e[1]]
+                once = len(set(mine)) == 1
+                shown.append([heading, "", "", named(list(mine[0])) if once else ""])
+                heading = ""
+            for node, inventory, names in found:
+                cells.append(["  " + label if label else "", node, inventory, "" if once else named(names)])
                 shown.append(cells[-1])
-                heading, label = "", ""
-    rows = iter(_rows_in(cells, width))
+                label = ""
+    if not shown:
+        return []
     lines = []
-    for line in shown:
-        lines += out.fit([line], width) if isinstance(line, str) else next(rows)
+    for line in _table(cells, shown, width):
+        lines += [line] if not isinstance(line, tuple) else out.fit([line[0]], width)
     return (out.group_lines(groups, width=width) + [""] + lines) if groups and lines else lines
 
 
-def _rows_in(cells, width=None):
-    """The table's rows (file, setting, change, nodes), each as its lines in width: on one line when every row
-    fits; else every row the same way, its nodes on the next lines under the change's column (under the
-    setting's when they do not fit there)."""
-    table = out.table(cells)
-    if not width or all(len(line) <= width for line in table):
-        return [[line] for line in table]
-    setting = max(len(c[0]) for c in cells) + 2
-    change = setting + max(len(c[1]) for c in cells) + 2
+def _table(cells, shown, width):
+    """The table's lines: the head row, then shown in order (a row of cells as aligned columns, a text as it is,
+    as a tuple: fitted to width); when a row does not fit in width, the nodes of every row (a file's too) go on its
+    next line, under the node's value, cut after a comma when longer than the room. A value is never cut."""
+    head = list(TABLE_HEAD)
+    columns = [max(len(c[i]) for c in cells + [head]) for i in range(3)]
+    # every file's settings on the same nodes: no Nodes column, each file's nodes on its row ("OS settings  on h-n1")
+    by_file = not any(c[3] for c in cells)
+    wide = sum(columns) + 4 + (0 if by_file else 2 + max(len(c[3]) for c in cells + [head]))
+    under = bool(width) and wide > width  # the nodes under the node's value
 
-    def fits(at):
-        return all(len(part) <= width - at for c in cells for part in out.wrap_list(c[3], width - at))
+    def nodes_at(at, names):  # (a node list cut after its commas, never inside a name)
+        return [" " * at + part for part in out.wrap_list(names, max(20, width - at))] if names else []
 
-    at = change if width > change and fits(change) else setting
-    return [out.fit([line], width) + [" " * at + part for part in out.wrap_list(cell[3], max(1, width - at)) if part]
-            for line, cell in zip(out.table([c[:3] for c in cells]), cells)]
+    def row(c):
+        if not c[1] and not c[2] and not c[0].startswith(" "):  # a file's row
+            if by_file:  # (its nodes cut after a comma when the line is longer than width)
+                lead = c[0] + "  on "
+                parts = out.wrap_list(c[3], max(20, width - len(lead))) if width else [c[3]]
+                return [c[0]] if not c[3] else [lead + parts[0]] + [" " * len(lead) + p for p in parts[1:]]
+            if not under:
+                return [(c[0].ljust(max(sum(columns) + 6, len(c[0]) + 2)) + c[3]).rstrip()]
+            return [c[0]] + nodes_at(columns[0] + 2, c[3])
+        text = "  ".join(c[i].ljust(columns[i]) for i in range(3))
+        if under:
+            return [text.rstrip()] + nodes_at(columns[0] + 2, c[3])
+        return [(text + "  " + c[3]).rstrip()]
+    lines = [] if not cells else ["  ".join(head[i].ljust(columns[i]) for i in range(3)).rstrip() if under or by_file
+                                  else "  ".join(head[i].ljust(columns[i]) for i in range(3)) + "  " + head[3]]
+    for item in shown:
+        lines += [(item,)] if isinstance(item, str) else row(item)
+    return lines
 
 
 def _outcome(node, check, plan):
@@ -651,6 +705,8 @@ def _outcome(node, check, plan):
         word = "would apply" if check else "will apply" if plan else "applied"  # (plan: before a real run's question)
         said = THEN.get(then, ("", ""))[0 if check else 1]
         text = word + (", " + said if said else "")
+        if then == "restart":  # (the tally names the most disruptive effect)
+            word = "would restart" if check else "will restart" if plan else "restarted"
         if plan and not check:  # the plan's own words: "write + restart", "write, no restart"
             text = PLANNED.get(then, word)
         if then == "restart" and node.get("why"):  # not for new settings alone: a restart for this too
@@ -672,11 +728,12 @@ def _outcome(node, check, plan):
         return result, "failed"
     for word in ("nothing to apply", "not reached", "not in this run", "skipped"):
         if word in result:
-            return ("up to date" if plan and not check and word == "nothing to apply" else result), word
+            return ("up to date", "up to date") if word == "nothing to apply" else (result, word)
     return result, "not touched"
 
 
-_RANK = {"would apply": 0, "will apply": 0, "applied": 0, "failed": 1}
+_RANK = {"would restart": 0, "will restart": 0, "restarted": 0, "would apply": 1, "will apply": 1, "applied": 1,
+         "failed": 2}
 
 
 def _width(width, margin=0):
@@ -700,8 +757,11 @@ def _grouped(nodes, check=False, plan=False, width=None):
             rank[key] = _RANK.get(word, len(_RANK))
         groups[key].append(str(node["name"]))
     lines = []
+    names = dict((key, out.nodes(groups[key])) for key in order)
+    column = max(len(n) for n in names.values()) if names else 0
+    column = column if column <= 30 else 0  # (the outcomes in a column, unless a list is long)
     for key in sorted(order, key=lambda k: rank[k]):  # the nodes changed first, then failed, then the others
-        lines += out.fit(["%s  %s" % (out.nodes(groups[key]), key[0])] + list(key[1]), _width(width))
+        lines += out.fit(["%s  %s" % (names[key].ljust(column), key[0])] + list(key[1]), _width(width))
     return lines, dict(sorted(counts.items(), key=lambda c: _RANK.get(c[0], len(_RANK))))
 
 
@@ -778,7 +838,8 @@ def _read_ahead_todo(nodes, restart_command, width=None):
 
 def _recap_verdict(counts, check, cluster, seconds):
     """The outcomes counted, --check, the cluster, the run's seconds -> the recap's verdict line: "CHECK
-    apply_config  my_cluster  2 would apply, 3 nothing to apply (12s)" (DONE, FAILED when a node failed)."""
+    apply_config  my_cluster  1 would restart, 1 would apply, 3 up to date  12s" (DONE, FAILED when a node failed),
+    the restarts first."""
     verdict = "CHECK" if check else ("FAILED" if counts.get("failed") else "DONE")
     said = ", ".join("%d %s" % (n, word) for word, n in counts.items()) or "no node"
     if seconds is not None:
@@ -786,7 +847,7 @@ def _recap_verdict(counts, check, cluster, seconds):
     return "  ".join(x for x in (verdict, "apply_config", str(cluster or ""), said) if x)
 
 
-def _recap_warnings(nodes, check, refused, planned, width):
+def _recap_warnings(nodes, check, refused, planned, width, more=None):
     """The nodes, --check, the refusal, the nodes whose warnings the plan showed, the width -> the recap's warning
     lines: how many the plan showed above (and for which nodes), then the others' (no plan: all of them, the
     refusal too)."""
@@ -798,13 +859,14 @@ def _recap_warnings(nodes, check, refused, planned, width):
     also = "the refusal" if check and refused and planned is not None else ""
     lines = [""] + out.warnings_above(count, names=warned, also=also) if count else []
     texts = ["%s: %s" % (w["label"], w["text"]) for w in cassandra_apply_config_warnings(others)]
+    texts += ["%s: %s" % (w["label"], w["text"]) if w.get("label") else w["text"] for w in more or [] if w.get("text")]
     if check and refused and planned is None:
         texts.append(["a real run is refused, before changing anything: %s" % refused[0]] + list(refused[1:]))
     return lines + ([""] + out.fit(out.warning_lines(texts), _width(width)) if texts else [])
 
 
 def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, diff=None, refused=None, planned=None, width=None,
-                                 restart_command=""):
+                                 restart_command="", more=None):
     """nodes: [{name, todo, done, os, os_done, then, result, notes}] in inventory order:
     todo, whether the node had config to apply; os, whether its OS settings
     differ; os_done, whether the OS play ran on it; done, whether its turn
@@ -826,16 +888,21 @@ def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, d
     ("terminal": the terminal's; the diff is laid out already).
     restart_command: the rolling_restart command of this cluster (as the run
     named it, no --limit): after a real run, a TO DO with it, for the nodes
-    whose read-ahead was set live.
+    whose read-ahead was set live. more: other warnings to say with the nodes' ([{label, text}], an empty text
+    left out: the plan's own, under --check where no plan is shown).
+    Under check, the plan said once: the verdict, "nothing was changed (--check)", WHAT CHANGES (the diff's table),
+    WHAT HAPPENS (each node's outcome), the warnings.
     e.g. (those nodes, check=True, cluster="my_cluster", seconds=12, diff=<the diff's lines>) ->
     ["CHECK  apply_config  my_cluster  1 would apply, 1 nothing to apply (12s)", "", <the diff's lines>, "",
     "node2  would apply, then restart", "node1  nothing to apply", "", "WARNING  node2: node2's data dirs belong to root"]."""
     nodes = list(nodes or []) if check else [_after_run(n) for n in nodes or []]
-    lines, counts = _grouped(nodes, check, width=width)
+    lines, counts = _grouped(nodes, check, width=_width(width, 2) if check else width)
     shown = [_recap_verdict(counts, check, cluster, out.number(seconds))]  # (text before ansible-core 2.19)
-    if check and diff:
-        shown += [""] + list(diff) + [""]
-    lines = lines + _recap_warnings(nodes, check, refused, planned, width)
+    if check:  # the plan, once: what changes (the settings), then what happens to each node
+        shown += ["  nothing was changed (--check)"]
+        shown += (["", "WHAT CHANGES"] + ["  " + line if line else "" for line in diff] if diff else [])
+        lines = ["", "WHAT HAPPENS"] + ["  " + line for line in lines]
+    lines = lines + _recap_warnings(nodes, check, refused, planned, width, more)
     return shown + lines + ([] if check else _read_ahead_todo(nodes, restart_command, _width(width)))
 
 

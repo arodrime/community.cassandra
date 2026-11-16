@@ -86,9 +86,9 @@ def test_op_recap_without_seconds(none):
 def test_apply_config_recap_seconds(seconds):
     nodes = [{"name": "node1", "todo": False, "result": "nothing to apply"}]
     assert cassandra_apply_config_recap(nodes, check=True, cluster="c", seconds=seconds)[0] == \
-        "CHECK  apply_config  c  1 nothing to apply  1m15s"
+        "CHECK  apply_config  c  1 up to date  1m15s"
     assert cassandra_apply_config_recap(nodes, check=True, cluster="c", seconds="")[0] == \
-        "CHECK  apply_config  c  1 nothing to apply"
+        "CHECK  apply_config  c  1 up to date"
 
 
 @pytest.mark.parametrize("now", as_text(100))

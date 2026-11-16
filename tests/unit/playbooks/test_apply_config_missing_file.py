@@ -225,7 +225,7 @@ def test_a_deleted_config_file_is_shown_and_written_back(tmp_path, series, delet
         {"name": "n2", "items": role["_cassandra_config_items"],
          "live": [{"cassandra_apply_config_file": deleted}],  # read by apply_config: not there, no content
          "stats": role["cassandra_config_live_stat"]["results"], "dir_stats": []}])
-    assert view == ["%s  file  missing -> written whole  n2" % deleted]
+    assert view[1:] == [deleted + "  on n2", "  file   absent  written whole"]
 
 
 def test_the_role_reads_a_missing_live_cassandra_yaml_as_none():
@@ -318,7 +318,7 @@ def test_a_deleted_jmx_file_is_shown_and_written_back(tmp_path, deleted, initial
             "access": "write + restart (jmxremote.access: read at start)"}[deleted]
     assert plan == ["n2  %s" % said, "n1  up to date"]
     # the view: the file, absent on n2, written whole (never its content)
-    assert view == ["jmxremote.%s  file  missing -> written whole  n2" % deleted]
+    assert view[1:] == ["jmxremote.%s  on n2" % deleted, "  file   absent  written whole"]
     if deleted == "access":  # local JMX logs in no one: its rights change nothing
         facts, plan, dummy = jmx_apply(dict(role, cassandra_local_jmx=True))
         assert facts["cassandra_apply_config_then"] == "none"
@@ -399,8 +399,11 @@ def test_other_jmx_rights_restart_the_node(tmp_path):
     facts, plan, view = jmx_apply(role)
     assert facts["cassandra_apply_config_then"] == "restart"
     assert plan == ["n2  write + restart (jmxremote.access: read at start)", "n1  up to date"]
-    assert view == ["jmxremote.password  file  other users or rights -> written whole  n2",
-                    "jmxremote.access    file  other users or rights -> written whole  n2"]
+    assert view == ["Setting  Node                   Inventory",
+                    "jmxremote.password  on n2",
+                    "  file   other users or rights  written whole",
+                    "jmxremote.access  on n2",
+                    "  file   other users or rights  written whole"]
     assert not [line for line in view if "s3cret" in line or "ops " in line]  # no content shown
 
 
