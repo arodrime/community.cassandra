@@ -90,7 +90,7 @@ def test_clean_import_nothing_to_act_on():
                          "  written: inventories/my_cluster.yml, group_vars/my_cluster*/",
                          "  report:  reports/my_cluster/report.txt"]
     # each section: two blank lines, its title in a rule, a blank line; what the report is: in the details
-    assert lines[4:8] == ["", "", "==== WHAT TO DO NEXT " + "=" * 79, ""]
+    assert lines[4:8] == ["", "", "==== WHAT TO DO NEXT " + "=" * 76, ""]
     assert lines[heading(lines, "WORDS") - 2:heading(lines, "WORDS") + 2] == ["", "", "==== WORDS " + "=" * 89, ""]
     assert not has(lines, "TO DO") and not has(lines, "WORTH A LOOK") and not has(lines, "DIFFERENT ON SOME NODES")
     assert has(report([node(1)], details=True), "WHAT THIS REPORT IS")
@@ -105,10 +105,13 @@ def test_clean_import_nothing_to_act_on():
     # what to do next: no -i when the inventory is ansible.cfg's, no -e cassandra_hosts for a cluster alone
     after = section(lines, "WHAT TO DO NEXT")
     assert after[0] == "  1. Review the files written, then keep them: git diff && git commit."
-    assert " ".join(x.strip() for x in after[1:]) == (
-        u"2. Check that the inventory changes nothing on the nodes (these two commands only look, they change nothing):"
-        u" ansible-playbook community.cassandra.apply_config --check --diff \u2192 expect nothing to apply;"
-        u" ansible-playbook community.cassandra.topology --check \u2192 expect nothing to do.")
+    # (UX audit B15) each command on a line of its own, what it should show under it, no arrow
+    assert after[1:] == [
+        "  2. Check that the inventory changes nothing on the nodes (both commands only look):",
+        "       ansible-playbook community.cassandra.apply_config --check --diff",
+        "     expected:  nothing to apply",
+        "       ansible-playbook community.cassandra.topology --check",
+        "     expected:  nothing to do"]
     lines = report([node(1)], inventory="/p/inventories", hosts="my_cluster", width=300)
     assert [line for line in lines if "ansible-playbook -i inventories community.cassandra.apply_config -e"
             " cassandra_hosts=my_cluster --check --diff" in line]
@@ -143,7 +146,7 @@ def test_sections_by_urgency_and_the_counts_in_the_head():
     # paths from the current dir, no cd; the vault password said; a head -1 to check
     assert "run: ansible-vault encrypt inventories/group_vars/my_cluster/secrets.yml" in joined
     assert "check: head -1 inventories/group_vars/my_cluster/secrets.yml shows $ANSIBLE_VAULT;1.1;AES256" in joined
-    assert "ansible-vault asks for a new password: keep it safe" in joined and "cd inventories" not in joined
+    assert "ansible-vault asks for a new password (keep it safe): every playbook run" in joined and "cd inventories" not in joined
     # a short "what to do next" at the end, the TO DO first
     assert section(lines, "WHAT TO DO NEXT")[0].startswith("  1. Do the TO DO steps above, in their order")
     # the screen: the same head, no FOR INFO details nor DETAILS, the report's path last
@@ -1352,12 +1355,12 @@ def test_files_written_with_no_effect_listed_apart_once_with_their_nodes():
     assert "something else" not in " ".join(lines)
     # the next step does not promise "nothing to apply": apply_config --check shows them
     steps = " ".join(" ".join(line.split()) for line in section(lines, "WHAT TO DO NEXT"))
-    assert "expect only the rewrites under APPLY_CONFIG WILL REWRITE (no effect)" in steps
-    assert "expect nothing to apply" not in steps
+    assert "expected: only the rewrites under APPLY_CONFIG WILL REWRITE (no effect)" in steps
+    assert "expected: nothing to apply" not in steps
     # none: no such section, nothing to apply
     lines = report([node(1)], details=False)
     assert "APPLY_CONFIG WILL REWRITE (no effect)" not in lines
-    assert "expect nothing to apply" in " ".join(" ".join(line.split()) for line in lines)
+    assert "expected: nothing to apply" in " ".join(" ".join(line.split()) for line in lines)
 
 
 def test_next_step_with_files_moved_and_rewrites_names_the_section():
@@ -1368,8 +1371,8 @@ def test_next_step_with_files_moved_and_rewrites_names_the_section():
                    details=False)
     assert "APPLY_CONFIG WILL REWRITE (no effect)" in lines
     steps = " ".join(" ".join(line.split()) for line in section(lines, "WHAT TO DO NEXT"))
-    assert ("expect cassandra-env.sh rewritten: the same JVM arguments, and the rewrites under APPLY_CONFIG WILL REWRITE"
-            " (no effect);") in steps
+    assert ("expected: cassandra-env.sh rewritten: the same JVM arguments, and the rewrites under APPLY_CONFIG WILL"
+            " REWRITE (no effect) ansible-playbook") in steps
 
 
 def test_parts_kept_said_in_one_sentence():
@@ -1446,3 +1449,13 @@ def test_import_cluster_notes_the_run_time_once():
     write = next(p for p in plays if p["name"] == "Write the inventory")
     assert write["tasks"][0]["ansible.builtin.set_fact"] == {"_import_run_time": "{{ now().timestamp() }}"}
     assert "_import_run_time" in write["vars"]["_report_args"]["run_time"]
+
+
+def test_what_to_do_next_never_says_nothing_stops_you_on_a_failed_self_check():
+    # (self-check pass) a failed self-check: the inventory is not to be used yet
+    edits = ["cassandra.yaml, line 12:", "  + concurrent_writes: 48"]
+    checks = {"node1": {"differences": ["cassandra.yaml: concurrent_writes: node has '48', import would write '32'"]}}
+    failed = report([node(1, hand=edits), node(2)], ok=False, self_check=checks, details=False)
+    passed = report([node(1, hand=edits), node(2)], details=False)
+    assert "none of it stops you" not in "\n".join(failed)
+    assert "none of it stops you" in "\n".join(section(passed, "WHAT TO DO NEXT")[0:1])

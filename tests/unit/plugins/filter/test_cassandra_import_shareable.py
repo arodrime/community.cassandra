@@ -411,3 +411,15 @@ def test_a_site_jvm_option_name_masked_everywhere():
              " nothing", "  cassandra-env.sh    zorglub-db1", "    -Dcom.zorglub.audit", "      Node     1"]
     text = cassandra_import_shareable(lines, ZORGLUB)["text"][2:]
     assert not [line for line in text if SITE.search(line)], text
+
+
+def test_the_reports_own_words_are_not_taken_for_a_secret():
+    # (UX audit B14) the vault step's sentence stays whole in the copy; a password setting still masked
+    layout = cassandra_inventory_layout([{"name": "node1", "address": "10.0.0.1", "dc": "dc1", "rack": "r1", "read": True,
+                                          "hand_edits": [], "normalized": [], "notes": [], "vars": {}}], "My Cluster")
+    lines = cassandra_import_report(layout, ["/p/inventories/my_cluster.yml", "/p/inventories"],
+                                    "/p/reports/my_cluster/report.txt", {}, True, secrets_clear=["secrets.yml"], cwd="/p",
+                                    in_git=True, width=200)
+    text = "\n".join(cassandra_import_shareable(lines, layout)["text"])
+    assert "ansible-vault asks for a new password (keep it safe): every playbook run" in text, text
+    assert "hunter2" not in "\n".join(cassandra_import_shareable(["    cassandra.yaml: password: hunter2"], layout)["text"])

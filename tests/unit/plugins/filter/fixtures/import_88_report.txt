@@ -84,8 +84,10 @@ IMPORT big_cluster  88 nodes  9 entries to review: 3 hand-edit entries, 6 settin
 
   1. Read the sections above: each entry says what to do; none of it stops you from using the inventory.
   2. Review the files written, then keep them: git diff && git commit.
-  3. Check that the inventory changes nothing on the nodes (these two commands only look, they change nothing):
-     ansible-playbook community.cassandra.apply_config --check --diff → expect nothing to apply; ansible-playbook community.cassandra.topology --check → expect
-     nothing to do.
+  3. Check that the inventory changes nothing on the nodes (both commands only look):
+       ansible-playbook community.cassandra.apply_config --check --diff
+     expected:  nothing to apply
+       ansible-playbook community.cassandra.topology --check
+     expected:  nothing to do
 
 details (the settings, the convergence, the OS, each node): reports/big/report.details.txt

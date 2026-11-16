@@ -1025,8 +1025,8 @@ def _todo_steps(report, allow_unread, self_check_ok, self_check_error, check_ite
         paths = " ".join(out.path_from(os.path.join(inventory_dir, f), report.cwd) for f in secrets_clear)
         steps.append(_Step(
             "Encrypt the passwords file%s" % ("" if len(secrets_clear) == 1 else "s"),
-            "%s in clear text there. ansible-vault asks for a new password: keep it safe, every playbook run on this"
-            " inventory needs it from then on (--ask-vault-pass)" % (
+            "%s in clear text there. ansible-vault asks for a new password (keep it safe): every playbook run on"
+            " this inventory needs it from then on (--ask-vault-pass)" % (
                 "the run without --check writes the passwords read on the nodes" if report.check
                 else "the passwords read on the nodes are written"),
             unbreakable("ansible-vault encrypt %s" % paths),
@@ -1770,36 +1770,39 @@ def _apply_config_expects(moves, heap_moved, rewrites):
 
 def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, changes, changed, removed, same, moves,
                 inventory, hosts, rewrites=False):
-    """WHAT TO DO NEXT: the next steps, numbered, the commands to copy -> [line]."""
-    items = []
+    """WHAT TO DO NEXT: the next steps, numbered, each command on a line of its own under its step, what it should
+    show under it -> [line]. "none of it stops you" only when the self-check passed."""
+    items = []  # (text, [(command, expected)])
     if steps:
-        items.append("Do the TO DO steps above, in their order, then import again: the head should say nothing to"
-                     " act on, or things to review only.")
+        items.append(("Do the TO DO steps above, in their order, then import again: the head should say nothing to"
+                      " act on, or things to review only.", []))
     if reviews:
-        items.append("Read the sections above: each entry says what to do; none of it stops you from using the"
-                     " inventory.")
+        items.append(("Read the sections above: each entry says what to do%s." % (
+            "; none of it stops you from using the inventory" if self_check_ok else ""), []))
     if report.check and not same:
-        items.append("Write the inventory: the same command without --check%s."
-                     % _what_changes(changed, removed, changes))
+        items.append(("Write the inventory: the same command without --check%s."
+                      % _what_changes(changed, removed, changes), []))
     if self_check_ok and not report.check and not same:
         git = out.in_git_work_tree(inventory_dir) if in_git is None else in_git
-        items.append("Review the files written, then keep them: %s." % unbreakable("git diff && git commit") if git
-                     else "Review the files written in %s." % out.path_from(inventory_dir, report.cwd))
+        items.append(("Review the files written, then keep them: %s." % unbreakable("git diff && git commit") if git
+                      else "Review the files written in %s." % out.path_from(inventory_dir, report.cwd), []))
     if self_check_ok:
         heap_moved = [line for n in report.read for line in n.get("normalized") or [] if line.endswith(HEAP_MOVED)]
         apply_check = out.command("apply_config", inventory=inventory or None, hosts=hosts or None,
                                   extra=["--check", "--diff"], cwd=report.cwd)
         topology = out.command("topology", inventory=inventory or None, hosts=hosts or None, extra=["--check"],
                                cwd=report.cwd)
-        items.append("Check that the inventory changes nothing on the nodes (these two commands only look, they"
-                     " change nothing): %s %s expect %s; %s %s expect nothing to do." % (
-                         unbreakable(apply_check), ARROW_RIGHT, _apply_config_expects(moves, bool(heap_moved), rewrites),
-                         unbreakable(topology), ARROW_RIGHT))
+        items.append(("Check that the inventory changes nothing on the nodes (both commands only look):",
+                      [(apply_check, _apply_config_expects(moves, bool(heap_moved), rewrites)),
+                       (topology, "nothing to do")]))
     if not items:
-        items.append("Nothing: the inventory matches the nodes.")
+        items.append(("Nothing: the inventory matches the nodes.", []))
     lines = ["WHAT TO DO NEXT"]
-    for i, text in enumerate(items):
+    for i, (text, commands) in enumerate(items):
         lines += fill_text("%d. %s" % (i + 1, text), report.width, "  ", "   ")
+        for command, expected in commands:
+            lines += command_lines(command, report.width, "       ")
+            lines += fill_text("expected:  %s" % expected, report.width, "     ", "           ")
     return lines
 
 
