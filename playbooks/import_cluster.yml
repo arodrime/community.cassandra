@@ -2129,15 +2129,11 @@
         _cql_node: "{{ _nodes | selectattr('read') | first | default({}) }}"
         _cql_vars: "{{ _cql_node.vars | default({}) }}"
         _cql_facts: "{{ hostvars[_cql_node.host].ansible_facts | default({}) }}"
-        _cql_rpc: "{{ _cql_vars.cassandra_rpc_address | default('localhost') | string }}"
         _cassandra_cql_login_from: "{{ _cql_node.host }}"
-        # its CQL address (as the import wrote it: a value, or its hostname or address fact)
+        # its CQL address and port, as the import read them: what Cassandra binds (rpc_interface, else rpc_address:
+        # blank, the node's own name; localhost or 0.0.0.0, 127.0.0.1; the hostname or address fact the import wrote)
         _cassandra_cql_login_host: >-
-          {{ '127.0.0.1' if _cql_rpc in ['', 'localhost', '0.0.0.0', '::']
-             else _cql_facts.hostname | default(_cql_node.address) if _cql_rpc is search('ansible_facts.*hostname')
-             else _cql_facts.fqdn | default(_cql_node.address) if _cql_rpc is search('ansible_facts.*fqdn')
-             else _cql_node.address if '{{' in _cql_rpc
-             else _cql_rpc }}
+          {{ _cql_vars | community.cassandra.cassandra_cql_host(facts=_cql_facts, address=_cql_node.address) }}
         _cassandra_cql_login_port: "{{ _cql_vars.cassandra_native_transport_port | default(9042) }}"
         # the inventory's (or -e), else the one an earlier import of this cluster wrote
         _cassandra_cql_login_given: "{{ _cql_set if _cql_set.user and _cql_set.password else _cql_own }}"

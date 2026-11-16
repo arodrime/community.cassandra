@@ -92,9 +92,7 @@
     - name: Change the keyspaces' replication
       community.cassandra.cassandra_cqlsh:
         execute: "{{ item }}"
-        cqlsh_host: >-
-          {{ hostvars[_staying[0]].cassandra_rpc_address | default('')
-             if hostvars[_staying[0]].cassandra_rpc_address | default('') not in ['', 'localhost', '0.0.0.0'] else '127.0.0.1' }}
+        cqlsh_host: "{{ hostvars[_staying[0]] | community.cassandra.cassandra_cql_host }}"  # (what Cassandra binds: cassandra_cql.py)
         cqlsh_port: "{{ hostvars[_staying[0]].cassandra_native_transport_port | default(9042) }}"
         username: "{{ cassandra_cql_username | default(omit, true) }}"
         cqlsh_cmd: "{{ cassandra_cqlsh_command | default(omit, true) }}"  # (a cqlsh outside root's PATH, e.g. a virtualenv)

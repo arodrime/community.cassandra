@@ -136,9 +136,7 @@
       community.cassandra.cassandra_cqlsh:
         execute: "SELECT JSON keyspace_name, replication FROM system_schema.keyspaces;"
         transform: raw
-        cqlsh_host: >-
-          {{ cassandra_rpc_address | default('')
-             if cassandra_rpc_address | default('') not in ['', 'localhost', '0.0.0.0'] else '127.0.0.1' }}
+        cqlsh_host: "{{ hostvars[inventory_hostname] | community.cassandra.cassandra_cql_host }}"  # (what Cassandra binds: cassandra_cql.py)
         cqlsh_port: "{{ hostvars[inventory_hostname].cassandra_native_transport_port | default(9042) }}"
         username: "{{ cassandra_cql_username | default(omit, true) }}"
         cqlsh_cmd: "{{ cassandra_cqlsh_command | default(omit, true) }}"  # (a cqlsh outside root's PATH, e.g. a virtualenv)

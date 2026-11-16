@@ -262,6 +262,8 @@ def test_what_is_left_to_do():
 
 
 def test_cql_address_of_the_node():
+    from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
+    load_collection_filters()  # cassandra_cql_host, under a plain pytest run too
     step = next(t for t in WRITE["tasks"] if t.get("name") == "Check the CQL login, or ask for one")
     assert step["ansible.builtin.include_role"]["tasks_from"] == "cql_login.yml"
     v = step["vars"]
@@ -270,7 +272,7 @@ def test_cql_address_of_the_node():
     def host(**variables):
         nodes = [node("n1", **variables)]
         values = dict(_nodes=fact(nodes), hostvars=hostvars)
-        for k in ("_cql_node", "_cql_vars", "_cql_facts", "_cql_rpc"):
+        for k in ("_cql_node", "_cql_vars", "_cql_facts"):
             values[k] = render(v[k], **values)
         return render(v["_cassandra_cql_login_host"], **values)
 
@@ -279,6 +281,9 @@ def test_cql_address_of_the_node():
     assert host(cassandra_rpc_address="10.9.9.9") == "10.9.9.9"
     assert host(cassandra_rpc_address="{{ ansible_facts['hostname'] }}") == "node1"
     assert host(cassandra_rpc_address="{{ ansible_facts['default_ipv4']['address'] }}") == "10.0.0.1"
+    # blank: Cassandra binds what the node's name resolves to, not loopback (production: refused on 127.0.0.1)
+    assert host(cassandra_rpc_address="") == "node1.example.com"
+    assert host(cassandra_rpc_address="::") == "127.0.0.1"
 
 
 def test_logs_in_as_the_operations_do():
