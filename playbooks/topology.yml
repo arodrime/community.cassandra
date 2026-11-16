@@ -319,8 +319,8 @@
                  ~ ' cassandra_cql_password.']
                 if cassandra_topology_plan.in_ring and cassandra_keyspaces is not mapping else [])
              + ((['Removing ' ~ cassandra_topology_plan.in_ring | join(', ') ~ ' leaves too few nodes:'] + _tp_replication
-                 + ['Lower the replication first (ALTER KEYSPACE, then repair), or set cassandra_decommission_force: true:'
-                    ~ ' those replicas are then lost, and QUORUM can fail.'])
+                 + ['Way out, either:', '  lower their replication (ALTER KEYSPACE), then repair, then run this again',
+                    '  -e cassandra_decommission_force=true   (those replicas are then lost, and QUORUM can fail)'])
                 if _tp_replication and not cassandra_decommission_force | default(false) | bool else []) }}
 
     - name: Say there is nothing to do

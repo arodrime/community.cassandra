@@ -153,8 +153,8 @@
             # a problem per line
             fail_msg: >-
               {{ ['Removing ' ~ _leaving | join(', ') ~ ' leaves too few nodes:'] + _problems | map('regex_replace', '^', '  ') | list
-                 + ['Lower the replication first (ALTER KEYSPACE, then repair), or set cassandra_decommission_force: true:'
-                    ~ ' those replicas are then lost, and QUORUM can fail.'] }}
+                 + ['Way out, either:', '  lower their replication (ALTER KEYSPACE), then repair, then run this again',
+                    '  -e cassandra_decommission_force=true   (those replicas are then lost, and QUORUM can fail)'] }}
             quiet: true
           run_once: true
       rescue:

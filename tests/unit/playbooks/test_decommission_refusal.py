@@ -72,9 +72,10 @@ def test_the_replica_problems_one_per_line():
     problems = ["system_auth needs 3 replicas in dc1, which would keep 2 node(s)",
                 "system_distributed (SimpleStrategy, RF 3) needs 3 nodes, the cluster would keep 2"]
     msg = render(REPLICAS["ansible.builtin.assert"]["fail_msg"], _leaving=["n3"], _problems=problems)
+    # (UX audit B11) the ways out one per line, the option exactly as typed
     assert msg == ["Removing n3 leaves too few nodes:", "  " + problems[0], "  " + problems[1],
-                   "Lower the replication first (ALTER KEYSPACE, then repair), or set cassandra_decommission_force: true:"
-                   " those replicas are then lost, and QUORUM can fail."]
+                   "Way out, either:", "  lower their replication (ALTER KEYSPACE), then repair, then run this again",
+                   "  -e cassandra_decommission_force=true   (those replicas are then lost, and QUORUM can fail)"]
     assert refusal({"msg": msg}) == msg  # it names the node already
 
 

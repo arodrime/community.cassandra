@@ -23,7 +23,9 @@ def said(check, problems):
     with open(PATH, encoding="utf-8") as f:
         stop = next(t for t in yaml.safe_load(f) if t.get("name") == "Stop on an unhealthy cluster")
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in stop["vars"].items() if k != "_absent")
-    variables.update(_absent=[], ansible_check_mode=check, cassandra_health_problems=problems)
+    variables.update(_absent=[], ansible_check_mode=check, cassandra_health_problems=problems,
+                     _cassandra_run_command_args={"inventory": ["/inv/hosts.yml"], "default_inventory": "/etc/ansible/hosts",
+                                                  "hosts": "prod", "cwd": "/inv"})
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(stop["ansible.builtin.fail"]["msg"]))
 
 
@@ -33,3 +35,15 @@ def test_the_way_out_under_check():
     assert said(True, down)[1] == "WAY OUT  start n4 (the server, then Cassandra), then check again"
     assert said(True, ["the schema differs"])[1] == "WAY OUT  fix it (the lines above say what), then check again"
     assert said(False, ["the schema differs"])[1] == "WAY OUT  fix it (the lines above say what), then resume"
+
+
+def test_a_node_lost_for_good_gets_full_commands():
+    # (UX audit B17) each way out a command to paste, not a playbook's name
+    lines = said(False, ["n4 (10.0.0.4, r1) is DN, seen from n1"])
+    assert lines[2:] == [
+        "if n4 is lost for good, replace it (NEW_NODE: the host that takes its place):",
+        "  ansible-playbook -i hosts.yml community.cassandra.replace_node -e cassandra_hosts=prod"
+        " -e cassandra_target_nodes=NEW_NODE -e cassandra_replace_address=10.0.0.4",
+        "as a last resort only, remove it from the ring:",
+        "  ansible-playbook -i hosts.yml community.cassandra.remove_dead_node -e cassandra_hosts=prod"
+        " -e cassandra_target_nodes=10.0.0.4"]

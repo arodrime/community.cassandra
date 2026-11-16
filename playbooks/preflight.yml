@@ -504,14 +504,28 @@
         - name: One Cassandra version in the cluster
           ansible.builtin.assert:
             that: _versions | length <= 1 or cassandra_allow_mixed_versions | default(false) | bool
+            # (UX audit B16) the versions as rows, the ways out as exact commands
             fail_msg: >-
-              The cluster runs several Cassandra versions ({{ _versions | join('; ') }}): an upgrade is not finished.
-              Adding or removing nodes and schema changes are not supported until every node runs the same version.
-              Finish the upgrade first, or set cassandra_allow_mixed_versions: true at your own risk
-              (bootstrap streaming between versions can fail or leave the new node incomplete).
+              {{ (['REFUSED  the cluster runs ' ~ _versions | length ~ ' Cassandra versions (an upgrade is not finished)'
+                   ~ '  nothing was changed', '  ' ~ 'Version'.ljust(([7] + _versions | map('split', ': ', 1) | map('first') | map('length') | list) | max) ~ '  Nodes']
+                  + _version_rows
+                  + ['', '  Adding or removing nodes and schema changes are not supported until every node runs the same version.',
+                     '  Way out, either:',
+                     '    finish the upgrade:  ansible-playbook community.cassandra.upgrade',
+                     '    at your own risk:    -e cassandra_allow_mixed_versions=true',
+                     '                         (bootstrap streaming between versions can fail or leave the new node incomplete)'])
+                 | join(_nl) }}
             quiet: true
           vars:
             cassandra_output: true  # a verdict: its msg as is (ops callback)
+            _nl: "\n"
+            # "5.0.9: [10.0.0.1, 10.0.0.2]" -> "  5.0.9    10.0.0.1, 10.0.0.2", the versions in a column
+            _version_rows: >-
+              {%- set out = [] -%}
+              {%- set pairs = _versions | map('split', ': ', 1) | list -%}
+              {%- set w = ([7] + pairs | map('first') | map('length') | list) | max -%}
+              {%- for p in pairs -%}{%- set _ = out.append('  ' ~ p[0].ljust(w) ~ '  ' ~ p[1] | trim('[]')) -%}{%- endfor -%}
+              {{ out }}
             _section: "{{ (cassandra_preflight_describe.stdout ~ '\\n').split('Database versions:')[1:] | first | default('') }}"
             _versions: "{{ _section.split('\\n\\n') | first | regex_findall('(?m)^\\s+(\\S+: \\[.*\\])$') }}"
 

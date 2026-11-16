@@ -160,8 +160,7 @@
          + (['Not counted, marked cassandra_node_state: absent: ' ~ _absent | join(', ')
              ~ '. Still in the ring? The playbook topology removes them.']
             if _absent and cassandra_health_problems | select('search', '^the ring has ') | list else [])
-         + (['WAY OUT  start ' ~ _down | join(', ') ~ ' (the server, then Cassandra), then ' ~ _again,
-             'if the server is lost: replace_node; remove_dead_node only as a last resort']
+         + (['WAY OUT  start ' ~ _down | join(', ') ~ ' (the server, then Cassandra), then ' ~ _again] + _lost
             if _down else ['WAY OUT  fix it (the lines above say what), then ' ~ _again]) }}
   vars:
     cassandra_output: true
@@ -171,6 +170,22 @@
     # the nodes down, as the problems name them ("node4 (10.0.0.4, r1) is DN, seen from node1")
     _down: >-
       {{ cassandra_health_problems | select('search', ' is D[NLJM],') | map('regex_replace', ' \(.*$', '') | unique | list }}
+    # (UX audit B17) a node lost for good: the full commands, replace_node first, remove_dead_node last
+    _lost: >-
+      {%- set out = [] -%}
+      {%- for p in cassandra_health_problems | select('search', ' is D[NLJM],') | unique -%}
+      {%-   set name = p | regex_replace(' \(.*$', '') -%}
+      {%-   set address = (p | regex_findall('^\S+ \(([^,)]+)') + [name]) | first -%}
+      {%-   set _ = out.extend(['if ' ~ name ~ ' is lost for good, replace it (NEW_NODE: the host that takes its place):',
+                                '  ' ~ 'replace_node' | community.cassandra.cassandra_command(
+                                   extra=['-e cassandra_target_nodes=NEW_NODE', '-e cassandra_replace_address=' ~ address],
+                                   **_cassandra_run_command_args),
+                                'as a last resort only, remove it from the ring:',
+                                '  ' ~ 'remove_dead_node' | community.cassandra.cassandra_command(
+                                   extra=['-e cassandra_target_nodes=' ~ address],
+                                   **_cassandra_run_command_args)]) -%}
+      {%- endfor -%}
+      {{ out }}
   when:
     - cassandra_health_problems | length > 0
     - not cassandra_service_health_force | bool
