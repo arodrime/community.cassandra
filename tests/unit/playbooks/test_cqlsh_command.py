@@ -68,7 +68,7 @@ def _why(err="", msg="", rc=1, command=None):
         outcome = next(t for t in yaml.safe_load(f) if t.get("name") == "Keep the outcome of the CQL login")
     variables = dict((k, trust_as_template(v)) for k, v in outcome["vars"].items())
     variables.update(_cassandra_cql_try={"rc": rc, "err": err, "msg": msg}, _cassandra_cql_login_from="n1",
-                     _cassandra_cql_login_host="10.0.0.1", _cassandra_cql_try_user="alice")
+                     _cassandra_cql_login_host="10.0.0.1", _cassandra_cql_login_port=9142, _cassandra_cql_try_user="alice")
     if command is not None:
         variables["cassandra_cqlsh_command"] = command
     why = outcome["ansible.builtin.set_fact"]["cassandra_cql_login"]["why"]
@@ -84,7 +84,7 @@ def test_not_found_only_when_cqlsh_itself_is_missing():
     assert _why(rc=2, msg="[Errno 2] No such file or directory: b'%s'" % venv, command=venv) == (
         "%s not found on n1 (cassandra_cqlsh_command): give the full path of a cqlsh there" % venv)
     # cqlsh ran (a virtualenv's, found) and missed another file: not "not found", its text not quoted
-    see = "; to see its error, run as root on n1: %s 10.0.0.1 -u alice" % venv
+    see = "; to see its error, run as root on n1: %s 10.0.0.1 9142 -u alice" % venv
     secret = "Pa55w0rd"
     why = _why(err="Traceback ...\nFileNotFoundError: [Errno 2] No such file or directory: '/root/.cassandra/%s.pem'"
                % secret, command=venv)
@@ -93,6 +93,30 @@ def test_not_found_only_when_cqlsh_itself_is_missing():
     assert _why(err="ModuleNotFoundError: No module named 'cassandra'", command=venv) == (
         "cqlsh failed on n1: its Python could not load a module it needs" + see)
     assert _why(err="something else " + secret, command=venv) == "cqlsh failed on n1" + see
-    assert _why(err="Connection error: ('Unable to connect to any servers', ...)") == "cqlsh could not reach 10.0.0.1 from n1"
+    reach = "cqlsh could not reach 10.0.0.1 port 9142 from n1"
+    assert _why(err="Connection error: ('Unable to connect to any servers', ...)") == reach
+    # (production: refused at the address, with a file named missing in the same text): the connection says why
+    assert _why(rc=1, err="Connection error: ('Unable to connect to any servers', {'10.0.0.1:9142': ConnectionRefusedError("
+                          "111, 'Tried connecting to [(10.0.0.1, 9142)]. Last error: Connection refused')}) [Errno 2] No such"
+                          " file or directory: '/root/.cassandra/cqlshrc'") == reach
     assert _why(err="AuthenticationFailed('Bad credentials')") == ""
     assert _why(rc=0) == ""
+
+
+def test_every_cqlsh_call_takes_the_node_s_port():
+    # cqlsh's port is the node's native_transport_port, not always 9042: the one of the node it connects to
+    files = glob.glob(os.path.join(ROOT, "playbooks", "*.yml")) + glob.glob(
+        os.path.join(ROOT, "roles", "*", "tasks", "*.yml"))
+    found = []
+    for path in files:
+        with open(path) as f:
+            for call in _calls(yaml.safe_load(f)):
+                found.append(os.path.relpath(path, ROOT))
+                port = call.get("cqlsh_port", "")
+                assert "cassandra_native_transport_port | default(9042)" in port or port == (
+                    "{{ _cassandra_cql_login_port | default(9042) }}"), path
+    assert len(found) >= 9, found
+    with open(os.path.join(ROOT, "playbooks", "import_cluster.yml")) as f:
+        step = next(t for play in yaml.safe_load(f) for t in play.get("tasks", [])
+                    if t.get("name") == "Check the CQL login, or ask for one")
+    assert step["vars"]["_cassandra_cql_login_port"] == "{{ _cql_vars.cassandra_native_transport_port | default(9042) }}"

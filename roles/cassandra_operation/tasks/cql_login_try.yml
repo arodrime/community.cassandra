@@ -6,6 +6,7 @@
     execute: "SELECT release_version FROM system.local;"
     # as the operations log in (keyspaces.yml): what works here works for them
     cqlsh_host: "{{ _cassandra_cql_login_host }}"
+    cqlsh_port: "{{ _cassandra_cql_login_port | default(9042) }}"
     cqlsh_cmd: "{{ cassandra_cqlsh_command | default(omit, true) }}"  # (a cqlsh outside root's PATH, e.g. a virtualenv)
     username: "{{ _cassandra_cql_try_user }}"
     password: "{{ _cassandra_cql_try_password }}"
@@ -28,6 +29,8 @@
            else 'unchecked' }}
       why: >-
         {{ '' if _cassandra_cql_try.rc | default(1) == 0 or _err is search(_refused)
+           else 'cqlsh could not reach ' ~ _cassandra_cql_login_host ~ ' port ' ~ _cassandra_cql_login_port | default(9042)
+                ~ ' from ' ~ _cassandra_cql_login_from if _err is search('Unable to connect|Connection refused|timed out|NoHostAvailable')
            else 'no cqlsh in the PATH of root on ' ~ _cassandra_cql_login_from ~ ': cassandra_cqlsh_command gives the'
                 ~ ' full path of one' if _cassandra_cql_try.rc | default(1) == 127 and _cqlsh == 'cqlsh'
                 or _cqlsh == 'cqlsh' and _err is search(_not_found)
@@ -35,7 +38,6 @@
                 ~ ' of a cqlsh there' if _cassandra_cql_try.rc | default(1) == 127 or _err is search(_not_found)
            else 'cqlsh failed on ' ~ _cassandra_cql_login_from ~ ': it could not open a file it needs as root'
                 ~ ' (cqlshrc, certificate...)' ~ _see if _err is search('No such file or directory|FileNotFoundError')
-           else 'cqlsh could not reach ' ~ _cassandra_cql_login_host ~ ' from ' ~ _cassandra_cql_login_from if _err is search('Unable to connect|Connection refused|timed out|NoHostAvailable')
            else 'cqlsh failed on ' ~ _cassandra_cql_login_from ~ ': its Python could not load a module it needs' ~ _see
                 if _err is search('No module named|ImportError|ModuleNotFoundError')
            else 'cqlsh failed on ' ~ _cassandra_cql_login_from ~ _see }}
@@ -55,4 +57,5 @@
     # its error is not quoted (it could hold the login): the same command as root shows it
     _see: >-
       {{ '; to see its error, run as root on ' ~ _cassandra_cql_login_from ~ ': '
-         ~ cassandra_cqlsh_command | default('cqlsh', true) ~ ' ' ~ _cassandra_cql_login_host ~ ' -u ' ~ _cassandra_cql_try_user }}
+         ~ cassandra_cqlsh_command | default('cqlsh', true) ~ ' ' ~ _cassandra_cql_login_host ~ ' '
+         ~ _cassandra_cql_login_port | default(9042) ~ ' -u ' ~ _cassandra_cql_try_user }}

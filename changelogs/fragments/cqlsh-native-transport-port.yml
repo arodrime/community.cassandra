@@ -1,0 +1,7 @@
+bugfixes:
+  - >-
+    cqlsh calls - every cqlsh the playbooks run (the replication read by ``add_datacenter``, ``decommission_node``,
+    ``remove_datacenter``, ``remove_dead_node``, ``rolling_restart``, ``stop_rack``, the operations that read the
+    keyspaces, and import_cluster's CQL login check) connects to the node's ``cassandra_native_transport_port``, not
+    always 9042. The CQL login check says that cqlsh could not reach the node (with the address and port) before any
+    other reason when the connection failed, and its way out names the port.

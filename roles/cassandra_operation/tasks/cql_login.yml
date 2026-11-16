@@ -6,6 +6,7 @@
 #   vars:
 #     _cassandra_cql_login_from: the node to log in on (cqlsh runs there)
 #     _cassandra_cql_login_host: its CQL address (cqlsh logs in as the operations do)
+#     _cassandra_cql_login_port: its CQL port (default 9042)
 #     _cassandra_cql_login_given: {user, password}, empty strings when none
 #     _cassandra_cql_login_ask: asking allowed (not --check, cassandra_operation_confirm)
 # Sets cassandra_cql_login: {state, user, password, asked, why}: state ok,

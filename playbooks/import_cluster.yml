@@ -2138,6 +2138,7 @@
              else _cql_facts.fqdn | default(_cql_node.address) if _cql_rpc is search('ansible_facts.*fqdn')
              else _cql_node.address if '{{' in _cql_rpc
              else _cql_rpc }}
+        _cassandra_cql_login_port: "{{ _cql_vars.cassandra_native_transport_port | default(9042) }}"
         # the inventory's (or -e), else the one an earlier import of this cluster wrote
         _cassandra_cql_login_given: "{{ _cql_set if _cql_set.user and _cql_set.password else _cql_own }}"
         _cassandra_cql_login_ask: "{{ not ansible_check_mode and cassandra_operation_confirm | default(true) | bool }}"
