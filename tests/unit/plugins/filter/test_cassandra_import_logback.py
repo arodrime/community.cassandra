@@ -249,6 +249,38 @@ def test_an_appender_no_ref_names():
     assert not same_settings("logback.xml", mine, stock_50)
 
 
+def cql_appender_named(text, how):
+    """The stock CQLLOG appender uncommented and named some way other than <root>'s ref (audit of rc12, B2)."""
+    text = cql_appender_alone(text)
+    if how == "logger":
+        logger = '  <logger name="org.apache.cassandra.db"><appender-ref ref="CQLLOG" /></logger>\n'
+        return text.replace("  <root ", logger + "  <root ")
+    if how == "async":
+        wrapper = ('  <appender name="ASYNCCQL" class="ch.qos.logback.classic.AsyncAppender">'
+                   '<appender-ref ref="CQLLOG" /></appender>\n')
+        return text.replace("  <root ", wrapper + "  <root ")
+    # inside <if>: no direct child of <configuration>, logback decides on it at its start
+    start = text.index('  <appender name="CQLLOG"')
+    end = text.index("  </appender>", start) + len("  </appender>")
+    return text[:start] + '  <if condition=\'isDefined("x")\'><then>\n' + text[start:end] + "\n  </then></if>" + text[end:]
+
+
+@pytest.mark.parametrize("how", ["logger", "async", "if"])
+def test_a_system_logs_appender_named_otherwise_stays_a_difference(how):
+    stock_50 = stock("50x")["logback.xml"]
+    assert not same_settings("logback.xml", cql_appender_named(stock_50, how), stock_50)
+
+
+@pytest.mark.parametrize("what", ["include", "variable"])
+def test_no_appender_left_out_when_the_file_does_not_say_all(what):
+    # (audit of rc12, C1) an <include>, a name or ref of a variable: the appender alone is not known unreferenced
+    stock_50 = stock("50x")["logback.xml"]
+    text = cql_appender_alone(stock_50)
+    text = text.replace("  <root ", '  <include file="/etc/cassandra/logback-extra.xml" />\n  <root ') \
+        if what == "include" else text.replace('<appender-ref ref="SYSTEMLOG"', '<appender-ref ref="${MAIN}"', 1)
+    assert not same_settings("logback.xml", text, stock_50)
+
+
 @pytest.mark.parametrize("series", SERIES)
 def test_one_encoders_own_pattern_is_not_everyones(series):
     # (audit) the console's pattern alone changed: not cassandra_log_pattern (it would change the others)

@@ -404,6 +404,9 @@ def _unreferenced_inert(conf):
     names: no effect, whatever logback reads it."""
     if _logback_tag(conf) != "configuration":
         return []
+    # (a file included, or a name or ref of a variable: what names what is not known from this file)
+    if any(_logback_tag(e) == "include" or "${" in str(e.get("name", "")) + str(e.get("ref", "")) for e in conf.iter()):
+        return []
     refs = set(e.get("ref") for e in conf.iter() if _logback_tag(e) == "appender-ref")
     return [c for c in conf if _logback_tag(c) == "appender" and c.get("name") not in refs
             and str(c.get("class", "")).strip() in INERT_APPENDERS]
@@ -477,6 +480,9 @@ def xml_differences(node, role):
                     out.append((here, mine[i] if i < len(mine) else None, theirs[i] if i < len(theirs) else None))
 
     a, b = ET.fromstring(node), ET.fromstring(role)
+    for conf in (a, b):  # (an appender of no effect, as xml_settings reads it: not a difference)
+        for appender in _unreferenced_inert(conf):
+            conf.remove(appender)
     if a.tag != b.tag:
         return [("/" + a.tag, a, None), ("/" + b.tag, None, b)]
     walk(a, b, "/" + a.tag)
