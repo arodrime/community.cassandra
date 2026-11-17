@@ -972,6 +972,10 @@ def test_wrap_value_and_fit():
                                   "     word word word word word word", "short"]
     assert out.fit(["  " + "y" * 50], 20) == ["  " + "y" * 50]  # one long word: whole
     assert out.fit(lines, None) == lines
+    # (pre-push audit, rc13) an option kept with its value (apply_config's refusal: its options to leave a restart
+    # for later)
+    assert out.fit(["    -e cassandra_linux_tuned_switch_restart=false -e cassandra_data_lvchange_restart=false"], 79) == [
+        "    -e cassandra_linux_tuned_switch_restart=false", "      -e cassandra_data_lvchange_restart=false"]
 
 
 def test_settings_lines_in_a_width():

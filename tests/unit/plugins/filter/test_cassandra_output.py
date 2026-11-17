@@ -83,12 +83,13 @@ def test_not_reached_says_only_what_was_observed():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_not_reached
     lines = cassandra_not_reached(["h-n3"], inventory=["/inv/hosts.yml"], default_inventory="/etc/ansible/hosts",
                                   cwd="/inv")
+    # (pre-push audit, rc13) a refusal's block: 79 columns, an option kept with its value
     assert lines == ["REFUSED  h-n3 not reached by Ansible  nothing was changed",
                      "  Ansible's error: the UNREACHABLE line above",
-                     "",
                      "  all of the error:     ansible -i hosts.yml h-n3 -m ping -vvv",
                      "  to go on without it:  -e cassandra_allow_down_nodes=true",
-                     "                        (the cluster health checks then need -e cassandra_service_health_force=true)"]
+                     "                        (the cluster health checks then need",
+                     "                          -e cassandra_service_health_force=true)"]
     two = cassandra_not_reached(["n3", "n4"], inventory=["/etc/ansible/hosts"], default_inventory="/etc/ansible/hosts")
     assert two[:3] == ["REFUSED  2 nodes not reached by Ansible  nothing was changed", "  n3", "  n4"]
     assert "  all of the error:       ansible n3,n4 -m ping -vvv" in two
