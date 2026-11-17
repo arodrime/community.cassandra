@@ -576,7 +576,7 @@ def test_the_plan_title_and_the_stop_block_are_blocks_of_their_own():
             "  node1         restarted  1m50s", "  node2         restarted; cluster health check failed",
             "  node3..node5  not touched", "", "WAY OUT", "  1. bring node4 back to UN (its host and/or Cassandra)",
             "  2. resume:", "     ansible-playbook community.cassandra.rolling_restart -e cassandra_rolling_resume=true",
-            "", "IF node4 IS LOST FOR GOOD", "  replace it: NEW_NODE a blank host, node4 out of the inventory"]
+            "", "IF node4 IS LOST FOR GOOD", "  replace it: NEW_NODE (a blank host) in prod, node4 out of the inventory"]
     callback = quiet_callback(tty=False)
     callback._print(stop)
     shown = printed(callback)

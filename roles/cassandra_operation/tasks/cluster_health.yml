@@ -166,6 +166,9 @@
   vars:
     cassandra_output: true
     _absent: "{{ query('community.cassandra.cassandra_nodes', state='absent') }}"
+    # the cluster's group, where replace_node wants the new host (replace_node.yml)
+    _group: >-
+      {{ _cassandra_run_command_args.hosts | default('', true) or "the cluster's group" }}
     # --check wrote no progress file: the same check again, not a resume
     _again: "{{ 'check again' if ansible_check_mode else 'resume' }}"
     # the nodes down, as the problems name them ("node4 (10.0.0.4, r1) is DN, seen from node1")
@@ -179,7 +182,7 @@
       {%-   set name = p | regex_replace(' \(.*$', '') -%}
       {%-   set address = (p | regex_findall('^\S+ \(([^,)]+)') + [name]) | first -%}
       {%-   set _ = out.extend(['IF ' ~ name ~ ' IS LOST FOR GOOD',
-                                'replace it: NEW_NODE a blank host, ' ~ name ~ ' out of the inventory',
+                                'replace it: NEW_NODE (a blank host) in ' ~ _group ~ ', ' ~ name ~ ' out of the inventory',
                                 '(a seed: out of cassandra_seeds first, with change_seeds)',
                                 '  ' ~ 'replace_node' | community.cassandra.cassandra_command(
                                    extra=['-e cassandra_target_nodes=NEW_NODE', '-e cassandra_replace_address=' ~ address],

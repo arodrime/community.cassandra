@@ -93,6 +93,7 @@ def outcome(node, result, stage="", check=False):
     if m:
         return ({"node": node, "status": "failed", "reason": m.group("reason").strip(),
                  "row": _failed_row(m.group("action"), stage, m.group("reason").strip(), check),
+                 "touched": not check and stage in ("during", "after", "unconfirmed"),
                  "seconds": int(m.group("seconds")) if m.group("seconds") else None}, m.group("action"))
     m = _REFUSED.match(text)
     if m:
@@ -100,7 +101,7 @@ def outcome(node, result, stage="", check=False):
     m = _SKIPPED.match(text)
     if m and m.group("action") in PLAYBOOKS:  # done by the run before; a node of a batch stopped midway: said as such
         said = ("not finished (%s)" % m.group("reason")) if m.group("unfinished") else m.group("reason")
-        return {"node": node, "said": said}, m.group("action")
+        return {"node": node, "said": said, "touched": bool(m.group("unfinished")) and not check}, m.group("action")
     # not reached, not in this run (--limit), already in the ring / on that version, nothing to apply...
     # (not run yet: the run stopped before it, plain "not touched")
     reason = {"not in this run (--limit)": "left out by --limit", "not run yet": ""}.get(text, text or "not reached")
@@ -150,6 +151,8 @@ def _cause_and_way_out(failure):
     return lines, []
 
 
+# what a resume does again to a node its run touched and did not record done: (one node, several)
+AGAIN = {"restart": ("restarts", "restart"), "reboot": ("reboots", "reboot")}
 # the width of a stop block: 79 columns (an 80-column terminal), whatever prints it (a terminal, a pipe, a log file)
 STOP_WIDTH = 79
 _COMMAND_LINE = re.compile(r"^(\s*)(ansible-playbook|ansible) ")
@@ -236,8 +239,12 @@ def cassandra_stop_block(results, node, failure, operation="", action="", cluste
         way_out = [re.sub(r"then resume(:?)$", r"then check again\1", way_out[0])] + way_out[1:]
     lines = ["WAY OUT"]
     steps = _THEN.match(way_out[0]) if command else None
+    # the nodes a resume does again (not in the progress file: node_operation.yml adds a node once the cluster
+    # check after its action passed, restart_batch.yml a rack once back NORMAL): said when that is a restart
+    again_nodes = [o["node"] for o in outcomes if o.get("touched")] if not check and action in AGAIN else []
+    again_said = " (%s %s again)" % (out.nodes(again_nodes), AGAIN[action][len(again_nodes) > 1]) if again_nodes else ""
     if steps:  # 1. what to fix, 2. the command that goes on (the progress file under it)
-        lines += _wrapped("1. " + steps.group("first"), 2, 5) + ["  2. %s:" % steps.group("again")]
+        lines += _wrapped("1. " + steps.group("first"), 2, 5) + ["  2. %s%s:" % (steps.group("again"), again_said)]
         lines += _wrapped(command, 5, 7)
         indent = 5
     else:

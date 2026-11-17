@@ -45,7 +45,7 @@ def test_a_node_lost_for_good_gets_full_commands():
     # the last resort, its data rebuilt from the other replicas, the dead host out of the inventory first)
     assert lines[2:] == [
         "IF n4 IS LOST FOR GOOD",
-        "replace it: NEW_NODE a blank host, n4 out of the inventory",
+        "replace it: NEW_NODE (a blank host) in prod, n4 out of the inventory",
         "(a seed: out of cassandra_seeds first, with change_seeds)",
         "  ansible-playbook -i hosts.yml community.cassandra.replace_node -e cassandra_hosts=prod"
         " -e cassandra_target_nodes=NEW_NODE -e cassandra_replace_address=10.0.0.4",

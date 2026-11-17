@@ -31,7 +31,7 @@ def recap(pairs, **kwargs):
 def test_each_operation_ends_with_done(result, operation, outcome):
     assert recap([("node4", result), ("node5", result.replace("100s", "110s"))], cluster="my_cluster") == [
         "DONE  %s  my_cluster  2 %s" % (operation, outcome),
-        "  node4, node5  %s  1m40s..1m50s each" % outcome]
+        "  node4, node5  %s  in 1m40s..1m50s each" % outcome]
 
 
 @pytest.mark.parametrize("result, operation, said", [
@@ -56,7 +56,7 @@ def test_a_failed_node_makes_it_failed_the_others_said():
                    ("node5", "decommission FAILED after 70s: the stream stopped"),
                    ("node6", "not reached"), ("node7", "not in this run (--limit)")], cluster="c")
     assert lines[0] == "FAILED  decommission_node  c  1 decommissioned, 1 failed, 2 not touched"
-    assert [" ".join(line.split()) for line in lines[1:]] == ["node4 decommissioned 2m45s",
+    assert [" ".join(line.split()) for line in lines[1:]] == ["node4 decommissioned in 2m45s",
                                                               "node5 FAILED", "the stream stopped",
                                                               "node6 not touched (not reached)",
                                                               "node7 not touched (left out by --limit)"]
@@ -108,7 +108,7 @@ HEALTH = ["node4 (10.0.0.4, r1) is DN, seen from node1 and node2",
           "waited 10m29s (cassandra_service_health_timeout: 600s)",
           "WAY OUT  bring node4 back to UN (its host and/or Cassandra), then resume",
           "IF node4 IS LOST FOR GOOD",
-          "replace it: NEW_NODE a blank host, node4 out of the inventory",
+          "replace it: NEW_NODE (a blank host) in prod, node4 out of the inventory",
           "  ansible-playbook -i hosts.yml community.cassandra.replace_node -e cassandra_hosts=prod"
           " -e cassandra_target_nodes=NEW_NODE -e cassandra_replace_address=10.0.0.4"]
 
@@ -145,7 +145,7 @@ def test_a_stop_on_purpose_says_the_cause_the_table_and_the_way_out_once():
         "STOPPED  rolling_restart  prod  at node2",
         "  Why:  node4 (10.0.0.4, r1) is DN, seen from node1 and node2",
         "        waited 10m29s (cassandra_service_health_timeout: 600s)",
-        "  node1  restarted                          1m50s",
+        "  node1  restarted                          in 1m50s",
         "  node2  restarted; cluster health check failed",
         "  node3  not touched",
         "  node4  not touched (not reached)",
@@ -153,13 +153,13 @@ def test_a_stop_on_purpose_says_the_cause_the_table_and_the_way_out_once():
         "",  # (review 3) the way out apart from the table
         "WAY OUT",
         "  1. bring node4 back to UN (its host and/or Cassandra)",
-        "  2. resume:",
+        "  2. resume (node2 restarts again):",  # (B1, review 4) not in the progress file: restarted again
         "     ansible-playbook -i hosts.yml community.cassandra.rolling_restart \\",
         "       -e cassandra_hosts=prod -e cassandra_rolling_resume=true",
         "     progress: .cassandra_progress/x",  # (under the command it is for)
         "",  # (review 3) a node lost for good: a block of its own, no next step of the resume
         "IF node4 IS LOST FOR GOOD",
-        "  replace it: NEW_NODE a blank host, node4 out of the inventory",
+        "  replace it: NEW_NODE (a blank host) in prod, node4 out of the inventory",
         "    ansible-playbook -i hosts.yml community.cassandra.replace_node \\",
         "      -e cassandra_hosts=prod -e cassandra_target_nodes=NEW_NODE \\",
         "      -e cassandra_replace_address=10.0.0.4"]
@@ -183,7 +183,7 @@ def test_the_hint_stays_under_the_failures_own_way_out():
         "  checked",
         "",
         "IF node4 IS LOST FOR GOOD",
-        "  replace it: NEW_NODE a blank host, node4 out of the inventory",
+        "  replace it: NEW_NODE (a blank host) in prod, node4 out of the inventory",
         "    ansible-playbook -i hosts.yml community.cassandra.replace_node \\",
         "      -e cassandra_hosts=prod -e cassandra_target_nodes=NEW_NODE \\",
         "      -e cassandra_replace_address=10.0.0.4"]
@@ -313,3 +313,18 @@ def test_under_check_no_resume_nor_progress_file():
     lines = stop(HEALTH[:3], resume=True, check=True, progress_file="/inv/.cassandra_progress/x", cwd="/inv")
     assert lines[-4:] == ["WAY OUT", "  1. bring node4 back to UN (its host and/or Cassandra)", "  2. check again:",
                           "     ansible-playbook community.cassandra.rolling_restart --check"]
+
+
+def test_the_resume_says_which_nodes_it_restarts_again():
+    # (review 4) a node touched and not in the progress file is restarted again by the resume; one not touched,
+    # or a resume of another action, says nothing; --check restarted nothing
+    for stage, said in (("after", "  2. resume (node2 restarts again):"), ("during", "  2. resume (node2 restarts again):"),
+                        ("unconfirmed", "  2. resume (node2 restarts again):"), ("before", "  2. resume:")):
+        assert said in stop(HEALTH, stage=stage, resume=True), stage
+    assert "  2. check again:" in stop(HEALTH, stage="after", resume=True, check=True)
+    # a rack: the nodes not finished too
+    rack = cassandra_stop_block(
+        [{"node": "n1", "result": "restart FAILED: not back in Mode NORMAL in time", "stage": "during"},
+         {"node": "n2", "result": "restart not finished: the rack stopped at n1", "stage": "during"},
+         {"node": "n3", "result": "not run yet"}], "the rack n1, n2", "boom", action="restart", resume=True, batch=True)
+    assert "  2. resume (n1, n2 restart again):" in rack
