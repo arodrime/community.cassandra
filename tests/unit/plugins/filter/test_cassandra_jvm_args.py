@@ -1285,6 +1285,37 @@ def test_a_line_in_a_block_set_again_below(later, again):
     assert jvm._set_again({"depth": 0, "text": 'JVM_OPTS="$JVM_OPTS -Dx=1"'}, later) is False
 
 
+@pytest.mark.parametrize("text", [
+    'JVM_OPTS="$JVM_OPTS -XX:CompileCommand=exclude,a/B.c"',  # a list: each one adds up
+    'JVM_OPTS="$JVM_OPTS -javaagent:x.jar"',  # no name
+    'JVM_OPTS="$JVM_OPTS -Xmx4G"',  # what cassandra-env.sh greps for
+    'JVM_OPTS="$JVM_OPTS -XX:+UnlockDiagnosticVMOptions"',  # unlocks the options after it
+    'JVM_OPTS="$JVM_OPTS -XX:VMOptionsFile=/etc/x.options"',  # read where it is
+    'JVM_OPTS="$JVM_OPTS -XX:Flags=/etc/x.flags"',
+])
+def test_a_line_whose_place_counts_is_never_taken_as_set_again(text):
+    assert jvm._set_again({"depth": 1, "text": text}, [{"depth": 0, "text": text}]) is False
+
+
+def test_a_line_reading_jvm_opts_in_between_keeps_the_block_s_line():
+    line = {"depth": 1, "text": 'JVM_OPTS="$JVM_OPTS -Dfoo=1"'}
+    grep = {"depth": 0, "text": 'if echo "$JVM_OPTS" | grep -q -- -Dfoo=1; then JVM_OPTS="$JVM_OPTS -XX:+X"; fi'}
+    again = {"depth": 0, "text": line["text"]}
+    assert jvm._set_again(line, [grep, again]) is False
+    # lines that only add to JVM_OPTS, or do not mention it: as before
+    assert jvm._set_again(line, [{"depth": 0, "text": 'JVM_OPTS="$JVM_OPTS -Dbar=2"'}, {"depth": 0, "text": "x=1"},
+                                 again]) is True
+
+
+def test_the_heap_in_a_block_and_again_after_fi_stays_a_difference():
+    # -Xmx is what cassandra-env.sh greps for: its line in a block is never dropped as set again
+    def heap_twice(files):
+        files["cassandra-env.sh"] = files["cassandra-env.sh"] + (
+            '\nif [ -n "$X" ]; then\n    JVM_OPTS="$JVM_OPTS -Xmx4G"\nfi\nJVM_OPTS="$JVM_OPTS -Xmx4G"\n')
+    files = node_files("50x", heap_twice)
+    assert [d for d in check(files, "50x", java="17")["differences"] if d.startswith("cassandra-env.sh")]
+
+
 def own_log_dirs(files):
     """system.log and debug.log in a dir of their own, the audit file's dir the log dir written as itself."""
     text = files["logback.xml"]

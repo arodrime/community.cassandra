@@ -224,9 +224,14 @@ def _set_again(line, later):
     append = APPEND.match(line["text"]) if line["depth"] else None
     if not append or not append.group(1).split() or any(g in line["text"] for g in JVM_ENV_GREPS):
         return False
-    if any(_jvm_name(o) is None or _jvm_name(o) in LISTS for o in append.group(1).split()):
+    # (an option adding up, without a name, unlocking others or read where it is: its place counts)
+    if any(_jvm_name(o) is None or _jvm_name(o) in LISTS or _jvm_name(o) in JVM_UNLOCK or IN_PLACE.match(o)
+           for o in append.group(1).split()):
         return False
-    return any(not other["depth"] and other["text"] == line["text"] for other in later)
+    again = next((i for i, other in enumerate(later) if not other["depth"] and other["text"] == line["text"]), None)
+    # the lines in between only add to JVM_OPTS or leave it alone: none reads it (a grep that decides on it)
+    return again is not None and all(APPEND.match(other["text"]) or "JVM_OPTS" not in other["text"]
+                                     for other in later[:again])
 
 
 def env_differences(live, role):
