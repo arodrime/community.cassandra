@@ -656,6 +656,10 @@
             say "$c: not found in the PATH of root"
           else
             echo "cqlsh_ran=$(command -v "$c")"
+            # the file each one is, links followed (/bin is a link to usr/bin on EL: /bin/cqlsh is the one of the package)
+            echo "cqlsh_ran_real=$(readlink -f "$(command -v "$c")" 2>/dev/null)"
+            [ -e /usr/bin/cqlsh ] && echo "cqlsh_usr_bin_real=$(readlink -f /usr/bin/cqlsh 2>/dev/null)"
+            [ -e /usr/local/bin/cqlsh ] && echo "cqlsh_usr_local_real=$(readlink -f /usr/local/bin/cqlsh 2>/dev/null)"
             v=$(timeout 30 "$c" "$@" --version 2>&1); rc=$?
             last=$(echo "$v" | grep -v '^[[:space:]]*$' | tail -1 | cut -c1-200)
             if [ $rc = 124 ]; then
@@ -834,6 +838,11 @@
           # path|site-packages|cqlshlib|ok or its last error line, of each Python the roles may give it
           pythons: "{{ _kv | dict2items | selectattr('key', 'match', '^cqlsh_python_') | map(attribute='value') | list }}"
           ran: "{{ _kv.cqlsh_ran | default('') }}"
+          # the same, links followed on the node: {path: the file it is}
+          real:
+            ran: "{{ _kv.cqlsh_ran_real | default('') }}"
+            /usr/bin/cqlsh: "{{ _kv.cqlsh_usr_bin_real | default('') }}"
+            /usr/local/bin/cqlsh: "{{ _kv.cqlsh_usr_local_real | default('') }}"
         # the cqlsh the playbooks run (the inventory's, or -e)
         import_cluster_cqlsh_command: "{{ cassandra_cqlsh_command | default('cqlsh', true) }}"
         # cassandra_linux's limits file with its mark: a node the roles set up

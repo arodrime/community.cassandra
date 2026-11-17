@@ -1673,6 +1673,29 @@ def test_cqlsh_offline_without_python311_left_as_it_is():
     assert [d for d in cqlsh_check(st, series="41x")[0] if "/usr/local/bin/cqlsh" in d]
 
 
+def test_cqlsh_found_through_a_link_to_the_package_s_is_the_package_s():
+    # sudo's secure_path finds /bin/cqlsh first on EL, /bin a link to usr/bin: the same file as /usr/bin/cqlsh
+    real = {"ran": "/usr/bin/cqlsh", "/usr/bin/cqlsh": "/usr/bin/cqlsh", "/usr/local/bin/cqlsh": ""}
+    assert cqlsh_check(cqlsh_state(ran="/bin/cqlsh", real=real)) == ([], [])
+    # /usr/bin/cqlsh itself a link (alternatives): compared as the files they both are
+    real = {"ran": "/opt/c/bin/cqlsh", "/usr/bin/cqlsh": "/opt/c/bin/cqlsh", "/usr/local/bin/cqlsh": ""}
+    assert cqlsh_check(cqlsh_state(ran="/bin/cqlsh", real=real)) == ([], [])
+
+
+def test_cqlsh_another_file_still_stops_whatever_the_links():
+    # a cqlsh of its own in /usr/local/bin (not the roles' wrapper): another file, the stop stays
+    real = {"ran": "/usr/local/bin/cqlsh", "/usr/bin/cqlsh": "/usr/bin/cqlsh",
+            "/usr/local/bin/cqlsh": "/usr/local/bin/cqlsh"}
+    assert cqlsh_check(cqlsh_state(wrapper="other", ran="/usr/local/bin/cqlsh", real=real))[0]
+    # a link to another cqlsh (a tarball's): still not the package's
+    real = {"ran": "/opt/apache-cassandra/bin/cqlsh", "/usr/bin/cqlsh": "/usr/bin/cqlsh", "/usr/local/bin/cqlsh": ""}
+    assert cqlsh_check(cqlsh_state(ran="/bin/cqlsh", real=real))[0]
+    # the files not read (an empty answer): never taken as the same
+    real = {"ran": "", "/usr/bin/cqlsh": "", "/usr/local/bin/cqlsh": ""}
+    assert cqlsh_check(cqlsh_state(ran="/bin/cqlsh", real=real))[0]
+    assert cqlsh_check(cqlsh_state(ran="/bin/cqlsh"))[0]
+
+
 def test_cqlsh_found_in_the_path_not_named_stops_with_both_ways_out():
     diffs = cqlsh_check(cqlsh_state(wrapper="other", ran="/usr/local/bin/cqlsh"))[0]
     assert diffs == ["cassandra_install: cqlsh: node has /usr/local/bin/cqlsh (not the package's) for the playbooks, the"

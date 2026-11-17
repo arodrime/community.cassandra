@@ -67,8 +67,23 @@ def _read(tmp_path, body, command="cqlsh"):
     env = dict(os.environ, PATH="%s:/usr/bin:/bin" % (tmp_path / "bin"))
     out = subprocess.run(["/bin/sh", "-c", _cqlsh_snippet(tmp_path, command)], env=env, stdout=subprocess.PIPE,
                          universal_newlines=True, check=True).stdout
-    # (the cqlsh that ran: the self-check's, said apart)
-    return "".join(line for line in out.splitlines(True) if not line.startswith("cqlsh_ran="))
+    # (the cqlsh that ran and the files the paths are: the self-check's, said apart)
+    return "".join(line for line in out.splitlines(True) if not line.startswith(("cqlsh_ran", "cqlsh_usr_")))
+
+
+def test_the_read_says_the_file_the_cqlsh_found_is(tmp_path):
+    # /bin/cqlsh on EL (/bin a link to usr/bin): the self-check compares the files, links followed on the node
+    (tmp_path / "real").mkdir()
+    target = tmp_path / "real" / "cqlsh"
+    target.write_text("#!/bin/sh\necho 'cqlsh 6.2.0'\n")
+    target.chmod(0o755)
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "cqlsh").symlink_to(target)
+    env = dict(os.environ, PATH="%s:/usr/bin:/bin" % (tmp_path / "bin"))
+    out = subprocess.run(["/bin/sh", "-c", _cqlsh_snippet(tmp_path)], env=env, stdout=subprocess.PIPE,
+                         universal_newlines=True, check=True).stdout.splitlines()
+    assert "cqlsh_ran=%s" % (tmp_path / "bin" / "cqlsh") in out
+    assert "cqlsh_ran_real=%s" % target in out
 
 
 def test_the_read_says_when_cqlsh_does_not_start(tmp_path):

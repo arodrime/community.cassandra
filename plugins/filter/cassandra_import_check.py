@@ -742,7 +742,10 @@ def _cqlsh_check(cqlsh, st, family, error):
                    % (used, test))
     ran = st.get("ran", "")
     package = ("/usr/bin/cqlsh", "/usr/local/bin/cqlsh") if st.get("wrapper") in ("role", "absent") else ("/usr/bin/cqlsh",)
-    if ran and ran not in package and cqlsh["command"] == "cqlsh" and not error:
+    # the same file through a link (/bin/cqlsh on EL, /bin a link to usr/bin): the package's
+    real = st.get("real") or {}
+    same = [p for p in package if real.get("ran") and real.get("ran") == real.get(p)]
+    if ran and ran not in package and not same and cqlsh["command"] == "cqlsh" and not error:
         out.append("cassandra_install: cqlsh: node has %s (not the package's) for the playbooks, the roles would set"
                    " the package's: set cassandra_cqlsh_command: %s in group_vars and import again (it writes"
                    " cassandra_cqlsh_source: external), or -e import_keep_hand_edits=cqlsh" % (ran, ran))
