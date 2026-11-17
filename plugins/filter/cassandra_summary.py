@@ -101,7 +101,8 @@ def outcome(node, result, stage="", check=False):
     m = _SKIPPED.match(text)
     if m and m.group("action") in PLAYBOOKS:  # done by the run before; a node of a batch stopped midway: said as such
         said = ("not finished (%s)" % m.group("reason")) if m.group("unfinished") else m.group("reason")
-        return {"node": node, "said": said, "touched": bool(m.group("unfinished")) and not check}, m.group("action")
+        touched = {"touched": True} if m.group("unfinished") and not check else {}  # (a resume does it again)
+        return dict({"node": node, "said": said}, **touched), m.group("action")
     # not reached, not in this run (--limit), already in the ring / on that version, nothing to apply...
     # (not run yet: the run stopped before it, plain "not touched")
     reason = {"not in this run (--limit)": "left out by --limit", "not run yet": ""}.get(text, text or "not reached")
