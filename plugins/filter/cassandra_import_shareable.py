@@ -438,7 +438,7 @@ def _masked_names(text, key):
         if key.get(word) or word.lower() in key.quiet:
             return key.get(word) or word
         if KERNEL_KEY.match(word) and (re.match(r"\s*[=:]", m.string[m.end():])  # (vm.swappiness = 0)
-                                       or re.search(r"\bsysctl $", m.string[:m.start()])):  # (sysctl vm.drop_caches)
+                                       or m.string[:m.start()].endswith("sysctl ")):  # (sysctl vm.drop_caches)
             return word
         if word in key.clear:  # (a kernel setting the nodes have, a stock JVM property: anywhere)
             return word
