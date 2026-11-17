@@ -65,11 +65,12 @@ def _wrap(text, indent="", subsequent=None):
 
 def _items(items, indent="", hang="  "):
     """The items as lines: a string wrapped (its next lines hang columns further in), a {'pre': [lines]} as it
-    is, indented; an empty one left out."""
+    is, indented, its title (a 'title') first, not indented; an empty one left out."""
     lines = []
     for item in items or []:
         if isinstance(item, Mapping):
-            lines += [indent + str(line) for line in item.get("pre") or []]
+            pre = [indent + str(line) for line in item.get("pre") or []]
+            lines += ([str(item["title"])] if item.get("title") and pre else []) + pre
         elif str(item).strip():
             lines += _wrap(item, indent, indent + hang)
     return lines

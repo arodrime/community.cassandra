@@ -333,8 +333,8 @@ def test_apply_config_and_update_java_screens():
                        cassandra_apply_config_diff=APPLY_DIFF), t["vars"], play["vars"])
     assert text == ("APPLY CONFIG  Orders  Cassandra restarts on 1 node, 1 up to date\n"
                     "  Cassandra restarts one node at a time.\n\n"
-                    "  " + APPLY_DIFF[0] + "\n\n"
-                    "  node1  write + restart\n  node2  up to date")
+                    "DIFFERENCES FOUND\n  " + APPLY_DIFF[0] + "\n\n"  # (review 4) titled as --check's, WILL DO a plan's
+                    "WILL DO\n  node1  write + restart\n  node2  up to date")
     question = Templar(loader=DataLoader(), variables=dict(trust(t["vars"]), **trust(play["vars"]), ansible_play_hosts=hosts,
                                                            hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS, **cluster))
     # (UX audit A2) the question names the most disruptive effect, on which nodes: a Cassandra restart, a start

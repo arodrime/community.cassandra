@@ -104,7 +104,7 @@ RING = [
     " node3  UN  10.100.100.5  71.84 MiB  16      76.0%  ca0e3575...  rack_c",
     " node1  UN  10.100.100.3  94.39 MiB  16      64.7%  76108dea...  rack_a",
 ]
-CUT = "Host IDs cut: whole with -e cassandra_status_raw=true (nodetool's own output)"
+CUT = "Host IDs shortened; full: -e cassandra_status_raw=true"
 # when the ring was read (the controller's clock, its date and zone): "at 2026-11-16 14:02 CET"
 SEEN = "  my_cluster  seen from node1 at YYYY-MM-DD HH:MM"
 # the run's first line (no version: these playbooks read none); not repeated at the end

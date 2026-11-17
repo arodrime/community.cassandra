@@ -757,8 +757,10 @@
               {%- endif -%}
           # a real run: the settings that differ before its question (--check: in the recap, no question)
           sections:
-            - "{{ [] if ansible_check_mode else [{'pre': cassandra_apply_config_diff | default([])}] }}"
-            - - pre: "{{ _nodes | community.cassandra.cassandra_apply_config_outcomes(plan=true, check=ansible_check_mode,
+            # (titled as --check's recap: what was found, then what the run will do)
+            - "{{ [] if ansible_check_mode else [{'title': 'DIFFERENCES FOUND', 'pre': cassandra_apply_config_diff | default([])}] }}"
+            - - title: WILL DO
+                pre: "{{ _nodes | community.cassandra.cassandra_apply_config_outcomes(plan=true, check=ansible_check_mode,
                                                                                   width='terminal', margin=2) }}"
           # the nodes' warnings, each one once, then (--check) why a real run is refused; the recap says how many
           warnings: >-

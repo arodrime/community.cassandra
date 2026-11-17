@@ -182,7 +182,7 @@ def _sort_nodes(cluster_status, owner, elsewhere, guessed, absent, names=None):
 
 # a Host ID cut to this many characters when the table is wider than the screen (its whole value: CUT_HOST_IDS)
 HOST_ID_SHOWN = 8
-CUT_HOST_IDS = "Host IDs cut: whole with -e cassandra_status_raw=true (nodetool's own output)"
+CUT_HOST_IDS = "Host IDs shortened; full: -e cassandra_status_raw=true"
 
 
 def _dc_rows(nodes, owner, guessed, names, cut):
