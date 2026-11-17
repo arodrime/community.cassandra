@@ -289,7 +289,7 @@
     that: _taken | length == 0
     fail_msg: >-
       cassandra_extra_settings: {{ _named | join(', ') }} already in cassandra.yaml, or the former name of a key
-      whose variable is set (Cassandra refuses both names): set them with their variable
+      the template writes (Cassandra refuses both names): set them with their variable
   vars:
     # (the one written: cassandra_config_template_overrides' when set)
     _template: >-
@@ -297,8 +297,12 @@
                                         ~ _cassandra_config_templates['cassandra.yaml']) }}
     _keys: >-
       {{ _template | regex_findall('(?m)^(?:\{\{[^}]*\}\})?([a-z0-9_]+):') }}
+    # (the keys it writes whatever their variable: no switch before them)
+    _always: >-
+      {{ _template | regex_findall('(?m)^([a-z0-9_]+):') }}
     # a section of _cassandra_config_extra_sections: a dict of other sub-keys than its variables'; a dotted key
-    # (sstable.selected_format) by its first part; 4.1+: a former name of a key whose variable is set
+    # (sstable.selected_format) by its first part; 4.1+: a former name of a key the template writes (its variable
+    # set, or its line there whatever its value: key_cache_size: with none)
     _taken: >-
       {%- set out = cassandra_extra_settings | list | intersect(_keys)
                     | difference(_cassandra_config_extra_sections | list) -%}
@@ -306,7 +310,8 @@
       {%-   set _ = out.append(key) -%}
       {%- endfor -%}
       {%- for key, var in _old.items() if key in cassandra_extra_settings and key not in _keys
-                                                                and lookup('ansible.builtin.vars', var) | string not in ['', 'None'] -%}
+                                         and (lookup('ansible.builtin.vars', var) | string not in ['', 'None']
+                                              or var[10:] in _always) -%}
       {%-   set _ = out.append(key) -%}
       {%- endfor -%}
       {%- for section, own in _cassandra_config_extra_sections.items() if section in cassandra_extra_settings -%}

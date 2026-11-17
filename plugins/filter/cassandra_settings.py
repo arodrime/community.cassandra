@@ -48,17 +48,59 @@ QUANTITY_KEYS = {
     "internode_streaming_tcp_user_timeout": "ms", "roles_update_interval": "ms", "permissions_update_interval": "ms",
     "credentials_update_interval": "ms", "partition_size_warn_threshold": "MiB",
     "partition_size_fail_threshold": "MiB", "gc_log_threshold": "ms", "gc_warn_threshold": "ms",
-    "native_transport_max_frame_size": "MiB", "auto_snapshot_ttl": "d"}
+    "native_transport_max_frame_size": "MiB", "auto_snapshot_ttl": "d",
+    # (and the ones 4.0 wrote under a former name, _cassandra_config_old_names)
+    "permissions_validity": "ms", "roles_validity": "ms", "credentials_validity": "ms", "max_hint_window": "h",
+    "request_timeout": "ms", "read_request_timeout": "ms", "range_request_timeout": "ms", "write_request_timeout": "ms",
+    "counter_write_request_timeout": "ms", "cas_contention_timeout": "ms", "truncate_request_timeout": "ms",
+    "slow_query_log_timeout": "ms", "column_index_cache_size": "KiB", "batch_size_warn_threshold": "KiB",
+    "batch_size_fail_threshold": "KiB", "compaction_throughput": "MiB/s", "commitlog_sync_group_window": "ms",
+    "commitlog_sync_period": "ms", "commitlog_segment_size": "MiB", "dynamic_snitch_update_interval": "ms",
+    "dynamic_snitch_reset_interval": "ms", "hinted_handoff_throttle": "KiB", "batchlog_replay_throttle": "KiB",
+    "hints_flush_period": "ms", "max_hints_file_size": "MiB", "trickle_fsync_interval": "KiB",
+    "sstable_preemptive_open_interval": "MiB", "key_cache_size": "MiB", "row_cache_size": "MiB",
+    "counter_cache_size": "MiB", "index_summary_capacity": "MiB", "index_summary_resize_interval": "m",
+    "trace_type_query_ttl": "d", "trace_type_repair_ttl": "d", "prepared_statements_cache_size": "MiB"}
 # Top-level settings the role leaves out at Cassandra's default, which a node may write: {key: that value}
 DEFAULT_WHEN_ABSENT = {"auto_bootstrap": "true"}
+# Keys a later series' stock cassandra.yaml added, which the role writes, that Cassandra reads the same when absent (its
+# Config.java default, or the class it takes when null): {key: its settings, as yaml_settings reads them, at that
+# value}. A node's file without the key (one of an older series) and the role's with these settings: the same settings.
+# Not crypto_provider: 5.0 takes JREProvider when absent, its stock file DefaultCryptoProvider (Amazon Corretto)
+STOCK_WHEN_ABSENT = {
+    # 4.1 (Config.java's defaults)
+    "auto_hints_cleanup_enabled": {"auto_hints_cleanup_enabled": "false"},
+    "uuid_sstable_identifiers_enabled": {"uuid_sstable_identifiers_enabled": "false"},
+    "compaction_tombstone_warning_threshold": {"compaction_tombstone_warning_threshold": "100000"},  # (4.1's role only)
+    # 5.0: AuthConfig's AllowAllCIDRAuthorizer when null; Config.java's default; the default memtable when null
+    # (SkipListMemtable: the stock "default" inherits it); DatabaseDescriptor's CASSANDRA_4 when null
+    "cidr_authorizer": {"cidr_authorizer.class_name": "AllowAllCIDRAuthorizer"},
+    "commitlog_disk_access_mode": {"commitlog_disk_access_mode": "legacy"},
+    "memtable": {"memtable.configurations.skiplist.class_name": "SkipListMemtable",
+                 "memtable.configurations.trie.class_name": "TrieMemtable",
+                 "memtable.configurations.default.inherits": "skiplist"},
+    "storage_compatibility_mode": {"storage_compatibility_mode": "CASSANDRA_4"},
+}
 # Settings that set nothing on the nodes compared (with the role's cassandra-env.sh), left out of the comparisons
 # when the role's file has a line for them (5.0's, not 4.x's, which Cassandra refuses): {key: why}
 NOT_COMPARED = {"heap_dump_path": "the -XX:HeapDumpPath cassandra-env.sh gives wins"}
 
 
 # The unit of the number a former name holds (Converters of Config.java's @Replaces), by the end of the name
-FORMER_UNITS = (("_megabits_per_sec", "megabits"), ("_in_mb", "MiB"), ("_mb", "MiB"), ("_in_kb", "KiB"),
-                ("_in_ms", "ms"))
+# (tracetype_query_ttl, tracetype_repair_ttl: seconds); a name without one (enable_x for x_enabled): its value as it is
+FORMER_UNITS = (("_megabits_per_sec", "megabits"), ("_mb_per_sec", "MiB/s"), ("_in_mb", "MiB"), ("_mb", "MiB"),
+                ("_in_kb", "KiB"), ("_in_ms", "ms"), ("_in_minutes", "m"), ("_ttl", "s"))
+# The former names Cassandra reads a negative number of as no value (null; Converters' MILLIS_CUSTOM_DURATION and
+# MINUTES_CUSTOM_DURATION: -1; NEGATIVE_MEBIBYTES_DATA_STORAGE_INT: any): {name: the negative numbers, None for any}
+FORMER_NULL_WHEN_NEGATIVE = {"permissions_update_interval_in_ms": ("-1",), "roles_update_interval_in_ms": ("-1",),
+                             "credentials_update_interval_in_ms": ("-1",),
+                             "index_summary_resize_interval_in_minutes": ("-1",),
+                             "sstable_preemptive_open_interval_in_mb": None}
+
+
+# 4.1+: the former names (4.0's) of a section's sub-keys the role writes (EncryptionOptions' @Replaces, its only ones):
+# {section: {former name: its 4.1+ key}}; Cassandra reads either, and refuses both
+FORMER_SUB_KEYS = {"server_encryption_options": {"enable_legacy_ssl_storage_port": "legacy_ssl_storage_port_enabled"}}
 
 
 @functools.lru_cache(maxsize=None)
@@ -82,8 +124,14 @@ def former_keys():
 def former_value(name, value):
     """The value of the former name `name` written for its 4.1+ key, as Cassandra converts it (512 for
     file_cache_size_in_mb: 512MiB; megabits per second: bytes per second), else None (not a whole number, or
-    negative: none, or -1 for "not set"). A former name without a unit (5.0's
-    compaction_large_partition_warning_threshold): its value as it is."""
+    negative: none, or -1 for "not set"). No value (null), or a negative number Cassandra reads as null
+    (FORMER_NULL_WHEN_NEGATIVE): "" (the variable unset: no value either). A former name without a unit (5.0's
+    compaction_large_partition_warning_threshold, enable_user_defined_functions): its value as it is."""
+    if value is None or value == "":
+        return ""  # (Cassandra converts null to null)
+    if name in FORMER_NULL_WHEN_NEGATIVE and re.match(r"^-\d+$", str(value)) and \
+            str(value) in (FORMER_NULL_WHEN_NEGATIVE[name] or (str(value),)):
+        return ""
     unit = next((u for end, u in FORMER_UNITS if str(name).endswith(end)), None)
     if unit is None:
         return value
@@ -94,15 +142,34 @@ def former_value(name, value):
     return "%d%s" % (int(value), unit)
 
 
+def stock_when_absent(key, settings):
+    """True when settings (yaml_settings') set the key of STOCK_WHEN_ABSENT at the value Cassandra takes without it
+    (a boolean in any case)."""
+    want = STOCK_WHEN_ABSENT[key]
+    mine = dict((k, v) for k, v in settings.items() if re.split(r"[.\[]", k, maxsplit=1)[0] == key)
+    return set(mine) == set(want) and all(
+        str(v) == want[k] or isinstance(v, Plain) and BOOLS.get(v.lower(), v) == want[k] for k, v in mine.items())
+
+
 def compared(settings, role_text):
-    """cassandra.yaml's settings (yaml_settings') without the NOT_COMPARED ones the role's text has a line for, and
-    with a former name the role's text writes under its 4.1+ name (Cassandra reads either) under that name."""
+    """cassandra.yaml's settings (yaml_settings') without the NOT_COMPARED ones the role's text has a line for, nor the
+    keys of STOCK_WHEN_ABSENT the role's text writes when at the value Cassandra takes without them, and with a former
+    name the role's text writes under its 4.1+ name (Cassandra reads either) under that name (none when Cassandra
+    reads it as null: as no key)."""
     gone = [k for k in NOT_COMPARED if re.search(r"(?m)^#?[ \t]*%s:" % k, role_text)]
+    gone += [k for k in STOCK_WHEN_ABSENT if re.search(r"(?m)^%s:" % k, role_text) and stock_when_absent(k, settings)]
     out = dict((k, v) for k, v in settings.items() if re.split(r"[.\[]", k, maxsplit=1)[0] not in gone)
+    for section, names in FORMER_SUB_KEYS.items():
+        for old, new in names.items():
+            old, new = "%s.%s" % (section, old), "%s.%s" % (section, new)
+            if old in out and new not in out and re.search(r"(?m)^\s+%s:" % new.split(".")[1], role_text):
+                out[new] = out.pop(old)
     for old, new in former_keys():
         if old in out and new not in out and re.search(r"(?m)^%s:" % new, role_text) \
                 and former_value(old, out[old]) is not None:
-            out[new] = former_value(old, out.pop(old))
+            value = former_value(old, out.pop(old))
+            if value != "":
+                out[new] = value
     return out
 
 

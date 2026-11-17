@@ -223,7 +223,10 @@ Role Variables
   `streaming_stats_enabled` before 4.1.1) is refused, checked against the
   installed release (else, or in the upgrade's preview, `cassandra_package_version`
   when pinned, else the series' latest release known); one of the other naming (a 4.0 `*_in_*` variable on 4.1+, or the
-  reverse) is ignored, as for the older variables. On 4.x, `disk_access_mode`, which the stock file has no line for,
+  reverse) is ignored, as for the older variables. On 4.1+, a 4.0 name in
+  `cassandra_extra_settings` (`read_request_timeout_in_ms`, `enable_*`...) is
+  refused when the template writes its key (its variable set, or a line it always
+  writes, such as `key_cache_size:`): Cassandra refuses both names. On 4.x, `disk_access_mode`, which the stock file has no line for,
   is written at the end, under its own header.
 * `cassandra_auto_bootstrap` (default `true`, not written): `false` writes
   `auto_bootstrap: false`, which a node reads at its first start: it then

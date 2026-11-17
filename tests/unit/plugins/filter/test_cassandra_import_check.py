@@ -1832,3 +1832,95 @@ def test_options_without_a_name_in_another_order_of_no_family_are_the_same():
                                          "\n-ea\n-Xlog:gc+heap+coops=info\n--add-exports java.base/jdk.internal.misc=")
     assert host_vars(files, "41x")["cassandra_jvm11_extra_options"] == ["-ea", "-Xlog:gc+heap+coops=info"]
     assert check(files, "41x", java="11")["differences"] == []
+
+
+# --- a cassandra.yaml of an earlier series (kept by the package on upgrade) ----
+
+def earlier_yaml(earlier, series, *edits):
+    """The stock files of series, cassandra.yaml the stock one of an earlier series, edited (old, new)."""
+    files = seeded(stock(series))
+    files["cassandra.yaml"] = seeded(stock(earlier))["cassandra.yaml"]
+    for old, new in edits:
+        files["cassandra.yaml"] = edit(files["cassandra.yaml"], old, new)
+    return files
+
+
+def test_a_40_cassandra_yaml_on_41_imports_clean():
+    """Its former names (_in_ms, _in_kb, enable_*, the null key_cache_size_in_mb, the 4-space sections, the
+    server_encryption_options' enable_legacy_ssl_storage_port) are the variables of their 4.1 keys; the keys 4.1 added
+    whose absence is their default are not differences."""
+    files = earlier_yaml("40x", "41x")
+    imported = cassandra_config_import(files, "41x", FACTS, "", "/var/lib/cassandra")
+    assert imported["hand_edits"] == []
+    assert sorted(imported["vars"].get("cassandra_extra_settings", {})) == ["windows_timer_interval"]  # (4.1 has it)
+    assert "cassandra.yaml: max_hint_window: 3h  (node: max_hint_window_in_ms: 10800000 # 3 hours)" in imported["normalized"]
+    assert "cassandra.yaml: server_encryption_options: legacy_ssl_storage_port_enabled: false  (node:" \
+        " enable_legacy_ssl_storage_port: false)" in imported["normalized"]
+    assert "cassandra.yaml: compaction_tombstone_warning_threshold: not in the node's file, which Cassandra reads as the" \
+        " role's compaction_tombstone_warning_threshold: 100000 (the role writes it)" in imported["normalized"]
+    assert check(files, "41x")["differences"] == []
+
+
+def test_former_names_set_by_hand_are_read_into_their_variables():
+    files = earlier_yaml("40x", "50x", ("read_request_timeout_in_ms: 5000", "read_request_timeout_in_ms: 7000"),
+                         ("enable_materialized_views: false", "enable_materialized_views: true"),
+                         ("key_cache_size_in_mb:", "key_cache_size_in_mb: 100"),
+                         ("max_hint_window_in_ms: 10800000", "max_hint_window_in_ms: 7200000"),
+                         ("tracetype_repair_ttl: 604800", "tracetype_repair_ttl: 1209600"),
+                         ("compaction_throughput_mb_per_sec: 64", "compaction_throughput_mb_per_sec: 0"),
+                         ("    internode_encryption: none", "    internode_encryption: all"),
+                         ("    keystore_password: cassandra", "    keystore_password: s3cret"),
+                         ("    enable_legacy_ssl_storage_port: false", "    enable_legacy_ssl_storage_port: true"))
+    imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
+    found = imported["vars"]
+    assert found["cassandra_read_request_timeout"] == "7000ms"
+    assert found["cassandra_materialized_views_enabled"] is True
+    assert found["cassandra_key_cache_size"] == "100MiB"
+    assert found["cassandra_max_hint_window"] == "2h"
+    assert found["cassandra_trace_type_repair_ttl"] == "14d"
+    assert found["cassandra_compaction_throughput"] == "0MiB/s"
+    assert found["cassandra_internode_encryption"] == "all"  # (4-space section, read as the role's)
+    assert found["cassandra_server_keystore_password"] == "s3cret"
+    assert found["cassandra_legacy_ssl_storage_port_enabled"] is True
+    for key in ("read_request_timeout_in_ms", "enable_materialized_views", "key_cache_size_in_mb", "max_hint_window_in_ms"):
+        assert key not in found.get("cassandra_extra_settings", {})
+    # (only 5.0's crypto_provider is left: see test_a_41_cassandra_yaml_on_50_differs_by_crypto_provider_only)
+    assert [d for d in check(files, "50x")["differences"] if "crypto_provider" not in d] == []
+
+
+def test_a_41_cassandra_yaml_on_50_differs_by_crypto_provider_only():
+    """5.0's stock sections a 4.1 file lacks: their absence is their default (cidr_authorizer, memtable,
+    commitlog_disk_access_mode, storage_compatibility_mode), but for crypto_provider: without it 5.0 installs no
+    provider (JREProvider), the role writes the stock DefaultCryptoProvider."""
+    files = earlier_yaml("41x", "50x")
+    imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
+    assert [line for line in imported["hand_edits"] if line.startswith("  - ") and not line[4:].lstrip().startswith("#")
+            and line[4:].strip()] == [
+        "  - crypto_provider:", "  -   - class_name: org.apache.cassandra.security.DefaultCryptoProvider",
+        "  -     parameters:", '  -       - fail_on_missing_provider: "false"']
+    assert check(files, "50x")["differences"] == [
+        "cassandra.yaml: crypto_provider[0].class_name: node has nothing, import would write"
+        " 'org.apache.cassandra.security.DefaultCryptoProvider'",
+        "cassandra.yaml: crypto_provider[0].parameters[0].fail_on_missing_provider: node has nothing, import would"
+        " write 'false'"]
+
+
+@pytest.mark.parametrize("old, new, key, value", [
+    # absent on the node is the default only at the stock value: another one the role writes is a difference
+    ("storage_compatibility_mode: CASSANDRA_4", "storage_compatibility_mode: UPGRADING", "storage_compatibility_mode",
+     "UPGRADING"),
+    ("    default:\n      inherits: skiplist", "    default:\n      inherits: trie", "memtable.configurations.default.inherits",
+     "trie"),
+    ("commitlog_disk_access_mode: legacy", "commitlog_disk_access_mode: direct", "commitlog_disk_access_mode", "direct"),
+    ("  class_name: AllowAllCIDRAuthorizer", "  class_name: CassandraCIDRAuthorizer", "cidr_authorizer.class_name",
+     "CassandraCIDRAuthorizer"),
+])
+def test_a_later_stock_key_set_otherwise_is_a_difference(old, new, key, value):
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import _compare
+    node, role = stock("41x")["cassandra.yaml"], stock("50x")["cassandra.yaml"]
+    assert not any(d.startswith("cassandra.yaml: %s:" % key) for d in _compare("cassandra.yaml", node, role))
+    found = _compare("cassandra.yaml", node, edit(role, old, new))
+    assert "cassandra.yaml: %s: node has nothing, import would write '%s'" % (key, value) in found
+    # and on the node's side
+    found = _compare("cassandra.yaml", edit(role, old, new), role)
+    assert "cassandra.yaml: %s: node has '%s', import would write nothing" % (key, value) in found

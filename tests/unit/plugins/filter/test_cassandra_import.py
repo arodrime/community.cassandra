@@ -245,9 +245,24 @@ def test_former_name_of_a_key_a_variable_writes_goes_to_that_variable(series):
 
 def test_former_name_with_its_new_name_or_not_a_number_stays_an_extra_setting():
     files = node_files("41x")
-    files["cassandra.yaml"] += "column_index_size_in_kb: 32\nroles_update_interval_in_ms: -1\n"
+    files["cassandra.yaml"] += "column_index_size_in_kb: 32\nroles_update_interval_in_ms: -2\n"
     out = cassandra_config_import(files, "41x", FACTS, release="4.1.12")
-    assert out["vars"]["cassandra_extra_settings"] == {"column_index_size_in_kb": 32, "roles_update_interval_in_ms": -1}
+    assert out["vars"]["cassandra_extra_settings"] == {"column_index_size_in_kb": 32, "roles_update_interval_in_ms": -2}
+
+
+@pytest.mark.parametrize("line, var", [
+    # Cassandra converts -1 (these names: any negative number) and no value to null: the variable unset
+    ("roles_update_interval_in_ms: -1", "cassandra_roles_update_interval"),
+    ("sstable_preemptive_open_interval_in_mb: -5", "cassandra_sstable_preemptive_open_interval"),
+    ("index_summary_resize_interval_in_minutes: -1", "cassandra_index_summary_resize_interval"),
+    ("key_cache_size_in_mb:", "cassandra_key_cache_size"),
+])
+def test_former_name_cassandra_reads_as_null_is_the_variable_unset(line, var):
+    files = node_files("50x")
+    files["cassandra.yaml"] = re.sub(r"(?m)^%s:.*$" % var[len("cassandra_"):], "", files["cassandra.yaml"]) + line + "\n"
+    out = cassandra_config_import(files, "50x", FACTS, release="5.0.9")
+    assert out["vars"].get("cassandra_extra_settings", {}) == {}
+    assert out["vars"].get(var, "") == ""
 
 
 def test_unsupported_series():

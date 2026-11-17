@@ -1310,8 +1310,22 @@ A ``cassandra.yaml`` setting with a variable is read into it wherever the node h
 commented out in stock (``disk_access_mode``, the memtable, streaming, auth cache, guardrail and GC log settings,
 ``native_transport_max_frame_size``, ``auto_snapshot_ttl``, ``streaming_stats_enabled``, ``cdc_raw_directory``, 5.0's
 ``heap_dump_path`` and ``sstable.selected_format``); only the others go to ``cassandra_extra_settings``. A 4.1 or 5.0
-node may still write a key under its 4.0 name (``native_transport_max_frame_size_in_mb: 32``): it is read into the
-variable of the new name, converted (``32MiB``). ``auto_snapshot_ttl`` and ``streaming_stats_enabled`` are 4.1 keys
+node may still write a key under its 4.0 name (``native_transport_max_frame_size_in_mb: 32``, a ``cassandra.yaml``
+the package kept on upgrade): it is read into the variable of the new name, converted as Cassandra does (``32MiB``;
+``read_request_timeout_in_ms: 7000`` as ``7000ms``, ``max_hint_window_in_ms`` as ``3h``, ``tracetype_query_ttl`` in
+seconds, ``enable_materialized_views`` as ``cassandra_materialized_views_enabled``, the 4.0 ``server_encryption_options``
+sub-key ``enable_legacy_ssl_storage_port`` as ``cassandra_legacy_ssl_storage_port_enabled``); no value
+(``key_cache_size_in_mb:``), and -1 where Cassandra reads it as none (the auth caches' ``*_update_interval_in_ms``,
+``index_summary_resize_interval_in_minutes``, any negative ``sstable_preemptive_open_interval_in_mb``), as the
+variable unset. ``cassandra_config`` refuses a 4.0 name in ``cassandra_extra_settings`` next to the key the template
+writes (Cassandra refuses both). A 4.0 file's sections indented by four spaces are read as the role's. A key the
+stock file of a later series added, which Cassandra reads the same when it is absent (4.1's
+``auto_hints_cleanup_enabled: false``, ``uuid_sstable_identifiers_enabled: false``,
+``compaction_tombstone_warning_threshold: 100000``; 5.0's ``cidr_authorizer``, ``memtable``,
+``commitlog_disk_access_mode: legacy``, ``storage_compatibility_mode: CASSANDRA_4``), is no difference when the node's
+file lacks it: the role writes it, the report says so. Not 5.0's ``crypto_provider``: without it, 5.0 installs no
+provider (the JRE's), while the stock line installs Amazon Corretto's; that node stops the self-check
+(``import_keep_hand_edits`` keeps its file). ``auto_snapshot_ttl`` and ``streaming_stats_enabled`` are 4.1 keys
 (``streaming_stats_enabled`` from 4.1.1), unknown to 4.0. A size, rate or duration of these settings is written in one unit, the stock comment's when the amount is
 whole in it (``209715200B/s`` as ``200MiB/s``, ``2s`` as ``2000ms``), so that nodes that write it differently share
 one value; ``cassandra_config`` takes the same amount in another unit as the same setting and leaves such a file as

@@ -68,8 +68,10 @@ from ansible.plugins.filter.core import regex_replace
 from ansible_collections.community.cassandra.plugins.filter.cassandra_repository_import import SERIES_TOKEN
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
-    DEFAULT_WHEN_ABSENT, JVM_UNLOCK, LATER_STOCK, NOT_COMPARED, QUANTITY_KEYS, canonical_quantity, former_keys, former_names,
-    former_value, jvm_options_settings, quantity, without_later_stock, same_settings, shell_words, xml_settings, yaml_rejected)
+    DEFAULT_WHEN_ABSENT, FORMER_SUB_KEYS, JVM_UNLOCK, LATER_STOCK, NOT_COMPARED, QUANTITY_KEYS, STOCK_WHEN_ABSENT,
+    canonical_quantity,
+    former_keys, former_names, former_value, jvm_options_settings, quantity, stock_when_absent, without_later_stock,
+    same_settings, shell_words, xml_settings, yaml_rejected, yaml_settings)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_prometheus as prometheus
@@ -847,6 +849,60 @@ def _canonical_shell(rendered, live):
     return out
 
 
+def _indents(lines, indexes):
+    """The indents of a block's setting lines (comments and blank lines aside), in order, each once."""
+    out = []
+    for i in indexes[1:]:
+        line = lines[i]
+        indent = len(line) - len(line.lstrip(" "))
+        if line.strip() and not line.lstrip().startswith("#") and indent not in out:
+            out.append(indent)
+    return sorted(out)
+
+
+def _reindented(rendered, live):
+    """The node's cassandra.yaml lines, each section indented as the role's (4.0's stock file indents by 4, 4.1's by
+    2: a 4.0 file on a later release) when it has as many levels, and reads the same with them (YAML) -> lines."""
+    role = dict((key, _indents(rendered, indexes)) for key, indexes in _top_blocks(rendered))
+    live = list(live)
+    for key, indexes in _top_blocks(live):
+        mine = _indents(live, indexes)
+        if key not in role or not mine or mine == role[key] or len(mine) != len(role[key]):
+            continue
+        levels = dict(zip(mine, role[key]))
+        block = []
+        for i in indexes:
+            line = live[i]
+            indent = len(line) - len(line.lstrip(" "))
+            block.append(" " * levels[indent] + line.lstrip(" ") if i != indexes[0] and indent in levels else line)
+        try:
+            same = yaml.safe_load("\n".join(live[i] for i in indexes)) == yaml.safe_load("\n".join(block))
+        except yaml.YAMLError:
+            same = False
+        if same:
+            for i, line in zip(indexes, block):
+                live[i] = line
+    return live
+
+
+def _former_sub_keys_renamed(rendered, live):
+    """The node's cassandra.yaml lines, a section's sub-key under its former name (FORMER_SUB_KEYS: 4.0's) under the
+    name the role's section writes it (Cassandra reads either), the section having no line of that name -> (lines,
+    notes)."""
+    role = dict((key, [rendered[i] for i in indexes]) for key, indexes in _top_blocks(rendered))
+    live, notes = list(live), []
+    for key, indexes in _top_blocks(live):
+        for old, new in FORMER_SUB_KEYS.get(key, {}).items():
+            written = re.compile(r"^\s+%s:" % new)
+            at = [i for i in indexes if re.match(r"^\s+%s:" % old, live[i])]
+            if len(at) == 1 and any(written.match(r) for r in role.get(key, [])) \
+                    and not any(written.match(live[i]) for i in indexes):
+                line = live[at[0]]
+                live[at[0]] = line.replace(old + ":", new + ":", 1)
+                notes.append("cassandra.yaml: %s: %s  (node: %s)" % (key, live[at[0]].strip(), _mask(line.strip())))
+    return live, notes
+
+
 def _canonical(name, rendered, live):
     """The node's lines, each simple setting written the way the role writes
     that setting (its quoting, no comment after it, true/false in lower case),
@@ -855,6 +911,7 @@ def _canonical(name, rendered, live):
     (as for Cassandra), the others are commented out."""
     if name.endswith(".yaml"):
         styles, bools = _yaml_styles(rendered)
+        live = _former_sub_keys_renamed(rendered, _reindented(rendered, live))[0]
         return _last_key_counts([_canonical_yaml_line(line, styles, bools) for line in live])
     if name.endswith(".sh"):
         return _canonical_shell(rendered, live)
@@ -1164,7 +1221,7 @@ def _without_former_names(rendered, live):
             role_value = (yaml.safe_load(rendered[role[new]]) or {}).get(new)
         except (yaml.YAMLError, AttributeError):
             continue
-        if value is not None and (str(value) == str(role_value) or
+        if value is not None and (str(value) == str(role_value) or value == "" and role_value is None or
                                   quantity(value) is not None and quantity(value) == quantity(role_value)):
             drop_rendered.add(role[new])
             drop_live.add(node[old])
@@ -1351,13 +1408,37 @@ def _without_same_sub_keys(rendered, live):
             [n for i, n in enumerate(live) if i not in drop_live], notes)
 
 
+def _without_stock_when_absent(rendered, live):
+    """The role's lines minus its block of each key of STOCK_WHEN_ABSENT the node's file has no line for, when the role
+    sets it at the value Cassandra takes without it (the stock line of a later series), a note for each."""
+    in_live = set(key for key, dummy in _top_blocks(live))
+    drop, notes = set(), []
+    for key, indexes in _top_blocks(rendered):
+        if key in STOCK_WHEN_ABSENT and key not in in_live:
+            try:
+                same = stock_when_absent(key, yaml_settings("\n".join(rendered[i] for i in indexes)))
+            except yaml.YAMLError:
+                same = False
+            if same:
+                drop.update(indexes)
+                notes.append("cassandra.yaml: %s: not in the node's file, which Cassandra reads as the role's %s"
+                             " (the role writes it)" % (key, rendered[indexes[0]].strip() if len(indexes) == 1
+                                                        else "stock section"))
+    return [r for i, r in enumerate(rendered) if i not in drop], live, notes
+
+
 def _yaml_compared(series, rendered, live, extras, rejected):
     """cassandra.yaml's lines to compare: without the settings the stock file has no line for, the keys under their
-    former names, the extra settings and the keys rejected (masked first) -> (rendered, live, normalized: notes)."""
+    former names, the keys of a later series' stock file Cassandra reads the same without, the extra settings and the
+    keys rejected (masked first) -> (rendered, live, normalized: notes)."""
     normalized = []
     rendered, live, notes = _without_declared(series, rendered, live)
     normalized += notes
+    rendered, live, notes = _without_stock_when_absent(rendered, live)
+    normalized += notes
     rendered, live, notes = _without_former_names(rendered, live)
+    normalized += notes
+    live, notes = _former_sub_keys_renamed(rendered, live)
     normalized += notes
     rendered, live, notes = _without_same_logger(rendered, live)
     normalized += notes

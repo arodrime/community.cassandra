@@ -105,7 +105,7 @@ def test_extra_settings_refuse_the_keys_with_a_variable(version, key):
     passed, msg = run("Refuse extra settings the template already has", version, cassandra_extra_settings={key: "x"})
     assert passed is False
     assert msg.startswith("cassandra_extra_settings: %s (cassandra_" % key)
-    assert msg.endswith(") already in cassandra.yaml, or the former name of a key whose variable is set (Cassandra"
+    assert msg.endswith(") already in cassandra.yaml, or the former name of a key the template writes (Cassandra"
                         " refuses both names): set them with their variable")
 
 
@@ -150,6 +150,26 @@ def test_former_names_of_the_partition_size_guardrail_are_refused_on_50(key):
     passed, msg = run("Refuse extra settings the template already has", cassandra_partition_size_warn_threshold="100MiB",
                       **changes)
     assert passed is False and msg.startswith("cassandra_extra_settings: %s (cassandra_partition_size_warn_threshold)" % key)
+
+
+@pytest.mark.parametrize("version", ["41x", "50x"])
+@pytest.mark.parametrize("key, var", [("read_request_timeout_in_ms", "cassandra_read_request_timeout"),
+                                      ("enable_materialized_views", "cassandra_materialized_views_enabled"),
+                                      ("tracetype_query_ttl", "cassandra_trace_type_query_ttl"),
+                                      # (unset: the template still writes "key_cache_size:", with no value)
+                                      ("key_cache_size_in_mb", "cassandra_key_cache_size"),
+                                      ("index_summary_capacity_in_mb", "cassandra_index_summary_capacity")])
+def test_former_names_of_keys_the_template_always_writes_are_refused(version, key, var):
+    passed, msg = run("Refuse extra settings the template already has", version, cassandra_extra_settings={key: 1})
+    assert passed is False and msg.startswith("cassandra_extra_settings: %s (%s) already" % (key, var))
+    # 4.0: its own key, which the 4.0 template writes
+    assert run("Refuse extra settings the template already has", "40x", cassandra_extra_settings={key: 1})[0] is False
+
+
+def test_a_former_name_the_template_leaves_commented_out_stays_allowed():
+    # file_cache_size: commented out while its variable is unset, so its 4.0 name alone is the one key
+    assert run("Refuse extra settings the template already has", "50x",
+               cassandra_extra_settings={"file_cache_size_in_mb": 512})[0] is True
 
 
 @pytest.mark.parametrize("version, value, ok", [("50x", "legacy", True), ("41x", "legacy", False), ("50x", "direct", False),

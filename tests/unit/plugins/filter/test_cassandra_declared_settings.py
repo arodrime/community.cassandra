@@ -181,7 +181,10 @@ def test_declared_tail_renders_nothing_at_the_defaults(series):
     ("auto_snapshot_ttl", "1440m", "1d"),
     ("auto_snapshot_ttl", "36h", "36h"),  # not whole in days: as it is
     ("roles_update_interval", "2000", "2000"),  # no unit: not one Cassandra 4.1+ reads, as it is
-    ("compaction_throughput", "67108864B/s", "67108864B/s"),  # not one of these settings
+    ("max_value_size", "268435456B", "268435456B"),  # not one of these settings
+    ("compaction_throughput", "67108864B/s", "64MiB/s"),  # (4.0's compaction_throughput_mb_per_sec: 64)
+    ("max_hint_window", "10800000ms", "3h"),
+    ("trace_type_query_ttl", "86400s", "1d"),
 ])
 def test_canonical_unit(key, node, written):
     assert canonical_quantity(key, node) == written
