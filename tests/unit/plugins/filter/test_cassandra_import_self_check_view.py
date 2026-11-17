@@ -193,7 +193,7 @@ def test_the_stop_golden():
         "  To pass:",
         "    keep logback.xml as these nodes have it",
         "      -e import_keep_hand_edits=logback.xml",
-        "    take the change (apply_config writes it)",
+        "    take the change (apply_config writes it; its plan says what restarts)",
         "      -e import_strict=false",
         "      then review it before applying:",
         "        ansible-playbook community.cassandra.apply_config \\",

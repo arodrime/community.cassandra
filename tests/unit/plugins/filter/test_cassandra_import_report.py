@@ -727,7 +727,7 @@ def test_self_check_stop_golden():
         "  To pass:",
         "    keep cassandra-env.sh, jvm17-server.options as these nodes have them",
         "      -e import_keep_hand_edits=cassandra-env.sh,jvm17-server.options",
-        "    take the change (apply_config writes it)",
+        "    take the change (apply_config writes it; its plan says what restarts)",
         "      -e import_strict=false",
         "",
         "  1 setting: a file of yours gives another value: apply_config would write it.",
@@ -740,7 +740,7 @@ def test_self_check_stop_golden():
         "  To pass:",
         "    in host_vars/node3/local.yml: cassandra_concurrent_reads: 64, or remove that line, then import",
         "      again",
-        "    take the change (apply_config writes it)",
+        "    take the change (apply_config writes it; its plan says what restarts)",
         "      -e import_strict=false",
         "",
         "  4 other differences that the import does not explain:",
@@ -765,7 +765,7 @@ def test_self_check_stop_golden():
         "",
         "  To pass:",
         "    change these nodes as the inventory has them, then import again",
-        "    take the change (apply_config writes it)                         -e import_strict=false",
+        "    take the change (apply_config writes it; its plan says what restarts)  -e import_strict=false",
         "      then review it before applying:",
         "        ansible-playbook community.cassandra.apply_config -e cassandra_hosts=my_cluster --check \\",
         "            --diff",
@@ -822,9 +822,11 @@ def test_self_check_stop_hand_edits_only():
                          "  logback.xml    all - node3", "    x", "      Node     present (level DEBUG)",
                          "      Ansible  absent", ""]
     assert "  --check: the inventory not written" in lines
-    assert [line.strip().split("  ", maxsplit=1)[0] for line in lines if line.startswith("    ") and "-e " in line
-            and "ansible-playbook" not in line] == [
-        "keep logback.xml as these nodes have it", "take the change (apply_config writes it)"]
+    # (each way out too long for its option beside it: the option on the line under it)
+    at = lines.index("  To pass:")
+    assert lines[at + 1:at + 5] == ["    keep logback.xml as these nodes have it", "      -e import_keep_hand_edits=logback.xml",
+                                    "    take the change (apply_config writes it; its plan says what restarts)",
+                                    "      -e import_strict=false"]
 
 
 def test_self_check_stop_kept_files_are_not_hand_edits():
@@ -869,6 +871,10 @@ def test_self_check_stop_could_not_run_or_not_read():
                          ' nodes']
     assert "    see the error (it may show passwords), fix it, then import again  -e import_debug=true" in lines
     assert "  1 node not read, so not checked: node2 (unreachable)." in lines
+    # (review 4) no reason recorded: none guessed
+    unread = node(2, read=False)
+    unread.pop("reason")
+    assert "  1 node not read, so not checked: node2 (reason not recorded)." in stop([node(1), unread], {}, error=error)
     assert "import_strict" not in "\n".join(lines) and "Evidence" not in "\n".join(lines)
     # the nodes not read accepted: not said
     lines = stop(nodes, {}, allow_unread=True, error=error)

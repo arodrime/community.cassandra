@@ -523,7 +523,7 @@ _OS_PARTS = ((("time sync", "chrony"), "timesync"),
 SCREEN_MOST = 100  # the stop's lines at most (the ops callback's rules)
 SELF_CHECK_WIDTH = 100  # the report's SELF-CHECK section
 VALUE_LABELS = ("Node", "Ansible")  # each side's value, in a column
-_TAKE = ("take the change (apply_config writes it)", "-e import_strict=false")
+_TAKE = ("take the change (apply_config writes it; its plan says what restarts)", "-e import_strict=false")
 
 
 def _hand_files(read):
@@ -825,7 +825,7 @@ def _self_check_lines(layout, self_check, who, width, report_file="", error="", 
         rows = [("start Cassandra or fix the access there, then import again", "")]
         if read:
             rows.append(("accept %s unchecked" % ("it" if len(unread) == 1 else "them"), "-e import_allow_unread=true"))
-        names = ", ".join("%s (%s)" % (n["name"], n.get("reason") or "unreachable") for n in unread)
+        names = ", ".join("%s (%s)" % (n["name"], n.get("reason") or "reason not recorded") for n in unread)
         said = "%s not read, so not checked: %s." % (out.plural(len(unread), "node"), names)
         blocks.append(fill_text(said, width, "  ", "  ") + [""] + _ways_out(rows, width))
     if not blocks:
@@ -991,7 +991,7 @@ def _todo_steps(report, allow_unread, self_check_ok, self_check_error, check_ite
             "Let the import read %s, then import again" % _who(report, names),
             "the import could not read %s (%s): the inventory has no settings of %s, and a playbook run on %s would"
             " give %s the cluster's settings, not %s own. Start Cassandra there, or fix how Ansible reaches %s" % (
-                them, "; ".join("%s: %s" % (n["name"], n.get("reason") or "unreachable") for n in report.unread),
+                them, "; ".join("%s: %s" % (n["name"], n.get("reason") or "reason not recorded") for n in report.unread),
                 them, them, them, "its" if len(names) == 1 else "their", them),
             again,
             "the head of the new report says every node was read (to import without %s instead, add %s)" % (
@@ -1598,7 +1598,7 @@ def _review_blocks(report, data, differs, allow_unread, look=None, below=False):
     blocks.append((DIFFERS, len(differs), _differs_entries(report, differs)))
     if report.unread and allow_unread:
         blocks.append((UNREAD, len(report.unread), _entry(
-            report, ", ".join("%s (%s)" % (n["name"], n.get("reason") or "unreachable") for n in report.unread),
+            report, ", ".join("%s (%s)" % (n["name"], n.get("reason") or "reason not recorded") for n in report.unread),
             None, "to have them in the inventory: start Cassandra there (or fix the access), then import again")))
     return [(kind, n, lines) for kind, n, lines in blocks if lines and n]
 
