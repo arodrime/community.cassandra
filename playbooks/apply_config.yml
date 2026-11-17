@@ -395,7 +395,8 @@
           {{ _files | reject('in', _as_started) | list | community.cassandra.cassandra_apply_config_no_effect(
                live, _cassandra_config_new | default({}), _jvm_read.cmdline | default('') | b64decode,
                cassandra_version | default(''), _jvm_read.java | default(''), env,
-               cassandra_config_newer_files | default([]) + cassandra_config_unknown_files | default([]))
+               cassandra_config_newer_files | default([]) + cassandra_config_unknown_files | default([]),
+               ansible_facts | default({}))
              if _jvm_read.cmdline | default('') and _running | bool and not _cassandra_apply_config_conf_switch | bool
              else [] }}
         _proven: "{{ _files | reject('in', _as_started) | list if _no_effect else [] }}"

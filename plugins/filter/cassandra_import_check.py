@@ -53,8 +53,8 @@ except ImportError:  # before, any string not marked unsafe
     def trust_as_template(value):
         return value
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    REMOTE_BRANCH_NOTE, REPEATED_NOTE, Unsafe, error_without_message, log_dir_of, logback_as_log_dir, undefined_name,
-    values_hidden)
+    REMOTE_BRANCH_NOTE, REPEATED_NOTE, Unsafe, earlier_env, error_without_message, log_dir_of, logback_as_log_dir,
+    undefined_name, values_hidden)
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
 from ansible_collections.community.cassandra.plugins.filter.cassandra_os import (
     NO_EFFECT, NO_EFFECT_NOTE, cassandra_firewall_changes, cassandra_linux_changes)
@@ -593,7 +593,7 @@ def _self_check(files_data, hosts, name, facts, live, node_environment, storage_
                 errors.append("cassandra.service.d (the environment of the init script): %s: node has %s, the roles"
                               " would set %s" % (key, _env_value(key, node_env.get(key)),
                                                  _env_value(key, role_env.get(key))))
-    running = dict(running or {}, series=str(dict(_defaults(), **variables).get("cassandra_version")))
+    running = dict(running or {}, series=str(dict(_defaults(), **variables).get("cassandra_version")), facts=facts)
     out = _compare_files(rendered, live, node_environment, role_environment, storage_dir, java,
                          release or SERIES.get(str(variables.get("cassandra_version")), ""), running=running)
     if permissions is None:
@@ -923,8 +923,22 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
         notes.append("%s: %s set in the other of the two files Java %s reads (bin/cassandra passes them as one list):"
                      " the same for the JVM" % (", ".join(sorted(moved)), ", ".join(sorted(set(
                          k for keys in moved.values() for k in keys))), java))
+    earlier = earlier_env(series, jvm_live[jvm_args.ENV], jvm_rendered[jvm_args.ENV], (running or {}).get("facts") or {}) \
+        if jvm_args.ENV in jvm_live and jvm_args.ENV in jvm_rendered and by_file.get(jvm_args.ENV) else None
     rewritten, apart = _jvm_rewritten(jvm_rendered, jvm_live, by_file, heap, node_environment, role_environment, java,
-                                      running or {})
+                                      running or {}, earlier["text"] if earlier else None)
+    if earlier and jvm_args.ENV not in rewritten:
+        # one line for the file: the JVM's arguments are what is not shown the same
+        why = "Cassandra not running, or its files changed since it started"
+        if (running or {}).get("cmdline") and not set((running or {}).get("newer") or []) & set(jvm_live):
+            why = jvm_args.cassandra_jvm_args_same(
+                running["cmdline"], jvm_live, dict(dict((f, jvm_live[f]) for f in jvm_live if f not in jvm_rendered),
+                                                   **jvm_rendered),
+                series, java, *_jvm_environments(node_environment, role_environment, running),
+                apart=(), earlier=earlier["text"])[1] or why
+        differences = [d for d in differences if d not in by_file[jvm_args.ENV]] + [
+            "cassandra-env.sh: the stock file of %s.x (kept on upgrade), its values read: %s's not shown to give the"
+            " JVM the same arguments: %s" % (SERIES[earlier["series"]].split(".")[0], SERIES.get(series, series), why)]
     if rewritten:
         # but for the options files' own hand edits, said as they are
         differences = [d for d in differences if not any(d in by_file.get(name, []) for name in rewritten)
@@ -954,7 +968,16 @@ def _options_moved(rendered, live, series, java, by_file):
     return moved
 
 
-def _jvm_rewritten(rendered, live, by_file, heap, node_environment, role_environment, java, running):
+def _jvm_environments(node_environment, role_environment, running):
+    """Each side's environment, the unit's (the roles': theirs, else the node's kept), with what the JVM got from
+    elsewhere for cassandra-env.sh to add, an EnvironmentFile's JVM_EXTRA_OPTS, as apply_config's proof reads it
+    -> (the node's, the roles')."""
+    jvm_env = running.get("environment") or {}
+    return (dict(node_environment or {}, **jvm_env),
+            dict(role_environment if role_environment is not None else node_environment or {}, **jvm_env))
+
+
+def _jvm_rewritten(rendered, live, by_file, heap, node_environment, role_environment, java, running, earlier=None):
     """The JVM's files (cassandra-env.sh, the options files the running Java reads) that differ when the JVM gets
     the same arguments from the roles' ones (the heap is among them), but for the settings the options files'
     own hand edits change -> (files, {setting: its file}); ([], {}) otherwise."""
@@ -967,12 +990,9 @@ def _jvm_rewritten(rendered, live, by_file, heap, node_environment, role_environ
             or not all(f in rendered and f in live for f in group):
         return [], {}
     apart = jvm_args.options_edits(live, rendered, series, java)
-    # (each side's environment, the unit's (the roles': theirs, else the node's kept), with what the JVM got from
-    # elsewhere for cassandra-env.sh to add, an EnvironmentFile's JVM_EXTRA_OPTS, as apply_config's proof reads it)
-    jvm_env = running.get("environment") or {}
     same, dummy = jvm_args.cassandra_jvm_args_same(
-        running["cmdline"], live, rendered, series, java, dict(node_environment or {}, **jvm_env),
-        dict(role_environment if role_environment is not None else node_environment or {}, **jvm_env), apart)
+        running["cmdline"], live, rendered, series, java, *_jvm_environments(node_environment, role_environment, running),
+        apart=apart, earlier=earlier)
     return ((differing or [jvm_args.ENV]), apart) if same else ([], {})
 
 

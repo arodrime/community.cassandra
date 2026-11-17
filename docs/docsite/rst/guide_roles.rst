@@ -1622,6 +1622,15 @@ files ``import_keep_hand_edits`` keeps. An ``-javaagent`` added at the end stays
 get it before the agent ``cassandra-env.sh`` adds). ``apply_config`` then rewrites those files in
 the role's layout (and restarts the nodes): the report says so (``MOVED``). The options the running JVM does not use
 (in the options file of another Java, set again later, ignored by its Java version) are listed under ``CLEANUP``.
+A 5.0 node may still have 4.x's stock ``cassandra-env.sh`` (kept by the package on upgrade, with 5.0's
+``jamm-0.4.0.jar`` line in place of 4.x's, which 5.0 does not start with): its values are read with 4.x's template,
+and ``cassandra_config`` writes 5.0's when the JVM gets the same arguments from it, worked out as above from the
+running JVM's (then ``MOVED``, its own ``JVM_OPTS`` lines moved as above). 5.0's adds what 4.x's leaves to the JVM:
+``-XX:MaxDirectMemorySize`` and, with G1, ``-XX:ParallelGCThreads`` and ``-XX:ConcGCThreads`` when the options do not
+set them, and works the heap out with another formula when ``MAX_HEAP_SIZE`` is not set; any of these makes the
+file one hand edit, with the reason (set them in the options, ``cassandra_heap_size``, or keep the file with
+``import_keep_hand_edits``). 5.0's always sets ``-XX:HeapDumpPath`` (``cassandra_heap_dump_dir``, the log dir by
+default), 4.x's only with ``CASSANDRA_HEAPDUMP_DIR``: said under WORTH A LOOK, not a difference.
 ``logback.xml`` is read as logback reads it: its root level, the ``org.apache.cassandra`` level, ``debug.log`` and the
 console, the stock ``AUDIT`` appender and its logger uncommented (``cassandra_log_audit_file``, written only when it is
 not its default: on with ``FileAuditLogger``) and the dir of its file (``cassandra_log_audit_dir``), the dirs of ``system.log`` and ``debug.log``

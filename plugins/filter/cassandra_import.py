@@ -620,6 +620,52 @@ def _import_file(env, series, name, ctx, live):
     return found
 
 
+# The earlier series whose stock cassandra-env.sh a node of a series may still have (the package keeps a changed file
+# on upgrade): their stock code differs as cassandra_jvm_args models it (a test checks it on the stock files). 4.0's
+# is 4.1's
+EARLIER_ENV = {"50x": ("41x",)}
+# a line of the later series a node may have put in the earlier file (5.0's jamm agent: 4.x's does not start 5.0)
+LATER_ENV_LINE = re.compile(r'^JVM_OPTS="\$JVM_OPTS ')
+
+
+def earlier_env(series, live, role, facts):
+    """The node's cassandra-env.sh (live: its text) as an earlier series' stock file (EARLIER_ENV), its lines added
+    to JVM_OPTS or setting the heap aside (cassandra_jvm_args.env_differences): {series: that one, found: its
+    variables, read by that series' template (but at that series' defaults), text: that file rendered with them, a
+    JVM_OPTS line outside any block taken from the later series' (role: the role's rendering) in place of its own}.
+    None when it is not one."""
+    for old in EARLIER_ENV.get(series, ()):
+        env, ctx, dummy = _load_role(old, facts)
+        found = _import_file(env, old, jvm_args.ENV, ctx, live.split("\n"))
+        found = dict((k, v) for k, v in found.items() if not _same_value(v, _default(ctx, k)))
+        lines = _render(env, old, jvm_args.ENV, dict(ctx, **found))[1]
+        node, later = live.split("\n"), set(line.strip() for line in role.split("\n"))
+        matcher = difflib.SequenceMatcher(None, [x.strip() for x in lines], [x.strip() for x in node], autojunk=False)
+        for op, i1, i2, j1, j2 in matcher.get_opcodes():
+            if op == "replace" and i2 - i1 == 1 and j2 - j1 == 1 and node[j1].strip() in later \
+                    and lines[i1].strip() not in later and LATER_ENV_LINE.match(lines[i1]) and LATER_ENV_LINE.match(node[j1]):
+                lines[i1] = node[j1]
+        text = "\n".join(lines)
+        try:
+            jvm_args.env_differences(jvm_args.env_lines(live), jvm_args.env_lines(text))
+        except jvm_args.NotSame:
+            continue
+        return {"series": old, "found": found, "text": text}
+    return None
+
+
+def _without_file_hunks(hand, name):
+    """Hand edits (_difference_lines') without the ones of the file name."""
+    out, mine = [], False
+    for line in hand:
+        header = re.match(r"^(\S.*), line \d+:$", line)
+        if header:
+            mine = header.group(1) == name
+        if not mine:
+            out.append(line)
+    return out
+
+
 # cassandra-env.sh's lines of a variable a node may have switched on at another place than the stock one (below the
 # stock comment, at the end) outside any block, or in the remote JMX branch: bash runs them as well there
 ELSEWHERE = ("-Djava.rmi.server.hostname=",)
@@ -2141,10 +2187,14 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     else:
         log_dir_note = []
     found, from_shell = {}, set()
+    where[0] = "cassandra-env.sh"
+    earlier = earlier_env(cassandra_version, live_files[jvm_args.ENV], "\n".join(
+        _render(env, cassandra_version, jvm_args.ENV, ctx)[1]), facts) if jvm_args.ENV in live_files else None
     for name in files:  # (in _config_import itself: an error raised below it, outside these files, names this function)
         if name in live_files:
             where[0] = name
-            got = _import_file(env, cassandra_version, name, ctx, live_files[name].split("\n"))
+            got = earlier["found"] if earlier and name == jvm_args.ENV else \
+                _import_file(env, cassandra_version, name, ctx, live_files[name].split("\n"))
             _merge(found, got)
             if name.endswith(".sh"):
                 from_shell.update(got)
@@ -2210,7 +2260,8 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     if "cassandra.yaml" in live_files and render_dirs:
         render["cassandra_data_file_directories"] = render_dirs
     where[0] = "the JVM options"
-    moved = _jvm_moves(env, cassandra_version, files, ctx, render, live_files, dict(running, jaas=jmx_files["jaas"]))
+    moved = _jvm_moves(env, cassandra_version, files, ctx, render, live_files, dict(running, jaas=jmx_files["jaas"]),
+                       earlier["text"] if earlier else None)
     for key, value in moved["vars"].items():
         render[key] = value
         if _same_value(value, _default(ctx, key)):
@@ -2222,10 +2273,28 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     hand, normalized, comments = _leftovers(env, cassandra_version, files, render, live_files, rejected,
                                             moved["shown"], HEAP_OPTIONS if moved["shown"] else (),
                                             running.get("environment"), running.get("cmdline"))
+    if earlier:
+        old = SERIES[earlier["series"]].split(".")[0] + ".x"
+        if jvm_args.ENV in moved["shown"]:
+            normalized.append("cassandra-env.sh: the stock file of %s (kept on upgrade), its values read: cassandra_config"
+                              " writes %s's, which gives the JVM the same arguments (worked out from the running JVM's)"
+                              % (old, SERIES[cassandra_version]))
+            if "-XX:HeapDumpPath=" not in cmdline:
+                jvm_warnings.append("-XX:HeapDumpPath (cassandra-env.sh): added by apply_config: %s's sets it always, in"
+                                    " %s (cassandra_heap_dump_dir), %s's only with CASSANDRA_HEAPDUMP_DIR; missing because"
+                                    " this file predates it" % (SERIES[cassandra_version],
+                                                                render.get("cassandra_heap_dump_dir"), old))
+        else:
+            # one line for the file: its values are read, the JVM's arguments are what is not shown the same
+            hand = _without_file_hunks(hand, jvm_args.ENV) + [
+                "cassandra-env.sh: the stock file of %s (kept on upgrade), its values read; %s's not shown to give the"
+                " JVM the same arguments: %s" % (old, SERIES[cassandra_version], moved["not_moved"] or (
+                    "Cassandra not running, or its files changed since it started" if not cmdline else "not worked out"))]
+            moved["not_moved"] = ""
     normalized += log_dir_note + heap_dump_note
     normalized += ["%s: %s %s" % (f, "/".join(options), HEAP_MOVED) for f, options in sorted(heap_moved.items())
                    if f != jvm_args.COMMON]
-    if jvm_args.ENV in moved["rewritten"] and not moved["moved"]:  # its lines at other places only: the same JVM
+    if jvm_args.ENV in moved["rewritten"] and not moved["moved"] and not earlier:  # its lines at other places only
         normalized.append("cassandra-env.sh: lines at another place than the role writes them (e.g. in the remote JMX"
                           " branch): the same arguments for the JVM (worked out from the running JVM's), no effect")
     changed.update(exporter["vars"])
@@ -2656,12 +2725,12 @@ def _exporter_rewritten(env, series, render, exporter, live):
     return out_files
 
 
-def _jvm_moves(env, series, files, ctx, render, live_files, running):
+def _jvm_moves(env, series, files, ctx, render, live_files, running, earlier=None):
     """cassandra-env.sh's hand edits moved to variables when the JVM gets the same arguments from the role's files
     (cassandra_jvm_args), and the options it does not use -> {vars, moved, rewritten: the JVM's files the role
     rewrites then, cleanup, shown: the JVM's files shown to give the same arguments (left out of the hand edits),
     not_moved: why not, '' if moved or nothing to say}; running: cassandra_config_import's, jaas: what says JMX
-    authenticates by JAAS."""
+    authenticates by JAAS; earlier: the earlier series' stock cassandra-env.sh the node's is (earlier_env's text)."""
     dep = jvm_args.options_file(series, running.get("java"))
     if dep is None:  # the running Java not known (Cassandra not running): nothing worked out
         return {"vars": {}, "moved": [], "rewritten": [], "cleanup": [], "shown": [], "not_moved": ""}
@@ -2685,7 +2754,8 @@ def _jvm_moves(env, series, files, ctx, render, live_files, running):
     adopted = None
     if cmdline and dep in files:
         adopted = jvm_args.cassandra_jvm_args_adopt(
-            cmdline, live_files, rendered, render, series, running.get("java"), running.get("environment") or {})
+            cmdline, live_files, rendered, render, series, running.get("java"), running.get("environment") or {},
+            earlier)
     why = (adopted or {}).get("why", "")
     adopted = adopted if adopted and "vars" in adopted else None
     found = adopted["vars"] if adopted else {}

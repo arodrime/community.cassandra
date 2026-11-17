@@ -18,6 +18,13 @@ files and the role's is applied to them:
   assignments (MAX_HEAP_SIZE, HEAP_NEWSIZE, MAX_DIRECT_MEMORY_SIZE). The
   options it adds itself depend on what it finds in JVM_OPTS (grep) and on
   the heap: worked out for both files as its stock code does.
+- or the node's is an earlier series' stock file (4.x's on 5.0: earlier, its
+  rendering), which it may differ from as above: what each file's stock code
+  adds is worked out from its own greps (5.0's adds MaxDirectMemorySize and,
+  with G1, the GC threads; 4.x's neither), never a heap worked out on the node
+  (their formulas differ), the GC log the same on Java 11+; 5.0's
+  -XX:HeapDumpPath, which 4.x's adds only with CASSANDRA_HEAPDUMP_DIR, is not
+  compared (EARLIER_APART: the import says it).
 Then the JVM must get every option with the same value: the last one of a
 name counts (-Xmx and -XX:MaxHeapSize are one), the ones that add up in the
 same order, and the -XX ones still after the option unlocking them.
@@ -63,6 +70,8 @@ OPENERS = ("if", "case", "for", "while", "until", "select", "{")
 CLOSERS = ("fi", "esac", "done", "}")
 # what cassandra-env.sh works out on the node itself
 CALC, CORES = "(calculated)", "(cpu cores)"
+# what an earlier series' stock cassandra-env.sh gives otherwise than the later one's, by design: not compared
+EARLIER_APART = ("HeapDumpPath",)
 STOCK_TEXT = {"-Xms": "-Xms%s", "-Xmx": "-Xmx%s", "-Xmn": "-Xmn%s", "MaxDirectMemorySize": "-XX:MaxDirectMemorySize=%s",
               "ParallelGCThreads": "-XX:ParallelGCThreads=%s", "ConcGCThreads": "-XX:ConcGCThreads=%s"}
 # HotSpot options the running Java ignores or no longer needs: name -> (from Java, why)
@@ -626,9 +635,11 @@ def differences(before, after):
     return sorted(names)
 
 
-def _analyse(args, live, role, series, java, node_env):
+def _analyse(args, live, role, series, java, node_env, earlier=None):
     """The node's side (see the module): where its options files' words are in its arguments, its JVM_OPTS lines
-    in cassandra-env.sh and where their options are, what cassandra-env.sh finds in JVM_OPTS, the heap it gets."""
+    in cassandra-env.sh and where their options are, what cassandra-env.sh finds in JVM_OPTS, the heap it gets.
+    earlier: the stock cassandra-env.sh of an earlier series the node's is (rendered with its values), its lines
+    added and heap told from that one's."""
     end = len(args) - 1 - args[::-1].index(MAIN_CLASS)
     words = _files_words(live, series, java)
     start = _find(args[:end], [w for w, dummy, dummy2 in words])
@@ -636,7 +647,9 @@ def _analyse(args, live, role, series, java, node_env):
     if ENV not in live or ENV not in role:
         raise NotSame("cassandra-env.sh not read")
     live_lines, role_lines = env_lines(live[ENV]), env_lines(role[ENV])
-    added, heap_lines, moved = env_differences(live_lines, role_lines)
+    if earlier is not None and int(str(java or 0)) < 11:
+        raise NotSame("an earlier series' cassandra-env.sh is compared on Java 11+ only")
+    added, heap_lines, moved = env_differences(live_lines, role_lines if earlier is None else env_lines(earlier))
     # options the unit gives cassandra-env.sh to add (JVM_EXTRA_OPTS, MX4J_*): a line moved to the options files
     # would go before them, and an option of another spelling among them (-Xint and -Xmixed, -Xrs and
     # -XX:-ReduceSignalUsage, -verbose:gc and -Xlog...) would win instead
@@ -677,16 +690,17 @@ def _analyse(args, live, role, series, java, node_env):
             "live_heap": live_heap, "dead": dead}
 
 
-def _launch(cmdline, live, role, series, java, node_env, role_env):
+def _launch(cmdline, live, role, series, java, node_env, role_env, earlier=None):
     """The arguments the JVM would get from the role's files (see the module): (the running JVM's arguments, the
     ones it would get); NotSame when that cannot be shown."""
     args = _arguments(cmdline)
-    info = _analyse(args, live, role, series, java, node_env)
+    info = _analyse(args, live, role, series, java, node_env, earlier)
     end, start, after_files, before = info["end"], info["start"], info["after_files"], info["greps"]
     role_words = [w for w, dummy, dummy2 in _files_words(role, series, java)]
     hand = set(i for line in info["added"] for i in range(line["at"], line["at"] + len(line["options"])))
-    role_greps = _greps(info["role_lines"])  # the node's (env_differences: no grep line differs)
-    now = dict((p, p in " ".join(args[1:start] + role_words)) for dummy, p in role_greps)
+    # the node's (env_differences: no grep line differs), but for an earlier series' file (its own, some others)
+    patterns = set(p for dummy, p in _greps(info["role_lines"])) | set(before)
+    now = dict((p, p in " ".join(args[1:start] + role_words)) for p in patterns)
     if any(before[p] != now[p] for p in GC_GREPS if p in before):
         raise NotSame("cassandra-env.sh would find another GC in the options")
     role_heap, dummy = heap_values(info["role_lines"], role_env)
@@ -696,6 +710,8 @@ def _launch(cmdline, live, role, series, java, node_env, role_env):
     if role_stock is None:
         raise NotSame("cassandra-env.sh would stop: the heap set without its pair (MAX_HEAP_SIZE and HEAP_NEWSIZE,"
                       " -Xmx and -Xms) or -Xmn with G1")
+    if earlier is not None and CALC in [s.get(k) for s in (live_stock, role_stock) for k in ("-Xms", "-Xmx", "-Xmn")]:
+        raise NotSame("the heap is worked out on the node, by another formula in the earlier series' cassandra-env.sh")
     rest = dict((i, args[i]) for i in range(after_files, end) if i not in hand)
     first = []  # options cassandra-env.sh would add that it does not add now
     for name in sorted(set(live_stock) | set(role_stock)):
@@ -743,18 +759,20 @@ def env_differs(node_env, role_env):
     return [name for name in JVM_ENV if text(node_env, name) != text(role_env, name)]
 
 
-def cassandra_jvm_args_same(cmdline, live, role, series, java, node_env=None, role_env=None, apart=()):
+def cassandra_jvm_args_same(cmdline, live, role, series, java, node_env=None, role_env=None, apart=(), earlier=None):
     """Whether the role's files (role: {file: text}) give the JVM the same arguments as the node's (live) did
     (cmdline: its /proc/<pid>/cmdline; node_env, role_env: the environment the unit gives Cassandra now, and with
-    the roles; apart: the names of the settings that differ by hand edits of the options files, not counted)
+    the roles; apart: the names of the settings that differ by hand edits of the options files, not counted;
+    earlier: the earlier series' stock cassandra-env.sh the node's is, rendered, EARLIER_APART not counted)
     -> (True, '') or (False, why)."""
     differ = env_differs(node_env, role_env)
     if differ:
         return False, "the roles would give cassandra-env.sh other options to add (%s)" % ", ".join(differ)
     try:
-        args, after = _launch(cmdline, live, role, series, java, node_env, role_env)
+        args, after = _launch(cmdline, live, role, series, java, node_env, role_env, earlier)
     except NotSame as exc:
         return False, str(exc)
+    apart = tuple(apart) + (EARLIER_APART if earlier is not None else ())
     if args != after and any(IN_PLACE.match(o) for o in args + after):
         return False, "an option reads a file of options where it is (-XX:VMOptionsFile, -XX:Flags, @file)"
     names = [n for n in differences(args[1:], after[1:]) if n not in apart]
@@ -791,20 +809,20 @@ HEAP_OPTIONS = {"-Xmx": "cassandra_heap_size", "-Xms": "cassandra_heap_size", "-
                 "MaxDirectMemorySize": "cassandra_max_direct_memory_size"}
 
 
-def cassandra_jvm_args_adopt(cmdline, live, render, variables, series, java, node_env=None):
+def cassandra_jvm_args_adopt(cmdline, live, render, variables, series, java, node_env=None, earlier=None):
     """The variables that move the node's hand edits of cassandra-env.sh (its JVM_OPTS lines, its heap set
     elsewhere) to where the role writes them, when the JVM gets the same arguments from the role's files.
     render(variables): {file: text} the role writes; variables: the ones imported so far; node_env: the
     environment the unit gives Cassandra. -> {vars, moved, dropped: report lines, apart: the options files with hand
     edits of their own (said as such, not counted)}; {why: the reason, names only} when there are such edits but the
-    same arguments cannot be shown; None when there are none."""
+    same arguments cannot be shown; None when there are none. earlier: as for cassandra_jvm_args_same."""
     dep = options_file(series, java)
     if not cmdline or dep is None or ENV not in live:
         return None
     role = render(variables)
     try:
         args = _arguments(cmdline)
-        info = _analyse(args, live, role, series, java, node_env)
+        info = _analyse(args, live, role, series, java, node_env, earlier)
         role_heap, dummy = heap_values(info["role_lines"], node_env)
     except NotSame as exc:
         return {"why": str(exc)} if env_has_candidates(live[ENV], role[ENV]) else None
@@ -840,7 +858,7 @@ def cassandra_jvm_args_adopt(cmdline, live, render, variables, series, java, nod
                 continue
             found[extras_var] = list(variables.get(extras_var) or []) + lines
         same, why = cassandra_jvm_args_same(cmdline, live, render(dict(variables, **found)), series, java,
-                                            node_env, node_env, apart)
+                                            node_env, node_env, apart, earlier)
         if same:
             moved = _moved(info, found, options, extras_var)
             # the files are rewritten for cassandra-env.sh's lines: their own extra options set again later are left
@@ -848,7 +866,7 @@ def cassandra_jvm_args_adopt(cmdline, live, render, variables, series, java, nod
             tidy, gone = _without_dead(args, info, variables, found, live, series, java, set(apart.values())) \
                 if info["added"] or info["heap_lines"] else ({}, [])
             if gone and cassandra_jvm_args_same(cmdline, live, render(dict(variables, **dict(found, **tidy))), series,
-                                                java, node_env, node_env, apart)[0]:
+                                                java, node_env, node_env, apart, earlier)[0]:
                 found.update(tidy)
                 dropped += gone
             return {"vars": found, "moved": moved, "dropped": dropped, "apart": sorted(set(apart.values()))}

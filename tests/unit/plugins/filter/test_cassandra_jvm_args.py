@@ -6,6 +6,8 @@ __metaclass__ = type
 # (cassandra.in.sh's reading of the options files, then cassandra-env.sh, as bin/cassandra does), for the node's
 # files and for the role's.
 
+import difflib
+import hashlib
 import os
 import re
 import shutil
@@ -1967,3 +1969,108 @@ def test_options_without_a_name_in_another_order_need_a_restart(tmp_path, a, b):
 def test_the_add_options_in_any_order_are_the_same(a, b):
     assert jvm.differences(a.split(" ") + b.split(" "), b.split(" ") + a.split(" ")) == []
     assert jvm.jvm_options_settings(a + "\n" + b + "\n") == jvm.jvm_options_settings(b + "\n" + a + "\n")
+
+
+# --- a 4.x cassandra-env.sh on 5.0 (kept by the package on upgrade) -------------------------------------------------
+
+def env_4x(heap="", jamm=True):
+    """5.0's files, cassandra-env.sh 4.1's stock one (4.0's is the same), with 5.0's jamm agent (4.x's does not start
+    5.0: the node's is a hybrid), its heap set."""
+    def edit(files):
+        text = seeded(stock("41x"))["cassandra-env.sh"]
+        files["cassandra-env.sh"] = (text.replace("jamm-0.3.2.jar", "jamm-0.4.0.jar") if jamm else text).replace(
+            '#MAX_HEAP_SIZE="4G"', 'MAX_HEAP_SIZE="%s"' % heap if heap else '#MAX_HEAP_SIZE="4G"')
+    return edit
+
+
+# the options 5.0's cassandra-env.sh adds, 4.x's not, set in the options files (the JVM's default otherwise)
+SET_IN_OPTIONS = add_to("jvm17-server.options", "-XX:MaxDirectMemorySize=4G\n-XX:ParallelGCThreads=8")
+
+
+def test_the_code_of_the_stock_4x_and_50_cassandra_env_differs_as_modelled():
+    """cassandra_jvm_args' model of a 4.x stock cassandra-env.sh on 5.0 (EARLIER_ENV): the code lines that differ,
+    a new 5.0.x release changing them must be looked at."""
+    def code(series):
+        return [line.strip() for line in stock(series)["cassandra-env.sh"].split("\n")
+                if line.strip() and not line.strip().startswith("#")]
+    assert stock("40x")["cassandra-env.sh"] == stock("41x")["cassandra-env.sh"]
+    changed = [line for line in difflib.unified_diff(code("41x"), code("50x"), lineterm="", n=0)
+               if line[:1] in "+-" and not line.startswith(("+++", "---"))]
+    assert hashlib.sha256("\n".join(changed).encode()).hexdigest()[:16] == "3c232c911fc559c5", "\n".join(changed)
+
+
+@pytest.mark.parametrize("edits, moved", [
+    ((), []),
+    ((before_extra('JVM_OPTS="$JVM_OPTS -XX:+AlwaysPreTouch"'),),
+     ["cassandra-env.sh line 306: -XX:+AlwaysPreTouch -> cassandra_jvm17_extra_options"]),
+], ids=["stock", "and a line of its own"])
+def test_a_4x_cassandra_env_on_50_giving_the_same_arguments_is_rewritten(tmp_path, edits, moved):
+    files = node_files("50x", both(env_4x("8G"), SET_IN_OPTIONS, *edits))
+    cmdline = launch(files, "17", tmp_path)
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    assert node["hand_edits"] == [] and node["moved"] == moved
+    assert "cassandra-env.sh" in node["rewritten"]
+    assert "cassandra-env.sh: the stock file of 4.x (kept on upgrade), its values read: cassandra_config writes 5.0's," \
+        " which gives the JVM the same arguments (worked out from the running JVM's)" in node["normalized"]
+    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
+    # bash: the same settings, but for 5.0's heap dump path (said under WORTH A LOOK)
+    rendered, variables = role_files(inventory, layout, files)
+    before, after = settings(cmdline), settings(launch(rendered, "17", tmp_path))
+    assert "HeapDumpPath" not in before[0] and after[0].pop("HeapDumpPath").endswith("/cassandra-1700000000-pid0.hprof")
+    assert before == after
+    imported_text = cassandra_config_import(files, "50x", FACTS, jvm={"cmdline": cmdline, "java": "17"})
+    assert any(w.startswith("-XX:HeapDumpPath (cassandra-env.sh): added by apply_config: 5.0's sets it always")
+               for w in imported_text["jvm_warnings"])
+
+
+def test_apply_config_proves_a_4x_cassandra_env_on_50_as_the_import_does(tmp_path):
+    """(rc14 on rc13) the import says the rewrite gives the same arguments, no restart: apply_config's proof reads
+    the node's file as 4.x's too (with its facts), the heap dump path apart as the import says it."""
+    files = node_files("50x", both(env_4x("8G"), SET_IN_OPTIONS))
+    cmdline = launch(files, "17", tmp_path)
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    assert "cassandra-env.sh" in node["rewritten"]
+    rendered, variables = role_files(inventory, layout, files)
+    changed = [f for f in rendered if f in files and rendered[f] != files[f]
+               and not cassandra_same_settings(files[f], rendered[f], f, STORAGE)]
+    assert "cassandra-env.sh" in changed
+    assert cassandra_apply_config_no_effect(changed, files, rendered, cmdline, "50x", "17", {}, [], FACTS)[:1] == [
+        "the same JVM arguments"]
+    assert cassandra_apply_config_no_effect(changed, files, rendered, cmdline, "50x", "17", {}, []) == []  # (no facts)
+
+
+@pytest.mark.parametrize("edits, why", [
+    # 5.0's adds what 4.x's left to the JVM: never hidden
+    ((env_4x("8G"),), "cassandra-env.sh would add ConcGCThreads, worked out on the node"),
+    ((env_4x("8G"), add_to("jvm17-server.options", "-XX:ParallelGCThreads=8")),
+     "cassandra-env.sh would add MaxDirectMemorySize, worked out on the node"),
+    # the heap worked out on the node: 5.0's formula is not 4.x's
+    ((env_4x(), SET_IN_OPTIONS), "the heap is worked out on the node, by another formula in the earlier series'"
+                                 " cassandra-env.sh"),
+], ids=["GC threads", "direct memory", "heap worked out"])
+def test_a_4x_cassandra_env_on_50_giving_other_arguments_is_one_hand_edit(tmp_path, edits, why):
+    files = node_files("50x", both(*edits))
+    cmdline = launch(files, "17", tmp_path)
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    assert node["hand_edits"] == ["cassandra-env.sh: the stock file of 4.x (kept on upgrade), its values read; 5.0's not"
+                                  " shown to give the JVM the same arguments: " + why]
+    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == [
+        "cassandra-env.sh: the stock file of 4.x (kept on upgrade), its values read: 5.0's not shown to give the JVM"
+        " the same arguments: " + why]
+
+
+def test_a_4x_cassandra_env_on_50_cassandra_not_running():
+    files = node_files("50x", both(env_4x("8G"), SET_IN_OPTIONS))
+    imported_node = imported(files, "50x", "17", "")[2]
+    assert imported_node["hand_edits"] == [
+        "cassandra-env.sh: the stock file of 4.x (kept on upgrade), its values read; 5.0's not shown to give the JVM the"
+        " same arguments: Cassandra not running, or its files changed since it started"]
+
+
+def test_a_4x_cassandra_env_with_a_hand_edit_in_a_block_is_not_one():
+    """Not an earlier stock file: its lines as hand edits, as before."""
+    files = node_files("50x", both(env_4x("8G"), SET_IN_OPTIONS, lambda f: f.update({"cassandra-env.sh": edit(
+        f["cassandra-env.sh"], '  JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.authenticate=true"',
+        '  JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.authenticate=false"')})))
+    hand = imported(files, "50x", "17", "")[2]["hand_edits"]
+    assert len(hand) > 10 and not any("the stock file of 4.x" in line for line in hand)

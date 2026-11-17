@@ -995,7 +995,8 @@ def _scans(text):
     return root.tag.rsplit("}", 1)[-1] == "configuration" and (root.get("scan") or "").strip().lower() == "true"
 
 
-def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", java="", environ=None, newer=None):
+def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", java="", environ=None, newer=None,
+                                     facts=None):
     """Whether the running Cassandra needs no restart for the files apply_config writes, proven file by file with the
     import self-check's proofs -> [the reasons, said in the plan]; [] (a restart, as for any change) when one is not.
     changed: the files written; live, new: {file: text} as the node has them and as written (every file of the JVM's:
@@ -1003,8 +1004,9 @@ def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", 
     /proc/<pid>/cmdline; series; java: the version of the running Java; environ: the environment cassandra-env.sh gets
     ({name: value}: its unit's, systemctl show -p Environment, as the import reads it; JVM_EXTRA_OPTS and MX4J_* as
     the JVM has them, whatever set them); newer: the files written since that JVM started, or with no record of what
-    it started with (what it read then is not known). The next start gets the same environment: apply_config writes no
-    unit (a change of it is cassandra_service's, told pending by the record of the start).
+    it started with (what it read then is not known); facts: the node's ansible_facts, to read its cassandra-env.sh as
+    an earlier series' stock file, as the import does (none: not read so). The next start gets the same environment:
+    apply_config writes no unit (a change of it is cassandra_service's, told pending by the record of the start).
     The proofs: the JVM's files give the JVM the same arguments (bin/cassandra emulated, cassandra_jvm_args_same,
     against the running JVM's, the options the environment adds carried, a plain CASSANDRA_HEAPDUMP_DIR read as the
     import reads it); a jvm<N>-server.options the running Java does not read; logback.xml read again by logback
@@ -1046,7 +1048,12 @@ def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", 
         node = dict((f, live[f]) for f in group)
         if series in ("40x", "41x"):  # (a plain CASSANDRA_HEAPDUMP_DIR: as the import reads it)
             node[jvm_args.ENV] = jvm_args.heap_dump_dir_as_role(node[jvm_args.ENV], environ, True)[0]
-        same, dummy = jvm_args.cassandra_jvm_args_same(cmdline, node, role, series, java, environ, environ)
+        earlier = None
+        if facts:  # (a 4.x stock cassandra-env.sh on 5.0, kept on upgrade: as the import reads it)
+            from ansible_collections.community.cassandra.plugins.filter.cassandra_import import earlier_env
+            earlier = earlier_env(series, node[jvm_args.ENV], role[jvm_args.ENV], facts)
+        same, dummy = jvm_args.cassandra_jvm_args_same(cmdline, node, role, series, java, environ, environ,
+                                                       earlier=earlier["text"] if earlier else None)
         if not same:
             return []
         reasons.insert(0, SAME_JVM_ARGUMENTS)
