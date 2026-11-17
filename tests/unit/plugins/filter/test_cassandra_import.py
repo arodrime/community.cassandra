@@ -2002,3 +2002,18 @@ def test_config_vars_named_only_in_the_maps_of_names_by_series_are_ignored():
         "cassandra_compaction_large_partition_warning_threshold"]
     assert cassandra_config_ignored_vars(["cassandra_partition_size_warn_threshold"], "41x") == [
         "cassandra_partition_size_warn_threshold"]
+
+
+def test_a_line_the_template_comments_out_is_still_its_own_in_a_pairing():
+    # MAX_HEAP_SIZE commented out by the template (no heap set), MAX_DIRECT_MEMORY_SIZE not; the node sets the heap
+    # and comments out the other: each line read against its own (paired by the lines that run on both sides, the
+    # node's heap would be read against the direct memory line, a false stop)
+    env, ctx, files = _load_role("50x", FACTS)
+    with open(os.path.join(os.path.dirname(cassandra_import.__file__), "..", "..", "roles", "cassandra_config",
+                           "templates", "5.0", "cassandra-env.sh.j2"), encoding="utf-8") as f:
+        tpl = [line for line in f.read().split("\n")
+               if line.startswith("{{ '' if cassandra_heap_size ") or line.startswith("{{ '' if cassandra_max_direct_")]
+    rendered = ['#MAX_HEAP_SIZE="20G"', 'MAX_DIRECT_MEMORY_SIZE="1G"']
+    live = ['MAX_HEAP_SIZE="8G"', '#MAX_DIRECT_MEMORY_SIZE="1G"']
+    found = cassandra_import._read_changed_lines("cassandra-env.sh", tpl, rendered, live, ctx, None)[0]
+    assert found.get("cassandra_heap_size") == "8G", found

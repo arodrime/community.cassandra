@@ -530,13 +530,13 @@ def _read_changed_lines(name, tpl, rendered, live, ctx, after):
         if op not in ("replace", "insert"):
             continue
         # cassandra-env.sh: a line the node commented out beside its own (#LOCAL_JMX=yes above LOCAL_JMX=no) does
-        # not run; the lines that run paired with the role's in order
+        # not run; the node's lines that run paired with the role's in order (the role's comments kept: a line its
+        # template comments out or not, #MAX_HEAP_SIZE, is still that line's)
         pairs = {}
         if op == "replace" and name.endswith(".sh"):
-            code = [[n for n in range(a, b) if not lines[n].lstrip().startswith("#")]
-                    for lines, a, b in ((rendered, i1, i2), (live, j1, j2))]
-            if len(code[0]) == len(code[1]):
-                pairs = dict(zip(code[1], code[0]))
+            code = [n for n in range(j1, j2) if not live[n].lstrip().startswith("#")]
+            if len(code) == i2 - i1:
+                pairs = dict(zip(code, range(i1, i2)))
         for k, j in enumerate(range(j1, j2)):
             i = pairs.get(j, i1 + k if op == "replace" and i1 + k < i2 else None)
             got = _read_line(tpl[i], live[j], ctx) if i is not None and "{{" in tpl[i] else None
