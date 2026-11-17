@@ -527,6 +527,14 @@ def _import_properties(tpl, rendered, live, ctx):
         got = _read_line(t, line, ctx)
         if got is not None:
             found.update(got)
+    # its other settings (cassandra_rackdc_extra_settings), when the role writes them back the same: a plain key, a
+    # value on one line, not starting with a blank (else hand edits)
+    keys = set(m.group(1) for t, r in zip(tpl, rendered) if "{{" in t
+               for m in [re.match(r"^(?:#\s*)?([\w.-]+)\s*=", r.strip())] if m)
+    extra = dict((k, v) for k, v in node_kv.items() if k not in keys and re.match(r"^[A-Za-z0-9_.-]+$", k)
+                 and not re.search(r"(^[ \t\f]|\\$)", v) and not _secret(k, v))
+    if extra and "cassandra_rackdc_extra_settings" in ctx:
+        found["cassandra_rackdc_extra_settings"] = extra
     return found
 
 

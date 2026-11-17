@@ -273,7 +273,10 @@ COMMON = {
     "cassandra-rackdc.properties": [
         ("dc=dc1", "dc={{ cassandra_rackdc_dc }}"),
         ("rack=rack1", "rack={{ cassandra_rackdc_rack }}"),
-        ("# prefer_local=true", "{{ '' if cassandra_prefer_local else '# ' }}prefer_local=true"),
+        # (your other settings after it: dc_suffix, ec2_naming_scheme..., cassandra_rackdc_extra_settings)
+        ("# prefer_local=true", "{{ '' if cassandra_prefer_local else '# ' }}prefer_local=true"
+         "{{ ('\\n' ~ (cassandra_rackdc_extra_settings.items() | map('join', '=') | join('\\n')))"
+         " if cassandra_rackdc_extra_settings else '' }}"),
     ],
     "logback.xml": [
         # the appenders of your snippet's "logback.xml:appenders" before <root>, which names them (logback 1.2: an

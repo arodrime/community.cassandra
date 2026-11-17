@@ -415,6 +415,10 @@ cassandra_jvm17_removed_options: []
 cassandra_dc: dc1
 cassandra_rack: rack1
 cassandra_prefer_local: false
+# Other settings of cassandra-rackdc.properties, {key: value} written key=value
+# after prefer_local: the cloud snitches' dc_suffix, ec2_naming_scheme (legacy
+# for an EC2 cluster created before 4.0), ec2_metadata_type, metadata_url...
+cassandra_rackdc_extra_settings: {}
 # The file's dc and rack lines. Of Cassandra's snitches only GossipingPropertyFileSnitch
 # reads them (then they must be cassandra_dc and cassandra_rack); under another
 # snitch they may differ from the node's dc and rack (import_cluster keeps the

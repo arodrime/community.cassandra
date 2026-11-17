@@ -372,7 +372,10 @@ Role Variables
   `cassandra_client_encryption_optional`, `cassandra_client_truststore` /
   `_password`. Settings commented out in stock stay commented until set.
 * `cassandra-rackdc.properties`: `cassandra_dc`, `cassandra_rack`,
-  `cassandra_prefer_local`. Of Cassandra's snitches, only
+  `cassandra_prefer_local`, and its other settings in
+  `cassandra_rackdc_extra_settings` (`{key: value}` written after
+  `prefer_local`: the cloud snitches' `dc_suffix`, `ec2_naming_scheme`, e.g.
+  `legacy` for an EC2 cluster created before 4.0, `ec2_metadata_type`...). Of Cassandra's snitches, only
   `GossipingPropertyFileSnitch` reads its `dc=` and `rack=`; under another one,
   `cassandra_rackdc_dc` and `cassandra_rackdc_rack` (default: `cassandra_dc`,
   `cassandra_rack`) keep lines that differ from the node's dc and rack. The

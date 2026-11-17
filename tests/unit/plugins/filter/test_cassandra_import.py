@@ -153,10 +153,14 @@ def test_properties_compared_by_settings():
     out = cassandra_config_import(files, "50x", FACTS)
     assert out["vars"]["cassandra_prefer_local"] is True
     assert not [h for h in out["hand_edits"] if "rackdc" in h]
-    files["cassandra-rackdc.properties"] = "dc=dc1\nrack=r1\ndc_suffix=_x\n"
+    files["cassandra-rackdc.properties"] = "dc=dc1\nrack=r1\ndc_suffix=_x\n"  # (cassandra_rackdc_extra_settings)
     out = cassandra_config_import(files, "50x", FACTS)
-    assert "cassandra-rackdc.properties: dc_suffix" in out["hand_edits"]
-    assert "  + dc_suffix=_x" in out["hand_edits"]
+    assert out["vars"]["cassandra_rackdc_extra_settings"] == {"dc_suffix": "_x"}
+    assert not [h for h in out["hand_edits"] if "rackdc" in h]
+    files["cassandra-rackdc.properties"] = "dc=dc1\nrack=r1\ndc\\_suffix=_x\n"  # (a key with an escape: a hand edit)
+    out = cassandra_config_import(files, "50x", FACTS)
+    assert "cassandra-rackdc.properties: dc\\_suffix" in out["hand_edits"]
+    assert "  + dc\\_suffix=_x" in out["hand_edits"]
 
 
 def test_line_switched_on_by_a_bool_or_by_another_variable():

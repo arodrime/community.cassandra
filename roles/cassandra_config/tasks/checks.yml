@@ -433,6 +433,30 @@
       {%- endfor -%}
       {{ out }}
 
+# cassandra-rackdc.properties' other settings, written key=value as Java's Properties reads them back
+- name: Refuse rackdc extra settings the file cannot hold
+  ansible.builtin.assert:
+    that: _wrong | length == 0
+    fail_msg: >-
+      cassandra_rackdc_extra_settings: {{ _wrong | join(', ') }}: a key of letters, digits, _, . or - other than dc,
+      rack and prefer_local (their variables), a value on one line, not starting with a blank nor ending with a
+      backslash. Nothing is changed.
+    quiet: true
+  vars:
+    _key: '^[A-Za-z0-9_.-]+$'
+    _value: '(^[ \t\f]|[\r\n]|\\$)'
+    _wrong: >-
+      {%- set out = [] -%}
+      {%- for key, value in (cassandra_rackdc_extra_settings.items() if cassandra_rackdc_extra_settings is mapping
+                             else [['(not a dict)', '']]) -%}
+      {%-   if key | string not in ['dc', 'rack', 'prefer_local'] and key | string is match(_key)
+              and (value is string or value is number) and not value | string is search(_value) -%}
+      {%-   else -%}
+      {%-     set _ = out.append(key | string) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+
 # GossipingPropertyFileSnitch takes the node's dc and rack from the file: other lines would
 # move it (e.g. kept by import_cluster under SimpleSnitch, then the snitch changed)
 - name: Refuse rackdc lines other than the node's dc and rack under a snitch that reads them

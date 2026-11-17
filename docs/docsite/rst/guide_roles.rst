@@ -1316,7 +1316,10 @@ Each node's ``cassandra_dc`` and ``cassandra_rack`` are the ring's. Of Cassandra
 ``GossipingPropertyFileSnitch`` reads them from ``cassandra-rackdc.properties``: under another snitch (e.g.
 ``SimpleSnitch``, whose ring says ``datacenter1`` and ``rack1``) the file's ``dc=`` and ``rack=`` lines may say
 something else, and the import keeps them as they are with ``cassandra_rackdc_dc`` and ``cassandra_rackdc_rack``
-(remove them before switching to ``GossipingPropertyFileSnitch``: ``cassandra_config`` refuses them then). Comment
+(remove them before switching to ``GossipingPropertyFileSnitch``: ``cassandra_config`` refuses them then). The
+file's other settings (a cloud snitch's ``dc_suffix``, ``ec2_naming_scheme``...) go to
+``cassandra_rackdc_extra_settings``, but a key with an escape (``\:``) or a value ending with a backslash, which stay
+hand edits. Comment
 lines that differ from the role's templates, such as the stock comments of the release a file came from, are listed
 apart: they set nothing.
 

@@ -25,7 +25,7 @@ rack={{ cassandra_rackdc_rack }}
 #dc_suffix=
 
 # Uncomment the following line to make this snitch prefer the internal ip when possible, as the Ec2MultiRegionSnitch does.
-{{ '' if cassandra_prefer_local else '# ' }}prefer_local=true
+{{ '' if cassandra_prefer_local else '# ' }}prefer_local=true{{ ('\n' ~ (cassandra_rackdc_extra_settings.items() | map('join', '=') | join('\n'))) if cassandra_rackdc_extra_settings else '' }}
 
 # Datacenter and rack naming convention used by the Ec2Snitch and Ec2MultiRegionSnitch.
 # Options are:

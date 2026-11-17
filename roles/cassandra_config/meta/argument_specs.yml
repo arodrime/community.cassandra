@@ -1556,6 +1556,14 @@ argument_specs:
         default: false
         description:
         - C(prefer_local) in C(cassandra-rackdc.properties).
+      cassandra_rackdc_extra_settings:
+        type: dict
+        default: {}
+        description:
+        - Other settings of C(cassandra-rackdc.properties), a dict written C(key=value) after C(prefer_local), e.g.
+          C(dc_suffix) and C(ec2_naming_scheme) (an EC2 cluster created before 4.0 keeps V(legacy)).
+        - Not C(dc), C(rack), C(prefer_local) (their variables); a key of letters, digits, C(_), C(.), C(-); a value on one
+          line, not starting with a blank nor ending with a backslash.
       cassandra_log_level:
         type: str
         default: INFO

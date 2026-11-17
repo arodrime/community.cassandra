@@ -2023,3 +2023,27 @@ def test_a_tls_placeholder_uncommented_is_read_as_its_value():
     imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
     # (the stock placeholder is the variable's value: the role writes it so)
     assert imported["vars"].get("cassandra_jmx_ssl_keystore") == "/path/to/keystore"
+
+
+# --- cassandra-rackdc.properties: its other settings ----------------------------------------------------------
+
+@pytest.mark.parametrize("series", sorted(VERSIONS))
+def test_rackdc_other_settings_are_imported(series):
+    """A cloud snitch's settings (an EC2 cluster from before 4.0 keeps ec2_naming_scheme=legacy)."""
+    files = seeded(stock(series))
+    files["cassandra-rackdc.properties"] = edit(files["cassandra-rackdc.properties"], "#dc_suffix=", "dc_suffix=_zorglub")
+    files["cassandra-rackdc.properties"] += "ec2_naming_scheme = legacy\nmetadata_url=http://h-n1.example:8080/x\n"
+    imported = cassandra_config_import(files, series, FACTS, "", "/var/lib/cassandra")
+    assert imported["hand_edits"] == []
+    assert imported["vars"]["cassandra_rackdc_extra_settings"] == {
+        "dc_suffix": "_zorglub", "ec2_naming_scheme": "legacy", "metadata_url": "http://h-n1.example:8080/x"}
+    assert check(files, series)["differences"] == []
+
+
+@pytest.mark.parametrize("line", ["ec2\\:naming_scheme=legacy", "dc_suffix=_x\\\\"])
+def test_rackdc_settings_the_role_cannot_write_back_stay_hand_edits(line):
+    files = seeded(stock("50x"))
+    files["cassandra-rackdc.properties"] += line + "\n"
+    imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
+    assert "cassandra_rackdc_extra_settings" not in imported["vars"]
+    assert imported["hand_edits"] != [] and check(files, "50x")["differences"] != []
