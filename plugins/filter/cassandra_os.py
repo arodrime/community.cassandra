@@ -87,7 +87,9 @@ def _vs(value, role, name):
 # --- sysctl ---
 
 # the kernel's write-only keys: a trigger (writing it flushes or drops something), never read back, no setting
-WRITE_ONLY_SYSCTL = ("net.ipv4.route.flush", "net.ipv6.route.flush", "vm.drop_caches", "vm.compact_memory")
+# (vm.stat_refresh: mode 0600, a read gives nothing, mm/vmstat.c vmstat_refresh; 0600 on EL 9 and 7.0 kernels)
+WRITE_ONLY_SYSCTL = ("net.ipv4.route.flush", "net.ipv6.route.flush", "vm.drop_caches", "vm.compact_memory",
+                     "vm.stat_refresh")
 
 
 def _sysctl_key(key):
@@ -186,12 +188,18 @@ def _sysctl(recs, wanted, own):
     if triggers:
         carried = dict((k, v) for k, v in carried.items() if k not in WRITE_ONLY_SYSCTL)
         notes.append("NOT carried: %s, write-only (an action, not a setting: never read back); its line stays in the"
-                     " node's file as it is" % ", ".join(triggers))
+                     " node's file as it is, and runs again whenever that file is reloaded (another sysctl change, a"
+                     " tuned switch)" % ", ".join(triggers))
     if own:
         notes += _sysctl_lost(carried, effective, target)
     changed = sorted(k for k in carried if k not in role or _norm(carried[k]) != _norm(role[k]))
     missing = [k for k in role if k not in carried]
-    if not carried and role:
+    only_triggers = bool(triggers) and not carried  # (its file has write-only keys alone: nothing to write there)
+    if not carried and role and only_triggers:
+        out["cassandra_linux_sysctl"] = {}
+        notes.append("cassandra_linux_sysctl: {}, the file these nodes set kernel keys in, %s, has write-only ones"
+                     " alone (%s): cassandra_linux sets none" % (target, ", ".join(triggers)))
+    elif not carried and role:
         out["cassandra_linux_sysctl"] = {}
         notes.append("cassandra_linux_sysctl: {}, no file of these nodes sets the role's kernel settings where it"
                      " writes them: cassandra_linux sets none")
@@ -201,7 +209,7 @@ def _sysctl(recs, wanted, own):
             ", ".join("%s %s" % (k, _norm(carried[k])) for k in changed) or "the same values",
             (" (without %s, as in their file)" % ", ".join(missing)) if missing
             else " (the role's other keys at their default)"))
-    if target != role_file:
+    if target != role_file and not only_triggers:  # (no file to write in with no key: no override)
         out["cassandra_linux_sysctl_file"] = target
         notes.append("cassandra_linux_sysctl_file: %s, the file these nodes set them in: the role writes its keys"
                      " there (line by line, the file's other lines kept) instead of a second file that %s"
@@ -1287,11 +1295,15 @@ def _sysctl_changes(recs, linux, live):
         set_live = dict(after.get(target, [])) if any(path == target for dummy, path, dummy2, dummy3 in edits) else {}
         set_live.update(wanted)
         for key, value in set_live.items():
-            if key not in WRITE_ONLY_SYSCTL and _norm(now.get(key, "")) != value:
+            if key in WRITE_ONLY_SYSCTL and key in dict(wanted):  # (cassandra_linux refuses it: set at each run)
+                items.append(_item("sysctl %s (live)" % key, "not read (write-only)", "written at each run: an action"))
+            elif key not in WRITE_ONLY_SYSCTL and _norm(now.get(key, "")) != value:
                 items.append(_item("sysctl %s (live)" % key, now.get(key) or "not read", value))
     for key, path, before, value in edits:
-        effect = NO_EFFECT if key in WRITE_ONLY_SYSCTL or key in now and _norm(at_boot.get(key, "")) == _norm(
-            now[key]) else CHANGE
+        # a write-only key the role would write: an action at each load of the file, a change; one removed: none
+        effect = CHANGE if key in WRITE_ONLY_SYSCTL and value is not None \
+            else NO_EFFECT if key in WRITE_ONLY_SYSCTL or key in now and _norm(at_boot.get(key, "")) == _norm(
+                now[key]) else CHANGE
         items.append(_item("sysctl %s (%s)" % (key, path), "not set" if before is None else before,
                            "removed" if value is None else value, effect))
     return items
@@ -1526,6 +1538,11 @@ def cassandra_os_import(text, wanted):
     return {"lines": lines, "vars": out, "carried": notes, "keep": keep}
 
 
+def cassandra_sysctl_write_only(keys):
+    """Kernel keys (cassandra_linux_sysctl's) -> the write-only ones among them (WRITE_ONLY_SYSCTL), sorted."""
+    return sorted(str(k) for k in (keys or {}) if str(k) in WRITE_ONLY_SYSCTL)
+
+
 class FilterModule(object):
     def filters(self):
-        return {"cassandra_os_import": cassandra_os_import}
+        return {"cassandra_os_import": cassandra_os_import, "cassandra_sysctl_write_only": cassandra_sysctl_write_only}

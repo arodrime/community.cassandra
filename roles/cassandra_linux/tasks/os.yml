@@ -43,6 +43,17 @@
     fail_msg: "cassandra_data_readahead_kb must be a number of KB or kernel, not {{ cassandra_data_readahead_kb }}"
     quiet: true
 
+# a write-only kernel key (vm.drop_caches...) is an action, not a setting: the sysctl module would write it at each run
+- name: Refuse a write-only kernel key in cassandra_linux_sysctl
+  ansible.builtin.assert:
+    that: _write_only | length == 0
+    fail_msg: >-
+      cassandra_linux_sysctl has {{ _write_only | join(', ') }}: write-only, an action (it flushes or drops
+      something), not a setting; the role would run it at each run. Remove it from cassandra_linux_sysctl.
+    quiet: true
+  vars:
+    _write_only: "{{ cassandra_linux_sysctl | community.cassandra.cassandra_sysctl_write_only }}"
+
 # what disable-thp.service writes ({} : no unit), and whether the role's unit is removed (kernel, no keep)
 - name: Decide how THP is set
   ansible.builtin.set_fact:

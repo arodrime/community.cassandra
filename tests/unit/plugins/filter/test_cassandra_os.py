@@ -908,16 +908,35 @@ def test_sysctl_live_and_file_changes():
         "what": "sysctl vm.swappiness (live)", "now": "1", "would": "5", "effect": "change"}
 
 
-@pytest.mark.parametrize("key", ["net.ipv4.route.flush", "net.ipv6.route.flush", "vm.drop_caches"])
-def test_a_write_only_sysctl_key_is_an_action_not_a_setting(key):
-    # (a 5.0.9 cluster, 2026-11-17) a trigger the kernel lets write, never read: never in sync, nothing to set
+@pytest.mark.parametrize("key", ["net.ipv4.route.flush", "net.ipv6.route.flush", "vm.drop_caches", "vm.compact_memory",
+                                 "vm.stat_refresh"])
+def test_a_write_only_sysctl_key_set_by_hand_is_an_action_at_each_run(key):
+    # (audit of rc12, A1) a trigger in cassandra_linux_sysctl: the sysctl module writes it at each run (sysctl_set, a
+    # reload): a change, never "no effect" (cassandra_linux refuses it, os.yml)
     wanted = dict(LINUX["cassandra_linux_sysctl"], **{key: 1})
     unread = "sysctl_live|%s|\n" % key
-    assert changes(role_built() + "sysctl|/etc/sysctl.d/60-cassandra.conf|%s = 1\n" % key + unread, sysctl=wanted) == []
-    # not in the file yet: written there, no effect (it sets nothing)
-    assert changes(role_built() + unread, sysctl=wanted) == [{
-        "what": "sysctl %s (/etc/sysctl.d/60-cassandra.conf)" % key, "now": "not set", "would": "1",
-        "effect": "no effect"}]
+    assert changes(role_built() + "sysctl|/etc/sysctl.d/60-cassandra.conf|%s = 1\n" % key + unread, sysctl=wanted) == [
+        {"what": "sysctl %s (live)" % key, "now": "not read (write-only)", "would": "written at each run: an action",
+         "effect": "change"}]
+    # not in the file yet: written there too, a change
+    assert {"what": "sysctl %s (/etc/sysctl.d/60-cassandra.conf)" % key, "now": "not set", "would": "1",
+            "effect": "change"} in changes(role_built() + unread, sysctl=wanted)
+    # not wanted: nothing (its line in a file of the node's own is no setting of the role's)
+    assert changes(role_built() + "sysctl|/etc/sysctl.d/99-x.conf|%s = 1\n" % key + unread) == []
+
+
+def test_the_role_refuses_a_write_only_kernel_key():
+    import yaml
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_os import cassandra_sysctl_write_only
+    with open(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_linux", "tasks",
+                           "os.yml"), encoding="utf-8") as f:
+        tasks = yaml.safe_load(f)
+    check = next(t for t in tasks if t.get("name") == "Refuse a write-only kernel key in cassandra_linux_sysctl")
+    assert "cassandra_sysctl_write_only" in check["vars"]["_write_only"]
+    assert "Remove it from cassandra_linux_sysctl" in check["ansible.builtin.assert"]["fail_msg"]
+    assert cassandra_sysctl_write_only({"vm.swappiness": 1, "vm.drop_caches": 3, "vm.stat_refresh": 1}) == [
+        "vm.drop_caches", "vm.stat_refresh"]
+    assert cassandra_sysctl_write_only({}) == [] and cassandra_sysctl_write_only(None) == []
 
 
 def test_time_sync_changes():
@@ -1027,6 +1046,18 @@ def test_owner_like_node_is_a_no_op_with_the_roles():
     assert cassandra_linux_changes(owner_like(), would_be(r["vars"]), RHEL, False) == []
     # with the stock defaults instead: far from a no-op
     assert len(cassandra_linux_changes(owner_like(), linux(), RHEL, False)) > 5
+
+
+def test_a_file_of_write_only_keys_alone_is_no_file_to_write_in():
+    # (audit of rc12, C3) the node's kernel keys file has only a trigger: nothing carried, no sysctl_file override
+    text = re.sub(r"(?m)^sysctl\|/etc/sysctl.d/90_cassandra.conf\|.*\n", "", owner_like())
+    text += "sysctl|/etc/sysctl.d/90_cassandra.conf|vm.drop_caches = 3\nsysctl_live|vm.drop_caches|\n"
+    r = found(text, os_family="RedHat")
+    assert "cassandra_linux_sysctl_file" not in r["vars"]
+    assert [n for n in r["carried"] if "write-only" in n and "runs again whenever that file is reloaded" in n]
+    alone = ("cassandra_linux_sysctl: {}, the file these nodes set kernel keys in, /etc/sysctl.d/90_cassandra.conf, has"
+             " write-only ones alone")
+    assert [n for n in r["carried"] if n.startswith(alone)]
 
 
 @pytest.mark.parametrize("own", [False, True])
