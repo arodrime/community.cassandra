@@ -186,6 +186,10 @@ _COLOURS = (
 # a mark anywhere in a line, its own colour over the one of the line it is indented under (that line only):
 # a node down, a stalled peer, a setting that differs, what a node would get or got, what a reset deletes
 _MARKS = (
+    # import_cluster's head: in sync with Ansible or not (its next line, indented under it, the same)
+    (re.compile(r"^  in sync with Ansible: yes\b"), "COLOR_OK"),
+    (re.compile(r"^  in sync with Ansible: not all verified\b"), "COLOR_CHANGED"),
+    (re.compile(r"^  in sync with Ansible: no\b"), "COLOR_ERROR"),
     (re.compile(r"\u2190 down\b|^\s*\S.*?\S  (\w+ )?FAILED\b"), "COLOR_ERROR"),  # (a recap's failed node)
     # a line of the other ends under a progress line (cassandra_output.peer_lines, indented 6) with a stalled one
     (re.compile(r"^ {6}(?:(?:to|from|with) +\S+ +[\d.]+(?: \w+)?/|\d+ peers?: |\+\d+ more: ).*\bSTALLED\b"),

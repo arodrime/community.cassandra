@@ -1695,8 +1695,60 @@ def _versions_lines(report):
 
 # --- the head, what to do next, the details --------------------------------------------------------------------
 
-def _head_lines(report, cluster, hosts_file, report_file, self_check_ok, same, steps, reviews):
-    """The head: the verdict with its counts, the self-check, the files written, where the report is -> [line]."""
+# the head's answer to "is Ansible in sync with the cluster?" (the ops callback colours it: yes green, not all
+# verified orange, no red), within 79 columns
+SYNC = "in sync with Ansible: "
+SYNC_WIDTH = 79
+
+
+def _sync_lines(report, data, self_check, self_check_error, moves):
+    """Whether applying the inventory changes the cluster: no (the self-check's differences: how many settings on
+    how many nodes), not all verified (nodes not read, parts or files kept by hand, a self-check that did not run:
+    what, on how many nodes), else yes, with what the next apply_config rewrites with no effect on the values (the
+    files the JVM arguments move in restart the nodes: apply_config restarts for a config file it writes) -> [line]."""
+    def said(text):
+        return fill_text(SYNC + text, min(report.width, SYNC_WIDTH), "  ", "  ")
+    differing = dict((name, len(check.get("differences") or [])) for name, check in (self_check or {}).items()
+                     if check.get("differences"))
+    if differing:
+        return said("no; apply_config would change %s on %s" % (
+            unbreakable(out.plural(sum(differing.values()), "setting")), unbreakable(out.plural(len(differing), "node"))))
+    gaps = []
+    if self_check_error:
+        gaps.append("the self-check did not run")
+    if report.unread:
+        gaps.append("%s not read (%s)" % (unbreakable(out.plural(len(report.unread), "node")),
+                                          out.nodes([n["name"] for n in report.unread])))
+    for parts, members in sorted(data["kept_parts"].items()):
+        gaps.append("%s kept by hand on %s" % (", ".join(parts), unbreakable(out.plural(len(members), "node"))))
+    kept = {}
+    for name, f in data["kept"]:
+        kept.setdefault(f, set()).add(name)
+    for f, members in sorted(kept.items()):
+        gaps.append("%s left as is on %s" % (f, unbreakable(out.plural(len(members), "node"))))
+    for label, members in sorted(data["left_groups"].items()):  # (*_manage: false: Ansible leaves it alone)
+        if not label.startswith("cassandra_config_keep_files") and _left_kind(label) == "managed":
+            gaps.append("%s not managed by Ansible on %s" % (INSTALLED.get(label, label),
+                                                             unbreakable(out.plural(len(members), "node"))))
+    if gaps:
+        return said("not all verified; " + "; ".join(gaps))
+    restarts = [n["name"] for n in report.read if n.get("rewritten")]
+    others = sorted(set(note[:-len(NO_EFFECT_NOTE)].split(": ")[1] if note.count(": ") > 1
+                        else note[:-len(NO_EFFECT_NOTE)]
+                        for check in (self_check or {}).values() for note in check.get("notes") or []
+                        if note.endswith(NO_EFFECT_NOTE)))
+    rewrites = []
+    if moves:
+        rewrites.append("%s rewritten (the same JVM arguments; Cassandra restarts on %s)"
+                        % (out.plural(len(moves), "file"), unbreakable(out.plural(len(restarts), "node"))))
+    if others:
+        rewrites.append("%s rewritten with no effect" % out.plural(len(others), "other item" if moves else "item"))
+    return said("yes" + ("; the next apply_config: " + ", ".join(rewrites) if rewrites else ""))
+
+
+def _head_lines(report, cluster, hosts_file, report_file, self_check_ok, same, steps, reviews, sync=()):
+    """The head: the verdict with its counts, in sync with Ansible or not (sync), the self-check, the files
+    written, where the report is -> [line]."""
     acted = len(steps) + sum(n for dummy, n, dummy2 in reviews)
     counts = (["%d TO DO" % len(steps)] if steps else []) + [
         "%d %s" % (n, kind.one if n == 1 else kind.many) for kind, n, dummy in reviews]
@@ -1707,6 +1759,7 @@ def _head_lines(report, cluster, hosts_file, report_file, self_check_ok, same, s
     lines = fill_text("IMPORT %s%s  %s%s  %s" % (cluster, " (--check, inventory not written)" if report.check else "",
                                                  report.when + "  " if report.when else "", nodes, verdict),
                       report.width, "", "  ")
+    lines += list(sync)
     check_step = next((i + 1 for i, step in enumerate(steps) if step.title == "Make the self-check pass"), None)
     lines += fill_text("self-check %s" % (
         "passed: the inventory gives every node that was read the settings it has now" if self_check_ok
@@ -1940,7 +1993,8 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     differs = _differs(report, data["settings"])
     reviews = _review_blocks(report, data, differs, allow_unread, look,
                              below=not self_check_ok and (not screen or boolean(strict, strict=False)))
-    lines = _head_lines(report, cluster, hosts_file, report_file, self_check_ok, same, steps, reviews)
+    sync = _sync_lines(report, data, self_check, self_check_error, moves)
+    lines = _head_lines(report, cluster, hosts_file, report_file, self_check_ok, same, steps, reviews, sync)
     if steps:
         lines += ["", "TO DO"]
         for i, step in enumerate(steps):

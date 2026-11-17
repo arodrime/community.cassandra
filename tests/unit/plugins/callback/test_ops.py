@@ -1688,3 +1688,13 @@ def test_a_verdict_that_names_its_host_names_it_once(tmp_path):
     assert rc != 0
     assert "node1: cassandra_x: refused; nothing is changed." in output.splitlines()
     assert "node1: node1:" not in output and "fatal: [node1]" not in output
+
+
+def test_the_import_s_in_sync_line_by_its_answer():
+    # its own colour over the IMPORT line it is under: yes green, not all verified orange, no red (Ansible's colours)
+    from ansible import constants as C
+    from ansible_collections.community.cassandra.plugins.callback.ops import colour
+    head = colour("IMPORT c1  12 nodes  nothing to act on")
+    assert colour("  in sync with Ansible: yes; the next apply_config: 5 files rewritten", head) == C.COLOR_OK
+    assert colour("  in sync with Ansible: not all verified; 1 node not read (h-n3)", head) == C.COLOR_CHANGED
+    assert colour("  in sync with Ansible: no; apply_config would change 3 settings on 2 nodes", head) == C.COLOR_ERROR
