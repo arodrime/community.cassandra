@@ -2,6 +2,7 @@
 # The environment of the package's init script (cassandra_service_start: package_script), a drop-in of the unit
 # systemd generates for it: the script gets these variables (JAVA_HOME, MAX_HEAP_SIZE...), Cassandra too.
 [Service]
+{# (each quoted as systemd reads it: JSON's quoting, its C-style escapes; % as %%, the sign of its specifiers) #}
 {% for name, value in cassandra_service_environment.items() %}
-Environment="{{ name }}={{ value }}"
+Environment={{ (name ~ '=' ~ value) | to_json | replace('%', '%%') }}
 {% endfor %}

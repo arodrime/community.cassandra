@@ -27,7 +27,8 @@ except ImportError:
 ROLES = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles")
 # defined once, in cassandra_service's defaults or vars, loaded by the task files that read them (Cassandra's account:
 # exporter_check.yml)
-LOADED = ("_cassandra_service_conf_dir", "_cassandra_service_config_snapshot", "cassandra_service_user")
+LOADED = ("_cassandra_service_conf_dir", "_cassandra_service_config_snapshot", "cassandra_service_user",
+          "_cassandra_service_environment_dropin")
 
 
 def load(role, kind="defaults"):

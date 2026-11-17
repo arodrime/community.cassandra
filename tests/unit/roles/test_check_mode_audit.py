@@ -73,6 +73,8 @@ AUDITED = {
     (S, "main.yml", "Wait for the node to be joined (Mode NORMAL)", "skipped"): ("no change",),
     (S, "main.yml", "Record the config Cassandra started with", "skipped"): ("no change",),
     (S, "unit.yml", "Tell whether the unit changes", "skipped"): ("no change",),
+    (S, "unit.yml", "Tell whether the drop-in changes", "skipped"): ("no change",),
+    (S, "unit.yml", "Record the config the running Cassandra started with", "skipped"): ("no change",),
     (S, "wait_normal_check.yml", "Read the end of its journal", "silent"): ("no change",),
     (F, "firewall.yml", "Read the current firewall state (change report)", "forced"): ("read",),
     (F, "firewall.yml", "Read the installed packages", "forced"): ("read",),

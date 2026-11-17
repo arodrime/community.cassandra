@@ -17,11 +17,42 @@
     - _cassandra_service_own_unit | bool
     - not ansible_check_mode
 
+# The package's init script (package_script): no unit written, its environment (cassandra_service_environment) in a
+# drop-in of the unit systemd generates for it, which systemd applies as to any unit (checked on EL 9, systemd 252:
+# the script and the JVM get the variables). Only the environment: the limits of the unit do not hold there, the
+# script starts Cassandra through runuser, whose session takes them from pam_limits. Named to come after the node's
+# own drop-ins (override.conf...): its values win. Applied at the next start, as a unit written. None set, or the
+# role's unit (whose environment it would override): the roles' drop-in removed
+- name: Tell whether the environment of the package's init script changes
+  when: cassandra_service_unit_manage | bool
+  block:
+    - name: Tell whether the drop-in changes
+      ansible.builtin.template:
+        src: cassandra-environment.conf.j2
+        dest: "{{ _cassandra_service_environment_dropin }}"
+      check_mode: true
+      diff: false  # shown by the write
+      register: cassandra_service_dropin_planned
+      when:
+        - _cassandra_service_dropin_wanted | bool
+        - not ansible_check_mode
+
+    - name: Look for the drop-in (to remove, or to report)
+      ansible.builtin.stat:
+        path: "{{ _cassandra_service_environment_dropin }}"
+        get_checksum: false
+      register: cassandra_service_dropin_found
+
+# a running node: what it runs with, before the unit or its environment changes (a later run then knows the change
+# waits for a restart)
 - name: Record the config the running Cassandra started with
   ansible.builtin.include_role:
     name: community.cassandra.cassandra_config
     tasks_from: config_seed.yml
-  when: cassandra_service_unit_planned is changed
+  when: >-
+    cassandra_service_unit_planned is changed or cassandra_service_dropin_planned is changed
+    or cassandra_service_dropin_found.stat.exists | default(false) and not _cassandra_service_dropin_wanted | bool
+       and not ansible_check_mode
 
 # Same name as the package's init script: systemd prefers a native unit
 # over the SysV-generated one, so service/systemctl both use this.
@@ -33,32 +64,34 @@
   register: cassandra_service_unit
   when: _cassandra_service_own_unit | bool
 
-# The package's init script (package_script): no unit written, its environment (cassandra_service_environment) in a
-# drop-in of the unit systemd generates for it, which systemd applies as to any unit (checked on EL 9, systemd 252:
-# the script and the JVM get the variables). Only the environment: the limits of the unit do not hold there, the
-# script starts Cassandra through runuser, whose session takes them from pam_limits. Applied at the next start, as a
-# unit written; none set: none (a drop-in of the roles' removed)
 - name: Write the environment of the package's init script
-  when:
-    - cassandra_service_start == 'package_script'
-    - cassandra_service_unit_manage | bool
+  when: cassandra_service_unit_manage | bool
   block:
     - name: Make the drop-in directory of its unit
       ansible.builtin.file:
-        path: /etc/systemd/system/cassandra.service.d
+        path: "{{ _cassandra_service_environment_dropin | dirname }}"
         state: directory
         mode: "0755"
-      when: cassandra_service_environment | length > 0
+      when: _cassandra_service_dropin_wanted | bool
 
     - name: Write the drop-in with its environment
       ansible.builtin.template:
         src: cassandra-environment.conf.j2
         dest: "{{ _cassandra_service_environment_dropin }}"
         mode: "0644"
-      when: cassandra_service_environment | length > 0
+      register: cassandra_service_dropin
+      when: _cassandra_service_dropin_wanted | bool
 
-    - name: Remove the drop-in when no environment is set
+    - name: Remove the drop-in when no environment is set, or with the role's unit
       ansible.builtin.file:
         path: "{{ _cassandra_service_environment_dropin }}"
         state: absent
-      when: cassandra_service_environment | length == 0
+      register: cassandra_service_dropin_removed
+      when: not _cassandra_service_dropin_wanted | bool
+
+# a restart for a change of the unit (cassandra_service_restart_on_change), as for the role's own
+- name: Note whether the unit or its environment changed
+  ansible.builtin.set_fact:
+    _cassandra_service_unit_changed: >-
+      {{ cassandra_service_unit is changed or cassandra_service_dropin is changed
+         or cassandra_service_dropin_removed is changed }}

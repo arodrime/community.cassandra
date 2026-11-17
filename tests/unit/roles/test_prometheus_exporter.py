@@ -698,7 +698,7 @@ def pending(files, record, ctime=50.0, fact="cassandra_config_newer_files"):
                  if record is not None else {"failed": True},
                  "cassandra_jvm": {"pid": "1", "start": 100.0},
                  "cassandra_pending_files": {"files": [{"path": p, "checksum": c, "ctime": ctime} for p, c in files]},
-                 "cassandra_pending_unit_file": {"stat": {"exists": False}}}
+                 "cassandra_pending_unit_files": []}
     for name, value in task["vars"].items():
         variables[name] = render(value, variables)
     return render(task["ansible.builtin.set_fact"][fact], variables)

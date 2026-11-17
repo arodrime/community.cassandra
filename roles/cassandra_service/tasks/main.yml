@@ -207,7 +207,7 @@
       ansible.builtin.set_fact:
         _cassandra_service_restarts: >-
           {{ cassandra_service_state == 'restarted' or (cassandra_service_restart_on_change | bool
-                                                        and cassandra_service_unit | default({}) is changed) }}
+                                                        and _cassandra_service_unit_changed | default(false) | bool) }}
       when:
         - cassandra_version | default('') == '50x'
         - not _cassandra_storage_mode_checked | default(false) | bool
@@ -240,7 +240,7 @@
         name: cassandra
         state: >-
           {{ 'restarted' if cassandra_service_state == 'restarted'
-                            or (cassandra_service_restart_on_change and cassandra_service_unit is changed)
+                            or (cassandra_service_restart_on_change and _cassandra_service_unit_changed | default(false) | bool)
              else 'started' }}
       register: cassandra_service_started
 
@@ -276,6 +276,11 @@
             'before': (_cassandra_service_before.unit or 'absent') if '/etc/systemd/system/' not in _cassandra_service_before.unit else 'different',
             'after': 'would be a native unit' if ansible_check_mode else 'native unit'}]
           if cassandra_service_unit is changed else [])
+         + ([{'item': _cassandra_service_environment_dropin,
+              'before': 'different' if cassandra_service_dropin_found.stat.exists | default(false) else 'absent',
+              'after': _would ~ 'written'}] if cassandra_service_dropin | default({}) is changed else [])
+         + ([{'item': _cassandra_service_environment_dropin, 'before': 'present', 'after': _would ~ 'removed'}]
+            if cassandra_service_dropin_removed | default({}) is changed else [])
          + ([{'item': 'cassandra', 'before': _cassandra_service_before.active or 'unknown',
               'after': ('would restart' if ansible_check_mode else 'restarted') if cassandra_service_state == 'restarted' else _would ~ _want_active}]
             if cassandra_service_state == 'restarted' or _cassandra_service_before.active != _want_active else [])

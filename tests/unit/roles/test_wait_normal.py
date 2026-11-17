@@ -113,7 +113,7 @@ def test_the_head_of_its_lines():
     assert shown(cassandra_service_state="restarted")["operation"] == "restart"
     assert shown(cassandra_service_state="started") == {"index": "0", "steps": "0", "node": "node2", "operation": "start"}
     assert shown(cassandra_service_state="started", cassandra_service_restart_on_change=True,
-                 cassandra_service_unit={"changed": True})["operation"] == "restart"  # its unit changed: restarted
+                 _cassandra_service_unit_changed=True)["operation"] == "restart"  # its unit changed: restarted
 
 
 class _Now(object):

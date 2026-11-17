@@ -69,8 +69,10 @@ argument_specs:
           - How Cassandra is started. V(unit), the role's systemd unit. V(package_script), the Cassandra package's
             init script (SysV, through systemd's generator); the role writes no unit and removes none, it manages the
             state and the boot setting, and O(cassandra_service_environment) in a drop-in of the unit systemd
-            generates for the script (C(/etc/systemd/system/cassandra.service.d/99-ansible-environment.conf), none
-            when it is empty); the other unit variables below have no effect on it (C(import_cluster) sets it on the
+            generates for the script (C(/etc/systemd/system/cassandra.service.d/zz-ansible-environment.conf), after
+            the node's own drop-ins (its values win); none when it is empty, and none with V(unit)); a change of it waits
+            for a restart, as one of the role's unit does; the other unit variables below have no effect on it
+            (C(import_cluster) sets it on the
             nodes started by the package's unmodified script whose drop-ins in C(cassandra.service.d) set only
             C(Environment=)). The role stops on a systemd without its SysV generator
             (C(systemd-sysv-generator), not shipped by recent systemd releases), with the way out.

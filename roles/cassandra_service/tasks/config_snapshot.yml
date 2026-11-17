@@ -1,5 +1,5 @@
 ---
-# Records the checksums of the config files (and of the systemd unit) the running Cassandra started
+# Records the checksums of the config files (and of the systemd unit, its drop-in) the running Cassandra started
 # with, so a later run can tell a change still to apply by content (a file rewritten with the same content, or a
 # change applied live, is not pending). Run after the start (and its wait): a file written since the JVM started is
 # left out (what it read is unknown: pending until a restart), and the JVM is recorded (_jvm: its pid and start, as
@@ -15,4 +15,5 @@
       - "{{ _cassandra_service_config_snapshot }}"
       - "{{ _cassandra_service_conf_dir }}"
       - /etc/systemd/system/cassandra.service
+      - "{{ _cassandra_service_environment_dropin }}"
   changed_when: true

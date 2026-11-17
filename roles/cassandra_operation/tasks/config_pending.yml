@@ -1,11 +1,13 @@
 ---
 # Whether the running Cassandra still has to pick up a config change (or a
 # change of its systemd unit): the files cassandra_config writes (not the
-# keystores, backups or other files of the conf dir) and the unit differ from
-# the ones it started with, recorded by config_snapshot.yml at each start, or
-# by config_seed.yml before the roles change a node started another way. A
-# unit missing from a record (recorded before it was, or written since that
-# start) is compared with the JVM start. With no record (e.g. a node just
+# keystores, backups or other files of the conf dir) and the unit files (the
+# role's unit, the drop-in of the package's init script) differ from the ones it
+# started with, recorded by config_snapshot.yml at each start, or by
+# config_seed.yml before the roles change a node started another way. A unit
+# file missing from a record (recorded before it was, or written since that
+# start) is compared with the JVM start; one recorded and gone since (the
+# drop-in removed) is a change too. With no record (e.g. a node just
 # imported, which the roles have not changed), or a record of another JVM
 # (restarted by hand since: it read the files as they were then, which the
 # record does not say), nothing is pending: a file written after its JVM
@@ -20,19 +22,21 @@
 # In one go (a task each would cost a round trip each), as ansible.builtin.find
 # (the files of the patterns, not hidden, not links), stat (the unit, not
 # followed) and slurp (the record) register them
-- name: Checksum the config files and the unit, read the checksums recorded at the last start
+- name: Checksum the config files and the unit files, read the checksums recorded at the last start
   ansible.builtin.command:
     argv: >-
       {{ [_cassandra_config_python | default(ansible_facts['python']['executable'] | default('/usr/bin/python3')), '-c', _read,
-          _cassandra_service_conf_dir, '/etc/systemd/system/cassandra.service', _cassandra_service_config_snapshot]
+          _cassandra_service_conf_dir, _cassandra_service_config_snapshot, _units | to_json]
          + _cassandra_service_config_files }}
   register: cassandra_pending_read
   changed_when: false
   check_mode: false  # reads only
   vars:
+    _units: ['/etc/systemd/system/cassandra.service', "{{ _cassandra_service_environment_dropin }}"]
     _read: |
       import base64, fnmatch, hashlib, json, os, stat, sys
-      conf, unit, record = [os.path.expanduser(os.path.expandvars(p)) for p in sys.argv[1:4]]
+      conf, record = [os.path.expanduser(os.path.expandvars(p)) for p in sys.argv[1:3]]
+      units = json.loads(sys.argv[3])
       def sha1(path):
           digest = hashlib.sha1()
           with open(path, "rb") as f:
@@ -50,24 +54,27 @@
               continue
           if stat.S_ISREG(st.st_mode):
               files.append({"path": path, "ctime": st.st_ctime, "mtime": st.st_mtime, "checksum": sha1(path)})
-      try:
-          st = os.lstat(unit)
-          unit_stat = {"exists": True, "path": unit, "ctime": st.st_ctime, "mtime": st.st_mtime}
-          if stat.S_ISREG(st.st_mode) and os.access(unit, os.R_OK):
-              unit_stat["checksum"] = sha1(unit)
-      except OSError:
-          unit_stat = {"exists": False}
+      unit_stats = []
+      for unit in units:
+          try:
+              st = os.lstat(unit)
+              unit_stat = {"exists": True, "path": unit, "ctime": st.st_ctime, "mtime": st.st_mtime}
+              if stat.S_ISREG(st.st_mode) and os.access(unit, os.R_OK):
+                  unit_stat["checksum"] = sha1(unit)
+          except OSError:
+              unit_stat = {"exists": False, "path": unit}
+          unit_stats.append(unit_stat)
       try:
           with open(record, "rb") as f:
               content = base64.b64encode(f.read()).decode("ascii")
       except (IOError, OSError):
           content = None
-      print(json.dumps({"files": files, "unit": unit_stat, "record": content}))
+      print(json.dumps({"files": files, "units": unit_stats, "record": content}))
 
 - name: Note the checksums read
   ansible.builtin.set_fact:
     cassandra_pending_files: {files: "{{ _read.files }}"}
-    cassandra_pending_unit_file: {stat: "{{ _read.unit }}"}
+    cassandra_pending_unit_files: "{{ _read.units }}"
     cassandra_pending_snapshot: "{{ {'content': _read.record} if _read.record is not none else {'failed': true} }}"
   vars:
     _read: "{{ cassandra_pending_read.stdout | from_json }}"
@@ -91,7 +98,8 @@
          and _record._jvm.pid | default('') | string == cassandra_jvm.pid | default('-') | string
          and (_record._jvm.start | default(0) | float - cassandra_jvm.start | float) | abs < 2 }}
     _started: "{{ _record if _record_current | bool else {} }}"
-    _files: "{{ cassandra_pending_files.files + ([cassandra_pending_unit_file.stat] if cassandra_pending_unit_file.stat.exists else []) }}"
+    _units: "{{ cassandra_pending_unit_files | map(attribute='path') | list }}"
+    _files: "{{ cassandra_pending_files.files + cassandra_pending_unit_files | selectattr('exists') | list }}"
     _newer: "{{ _files | selectattr('ctime', '>', cassandra_jvm.start | float) | map(attribute='path') | list if cassandra_jvm.start is defined else [] }}"
     # The exporter's record (jmx_prometheus.at_start) not in the one of the start (none, e.g. a node imported: the
     # record first written since): what that JVM's exporter read is not known, and Cassandra reads no such file
@@ -99,11 +107,14 @@
       {%- set out = [] -%}
       {%- for f in _files if _record_current | bool -%}
       {%-   if f.path | basename == 'jmx_prometheus.at_start' and f.path not in _started -%}
-      {%-   elif f.path in _started or f.path != cassandra_pending_unit_file.stat.path | default('') -%}
+      {%-   elif f.path in _started or f.path not in _units -%}
       {%-     if _started.get(f.path) != f.checksum -%}{%- set _ = out.append(f.path | basename) -%}{%- endif -%}
       {%-   elif f.path in _newer -%}
       {%-     set _ = out.append(f.path | basename) -%}
       {%-   endif -%}
+      {%- endfor -%}
+      {%- for f in cassandra_pending_unit_files if _record_current | bool and not f.exists and f.path in _started -%}
+      {%-   set _ = out.append(f.path | basename) -%}
       {%- endfor -%}
       {{ out | sort }}
     # (the exporter's record: when an earlier record has it, i.e. not its first write, as for a node imported)

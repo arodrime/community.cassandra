@@ -128,6 +128,10 @@ _cassandra_config_pkg_conf_dir: "{{ '/etc/cassandra/default.conf' if ansible_fac
 _cassandra_config_snapshot: /var/lib/cassandra/.ansible_config_at_start.json
 _cassandra_config_snapshot_files: [cassandra.yaml, cassandra-env.sh, jvm*-server.options, cassandra-rackdc.properties,
                                    logback.xml, jmxremote.access, jmx_prometheus.at_start]
+# and the unit files it covers: the role's unit, the drop-in of the package's init script (cassandra_service's
+# _cassandra_service_environment_dropin)
+_cassandra_config_snapshot_units: [/etc/systemd/system/cassandra.service,
+                                   /etc/systemd/system/cassandra.service.d/zz-ansible-environment.conf]
 # A duration above zero Cassandra 4.1+ reads in milliseconds (DurationSpec.IntMillisecondsBound)
 _cassandra_config_duration_ms: '^0*[1-9][0-9]*(ms|s|m|h|d)$'
 # Installed Cassandra release ('' if not from a package), read with the node (rpm, else dpkg)

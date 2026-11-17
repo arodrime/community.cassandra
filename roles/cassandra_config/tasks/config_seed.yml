@@ -1,5 +1,5 @@
 ---
-# Before the roles change the config (or the systemd unit) of a running
+# Before the roles change the config (or the systemd unit, its drop-in) of a running
 # Cassandra with no record of the files it started with (started another way,
 # e.g. imported): records the files not written since its JVM started, which
 # are the ones it runs with, so a change still to apply is told by content
@@ -45,10 +45,11 @@
         - cassandra_jvm.start is defined
         - cassandra_seed_dir.stat.isdir | default(false)
 
-    - name: Checksum the unit
+    - name: Checksum the unit and its drop-in
       ansible.builtin.stat:
-        path: /etc/systemd/system/cassandra.service
-      register: cassandra_seed_unit
+        path: "{{ item }}"
+      loop: "{{ _cassandra_config_snapshot_units }}"
+      register: cassandra_seed_units
       when:
         - cassandra_jvm.start is defined
         - cassandra_seed_dir.stat.isdir | default(false)
@@ -64,7 +65,7 @@
         mode: "0600"  # root only: the checksum of the JMX password file
       vars:
         _files: >-
-          {{ (cassandra_seed_files.files + ([cassandra_seed_unit.stat] if cassandra_seed_unit.stat.exists else []))
+          {{ (cassandra_seed_files.files + cassandra_seed_units.results | map(attribute='stat') | selectattr('exists') | list)
              | rejectattr('ctime', '>', cassandra_jvm.start | float) | list }}
       when:
         - cassandra_jvm.start is defined

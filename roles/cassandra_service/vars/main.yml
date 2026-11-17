@@ -56,5 +56,9 @@ _cassandra_service_jmx: >-
      | combine({'password_file': cassandra_jmx_password_file} if cassandra_jmx_password_file
                else ({'password': cassandra_jmx_password} if cassandra_jmx_password else {})) }}
 # cassandra_service_start package_script: the drop-in of the unit systemd generates for the package's init script
-# that sets cassandra_service_environment (unit.yml)
-_cassandra_service_environment_dropin: /etc/systemd/system/cassandra.service.d/99-ansible-environment.conf
+# that sets cassandra_service_environment (unit.yml); its name sorts after the node's own drop-ins (override.conf,
+# 99-x.conf): systemd reads them in that order, the last value of a variable wins
+_cassandra_service_environment_dropin: /etc/systemd/system/cassandra.service.d/zz-ansible-environment.conf
+_cassandra_service_dropin_wanted: >-
+  {{ cassandra_service_unit_manage | bool and cassandra_service_start == 'package_script'
+     and cassandra_service_environment | length > 0 }}

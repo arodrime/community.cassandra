@@ -37,25 +37,53 @@ BLOCK = next(t for t in load("tasks", "unit.yml") if t.get("name") == "Write the
 TASKS = dict((t["name"], t) for t in BLOCK["block"])
 
 
+def _list(when):
+    return when if isinstance(when, list) else [when] if when else []
+
+
 @pytest.mark.parametrize("start, manage, env, written, removed", [
     ("package_script", True, {"JAVA_HOME": "/usr/lib/jvm/jre-17"}, True, False),
     ("package_script", True, {}, False, True),  # none set: the roles' drop-in removed, none written
-    ("unit", True, {"JAVA_HOME": "/x"}, False, False),  # the role's unit carries it itself
+    # the role's unit carries it itself: the roles' drop-in removed (left from package_script, it would override the
+    # unit's environment; pre-push audit, rc13)
+    ("unit", True, {"JAVA_HOME": "/x"}, False, True),
     ("package_script", False, {"JAVA_HOME": "/x"}, False, False),  # the node's own unit kept: nothing
 ])
 def test_the_drop_in_only_for_the_init_script_with_an_environment(start, manage, env, written, removed):
     variables = {"cassandra_service_start": start, "cassandra_service_unit_manage": manage,
                  "cassandra_service_environment": env}
+    variables["_cassandra_service_dropin_wanted"] = render(load("vars", "main.yml")["_cassandra_service_dropin_wanted"],
+                                                           **variables)
 
     def runs(task):
-        whens = BLOCK["when"] + ([task["when"]] if isinstance(task.get("when"), str) else task.get("when", []))
+        whens = _list(BLOCK["when"]) + _list(task.get("when"))
         return all(render("{{ %s }}" % w, **variables) in (True, "True") for w in whens)
     assert runs(TASKS["Write the drop-in with its environment"]) is written
-    assert runs(TASKS["Remove the drop-in when no environment is set"]) is removed
+    assert runs(TASKS["Remove the drop-in when no environment is set, or with the role's unit"]) is removed
     assert TASKS["Write the drop-in with its environment"]["ansible.builtin.template"]["dest"] == \
         "{{ _cassandra_service_environment_dropin }}"
-    assert load("vars", "main.yml")["_cassandra_service_environment_dropin"] == \
-        "/etc/systemd/system/cassandra.service.d/99-ansible-environment.conf"
+
+
+def test_the_drop_in_comes_after_the_nodes_own():
+    # (pre-push audit, rc13) systemd reads the drop-ins by their names' order, the last value of a variable wins:
+    # after the one systemctl edit writes (override.conf) and the numbered ones, so the inventory's values hold
+    name = os.path.basename(load("vars", "main.yml")["_cassandra_service_environment_dropin"])
+    assert name == "zz-ansible-environment.conf"
+    assert sorted([name, "override.conf", "99-java.conf", "zulu.conf"])[-1] == name
+
+
+def test_a_change_of_the_drop_in_restarts_as_one_of_the_unit():
+    # (pre-push audit, rc13) cassandra_service_restart_on_change: the drop-in written or removed too
+    unit = dict((t.get("name"), t) for t in load("tasks", "unit.yml"))
+    changed = unit["Note whether the unit or its environment changed"]["ansible.builtin.set_fact"]
+    for registered in ("cassandra_service_unit", "cassandra_service_dropin", "cassandra_service_dropin_removed"):
+        assert "%s is changed" % registered in changed["_cassandra_service_unit_changed"]
+    with open(os.path.join(ROLE, "tasks", "main.yml"), encoding="utf-8") as f:
+        main = f.read()
+    with open(os.path.join(ROLE, "tasks", "wait_normal.yml"), encoding="utf-8") as f:
+        wait = f.read()
+    assert "cassandra_service_unit is changed" not in main.replace("if cassandra_service_unit is changed else", "")
+    assert main.count("_cassandra_service_unit_changed") == 2 and "_cassandra_service_unit_changed" in wait
 
 
 def test_the_drop_in_sets_the_environment_only():
@@ -64,3 +92,10 @@ def test_the_drop_in_sets_the_environment_only():
     lines = [line for line in text.split("\n") if line and not line.startswith("#")]
     assert lines == ["[Service]", 'Environment="JAVA_HOME=/usr/lib/jvm/jre-17"', 'Environment="LOCAL_JMX=no"']
     assert text.startswith("# Managed by Ansible (community.cassandra.cassandra_service)")
+
+
+def test_the_drop_in_quotes_each_value_as_systemd_reads_it():
+    # (pre-push audit, rc13) % starts a systemd specifier, \ and " end or escape the quoted value
+    with open(os.path.join(ROLE, "templates", "cassandra-environment.conf.j2"), encoding="utf-8") as f:
+        text = render(f.read(), cassandra_service_environment={"JVM_EXTRA_OPTS": '-Dx="a b" -Dp=50% -Dw=C:\\x'})
+    assert 'Environment="JVM_EXTRA_OPTS=-Dx=\\"a b\\" -Dp=50%% -Dw=C:\\\\x"' in text.split("\n")

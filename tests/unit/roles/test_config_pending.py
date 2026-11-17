@@ -75,17 +75,18 @@ def pending(snapshot, files, jvm=None, recorded=("42", 100.5)):
         "cassandra_pending_files": {"files": [{"path": p, "checksum": c, "ctime": m} for p, c, m in files]},
         "cassandra_pending_snapshot": ({"content": base64.b64encode(json.dumps(snapshot).encode()).decode()}
                                        if snapshot is not None else {}),
-        "cassandra_pending_unit_file": {"stat": {"exists": False}},
+        "cassandra_pending_unit_files": [],
         "cassandra_jvm": JVM if jvm is None else jvm,
     }
-    for name in ("_record", "_record_current", "_started", "_files", "_newer"):
+    for name in ("_record", "_record_current", "_started", "_units", "_files", "_newer"):
         variables[name] = trust_as_template(NOTE["vars"][name])
     return render(NOTE["vars"]["_changed"], variables), render(NOTE["vars"]["_unknown"], variables)
 
 
 def test_only_the_files_cassandra_config_writes(tmp_path):
     patterns = yaml.safe_load(open(os.path.join(ROLE, "vars", "main.yml")))["_cassandra_service_config_files"]
-    read = task("config_pending.yml", "Checksum the config files and the unit, read the checksums recorded at the last start")
+    read = task("config_pending.yml", "Checksum the config files and the unit files, read the checksums recorded at the last"
+                                      " start")
     assert "+ _cassandra_service_config_files" in read["ansible.builtin.command"]["argv"]
     names = ["cassandra.yaml", "cassandra-env.sh", "jvm-server.options", "jvm11-server.options", "jvm17-server.options",
              "jvm8-server.options", "cassandra-rackdc.properties", "logback.xml",
@@ -102,18 +103,21 @@ def test_only_the_files_cassandra_config_writes(tmp_path):
     (conf / "jvm8-server.options").symlink_to(conf / "logback.xml")  # a link: not a file of find's
     (tmp_path / "unit").write_text("[Unit]\n")
     (tmp_path / "record.json").write_text("{}")
-    argv = [sys.executable, "-c", read["vars"]["_read"], str(conf), str(tmp_path / "unit"), str(tmp_path / "record.json")] + patterns
+    units = json.dumps([str(tmp_path / "unit"), str(tmp_path / "drop-in.conf")])
+    argv = [sys.executable, "-c", read["vars"]["_read"], str(conf), str(tmp_path / "record.json"), units] + patterns
     found = json.loads(subprocess.run(argv, stdout=subprocess.PIPE, check=True).stdout)
     assert sorted(os.path.basename(f["path"]) for f in found["files"]) == sorted(n for n in names if n != "jvm8-server.options")
     for f in found["files"]:  # as the find module (get_checksum) gives them
         assert f["checksum"] == hashlib.sha1(os.path.basename(f["path"]).encode()).hexdigest()
         assert f["ctime"] == os.lstat(f["path"]).st_ctime
-    assert found["unit"]["exists"] is True and found["unit"]["path"] == str(tmp_path / "unit")
-    assert found["unit"]["checksum"] == hashlib.sha1(b"[Unit]\n").hexdigest()
+    unit, dropin = found["units"]
+    assert unit["exists"] is True and unit["path"] == str(tmp_path / "unit")
+    assert unit["checksum"] == hashlib.sha1(b"[Unit]\n").hexdigest()
+    assert dropin == {"exists": False, "path": str(tmp_path / "drop-in.conf")}
     assert base64.b64decode(found["record"]) == b"{}"
-    argv[4:6] = [str(tmp_path / "no-unit"), str(tmp_path / "no-record")]
+    argv[4:6] = [str(tmp_path / "no-record"), json.dumps([str(tmp_path / "no-unit")])]
     found = json.loads(subprocess.run(argv, stdout=subprocess.PIPE, check=True).stdout)
-    assert found["unit"] == {"exists": False} and found["record"] is None
+    assert found["units"] == [{"exists": False, "path": str(tmp_path / "no-unit")}] and found["record"] is None
 
 
 @pytest.mark.parametrize("checksum, expected", [("y1", []), ("y2", ["cassandra.yaml"])])
@@ -176,14 +180,15 @@ def test_seed_leaves_out_the_files_written_since_the_start():
     variables = {
         "cassandra_seed_files": {"files": [{"path": YAML, "checksum": "y1", "ctime": 90.0},
                                            {"path": ENV, "checksum": "e1", "ctime": 110.0}]},
-        "cassandra_seed_unit": {"stat": {"exists": True, "path": UNIT, "checksum": "u1", "ctime": 95.0}},
+        "cassandra_seed_units": {"results": [{"stat": {"exists": True, "path": UNIT, "checksum": "u1", "ctime": 95.0}},
+                                             {"stat": {"exists": False}}]},
         "cassandra_jvm": {"pid": "42", "start": "100.00"},
     }
     variables["_files"] = trust_as_template(rec["vars"]["_files"])
     jvm = {"pid": "42", "start": 100.0}  # the JVM it records, as config_snapshot.yml does
     assert json.loads(render(rec["ansible.builtin.copy"]["content"], variables)) == {YAML: "y1", UNIT: "u1", "_jvm": jvm}
     # the unit written since the start: left out too
-    variables["cassandra_seed_unit"]["stat"]["ctime"] = 105.0
+    variables["cassandra_seed_units"]["results"][0]["stat"]["ctime"] = 105.0
     assert json.loads(render(rec["ansible.builtin.copy"]["content"], variables)) == {YAML: "y1", "_jvm": jvm}
 
 
@@ -197,7 +202,9 @@ def test_service_seeds_before_changing_the_unit():
     assert "mode" not in unit[plan]["ansible.builtin.template"]  # a mode change alone records nothing
     assert "not ansible_check_mode" in unit[plan]["when"]
     assert unit[seed]["ansible.builtin.include_role"] == {"name": "community.cassandra.cassandra_config", "tasks_from": "config_seed.yml"}
-    assert unit[seed]["when"] == "cassandra_service_unit_planned is changed"
+    # (and before its drop-in changes or goes: package_script, pre-push audit rc13)
+    assert unit[seed]["when"].startswith("cassandra_service_unit_planned is changed or cassandra_service_dropin_planned"
+                                         " is changed or cassandra_service_dropin_found.stat.exists")
 
 
 def test_config_seeds_before_writing():
@@ -307,7 +314,7 @@ def test_the_record_of_a_start_is_that_jvms_and_leaves_out_the_files_written_sin
     start), for which apply_config trusts the record only."""
     record = task("config_snapshot.yml", "Record the config Cassandra started with")["ansible.builtin.command"]["argv"]
     assert record[3:] == ["start", "{{ _cassandra_service_config_snapshot }}", "{{ _cassandra_service_conf_dir }}",
-                          "/etc/systemd/system/cassandra.service"]
+                          "/etc/systemd/system/cassandra.service", "{{ _cassandra_service_environment_dropin }}"]
     conf = tmp_path / "conf"
     conf.mkdir()
     for name in ("cassandra.yaml", "jvm17-server.options", ".hidden"):

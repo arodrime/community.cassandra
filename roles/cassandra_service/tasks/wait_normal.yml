@@ -24,7 +24,7 @@
         {{ {'apply_config': 'write_config'}.get(cassandra_service_node_action, cassandra_service_node_action)
            if cassandra_service_node_action is defined
            else 'restart' if cassandra_service_state | default('') == 'restarted'
-                             or (cassandra_service_restart_on_change | default(false) | bool and cassandra_service_unit is changed)
+                             or (cassandra_service_restart_on_change | default(false) | bool and _cassandra_service_unit_changed | default(false) | bool)
            else 'start' }}
   vars:
     _rolling: "{{ cassandra_service_node_action is defined and not cassandra_service_node_batch | default(false) | bool }}"
