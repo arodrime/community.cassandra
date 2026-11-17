@@ -1339,6 +1339,30 @@ def test_system_and_debug_log_in_a_dir_of_their_own(tmp_path, on):
     assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
 
 
+def log_dirs_apart(system, debug, audit):
+    """system.log, debug.log and audit.log each in a dir of its own (as written in the XML: & as &amp;)."""
+    def edit_dirs(files):
+        text = files["logback.xml"]
+        for tag in ("<file>", "<fileNamePattern>"):
+            for log, where in (("system", system), ("debug", debug)):
+                text = edit(text, "%s${cassandra.logdir}/%s" % (tag, log), "%s%s/%s" % (tag, where, log))
+            text = text.replace("%s${cassandra.logdir}/audit/" % tag, "%s%s/" % (tag, audit))
+        files["logback.xml"] = text
+    return edit_dirs
+
+
+def test_a_log_dir_with_an_ampersand_is_read_as_the_xml_writes_it(tmp_path):
+    # findtext decodes &amp;: read back escaped, the role writes the same line (never /data/R&D, invalid XML)
+    files = node_files("50x", log_dirs_apart("/data/R&amp;D/sys", "/data/R&amp;D/debug", "/data/R&amp;D/audit"))
+    cmdline = running(files, tmp_path)
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    rendered, variables = role_files(inventory, layout, files)
+    assert [variables[k] for k in ("cassandra_log_system_dir", "cassandra_log_debug_dir", "cassandra_log_audit_dir")] \
+        == ["/data/R&amp;D/sys", "/data/R&amp;D/debug", "/data/R&amp;D/audit"]
+    assert "<file>/data/R&amp;D/sys/system.log</file>" in rendered["logback.xml"]
+    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
+
+
 def test_a_log_dir_its_rolled_files_do_not_share_stays_a_hand_edit(tmp_path):
     def edit_logs(files):
         files["logback.xml"] = edit(files["logback.xml"], "<file>${cassandra.logdir}/system.log",

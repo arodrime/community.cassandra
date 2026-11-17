@@ -1,0 +1,2 @@
+bugfixes:
+  - "import_cluster playbook - a log dir of ``logback.xml`` with ``&`` or ``<`` in it (``/data/R&amp;D``) is imported as the XML writes it (``cassandra_log_system_dir``, ``cassandra_log_debug_dir``, ``cassandra_log_audit_dir``), no longer decoded into a value the role would write as invalid XML."

@@ -2555,6 +2555,12 @@ def _jvm_moves(env, series, files, ctx, render, live_files, running):
             "shown": [f for f in jvm_files if f not in adopted["apart"]] if adopted else [], "not_moved": why}
 
 
+def _xml_text(text):
+    """A value read from logback.xml (its entities decoded) as the template writes it in the XML: & and < escaped
+    (/data/R&amp;D read as /data/R&D, written back as /data/R&amp;D)."""
+    return text.replace("&", "&amp;").replace("<", "&lt;")
+
+
 def _logback(text):
     """cassandra_config's logback.xml variables as logback reads the node's file, whatever its quoting, spacing,
     attribute order or comments (a line written another way is not read by the template's): the root logger's
@@ -2593,7 +2599,7 @@ def _logback(text):
         path = (appender.findtext("file") or "").strip()
         pattern = (appender.findtext("rollingPolicy/fileNamePattern") or "").strip()
         if path.endswith("/audit.log") and pattern in (path + ROLLED, path + ROLLED + ".zip"):
-            found["cassandra_log_audit_dir"] = path[:-len("/audit.log")]
+            found["cassandra_log_audit_dir"] = _xml_text(path[:-len("/audit.log")])
             found["cassandra_log_audit_compress"] = pattern.endswith(".zip")
     # system.log's and debug.log's dir, the same for the file and its rolled files (else a hand edit); their rolled
     # files (their stock names), zipped or not: one variable for both, read when they agree (else the line that
@@ -2606,7 +2612,7 @@ def _logback(text):
         path = (appender.findtext("file") or "").strip()
         pattern = (appender.findtext("rollingPolicy/fileNamePattern") or "").strip()
         if path.endswith("/%s.log" % kind) and pattern in (path + ROLLED, path + ROLLED + ".zip"):
-            found["cassandra_log_%s_dir" % kind] = path[:-len("/%s.log" % kind)]
+            found["cassandra_log_%s_dir" % kind] = _xml_text(path[:-len("/%s.log" % kind)])
             zipped.add(pattern.endswith(".zip"))
         else:  # (None: not read, whatever its <file> line said)
             found["cassandra_log_%s_dir" % kind] = None
