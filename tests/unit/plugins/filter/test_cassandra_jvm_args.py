@@ -1351,6 +1351,17 @@ def log_dirs_apart(system, debug, audit):
     return edit_dirs
 
 
+def test_system_debug_and_audit_dirs_apart_pass_the_self_check(tmp_path):
+    files = node_files("50x", log_dirs_apart("/srv/sys/logs", "/srv/debug/logs", "/srv/audit/logs"))
+    cmdline = running(files, tmp_path)
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    rendered, variables = role_files(inventory, layout, files)
+    assert variables["cassandra_log_system_dir"] == "/srv/sys/logs"
+    assert variables["cassandra_log_debug_dir"] == "/srv/debug/logs"
+    assert variables["cassandra_log_audit_dir"] == "/srv/audit/logs"
+    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
+
+
 def test_a_log_dir_with_an_ampersand_is_read_as_the_xml_writes_it(tmp_path):
     # findtext decodes &amp;: read back escaped, the role writes the same line (never /data/R&D, invalid XML)
     files = node_files("50x", log_dirs_apart("/data/R&amp;D/sys", "/data/R&amp;D/debug", "/data/R&amp;D/audit"))
