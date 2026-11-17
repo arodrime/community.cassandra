@@ -88,6 +88,7 @@ class _Key(object):
 
     def __init__(self):
         self.names, self.order, self.counts, self.taken, self.kinds, self.quiet = {}, [], {}, set(), {}, set()
+        self.clear = set()  # names shown in clear wherever they are (_clear_names)
 
     def get(self, real):
         """What replaces real in the text, None when nothing does."""
@@ -138,11 +139,51 @@ def _forms(name):
     return set([str(name)] + [sep.join(words) for sep in (" ", "_", "-", "")])
 
 
+@functools.lru_cache(maxsize=1)
+def _stock_names():
+    """The setting names the copy shows in clear wherever they are: the kernel settings cassandra_linux sets, and the
+    JVM properties of the stock options files (-Dcassandra.x, -Dchronicle.analytics.disable: their -D names, with and
+    without it), the later stock lines the import reports too -> frozenset."""
+    import yaml
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import LATER_STOCK
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import ROLES
+    names = set()
+    with open(os.path.join(ROLES, "cassandra_linux", "defaults", "main.yml"), encoding="utf-8") as f:
+        names.update(str(k) for k in (yaml.safe_load(f).get("cassandra_linux_sysctl") or {}))
+    lines = [line for files in LATER_STOCK.values() for line in files]
+    templates = os.path.join(ROLES, "cassandra_config", "templates")
+    for series in sorted(os.listdir(templates)):
+        folder = os.path.join(templates, series)
+        for name in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
+            if re.match(r"^jvm\d*-server\.options\.j2$", name):
+                with open(os.path.join(folder, name), encoding="utf-8") as f:
+                    lines += f.read().split("\n")
+    for line in lines:
+        m = re.match(r"^\s*#?\s*-D([\w.-]+)", line)
+        if m:
+            names.update((m.group(1), "-D" + m.group(1)))
+    return frozenset(names)
+
+
+def _clear_names(layout):
+    """The names the copy shows in clear: the stock ones (_stock_names), and the kernel settings the import read on
+    the nodes or carries (cassandra_linux_sysctl, the OS lines read) -> set."""
+    names = set(_stock_names())
+    for n in layout.get("nodes") or []:
+        names.update(str(k) for k in ((n.get("vars") or {}).get("cassandra_linux_sysctl") or {}))
+        for line in (n.get("os") or {}).get("lines") or []:
+            m = re.match(r"^\s*(?:sysctl\s+)?([a-z0-9_]+(?:\.[a-z0-9_-]+)+)\s*(?:[=:]|\()", str(line))
+            if m and KERNEL_KEY.match(m.group(1)):
+                names.add(m.group(1))
+    return names
+
+
 def _key(layout, paths=()):
     """The names of the layout -> _Key: the clusters, the nodes (their names, host names, the hosts they were given,
     an address as a name too), the data centers and racks named after the site, the inventory's groups, the dirs of
     paths (the inventory's and the report's as the report shows them, unless the default ones)."""
     key = _Key()
+    key.clear = _clear_names(layout)
     nodes = sorted(layout.get("nodes") or [], key=lambda n: _natural(n.get("name", "")))
     places = [str(n.get(k)) for n in nodes for k in ("dc", "rack") if n.get(k)]
     key.taken |= set(p for p in places if GENERIC.match(p))  # (a real dc1 keeps its name: the site's ones after it)
@@ -398,6 +439,8 @@ def _masked_names(text, key):
             return key.get(word) or word
         if KERNEL_KEY.match(word) and (re.match(r"\s*[=:]", m.string[m.end():])  # (vm.swappiness = 0)
                                        or re.search(r"\bsysctl $", m.string[:m.start()])):  # (sysctl vm.drop_caches)
+            return word
+        if word in key.clear:  # (a kernel setting the nodes have, a stock JVM property: anywhere)
             return word
         if word.startswith("cassandra_") or re.sub(r"^-+D?", "", word).startswith(STOCK_DOTTED):
             return _dotted(word, key) if "." in word else word

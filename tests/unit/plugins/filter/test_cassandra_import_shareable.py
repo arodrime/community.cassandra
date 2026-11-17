@@ -423,3 +423,20 @@ def test_the_reports_own_words_are_not_taken_for_a_secret():
     text = "\n".join(cassandra_import_shareable(lines, layout)["text"])
     assert "ansible-vault asks for a new password (keep it safe): every playbook run" in text, text
     assert "hunter2" not in "\n".join(cassandra_import_shareable(["    cassandra.yaml: password: hunter2"], layout)["text"])
+
+
+def test_known_kernel_settings_and_stock_jvm_properties_in_clear_anywhere():
+    # (owner's report, 2026-11-17) "remove domain2 from cassandra_linux_sysctl" (vm.swappiness), "domain1=true
+    # (jvm-server.options) ... added by apply_config" (a stock -D property): a kernel setting the role sets or the
+    # nodes have, a JVM property of the stock options files, in clear wherever they are; real hosts still masked
+    nodes = [{"name": "a1", "vars": {"cassandra_linux_sysctl": {"vm.dirty_background_ratio": 7}}}]
+    text = shared_text(["    to change it: remove vm.swappiness from cassandra_linux_sysctl, then apply_config",
+                        "    and vm.dirty_background_ratio too, read on the nodes",
+                        "  chronicle.analytics.disable=true (jvm-server.options) added by apply_config: Cassandra's"
+                        " default since CASSANDRA-19656",
+                        "  -Dchronicle.analytics.disable=true",
+                        "  seed ntp.qxsite.example.com, vm.qxlab.example.com"], nodes)
+    for kept in ("remove vm.swappiness from", "vm.dirty_background_ratio too", "chronicle.analytics.disable=true (jvm",
+                 "-Dchronicle.analytics.disable=true"):
+        assert kept in text, kept
+    assert "qxsite" not in text and "qxlab" not in text and "example.com" not in text
