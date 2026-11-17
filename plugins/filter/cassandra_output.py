@@ -12,6 +12,7 @@ cassandra_phase, cassandra_check_what: a phase line, preflight's check line.
 cassandra_prepare_lines, cassandra_left_system_warning: what the prepare of new nodes did.
 cassandra_command, cassandra_todo, cassandra_removed_todo, cassandra_seeds_todo, cassandra_seeds_reload_todo,
 cassandra_reimport_hosts: what is left to do, and the commands for it.
+cassandra_refused: a refusal before any change, as a block of 79 columns.
 cassandra_cqlsh_words: cassandra_cqlsh_command split as the cassandra_cqlsh module splits it.
 """
 
@@ -159,6 +160,21 @@ def cassandra_not_reached(hosts, inventory=None, default_inventory=None, cwd=Non
     return lines
 
 
+# the width of a refusal: 79 columns (an 80-column terminal), whatever prints it (a terminal, a pipe, a log file)
+REFUSED_WIDTH = 79
+
+
+def cassandra_refused(head, lines=None):
+    """A refusal before any change -> its block: "REFUSED  <head>  nothing was changed", then its lines (one fact
+    each) indented 2, each fitted to 79 columns (a command cut between its arguments, " \\" at the end of each
+    line but the last); an empty line left out, a line of lines (a list) as its lines."""
+    said = []
+    for line in lines or []:
+        said += [str(x) for x in line] if isinstance(line, (list, tuple)) else [str(line)]
+    lines = ["  " + line.rstrip() for line in said if line.strip()]
+    return ["REFUSED  %s  nothing was changed" % head] + out.fit(lines, REFUSED_WIDTH)
+
+
 def cassandra_cqlsh_words(command):
     """cassandra_cqlsh_command as the cassandra_cqlsh module splits it (shlex: the program, then its arguments) ->
     [word], [] when it cannot be split (an unclosed quote).
@@ -264,6 +280,7 @@ class FilterModule(object):
             "cassandra_normal_wait_line": cassandra_normal_wait_line,
             "cassandra_command": cassandra_command,
             "cassandra_not_reached": cassandra_not_reached,
+            "cassandra_refused": cassandra_refused,
             "cassandra_cqlsh_words": cassandra_cqlsh_words,
             "cassandra_seeds_reload_todo": cassandra_seeds_reload_todo,
             "cassandra_todo": cassandra_todo,

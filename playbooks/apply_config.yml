@@ -462,21 +462,23 @@
     # here; --check (nothing restarted) goes on to show everything, the refusal said in its recap
     - name: Note whether restarts are refused while a node is not running
       ansible.builtin.set_fact:
+        # [why, then the way out: a fact per line, a command on a line of its own (to paste)]
         _cassandra_apply_config_refused: >-
           {{ [] if not _down else
              [_down | join(', ') ~ ': Cassandra not running, and ' ~ _restart | join(', ') ~ ' would be restarted, which needs'
-              ~ ' every other node up.',
-              [('Apply the config there first (--limit ' ~ _limit | join(',') ~ ') and start ' ~ _them ~ ' with start_rack'
-                ~ ' (which checks the start first: ' ~ _start_rack.limit | join('; ') ~ ') if stopped on purpose,'
-                ~ ' or, if an interrupted run stopped ' ~ _them ~ ', resume it (-e cassandra_rolling_resume=true); then run again.'
-                if _limit else ''),
-               (_failed | join(', ') ~ ': the cassandra unit failed and nothing is to apply: see systemctl status cassandra'
-                ~ ' / journalctl -u cassandra there, fix it and start it with start_rack (which checks the start first: '
-                ~ _start_rack.failed | join('; ') ~ '), then run again.' if _failed else ''),
-               ('A restart for the tuned profile or the LVM read-ahead can be left for later:'
-                ~ ' -e cassandra_linux_tuned_switch_restart=false -e cassandra_data_lvchange_restart=false.'
+              ~ ' every other node up.']
+             + (['stopped on purpose: apply the config there first (--limit ' ~ _limit | join(',') ~ '), then start '
+                 ~ _them ~ ' with start_rack, which checks the start first:']
+                + _start_rack.limit | map('regex_replace', '^', '    ') | list
+                + ['stopped by an interrupted run: resume it (-e cassandra_rolling_resume=true)'] if _limit else [])
+             + ([_failed | join(', ') ~ ': the cassandra unit failed and nothing is to apply: see systemctl status cassandra'
+                 ~ ' / journalctl -u cassandra there, fix it, then start it with start_rack, which checks the start first:']
+                + _start_rack.failed | map('regex_replace', '^', '    ') | list if _failed else [])
+             + (['a restart for the tuned profile or the LVM read-ahead can be left for later:',
+                 '    -e cassandra_linux_tuned_switch_restart=false -e cassandra_data_lvchange_restart=false']
                 if _restart | map('extract', hostvars) | map(attribute='cassandra_apply_config_disks_window', default=[])
-                   | select | list else '')] | select | join(' ')] }}
+                   | select | list else [])
+             + ['then run again.'] }}
       run_once: true
       vars:
         _restart: >-
@@ -535,13 +537,17 @@
 
     - name: Refuse restarts while a node is not running
       ansible.builtin.fail:
-        msg: "{{ _cassandra_apply_config_refused[0] }} Nothing was changed. {{ _cassandra_apply_config_refused[1] }}"
+        msg: >-
+          {{ ('apply_config  ' ~ _cluster) | community.cassandra.cassandra_refused(_cassandra_apply_config_refused)
+             | join(_nl) }}
       run_once: true
       when:
         - _cassandra_apply_config_refused | length > 0
         - not ansible_check_mode
       vars:
         cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
 
     # every node's value of the settings that differ somewhere: the live files that differ on a node (listed
     # once for all), read on each one in one go (only shown masked; one not on this node or not readable: no
@@ -762,16 +768,13 @@
             - - title: WILL DO
                 pre: "{{ _nodes | community.cassandra.cassandra_apply_config_outcomes(plan=true, check=ansible_check_mode,
                                                                                   width='terminal', margin=2) }}"
-          # the nodes' warnings, each one once, then (--check) why a real run is refused; the recap says how many
+          # the nodes' warnings, each one once (a real run: --check, which shows no plan, says the refusal in its recap)
           warnings: >-
             {{ _nodes | community.cassandra.cassandra_apply_config_warnings
                + [{'label': cassandra_apply_config_no_return | default([]) | community.cassandra.cassandra_node_list,
                    'text': ('storage_compatibility_mode moves to NONE: the point of no return. Once a node runs with it,'
                             ~ ' it cannot go back to UPGRADING or CASSANDRA_4, nor to its former Cassandra version.')
-                           if cassandra_apply_config_no_return | default([]) else ''}]
-               + [{'label': 'refused',
-                   'text': ('a real run is refused, before changing anything: ' ~ _cassandra_apply_config_refused | join(' '))
-                           if ansible_check_mode and _cassandra_apply_config_refused | default([]) else ''}] }}
+                           if cassandra_apply_config_no_return | default([]) else ''}] }}
 
     # first, once the run is confirmed: read at each JMX login (no restart), the checks before a node's turn
     # log in with it; a node it fails on stops the run, as a write at its turn would

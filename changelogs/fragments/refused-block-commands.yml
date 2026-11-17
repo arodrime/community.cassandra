@@ -1,0 +1,3 @@
+bugfixes:
+  - "preflight (every playbook that changes the cluster) - a JMX login refused, a ``nodetool describecluster`` that failed or a node of another cluster is a ``REFUSED  JMX login refused on node1  nothing was changed`` block, a fact per line within 79 columns, no longer one long line ending with a space."
+  - "apply_config playbook - the refusal of restarts while a node is not running (a real run's ``REFUSED  apply_config  prod  nothing was changed`` block, the warning of ``--check``) gives each way out on a line of its own and the ``start_rack`` command on lines of its own, cut between its arguments with `` \\`` so that it pastes as one command."

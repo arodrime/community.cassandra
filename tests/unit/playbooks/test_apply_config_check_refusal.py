@@ -78,10 +78,13 @@ HOSTVARS = {
               "_cassandra_preflight": {"ring_address": "10.0.0.5", "cassandra_dc": "dc1", "cassandra_rack": "r1"}}}
 HOSTS = sorted(HOSTVARS)
 REASON = ("node5: Cassandra not running, and node1, node2 would be restarted, which needs every other node up.")
-WAY = ("Apply the config there first (--limit node5) and start it with start_rack (which checks the start first:"
-       " ansible-playbook community.cassandra.start_rack --limit node5 -e cassandra_target_dc=dc1"
-       " -e cassandra_target_rack=r1) if stopped on purpose, or, if an interrupted run stopped it, resume it (-e cassandra_rolling_resume=true); then run"
-       " again.")
+# the way out: a fact per line, each command on a line of its own (to paste)
+WAY = ["stopped on purpose: apply the config there first (--limit node5), then start it with start_rack, which checks"
+       " the start first:",
+       "    ansible-playbook community.cassandra.start_rack --limit node5 -e cassandra_target_dc=dc1"
+       " -e cassandra_target_rack=r1",
+       "stopped by an interrupted run: resume it (-e cassandra_rolling_resume=true)"]
+AGAIN = "then run again."
 
 
 def refused(hostvars):
@@ -91,7 +94,7 @@ def refused(hostvars):
 
 
 def test_the_refusal_reason_and_its_way_out():
-    assert refused(HOSTVARS) == [REASON, WAY]
+    assert refused(HOSTVARS) == [REASON] + WAY + [AGAIN]
     # node5 started by the run before the restarts (its unit failed, it is first): nothing refused
     started = dict(HOSTVARS, node0={"cassandra_apply_config_todo": True, "cassandra_apply_config_then": "start"})
     started.pop("node5")
@@ -108,19 +111,19 @@ def test_the_refusal_names_a_failed_unit_this_run_does_not_start():
     hostvars = dict(HOSTVARS, node7=failed)
     t = task("Note whether restarts are refused while a node is not running")
     variables = dict(trust(t["vars"]), hostvars=hostvars, ansible_play_hosts=sorted(hostvars))
-    reason, way = render(t["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"], variables)
+    reason, *way = render(t["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"], variables)
     assert reason == "node5, node7: Cassandra not running, and node1, node2 would be restarted, which needs every other node up."
     # --limit names node5 only (the config applied there, started if stopped on purpose); node7's way out is on the node
-    failed_way = ("node7: the cassandra unit failed and nothing is to apply: see systemctl status cassandra / journalctl -u"
-                  " cassandra there, fix it and start it with start_rack (which checks the start first: ansible-playbook"
-                  " community.cassandra.start_rack --limit node7 -e cassandra_target_dc=dc1 -e cassandra_target_rack=r2),"
-                  " then run again.")
-    assert way == WAY + " " + failed_way
+    failed_way = ["node7: the cassandra unit failed and nothing is to apply: see systemctl status cassandra / journalctl -u"
+                  " cassandra there, fix it, then start it with start_rack, which checks the start first:",
+                  "    ansible-playbook community.cassandra.start_rack --limit node7 -e cassandra_target_dc=dc1"
+                  " -e cassandra_target_rack=r2"]
+    assert way == WAY + failed_way + [AGAIN]
     # node7 the only node down: no --limit sentence (nothing to apply there)
     hostvars.pop("node5")
     variables = dict(trust(t["vars"]), hostvars=hostvars, ansible_play_hosts=sorted(hostvars))
     assert render(t["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"], variables) == [
-        "node7: Cassandra not running, and node1, node2 would be restarted, which needs every other node up.", failed_way]
+        "node7: Cassandra not running, and node1, node2 would be restarted, which needs every other node up."] + failed_way + [AGAIN]
     # the fact the refusal reads, set with the node's needs
     note = task("Note what this node needs")
     assert note["ansible.builtin.set_fact"]["cassandra_apply_config_unit_failed"] == "{{ _unit_failed }}"
@@ -138,11 +141,11 @@ def test_the_start_rack_of_the_way_out_starts_these_nodes_alone():
     t = task("Note whether restarts are refused while a node is not running")
     variables = dict(trust(t["vars"]), hostvars=hostvars, ansible_play_hosts=sorted(hostvars),
                      ansible_inventory_sources=["/srv/inv/prod.yml"], cassandra_hosts="prod")
-    way = render(t["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"], variables)[1]
-    assert ("(which checks the start first: ansible-playbook -i /srv/inv/prod.yml community.cassandra.start_rack"
-            " -e cassandra_hosts=prod --limit node5,node6 -e cassandra_target_dc=dc1 -e cassandra_target_rack=r1;"
-            " ansible-playbook -i /srv/inv/prod.yml community.cassandra.start_rack -e cassandra_hosts=prod --limit node8"
-            " -e cassandra_target_dc=dc2 -e cassandra_target_rack=r1) if stopped on purpose") in way
+    way = render(t["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"], variables)[2:4]
+    assert way == ["    ansible-playbook -i /srv/inv/prod.yml community.cassandra.start_rack -e cassandra_hosts=prod"
+                   " --limit node5,node6 -e cassandra_target_dc=dc1 -e cassandra_target_rack=r1",
+                   "    ansible-playbook -i /srv/inv/prod.yml community.cassandra.start_rack -e cassandra_hosts=prod"
+                   " --limit node8 -e cassandra_target_dc=dc2 -e cassandra_target_rack=r1"]
     # the plan's note of a failed unit left stopped: start_rack on that node alone (the note's own expression)
     note = task("Note what this node needs")["ansible.builtin.set_fact"]["cassandra_apply_config_notes"]
     start = note.index("'start_rack' | community.cassandra.cassandra_command(")
@@ -167,11 +170,23 @@ def test_the_plan_says_a_failed_unit_left_stopped_is_not_stopped_on_purpose():
 
 def test_a_real_run_refuses_before_any_change_check_goes_on():
     t = task("Refuse restarts while a node is not running")
-    for check, refused, runs in ((False, [REASON, WAY], True), (True, [REASON, WAY], False), (False, [], False)):
+    for check, refused, runs in ((False, [REASON] + WAY, True), (True, [REASON] + WAY, False), (False, [], False)):
         variables = {"ansible_check_mode": check, "_cassandra_apply_config_refused": refused}
         assert all(render("{{ %s | bool }}" % w, variables) in (True, "True") for w in t["when"]) is runs
-    variables = {"_cassandra_apply_config_refused": [REASON, WAY]}
-    assert render(t["ansible.builtin.fail"]["msg"], variables) == REASON + " Nothing was changed. " + WAY
+    variables = dict(trust(t["vars"]), _cassandra_apply_config_refused=[REASON] + WAY + [AGAIN], hostvars={"localhost": {}},
+                     cassandra_cluster_name="c")
+    # a block: its verdict, then the reason and the way out, at 79 columns; the command cut between its arguments,
+    # a continuation at the end of each line but the last (it pastes as one command)
+    assert render(t["ansible.builtin.fail"]["msg"], variables).split("\n") == [
+        "REFUSED  apply_config  c  nothing was changed",
+        "  node5: Cassandra not running, and node1, node2 would be restarted, which",
+        "    needs every other node up.",
+        "  stopped on purpose: apply the config there first (--limit node5), then start",
+        "    it with start_rack, which checks the start first:",
+        "      ansible-playbook community.cassandra.start_rack --limit node5 \\",
+        "        -e cassandra_target_dc=dc1 -e cassandra_target_rack=r1",
+        "  stopped by an interrupted run: resume it (-e cassandra_rolling_resume=true)",
+        "  then run again."]
     # the refusal comes before anything is written: in the first play, before the plan and its question
     names = [x.get("name") for x in PLAYS[1]["tasks"]]
     assert names.index("Refuse restarts while a node is not running") < names.index("Show the plan and confirm the run")
@@ -190,7 +205,7 @@ def test_check_lets_the_stopped_node_stay_down_for_a_restart_node():
 
 def test_the_check_recap_ends_with_the_refusal():
     t = task("Print the changes")
-    hostvars = dict((h, dict(v, _cassandra_apply_config_refused=[REASON, WAY], cassandra_op_done=v["cassandra_apply_config_todo"],
+    hostvars = dict((h, dict(v, _cassandra_apply_config_refused=[REASON] + WAY + [AGAIN], cassandra_op_done=v["cassandra_apply_config_todo"],
                              cassandra_op_result="would apply" if v["cassandra_apply_config_todo"] else "nothing to apply"))
                     for h, v in HOSTVARS.items())
     variables = dict(trust(t["vars"]), hostvars=hostvars, groups={"prod": HOSTS}, cassandra_hosts="prod",
@@ -199,7 +214,9 @@ def test_the_check_recap_ends_with_the_refusal():
     lines = render(t["ansible.builtin.debug"]["msg"], variables)
     assert lines[0] == "CHECK  apply_config  c  2 would restart, 1 would apply, 1 up to date"
     warning = lines.index("WARNING  a real run is refused, before changing anything: " + REASON)
-    assert lines[warning - 1] == "" and " ".join(line.strip() for line in lines[warning + 1:]) == WAY  # (laid out)
+    assert lines[warning - 1] == ""
+    # the way out under it, a fact per line, the command on a line of its own (it pastes as one command)
+    assert lines[warning + 1:] == ["  " + line if not line.startswith(" ") else line for line in WAY + [AGAIN]]
     # the nodes' outcomes are all there, before it
     assert "  node1, node2  would apply, then restart" in lines
     # the plan said it: said once, the recap points at it
@@ -212,22 +229,14 @@ def test_the_check_recap_ends_with_the_refusal():
 
 def test_the_recap_says_no_refusal_after_a_real_run():
     nodes = [{"name": "node1", "todo": True, "done": True, "then": "restart", "result": "", "notes": []}]
-    assert cassandra_apply_config_recap(nodes, refused=[REASON, WAY]) == ["DONE  apply_config  1 restarted", "node1  applied, restarted"]
+    assert cassandra_apply_config_recap(nodes, refused=[REASON] + WAY) == ["DONE  apply_config  1 restarted", "node1  applied, restarted"]
 
 
-def test_the_check_plan_says_it_too():
-    # once, in the plan: the recap only points at it
+def test_the_plan_never_says_the_refusal():
+    # a real run refuses before its plan; --check shows no plan: its recap says it
     t = next(x for x in PLAYS[1]["tasks"] if x.get("name") == "Show the plan and confirm the run")
-    warnings = t["vars"]["cassandra_screen"]["warnings"]  # the nodes' warnings, then the refusal
-
-    def refusal(variables):
-        return render(warnings, dict(variables, _nodes=[]))[-1]
-
-    variables = {"_cassandra_apply_config_refused": [REASON, WAY]}
-    assert refusal(dict(variables, ansible_check_mode=True)) == {
-        "label": "refused", "text": "a real run is refused, before changing anything: " + REASON + " " + WAY}
-    assert refusal(dict(variables, ansible_check_mode=False))["text"] == ""
-    assert refusal({"ansible_check_mode": True})["text"] == ""
+    assert "_cassandra_apply_config_refused" not in t["vars"]["cassandra_screen"]["warnings"]
+    assert t["when"] == ["_todo | length > 0", "not ansible_check_mode"]
 
 
 def test_the_owner_and_mode_changes_are_not_shown_twice():

@@ -31,31 +31,40 @@ def tasks():
         return yaml.safe_load(f)
 
 
-def message(found, n1=None):
+def block(found, n1=None):
     task = next(t for t in tasks() if t["name"] == "The running node belongs to this cluster")
     assert task["vars"]["cassandra_output"] is True
     variables = dict(task["vars"], ansible_play_hosts=["n1"], cassandra_cluster_name="Demo Cluster",
                      hostvars={"n1": dict(n1 or {}, _cassandra_cluster_found=found)})
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
     templar = Templar(loader=DataLoader(), variables=variables)
-    return " ".join(templar.template(trust_as_template(task["ansible.builtin.assert"]["fail_msg"])).split())
+    return templar.template(trust_as_template(task["ansible.builtin.assert"]["fail_msg"])).split("\n")
+
+
+def message(found, n1=None):
+    return " ".join(" ".join(block(found, n1)).split())
 
 
 def test_a_jmx_login_refused():
     found = {"from": "n1", "rc": 2, "stdout": "", "stderr": "error: Invalid username or password\n-- StackTrace --\n"
              "javax.security.auth.login.FailedLoginException: Invalid username or password\n\tat java.base/x.run(X.java:840)\n"}
     assert message(found) == (
-        "JMX login refused on n1 (Invalid username or password): check cassandra_jmx_username and"
-        " cassandra_jmx_password_file or cassandra_jmx_password; the cluster name is not checked against"
-        " 'Demo Cluster' (cassandra_cluster_name). Nothing was changed.")
+        "REFUSED JMX login refused on n1 nothing was changed nodetool: Invalid username or password check"
+        " cassandra_jmx_username and cassandra_jmx_password_file or cassandra_jmx_password the cluster name is not"
+        " checked against 'Demo Cluster' (cassandra_cluster_name)")
+    # a block: its verdict first, then a fact per line, each within 79 columns, none ending with a space
+    lines = block(found)
+    assert lines[0] == "REFUSED  JMX login refused on n1  nothing was changed"
+    assert lines[1] == "  nodetool: Invalid username or password"
+    assert all(len(line) <= 79 and line == line.rstrip() for line in lines), lines
 
 
 def test_another_failure_keeps_its_error_line():
     found = {"from": "n1", "rc": 1, "stdout": "", "stderr": "nodetool: Failed to connect to '127.0.0.1:7199'\n"}
     assert message(found) == (
-        "nodetool describecluster failed on n1 (nodetool: Failed to connect to '127.0.0.1:7199'): the cluster name is"
-        " not checked against 'Demo Cluster' (cassandra_cluster_name). Nothing was changed. Check the inventory (-i)"
-        " and cassandra_cluster_name.")
+        "REFUSED nodetool describecluster failed on n1 nothing was changed nodetool: Failed to connect to"
+        " '127.0.0.1:7199' the cluster name is not checked against 'Demo Cluster' (cassandra_cluster_name) Check the"
+        " inventory (-i) and cassandra_cluster_name.")
 
 
 REFUSED = {"from": "n1", "rc": 2, "stdout": "", "stderr": "error: Authentication failed! Error: unable to load the password file\n"}
@@ -66,12 +75,12 @@ def test_a_jmx_login_refused_with_the_password_file_missing():
     n1 = {"cassandra_jmx_users": [{"name": "ops"}], "cassandra_jmx_remote_password_file": "/etc/cassandra/jmx/jmxremote.password",
           "cassandra_cluster_jmx_password_file": {"changed": False, "stat": {"exists": False}}}
     assert message(REFUSED, n1).endswith(
-        "Nothing was changed. /etc/cassandra/jmx/jmxremote.password is missing on n1: Cassandra reads it at each JMX login."
+        "(cassandra_cluster_name) /etc/cassandra/jmx/jmxremote.password is missing on n1: Cassandra reads it at each JMX login."
         " No running node of this run has it: restore it on one (or run without --limit, so that one that has it is read),"
         " then apply_config writes it back on the others, no restart.")
     # there (another password), or not looked at: as before
     for stat in ({"stat": {"exists": True}}, {"skipped": True}):
-        assert message(REFUSED, dict(n1, cassandra_cluster_jmx_password_file=stat)).endswith("Nothing was changed.")
+        assert message(REFUSED, dict(n1, cassandra_cluster_jmx_password_file=stat)).endswith("(cassandra_cluster_name)")
 
 
 def test_the_password_file_is_looked_at_only_for_a_refused_login_of_jmx_users():

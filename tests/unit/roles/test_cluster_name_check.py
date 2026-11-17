@@ -87,15 +87,16 @@ def run(tmp_path, inventory_name, node_name, candidates=("gone", "n1", "n2", "n3
     result = subprocess.run(argv, env=env, cwd=str(tmp_path), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             timeout=300, check=False)
     asked = [line.split()[0] for line in log.read_text().splitlines()]
-    out = " ".join(result.stdout.decode(errors="replace").split())
+    # (ansible-core 2.16 prints the msg as JSON: its newlines as \\n)
+    out = " ".join(result.stdout.decode(errors="replace").replace("\\n", " ").split())
     return result.returncode, out, asked, sorted(set(re.findall(r"NEXT PLAY ON (n\d)", out)))
 
 
 def test_an_inventory_not_loaded_is_named_first(tmp_path):
     rc, out, asked, went_on = run(tmp_path, "Test Cluster", "my_cluster")
     assert rc != 0, out
-    assert ("n2 runs Cassandra for cluster 'my_cluster', not 'Test Cluster' (cassandra_cluster_name). Nothing was changed. "
-            "cassandra_cluster_name is the role default 'Test Cluster': are the inventory's group_vars loaded? Check with "
+    assert ("REFUSED n2 runs another cluster nothing was changed its cluster: 'my_cluster' the inventory's: 'Test Cluster'"
+            " (cassandra_cluster_name) cassandra_cluster_name is the role default 'Test Cluster': are the inventory's group_vars loaded? Check with "
             "ansible-inventory -i <inventory> --host n2 (group_vars are read next to the inventory file or directory given, "
             "not in its subdirectories).") in out
     assert "reset_node" not in out and "empty" not in out
@@ -108,8 +109,8 @@ def test_an_inventory_not_loaded_is_named_first(tmp_path):
 def test_a_stock_instance_is_only_suggested_when_the_node_runs_the_stock_name(tmp_path):
     rc, out, asked, went_on = run(tmp_path, "my_cluster", "Test Cluster", down=())
     assert rc != 0, out
-    assert ("n1 runs Cassandra for cluster 'Test Cluster', not 'my_cluster' (cassandra_cluster_name). Nothing was changed. "
-            "'Test Cluster' is the package's stock name: is n1 a new host the package started with its stock config? "
+    assert ("REFUSED n1 runs another cluster nothing was changed its cluster: 'Test Cluster' the inventory's: 'my_cluster'"
+            " (cassandra_cluster_name) 'Test Cluster' is the package's stock name: is n1 a new host the package started with its stock config? "
             "Check it is the right host; if it never joined 'my_cluster', the reset_node playbook makes it ready to join.") in out
     assert "group_vars" not in out
     assert asked == ["n1"]
@@ -118,8 +119,8 @@ def test_a_stock_instance_is_only_suggested_when_the_node_runs_the_stock_name(tm
 def test_another_name(tmp_path):
     rc, out, asked, went_on = run(tmp_path, "my_cluster", "other_cluster")
     assert rc != 0, out
-    assert ("n2 runs Cassandra for cluster 'other_cluster', not 'my_cluster' (cassandra_cluster_name). Nothing was changed. "
-            "Check the inventory (-i) and cassandra_cluster_name.") in out
+    assert ("REFUSED n2 runs another cluster nothing was changed its cluster: 'other_cluster' the inventory's: 'my_cluster'"
+            " (cassandra_cluster_name) Check the inventory (-i) and cassandra_cluster_name.") in out
     assert went_on == []
 
 
@@ -170,17 +171,17 @@ def test_a_description_that_failed_is_refused(tmp_path):
     rc, out, asked, went_on = run(tmp_path, "Test Cluster", "my_cluster", describe=describe)
     assert rc != 0, out
     # a JMX login refused, said so; the role default name: the inventory not loaded is the likely cause
-    assert ("JMX login refused on n3 (Authentication failed! Credentials required): check cassandra_jmx_username and "
-            "cassandra_jmx_password_file or cassandra_jmx_password; the cluster name is not checked "
-            "against 'Test Cluster' (cassandra_cluster_name). Nothing was changed. cassandra_cluster_name is the role "
-            "default 'Test Cluster': are the inventory's group_vars loaded?") in out
+    assert ("REFUSED JMX login refused on n3 nothing was changed nodetool: Authentication failed! Credentials required"
+            " check cassandra_jmx_username and cassandra_jmx_password_file or cassandra_jmx_password the cluster name is"
+            " not checked against 'Test Cluster' (cassandra_cluster_name) cassandra_cluster_name is the role default"
+            " 'Test Cluster': are the inventory's group_vars loaded?") in out
     assert asked == [] and went_on == []
 
 
 def test_a_description_read_already_is_used(tmp_path):
     describe = {"from": "n3", "stdout": "Cluster Information:\n\tName: other_cluster\n"}
     rc, out, asked, went_on = run(tmp_path, "my_cluster", "my_cluster", describe=describe)
-    assert rc != 0 and "n3 runs Cassandra for cluster 'other_cluster', not 'my_cluster'" in out, out
+    assert rc != 0 and "REFUSED n3 runs another cluster nothing was changed its cluster: 'other_cluster'" in out, out
     assert asked == [] and went_on == []
 
 

@@ -170,3 +170,14 @@ def test_the_style_check_finds_the_old_marks():
         assert _OLD.search(old) or _OLD_LINE.search(old), old
     for kept in ('"WARNING  x"', "the WARNING lines", "[WARNING]: x".replace("[WARNING]", ""), "_WARNING = re.compile"):
         assert not (_OLD.search(kept) or _OLD_LINE.search(kept)), kept
+
+
+def test_a_command_too_long_is_cut_between_its_arguments():
+    # (a line of its own: it pastes as one command, never cut inside an option and its value)
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import fit
+    line = "    ansible-playbook community.cassandra.start_rack --limit h-n5 -e cassandra_target_dc=dc1 -e cassandra_target_rack=r1"
+    assert fit([line], 79) == ["    ansible-playbook community.cassandra.start_rack --limit h-n5 \\",
+                               "      -e cassandra_target_dc=dc1 -e cassandra_target_rack=r1"]
+    # prose that names a command is cut between words, as before
+    prose = fit(["  run ansible-playbook community.cassandra.start_rack --limit h-n5 -e cassandra_target_dc=dc1"], 60)
+    assert len(prose) == 2 and not [x for x in prose if x.endswith("\\")], prose

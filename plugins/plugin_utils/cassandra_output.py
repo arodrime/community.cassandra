@@ -704,17 +704,27 @@ def wrap_list(text, room):
     return lines + [line]
 
 
+_COMMAND_LINE = re.compile(r"^(\s*)(ansible-playbook|ansible) ")
+
+
 def fit(lines, width):
     """Lines no longer than width (a terminal's): a longer one goes on over
     lines indented under its text ("  1. " of a numbered item, else its own
     indent and 2 more), cut between words only (a path or a name longer than
-    width stays whole). None or 0: as they are."""
+    width stays whole); a command (a line of its own starting with
+    ansible-playbook or ansible) cut between its arguments only, each line but
+    the last ending with " \\" (it pastes as one command). None or 0: as
+    they are."""
     if not width:
         return list(lines)
     out = []
     for line in lines:
         if len(line) <= width:
             out.append(line)
+            continue
+        command = _COMMAND_LINE.match(line)
+        if command:
+            out += _continued(len(command.group(1)), line.strip(), width)
             continue
         lead = re.match(r"^(\s*)(\d+\.\s+)?", line)
         hang = " " * (len(lead.group(0)) if lead.group(2) else len(lead.group(1)) + 2)
@@ -795,6 +805,20 @@ def command_words(text):
 def is_command(line):
     """Whether a line is a command of command_flow (each of its lines printed as a command)."""
     return _COMMAND.match(line) is not None
+
+
+def _continued(indent, text, width):
+    """A command from column indent, cut between its arguments (an option and its value together), each line but
+    the last ending with " \\", the next ones 2 columns further in."""
+    first, rest = " " * indent, " " * (indent + 2)
+    words = command_words(text)
+    lines, line = [], first
+    for i, word in enumerate(words):
+        if line.strip() and len(line) + 1 + len(word) + (2 if i < len(words) - 1 else 0) > width:
+            lines.append(line + " \\")
+            line = rest
+        line += (" " if line.strip() else "") + word
+    return lines + [line]
 
 
 def _command_lines(indent, text, width):
