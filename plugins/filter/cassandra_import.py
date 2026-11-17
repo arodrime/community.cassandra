@@ -529,8 +529,16 @@ def _read_changed_lines(name, tpl, rendered, live, ctx, after):
     for op, i1, i2, j1, j2 in ops:
         if op not in ("replace", "insert"):
             continue
+        # cassandra-env.sh: a line the node commented out beside its own (#LOCAL_JMX=yes above LOCAL_JMX=no) does
+        # not run; the lines that run paired with the role's in order
+        pairs = {}
+        if op == "replace" and name.endswith(".sh"):
+            code = [[n for n in range(a, b) if not lines[n].lstrip().startswith("#")]
+                    for lines, a, b in ((rendered, i1, i2), (live, j1, j2))]
+            if len(code[0]) == len(code[1]):
+                pairs = dict(zip(code[1], code[0]))
         for k, j in enumerate(range(j1, j2)):
-            i = i1 + k if op == "replace" and i1 + k < i2 else None
+            i = pairs.get(j, i1 + k if op == "replace" and i1 + k < i2 else None)
             got = _read_line(tpl[i], live[j], ctx) if i is not None and "{{" in tpl[i] else None
             if got is not None:
                 found.update(got)

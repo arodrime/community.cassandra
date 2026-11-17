@@ -23,7 +23,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import_rep
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     IPV4, cassandra_config_import, cassandra_inventory_layout)
 
-from .test_cassandra_import_check import FACTS, check, import_node, seeded, stock
+from .test_cassandra_import_check import FACTS, check, edit, import_node, seeded, stock
 
 # bin/cassandra up to the JVM: the options files of the running Java, cassandra-env.sh, its arguments. What the
 # node works out (memory, cpus, the date) is set so that two runs give the same.
@@ -1188,3 +1188,94 @@ def test_a_5_0_heap_newsize_with_g1_kept_as_found(tmp_path, java):
             and "Managed by Ansible" not in d] == []  # the role's mark aside, line for line
     assert node["hand_edits"] == [] and "cassandra-env.sh" not in node.get("rewritten", [])
     assert settings(launch(rendered, java, tmp_path)) == settings(cmdline)
+
+
+# (2026-11-17) a stock 5.0 RPM node with remote JMX set by hand: LOCAL_JMX=no below the stock line commented out, the
+# password file, access file and rmi hostname in the remote branch, the stock password file line still on after fi, the heap
+# in jvm17-server.options, the log dir written as itself in logback.xml, jvm11-server.options edited (Java 17)
+def remote_jmx_by_hand(files):
+    env = edit(files["cassandra-env.sh"], "    LOCAL_JMX=yes", "    #LOCAL_JMX=yes\n    LOCAL_JMX=no")
+    authenticate = '  JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.authenticate=true"\n'
+    files["cassandra-env.sh"] = edit(env, authenticate, authenticate + "\n"
+                                     '  JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.password.file='
+                                     '/etc/cassandra/jmxremote.password"\n'
+                                     '  JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file='
+                                     '/etc/cassandra/jmxremote.access"\n'
+                                     '  JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=10.0.0.1"\n')
+    files["jmxremote.password"] = "ops s3cret\n"
+    files["jmxremote.access"] = "ops readwrite\n"
+
+
+def heap_in_jvm17(files):
+    files["jvm17-server.options"] = files["jvm17-server.options"].rstrip("\n") + "\n-Xms23552m\n-Xmx23552m\n"
+
+
+def log_dir_as_itself(files):
+    for tag in ("<file>", "<fileNamePattern>"):
+        for log in ("system", "debug"):
+            files["logback.xml"] = edit(files["logback.xml"], "%s${cassandra.logdir}/%s" % (tag, log),
+                                        "%s/var/log/cassandra/%s" % (tag, log))
+
+
+def jvm11_edited(files):
+    text = edit(files["jvm11-server.options"], "-XX:-UseBiasedLocking\n", "")
+    text = edit(text, "-Dio.netty.tryReflectionSetAccessible=true\n", "")
+    files["jvm11-server.options"] = edit(text, "--add-exports java.base/jdk.internal.util=ALL-UNNAMED\n", "")
+
+
+def running(files, tmp_path):
+    """The running JVM's arguments, its log dir the packages' (bin/cassandra gives -Dcassandra.logdir)."""
+    return launch(files, "17", tmp_path).replace("-Dcassandra.logdir=/run/logs", "-Dcassandra.logdir=/var/log/cassandra")
+
+
+def test_remote_jmx_set_by_hand_is_imported(tmp_path):
+    # LOCAL_JMX=no was not read beside the stock line commented out (paired with it): LOCAL_JMX=yes written
+    files = node_files("50x", remote_jmx_by_hand)
+    cmdline = running(files, tmp_path)
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    rendered, variables = role_files(inventory, layout, files)
+    assert variables["cassandra_local_jmx"] is False
+    assert variables["cassandra_jmx_rmi_hostname"] == IPV4  # the node's address
+    assert [u["name"] for u in variables["cassandra_jmx_users"]] == ["ops"]
+    assert 'JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file=/etc/cassandra/jmxremote.access"' \
+        in rendered["cassandra-env.sh"].split("\n")
+    assert settings(launch(rendered, "17", tmp_path)) == settings(launch(files, "17", tmp_path))
+    out = check(files, "50x", java="17", cmdline=cmdline)
+    assert out["differences"] == []
+    assert [n for n in out["notes"] if n.startswith("cassandra-env.sh") and "the same arguments" in n]
+    # Cassandra not running: LOCAL_JMX=no read all the same
+    assert cassandra_config_import(files, "50x", FACTS)["vars"]["cassandra_local_jmx"] is False
+
+
+def test_remote_jmx_by_hand_with_the_heap_moved_and_the_log_dir_as_itself(tmp_path):
+    # the heap moved to jvm-server.options failed the check once cassandra-env.sh differed (5 items)
+    files = node_files("50x", both(remote_jmx_by_hand, heap_in_jvm17, log_dir_as_itself))
+    cmdline = running(files, tmp_path)
+    variables = role_files(*imported(files, "50x", "17", cmdline)[:2] + (files,))[1]
+    assert variables["cassandra_heap_size"] == "23552m" and variables["cassandra_heap_in_jvm_options"] is True
+    out = check(files, "50x", java="17", cmdline=cmdline)
+    assert out["differences"] == []
+
+
+def test_a_jvm_options_file_the_running_java_does_not_read_is_a_note(tmp_path):
+    files = node_files("50x", both(remote_jmx_by_hand, heap_in_jvm17, log_dir_as_itself, jvm11_edited))
+    cmdline = running(files, tmp_path)
+    out = check(files, "50x", java="17", cmdline=cmdline)
+    assert out["differences"] == []
+    unread = [n for n in out["notes"] if n.startswith("jvm11-server.options")]
+    assert unread and all(n.endswith("(no effect: Java 17 does not read this file; it matters only if the node runs"
+                                     " Java 11)") for n in unread)
+    assert any("UseBiasedLocking" in n for n in unread) and any("tryReflectionSetAccessible" in n for n in unread)
+    # the Java that reads it: a difference still
+    files = node_files("50x", jvm11_edited)
+    assert [d for d in check(files, "50x", java="11")["differences"] if d.startswith("jvm11-server.options")]
+
+
+@pytest.mark.parametrize("later, again", [
+    ([{"depth": 0, "text": 'JVM_OPTS="$JVM_OPTS -Dx=1"'}], True),
+    ([{"depth": 1, "text": 'JVM_OPTS="$JVM_OPTS -Dx=1"'}], False),  # again in a block: maybe not run
+    ([{"depth": 0, "text": 'JVM_OPTS="$JVM_OPTS -Dx=2"'}], False),
+])
+def test_a_line_in_a_block_set_again_below(later, again):
+    assert jvm._set_again({"depth": 1, "text": 'JVM_OPTS="$JVM_OPTS -Dx=1"'}, later) is again
+    assert jvm._set_again({"depth": 0, "text": 'JVM_OPTS="$JVM_OPTS -Dx=1"'}, later) is False

@@ -781,11 +781,12 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
         node_heap = _heap(live["cassandra-env.sh"], node_environment)
         role_heap = _heap(rendered["cassandra-env.sh"], role_environment)
         heap = _dict_diff(HEAP_FILE, node_heap, role_heap)
+    read = jvm.options_file(series, java) or "jvm%s-server.options" % java
     for name in sorted(rendered):
+        other_java = re.match(r"^jvm(\d+)-server\.options$", name)
+        other_java = other_java if other_java and java and name != read else None
         if name not in live:
-            other_java = re.match(r"^jvm(\d+)-server\.options$", name)
-            read = jvm.options_file(series, java) or "jvm%s-server.options" % java
-            if other_java and java and name != read:
+            if other_java:
                 notes.append("%s: not on the node, the roles would create it (Java %s does not read it)" % (name, java))
             else:
                 differences.append("%s: not on the node, the roles would create it" % name)
@@ -804,6 +805,10 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
                 and not same_settings(name, live[name], rendered[name], storage_dir):
             found = ["%s: the same settings, written in a way cassandra_config does not keep (it would rewrite the file,"
                      " e.g. the heap moved between the unit and cassandra-env.sh, or a line going on to the next)" % name]
+        if other_java and found:  # a file the running Java does not read: no effect today
+            notes += ["%s (no effect: Java %s does not read this file; it matters only if the node runs Java %s)"
+                      % (line, java, other_java.group(1)) for line in found]
+            continue
         by_file[name] = found
         differences += found
     rewritten, apart = _jvm_rewritten(rendered, live, by_file, heap, node_environment, role_environment, java,

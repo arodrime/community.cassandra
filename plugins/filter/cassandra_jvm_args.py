@@ -217,6 +217,18 @@ def _moved_lines(live, role, ops):
     return moved
 
 
+def _set_again(line, later):
+    """Whether a line in a block adding plain options to JVM_OPTS (each set by its last occurrence) is written again
+    below it, outside any block (the remote JMX branch's password file line, the stock one after fi): the later
+    one sets the same values last, the JVM gets the same whether the block ran or not."""
+    append = APPEND.match(line["text"]) if line["depth"] else None
+    if not append or not append.group(1).split() or any(g in line["text"] for g in JVM_ENV_GREPS):
+        return False
+    if any(_jvm_name(o) is None or _jvm_name(o) in LISTS for o in append.group(1).split()):
+        return False
+    return any(not other["depth"] and other["text"] == line["text"] for other in later)
+
+
 def env_differences(live, role):
     """The lines of the node's cassandra-env.sh not in the role's -> ([its JVM_OPTS lines: {n, text, words}], [its
     heap assignments], [its lines the role's has at another place (_moved_lines)]);
@@ -227,6 +239,7 @@ def env_differences(live, role):
                                           [(line["depth"] > 0, line["text"]) for line in live], autojunk=False)
         return [op for op in matcher.get_opcodes() if op[0] != "equal"]
     added, heap = [], []
+    live = [line for i, line in enumerate(live) if not _set_again(line, live[i + 1:])]
     moved = _moved_lines(live, role, ops_of(role, live))
     moved_lines = [line for line in live if line["text"] in moved]
     if any(line["text"] in moved and GREP.match(lines[i - 1]["text"]) for lines in (role, live)
