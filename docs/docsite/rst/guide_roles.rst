@@ -69,6 +69,11 @@ would otherwise repeat:
     # a task on that many nodes at a time (Ansible's default: 5): the node count of the largest cluster
     forks = 30
 
+    [ssh_connection]
+    # Ansible's own ssh_args, plus a keepalive: a node that froze under a live connection is
+    # given up after 45 seconds instead of waiting for it (see below)
+    ssh_args = -C -o ControlMaster=auto -o ControlPersist=60s -o ServerAliveInterval=15 -o ServerAliveCountMax=3
+
 ``forks``: Ansible runs each task on that many nodes at a time, 5 by default, so a 30-node cluster takes 6 rounds
 per task (``import_cluster`` reads every node, ``status`` and ``health_check`` too); its phase lines say so. Set it
 to the node count of the largest cluster (one ssh connection per node from the controller).
@@ -79,6 +84,17 @@ its message and stderr), instead of a header and a line per host for each of the
 operation. With ``-v`` or more, the output is the default callback's. Without it (``stdout_callback =
 ansible.builtin.default``), ``callback_result_format = yaml`` shows the same messages as plain text. The
 conventions of these messages, and how a playbook writes them: :ref:`ansible_collections.community.cassandra.docsite.guide_output`.
+
+``ssh_args``: Ansible keeps a connection to each node open for 60 seconds after its last use (``ControlPersist``),
+and the next tasks go through it. When a node stops answering while that connection is open (the host froze, a VM
+paused, a network cut that drops packets without a reset), ssh waits for an answer on it: no timeout applies to a
+connection already open (Ansible's ``timeout`` and ssh's ``ConnectTimeout`` are for opening one), and the run stays
+on its last line until the host comes back, or until the system gives up the TCP connection (15 minutes or more).
+The playbooks print the run's first line and the phase they are in (``Checking the cluster (3 nodes)...``) before
+they reach the nodes, so a run that stays on that line is waiting for a node. ``ServerAliveInterval=15`` with
+``ServerAliveCountMax=3`` makes ssh give the connection up after 45 seconds without an answer: the node is then
+``UNREACHABLE`` and the run stops on it (``REFUSED  node3 not reached by Ansible``) as for a node down. A node that
+is down when the run opens its connection is said at once, without it.
 
 No ``become`` in ``ansible.cfg`` (nor ``-b``): the collection's playbooks ask for root on the nodes themselves, where
 they need it (``status`` and ``health_check`` only to read ``cassandra_jmx_password_file``, ``help`` nowhere), and

@@ -36,7 +36,7 @@
              + (query('ansible.builtin.inventory_hostnames', cassandra_target_nodes)
                 if _cassandra_preflight_target | default('') in ['leave', 'reset'] and cassandra_target_nodes | default('') | length > 0
                 else []) | select('in', groups[lookup('community.cassandra.cassandra_hosts')]) | list) | unique }}
-  gather_facts: true
+  gather_facts: false  # (below, after the run's first line and its phase line)
   become: true
   tasks:
     # first: each node its own facts before any run_once task (ansible/ansible#87148)
@@ -99,6 +99,12 @@
              else query('ansible.builtin.inventory_hostnames', _pattern) | select('in', groups[lookup('community.cassandra.cassandra_hosts')])
                   | list if _kind in ['add', 'leave', 'reset'] and _pattern else [] }}
         _absent: "{{ query('community.cassandra.cassandra_nodes', state='absent') if _kind == 'plan' else [] }}"
+
+    # after the phase line: a node that does not answer (ssh waiting on a connection whose host froze) leaves the
+    # run on that line, not silent
+    - name: Gather facts
+      ansible.builtin.setup:
+      tags: [always]  # under --tags too, as a play's own gathering
 
     # An unreachable host would silently be left out of the rest of the run
     - name: Every node answers

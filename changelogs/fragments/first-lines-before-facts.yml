@@ -1,0 +1,4 @@
+bugfixes:
+  - "preflight (every playbook that changes the cluster) and health_check playbook - the run's first line (the cluster) and preflight's phase line (``Checking the cluster (3 nodes)...``) come before the nodes are reached for their facts: a node that froze under a live ssh connection leaves the run on those lines, no longer silent from its start."
+minor_changes:
+  - "Documentation - the project setup says why a run can wait on a node that stopped answering while Ansible's ssh connection to it was open (no timeout applies to a connection already open), and the ``ssh_args`` keepalive (``ServerAliveInterval=15``, ``ServerAliveCountMax=3``) that gives such a node up after 45 seconds."

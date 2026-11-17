@@ -194,3 +194,23 @@ def test_the_check_line_counts_the_members(extra, absent, run, line):
 ])
 def test_check_what(kwargs, text):
     assert out.check_what(**kwargs) == text
+
+
+@pytest.mark.parametrize("playbook, play, before", [
+    ("preflight.yml", "Cassandra preflight checks", ["Say which cluster the run is on", "Say what the run does"]),
+    ("health_check.yml", "Cluster health", ["Say which cluster the run is on"]),
+    ("status.yml", "Cluster status", ["Say which cluster the run is on"]),
+])
+def test_the_first_lines_come_before_the_nodes_are_reached(playbook, play, before):
+    # the first contact with each node (its facts) can wait on a host that froze under a live ssh connection (no
+    # ServerAliveInterval): the run's first line and its phase line are on the screen before, never 600 s of silence
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", playbook)
+    with open(path, encoding="utf-8") as f:
+        tasks = next(p for p in yaml.safe_load(f) if p.get("name") == play)
+    assert tasks.get("gather_facts") is False
+    names = [t.get("name") for t in tasks["tasks"]]
+    gather = next(i for i, t in enumerate(tasks["tasks"]) if "ansible.builtin.setup" in t)
+    assert all(names.index(name) < gather for name in before), names
+    # nothing before it reaches a node: no module of its own runs on them (set_fact, assert, debug, includes)
+    local = ("ansible.builtin.set_fact", "ansible.builtin.assert", "ansible.builtin.debug", "ansible.builtin.include_role")
+    assert all(any(k in t for k in local) for t in tasks["tasks"][:gather]), names[:gather]
