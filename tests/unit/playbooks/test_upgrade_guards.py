@@ -541,6 +541,13 @@ def test_the_storage_mode_read_script_of_a_stopped_node(tmp_path):
     (logs / "system.log").write_text(line % "NONE")
     os.utime(str(logs / "system.log"), (started - 3600, started - 3600))
     assert run() == ["running=no", "log_state=old", "last_same=no"]
+    # system.log in a dir of its own (cassandra_log_system_dir a path): read there, not in the log dir
+    own = tmp_path / "own"
+    own.mkdir()
+    (own / "system.log").write_text(line % "UPGRADING")
+    env = {"F": str(path), "L": str(logs), "S": str(own), "R": str(record), "PATH": "%s:%s" % (bin_dir, os.environ["PATH"])}
+    out = subprocess.run(["/bin/sh", "-c", script], env=env, stdout=subprocess.PIPE, universal_newlines=True, check=True)
+    assert "log=%s/system.log" % own in out.stdout.split("\n") and "last_logged=UPGRADING" in out.stdout.split("\n")
 
 
 def next_phase(phase, check=False, modes=None, version="50x", read=None, **kwargs):

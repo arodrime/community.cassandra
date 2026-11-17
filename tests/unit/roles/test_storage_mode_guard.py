@@ -606,6 +606,9 @@ def test_a_stopped_node_is_checked_against_the_mode_it_last_ran():
     assert shell.index('rsum=$(sed') < shell.index('echo "running=no"') < shell.index('echo "last_logged=${m:-CASSANDRA_4}"')
     assert 'echo "log_state=old"' in shell and 'echo "last_same=yes" || echo "last_same=no"' in shell
     assert read["environment"]["L"] == "{{ cassandra_log_dir | default('/var/log/cassandra', true) }}"
+    # S: cassandra_log_system_dir when it is a path, its XML escapes undone; the log dir's default: none
+    for value, said in (("${cassandra.logdir}", ""), ("/data/R&amp;D/logs", "/data/R&D/logs")):
+        assert str(_render(read["environment"]["S"], cassandra_log_system_dir=value)).strip() == said
 
 
 def test_the_back_way_out_of_a_file_ahead_names_both_choices():

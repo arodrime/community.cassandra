@@ -1,0 +1,2 @@
+bugfixes:
+  - "cassandra_operation and cassandra_service roles (5.0 storage_compatibility_mode guard of the restarts, starts and upgrades) - the mode a node logged at its start is read from ``system.log`` in ``cassandra_log_system_dir`` when that is a path, no longer always in the log dir."

@@ -12,7 +12,8 @@
 # Stopped (running=no): the mode it last ran, last_logged=<the mode> from the last "Node configuration" line of its
 # system.log (CASSANDRA_4 for a 4.x start: no such mode), not taken when that log is older than the record of its last
 # start (log_state=old; none: no such log); last_same=yes|no: its cassandra.yaml is the one of the record of its last
-# start (written by the roles), or not; log=, record=: their paths. Read-only, under --check too.
+# start (written by the roles), or not; log=, record=: their paths. system.log: in cassandra_log_system_dir when it is a
+# path, else in the log dir. Read-only, under --check too.
 - name: Load the cassandra_service defaults (the record of the config Cassandra started with)
   ansible.builtin.include_role:
     name: community.cassandra.cassandra_service
@@ -47,7 +48,7 @@
       echo "running=no"
       # the mode it last ran: the last "Node configuration" line of its system.log, unless that log is older than
       # the record of its last start (of an earlier start, or another log); else its file unchanged since the record
-      log="$L/system.log"
+      log="${S:-$L}/system.log"
       echo "log=$log"
       echo "record=$R"
       lt=$(stat -c '%Y' "$log" 2>/dev/null)
@@ -92,7 +93,7 @@
     # the mode it logged at its start: the last "Node configuration" line of its system.log, taken only when that
     # log was written since this JVM started (else the line may be of an earlier start, or of another log)
     log="$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's/^-Dcassandra[.]logdir=//p' | head -1)"
-    log="${log:-/var/log/cassandra}/system.log"
+    log="${S:-${log:-/var/log/cassandra}}/system.log"
     m=
     lt=$(stat -c '%Y' "$log" 2>/dev/null)
     if [ -n "$lt" ] && [ "$lt" -ge "$start" ]; then
@@ -124,6 +125,11 @@
     F: "{{ _cassandra_service_conf_dir }}/cassandra.yaml"
     R: "{{ _cassandra_service_config_snapshot }}"
     L: "{{ cassandra_log_dir | default('/var/log/cassandra', true) }}"
+    # system.log's own dir (cassandra_log_system_dir) when it is a path, not the log dir (${cassandra.logdir}): as
+    # logback.xml has it, its XML escapes undone
+    S: >-
+      {{ (cassandra_log_system_dir | replace('&lt;', '<') | replace('&amp;', '&'))
+         if cassandra_log_system_dir | default('') is match('/') else '' }}
   register: cassandra_storage_mode_read
   changed_when: false
   check_mode: false  # a read
