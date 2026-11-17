@@ -46,7 +46,7 @@ DONE = {"add": "added", "decommission": "decommissioned", "restart": "restarted"
         "clock_start_step_slewing": "time sync started, clock stepped, being corrected (minutes)"}
 
 # the texts node_operation.yml, restart_batch.yml, cleanup_batch.yml and the playbooks record
-_DONE = re.compile(r"^(?P<action>\w+) done(?P<how> with its rack)? in (?P<seconds>\d+)s$")
+_DONE = re.compile(r"^(?P<action>\w+) done(?P<how> with its rack)?(?P<resumed> \(resumed\))? in (?P<seconds>\d+)s$")
 _WOULD = re.compile(r"^would (?P<what>(?P<action>\w+).*?)(?: \(--check: nothing was changed\))?$")
 _FAILED = re.compile(r"^(?P<action>\w+) FAILED(?: after (?P<seconds>\d+)s)?:?\s*(?P<reason>.*)$", re.S)
 _REFUSED = re.compile(r"^(?P<action>\w+) refused: (?P<reason>.*)$", re.S)
@@ -83,8 +83,10 @@ def outcome(node, result, stage="", check=False):
     text = " ".join(str(result or "").split())
     m = _DONE.match(text)
     if m:
-        return ({"node": node, "outcome": DONE.get(m.group("action"), m.group("action") + " done") + (m.group("how") or ""),
-                 "seconds": int(m.group("seconds"))}, m.group("action"))
+        # (resumed: its time is only this run's part of it, never compared with the others')
+        return (dict({"node": node, "outcome": DONE.get(m.group("action"), m.group("action") + " done") + (m.group("how") or ""),
+                      "seconds": int(m.group("seconds"))}, **({"partial": True} if m.group("resumed") else {})),
+                m.group("action"))
     m = _WOULD.match(text)
     if m:
         action = "clean" if m.group("what").startswith("clean up") else m.group("action")
@@ -105,7 +107,8 @@ def outcome(node, result, stage="", check=False):
         return dict({"node": node, "said": said}, **touched), m.group("action")
     # not reached, not in this run (--limit), already in the ring / on that version, nothing to apply...
     # (not run yet: the run stopped before it, plain "not touched")
-    reason = {"not in this run (--limit)": "left out by --limit", "not run yet": ""}.get(text, text or "not reached")
+    reason = {"not in this run (--limit)": "left out by --limit", "not run yet": "",
+              "not done (the run stopped before it)": ""}.get(text, text)
     return {"node": node, "status": "skipped", "reason": reason}, ""
 
 

@@ -178,7 +178,7 @@ def test_the_role_s_restart_hint_left_to_the_restart_that_follows():
 
 def test_a_node_with_os_settings_only_is_not_reached_until_they_are_applied():
     nothing = FIND["tasks"][TASKS.index("Nothing to do on this node")]["ansible.builtin.set_fact"]["cassandra_op_result"]
-    assert render(nothing, {"cassandra_apply_config_os_live": [SYSCTL]}) == "not reached"
+    assert render(nothing, {"cassandra_apply_config_os_live": [SYSCTL]}) == "not done (the run stopped before it)"
     assert render(nothing, {"cassandra_apply_config_os_live": []}) == "nothing to apply"
 
 
@@ -225,10 +225,10 @@ def test_swap_turned_off_only_when_it_fits_in_memory(active, used, available, ex
 
 
 @pytest.mark.parametrize("todo, check, before, expected", [
-    (False, False, "not reached", "OS settings applied"),
-    (False, True, "not reached", "OS settings would be applied (--check: nothing was changed)"),
-    (True, False, "not reached", "not reached, its OS settings applied"),
-    (True, True, "not reached", "not reached")])
+    (False, False, "not done (the run stopped before it)", "OS settings applied"),
+    (False, True, "not done (the run stopped before it)", "OS settings would be applied (--check: nothing was changed)"),
+    (True, False, "not done (the run stopped before it)", "not done (the run stopped before it), its OS settings applied"),
+    (True, True, "not done (the run stopped before it)", "not done (the run stopped before it)")])
 def test_the_result_said_if_a_node_fails_later(todo, check, before, expected):
     task = [t for t in OS_PLAY["tasks"] if t.get("name") == "Note the result"][0]["ansible.builtin.set_fact"]
     assert render(task["cassandra_op_result"], {"cassandra_apply_config_todo": todo, "ansible_check_mode": check,

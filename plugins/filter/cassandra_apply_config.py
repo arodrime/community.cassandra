@@ -32,6 +32,7 @@ import importlib.util
 import os
 import re
 import shlex
+import textwrap
 from collections import OrderedDict
 
 from ansible.module_utils.parsing.convert_bool import boolean
@@ -731,7 +732,8 @@ def _outcome(node, check, plan):
         result += ", its OS settings applied"
     if "FAILED" in result:
         return result, "failed"
-    for word in ("nothing to apply", "not reached", "not in this run", "skipped"):
+    # (not done: the run stopped before it, never "not reached", which is said of a host Ansible does not reach)
+    for word in ("nothing to apply", "not done", "not in this run", "skipped"):
         if word in result:
             return ("up to date", "up to date") if word == "nothing to apply" else (result, word)
     return result, "not touched"
@@ -751,6 +753,7 @@ def _width(width, margin=0):
 def _grouped(nodes, check=False, plan=False, width=None):
     """(the outcome lines, nodes with the same outcome and notes on one line;
     {tally word: count}); width: the lines fit in it."""
+    width = _width(width)
     groups, order, counts, rank = {}, [], {}, {}
     for node in nodes or []:
         text, word = _outcome(node, check, plan)
@@ -766,7 +769,12 @@ def _grouped(nodes, check=False, plan=False, width=None):
     column = max(len(n) for n in names.values()) if names else 0
     column = column if column <= 30 else 0  # (the outcomes in a column, unless a list is long)
     for key in sorted(order, key=lambda k: rank[k]):  # the nodes changed first, then failed, then the others
-        lines += out.fit(["%s  %s" % (names[key].ljust(column), key[0])] + list(key[1]), _width(width))
+        first = "%s  " % names[key].ljust(column)
+        room = (width or 0) - len(first)
+        # a long outcome goes on under its own column (the nodes' column left clear), when that leaves room enough
+        row = (textwrap.wrap(key[0], width, initial_indent=first, subsequent_indent=" " * len(first),
+                             break_long_words=False, break_on_hyphens=False) if column and room >= 30 else [])
+        lines += (row or out.fit([first + key[0]], width)) + out.fit(list(key[1]), width)
     return lines, dict(sorted(counts.items(), key=lambda c: _RANK.get(c[0], len(_RANK))))
 
 

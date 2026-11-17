@@ -349,17 +349,17 @@ def test_the_check_recap_shows_the_settings_then_the_outcomes():
 def test_the_real_run_recap_says_the_outcomes_only():
     nodes = outcome_nodes()
     nodes[3] = {"name": "node4", "todo": True, "done": False, "result": "apply_config FAILED after 30s: no answer"}
-    nodes.append({"name": "node6", "todo": True, "result": "not reached"})
+    nodes.append({"name": "node6", "todo": True, "result": "not done (the run stopped before it)"})
     nodes.append({"name": "node7", "result": "not in this run (--limit)"})
     assert cassandra_apply_config_recap(nodes, cluster="my_cluster", diff=["cassandra.yaml", "  x"],
                                         planned=["node%d" % i for i in range(1, 8)]) == [
                                             'FAILED  apply_config  my_cluster  1 restarted, 1 applied, 1 failed, 2 up to date,'
-                                            ' 1 not reached, 1 not in this run',
+                                            ' 1 not done, 1 not in this run',
                                             'node2         applied, restarted',
                                             'node3         applied, no restart',
                                             'node4         apply_config FAILED after 30s: no answer',
                                             'node1, node5  up to date',
-                                            'node6         not reached',
+                                            'node6         not done (the run stopped before it)',
                                             'node7         not in this run (--limit)',
                                             '',
                                             '1 warning in the plan above (node3).']
@@ -431,7 +431,7 @@ def test_the_os_settings_that_differ_after_the_config(tmp_path):
 
 
 def test_the_os_settings_alone_no_restart():
-    nodes = [{"name": "node1", "todo": False, "os": True, "result": "not reached",
+    nodes = [{"name": "node1", "todo": False, "os": True, "result": "not done (the run stopped before it)",
               "notes": ["read-ahead set live: the files Cassandra has open keep the old one until it restarts"]},
              {"name": "node2", "todo": True, "os": True, "then": "restart", "done": True},
              {"name": "node3", "todo": False, "result": "nothing to apply"}]
@@ -447,10 +447,10 @@ def test_the_os_settings_alone_no_restart():
         'node2  applied, restarted']
     # the run stopped before the OS settings: not said applied
     del nodes[0]["os_done"]
-    assert "node1  not reached" in cassandra_apply_config_recap(nodes)
+    assert "node1  not done (the run stopped before it)" in cassandra_apply_config_recap(nodes)
     # its config not reached, its OS settings applied: said
-    nodes[1].update({"done": False, "os_done": True, "result": "not reached"})
-    assert "node2  not reached, its OS settings applied" in cassandra_apply_config_recap(nodes)
+    nodes[1].update({"done": False, "os_done": True, "result": "not done (the run stopped before it)"})
+    assert "node2  not done (the run stopped before it), its OS settings applied" in cassandra_apply_config_recap(nodes)
 
 
 def test_an_os_value_unknown_before():
@@ -579,9 +579,9 @@ def test_the_recap_drops_the_restart_pending_of_a_node_this_run_restarted():
     """It was computed before the restart: "node4  applied, restarted" then "restart pending" was wrong."""
     nodes = [{"name": "node4", "todo": True, "then": "restart", "done": True, "notes": [PENDING]},
              {"name": "node5", "todo": True, "then": "start", "done": True, "notes": [PENDING]},
-             {"name": "node6", "todo": True, "then": "restart", "result": "not reached", "notes": [PENDING]}]
+             {"name": "node6", "todo": True, "then": "restart", "result": "not done (the run stopped before it)", "notes": [PENDING]}]
     lines = cassandra_apply_config_recap(nodes)
-    assert lines[1:] == ["node4  applied, restarted", "node5  applied, started", "node6  not reached", "  " + PENDING]
+    assert lines[1:] == ["node4  applied, restarted", "node5  applied, started", "node6  not done (the run stopped before it)", "  " + PENDING]
     # under --check nothing was restarted: still pending; the plan says it too
     assert "    " + PENDING in cassandra_apply_config_recap(nodes, check=True)  # (under WOULD DO)
     assert cassandra_apply_config_outcomes(nodes[:1], plan=True) == ["node4  write + restart", "  " + PENDING]
@@ -652,3 +652,16 @@ def test_the_plan_and_the_check_say_the_steps_the_recap_what_was_done():
         "h-n1  drain and stop Cassandra, start chronyd, wait up to 2m for clock sync, start Cassandra"]
     assert cassandra_apply_config_outcomes([dict(node, done=True)], check=True)[0].startswith("h-n1  would drain and stop Cassandra, ")
     assert cassandra_apply_config_recap([dict(node, done=True)])[1] == "h-n1  applied, restarted (time sync)"
+
+
+def test_a_long_plan_row_goes_on_under_its_own_column():
+    # the nodes' column left clear: the next line of an outcome under its text, not under the names
+    steps = ["drain and stop Cassandra", "start chronyd", "wait up to 2m for clock sync", "start Cassandra"]
+    nodes = [{"name": "h-n1", "todo": True, "then": "restart", "steps": steps, "why": "time sync", "result": "",
+              "notes": []},
+             {"name": "h-n2", "todo": False, "result": "nothing to apply"},
+             {"name": "h-n3", "todo": False, "result": "nothing to apply"}]
+    assert cassandra_apply_config_outcomes(nodes, plan=True, width=77) == [
+        "h-n1        drain and stop Cassandra, start chronyd, wait up to 2m for clock",
+        "            sync, start Cassandra",
+        "h-n2, h-n3  up to date"]

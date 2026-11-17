@@ -29,8 +29,8 @@
       {%- elif _cassandra_disk_tuned.name is defined and listed
                and (_cassandra_disk_tuned_reload | default(false) | bool
                     or (window and cassandra_data_tuned_file | default({}) is changed)) -%}
-      {%-   set _ = out.append({'item': 'tuned profile ' ~ _cassandra_disk_tuned.name, 'before': 'loaded before its change',
-                               'after': 'loaded again'} | combine(window)) -%}
+      {%-   set _ = out.append({'item': 'tuned profile ' ~ _cassandra_disk_tuned.name, 'before': 'loaded before its last change',
+                               'after': 'loaded with its last change'} | combine(window)) -%}
       {%- endif -%}
       {%- for d in _cassandra_disk_lvm_window if _cassandra_linux_check -%}
       {%-   set _ = out.append({'item': 'LVM read-ahead ' ~ d.lv ~ ' (sectors)', 'before': d.lv_read_ahead,

@@ -507,6 +507,6 @@ def test_the_nodes_to_do_are_not_reached_until_their_play():
     plays = load("playbooks", "apply_config.yml")
     progress = [p for p in plays if p.get("name") == "Set up the progress file"][0]
     note = [t for t in progress["tasks"] if t.get("name") == "Note the nodes not reached yet"][0]
-    assert note["ansible.builtin.set_fact"] == {"cassandra_op_result": "not reached"}
+    assert note["ansible.builtin.set_fact"] == {"cassandra_op_result": "not done (the run stopped before it)"}
     names = [p.get("name") for p in plays]
     assert names.index("Set up the progress file") < names.index("Apply the config where nothing is restarted, on these nodes at once")

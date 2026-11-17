@@ -1750,9 +1750,10 @@ def _recap_verdict(operation, cluster, groups, failed, skipped, check, seconds, 
 def _recap_done_rows(word, members, check, full, slow_factor):
     """The rows of the nodes done with one same outcome (word): the usual ones together with their times, then
     each one slower than slow_factor times the group's median on its own."""
-    times = [o["seconds"] for o in members if o.get("seconds") is not None]
+    # (a node's partial time, the part a resumed run did: no measure of the others, never slow itself)
+    times = [o["seconds"] for o in members if o.get("seconds") is not None and not o.get("partial")]
     middle = _median(times) if times else None
-    slow = [o for o in members if middle and len(times) > 1 and o.get("seconds") is not None
+    slow = [o for o in members if middle and len(times) > 1 and o.get("seconds") is not None and not o.get("partial")
             and o["seconds"] > slow_factor * middle]
     usual = [o for o in members if o not in slow]
     rows = []

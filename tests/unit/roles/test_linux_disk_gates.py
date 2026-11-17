@@ -351,7 +351,7 @@ def test_compared_with_the_reason_of_the_restart():
                   _cassandra_disk_lvm_window=[{"lv": "vg/data", "lv_read_ahead": "auto"}]) == []
     # a reload: the profile changed now, or since tuned loaded it (an earlier run left it for later)
     loaded = dict(TUNED, active=TUNED["profiles"])
-    reload = {"item": "tuned profile cassandra-disks", "before": "loaded before its change", "after": "loaded again",
+    reload = {"item": "tuned profile cassandra-disks", "before": "loaded before its last change", "after": "loaded with its last change",
               "restart": "tuned profile"}
     assert _items(_cassandra_disk_tuned=loaded, cassandra_data_tuned_file={"changed": True})[1:] == [reload]
     assert _items(_cassandra_disk_tuned=loaded, cassandra_data_tuned_file={"changed": False},

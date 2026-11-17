@@ -501,7 +501,7 @@ def test_apply_config_recap():
     variables["cassandra_cluster_name"] = "my_cluster"
     # (UX audit B1) the plan once: the verdict naming the restart, DIFFERENCES FOUND, WOULD DO
     assert recap(True) == [
-        "CHECK  apply_config  my_cluster  1 would restart, 1 would apply, 1 up to date, 1 not reached, 1 not in this run",
+        "CHECK  apply_config  my_cluster  1 would restart, 1 would apply, 1 up to date, 1 not done, 1 not in this run",
         "  nothing was changed (--check)",
         "",
         "DIFFERENCES FOUND"] + ["  " + line for line in APPLY_DIFF] + [
@@ -511,16 +511,16 @@ def test_apply_config_recap():
         "    restart pending (jvm11-server.options changed since the running Cassandra started)",
         "  node1  would apply, no restart",
         "  node3  up to date",
-        "  node4  not reached",
+        "  node4  not done (the run stopped before it)",
         "  node5  not in this run (--limit)"]
     # a real run showed the settings in its plan, before its question: the outcomes here (node2 restarted by
     # this run: no restart pending left)
     assert recap(False) == [
-        "DONE  apply_config  my_cluster  1 restarted, 1 applied, 1 up to date, 1 not reached, 1 not in this run",
+        "DONE  apply_config  my_cluster  1 restarted, 1 applied, 1 up to date, 1 not done, 1 not in this run",
         "node2  applied, restarted",
         "node1  applied, no restart",
         "node3  up to date",
-        "node4  not reached",
+        "node4  not done (the run stopped before it)",
         "node5  not in this run (--limit)"]
     # how long the run took, from its start (the first play)
     hostvars["node3"]["_cassandra_apply_config_start"] = 1000  # an epoch (0 would read as no start)

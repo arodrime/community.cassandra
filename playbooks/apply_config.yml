@@ -650,7 +650,7 @@
 
     - name: Nothing to do on this node
       ansible.builtin.set_fact:
-        cassandra_op_result: "{{ 'not reached' if cassandra_apply_config_os_live | length > 0 else 'nothing to apply' }}"
+        cassandra_op_result: "{{ 'not done (the run stopped before it)' if cassandra_apply_config_os_live | length > 0 else 'nothing to apply' }}"
       when: not cassandra_apply_config_todo | bool
 
     # the nodes whose warnings the plan shows: the recap points at them (said again only for the others)
@@ -835,7 +835,7 @@
     # said by the summary of a run that stops before them (the nodes written at once go first, in their own play)
     - name: Note the nodes not reached yet
       ansible.builtin.set_fact:
-        cassandra_op_result: not reached
+        cassandra_op_result: not done (the run stopped before it)
 
 # The OS settings of cassandra_linux (kernel settings, limits, THP, swap, time
 # sync, the read-ahead and scheduler of the data devices) too, except on a node
@@ -928,7 +928,7 @@
     - name: Note the result
       ansible.builtin.set_fact:
         cassandra_op_result: >-
-          {{ (cassandra_op_result if ansible_check_mode else 'not reached, its OS settings applied') if cassandra_apply_config_todo | bool
+          {{ (cassandra_op_result if ansible_check_mode else 'not done (the run stopped before it), its OS settings applied') if cassandra_apply_config_todo | bool
              else 'OS settings ' ~ ('would be applied (--check: nothing was changed)' if ansible_check_mode else 'applied') }}
 
 # The nodes whose Cassandra keeps running as it is (an owner, group or mode alone) or stays stopped (stopped on
@@ -1083,7 +1083,7 @@
                                     'steps': v.cassandra_apply_config_steps | default([]),
                                     'os_done': v.cassandra_apply_config_os_done | default(false),
                                     'done': v.cassandra_op_done | default(false), 'then': v.cassandra_apply_config_then | default(''),
-                                    'result': v.cassandra_op_result | default('not reached' if h in ansible_play_hosts_all
+                                    'result': v.cassandra_op_result | default('not done (the run stopped before it)' if h in ansible_play_hosts_all
                                                                                 else 'not in this run (--limit)'),
                                     'notes': v.cassandra_apply_config_notes | default([])}) -%}
           {%- endfor -%}

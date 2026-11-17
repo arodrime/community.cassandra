@@ -328,3 +328,16 @@ def test_the_resume_says_which_nodes_it_restarts_again():
          {"node": "n2", "result": "restart not finished: the rack stopped at n1", "stage": "during"},
          {"node": "n3", "result": "not run yet"}], "the rack n1, n2", "boom", action="restart", resume=True, batch=True)
     assert "  2. resume (n1, n2 restart again):" in rack
+
+
+def test_a_resumed_node_s_partial_time_is_never_compared():
+    # the node a resumed run found drained: only started by this run, its time no measure of a restart
+    results = [{"node": "n1", "result": "restart done (resumed) in 15s"}, {"node": "n2", "result": "restart done in 36s"},
+               {"node": "n3", "result": "restart done in 37s"}]
+    lines = cassandra_op_recap(results, cluster="c", operation="rolling_restart")
+    assert not [line for line in lines if "slow" in line], lines
+    assert lines[1:] == ["  n1..n3  restarted  in 15s..37s each"]
+    # nor slow itself, against the others
+    results = [{"node": "n1", "result": "restart done (resumed) in 90s"}, {"node": "n2", "result": "restart done in 36s"},
+               {"node": "n3", "result": "restart done in 37s"}]
+    assert not [line for line in cassandra_op_recap(results, cluster="c", operation="rolling_restart") if "slow" in line]
