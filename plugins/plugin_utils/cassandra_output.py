@@ -1736,13 +1736,14 @@ def _recap_done_rows(word, members, check, full, slow_factor):
         spread = sorted(o["seconds"] for o in usual if o.get("seconds") is not None)
         note = ""
         if spread and not check:
-            note = "%s each" % duration(spread[0]) if spread[0] == spread[-1] or len(usual) == 1 \
-                else "%s..%s each" % (duration(spread[0]), duration(spread[-1]))
+            # (labelled: "in 49s", the time of its part of the run)
+            note = "in %s each" % duration(spread[0]) if spread[0] == spread[-1] or len(usual) == 1 \
+                else "in %s..%s each" % (duration(spread[0]), duration(spread[-1]))
             if len(usual) == 1:
-                note = duration(spread[0])
+                note = "in " + duration(spread[0])
         rows.append([nodes([o["node"] for o in usual], keep_order=True, full=full), word, note])
     for o in slow:
-        rows.append([o["node"], word, "%s  %s slow (median %s)" % (duration(o["seconds"]), ARROW, duration(middle))])
+        rows.append([o["node"], word, "in %s  %s slow (median %s)" % (duration(o["seconds"]), ARROW, duration(middle))])
     return rows
 
 

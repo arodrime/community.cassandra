@@ -49,7 +49,7 @@ def test_operation_summary_is_a_recap():
     variables["_cluster"] = render(task["vars"]["_cluster"], **variables)
     # a verdict, the nodes grouped (a list: a line each under any callback)
     lines = [" ".join(line.split()) for line in render(task["ansible.builtin.debug"]["msg"], **variables)]
-    assert lines == ["DONE add_node my_cluster 1 added, 2 not touched", "n1 added 5s", "n2 not touched (not reached)",
+    assert lines == ["DONE add_node my_cluster 1 added, 2 not touched", "n1 added in 5s", "n2 not touched (not reached)",
                      "n3 not touched (left out by --limit)"]
     variables.update(cassandra_service_summary_operation="remove_datacenter")
     assert render(task["ansible.builtin.debug"]["msg"], **variables)[0].startswith("DONE  remove_datacenter  my_cluster")

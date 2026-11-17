@@ -1,0 +1,2 @@
+minor_changes:
+  - "operation recaps and stop blocks - a node's duration is labelled (``node1  restarted  in 49s``, ``in 1m40s..1m50s each``), no longer a bare figure next to the outcome."

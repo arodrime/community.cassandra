@@ -117,7 +117,7 @@ Conventions
   node's block is live on a terminal can be overwritten by the next rewrite; the log file keeps it.
 
 - **Recap**: the verdict with the counts and the duration (``DONE  rolling_restart  prod  5 restarted  11m30s``),
-  the nodes grouped by identical outcome (``node1..node5  restarted  1m49s..1m58s each``), a line of its own for a
+  the nodes grouped by identical outcome (``node1..node5  restarted  in 1m49s..1m58s each``), a line of its own for a
   node more than 50% slower than the median, a failed or a skipped one, with the reason. ``--check`` says
   ``would ...`` and ends the verdict with ``nothing was changed``. No cluster line at the end. The titles, the
   questions and the recaps name the cluster by its inventory group (``prod``), as the run's first line and
@@ -136,19 +136,19 @@ Conventions
     STOPPED  rolling_restart  prod  at node2
       Why:  node4 (10.0.0.4, r1) is DN, seen from node1 and node2
             waited 10m29s (cassandra_service_health_timeout: 600s)
-      node1         restarted    1m50s
+      node1         restarted    in 1m50s
       node2         restarted; cluster health check failed
       node3..node5  not touched
 
     WAY OUT
       1. bring node4 back to UN (its host and/or Cassandra)
-      2. resume:
+      2. resume (node2 restarts again):
          ansible-playbook community.cassandra.rolling_restart \
            -e cassandra_hosts=prod -e cassandra_rolling_resume=true
          progress: .cassandra_progress/rolling_restart-prod.done
 
     IF node4 IS LOST FOR GOOD
-      replace it: NEW_NODE a blank host, node4 out of the inventory
+      replace it: NEW_NODE (a blank host) in prod, node4 out of the inventory
       (a seed: out of cassandra_seeds first, with change_seeds)
         ansible-playbook community.cassandra.replace_node -e cassandra_hosts=prod \
           -e cassandra_target_nodes=NEW_NODE -e cassandra_replace_address=10.0.0.4
@@ -201,7 +201,7 @@ Conventions
       rack3   2 nodes   1 up, 1 down   load  9.1 GiB
       dc1     5 nodes   4 up, 1 down   load 23.2 GiB
 
-    Host IDs cut: whole with -e cassandra_status_raw=true (nodetool's own output)
+    Host IDs shortened; full: -e cassandra_status_raw=true
 
   The verdict: ``ALL 5 NODES UP`` (green under the ops callback), or ``1 NODE DOWN: ...`` (red); then, after
   ``—``, the nodes joining, leaving or moving (``ALL 6 NODES UP — 1 JOINING: node6``, yellow). Under it, a second

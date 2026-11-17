@@ -679,13 +679,13 @@ def restarts(times):
 def test_recap_grouped_with_the_slow_node_apart():
     lines = out.recap("rolling_restart", "my_cluster", restarts([109, 112, 400, 115, 118, 110]), seconds=690)
     assert lines == ["DONE  rolling_restart  my_cluster  6 restarted  11m30s",
-                     "  node1, node2, node4..node6  restarted  1m49s..1m58s each",
-                     "  node3                       restarted  6m40s  %s slow (median 1m53s)" % ARROW]
+                     "  node1, node2, node4..node6  restarted  in 1m49s..1m58s each",
+                     "  node3                       restarted  in 6m40s  %s slow (median 1m53s)" % ARROW]
 
 
 def test_recap_no_outlier_under_the_factor_and_one_node():
-    assert out.recap("rolling_restart", "c", restarts([100, 140]))[1:] == ["  node1, node2  restarted  1m40s..2m20s each"]
-    assert out.recap("rolling_restart", "c", restarts([100]))[1:] == ["  node1  restarted  1m40s"]
+    assert out.recap("rolling_restart", "c", restarts([100, 140]))[1:] == ["  node1, node2  restarted  in 1m40s..2m20s each"]
+    assert out.recap("rolling_restart", "c", restarts([100]))[1:] == ["  node1  restarted  in 1m40s"]
 
 
 def test_recap_failed_and_skipped():
@@ -694,7 +694,7 @@ def test_recap_failed_and_skipped():
         {"node": "node3", "status": "skipped", "reason": "after the failure"},
         {"node": "node4", "status": "skipped", "reason": "after the failure"}])
     assert lines == ["FAILED  rolling_restart  my_cluster  1 restarted, 1 failed, 2 not touched",
-                     "  node1         restarted                        1m40s",
+                     "  node1         restarted                        in 1m40s",
                      "  node2         FAILED",
                      "    not UN after 10m",
                      "  node3, node4  not touched (after the failure)"]
@@ -703,7 +703,7 @@ def test_recap_failed_and_skipped():
 def test_recap_columns_not_stretched_by_a_long_reason():
     reason = "Cluster not healthy, nothing more is done: " + "x" * 300
     lines = out.recap("rolling_restart", "c", restarts([96]) + [{"node": "node2", "status": "failed", "reason": reason}])
-    assert lines[1:] == ["  node1  restarted  1m36s", "  node2  FAILED", "    " + reason]
+    assert lines[1:] == ["  node1  restarted  in 1m36s", "  node2  FAILED", "    " + reason]
 
 
 def test_recap_check_mode_says_would_and_nothing_changed():
