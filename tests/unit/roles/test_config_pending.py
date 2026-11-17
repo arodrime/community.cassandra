@@ -45,6 +45,10 @@ def tasks(name):
     return out
 
 
+with open(os.path.join(ROLE, "..", "cassandra_service", "files", "config_record.py")) as f:
+    RECORD = f.read()
+
+
 def task(tasks_file, name):
     return next(t for t in tasks(tasks_file) if t.get("name") == name)
 
@@ -301,14 +305,16 @@ def test_import_lists_the_config_files_written_since_the_start():
 def test_the_record_of_a_start_is_that_jvms_and_leaves_out_the_files_written_since(tmp_path):
     """config_snapshot.yml: the files the JVM read (not one written after its start), and that JVM (pid,
     start), for which apply_config trusts the record only."""
-    record = task("config_snapshot.yml", "Record the config Cassandra started with")
+    record = task("config_snapshot.yml", "Record the config Cassandra started with")["ansible.builtin.command"]["argv"]
+    assert record[3:] == ["start", "{{ _cassandra_service_config_snapshot }}", "{{ _cassandra_service_conf_dir }}",
+                          "/etc/systemd/system/cassandra.service"]
     conf = tmp_path / "conf"
     conf.mkdir()
     for name in ("cassandra.yaml", "jvm17-server.options", ".hidden"):
         (conf / name).write_text(name)
     (tmp_path / "unit").write_text("[Unit]\n")
     out = tmp_path / "record.json"
-    argv = [sys.executable, "-c", record["vars"]["_record"], str(conf), str(tmp_path / "unit"), str(out)]
+    argv = [sys.executable, "-c", RECORD, "start", str(out), str(conf), str(tmp_path / "unit"), str(tmp_path / "none.conf")]
     # a process taken for Cassandra (a java, its main class on its command line), started after the files;
     # one that is not a java (a sudo, a grep) with that argument too is not it
     java = tmp_path / "java"
@@ -336,3 +342,48 @@ def test_the_record_of_a_start_is_that_jvms_and_leaves_out_the_files_written_sin
     got = json.loads(out.read_text())
     assert "_jvm" not in got and sorted(got) == sorted([str(conf / "cassandra.yaml"), str(conf / "jvm17-server.options"),
                                                         str(tmp_path / "unit")])
+
+
+def update(tmp_path, record, request, env=None):
+    path = tmp_path / "record.json"
+    if record is not None:
+        path.write_text(json.dumps(record))
+    elif path.exists():
+        path.unlink()
+    out = subprocess.run([sys.executable, "-c", RECORD, "update", str(path), json.dumps(request)], check=True,
+                         stdout=subprocess.PIPE, universal_newlines=True, env=env).stdout.strip()
+    return out, (json.loads(path.read_text()) if path.exists() else None)
+
+
+def test_files_recorded_as_the_running_cassandras_only_as_planned(tmp_path):
+    # (pre-push audit, rc13) one helper for every update of the record: that JVM's record, the files on disk as
+    # planned (a path under ~ or $VAR as the record keys it), written whole, root only
+    conf = tmp_path / "conf"
+    conf.mkdir()
+    (conf / "jvm-server.options").write_text("new")
+    new = hashlib.sha1(b"new").hexdigest()
+    jvm = {"pid": "42", "start": 100.0}
+    env = dict(os.environ, HOME=str(tmp_path))
+    request = {"jvm": {"pid": "42", "start": "100.5"}, "files": {"~/conf/jvm-server.options": new}}
+    out, record = update(tmp_path, {"_jvm": jvm, str(conf / "jvm-server.options"): "old"}, request, env)
+    assert out == "recorded" and record == {"_jvm": jvm, str(conf / "jvm-server.options"): new}
+    assert oct(os.stat(str(tmp_path / "record.json")).st_mode & 0o777) == "0o600"
+    for record, request, why in [
+            (None, request, "no record"),
+            ({"_jvm": {"pid": "41", "start": 100.0}}, request, "the record of another JVM"),  # restarted since
+            ({}, dict(request, jvm=None), "the record of another JVM"),  # a record of no JVM
+            ({"_jvm": jvm}, dict(request, files={"~/conf/jvm-server.options": "other"}), "written otherwise"),
+            ({"_jvm": jvm}, dict(request, files={"~/conf/gone": None}), "written otherwise"),  # (missing)
+            ({"_jvm": jvm, "/u": "a"}, dict(request, before={"/u": "b"}), "started with other files")]:
+        assert update(tmp_path, record, request, env)[0] == why
+    assert not [p for p in os.listdir(str(tmp_path)) if p.startswith(".ansible_config_at_start.")]
+
+
+def test_every_update_of_the_record_goes_through_the_one_helper():
+    # (pre-push audit, rc13) the record rewritten in one place: config_record.py, for the start and the updates
+    for name in ("config_snapshot.yml", "config_record_update.yml"):
+        argv = tasks(name)[0]["ansible.builtin.command"]["argv"]
+        assert argv[2] == "{{ lookup('ansible.builtin.file', 'config_record.py') }}"
+    assert tasks("unit_no_restart.yml")[0]["ansible.builtin.include_tasks"] == "config_record_update.yml"
+    proven = task("action_apply_config.yml", "Record them when they are on disk as planned and that Cassandra still runs")
+    assert proven["ansible.builtin.include_role"]["tasks_from"] == "config_record_update.yml"

@@ -173,40 +173,18 @@
         tasks_from: jvm_started.yml
 
     - name: Record them when they are on disk as planned and that Cassandra still runs
-      ansible.builtin.command:
-        argv:
-          - "{{ _cassandra_config_python | default(ansible_facts['python']['executable'] | default('/usr/bin/python3')) }}"
-          - -c
-          - |
-            import hashlib, json, os, sys, tempfile
-            record, plan = sys.argv[1], json.loads(sys.argv[2])
-            def sha1(path):
-                with open(path, "rb") as f:
-                    return hashlib.sha1(f.read()).hexdigest()
-            try:
-                with open(record) as f:
-                    data = json.load(f)
-            except (IOError, OSError, ValueError):
-                print("no record"); sys.exit(0)
-            jvm = data.get("_jvm") or {}
-            if str(jvm.get("pid")) != str(plan["pid"]) or abs(float(jvm.get("start") or 0) - float(plan["start"])) >= 2:
-                print("the record of another JVM"); sys.exit(0)
-            paths = dict((os.path.normpath(os.path.join(plan["conf"], f)), s) for f, s in plan["sha1"].items())
-            if any(not os.path.isfile(p) or sha1(p) != s for p, s in paths.items()):
-                print("written otherwise"); sys.exit(0)
-            data.update(paths)
-            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(record) or ".", prefix=".ansible_config_at_start.")
-            with os.fdopen(fd, "w") as f:
-                json.dump(data, f, indent=4, sort_keys=True)
-            os.chmod(tmp, 0o600)
-            os.rename(tmp, record)
-            print("recorded")
-          - "{{ _cassandra_service_config_snapshot }}"
-          - >-
-            {{ {'pid': cassandra_apply_config_proven.pid, 'start': cassandra_apply_config_proven.start,
-                'conf': _cassandra_service_conf_dir, 'sha1': cassandra_apply_config_proven.sha1} | to_json }}
-      register: cassandra_apply_config_proven_record
-      changed_when: cassandra_apply_config_proven_record.stdout == 'recorded'
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: config_record_update.yml
+      vars:
+        _cassandra_service_record_request:
+          jvm: {pid: "{{ cassandra_apply_config_proven.pid }}", start: "{{ cassandra_apply_config_proven.start }}"}
+          files: >-
+            {%- set out = {} -%}
+            {%- for f, sum in cassandra_apply_config_proven.sha1.items() -%}
+            {%-   set _ = out.update({_cassandra_service_conf_dir ~ '/' ~ f: sum}) -%}
+            {%- endfor -%}
+            {{ out }}
       when:
         - cassandra_jvm.pid | default('') | string == cassandra_apply_config_proven.pid | string
         - (cassandra_jvm.start | default(0) | float - cassandra_apply_config_proven.start | float) | abs < 2

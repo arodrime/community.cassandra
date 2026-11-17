@@ -26,19 +26,27 @@ def sha1(text):
     return hashlib.sha1(text.encode()).hexdigest()
 
 
+UNIT_PATH = "/etc/systemd/system/cassandra.service"
 UNIT = "[Service]\nEnvironment=X=1\n"
 FLAGGED = "[Service]\nEnvironment=X=1 -Dcassandra.replace_address_first_boot=10.0.0.5\n"
 
 
 def run(tmp_path, record):
-    """The task's script on a unit (without the flag now) and a record of the start with the flagged one."""
+    """The task's request to config_record.py on a unit (without the flag now) and a record of the start with the
+    flagged one."""
     task = load("roles", "cassandra_service", "tasks", "unit_no_restart.yml")[0]
+    assert task["ansible.builtin.include_tasks"] == "config_record_update.yml"
+    request = task["vars"]["_cassandra_service_record_request"]
     unit = tmp_path / "cassandra.service"
     unit.write_text(UNIT)
     path = tmp_path / "record.json"
     if record is not None:
         path.write_text(json.dumps(dict((str(unit) if k == "unit" else k, v) for k, v in record.items())))
-    out = subprocess.run([sys.executable, "-c", task["vars"]["_record"], str(unit), str(path), sha1(FLAGGED)],
+    assert request == {"before": {UNIT_PATH: "{{ _cassandra_service_unit_before }}"}, "files": {UNIT_PATH: None}}
+    request = {"before": {str(unit): sha1(FLAGGED)}, "files": {str(unit): None}}  # (the unit here, its sha1 before)
+    with open(os.path.join(ROOT, "roles", "cassandra_service", "files", "config_record.py")) as f:
+        script = f.read()
+    out = subprocess.run([sys.executable, "-c", script, "update", str(path), json.dumps(request)],
                          capture_output=True, text=True, check=True).stdout.strip()
     return out, (json.loads(path.read_text()) if path.exists() else None), str(unit)
 
@@ -49,8 +57,8 @@ def test_the_unit_without_the_flag_is_recorded(tmp_path):
 
 
 @pytest.mark.parametrize("record, why", [
-    ({"_jvm": {"pid": "42", "start": 1.0}, "unit": sha1("another unit")}, "kept"),  # started with another unit
-    ({"unit": sha1(FLAGGED)}, "kept"),                                            # no JVM in the record
+    ({"_jvm": {"pid": "42", "start": 1.0}, "unit": sha1("another unit")}, "started with other files"),
+    ({"unit": sha1(FLAGGED)}, "the record of another JVM"),                       # no JVM in the record
     (None, "no record"),
 ])
 def test_anything_else_is_left_as_it_is(tmp_path, record, why):

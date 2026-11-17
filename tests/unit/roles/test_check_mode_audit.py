@@ -61,7 +61,7 @@ AUDITED = {
     (L, "timesync.yml", "Time servers (chrony)", "skipped"): ("report", "model"),
     (S, "account_check.yml", "Read the account Cassandra runs as", "forced"): ("read",),
     (S, "config_snapshot.yml", "Record the config Cassandra started with", "writer"): ("no change",),
-    (S, "unit_no_restart.yml", "Record the rewritten unit as the running Cassandra's (no restart needed for it)", "skipped,writer"): (
+    (S, "config_record_update.yml", "Record files as the running Cassandra's (no restart needed for them)", "skipped,writer"): (
         "no change",),
     (S, "main.yml", "Read the current service state (change report)", "forced"): ("read",),
     (S, "main.yml", "Look for a running Cassandra JVM", "forced"): ("read",),
