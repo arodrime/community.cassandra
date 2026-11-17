@@ -1,0 +1,3 @@
+bugfixes:
+  - 'import_cluster playbook - the 5.0 ``CQLLOG`` appender uncommented while ``<root>`` does not name it no longer reads as ``cassandra_log_cql_table: true`` (which adds the ``<root>`` line): logback sends it nothing, so the self-check and ``cassandra_config`` take the file as having the same settings as the role''s, the appender left out.'
+  - 'import_cluster playbook - a write-only kernel key (``net.ipv4.route.flush``, ``net.ipv6.route.flush``, ``vm.drop_caches``, ``vm.compact_memory``), never read back, is no longer a self-check difference: writing it in the sysctl file is a note with no effect; the shareable copy keeps the key named after ``sysctl`` instead of masking it as a domain.'

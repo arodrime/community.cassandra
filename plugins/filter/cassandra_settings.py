@@ -393,8 +393,25 @@ def shell_lines(text, strict=False):
     return out
 
 
+# appenders that do nothing unless an event reaches them, created and started or not (logback 1.2 creates and
+# starts an appender no appender-ref names, 1.3+ skips it): Cassandra 5.0's system_views.system_logs one (the
+# stock CQLLOG), its start() its base class's
+INERT_APPENDERS = ("org.apache.cassandra.utils.logging.VirtualTableAppender",)
+
+
+def _unreferenced_inert(conf):
+    """The <appender> elements under <configuration> of an INERT_APPENDERS class that no appender-ref of the file
+    names: no effect, whatever logback reads it."""
+    if _logback_tag(conf) != "configuration":
+        return []
+    refs = set(e.get("ref") for e in conf.iter() if _logback_tag(e) == "appender-ref")
+    return [c for c in conf if _logback_tag(c) == "appender" and c.get("name") not in refs
+            and str(c.get("class", "")).strip() in INERT_APPENDERS]
+
+
 def xml_settings(text):
-    """Every element, with its attributes and text, comments out; logback.xml's in logback_order."""
+    """Every element, with its attributes and text, comments out; logback.xml's in logback_order, without its
+    appenders of no effect (_unreferenced_inert)."""
     out = []
 
     def walk(el, path):
@@ -404,7 +421,10 @@ def xml_settings(text):
         out.append(here + ((" = " + el.text.strip()) if (el.text or "").strip() else ""))
         for child in logback_order(el, path == ""):
             walk(child, here)
-    walk(ET.fromstring(text), "")
+    conf = ET.fromstring(text)
+    for appender in _unreferenced_inert(conf):
+        conf.remove(appender)
+    walk(conf, "")
     return out
 
 

@@ -1247,6 +1247,10 @@ def _live_boot(linux, facts):
     return live, live or not container
 
 
+# the kernel's write-only keys: a trigger (writing it flushes or drops something), never read back, no setting
+WRITE_ONLY_SYSCTL = ("net.ipv4.route.flush", "net.ipv6.route.flush", "vm.drop_caches", "vm.compact_memory")
+
+
 def _sysctl_changes(recs, linux, live):
     """cassandra_linux's sysctl module: each key in its file (and set live), the same keys out of /etc/sysctl.conf.
     A file line is no effect when the value read at boot stays the one the node has now."""
@@ -1275,10 +1279,11 @@ def _sysctl_changes(recs, linux, live):
         set_live = dict(after.get(target, [])) if any(path == target for dummy, path, dummy2, dummy3 in edits) else {}
         set_live.update(wanted)
         for key, value in set_live.items():
-            if _norm(now.get(key, "")) != value:
+            if key not in WRITE_ONLY_SYSCTL and _norm(now.get(key, "")) != value:
                 items.append(_item("sysctl %s (live)" % key, now.get(key) or "not read", value))
     for key, path, before, value in edits:
-        effect = NO_EFFECT if key in now and _norm(at_boot.get(key, "")) == _norm(now[key]) else CHANGE
+        effect = NO_EFFECT if key in WRITE_ONLY_SYSCTL or key in now and _norm(at_boot.get(key, "")) == _norm(
+            now[key]) else CHANGE
         items.append(_item("sysctl %s (%s)" % (key, path), "not set" if before is None else before,
                            "removed" if value is None else value, effect))
     return items

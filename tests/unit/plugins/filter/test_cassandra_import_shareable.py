@@ -307,6 +307,13 @@ def test_audit_2026_11_06_kernel_settings_kept_hosts_named_like_them_masked():
         assert kept in text
 
 
+def test_a_kernel_setting_after_sysctl_kept():
+    # (a 5.0.9 cluster, 2026-11-17) no value after it: net.ipv4.route.flush was masked as a domain
+    text = shared_text(["cassandra_linux: sysctl net.ipv4.route.flush (live): node not read, the roles would set 1"],
+                       [{"name": "a1"}])
+    assert "sysctl net.ipv4.route.flush (live)" in text and "domain1" not in text
+
+
 def test_audit_2026_11_06_short_site_codes_where_the_site_names_things():
     text = shared_text([
         "sysctl /etc/sysctl.d/01-sysctl-iv2.conf: vm.swappiness = 0   limits /etc/security/limits.d/90-zq7.conf",

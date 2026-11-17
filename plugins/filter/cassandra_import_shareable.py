@@ -338,7 +338,8 @@ def _line(text, key):
         word = m.group(0)
         if key.get(word) or word.lower() in key.quiet:
             return key.get(word) or word
-        if KERNEL_KEY.match(word) and re.match(r"\s*[=:]", m.string[m.end():]):  # (vm.swappiness = 0)
+        if KERNEL_KEY.match(word) and (re.match(r"\s*[=:]", m.string[m.end():])  # (vm.swappiness = 0)
+                                       or re.search(r"\bsysctl $", m.string[:m.start()])):  # (sysctl vm.drop_caches)
             return word
         if word.startswith("cassandra_") or re.sub(r"^-+D?", "", word).startswith(STOCK_DOTTED):
             return _dotted(word, key) if "." in word else word

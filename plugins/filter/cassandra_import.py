@@ -2617,8 +2617,11 @@ def _logback(text):
     refs = [r.get("ref") for r in roots[0].findall("appender-ref")] if len(roots) == 1 else []
     # 5.0's system_views.system_logs table: the stock CQLLOG appender live, <root> naming it
     cql = "CQLLOG" in refs and [a for a in conf.findall("appender") if a.get("name") == "CQLLOG"]
-    if cql:
-        found["cassandra_log_cql_table"] = True
+    # (the appender alone gets no event: not the table, though the line reader took its line on for it; its level
+    # then has no effect)
+    found["cassandra_log_cql_table"] = True if cql else None
+    if not cql:
+        found["cassandra_log_cql_table_level"] = None
     if len(roots) == 1:  # the appenders <root> names besides the stock ones, in their order
         extra = [ref for ref in refs if ref not in ("SYSTEMLOG", "STDOUT", "ASYNCDEBUGLOG") + (("CQLLOG",) if cql else ())]
         if extra and len(set(extra)) == len(extra):

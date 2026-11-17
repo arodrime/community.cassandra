@@ -6,6 +6,7 @@ import json
 import os
 import re
 
+import pytest
 import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_os import (
@@ -904,6 +905,18 @@ def test_sysctl_live_and_file_changes():
     assert changes(role_built(), sysctl={"vm.swappiness": 1}) == []
     assert changes(role_built(), sysctl={"vm.swappiness": 5})[0] == {
         "what": "sysctl vm.swappiness (live)", "now": "1", "would": "5", "effect": "change"}
+
+
+@pytest.mark.parametrize("key", ["net.ipv4.route.flush", "net.ipv6.route.flush", "vm.drop_caches"])
+def test_a_write_only_sysctl_key_is_an_action_not_a_setting(key):
+    # (a 5.0.9 cluster, 2026-11-17) a trigger the kernel lets write, never read: never in sync, nothing to set
+    wanted = dict(LINUX["cassandra_linux_sysctl"], **{key: 1})
+    unread = "sysctl_live|%s|\n" % key
+    assert changes(role_built() + "sysctl|/etc/sysctl.d/60-cassandra.conf|%s = 1\n" % key + unread, sysctl=wanted) == []
+    # not in the file yet: written there, no effect (it sets nothing)
+    assert changes(role_built() + unread, sysctl=wanted) == [{
+        "what": "sysctl %s (/etc/sysctl.d/60-cassandra.conf)" % key, "now": "not set", "would": "1",
+        "effect": "no effect"}]
 
 
 def test_time_sync_changes():

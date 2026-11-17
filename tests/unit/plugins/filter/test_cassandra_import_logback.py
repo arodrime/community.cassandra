@@ -12,6 +12,7 @@ import pytest
 import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_config_import, log_dir_of
+from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import same_settings
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import (
     _compare_files, cassandra_import_self_check)
 from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_import_check import (
@@ -223,6 +224,29 @@ def test_the_system_logs_table_of_5_0():
     assert variables["cassandra_log_cql_table"] is True and variables["cassandra_log_cql_table_level"] == "ERROR"
     assert "cassandra_logback_root_extra_refs" not in variables
     assert check["differences"] == []
+
+
+def cql_appender_alone(text):
+    """The stock CQLLOG appender uncommented, its <root> line left commented out (a 5.0.9 cluster, 2026-11-17)."""
+    text = text.replace('  <!-- <appender name="CQLLOG"', '  <appender name="CQLLOG"')
+    return text.replace("      <level>WARN</level>\n    </filter>\n  </appender> -->",
+                        "      <level>ERROR</level>\n    </filter>\n  </appender>")
+
+
+def test_the_system_logs_appender_alone_is_not_the_table():
+    # no appender-ref names it: logback sends it nothing (1.3+ does not even create it), so not
+    # cassandra_log_cql_table, which would add the <root> line too
+    variables, snippets, check = imported(node_files("50x", cql_appender_alone), "50x")
+    assert not [k for k in variables if k.startswith("cassandra_log_cql_table")] and snippets == {}
+    assert check["differences"] == []
+
+
+def test_an_appender_no_ref_names():
+    stock_50 = stock("50x")["logback.xml"]
+    assert same_settings("logback.xml", cql_appender_alone(stock_50), stock_50)
+    # a file appender: logback 1.2 (Cassandra 4.x, 5.0.0 to 5.0.6) creates and starts it, its file opened
+    mine = stock_50.replace("  <root ", "\n".join(MINE) + "\n\n  <root ")
+    assert not same_settings("logback.xml", mine, stock_50)
 
 
 @pytest.mark.parametrize("series", SERIES)
