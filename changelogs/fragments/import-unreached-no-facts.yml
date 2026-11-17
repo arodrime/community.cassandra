@@ -1,0 +1,2 @@
+bugfixes:
+  - "import_cluster playbook - a node Ansible does not reach while the import reads the nodes no longer prints a raw templating error (``'dict object' has no attribute 'os_family'``): its reading ends unreachable, the reason the report gives."

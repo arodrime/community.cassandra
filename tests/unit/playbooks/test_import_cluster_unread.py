@@ -78,3 +78,18 @@ def test_air_gapped_node_noted():
     notes = node({"import_cluster_repos_answer": False, "import_cluster_newer_files": []})["notes"]
     assert [n for n in notes if "cassandra_offline: true" in n]
     assert not [n for n in node({"import_cluster_repos_answer": True})["notes"] if "cassandra_offline: true" in n]
+
+
+READ = next(p for p in PLAYS if p["name"] == "Read every node")
+
+
+@pytest.mark.parametrize("task, field", [
+    ("Read the running Cassandra (conf dir, Cassandra and Java versions)", ("environment", "IMPORT_CLUSTER_OS_FAMILY")),
+    ("Read the config files, when they were written, the JVM's arguments, the repository files and the unit",
+     ("vars", "_repo")),
+])
+def test_a_node_not_reached_has_no_facts_and_no_templating_error(task, field):
+    # ignore_unreachable: the node's later tasks run without its facts and end unreachable, the reason the report
+    # gives, never a templating error ('dict object' has no attribute 'os_family')
+    template = next(t for t in READ["tasks"] if t["name"] == task)[field[0]][field[1]]
+    assert render(template, ansible_facts={}, import_cluster_repo_files=[]) in ("", [], "[]")

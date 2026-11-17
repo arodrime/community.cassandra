@@ -754,7 +754,8 @@
           cassandra cassandra-tools jemalloc libjemalloc2
           {{ (lookup('ansible.builtin.file', playbook_dir ~ '/../roles/cassandra_repository/defaults/main.yml') | from_yaml).debian_packages
              | join(' ') }}
-        IMPORT_CLUSTER_OS_FAMILY: "{{ ansible_facts['os_family'] }}"
+        # (a node not reached has no facts: the task is then unreachable too, the reason the report gives)
+        IMPORT_CLUSTER_OS_FAMILY: "{{ ansible_facts['os_family'] | default('') }}"
       register: import_cluster_running
       changed_when: false
       failed_when: false
@@ -893,7 +894,7 @@
         _supported: "{{ import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x'] }}"
         _repo: >-
           {{ import_cluster_repo_files | default([])
-             + (['/etc/apt/auth.conf.d/cassandra.conf'] if ansible_facts['os_family'] == 'Debian' else []) }}
+             + (['/etc/apt/auth.conf.d/cassandra.conf'] if ansible_facts['os_family'] | default('') == 'Debian' else []) }}
         # [what, how, [[item, path]...]]: the files' content (as slurp), stat (follow), stat with a checksum, find
         _wanted: >-
           {{ ([['newer', 'find', [[import_cluster_conf_dir, _cassandra_service_config_files]]]]
