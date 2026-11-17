@@ -316,7 +316,7 @@ def test_tuned_profile_devices_without_a_usable_id():
 
 # --- the summary of the run ---
 
-ARROW = u" \u2192 "
+ARROW = u" on "
 STACK = "/data/c/dev/{data,commitlog}" + ARROW + "datavg-lv_data" + ARROW + "sdb"
 
 

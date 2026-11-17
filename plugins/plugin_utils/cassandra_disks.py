@@ -25,7 +25,8 @@ import json
 import re
 from collections import OrderedDict
 
-ARROW = u" \u2192 "
+# a device and what it sits on: "/data/c on vg_data-lv_cass on sdb" (words, no arrow mid-line)
+ARROW = u" on "
 # lsblk's columns read (ra, rota, sched: by import_cluster only, the role reads sysfs)
 FIELDS = ("name", "type", "maj:min", "mountpoint", "fstype", "ra", "rota", "sched")
 # the dm names of LVM's own layers: pools, snapshots, raid, mirror, cache, vdo, integrity, writecache

@@ -405,7 +405,7 @@ def test_disks_lvm_stack():
     lv = blk("vg1-cassandra", "dm-2", "253:2", "lvm", 4096, True, "", "/data")
     r = found(disk_records([blk("sdb", "sdb", "8:16", "disk", 4096, True, "mq-deadline", children=[lv])],
                            [("/data/c/data", "253:2", "/data", "xfs")], lvs=["253|2|vg1|cassandra|auto"]))
-    assert u"disks: /data/c/data \u2192 vg1-cassandra (dm-2) \u2192 sdb" in r["lines"]
+    assert u"disks: /data/c/data on vg1-cassandra (dm-2) on sdb" in r["lines"]
     assert ("device vg1-cassandra (dm-2) (/data/c/data, rotational): read_ahead_kb 4096 (cassandra_linux: 4),"
             " scheduler none, LVM read-ahead auto (cassandra_linux: 8)") in r["lines"]
     assert ("disk sdb (under vg1-cassandra (dm-2), rotational): read_ahead_kb 4096 (cassandra_linux: 4),"

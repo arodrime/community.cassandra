@@ -389,6 +389,29 @@ def test_a_rescue_that_says_the_failure_itself(tmp_path, inner, cause):
     assert output.splitlines() == ["node1: FAILED  op  could not be prepared: " + cause]
 
 
+def test_the_stop_of_a_verdict_said_already_prints_nothing(tmp_path):
+    # replace_node and add_node: the summary says REFUSED, nothing was changed; the task that stops the run after
+    # it adds nothing ("node5: Nothing was replaced." after the block)
+    playbook = """
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: Summary
+      ansible.builtin.debug:
+        msg: "REFUSED  op  c  nothing was changed"
+      vars:
+        cassandra_output: true
+    - name: Stop here
+      ansible.builtin.fail:
+        msg: Nothing was replaced.
+      vars:
+        cassandra_output_said: true
+"""
+    rc, output = run(tmp_path, playbook, INVENTORY="node1,")
+    assert rc != 0
+    assert "Nothing was replaced" not in output and "REFUSED  op  c  nothing was changed" in output, output
+
+
 def test_a_play_with_no_host_says_nothing(tmp_path):
     playbook = """
 - hosts: "{{ groups['nothing_to_do'] | default([]) }}"

@@ -25,7 +25,9 @@ description:
     included; an unreachable host on one line (C(UNREACHABLE  node3  <the first sentence of the error>)), the
     command that shows all of the error under it (C(ansible node3 -m ping -vvv)). A failure the playbook handles (a task of a block with a C(rescue)) on
     one line too, its host, task and the first line of its message; nothing when that block sets the variable
-    C(cassandra_output_rescued) to C(true) (its rescue says what failed). Diffs (C(--diff)) too.
+    C(cassandra_output_rescued) to C(true) (its rescue says what failed). Nothing for a failed task with the task
+    variable C(cassandra_output_said) set to C(true), the stop of a run whose verdict was printed just before (a
+    summary C(REFUSED  ...)). Diffs (C(--diff)) too.
   - The warnings of the tasks are printed too.
   - The operator messages are coloured by the start of their lines (Ansible's colours, so C(ANSIBLE_NOCOLOR),
     C(ANSIBLE_FORCE_COLOR) and a non-terminal output apply). C(WARNING) in O(warning_color), indented or not; C(DONE), C(HEALTHY),
@@ -133,6 +135,7 @@ from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_outp
 MARKER = "cassandra_output"
 GAP = "cassandra_output_gap"  # a blank line before the next operator message
 RESCUED = "cassandra_output_rescued"  # on a block: its rescue says what failed
+SAID = "cassandra_output_said"  # on a task: its failure is the stop of a verdict printed already (nothing printed)
 HELP = "cassandra_output_help"  # the help playbook's text: laid out at the terminal's width, its keys coloured
 INFO = "cassandra_output_info"  # an informative summary: in the progress colour, except its WARNING lines
 _PAUSES = ("pause", "ansible.builtin.pause", "ansible.legacy.pause")
@@ -749,6 +752,8 @@ class CallbackModule(DefaultCallback):
         if ignore_errors:
             return None  # the playbook expects it (ignore_errors) and handles it
         if reported(_task(result)):  # its rescue says it (a verdict too: said once, there)
+            return None
+        if _flag(_task(result), SAID):  # the stop of a verdict printed already (a summary): said once, there
             return None
         if self._own_failure(result) and not (_task(result).loop and "results" in _result(result)):
             return self._verdict(result)

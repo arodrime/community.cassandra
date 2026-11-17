@@ -1310,8 +1310,8 @@ def test_self_check_stop_os_golden():
         "      Ansible  never",
         "",
         "  To pass:",
-        "    keep transparent huge pages as these nodes have it  -e import_keep_hand_edits=thp",
-        "    take the change (the roles make it)                 -e import_strict=false",
+        "    keep transparent huge pages as on these nodes  -e import_keep_hand_edits=thp",
+        "    take the change (the roles make it)            -e import_strict=false",
         "      then review it before applying:",
         "        ansible-playbook community.cassandra.apply_config -e cassandra_hosts=my_cluster --check \\",
         "            --diff",
@@ -1322,7 +1322,7 @@ def test_self_check_stop_os_golden():
 
 def test_self_check_stop_os_finest_switch_on_its_nodes():
     lines = stop([node(1), node(2)], {"node1": {"differences": [READ_AHEAD]}}, width=400)
-    assert [line for line in lines if re.match(r"^    keep the tuning of the data devices as this node has it +-e"
+    assert [line for line in lines if re.match(r"^    keep the tuning of the data devices as on this node +-e"
                                                r" import_keep_hand_edits=disks$", line)]
     # time sync alone: its own switch; THP and the disks: both
     sync = "cassandra_linux: time sync chronyd: node has inactive, the roles would set started"
@@ -1344,8 +1344,8 @@ def test_self_check_stop_unit_way_out():
     assert lines[3:5] == ["  cassandra.service    node1", "    the node starts Cassandra with the init script"
                           " /etc/rc.d/init.d/cassandra (modified since its package installed it), the roles would start"
                           " it with their systemd unit from its next restart"]
-    assert [line for line in lines if re.match(r"^    keep the unit \(or init script\) Cassandra is started by as this"
-                                               r" node has it +-e import_keep_hand_edits=unit$", line)]
+    assert [line for line in lines if re.match(r"^    keep the unit \(or init script\) Cassandra is started by as on"
+                                               r" this node +-e import_keep_hand_edits=unit$", line)]
 
 
 def test_files_written_with_no_effect_listed_apart_once_with_their_nodes():
@@ -1386,7 +1386,7 @@ def test_parts_kept_said_in_one_sentence():
     sysctl = "cassandra_linux: sysctl vm.swappiness (/etc/sysctl.conf): node has 10, the roles would set removed"
     rule = "cassandra_firewall: firewall rule (not carried): node has iptables: -A INPUT, the roles would set not written"
     flat = " ".join(" ".join(stop([node(1)], {"node1": {"differences": [sysctl, rule]}}, width=400)).split())
-    assert "keep the kernel settings and the firewall as this node has them -e import_keep_hand_edits=sysctl,firewall" \
+    assert "keep the kernel settings and the firewall as on this node -e import_keep_hand_edits=sysctl,firewall" \
         in flat
     kept = [node(i, keep={"cassandra_import_kept": ["sysctl", "swap", "firewall"]}) for i in (1, 2)]
     flat = " ".join(" ".join(report(kept, details=False)).split())

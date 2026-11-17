@@ -94,7 +94,7 @@ def test_switch_timed_out_is_a_failure():
 
 SUMMED = dict(
     inventory_hostname="node1", _cassandra_readahead_read_back=4, _cassandra_lv_readahead="8", _cassandra_disk_items=[],
-    _cassandra_disk_plan={"brief": ["/data/c/{data,commitlog} \u2192 vg-data \u2192 sdb"], "stacks": ["full"],
+    _cassandra_disk_plan={"brief": ["/data/c/{data,commitlog} on vg-data on sdb"], "stacks": ["full"],
                           "warnings": [], "info": [], "notes": []},
     _cassandra_disk_lvm_failed=[], _cassandra_disk_tuned={}, _cassandra_disk_tuned_deferred=False,
     _cassandra_disk_changes_seen=[], _cassandra_disk_devices=[], _cassandra_data_lvchange_now=True,

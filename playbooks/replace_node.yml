@@ -152,7 +152,7 @@
 
         - name: Stop here
           vars:
-            cassandra_output: true  # a verdict: its msg as is
+            cassandra_output_said: true  # the summary above said it (REFUSED, nothing was changed): nothing more
           ansible.builtin.fail:
             msg: Nothing was replaced.
 

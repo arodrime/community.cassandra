@@ -150,7 +150,7 @@ same filesystems and devices grouped, e.g.
 ```
 Data disks: read-ahead 4 KB, set now on 2 nodes
   node1, node2:
-    /data/c/{data,commitlog} → vg_data-lv_cass → md0 → sdb1, sdc1 → sdb, sdc
+    /data/c/{data,commitlog} on vg_data-lv_cass on md0 on sdb1, sdc1 on sdb, sdc
   optional: restart Cassandra to read the files it has open with the new read-ahead (node1, node2)
 ```
 

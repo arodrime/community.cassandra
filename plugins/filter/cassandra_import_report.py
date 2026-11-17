@@ -740,7 +740,8 @@ def _section(layout, kind, items, read, who, width, review=""):
     elif kind == _PARTS:
         parts = [p for p in KEPT_PARTS if p in set(_part_of(i) for i in items)]
         said = "%s outside the config files: the roles would change %s." % (_counted(items), them)
-        rows = [("keep %s as %s %s" % (_part_words(parts), these, _have(nodes, parts)),
+        # (a part in words may be plural, "the kernel settings": no pronoun for it)
+        rows = [("keep %s as on %s" % (_part_words(parts), these),
                  _keep_option(layout, *parts)), ("take the change (the roles make it)", "-e import_strict=false")]
     elif kind == _LAYOUT:
         said = "%s: the same settings in another layout (no effect); apply_config would rewrite %s." % (

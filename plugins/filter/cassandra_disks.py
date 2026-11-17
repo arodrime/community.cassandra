@@ -472,7 +472,7 @@ def cassandra_disk_summary(nodes, check=False, verbose=False, said=None):
     problems (WARNING  ..., together). said: {node: [warnings
     said already]}, left out (apply_config's plan said them).
     Output: [str]. e.g. two nodes already set, the same stack -> ["Data disks: read-ahead 4 KB, already set (nothing
-    changed)", "  node1, node2:", "    /data/c/dev/{data,commitlog} \u2192 datavg-lv_data \u2192 sdb"]."""
+    changed)", "  node1, node2:", "    /data/c/dev/{data,commitlog} on datavg-lv_data on sdb"]."""
     nodes = [n for n in nodes or [] if isinstance(n, dict) and n.get("name")]
     if not nodes:
         return []
