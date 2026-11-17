@@ -1031,6 +1031,11 @@ def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", 
         else:
             return []
     if jvm_files:
+        # (Cassandra's jar on its classpath, when it has it: a JVM of another series than the inventory's, the
+        # package upgraded under it, is not emulated with this one's files)
+        jar = re.search(r"apache-cassandra-(\d+)\.(\d+)\.", cmdline or "")
+        if jar and "%s%sx" % jar.groups() != series:
+            return []
         group = [jvm_args.ENV, jvm_args.COMMON, read]
         if not cmdline or jvm_args.env_adds_options(environ) or set(newer or []) & set(group) \
                 or not all(f in live and (f in new or f not in changed) for f in group):

@@ -1484,6 +1484,17 @@ def test_logback_scan_read_as_logback_reads_it(tmp_path, head):
     assert no_effect(changed, live, rendered, cmdline) == []
 
 
+@pytest.mark.parametrize("release, proven", [("5.0.2", True), ("4.1.7", False)])
+def test_a_jvm_of_another_series_than_the_inventorys_restarts(tmp_path, release, proven):
+    # (pre-push audit, rc13) the package upgraded under the running JVM (cassandra_version, the inventory's series,
+    # is the installed one): its arguments are not emulated with the new series' files
+    files, rendered, changed, cmdline = written(tmp_path)
+    java, rest = cmdline.split("\0", 1)
+    cmdline = "\0".join([java, "-cp", "/usr/share/cassandra/apache-cassandra-%s.jar:/usr/share/cassandra/lib/x.jar" % release,
+                         rest])
+    assert bool(no_effect(changed, files, rendered, cmdline)) is proven
+
+
 @pytest.mark.parametrize("environ", [{"JVM_EXTRA_OPTS": "-Dx=1"}, {"MX4J_PORT": "8081"}, {"JVM_OPTS": "-Dy=2"}])
 def test_the_import_and_apply_config_give_up_alike_on_an_environment_that_adds_options(tmp_path, environ):
     # (pre-push audit, rc13) one predicate (env_adds_options): the import no longer says "no restart (the same JVM
