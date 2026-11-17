@@ -1566,6 +1566,13 @@ argument_specs:
         default: DEBUG
         description:
         - Level of the C(org.apache.cassandra) logger in C(logback.xml), which feeds C(debug.log).
+      cassandra_log_system_level:
+        type: str
+        default: INFO
+        description:
+        - The lowest level C(system.log) takes (the C(ThresholdFilter) of the C(SYSTEMLOG) appender of
+          C(logback.xml)), e.g. V(WARN). The loggers' levels (O(cassandra_log_level), O(cassandra_log_levels)) still
+          decide what reaches it.
       cassandra_debug_log_enabled:
         type: bool
         default: true

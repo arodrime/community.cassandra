@@ -631,3 +631,29 @@ def test_the_compression_and_jmx_are_listed_with_the_logging():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _block
     assert _block("cassandra_log_compress") == _block("cassandra_log_audit_compress") \
         == _block("cassandra_log_jmx_configurator") == "Logging (logback.xml)"
+
+
+SYSTEM_FILTER = ('    <filter class="ch.qos.logback.classic.filter.ThresholdFilter">\n      <level>INFO</level>\n'
+                 '    </filter>\n    <file>${cassandra.logdir}/system.log</file>')
+
+
+@pytest.mark.parametrize("series", SERIES)
+@pytest.mark.parametrize("level", ["WARN", "warn", "ERROR"])
+def test_the_lowest_level_of_system_log(series, level):
+    variables, snippets, check = imported(node_files(series, lambda text: text.replace(
+        SYSTEM_FILTER, SYSTEM_FILTER.replace("<level>INFO</level>", "<level>%s</level>" % level), 1)), series)
+    assert variables["cassandra_log_system_level"] == level
+    assert check["differences"] == []
+
+
+@pytest.mark.parametrize("filters", [
+    # not the one ThresholdFilter of SYSTEMLOG: not read, a hand edit
+    SYSTEM_FILTER.replace("<level>INFO</level>", "<level>${LVL:-INFO}</level>"),
+    SYSTEM_FILTER.replace("</filter>", '</filter>\n    <filter class="ch.qos.logback.classic.filter.ThresholdFilter">'
+                                       "<level>WARN</level></filter>"),
+])
+def test_a_system_log_level_not_read(filters):
+    files = node_files("50x", lambda text: text.replace(SYSTEM_FILTER, filters, 1))
+    imported_node = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
+    assert "cassandra_log_system_level" not in imported_node["vars"]
+    assert imported_node["hand_edits"] != []

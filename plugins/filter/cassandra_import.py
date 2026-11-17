@@ -2804,6 +2804,12 @@ def _logback(text):
     loggers = [logger for logger in conf.findall("logger") if logger.get("name") == "org.apache.cassandra"]
     if len(loggers) == 1 and loggers[0].get("level"):
         found["cassandra_log_level_cassandra"] = loggers[0].get("level")
+    # the lowest level system.log takes: SYSTEMLOG's one ThresholdFilter (None: not read, whatever its line said)
+    systemlog = [a for a in conf.findall("appender") if a.get("name") == "SYSTEMLOG"]
+    filters = [f for f in systemlog[0].findall("filter") if f.get("class") == "ch.qos.logback.classic.filter.ThresholdFilter"] \
+        if len(systemlog) == 1 else []
+    level = (filters[0].findtext("level") or "").strip() if len(filters) == 1 and len(list(filters[0])) == 1 else ""
+    found["cassandra_log_system_level"] = level if level.upper() in LOG_LEVELS else None
     # the rotation of each file, by its appender (live: a commented-out AUDIT's values are not its own)
     for name, kind in (("SYSTEMLOG", "system"), ("DEBUGLOG", "debug"), ("AUDIT", "audit")):
         policy = next((a.find("rollingPolicy") for a in conf.findall("appender") if a.get("name") == name), None)

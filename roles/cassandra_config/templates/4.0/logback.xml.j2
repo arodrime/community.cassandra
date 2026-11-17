@@ -32,7 +32,7 @@ appender reference in the root level section below.
 
   <appender name="SYSTEMLOG" class="ch.qos.logback.core.rolling.RollingFileAppender">
     <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
-      <level>INFO</level>
+      <level>{{ cassandra_log_system_level }}</level>
     </filter>
     <file>{{ cassandra_log_system_dir }}/system.log</file>
     <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">

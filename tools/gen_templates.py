@@ -225,6 +225,8 @@ ROTATION = [in_block(appender, "      <%s>%s</%s>" % (tag, stock, tag),
             for appender, kind in (("SYSTEMLOG", "system"), ("DEBUGLOG", "debug"))
             for tag, stock, var in (("maxFileSize", "50MB", "max_file_size"), ("maxHistory", "7", "max_history"),
                                     ("totalSizeCap", "5GB", "total_size_cap"))]
+# the lowest level system.log takes (cassandra_log_system_level: SYSTEMLOG's ThresholdFilter)
+ROTATION += [in_block("SYSTEMLOG", "      <level>INFO</level>", "      <level>{{ cassandra_log_system_level }}</level>")]
 # their dir (cassandra_log_system_dir, cassandra_log_debug_dir: the log dir by default), their rolled files zipped with
 # cassandra_log_compress
 ROTATION += [in_block(appender, "    <file>${cassandra.logdir}/%s.log</file>" % kind,

@@ -1645,7 +1645,8 @@ set them, and works the heap out with another formula when ``MAX_HEAP_SIZE`` is 
 file one hand edit, with the reason (set them in the options, ``cassandra_heap_size``, or keep the file with
 ``import_keep_hand_edits``). 5.0's always sets ``-XX:HeapDumpPath`` (``cassandra_heap_dump_dir``, the log dir by
 default), 4.x's only with ``CASSANDRA_HEAPDUMP_DIR``: said under WORTH A LOOK, not a difference.
-``logback.xml`` is read as logback reads it: its root level, the ``org.apache.cassandra`` level, ``debug.log`` and the
+``logback.xml`` is read as logback reads it: its root level, the ``org.apache.cassandra`` level, the lowest level
+``system.log`` takes (``cassandra_log_system_level``, its ``ThresholdFilter``), ``debug.log`` and the
 console, the stock ``AUDIT`` appender and its logger uncommented (``cassandra_log_audit_file``, written only when it is
 not its default: on with ``FileAuditLogger``) and the dir of its file (``cassandra_log_audit_dir``), the dirs of ``system.log`` and ``debug.log``
 (``cassandra_log_system_dir``, ``cassandra_log_debug_dir``), the log dir

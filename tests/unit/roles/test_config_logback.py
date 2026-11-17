@@ -299,6 +299,7 @@ def test_said_when_the_default_moves_the_audit_events(live_audit, in_inventory, 
     ({"cassandra_log_levels": {'com."x': "INFO"}}, 'cassandra_log_levels: com."x has a ", which ends the XML attribute'
                                                    " there: write it &quot;"),
     ({"cassandra_log_level": "IN<FO"}, "cassandra_log_level: IN<FO has a <"),
+    ({"cassandra_log_system_level": "W<ARN"}, "cassandra_log_system_level: W<ARN has a <"),
     ({"cassandra_log_audit_max_file_size": "5--0MB"}, "cassandra_log_audit_max_file_size: 5--0MB has a --"),
 ])
 def test_values_that_would_leave_logback_xml_unreadable_are_refused(variables, said):
@@ -313,6 +314,7 @@ def test_values_that_would_leave_logback_xml_unreadable_are_refused(variables, s
     {"cassandra_log_pattern": "%msg -- %n", "cassandra_log_audit_file": True},  # (the audit appender on: no comment)
     {"cassandra_log_pattern": "%msg &amp; &lt;x&gt; &#38; &quot;&apos;&#x26; %n"},
     {"cassandra_log_level": "${LVL:-INFO}", "cassandra_log_levels": {"com.x": "warn"}},
+    {"cassandra_log_system_level": "WARN"},
 ])
 def test_values_logback_xml_takes_pass(series, variables):
     assert refused(**variables) == []
@@ -397,3 +399,10 @@ def test_the_jmx_configurator(series, stock):
     assert tags(cassandra_log_jmx_configurator=True)[0] == "jmxConfigurator"
     assert "jmxConfigurator" not in tags(cassandra_log_jmx_configurator=False)
     assert logback(series, cassandra_log_jmx_configurator=True).count("jmxConfigurator") == 1
+
+
+@pytest.mark.parametrize("series", sorted(VERSIONS))
+def test_the_lowest_level_of_system_log(series):
+    root = ET.fromstring(logback(series, cassandra_log_system_level="WARN"))
+    systemlog = [a for a in root.findall("appender") if a.get("name") == "SYSTEMLOG"][0]
+    assert systemlog.find("filter").findtext("level") == "WARN"

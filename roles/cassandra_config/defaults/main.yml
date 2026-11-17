@@ -425,6 +425,7 @@ cassandra_rackdc_rack: "{{ cassandra_rack }}"
 # ---- logback.xml ----
 cassandra_log_level: INFO  # root logger
 cassandra_log_level_cassandra: DEBUG  # org.apache.cassandra logger, feeds debug.log
+cassandra_log_system_level: INFO  # the lowest level system.log takes (its ThresholdFilter)
 cassandra_debug_log_enabled: true
 # Console (stdout) copy of the logs: journald under systemd, a second copy of
 # system.log. Off: logs go to system.log only (JVM errors before logback starts

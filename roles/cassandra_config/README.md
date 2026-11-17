@@ -380,7 +380,8 @@ Role Variables
   switching to `GossipingPropertyFileSnitch`.
 * `logback.xml`: `cassandra_log_level` (root logger),
   `cassandra_log_level_cassandra` (`org.apache.cassandra` logger),
-  `cassandra_debug_log_enabled`, `cassandra_log_console` (default `false`:
+  `cassandra_log_system_level` (the lowest level `system.log` takes, its
+  `ThresholdFilter`: `INFO` in stock), `cassandra_debug_log_enabled`, `cassandra_log_console` (default `false`:
   no stdout copy of the logs, which under systemd would be a second copy of
   `system.log` in journald; JVM errors before logback starts still go there).
   `cassandra_log_pattern`: the pattern of every log line, the series' stock

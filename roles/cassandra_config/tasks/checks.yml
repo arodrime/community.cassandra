@@ -191,6 +191,7 @@
                                                      ' system_views.system_logs table too'} -%}
       {%- set xml = [['cassandra_log_level', cassandra_log_level, true, ''],
                      ['cassandra_log_level_cassandra', cassandra_log_level_cassandra, true, ''],
+                     ['cassandra_log_system_level', cassandra_log_system_level, false, ''],
                      ['cassandra_log_pattern', cassandra_log_pattern, false, audit]] -%}
       {%- for var, value, commented in [
             ['cassandra_log_system_max_file_size', cassandra_log_system_max_file_size, ''],
