@@ -290,16 +290,31 @@ def test_log_dir_of_a_kept_unit_carried_for_the_role_unit(hv, keep_hand_edits):
     assert "its Environment CASSANDRA_LOG_DIR, LOCAL_JMX as cassandra_service_environment" in n["notes"][1]
 
 
-@pytest.mark.parametrize("dropins, imported", [
-    # a drop-in of its own: what it sets would not hold for a node added later, the self-check compares instead
-    ("/etc/systemd/system/cassandra.service.d/override.conf", False),
-    ("/run/systemd/generator/cassandra.service.d/x.conf /etc/systemd/system/cassandra.service.d/java.conf", False),
+@pytest.mark.parametrize("dropins, other, imported", [
+    # (2026-11-17) a drop-in of its own that sets only its Environment (a JAVA_HOME): the init script kept, the
+    # environment carried (cassandra_service writes it in a drop-in of its own with package_script)
+    ("/etc/systemd/system/cassandra.service.d/java.conf", "", True),
+    ("/run/systemd/generator/cassandra.service.d/x.conf /etc/systemd/system/cassandra.service.d/java.conf", "", True),
+    # one that sets anything else (a limit, a restart policy, an ExecStartPre): not, the self-check compares instead
+    ("/etc/systemd/system/cassandra.service.d/override.conf", "LimitNOFILE=200000;", False),
+    ("/etc/systemd/system/cassandra.service.d/override.conf", "[Unit];After=x.mount;", False),
     # the distribution's drop-ins for every service are not the node's own
-    ("/usr/lib/systemd/system/service.d/10-timeout-abort.conf", True),
-    ("", True)])
-def test_package_script_with_drop_ins_of_its_own_is_not_imported(dropins, imported):
-    n = node({"import_cluster_unit": dict(SYSV, pkg_script="cassandra", dropins=dropins)})
+    ("/usr/lib/systemd/system/service.d/10-timeout-abort.conf", "", True),
+    ("", "", True)])
+def test_package_script_with_drop_ins_of_its_own(dropins, other, imported):
+    env = {"JAVA_HOME": "/usr/lib/jvm/jre-17"} if "java.conf" in dropins else {}
+    n = node({"import_cluster_unit": dict(SYSV, pkg_script="cassandra", dropins=dropins, dropin_other=other, env=env)})
     assert ("cassandra_service_start" in n["vars"]) is imported
+    if imported and env:
+        assert n["vars"]["cassandra_service_environment"] == env
+        assert "cassandra_service_unit_manage" not in n["keep"]
+
+
+def test_unit_read_says_the_drop_in_lines_besides_environment():
+    script = task("Read the running Cassandra (conf dir, Cassandra and Java versions)")["ansible.builtin.shell"]
+    assert "unit_dropin_other=" in script and "*/cassandra.service.d/*" in script
+    unit = WORK_OUT["import_cluster_unit"]
+    assert render(str(unit["dropin_other"]), _kv={"unit_dropin_other": "LimitNOFILE=1;"}) == "LimitNOFILE=1;"
 
 
 def test_unit_facts_read_the_script_and_its_package():

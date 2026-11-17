@@ -1703,3 +1703,29 @@ def test_cqlsh_found_in_the_path_not_named_stops_with_both_ways_out():
                      " import again (it writes cassandra_cqlsh_source: external), or -e import_keep_hand_edits=cqlsh"]
     # named by the inventory: the import writes it with cassandra_cqlsh_source external (nothing checked then)
     assert parts_check("system", tamper={"cassandra_cqlsh_source": "external"}) == []
+
+
+def test_package_script_compares_the_environment_of_its_drop_in():
+    # (2026-11-17) the init script started with a JAVA_HOME from a drop-in of its unit: the roles write the same
+    # (cassandra_service_environment in their drop-in): nothing; another, or none: said, a variable each
+    keep = {"cassandra_linux_manage": False, "cassandra_firewall_manage": False}
+    java = {"JAVA_HOME": "/usr/lib/jvm/jre-17"}
+
+    def check(node_env, role_env):
+        files = seeded(stock("50x"))
+        tamper = {"cassandra_service_start": "package_script"}
+        if role_env:
+            tamper["cassandra_service_environment"] = role_env
+        inventory, layout = import_node(files, "50x", keep=keep, tamper=tamper)
+        hv = {"import_cluster_slurp": slurped(files), "ansible_facts": FACTS, "import_cluster_conf_dir": "",
+              "import_cluster_storage_dir": "/var/lib/cassandra", "import_cluster_java": "17",
+              "import_cluster_unit": {"env": node_env, "file": SCRIPT, "script": SCRIPT, "pkg_script": "cassandra"},
+              "import_cluster_perms": {"files": {}}}
+        return cassandra_import_self_check_nodes(inventory, layout["hosts"], [{"address": "10.0.0.1", "host": "h1",
+                                                                               "read": True}],
+                                                 {"10.0.0.1": "n1"}, {"h1": hv})["n1"]["differences"]
+    assert check(java, java) == []
+    assert check(java, {}) == ["cassandra.service.d (the environment of the init script): JAVA_HOME: node has"
+                               " '/usr/lib/jvm/jre-17', the roles would set nothing"]
+    assert check({}, {"JAVA_HOME": "/opt/jdk"}) == ["cassandra.service.d (the environment of the init script): JAVA_HOME:"
+                                                    " node has nothing, the roles would set '/opt/jdk'"]

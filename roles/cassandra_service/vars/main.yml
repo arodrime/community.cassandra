@@ -55,3 +55,6 @@ _cassandra_service_jmx: >-
      | combine({'username': cassandra_jmx_username} if cassandra_jmx_username else {})
      | combine({'password_file': cassandra_jmx_password_file} if cassandra_jmx_password_file
                else ({'password': cassandra_jmx_password} if cassandra_jmx_password else {})) }}
+# cassandra_service_start package_script: the drop-in of the unit systemd generates for the package's init script
+# that sets cassandra_service_environment (unit.yml)
+_cassandra_service_environment_dropin: /etc/systemd/system/cassandra.service.d/99-ansible-environment.conf

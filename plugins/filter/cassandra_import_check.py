@@ -387,6 +387,9 @@ def _render(variables, facts, live, conf_dir="", templates=None, script=None):
     # (cassandra_service_start package_script: the package's init script started, no unit written)
     unit_managed = str(value("cassandra_service_unit_manage | bool and cassandra_service_start | default('unit')"
                              " == 'unit'")) == "True"
+    # the package's init script: its environment in a drop-in of its unit (cassandra_service_environment)
+    package_script = str(value("cassandra_service_unit_manage | bool and cassandra_service_start | default('unit')"
+                               " == 'package_script'")) == "True"
     if unit_managed:
         if "cassandra.service" in live:
             wanted.append(("cassandra.service", "cassandra_service/templates/cassandra.service.j2"))
@@ -420,7 +423,8 @@ def _render(variables, facts, live, conf_dir="", templates=None, script=None):
         errors.append("owner, group and mode: the roles could not work them out with these variables (%s)"
                       % type(exc).__name__)
     # the environment Cassandra would get from the unit: the roles' one, else the node's, kept
-    return rendered, errors, value("cassandra_service_environment") if unit_managed else None, permissions
+    return rendered, errors, value("cassandra_service_environment") if unit_managed or package_script else None, \
+        permissions
 
 
 def _in_inventory(given, name, templates):
@@ -545,6 +549,13 @@ def _self_check_node(files_data, hosts, node, names, data, inventory_dir=""):
          "cqlsh": hv.get("import_cluster_cqlsh") or {}})
 
 
+def _env_value(key, value):
+    """A value of the environment as said (none: "nothing"; a secret's masked)."""
+    if value is None:
+        return "nothing"
+    return "'%s'" % (_out.MASK if re.search(r"(?i)pass|secret|token|key", key) else value)
+
+
 def _self_check(files_data, hosts, name, facts, live, node_environment, storage_dir, java, conf_dir, permissions,
                 release="", inventory_dir="", running=None, os_found=None, os_own=False, script=None, parts=None):
     # the names Ansible gives the host, which a value of the import may follow ({{ inventory_hostname }}.x)
@@ -556,6 +567,16 @@ def _self_check(files_data, hosts, name, facts, live, node_environment, storage_
                                                          files_data.get(TEMPLATES) or {}, script)
     if role_environment is None:  # the unit stays as it is
         role_environment = node_environment
+    elif script and str(variables.get("cassandra_service_start", "unit")) == "package_script" \
+            and boolean(variables.get("cassandra_service_unit_manage", True), strict=False):
+        # the package's init script, its environment from a drop-in of its unit: the one the roles write against
+        # the node's (what the script and Cassandra get)
+        node_env, role_env = dict(node_environment or {}), dict(role_environment or {})
+        for key in sorted(set(node_env) | set(role_env)):
+            if node_env.get(key) != role_env.get(key):
+                errors.append("cassandra.service.d (the environment of the init script): %s: node has %s, the roles"
+                              " would set %s" % (key, _env_value(key, node_env.get(key)),
+                                                 _env_value(key, role_env.get(key))))
     running = dict(running or {}, series=str(dict(_defaults(), **variables).get("cassandra_version")))
     out = _compare_files(rendered, live, node_environment, role_environment, storage_dir, java,
                          release or SERIES.get(str(variables.get("cassandra_version")), ""), running=running)

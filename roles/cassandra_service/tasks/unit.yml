@@ -32,3 +32,33 @@
     mode: "0644"
   register: cassandra_service_unit
   when: _cassandra_service_own_unit | bool
+
+# The package's init script (package_script): no unit written, its environment (cassandra_service_environment) in a
+# drop-in of the unit systemd generates for it, which systemd applies as to any unit (checked on EL 9, systemd 252:
+# the script and the JVM get the variables). Only the environment: the limits of the unit do not hold there, the
+# script starts Cassandra through runuser, whose session takes them from pam_limits. Applied at the next start, as a
+# unit written; none set: none (a drop-in of the roles' removed)
+- name: Write the environment of the package's init script
+  when:
+    - cassandra_service_start == 'package_script'
+    - cassandra_service_unit_manage | bool
+  block:
+    - name: Make the drop-in directory of its unit
+      ansible.builtin.file:
+        path: /etc/systemd/system/cassandra.service.d
+        state: directory
+        mode: "0755"
+      when: cassandra_service_environment | length > 0
+
+    - name: Write the drop-in with its environment
+      ansible.builtin.template:
+        src: cassandra-environment.conf.j2
+        dest: "{{ _cassandra_service_environment_dropin }}"
+        mode: "0644"
+      when: cassandra_service_environment | length > 0
+
+    - name: Remove the drop-in when no environment is set
+      ansible.builtin.file:
+        path: "{{ _cassandra_service_environment_dropin }}"
+        state: absent
+      when: cassandra_service_environment | length == 0

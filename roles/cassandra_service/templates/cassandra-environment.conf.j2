@@ -1,0 +1,7 @@
+# Managed by Ansible (community.cassandra.cassandra_service): change cassandra_service_environment, not this file.
+# The environment of the package's init script (cassandra_service_start: package_script), a drop-in of the unit
+# systemd generates for it: the script gets these variables (JAVA_HOME, MAX_HEAP_SIZE...), Cassandra too.
+[Service]
+{% for name, value in cassandra_service_environment.items() %}
+Environment="{{ name }}={{ value }}"
+{% endfor %}

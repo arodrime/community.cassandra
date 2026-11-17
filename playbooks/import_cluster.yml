@@ -501,6 +501,11 @@
         done
         # the unit of an init script is "generated": is-enabled asks the init system
         echo "unit_IsEnabled=$(systemctl is-enabled cassandra 2>/dev/null)"
+        # what the drop-ins of the unit itself (cassandra.service.d) set besides Environment= (the roles carry only
+        # that with the init script of the package): their lines, cut, each once
+        printf 'unit_dropin_other=%s\n' "$(for d in $(systemctl show cassandra -p DropInPaths --value 2>/dev/null); do
+          case $d in */cassandra.service.d/*) grep -hvE '^[[:space:]]*([#;]|$|\[Service\][[:space:]]*$|Environment=)' "$d" 2>/dev/null ;; esac
+        done | cut -c1-120 | sort -u | tr '\n' ';')"
         # an init script: the package it comes from, as installed (rpm -V, dpkg --verify: not listed), else modified
         src=$(systemctl show cassandra -p SourcePath --value 2>/dev/null)
         if [ -n "$src" ] && [ -f "$src" ]; then
@@ -863,6 +868,8 @@
           script: "{{ _kv.unit_SourcePath | default('') }}"
           # drop-ins of the unit (cassandra.service.d): what they set holds only for a unit
           dropins: "{{ _kv.unit_DropInPaths | default('') }}"
+          # their lines besides Environment= (the roles carry only that with the init script of the package)
+          dropin_other: "{{ _kv.unit_dropin_other | default('') }}"
           pkg_script: "{{ _kv.pkg_script | default('') }}"
       vars:
         _kv: "{{ dict(import_cluster_running.stdout_lines | map('split', '=', 1)) }}"

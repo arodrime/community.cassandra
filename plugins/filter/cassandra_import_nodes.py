@@ -406,10 +406,16 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
     conf = _place_vars(hv, read, unit, unit_env, os_family)
 
     config_vars = _d(config.get("vars"))
-    # started by the package's init script as installed: the roles write no unit, they start that script
-    # (not with drop-ins: what they set, e.g. a JAVA_HOME, would not hold for the script of a node added later)
+    # started by the package's init script as installed: the roles write no unit, they start that script; drop-ins
+    # of its unit that set only its Environment: carried (cassandra_service_environment, which cassandra_service
+    # writes in a drop-in of its own with package_script); one that sets anything else: not (the roles' unit then,
+    # which the self-check refuses for a node started by the script, the drop-in's lines said)
     start = {"cassandra_service_start": "package_script"} \
-        if read and unit.get("pkg_script", "") not in ("", "modified") and not _own_dropins(unit) else {}
+        if read and unit.get("pkg_script", "") not in ("", "modified") \
+        and not (_own_dropins(unit) and str(unit.get("dropin_other", "")).strip(" ;")) else {}
+    if start and env:  # (the init script gets its whole environment from the drop-in, CASSANDRA_LOG_DIR too)
+        unit_env = dict(env)
+        conf = dict(conf, cassandra_service_environment=unit_env)
     unit_kept = dict(keep, **({"cassandra_service_unit_manage": False} if start or unit_by_hand else {}))
     env_log_dir = _env_log_dir(read, unit_kept, env, conf, config_vars)
     if env_log_dir:

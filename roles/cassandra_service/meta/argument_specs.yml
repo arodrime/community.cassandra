@@ -68,9 +68,11 @@ argument_specs:
         description:
           - How Cassandra is started. V(unit), the role's systemd unit. V(package_script), the Cassandra package's
             init script (SysV, through systemd's generator); the role writes no unit and removes none, it manages the
-            state and the boot setting only; the unit variables below have no effect on it (C(import_cluster) sets it
-            on the nodes started by the package's unmodified script with no drop-in of their own in
-            C(cassandra.service.d)). The role stops on a systemd without its SysV generator
+            state and the boot setting, and O(cassandra_service_environment) in a drop-in of the unit systemd
+            generates for the script (C(/etc/systemd/system/cassandra.service.d/99-ansible-environment.conf), none
+            when it is empty); the other unit variables below have no effect on it (C(import_cluster) sets it on the
+            nodes started by the package's unmodified script whose drop-ins in C(cassandra.service.d) set only
+            C(Environment=)). The role stops on a systemd without its SysV generator
             (C(systemd-sysv-generator), not shipped by recent systemd releases), with the way out.
       cassandra_service_restart:
         type: str
@@ -119,7 +121,9 @@ argument_specs:
         type: dict
         default: {}
         description:
-          - "Extra environment variables for the unit, for example C({JAVA_HOME: /usr/lib/jvm/java-17})."
+          - "Extra environment variables for the unit, for example C({JAVA_HOME: /usr/lib/jvm/java-17}). With
+            O(cassandra_service_start=package_script), in a drop-in of the init script's unit (applied at the next
+            start)."
       cassandra_service_wait_for_normal:
         type: bool
         default: true

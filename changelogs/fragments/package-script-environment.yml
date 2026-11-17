@@ -1,0 +1,4 @@
+minor_changes:
+  - "cassandra_service role - with ``cassandra_service_start: package_script``, ``cassandra_service_environment`` is written in a drop-in of the unit systemd generates for the package's init script (``/etc/systemd/system/cassandra.service.d/99-ansible-environment.conf``), which the script and Cassandra get (a JAVA_HOME, a heap); none when it is empty. Only the environment: the unit's limits do not hold there (the script starts Cassandra through runuser, whose session takes them from pam_limits)."
+bugfixes:
+  - "import_cluster playbook - a node started by the package's init script whose unit has drop-ins that set only its Environment (a JAVA_HOME) is imported as such: ``cassandra_service_start: package_script``, its environment as ``cassandra_service_environment``, compared by the self-check; no longer put on the roles' unit, which the self-check then refused. A drop-in that sets anything else still stops the self-check."
