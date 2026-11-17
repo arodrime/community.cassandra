@@ -1779,8 +1779,18 @@ refused login is a ``TO DO``). A login an earlier import wrote is kept on a re-i
 a terminal, under ``--check`` or with ``-e cassandra_operation_confirm=false`` it does not ask: a ``TO DO`` says how
 to set them. No password is shown on the screen, in the report or in a log.
 
+The cluster's group is its cluster name's (``test_cluster`` for ``Test Cluster``), or the one ``-e import_group=<name>``
+gives (an Ansible group name: letters, digits and ``_``, not a digit first; written in lower case): the name of its
+hosts file, of its ``group_vars`` directories (``<name>``, ``<name>_<dc>``, ``<name>_<dc>_<rack>``), of its report
+directory, and the one the playbooks then take (``-e cassandra_hosts=<name>``). Two clusters of one name (the default
+``Test Cluster``) need it: the second import of that name stops, saying so. A re-import finds the group again (the
+group the given nodes are in whose hosts file the import wrote), with or without ``-e import_group``.
+
 Every file the import writes starts with ``# Written by community.cassandra.import_cluster for <cluster group>``. A
-cluster whose ``<cluster group>.yml`` is there already is refused unless ``import_force=true`` (the directory
+cluster whose ``<cluster group>.yml`` is there already is refused unless ``import_force=true``, and even then when none
+of that file's hosts is a node of this cluster (by host name, address or ``ansible_host``: neither the inventory nor
+the report records the Host IDs): another cluster of the same name, whose files it would write over; the way out is
+``-e import_group=<another name>`` (the directory
 itself may exist, with other clusters); then the import writes the files at its own paths (``<cluster group>.yml``,
 ``group_vars``/``host_vars`` ``main.yml`` and ``secrets.yml``), removes the files with its header for this cluster it
 no longer writes (the ``host_vars`` of a node gone from the ring; a vaulted one only when it decrypts with the

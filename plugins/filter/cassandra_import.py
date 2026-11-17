@@ -3055,6 +3055,73 @@ def _slug(text):
     return "c_" + s if s[0].isdigit() else s
 
 
+# an Ansible group name (letters, digits, _; not a digit first), as -e import_group takes it
+GROUP_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def cassandra_import_group_error(name):
+    """-e import_group: why it is not an Ansible group name (all, ungrouped: Ansible's own) -> the stop's message,
+    '' when it is one."""
+    if not GROUP_NAME.match(str(name)) or _slug(name) in ("all", "ungrouped"):
+        return ("import_group=%s: not an Ansible group name: letters, digits and _, not a digit first (nor all,"
+                " ungrouped). Nothing was written." % name)
+    return ""
+
+
+def cassandra_import_group(name):
+    """-e import_group: the cluster's group the import writes, slugged as a cluster name is (lower case) ->
+    the group; AnsibleFilterError for one that is not an Ansible group name (cassandra_import_group_error).
+    e.g. "Orders_EU" -> "orders_eu"."""
+    error = cassandra_import_group_error(name)
+    if error:
+        raise AnsibleFilterError(error)
+    return _slug(name)
+
+
+def cassandra_import_known_group(groups, texts):
+    """The group an earlier import wrote for the given nodes: groups: the groups the given nodes are in; texts:
+    {group: the text of <import_dir>/<group>.yml, '' when none} -> that group when one only is the hosts file the
+    import wrote for it (its first line), else ''."""
+    found = sorted(set(g for g in groups or [] if written_for(str((texts or {}).get(g) or "")) == g))
+    return found[0] if len(found) == 1 else ""
+
+
+def _hosts_of(text):
+    """A YAML hosts file the import wrote -> (its host names, the ansible_host of its hosts)."""
+    try:
+        data = yaml.load(str(text or ""), Loader=_TagsLoader)  # nosec B506: the loader builds no object
+    except yaml.YAMLError:
+        return set(), set()
+    names, addresses, seen = set(), set(), set()
+
+    def walk(level):
+        if not isinstance(level, dict) or id(level) in seen:
+            return
+        seen.add(id(level))
+        for group in level.values():
+            if isinstance(group, dict):
+                for host, hvars in (group.get("hosts") if isinstance(group.get("hosts"), dict) else {}).items():
+                    names.add(str(host))
+                    if isinstance(hvars, dict) and hvars.get("ansible_host"):
+                        addresses.add(str(hvars["ansible_host"]))
+                walk(group.get("children"))
+    walk(data)
+    return names, addresses
+
+
+def cassandra_import_other_cluster(text, layout):
+    """text: the <cluster group>.yml there already; layout: cassandra_inventory_layout's -> the hosts of that file
+    when none of them is a node of this import (by name, address or ansible_host: neither the inventory nor the
+    report records the Host IDs), sorted; [] when one is (a re-import), or the file has no host."""
+    names, addresses = _hosts_of(text)
+    if not names:
+        return []
+    mine = set()
+    for n in layout.get("nodes") or []:
+        mine.update(str(v) for v in (n.get("name"), n.get("address"), n.get("hostname"), n.get("ansible_host")) if v)
+    return [] if (names | addresses) & mine else sorted(names)
+
+
 def _same(key, a, b):
     """Equal values; for a value written in its order (KEEP_ORDER), its mappings in the same order too."""
     if key in KEEP_ORDER:
@@ -3383,13 +3450,14 @@ def _node_report(n, grouped=()):
 
 
 @values_hidden
-def cassandra_inventory_layout(nodes, cluster_name):
+def cassandra_inventory_layout(nodes, cluster_name, group=""):
     """nodes: [{name, address?, hostname?, dc, rack, ansible_host?, read: bool, reason?,
     vars, hand_edits, normalized, comments?, notes}] -> {'cluster_group', 'cluster_name', 'hosts', 'group_vars', 'host_vars',
     'differences', 'report', 'names' (address -> name in the hosts file)}. Nodes sharing a name are named by their address instead.
+    group: the cluster's group (import_group, cassandra_import_group's), else the cluster name's.
     e.g. cassandra_inventory_layout(cassandra_import_nodes, "Prod Cluster") -> {"cluster_group": "prod_cluster",
     "hosts": {"all": {"children": {"prod_cluster": {"children": {"prod_cluster_dc1": ...}}}}}, ...}."""
-    cluster = _slug(cluster_name)
+    cluster = cassandra_import_group(group) if group else _slug(cluster_name)
     names = [n["name"] for n in nodes]
     shared = sorted({name for name in names if names.count(name) > 1})
     nodes = [dict(n, name=n.get("address") or n["name"]) if n["name"] in shared else n for n in nodes]
@@ -3690,16 +3758,17 @@ def cassandra_inventory_user_files(read, layout, password=""):
 
 
 @values_hidden
-def cassandra_inventory_layout_over(nodes, cluster_name, user_files, inventory_dir=""):
+def cassandra_inventory_layout_over(nodes, cluster_name, user_files, inventory_dir="", group=""):
     """nodes, cluster_name: cassandra_inventory_layout's; user_files: cassandra_inventory_user_files' -> the layout
     of _layout_over (inventory_dir: where the inventory is, for a {{ inventory_dir }} in the path of your own
     template), without the user's files at the paths it writes (replaced, kept as <file>.<date>~: their
     values are not the user's any more), until they no longer meet; 'user_paths': the user's files counted.
     e.g. -> {"cluster_group": "prod", ..., "yours": [{"node": "db1", "key": "cassandra_heap_size", "value": "8G",
-    "yours": "4G", "path": "group_vars/all.yml"}], "user_paths": ["group_vars/all.yml"]}."""
+    "yours": "4G", "path": "group_vars/all.yml"}], "user_paths": ["group_vars/all.yml"]}. group: as for
+    cassandra_inventory_layout."""
     files = list(user_files or [])
     for dummy in range(len(files) + 2):  # one file less each round
-        layout = _layout_over(nodes, cluster_name, files, inventory_dir)
+        layout = _layout_over(nodes, cluster_name, files, inventory_dir, group)
         written = set(f["path"] for f in cassandra_inventory_files(layout))
         kept = [f for f in files if f["path"] not in written]
         if len(kept) == len(files):
@@ -3927,7 +3996,7 @@ def _theirs_win(nodes, layout, user, yours):
     return theirs_win
 
 
-def _layout_over(nodes, cluster_name, user_files, inventory_dir=""):
+def _layout_over(nodes, cluster_name, user_files, inventory_dir="", group=""):
     """cassandra_inventory_layout, with the user's own variables files of the inventory dir (user_files: [{path,
     content}], group_vars/all and those of this cluster's groups and hosts) taken into account: a node whose value
     one of them would change gets its value written (the node as it is wins), and is listed in 'yours': [{node,
@@ -3940,16 +4009,16 @@ def _layout_over(nodes, cluster_name, user_files, inventory_dir=""):
     nodes = [dict(n, vars=dict(n.get("vars") or {})) for n in nodes]
     found = _Found(dict((n["name"], dict(n["vars"])) for n in nodes), defaults, [])  # (live_vars: as found)
     yours = []
-    layout = cassandra_inventory_layout(nodes, cluster_name)
+    layout = cassandra_inventory_layout(nodes, cluster_name, group)
     from_yours, differ = _left_to_theirs(nodes, layout, user, inventory_dir, found)
-    layout = cassandra_inventory_layout(nodes, cluster_name)
+    layout = cassandra_inventory_layout(nodes, cluster_name, group)
     for dummy in range(3):  # each round writes the values theirs would change; the layout again
         changed, pins = _write_over_theirs(nodes, layout, user, found, yours)
         if not changed:
             for name, key, live in pins:
                 layout["host_vars"].setdefault(name, {})[key] = live
             break
-        layout = cassandra_inventory_layout(nodes, cluster_name)
+        layout = cassandra_inventory_layout(nodes, cluster_name, group)
     theirs_win = _theirs_win(nodes, layout, user, yours)
     for d in differ:  # the ones the import writes anyway (a value that differs between nodes) too
         if not any(y["node"] == d["node"] and y["key"] == d["key"] for y in yours):
@@ -4822,6 +4891,10 @@ class FilterModule(object):
     def filters(self):
         return {
             "cassandra_ring_nodes": cassandra_ring_nodes,
+            "cassandra_import_group": cassandra_import_group,
+            "cassandra_import_group_error": cassandra_import_group_error,
+            "cassandra_import_known_group": cassandra_import_known_group,
+            "cassandra_import_other_cluster": cassandra_import_other_cluster,
             "cassandra_config_import": cassandra_config_import,
             "cassandra_jmx_files": cassandra_jmx_files,
             "cassandra_inventory_layout": cassandra_inventory_layout,

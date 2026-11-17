@@ -217,6 +217,7 @@ OPERATIONS = [
      "options": [("-e import_dir=<dir>", "the inventory dir", "inventories"),
                  ("-e import_report_dir=<dir>", "report.txt dir", "next to the inventory dir"),
                  ("-e import_force=true", "re-import over this cluster's files", "false"),
+                 ("-e import_group=<name>", "the cluster's group", "its cluster name"),
                  ("-e import_adopt=true", "adopts an earlier import's files", "false"),
                  ("-e import_allow_unread=true", "accepts unread ring nodes", "false"),
                  ("-e import_keep_hand_edits=true", "keeps hand edits, parts (=<names>)", "false"),

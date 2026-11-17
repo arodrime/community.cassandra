@@ -92,7 +92,7 @@ _cassandra_playbook_variables: [cassandra_hosts, cassandra_target_nodes, cassand
                                 # status's option (its header)
                                 status_resolve_ip,
                                 # import_cluster's and help's options (their header)
-                                import_dir, import_report_dir, import_force, import_host_names,
+                                import_dir, import_report_dir, import_force, import_group, import_host_names,
                                 import_set_ansible_host, import_vault_password_file, import_vault_id,
                                 import_medusa_path, import_keep_hand_edits, import_allow_unread,
                                 import_carry_exporter_config, import_report_shareable, import_adopt, import_strict,

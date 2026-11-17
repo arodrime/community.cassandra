@@ -142,6 +142,19 @@
       vars:
         cassandra_output: true
 
+    # import_group: the cluster's group (default: its cluster name's, test_cluster for Test Cluster), an Ansible group
+    # name, written in lower case
+    - name: Check the group asked for
+      ansible.builtin.assert:
+        that: _error | length == 0
+        fail_msg: "{{ _error }}"
+        quiet: true
+      run_once: true
+      when: import_group | default('', true) | string | length > 0
+      vars:
+        cassandra_output: true
+        _error: "{{ import_group | string | community.cassandra.cassandra_import_group_error }}"
+
     # --limit is refused: it would leave out the nodes found in the ring, and localhost, whose play writes the
     # inventory
     - name: Stop on --limit
@@ -2009,10 +2022,23 @@
         - name: Lay out groups and variables
           no_log: "{{ not import_debug | default(false) | bool }}"
           ansible.builtin.set_fact:
-            _layout: "{{ _nodes | community.cassandra.cassandra_inventory_layout(_cluster_name) }}"
+            _layout: "{{ _nodes | community.cassandra.cassandra_inventory_layout(_cluster_name, _group) }}"
           vars:
             _cluster_name: >-
               {{ _nodes | selectattr('read') | map(attribute='vars.cassandra_cluster_name') | first | default('cassandra') }}
+            # import_group, else the group an earlier import wrote for the given nodes (<import_dir>/<group>.yml its
+            # hosts file), else (empty) the cluster name's
+            _group: "{{ import_group | default('', true) or _known }}"
+            _known: >-
+              {%- set texts = {} -%}
+              {%- for g in _given | map('extract', hostvars, 'group_names') | flatten | unique
+                   if g not in ['all', 'ungrouped'] -%}
+              {%-   set _ = texts.update({g: lookup('ansible.builtin.file', _known_dir ~ '/' ~ g ~ '.yml', errors='ignore')
+                                             | default('', true)}) -%}
+              {%- endfor -%}
+              {{ _given | map('extract', hostvars, 'group_names') | flatten | unique
+                 | community.cassandra.cassandra_import_known_group(texts) }}
+            _known_dir: "{{ import_dir | default('inventories', true) | expanduser }}"
       rescue:
         - name: Say how to see the error
           ansible.builtin.fail:
@@ -2064,10 +2090,29 @@
         that: import_force | default(false) | bool or not import_cluster_hosts_stat.stat.exists
         fail_msg: >-
           {{ _dir ~ '/' ~ _hosts_file }} exists: this cluster is imported there already, set import_force=true
-          to import it again (with --check --diff first to see the changes)
+          to import it again (with --check --diff first to see the changes); another cluster of the same name:
+          -e import_group=<another name>
       run_once: true  # (no host before its message)
       vars:
         cassandra_output: true
+
+    # two clusters of one name (Test Cluster, the default) get one group: import_force never writes over the other
+    # one's files (none of its hosts a node of this ring)
+    - name: Stop rather than overwrite another cluster's inventory
+      ansible.builtin.assert:
+        that: _other | length == 0
+        fail_msg: >-
+          {{ _dir ~ '/' ~ _hosts_file }} is another cluster's: none of its hosts ({{ _other | join(', ') }}) is a node
+          of this one, though both are named {{ _layout.cluster_name }}. Import this one under a group of its own:
+          -e import_group=<another name> (then -e cassandra_hosts=<that name> for the playbooks). Nothing was written.
+        quiet: true
+      run_once: true
+      when: import_cluster_hosts_stat.stat.exists
+      vars:
+        cassandra_output: true
+        _other: >-
+          {{ lookup('ansible.builtin.file', _dir ~ '/' ~ _hosts_file, errors='ignore') | default('', true)
+             | community.cassandra.cassandra_import_other_cluster(_layout) }}
 
     # The vault password: import_vault_password_file (default none), else Ansible's own
     # (vault_password_file in ansible.cfg, ANSIBLE_VAULT_PASSWORD_FILE; not --vault-password-file, which is
@@ -2242,7 +2287,9 @@
     - name: Lay out again over your own variables
       no_log: "{{ not import_debug | default(false) | bool }}"
       ansible.builtin.set_fact:
-        _layout: "{{ _nodes | community.cassandra.cassandra_inventory_layout_over(_layout.cluster_name, _theirs, _dir) }}"
+        _layout: >-
+          {{ _nodes | community.cassandra.cassandra_inventory_layout_over(_layout.cluster_name, _theirs, _dir,
+                                                                         _layout.cluster_group) }}
         _user_files: "{{ _theirs }}"
       vars:
         _theirs: >-
