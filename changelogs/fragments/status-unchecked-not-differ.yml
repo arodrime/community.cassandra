@@ -1,0 +1,3 @@
+bugfixes:
+  - "status playbook - a node not reached, taken for the one ring node no host has, is said ``ring and inventory: 3 nodes in the ring, node3 not checked (not reached)``, no longer ``ring and inventory differ (below)`` when nothing else differs: a node that does not answer is no difference seen."
+  - "health_check playbook - the TO DO for a node not reached and taken for the node down in the ring names the host (``bring node3 back``), no longer ``node3?``; the ring line says the guess."

@@ -87,8 +87,10 @@ def test_an_unreachable_host_known_by_no_address_taken_for_the_one_ring_node_no_
     status = ring(node("10.0.0.4"), node("10.0.0.2"), node("10.0.0.1"))
     lines = cassandra_ring_report(status, inventory, unreachable=["h3"], cluster="c", seen_from="h1",
                                   places={"h3": ["dc1", "r1"]})
-    # never ALL 3 NODES UP while one is not reached; a guess is no match
-    assert lines[:3] == ["1 NODE NOT REACHED: h3", "  c  seen from h1", "  ring and inventory differ (below), 3 nodes in the ring"]
+    # never ALL 3 NODES UP while one is not reached; a guess is no match, nor a difference seen: not checked
+    assert lines[:3] == ["1 NODE NOT REACHED: h3", "  c  seen from h1",
+                         "  ring and inventory: 3 nodes in the ring, h3 not checked (not reached)"]
+    assert "WARNING  ring and inventory differ" not in lines
     assert " h3?   UN  10.0.0.4  1.0 GiB  16      33.3%  id-10.0.0.4  r1" in lines
     assert lines[-1] == ("h3 not reached by Ansible: taken for 10.0.0.4, the only node of the ring no host has (its"
                          " ansible_host or cassandra_listen_address in the inventory would say for sure)")

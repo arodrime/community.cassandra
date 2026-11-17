@@ -294,8 +294,11 @@ def _report_todo(rows, names, unreachable, absent, counted, topology_command):
         todo.append("start Cassandra on %s (its server first if it is down); a node that can't be recovered: "
                     "replace_node" % ", ".join(down))
     if both:
-        todo.append("bring %s back (not reached over SSH, down in the ring): its server first, then Cassandra, then run "
-                    "this again; a node that can't be recovered: replace_node" % out.nodes(both))
+        # a guess (host?) named by its host, the ring line above says the guess
+        todo.append("bring %s back (not reached over SSH, %s in the ring): its server first, then Cassandra, then"
+                    " run this again; a node that can't be recovered: replace_node"
+                    % (out.nodes([h.rstrip("?") for h in both]),
+                       "taken for the node down" if any(h.endswith("?") for h in both) else "down"))
     if absent and counted and topology_command:
         todo.append({"text": "remove %s from the ring" % out.nodes(absent), "command": topology_command})
     others = [h for h in unreachable if h not in both and h + "?" not in both]

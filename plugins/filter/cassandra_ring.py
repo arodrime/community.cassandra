@@ -88,12 +88,16 @@ def _summaries(rows):
         for name, count, states, load, unknown in rows]
 
 
-def _header(cluster, seen_from, matches, members, total, seen_at=None):
+def _header(cluster, seen_from, matches, members, total, seen_at=None, unchecked=None):
     """The lines under the verdict: "  my_cluster  seen from node1 at 2026-11-16 14:02 CET" (seen_at: when nodetool status
-    answered there, the controller's clock), "  ring and inventory: the same 3 nodes"."""
+    answered there, the controller's clock), "  ring and inventory: the same 3 nodes". unchecked: the hosts not
+    reached, taken for a ring node, when nothing else differs: not a difference seen, "not checked"."""
     where = ("seen from %s" % seen_from if seen_from else "") + (
         (" at " if seen_from else "seen at ") + out.clock(float(seen_at), date=True) if seen_at not in (None, "") else "")
     lines = ["  " + "  ".join(x for x in [cluster, where] if x)] if cluster or where else []
+    if unchecked:
+        return lines + ["  ring and %s: %s in the ring, %s not checked (not reached)"
+                        % (members, out.plural(total, "node"), ", ".join(unchecked))]
     return lines + ["  " + (("ring and %s: the same %s" % (members, out.plural(total, "node"))) if matches
                             else "ring and %s differ (below), %s in the ring" % (members, out.plural(total, "node")))]
 
@@ -280,7 +284,9 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
     notes = _differences(missing, known, leaving, stray, guessed, unreachable, run, outside)
     matches = not missing and not known and not leaving and not stray and not guessed  # a guess is no match
     members = "inventory" if run == group else run
-    head = _header(cluster, seen_from, matches, members, len(named), seen_at) if cluster or seen_from else []
+    # the only gap a host not reached, taken for the ring node no host has: unchecked, not seen to differ
+    unchecked = sorted(guessed.values()) if guessed and not (missing or known or leaving or stray) else None
+    head = _header(cluster, seen_from, matches, members, len(named), seen_at, unchecked) if cluster or seen_from else []
     if not head and matches:
         notes.append("The ring and %s match (%s)" % (run, out.plural(len(inventory), "node")))
     if notes:
