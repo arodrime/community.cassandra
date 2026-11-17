@@ -89,9 +89,9 @@
               case " $(echo $units) " in
                 *" $f "*) case "$name" in
                     /etc/systemd/system/cassandra.service.d/override.conf) kind=override ;;
-                    *.service.d/*) kind=drop-in ;;
-                    *) grep -qs '^# Managed by Ansible (community.cassandra.cassandra_service)' "$f" \
-                         && kind=role-unit || kind=unit ;;
+                    *) # the role's unit, the roles' drop-in of the package's init script: by their header
+                       if grep -qs '^# Managed by Ansible (community.cassandra.cassandra_service)' "$f"; then kind=role-unit
+                       else case "$name" in *.service.d/*) kind=drop-in ;; *) kind=unit ;; esac; fi ;;
                   esac ;;
                 *) case "$f" in /*) kind=file ;; *) kind=conf ;; esac ;;
               esac

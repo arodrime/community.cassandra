@@ -484,6 +484,9 @@ def test_off_nothing_removed_while_the_next_start_may_still_load_it(tmp_path):
              unit + ".d/override.conf|override"),
             ("drop-in", {unit: "[Service]\n", unit + ".d/50-agent.conf": "Environment=" + line},
              unit + ".d/50-agent.conf|drop-in"),
+            # (pre-push audit, rc13) the roles' drop-in of the package's init script: cassandra_service_environment
+            ("roles-drop-in", {unit + ".d/zz-ansible-environment.conf": header + "[Service]\nEnvironment=" + line},
+             unit + ".d/zz-ansible-environment.conf|role-unit"),
             ("environment-file", {unit: "EnvironmentFile = -/etc/cassandra.env\n", "/etc/cassandra.env": line},
              "/etc/cassandra.env|file"),
             ("quoted", {unit: 'EnvironmentFile="/etc/cassandra.env"\n', "/etc/cassandra.env": line},
