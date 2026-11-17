@@ -413,10 +413,12 @@ def test_the_log_dir_written_as_itself_is_the_same_file():
     assert "logback.xml: /data/cassandra/log written as itself, the dir Cassandra gives logback as ${cassandra.logdir}:" \
            " the same files" in out["normalized"]
     assert imported(files, "50x")[2]["differences"] == []
-    # another dir: other files, a hand edit
+    # another dir: other files, theirs (cassandra_log_system_dir, cassandra_log_debug_dir; a hand edit before)
     files = with_log_dir("/data/cassandra/log", literal("/srv/logs"))
-    assert cassandra_config_import(files, "50x", FACTS)["hand_edits"]
-    assert imported(files, "50x")[2]["differences"]
+    out = cassandra_config_import(files, "50x", FACTS)
+    assert out["hand_edits"] == []
+    assert out["vars"]["cassandra_log_system_dir"] == out["vars"]["cassandra_log_debug_dir"] == "/srv/logs"
+    assert imported(files, "50x")[2]["differences"] == []
 
 
 @pytest.mark.parametrize("series", SERIES)
@@ -458,10 +460,13 @@ def test_the_log_dir_the_jvm_gets():
 
 
 def test_the_log_dir_written_as_itself_only_when_the_jvm_gets_it():
-    # the first -Dcassandra.logdir the literal dir, the last (the one the JVM uses) another: other files
+    # the first -Dcassandra.logdir the literal dir, the last (the one the JVM uses) another: other files, kept as
+    # the node writes them (their dir of their own; a hand edit before)
     files = with_log_dir("/data/cassandra/log", literal("/data/cassandra/log"))
     cmdline = "java\0-Dcassandra.logdir=/data/cassandra/log\0-Dcassandra.logdir=/srv/log\0Main"
-    assert cassandra_config_import(files, "50x", FACTS, cmdline=cmdline)["hand_edits"]
+    out = cassandra_config_import(files, "50x", FACTS, cmdline=cmdline)
+    assert out["vars"]["cassandra_log_system_dir"] == "/data/cassandra/log"
+    assert not [n for n in out["normalized"] if "written as itself" in n]
     # the roles' own file with the dir written as itself (a template of yours): read so too
     rendered = dict(files)
     rendered["logback.xml"] = files["logback.xml"]

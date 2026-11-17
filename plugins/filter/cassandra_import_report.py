@@ -98,6 +98,8 @@ WORDS = {
     "cassandra_config_template_snippets": "your template pieces added to logback.xml or cassandra-env.sh",
     "cassandra_log_audit_file": "audit events in their own file, audit/audit.log",
     "cassandra_log_audit_dir": "the dir of the audit file",
+    "cassandra_log_system_dir": "the dir of system.log",
+    "cassandra_log_debug_dir": "the dir of debug.log",
     "cassandra_logback_root_extra_refs": "appenders the root logger also writes to",
     "cassandra_log_levels": "loggers' levels",
     "cassandra_log_pattern": "the pattern of the log lines",

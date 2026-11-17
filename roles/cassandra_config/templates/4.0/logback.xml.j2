@@ -34,10 +34,10 @@ appender reference in the root level section below.
     <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
       <level>INFO</level>
     </filter>
-    <file>${cassandra.logdir}/system.log</file>
+    <file>{{ cassandra_log_system_dir }}/system.log</file>
     <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
       <!-- rollover daily -->
-      <fileNamePattern>${cassandra.logdir}/system.log.%d{yyyy-MM-dd}.%i{{ '.zip' if cassandra_log_compress | bool else '' }}</fileNamePattern>
+      <fileNamePattern>{{ cassandra_log_system_dir }}/system.log.%d{yyyy-MM-dd}.%i{{ '.zip' if cassandra_log_compress | bool else '' }}</fileNamePattern>
       <!-- each file should be at most 50MB, keep 7 days worth of history, but at most 5GB -->
       <maxFileSize>{{ cassandra_log_system_max_file_size }}</maxFileSize>
       <maxHistory>{{ cassandra_log_system_max_history }}</maxHistory>
@@ -51,10 +51,10 @@ appender reference in the root level section below.
   <!-- DEBUGLOG rolling file appender to debug.log (all levels) -->
 
   <appender name="DEBUGLOG" class="ch.qos.logback.core.rolling.RollingFileAppender">
-    <file>${cassandra.logdir}/debug.log</file>
+    <file>{{ cassandra_log_debug_dir }}/debug.log</file>
     <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
       <!-- rollover daily -->
-      <fileNamePattern>${cassandra.logdir}/debug.log.%d{yyyy-MM-dd}.%i{{ '.zip' if cassandra_log_compress | bool else '' }}</fileNamePattern>
+      <fileNamePattern>{{ cassandra_log_debug_dir }}/debug.log.%d{yyyy-MM-dd}.%i{{ '.zip' if cassandra_log_compress | bool else '' }}</fileNamePattern>
       <!-- each file should be at most 50MB, keep 7 days worth of history, but at most 5GB -->
       <maxFileSize>{{ cassandra_log_debug_max_file_size }}</maxFileSize>
       <maxHistory>{{ cassandra_log_debug_max_history }}</maxHistory>

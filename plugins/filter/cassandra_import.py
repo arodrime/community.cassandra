@@ -1984,6 +1984,15 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
                     "notes": ["%s: the Prometheus exporter's agent NOT imported: %s" % (agent_file, why)]}
     running["cmdline"] = cmdline
     release, rejected = str(release or SERIES[cassandra_version]), []
+    log_dir = log_dir_of(live_files.get("cassandra-env.sh", ""), cmdline, running.get("environment"),
+                         running.get("newer"))
+    if "logback.xml" in live_files and logback_as_log_dir(live_files["logback.xml"], log_dir) != live_files["logback.xml"]:
+        # the log dir written as itself: the same files as ${cassandra.logdir}, read so (its lines too)
+        live_files = dict(live_files, **{"logback.xml": logback_as_log_dir(live_files["logback.xml"], log_dir)})
+        log_dir_note = ["logback.xml: %s written as itself, the dir Cassandra gives logback as ${cassandra.logdir}: the"
+                        " same files" % log_dir]
+    else:
+        log_dir_note = []
     found, from_shell = {}, set()
     for name in files:  # (in _config_import itself: an error raised below it, outside these files, names this function)
         if name in live_files:
@@ -1992,15 +2001,6 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
             found.update(got)
             if name.endswith(".sh"):
                 from_shell.update(got)
-    log_dir = log_dir_of(live_files.get("cassandra-env.sh", ""), cmdline, running.get("environment"),
-                         running.get("newer"))
-    if "logback.xml" in live_files and logback_as_log_dir(live_files["logback.xml"], log_dir) != live_files["logback.xml"]:
-        # the log dir written as itself: the same files as ${cassandra.logdir}, read so
-        live_files = dict(live_files, **{"logback.xml": logback_as_log_dir(live_files["logback.xml"], log_dir)})
-        log_dir_note = ["logback.xml: %s written as itself, the dir Cassandra gives logback as ${cassandra.logdir}: the"
-                        " same files" % log_dir]
-    else:
-        log_dir_note = []
     if "logback.xml" in live_files:
         where[0] = "logback.xml"
         for key, value in _logback(live_files["logback.xml"]).items():
@@ -2595,14 +2595,21 @@ def _logback(text):
         if path.endswith("/audit.log") and pattern in (path + ROLLED, path + ROLLED + ".zip"):
             found["cassandra_log_audit_dir"] = path[:-len("/audit.log")]
             found["cassandra_log_audit_compress"] = pattern.endswith(".zip")
-    # system.log's and debug.log's rolled files (their stock names), zipped or not: one variable for both, read when
-    # they agree (else the line that differs: a hand edit)
+    # system.log's and debug.log's dir, the same for the file and its rolled files (else a hand edit); their rolled
+    # files (their stock names), zipped or not: one variable for both, read when they agree (else the line that
+    # differs: a hand edit)
     zipped = set()
     for name, kind in (("SYSTEMLOG", "system"), ("DEBUGLOG", "debug")):
-        pattern = next(((a.findtext("rollingPolicy/fileNamePattern") or "").strip() for a in conf.findall("appender")
-                        if a.get("name") == name), "")
-        if pattern in ("${cassandra.logdir}/%s.log%s" % (kind, ROLLED), "${cassandra.logdir}/%s.log%s.zip" % (kind, ROLLED)):
+        appender = next((a for a in conf.findall("appender") if a.get("name") == name), None)
+        if appender is None:
+            continue
+        path = (appender.findtext("file") or "").strip()
+        pattern = (appender.findtext("rollingPolicy/fileNamePattern") or "").strip()
+        if path.endswith("/%s.log" % kind) and pattern in (path + ROLLED, path + ROLLED + ".zip"):
+            found["cassandra_log_%s_dir" % kind] = path[:-len("/%s.log" % kind)]
             zipped.add(pattern.endswith(".zip"))
+        else:  # (None: not read, whatever its <file> line said)
+            found["cassandra_log_%s_dir" % kind] = None
     if len(zipped) == 1:
         found["cassandra_log_compress"] = zipped.pop()
     # logback's JMX MBean, under <configuration>
@@ -3802,7 +3809,8 @@ BLOCKS = [
     ("cassandra.yaml settings no variable covers", ["cassandra_extra_settings"]),
     ("Logging (logback.xml)", [
         "cassandra_log_level", "cassandra_log_level_cassandra", "cassandra_debug_log_enabled", "cassandra_log_console",
-        "cassandra_log_audit_file", "cassandra_log_audit_dir", "cassandra_log_compress", "cassandra_log_audit_compress",
+        "cassandra_log_audit_file", "cassandra_log_audit_dir", "cassandra_log_system_dir", "cassandra_log_debug_dir",
+        "cassandra_log_compress", "cassandra_log_audit_compress",
         "cassandra_log_jmx_configurator"]),
     ("Template pieces next to the inventory (hand edits the import carried)", [SNIPPETS]),
     ("Secrets of the lines above (hand edits the import carried)", []),

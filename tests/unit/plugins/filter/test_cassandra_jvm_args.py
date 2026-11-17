@@ -1225,7 +1225,7 @@ def jvm11_edited(files):
 
 def running(files, tmp_path):
     """The running JVM's arguments, its log dir the packages' (bin/cassandra gives -Dcassandra.logdir)."""
-    return launch(files, "17", tmp_path).replace("-Dcassandra.logdir=/run/logs", "-Dcassandra.logdir=/var/log/cassandra")
+    return re.sub(r"-Dcassandra\.logdir=[^\0]*", "-Dcassandra.logdir=/var/log/cassandra", launch(files, "17", tmp_path))
 
 
 def test_remote_jmx_set_by_hand_is_imported(tmp_path):
@@ -1251,8 +1251,11 @@ def test_remote_jmx_by_hand_with_the_heap_moved_and_the_log_dir_as_itself(tmp_pa
     # the heap moved to jvm-server.options failed the check once cassandra-env.sh differed (5 items)
     files = node_files("50x", both(remote_jmx_by_hand, heap_in_jvm17, log_dir_as_itself))
     cmdline = running(files, tmp_path)
-    variables = role_files(*imported(files, "50x", "17", cmdline)[:2] + (files,))[1]
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    variables = role_files(inventory, layout, files)[1]
     assert variables["cassandra_heap_size"] == "23552m" and variables["cassandra_heap_in_jvm_options"] is True
+    assert variables.get("cassandra_log_system_dir", "${cassandra.logdir}") == "${cassandra.logdir}"  # (as itself)
+    assert [n for n in node["normalized"] if "/var/log/cassandra written as itself" in n]
     out = check(files, "50x", java="17", cmdline=cmdline)
     assert out["differences"] == []
 
@@ -1279,3 +1282,48 @@ def test_a_jvm_options_file_the_running_java_does_not_read_is_a_note(tmp_path):
 def test_a_line_in_a_block_set_again_below(later, again):
     assert jvm._set_again({"depth": 1, "text": 'JVM_OPTS="$JVM_OPTS -Dx=1"'}, later) is again
     assert jvm._set_again({"depth": 0, "text": 'JVM_OPTS="$JVM_OPTS -Dx=1"'}, later) is False
+
+
+def own_log_dirs(files):
+    """system.log and debug.log in a dir of their own, the audit file's dir the log dir written as itself."""
+    text = files["logback.xml"]
+    for tag in ("<file>", "<fileNamePattern>"):
+        for log in ("system", "debug"):
+            text = edit(text, "%s${cassandra.logdir}/%s" % (tag, log), "%s/srv/zorglub/logs/%s" % (tag, log))
+        text = text.replace("%s${cassandra.logdir}/audit/" % tag, "%s/var/log/cassandra/audit/" % tag)
+    files["logback.xml"] = text
+
+
+@pytest.mark.parametrize("on", [False, True], ids=["without the earlier edits", "with them"])
+def test_system_and_debug_log_in_a_dir_of_their_own(tmp_path, on):
+    files = node_files("50x", both(remote_jmx_by_hand, heap_in_jvm17, jvm11_edited, own_log_dirs) if on else own_log_dirs)
+    cmdline = running(files, tmp_path)
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    rendered, variables = role_files(inventory, layout, files)
+    assert variables["cassandra_log_system_dir"] == variables["cassandra_log_debug_dir"] == "/srv/zorglub/logs"
+    assert "cassandra_log_audit_dir" not in variables  # (the log dir written as itself: the default)
+    assert "<file>/srv/zorglub/logs/system.log</file>" in rendered["logback.xml"]
+    assert "<fileNamePattern>/srv/zorglub/logs/debug.log.%d{yyyy-MM-dd}.%i.zip</fileNamePattern>" in rendered["logback.xml"]
+    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
+
+
+def test_a_log_dir_its_rolled_files_do_not_share_stays_a_hand_edit(tmp_path):
+    def edit_logs(files):
+        files["logback.xml"] = edit(files["logback.xml"], "<file>${cassandra.logdir}/system.log",
+                                    "<file>/srv/zorglub/logs/system.log")
+    files = node_files("50x", edit_logs)
+    cmdline = running(files, tmp_path)
+    node = imported(files, "50x", "17", cmdline)[2]
+    assert "cassandra_log_system_dir" not in node["vars"]
+    assert [d for d in check(files, "50x", java="17", cmdline=cmdline)["differences"] if d.startswith("logback.xml")]
+
+
+@pytest.mark.parametrize("series", ["4.0", "4.1", "5.0"])
+def test_the_log_dirs_by_default_render_the_stock_lines(series):
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _load_role, _render
+    key = {"4.0": "40x", "4.1": "41x", "5.0": "50x"}[series]
+    env, ctx, dummy = _load_role(key, FACTS)
+    text = "\n".join(_render(env, key, "logback.xml", ctx)[1])
+    for log in ("system", "debug"):
+        assert "<file>${cassandra.logdir}/%s.log</file>" % log in text
+        assert "<fileNamePattern>${cassandra.logdir}/%s.log.%%d{yyyy-MM-dd}.%%i.zip</fileNamePattern>" % log in text

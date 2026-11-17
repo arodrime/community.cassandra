@@ -448,6 +448,11 @@ cassandra_log_audit_file: >-
 # a path of its own, e.g. /data/audit. Not cassandra.yaml's audit_logs_dir
 # (cassandra_audit_logs_dir, BinAuditLogger's).
 cassandra_log_audit_dir: "${cassandra.logdir}/audit"
+# The dir of system.log and of debug.log (each with its rolled files): the log
+# dir by default (${cassandra.logdir}, the dir Cassandra gives logback), or a
+# path of its own, e.g. /data/logs.
+cassandra_log_system_dir: "${cassandra.logdir}"
+cassandra_log_debug_dir: "${cassandra.logdir}"
 # Appenders <root> also writes to, by name: a stock one (SYSTEMLOG, DEBUGLOG,
 # ASYNCDEBUGLOG, STDOUT), AUDIT (cassandra_log_audit_file), or one your snippet
 # logback.xml:appenders defines (cassandra_config_template_snippets)

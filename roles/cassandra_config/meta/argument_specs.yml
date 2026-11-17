@@ -1594,6 +1594,18 @@ argument_specs:
         - 'The dir of the audit file (O(cassandra_log_audit_file)) in C(logback.xml): C(audit.log) and its rolled files.'
         - 'The log dir''s C(audit/) by default (C(${cassandra.logdir}), the dir Cassandra gives logback), or a path of
           its own, e.g. C(/data/audit). Not C(cassandra.yaml)''s C(audit_logs_dir) (O(cassandra_audit_logs_dir)).'
+      cassandra_log_system_dir:
+        type: str
+        default: ${cassandra.logdir}
+        description:
+        - 'The dir of C(system.log) and its rolled files in C(logback.xml): the log dir by default (C(${cassandra.logdir}),
+          the dir Cassandra gives logback), or a path of its own, e.g. C(/data/logs).'
+      cassandra_log_debug_dir:
+        type: str
+        default: ${cassandra.logdir}
+        description:
+        - 'The dir of C(debug.log) and its rolled files in C(logback.xml): the log dir by default (C(${cassandra.logdir}),
+          the dir Cassandra gives logback), or a path of its own, e.g. C(/data/logs).'
       cassandra_logback_root_extra_refs:
         type: list
         elements: str

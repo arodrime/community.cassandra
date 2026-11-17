@@ -386,6 +386,9 @@ Role Variables
   then (the events go to `system.log`).
   `cassandra_log_audit_dir`: the dir of that file, the log dir's `audit/` by
   default (`${cassandra.logdir}/audit`), or a path of its own.
+  `cassandra_log_system_dir`, `cassandra_log_debug_dir`: the dir of
+  `system.log`, of `debug.log` (with their rolled files), the log dir by
+  default (`${cassandra.logdir}`), or a path of its own.
   `cassandra_logback_root_extra_refs`: appenders `<root>` names besides the
   stock ones (a stock one, `AUDIT` with the audit file, or one of your
   snippet `logback.xml:appenders`; another name is refused).

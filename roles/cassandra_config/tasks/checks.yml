@@ -202,7 +202,9 @@
             ['cassandra_log_audit_max_file_size', cassandra_log_audit_max_file_size, audit],
             ['cassandra_log_audit_max_history', cassandra_log_audit_max_history, audit],
             ['cassandra_log_audit_total_size_cap', cassandra_log_audit_total_size_cap, audit],
-            ['cassandra_log_audit_dir', cassandra_log_audit_dir, audit]] -%}
+            ['cassandra_log_audit_dir', cassandra_log_audit_dir, audit],
+            ['cassandra_log_system_dir', cassandra_log_system_dir, ''],
+            ['cassandra_log_debug_dir', cassandra_log_debug_dir, '']] -%}
       {%-   set _ = xml.append([var, value, false, commented]) -%}
       {%- endfor -%}
       {%- if cassandra_version == '50x' -%}

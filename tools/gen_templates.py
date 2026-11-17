@@ -225,10 +225,14 @@ ROTATION = [in_block(appender, "      <%s>%s</%s>" % (tag, stock, tag),
             for appender, kind in (("SYSTEMLOG", "system"), ("DEBUGLOG", "debug"))
             for tag, stock, var in (("maxFileSize", "50MB", "max_file_size"), ("maxHistory", "7", "max_history"),
                                     ("totalSizeCap", "5GB", "total_size_cap"))]
-# their rolled files zipped with cassandra_log_compress
+# their dir (cassandra_log_system_dir, cassandra_log_debug_dir: the log dir by default), their rolled files zipped with
+# cassandra_log_compress
+ROTATION += [in_block(appender, "    <file>${cassandra.logdir}/%s.log</file>" % kind,
+                      "    <file>{{ cassandra_log_%s_dir }}/%s.log</file>" % (kind, kind))
+             for appender, kind in (("SYSTEMLOG", "system"), ("DEBUGLOG", "debug"))]
 ROTATION += [in_block(appender, "      <fileNamePattern>${cassandra.logdir}/%s.log.%%d{yyyy-MM-dd}.%%i.zip</fileNamePattern>" % kind,
-                      "      <fileNamePattern>${cassandra.logdir}/%s.log.%%d{yyyy-MM-dd}.%%i%s</fileNamePattern>"
-                      % (kind, zipped("cassandra_log_compress")))
+                      "      <fileNamePattern>{{ cassandra_log_%s_dir }}/%s.log.%%d{yyyy-MM-dd}.%%i%s</fileNamePattern>"
+                      % (kind, kind, zipped("cassandra_log_compress")))
              for appender, kind in (("SYSTEMLOG", "system"), ("DEBUGLOG", "debug"))]
 
 # logback's JMX MBean (cassandra_log_jmx_configurator): 4.x's stock line, commented out when off; none in 5.0's stock
