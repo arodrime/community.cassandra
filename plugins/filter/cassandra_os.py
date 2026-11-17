@@ -86,6 +86,10 @@ def _vs(value, role, name):
 
 # --- sysctl ---
 
+# the kernel's write-only keys: a trigger (writing it flushes or drops something), never read back, no setting
+WRITE_ONLY_SYSCTL = ("net.ipv4.route.flush", "net.ipv6.route.flush", "vm.drop_caches", "vm.compact_memory")
+
+
 def _sysctl_key(key):
     key = key.strip()
     # systemd: a key whose first separator is a slash has its slashes and dots swapped
@@ -171,10 +175,18 @@ def _sysctl(recs, wanted, own):
         # the file the role is to write in, its keys exactly (a key of another file would be added there, and a
         # /etc/sysctl.conf line removed)
         carried = dict((k, _typed(v)) for k, v in files.get(target, []))
-        others = sorted(k for k, path in won_by.items() if path != target and k not in carried)
+        others = sorted(k for k, path in won_by.items()
+                        if path != target and k not in carried and k not in WRITE_ONLY_SYSCTL)
         if others:
             notes.append("NOT carried: %s, set in other files than %s (the role would move them there)"
                          % (", ".join(others), target))
+    # (the sysctl module could never read one back: a change at each run; its line stays in the node's file, the
+    # role writing its own keys line by line)
+    triggers = sorted(k for k in carried if k in WRITE_ONLY_SYSCTL)
+    if triggers:
+        carried = dict((k, v) for k, v in carried.items() if k not in WRITE_ONLY_SYSCTL)
+        notes.append("NOT carried: %s, write-only (an action, not a setting: never read back); its line stays in the"
+                     " node's file as it is" % ", ".join(triggers))
     if own:
         notes += _sysctl_lost(carried, effective, target)
     changed = sorted(k for k in carried if k not in role or _norm(carried[k]) != _norm(role[k]))
@@ -1245,10 +1257,6 @@ def _live_boot(linux, facts):
     mode = str(linux.get("apply_live", "auto")).lower()
     live = not container if mode == "auto" else boolean(mode, strict=False)
     return live, live or not container
-
-
-# the kernel's write-only keys: a trigger (writing it flushes or drops something), never read back, no setting
-WRITE_ONLY_SYSCTL = ("net.ipv4.route.flush", "net.ipv6.route.flush", "vm.drop_caches", "vm.compact_memory")
 
 
 def _sysctl_changes(recs, linux, live):

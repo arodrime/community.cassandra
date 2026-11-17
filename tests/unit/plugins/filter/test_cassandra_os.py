@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_os import (
+    WRITE_ONLY_SYSCTL,
     _limits,
     _records,
     _sysctl_line,
@@ -1026,6 +1027,19 @@ def test_owner_like_node_is_a_no_op_with_the_roles():
     assert cassandra_linux_changes(owner_like(), would_be(r["vars"]), RHEL, False) == []
     # with the stock defaults instead: far from a no-op
     assert len(cassandra_linux_changes(owner_like(), linux(), RHEL, False)) > 5
+
+
+@pytest.mark.parametrize("own", [False, True])
+def test_a_write_only_sysctl_key_not_carried(own):
+    # (a 5.0.9 cluster, 2026-11-17) the sysctl module never reads it back: carried, a change at each run of the roles
+    path = "/etc/sysctl.d/60-cassandra.conf" if own else "/etc/sysctl.d/90_cassandra.conf"
+    text = owner_like().replace("/etc/sysctl.d/90_cassandra.conf", path)
+    text += "sysctl|%s|net.ipv4.route.flush = 1\nsysctl_live|net.ipv4.route.flush|\n" % path
+    r = found(text, os_family="RedHat", own=own)
+    assert not [k for k in r["vars"].get("cassandra_linux_sysctl") or {} if k in WRITE_ONLY_SYSCTL]
+    assert [n for n in r["carried"] if n.startswith("NOT carried: net.ipv4.route.flush, write-only")]
+    # nothing the role would change: the role writes its keys line by line, the node's line left in its file
+    assert cassandra_linux_changes(text, would_be(r["vars"]), RHEL, own) == []
 
 
 def test_thp_carried():
