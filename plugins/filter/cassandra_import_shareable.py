@@ -21,7 +21,11 @@ import functools
 import os
 import re
 
+import yaml
+
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import group_chains
+from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import LATER_STOCK
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import ROLES
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?!\.?\d)")  # (also in a file name: 10.1.2.3.jks, ip_10.1.2.3)
@@ -144,9 +148,6 @@ def _stock_names():
     """The setting names the copy shows in clear wherever they are: the kernel settings cassandra_linux sets, and the
     JVM properties of the stock options files (-Dcassandra.x, -Dchronicle.analytics.disable: their -D names, with and
     without it), the later stock lines the import reports too -> frozenset."""
-    import yaml
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import LATER_STOCK
-    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import ROLES
     names = set()
     with open(os.path.join(ROLES, "cassandra_linux", "defaults", "main.yml"), encoding="utf-8") as f:
         names.update(str(k) for k in (yaml.safe_load(f).get("cassandra_linux_sysctl") or {}))

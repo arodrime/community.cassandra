@@ -14,6 +14,7 @@ import subprocess
 import pytest
 
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm
+from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import cassandra_apply_config_no_effect
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import (
     _render as role_render,
     cassandra_import_self_check,
@@ -22,8 +23,10 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import_che
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import cassandra_import_report
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     IPV4, cassandra_config_import, cassandra_inventory_layout)
+from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import cassandra_same_settings
 
 from .test_cassandra_import_check import FACTS, check, edit, import_node, seeded, stock
+from .test_cassandra_import_logback import audit_on, file_auditing
 
 # bin/cassandra up to the JVM: the options files of the running Java, cassandra-env.sh, its arguments. What the
 # node works out (memory, cpus, the date) is set so that two runs give the same.
@@ -714,7 +717,6 @@ def owner_dev_node(files):
     and the rmi hostname in its branch), logback.xml (the log dir written as itself, the audit file in a dir of its
     own), jvm-server.options of 4.x (-Xss1024M, biased locking off, no chronicle line), jvm17-server.options (the
     heap and the stack in G1's block, its tuning commented out)."""
-    from .test_cassandra_import_logback import audit_on
     remote_jmx()(files)
     files["cassandra-env.sh"] = files["cassandra-env.sh"].replace("CASSANDRA_LOG_DIR=/var/log/cassandra",
                                                                   "CASSANDRA_LOG_DIR=/data/cassandra/log")
@@ -1403,7 +1405,6 @@ def test_the_log_dirs_by_default_render_the_stock_lines(series):
 # lines put back (Java 17 does not read it), logback.xml's audit file under ${cassandra.logdir} where the node writes
 # /var/log/cassandra (the log dir), a stray text of it removed
 def audit_dir_written_out(files):
-    from .test_cassandra_import_logback import audit_on, file_auditing
     file_auditing(files, "50x")
     files["logback.xml"] = audit_on(files["logback.xml"])
     for tag in ("<file>", "<fileNamePattern>"):
@@ -1418,7 +1419,6 @@ STORAGE = "/var/lib/cassandra"
 
 def written(tmp_path, node_edit=OWNERS_CASE, rc12=True):
     """(the node's files, the files apply_config writes, the ones it changes, the running JVM's arguments)."""
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import cassandra_same_settings
     files = node_files("50x", node_edit)
     cmdline = running(files, tmp_path)
     inventory, layout, dummy = imported(files, "50x", "17", cmdline)
@@ -1434,8 +1434,6 @@ def written(tmp_path, node_edit=OWNERS_CASE, rc12=True):
 
 
 def no_effect(changed, files, rendered, cmdline, java="17", environ=None, newer=None):
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import \
-        cassandra_apply_config_no_effect
     return cassandra_apply_config_no_effect(changed, files, rendered, cmdline, "50x", java, environ or {}, newer or [])
 
 
@@ -1499,12 +1497,11 @@ def test_a_jvm_of_another_series_than_the_inventorys_restarts(tmp_path, release,
 def test_the_import_and_apply_config_give_up_alike_on_an_environment_that_adds_options(tmp_path, environ):
     # (pre-push audit, rc13) one predicate (env_adds_options): the import no longer says "no restart (the same JVM
     # arguments)" where apply_config restarts, even with the same environment on both sides
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_jvm_args import cassandra_jvm_args_same
     files, rendered, changed, cmdline = written(tmp_path)
     group = ["cassandra-env.sh", "jvm-server.options", "jvm17-server.options"]
     live, role = [dict((f, side[f]) for f in group) for side in (files, rendered)]
-    assert cassandra_jvm_args_same(cmdline, live, role, "50x", "17", {}, {})[0] is True
-    same, why = cassandra_jvm_args_same(cmdline, live, role, "50x", "17", environ, environ)
+    assert jvm.cassandra_jvm_args_same(cmdline, live, role, "50x", "17", {}, {})[0] is True
+    same, why = jvm.cassandra_jvm_args_same(cmdline, live, role, "50x", "17", environ, environ)
     assert same is False and "the environment gives cassandra-env.sh options to add (%s)" % list(environ)[0] == why
     assert no_effect(changed, files, rendered, cmdline, environ=environ) == []
 
