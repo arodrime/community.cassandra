@@ -174,6 +174,7 @@ def test_import_variables():
         "cassandra_medusa_nodetool_password": "",
         "cassandra_medusa_nodetool_password_file": "/etc/cassandra/jmxremote.password",
         "cassandra_medusa_nodetool_port": "",
+        "cassandra_medusa_nodetool_ssl": "",  # (the default follows cassandra_jmx_ssl_enabled: none here)
         "cassandra_medusa_resolve_ip_addresses": "False",
         "cassandra_medusa_storage_provider": "s3_compatible",
         "cassandra_medusa_bucket_name": "orders-backups",

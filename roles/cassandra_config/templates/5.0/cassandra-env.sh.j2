@@ -248,14 +248,14 @@ else
   JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.authenticate=true"
 
   # jmx ssl options
-  #JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.ssl=true"
-  #JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.ssl.need.client.auth=true"
-  #JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.ssl.enabled.protocols=<enabled-protocols>"
-  #JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.ssl.enabled.cipher.suites=<enabled-cipher-suites>"
-  #JVM_OPTS="$JVM_OPTS -Djavax.net.ssl.keyStore=/path/to/keystore"
-  #JVM_OPTS="$JVM_OPTS -Djavax.net.ssl.keyStorePassword=<keystore-password>"
-  #JVM_OPTS="$JVM_OPTS -Djavax.net.ssl.trustStore=/path/to/truststore"
-  #JVM_OPTS="$JVM_OPTS -Djavax.net.ssl.trustStorePassword=<truststore-password>"
+  {{ '' if cassandra_jmx_ssl_enabled else '#' }}JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.ssl=true"
+  {{ '' if cassandra_jmx_ssl_need_client_auth else '#' }}JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.ssl.need.client.auth=true"
+  {{ '' if cassandra_jmx_ssl_protocols else '#' }}JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.ssl.enabled.protocols={{ cassandra_jmx_ssl_protocols or '<enabled-protocols>' }}"
+  {{ '' if cassandra_jmx_ssl_cipher_suites else '#' }}JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.ssl.enabled.cipher.suites={{ cassandra_jmx_ssl_cipher_suites or '<enabled-cipher-suites>' }}"
+  {{ '' if cassandra_jmx_ssl_keystore else '#' }}JVM_OPTS="$JVM_OPTS -Djavax.net.ssl.keyStore={{ cassandra_jmx_ssl_keystore or '/path/to/keystore' }}"
+  {{ '' if cassandra_jmx_ssl_keystore_password else '#' }}JVM_OPTS="$JVM_OPTS -Djavax.net.ssl.keyStorePassword={{ cassandra_jmx_ssl_keystore_password or '<keystore-password>' }}"
+  {{ '' if cassandra_jmx_ssl_truststore else '#' }}JVM_OPTS="$JVM_OPTS -Djavax.net.ssl.trustStore={{ cassandra_jmx_ssl_truststore or '/path/to/truststore' }}"
+  {{ '' if cassandra_jmx_ssl_truststore_password else '#' }}JVM_OPTS="$JVM_OPTS -Djavax.net.ssl.trustStorePassword={{ cassandra_jmx_ssl_truststore_password or '<truststore-password>' }}"
 fi
 
 # jmx authentication and authorization options. By default, auth is only

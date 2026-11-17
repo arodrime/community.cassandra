@@ -363,6 +363,21 @@ cassandra_heap_dump_dir: "{{ '$CASSANDRA_LOG_DIR' if cassandra_version == '50x' 
 cassandra_local_jmx: true  # false = remote JMX, with authentication
 cassandra_jmx_port: 7199
 cassandra_jmx_rmi_hostname: ""
+# Remote JMX over TLS (cassandra_local_jmx: false): the stock -D lines of
+# cassandra-env.sh's remote branch, each switched on by its variable. The
+# keystore and truststore are paths on the node (the role does not copy
+# them). The passwords end up in the JVM's command line (ps), as with stock
+# Cassandra. On, the role also writes the nodetool-ssl.properties of root and
+# of cassandra_user (nodetool --ssl, Medusa), and the collection's nodetool
+# calls use --ssl.
+cassandra_jmx_ssl_enabled: false
+cassandra_jmx_ssl_keystore: ""
+cassandra_jmx_ssl_keystore_password: ""
+cassandra_jmx_ssl_truststore: ""  # needed with need_client_auth (and for nodetool)
+cassandra_jmx_ssl_truststore_password: ""
+cassandra_jmx_ssl_need_client_auth: false
+cassandra_jmx_ssl_protocols: ""  # comma-separated, e.g. TLSv1.3,TLSv1.2
+cassandra_jmx_ssl_cipher_suites: ""  # comma-separated
 
 # ---- jvm8/jvm11/jvm17-server.options ----
 # Each cassandra_jvm_<option> applies to every jvm<N>-server.options file;

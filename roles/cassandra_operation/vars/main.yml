@@ -7,7 +7,8 @@ _cassandra_service_jmx: >-
   {{ {'port': cassandra_jmx_port | default(7199) | int}
      | combine({'username': cassandra_jmx_username} if cassandra_jmx_username else {})
      | combine({'password_file': cassandra_jmx_password_file} if cassandra_jmx_password_file
-               else ({'password': cassandra_jmx_password} if cassandra_jmx_password else {})) }}
+               else ({'password': cassandra_jmx_password} if cassandra_jmx_password else {}))
+     | combine({'ssl': true} if cassandra_jmx_ssl_enabled | default(false) | bool else {}) }}
 
 # the words of an action in a --check result ("would restart")
 _cassandra_service_would:
@@ -71,7 +72,8 @@ _cassandra_service_config_files: [cassandra.yaml, cassandra-env.sh, jvm*-server.
 _cassandra_service_nodetool: >-
   nodetool -p {{ _cassandra_service_jmx.port }}{{ (' -u ' ~ cassandra_jmx_username | quote) if cassandra_jmx_username else '' }}{{
   (' -pwf ' ~ cassandra_jmx_password_file | quote) if cassandra_jmx_password_file
-  else ((' -pw ' ~ cassandra_jmx_password | quote) if cassandra_jmx_password else '') }}
+  else ((' -pw ' ~ cassandra_jmx_password | quote) if cassandra_jmx_password else '') }}{{
+  ' --ssl' if cassandra_jmx_ssl_enabled | default(false) | bool else '' }}
 
 # The variables the playbooks are run with (-e): a name set close to one of them
 # is pointed out (hosts_check.yml), preflight warns about cassandra_*

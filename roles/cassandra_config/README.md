@@ -324,6 +324,16 @@ Role Variables
   `-XX:HeapDumpPath` first, and the role creates it, or gives an existing one
   to the account Cassandra runs as like the data directories),
   `cassandra_local_jmx`, `cassandra_jmx_port`, `cassandra_jmx_rmi_hostname`.
+* Remote JMX over TLS (`cassandra_local_jmx: false`): `cassandra_jmx_ssl_enabled`,
+  `cassandra_jmx_ssl_keystore` and `cassandra_jmx_ssl_keystore_password` (needed
+  when enabled; paths on the node, not copied), `cassandra_jmx_ssl_truststore`,
+  `cassandra_jmx_ssl_truststore_password`, `cassandra_jmx_ssl_need_client_auth`
+  (needs the truststore), `cassandra_jmx_ssl_protocols`,
+  `cassandra_jmx_ssl_cipher_suites` (comma-separated): each switches on its
+  stock line in the remote branch of `cassandra-env.sh` (no blank, quote, `$`,
+  backquote or backslash in a value). Enabled, the role also writes
+  `~/.cassandra/nodetool-ssl.properties` (0600) for root and `cassandra_user`,
+  which `nodetool --ssl` reads; the collection's nodetool calls use `--ssl`.
 * GC: `cassandra_jvm_gc` defaults to the series' stock GC (`CMS` on 4.x,
   `G1` on 5.0). `G1` on 4.x turns on the stock G1 block with the
   `cassandra_jvm_*` values (5.0's by default); `CMS` needs Java 8/11

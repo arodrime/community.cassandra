@@ -31,9 +31,10 @@
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false  # (below, after the run's first line)
   # root (sudo) only to read the JMX password file when cassandra_jmx_password_file
-  # is set (the service account's, 0400): the play asks for it itself, no -b
+  # is set (the service account's, 0400), or with JMX over TLS (root's
+  # ~/.cassandra/nodetool-ssl.properties): the play asks for it itself, no -b
   # needed; nodetool needs no root otherwise
-  become: "{{ cassandra_jmx_password_file | default('', true) | length > 0 }}"
+  become: "{{ cassandra_jmx_password_file | default('', true) | length > 0 or cassandra_jmx_ssl_enabled | default(false) | bool }}"
   tasks:
     # first: each node its own facts before any run_once task (ansible/ansible#87148)
     - name: Give each node its own facts

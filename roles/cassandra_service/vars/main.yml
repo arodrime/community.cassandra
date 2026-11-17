@@ -54,7 +54,8 @@ _cassandra_service_jmx: >-
   {{ {'port': cassandra_jmx_port | default(7199) | int}
      | combine({'username': cassandra_jmx_username} if cassandra_jmx_username else {})
      | combine({'password_file': cassandra_jmx_password_file} if cassandra_jmx_password_file
-               else ({'password': cassandra_jmx_password} if cassandra_jmx_password else {})) }}
+               else ({'password': cassandra_jmx_password} if cassandra_jmx_password else {}))
+     | combine({'ssl': true} if cassandra_jmx_ssl_enabled | default(false) | bool else {}) }}
 # cassandra_service_start package_script: the drop-in of the unit systemd generates for the package's init script
 # that sets cassandra_service_environment (unit.yml); its name sorts after the node's own drop-ins (override.conf,
 # 99-x.conf): systemd reads them in that order, the last value of a variable wins

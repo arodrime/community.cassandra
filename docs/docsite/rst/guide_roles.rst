@@ -1149,6 +1149,20 @@ their names (the running JVM's arguments, else ``cassandra-env.sh``, else the JV
 CQL credentials, for the OS users you list. Playbooks that read the schema over CQL take ``cassandra_cql_username``
 and ``cassandra_cql_password``.
 
+Remote JMX over TLS: ``cassandra_jmx_ssl_enabled: true`` (with ``cassandra_local_jmx: false``), and
+``cassandra_jmx_ssl_keystore``, ``cassandra_jmx_ssl_keystore_password`` (files on the node: the role does not copy
+them); ``cassandra_jmx_ssl_truststore`` and its password, ``cassandra_jmx_ssl_need_client_auth``,
+``cassandra_jmx_ssl_protocols``, ``cassandra_jmx_ssl_cipher_suites`` (comma-separated) as needed. The role switches on
+the stock lines of the remote branch of ``cassandra-env.sh`` (the passwords then show in the JVM's command line, as
+with stock Cassandra), and writes ``~/.cassandra/nodetool-ssl.properties`` (mode 0600) for root and
+``cassandra_user``: ``nodetool --ssl`` adds its options (the truststore, else the keystore, to trust the node; the
+keystore too with client authentication). The collection's nodetool calls and modules then use ``--ssl`` (the
+modules' ``ssl`` option), ``status`` and ``health_check`` run nodetool as root, and Medusa's ``nodetool_ssl`` defaults
+to ``true``. JMX and its RMI connector keep sharing one port: Cassandra 4.0+ gives both the same TLS socket factories
+(the stock comment above ``jmxremote.rmi.port`` predates that). ``import_cluster`` reads these lines (their passwords
+to ``secrets.yml``), finds TLS from the running JVM's options before it runs nodetool, and stops with the way out
+when root has no ``nodetool-ssl.properties`` there.
+
 
 Monitoring with Prometheus
 --------------------------

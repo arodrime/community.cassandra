@@ -295,6 +295,27 @@ COMMON = {
     ] + AUDIT_FILE + ROTATION,
 }
 
+
+def jmx_ssl(var, option, example=None):
+    """A stock JMX TLS line of the remote branch ("  #JVM_OPTS=..."), on with var; example: the stock placeholder,
+    the var's value in its place."""
+    stock = '  #JVM_OPTS="$JVM_OPTS %s"' % (option if example is None else option + example)
+    value = "" if example is None else "{{ %s or '%s' }}" % (var, example)
+    return (stock, "  {{ '' if %s else '#' }}JVM_OPTS=\"$JVM_OPTS %s%s\"" % (var, option, value))
+
+
+JMX_SSL = [
+    jmx_ssl("cassandra_jmx_ssl_enabled", "-Dcom.sun.management.jmxremote.ssl=true"),
+    jmx_ssl("cassandra_jmx_ssl_need_client_auth", "-Dcom.sun.management.jmxremote.ssl.need.client.auth=true"),
+    jmx_ssl("cassandra_jmx_ssl_protocols", "-Dcom.sun.management.jmxremote.ssl.enabled.protocols=", "<enabled-protocols>"),
+    jmx_ssl("cassandra_jmx_ssl_cipher_suites", "-Dcom.sun.management.jmxremote.ssl.enabled.cipher.suites=",
+            "<enabled-cipher-suites>"),
+    jmx_ssl("cassandra_jmx_ssl_keystore", "-Djavax.net.ssl.keyStore=", "/path/to/keystore"),
+    jmx_ssl("cassandra_jmx_ssl_keystore_password", "-Djavax.net.ssl.keyStorePassword=", "<keystore-password>"),
+    jmx_ssl("cassandra_jmx_ssl_truststore", "-Djavax.net.ssl.trustStore=", "/path/to/truststore"),
+    jmx_ssl("cassandra_jmx_ssl_truststore_password", "-Djavax.net.ssl.trustStorePassword=", "<truststore-password>"),
+]
+
 ENV_COMMON = [
     # deb and rpm packages ship /var/log/cassandra here, not the tarball's value
     ('    CASSANDRA_LOG_DIR="$CASSANDRA_HOME/logs"', '    CASSANDRA_LOG_DIR={{ cassandra_log_dir }}'),
@@ -309,6 +330,8 @@ ENV_COMMON = [
     ('#JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file=/etc/cassandra/jmxremote.access"',
      "{{ '' if cassandra_jmx_users else '#' }}"
      'JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file={{ cassandra_jmx_remote_access_file }}"'),
+    # remote JMX over TLS (cassandra_jmx_ssl_*): the stock lines of the remote branch, each on with its variable
+] + JMX_SSL + [
     # the file's last line: your snippet after it
     ('JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"', 'JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"' + append_snippet("_cassandra_config_snippet_env")),
 ]

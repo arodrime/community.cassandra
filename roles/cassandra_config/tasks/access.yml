@@ -197,3 +197,43 @@
       no_log: true
       diff: false
       when: cassandra_version != '40x'
+
+# Remote JMX over TLS: nodetool --ssl adds the lines of ~/.cassandra/nodetool-ssl.properties of the user running it
+# to its JVM options: root's (the collection's nodetool calls under sudo), and the one of the account Cassandra runs as
+# (Medusa). It trusts the node's certificate (the truststore, else the keystore itself), and shows the keystore's with
+# need_client_auth
+- name: Write nodetool's JMX TLS settings
+  when: cassandra_jmx_ssl_enabled | bool
+  vars:
+    _home: "{{ ansible_facts.getent_passwd[item.os_user][4] }}"
+    _users: "{{ [{'os_user': 'root'}, {'os_user': _cassandra_config_perm_settings.user}] | unique }}"
+  block:
+    - name: Find the home directories of root and the account Cassandra runs as
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ item.os_user }}"
+      loop: "{{ _users }}"
+      loop_control:
+        label: "{{ item.os_user }}"
+
+    - name: Create their ~/.cassandra
+      ansible.builtin.file:
+        path: "{{ _home }}/.cassandra"
+        state: directory
+        owner: "{{ item.os_user }}"
+        mode: "0700"
+      loop: "{{ _users }}"
+      loop_control:
+        label: "{{ item.os_user }}"
+
+    - name: Write their ~/.cassandra/nodetool-ssl.properties
+      ansible.builtin.copy:
+        content: "{{ lookup('ansible.builtin.template', 'nodetool-ssl.properties.j2') }}"
+        dest: "{{ _home }}/.cassandra/nodetool-ssl.properties"
+        owner: "{{ item.os_user }}"
+        mode: "0600"
+      loop: "{{ _users }}"
+      loop_control:
+        label: "{{ item.os_user }}"
+      no_log: true
+      diff: false

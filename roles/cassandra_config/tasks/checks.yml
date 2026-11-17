@@ -400,6 +400,38 @@
       {%- endfor -%}
       {{ out }}
 
+# Remote JMX over TLS: the stock lines are in the remote branch of cassandra-env.sh; the JVM needs a keystore to serve
+# TLS, a truststore to check client certificates; a value goes in a JVM_OPTS="..." line bash splits on blanks
+- name: Refuse JMX TLS settings the JVM would not start with
+  ansible.builtin.assert:
+    that: _wrong | length == 0
+    fail_msg: "{{ _wrong | join('; ') }}. Nothing is changed."
+    quiet: true
+  vars:
+    _unsafe: '[\s"$`\\]'  # (what bash would split on or expand)
+    _wrong: >-
+      {%- set out = [] -%}
+      {%- if cassandra_jmx_ssl_enabled | bool and cassandra_local_jmx | bool -%}
+      {%-   set _ = out.append('cassandra_jmx_ssl_enabled needs remote JMX (cassandra_local_jmx: false): the TLS lines'
+                               ~ ' are in the remote branch of cassandra-env.sh') -%}
+      {%- endif -%}
+      {%- if cassandra_jmx_ssl_enabled | bool and not (cassandra_jmx_ssl_keystore and cassandra_jmx_ssl_keystore_password) -%}
+      {%-   set _ = out.append('cassandra_jmx_ssl_enabled needs cassandra_jmx_ssl_keystore and'
+                               ~ ' cassandra_jmx_ssl_keystore_password (the certificate JMX serves)') -%}
+      {%- endif -%}
+      {%- if cassandra_jmx_ssl_need_client_auth | bool and not (cassandra_jmx_ssl_enabled | bool
+                                                                and cassandra_jmx_ssl_truststore) -%}
+      {%-   set _ = out.append('cassandra_jmx_ssl_need_client_auth needs cassandra_jmx_ssl_enabled and'
+                               ~ ' cassandra_jmx_ssl_truststore (the certificates it accepts)') -%}
+      {%- endif -%}
+      {%- for name in ['keystore', 'keystore_password', 'truststore', 'truststore_password', 'protocols', 'cipher_suites'] -%}
+      {%-   if lookup('ansible.builtin.vars', 'cassandra_jmx_ssl_' ~ name) | string is search(_unsafe) -%}
+      {%-     set _ = out.append('cassandra_jmx_ssl_' ~ name ~ ': no blank, quote, $, ` or backslash (a word of'
+                                 ~ ' a JVM_OPTS line of cassandra-env.sh)') -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+
 # GossipingPropertyFileSnitch takes the node's dc and rack from the file: other lines would
 # move it (e.g. kept by import_cluster under SimpleSnitch, then the snitch changed)
 - name: Refuse rackdc lines other than the node's dc and rack under a snitch that reads them

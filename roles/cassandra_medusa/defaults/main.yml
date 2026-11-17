@@ -58,7 +58,8 @@ cassandra_medusa_nodetool_password_file: "{{ cassandra_jmx_password_file | defau
 cassandra_medusa_nodetool_host: ""
 cassandra_medusa_nodetool_port: "{{ cassandra_jmx_port | default(7199) }}"
 cassandra_medusa_nodetool_executable: ""
-cassandra_medusa_nodetool_ssl: ""
+# (true with cassandra_config's JMX over TLS: nodetool --ssl, with the service account's nodetool-ssl.properties)
+cassandra_medusa_nodetool_ssl: "{{ true if cassandra_jmx_ssl_enabled | default(false) | string | lower in ['true', 'yes', 'on', '1'] else '' }}"
 cassandra_medusa_sstableloader_bin: ""
 cassandra_medusa_sstableloader_truststore: ""
 cassandra_medusa_sstableloader_truststore_password: ""

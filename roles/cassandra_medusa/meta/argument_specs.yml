@@ -160,9 +160,9 @@ argument_specs:
           - "[cassandra] C(nodetool_executable)."
       cassandra_medusa_nodetool_ssl:
         type: raw
-        default: ""
         description:
           - "[cassandra] C(nodetool_ssl)."
+          - V(true) by default with C(cassandra_jmx_ssl_enabled) (JMX over TLS, C(cassandra_config)), else unset.
       cassandra_medusa_sstableloader_bin:
         type: str
         default: ""

@@ -75,7 +75,7 @@
     # with that node's own JMX port and login (delegate_to keeps this node's variables)
     - name: Check the removal
       ansible.builtin.command: >-
-        nodetool -p {{ _h.cassandra_jmx_port | default(_cassandra_service_jmx.port) }}{{ (' -u ' ~ _u | quote) if _u else '' }}{{ (' -pwf ' ~ _pwf | quote) if _pwf else ((' -pw ' ~ _pw | quote) if _pw else '') }} removenode status
+        nodetool -p {{ _h.cassandra_jmx_port | default(_cassandra_service_jmx.port) }}{{ (' -u ' ~ _u | quote) if _u else '' }}{{ (' -pwf ' ~ _pwf | quote) if _pwf else ((' -pw ' ~ _pw | quote) if _pw else '') }}{{ ' --ssl' if _h.cassandra_jmx_ssl_enabled | default(false) | bool else '' }} removenode status
       delegate_to: "{{ _cassandra_stream_removal_on | default(inventory_hostname, true) }}"
       register: cassandra_stream_removal
       changed_when: false

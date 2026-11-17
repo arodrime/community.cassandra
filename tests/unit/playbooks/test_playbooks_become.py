@@ -14,8 +14,10 @@ import yaml
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 CONTROLLER = ("localhost", "127.0.0.1")
-# root only to read the JMX password file (cassandra_jmx_password_file, the service account's 0400)
-JMX_FILE_ONLY = "{{ cassandra_jmx_password_file | default('', true) | length > 0 }}"
+# root only to read the JMX password file (cassandra_jmx_password_file, the service account's 0400), or for root's
+# nodetool-ssl.properties (JMX over TLS)
+JMX_FILE_ONLY = ("{{ cassandra_jmx_password_file | default('', true) | length > 0"
+                 " or cassandra_jmx_ssl_enabled | default(false) | bool }}")
 LESS = {
     ("status.yml", "Cluster status"): JMX_FILE_ONLY,
     ("health_check.yml", "Cluster health"): JMX_FILE_ONLY,

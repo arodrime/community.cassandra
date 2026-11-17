@@ -1962,3 +1962,64 @@ def test_a_later_stock_line_set_otherwise_is_carried(line):
     assert imported["vars"]["cassandra_jvm11_extra_options"] == [line]
     assert not any(w.startswith(line.split("=")[0].replace("+", "-")) for w in imported["jvm_warnings"])
     assert check(files, "50x", java="11")["differences"] == []
+
+
+# --- remote JMX over TLS ----------------------------------------------------------------------------------------
+
+TLS_LINES = (("-Dcom.sun.management.jmxremote.ssl=true", "-Dcom.sun.management.jmxremote.ssl=true"),
+             ("-Dcom.sun.management.jmxremote.ssl.need.client.auth=true",
+              "-Dcom.sun.management.jmxremote.ssl.need.client.auth=true"),
+             ("-Djavax.net.ssl.keyStore=/path/to/keystore", "-Djavax.net.ssl.keyStore=/srv/zorglub/ks.jks"),
+             ("-Djavax.net.ssl.keyStorePassword=<keystore-password>", "-Djavax.net.ssl.keyStorePassword=s3cret"),
+             ("-Djavax.net.ssl.trustStore=/path/to/truststore", "-Djavax.net.ssl.trustStore=/srv/zorglub/ts.jks"),
+             ("-Dcom.sun.management.jmxremote.ssl.enabled.protocols=<enabled-protocols>",
+              "-Dcom.sun.management.jmxremote.ssl.enabled.protocols=TLSv1.3,TLSv1.2"))
+
+
+def tls_node(series, at_the_end=False):
+    files = seeded(stock(series))
+    text = edit(files["cassandra-env.sh"], "    LOCAL_JMX=yes", "    LOCAL_JMX=no")
+    for old, new in TLS_LINES:
+        if at_the_end:
+            text += 'JVM_OPTS="$JVM_OPTS %s"\n' % new
+        else:
+            text = edit(text, '  #JVM_OPTS="$JVM_OPTS %s"' % old, '  JVM_OPTS="$JVM_OPTS %s"' % new)
+    files["cassandra-env.sh"] = text
+    return files
+
+
+@pytest.mark.parametrize("series", sorted(VERSIONS))
+def test_jmx_over_tls_is_imported(series):
+    files = tls_node(series)
+    imported = cassandra_config_import(files, series, FACTS, "", "/var/lib/cassandra")
+    assert imported["hand_edits"] == []
+    assert dict((k, v) for k, v in imported["vars"].items() if k.startswith("cassandra_jmx_ssl_")) == {
+        "cassandra_jmx_ssl_enabled": True, "cassandra_jmx_ssl_need_client_auth": True,
+        "cassandra_jmx_ssl_keystore": "/srv/zorglub/ks.jks", "cassandra_jmx_ssl_keystore_password": "s3cret",
+        "cassandra_jmx_ssl_truststore": "/srv/zorglub/ts.jks", "cassandra_jmx_ssl_protocols": "TLSv1.3,TLSv1.2"}
+    assert check(files, series)["differences"] == []
+    inventory, layout = import_node(files, series)
+    secrets = [f["content"] for f in inventory if f["path"].endswith("secrets.yml")]
+    assert any("cassandra_jmx_ssl_keystore_password: s3cret" in text for text in secrets)
+    assert not any("s3cret" in f["content"] for f in inventory if not f["path"].endswith("secrets.yml"))
+
+
+def test_jmx_over_tls_lines_at_the_end_are_the_nodes_own():
+    """Not where the stock file has them: they set the JVM's default TLS settings whatever LOCAL_JMX (another client
+    may use them), carried as the node's own lines, no variable read."""
+    files = tls_node("50x", at_the_end=True)
+    imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
+    assert not any(k.startswith("cassandra_jmx_ssl_") for k in imported["vars"])
+    assert imported["hand_edits"] == []
+    inventory, layout = import_node(files, "50x")
+    assert cassandra_import_self_check(inventory, layout["hosts"], "n1", FACTS, files, {}, "/var/lib/cassandra", "17", "",
+                                       {}, inventory_dir="/p/inv")["differences"] == []
+
+
+def test_a_tls_placeholder_uncommented_is_read_as_its_value():
+    files = seeded(stock("50x"))
+    files["cassandra-env.sh"] = edit(files["cassandra-env.sh"], "  #JVM_OPTS=\"$JVM_OPTS -Djavax.net.ssl.keyStore=",
+                                     "  JVM_OPTS=\"$JVM_OPTS -Djavax.net.ssl.keyStore=")
+    imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
+    # (the stock placeholder is the variable's value: the role writes it so)
+    assert imported["vars"].get("cassandra_jmx_ssl_keystore") == "/path/to/keystore"

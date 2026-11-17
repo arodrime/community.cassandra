@@ -146,6 +146,7 @@ class NodeToolCmd(object):
         self.nodetool_flags = module.params['nodetool_flags']
         self.debug = module.params['debug']
         self.cassandra_version = module.params['cassandra_version']
+        self.ssl = module.params.get('ssl')
         if self.host is None:
             self.host = socket.getfqdn()
         # nodetool takes a password only with a user: without one it would run
@@ -179,6 +180,8 @@ class NodeToolCmd(object):
                 cmd += " --password-file {0}".format(self.password_file)
             else:
                 cmd += " --password '{0}'".format(self.password)
+        if self.ssl:  # (bin/nodetool adds the lines of ~/.cassandra/nodetool-ssl.properties to the JVM options)
+            cmd += " --ssl"
         # The thing we want nodetool to execute
         cmd += " {0}".format(sub_command)
         if self.debug:

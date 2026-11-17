@@ -65,3 +65,12 @@ def test_release_series_of_nodetool_version():
     assert release_series("ReleaseVersion: 5.0.7\n") == "5.0"
     assert release_series("Picked up X\nReleaseVersion: 4.1.12") == "4.1"
     assert release_series("ReleaseVersion: 4.0.21-SNAPSHOT") == "4.0"
+
+
+@pytest.mark.parametrize("params, ssl", [({}, False), ({"ssl": False}, False), ({"ssl": True}, True)])
+def test_jmx_over_tls(params, ssl):
+    """--ssl: bin/nodetool adds the options of ~/.cassandra/nodetool-ssl.properties; a module without the option
+    (its params): none."""
+    module = FakeModule(**params)
+    NodeToolCmd(module).nodetool_cmd("status")
+    assert module.commands[0].endswith(" --ssl status") is ssl

@@ -669,6 +669,10 @@ def _without_file_hunks(hand, name):
 # cassandra-env.sh's lines of a variable a node may have switched on at another place than the stock one (below the
 # stock comment, at the end) outside any block, or in the remote JMX branch: bash runs them as well there
 ELSEWHERE = ("-Djava.rmi.server.hostname=",)
+# the options of cassandra-env.sh's remote JMX TLS lines (cassandra_jmx_ssl_*, off by default): read where the stock
+# file has them; set by a node's own lines elsewhere (the JVM's default TLS settings, for another client too), those
+# lines are its own, carried as such
+JMX_TLS_OPTIONS = ("-Dcom.sun.management.jmxremote.ssl", "-Djavax.net.ssl.")
 LOCAL_JMX_TEST = 'if [ "$LOCAL_JMX" = yes ]; then'  # (as env_lines writes it)
 
 
@@ -790,6 +794,8 @@ def _carried(name, series, tpl, lines):
         if f == "cassandra-env.sh.j2" or f.endswith("-server.options.j2"):
             with open(os.path.join(folder, f)) as text:
                 for line in text.read().split("\n"):
+                    if any(o in line for o in JMX_TLS_OPTIONS):
+                        continue
                     if "{{" in line or not line.lstrip().startswith("#"):
                         options.update(_option_key(w.lstrip("#")) for w in re.split(r"[\s\"']+", line)
                                        if w.lstrip("#").startswith(("-X", "-D")))

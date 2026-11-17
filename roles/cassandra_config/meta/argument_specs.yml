@@ -1365,6 +1365,53 @@ argument_specs:
         default: ''
         description:
         - C(java.rmi.server.hostname) for remote JMX. Left commented out when empty.
+      cassandra_jmx_ssl_enabled:
+        type: bool
+        default: false
+        description:
+        - Remote JMX over TLS (C(com.sun.management.jmxremote.ssl=true) in the remote branch of C(cassandra-env.sh)).
+        - Needs O(cassandra_local_jmx=false), O(cassandra_jmx_ssl_keystore) and O(cassandra_jmx_ssl_keystore_password).
+        - Also writes C(~/.cassandra/nodetool-ssl.properties) for root and O(cassandra_user) (mode 0600), which
+          C(nodetool --ssl) and Medusa read; the collection's nodetool calls then use C(--ssl).
+      cassandra_jmx_ssl_keystore:
+        type: str
+        default: ''
+        description:
+        - C(javax.net.ssl.keyStore), a path on the node (not copied by the role). Left commented out when empty.
+      cassandra_jmx_ssl_keystore_password:
+        type: str
+        default: ''
+        description:
+        - C(javax.net.ssl.keyStorePassword). Visible in the JVM's command line, as with stock Cassandra.
+          import_cluster writes it to C(secrets.yml).
+      cassandra_jmx_ssl_truststore:
+        type: str
+        default: ''
+        description:
+        - C(javax.net.ssl.trustStore), a path on the node. Needed with O(cassandra_jmx_ssl_need_client_auth), and by
+          nodetool to trust the node's certificate.
+      cassandra_jmx_ssl_truststore_password:
+        type: str
+        default: ''
+        description:
+        - C(javax.net.ssl.trustStorePassword).
+      cassandra_jmx_ssl_need_client_auth:
+        type: bool
+        default: false
+        description:
+        - C(com.sun.management.jmxremote.ssl.need.client.auth=true). JMX clients then need a certificate the
+          truststore trusts (nodetool shows the node's keystore, in nodetool-ssl.properties).
+      cassandra_jmx_ssl_protocols:
+        type: str
+        default: ''
+        description:
+        - C(com.sun.management.jmxremote.ssl.enabled.protocols), comma-separated (V(TLSv1.3,TLSv1.2)). The JVM's when
+          empty.
+      cassandra_jmx_ssl_cipher_suites:
+        type: str
+        default: ''
+        description:
+        - C(com.sun.management.jmxremote.ssl.enabled.cipher.suites), comma-separated. The JVM's when empty.
       cassandra_jvm_gc:
         type: str
         choices:

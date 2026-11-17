@@ -182,6 +182,50 @@
         import_cluster_given: "{{ ansible_play_hosts_all }}"  # unreachable ones too, for the errors
       run_once: true
 
+    # Remote JMX over TLS (the running JVM's last -Dcom.sun.management.jmxremote.ssl): nodetool needs --ssl, and
+    # the options of root's ~/.cassandra/nodetool-ssl.properties (bin/nodetool adds them), before it is run here
+    - name: Find whether JMX runs over TLS on the given nodes
+      ansible.builtin.shell: |
+        for p in $(pgrep -x java); do
+          tr '\0' '\n' < /proc/$p/cmdline | grep -qx org.apache.cassandra.service.CassandraDaemon || continue
+          echo "ssl=$(tr '\0' '\n' < /proc/$p/cmdline | sed -n 's/^-Dcom[.]sun[.]management[.]jmxremote[.]ssl=//p' | tail -1)"
+          [ -r ~/.cassandra/nodetool-ssl.properties ] && echo "properties=yes"
+          break
+        done
+        exit 0
+      register: import_cluster_jmx_tls
+      changed_when: false
+      failed_when: false
+      check_mode: false  # read only
+
+    - name: Use JMX over TLS where the JVM serves it
+      ansible.builtin.set_fact:
+        cassandra_jmx_ssl_enabled: true
+      when: "'ssl=true' in import_cluster_jmx_tls.stdout_lines | default([])"
+
+    - name: Stop on JMX over TLS without nodetool's settings
+      ansible.builtin.assert:
+        that: _missing | length == 0
+        fail_msg: >-
+          JMX runs over TLS on {{ _missing | join(', ') }} (-Dcom.sun.management.jmxremote.ssl=true), and nodetool
+          finds no ~/.cassandra/nodetool-ssl.properties for root there. Write it (one option per line:
+          -Djavax.net.ssl.trustStore=<a truststore trusting the node's certificate>,
+          -Djavax.net.ssl.trustStorePassword=<its password>, with client authentication -Djavax.net.ssl.keyStore=
+          and -Djavax.net.ssl.keyStorePassword=), then run import_cluster again. Nothing was changed.
+        quiet: true
+      run_once: true
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _missing: >-
+          {%- set out = [] -%}
+          {%- for h in import_cluster_given -%}
+          {%-   set read = (hostvars[h].import_cluster_jmx_tls | default({})).stdout_lines | default([]) -%}
+          {%-   if 'ssl=true' in read and 'properties=yes' not in read -%}
+          {%-     set _ = out.append(h) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
+
     # DataStax Enterprise and ScyllaDB answer nodetool status too: what runs on the given nodes, before the ring
     # is read (files/import_distribution.sh: the java processes' main class, the dse and scylla commands and
     # configuration directories, their versions; nothing started)
@@ -483,10 +527,13 @@
         }
         cfg=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.config=\(file://\)\?##p' | head -1)
         echo "config=$cfg"
+        # (JMX over TLS: nodetool --ssl, for a node of the ring the given nodes did not tell)
+        tls=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's/^-Dcom[.]sun[.]management[.]jmxremote[.]ssl=//p' | tail -1)
+        [ "$tls" = true ] && tls=' --ssl' || tls=
         # its version from its jar on the classpath (apache-cassandra-4.1.5.jar), else nodetool (a JVM to start:
         # seconds per node)
         ver=$(tr '\0' '\n' < /proc/$pid/cmdline | tr ':' '\n' | sed -n 's#^.*/apache-cassandra-\([0-9][0-9.]*[0-9]\)\.jar$#\1#p' | head -1)
-        [ -n "$ver" ] || ver=$({{ _cassandra_service_nodetool }} version | sed -n 's/^ReleaseVersion: //p')
+        [ -n "$ver" ] || ver=$({{ _cassandra_service_nodetool }} version$tls | sed -n 's/^ReleaseVersion: //p')
         echo "version=$ver"
         echo "logdir=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.logdir=##p' | head -1)"
         echo "storagedir=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.storagedir=##p' | head -1)"

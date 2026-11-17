@@ -1,0 +1,13 @@
+-Dcom.sun.management.jmxremote.registry.ssl=true
+-Djavax.net.ssl.trustStore={{ cassandra_jmx_ssl_truststore or cassandra_jmx_ssl_keystore }}
+-Djavax.net.ssl.trustStorePassword={{ cassandra_jmx_ssl_truststore_password if cassandra_jmx_ssl_truststore else cassandra_jmx_ssl_keystore_password }}
+{% if cassandra_jmx_ssl_need_client_auth | bool %}
+-Djavax.net.ssl.keyStore={{ cassandra_jmx_ssl_keystore }}
+-Djavax.net.ssl.keyStorePassword={{ cassandra_jmx_ssl_keystore_password }}
+{% endif %}
+{% if cassandra_jmx_ssl_protocols %}
+-Djavax.rmi.ssl.client.enabledProtocols={{ cassandra_jmx_ssl_protocols }}
+{% endif %}
+{% if cassandra_jmx_ssl_cipher_suites %}
+-Djavax.rmi.ssl.client.enabledCipherSuites={{ cassandra_jmx_ssl_cipher_suites }}
+{% endif %}
