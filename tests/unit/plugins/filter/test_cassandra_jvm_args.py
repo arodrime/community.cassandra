@@ -405,8 +405,8 @@ def test_the_report_says_the_heap_moves_to_jvm_server_options(tmp_path):
     nodes = [dict(imported(files, "50x", "17", launch(files, "17", tmp_path))[2], name="n1", address="10.0.0.1")]
     lines = cassandra_import_report(cassandra_inventory_layout(nodes, "c"), ["c.yml", "."], "report.txt", {}, True,
                                     width=400, in_git=False)
-    assert [line for line in lines if "jvm-server.options, jvm17-server.options rewritten: the heap moves to"
-            " jvm-server.options, the same JVM arguments, nothing else" in line]
+    assert [line for line in lines if "jvm-server.options, jvm17-server.options rewritten, no restart (the same JVM"
+            " arguments; the heap moves to jvm-server.options), nothing else" in line]
     assert not [line for line in lines if "see HAND EDITS" in line]
     # (audit r5) the heap already in jvm-server.options, a JVM_OPTS line moved: it does not move
     files = node_files("50x", both(add_to("jvm-server.options", "-Xms16G\n-Xmx16G"),
@@ -415,7 +415,7 @@ def test_the_report_says_the_heap_moves_to_jvm_server_options(tmp_path):
     assert nodes[0]["vars"]["cassandra_heap_in_jvm_options"] is True
     lines = cassandra_import_report(cassandra_inventory_layout(nodes, "c"), ["c.yml", "."], "report.txt", {}, True,
                                     width=400, in_git=False)
-    assert [line for line in lines if "rewritten: the same JVM arguments, nothing else" in line]
+    assert [line for line in lines if "rewritten, no restart (the same JVM arguments), nothing else" in line]
     assert not [line for line in lines if "the heap moves" in line]
 
 
@@ -877,7 +877,8 @@ def test_report_moved_cleanup_and_next(tmp_path):
     assert lines[at + 2] == "      not read, Java 17 reads jvm17-server.options"
     assert "1 hand edit moved" in lines[0]
     after = lines[next(i for i, line in enumerate(lines) if line.startswith("==== WHAT TO DO NEXT =")):]
-    assert "expected: cassandra-env.sh, jvm17-server.options rewritten: the same JVM arguments, nothing else" in \
+    assert "expected: cassandra-env.sh, jvm17-server.options rewritten, no restart (the same JVM arguments), nothing" \
+        " else" in \
         " ".join(" ".join(x.split()) for x in after)
 
 
@@ -1394,3 +1395,81 @@ def test_the_log_dirs_by_default_render_the_stock_lines(series):
     for log in ("system", "debug"):
         assert "<file>${cassandra.logdir}/%s.log</file>" % log in text
         assert "<fileNamePattern>${cassandra.logdir}/%s.log.%%d{yyyy-MM-dd}.%%i.zip</fileNamePattern>" % log in text
+
+
+# apply_config's proof that the files it writes change nothing for the running Cassandra (no restart for them),
+# the self-check's own: (2026-11-17) the owner's case after an import with rc12, 12 nodes on Java 17: cassandra-env.sh
+# laid out otherwise, the heap moved from jvm17-server.options to jvm-server.options, jvm11-server.options' stock
+# lines put back (Java 17 does not read it), logback.xml's audit file under ${cassandra.logdir} where the node writes
+# /var/log/cassandra (the log dir), a stray text of it removed
+def audit_dir_written_out(files):
+    from .test_cassandra_import_logback import audit_on, file_auditing
+    file_auditing(files, "50x")
+    files["logback.xml"] = audit_on(files["logback.xml"])
+    for tag in ("<file>", "<fileNamePattern>"):
+        files["logback.xml"] = files["logback.xml"].replace("%s${cassandra.logdir}/audit/" % tag,
+                                                            "%s/var/log/cassandra/audit/" % tag)
+    files["logback.xml"] = edit(files["logback.xml"], "</root>", "</root> >")
+
+
+OWNERS_CASE = both(remote_jmx_by_hand, heap_in_jvm17, jvm11_edited, audit_dir_written_out)
+STORAGE = "/var/lib/cassandra"
+
+
+def written(tmp_path, node_edit=OWNERS_CASE, rc12=True):
+    """(the node's files, the files apply_config writes, the ones it changes, the running JVM's arguments)."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import cassandra_same_settings
+    files = node_files("50x", node_edit)
+    cmdline = running(files, tmp_path)
+    inventory, layout, dummy = imported(files, "50x", "17", cmdline)
+    variables = cassandra_inventory_host_vars(inventory, layout["hosts"], "n1")
+    rendered, errors, dummy, dummy2 = role_render(variables, FACTS, files)
+    assert errors == []
+    if rc12:  # (an inventory an rc12 import wrote: the audit dir not read, the role's own, the stray text gone)
+        rendered["logback.xml"] = files["logback.xml"].replace("/var/log/cassandra/audit/", "${cassandra.logdir}/audit/") \
+            .replace("</root> >", "</root>")
+    changed = [f for f in rendered if f in files and rendered[f] != files[f]
+               and not cassandra_same_settings(files[f], rendered[f], f, STORAGE)]
+    return files, rendered, changed, cmdline
+
+
+def no_effect(changed, files, rendered, cmdline, java="17", environ=None, newer=None):
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import \
+        cassandra_apply_config_no_effect
+    return cassandra_apply_config_no_effect(changed, files, rendered, cmdline, "50x", java, environ or {}, newer or [])
+
+
+def test_the_owners_case_is_proven_no_restart(tmp_path):
+    files, rendered, changed, cmdline = written(tmp_path)
+    assert sorted(changed) == ["cassandra-env.sh", "jvm-server.options", "jvm11-server.options", "jvm17-server.options",
+                               "logback.xml"]
+    assert no_effect(changed, files, rendered, cmdline) == [
+        "the same JVM arguments", "jvm11-server.options not read by Java 17", "logback.xml read again by logback (scan)"]
+
+
+def test_a_real_heap_change_restarts(tmp_path):
+    files, rendered, changed, cmdline = written(tmp_path)
+    rendered = dict(rendered, **{"jvm-server.options": rendered["jvm-server.options"].replace("-Xmx23552m", "-Xmx16G")})
+    assert "-Xmx16G" in rendered["jvm-server.options"]
+    assert no_effect(changed, files, rendered, cmdline) == []
+
+
+def test_logback_without_scan_restarts(tmp_path):
+    files, rendered, changed, cmdline = written(tmp_path)
+    unscanned = dict(files, **{"logback.xml": files["logback.xml"].replace(' scan="true"', "")})
+    assert no_effect(changed, unscanned, rendered, cmdline) == []
+    # the new file without it: the same
+    assert no_effect(changed, files, dict(rendered, **{"logback.xml": rendered["logback.xml"].replace(' scan="true"', "")}),
+                     cmdline) == []
+
+
+@pytest.mark.parametrize("java, environ, newer, more", [
+    ("", None, None, []),  # the running Java not known: which options file it reads is not
+    ("17", {"JVM_EXTRA_OPTS": "-Dx=1"}, None, []),  # the environment adds options
+    ("17", None, ["jvm-server.options"], []),  # written since that JVM started: its arguments not theirs
+    ("17", None, None, ["cassandra.yaml"]),  # a file no proof covers
+])
+def test_anything_unproven_restarts(tmp_path, java, environ, newer, more):
+    files, rendered, changed, cmdline = written(tmp_path)
+    assert no_effect(changed + more, files, rendered, cmdline, java, environ, newer) == []
+    assert no_effect(changed, files, rendered, "", java="17") == []  # no arguments read

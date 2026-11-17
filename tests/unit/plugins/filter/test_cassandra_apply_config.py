@@ -520,7 +520,8 @@ def test_rows_too_wide_have_their_nodes_under_the_node_value_every_row_the_same(
     # a list of nodes wider than the room: cut after its commas, never inside a name
     many = ["cassandra-db-node-%d.example.net" % i for i in (1, 3, 5, 7)]
     lines = cassandra_apply_config_diff([{"name": n, "items": [], "os": [{"item": "read_ahead_kb sdb", "before": "4096",
-                                                                          "after": "4"}]} for n in many], width=60)
+                                                                          "after": "4"}]} for n in many]
+                                        + [{"name": "cassandra-db-node-9.example.net", "items": []}], width=60)
     assert lines[1] == "OS settings  on cassandra-db-node-1.example.net," and "  read-ahead sdb  4096 KB  4 KB" in lines
     assert all(len(line) <= 60 for line in lines) and all(n in "\n".join(lines) for n in many), lines
 
@@ -665,3 +666,31 @@ def test_a_long_plan_row_goes_on_under_its_own_column():
         "h-n1        drain and stop Cassandra, start chronyd, wait up to 2m for clock",
         "            sync, start Cassandra",
         "h-n2, h-n3  up to date"]
+
+
+def test_every_file_on_the_same_nodes_says_them_once(tmp_path):
+    # (2026-11-17, the owner's --check on 12 nodes) the node list said once above the table, "all 12 nodes" for the
+    # whole run (more than 5 nodes: a list counted otherwise), not on each file's row
+    names = ["h-n%d" % i for i in range(1, 13)]
+    for n in names:
+        (tmp_path / n).mkdir()
+    same = [Node(tmp_path / n, n, files={"jvm-server.options": JVM + "-Xmx8G\n", "cassandra-env.sh": ENV + "# x\n"})
+            for n in names]
+    lines = view(*same)
+    assert lines[0] == "on all 12 nodes:" and lines[1].startswith("Item")
+    assert "cassandra-env.sh" in lines and "jvm-server.options" in lines  # (the file rows alone)
+    assert not [line for line in lines[1:] if "h-n" in line or "12 nodes" in line]
+    # one node apart: each file on its own nodes, as before
+    other = Node(tmp_path / "h-n1", "h-n1", files={"jvm-server.options": JVM + "-Xmx8G\n"})
+    lines = view(other, *same[1:])
+    assert not lines[0].startswith("on ") and [line for line in lines if "cassandra-env.sh  on " in line]
+
+
+def test_an_item_too_long_has_its_values_on_the_next_line(tmp_path):
+    long_option = "--add-exports java.base/jdk.internal.util=ALL-UNNAMED"
+    edited = JVM.replace("-Xss256k", "-Xss512k") + long_option + "\n"
+    lines = cassandra_apply_config_diff([Node(tmp_path, "node1", files={"jvm-server.options": edited}).data()], width=50)
+    at = next((i for i, line in enumerate(lines) if line.strip() == long_option), None)
+    assert at is not None, lines
+    assert lines[at + 1].split() == ["present", "absent", "node1"] or lines[at + 1].split()[:2] == ["present", "absent"]
+    assert all(len(line) <= 50 for line in lines if long_option not in line), lines

@@ -1695,6 +1695,22 @@ def _versions_lines(report):
 
 # --- the head, what to do next, the details --------------------------------------------------------------------
 
+# a self-check note of a JVM options file the running Java does not read ("jvm11-server.options: ... (no effect: Java
+# 17 does not read this file; ...)"): apply_config writes it, no restart for it
+_UNREAD_JVM_NOTE = re.compile(r"^(jvm\d+-server\.options): .*\(no effect: Java \d+ does not read this file;")
+
+
+def _jvm_rewrites(report, self_check):
+    """The config files the next apply_config rewrites with the same JVM arguments: the JVM's files the import
+    proved give the same arguments (the nodes' rewritten), the options files their Java does not read -> sorted
+    [file]. apply_config makes the same proof before it writes them, and restarts no node for them
+    (cassandra_apply_config_no_effect)."""
+    files = set(f for n in report.read for f in n.get("rewritten") or [])
+    for check in (self_check or {}).values():
+        files.update(m.group(1) for m in (_UNREAD_JVM_NOTE.match(note) for note in check.get("notes") or []) if m)
+    return sorted(files)
+
+
 # the head's answer to "is Ansible in sync with the cluster?" (the ops callback colours it: yes green, not all
 # verified orange, no red), within 79 columns
 SYNC = "in sync with Ansible: "
@@ -1705,7 +1721,7 @@ def _sync_lines(report, data, self_check, self_check_error, moves):
     """Whether applying the inventory changes the cluster: no (the self-check's differences: how many settings on
     how many nodes), not all verified (nodes not read, parts or files kept by hand, a self-check that did not run:
     what, on how many nodes), else yes, with what the next apply_config rewrites with no effect on the values (the
-    files the JVM arguments move in restart the nodes: apply_config restarts for a config file it writes) -> [line]."""
+    JVM's files with the same arguments: no restart, apply_config proves it again before writing them) -> [line]."""
     def said(text):
         return fill_text(SYNC + text, min(report.width, SYNC_WIDTH), "  ", "  ")
     differing = dict((name, len(check.get("differences") or [])) for name, check in (self_check or {}).items()
@@ -1732,15 +1748,14 @@ def _sync_lines(report, data, self_check, self_check_error, moves):
                                                              unbreakable(out.plural(len(members), "node"))))
     if gaps:
         return said("not all verified; " + "; ".join(gaps))
-    restarts = [n["name"] for n in report.read if n.get("rewritten")]
     others = sorted(set(note[:-len(NO_EFFECT_NOTE)].split(": ")[1] if note.count(": ") > 1
                         else note[:-len(NO_EFFECT_NOTE)]
                         for check in (self_check or {}).values() for note in check.get("notes") or []
                         if note.endswith(NO_EFFECT_NOTE)))
     rewrites = []
-    if moves:
-        rewrites.append("%s rewritten (the same JVM arguments; Cassandra restarts on %s)"
-                        % (out.plural(len(moves), "file"), unbreakable(out.plural(len(restarts), "node"))))
+    files = _jvm_rewrites(report, self_check)
+    if files:
+        rewrites.append("%s rewritten, no restart (the same JVM arguments)" % out.plural(len(files), "file"))
     if others:
         rewrites.append("%s rewritten with no effect" % out.plural(len(others), "other item" if moves else "item"))
     return said("yes" + ("; the next apply_config: " + ", ".join(rewrites) if rewrites else ""))
@@ -1808,21 +1823,20 @@ WORDS_USED = (
 REWRITES = "APPLY_CONFIG WILL REWRITE (no effect)"
 
 
-def _apply_config_expects(moves, heap_moved, rewrites):
-    """What apply_config --check --diff shows on the nodes imported: the files the JVM arguments move in (moves; the
-    heap among them: heap_moved), the rewrites with no effect (rewrites) -> text."""
-    if not moves:
-        return "only the rewrites under %s" % REWRITES if rewrites else "nothing to apply"
-    text = "%s rewritten: " % ", ".join(moves)
-    if heap_moved:
-        text += "the heap moves to jvm-server.options, "
-    text += "the same JVM arguments, "
+def _apply_config_expects(files, heap_moved, rewrites):
+    """What apply_config --check --diff shows on the nodes imported: the JVM's files it rewrites with the same
+    arguments, no restart (files, _jvm_rewrites'; the heap moved among them: heap_moved), the rewrites with no effect
+    (rewrites) -> text."""
+    if not files:
+        return "only the rewrites under %s" % REWRITES if rewrites else "every node up to date"
+    text = "%s rewritten, no restart (the same JVM arguments%s)" % (
+        ", ".join(files), "; the heap moves to jvm-server.options" if heap_moved else "")
     if rewrites:
-        return text + "and the rewrites under %s" % REWRITES
-    return text + "nothing else"
+        return text + ", and the rewrites under %s" % REWRITES
+    return text + ", nothing else"
 
 
-def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, changes, changed, removed, same, moves,
+def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, changes, changed, removed, same, jvm_files,
                 inventory, hosts, rewrites=False):
     """WHAT TO DO NEXT: the next steps, numbered, each command on a line of its own under its step, what it should
     show under it -> [line]. "none of it stops you" only when the self-check passed."""
@@ -1847,7 +1861,7 @@ def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, ch
         topology = out.command("topology", inventory=inventory or None, hosts=hosts or None, extra=["--check"],
                                cwd=report.cwd)
         items.append(("Check that the inventory changes nothing on the nodes (both commands only look):",
-                      [(apply_check, _apply_config_expects(moves, bool(heap_moved), rewrites)),
+                      [(apply_check, _apply_config_expects(jvm_files, bool(heap_moved), rewrites)),
                        (topology, "nothing to do")]))
     if not items:
         items.append(("Nothing: the inventory matches the nodes.", []))
@@ -2029,7 +2043,8 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     if UNREAD in blocks:
         lines += ["", "NODES NOT READ"] + blocks[UNREAD]
     lines += [""] + _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, changes, changed,
-                                removed, same, moves, inventory, hosts, rewrites=bool(rewrites))
+                                removed, same, _jvm_rewrites(report, self_check), inventory, hosts,
+                                rewrites=bool(rewrites))
     details_file = re.sub(r"\.txt$", "", report_file) + ".details.txt"
     if screen:
         lines += ["", "details: %s" % out.path_from(details_file, cwd),

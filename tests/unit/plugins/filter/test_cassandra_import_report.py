@@ -110,7 +110,7 @@ def test_clean_import_nothing_to_act_on():
     assert after[1:] == [
         "  2. Check that the inventory changes nothing on the nodes (both commands only look):",
         "       ansible-playbook community.cassandra.apply_config --check --diff",
-        "     expected:  nothing to apply",
+        "     expected:  every node up to date",
         "       ansible-playbook community.cassandra.topology --check",
         "     expected:  nothing to do"]
     lines = report([node(1)], inventory="/p/inventories", hosts="my_cluster", width=300)
@@ -1368,11 +1368,11 @@ def test_files_written_with_no_effect_listed_apart_once_with_their_nodes():
     # the next step does not promise "nothing to apply": apply_config --check shows them
     steps = " ".join(" ".join(line.split()) for line in section(lines, "WHAT TO DO NEXT"))
     assert "expected: only the rewrites under APPLY_CONFIG WILL REWRITE (no effect)" in steps
-    assert "expected: nothing to apply" not in steps
+    assert "expected: every node up to date" not in steps
     # none: no such section, nothing to apply
     lines = report([node(1)], details=False)
     assert "APPLY_CONFIG WILL REWRITE (no effect)" not in lines
-    assert "expected: nothing to apply" in " ".join(" ".join(line.split()) for line in lines)
+    assert "expected: every node up to date" in " ".join(" ".join(line.split()) for line in lines)
 
 
 def test_next_step_with_files_moved_and_rewrites_names_the_section():
@@ -1383,8 +1383,8 @@ def test_next_step_with_files_moved_and_rewrites_names_the_section():
                    details=False)
     assert "APPLY_CONFIG WILL REWRITE (no effect)" in lines
     steps = " ".join(" ".join(line.split()) for line in section(lines, "WHAT TO DO NEXT"))
-    assert ("expected: cassandra-env.sh rewritten: the same JVM arguments, and the rewrites under APPLY_CONFIG WILL"
-            " REWRITE (no effect) ansible-playbook") in steps
+    assert ("expected: cassandra-env.sh rewritten, no restart (the same JVM arguments), and the rewrites under"
+            " APPLY_CONFIG WILL REWRITE (no effect) ansible-playbook") in steps
 
 
 def test_parts_kept_said_in_one_sentence():
@@ -1488,17 +1488,18 @@ def sync(lines):
     return " ".join(line.strip() for line in said)
 
 
-def test_in_sync_yes_with_the_rewrites_and_the_restarts_they_bring():
+def test_in_sync_yes_with_the_rewrites_and_no_restart_for_them():
     assert sync(report([node(i) for i in range(1, 4)])) == "in sync with Ansible: yes"
-    # the JVM arguments moved into the collection's layout: apply_config writes the files, restarts for them
-    # (a config file written: a restart, playbooks/apply_config.yml _then); OS rewrites with no effect said apart
+    # the JVM arguments moved into the collection's layout: apply_config writes the files with the same JVM arguments
+    # (cassandra_apply_config_no_effect: no restart); OS rewrites with no effect said apart
     moved = [node(i, rewritten=["cassandra-env.sh", "jvm-server.options"]) for i in range(1, 4)]
     os_note = "cassandra_linux: /etc/systemd/system/disable-thp.service: another content -> the role's" \
         ", no effect (the node keeps the values it has now)"
     lines = report(moved, self_check={"node%d" % i: {"differences": [], "notes": [os_note]} for i in range(1, 4)},
                    screen=True, width=200)
-    assert sync(lines) == ("in sync with Ansible: yes; the next apply_config: 2 files rewritten (the same JVM"
-                           " arguments; Cassandra restarts on 3 nodes), 1 other item rewritten with no effect")
+    # (apply_config proves it again before it writes them, and restarts no node for them)
+    assert sync(lines) == ("in sync with Ansible: yes; the next apply_config: 2 files rewritten, no restart (the"
+                           " same JVM arguments), 1 other item rewritten with no effect")
     assert lines[1].startswith(SYNC + "yes; the next apply_config: 2 files rewritten")
 
 

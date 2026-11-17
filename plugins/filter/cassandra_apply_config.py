@@ -36,6 +36,7 @@ import textwrap
 from collections import OrderedDict
 
 from ansible.module_utils.parsing.convert_bool import boolean
+from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import terminal_width
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import stat_fields
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import DEFAULT_WHEN_ABSENT, BOOLS
@@ -630,6 +631,8 @@ def _named(entries, all_nodes, width=None):
     groups = out.node_groups([r[2] for r in rows], all_nodes)
 
     def named(names):
+        if not groups and len(all_nodes) > 5 and sorted(set(names)) == sorted(set(all_nodes)):
+            return "all %d nodes" % len(all_nodes)  # (the whole run, its list said nowhere else)
         return out.who(names, all_nodes, groups) if groups else out.nodes(names)
 
     # shown: a row of cells, a file's row (its nodes in the last cell when all its settings change on the same
@@ -670,6 +673,11 @@ def _table(cells, shown, width):
     next line, under the node's value, cut after a comma when longer than the room. A value is never cut."""
     head = list(TABLE_HEAD)
     columns = [max(len(c[i]) for c in cells + [head]) for i in range(3)]
+    # an item too long for the Node and Inventory columns to fit beside it: its values on the next line, under them
+    # (the Item column as wide as the others leave, a value never cut)
+    room = (width - columns[1] - columns[2] - 4) if width else 0
+    if width and columns[0] > room >= len(head[0]) and any(len(c[0]) <= room for c in cells):
+        columns[0] = max([len(head[0])] + [len(c[0]) for c in cells if len(c[0]) <= room])
     # every file's settings on the same nodes: no Nodes column, each file's nodes on its row ("OS settings  on h-n1")
     by_file = not any(c[3] for c in cells)
     wide = sum(columns) + 4 + (0 if by_file else 2 + max(len(c[3]) for c in cells + [head]))
@@ -687,12 +695,22 @@ def _table(cells, shown, width):
             if not under:
                 return [(c[0].ljust(max(sum(columns) + 6, len(c[0]) + 2)) + c[3]).rstrip()]
             return [c[0]] + nodes_at(columns[0] + 2, c[3])
+        if len(c[0]) > columns[0]:  # (its values on the next line, in their columns)
+            values = (" " * (columns[0] + 2) + "  ".join(c[i].ljust(columns[i]) for i in (1, 2))).rstrip()
+            return [c[0], values] + (nodes_at(columns[0] + 2, c[3]) if under else
+                                     ([" " * (columns[0] + 2) + c[3]] if c[3] else []))
         text = "  ".join(c[i].ljust(columns[i]) for i in range(3))
         if under:
             return [text.rstrip()] + nodes_at(columns[0] + 2, c[3])
         return [(text + "  " + c[3]).rstrip()]
     lines = [] if not cells else ["  ".join(head[i].ljust(columns[i]) for i in range(3)).rstrip() if under or by_file
                                   else "  ".join(head[i].ljust(columns[i]) for i in range(3)) + "  " + head[3]]
+    # every file on the same nodes: said once, above the table, not on each file's row
+    files = [c for c in shown if not isinstance(c, str) and not c[1] and not c[2] and not c[0].startswith(" ")]
+    common = set(c[3] for c in files)
+    if by_file and len(files) > 1 and len(common) == 1 and next(iter(common)).startswith("all "):
+        lines = ["on %s:" % common.pop()] + lines
+        shown = [[c[0], "", "", ""] if any(c is f for f in files) else c for c in shown]
     for item in shown:
         lines += [(item,)] if isinstance(item, str) else row(item)
     return lines
@@ -720,8 +738,14 @@ def _outcome(node, check, plan):
         # a file written back as the running Cassandra started with it: its note says why, not "an owner... only"
         written_back = any(_WRITTEN_BACK in str(n) for n in node.get("notes") or [])
         kept_running = node.get("kept_running") if then == "none" else None  # its own reasons, when given
+        # the files written proven to change nothing for the running Cassandra: said in the --check recap and in the
+        # recap of a real run too
+        proven = [r for r in kept_running or [] if r == SAME_JVM_ARGUMENTS or " not read by Java " in r
+                  or r.startswith("logback.xml read again")]
         if plan and kept_running:
             text += " (%s)" % "; ".join(kept_running)
+        elif proven:
+            text = ("would apply, no restart" if check else "applied, not restarted") + " (%s)" % "; ".join(proven)
         elif plan and then == "write" and node.get("unit_failed"):  # not stopped on purpose: this run does not start it
             text += " (its cassandra unit failed: left as it is)"
         elif plan and then in _WHY and not (then == "none" and written_back):
@@ -765,7 +789,10 @@ def _grouped(nodes, check=False, plan=False, width=None):
             rank[key] = _RANK.get(word, len(_RANK))
         groups[key].append(str(node["name"]))
     lines = []
-    names = dict((key, out.nodes(groups[key])) for key in order)
+    every = [str(n["name"]) for n in nodes or []]
+    # (every node of the run, more than 5 (a list counted then): "all 12 nodes", its list said nowhere else)
+    names = dict((key, "all %d nodes" % len(every) if len(every) > 5 and sorted(groups[key]) == sorted(every)
+                  else out.nodes(groups[key])) for key in order)
     column = max(len(n) for n in names.values()) if names else 0
     column = column if column <= 30 else 0  # (the outcomes in a column, unless a list is long)
     for key in sorted(order, key=lambda k: rank[k]):  # the nodes changed first, then failed, then the others
@@ -944,6 +971,61 @@ def cassandra_apply_config_down_ok(nodes, hostvars, host, then, check, batch=Fal
     return out if batch or then != "restart" or check else []
 
 
+# logback.xml read again by logback itself while Cassandra runs: scan="true" on <configuration>
+_SCAN = re.compile(r"<configuration\b[^>]*\sscan\s*=\s*[\"']true[\"']", re.I)
+# what the unit (or the shell that started it) gives cassandra-env.sh to add to the JVM's options
+_JVM_ENV = ("JVM_OPTS", "JVM_EXTRA_OPTS", "MX4J_ADDRESS", "MX4J_PORT")
+# the reason said for a node not restarted, its JVM getting the same arguments from the files written
+SAME_JVM_ARGUMENTS = "the same JVM arguments"
+
+
+def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", java="", environ=None, newer=None):
+    """Whether the running Cassandra needs no restart for the files apply_config writes, proven file by file, else
+    a restart as for any change. changed: the files written; live, new: {file: text} as the node has them and as
+    written (every file of the JVM's: cassandra-env.sh, jvm-server.options and the one of its Java, changed or not);
+    cmdline: the running JVM's /proc/<pid>/cmdline; series; java: the version of the running Java; environ: {name:
+    value}; newer: the files written since that
+    JVM started (its arguments are then not known to be theirs). environ: the environment its unit gives it (systemctl
+    show -p Environment, as the import reads it). The proofs, the import self-check's: the JVM files
+    give the JVM the same arguments (bin/cassandra emulated, cassandra_jvm_args_same, against the running JVM's);
+    a jvm<N>-server.options the running Java does not read; logback.xml read again by logback (scan="true" in the
+    node's file and in the new one). Anything else, or a proof that cannot be made (no Java, no cmdline, an
+    environment that adds options): [] (a restart) -> [the reasons, said in the plan] when proven."""
+    changed = [str(f) for f in changed or []]
+    live, new, environ = dict(live or {}), dict(new or {}), dict(environ or {})
+    if not changed:
+        return []
+    read = jvm_args.options_file(series, java) if java else None
+    reasons, jvm_files = [], []
+    for name in changed:
+        other_java = re.match(r"^jvm(\d+)-server\.options$", name)
+        if name == "logback.xml":
+            if not (_SCAN.search(live.get(name) or "") and _SCAN.search(new.get(name) or "")):
+                return []
+            reasons.append("logback.xml read again by logback (scan)")
+        elif name in (jvm_args.ENV, jvm_args.COMMON) or other_java:
+            if not read:
+                return []  # (the Java not known: which file it reads is not)
+            if other_java and name != read:
+                reasons.append("%s not read by Java %s" % (name, jvm_args.jvm.java_major(java)))
+            else:
+                jvm_files.append(name)
+        else:
+            return []
+    if jvm_files:
+        group = [jvm_args.ENV, jvm_args.COMMON, read]
+        if not cmdline or any(environ.get(k) for k in _JVM_ENV) or set(newer or []) & set(group) \
+                or not all(f in live and (f in new or f not in changed) for f in group):
+            return []
+        role = dict((f, new[f] if f in changed else live[f]) for f in group)
+        same, dummy = jvm_args.cassandra_jvm_args_same(cmdline, dict((f, live[f]) for f in group), role, series,
+                                                       java, environ, environ)
+        if not same:
+            return []
+        reasons.insert(0, SAME_JVM_ARGUMENTS)
+    return reasons
+
+
 class FilterModule(object):
     def filters(self):
         return {
@@ -953,4 +1035,5 @@ class FilterModule(object):
             "cassandra_apply_config_warnings": cassandra_apply_config_warnings,
             "cassandra_apply_config_down_ok": cassandra_apply_config_down_ok,
             "cassandra_apply_config_no_return": cassandra_apply_config_no_return,
+            "cassandra_apply_config_no_effect": cassandra_apply_config_no_effect,
         }

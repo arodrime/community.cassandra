@@ -176,6 +176,36 @@
       failed_when: false
       check_mode: false  # reads only
 
+    # The proof that the files to write change nothing for the running Cassandra, so that it is not restarted for
+    # them (the import self-check's, cassandra_apply_config_no_effect): its arguments, the version of the Java it
+    # runs, the environment its unit gives it (what cassandra-env.sh reads). Read only when every file to write
+    # is one such a proof covers (cassandra-env.sh, the JVM options files, logback.xml); anything else restarts
+    - name: Read the running JVM's arguments, its Java and the environment of its unit
+      ansible.builtin.shell: |
+        [ -r "/proc/$CASSANDRA_PID/cmdline" ] || exit 0
+        echo "cmdline=$(base64 -w0 < "/proc/$CASSANDRA_PID/cmdline")"
+        echo "java=$("/proc/$CASSANDRA_PID/exe" -XshowSettings:properties -version 2>&1 \
+          | sed -n 's/^ *java.specification.version = //p' | head -1)"
+        # (the unit's, as the import reads it: the JVM's own environment has the JVM_OPTS bin/cassandra exports)
+        echo "unitenv=$(systemctl show cassandra -p Environment --value 2>/dev/null)"
+        exit 0
+      environment:
+        CASSANDRA_PID: "{{ cassandra_jvm.pid }}"
+      register: cassandra_apply_config_jvm_read
+      changed_when: false
+      failed_when: false  # not read: no proof, a restart as for any change
+      check_mode: false  # reads only
+      no_log: true  # its arguments and environment can hold passwords
+      when:
+        - cassandra_jvm.pid is defined
+        - _cassandra_preflight_running | default(true) | bool
+        - _files | length > 0
+        - _files | reject('in', _provable) | list | length == 0
+      vars:
+        _files: "{{ _cassandra_config_changes | default([]) }}"
+        _provable: [cassandra-env.sh, jvm-server.options, jvm8-server.options, jvm11-server.options, jvm17-server.options,
+                    logback.xml]
+
     # (not under --check) a mark left by a run stopped after the start
     - name: Forget a mark of a restart done
       ansible.builtin.file:
@@ -205,6 +235,13 @@
           {{ {'files': _as_started, 'pid': cassandra_jvm.pid, 'start': cassandra_jvm.start,
               'sha1': dict(_as_started | zip(_as_started | map('extract', _cassandra_config_new) | map('hash', 'sha1')))}
              if _as_started else {} }}
+        # written with no restart, proven to change nothing for the running Cassandra (_no_effect): checked again
+        # before the write (that JVM still runs) and after it (the files as planned), then recorded as the ones it
+        # runs with (action_apply_config.yml), so that no restart is told pending for them later
+        cassandra_apply_config_proven: >-
+          {{ {'files': _proven, 'pid': cassandra_jvm.pid, 'start': cassandra_jvm.start, 'why': _no_effect,
+              'sha1': dict(_proven | zip(_proven | map('extract', _cassandra_config_new) | map('hash', 'sha1')))}
+             if _proven and _then == 'none' else {} }}
         # the OS settings that differ (applied live, on their own: no restart for them), and those applied live
         # (not the time sync of a running Cassandra, nor what the role leaves to the restart: in its restart window)
         cassandra_apply_config_os: "{{ _os | reject('in', _no_unit) | list }}"
@@ -285,7 +322,7 @@
           {%- if 'config' in kinds -%}{%- set _ = out.append('the exporter rules: reloaded at its next scrape') -%}{%- endif -%}
           {%- if 'jar' in kinds -%}{%- set _ = out.append('the exporter jar: loaded at the next start') -%}{%- endif -%}
           {%- if 'removed' in kinds -%}{%- set _ = out.append('the exporter files removed: the running Cassandra keeps the ones it opened until its next restart') -%}{%- endif -%}
-          {{ out if _jmx or _exporter else [] }}
+          {{ (out if _jmx or _exporter else []) + (_no_effect if _then == 'none' else []) }}
       vars:
         _files: "{{ _cassandra_config_changes | default([]) }}"
         _keep_missing: "{{ _cassandra_config_keep_missing | default([]) }}"
@@ -335,6 +372,23 @@
         _perms: "{{ _cassandra_config_perm_changes | default([]) | map(attribute='item') | map('regex_replace', ' [(].*$', '') | map('basename') | list }}"
         _dirs: "{{ _cassandra_config_dir_changes | default([]) | map(attribute='item') | map('regex_replace', ' [(].*$', '') | list }}"
         _running: "{{ _cassandra_preflight_running | default(true) | bool or cassandra_jvm.pid is defined }}"
+        # the files to write proven to change nothing for the running Cassandra: [the reasons] (none: a restart)
+        _jvm_read: "{{ dict(cassandra_apply_config_jvm_read.stdout_lines | default([]) | select('search', '=') | map('split', '=', 1)) }}"
+        _no_effect: >-
+          {%- set live = {} -%}
+          {%- set compared = _cassandra_config_compared | default({}) -%}
+          {%- for f in _cassandra_config_new | default({}) -%}
+          {%-   if f in compared and compared[f] is not none -%}{%- set _ = live.update({f: compared[f] | b64decode}) -%}
+          {%-   elif f not in compared and f not in _files -%}{%- set _ = live.update({f: _cassandra_config_new[f]}) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {%- set env = _jvm_read.unitenv | default('') | community.cassandra.cassandra_unit_environment -%}
+          {{ _files | reject('in', _as_started) | list | community.cassandra.cassandra_apply_config_no_effect(
+               live, _cassandra_config_new | default({}), _jvm_read.cmdline | default('') | b64decode,
+               cassandra_version | default(''), _jvm_read.java | default(''), env,
+               cassandra_config_newer_files | default([]) + cassandra_config_unknown_files | default([]))
+             if _jvm_read.cmdline | default('') and _running | bool else [] }}
+        _proven: "{{ _files | reject('in', _as_started) | list if _no_effect else [] }}"
         # a node not running reads its files when it starts: pending only under a resumed run, taken for the
         # node the interrupted run stopped (then started)
         _same_newer: "{{ cassandra_config_newer_files | default([]) | select('in', _same) | list }}"
@@ -376,17 +430,17 @@
         # start); not running: start (_starts: its unit failed and its config is written, e.g. it was unreadable;
         # or the node a resumed run stopped), write (stopped on purpose, or failed with nothing to write: left as it is)
         _then: >-
-          {{ ('restart' if _files | reject('in', _as_started) | list | length > 0 or _rights | length > 0 or _pending | bool
+          {{ ('restart' if _files | reject('in', _as_started + _proven) | list | length > 0 or _rights | length > 0 or _pending | bool
                             or _timesync | bool or _disks_window | length > 0 or _exporter_restart | bool
               else 'none') if _running | bool
              else 'start' if _starts | bool else 'write' }}
         # a restart for a file read at start alone (no setting of the config changes)
         _restart_why: >-
           {{ 'jmxremote.access: read at start'
-             if _running | bool and _rights | length > 0 and _files | reject('in', _as_started) | list | length == 0
+             if _running | bool and _rights | length > 0 and _files | reject('in', _as_started + _proven) | list | length == 0
                 and not _pending | bool
              else 'the exporter HTTPS, authentication or openTelemetry: read at start'
-             if _running | bool and _exporter_restart | bool and _files | reject('in', _as_started) | list | length == 0
+             if _running | bool and _exporter_restart | bool and _files | reject('in', _as_started + _proven) | list | length == 0
                 and not _pending | bool else '' }}
         # what a real run does, in its order (action_apply_config.yml, action_restart.yml, os_window.yml, the
         # cassandra_linux tasks it runs there): the config written; drained (as action_restart.yml decides) and
@@ -721,7 +775,8 @@
           {%- set n = _todo | length -%}
           {%- set count = n ~ (' node' if n == 1 else ' nodes') -%}
           {%- set ask = [] -%}
-          {%- for nodes, r, s in [(_todo | community.cassandra.cassandra_node_list, _restarts | community.cassandra.cassandra_node_list,
+          {%- set every = 'all ' ~ n ~ ' nodes' if n > 5 and n == ansible_play_hosts | length else '' -%}
+          {%- for nodes, r, s in [(every or _todo | community.cassandra.cassandra_node_list, _restarts | community.cassandra.cassandra_node_list,
                                    _starts | community.cassandra.cassandra_node_list),
                                   (count, _restarts | length, _starts | length), (count, _restarts | length, '')] -%}
           {%-   if _restarts | length == n -%}{%- set q = 'Apply changes and restart Cassandra on ' ~ nodes ~ '?' -%}
@@ -1085,6 +1140,7 @@
                                     'done': v.cassandra_op_done | default(false), 'then': v.cassandra_apply_config_then | default(''),
                                     'result': v.cassandra_op_result | default('not done (the run stopped before it)' if h in ansible_play_hosts_all
                                                                                 else 'not in this run (--limit)'),
-                                    'notes': v.cassandra_apply_config_notes | default([])}) -%}
+                                    'notes': v.cassandra_apply_config_notes | default([]),
+                                    'kept_running': v.cassandra_apply_config_kept_running | default([])}) -%}
           {%- endfor -%}
           {{ out }}

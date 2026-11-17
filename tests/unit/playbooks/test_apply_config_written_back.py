@@ -296,3 +296,77 @@ def test_a_restart_into_none_from_a_file_at_none_already_is_the_point_of_no_retu
     stopped = _mode_read("NONE", running="no", more=("last_logged=UPGRADING",))
     assert no_return(n1=stopped, then="start") == ["n1"]
     assert no_return(n1=stopped, then="write") == []
+
+
+def proven(tmp_path, java="17", heap=None, more_changes=(), unitenv=""):
+    """(then, kept_running, proven) of the owner's case (test_cassandra_jvm_args.written): the files apply_config
+    writes, the node's as compared, the running JVM's arguments and Java as read."""
+    from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_jvm_args import written
+    files, rendered, changed, cmdline = written(tmp_path)
+    if heap:
+        rendered = dict(rendered, **{"jvm-server.options": rendered["jvm-server.options"].replace("-Xmx23552m", heap)})
+    read = {"stdout_lines": ["cmdline=" + base64.b64encode(cmdline.encode()).decode(), "java=" + java,
+                             "unitenv=" + unitenv]}
+    compared = dict((f, base64.b64encode(files[f].encode()).decode()) for f in changed)
+    variables = {"_cassandra_config_changes": list(changed) + list(more_changes), "_cassandra_config_new": rendered,
+                 "_cassandra_config_compared": compared, "cassandra_apply_config_jvm_read": read,
+                 "cassandra_version": "50x", "cassandra_conf_dir": CONF,
+                 "cassandra_pending_snapshot": {"failed": True}, "cassandra_rpm_conf_alternative": "/etc/cassandra/conf.ansible",
+                 "cassandra_config_conf_target": {"skipped": True}, "_cassandra_config_perm_changes": [],
+                 "_cassandra_config_dir_notes": [], "cassandra_config_restart_pending": False,
+                 "cassandra_config_newer_files": [], "cassandra_config_unknown_files": [], "_cassandra_config_kept": [],
+                 "cassandra_config_keep_files": [], "_cassandra_preflight_running": True,
+                 "cassandra_apply_config_unit": {"skipped": True}, "cassandra_jvm": {"pid": "42", "start": "100.00"},
+                 "inventory_hostname": "n1"}
+    variables = with_task_vars(AS_STARTED, variables)
+    variables["_cassandra_apply_config_as_started"] = render(
+        AS_STARTED["ansible.builtin.set_fact"]["_cassandra_apply_config_as_started"], variables)
+    variables = with_task_vars(NOTE, variables)
+    facts = NOTE["ansible.builtin.set_fact"]
+    keys = ("cassandra_apply_config_then", "cassandra_apply_config_kept_running", "cassandra_apply_config_proven")
+    return tuple(render(facts[k], variables) for k in keys)
+
+
+def test_files_proven_to_change_nothing_are_written_with_no_restart(tmp_path):
+    then, why, plan = proven(tmp_path)
+    assert then == "none"
+    assert why == ["the same JVM arguments", "jvm11-server.options not read by Java 17",
+                   "logback.xml read again by logback (scan)"]
+    # checked again before the write and recorded after it (action_apply_config.yml): the files and their checksums
+    assert sorted(plan["files"]) == ["cassandra-env.sh", "jvm-server.options", "jvm11-server.options",
+                                     "jvm17-server.options", "logback.xml"]
+    assert plan["pid"] == "42" and set(plan["sha1"]) == set(plan["files"])
+
+
+@pytest.mark.parametrize("case", [dict(heap="-Xmx16G"), dict(java=""), dict(more_changes=["cassandra.yaml"]),
+                                  dict(unitenv='"JVM_EXTRA_OPTS=-Dx=1" LOCAL_JMX=no')])
+def test_anything_unproven_restarts_as_before(tmp_path, case):
+    then, why, plan = proven(tmp_path, **case)
+    assert then == "restart" and plan == {} and "the same JVM arguments" not in why
+
+
+def test_the_proven_files_are_recorded_only_as_planned_for_that_jvm():
+    from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import load
+    action = load("roles", "cassandra_operation", "tasks", "action_apply_config.yml")
+    name = "Record the files written with no effect as the ones the running Cassandra runs with"
+    block = next(t for t in action if t.get("name") == name)
+    assert "not ansible_check_mode" in block["when"]
+    record = next(t for t in block["block"] if t.get("name", "").startswith("Record them"))
+    assert record["when"][0].startswith("cassandra_jvm.pid | default('') | string == cassandra_apply_config_proven.pid")
+    # the JVM checked before the write too
+    check = next(t for t in action if t.get("name") == "Check the JVM a file is written back for still runs")
+    assert "cassandra_apply_config_proven" in check["when"][0]
+
+
+def test_the_environment_read_is_the_unit_s_not_the_jvm_s(tmp_path):
+    # (hostile S18, 2026-11-17) bin/cassandra exports JVM_OPTS: the JVM's own environment always has it, which no
+    # proof would ever pass; the unit's (systemctl show -p Environment) is what cassandra-env.sh gets, as the import
+    # reads it
+    from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import load
+    name = "Read the running JVM's arguments, its Java and the environment of its unit"
+    play = next(p for p in load("playbooks", "apply_config.yml") if any(t.get("name") == name for t in p.get("tasks", [])))
+    read = next(t for t in play["tasks"] if t.get("name") == name)
+    script = read["ansible.builtin.shell"]
+    assert "systemctl show cassandra -p Environment" in script and "/environ" not in script
+    # a unit environment with nothing for cassandra-env.sh to add: proven as before
+    assert proven(tmp_path, unitenv="LOCAL_JMX=no")[0] == "none"
