@@ -937,6 +937,9 @@ def test_the_role_refuses_a_write_only_kernel_key():
     assert cassandra_sysctl_write_only({"vm.swappiness": 1, "vm.drop_caches": 3, "vm.stat_refresh": 1}) == [
         "vm.drop_caches", "vm.stat_refresh"]
     assert cassandra_sysctl_write_only({}) == [] and cassandra_sysctl_write_only(None) == []
+    # (pre-push audit, rc13) written another way, as sysctl reads it: refused too
+    assert cassandra_sysctl_write_only({"vm/drop_caches": 3, " net.ipv4.route.flush": 1}) == [
+        " net.ipv4.route.flush", "vm/drop_caches"]
 
 
 def test_time_sync_changes():

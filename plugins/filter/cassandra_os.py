@@ -1539,8 +1539,9 @@ def cassandra_os_import(text, wanted):
 
 
 def cassandra_sysctl_write_only(keys):
-    """Kernel keys (cassandra_linux_sysctl's) -> the write-only ones among them (WRITE_ONLY_SYSCTL), sorted."""
-    return sorted(str(k) for k in (keys or {}) if str(k) in WRITE_ONLY_SYSCTL)
+    """Kernel keys (cassandra_linux_sysctl's) -> the write-only ones among them (WRITE_ONLY_SYSCTL; a key written
+    another way as sysctl reads it: vm/drop_caches), as given, sorted."""
+    return sorted(str(k) for k in (keys or {}) if _sysctl_key(str(k)) in WRITE_ONLY_SYSCTL)
 
 
 class FilterModule(object):
