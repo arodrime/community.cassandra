@@ -126,7 +126,8 @@
     R: "{{ _cassandra_service_config_snapshot }}"
     L: "{{ cassandra_log_dir | default('/var/log/cassandra', true) }}"
     # system.log's own dir (cassandra_log_system_dir) when it is a path, not the log dir (${cassandra.logdir}): as
-    # logback.xml has it, its XML escapes undone
+    # logback.xml has it, its XML escapes undone (the variable goes into the XML as it is: the import escapes only & and
+    # < in a value it reads, _xml_text)
     S: >-
       {{ (cassandra_log_system_dir | replace('&lt;', '<') | replace('&amp;', '&'))
          if cassandra_log_system_dir | default('') is match('/') else '' }}

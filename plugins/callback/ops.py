@@ -183,10 +183,11 @@ _COLOURS = (
     (re.compile(r"NOTE\b|\[\d+/\d+\] |%s|%s" % (_PHASE.pattern, _BANNER.pattern)), "PROGRESS"),
     (_WAIT, "PROGRESS"),
 )
-# a mark anywhere in a line, its own colour over the one of the line it is indented under (that line only):
-# a node down, a stalled peer, a setting that differs, what a node would get or got, what a reset deletes
+# a mark anywhere in a line, its own colour over the one of the line it is indented under (the lines indented under
+# it take it in turn): a node down, a stalled peer, a setting that differs, what a node would get or got, what a reset
+# deletes, whether the import is in sync with Ansible
 _MARKS = (
-    # import_cluster's head: in sync with Ansible or not (its next line, indented under it, the same)
+    # import_cluster's head: in sync with Ansible or not (its next lines, indented under it, the same)
     (re.compile(r"^  in sync with Ansible: yes\b"), "COLOR_OK"),
     (re.compile(r"^  in sync with Ansible: not all verified\b"), "COLOR_CHANGED"),
     (re.compile(r"^  in sync with Ansible: no\b"), "COLOR_ERROR"),
@@ -224,7 +225,7 @@ LOG_EVERY = 300  # seconds between two lines of a step going on, in a log or a p
 _RING_VERDICT = re.compile(r"ALL \d+ NODES? UP\b|\d+ NODES? (DOWN|NOT REACHED): ")
 _RING_DIFFER = re.compile(r"WARNING  ring and inventory differ$")
 # a row of the status playbook's nodetool table: its colour by the node's state
-_RING_ROW = re.compile(r" (?:\S+ +)?([UD])([NJLM])  \S")  # (its node name first, since the next release)
+_RING_ROW = re.compile(r" (?:\S+ +)?([UD])([NJLM])  \S")  # (its node name first, from 2.1.0 on)
 # the help playbook's text: a rule naming a section, an operation (its key), a command
 _HELP_RULE = re.compile(r"(====|----) (\S.*?) [=-]{4,}$")
 _HELP_COMMAND = re.compile(r"\s*\$ ")
@@ -233,7 +234,7 @@ _HELP_COMMAND = re.compile(r"\s*\$ ")
 def _ring_verdict(texts):
     """(the lines above, the verdict lines) of the status playbook's report, its verdict last (its warning
     under it), the blank lines around them left out; (texts, []) for any other message. Its verdict first (the
-    status report since the next release: the verdict, the cluster's line, a warning): (["", the rest], the verdict
+    status report from 2.1.0 on: the verdict, the cluster's line, a warning): (["", the rest], the verdict
     lines), the rest printed after them (_print)."""
     first = [t for t in texts if t.strip()][:1]
     if first and _RING_VERDICT.match(first[0]) and texts[0] == first[0]:

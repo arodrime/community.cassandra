@@ -110,8 +110,9 @@
     _what: >-
       {{ ["its cluster:     '" ~ _name ~ "'", "the inventory's: '" ~ cassandra_cluster_name ~ "' (cassandra_cluster_name)"]
          if _found.rc | default(0) == 0
-         else ['nodetool: ' ~ _error, 'check cassandra_jmx_username and cassandra_jmx_password_file or cassandra_jmx_password',
-               _unchecked] if _refused | bool
+         else ['nodetool: ' ~ _error | regex_replace('^nodetool: *', ''),
+               'check cassandra_jmx_username and cassandra_jmx_password_file or cassandra_jmx_password', _unchecked]
+              if _refused | bool
          else ['nodetool: ' ~ _error | regex_replace('^nodetool: *', ''), _unchecked] }}
     _hint: >-
       {{ ("cassandra_cluster_name is the role default 'Test Cluster': are the inventory's group_vars loaded? Check with"
