@@ -51,8 +51,8 @@ def needs(changes=(OPTIONS,), new=None, record=None, recorded=("42", 100.0), sta
                  "cassandra_jvm": {"pid": "42", "start": "%.2f" % start} if start is not None else {}}
     variables = dict(variables, inventory_hostname="n1", **extra)
     variables = with_task_vars(AS_STARTED, variables)
-    variables["_cassandra_apply_config_as_started"] = render(
-        AS_STARTED["ansible.builtin.set_fact"]["_cassandra_apply_config_as_started"], variables)
+    for fact in ("_cassandra_apply_config_as_started", "_cassandra_apply_config_conf_switch"):
+        variables[fact] = render(AS_STARTED["ansible.builtin.set_fact"][fact], variables)
     variables = with_task_vars(NOTE, variables)
     facts = NOTE["ansible.builtin.set_fact"]
     said = (render(facts["cassandra_apply_config_then"], variables), render(facts["cassandra_apply_config_notes"], variables))
@@ -298,7 +298,7 @@ def test_a_restart_into_none_from_a_file_at_none_already_is_the_point_of_no_retu
     assert no_return(n1=stopped, then="write") == []
 
 
-def proven(tmp_path, java="17", heap=None, more_changes=(), unitenv=""):
+def proven(tmp_path, java="17", heap=None, more_changes=(), unitenv="", jvmenv="", target=None):
     """(then, kept_running, proven) of the owner's case (test_cassandra_jvm_args.written): the files apply_config
     writes, the node's as compared, the running JVM's arguments and Java as read."""
     from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_jvm_args import written
@@ -306,21 +306,22 @@ def proven(tmp_path, java="17", heap=None, more_changes=(), unitenv=""):
     if heap:
         rendered = dict(rendered, **{"jvm-server.options": rendered["jvm-server.options"].replace("-Xmx23552m", heap)})
     read = {"stdout_lines": ["cmdline=" + base64.b64encode(cmdline.encode()).decode(), "java=" + java,
-                             "unitenv=" + unitenv]}
+                             "unitenv=" + unitenv, "jvmenv=" + base64.b64encode(jvmenv.encode()).decode()]}
     compared = dict((f, base64.b64encode(files[f].encode()).decode()) for f in changed)
     variables = {"_cassandra_config_changes": list(changed) + list(more_changes), "_cassandra_config_new": rendered,
                  "_cassandra_config_compared": compared, "cassandra_apply_config_jvm_read": read,
                  "cassandra_version": "50x", "cassandra_conf_dir": CONF,
                  "cassandra_pending_snapshot": {"failed": True}, "cassandra_rpm_conf_alternative": "/etc/cassandra/conf.ansible",
-                 "cassandra_config_conf_target": {"skipped": True}, "_cassandra_config_perm_changes": [],
+                 "cassandra_config_conf_target": {"stat": {"lnk_source": target}} if target else {"skipped": True},
+                 "_cassandra_config_perm_changes": [],
                  "_cassandra_config_dir_notes": [], "cassandra_config_restart_pending": False,
                  "cassandra_config_newer_files": [], "cassandra_config_unknown_files": [], "_cassandra_config_kept": [],
                  "cassandra_config_keep_files": [], "_cassandra_preflight_running": True,
                  "cassandra_apply_config_unit": {"skipped": True}, "cassandra_jvm": {"pid": "42", "start": "100.00"},
                  "inventory_hostname": "n1"}
     variables = with_task_vars(AS_STARTED, variables)
-    variables["_cassandra_apply_config_as_started"] = render(
-        AS_STARTED["ansible.builtin.set_fact"]["_cassandra_apply_config_as_started"], variables)
+    for fact in ("_cassandra_apply_config_as_started", "_cassandra_apply_config_conf_switch"):
+        variables[fact] = render(AS_STARTED["ansible.builtin.set_fact"][fact], variables)
     variables = with_task_vars(NOTE, variables)
     facts = NOTE["ansible.builtin.set_fact"]
     keys = ("cassandra_apply_config_then", "cassandra_apply_config_kept_running", "cassandra_apply_config_proven")
@@ -339,7 +340,12 @@ def test_files_proven_to_change_nothing_are_written_with_no_restart(tmp_path):
 
 
 @pytest.mark.parametrize("case", [dict(heap="-Xmx16G"), dict(java=""), dict(more_changes=["cassandra.yaml"]),
-                                  dict(unitenv='"JVM_EXTRA_OPTS=-Dx=1" LOCAL_JMX=no')])
+                                  dict(unitenv='"JVM_EXTRA_OPTS=-Dx=1" LOCAL_JMX=no'),
+                                  # (pre-push audit, rc13) set outside the unit (an EnvironmentFile,
+                                  # /etc/default/cassandra): as the JVM has it
+                                  dict(jvmenv="JVM_EXTRA_OPTS=-Dx=1\nPATH=/bin\n"), dict(jvmenv="MX4J_PORT=8081"),
+                                  # the conf directory switched (rpm alternative): nothing proven of it
+                                  dict(target="/etc/cassandra/default.conf")])
 def test_anything_unproven_restarts_as_before(tmp_path, case):
     then, why, plan = proven(tmp_path, **case)
     assert then == "restart" and plan == {} and "the same JVM arguments" not in why
@@ -367,6 +373,9 @@ def test_the_environment_read_is_the_unit_s_not_the_jvm_s(tmp_path):
     play = next(p for p in load("playbooks", "apply_config.yml") if any(t.get("name") == name for t in p.get("tasks", [])))
     read = next(t for t in play["tasks"] if t.get("name") == name)
     script = read["ansible.builtin.shell"]
-    assert "systemctl show cassandra -p Environment" in script and "/environ" not in script
+    assert "systemctl show cassandra -p Environment" in script
+    # (from the JVM's environment, the variables bin/cassandra passes on as they are, never JVM_OPTS)
+    assert "grep -E '^(JVM_EXTRA_OPTS|MX4J_ADDRESS|MX4J_PORT)='" in script
     # a unit environment with nothing for cassandra-env.sh to add: proven as before
     assert proven(tmp_path, unitenv="LOCAL_JMX=no")[0] == "none"
+    assert proven(tmp_path, jvmenv="MX4J_PORT=")[0] == "none"  # (set empty: nothing added)

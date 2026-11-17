@@ -43,6 +43,9 @@ MAIN_CLASS = "org.apache.cassandra.service.CassandraDaemon"
 ENV = "cassandra-env.sh"
 COMMON = "jvm-server.options"
 HEAP_NAMES = ("MAX_HEAP_SIZE", "HEAP_NEWSIZE", "MAX_DIRECT_MEMORY_SIZE")
+# what the environment gives cassandra-env.sh to add to the JVM's options: with one of them set, the arguments are not
+# shown to be the files' (env_adds_options: the import's "no restart" and apply_config's proof alike)
+JVM_ENV = ("JVM_OPTS", "JVM_EXTRA_OPTS", "MX4J_ADDRESS", "MX4J_PORT")
 # the variable that writes each heap assignment, by series (none: the template has no line for it)
 HEAP_VARS = {
     "MAX_HEAP_SIZE": {"40x": "cassandra_heap_size", "41x": "cassandra_heap_size", "50x": "cassandra_heap_size"},
@@ -524,14 +527,19 @@ def options_edits(live, role, series, java):
     return found
 
 
+def env_adds_options(environ):
+    """The variables of environ ({name: value}) that give cassandra-env.sh options to add (JVM_ENV) -> [name]."""
+    return [name for name in JVM_ENV if (environ or {}).get(name)]
+
+
 def cassandra_jvm_args_same(cmdline, live, role, series, java, node_env=None, role_env=None, apart=()):
     """Whether the role's files (role: {file: text}) give the JVM the same arguments as the node's (live) did
     (cmdline: its /proc/<pid>/cmdline; node_env, role_env: the environment the unit gives Cassandra now, and with
     the roles; apart: the names of the settings that differ by hand edits of the options files, not counted)
     -> (True, '') or (False, why)."""
-    for name in ("JVM_OPTS", "JVM_EXTRA_OPTS"):
-        if (node_env or {}).get(name) != (role_env or {}).get(name):
-            return False, "the unit would give Cassandra another %s" % name
+    added = sorted(set(env_adds_options(node_env) + env_adds_options(role_env)))
+    if added:
+        return False, "the environment gives cassandra-env.sh options to add (%s)" % ", ".join(added)
     try:
         args, after = _launch(cmdline, live, role, series, java, node_env, role_env)
     except NotSame as exc:

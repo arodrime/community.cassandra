@@ -694,3 +694,15 @@ def test_an_item_too_long_has_its_values_on_the_next_line(tmp_path):
     assert at is not None, lines
     assert lines[at + 1].split() == ["present", "absent", "node1"] or lines[at + 1].split()[:2] == ["present", "absent"]
     assert all(len(line) <= 50 for line in lines if long_option not in line), lines
+
+
+def test_the_recap_says_the_proofs_by_their_own_words():
+    # (pre-push audit, rc13) the reasons of cassandra_apply_config_no_effect, by the constants it says them with;
+    # another reason of a node kept running is not one of them
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import (
+        LOGBACK_SCANS, NOT_READ_BY_JAVA, SAME_JVM_ARGUMENTS)
+    proofs = [SAME_JVM_ARGUMENTS, NOT_READ_BY_JAVA % ("jvm11-server.options", "17"), LOGBACK_SCANS]
+    node = {"name": "n1", "todo": True, "done": True, "then": "none", "result": "applied",
+            "kept_running": proofs + ["an owner, group or mode: read at start"]}
+    text = "\n".join(cassandra_apply_config_recap([node]))
+    assert "applied, not restarted (%s)" % "; ".join(proofs) in text, text

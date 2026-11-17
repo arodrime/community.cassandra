@@ -741,8 +741,7 @@ def _outcome(node, check, plan):
         kept_running = node.get("kept_running") if then == "none" else None  # its own reasons, when given
         # the files written proven to change nothing for the running Cassandra: said in the --check recap and in the
         # recap of a real run too
-        proven = [r for r in kept_running or [] if r == SAME_JVM_ARGUMENTS or " not read by Java " in r
-                  or r.startswith("logback.xml read again")]
+        proven = [r for r in kept_running or [] if _proven(r)]
         if plan and kept_running:
             text += " (%s)" % "; ".join(kept_running)
         elif proven:
@@ -972,10 +971,18 @@ def cassandra_apply_config_down_ok(nodes, hostvars, host, then, check, batch=Fal
     return out if batch or then != "restart" or check else []
 
 
-# what the unit (or the shell that started it) gives cassandra-env.sh to add to the JVM's options
-_JVM_ENV = ("JVM_OPTS", "JVM_EXTRA_OPTS", "MX4J_ADDRESS", "MX4J_PORT")
-# the reason said for a node not restarted, its JVM getting the same arguments from the files written
+# the reasons said for a node not restarted, the files written proven to change nothing for it
+# (cassandra_apply_config_no_effect): its JVM gets the same arguments from them, a JVM options file its Java does not
+# read, logback.xml read again by logback
 SAME_JVM_ARGUMENTS = "the same JVM arguments"
+NOT_READ_BY_JAVA = "%s not read by Java %s"
+LOGBACK_SCANS = "logback.xml read again by logback (scan)"
+
+
+def _proven(reason):
+    """Whether reason (a node's, why it is not restarted) is one of cassandra_apply_config_no_effect's."""
+    return reason in (SAME_JVM_ARGUMENTS, LOGBACK_SCANS) or bool(
+        re.match("^%s$" % (re.escape(NOT_READ_BY_JAVA) % (r"\S+", r"\S+")), reason))
 
 
 def _scans(text):
@@ -989,17 +996,18 @@ def _scans(text):
 
 
 def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", java="", environ=None, newer=None):
-    """Whether the running Cassandra needs no restart for the files apply_config writes, proven file by file, else
-    a restart as for any change. changed: the files written; live, new: {file: text} as the node has them and as
-    written (every file of the JVM's: cassandra-env.sh, jvm-server.options and the one of its Java, changed or not);
-    cmdline: the running JVM's /proc/<pid>/cmdline; series; java: the version of the running Java; environ: {name:
-    value}; newer: the files written since that
-    JVM started (its arguments are then not known to be theirs). environ: the environment its unit gives it (systemctl
-    show -p Environment, as the import reads it). The proofs, the import self-check's: the JVM files
-    give the JVM the same arguments (bin/cassandra emulated, cassandra_jvm_args_same, against the running JVM's);
-    a jvm<N>-server.options the running Java does not read; logback.xml read again by logback (scan="true" in the
-    node's file and in the new one). Anything else, or a proof that cannot be made (no Java, no cmdline, an
-    environment that adds options): [] (a restart) -> [the reasons, said in the plan] when proven."""
+    """Whether the running Cassandra needs no restart for the files apply_config writes, proven file by file with the
+    import self-check's proofs -> [the reasons, said in the plan]; [] (a restart, as for any change) when one is not.
+    changed: the files written; live, new: {file: text} as the node has them and as written (every file of the JVM's:
+    cassandra-env.sh, jvm-server.options and the one of its Java, changed or not); cmdline: the running JVM's
+    /proc/<pid>/cmdline; series; java: the version of the running Java; environ: the environment cassandra-env.sh gets
+    ({name: value}: its unit's, systemctl show -p Environment, as the import reads it; JVM_EXTRA_OPTS and MX4J_* as
+    the JVM has them, whatever set them); newer: the files written since that JVM started, or with no record of what
+    it started with (what it read then is not known).
+    The proofs: the JVM's files give the JVM the same arguments (bin/cassandra emulated, cassandra_jvm_args_same,
+    against the running JVM's; not with an environment that adds options); a jvm<N>-server.options the running Java
+    does not read; logback.xml read again by logback (scan="true" on the root of the node's file, unchanged since the
+    start, and of the new one). Anything else, or a proof that cannot be made (no Java, no cmdline): []."""
     changed = [str(f) for f in changed or []]
     live, new, environ = dict(live or {}), dict(new or {}), dict(environ or {})
     if not changed:
@@ -1012,19 +1020,19 @@ def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", 
             # (written since the JVM started, scan may not be what logback read then: it scans only if it was)
             if name in (newer or []) or not (_scans(live.get(name)) and _scans(new.get(name))):
                 return []
-            reasons.append("logback.xml read again by logback (scan)")
+            reasons.append(LOGBACK_SCANS)
         elif name in (jvm_args.ENV, jvm_args.COMMON) or other_java:
             if not read:
                 return []  # (the Java not known: which file it reads is not)
             if other_java and name != read:
-                reasons.append("%s not read by Java %s" % (name, jvm_args.jvm.java_major(java)))
+                reasons.append(NOT_READ_BY_JAVA % (name, jvm_args.jvm.java_major(java)))
             else:
                 jvm_files.append(name)
         else:
             return []
     if jvm_files:
         group = [jvm_args.ENV, jvm_args.COMMON, read]
-        if not cmdline or any(environ.get(k) for k in _JVM_ENV) or set(newer or []) & set(group) \
+        if not cmdline or jvm_args.env_adds_options(environ) or set(newer or []) & set(group) \
                 or not all(f in live and (f in new or f not in changed) for f in group):
             return []
         role = dict((f, new[f] if f in changed else live[f]) for f in group)

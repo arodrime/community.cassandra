@@ -1484,6 +1484,20 @@ def test_logback_scan_read_as_logback_reads_it(tmp_path, head):
     assert no_effect(changed, live, rendered, cmdline) == []
 
 
+@pytest.mark.parametrize("environ", [{"JVM_EXTRA_OPTS": "-Dx=1"}, {"MX4J_PORT": "8081"}, {"JVM_OPTS": "-Dy=2"}])
+def test_the_import_and_apply_config_give_up_alike_on_an_environment_that_adds_options(tmp_path, environ):
+    # (pre-push audit, rc13) one predicate (env_adds_options): the import no longer says "no restart (the same JVM
+    # arguments)" where apply_config restarts, even with the same environment on both sides
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_jvm_args import cassandra_jvm_args_same
+    files, rendered, changed, cmdline = written(tmp_path)
+    group = ["cassandra-env.sh", "jvm-server.options", "jvm17-server.options"]
+    live, role = [dict((f, side[f]) for f in group) for side in (files, rendered)]
+    assert cassandra_jvm_args_same(cmdline, live, role, "50x", "17", {}, {})[0] is True
+    same, why = cassandra_jvm_args_same(cmdline, live, role, "50x", "17", environ, environ)
+    assert same is False and "the environment gives cassandra-env.sh options to add (%s)" % list(environ)[0] == why
+    assert no_effect(changed, files, rendered, cmdline, environ=environ) == []
+
+
 @pytest.mark.parametrize("java, environ, newer, more", [
     ("", None, None, []),  # the running Java not known: which options file it reads is not
     ("17", {"JVM_EXTRA_OPTS": "-Dx=1"}, None, []),  # the environment adds options

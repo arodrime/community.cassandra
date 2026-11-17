@@ -88,6 +88,8 @@
     # reloadseeds, a hand edit may have loaded others): reloaded once written back (action_apply_config.yml)
     - name: Note the files written back as the running Cassandra started with them
       ansible.builtin.set_fact:
+        # (the conf directory changes: what Cassandra runs with is not what is compared, nothing proven of it)
+        _cassandra_apply_config_conf_switch: "{{ _switch }}"
         _cassandra_apply_config_as_started: >-
           {%- set out = [] -%}
           {%- set conf = cassandra_conf_dir | trim | regex_replace('/+$', '') -%}
@@ -188,6 +190,10 @@
           | sed -n 's/^ *java.specification.version = //p' | head -1)"
         # (the unit's, as the import reads it: the JVM's own environment has the JVM_OPTS bin/cassandra exports)
         echo "unitenv=$(systemctl show cassandra -p Environment --value 2>/dev/null)"
+        # and the variables bin/cassandra passes on as they are, as the JVM has them whatever set them (an
+        # EnvironmentFile, /etc/default/cassandra the init script reads)
+        echo "jvmenv=$(tr '\0' '\n' < "/proc/$CASSANDRA_PID/environ" 2>/dev/null \
+          | grep -E '^(JVM_EXTRA_OPTS|MX4J_ADDRESS|MX4J_PORT)=' | base64 -w0)"
         exit 0
       environment:
         CASSANDRA_PID: "{{ cassandra_jvm.pid }}"
@@ -383,11 +389,14 @@
           {%-   endif -%}
           {%- endfor -%}
           {%- set env = _jvm_read.unitenv | default('') | community.cassandra.cassandra_unit_environment -%}
+          {%- set env = dict(env, **dict(_jvm_read.jvmenv | default('') | b64decode | split('\n') | select
+                                         | map('split', '=', 1))) -%}
           {{ _files | reject('in', _as_started) | list | community.cassandra.cassandra_apply_config_no_effect(
                live, _cassandra_config_new | default({}), _jvm_read.cmdline | default('') | b64decode,
                cassandra_version | default(''), _jvm_read.java | default(''), env,
                cassandra_config_newer_files | default([]) + cassandra_config_unknown_files | default([]))
-             if _jvm_read.cmdline | default('') and _running | bool else [] }}
+             if _jvm_read.cmdline | default('') and _running | bool and not _cassandra_apply_config_conf_switch | bool
+             else [] }}
         _proven: "{{ _files | reject('in', _as_started) | list if _no_effect else [] }}"
         # a node not running reads its files when it starts: pending only under a resumed run, taken for the
         # node the interrupted run stopped (then started)
