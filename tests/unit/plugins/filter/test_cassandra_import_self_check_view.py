@@ -334,9 +334,10 @@ def test_the_shareable_copy_keeps_the_settings_names():
     lines = stop(nodes, checks)
     text = "\n".join(cassandra_import_shareable(lines + ["  " + d for d in checks["node1"]["differences"]],
                                                 layout)["text"])
-    for name in ("    -Dchronicle.analytics.disable", "    [storage] search_obscurekey_from_name",
-                 "    com.zorblax.payments"):
+    for name in ("    -Dchronicle.analytics.disable", "    [storage] search_obscurekey_from_name"):
         assert name in text.split("\n"), text
-    # the settings of the evidence too; the values and the node names masked
-    assert "zorblax.example.org" not in text and "node1" not in text
+    # the settings of the evidence too; the values, the node names and what the site named (a logger's package:
+    # pre-push audit, rc13) masked
+    assert "zorblax" not in text and "node1" not in text
+    assert re.search(r"logback\.xml: /configuration/logger\[@name=\"domain\d+\"\]: node has", text), text
     assert re.search(r"medusa\.ini: \[storage\] search_obscurekey_from_name: node has '\S+'", text)

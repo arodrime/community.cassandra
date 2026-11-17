@@ -440,3 +440,28 @@ def test_known_kernel_settings_and_stock_jvm_properties_in_clear_anywhere():
                  "-Dchronicle.analytics.disable=true"):
         assert kept in text, kept
     assert "qxsite" not in text and "qxlab" not in text and "example.com" not in text
+
+
+def test_a_self_check_setting_masks_what_the_site_chose():
+    # (pre-push audit, rc13) a site's logger package, appender and JMX user, a domain as a logger's name: masked in a
+    # difference and on a self-check setting's own line; the files' own words in clear
+    lines = ['  logback.xml: /configuration/logger[@name="com.zorglub.billing"]/@level: node has DEBUG, import would'
+             ' write nothing',
+             '  logback.xml: /configuration/appender[@name="ZORGLUB_AUDIT"]/file: node has x.log, import would write'
+             ' nothing',
+             '  logback.xml: /configuration/logger[@name="db.acme.example"]/@level: node has INFO, import would write'
+             ' nothing',
+             "  jmxremote.access: orders_ops: node has readwrite, import would write nothing",
+             "    logback.xml    zorglub-db1", "      com.zorglub.billing / @level", "        Node      DEBUG",
+             "      root / appender-ref ZORGLUB_AUDIT", "        Node      present",
+             "      SYSTEMLOG / rollingPolicy / maxHistory", "        Node      7",
+             "      org.apache.cassandra / @level", "        Node      DEBUG",
+             "    jmxremote.access    zorglub-db1", "      orders_ops", "        Node      readwrite",
+             "    cassandra.yaml    zorglub-db1", "      client_encryption_options.enabled", "        Node      true"]
+    text = cassandra_import_shareable(lines, ZORGLUB)["text"][2:]
+    assert not [line for line in text if SITE.search(line)], text
+    for kept in ("/configuration/logger[@name=", '"]/@level: node has DEBUG', "/@level", "root / appender-ref ",
+                 "      SYSTEMLOG / rollingPolicy / maxHistory", "      org.apache.cassandra / @level",
+                 "      client_encryption_options.enabled"):
+        assert any(kept in line for line in text), kept
+    assert text[3].split(":")[1].strip() == text[14].strip(), text  # (the same user, the same name)
