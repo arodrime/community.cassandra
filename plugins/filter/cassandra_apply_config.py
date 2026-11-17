@@ -33,6 +33,7 @@ import os
 import re
 import shlex
 import textwrap
+import xml.etree.ElementTree as ET
 from collections import OrderedDict
 
 from ansible.module_utils.parsing.convert_bool import boolean
@@ -971,12 +972,20 @@ def cassandra_apply_config_down_ok(nodes, hostvars, host, then, check, batch=Fal
     return out if batch or then != "restart" or check else []
 
 
-# logback.xml read again by logback itself while Cassandra runs: scan="true" on <configuration>
-_SCAN = re.compile(r"<configuration\b[^>]*\sscan\s*=\s*[\"']true[\"']", re.I)
 # what the unit (or the shell that started it) gives cassandra-env.sh to add to the JVM's options
 _JVM_ENV = ("JVM_OPTS", "JVM_EXTRA_OPTS", "MX4J_ADDRESS", "MX4J_PORT")
 # the reason said for a node not restarted, its JVM getting the same arguments from the files written
 SAME_JVM_ARGUMENTS = "the same JVM arguments"
+
+
+def _scans(text):
+    """Whether logback.xml has logback read it again while Cassandra runs: scan="true" on its <configuration> (as
+    logback reads it: trimmed, any case); a file that does not parse proves nothing (False)."""
+    try:
+        root = ET.fromstring(text or "")
+    except ET.ParseError:
+        return False
+    return root.tag.rsplit("}", 1)[-1] == "configuration" and (root.get("scan") or "").strip().lower() == "true"
 
 
 def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", java="", environ=None, newer=None):
@@ -1000,7 +1009,8 @@ def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", 
     for name in changed:
         other_java = re.match(r"^jvm(\d+)-server\.options$", name)
         if name == "logback.xml":
-            if not (_SCAN.search(live.get(name) or "") and _SCAN.search(new.get(name) or "")):
+            # (written since the JVM started, scan may not be what logback read then: it scans only if it was)
+            if name in (newer or []) or not (_scans(live.get(name)) and _scans(new.get(name))):
                 return []
             reasons.append("logback.xml read again by logback (scan)")
         elif name in (jvm_args.ENV, jvm_args.COMMON) or other_java:

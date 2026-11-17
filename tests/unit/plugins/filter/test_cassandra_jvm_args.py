@@ -1463,6 +1463,27 @@ def test_logback_without_scan_restarts(tmp_path):
                      cmdline) == []
 
 
+def test_logback_written_since_the_start_restarts(tmp_path):
+    # (pre-push audit, rc13) scan="true" added after the JVM started (or no record of what it read): logback scans
+    # only if it read scan="true" at its start
+    files, rendered, changed, cmdline = written(tmp_path)
+    assert no_effect(changed, files, rendered, cmdline, newer=["logback.xml"]) == []
+
+
+@pytest.mark.parametrize("head", [
+    '<!-- <configuration scan="true"> -->\n<configuration>',  # in a comment
+    '<configuration name=" scan=\'true\'">',  # in another attribute's value
+    '<configuration scan="yes">',  # (logback: true only)
+    '<configuration scan="true">\n<unclosed>',  # a file that does not parse
+])
+def test_logback_scan_read_as_logback_reads_it(tmp_path, head):
+    # (pre-push audit, rc13) the root's scan attribute, parsed; anything else proves nothing
+    files, rendered, changed, cmdline = written(tmp_path)
+    live = dict(files, **{"logback.xml": re.sub(r"<configuration[^>]*>", lambda m: head, files["logback.xml"], count=1)})
+    assert "scan" in live["logback.xml"]
+    assert no_effect(changed, live, rendered, cmdline) == []
+
+
 @pytest.mark.parametrize("java, environ, newer, more", [
     ("", None, None, []),  # the running Java not known: which options file it reads is not
     ("17", {"JVM_EXTRA_OPTS": "-Dx=1"}, None, []),  # the environment adds options
