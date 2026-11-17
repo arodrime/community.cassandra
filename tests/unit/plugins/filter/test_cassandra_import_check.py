@@ -1924,3 +1924,41 @@ def test_a_later_stock_key_set_otherwise_is_a_difference(old, new, key, value):
     # and on the node's side
     found = _compare("cassandra.yaml", edit(role, old, new), role)
     assert "cassandra.yaml: %s: node has '%s', import would write nothing" % (key, value) in found
+
+
+JVM11_LATER = ["-XX:-UseBiasedLocking", "--add-exports java.base/jdk.internal.util=ALL-UNNAMED",
+               "-Dio.netty.allocator.useCacheForAllThreads=true", "-Dio.netty.allocator.maxOrder=11"]
+
+
+def test_a_4x_jvm11_options_file_on_50_lacks_the_lines_50_added():
+    """Java 11: the lines 5.0's stock jvm11-server.options added are no hand edit in a 4.1 file; apply_config adds
+    them, said under WORTH A LOOK."""
+    files = seeded(stock("50x"))
+    files["jvm11-server.options"] = stock("41x")["jvm11-server.options"]
+    imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra", jvm={"java": "11"})
+    assert imported["hand_edits"] == []
+    assert [w.split(" (jvm11-server.options)")[0] for w in imported["jvm_warnings"]
+            if "(jvm11-server.options): added by apply_config" in w] == JVM11_LATER
+    assert check(files, "50x", java="11")["differences"] == []
+
+
+def test_a_later_stock_line_whose_comment_is_there_is_switched_off():
+    """Its stock comment there: a file of 5.0, its line removed by hand: switched off (no later stock line said)."""
+    files = seeded(stock("50x"))
+    files["jvm11-server.options"] = stock("41x")["jvm11-server.options"] + \
+        "# Disable biased locking as it does not benefit Cassandra.\n"
+    imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra", jvm={"java": "11"})
+    assert imported["vars"]["cassandra_jvm11_removed_options"] == ["-XX:-UseBiasedLocking"]
+    assert not any(w.startswith("-XX:-UseBiasedLocking") for w in imported["jvm_warnings"])
+    assert check(files, "50x", java="11")["differences"] == []
+
+
+@pytest.mark.parametrize("line", ["-XX:+UseBiasedLocking", "-Dio.netty.allocator.maxOrder=9"])
+def test_a_later_stock_line_set_otherwise_is_carried(line):
+    """Its option set otherwise: not the line the file predates, the node's value carried (written after it)."""
+    files = seeded(stock("50x"))
+    files["jvm11-server.options"] = stock("41x")["jvm11-server.options"] + line + "\n"
+    imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra", jvm={"java": "11"})
+    assert imported["vars"]["cassandra_jvm11_extra_options"] == [line]
+    assert not any(w.startswith(line.split("=")[0].replace("+", "-")) for w in imported["jvm_warnings"])
+    assert check(files, "50x", java="11")["differences"] == []

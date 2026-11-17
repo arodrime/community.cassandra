@@ -1602,7 +1602,10 @@ of its own: no line of it the stock file has not, outside a comment, with ``MAX_
 ``:=``, a default such as ``${MAX_HEAP_SIZE:=8G}``), ``-Xms``, ``-Xmx`` or ``-Xmn`` anywhere in it (indented, through a
 variable); with one, the pair stays in the extra options where the node has it. A heap set in a file
 ``cassandra-env.sh`` sources is not seen. A stock line a later release added that the node's file
-predates (5.0's ``-Dchronicle.analytics.disable=true`` of ``jvm-server.options``, CASSANDRA-19656) is no difference:
+predates (5.0's ``-Dchronicle.analytics.disable=true`` of ``jvm-server.options``, CASSANDRA-19656; the lines 5.0's
+``jvm11-server.options`` added to 4.x's: ``-XX:-UseBiasedLocking``, 4.x's in ``jvm-server.options``,
+``--add-exports java.base/jdk.internal.util=ALL-UNNAMED`` and Netty's former defaults
+``-Dio.netty.allocator.useCacheForAllThreads=true``, ``-Dio.netty.allocator.maxOrder=11``) is no difference:
 ``apply_config`` adds it, the report says so under WORTH A LOOK; any other stock line the node lacks is one.
 
 Hand edits of ``cassandra-env.sh`` that add plain options to ``JVM_OPTS`` (``JVM_OPTS="$JVM_OPTS -Xms8G -Xmx8G

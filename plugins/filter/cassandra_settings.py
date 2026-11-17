@@ -323,11 +323,31 @@ def properties_settings(text):
 JVM_LISTS = jvm.LISTS
 # options the ones they unlock must come after
 JVM_UNLOCK = ("UnlockDiagnosticVMOptions", "UnlockExperimentalVMOptions", "UnlockCommercialFeatures")
-# Stock lines a later release added (file: {line: why}): a node's file without one predates it, not a hand edit;
-# the role adds it (said under WORTH A LOOK)
+# Stock lines a later release added (file: {line: (why, the stock comment line above it, None when it has none of
+# its own)}): a node's file without one predates it, not a hand edit; the role adds it (said under WORTH A LOOK)
 # (the stock comment line above it too: a file with it is of that release, its line removed or changed by hand)
-LATER_STOCK = {"jvm-server.options": {"-Dchronicle.analytics.disable=true": (
-    "Cassandra's default since CASSANDRA-19656", "# Disable chronicle analytics. See CASSANDRA-19656")}}
+NETTY = "# Revert changes in defaults introduced in https://netty.io/news/2022/03/10/4-1-75-Final.html"
+LATER_STOCK = {
+    "jvm-server.options": {"-Dchronicle.analytics.disable=true": (
+        "Cassandra's default since CASSANDRA-19656", "# Disable chronicle analytics. See CASSANDRA-19656")},
+    # 5.0's (4.x has -XX:-UseBiasedLocking in jvm-server.options, which a node upgraded keeps)
+    "jvm11-server.options": {
+        "-XX:-UseBiasedLocking": ("5.0's stock line for Java 11 (4.x's in jvm-server.options)",
+                                  "# Disable biased locking as it does not benefit Cassandra."),
+        "--add-exports java.base/jdk.internal.util=ALL-UNNAMED": ("5.0's stock line for Java 11", None),
+        "-Dio.netty.allocator.useCacheForAllThreads=true": ("5.0's stock line for Java 11 (Netty's former default)",
+                                                            NETTY),
+        "-Dio.netty.allocator.maxOrder=11": ("5.0's stock line for Java 11 (Netty's former default)", NETTY)},
+}
+
+
+def _later_stock_named(line, text):
+    """True when text names the option of a LATER_STOCK line: -XX:+Name or -XX:-Name for -XX:-Name, the part before
+    = of any other."""
+    m = re.match(r"^-XX:[+-]?(\w+)$", line)
+    if m:
+        return re.search(r"-XX:[+-]?%s\b" % m.group(1), text) is not None
+    return line.split("=", 1)[0] in text
 
 
 def without_later_stock(name, rendered, live):
@@ -336,7 +356,7 @@ def without_later_stock(name, rendered, live):
     lines = rendered.split("\n")
     text = str(live or "")
     missing = [line for line, (dummy, comment) in LATER_STOCK.get(name, {}).items() if line in lines
-               and line.split("=", 1)[0] not in text and comment not in text]
+               and not _later_stock_named(line, text) and (comment is None or comment not in text)]
     return "\n".join(line for line in lines if line not in missing), missing
 
 
