@@ -239,7 +239,6 @@ def _set_again(line, later):
 
 
 LOCAL_JMX_TEST = 'if [ "$LOCAL_JMX" = yes ]; then'  # (as env_lines writes it)
-LOCAL_JMX_GUARD = re.compile(r'^if \[ "x\$LOCAL_JMX" = x \] ?; then$')
 
 
 # a line adding to JVM_OPTS, whatever it adds (but JVM_OPTS itself)
@@ -257,37 +256,39 @@ def _block_end(lines, at):
     return next(i for i in range(at + 1, len(lines)) if lines[i]["depth"] == lines[at]["depth"])
 
 
-def _local_jmx(lines, environment):
-    """LOCAL_JMX as cassandra-env.sh's test reads it: the environment's, else the default under its stock guard (set
-    there only) -> the value, None when not known."""
-    if (environment or {}).get("LOCAL_JMX"):
-        return environment["LOCAL_JMX"]
-    sets = [i for i, line in enumerate(lines) if re.search(r"\bLOCAL_JMX=", line["text"])]
-    if len(sets) != 1 or not sets[0] or not LOCAL_JMX_GUARD.match(lines[sets[0] - 1]["text"]) \
-            or lines[sets[0]]["depth"] != lines[sets[0] - 1]["depth"] + 1:
-        return None
-    value = lines[sets[0]]["text"].split("=", 1)[1]
-    return None if re.search(r"[$`\s]", value) else value
+REMOTE_PORT, LOCAL_PORT = "-Dcassandra.jmx.remote.port=", "-Dcassandra.jmx.local.port="
 
 
-def remote_branch_moved(live, role, environment=None):
+def _remote_branch_taken(node, at_else, end, environment, cmdline):
+    """Whether bash takes the remote JMX branch (node[at_else + 1:end]): the running JVM got the remote port (that
+    branch's own line) and not the local one, LOCAL_JMX not yes in the environment. Not from the file's default: an
+    EnvironmentFile or /etc/default/cassandra may give LOCAL_JMX, unseen; Cassandra not running: not known."""
+    args = re.split(r"[\0\n]", str(cmdline or ""))
+    remote = [a for a in args if a.startswith(REMOTE_PORT)]
+    local = [a for a in args if a.startswith(LOCAL_PORT)]
+    own = any(line["depth"] == 1 and APPEND_ANY.match(line["text"]) and REMOTE_PORT in line["text"]
+              for line in node[at_else + 1:end])
+    return bool(remote) and not local and own and (environment or {}).get("LOCAL_JMX") != "yes"
+
+
+def remote_branch_moved(live, role, environment=None, cmdline=""):
     """The node's lines adding plain options to JVM_OPTS in the remote JMX branch (the else of its LOCAL_JMX test),
-    which bash takes (LOCAL_JMX from the environment, else its stock default, not yes), that the role's file has once
-    outside any block (the rmi hostname above the test, the password and access files below it): the JVM gets the
-    same, when no other line of either file sets their options and none between the two places reads or resets
-    JVM_OPTS (a grep deciding on it) -> ([their line numbers in live], [in role]); ([], []) when not proven (LOCAL_JMX
-    yes, or not known)."""
+    which bash takes (_remote_branch_taken: the running JVM's arguments, cmdline, say so), that the role's file has
+    once outside any block (the rmi hostname above the test, the password and access files below it): the JVM gets
+    the same, when no other line of either file sets their options and none between the two places reads or resets
+    JVM_OPTS (a grep deciding on it) -> ([their line numbers in live], [in role]); ([], []) when not proven (the
+    local branch taken, or not known)."""
     try:
         node, ours = env_lines(live), env_lines(role)
     except NotSame:
         return [], []
     tests = [[i for i, line in enumerate(lines) if line["text"] == LOCAL_JMX_TEST and not line["depth"]]
              for lines in (node, ours)]
-    if any(len(found) != 1 for found in tests) or _local_jmx(node, environment) in (None, "yes"):
+    if any(len(found) != 1 for found in tests):
         return [], []
     start, end = tests[0][0], _block_end(node, tests[0][0])
     at_else = next((i for i in range(start + 1, end) if node[i]["depth"] == 1 and node[i]["text"] == "else"), None)
-    if at_else is None:
+    if at_else is None or not _remote_branch_taken(node, at_else, end, environment, cmdline):
         return [], []
     r_start, r_end = tests[1][0], _block_end(ours, tests[1][0])
     moved_live, moved_role = [], []

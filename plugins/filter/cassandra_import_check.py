@@ -869,7 +869,7 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
     if "cassandra-env.sh" in rendered and "cassandra-env.sh" in live:
         # (the node's lines in the remote JMX branch it takes, the roles' outside it: as the import reads them)
         mine, theirs = jvm_args.remote_branch_moved(live["cassandra-env.sh"], rendered["cassandra-env.sh"], dict(
-            node_environment or {}, **((running or {}).get("environment") or {})))
+            node_environment or {}, **((running or {}).get("environment") or {})), (running or {}).get("cmdline"))
         if mine:
             live = dict(live, **{"cassandra-env.sh": jvm_args.without_lines(live["cassandra-env.sh"], mine)})
             rendered = dict(rendered, **{"cassandra-env.sh": jvm_args.without_lines(rendered["cassandra-env.sh"], theirs)})

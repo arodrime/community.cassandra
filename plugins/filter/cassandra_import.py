@@ -1429,14 +1429,15 @@ def _difference_lines(name, rendered, live, ops):
 
 
 # the node's JVM_OPTS lines in the remote JMX branch, the role's outside it (jvm_args.remote_branch_moved)
-REMOTE_BRANCH_NOTE = ("cassandra-env.sh: %s adding options to JVM_OPTS in the remote JMX branch (LOCAL_JMX not yes: the"
-                      " branch bash takes), the role's outside it: the same for the JVM")
+REMOTE_BRANCH_NOTE = ("cassandra-env.sh: %s adding options to JVM_OPTS in the remote JMX branch (the one the running"
+                      " Cassandra started with: its remote JMX port), the role's outside it: the same for the JVM")
 
 
-def _leftovers(env, series, files, ctx, live_files, rejected=(), skip=(), proven=(), environment=None):
+def _leftovers(env, series, files, ctx, live_files, rejected=(), skip=(), proven=(), environment=None, cmdline=""):
     """What the role would still change in the node's files, rendered with ctx: rejected: the cassandra.yaml keys
     its Cassandra rejects; skip: files not compared here (the JVM's, its arguments shown to be the same); environment:
-    the one cassandra-env.sh gets -> (hand edits, normalized lines, comment lines)."""
+    the one cassandra-env.sh gets; cmdline: the running JVM's arguments -> (hand edits, normalized lines, comment
+    lines)."""
     hand, normalized, comments = [], [], []
     extras = ctx.get("cassandra_extra_settings") or {}
     for name in files:
@@ -1456,7 +1457,7 @@ def _leftovers(env, series, files, ctx, live_files, rejected=(), skip=(), proven
             continue
         live_text = live_files[name]
         if name == jvm_args.ENV:  # (the node's lines in the remote JMX branch it takes, the role's outside it)
-            mine, theirs = jvm_args.remote_branch_moved(live_text, "\n".join(rendered), environment)
+            mine, theirs = jvm_args.remote_branch_moved(live_text, "\n".join(rendered), environment, cmdline)
             if mine:
                 live_text = jvm_args.without_lines(live_text, mine)
                 rendered = jvm_args.without_lines("\n".join(rendered), theirs).split("\n")
@@ -2130,7 +2131,7 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     # (the heap shown the same from the running JVM's arguments wherever its file has it: not a hand edit there)
     hand, normalized, comments = _leftovers(env, cassandra_version, files, render, live_files, rejected,
                                             moved["shown"], HEAP_OPTIONS if moved["shown"] else (),
-                                            running.get("environment"))
+                                            running.get("environment"), running.get("cmdline"))
     normalized += log_dir_note + heap_dump_note
     normalized += ["%s: %s %s" % (f, "/".join(options), HEAP_MOVED) for f, options in sorted(heap_moved.items())
                    if f != jvm_args.COMMON]
