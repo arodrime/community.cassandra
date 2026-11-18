@@ -565,14 +565,14 @@ def test_stock_names_and_the_logs_paths_readable():
     # (pre-push audit, rc13, round 3) a -D property of a stock library, logback's own; a path after ${var}; the role's
     # udev rules file; the heap's options only among the -X ones of an options file
     text = cassandra_import_shareable([
-        "  -Dlogback.configurationFile=logback.xml -Dorg.apache.cassandra.x=1 -Dsun.rmi.dgc.server.gcInterval=1"
+        "  -Dlogback.configurationFile=logback.xml -Dorg.apache.cassandra.x=1 -Djava.rmi.server.hostname=x"
         " -Dch.qos.logback.x=1 -Dnet.openhft.x=1",
         "  ${cassandra.logdir}/system.log ${cassandra.logdir}/audit/audit.log.%d{yyyy-MM-dd}.%i.zip",
         "  /etc/udev/rules.d/64-cassandra-data-disk.rules",
         "  jvm17-server.options: -Xloggc:/srv/zorglub/gc.log: node has 'x', import would write nothing",
         "  jvm17-server.options: -Xmx: node has '8G', import would write '16G'"], ZORGLUB)["text"][2:]
     assert text[0] == ("  -Dlogback.configurationFile=logback.xml -Dorg.apache.cassandra.x=1"
-                       " -Dsun.rmi.dgc.server.gcInterval=1 -Dch.qos.logback.x=1 -Dnet.openhft.x=1")
+                       " -Djava.rmi.server.hostname=x -Dch.qos.logback.x=1 -Dnet.openhft.x=1")
     assert text[1] == "  ${cassandra.logdir}/system.log ${cassandra.logdir}/audit/audit.log.%d{yyyy-MM-dd}.%i.zip"
     assert text[2] == "  /etc/udev/rules.d/64-cassandra-data-disk.rules"
     assert "zorglub" not in text[3] and ": -Xmx: node has" in text[4]
@@ -587,3 +587,13 @@ def test_a_device_after_the_read_ahead_or_the_scheduler_its_codes_masked():
         ZORGLUB)["text"][2:]
     assert not [line for line in text if re.search(r"\b(q7|z9|zq7)\b", line)], text
     assert "(dm-3)" in text[0] and "(sdb)" in text[1]
+
+
+def test_a_site_value_that_is_a_word_of_the_report_masked_on_its_own_lines_only():
+    # (pre-push audit, rc13, round 4) a JMX user named ansible, readwrite: masked as the user, the report's words kept
+    lines = ["  jmxremote.access: ansible: node has readwrite, import would write nothing",
+             "  jmxremote.access: readwrite: node has readwrite, import would write nothing",
+             "  run ansible-playbook, the rights readwrite"]
+    text = cassandra_import_shareable(lines, ZORGLUB)["text"][2:]
+    assert re.match(r"^  jmxremote\.access: user\d+: node has readwrite, import would write nothing$", text[0]), text
+    assert re.match(r"^  jmxremote\.access: user\d+: node has readwrite", text[1]) and text[2] == lines[2]

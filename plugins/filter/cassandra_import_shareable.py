@@ -35,6 +35,9 @@ DASHED_IPV4 = re.compile(r"(?<!\d)(?<!\d-)(?:\d{1,3}-){3}\d{1,3}(?!\d)(?!-\d)(?!
 IPV6 = re.compile(r"(?<![\w:])(?:[0-9A-Fa-f]{0,4}:){2,7}(?:IP\b|[0-9A-Fa-f]{0,4}(?![\w:]))")
 URL = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s,;'\"<>)]+")
 PATH = re.compile(r"(?<![\w.~/<>*}-])/[\w.@+-]+(?:/[\w.@+*{}<>-]*)*")
+# a path after a variable (${HOME}/x, $CASSANDRA_HOME/x): masked, but logback's stock files under the log dir
+VAR_PATH = re.compile(r"\$\{?[A-Za-z_][\w.]*\}?(?:/[\w.@+*{}%-]+)+")
+STOCK_LOG_PATH = re.compile(r"^\$\{cassandra\.logdir\}/(?:system|debug|gc|audit/audit)\.log(?:\.[\w%{}.*-]*)?$")
 # a path as an XML element's value (<file>/srv/x/a.log</file>): up to the closing tag, never the tag itself
 XML_PATH = re.compile(r"(?<![/\w])(<[A-Za-z][\w:.-]*(?:\s[^<>]*)?>)(/[\w.@+-]+(?:/[\w.@+*{}-]*)*)")  # (not <node>/ of a path)
 # a path from the home or the current directory (~/ops/x, ./ops, ../ops): the site's own, always masked
@@ -338,7 +341,36 @@ def vocabulary():
                         words.update(w.lower() for w in WORD.findall(f.read()))
                 except OSError:
                     continue
-    return frozenset(words)
+    return frozenset(words | set(EXTRA_VOCABULARY))
+
+
+# a dotted name, a -D property of one (-Dsun.rmi.dgc.server.gcInterval, org.apache.cassandra.auth.PasswordAuthenticator)
+DOTTED_NAME = re.compile(r"(?<![\w.$-])(?:-D)?[A-Za-z_][\w$-]*(?:\.[\w$-]+)+(?![\w$])")
+# words of a stock install the collection's files do not write (THP, systemd's directives, a cloud region's parts):
+# read as the report's own
+EXTRA_VOCABULARY = ("hugepages", "execstartpre", "execstartpost", "execstart", "execstop", "execreload",
+                    "workingdirectory", "environmentfile", "limitnofile", "limitmemlock", "limitnproc", "limitas",
+                    "timeoutstartsec", "timeoutstopsec", "restartsec", "successexitstatus", "standardoutput",
+                    "standarderror", "east", "west", "north", "south", "central", "southeast", "northeast")
+
+
+# the -D properties bin/cassandra itself gives (not in the role's files)
+STOCK_NAMES = ("logback.configurationFile", "cassandra.logdir", "cassandra.storagedir", "cassandra-foreground",
+               "cassandra-pidfile")
+
+
+@functools.lru_cache(maxsize=1)
+def stock_dotted_names():
+    """The dotted names of a stock install, in clear wherever they are, each whole (a name of the site under a stock
+    prefix is not one): the stock JVM properties and kernel settings (_stock_names), the role's logback names, the
+    class names and -D properties its templates write -> frozenset (each also as -D<name>)."""
+    names = set(_stock_names()) | set(stock_xml_names()) | set(STOCK_NAMES)
+    for top, dirs, files in os.walk(os.path.join(ROLES, "cassandra_config", "templates")):
+        for name in files:
+            with open(os.path.join(top, name), encoding="utf-8", errors="replace") as f:
+                names.update(m.group(0) for m in DOTTED_NAME.finditer(f.read())
+                             if re.sub(r"^-D", "", m.group(0)).startswith(STOCK_DOTTED))
+    return frozenset(names | set("-D" + n for n in names if not n.startswith("-D")))
 
 
 def _unknown_words(text, key):
@@ -346,15 +378,16 @@ def _unknown_words(text, key):
     masked (word1): the names the other passes cannot know (a keyspace, acme.jks, a user named in free text). The
     pseudonyms of the copy and IP are kept."""
     known = vocabulary()
-    # (a stock dotted name, a -D property of one: -Dorg.apache.cassandra.x, -Dsun.rmi.y, as it is)
-    stock = [m.span() for m in re.finditer(r"(?<![\w.])(?:-D)?(?:%s)[\w.$-]*" % "|".join(
-        re.escape(p) for p in STOCK_DOTTED), text)]
+    # (a stock dotted name as it is, never a name of the site under a stock prefix: org.apache.cassandra.acme)
+    stock = [m.span() for m in DOTTED_NAME.finditer(text) if m.group(0) in stock_dotted_names()]
 
     def word(m):
         found = m.group(0)
         if any(a <= m.start() < b for a, b in stock):
             return found
         letters = re.match(r"[A-Za-z]+", found).group(0)
+        if m.string[m.start() - 1:m.start()] == "-" and m.string[m.start() + 1:].startswith(STOCK_DOTTED):
+            return found  # (-Dsun.x, -Dorg.apache.x: a stock prefix's first word; the words after it judged alone)
         if letters.lower() in known or found == "IP" or PSEUDONYM.match(found):
             return found
         return key.add(found, "word") or found
@@ -424,10 +457,10 @@ KNOWN_OPTION = re.compile(r"^(-X(mx|ms|mn|ss)|(%s)[+-]?[\w.]+)$" % "|".join(re.e
 XPATH_VALUE = re.compile(r"""(\[@([\w.:-]+)=(["']))(.*?)(\3\])""")
 # the JMX users of the JDK's own files: the others are the site's
 STOCK_JMX_USERS = ("cassandra", "monitorRole", "controlRole")
-# the names cassandra.yaml leaves to the site in a key: a memtable configuration's (the stock ones kept), a seed
-# provider's parameter (seeds kept)
+# the names cassandra.yaml leaves to the site in a key: a memtable configuration's (the stock ones kept), a
+# parameter of a class it names (a seed provider's, an authenticator's: seeds kept)
 YAML_NAMED = ((re.compile(r"(memtable\.configurations\.)([^.\[\s]+)"), ("skiplist", "trie", "default", "skiplist_sharded")),
-              (re.compile(r"(seed_provider(?:\[\d+\])?\.parameters(?:\[\d+\])?\.)([^.\[\s]+)"), ("seeds",)))
+              (re.compile(r"(\.parameters(?:\[\d+\])?\.)([^.\[\s]+)"), ("seeds",)))
 
 
 @functools.lru_cache(maxsize=1)
@@ -476,7 +509,7 @@ def setting(text, key, file_name):
                           lambda m: u"\ue002%s\ue003" % _xml_name(real, key), text)
     text = IPV4.sub("IP", key.inside(text, ("n", "c", "dc", "r")))
     if name.startswith("jmxremote."):  # (the setting is a user)
-        return text if text in STOCK_JMX_USERS or PSEUDONYM.match(text) else key.add(text, "user") or text
+        return text if text in STOCK_JMX_USERS or PSEUDONYM.match(text) else _site_value(text, "user", key)
     if name.endswith(".xml"):
         if text.startswith("/"):  # an XPath: /configuration/logger[@name="x"]/@level
             return _xpath(text, key)
@@ -523,6 +556,7 @@ def _masked_names(text, key):
     text = DASHED_IPV4.sub("IP", text)
     text = IPV6.sub(lambda m: "IP" if ("::" in m.group(0) or m.group(0).count(":") >= 3) else m.group(0), text)
     text = URL.sub(lambda m: key.add(m.group(0), "url"), text)
+    text = VAR_PATH.sub(lambda m: m.group(0) if STOCK_LOG_PATH.match(m.group(0)) else key.add(m.group(0), "path"), text)
     text = PATH.sub(lambda m: _path(m.group(0), key), text)
     text = XML_PATH.sub(lambda m: m.group(1) + _path(m.group(2), key), text)
     text = re.sub(r"\b(tuned:? \(?profile )([\w.-]+)", lambda m: m.group(1) + _profile(m.group(2), key), text)
@@ -543,7 +577,7 @@ def _masked_names(text, key):
         if KERNEL_KEY.match(word) and (re.match(r"\s*[=:]", m.string[m.end():])  # (vm.swappiness = 0)
                                        or m.string[:m.start()].endswith("sysctl ")):  # (sysctl vm.drop_caches)
             return word
-        if word in key.clear:  # (a kernel setting the nodes have, a stock JVM property: anywhere)
+        if word in key.clear or word in stock_dotted_names():  # (a kernel setting the nodes have, a stock name)
             return word
         if word.startswith("cassandra_") or re.sub(r"^-+D?", "", word).startswith(STOCK_DOTTED):
             return _dotted(word, key) if "." in word else word
@@ -582,7 +616,17 @@ def _valued_word(word, kind, key):
     if (not word or word.startswith("(") or word.lower() in STOCK_WORDS or re.match(r"^[\d.]+$", word)
             or word in key.taken or word in ("****", "{{", "''", "nothing", "absent", "present")):
         return word
-    return key.add(word, kind) or word
+    return _site_value(word, kind, key)
+
+
+def _site_value(real, kind, key):
+    """A value the site chose (a user, a bucket) -> its name in the copy; a word the report uses too (a user named
+    ansible, readwrite) masked where it is the value only (quiet: the report's own words stay)."""
+    if real.lower() in vocabulary() or real.lower() in STOCK_WORDS:
+        given = key.add(real, kind, force=True)
+        key.quiet.add(real.lower())
+        return given
+    return key.add(real, kind) or real
 
 
 def _valued(text, key):
