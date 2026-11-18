@@ -379,14 +379,14 @@ def test_the_environment_read_is_the_unit_s_not_the_jvm_s(tmp_path):
     script = read["ansible.builtin.shell"]
     assert "systemctl show cassandra -p Environment" in script
     # (from the JVM's environment, the variables bin/cassandra passes on as they are, never JVM_OPTS)
-    assert "grep -E '^(JVM_EXTRA_OPTS|MX4J_ADDRESS|MX4J_PORT)='" in script
+    assert "grep -E '^(JVM_EXTRA_OPTS|MX4J_ADDRESS|MX4J_PORT|CASSANDRA_HEAPDUMP_DIR)='" in script
     # a unit environment with nothing for cassandra-env.sh to add: proven as before
     assert proven(tmp_path, unitenv="LOCAL_JMX=no")[0] == "none"
     assert proven(tmp_path, jvmenv="MX4J_PORT=")[0] == "none"  # (set empty: nothing added)
     # (pre-push audit, rc13, round 3) the import reads the same, its "no restart" then as apply_config's proof
     with open(os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")) as f:
         text = f.read()
-    assert "grep -E '^(JVM_EXTRA_OPTS|MX4J_ADDRESS|MX4J_PORT)='" in text
+    assert "grep -E '^(JVM_EXTRA_OPTS|MX4J_ADDRESS|MX4J_PORT|CASSANDRA_HEAPDUMP_DIR)='" in text
     assert "environment: \"{{ dict(import_cluster_unit.env | default({}), **(import_cluster_unit.jvm_env" in text
 
 

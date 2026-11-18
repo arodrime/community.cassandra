@@ -193,7 +193,7 @@
         # and the variables bin/cassandra passes on as they are, as the JVM has them whatever set them (an
         # EnvironmentFile, /etc/default/cassandra the init script reads)
         echo "jvmenv=$(tr '\0' '\n' < "/proc/$CASSANDRA_PID/environ" 2>/dev/null \
-          | grep -E '^(JVM_EXTRA_OPTS|MX4J_ADDRESS|MX4J_PORT)=' | base64 -w0)"
+          | grep -E '^(JVM_EXTRA_OPTS|MX4J_ADDRESS|MX4J_PORT|CASSANDRA_HEAPDUMP_DIR)=' | base64 -w0)"
         exit 0
       environment:
         CASSANDRA_PID: "{{ cassandra_jvm.pid }}"

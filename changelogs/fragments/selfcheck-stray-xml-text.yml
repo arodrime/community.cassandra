@@ -1,2 +1,3 @@
 bugfixes:
-  - import_cluster playbook - the self-check says text in a ``logback.xml`` element that takes none (a ``-->`` left after ``<rollingPolicy>`` when uncommenting the audit appender) in plain words, with its way out: remove it on the nodes, then import again (before, a value the roles would write empty).
+  - >-
+    import_cluster playbook - the self-check says text in a ``logback.xml`` element that takes none (a ``-->`` left after ``<rollingPolicy>`` when uncommenting the audit appender) in plain words, with its way out: remove it on the nodes, then import again (before, a value the roles would write empty).

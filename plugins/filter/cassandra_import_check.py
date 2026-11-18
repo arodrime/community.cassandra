@@ -291,11 +291,11 @@ def _stray_text(name, path, text):
     """The node's text in an element that holds elements, where it means nothing (the role's has none): said in
     words, with the way out (the operator removes it on the nodes)."""
     appender = re.search(r'/appender\[@name="([^"]*)"\]', path)
+    element = re.sub(r"\[.*$", "", path.rsplit("/", 1)[-1])
+    where = " of appender %s" % appender.group(1) if appender else ""
     return ("%s: stray text %s inside <%s>%s, an element that takes no text (such as the end of a comment left when"
             " uncommenting a block): remove it on the nodes, then import again (or keep %s as it is: -e"
-            " import_keep_hand_edits=%s)" % (name, _out.mask(repr(str(text))), re.sub(r"\[.*$", "", path.rsplit("/", 1)[-1]),
-                                            " of appender %s" % appender.group(1) if appender else "", name,
-                                            name))
+            " import_keep_hand_edits=%s)" % (name, _out.mask(repr(str(text))), element, where, name, name))
 
 
 def _xml_shown(path, value):
