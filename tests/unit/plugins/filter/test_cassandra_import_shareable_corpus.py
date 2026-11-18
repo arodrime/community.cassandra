@@ -554,7 +554,13 @@ REPORT_LINES = [
     "    -e import_keep_hand_edits=sysctl,limits,swap,timesync,disks,firewall",
     "    the system java (/usr/bin/java); /usr/lib/jvm/java-17-openjdk-amd64/bin/java",
     "    gc.log.0.current  multi-user.target.wants  system.log.1.zip  debug.log",
-    "    logs/system.log data/data conf/cassandra.yaml bin/nodetool tools/bin/cassandra-stress lib/jamm-0.3.2.jar"]
+    "    logs/system.log data/data conf/cassandra.yaml bin/nodetool tools/bin/cassandra-stress lib/jamm-0.3.2.jar",
+    # (round 8)
+    "    roles/cassandra_config/templates/cassandra.yaml.j2 roles/cassandra_linux/defaults/main.yml",
+    "    /proc/sys/fs/file-max /sys/block/sda/queue/nr_requests pylib/cqlshlib doc/cql3",
+    "    '/etc/cassandra/cassandra.yaml: line 4'",
+    "    cron: '/usr/bin/nodetool repair -pr -full'",
+    "    2 nodes in dc1/r1; read 2/2 nodes"]
 
 
 def test_the_reports_own_lines_as_they_are():
@@ -597,3 +603,24 @@ def test_the_report_and_inventory_paths_carry_the_clusters_pseudonym(cluster):
     text = "\n".join(cassandra_import_shareable(lines, layout)["text"])
     words = [w for w in re.split(r"\W+", cluster.lower()) if len(w) > 1]
     assert not [w for w in words + ["frob", "paris", "racka"] if re.search(r"(?i)(?<![a-z])%s" % w, text)], text
+
+
+# (round 8) a password on a command line, quoted or not: never in the copy, never in its key
+COMMANDS = ['    cron: "/usr/bin/nodetool -u cassandra -pw s3cret snapshot -t daily zorglub_ks"',
+            "    cron: /usr/bin/nodetool -u cassandra -pw s3cret repair",
+            "    cron: '/usr/bin/nodetool --password s3cret cleanup'",
+            '    cron: "cqlsh -u cassandra -p s3cret -e x"',
+            "    cron: '/usr/bin/nodetool -h zorglub-db1.acme.example repair -pr -full'"]
+
+
+def test_a_password_on_a_command_line_never_shown_its_subcommands_readable():
+    nodes = [{"name": "zorglub-db%d.acme.example" % i, "address": "10.0.0.%d" % i, "dc": "dc1", "rack": "r1",
+              "read": True, "hand_edits": [], "normalized": [], "notes": [], "vars": {"cassandra_version": "50x"}}
+             for i in (1, 2)]
+    shared = cassandra_import_shareable(COMMANDS, cassandra_inventory_layout(nodes, "Zorglub Prod"))
+    assert "s3cret" not in "\n".join(shared["text"] + shared["map"])
+    text = "\n".join(shared["text"])
+    for readable in ("-pw **** snapshot -t daily", "-pw **** repair", "--password **** cleanup", "-p **** -e x",
+                     "-h n1 repair -pr -full"):
+        assert readable in text, readable
+    assert "zorglub" not in text

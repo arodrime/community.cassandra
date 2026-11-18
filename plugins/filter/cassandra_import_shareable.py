@@ -302,6 +302,17 @@ def _path(path, key):
     return "/" + key.add(path, "path")
 
 
+def _quoted_path(text, key):
+    """A quoted absolute path with a space or a colon: a command (/usr/bin/nodetool -h x repair) its path alone, its
+    arguments left to the other passes, as what follows ": "; else the whole as one path (/x/Orders Billing)."""
+    head, sep, rest = text.partition(": ")  # (a path and what is said of it: '/x/cassandra.yaml: line 4')
+    if not sep:
+        head, sep, rest = text.partition(" ")
+    if sep == ": " or sep and re.search(r"/s?bin/[^/]*$", head):
+        return _path(head, key) + sep + rest
+    return _path(text, key)
+
+
 def _part(part, key):
     """A component of a path under a stock directory: the names of the site in it replaced, its short codes masked,
     each word no path of the roles has (orders under /var/lib/cassandra) masked there (_path_words)."""
@@ -322,7 +333,9 @@ KEPT_PATH_WORDS = ("mapper", "swap", "amd64", "x86_64", "jamm", "override", "rea
                    "proc", "etc", "usr", "opt", "var", "tmp", "local", "default", "conf", "data", "keystore", "read",
                    "ahead", "kb", "auth", "topology", "traces", "distributed", "schema", "system", "yum", "repos", "gc",
                    "tools", "stress", "dumps", "iptables", "nftables", "true", "false", "write", "and", "or", "stop",
-                   "nodes", "racks", "password", "access", "files", "rules")
+                   "nodes", "racks", "password", "access", "files", "rules", "fs", "nf", "ns", "defaults", "tasks",
+                   "handlers", "meta", "nr", "requests", "doc", "cql3", "pylib", "cqlshlib", "jsr223", "groovy",
+                   "init")
 
 
 def _path_words(text, key):
@@ -332,6 +345,7 @@ def _path_words(text, key):
         found = m.group(0)
         if (found.lower() in stock_path_words() or found.lower() in KEPT_PATH_WORDS or found.lower() in EXTENSIONS
                 or found == "IP" or PSEUDONYM.match(found) or OS_CODES.match(found)
+                or GENERIC_PLACE.match(found)
                 or not re.search(r"[A-Za-z]{2}", found) or re.match(r"^[0-9a-f]{32}$", found)):
             return found
         if key.name(found):
@@ -366,12 +380,14 @@ def stock_path_parts():
     return frozenset(parts)
 
 
+# a data center or a rack named so (dc2, rack3, az1): says nothing of the site, never a short code of it
+GENERIC_PLACE = re.compile(r"(?i)^(dc|r|rack|zone|az)[-_]?\d+$")
 # a short code of the site (iv2, zq7, pr01: one or two letters, then digits): what the vocabulary pass leaves (fewer
 # than three letters), masked where the site names things (file names, tuned profiles, disk labels); not the OS's
 # own (x86_64, el8, sdb1, nvme0n1, dm-3, lz4, s3...) nor the copy's pseudonyms (n1, dc2, r1, c1)
 SHORT_CODE = re.compile(r"^[A-Za-z]{1,2}\d+[A-Za-z0-9]*$")
 OS_CODES = re.compile(r"(?i)^(x86|x64|el\d+|fc\d+|sd[a-z]+\d*|vd[a-z]+\d*|hd[a-z]+\d*|nvme\d+(n\d+(p\d+)?)?|md\d+|dm\d*|"
-                      r"lz4|s3|ec2|gp\d|io\d|v\d+|py\d+|ip\d?|ipv[46]|tls\d*|ssl\d*|sha\d+|md5|utf\d+|k8s|i\d86)$")
+                      r"lz4|s3|ec2|gp\d|io\d|v\d+|py\d+|ip\d?|ipv[46]|tls\d*|ssl\d*|sha\d+|md5|utf\d+|k8s|i\d86|j2)$")
 STOCK_TUNED = ("balanced", "desktop", "latency-performance", "network-latency", "network-throughput", "powersave",
                "throughput-performance", "virtual-guest", "virtual-host", "hpc-compute", "accelerator-performance",
                "intel-sst", "optimize-serial-console", "aws", "functions", "recommend.d")
@@ -381,7 +397,8 @@ def _codes(text, key):
     """text (a file name, a label) with each short code of the site in it masked (01-sysctl-iv2.conf ->
     01-sysctl-word1.conf), its other parts as they are."""
     def code(part):
-        if SHORT_CODE.match(part) and not OS_CODES.match(part) and not PSEUDONYM.match(part) and part != "IP":
+        if SHORT_CODE.match(part) and not OS_CODES.match(part) and not PSEUDONYM.match(part) and part != "IP" \
+                and not GENERIC_PLACE.match(part):
             return key.add(part, "word") or part
         return part
     return "".join(code(p) for p in re.split(r"([-_./]+)", text))
@@ -643,7 +660,7 @@ def _masked_names(text, key):
     text = URL.sub(lambda m: key.add(m.group(0), "url"), text)
     text = VAR_PATH.sub(lambda m: m.group(0) if STOCK_LOG_PATH.match(m.group(0)) else key.add(m.group(0), "path"), text)
     text = QUOTED_RELATIVE.sub(lambda m: key.add(m.group(0), "path"), text)
-    text = QUOTED_PATH.sub(lambda m: _path(m.group(0), key), text)
+    text = QUOTED_PATH.sub(lambda m: _quoted_path(m.group(0), key), text)
     text = OPTIONAL_PATH.sub(lambda m: m.group(1) + _path(m.group(2), key) if m.group(1).endswith(("-", "/"))
                              else m.group(0), text)
     text = RELATIVE_VALUE.sub(lambda m: m.group(1) + _path_words(_codes(key.inside(m.group(2)), key), key), text)
@@ -801,7 +818,7 @@ def cassandra_import_shareable(lines, layout, written=None, report_file="", cwd=
             " names, domains, URLs, paths, buckets and user names replaced (domain1, url1, path1, bucket1, user1..),"
             " secrets masked. A short host name that is not a node's may remain: check before sharing. Its key"
             " stays with whoever ran the import.", ""]
-    lines = [str(line) for line in lines]
+    lines = [_masked(str(line)) for line in lines]  # (the secrets first: no later pass may hide one from it)
     # the names of XML elements the report's XPaths give (name=, ref=): a self-check's setting names them alone
     key.xml_names = set(m.group(4) for line in lines for m in XPATH_VALUE.finditer(line) if m.group(2) in ("name", "ref"))
     # a self-check's setting, on its own line above its values (Node, Ansible): in the file's own words
