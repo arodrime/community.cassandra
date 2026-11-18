@@ -335,7 +335,7 @@ KEPT_PATH_WORDS = ("mapper", "swap", "amd64", "x86_64", "jamm", "override", "rea
                    "tools", "stress", "dumps", "iptables", "nftables", "true", "false", "write", "and", "or", "stop",
                    "nodes", "racks", "password", "access", "files", "rules", "fs", "nf", "ns", "defaults", "tasks",
                    "handlers", "meta", "nr", "requests", "doc", "cql3", "pylib", "cqlshlib", "jsr223", "groovy",
-                   "init")
+                   "init", "check")
 
 
 def _path_words(text, key):
@@ -378,6 +378,22 @@ def stock_path_parts():
                             parts.update(p for p in path.split("/") if p)
                     parts.add(re.sub(r"\.j2$", "", name))
     return frozenset(parts)
+
+
+@functools.lru_cache(maxsize=1)
+def stock_file_names():
+    """The names of the files the roles write (their templates': cassandra-env.sh, jvm11-server.options...) -> frozenset."""
+    names = set()
+    for role in sorted(os.listdir(ROLES)):
+        for top, dirs, files in os.walk(os.path.join(ROLES, role, "templates")):
+            names.update(re.sub(r"\.j2$", "", name) for name in files if "." in re.sub(r"\.j2$", "", name))
+    return frozenset(names)
+
+
+def _stock_file(word):
+    """Whether word is a file the roles write, alone or with a key of cassandra_config_file_permissions after it."""
+    return any(word == name or word in ("%s.%s" % (name, k) for k in ("owner", "group", "mode"))
+               for name in stock_file_names())
 
 
 # a data center or a rack named so (dc2, rack3, az1): says nothing of the site, never a short code of it
@@ -679,6 +695,8 @@ def _masked_names(text, key):
 
     def token(m):
         word = m.group(0)
+        if _stock_file(word):  # (a file the roles write, a key of its in a dict: jvm-server.options.mode)
+            return word
         if key.get(word) or word.lower() in key.quiet:
             return key.get(word) or word
         if KERNEL_KEY.match(word) and (re.match(r"\s*[=:]", m.string[m.end():])  # (vm.swappiness = 0)

@@ -321,6 +321,7 @@ SITE_DIFFERENCES += [
 ]
 
 SITE_LINES = [
+    '  logback.xml.frobcorp cassandra.yaml.quux.mode jvm-server.options.zorglub',
     '  see cassandra.acmecorp.example and sun.acmecorp.example, logback.acmecorp.example',
     '  -Dsun.acmecorp=1 -Dio.netty.acmeflag=2 -Dcom.google.acmeprop=3 -Dcom.datastax.acmething=4',
     'check ${cassandra.logdir}/payments/orders.log and /srv/payments/orders.log',
@@ -408,8 +409,13 @@ STOCK_DIFFERENCES += [
     "cassandra.yaml: saved_caches_directory: node has '/var/lib/cassandra/saved_caches', import would write nothing"]
 STOCK_LINES = ["-Dsun.rmi.server.x=1 -Dlogback.configurationFile=logback.xml -Djava.rmi.server.hostname=x",
                "${cassandra.logdir}/system.log ${cassandra.logdir}/audit/audit.log.%d{yyyy-MM-dd}.%i.zip",
-               "/etc/udev/rules.d/64-cassandra-data-disk.rules"]
-READABLE = ["$CASSANDRA_HOME/lib/jamm-0.3.2.jar", "$CASSANDRA_CONF/hotspot_compiler", "${CASSANDRA_LOG_DIR}/gc.log",
+               "/etc/udev/rules.d/64-cassandra-data-disk.rules",
+               "remove jvm-server.options.mode from cassandra_config_file_permissions in host_vars/zorglub-db1/",
+               "jvm11-server.options.mode cassandra-env.sh.owner cassandra.yaml.group jvm11-server.options",
+               "report: reports/zorglub/report.check.txt"]
+READABLE = ["remove jvm-server.options.mode from", "jvm11-server.options.mode", "cassandra-env.sh.owner",
+            "cassandra.yaml.group", " jvm11-server.options", "report.check.txt",
+            "$CASSANDRA_HOME/lib/jamm-0.3.2.jar", "$CASSANDRA_CONF/hotspot_compiler", "${CASSANDRA_LOG_DIR}/gc.log",
             "parameters[0].high_ratio", "parameters[0].fail_on_missing_provider",
             "parameters[0].keystore: node has 'conf/.keystore'", "/var/lib/cassandra/saved_caches",
             "ASYNCDEBUGLOG / queueSize", "DEBUGLOG / encoder / pattern", "org.apache.cassandra / @level",
