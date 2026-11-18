@@ -465,3 +465,51 @@ def test_a_self_check_setting_masks_what_the_site_chose():
                  "      client_encryption_options.enabled"):
         assert any(kept in line for line in text), kept
     assert text[3].split(":")[1].strip() == text[14].strip(), text  # (the same user, the same name)
+
+
+def test_every_self_check_setting_masks_the_sites_names():
+    # (pre-push audit, rc13, round 2) a self-check's settings outside the files keyed by their own vocabulary: an
+    # environment variable, a JVM agent's path, the unit's environment, a kernel setting's file, a device, a limits
+    # file, a firewall source; the advice and the evidence alike
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import \
+        cassandra_import_self_check_advice
+    nodes = [{"name": "zorglub-db%d" % i, "address": "10.0.0.%d" % i, "dc": "dc1", "rack": "r1", "read": True,
+              "hand_edits": ["cassandra-env.sh, line 3:", "  + x"], "normalized": [], "notes": [],
+              "vars": {"cassandra_version": "50x"}} for i in (1, 2)]
+    layout = cassandra_inventory_layout(nodes, "My Cluster")
+    differences = [
+        "jvm17-server.options: -javaagent:/srv/acme/agent.jar: node has '-javaagent:/srv/acme/agent.jar', import"
+        " would write nothing",
+        'cassandra-env.sh: node has JVM_OPTS="$JVM_OPTS -javaagent:/srv/acme/agent.jar=7070", import would write'
+        " nothing",
+        "cassandra-env.sh: node has ACME_HOME=/srv/acme, import would write nothing",
+        "cassandra.service: [Service] Environment ACME_LICENSE: node has 'x', import would write nothing",
+        "cassandra_linux: sysctl vm.max_map_count (/etc/sysctl.d/99-acme.conf): node has 1, the roles would set 2",
+        "cassandra_linux: read_ahead_kb vg_acme-lv_data (live): node has 128, the roles would set 8",
+        "cassandra_linux: /etc/security/limits.d/acme-limits.conf: node has x, the roles would set y",
+        "cassandra_firewall: port 7000 from 192.168.77.0/24: node has closed, the roles would set open",
+        "cassandra-topology.properties: zorglub-db1.acme.example: node has 'dc1:r1', import would write nothing",
+        "jmxremote.access: orders_ops: node has readwrite, import would write nothing",
+        "cassandra.yaml: client_encryption_options.enabled: node has 'true', import would write 'false'"]
+    lines = cassandra_import_self_check_advice(layout, {"zorglub-db1": {"differences": differences}},
+                                               report_file="/p/reports/x/report.txt", cwd="/p", width=200)
+    text = cassandra_import_shareable(lines + ["  " + d for d in differences], layout)["text"]
+    assert not [line for line in text if re.search(r"(?i)acme|zorglub|orders|192\.168", line)], text
+    for kept in ("    sysctl vm.max_map_count (/etc/sysctl.d/99-", "    client_encryption_options.enabled",
+                 "    [Service] Environment ", "    -javaagent:/path"):
+        assert [line for line in text if kept in line], kept
+
+
+def test_a_logback_tag_stays_in_clear_its_names_masked():
+    # (pre-push audit, rc13, round 2) any tag (immediateFlush, neverBlock, shutdownHook: logback's, not only the
+    # collection's) in clear; an element named by name= or ref= in an XPath of the report masked wherever it is
+    xpath = '/configuration/appender[@name="ZORGLUBLOG"]/encoder/immediateFlush'
+    lines = ["  logback.xml: %s: node has 'false', import would write nothing" % xpath,
+             "    logback.xml    zorglub-db1", "      ZORGLUBLOG / encoder / immediateFlush", "        Node      false",
+             "      ASYNC / neverBlock", "        Node      true", "      shutdownHook", "        Node      present",
+             "      root / appender-ref ZORGLUBLOG", "        Node      present"]
+    text = cassandra_import_shareable(lines, ZORGLUB)["text"][2:]
+    assert not [line for line in text if SITE.search(line) or "ZORGLUBLOG" in line], text
+    assert "/encoder/immediateFlush: node has" in text[0]
+    assert text[2].endswith(" / encoder / immediateFlush") and not text[2].strip().startswith("ZORG")
+    assert "      ASYNC / neverBlock" in text and "      shutdownHook" in text

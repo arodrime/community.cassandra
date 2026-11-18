@@ -93,6 +93,7 @@ class _Key(object):
     def __init__(self):
         self.names, self.order, self.counts, self.taken, self.kinds, self.quiet = {}, [], {}, set(), {}, set()
         self.clear = set()  # names shown in clear wherever they are (_clear_names)
+        self.xml_names = set()  # the names of XML elements (name=, ref=) the report gives
 
     def get(self, real):
         """What replaces real in the text, None when nothing does."""
@@ -373,15 +374,18 @@ _HELD = re.compile(u"\ue000(\\d+)\ue001")
 
 
 def _held(text, key, spans):
-    """text with each span of spans (regexes) put aside (its names of nodes and clusters replaced), the others
-    as they are -> (text, [the spans put aside, by their number])."""
+    """text with each span of spans (regexes) put aside (a self-check's setting as setting shows it, another with
+    its names of nodes and clusters replaced), the others as they are -> (text, [the spans put aside, by their
+    number])."""
     held = []
 
     def hold(m):
         at = m.span("held") if "held" in m.re.groupindex else m.span()
         if _site_option(m.string[at[0]:at[1]]):
             return m.group(0)
-        held.append(setting(m.string[at[0]:at[1]], key, m.groupdict().get("file") or ""))
+        span = m.string[at[0]:at[1]]  # (a self-check's setting in its file's words; a known JVM option's name)
+        held.append(setting(span, key, m.group("file")) if "file" in m.re.groupindex
+                    else key.inside(span, ("n", "c", "dc", "r")))
         return u"%s\ue000%d\ue001%s" % (m.string[m.start():at[0]], len(held) - 1, m.string[at[1]:m.end()])
     for span in spans:
         text = span.sub(hold, text)
@@ -406,31 +410,45 @@ def _file_above(lines, i):
     return (above.split() or [""])[0]
 
 
+# the files whose settings are named by keys of their own vocabulary (a YAML key, an INI one): in clear but for the
+# names of the site in them; a JVM option's name, in clear when the JVM's, Cassandra's or a stock library's
+KEYED_FILES = (".yaml", ".yml", ".ini")
+# an XPath's attribute value (an element named by name= or ref=, another attribute's value): the site's
+XPATH_VALUE = re.compile(r"""(\[@[\w.:-]+=(["']))(.*?)(\2\])""")
+
+
 def setting(text, key, file_name):
     """A setting of file_name named in the file's own words (a line of the self-check's: AUDIT / rollingPolicy, -Dx.y,
-    client_encryption_options.enabled): its keys, tags and attribute names as they are (but for the names of nodes
-    and clusters in them, an address); what the site chose masked as in any line: a JMX user, the name= or ref= of an
-    XML element (a logger's package, an appender)."""
+    client_encryption_options.enabled): a YAML or INI key, an XML element's tags and attribute names, a JVM option of
+    JVM_KNOWN as they are (but for the names of the site in them, an address); what the site chose masked as in any
+    line: a JMX user, the name= or ref= of an XML element (a logger's package, an appender), any other setting (an
+    environment variable, a kernel setting's file, a device, a JVM option of the site's: -javaagent:/srv/x.jar)."""
     text = IPV4.sub("IP", key.inside(text, ("n", "c", "dc", "r")))
-    if file_name.startswith("jmxremote."):  # (the setting is a user)
+    name = os.path.basename(file_name)
+    if name.startswith("jmxremote."):  # (the setting is a user)
         return text if text.lower() in vocabulary() or PSEUDONYM.match(text) else key.add(text, "user") or text
-    if not file_name.endswith(".xml"):
-        return text
-    if text.startswith("/"):  # an XPath: /configuration/logger[@name="x"]/@level
-        return re.sub(r'(\[@[\w.:-]+=")([^"]*)("\])', lambda m: m.group(1) + _masked_names(m.group(2), key) + m.group(3),
-                      text)
-    return " / ".join(_step(step, key) for step in text.split(" / "))  # as xml_where names it: x.y / @level
+    if name.endswith(".xml"):
+        if text.startswith("/"):  # an XPath: /configuration/logger[@name="x"]/@level
+            return XPATH_VALUE.sub(lambda m: m.group(1) + _masked_names(m.group(3), key) + m.group(4), text)
+        return " / ".join(_step(step, key) for step in text.split(" / "))  # as xml_where names it: x.y / @level
+    if name.endswith(KEYED_FILES) or name.endswith(".options") and re.match(r"^-X[a-z]|%s" % "|".join(
+            re.escape(k) for k in JVM_KNOWN), text):
+        return key.inside(text)
+    return _line(text, key)
 
 
 def _step(step, key):
-    """A step of an XML setting as the self-check names it: an attribute (@level) as it is; an element by its name
-    (com.acme.x, AUDIT), an appender-ref by its ref (appender-ref ASYNC), the name masked as in any line; its place
-    among its siblings (2) kept."""
+    """A step of an XML setting as the self-check names it (xml_where): a tag (rollingPolicy, immediateFlush) or an
+    attribute (@level) as it is; an element by its name (AUDIT, com.acme.x: one the XPaths of the report name with
+    name= or ref=, key.xml_names, or a package), an appender-ref by its ref (appender-ref ASYNC): the name masked as in
+    any line; its place among its siblings (2) kept."""
     m = re.match(r"^(.*?)((?: \(\d+\))?)$", step)
     name, place = m.groups()
-    if name.startswith("@"):
-        return step
+    if "[@" in name:  # (an XPath's step left as it is: appender[@name='x'])
+        return XPATH_VALUE.sub(lambda v: v.group(1) + _masked_names(v.group(3), key) + v.group(4), name) + place
     tag, dummy, value = name.rpartition(" ")
+    if not tag and (name.startswith("@") or name not in key.xml_names and "." not in name):
+        return step
     return (tag + " " if tag else "") + _masked_names(value, key) + place
 
 
@@ -557,6 +575,9 @@ def cassandra_import_shareable(lines, layout, written=None, report_file="", cwd=
             " secrets masked. A short host name that is not a node's may remain: check before sharing. Its key"
             " stays with whoever ran the import.", ""]
     lines = [str(line) for line in lines]
+    # the names of XML elements the report's XPaths give (name=, ref=): a self-check's setting names them alone
+    key.xml_names = set(m.group(3) for line in lines for m in XPATH_VALUE.finditer(line)
+                        if re.match(r"\[@(name|ref)=", m.group(1)))
     # a self-check's setting, on its own line above its values (Node, Ansible): in the file's own words
     named = set(i for i in range(len(lines) - 1) if lines[i].strip() and VALUES.match(lines[i + 1])
                 and _indent(lines[i]) < _indent(lines[i + 1]))
