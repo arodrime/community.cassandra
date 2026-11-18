@@ -1434,6 +1434,15 @@ argument_specs:
         default: []
         description:
         - Extra lines appended to C(jvm-server.options) (all Java versions).
+      cassandra_jvm_removed_options:
+        type: list
+        elements: str
+        default: []
+        description:
+        - Stock option lines of C(jvm-server.options) written commented out (switched off), as written in stock,
+          e.g. V(-XX:+HeapDumpOnOutOfMemoryError), V(-XX:+UseNUMA), V(-Djava.net.preferIPv4Stack=true) (an IPv6
+          node). Not the heap lines, which their variables write.
+        - To change a value instead, add the option with its value to the extra options (the last one counts).
       cassandra_jvm8_extra_options:
         type: list
         elements: str
@@ -1452,6 +1461,27 @@ argument_specs:
         default: []
         description:
         - Extra lines appended to C(jvm17-server.options) (5.0).
+      cassandra_jvm8_removed_options:
+        type: list
+        elements: str
+        default: []
+        description:
+        - Stock option lines of C(jvm8-server.options) (4.x) written commented out, as O(cassandra_jvm_removed_options).
+          Not the GC lines (O(cassandra_jvm_gc)).
+      cassandra_jvm11_removed_options:
+        type: list
+        elements: str
+        default: []
+        description:
+        - Stock option lines of C(jvm11-server.options) written commented out, as O(cassandra_jvm_removed_options).
+          Not the GC lines (O(cassandra_jvm_gc)).
+      cassandra_jvm17_removed_options:
+        type: list
+        elements: str
+        default: []
+        description:
+        - Stock option lines of C(jvm17-server.options) (5.0) written commented out, as
+          O(cassandra_jvm_removed_options). Not the GC lines (O(cassandra_jvm_gc)).
       cassandra_dc:
         type: str
         default: dc1

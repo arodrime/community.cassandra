@@ -370,6 +370,31 @@
     quiet: true
   when: cassandra_version == '50x'
 
+# a stock option line its JVM options file does not have (or one a variable writes): it would switch nothing off
+- name: Refuse removed JVM options the role does not write
+  ansible.builtin.assert:
+    that: _unknown | length == 0
+    fail_msg: >-
+      {{ _unknown | join('; ') }}: not a stock line of that file of {{ cassandra_version }} (the GC and heap lines: their
+      variables). Write each as in the stock file, or remove it; nothing is changed.
+    quiet: true
+  vars:
+    _unknown: >-
+      {%- set out = [] -%}
+      {%- for name in _cassandra_config_files[_cassandra_config_series] if name is match('jvm[0-9]*-server[.]options$') -%}
+      {%-   set var = 'cassandra_' ~ name | regex_replace('-server[.]options$', '') ~ '_removed_options' -%}
+      {%-   set listed = lookup('ansible.builtin.vars', var, default=[]) -%}
+      {%-   if listed | length > 0 -%}
+      {%-     set stock = lookup('ansible.builtin.file', role_path ~ '/templates/' ~ _cassandra_config_series ~ '/' ~ name
+                                 ~ '.j2') | regex_findall("'#' if '([^']*)' in " ~ var) -%}
+      {%-     set bad = listed | reject('in', stock) | list -%}
+      {%-     if bad -%}
+      {%-       set _ = out.append(var ~ ': ' ~ bad | join(', ')) -%}
+      {%-     endif -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+
 # GossipingPropertyFileSnitch takes the node's dc and rack from the file: other lines would
 # move it (e.g. kept by import_cluster under SimpleSnitch, then the snitch changed)
 - name: Refuse rackdc lines other than the node's dc and rack under a snitch that reads them

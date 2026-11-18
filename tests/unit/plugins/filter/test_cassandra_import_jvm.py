@@ -147,10 +147,10 @@ def test_an_option_carried_is_no_hand_edit_beside_another_edit():
     # removed line is a hand edit (the report said -Xss1024M both carried and a hand edit no variable carries)
     files = node_files("50x")
     files["jvm-server.options"] = files["jvm-server.options"].replace("-Xss256k", "-Xss1024M").replace(
-        "-XX:+UseNUMA\n", "")
+        "-XX:+UseNUMA\n", "##-XX:+UseNUMA\n")
     out = cassandra_config_import(files, "50x", FACTS, java="17")
     assert out["vars"]["cassandra_jvm_extra_options"] == ["-Xss1024M"]
-    assert [line for line in out["hand_edits"] if line.startswith("  ")] == ["  - -XX:+UseNUMA"]
+    assert [line for line in out["hand_edits"] if line.startswith("  ")] == ["  - -XX:+UseNUMA", "  + ##-XX:+UseNUMA"]
     assert "jvm-server.options: -Xss, at another place than the role writes it: the same for the JVM (the last one" \
            " counts)" in out["normalized"]
 

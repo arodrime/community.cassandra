@@ -77,23 +77,23 @@
 
 ### JPMS
 
--Djdk.attach.allowAttachSelf=true
---add-exports java.base/jdk.internal.misc=ALL-UNNAMED
---add-exports java.base/jdk.internal.ref=ALL-UNNAMED
---add-exports java.base/sun.nio.ch=ALL-UNNAMED
---add-exports java.management.rmi/com.sun.jmx.remote.internal.rmi=ALL-UNNAMED
---add-exports java.rmi/sun.rmi.registry=ALL-UNNAMED
---add-exports java.rmi/sun.rmi.server=ALL-UNNAMED
---add-exports java.sql/java.sql=ALL-UNNAMED
+{{ '#' if '-Djdk.attach.allowAttachSelf=true' in cassandra_jvm11_removed_options else '' }}-Djdk.attach.allowAttachSelf=true
+{{ '#' if '--add-exports java.base/jdk.internal.misc=ALL-UNNAMED' in cassandra_jvm11_removed_options else '' }}--add-exports java.base/jdk.internal.misc=ALL-UNNAMED
+{{ '#' if '--add-exports java.base/jdk.internal.ref=ALL-UNNAMED' in cassandra_jvm11_removed_options else '' }}--add-exports java.base/jdk.internal.ref=ALL-UNNAMED
+{{ '#' if '--add-exports java.base/sun.nio.ch=ALL-UNNAMED' in cassandra_jvm11_removed_options else '' }}--add-exports java.base/sun.nio.ch=ALL-UNNAMED
+{{ '#' if '--add-exports java.management.rmi/com.sun.jmx.remote.internal.rmi=ALL-UNNAMED' in cassandra_jvm11_removed_options else '' }}--add-exports java.management.rmi/com.sun.jmx.remote.internal.rmi=ALL-UNNAMED
+{{ '#' if '--add-exports java.rmi/sun.rmi.registry=ALL-UNNAMED' in cassandra_jvm11_removed_options else '' }}--add-exports java.rmi/sun.rmi.registry=ALL-UNNAMED
+{{ '#' if '--add-exports java.rmi/sun.rmi.server=ALL-UNNAMED' in cassandra_jvm11_removed_options else '' }}--add-exports java.rmi/sun.rmi.server=ALL-UNNAMED
+{{ '#' if '--add-exports java.sql/java.sql=ALL-UNNAMED' in cassandra_jvm11_removed_options else '' }}--add-exports java.sql/java.sql=ALL-UNNAMED
 
---add-opens java.base/java.lang.module=ALL-UNNAMED
---add-opens java.base/jdk.internal.loader=ALL-UNNAMED
---add-opens java.base/jdk.internal.ref=ALL-UNNAMED
---add-opens java.base/jdk.internal.reflect=ALL-UNNAMED
---add-opens java.base/jdk.internal.math=ALL-UNNAMED
---add-opens java.base/jdk.internal.module=ALL-UNNAMED
---add-opens java.base/jdk.internal.util.jar=ALL-UNNAMED
---add-opens jdk.management/com.sun.management.internal=ALL-UNNAMED
+{{ '#' if '--add-opens java.base/java.lang.module=ALL-UNNAMED' in cassandra_jvm11_removed_options else '' }}--add-opens java.base/java.lang.module=ALL-UNNAMED
+{{ '#' if '--add-opens java.base/jdk.internal.loader=ALL-UNNAMED' in cassandra_jvm11_removed_options else '' }}--add-opens java.base/jdk.internal.loader=ALL-UNNAMED
+{{ '#' if '--add-opens java.base/jdk.internal.ref=ALL-UNNAMED' in cassandra_jvm11_removed_options else '' }}--add-opens java.base/jdk.internal.ref=ALL-UNNAMED
+{{ '#' if '--add-opens java.base/jdk.internal.reflect=ALL-UNNAMED' in cassandra_jvm11_removed_options else '' }}--add-opens java.base/jdk.internal.reflect=ALL-UNNAMED
+{{ '#' if '--add-opens java.base/jdk.internal.math=ALL-UNNAMED' in cassandra_jvm11_removed_options else '' }}--add-opens java.base/jdk.internal.math=ALL-UNNAMED
+{{ '#' if '--add-opens java.base/jdk.internal.module=ALL-UNNAMED' in cassandra_jvm11_removed_options else '' }}--add-opens java.base/jdk.internal.module=ALL-UNNAMED
+{{ '#' if '--add-opens java.base/jdk.internal.util.jar=ALL-UNNAMED' in cassandra_jvm11_removed_options else '' }}--add-opens java.base/jdk.internal.util.jar=ALL-UNNAMED
+{{ '#' if '--add-opens jdk.management/com.sun.management.internal=ALL-UNNAMED' in cassandra_jvm11_removed_options else '' }}--add-opens jdk.management/com.sun.management.internal=ALL-UNNAMED
 
 
 ### GC logging options -- uncomment to enable
@@ -119,6 +119,6 @@
 # On Java >= 9 Netty requires the io.netty.tryReflectionSetAccessible system property to be set to true to enable
 # creation of direct buffers using Unsafe. Without it, this falls back to ByteBuffer.allocateDirect which has
 # inferior performance and risks exceeding MaxDirectMemory
--Dio.netty.tryReflectionSetAccessible=true
+{{ '#' if '-Dio.netty.tryReflectionSetAccessible=true' in cassandra_jvm11_removed_options else '' }}-Dio.netty.tryReflectionSetAccessible=true
 
 # The newline in the end of file is intentional{{ ('\n' ~ (cassandra_jvm11_extra_options | join('\n'))) if cassandra_jvm11_extra_options else '' }}

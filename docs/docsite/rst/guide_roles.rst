@@ -1567,6 +1567,12 @@ the masking reads as part of its value) puts all the lines of its snippet in ``s
 (``MAX_HEAP_SIZE=``, ``-Xmx``, the JMX port, a GC), or that do not make a whole (an ``if`` without its ``fi``), are not carried: none of the end lines
 then is.
 
+A stock option line a node has commented out (``#``, or ``#`` and a space) or removed, when no other line of the
+file sets that option, is switched off: ``cassandra_jvm_removed_options`` for ``jvm-server.options``,
+``cassandra_jvm<N>_removed_options`` for ``jvm<N>-server.options`` (``-XX:+HeapDumpOnOutOfMemoryError`` on a small
+disk, ``-Djava.net.preferIPv4Stack=true`` on an IPv6 node); not a stock line of a later release the file predates
+(said apart, below). Another value in its place (``-XX:-UseNUMA``) is an extra option, as above.
+
 The GC block of a ``jvm<N>-server.options`` file is read as the stock one with its values; a G1 tuning line the
 node has commented out or removed, ``""`` (the role writes it commented out). When that cannot give the node's GC
 options (another GC in G1's place, a line no variable switches), ``cassandra_jvm<N>_gc: custom`` with the node's GC

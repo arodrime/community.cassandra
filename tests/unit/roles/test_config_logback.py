@@ -169,7 +169,9 @@ def test_the_templates_are_the_generators(series):
             continue
         with open(os.path.join(STOCK % VERSIONS[series], name + ".stock"), encoding="utf-8") as f:
             lines = f.read().split("\n")
+        stock = list(lines)
         gen.replace_lines(name, lines, rules)
+        gen.removable(name, stock, lines)  # (the JVM options files' stock lines: cassandra_jvm*_removed_options)
         with open(os.path.join(ROLE, "templates", series, name + ".j2"), encoding="utf-8") as f:
             assert f.read().split("\n")[1:] == lines, name
 

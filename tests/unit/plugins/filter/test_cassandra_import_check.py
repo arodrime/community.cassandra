@@ -479,7 +479,8 @@ HAND_EDITS = [  # no variable covers them: the roles would change them, the self
      'cassandra-env.sh: node has JVM_OPTS="$JVM_OPTS -Dcassandra.custom=1", import would write nothing'),
     ("cassandra-env.sh", r'(?m)^JMX_PORT=.*$', 'JMX_PORT="${JMX_PORT:-7299}"',  # the environment decides
      'cassandra-env.sh: node has JMX_PORT="${JMX_PORT:-7299}", import would write JMX_PORT=7199'),
-    ("jvm-server.options", r"(?m)^(-Xss.*)$", r"#\1",  # a stock option switched off
+    # a stock option switched off otherwise than the role does (#, # and a space: cassandra_jvm_removed_options)
+    ("jvm-server.options", r"(?m)^(-Xss.*)$", r"##\1",
      "jvm-server.options: -Xss: node has nothing, import would write '-Xss256k'"),
 ]
 
@@ -1729,3 +1730,43 @@ def test_package_script_compares_the_environment_of_its_drop_in():
                                " '/usr/lib/jvm/jre-17', the roles would set nothing"]
     assert check({}, {"JAVA_HOME": "/opt/jdk"}) == ["cassandra.service.d (the environment of the init script): JAVA_HOME:"
                                                     " node has nothing, the roles would set '/opt/jdk'"]
+
+
+# --- stock JVM options switched off -----------------------------------------------------------------------------
+
+@pytest.mark.parametrize("series", sorted(VERSIONS))
+def test_stock_jvm_options_commented_out_or_removed_are_imported(series):
+    files = seeded(stock(series))
+    text = files["jvm-server.options"]
+    text = edit(text, "\n-XX:+HeapDumpOnOutOfMemoryError\n", "\n#-XX:+HeapDumpOnOutOfMemoryError\n")
+    text = edit(text, "\n-XX:+UseNUMA\n", "\n")
+    text = edit(text, "\n-Djava.net.preferIPv4Stack=true\n", "\n# -Djava.net.preferIPv4Stack=true\n")
+    files["jvm-server.options"] = text
+    imported = cassandra_config_import(files, series, FACTS, "", "/var/lib/cassandra")
+    assert imported["hand_edits"] == []
+    assert sorted(imported["vars"]["cassandra_jvm_removed_options"]) == [
+        "-Djava.net.preferIPv4Stack=true", "-XX:+HeapDumpOnOutOfMemoryError", "-XX:+UseNUMA"]
+    assert check(files, series)["differences"] == []
+
+
+def test_a_stock_option_set_otherwise_is_not_removed():
+    """-XX:-UseNUMA in place of -XX:+UseNUMA, or the line at another place: the option is set, as before (an extra
+    option, the last one counting)."""
+    files = seeded(stock("50x"))
+    files["jvm-server.options"] = edit(edit(files["jvm-server.options"], "\n-XX:+UseNUMA\n", "\n-XX:-UseNUMA\n"),
+                                       "\n-XX:+AlwaysPreTouch\n", "\n") + "-XX:+AlwaysPreTouch\n"
+    imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
+    assert "cassandra_jvm_removed_options" not in imported["vars"]
+    assert imported["vars"]["cassandra_jvm_extra_options"] == ["-XX:-UseNUMA", "-XX:+AlwaysPreTouch"]
+    assert check(files, "50x")["differences"] == []
+
+
+def test_a_stock_option_commented_out_in_the_file_the_java_reads():
+    files = seeded(stock("50x"))
+    files["jvm17-server.options"] = edit(files["jvm17-server.options"], "\n-Djdk.attach.allowAttachSelf=true\n",
+                                         "\n#-Djdk.attach.allowAttachSelf=true\n")
+    imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
+    assert imported["vars"]["cassandra_jvm17_removed_options"] == ["-Djdk.attach.allowAttachSelf=true"]
+    assert "cassandra_jvm11_removed_options" not in imported["vars"]  # (that file has the line as it is)
+    out = check(files, "50x", java="17")
+    assert out["differences"] == [] and out["notes"] == []

@@ -145,14 +145,16 @@ def test_the_filter_refusals():
 
 
 def test_the_role_template_lines_count_too():
-    # 4.x's jvm-server.options writes -XX:-UseBiasedLocking for Java 8/11: on an unsupported Java, no variable
-    # removes it
+    # 4.x's jvm-server.options writes -XX:-UseBiasedLocking for Java 8/11: on an unsupported Java, unless
+    # cassandra_jvm_removed_options switches it off
     assert cassandra_jvm_option_checks({}, "41x", "11") == []
     found = cassandra_jvm_option_checks({}, "41x", "17")
     assert len(found) == 1 and found[0].startswith("-XX:-UseBiasedLocking (the role's jvm-server.options, Java 17)")
     assert found[0].endswith("The role writes it as Cassandra 4.1's stock file does, for Java 8 or 11: set"
-                             " cassandra_java_version to one of them")
+                             " cassandra_java_version to one of them, or switch it off (cassandra_jvm_removed_options)")
     assert len(cassandra_jvm_option_checks({}, "40x", "21", refusals=True)) == 1
+    # switched off: the role does not write it
+    assert cassandra_jvm_option_checks({"cassandra_jvm_removed_options": ["-XX:-UseBiasedLocking"]}, "41x", "17") == []
     # 5.0's stock line is in jvm11-server.options, which Java 21 does not read
     assert cassandra_jvm_option_checks({}, "50x", "21", refusals=True) == []
     # a variable setting it again: the last one counts, its own way out

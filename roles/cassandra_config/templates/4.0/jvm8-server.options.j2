@@ -30,7 +30,7 @@
 # allows lowering thread priority without being root on linux - probably
 # not necessary on Windows but doesn't harm anything.
 # see http://tech.stolsvik.com/2010/01/linux-java-thread-priorities-workaround.html
--XX:ThreadPriorityPolicy=42
+{{ '#' if '-XX:ThreadPriorityPolicy=42' in cassandra_jvm8_removed_options else '' }}-XX:ThreadPriorityPolicy=42
 
 #################
 #  GC SETTINGS  #
@@ -80,16 +80,16 @@
 
 ### GC logging options -- uncomment to enable
 
--XX:+PrintGCDetails
--XX:+PrintGCDateStamps
--XX:+PrintHeapAtGC
--XX:+PrintTenuringDistribution
--XX:+PrintGCApplicationStoppedTime
--XX:+PrintPromotionFailure
+{{ '#' if '-XX:+PrintGCDetails' in cassandra_jvm8_removed_options else '' }}-XX:+PrintGCDetails
+{{ '#' if '-XX:+PrintGCDateStamps' in cassandra_jvm8_removed_options else '' }}-XX:+PrintGCDateStamps
+{{ '#' if '-XX:+PrintHeapAtGC' in cassandra_jvm8_removed_options else '' }}-XX:+PrintHeapAtGC
+{{ '#' if '-XX:+PrintTenuringDistribution' in cassandra_jvm8_removed_options else '' }}-XX:+PrintTenuringDistribution
+{{ '#' if '-XX:+PrintGCApplicationStoppedTime' in cassandra_jvm8_removed_options else '' }}-XX:+PrintGCApplicationStoppedTime
+{{ '#' if '-XX:+PrintPromotionFailure' in cassandra_jvm8_removed_options else '' }}-XX:+PrintPromotionFailure
 #-XX:PrintFLSStatistics=1
 #-Xloggc:/var/log/cassandra/gc.log
--XX:+UseGCLogFileRotation
--XX:NumberOfGCLogFiles=10
--XX:GCLogFileSize=10M
+{{ '#' if '-XX:+UseGCLogFileRotation' in cassandra_jvm8_removed_options else '' }}-XX:+UseGCLogFileRotation
+{{ '#' if '-XX:NumberOfGCLogFiles=10' in cassandra_jvm8_removed_options else '' }}-XX:NumberOfGCLogFiles=10
+{{ '#' if '-XX:GCLogFileSize=10M' in cassandra_jvm8_removed_options else '' }}-XX:GCLogFileSize=10M
 
 # The newline in the end of file is intentional{{ ('\n' ~ (cassandra_jvm8_extra_options | join('\n'))) if cassandra_jvm8_extra_options else '' }}

@@ -581,12 +581,28 @@ def section_indent(lines):
                           lambda m: "indent(%d, true)%s" % (len(child) - len(child.lstrip()), m.group(1)), line)
 
 
+def removable(name, stock, lines):
+    """The option lines of a JVM options file left as in stock by the rules: on unless listed in the file's
+    cassandra_jvm<N>_removed_options (cassandra_jvm_removed_options: jvm-server.options'), as its extra options (an
+    option switched off: commented out or removed on a node)."""
+    m = re.match(r"^jvm(\d*)-server\.options$", name)
+    if not m:
+        return
+    var = "cassandra_jvm%s_removed_options" % m.group(1)
+    for i, (old, new) in enumerate(zip(stock, lines)):
+        if old == new and old.startswith("-"):
+            assert "'" not in old and "{" not in old and "\\" not in old, "%s: %r" % (name, old)
+            lines[i] = "{{ '#' if '%s' in %s else '' }}%s" % (old, var, old)
+
+
 def main(series, stock_dir, out_dir):
     os.makedirs(out_dir, exist_ok=True)
     for name, rules in RULES[series].items():
         with open(os.path.join(stock_dir, name)) as f:
             lines = f.read().split("\n")
+        stock = list(lines)
         replace_lines(name, lines, rules)
+        removable(name, stock, lines)
         with open(os.path.join(out_dir, name + ".j2"), "w") as f:
             f.write("\n".join([header(name)] + lines))
 

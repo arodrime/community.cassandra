@@ -110,43 +110,43 @@
 ########################
 
 # enable assertions. highly suggested for correct application functionality.
--ea
+{{ '#' if '-ea' in cassandra_jvm_removed_options else '' }}-ea
 
 # disable assertions for net.openhft.** because it runs out of memory by design
 # if enabled and run for more than just brief testing
--da:net.openhft...
+{{ '#' if '-da:net.openhft...' in cassandra_jvm_removed_options else '' }}-da:net.openhft...
 
 # enable thread priorities, primarily so we can give periodic tasks
 # a lower priority to avoid interfering with client workload
--XX:+UseThreadPriorities
+{{ '#' if '-XX:+UseThreadPriorities' in cassandra_jvm_removed_options else '' }}-XX:+UseThreadPriorities
 
 # Enable heap-dump if there's an OOM
--XX:+HeapDumpOnOutOfMemoryError
+{{ '#' if '-XX:+HeapDumpOnOutOfMemoryError' in cassandra_jvm_removed_options else '' }}-XX:+HeapDumpOnOutOfMemoryError
 
 # Per-thread stack size.
--Xss256k
+{{ '#' if '-Xss256k' in cassandra_jvm_removed_options else '' }}-Xss256k
 
 # Make sure all memory is faulted and zeroed on startup.
 # This helps prevent soft faults in containers and makes
 # transparent hugepage allocation more effective.
--XX:+AlwaysPreTouch
+{{ '#' if '-XX:+AlwaysPreTouch' in cassandra_jvm_removed_options else '' }}-XX:+AlwaysPreTouch
 
 # Disable biased locking as it does not benefit Cassandra.
--XX:-UseBiasedLocking
+{{ '#' if '-XX:-UseBiasedLocking' in cassandra_jvm_removed_options else '' }}-XX:-UseBiasedLocking
 
 # Enable thread-local allocation blocks and allow the JVM to automatically
 # resize them at runtime.
--XX:+UseTLAB
--XX:+ResizeTLAB
--XX:+UseNUMA
+{{ '#' if '-XX:+UseTLAB' in cassandra_jvm_removed_options else '' }}-XX:+UseTLAB
+{{ '#' if '-XX:+ResizeTLAB' in cassandra_jvm_removed_options else '' }}-XX:+ResizeTLAB
+{{ '#' if '-XX:+UseNUMA' in cassandra_jvm_removed_options else '' }}-XX:+UseNUMA
 
 # http://www.evanjones.ca/jvm-mmap-pause.html
--XX:+PerfDisableSharedMem
+{{ '#' if '-XX:+PerfDisableSharedMem' in cassandra_jvm_removed_options else '' }}-XX:+PerfDisableSharedMem
 
 # Prefer binding to IPv4 network intefaces (when net.ipv6.bindv6only=1). See
 # http://bugs.sun.com/bugdatabase/view_bug.do?bug_id=6342561 (short version:
 # comment out this entry to enable IPv6 support).
--Djava.net.preferIPv4Stack=true
+{{ '#' if '-Djava.net.preferIPv4Stack=true' in cassandra_jvm_removed_options else '' }}-Djava.net.preferIPv4Stack=true
 
 ### Debug options
 

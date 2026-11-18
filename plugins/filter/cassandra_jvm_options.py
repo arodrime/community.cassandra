@@ -37,14 +37,29 @@ SERIES = {"40x": "4.0", "41x": "4.1", "50x": "5.0"}
 DEFAULT_JAVA = {"40x": "11", "41x": "11", "50x": "17"}
 
 
+# a stock option line the role writes unless its file's cassandra_jvm<N>_removed_options lists it
+REMOVABLE = re.compile(r"^\{\{ '#' if '([^']*)' in cassandra_jvm\d*_removed_options else '' \}\}(.*)$")
+
+
 @functools.lru_cache(maxsize=None)
 def _template_options(series, name):
-    """The option lines the role's template of a file always writes."""
+    """The option lines the role's template of a file always writes, but the ones a variable switches off:
+    ((option, its stock line), ...)."""
     path = os.path.join(TEMPLATES, SERIES.get(series, ""), name + ".j2")
     if series not in SERIES or not os.path.exists(path):
         return ()
+    out = []
     with open(path) as f:
-        return tuple(jvm.words([line for line in f.read().split("\n") if "{{" not in line]))
+        for line in f.read().split("\n"):
+            m = REMOVABLE.match(line)
+            if m or "{{" not in line:
+                out += [(o, m.group(1) if m else None) for o in jvm.words([m.group(2) if m else line])]
+    return tuple(out)
+
+
+def _removed_variable(name):
+    """jvm11-server.options -> cassandra_jvm11_removed_options."""
+    return re.sub(r"_extra_options$", "_removed_options", jvm.options_variable(name))
 
 
 def cassandra_jvm_option_checks(variables, series, java="", refusals=False, kept=None):
@@ -53,14 +68,16 @@ def cassandra_jvm_option_checks(variables, series, java="", refusals=False, kept
     the role leaves as they are (neither its lines nor the variable's in them) -> [message]."""
     series = str(series)
     java = str(java or DEFAULT_JAVA.get(series, ""))
-    stock = ("The role writes it as Cassandra %s's stock file does, for Java %s: set cassandra_java_version to one"
-             " of them" % (SERIES.get(series, series), " or ".join(cassandra_java_supported(series))))
     options = []
     for name in jvm.read_files(series, java):  # each file's own lines, then its extra options
         var = jvm.options_variable(name)
         if name in (kept or []):  # the node's own file, which the role leaves as it is: not known here
             continue
-        options += [(o, "the role's %s" % name, stock) for o in _template_options(series, name)]
+        removed = list((variables or {}).get(_removed_variable(name)) or [])
+        stock = ("The role writes it as Cassandra %s's stock file does, for Java %s: set cassandra_java_version to one"
+                 " of them, or switch it off (%s)" % (SERIES.get(series, series),
+                                                      " or ".join(cassandra_java_supported(series)), _removed_variable(name)))
+        options += [(o, "the role's %s" % name, stock) for o, line in _template_options(series, name) if line not in removed]
         options += [(o, var, jvm.remove_it(var) if refusals else jvm.fix_it(var))
                     for o in jvm.words((variables or {}).get(var) or [])]
     return jvm.check(options, java, refusals=bool(refusals))

@@ -392,6 +392,27 @@ def _read_between(m, e, cap, seen):
         return False
 
 
+REMOVED = re.compile(r"^cassandra_jvm\d*_removed_options$")
+REMOVED_TOGGLE = re.compile(r"^\{\{ '#' if '([^']*)' in (cassandra_jvm\d*_removed_options) else '' \}\}(.*)$")
+
+
+def _read_removed(m, e, cap, seen):
+    """{{ '#' if 'line' in cassandra_jvm<N>_removed_options else '' }}: a stock option line commented out."""
+    if re.match(r"^#\s*$", cap):
+        seen.found[m.group(2)] = [m.group(1)]
+    elif cap:
+        return False
+
+
+def _merge(found, got):
+    """found updated with got, the stock option lines switched off added to found's."""
+    for key, value in got.items():
+        if REMOVED.match(key) and isinstance(found.get(key), list):
+            found[key] = found[key] + [line for line in value if line not in found[key]]
+        else:
+            found[key] = value
+
+
 def _read_newline_list(m, e, cap, seen):
     """{{ ('\\n' ~ ...) if x else '' }}: lines of a list, none on the node."""
     if cap:
@@ -426,6 +447,7 @@ _LINE_EXPRESSIONS = tuple((re.compile(pattern), reader) for pattern, reader in (
     (r"'' if (\w+) and not \(\w+ \| bool\) else '[^']*'", _read_switch),
     (r"(\w+) if \1 and not \(\w+ \| bool\) else '[^']*'", _read_or_default),
     (r"\('\\n-Xms' ~ .*\) if .* else ''", _read_newline_list),
+    (r"'#' if '([^']*)' in (cassandra_jvm\d*_removed_options) else ''", _read_removed),
 ))
 
 
@@ -526,6 +548,17 @@ def _read_changed_lines(name, tpl, rendered, live, ctx, after):
     options no variable covers, or the lines appended after the last one)."""
     found, appended, extra = {}, [], []
     ops = difflib.SequenceMatcher(None, rendered, live, autojunk=False).get_opcodes()
+    if name.endswith(".options"):
+        # a stock option line the node has removed: switched off, unless the node sets that option elsewhere, or the
+        # file predates it (LATER_STOCK: the role adds it)
+        options = set(_option_key(line) for line in live if line.startswith("-"))
+        later = without_later_stock(name, "\n".join(rendered), "\n".join(live))[1]
+        for op, i1, i2, j1, j2 in ops:
+            gone = range(i1, i2) if op == "delete" else range(i1 + (j2 - j1), i2) if op == "replace" else ()
+            for i in gone:
+                m = REMOVED_TOGGLE.match(tpl[i])
+                if m and rendered[i] == m.group(1) and _option_key(m.group(1)) not in options and m.group(1) not in later:
+                    _merge(found, {m.group(2): [m.group(1)]})
     for op, i1, i2, j1, j2 in ops:
         if op not in ("replace", "insert"):
             continue
@@ -541,7 +574,7 @@ def _read_changed_lines(name, tpl, rendered, live, ctx, after):
             i = pairs.get(j, i1 + k if op == "replace" and i1 + k < i2 else None)
             got = _read_line(tpl[i], live[j], ctx) if i is not None and "{{" in tpl[i] else None
             if got is not None:
-                found.update(got)
+                _merge(found, got)
             elif name.endswith(".options") and live[j].startswith("-"):
                 # bin/cassandra passes on the lines starting with '-', the last of an option counts:
                 # at the end of the file, it has the same effect (unless a later line sets it again)
@@ -1445,6 +1478,9 @@ def _template_options(env, series, ctx, name):
     """A jvm options template -> (the option lines it always writes as they
     are, the names of the options its other lines set)."""
     tpl = _render(env, series, name, ctx)[0]
+    # (a stock option line on unless switched off, cassandra_jvm_removed_options: as it is while on)
+    tpl = [m.group(3) if m and m.group(1) not in (ctx.get(m.group(2)) or []) else line
+           for line, m in ((line, REMOVED_TOGGLE.match(line)) for line in tpl)]
     static = set(line for line in tpl if "{{" not in line and line.startswith("-") and len(line.split()) == 1)
     templated = set(jvm.option_name(EXPR.sub("", line).lstrip("#").strip()) for line in tpl if "{{" in line)
     return static, templated - {None}
@@ -1998,7 +2034,7 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
         if name in live_files:
             where[0] = name
             got = _import_file(env, cassandra_version, name, ctx, live_files[name].split("\n"))
-            found.update(got)
+            _merge(found, got)
             if name.endswith(".sh"):
                 from_shell.update(got)
     if "logback.xml" in live_files:

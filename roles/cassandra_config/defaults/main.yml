@@ -384,9 +384,17 @@ cassandra_jvm_parallel_gc_threads: ""  # "" = JVM default
 cassandra_jvm_conc_gc_threads: ""  # "" = JVM default
 # Extra lines appended to jvm-server.options (all Java versions) or to one file.
 cassandra_jvm_extra_options: []
+# Stock option lines written commented out (switched off), as written in
+# stock: jvm-server.options' (e.g. -XX:+HeapDumpOnOutOfMemoryError,
+# -XX:+UseNUMA, -Djava.net.preferIPv4Stack=true on an IPv6 node), and each
+# jvm<N>-server.options' below. Not the GC and heap lines (their variables).
+cassandra_jvm_removed_options: []
 cassandra_jvm8_extra_options: []  # 4.x
 cassandra_jvm11_extra_options: []
 cassandra_jvm17_extra_options: []
+cassandra_jvm8_removed_options: []  # 4.x
+cassandra_jvm11_removed_options: []
+cassandra_jvm17_removed_options: []
 
 # ---- cassandra-rackdc.properties ---- (per node, usually host_vars)
 cassandra_dc: dc1

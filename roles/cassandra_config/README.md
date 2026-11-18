@@ -338,7 +338,13 @@ Role Variables
   (`g1_new_size_percent`'s `-XX:+UnlockExperimentalVMOptions` line too).
   `cassandra_jvm_extra_options` (jvm-server.options),
   `cassandra_jvm8_extra_options`, `cassandra_jvm11_extra_options` and
-  `cassandra_jvm17_extra_options` append extra lines.
+  `cassandra_jvm17_extra_options` append extra lines;
+  `cassandra_jvm_removed_options` (jvm-server.options) and
+  `cassandra_jvm8_removed_options`, `cassandra_jvm11_removed_options`,
+  `cassandra_jvm17_removed_options` list stock option lines to write
+  commented out (switched off: `-XX:+HeapDumpOnOutOfMemoryError`,
+  `-XX:+UseNUMA`, `-Djava.net.preferIPv4Stack=true` on an IPv6 node...), as
+  written in stock; not the GC and heap lines.
 * `cassandra-env.sh`: lines of yours at its end (an `export`, or
   `JVM_OPTS="$JVM_OPTS -D..."` for an option no variable covers): a template
   piece of yours (below).

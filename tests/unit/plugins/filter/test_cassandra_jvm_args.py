@@ -299,15 +299,17 @@ def test_gc_lines_removed_are_carried(tmp_path, removed):
 @pytest.mark.parametrize("removed", [G1_TUNING, ("-XX:+UseG1GC", "-XX:+ParallelRefProcEnabled") + G1_TUNING],
                          ids=["G1 without its tuning", "the JVM's default GC"])
 def test_a_gc_reading_kept_beside_another_hand_edit(tmp_path, removed):
-    # (re-audit, 2026-11-14) a stock line of the file removed too: the GC read all the same, that line the only
-    # difference (custom was dropped then: 8 differences)
+    # (re-audit, 2026-11-14) a stock line of the file switched off too (otherwise than the role does: ##): the GC
+    # read all the same, that line the only difference (custom was dropped then: 8 differences)
     def edit(files):
-        text = files["jvm17-server.options"].replace("-Djdk.attach.allowAttachSelf=true\n", "")
+        text = files["jvm17-server.options"].replace("-Djdk.attach.allowAttachSelf=true\n",
+                                                     "##-Djdk.attach.allowAttachSelf=true\n")
         files["jvm17-server.options"] = "\n".join(line for line in text.split("\n") if line not in removed)
     files = node_files("50x", edit)
     cmdline = launch(files, "17", tmp_path)
     node = imported(files, "50x", "17", cmdline)[2]
-    assert [line for line in node["hand_edits"] if line.startswith("  ")] == ["  - -Djdk.attach.allowAttachSelf=true"]
+    assert [line for line in node["hand_edits"] if line.startswith("  ")] == [
+        "  - -Djdk.attach.allowAttachSelf=true", "  + ##-Djdk.attach.allowAttachSelf=true"]
     assert [d.split(":")[1].strip() for d in check(files, "50x", java="17", cmdline=cmdline)["differences"]] == [
         "-Djdk.attach.allowAttachSelf"]
 
@@ -501,9 +503,10 @@ CHRONICLE = ("-Dchronicle.analytics.disable=true (jvm-server.options): added by 
 
 
 @pytest.mark.parametrize("edit, said, differs", [
-    (("-Dchronicle.analytics.disable=true\n", ""), False, True),  # the stock comment there: removed by hand
+    # the stock comment there: removed by hand, switched off (cassandra_jvm_removed_options)
+    (("-Dchronicle.analytics.disable=true\n", ""), False, False),
     ((OLDER_CHRONICLE, ""), True, False),
-    (("-Dchronicle.analytics.disable=true", "#-Dchronicle.analytics.disable=true"), False, True),
+    (("-Dchronicle.analytics.disable=true", "#-Dchronicle.analytics.disable=true"), False, False),
     (("-Dchronicle.analytics.disable=true", "-Dchronicle.analytics.disable=false"), False, False)],  # (carried)
     ids=["line removed", "older file", "commented out", "set false"])
 def test_a_later_stock_line_only_when_the_file_predates_it(tmp_path, edit, said, differs):
@@ -619,20 +622,21 @@ def test_remote_jmx_lines_in_its_branch_are_carried(tmp_path):
 
 
 def test_a_hand_edit_of_an_options_file_does_not_stop_a_move(tmp_path):
-    # a stock line removed from jvm-server.options (said as a hand edit, the role puts it back): the JVM_OPTS line
-    # of cassandra-env.sh is moved all the same, the self-check says that line only
+    # a stock line of jvm-server.options switched off otherwise than the role does (said as a hand edit, the role
+    # puts it back): the JVM_OPTS line of cassandra-env.sh is moved all the same, the self-check says that line only
     files = node_files("50x", before_extra('JVM_OPTS="$JVM_OPTS -Dfoo=1"'))
-    files["jvm-server.options"] = files["jvm-server.options"].replace("-XX:+UseNUMA\n", "")
+    files["jvm-server.options"] = files["jvm-server.options"].replace("-XX:+UseNUMA\n", "##-XX:+UseNUMA\n")
     cmdline = launch(files, "17", tmp_path)
     inventory, layout, node = imported(files, "50x", "17", cmdline)
     assert node["vars"]["cassandra_jvm17_extra_options"] == ["-Dfoo=1"]
-    assert [line for line in node["hand_edits"] if line.startswith("  ")] == ["  - -XX:+UseNUMA"]
+    assert [line for line in node["hand_edits"] if line.startswith("  ")] == ["  - -XX:+UseNUMA", "  + ##-XX:+UseNUMA"]
     out = check(files, "50x", java="17", cmdline=cmdline)
     assert out["differences"] == ["jvm-server.options: UseNUMA: node has nothing, import would write '-XX:+UseNUMA'"]
     assert [n for n in out["notes"] if n.endswith("but for UseNUMA, above")]
     # the hand edit in the file the move goes to: not moved
     files = node_files("50x", before_extra('JVM_OPTS="$JVM_OPTS -Dfoo=1"'))
-    files["jvm17-server.options"] = files["jvm17-server.options"].replace("-Djdk.attach.allowAttachSelf=true\n", "")
+    files["jvm17-server.options"] = files["jvm17-server.options"].replace("-Djdk.attach.allowAttachSelf=true\n",
+                                                                          "##-Djdk.attach.allowAttachSelf=true\n")
     assert imported(files, "50x", "17", launch(files, "17", tmp_path))[2]["moved"] == []
 
 
@@ -667,11 +671,11 @@ def test_a_node_with_the_files_of_an_older_release(tmp_path):
 
 
 def test_the_way_out_of_an_options_file_hand_edit_keeps_it(tmp_path):
-    # the report's way out for a stock line removed: jvm-server.options kept, with cassandra-env.sh (whose lines were
-    # moved: a JVM file kept, nothing is moved), and the self-check passes then
+    # the report's way out for a stock line switched off otherwise than the role does: jvm-server.options kept, with
+    # cassandra-env.sh (whose lines were moved: a JVM file kept, nothing is moved), and the self-check passes then
     def edit(files):
         older_release(files)
-        files["jvm-server.options"] = files["jvm-server.options"].replace("-XX:+UseNUMA\n", "")
+        files["jvm-server.options"] = files["jvm-server.options"].replace("-XX:+UseNUMA\n", "##-XX:+UseNUMA\n")
     files = node_files("50x", edit)
     cmdline = launch(files, "17", tmp_path)
     node = imported(files, "50x", "17", cmdline)[2]
@@ -695,7 +699,7 @@ def test_a_kept_jvm_file_keeps_the_exporter_s_agent(tmp_path, keep):
     # jvm-server.options), cassandra-env.sh gives it as it does
     def edit(files):
         files["cassandra-env.sh"] += '\nif [ -n "$CASSANDRA_CONF" ]; then\n    JVM_OPTS="$JVM_OPTS %s"\nfi\n' % AGENT
-        files["jvm-server.options"] = files["jvm-server.options"].replace("-XX:+UseNUMA\n", "")
+        files["jvm-server.options"] = files["jvm-server.options"].replace("-XX:+UseNUMA\n", "##-XX:+UseNUMA\n")
     files = node_files("50x", edit)
     cmdline = launch(files, "17", tmp_path)
     nodes = [dict(imported(files, "50x", "17", cmdline)[2], name="n1", address="10.0.0.1")]
@@ -1222,9 +1226,11 @@ def log_dir_as_itself(files):
 
 
 def jvm11_edited(files):
-    text = edit(files["jvm11-server.options"], "-XX:-UseBiasedLocking\n", "")
-    text = edit(text, "-Dio.netty.tryReflectionSetAccessible=true\n", "")
-    files["jvm11-server.options"] = edit(text, "--add-exports java.base/jdk.internal.util=ALL-UNNAMED\n", "")
+    # (switched off otherwise than the role does, ##: hand edits; with # or removed: cassandra_jvm11_removed_options)
+    text = edit(files["jvm11-server.options"], "-XX:-UseBiasedLocking\n", "##-XX:-UseBiasedLocking\n")
+    text = edit(text, "-Dio.netty.tryReflectionSetAccessible=true\n", "##-Dio.netty.tryReflectionSetAccessible=true\n")
+    files["jvm11-server.options"] = edit(text, "--add-exports java.base/jdk.internal.util=ALL-UNNAMED\n",
+                                         "##--add-exports java.base/jdk.internal.util=ALL-UNNAMED\n")
 
 
 def running(files, tmp_path):
