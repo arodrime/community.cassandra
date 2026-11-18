@@ -484,7 +484,8 @@ def cassandra_import_self_check(files, hosts, name, facts, live, node_environmen
     release: its Cassandra version (4.1.5; '': its series'), the cassandra.yaml
     keys it rejects are notes, not differences (the import leaves them out); inventory_dir: where the
     inventory is (a value may follow it: {{ inventory_dir }}/templates/...); jvm: {cmdline: the running
-    JVM's /proc/<pid>/cmdline, newer: the config files written since it started}: the JVM's files the roles
+    JVM's /proc/<pid>/cmdline, newer: the config files written since it started, environment: what the JVM got for
+    cassandra-env.sh to add from outside its unit (JVM_EXTRA_OPTS, MX4J_*)}: the JVM's files the roles
     would rewrite pass when the JVM gets the same arguments from them (a note).
     os_found: what import_cluster's read of the OS printed on the node ({rc, stdout}; {}: not read), None: the OS
     settings not checked; os_own: its limits file has cassandra_linux's mark.
@@ -535,7 +536,8 @@ def _self_check_node(files_data, hosts, node, names, data, inventory_dir=""):
     unit = hv.get("import_cluster_unit") or {}
     name = names[node["address"]]
     cmdline = (hv.get("import_cluster_jvm_cmdline") or {}).get("content")
-    running = {"cmdline": b64decode(cmdline) if cmdline else "", "newer": hv.get("import_cluster_newer_files") or []}
+    running = {"cmdline": b64decode(cmdline) if cmdline else "", "newer": hv.get("import_cluster_newer_files") or [],
+               "environment": unit.get("jvm_env") or {}}
     return name, _self_check(
         files_data, hosts, name, hv["ansible_facts"], live, unit.get("env", {}),
         hv.get("import_cluster_storage_dir", ""), hv.get("import_cluster_java", ""), hv["import_cluster_conf_dir"],
@@ -907,8 +909,11 @@ def _jvm_rewritten(rendered, live, by_file, heap, node_environment, role_environ
             or not all(f in rendered and f in live for f in group):
         return [], {}
     apart = jvm_args.options_edits(live, rendered, series, java)
-    same, dummy = jvm_args.cassandra_jvm_args_same(running["cmdline"], live, rendered, series, java, node_environment,
-                                                   role_environment, apart)
+    # (the environment the next start gets on both sides, as apply_config's proof: the unit's, and what the JVM got
+    # from elsewhere for cassandra-env.sh to add, an EnvironmentFile's JVM_EXTRA_OPTS; a change of the unit is a
+    # difference of its own)
+    env = dict(node_environment or {}, **(running.get("environment") or {}))
+    same, dummy = jvm_args.cassandra_jvm_args_same(running["cmdline"], live, rendered, series, java, env, env, apart)
     return ((differing or [jvm_args.ENV]), apart) if same else ([], {})
 
 

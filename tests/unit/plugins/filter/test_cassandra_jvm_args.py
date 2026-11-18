@@ -1540,3 +1540,20 @@ def test_anything_unproven_restarts(tmp_path, java, environ, newer, more):
     files, rendered, changed, cmdline = written(tmp_path)
     assert no_effect(changed + more, files, rendered, cmdline, java, environ, newer) == []
     assert no_effect(changed, files, rendered, "", java="17") == []  # no arguments read
+
+
+def test_the_self_check_reads_the_environment_as_apply_config(tmp_path):
+    # (pre-push audit, rc13, round 4) JVM_EXTRA_OPTS the JVM got from outside its unit (an EnvironmentFile,
+    # /etc/default/cassandra): the self-check no longer passes the JVM's files rewritten as "the same arguments"
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import cassandra_import_self_check
+    files = node_files("50x", OWNERS_CASE)
+    cmdline = running(files, tmp_path)
+    jvm_read = {"cmdline": cmdline, "java": "17", "environment": {}, "newer": []}
+    inventory, layout = import_node(files, "50x", jvm=jvm_read)
+    found = dict((name, cassandra_import_self_check(inventory, layout["hosts"], "n1", FACTS, files, {},
+                                                    "/var/lib/cassandra", "17", "", {}, jvm=dict(jvm_read, environment=env)))
+                 for name, env in (("unit only", {}), ("environment file", {"JVM_EXTRA_OPTS": "-Dx=1"})))
+    assert found["unit only"]["differences"] == []
+    assert [n for n in found["unit only"]["notes"] if "the JVM gets the same arguments" in n]
+    assert not [n for n in found["environment file"]["notes"] if "the JVM gets the same arguments" in n]
+    assert found["environment file"]["differences"]
