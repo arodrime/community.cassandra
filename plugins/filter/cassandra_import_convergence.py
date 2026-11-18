@@ -188,6 +188,17 @@ def _common(values, names):
     return len(values) == 1 and sorted(values[0][1]) == sorted(names)
 
 
+def _unread(key, changing):
+    """The jvm<N>-server.options key is written in when no changing node's Java reads it (bin/cassandra reads
+    jvm-server.options and its Java's file only: no restart, as apply_config's proof) -> "Java 11 does not read
+    jvm8-server.options"; "" otherwise."""
+    files = [name for name in TEMPLATES if key in template_vars(name)]
+    if not changing or len(files) != 1 or not re.match(r"^jvm\d+-server\.options$", files[0]):
+        return ""
+    majors = set(unread_by(n, files[0]) for n in changing)
+    return "" if "" in majors else "Java %s does not read %s" % ("/".join(sorted(majors)), files[0])
+
+
 def _setting_items(layout, data, read):
     """The settings the read nodes do not all share -> [{name, key, values: [(text, [nodes])] most nodes first,
     target, raw (its value), changing: [nodes], without: [the changing nodes without the variable], kind, rank,
@@ -217,7 +228,9 @@ def _setting_items(layout, data, read):
                       "unmanaged": [n["name"] for n in changing
                                     if (n.get("keep") or {}).get("cassandra_linux_manage") is False]})
         kind = items[-1]["kind"]
-        items[-1]["rank"] = max(_KINDS[kind][0], _KINDS["unknown"][0] if key in HARDWARE else 0)
+        items[-1]["unread"] = _unread(key, changing) if kind == "restart" else ""
+        items[-1]["rank"] = 0 if items[-1]["unread"] else \
+            max(_KINDS[kind][0], _KINDS["unknown"][0] if key in HARDWARE else 0)
     items.sort(key=lambda i: (i["rank"], len(i["changing"]), i["name"]))
     return items, counted
 
@@ -379,7 +392,8 @@ def _values_text(item, who):
 def _then_text(item):
     """3 nodes change, then restart; why to take care, too."""
     count = len(item["changing"])
-    text = "%s %s, %s" % (out.plural(count, "node"), "changes" if count == 1 else "change", _KINDS[item["kind"]][1])
+    then = "no restart (%s)" % item["unread"] if item.get("unread") else _KINDS[item["kind"]][1]
+    text = "%s %s, %s" % (out.plural(count, "node"), "changes" if count == 1 else "change", then)
     if item["key"] in HARDWARE:
         text += "; sized for the machine: one value only where the machines are alike, else keep it per group"
     if item["kind"] == "os" and item["unmanaged"]:

@@ -1,0 +1,2 @@
+bugfixes:
+  - import_cluster playbook - DIFFERENT ON SOME NODES says "no restart" for a ``jvm<N>-server.options`` variable when the Java of the nodes that change does not read that file (it said "then restart").

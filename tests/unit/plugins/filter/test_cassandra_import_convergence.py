@@ -411,3 +411,19 @@ def test_in_the_report_for_info():
     # without it: as before
     assert not [line for line in cassandra_import_report(big, ["/p/inventories/big.yml", "/p/inventories"], REPORT,
                                                          {}, True, details=True, **common) if "CONVERGENCE" in line]
+
+
+def test_a_jvm_options_file_the_java_does_not_read_needs_no_restart():
+    """cassandra_jvm8_extra_options taken off a node of Java 11: bin/cassandra never reads jvm8-server.options, no
+    restart (apply_config's proof); a node of Java 8 reads it: a restart."""
+    def node(name, java):
+        return {"name": name, "vars": {"cassandra_version": "41x"}, "versions": {"java": java}}
+    item = {"key": "cassandra_jvm8_extra_options", "kind": "restart", "changing": ["n9"], "unmanaged": []}
+    item["unread"] = convergence._unread(item["key"], [node("n9", "11.0.25")])
+    assert convergence._then_text(item) == "1 node changes, no restart (Java 11 does not read jvm8-server.options)"
+    item.update(changing=["n8", "n9"])
+    item["unread"] = convergence._unread(item["key"], [node("n9", "11.0.25"), node("n8", "1.8.0_402")])
+    assert convergence._then_text(item) == "2 nodes change, then restart"
+    # (jvm-server.options is read by every Java; the Java not known: a restart)
+    assert convergence._unread("cassandra_jvm_extra_options", [node("n9", "11.0.25")]) == ""
+    assert convergence._unread("cassandra_jvm8_extra_options", [node("n9", "")]) == ""
