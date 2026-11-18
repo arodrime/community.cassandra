@@ -1557,3 +1557,19 @@ def test_the_self_check_reads_the_environment_as_apply_config(tmp_path):
     assert [n for n in found["unit only"]["notes"] if "the JVM gets the same arguments" in n]
     assert not [n for n in found["environment file"]["notes"] if "the JVM gets the same arguments" in n]
     assert found["environment file"]["differences"]
+
+
+def test_the_self_check_compares_the_roles_environment_with_the_nodes(tmp_path):
+    # (pre-push audit, rc13, round 5) the heap the unit gives cassandra-env.sh: the roles' (16G) against the node's
+    # (8G), no "same arguments"; the same environment on both sides, as before
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import _jvm_rewritten
+    files = node_files("50x")
+    heap = {"MAX_HEAP_SIZE": "8G", "HEAP_NEWSIZE": "800M"}
+    cmdline = launch(files, "17", tmp_path, heap)
+    jvm_read = {"cmdline": cmdline, "newer": [], "series": "50x"}
+
+    def rewritten(role_env):
+        return _jvm_rewritten(files, files, {"cassandra-env.sh": ["x"]}, False, heap, role_env, "17", jvm_read)[0]
+    assert rewritten(heap) == ["cassandra-env.sh"]
+    assert rewritten(None) == ["cassandra-env.sh"]  # (the unit kept: the node's)
+    assert rewritten(dict(heap, MAX_HEAP_SIZE="16G")) == []

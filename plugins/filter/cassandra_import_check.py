@@ -909,11 +909,12 @@ def _jvm_rewritten(rendered, live, by_file, heap, node_environment, role_environ
             or not all(f in rendered and f in live for f in group):
         return [], {}
     apart = jvm_args.options_edits(live, rendered, series, java)
-    # (the environment the next start gets on both sides, as apply_config's proof: the unit's, and what the JVM got
-    # from elsewhere for cassandra-env.sh to add, an EnvironmentFile's JVM_EXTRA_OPTS; a change of the unit is a
-    # difference of its own)
-    env = dict(node_environment or {}, **(running.get("environment") or {}))
-    same, dummy = jvm_args.cassandra_jvm_args_same(running["cmdline"], live, rendered, series, java, env, env, apart)
+    # (each side's environment, the unit's (the roles': theirs, else the node's kept), with what the JVM got from
+    # elsewhere for cassandra-env.sh to add, an EnvironmentFile's JVM_EXTRA_OPTS, as apply_config's proof reads it)
+    jvm_env = running.get("environment") or {}
+    same, dummy = jvm_args.cassandra_jvm_args_same(
+        running["cmdline"], live, rendered, series, java, dict(node_environment or {}, **jvm_env),
+        dict(role_environment if role_environment is not None else node_environment or {}, **jvm_env), apart)
     return ((differing or [jvm_args.ENV]), apart) if same else ([], {})
 
 
