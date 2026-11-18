@@ -1295,20 +1295,39 @@ def test_a_jvm_options_file_the_running_java_does_not_read_is_a_note(tmp_path):
     assert [d for d in check(files, "50x", java="11")["differences"] if d.startswith("jvm11-server.options")]
 
 
-@pytest.mark.parametrize("later, again", [
-    ([{"depth": 0, "text": 'JVM_OPTS="$JVM_OPTS -Dx=1"'}], True),
-    ([{"depth": 1, "text": 'JVM_OPTS="$JVM_OPTS -Dx=1"'}], True),  # again below in the same block
-    ([{"depth": 1, "text": "else"}, {"depth": 1, "text": 'JVM_OPTS="$JVM_OPTS -Dx=1"'}], False),  # another branch
+X1 = 'JVM_OPTS="$JVM_OPTS -Dx=1"'
+
+
+@pytest.mark.parametrize("later, outside, inside", [  # (in_block False: again outside any block; True: in its block)
+    ([{"depth": 0, "text": X1}], True, False),
+    ([{"depth": 1, "text": X1}], False, True),  # again below in the same block
+    ([{"depth": 1, "text": "x=1"}, {"depth": 1, "text": 'JVM_OPTS="$JVM_OPTS -Dy=2"'}, {"depth": 1, "text": X1}],
+     False, True),  # plain lines in between
+    ([{"depth": 1, "text": "fi"}, {"depth": 0, "text": "x=1"}, {"depth": 0, "text": X1}], True, False),
+    ([{"depth": 1, "text": "else"}, {"depth": 1, "text": X1}], False, False),  # another branch
     ([{"depth": 1, "text": "fi"}, {"depth": 0, "text": "if [ -n x ]; then"},
-      {"depth": 1, "text": 'JVM_OPTS="$JVM_OPTS -Dx=1"'}], False),  # another block: maybe not run
-    ([{"depth": 2, "text": 'JVM_OPTS="$JVM_OPTS -Dx=1"'}], False),  # in a block inside it: maybe not run
-    ([{"depth": 0, "text": 'JVM_OPTS="$JVM_OPTS -Dx=2"'}], False),
+      {"depth": 1, "text": X1}], False, False),  # another block: maybe not run
+    ([{"depth": 2, "text": X1}], False, False),  # in a block inside it: maybe not run
+    ([{"depth": 0, "text": 'JVM_OPTS="$JVM_OPTS -Dx=2"'}], False, False),
 ])
-def test_a_line_in_a_block_set_again_below(later, again):
-    assert jvm._set_again({"depth": 1, "text": 'JVM_OPTS="$JVM_OPTS -Dx=1"'}, later) is again
-    in_block = again and later[-1]["depth"] == 1  # (in_block: the same block only, not outside any)
-    assert jvm._set_again({"depth": 1, "text": 'JVM_OPTS="$JVM_OPTS -Dx=1"'}, later, in_block=True) is in_block
-    assert jvm._set_again({"depth": 0, "text": 'JVM_OPTS="$JVM_OPTS -Dx=1"'}, later) is False
+def test_a_line_in_a_block_set_again_below(later, outside, inside):
+    assert jvm._set_again({"depth": 1, "text": X1}, later, in_block=False) is outside
+    assert jvm._set_again({"depth": 1, "text": X1}, later, in_block=True) is inside
+    assert jvm._set_again({"depth": 0, "text": X1}, later, in_block=False) is False
+
+
+@pytest.mark.parametrize("between", [  # (2026-11-18) bash may not go from one copy to the other: not set again
+    "return", "[ -d / ] && return", "if [ -d / ]; then return; fi", "exit 1", "break", "continue", "f", 'eval "$Z"',
+    "fi; if [ -d /x ]; then", "done; for j in; do", "}; [ -d /x ] && {", ";;", ";;&", "b | c)", "a)", "esac",
+    "done", "}", "f() {", "x=$(f)", "x=`f`", "x=1 f", "x=1; return", "JVM_OPTS=-Dx=2", "export JVM_OPTS=",
+    'JVM_OPTS="$JVM_OPTS $Y"', "elif [ -d / ]; then",
+])
+@pytest.mark.parametrize("in_block", [True, False])
+def test_a_line_with_any_command_in_between_is_not_set_again(between, in_block):
+    other = {"depth": 1 if in_block else 0, "text": X1}
+    words = between.split()
+    assert jvm._set_again({"depth": 1, "text": X1}, [{"depth": 1, "text": between, "words": words}, other],
+                          in_block=in_block) is False
 
 
 @pytest.mark.parametrize("text", [
@@ -1320,17 +1339,18 @@ def test_a_line_in_a_block_set_again_below(later, again):
     'JVM_OPTS="$JVM_OPTS -XX:Flags=/etc/x.flags"',
 ])
 def test_a_line_whose_place_counts_is_never_taken_as_set_again(text):
-    assert jvm._set_again({"depth": 1, "text": text}, [{"depth": 0, "text": text}]) is False
+    assert jvm._set_again({"depth": 1, "text": text}, [{"depth": 0, "text": text}], in_block=False) is False
+    assert jvm._set_again({"depth": 1, "text": text}, [{"depth": 1, "text": text}], in_block=True) is False
 
 
 def test_a_line_reading_jvm_opts_in_between_keeps_the_block_s_line():
     line = {"depth": 1, "text": 'JVM_OPTS="$JVM_OPTS -Dfoo=1"'}
     grep = {"depth": 0, "text": 'if echo "$JVM_OPTS" | grep -q -- -Dfoo=1; then JVM_OPTS="$JVM_OPTS -XX:+X"; fi'}
     again = {"depth": 0, "text": line["text"]}
-    assert jvm._set_again(line, [grep, again]) is False
+    assert jvm._set_again(line, [grep, again], in_block=False) is False
     # lines that only add to JVM_OPTS, or do not mention it: as before
     assert jvm._set_again(line, [{"depth": 0, "text": 'JVM_OPTS="$JVM_OPTS -Dbar=2"'}, {"depth": 0, "text": "x=1"},
-                                 again]) is True
+                                 again], in_block=False) is True
 
 
 def test_the_heap_in_a_block_and_again_after_fi_stays_a_difference():
@@ -1858,3 +1878,92 @@ def test_options_of_no_family_in_another_order_are_the_same_for_the_running_jvm(
     assert node["hand_edits"] == []
     assert check(files, "41x", java="11", cmdline=cmdline)["differences"] == []
     assert jvm.differences(cmdline.split("\0")[1:], launch(rendered, "11", tmp_path).split("\0")[1:]) == []
+
+
+# --- (2026-11-18) a line written again: the same only with plain lines in between ---------------------------------
+
+ZORGLUB = 'JVM_OPTS="$JVM_OPTS -Dzorglub=1"'
+EXTRA = 'JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"'
+STOPS = {  # (a block whose first copy bash may run without the second one: {name: its text, %s the first copy})
+    "return": "if [ -d / ]; then\n%s  [ -d / ] && return\n  " + ZORGLUB + "\nfi",
+    "if-return": "if [ -d / ]; then\n%s  if [ -d / ]; then return; fi\n  " + ZORGLUB + "\nfi",
+    "fi;if": "if [ -d / ]; then\n%sfi; if [ -d /nonexistent ]; then\n  " + ZORGLUB + "\nfi",
+    "done;for": "for i in 1; do\n%sdone; for j in; do\n  " + ZORGLUB + "\ndone",
+    "};{": "[ -d / ] && {\n%s}; [ -d /nonexistent ] && {\n  " + ZORGLUB + "\n}",
+    "case-bar": 'case "a" in\n  a)\n%s  ;;&\n  b | c)\n  ' + ZORGLUB + "\n  ;;\nesac",
+    "break": "for i in 1 2; do\n%s  break\n  " + ZORGLUB + "\ndone",
+}
+
+
+@pytest.mark.parametrize("after", [True, False])
+@pytest.mark.parametrize("stop", sorted(STOPS))
+def test_a_line_written_again_past_a_command_is_not_the_same(tmp_path, stop, after):
+    def place(text, block):
+        return text.replace(EXTRA, EXTRA + "\n" + block) if after else text.replace(EXTRA, block + "\n" + EXTRA)
+    files = node_files("41x")
+    env = files["cassandra-env.sh"]
+    files["cassandra-env.sh"] = place(env, STOPS[stop] % ("  %s\n" % ZORGLUB))
+    new = dict(files, **{"cassandra-env.sh": place(env, STOPS[stop] % "")})
+    cmdline = launch(files, "11", tmp_path)
+    assert "-Dzorglub=1" in cmdline and "-Dzorglub=1" not in launch(new, "11", tmp_path)
+    assert jvm.repeated_lines(files["cassandra-env.sh"], new["cassandra-env.sh"]) == []
+    assert cassandra_apply_config_no_effect(["cassandra-env.sh"], files, new, cmdline, "41x", "11", {}) == []
+    assert jvm.cassandra_jvm_args_same(cmdline, files, new, "41x", "11")[0] is False
+
+
+@pytest.mark.parametrize("between", ["", '  x=1\n  JVM_OPTS="$JVM_OPTS -Dother=2"\n'])
+def test_a_line_written_again_through_plain_lines_is_the_same(tmp_path, between):
+    block = "if [ -d / ]; then\n%s" + between + "  " + ZORGLUB + "\nfi"
+    files = node_files("41x", before_extra(block % ("  %s\n" % ZORGLUB)))
+    new = node_files("41x", before_extra(block % ""))
+    cmdline = launch(files, "11", tmp_path)
+    assert jvm.repeated_lines(files["cassandra-env.sh"], new["cassandra-env.sh"]) != []
+    assert cassandra_apply_config_no_effect(["cassandra-env.sh"], files, new, cmdline, "41x", "11", {}) != []
+
+
+@pytest.mark.parametrize("between", ["", "  [ -d / ] && return\n"])
+def test_a_line_written_again_in_a_block_of_the_node_only_shows_each_copy(tmp_path, between):
+    """The hand edit shows the node's block whole: both copies of the line (the first one was left out)."""
+    files = node_files("41x", before_extra("if [ -d / ]; then\n  %s\n%s  %s\nfi" % (ZORGLUB, between, ZORGLUB)))
+    cmdline = launch(files, "11", tmp_path)
+    inventory, layout, node = imported(files, "41x", "11", cmdline)
+    assert sum(ZORGLUB in line for line in node["hand_edits"]) == 2
+    assert sum(ZORGLUB in d for d in check(files, "41x", java="11", cmdline=cmdline)["differences"]) == 2
+
+
+# --- (2026-11-18) options without a name: only the --add-* ones in any order --------------------------------------
+
+ORDERED = [  # (the JVM takes these in their order: the last one counts, or each appends)
+    ("--illegal-access=deny", "--illegal-access=permit"), ("-Xverify:none", "-Xverify:all"),
+    ("-Xbootclasspath/a:/opt/x.jar", "-Xbootclasspath/a:/opt/y.jar"), ("--limit-modules=java.base", "--limit-modules=java.se"),
+    ("--module-path=/opt/a", "--module-path=/opt/b"), ("-Xrunjdwp:transport=dt_socket", "-Xrunjdwp:transport=dt_shmem"),
+    ("-Xint", "-Xmixed"), ("-Xshare:off", "-Xshare:on"), ("-Xlog:disable", "-verbose:gc"),
+    ("-Xlog:gc=debug:stdout", "-verbose:gc"), ("-Xloggc:/opt/x/gc.log", "-Xlog:gc*:file=/opt/x/gc.log"),
+]
+
+
+@pytest.mark.parametrize("a, b", ORDERED)
+def test_options_without_a_name_in_another_order_differ(a, b):
+    assert jvm.differences([a, b], [b, a]) != []
+    assert jvm.jvm_options_settings(a + "\n" + b + "\n") != jvm.jvm_options_settings(b + "\n" + a + "\n")
+
+
+@pytest.mark.parametrize("a, b", ORDERED[:3])
+def test_options_without_a_name_in_another_order_need_a_restart(tmp_path, a, b):
+    files = node_files("41x")
+    files["jvm11-server.options"] += "\n%s\n%s\n" % (a, b)
+    cmdline = launch(files, "11", tmp_path)
+    new = dict(files, **{"jvm11-server.options": files["jvm11-server.options"].replace(
+        "\n%s\n%s\n" % (a, b), "\n%s\n%s\n" % (b, a))})
+    assert launch(new, "11", tmp_path) != cmdline
+    assert cassandra_apply_config_no_effect(["jvm11-server.options"], files, new, cmdline, "41x", "11", {}) == []
+
+
+@pytest.mark.parametrize("a, b", [
+    ("--add-opens java.base/java.io=ALL-UNNAMED", "--add-exports java.base/sun.nio.ch=ALL-UNNAMED"),
+    ("--add-opens=java.base/java.io=ALL-UNNAMED", "--add-reads=java.base=ALL-UNNAMED"),
+    ("--add-modules=jdk.zorglub", "--enable-native-access=ALL-UNNAMED"), ("-ea", "--add-opens java.base/java.io=ALL-UNNAMED"),
+])
+def test_the_add_options_in_any_order_are_the_same(a, b):
+    assert jvm.differences(a.split(" ") + b.split(" "), b.split(" ") + a.split(" ")) == []
+    assert jvm.jvm_options_settings(a + "\n" + b + "\n") == jvm.jvm_options_settings(b + "\n" + a + "\n")

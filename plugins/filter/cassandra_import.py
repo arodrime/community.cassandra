@@ -1465,7 +1465,8 @@ def _leftovers(env, series, files, ctx, live_files, rejected=(), skip=(), proven
             if mine:
                 normalized.append(REMOTE_BRANCH_NOTE % out.plural(len(mine), "line"))
             # (and a line its block writes again the same below it: the last one counts)
-            again, again_rendered = jvm_args.repeated_lines(live_text), jvm_args.repeated_lines("\n".join(rendered))
+            again = jvm_args.repeated_lines(live_text, "\n".join(rendered))
+            again_rendered = jvm_args.repeated_lines("\n".join(rendered), live_text)
             if again:
                 normalized.append(REPEATED_NOTE % out.plural(len(again), "line"))
             live_text = jvm_args.without_lines(live_text, mine + again)

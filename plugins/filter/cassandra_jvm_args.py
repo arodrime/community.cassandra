@@ -221,11 +221,33 @@ def _moved_lines(live, role, ops):
     return moved
 
 
-def _set_again(line, later, in_block=False):
+# a variable set to a value, no command run (no command substitution, no other command on the line)
+PLAIN_ASSIGNMENT = re.compile(r"^[A-Za-z_]\w*=[^`;&|<>()]*$")
+
+
+def _plain_line(line):
+    """Whether bash runs line without changing where it goes next nor what JVM_OPTS has but plain options added: a
+    line adding plain options to JVM_OPTS, or NAME=value (export NAME=value), JVM_OPTS aside."""
+    if APPEND.match(line["text"]):
+        return True
+    words = line.get("words") or line["text"].split()
+    words = words[1:] if words[:1] == ["export"] else words
+    return len(words) == 1 and bool(PLAIN_ASSIGNMENT.match(words[0])) and not words[0].startswith("JVM_OPTS=")
+
+
+def _leaves_if(line):
+    """Whether line only ends an if (fi) or goes to its else: bash, having run a line of that if, goes on below."""
+    parts = [p.strip() for p in line["text"].split(";") if p.strip()]
+    return len(parts) == 1 and parts[0] in ("fi", "else")
+
+
+def _set_again(line, later, in_block):
     """Whether a line in a block adding plain options to JVM_OPTS (each set by its last occurrence) is written again
-    the same below it: outside any block (the remote JMX branch's password file line, the stock one after fi), or in
-    the same block before it ends (a line repeated in the remote JMX branch); in_block: only the latter. The later
-    one sets the same values last, the JVM gets the same whether the first one is there or not."""
+    the same below it, bash going from one to the other through plain lines only (_plain_line: no command, no loop,
+    no return, no case, no other block): with in_block, in the same block (a line repeated in the remote JMX
+    branch); without, outside any block, the lines in between leaving its ifs (fi, else) too (the remote JMX
+    branch's password file line, the stock one after fi). The later one sets the same values last, the JVM gets the
+    same whether the first one is there or not."""
     append = APPEND.match(line["text"]) if line["depth"] else None
     if not append or not append.group(1).split() or any(g in line["text"] for g in JVM_ENV_GREPS):
         return False
@@ -233,30 +255,25 @@ def _set_again(line, later, in_block=False):
     if any(_jvm_name(o) is None or _jvm_name(o) in LISTS or _jvm_name(o) in JVM_UNLOCK or IN_PLACE.match(o)
            for o in append.group(1).split()):
         return False
-    again, same_block = None, True
-    for i, other in enumerate(later):
-        if other["text"] == line["text"] and ((not other["depth"] and not in_block) or
-                                              (same_block and other["depth"] == line["depth"])):
-            again = i
-            break
-        first = other["text"].split()[0] if other["text"].split() else ""
-        if other["depth"] < line["depth"] or (other["depth"] == line["depth"] and (
-                first in CLOSERS + ("else", "elif") or first.endswith(")") or other["text"].endswith(";;"))):
-            same_block = False  # (its block ends, or another branch of it starts)
-    # the lines in between only add to JVM_OPTS or leave it alone: none reads it (a grep that decides on it)
-    return again is not None and all(APPEND.match(other["text"]) or "JVM_OPTS" not in other["text"]
-                                     for other in later[:again])
+    for other in later:
+        if other["text"] == line["text"] and (other["depth"] == line["depth"] if in_block else not other["depth"]):
+            return True
+        if not (_plain_line(other) or (not in_block and _leaves_if(other))):
+            return False
+    return False
 
 
-def repeated_lines(text):
+def repeated_lines(text, other):
     """The numbers of cassandra-env.sh's lines adding plain options to JVM_OPTS in a block that the same block writes
-    again the same below them (_set_again: the last one counts): the JVM gets the same without them; [] when it is
-    not read line by line."""
+    again the same below them (_set_again: the last one counts), when the other side's cassandra-env.sh (other) has
+    that line too: the JVM gets the same without them, the rest is compared with the other side's; a line the other
+    side does not have stays, each copy of it shown. [] when either is not read line by line."""
     try:
-        lines = env_lines(text)
+        lines, theirs = env_lines(text), set(line["text"] for line in env_lines(other))
     except NotSame:
         return []
-    return [line["n"] for i, line in enumerate(lines) if _set_again(line, lines[i + 1:], in_block=True)]
+    return [line["n"] for i, line in enumerate(lines)
+            if line["text"] in theirs and _set_again(line, lines[i + 1:], in_block=True)]
 
 
 LOCAL_JMX_TEST = 'if [ "$LOCAL_JMX" = yes ]; then'  # (as env_lines writes it)
@@ -406,7 +423,8 @@ def env_differences(live, role):
                                           [(line["depth"] > 0, line["text"]) for line in live], autojunk=False)
         return [op for op in matcher.get_opcodes() if op[0] != "equal"]
     added, heap = [], []
-    live = [line for i, line in enumerate(live) if not _set_again(line, live[i + 1:])]
+    live = [line for i, line in enumerate(live)  # (a line set again outside any block, or in its own block)
+            if not (_set_again(line, live[i + 1:], in_block=False) or _set_again(line, live[i + 1:], in_block=True))]
     moved = _moved_lines(live, role, ops_of(role, live))
     moved_lines = [line for line in live if line["text"] in moved]
     if any(line["text"] in moved and GREP.match(lines[i - 1]["text"]) for lines in (role, live)
@@ -511,28 +529,43 @@ def stock_options(greps, heap, why=None):
     return added
 
 
+UNNAMED_ORDER = "(the order of the options without a name)"
+
+
 def _kind(option):
-    """The order of the options without a name counts among the ones of a family (jvm.unnamed_family): -ea/-da,
-    -esa/-dsa, -javaagent:... (the Prometheus exporter's apart), -Xlog by output (-Xlog:<what>:<output>: a later one
-    for an output reconfigures it, other outputs are apart); the others (--add-opens...) by their first word, in any
-    order."""
-    family = jvm.unnamed_family(option)
-    if family in ("(assertions)", "(system assertions)"):
-        return family
-    if prometheus.AGENT.match(option):  # it transforms no class: its place among the other agents does not count
+    """The kind of an option without a name, its name in a difference: -ea/-da, -esa/-dsa, agents (the Prometheus
+    exporter's apart), -Xlog by output (-Xlog:<what>:<output>), the others by their first word."""
+    if re.match(r"^-(ea|da|enableassertions|disableassertions)(:|$)", option):
+        return "(assertions)"
+    if re.match(r"^-(esa|dsa|enablesystemassertions|disablesystemassertions)$", option):
+        return "(system assertions)"
+    if prometheus.AGENT.match(option):
         return "(the Prometheus exporter's agent)"
-    if family == "(agents)":
-        return family
+    if re.match(r"^-(javaagent|agentlib|agentpath)[:=]", option):
+        return "(agents)"
     xlog = re.match(r"^-Xlog:[^:]+:([^:]+)", option)
     if xlog and not xlog.group(1).startswith("disable"):
         return "-Xlog:%s" % xlog.group(1)
     return re.split(r"[:=]", option.split(" ")[0], maxsplit=1)[0]
 
 
+def _order_counts(kind, options):
+    """Whether the place of an option of that kind among the other options without a name counts (UNNAMED_ORDER):
+    but for the ones the JVM takes in any order (jvm.in_any_order), the Prometheus exporter's agent (it transforms
+    no class) and an -Xlog to a file of its own (another output is apart, unless an -Xloggc may write that file)."""
+    if kind == "(the Prometheus exporter's agent)":
+        return False
+    if kind.startswith("-Xlog:file=") and not any(o.startswith("-Xloggc") for o in options):
+        return False
+    return True
+
+
 def effective(args):
     """What the JVM gets from its arguments (the program name and the main class out): {name: [option]} (the last
-    one, every one in order for the ones that add up), {kind: [options in order]} for the others, the unlock
-    options before each -XX option that counts, and in each family of settings the order of their last options."""
+    one, every one in order for the ones that add up), {kind: [options in order]} for the others (in any order for
+    the ones the JVM takes so, jvm.in_any_order) and under UNNAMED_ORDER their kinds in order (_order_counts), the
+    unlock options before each -XX option that counts, and in each family of settings the order of their last
+    options."""
     options, i = [], 0
     while i < len(args):
         option = args[i]
@@ -547,17 +580,27 @@ def effective(args):
     named, unnamed, unlocked, seen, last = {}, {}, {}, set(), {}
     # an -Xlog without an output (stdout) or -Xlog:disable acts on every output: their order with all -Xlog counts
     xlog_apart = all(_kind(o) != "-Xlog" for o in options if o.startswith("-Xlog"))
+    # -verbose:gc and -Xloggc are -Xlog's too: with an -Xlog, their place among the options without a name counts
+    xlog_used = any(re.match(r"^-Xlog(:|$)", o) for o in options)
     for position, option in enumerate(options):
         name = _jvm_name(option)
         if name is None:
+            if jvm.in_any_order(option):  # (each kind in any order, sorted below)
+                unnamed.setdefault(_kind(option), []).append(option)
+                continue
             kind = _kind(option)
-            unnamed.setdefault(kind if xlog_apart or not kind.startswith("-Xlog") else "-Xlog", []).append(option)
+            kind = kind if xlog_apart or not kind.startswith("-Xlog") else "-Xlog"
+            unnamed.setdefault(kind, []).append(option)
+            if _order_counts(kind, options):
+                unnamed.setdefault(UNNAMED_ORDER, []).append(kind)
             continue
         if name in LISTS:
             named.setdefault(name, []).append(option)
         else:
             named[name] = [option]
         last[name] = position
+        if name in ("-verbose:gc", "-Xloggc") and xlog_used:
+            unnamed.setdefault(UNNAMED_ORDER, []).append(name)
         if option.startswith("-XX:"):
             unlocked[name] = sorted(seen)
         else:
@@ -566,8 +609,9 @@ def effective(args):
             seen.add(name)
         elif option.startswith("-XX:-") and name in JVM_UNLOCK:
             seen.discard(name)
-    for kind, given in unnamed.items():  # (of no family: in any order)
-        unnamed[kind] = jvm.unnamed_in_order(given)
+    for kind, given in unnamed.items():
+        if kind != UNNAMED_ORDER:
+            unnamed[kind] = jvm.unnamed_in_order(given)
     families = dict((family, [n for n in sorted(last, key=last.get) if n in members])
                     for family, members in FAMILIES.items())
     return {"named": named, "unnamed": unnamed, "unlocked": unlocked, "families": families}

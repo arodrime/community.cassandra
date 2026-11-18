@@ -43,25 +43,21 @@ def option_name(option):
     return m.group(1) if m else None
 
 
-def unnamed_family(option):
-    """The family of an option without a name whose order counts among the others of it: assertions (-ea/-da, with
-    or without :<package>), system assertions (-esa/-dsa), -Xlog, agents; None for one the JVM takes in any order
-    (--add-opens, --add-exports, --add-modules...)."""
-    if re.match(r"^-(ea|da|enableassertions|disableassertions)(:|$)", option):
-        return "(assertions)"
-    if re.match(r"^-(esa|dsa|enablesystemassertions|disablesystemassertions)$", option):
-        return "(system assertions)"
-    if option.startswith("-Xlog"):
-        return "-Xlog"
-    if re.match(r"^-(javaagent|agentlib|agentpath)[:=]", option):
-        return "(agents)"
-    return None
+# the options without a name the JVM takes in any order: each adds to the module system's settings, read once all
+# are parsed (--add-opens x and --add-opens=x alike); any other one keeps its place (-Xshare:on/-Xshare:off, -Xint/-Xmixed,
+# --illegal-access=..., -Xbootclasspath/a:..., -verbose:gc then -Xlog:disable: the order counts)
+ANY_ORDER_OPTIONS = ("--add-opens", "--add-exports", "--add-reads", "--add-modules", "--enable-native-access")
+
+
+def in_any_order(option):
+    """Whether the JVM takes option in any order among the others (ANY_ORDER_OPTIONS)."""
+    return re.match(r"^(%s)([ =]|$)" % "|".join(ANY_ORDER_OPTIONS), option) is not None
 
 
 def unnamed_in_order(options):
-    """Options without a name as the JVM takes them: each family's in their order (unnamed_family), the others in
-    any (sorted), so that two lists the JVM takes the same are equal."""
-    return sorted(options, key=lambda o: (0, unnamed_family(o)) if unnamed_family(o) else (1, o))
+    """Options without a name as the JVM takes them: in their order, but the ones it takes in any order
+    (in_any_order) after them, sorted, so that two lists the JVM takes the same are equal."""
+    return [o for o in options if not in_any_order(o)] + sorted(o for o in options if in_any_order(o))
 
 
 def size(option):

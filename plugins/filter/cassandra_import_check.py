@@ -874,12 +874,13 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
         if mine:
             notes.append(REMOTE_BRANCH_NOTE % _out.plural(len(mine), "line"))
         # (and a line its block writes again the same below it: the last one counts)
-        again = jvm_args.repeated_lines(live["cassandra-env.sh"])
+        again = jvm_args.repeated_lines(live["cassandra-env.sh"], rendered["cassandra-env.sh"])
+        again_rendered = jvm_args.repeated_lines(rendered["cassandra-env.sh"], live["cassandra-env.sh"])
         if again:
             notes.append(REPEATED_NOTE % _out.plural(len(again), "line"))
         live = dict(live, **{"cassandra-env.sh": jvm_args.without_lines(live["cassandra-env.sh"], mine + again)})
         rendered = dict(rendered, **{"cassandra-env.sh": jvm_args.without_lines(
-            rendered["cassandra-env.sh"], theirs + jvm_args.repeated_lines(rendered["cassandra-env.sh"]))})
+            rendered["cassandra-env.sh"], theirs + again_rendered)})
         node_heap = _heap(live["cassandra-env.sh"], node_environment)
         role_heap = _heap(rendered["cassandra-env.sh"], role_environment)
         heap = _dict_diff(HEAP_FILE, node_heap, role_heap)

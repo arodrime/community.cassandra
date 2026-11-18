@@ -92,7 +92,8 @@ def compare(tmp_path, name, live, new, storage_dir=""):
     # options without a name keep their order; an option starting with -- takes the next word
     ("jvm-server.options", "-Xloggc:/a\n-Xloggc:/b\n", HEADER + "-Xloggc:/b\n-Xloggc:/a\n", 1),
     ("jvm-server.options", "--add-exports A\n--add-opens B\n", HEADER + "--add-exports B\n--add-opens A\n", 1),
-    # (2026-11-18) the ones of no family in any order; in a family (-ea/-da, -esa/-dsa, -Xlog, agents) their order
+    # (2026-11-18) the --add-* ones (--add-opens, --add-exports, --add-reads, --add-modules, --enable-native-access)
+    # in any order; the others in theirs (-ea/-da, -Xlog, agents, --illegal-access, -Xshare, -Xint, -Xbootclasspath)
     ("jvm11-server.options", "-ea\n-Xlog:gc+heap+coops=info\n--add-exports a/b=ALL-UNNAMED\n--add-opens c/d=ALL-UNNAMED\n",
      HEADER + "--add-exports a/b=ALL-UNNAMED\n--add-opens c/d=ALL-UNNAMED\n-ea\n-Xlog:gc+heap+coops=info\n", 2),
     ("jvm11-server.options", "--add-opens c/d=ALL-UNNAMED\n--add-opens e/f=ALL-UNNAMED\n",
@@ -103,6 +104,16 @@ def compare(tmp_path, name, live, new, storage_dir=""):
     ("jvm11-server.options", "-javaagent:/a.jar\n-agentpath:/b.so\n", HEADER + "-agentpath:/b.so\n-javaagent:/a.jar\n", 1),
     ("jvm11-server.options", "--add-opens c/d=ALL-UNNAMED\n--add-opens e/f=ALL-UNNAMED\n",
      HEADER + "--add-opens e/f=ALL-UNNAMED\n", 1),
+    ("jvm11-server.options", "--add-opens=c/d=ALL-UNNAMED\n--add-modules=jdk.zorglub\n--enable-native-access=ALL-UNNAMED\n",
+     HEADER + "--enable-native-access=ALL-UNNAMED\n--add-modules=jdk.zorglub\n--add-opens=c/d=ALL-UNNAMED\n", 2),
+    ("jvm11-server.options", "--illegal-access=deny\n--illegal-access=permit\n",
+     HEADER + "--illegal-access=permit\n--illegal-access=deny\n", 1),
+    ("jvm11-server.options", "-Xshare:off\n-Xshare:on\n", HEADER + "-Xshare:on\n-Xshare:off\n", 1),
+    ("jvm11-server.options", "-Xint\n-Xmixed\n", HEADER + "-Xmixed\n-Xint\n", 1),
+    ("jvm11-server.options", "-Xbootclasspath/a:/opt/x.jar\n-Xbootclasspath/a:/opt/y.jar\n",
+     HEADER + "-Xbootclasspath/a:/opt/y.jar\n-Xbootclasspath/a:/opt/x.jar\n", 1),
+    ("jvm11-server.options", "-Xlog:disable\n-verbose:gc\n", HEADER + "-verbose:gc\n-Xlog:disable\n", 1),
+    ("jvm11-server.options", "-ea\n-Xshare:off\n", HEADER + "-Xshare:off\n-ea\n", 1),
     ("jvm-server.options", "-Xss256k foo\n", HEADER + "-Xss256k\nfoo\n", 1),  # foo: not a line starting with '-'
     ("jvm-server.options", "-Xss256k   -Xmx1G\n", HEADER + "-Xmx1G\n-Xss256k\n", 2),  # each word is an option
     # these add up: given twice, both count
