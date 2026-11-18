@@ -1,0 +1,3 @@
+bugfixes:
+  - >-
+    import_cluster playbook - a ``cassandra-env.sh`` line adding named options to ``JVM_OPTS`` in a block, written again the same below it in that block (the remote JMX branch's authenticate line twice), is the same for the JVM: the last one counts; no longer a hand edit or a self-check difference. Options that add up (agents, ``--add-opens``) stay reported.

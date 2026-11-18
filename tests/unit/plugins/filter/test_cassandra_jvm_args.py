@@ -1286,11 +1286,17 @@ def test_a_jvm_options_file_the_running_java_does_not_read_is_a_note(tmp_path):
 
 @pytest.mark.parametrize("later, again", [
     ([{"depth": 0, "text": 'JVM_OPTS="$JVM_OPTS -Dx=1"'}], True),
-    ([{"depth": 1, "text": 'JVM_OPTS="$JVM_OPTS -Dx=1"'}], False),  # again in a block: maybe not run
+    ([{"depth": 1, "text": 'JVM_OPTS="$JVM_OPTS -Dx=1"'}], True),  # again below in the same block
+    ([{"depth": 1, "text": "else"}, {"depth": 1, "text": 'JVM_OPTS="$JVM_OPTS -Dx=1"'}], False),  # another branch
+    ([{"depth": 1, "text": "fi"}, {"depth": 0, "text": "if [ -n x ]; then"},
+      {"depth": 1, "text": 'JVM_OPTS="$JVM_OPTS -Dx=1"'}], False),  # another block: maybe not run
+    ([{"depth": 2, "text": 'JVM_OPTS="$JVM_OPTS -Dx=1"'}], False),  # in a block inside it: maybe not run
     ([{"depth": 0, "text": 'JVM_OPTS="$JVM_OPTS -Dx=2"'}], False),
 ])
 def test_a_line_in_a_block_set_again_below(later, again):
     assert jvm._set_again({"depth": 1, "text": 'JVM_OPTS="$JVM_OPTS -Dx=1"'}, later) is again
+    in_block = again and later[-1]["depth"] == 1  # (in_block: the same block only, not outside any)
+    assert jvm._set_again({"depth": 1, "text": 'JVM_OPTS="$JVM_OPTS -Dx=1"'}, later, in_block=True) is in_block
     assert jvm._set_again({"depth": 0, "text": 'JVM_OPTS="$JVM_OPTS -Dx=1"'}, later) is False
 
 
@@ -1789,3 +1795,41 @@ def test_apply_config_restarts_for_an_exported_heap_dump_dir_against_another(tmp
         cmdline = launch(files, "11", tmp_path)
         new = dict(files, **{"cassandra-env.sh": heap_dump_dir_of_role("41x", "/srv/zorglub/other")})
         assert cassandra_apply_config_no_effect(["cassandra-env.sh"], files, new, cmdline, "41x", "11", environ) == []
+
+
+# --- an option set again identically: the last one counts ---------------------------------------------------------
+
+AUTHENTICATE = '  JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.authenticate=true"\n'
+
+
+def authenticate_twice(again):
+    """(2026-11-18) the JMX lines in the remote branch, its authenticate line written twice in a row (again: the
+    second one's text)."""
+    def change(files):
+        jmx_in_remote_branch(files)
+        files["cassandra-env.sh"] = edit(files["cassandra-env.sh"], AUTHENTICATE, AUTHENTICATE + again)
+    return change
+
+
+@pytest.mark.parametrize("series", sorted(JAVA))
+def test_an_option_repeated_identically_in_the_remote_branch_is_the_roles(tmp_path, series):
+    files = node_files(series, authenticate_twice(AUTHENTICATE))
+    cmdline = launch(files, JAVA[series], tmp_path)
+    inventory, layout, node = imported(files, series, JAVA[series], cmdline)
+    rendered = role_files(inventory, layout, files)[0]
+    assert node["hand_edits"] == []
+    assert check(files, series, java=JAVA[series], cmdline=cmdline)["differences"] == []
+    assert settings(launch(rendered, JAVA[series], tmp_path)) == settings(cmdline)
+
+
+@pytest.mark.parametrize("again", [
+    AUTHENTICATE.replace("=true", "=false"),  # (another value: the last one, false, counts)
+    '  JVM_OPTS="$JVM_OPTS -javaagent:/srv/zorglub/agent.jar"\n' * 2,  # (agents add up)
+    '  JVM_OPTS="$JVM_OPTS --add-opens java.base/java.io=ALL-UNNAMED"\n' * 2,
+])
+def test_an_option_repeated_otherwise_or_adding_up_stays_reported(tmp_path, again):
+    files = node_files("41x", authenticate_twice(again))
+    cmdline = launch(files, "11", tmp_path)
+    inventory, layout, node = imported(files, "41x", "11", cmdline)
+    assert node["hand_edits"] != []
+    assert check(files, "41x", java="11", cmdline=cmdline)["differences"] != []

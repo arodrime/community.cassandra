@@ -53,7 +53,8 @@ except ImportError:  # before, any string not marked unsafe
     def trust_as_template(value):
         return value
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    REMOTE_BRANCH_NOTE, Unsafe, error_without_message, log_dir_of, logback_as_log_dir, undefined_name, values_hidden)
+    REMOTE_BRANCH_NOTE, REPEATED_NOTE, Unsafe, error_without_message, log_dir_of, logback_as_log_dir, undefined_name,
+    values_hidden)
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
 from ansible_collections.community.cassandra.plugins.filter.cassandra_os import (
     NO_EFFECT, NO_EFFECT_NOTE, cassandra_firewall_changes, cassandra_linux_changes)
@@ -871,9 +872,14 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
         mine, theirs = jvm_args.remote_branch_moved(live["cassandra-env.sh"], rendered["cassandra-env.sh"], dict(
             node_environment or {}, **((running or {}).get("environment") or {})), (running or {}).get("cmdline"))
         if mine:
-            live = dict(live, **{"cassandra-env.sh": jvm_args.without_lines(live["cassandra-env.sh"], mine)})
-            rendered = dict(rendered, **{"cassandra-env.sh": jvm_args.without_lines(rendered["cassandra-env.sh"], theirs)})
             notes.append(REMOTE_BRANCH_NOTE % _out.plural(len(mine), "line"))
+        # (and a line its block writes again the same below it: the last one counts)
+        again = jvm_args.repeated_lines(live["cassandra-env.sh"])
+        if again:
+            notes.append(REPEATED_NOTE % _out.plural(len(again), "line"))
+        live = dict(live, **{"cassandra-env.sh": jvm_args.without_lines(live["cassandra-env.sh"], mine + again)})
+        rendered = dict(rendered, **{"cassandra-env.sh": jvm_args.without_lines(
+            rendered["cassandra-env.sh"], theirs + jvm_args.repeated_lines(rendered["cassandra-env.sh"]))})
         node_heap = _heap(live["cassandra-env.sh"], node_environment)
         role_heap = _heap(rendered["cassandra-env.sh"], role_environment)
         heap = _dict_diff(HEAP_FILE, node_heap, role_heap)

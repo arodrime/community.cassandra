@@ -1432,6 +1432,10 @@ def _difference_lines(name, rendered, live, ops):
 REMOTE_BRANCH_NOTE = ("cassandra-env.sh: %s adding options to JVM_OPTS in the remote JMX branch (the one the running"
                       " Cassandra started with: its remote JMX port), the role's outside it: the same for the JVM")
 
+# a node's line in a block written again the same below it in that block (jvm_args.repeated_lines)
+REPEATED_NOTE = ("cassandra-env.sh: %s adding options to JVM_OPTS written again the same below in its block: the"
+                 " last one counts, the same for the JVM")
+
 
 def _leftovers(env, series, files, ctx, live_files, rejected=(), skip=(), proven=(), environment=None, cmdline=""):
     """What the role would still change in the node's files, rendered with ctx: rejected: the cassandra.yaml keys
@@ -1459,9 +1463,13 @@ def _leftovers(env, series, files, ctx, live_files, rejected=(), skip=(), proven
         if name == jvm_args.ENV:  # (the node's lines in the remote JMX branch it takes, the role's outside it)
             mine, theirs = jvm_args.remote_branch_moved(live_text, "\n".join(rendered), environment, cmdline)
             if mine:
-                live_text = jvm_args.without_lines(live_text, mine)
-                rendered = jvm_args.without_lines("\n".join(rendered), theirs).split("\n")
                 normalized.append(REMOTE_BRANCH_NOTE % out.plural(len(mine), "line"))
+            # (and a line its block writes again the same below it: the last one counts)
+            again, again_rendered = jvm_args.repeated_lines(live_text), jvm_args.repeated_lines("\n".join(rendered))
+            if again:
+                normalized.append(REPEATED_NOTE % out.plural(len(again), "line"))
+            live_text = jvm_args.without_lines(live_text, mine + again)
+            rendered = jvm_args.without_lines("\n".join(rendered), theirs + again_rendered).split("\n")
         live = _align(rendered, live_text.split("\n"))
         if name == "cassandra.yaml":
             rendered, live, notes = _yaml_compared(series, rendered, live, extras, rejected)

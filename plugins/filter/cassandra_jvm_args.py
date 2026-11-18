@@ -221,10 +221,11 @@ def _moved_lines(live, role, ops):
     return moved
 
 
-def _set_again(line, later):
+def _set_again(line, later, in_block=False):
     """Whether a line in a block adding plain options to JVM_OPTS (each set by its last occurrence) is written again
-    below it, outside any block (the remote JMX branch's password file line, the stock one after fi): the later
-    one sets the same values last, the JVM gets the same whether the block ran or not."""
+    the same below it: outside any block (the remote JMX branch's password file line, the stock one after fi), or in
+    the same block before it ends (a line repeated in the remote JMX branch); in_block: only the latter. The later
+    one sets the same values last, the JVM gets the same whether the first one is there or not."""
     append = APPEND.match(line["text"]) if line["depth"] else None
     if not append or not append.group(1).split() or any(g in line["text"] for g in JVM_ENV_GREPS):
         return False
@@ -232,10 +233,30 @@ def _set_again(line, later):
     if any(_jvm_name(o) is None or _jvm_name(o) in LISTS or _jvm_name(o) in JVM_UNLOCK or IN_PLACE.match(o)
            for o in append.group(1).split()):
         return False
-    again = next((i for i, other in enumerate(later) if not other["depth"] and other["text"] == line["text"]), None)
+    again, same_block = None, True
+    for i, other in enumerate(later):
+        if other["text"] == line["text"] and ((not other["depth"] and not in_block) or
+                                              (same_block and other["depth"] == line["depth"])):
+            again = i
+            break
+        first = other["text"].split()[0] if other["text"].split() else ""
+        if other["depth"] < line["depth"] or (other["depth"] == line["depth"] and (
+                first in CLOSERS + ("else", "elif") or first.endswith(")") or other["text"].endswith(";;"))):
+            same_block = False  # (its block ends, or another branch of it starts)
     # the lines in between only add to JVM_OPTS or leave it alone: none reads it (a grep that decides on it)
     return again is not None and all(APPEND.match(other["text"]) or "JVM_OPTS" not in other["text"]
                                      for other in later[:again])
+
+
+def repeated_lines(text):
+    """The numbers of cassandra-env.sh's lines adding plain options to JVM_OPTS in a block that the same block writes
+    again the same below them (_set_again: the last one counts): the JVM gets the same without them; [] when it is
+    not read line by line."""
+    try:
+        lines = env_lines(text)
+    except NotSame:
+        return []
+    return [line["n"] for i, line in enumerate(lines) if _set_again(line, lines[i + 1:], in_block=True)]
 
 
 LOCAL_JMX_TEST = 'if [ "$LOCAL_JMX" = yes ]; then'  # (as env_lines writes it)
@@ -282,6 +303,7 @@ def remote_branch_moved(live, role, environment=None, cmdline=""):
         node, ours = env_lines(live), env_lines(role)
     except NotSame:
         return [], []
+    node = [line for i, line in enumerate(node) if not _set_again(line, node[i + 1:], in_block=True)]
     tests = [[i for i, line in enumerate(lines) if line["text"] == LOCAL_JMX_TEST and not line["depth"]]
              for lines in (node, ours)]
     if any(len(found) != 1 for found in tests):
