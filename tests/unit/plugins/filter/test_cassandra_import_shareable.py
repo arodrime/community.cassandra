@@ -589,11 +589,12 @@ def test_a_device_after_the_read_ahead_or_the_scheduler_its_codes_masked():
     assert "(dm-3)" in text[0] and "(sdb)" in text[1]
 
 
-def test_a_site_value_that_is_a_word_of_the_report_masked_on_its_own_lines_only():
-    # (pre-push audit, rc13, round 4) a JMX user named ansible, readwrite: masked as the user, the report's words kept
+def test_a_site_value_that_is_a_word_of_the_report_masked_everywhere():
+    # (pre-push audit, rc13, rounds 4-5) a JMX user named ansible, readwrite: masked wherever it is, the report's
+    # words too (over-masking rather than a name of the site left)
     lines = ["  jmxremote.access: ansible: node has readwrite, import would write nothing",
              "  jmxremote.access: readwrite: node has readwrite, import would write nothing",
-             "  run ansible-playbook, the rights readwrite"]
+             "  the user ansible"]
     text = cassandra_import_shareable(lines, ZORGLUB)["text"][2:]
-    assert re.match(r"^  jmxremote\.access: user\d+: node has readwrite, import would write nothing$", text[0]), text
-    assert re.match(r"^  jmxremote\.access: user\d+: node has readwrite", text[1]) and text[2] == lines[2]
+    assert re.match(r"^  jmxremote\.access: user\d+: node has user\d+, import would write nothing$", text[0]), text
+    assert not [line for line in text if re.search(r"\b(ansible|readwrite)\b", line)], text

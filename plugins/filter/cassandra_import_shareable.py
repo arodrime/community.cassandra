@@ -36,8 +36,13 @@ IPV6 = re.compile(r"(?<![\w:])(?:[0-9A-Fa-f]{0,4}:){2,7}(?:IP\b|[0-9A-Fa-f]{0,4}
 URL = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s,;'\"<>)]+")
 PATH = re.compile(r"(?<![\w.~/<>*}-])/[\w.@+-]+(?:/[\w.@+*{}<>-]*)*")
 # a path after a variable (${HOME}/x, $CASSANDRA_HOME/x): masked, but logback's stock files under the log dir
-VAR_PATH = re.compile(r"\$\{?[A-Za-z_][\w.]*\}?(?:/[\w.@+*{}%-]+)+")
-STOCK_LOG_PATH = re.compile(r"^\$\{cassandra\.logdir\}/(?:system|debug|gc|audit/audit)\.log(?:\.[\w%{}.*-]*)?$")
+VAR_PATH = re.compile(r"\$\{[A-Za-z_]\w*:-[^}]*\}(?:/[\w.@+*{}%-]+)*|\$\{?[A-Za-z_][\w.]*\}?(?:/[\w.@+*{}%-]+)+")
+# (the stock ones: the log files under the log dir, their rolling patterns; cassandra-env.sh's own paths)
+STOCK_LOG_PATH = re.compile(r"^\$\{?(?:cassandra\.logdir|CASSANDRA_LOG_DIR)\}?/(?:system|debug|gc|audit/audit)\.log"
+                            r"(?:\.%d\{[^}]*\})?(?:\.%i)?(?:\.(?:zip|gz))?$"
+                            r"|^\$\{?CASSANDRA_HOME\}?/lib/(?:jamm-[\d.]+\.jar|sigar-bin)$|^\$\{?CASSANDRA_CONF\}?/hotspot_compiler$")
+# a relative path in a quoted value (data/x/cdc), a Windows one: masked, but the stock keystore of TDE
+QUOTED_RELATIVE = re.compile(r"""(?<=['"])(?!conf/\.keystore['"])[\w.-]+(?:/[\w.@+*-]+)+(?=['"])|[A-Za-z]:\\[^\s'"]+""")
 # a path as an XML element's value (<file>/srv/x/a.log</file>): up to the closing tag, never the tag itself
 XML_PATH = re.compile(r"(?<![/\w])(<[A-Za-z][\w:.-]*(?:\s[^<>]*)?>)(/[\w.@+-]+(?:/[\w.@+*{}-]*)*)")  # (not <node>/ of a path)
 # a path from the home or the current directory (~/ops/x, ./ops, ../ops): the site's own, always masked
@@ -278,10 +283,53 @@ def _path(path, key):
             path == stock or path.startswith(stock + "/") for stock in STOCK_DIRS)):
         parts = path.split("/")
         at = 3 if path.startswith("/etc/tuned/") else 4 if path.startswith("/usr/lib/tuned/") else 0
-        if at and len(parts) > at + 1:  # (its profile's directory, a file under it)
+        profile = at if at and len(parts) > at + 1 else None  # (its profile's directory, a file under it)
+        if profile:
             parts[at] = _profile(parts[at], key)
-        return "/".join(_codes(key.inside(part), key) for part in parts)
+        top = max(len(stock.split("/")) for stock in STOCK_DIRS + STOCK_TOPS
+                  if path == stock or path.startswith(stock + "/"))
+        return "/".join(part if i < top or i == profile else _part(part, key) for i, part in enumerate(parts))
     return "/" + key.add(path, "path")
+
+
+def _part(part, key):
+    """A component of a path under a stock directory: the names of the site in it replaced, its short codes masked,
+    each word no path of the roles has (orders under /var/lib/cassandra) masked."""
+    shown = _codes(key.inside(part), key)
+    if shown in stock_path_parts():
+        return shown
+
+    def word(m):
+        found = m.group(0)
+        if (found.lower() in stock_path_words() or found.lower() in EXTENSIONS or found == "IP"
+                or PSEUDONYM.match(found) or OS_CODES.match(found) or not re.search(r"[A-Za-z]{2}", found)):
+            return found
+        return key.add(found, "word") or found
+    return re.sub(r"[^-_.]+", word, shown)
+
+
+@functools.lru_cache(maxsize=1)
+def stock_path_words():
+    """The words of stock_path_parts (60-cassandra.conf: cassandra, conf), lower case -> frozenset."""
+    return frozenset(w.lower() for part in stock_path_parts() for w in re.split(r"[-_.]+", part) if w)
+
+
+@functools.lru_cache(maxsize=1)
+def stock_path_parts():
+    """The components of the paths the roles' defaults, variables and templates name (data, commitlog, system.log,
+    60-cassandra.conf...), and of a stock install's (hints, saved_caches, cdc_raw, lib, conf) -> frozenset."""
+    parts = set(("data", "commitlog", "saved_caches", "hints", "cdc_raw", "lib", "conf", "bin", "logs", "audit",
+                 "system.log", "debug.log", "gc.log", "ssl", "backups", "snapshots", "system", "jmx_prometheus",
+                 "cqlsh", "nodetool", "sstableloader", "keystore", "truststore", "rc.local") + STOCK_TUNED)
+    for role in sorted(os.listdir(ROLES)):
+        for kind in ("defaults", "vars", "templates"):
+            for top, dirs, files in os.walk(os.path.join(ROLES, role, kind)):
+                for name in files:
+                    with open(os.path.join(top, name), encoding="utf-8", errors="replace") as f:
+                        for path in re.findall(r"(?<![\w.])/[\w.@+-]+(?:/[\w.@+-]+)*", f.read()):
+                            parts.update(p for p in path.split("/") if p)
+                    parts.add(re.sub(r"\.j2$", "", name))
+    return frozenset(parts)
 
 
 # a short code of the site (iv2, zq7, pr01: one or two letters, then digits): what the vocabulary pass leaves (fewer
@@ -460,7 +508,10 @@ STOCK_JMX_USERS = ("cassandra", "monitorRole", "controlRole")
 # the names cassandra.yaml leaves to the site in a key: a memtable configuration's (the stock ones kept), a
 # parameter of a class it names (a seed provider's, an authenticator's: seeds kept)
 YAML_NAMED = ((re.compile(r"(memtable\.configurations\.)([^.\[\s]+)"), ("skiplist", "trie", "default", "skiplist_sharded")),
-              (re.compile(r"(\.parameters(?:\[\d+\])?\.)([^.\[\s]+)"), ("seeds",)))
+              (re.compile(r"(\.parameters(?:\[\d+\])?\.)([^.\[\s]+)"),
+               ("seeds", "high_ratio", "low_ratio", "factor", "flow", "fail_on_missing_provider", "keystore",
+                "keystore_password", "store_type", "key_password", "truststore", "truststore_password",
+                "default_keyspace", "default_table")))
 
 
 @functools.lru_cache(maxsize=1)
@@ -557,6 +608,7 @@ def _masked_names(text, key):
     text = IPV6.sub(lambda m: "IP" if ("::" in m.group(0) or m.group(0).count(":") >= 3) else m.group(0), text)
     text = URL.sub(lambda m: key.add(m.group(0), "url"), text)
     text = VAR_PATH.sub(lambda m: m.group(0) if STOCK_LOG_PATH.match(m.group(0)) else key.add(m.group(0), "path"), text)
+    text = QUOTED_RELATIVE.sub(lambda m: key.add(m.group(0), "path"), text)
     text = PATH.sub(lambda m: _path(m.group(0), key), text)
     text = XML_PATH.sub(lambda m: m.group(1) + _path(m.group(2), key), text)
     text = re.sub(r"\b(tuned:? \(?profile )([\w.-]+)", lambda m: m.group(1) + _profile(m.group(2), key), text)
@@ -620,13 +672,13 @@ def _valued_word(word, kind, key):
 
 
 def _site_value(real, kind, key):
-    """A value the site chose (a user, a bucket) -> its name in the copy; a word the report uses too (a user named
-    ansible, readwrite) masked where it is the value only (quiet: the report's own words stay)."""
-    if real.lower() in vocabulary() or real.lower() in STOCK_WORDS:
-        given = key.add(real, kind, force=True)
-        key.quiet.add(real.lower())
-        return given
-    return key.add(real, kind) or real
+    """A value the site chose (a user, a bucket) -> its name in the copy, masked wherever it is (a word the report
+    uses too, ansible, readwrite: there as well); a name the key has already (the cluster's) as it is there."""
+    if key.name(real):
+        return key.name(real)
+    given = key.add(real, kind, force=True)
+    key.quiet.discard(real.lower())
+    return given
 
 
 def _valued(text, key):

@@ -17,7 +17,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import_sha
 
 # the site's names in the corpus
 SITE = re.compile(r"(?i)frob|kwy|quux|zorglub|acme|10\.0\.0|10\.1\.2|10\.9\.|fd12|2001:db8|fe80|192\.168"
-                  r"|\b(paris|london|payments|billing|orders|ledger|zq7|q7|z9)\b")
+                  r"|\b(paris|london|payments|billing|orders|ledger|operator|zq7|q7|z9)\b")
 # kept in clear by the owner's decisions: a JVM option of a known prefix (JVM_KNOWN), a key of a file keyed by its own
 # vocabulary (YAML, INI), an XML tag
 KEPT_BY_DECISION = ("-Dcassandra.frobsetting", "-Dcassandra.frobnitz_dir", "frobnitz_custom_key", "[frobsection] frobkey",
@@ -251,9 +251,27 @@ SITE_DIFFERENCES = [
     "cassandra.yaml: saved_caches_directory: node has '$CASSANDRA_HOME/orders/caches', import would write nothing",
     "jvm17-server.options: -XX:HeapDumpPath: node has '-XX:HeapDumpPath=${DUMPS}/ledger/team', import"
     ' would write nothing',
-    'jmxremote.access: ansible: node has readwrite, import would write nothing',
-    'jmxremote.access: readwrite: node has readwrite, import would write nothing',
+    'jmxremote.access: operator: node has readwrite, import would write nothing',
+    'medusa.ini: [cassandra] cql_username: node has \'operator\', import would write \'cassandra\'',
 ]
+
+# (round 5) paths of the site after a variable, a default, under a stock directory, relative, Windows'
+SITE_DIFFERENCES += [
+    "jvm17-server.options: -XX:HeapDumpPath: node has '-XX:HeapDumpPath=${DUMPS:-/srv/orders/billing}', import would"
+    " write nothing",
+    'cassandra-env.sh: node has JVM_OPTS="$JVM_OPTS -Dx=${ROOT:-/data/payments/metrics}", import would write nothing',
+    "cassandra.yaml: hints_directory: node has '~cassandra/orders/hints', import would write nothing",
+    "cassandra.yaml: hints_directory: node has '$HOME/../orders', import would write nothing",
+    "cassandra.yaml: cdc_raw_directory: node has 'data/orders/cdc', import would write nothing",
+    "cassandra.yaml: cdc_raw_directory: node has 'C:\\\\orders\\\\cdc', import would write nothing",
+    "cassandra.yaml: saved_caches_directory: node has '/var/lib/cassandra/orders/caches', import would write nothing",
+    "cassandra.yaml: saved_caches_directory: node has '/var/lib/cassandra/../../srv/orders', import would write nothing",
+    'logback.xml: /configuration/appender[@name="SYSTEMLOG"]/file: node has \'${cassandra.logdir}/system.log.orders\','
+    " import would write nothing",
+    'logback.xml: /configuration/appender[@name="SYSTEMLOG"]/file: node has'
+    " '${cassandra.logdir}/gc.log.billing-events', import would write nothing",
+    "jmxremote.access: operator: node has readwrite, import would write nothing",
+    "medusa.ini: [storage] bucket_name: node has 'operator', import would write nothing"]
 
 SITE_LINES = [
     '  see cassandra.acmecorp.example and sun.acmecorp.example, logback.acmecorp.example',
@@ -329,10 +347,25 @@ STOCK_DIFFERENCES = [
 ]
 
 # what must stay readable of STOCK_DIFFERENCES (and of STOCK_LINES)
+STOCK_DIFFERENCES += [
+    'cassandra-env.sh: node has JVM_OPTS="$JVM_OPTS -javaagent:$CASSANDRA_HOME/lib/jamm-0.3.2.jar", import would write'
+    " nothing",
+    'cassandra-env.sh: node has JVM_OPTS="$JVM_OPTS -XX:CompileCommandFile=$CASSANDRA_CONF/hotspot_compiler", import'
+    " would write nothing",
+    'cassandra-env.sh: node has JVM_OPTS="$JVM_OPTS -Xloggc:${CASSANDRA_LOG_DIR}/gc.log", import would write nothing',
+    "cassandra.yaml: back_pressure_strategy[0].parameters[0].high_ratio: node has '0.90', import would write '0.95'",
+    "cassandra.yaml: crypto_provider[0].parameters[0].fail_on_missing_provider: node has 'true', import would write"
+    " 'false'",
+    "cassandra.yaml: transparent_data_encryption_options.key_provider[0].parameters[0].keystore: node has"
+    " 'conf/.keystore', import would write nothing",
+    "cassandra.yaml: saved_caches_directory: node has '/var/lib/cassandra/saved_caches', import would write nothing"]
 STOCK_LINES = ["-Dsun.rmi.server.x=1 -Dlogback.configurationFile=logback.xml -Djava.rmi.server.hostname=x",
                "${cassandra.logdir}/system.log ${cassandra.logdir}/audit/audit.log.%d{yyyy-MM-dd}.%i.zip",
                "/etc/udev/rules.d/64-cassandra-data-disk.rules"]
-READABLE = ["ASYNCDEBUGLOG / queueSize", "DEBUGLOG / encoder / pattern", "org.apache.cassandra / @level",
+READABLE = ["$CASSANDRA_HOME/lib/jamm-0.3.2.jar", "$CASSANDRA_CONF/hotspot_compiler", "${CASSANDRA_LOG_DIR}/gc.log",
+            "parameters[0].high_ratio", "parameters[0].fail_on_missing_provider",
+            "parameters[0].keystore: node has 'conf/.keystore'", "/var/lib/cassandra/saved_caches",
+            "ASYNCDEBUGLOG / queueSize", "DEBUGLOG / encoder / pattern", "org.apache.cassandra / @level",
             "com.thinkaurelius.thrift", "root / appender-ref ASYNCDEBUGLOG", "AUDIT / rollingPolicy / fileNamePattern",
             "-XX:+UseG1GC", "-Dcassandra.max_queued_native_transport_requests", "-Djdk.attach.allowAttachSelf",
             "-Dio.netty.tryReflectionSetAccessible", "-Djava.net.preferIPv4Stack", "-Dcom.datastax.driver.FORCE_NIO",
@@ -344,7 +377,10 @@ READABLE = ["ASYNCDEBUGLOG / queueSize", "DEBUGLOG / encoder / pattern", "org.ap
             "us-east-1", "-Dsun.rmi.server.x=1", "-Dlogback.configurationFile=logback.xml",
             "-Djava.rmi.server.hostname=x", "${cassandra.logdir}/system.log",
             "${cassandra.logdir}/audit/audit.log.%d{yyyy-MM-dd}.%i.zip",
-            "/etc/udev/rules.d/64-cassandra-data-disk.rules"]
+            "/etc/udev/rules.d/64-cassandra-data-disk.rules", "$CASSANDRA_HOME/lib/jamm-0.3.2.jar",
+            "$CASSANDRA_CONF/hotspot_compiler", "${CASSANDRA_LOG_DIR}/gc.log", "parameters[0].high_ratio",
+            "parameters[0].fail_on_missing_provider", "parameters[0].keystore: node has 'conf/.keystore'",
+            "/var/lib/cassandra/saved_caches"]
 
 
 def test_no_name_of_the_site_left():
@@ -364,3 +400,20 @@ def test_the_stock_names_stay_readable(readable):
 
 
 STOCK_TEXT = shared(STOCK_DIFFERENCES, STOCK_LINES)
+
+
+@pytest.mark.parametrize("kind", ["cassandra_medusa_storage_prefix", "cassandra_medusa_storage_bucket_name",
+                                  "cassandra_medusa_cql_username"])
+def test_a_value_named_as_the_cluster_leaves_the_cluster_masked(kind):
+    # (round 5) a Medusa prefix, bucket or user named as the cluster (metrics): the cluster's name masked everywhere
+    nodes = [{"name": "db%d" % i, "address": "10.0.0.%d" % i, "dc": "dc1", "rack": "r1", "read": True,
+              "hand_edits": [], "normalized": [], "notes": [], "vars": {"cassandra_version": "50x", kind: "metrics"}}
+             for i in (1, 2)]
+    layout = cassandra_inventory_layout(nodes, "metrics")
+    checks = {"db1": {"differences": ["medusa.ini: [storage] prefix: node has 'metrics', import would write nothing",
+                                      "cassandra.yaml: cluster_name: node has 'Other', import would write 'metrics'"]}}
+    args = (layout, ["/p/inventories/x.yml", "/p/inventories"], "/p/reports/x/report.txt", checks, False)
+    lines = cassandra_import_report(*args, cwd="/p", in_git=True, width=200)
+    lines += cassandra_import_report(*args, cwd="/p", in_git=True, width=200, details=True)
+    text = cassandra_import_shareable(lines, layout)["text"]
+    assert not [line for line in text if re.search(r"(?i)\bmetrics\b", line)]
