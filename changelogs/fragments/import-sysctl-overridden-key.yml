@@ -1,0 +1,7 @@
+bugfixes:
+  - >-
+    import_cluster - a kernel key of the file the role writes its keys in that a file read later sets again (for
+    example ``fs.suid_dumpable`` in an admin's ``/etc/sysctl.d`` file and in systemd's
+    ``/usr/lib/sysctl.d/50-coredump.conf``) is no longer carried into ``cassandra_linux_sysctl``: the role would
+    have set the earlier value live, a change after the import. Its line stays in the file as it is, and the
+    report says so. This also applies to the role's own file on a node it set up, instead of a change to decide.

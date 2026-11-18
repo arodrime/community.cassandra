@@ -182,6 +182,16 @@ def _sysctl(recs, wanted, own):
         if others:
             notes.append("NOT carried: %s, set in other files than %s (the role would move them there)"
                          % (", ".join(others), target))
+    # a key of the file that a file read later sets again: the role would set the file's value live, the node having
+    # the later one; its line stays in the file as it is (the role writes its keys line by line)
+    set_again = {}
+    for key in sorted(carried):
+        if effective.get(key, (None, target))[1] != target:
+            set_again.setdefault(effective[key][1], []).append(key)
+            del carried[key]
+    for later in sorted(set_again):
+        notes.append("NOT carried: %s, set again by %s read after %s: its line stays there as it is (the role would"
+                     " set that file's value live)" % (", ".join(set_again[later]), _label(later, owners), target))
     # (the sysctl module could never read one back: a change at each run; its line stays in the node's file, the
     # role writing its own keys line by line)
     triggers = sorted(k for k in carried if k in WRITE_ONLY_SYSCTL)
@@ -190,8 +200,6 @@ def _sysctl(recs, wanted, own):
         notes.append("NOT carried: %s, write-only (an action, not a setting: never read back); its line stays in the"
                      " node's file as it is, and runs again whenever that file is reloaded (another sysctl change, a"
                      " tuned switch)" % ", ".join(triggers))
-    if own:
-        notes += _sysctl_lost(carried, effective, target)
     changed = sorted(k for k in carried if k not in role or _norm(carried[k]) != _norm(role[k]))
     missing = [k for k in role if k not in carried]
     only_triggers = bool(triggers) and not carried  # (its file has write-only keys alone: nothing to write there)
@@ -297,20 +305,6 @@ def _sysctl_carried(role, relevant, effective, owners, own, own_values, role_fil
             carried[key] = _typed(effective[key][0])
             won_by[key] = effective[key][1]
     return carried, won_by
-
-
-def _sysctl_lost(carried, effective, target):
-    """A node the role set up whose own file loses to another one: running the role again resets the live value
-    (and takes the line out of /etc/sysctl.conf)."""
-    notes = []
-    for key in sorted(carried):
-        won = effective.get(key, (None, None))[1]
-        if won and won != target and (won == SYSCTL_CONF or _norm(effective[key][0]) != _norm(carried[key])):
-            notes.append("CHANGE on these nodes if the roles run: %s = %s in %s wins over %s (the role sets"
-                         " %s live%s): make them the same first" % (
-                             key, effective[key][0], won, target, _norm(carried[key]),
-                             ", and removes it from %s" % SYSCTL_CONF if won == SYSCTL_CONF else ""))
-    return notes
 
 
 # --- limits ---

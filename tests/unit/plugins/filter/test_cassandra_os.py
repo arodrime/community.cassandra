@@ -175,12 +175,11 @@ def test_sysctl_same_values_still_name_the_file():
 
 
 def test_sysctl_own_file_keeps_its_values():
-    """A node the role set up: its own file's values, even when a later file overrides them (the role run
-    again changes nothing), and the file stays the role's."""
+    """A node the role set up: its own file's values, but a key a later file sets again (the role would set it
+    live), and the file stays the role's."""
     own = file_records("sysctl", "/etc/sysctl.d/60-cassandra.conf", text="vm.swappiness = 1\nvm.max_map_count = 262144\n")
     r = found(own + file_records("sysctl", "/etc/sysctl.d/99-z.conf", text="vm.swappiness = 20\n"), own=True)
-    assert r["vars"]["cassandra_linux_sysctl"]["vm.max_map_count"] == 262144
-    assert r["vars"]["cassandra_linux_sysctl"]["vm.swappiness"] == 1
+    assert r["vars"]["cassandra_linux_sysctl"] == {"vm.max_map_count": 262144}
     assert "cassandra_linux_sysctl_file" not in r["vars"]
     assert ("sysctl /etc/sysctl.d/60-cassandra.conf: vm.swappiness = 1 (same as cassandra_linux), overridden by"
             " /etc/sysctl.d/99-z.conf") in r["lines"]
@@ -581,8 +580,10 @@ def test_package_file_under_etc_not_carried():
 def test_own_node_sysctl_carries_only_its_own_file():
     own = file_records("sysctl", "/etc/sysctl.d/60-cassandra.conf", text="vm.swappiness = 1\nvm.max_map_count = 1048575\n")
     r = found(own + SITE_SYSCTL, own=True)
-    # exactly its file: net.core.somaxconn of the site file would be added to 60-cassandra.conf
-    assert sysctl_vars(r) == {"cassandra_linux_sysctl": {"vm.swappiness": 1, "vm.max_map_count": 1048575}}
+    # its file only: net.core.somaxconn of the site file would be added to 60-cassandra.conf; its two keys, set again
+    # by the site file read after it, not carried
+    assert sysctl_vars(r) == {"cassandra_linux_sysctl": {}}
+    assert sysctl_vars(found(own, own=True)) == {"cassandra_linux_sysctl": {"vm.swappiness": 1, "vm.max_map_count": 1048575}}
     assert any(line.startswith("sysctl /etc/sysctl.d/99-cassandra.conf: vm.swappiness = 10") for line in r["lines"])
 
 
@@ -758,17 +759,19 @@ def test_own_node_fallback_carries_only_the_target_files_keys():
     assert any(n.startswith("NOT carried: net.core.rmem_max, set in other files") for n in r["carried"])
 
 
-def test_own_node_file_overridden_is_a_change_to_decide():
+def test_own_node_file_overridden_is_not_carried():
+    """(rc13) its own file's key a later file sets again: not carried (the role would set it live, and remove a
+    /etc/sysctl.conf line), the node's lines left as they are: the roles change nothing."""
     own = file_records("sysctl", "/etc/sysctl.d/60-cassandra.conf", text="vm.swappiness = 1\n")
-    later = file_records("sysctl", "/etc/sysctl.d/99-zz.conf", text="vm.swappiness = 10\n")
-    r = found(own + later, own=True)
-    assert any(n.startswith("CHANGE on these nodes if the roles run: vm.swappiness = 10 in /etc/sysctl.d/99-zz.conf")
-               for n in r["carried"])
-    assert not any(n.startswith("CHANGE") for n in found(own, own=True)["carried"])
-    same = file_records("sysctl", "/etc/sysctl.d/99-zz.conf", text="vm.swappiness = 1\n")
-    assert not any(n.startswith("CHANGE") for n in found(own + same, own=True)["carried"])  # same value: nothing changes
-    conf = file_records("sysctl", "/etc/sysctl.conf", text="vm.swappiness = 1\n")
-    assert any(n.startswith("CHANGE") for n in found(own + conf, own=True)["carried"])  # the role removes the line
+    for later in ("/etc/sysctl.d/99-zz.conf", "/etc/sysctl.conf"):
+        for value in (10, 1):
+            text = own + file_records("sysctl", later, text="vm.swappiness = %s\n" % value)
+            text += "sysctl_live|vm.swappiness|%s\n" % value
+            r = found(text, own=True)
+            assert "vm.swappiness" not in r["vars"]["cassandra_linux_sysctl"]
+            assert [n for n in r["carried"] if n.startswith("NOT carried: vm.swappiness, set again by %s" % later)]
+            assert not [n for n in r["carried"] if n.startswith("CHANGE")]
+            assert sysctl_changes(text, r, True) == []
 
 
 def test_own_node_readahead_from_its_own_rule():
@@ -1257,3 +1260,36 @@ def test_firewall_runtime_permanent_and_boot():
     ufw = "fw|ufw|active|\nfw_rule|ufw|9042/tcp                   ALLOW       Anywhere\n"
     r = found(ufw)
     assert r["vars"]["open_ports"] == [] and any("9042/tcp open to everyone for IPv4 only" in c for c in r["carried"])
+
+
+def sysctl_changes(text, r, own):
+    """What cassandra_linux would change in the kernel settings, with the variables the import wrote."""
+    return [c for c in cassandra_linux_changes(text, would_be(r["vars"]), RHEL, own) if c["what"].startswith("sysctl")]
+
+
+def site_file_with_a_vendor_override(suid_vendor="2", tail=""):
+    """An admin file setting the role's keys plus fs.suid_dumpable, a package file read after it setting that key
+    again (systemd's coredump file)."""
+    text = file_records("sysctl", "/etc/sysctl.d/01-site.conf",
+                        text="vm.max_map_count = 1048575\nvm.swappiness = 1\nfs.suid_dumpable = 0\n" + tail)
+    text += file_records("sysctl", "/usr/lib/sysctl.d/50-coredump.conf", text="fs.suid_dumpable=%s\n" % suid_vendor)
+    live = (("vm.max_map_count", 1048575), ("vm.swappiness", 1), ("fs.suid_dumpable", suid_vendor))
+    return text + "".join("sysctl_live|%s|%s\n" % kv for kv in live)
+
+
+@pytest.mark.parametrize("own", [False, True])
+def test_a_sysctl_key_a_later_file_sets_again_is_not_carried(own):
+    # (rc13, a real node) the role would set fs.suid_dumpable 0 live, the later package file's 2 being the one read
+    text = site_file_with_a_vendor_override()
+    r = found(text, own=own)
+    assert sysctl_vars(r) == {"cassandra_linux_sysctl": {"vm.max_map_count": 1048575, "vm.swappiness": 1},
+                              "cassandra_linux_sysctl_file": "/etc/sysctl.d/01-site.conf"}
+    assert [n for n in r["carried"] if n.startswith("NOT carried: fs.suid_dumpable, set again by"
+                                                    " /usr/lib/sysctl.d/50-coredump.conf read after /etc/sysctl.d/01-site.conf")]
+    assert sysctl_changes(text, r, own) == []
+    # the same value in the later file: nothing changes either way
+    same = site_file_with_a_vendor_override(suid_vendor="0")
+    assert sysctl_changes(same, found(same, own=own), own) == []
+    # a key of the file no later file sets: still carried
+    assert found(site_file_with_a_vendor_override(tail="net.core.somaxconn = 4096\n"), own=own)["vars"][
+        "cassandra_linux_sysctl"]["net.core.somaxconn"] == 4096
