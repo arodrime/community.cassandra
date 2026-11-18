@@ -1706,32 +1706,6 @@ def logback_as_log_dir(text, log_dir):
     return re.sub(r"(<(file|fileNamePattern)>\s*)%s/" % re.escape(log_dir.rstrip("/")), r"\1${cassandra.logdir}/", text)
 
 
-HEAPDUMP_SET = re.compile(r'^CASSANDRA_HEAPDUMP_DIR=("?)(/[^\s"\'$`\\#;]*)\1\s*$')
-HEAPDUMP_COMMENT = "# set jvm HeapDumpPath with CASSANDRA_HEAPDUMP_DIR"
-HEAPDUMP_IF = 'if [ "x$CASSANDRA_HEAPDUMP_DIR" != "x" ]; then'
-
-
-def heap_dump_dir_as_role(text, environment, read):
-    """cassandra-env.sh (4.x) with its plain CASSANDRA_HEAPDUMP_DIR=<dir> above the stock if that reads it (its stock
-    comment above it, or none) written as the role writes cassandra_heap_dump_dir, "${CASSANDRA_HEAPDUMP_DIR:-<dir>}":
-    the same dir for the JVM when its environment gives no CASSANDRA_HEAPDUMP_DIR (read: the running JVM's
-    environment was read, environment holding its CASSANDRA_HEAPDUMP_DIR; else as it is: not proven) -> (text, the
-    dir or "")."""
-    lines = str(text or "").split("\n")
-    if not read or (environment or {}).get("CASSANDRA_HEAPDUMP_DIR") \
-            or sum(1 for line in lines if "CASSANDRA_HEAPDUMP_DIR=" in line) != 1:
-        return text, ""
-    at = next((i for i, line in enumerate(lines) if HEAPDUMP_SET.match(line)), None)
-    after = next((line for line in lines[at + 1:] if line.strip()), None) if at is not None else None
-    if after is None or after.strip() != HEAPDUMP_IF:
-        return text, ""
-    folder = HEAPDUMP_SET.match(lines[at]).group(2)
-    start = at - 1 if at and lines[at - 1].strip() == HEAPDUMP_COMMENT else at
-    lines[start:at + 1] = ['CASSANDRA_HEAPDUMP_DIR="${CASSANDRA_HEAPDUMP_DIR:-%s}"  # set jvm HeapDumpPath with it'
-                           % folder]
-    return "\n".join(lines), folder
-
-
 def _shell_code(line):
     """A shell line without its comment (a # starting a word, outside quotes)."""
     quote = None
@@ -2062,8 +2036,8 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
                          running.get("newer"))
     heap_dump_note = []
     if cassandra_version in ("40x", "41x") and "cassandra-env.sh" in live_files:
-        text, folder = heap_dump_dir_as_role(live_files["cassandra-env.sh"], running.get("environment"),
-                                             bool(running.get("cmdline")))
+        text, folder = jvm_args.heap_dump_dir_as_role(live_files["cassandra-env.sh"], running.get("environment"),
+                                                      bool(running.get("cmdline")))
         if folder:  # (the same dir as the role's line, the JVM's environment giving none)
             live_files = dict(live_files, **{"cassandra-env.sh": text})
             heap_dump_note = ["cassandra-env.sh: CASSANDRA_HEAPDUMP_DIR=%s read as cassandra_heap_dump_dir (the running"

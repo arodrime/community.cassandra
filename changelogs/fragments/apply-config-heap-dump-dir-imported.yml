@@ -1,0 +1,3 @@
+bugfixes:
+  - >-
+    apply_config playbook - a plain ``CASSANDRA_HEAPDUMP_DIR=<dir>`` in ``cassandra-env.sh`` (4.x), imported as ``cassandra_heap_dump_dir``, no longer restarts the node: its proof of no restart reads that line as the import does (the same dir when the running JVM's environment has no ``CASSANDRA_HEAPDUMP_DIR``).

@@ -1006,9 +1006,10 @@ def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", 
     it started with (what it read then is not known). The next start gets the same environment: apply_config writes no
     unit (a change of it is cassandra_service's, told pending by the record of the start).
     The proofs: the JVM's files give the JVM the same arguments (bin/cassandra emulated, cassandra_jvm_args_same,
-    against the running JVM's, the options the environment adds carried); a jvm<N>-server.options the running Java
-    does not read; logback.xml read again by logback (scan="true" on the root of the node's file, unchanged since the
-    start, and of the new one). Anything else, or a proof that cannot be made (no Java, no cmdline): []."""
+    against the running JVM's, the options the environment adds carried, a plain CASSANDRA_HEAPDUMP_DIR read as the
+    import reads it); a jvm<N>-server.options the running Java does not read; logback.xml read again by logback
+    (scan="true" on the root of the node's file, unchanged since the start, and of the new one). Anything else, or a
+    proof that cannot be made (no Java, no cmdline): []."""
     changed = [str(f) for f in changed or []]
     live, new, environ = dict(live or {}), dict(new or {}), dict(environ or {})
     if not changed:
@@ -1042,8 +1043,10 @@ def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", 
                 or not all(f in live and (f in new or f not in changed) for f in group):
             return []
         role = dict((f, new[f] if f in changed else live[f]) for f in group)
-        same, dummy = jvm_args.cassandra_jvm_args_same(cmdline, dict((f, live[f]) for f in group), role, series,
-                                                       java, environ, environ)
+        node = dict((f, live[f]) for f in group)
+        if series in ("40x", "41x"):  # (a plain CASSANDRA_HEAPDUMP_DIR: as the import reads it)
+            node[jvm_args.ENV] = jvm_args.heap_dump_dir_as_role(node[jvm_args.ENV], environ, True)[0]
+        same, dummy = jvm_args.cassandra_jvm_args_same(cmdline, node, role, series, java, environ, environ)
         if not same:
             return []
         reasons.insert(0, SAME_JVM_ARGUMENTS)

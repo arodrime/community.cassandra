@@ -1697,3 +1697,56 @@ def test_a_41_rpm_node_with_remote_jmx_by_hand_imports_clean(tmp_path, running_j
         assert settings(launch(rendered, "11", tmp_path)) == settings(cmdline)
     else:
         assert [d for d in out["differences"] if "HEAPDUMP" not in d] == []
+
+
+# --- apply_config after an import: a plain CASSANDRA_HEAPDUMP_DIR read as the import reads it --------------------
+
+def heap_dump_dir_of_role(series, folder):
+    """The stock cassandra-env.sh with the role's line for cassandra_heap_dump_dir: folder."""
+    text = node_files(series)["cassandra-env.sh"]
+    return edit(text, "# set jvm HeapDumpPath with CASSANDRA_HEAPDUMP_DIR\n",
+                'CASSANDRA_HEAPDUMP_DIR="${CASSANDRA_HEAPDUMP_DIR:-%s}"  # set jvm HeapDumpPath with it\n' % folder)
+
+
+def dump_path(cmdline):
+    return [a for a in cmdline.split("\0") if a.startswith("-XX:HeapDumpPath")]
+
+
+@pytest.mark.parametrize("which", ["heapdump", "all"])
+def test_apply_config_after_import_proves_a_plain_heap_dump_dir(tmp_path, which):
+    """(pre-push audit, rc13, round 9) a plain CASSANDRA_HEAPDUMP_DIR imported clean: the next apply_config proves the
+    role's files change nothing for the running JVM (no restart), as the import and its self-check do."""
+    files = node_files("41x", HEAPDUMP if which == "heapdump"
+                       else both(jmx_in_remote_branch, HEAPDUMP, heap_in_jvm11_dump_off))
+    cmdline = launch(files, "11", tmp_path)
+    inventory, layout, node = imported(files, "41x", "11", cmdline)
+    assert node["hand_edits"] == []
+    rendered, variables = role_files(inventory, layout, files)
+    changed = [f for f in ("cassandra-env.sh", "jvm-server.options", "jvm11-server.options", "jvm8-server.options")
+               if f in rendered and rendered[f] != files[f]]
+    assert "cassandra-env.sh" in changed
+    assert cassandra_apply_config_no_effect(changed, files, rendered, cmdline, "41x", "11", {})[0] == "the same JVM arguments"
+    assert dump_path(launch(rendered, "11", tmp_path)) == dump_path(cmdline)
+
+
+def test_apply_config_restarts_for_a_heap_dump_dir_the_environment_gives(tmp_path):
+    """The unit exports another dir: the node's plain line overrides it (the JVM's environment shows the line's dir),
+    the role's would not: a restart."""
+    files = node_files("41x", HEAPDUMP)
+    unit = {"CASSANDRA_HEAPDUMP_DIR": "/srv/other"}
+    cmdline = launch(files, "11", tmp_path, environment=unit)
+    new = dict(files, **{"cassandra-env.sh": heap_dump_dir_of_role("41x", "/srv/zorglub/dumps")})
+    assert dump_path(launch(new, "11", tmp_path, environment=unit)) != dump_path(cmdline)
+    environ = dict(unit, CASSANDRA_HEAPDUMP_DIR="/srv/zorglub/dumps")  # (unit's, then the JVM's: after the line)
+    assert cassandra_apply_config_no_effect(["cassandra-env.sh"], files, new, cmdline, "41x", "11", environ) == []
+
+
+def test_apply_config_restarts_for_an_exported_heap_dump_dir_against_another(tmp_path):
+    """The node exports its dir, the role writes another: a restart (as when the role's dir differs, nothing exported)."""
+    exported = node_files("41x", after_line("# set jvm HeapDumpPath with CASSANDRA_HEAPDUMP_DIR",
+                                            "export CASSANDRA_HEAPDUMP_DIR=/srv/zorglub/dumps"))
+    plain = node_files("41x", HEAPDUMP)
+    for files, environ in ((exported, {"CASSANDRA_HEAPDUMP_DIR": "/srv/zorglub/dumps"}), (plain, {})):
+        cmdline = launch(files, "11", tmp_path)
+        new = dict(files, **{"cassandra-env.sh": heap_dump_dir_of_role("41x", "/srv/zorglub/other")})
+        assert cassandra_apply_config_no_effect(["cassandra-env.sh"], files, new, cmdline, "41x", "11", environ) == []
