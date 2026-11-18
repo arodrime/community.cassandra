@@ -1579,3 +1579,35 @@ def test_the_self_check_compares_the_roles_environment_with_the_nodes(tmp_path):
     assert rewritten(heap) == ["cassandra-env.sh"]
     assert rewritten(None) == ["cassandra-env.sh"]  # (the unit kept: the node's)
     assert rewritten(dict(heap, MAX_HEAP_SIZE="16G")) == []
+
+
+# --- 4.x: CASSANDRA_HEAPDUMP_DIR set plainly ---------------------------------------------------------------------
+
+HEAPDUMP = after_line("# set jvm HeapDumpPath with CASSANDRA_HEAPDUMP_DIR", "CASSANDRA_HEAPDUMP_DIR=/srv/zorglub/dumps")
+
+
+@pytest.mark.parametrize("series", ["40x", "41x"])
+def test_a_plain_heap_dump_dir_is_the_roles_when_the_environment_has_none(tmp_path, series):
+    """CASSANDRA_HEAPDUMP_DIR=<dir> above the stock if: the role's "${CASSANDRA_HEAPDUMP_DIR:-<dir>}" gives the JVM
+    the same dir when its environment has none (read from the running JVM)."""
+    files = node_files(series, HEAPDUMP)
+    cmdline = launch(files, JAVA[series], tmp_path)
+    inventory, layout, node = imported(files, series, JAVA[series], cmdline)
+    assert node["vars"]["cassandra_heap_dump_dir"] == "/srv/zorglub/dumps" and node["hand_edits"] == []
+    assert any("CASSANDRA_HEAPDUMP_DIR=/srv/zorglub/dumps read as cassandra_heap_dump_dir" in line
+               for line in node["normalized"])
+    assert check(files, series, java=JAVA[series], cmdline=cmdline)["differences"] == []
+
+
+def test_a_plain_heap_dump_dir_is_not_the_roles_when_the_environment_sets_it(tmp_path):
+    """The environment gives CASSANDRA_HEAPDUMP_DIR: the node's line wins over it, the role's would not: not the same;
+    the JVM not read (its environment not known): not proven either."""
+    files = node_files("41x", HEAPDUMP)
+    env = {"CASSANDRA_HEAPDUMP_DIR": "/srv/other"}
+    cmdline = launch(files, "11", tmp_path, environment=env)
+    inventory, layout, node = imported(files, "41x", "11", cmdline, environment=env)
+    assert "cassandra_heap_dump_dir" not in node["vars"]
+    assert check(files, "41x", java="11", cmdline=cmdline, env=env)["differences"] != []
+    inventory, layout, node = imported(files, "41x", "11", "")
+    assert "cassandra_heap_dump_dir" not in node["vars"]
+    assert check(files, "41x", java="11")["differences"] != []

@@ -53,7 +53,7 @@ except ImportError:  # before, any string not marked unsafe
     def trust_as_template(value):
         return value
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    Unsafe, error_without_message, log_dir_of, logback_as_log_dir, undefined_name, values_hidden)
+    Unsafe, error_without_message, heap_dump_dir_as_role, log_dir_of, logback_as_log_dir, undefined_name, values_hidden)
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
 from ansible_collections.community.cassandra.plugins.filter.cassandra_os import (
     NO_EFFECT, NO_EFFECT_NOTE, cassandra_firewall_changes, cassandra_linux_changes)
@@ -861,6 +861,10 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
     if "cassandra-env.sh" in live:  # the Prometheus exporter's block: the line it runs (the role writes the agent)
         live = dict(live, **{"cassandra-env.sh": prometheus.block_as_line(live["cassandra-env.sh"],
                                                                           (running or {}).get("cmdline"))})
+    if "cassandra-env.sh" in live and series in ("40x", "41x"):  # (a plain CASSANDRA_HEAPDUMP_DIR: as the import reads it)
+        live = dict(live, **{"cassandra-env.sh": heap_dump_dir_as_role(
+            live["cassandra-env.sh"], dict(node_environment or {}, **((running or {}).get("environment") or {})),
+            bool((running or {}).get("cmdline")))[0]})
     if "cassandra-env.sh" in rendered and "cassandra-env.sh" in live:
         node_heap = _heap(live["cassandra-env.sh"], node_environment)
         role_heap = _heap(rendered["cassandra-env.sh"], role_environment)

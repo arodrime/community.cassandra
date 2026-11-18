@@ -504,7 +504,7 @@
         # the variables bin/cassandra passes on to cassandra-env.sh as they are, as the JVM has them whatever set them
         # (an EnvironmentFile, /etc/default/cassandra the init script reads): as apply_config reads them
         echo "jvm_env=$(tr '\0' '\n' < /proc/$pid/environ 2>/dev/null \
-          | grep -E '^(JVM_EXTRA_OPTS|MX4J_ADDRESS|MX4J_PORT)=' | base64 -w0)"
+          | grep -E '^(JVM_EXTRA_OPTS|MX4J_ADDRESS|MX4J_PORT|CASSANDRA_HEAPDUMP_DIR)=' | base64 -w0)"
         # what the drop-ins of the unit itself (cassandra.service.d) set besides Environment= (the roles carry only
         # that with the init script of the package): their lines, cut, each once
         printf 'unit_dropin_other=%s\n' "$(for d in $(systemctl show cassandra -p DropInPaths --value 2>/dev/null); do
