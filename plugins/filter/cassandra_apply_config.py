@@ -995,7 +995,8 @@ def _scans(text):
     return root.tag.rsplit("}", 1)[-1] == "configuration" and (root.get("scan") or "").strip().lower() == "true"
 
 
-def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", java="", environ=None, newer=None):
+def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", java="", environ=None, newer=None,
+                                     role_environ=None):
     """Whether the running Cassandra needs no restart for the files apply_config writes, proven file by file with the
     import self-check's proofs -> [the reasons, said in the plan]; [] (a restart, as for any change) when one is not.
     changed: the files written; live, new: {file: text} as the node has them and as written (every file of the JVM's:
@@ -1003,9 +1004,11 @@ def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", 
     /proc/<pid>/cmdline; series; java: the version of the running Java; environ: the environment cassandra-env.sh gets
     ({name: value}: its unit's, systemctl show -p Environment, as the import reads it; JVM_EXTRA_OPTS and MX4J_* as
     the JVM has them, whatever set them); newer: the files written since that JVM started, or with no record of what
-    it started with (what it read then is not known).
+    it started with (what it read then is not known); role_environ: the one the inventory gives it (environ when
+    None).
     The proofs: the JVM's files give the JVM the same arguments (bin/cassandra emulated, cassandra_jvm_args_same,
-    against the running JVM's; not with an environment that adds options); a jvm<N>-server.options the running Java
+    against the running JVM's; not when the inventory would give cassandra-env.sh other options to add: JVM_OPTS,
+    JVM_EXTRA_OPTS, MX4J_*); a jvm<N>-server.options the running Java
     does not read; logback.xml read again by logback (scan="true" on the root of the node's file, unchanged since the
     start, and of the new one). Anything else, or a proof that cannot be made (no Java, no cmdline): []."""
     changed = [str(f) for f in changed or []]
@@ -1037,12 +1040,12 @@ def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", 
         if jar and "%s%sx" % jar.groups() != series:
             return []
         group = [jvm_args.ENV, jvm_args.COMMON, read]
-        if not cmdline or jvm_args.env_adds_options(environ) or set(newer or []) & set(group) \
+        if not cmdline or set(newer or []) & set(group) \
                 or not all(f in live and (f in new or f not in changed) for f in group):
             return []
         role = dict((f, new[f] if f in changed else live[f]) for f in group)
         same, dummy = jvm_args.cassandra_jvm_args_same(cmdline, dict((f, live[f]) for f in group), role, series,
-                                                       java, environ, environ)
+                                                       java, environ, environ if role_environ is None else role_environ)
         if not same:
             return []
         reasons.insert(0, SAME_JVM_ARGUMENTS)

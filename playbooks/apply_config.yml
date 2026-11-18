@@ -388,13 +388,17 @@
           {%-   elif f not in compared and f not in _files -%}{%- set _ = live.update({f: _cassandra_config_new[f]}) -%}
           {%-   endif -%}
           {%- endfor -%}
-          {%- set env = _jvm_read.unitenv | default('') | community.cassandra.cassandra_unit_environment -%}
-          {%- set env = dict(env, **dict(_jvm_read.jvmenv | default('') | b64decode | split('\n') | select
-                                         | map('split', '=', 1))) -%}
+          {%- set unit = _jvm_read.unitenv | default('') | community.cassandra.cassandra_unit_environment -%}
+          {%- set env = dict(unit, **dict(_jvm_read.jvmenv | default('') | b64decode | split('\n') | select
+                                          | map('split', '=', 1))) -%}
+          {#- what the inventory gives it: its unit's environment (or the init script's drop-in) when the roles write it -#}
+          {%- set given = cassandra_service_environment | default({}) if cassandra_service_unit_manage | default(true) | bool
+                          else {} -%}
+          {%- set role_env = dict(unit, **(given if given is mapping else {})) -%}
           {{ _files | reject('in', _as_started) | list | community.cassandra.cassandra_apply_config_no_effect(
                live, _cassandra_config_new | default({}), _jvm_read.cmdline | default('') | b64decode,
                cassandra_version | default(''), _jvm_read.java | default(''), env,
-               cassandra_config_newer_files | default([]) + cassandra_config_unknown_files | default([]))
+               cassandra_config_newer_files | default([]) + cassandra_config_unknown_files | default([]), role_env)
              if _jvm_read.cmdline | default('') and _running | bool and not _cassandra_apply_config_conf_switch | bool
              else [] }}
         _proven: "{{ _files | reject('in', _as_started) | list if _no_effect else [] }}"

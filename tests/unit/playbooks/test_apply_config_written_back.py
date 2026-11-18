@@ -298,7 +298,7 @@ def test_a_restart_into_none_from_a_file_at_none_already_is_the_point_of_no_retu
     assert no_return(n1=stopped, then="write") == []
 
 
-def proven(tmp_path, java="17", heap=None, more_changes=(), unitenv="", jvmenv="", target=None):
+def proven(tmp_path, java="17", heap=None, more_changes=(), unitenv="", jvmenv="", target=None, given=None):
     """(then, kept_running, proven) of the owner's case (test_cassandra_jvm_args.written): the files apply_config
     writes, the node's as compared, the running JVM's arguments and Java as read."""
     from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_jvm_args import written
@@ -319,6 +319,8 @@ def proven(tmp_path, java="17", heap=None, more_changes=(), unitenv="", jvmenv="
                  "cassandra_config_keep_files": [], "_cassandra_preflight_running": True,
                  "cassandra_apply_config_unit": {"skipped": True}, "cassandra_jvm": {"pid": "42", "start": "100.00"},
                  "inventory_hostname": "n1"}
+    if given is not None:  # (the inventory's cassandra_service_environment)
+        variables["cassandra_service_environment"] = given
     variables = with_task_vars(AS_STARTED, variables)
     for fact in ("_cassandra_apply_config_as_started", "_cassandra_apply_config_conf_switch"):
         variables[fact] = render(AS_STARTED["ansible.builtin.set_fact"][fact], variables)
@@ -379,3 +381,12 @@ def test_the_environment_read_is_the_unit_s_not_the_jvm_s(tmp_path):
     # a unit environment with nothing for cassandra-env.sh to add: proven as before
     assert proven(tmp_path, unitenv="LOCAL_JMX=no")[0] == "none"
     assert proven(tmp_path, jvmenv="MX4J_PORT=")[0] == "none"  # (set empty: nothing added)
+
+
+def test_the_environment_the_inventory_gives_is_compared_with_the_nodes(tmp_path):
+    # (pre-push audit, rc13, round 2) JVM_OPTS... in the unit as the inventory gives it: carried, proven as before
+    # (rc12's rule); another value in the inventory, or one from outside the unit (an EnvironmentFile): a restart
+    assert proven(tmp_path, unitenv='"JVM_OPTS=-Dy=2"', given={"JVM_OPTS": "-Dy=2"})[0] == "none"
+    assert proven(tmp_path, unitenv='"JVM_OPTS=-Dy=2"')[0] == "none"  # (no inventory environment: the unit's kept)
+    assert proven(tmp_path, unitenv='"JVM_OPTS=-Dy=2"', given={"JVM_OPTS": "-Dy=3"})[0] == "restart"
+    assert proven(tmp_path, jvmenv="JVM_EXTRA_OPTS=-Dx=1", given={})[0] == "restart"

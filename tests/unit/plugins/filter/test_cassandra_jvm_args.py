@@ -1433,8 +1433,9 @@ def written(tmp_path, node_edit=OWNERS_CASE, rc12=True):
     return files, rendered, changed, cmdline
 
 
-def no_effect(changed, files, rendered, cmdline, java="17", environ=None, newer=None):
-    return cassandra_apply_config_no_effect(changed, files, rendered, cmdline, "50x", java, environ or {}, newer or [])
+def no_effect(changed, files, rendered, cmdline, java="17", environ=None, newer=None, role_environ=None):
+    return cassandra_apply_config_no_effect(changed, files, rendered, cmdline, "50x", java, environ or {}, newer or [],
+                                            role_environ)
 
 
 def test_the_owners_case_is_proven_no_restart(tmp_path):
@@ -1493,17 +1494,22 @@ def test_a_jvm_of_another_series_than_the_inventorys_restarts(tmp_path, release,
     assert bool(no_effect(changed, files, rendered, cmdline)) is proven
 
 
-@pytest.mark.parametrize("environ", [{"JVM_EXTRA_OPTS": "-Dx=1"}, {"MX4J_PORT": "8081"}, {"JVM_OPTS": "-Dy=2"}])
-def test_the_import_and_apply_config_give_up_alike_on_an_environment_that_adds_options(tmp_path, environ):
-    # (pre-push audit, rc13) one predicate (env_adds_options): the import no longer says "no restart (the same JVM
-    # arguments)" where apply_config restarts, even with the same environment on both sides
+def test_the_import_and_apply_config_judge_the_environment_alike(tmp_path):
+    # (pre-push audit, rc13, rounds 1-2) one rule (env_differs) for the import's "no restart (the same JVM arguments)"
+    # and apply_config's proof: what the environment gives cassandra-env.sh to add, the same on both sides, is carried
+    # as it is (rc12's rule); another on one side gives up
     files, rendered, changed, cmdline = written(tmp_path)
     group = ["cassandra-env.sh", "jvm-server.options", "jvm17-server.options"]
     live, role = [dict((f, side[f]) for f in group) for side in (files, rendered)]
-    assert jvm.cassandra_jvm_args_same(cmdline, live, role, "50x", "17", {}, {})[0] is True
-    same, why = jvm.cassandra_jvm_args_same(cmdline, live, role, "50x", "17", environ, environ)
-    assert same is False and "the environment gives cassandra-env.sh options to add (%s)" % list(environ)[0] == why
-    assert no_effect(changed, files, rendered, cmdline, environ=environ) == []
+    same = jvm.cassandra_jvm_args_same
+    assert same(cmdline, live, role, "50x", "17", {}, {})[0] is True
+    assert same(cmdline, live, role, "50x", "17", {"JVM_OPTS": "-Dy=2"}, {"JVM_OPTS": "-Dy=2"})[0] is True
+    assert no_effect(changed, files, rendered, cmdline, environ={"JVM_OPTS": "-Dy=2"})
+    for node_env, role_env in (({"JVM_OPTS": "-Dy=2"}, {}), ({}, {"MX4J_PORT": "8081"}),
+                               ({"JVM_EXTRA_OPTS": "-Dx=1"}, {"JVM_EXTRA_OPTS": "-Dx=2"})):
+        assert same(cmdline, live, role, "50x", "17", node_env, role_env) == (
+            False, "the roles would give cassandra-env.sh other options to add (%s)" % list(dict(node_env, **role_env))[0])
+        assert no_effect(changed, files, rendered, cmdline, environ=node_env, role_environ=role_env) == []
 
 
 @pytest.mark.parametrize("java, environ, newer, more", [
