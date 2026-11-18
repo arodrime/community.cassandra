@@ -1518,3 +1518,14 @@ def test_in_sync_no_counts_the_settings_and_the_nodes():
              "node2": {"differences": ["cassandra.yaml: concurrent_reads: 8 -> 16"]}}
     lines = report([node(1), node(2), node(3)], ok=False, self_check=check, screen=True, strict=False)
     assert sync(lines) == "in sync with Ansible: no; apply_config would change 3 settings on 2 nodes"
+
+
+def test_a_dict_key_most_nodes_do_not_set_is_given_as_the_collections_default():
+    """cassandra_config_file_permissions.<file>.mode on one node only: to give every node the collection's default,
+    never "to give every node not set"."""
+    def perms(i, mode):
+        return dict(node(i), vars=dict(node(i)["vars"], cassandra_config_file_permissions={
+            "cassandra.yaml": {"mode": mode}} if mode else {"cassandra-env.sh": {"mode": "0644"}}))
+    full = " ".join(" ".join(report([perms(1, "0640"), perms(2, None), perms(3, None)], details=False)).split())
+    assert "to give every node the collection's default: remove" in full
+    assert "to give every node not set" not in full

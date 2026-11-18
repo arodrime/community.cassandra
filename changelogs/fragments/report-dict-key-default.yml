@@ -1,0 +1,2 @@
+bugfixes:
+  - import_cluster playbook - DIFFERENT ON SOME NODES says "to give every node the collection's default" for a dict's key most nodes do not set (it said "to give every node not set").

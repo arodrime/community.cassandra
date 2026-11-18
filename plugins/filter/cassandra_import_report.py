@@ -1547,7 +1547,8 @@ def _differs_plans(report):
             item["changing"], item["kind"], report.inventory, report.hosts, report.cwd)) \
             if conv._KINDS[item["kind"]][2] else "no check (apply_config does not show it)"  # pylint: disable=protected-access
         value = conv._shown(m.group(1))  # pylint: disable=protected-access
-        plans[item["name"]] = (value if value != "default" else "the collection's default", m.group(2),
+        # (a dict's key a node does not set: the file gets what it would without the dict, the collection's default)
+        plans[item["name"]] = ("the collection's default" if value in ("default", "not set") else value, m.group(2),
                                "%s; %s" % (conv._then_text(item), check))  # pylint: disable=protected-access
     return plans
 
