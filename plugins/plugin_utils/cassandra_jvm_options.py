@@ -43,6 +43,27 @@ def option_name(option):
     return m.group(1) if m else None
 
 
+def unnamed_family(option):
+    """The family of an option without a name whose order counts among the others of it: assertions (-ea/-da, with
+    or without :<package>), system assertions (-esa/-dsa), -Xlog, agents; None for one the JVM takes in any order
+    (--add-opens, --add-exports, --add-modules...)."""
+    if re.match(r"^-(ea|da|enableassertions|disableassertions)(:|$)", option):
+        return "(assertions)"
+    if re.match(r"^-(esa|dsa|enablesystemassertions|disablesystemassertions)$", option):
+        return "(system assertions)"
+    if option.startswith("-Xlog"):
+        return "-Xlog"
+    if re.match(r"^-(javaagent|agentlib|agentpath)[:=]", option):
+        return "(agents)"
+    return None
+
+
+def unnamed_in_order(options):
+    """Options without a name as the JVM takes them: each family's in their order (unnamed_family), the others in
+    any (sorted), so that two lists the JVM takes the same are equal."""
+    return sorted(options, key=lambda o: (0, unnamed_family(o)) if unnamed_family(o) else (1, o))
+
+
 def size(option):
     """The bytes a size option gives (-Xss1024M; -XX:ThreadStackSize=1024 and
     =1m count in KiB), None when it gives no number."""

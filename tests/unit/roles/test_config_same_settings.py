@@ -92,6 +92,17 @@ def compare(tmp_path, name, live, new, storage_dir=""):
     # options without a name keep their order; an option starting with -- takes the next word
     ("jvm-server.options", "-Xloggc:/a\n-Xloggc:/b\n", HEADER + "-Xloggc:/b\n-Xloggc:/a\n", 1),
     ("jvm-server.options", "--add-exports A\n--add-opens B\n", HEADER + "--add-exports B\n--add-opens A\n", 1),
+    # (2026-11-18) the ones of no family in any order; in a family (-ea/-da, -esa/-dsa, -Xlog, agents) their order
+    ("jvm11-server.options", "-ea\n-Xlog:gc+heap+coops=info\n--add-exports a/b=ALL-UNNAMED\n--add-opens c/d=ALL-UNNAMED\n",
+     HEADER + "--add-exports a/b=ALL-UNNAMED\n--add-opens c/d=ALL-UNNAMED\n-ea\n-Xlog:gc+heap+coops=info\n", 2),
+    ("jvm11-server.options", "--add-opens c/d=ALL-UNNAMED\n--add-opens e/f=ALL-UNNAMED\n",
+     HEADER + "--add-opens e/f=ALL-UNNAMED\n--add-opens c/d=ALL-UNNAMED\n", 2),
+    ("jvm11-server.options", "-ea\n-da:x\n", HEADER + "-da:x\n-ea\n", 1),
+    ("jvm11-server.options", "-esa\n-dsa\n", HEADER + "-dsa\n-esa\n", 1),
+    ("jvm11-server.options", "-Xlog:gc=info\n-Xlog:gc=debug\n", HEADER + "-Xlog:gc=debug\n-Xlog:gc=info\n", 1),
+    ("jvm11-server.options", "-javaagent:/a.jar\n-agentpath:/b.so\n", HEADER + "-agentpath:/b.so\n-javaagent:/a.jar\n", 1),
+    ("jvm11-server.options", "--add-opens c/d=ALL-UNNAMED\n--add-opens e/f=ALL-UNNAMED\n",
+     HEADER + "--add-opens e/f=ALL-UNNAMED\n", 1),
     ("jvm-server.options", "-Xss256k foo\n", HEADER + "-Xss256k\nfoo\n", 1),  # foo: not a line starting with '-'
     ("jvm-server.options", "-Xss256k   -Xmx1G\n", HEADER + "-Xmx1G\n-Xss256k\n", 2),  # each word is an option
     # these add up: given twice, both count

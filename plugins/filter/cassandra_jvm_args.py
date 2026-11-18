@@ -512,15 +512,17 @@ def stock_options(greps, heap, why=None):
 
 
 def _kind(option):
-    """The order of the options without a name counts among the ones of a kind: -ea/-da, -javaagent:... (the
-    Prometheus exporter's apart), -Xlog
-    by output (-Xlog:<what>:<output>: a later one for an output reconfigures it, other outputs are apart)."""
-    if re.match(r"^-[ed]s?a\b", option):
-        return "(assertions)"
+    """The order of the options without a name counts among the ones of a family (jvm.unnamed_family): -ea/-da,
+    -esa/-dsa, -javaagent:... (the Prometheus exporter's apart), -Xlog by output (-Xlog:<what>:<output>: a later one
+    for an output reconfigures it, other outputs are apart); the others (--add-opens...) by their first word, in any
+    order."""
+    family = jvm.unnamed_family(option)
+    if family in ("(assertions)", "(system assertions)"):
+        return family
     if prometheus.AGENT.match(option):  # it transforms no class: its place among the other agents does not count
         return "(the Prometheus exporter's agent)"
-    if re.match(r"^-(javaagent|agentlib|agentpath)[:=]", option):
-        return "(agents)"
+    if family == "(agents)":
+        return family
     xlog = re.match(r"^-Xlog:[^:]+:([^:]+)", option)
     if xlog and not xlog.group(1).startswith("disable"):
         return "-Xlog:%s" % xlog.group(1)
@@ -564,6 +566,8 @@ def effective(args):
             seen.add(name)
         elif option.startswith("-XX:-") and name in JVM_UNLOCK:
             seen.discard(name)
+    for kind, given in unnamed.items():  # (of no family: in any order)
+        unnamed[kind] = jvm.unnamed_in_order(given)
     families = dict((family, [n for n in sorted(last, key=last.get) if n in members])
                     for family, members in FAMILIES.items())
     return {"named": named, "unnamed": unnamed, "unlocked": unlocked, "families": families}

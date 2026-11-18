@@ -287,7 +287,8 @@ def jvm_options_settings(text):
     with -- and the word after it are one option), as the JVM takes them: by
     name, in any order, the last one counting (-X and -XX spellings of one
     setting under one name), but for the ones that add up; the options
-    without a name (an agent, -ea) in their order; the -XX ones set before an
+    without a name (an agent, -ea) in their order among their family, the
+    others (--add-opens) in any (jvm.unnamed_in_order); the -XX ones set before an
     unlock option; and what cassandra-env.sh looks for in them. A \\r (the JVM
     would get it): the text itself."""
     if "\r" in text:
@@ -311,7 +312,7 @@ def jvm_options_settings(text):
         else:
             out[name] = [option]
     if unnamed:
-        out["(options without a name, in order)"] = unnamed
+        out["(options without a name, in order)"] = jvm.unnamed_in_order(unnamed)
     for unlock in JVM_UNLOCK:
         if ("-XX:+%s" % unlock) in options:
             before = options[:options.index("-XX:+%s" % unlock)]

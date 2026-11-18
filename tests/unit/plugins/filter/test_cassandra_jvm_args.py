@@ -902,6 +902,17 @@ def test_report_moved_cleanup_and_next(tmp_path):
     (["-Xlog:disable", "-Xlog:gc:file=a"], ["-Xlog:gc:file=a", "-Xlog:disable"], ["-Xlog"]),
     (["--add-opens", "a=b", "-ea"], ["-ea", "--add-opens", "a=b"], []),
     (["-ea", "-da:x"], ["-da:x", "-ea"], ["(assertions)"]),
+    # (2026-11-18) of no family: in any order; in one (-ea/-da, -esa/-dsa, -Xlog, agents): in theirs
+    (["-ea", "-Xlog:gc+heap+coops=info", "--add-exports", "a/b=ALL-UNNAMED", "--add-opens", "c/d=ALL-UNNAMED"],
+     ["--add-exports", "a/b=ALL-UNNAMED", "--add-opens", "c/d=ALL-UNNAMED", "-ea", "-Xlog:gc+heap+coops=info"], []),
+    (["--add-opens", "c/d=ALL-UNNAMED", "--add-opens", "e/f=ALL-UNNAMED"],
+     ["--add-opens", "e/f=ALL-UNNAMED", "--add-opens", "c/d=ALL-UNNAMED"], []),
+    (["--add-opens", "c/d=ALL-UNNAMED", "--add-opens", "e/f=ALL-UNNAMED"], ["--add-opens", "e/f=ALL-UNNAMED"],
+     ["--add-opens"]),
+    (["-enableassertions", "-da:x"], ["-da:x", "-enableassertions"], ["(assertions)"]),
+    (["-esa", "-dsa"], ["-dsa", "-esa"], ["(system assertions)"]),
+    (["-Xlog:gc=info", "-Xlog:gc=debug"], ["-Xlog:gc=debug", "-Xlog:gc=info"], ["-Xlog"]),
+    (["-javaagent:/a.jar", "-agentpath:/b.so"], ["-agentpath:/b.so", "-javaagent:/a.jar"], ["(agents)"]),
 ])
 def test_differences(before, after, names):
     assert jvm.differences(before, after) == names
@@ -1833,3 +1844,17 @@ def test_an_option_repeated_otherwise_or_adding_up_stays_reported(tmp_path, agai
     inventory, layout, node = imported(files, "41x", "11", cmdline)
     assert node["hand_edits"] != []
     assert check(files, "41x", java="11", cmdline=cmdline)["differences"] != []
+
+
+def test_options_of_no_family_in_another_order_are_the_same_for_the_running_jvm(tmp_path):
+    """(2026-11-18) -ea and an -Xlog above the stock --add-exports/--add-opens of jvm11-server.options, the role's
+    after them: imported clean, Cassandra running."""
+    files = node_files("41x")
+    files["jvm11-server.options"] = edit(files["jvm11-server.options"], "\n--add-exports java.base/jdk.internal.misc=",
+                                         "\n-ea\n-Xlog:gc+heap+coops=info\n--add-exports java.base/jdk.internal.misc=")
+    cmdline = launch(files, "11", tmp_path)
+    inventory, layout, node = imported(files, "41x", "11", cmdline)
+    rendered = role_files(inventory, layout, files)[0]
+    assert node["hand_edits"] == []
+    assert check(files, "41x", java="11", cmdline=cmdline)["differences"] == []
+    assert jvm.differences(cmdline.split("\0")[1:], launch(rendered, "11", tmp_path).split("\0")[1:]) == []

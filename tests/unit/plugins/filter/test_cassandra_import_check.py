@@ -1822,3 +1822,13 @@ def test_the_heap_moved_between_the_options_files_the_java_reads_is_the_same():
     # a file the Java does not read (Java 8 reads jvm8-server.options): not the same
     node = dict(files, **{"jvm11-server.options": files["jvm11-server.options"] + "-Xms10G\n-Xmx10G\n"})
     assert _compare_files(role, node, java="8", series="41x")["differences"] != []
+
+
+def test_options_without_a_name_in_another_order_of_no_family_are_the_same():
+    """(2026-11-18) -ea and an -Xlog above the stock --add-exports/--add-opens of jvm11-server.options: the role
+    writes them after; the JVM takes those of no family in any order, -ea and -Xlog keep theirs."""
+    files = seeded(stock("41x"))
+    files["jvm11-server.options"] = edit(files["jvm11-server.options"], "\n--add-exports java.base/jdk.internal.misc=",
+                                         "\n-ea\n-Xlog:gc+heap+coops=info\n--add-exports java.base/jdk.internal.misc=")
+    assert host_vars(files, "41x")["cassandra_jvm11_extra_options"] == ["-ea", "-Xlog:gc+heap+coops=info"]
+    assert check(files, "41x", java="11")["differences"] == []
