@@ -540,3 +540,60 @@ def test_the_way_out_commands_and_the_reports_words_stay_intact():
     assert set(option.split(",")) <= {"os", "sysctl", "limits", "swap", "timesync", "disks", "unit", "firewall",
                                       "cassandra-env.sh", "logback.xml", "cassandra.yaml", "jvm17-server.options"}, option
     assert not re.search(r"\b\d+ word\d+", text)
+
+
+# (round 7) the report's own lines, a stock install's: as they are
+REPORT_LINES = [
+    "    jvm17-server.options: -Xlog: node has '-Xlog:gc=info,heap*=trace,age*=debug,safepoint=info,promotion*=trace"
+    ":file=/var/log/cassandra/gc.log:time,uptime,pid,tid,level:filecount=10,filesize=10485760', import would write"
+    " nothing",
+    "      + -Xlog:gc*:file=/var/log/cassandra/gc.log:time,uptime:filecount=10,filesize=10m",
+    "    see /etc/cassandra/jvm.options:12 and /etc/cassandra/cassandra.yaml:44",
+    "    /proc/sys/vm/swappiness=1",
+    "    keep the JMX password/access files, iptables/nftables rules, true/false, read/write, and/or, start/stop",
+    "    -e import_keep_hand_edits=sysctl,limits,swap,timesync,disks,firewall",
+    "    the system java (/usr/bin/java); /usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+    "    gc.log.0.current  multi-user.target.wants  system.log.1.zip  debug.log",
+    "    logs/system.log data/data conf/cassandra.yaml bin/nodetool tools/bin/cassandra-stress lib/jamm-0.3.2.jar"]
+
+
+def test_the_reports_own_lines_as_they_are():
+    nodes = [{"name": "zorglub-db%d" % i, "address": "10.0.0.%d" % i, "dc": "dc1", "rack": "r1", "read": True,
+              "hand_edits": [], "normalized": [], "notes": [], "vars": {"cassandra_version": "50x"}} for i in (1, 2)]
+    text = cassandra_import_shareable(REPORT_LINES, cassandra_inventory_layout(nodes, "Zorglub Prod"))["text"][2:]
+    assert text == REPORT_LINES
+
+
+def test_the_sites_names_in_relative_paths_and_two_letter_words():
+    # (round 7) a node's, a cluster's, a data center's, a rack's name in a relative path: their pseudonyms; a two
+    # letter word of the site under a stock directory masked
+    nodes = [{"name": "pay-db%d.acme.io" % i, "address": "10.0.0.%d" % i, "dc": "eu-west", "rack": "rack_a1",
+              "read": True, "hand_edits": [], "normalized": [], "notes": [], "vars": {"cassandra_version": "50x"}}
+             for i in (1, 2)]
+    lines = ["    cassandra.yaml: hints_directory: node has 'data/pay-db1/hints', import would write nothing",
+             "    cassandra.yaml: hints_directory: node has data/pay-db1.acme.io/hints, import would write nothing",
+             "    -XX:HeapDumpPath=dumps/eu-west/rack_a1 and data/pay_prod_eu/cdc",
+             "    keystore conf/pay-db1.acme.io.jks, file=logs/pay-db1.log",
+             "    commitlog_directory: node has '/var/lib/cassandra/cl', saved_caches: '/var/lib/cassandra/eu/fr'",
+             "    commitlog_directory: node has '/var/lib/cassandra/Orders Billing', '/var/lib/cassandra/orders:billing'"]
+    text = "\n".join(cassandra_import_shareable(lines, cassandra_inventory_layout(nodes, "Pay Prod EU"))["text"][2:])
+    assert not re.search(r"(?i)pay|acme|west|rack_a|/cl'|/eu/|/fr'|orders|billing", text), text
+    for name in ("data/n1/hints", "dumps/dc1/r1", "data/c1/cdc", "conf/n1.jks", "logs/n1.log"):
+        assert name in text, name
+
+
+@pytest.mark.parametrize("cluster", ["Acme Payments", "Zorglub Prod", "Frobnitz Ledger EU"])
+def test_the_report_and_inventory_paths_carry_the_clusters_pseudonym(cluster):
+    # (round 7) reports/<cluster>/report.txt, -i inventories/<cluster>.yml: the cluster's name whole, as c1
+    nodes = [{"name": "frob-db%d" % i, "address": "10.0.0.%d" % i, "dc": "paris", "rack": "rackA", "read": True,
+              "hand_edits": ["cassandra-env.sh, line 3:", "  + x"], "normalized": [], "notes": [],
+              "vars": {"cassandra_version": "50x"}} for i in (1, 2)]
+    layout = cassandra_inventory_layout(nodes, cluster)
+    slug = re.sub(r"\W+", "_", cluster.lower())
+    checks = {"frob-db1": {"differences": ["logback.xml: /configuration/root/@level: node has 'DEBUG', import would"
+                                           " write 'INFO'"]}}
+    lines = cassandra_import_self_check_advice(layout, checks, report_file="/p/reports/%s/report.txt" % slug, cwd="/p",
+                                               width=200, inventory="inventories/%s.yml" % slug, hosts=slug)
+    text = "\n".join(cassandra_import_shareable(lines, layout)["text"])
+    words = [w for w in re.split(r"\W+", cluster.lower()) if len(w) > 1]
+    assert not [w for w in words + ["frob", "paris", "racka"] if re.search(r"(?i)(?<![a-z])%s" % w, text)], text

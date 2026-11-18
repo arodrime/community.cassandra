@@ -34,14 +34,17 @@ DASHED_IPV4 = re.compile(r"(?<!\d)(?<!\d-)(?:\d{1,3}-){3}\d{1,3}(?!\d)(?!-\d)(?!
 # an IPv6 address: a "::" in it, or 4 groups at least (a time, 13:33:20, has 3); its IPv4 tail masked already
 IPV6 = re.compile(r"(?<![\w:])(?:[0-9A-Fa-f]{0,4}:){2,7}(?:IP\b|[0-9A-Fa-f]{0,4}(?![\w:]))")
 URL = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s,;'\"<>)]+")
-# (a component's , : = # ~ before a word kept in it: /x/orders,billing is one path)
-PATH = re.compile(r"(?<![\w.~/<>*}-])/(?:[\w.@+-]|[,:=#~](?=\w))+(?:/(?:[\w.@+*{}<>-]|[,:=#~](?=\w))*)*")
+# (a component's , = # ~ before a word kept in it: /x/orders,billing is one path; never a colon, the end of a path in
+# -Xlog:...:file=/x/gc.log:time,uptime or /x/jvm.options:12)
+PATH = re.compile(r"(?<![\w.~/<>*}-])/(?:[\w.@+-]|[,=#~](?=\w))+(?:/(?:[\w.@+*{}<>-]|[,=#~](?=\w))*)*")
 # a path after a variable (${HOME}/x, $CASSANDRA_HOME/x): masked, but logback's stock files under the log dir
 VAR_PATH = re.compile(r"\$\{[A-Za-z_][\w.]*:?[-=+?][^}]*\}(?:/[\w.@+*{}%-]+)*|\$\{?[A-Za-z_][\w.]*\}?(?:/[\w.@+*{}%-]+)+")
 # (the stock ones: the log files under the log dir, their rolling patterns; cassandra-env.sh's own paths)
 STOCK_LOG_PATH = re.compile(r"^\$\{?(?:cassandra\.logdir|CASSANDRA_LOG_DIR)\}?/(?:system|debug|gc|audit/audit)\.log"
                             r"(?:\.%d\{[yMdHhms:._ -]*\})?(?:\.%i)?(?:\.(?:zip|gz))?$"
                             r"|^\$\{?CASSANDRA_HOME\}?/lib/(?:jamm-[\d.]+\.jar|sigar-bin)$|^\$\{?CASSANDRA_CONF\}?/hotspot_compiler$")
+# a quoted absolute path with a space or a colon in it ('/x/Orders Billing', '/x/orders:billing'): one path
+QUOTED_PATH = re.compile(r"""(?<=['"])/[^'"\n]*[\s:][^'"\n]*(?=['"])|^/[^\s'"]*:[^\s'"]+$""")
 # a path systemd may do without (EnvironmentFile=-/x, ExecStartPre=-/x), one written //x: masked as any absolute path
 OPTIONAL_PATH = re.compile(r"""((?:^|[=\s'"])-?/?)(/[\w.@+-]+(?:/[\w.@+*{}<>-]*)*)""")
 # a relative path as a value (data/x/cdc, file=logs/x.log, ${ROOT}x/y): its words of the site masked
@@ -317,7 +320,9 @@ KEPT_PATH_WORDS = ("mapper", "swap", "amd64", "x86_64", "jamm", "override", "rea
                    "group_vars", "host_vars", "inventories", "inventory", "reports", "report", "details", "shareable",
                    "secrets", "hosts", "main", "vars", "files", "templates", "roles", "playbooks", "all", "dev", "sys",
                    "proc", "etc", "usr", "opt", "var", "tmp", "local", "default", "conf", "data", "keystore", "read",
-                   "ahead", "kb", "auth", "topology", "traces", "distributed", "schema", "system", "yum", "repos", "gc")
+                   "ahead", "kb", "auth", "topology", "traces", "distributed", "schema", "system", "yum", "repos", "gc",
+                   "tools", "stress", "dumps", "iptables", "nftables", "true", "false", "write", "and", "or", "stop",
+                   "nodes", "racks", "password", "access", "files", "rules")
 
 
 def _path_words(text, key):
@@ -327,14 +332,14 @@ def _path_words(text, key):
         found = m.group(0)
         if (found.lower() in stock_path_words() or found.lower() in KEPT_PATH_WORDS or found.lower() in EXTENSIONS
                 or found == "IP" or PSEUDONYM.match(found) or OS_CODES.match(found)
-                or not re.search(r"[A-Za-z]{3}", found) or re.match(r"^[0-9a-f]{32}$", found)):
+                or not re.search(r"[A-Za-z]{2}", found) or re.match(r"^[0-9a-f]{32}$", found)):
             return found
         if key.name(found):
             return key.name(found)
         given = key.add(found, "word", force=True)
         key.quiet.add(found.lower())
         return given
-    return re.sub(r"[^-_./]+", word, text)
+    return re.sub(r"[^-_./=,#~:\s]+", word, text)
 
 
 @functools.lru_cache(maxsize=1)
@@ -638,9 +643,10 @@ def _masked_names(text, key):
     text = URL.sub(lambda m: key.add(m.group(0), "url"), text)
     text = VAR_PATH.sub(lambda m: m.group(0) if STOCK_LOG_PATH.match(m.group(0)) else key.add(m.group(0), "path"), text)
     text = QUOTED_RELATIVE.sub(lambda m: key.add(m.group(0), "path"), text)
+    text = QUOTED_PATH.sub(lambda m: _path(m.group(0), key), text)
     text = OPTIONAL_PATH.sub(lambda m: m.group(1) + _path(m.group(2), key) if m.group(1).endswith(("-", "/"))
                              else m.group(0), text)
-    text = RELATIVE_VALUE.sub(lambda m: m.group(1) + _path_words(m.group(2), key), text)
+    text = RELATIVE_VALUE.sub(lambda m: m.group(1) + _path_words(_codes(key.inside(m.group(2)), key), key), text)
     text = PATH.sub(lambda m: _path(m.group(0), key), text)
     text = XML_PATH.sub(lambda m: m.group(1) + _path(m.group(2), key), text)
     text = re.sub(r"\b(tuned:? \(?profile )([\w.-]+)", lambda m: m.group(1) + _profile(m.group(2), key), text)
