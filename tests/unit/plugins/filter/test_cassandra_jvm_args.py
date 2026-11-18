@@ -1433,9 +1433,8 @@ def written(tmp_path, node_edit=OWNERS_CASE, rc12=True):
     return files, rendered, changed, cmdline
 
 
-def no_effect(changed, files, rendered, cmdline, java="17", environ=None, newer=None, role_environ=None):
-    return cassandra_apply_config_no_effect(changed, files, rendered, cmdline, "50x", java, environ or {}, newer or [],
-                                            role_environ)
+def no_effect(changed, files, rendered, cmdline, java="17", environ=None, newer=None):
+    return cassandra_apply_config_no_effect(changed, files, rendered, cmdline, "50x", java, environ or {}, newer or [])
 
 
 def test_the_owners_case_is_proven_no_restart(tmp_path):
@@ -1495,21 +1494,40 @@ def test_a_jvm_of_another_series_than_the_inventorys_restarts(tmp_path, release,
 
 
 def test_the_import_and_apply_config_judge_the_environment_alike(tmp_path):
-    # (pre-push audit, rc13, rounds 1-2) one rule (env_differs) for the import's "no restart (the same JVM arguments)"
+    # (pre-push audit, rc13, rounds 1-3) one rule (env_differs) for the import's "no restart (the same JVM arguments)"
     # and apply_config's proof: what the environment gives cassandra-env.sh to add, the same on both sides, is carried
-    # as it is (rc12's rule); another on one side gives up
+    # as it is (rc12's rule); another value on one side gives up; a value as text (8081, "8081"), None as unset
     files, rendered, changed, cmdline = written(tmp_path)
     group = ["cassandra-env.sh", "jvm-server.options", "jvm17-server.options"]
     live, role = [dict((f, side[f]) for f in group) for side in (files, rendered)]
     same = jvm.cassandra_jvm_args_same
     assert same(cmdline, live, role, "50x", "17", {}, {})[0] is True
-    assert same(cmdline, live, role, "50x", "17", {"JVM_OPTS": "-Dy=2"}, {"JVM_OPTS": "-Dy=2"})[0] is True
-    assert no_effect(changed, files, rendered, cmdline, environ={"JVM_OPTS": "-Dy=2"})
+    assert jvm.env_differs({"MX4J_PORT": 8081, "JVM_OPTS": None}, {"MX4J_PORT": "8081", "JVM_OPTS": ""}) == []
+    assert jvm.env_differs({"MX4J_PORT": 0}, {}) == ["MX4J_PORT"]
     for node_env, role_env in (({"JVM_OPTS": "-Dy=2"}, {}), ({}, {"MX4J_PORT": "8081"}),
                                ({"JVM_EXTRA_OPTS": "-Dx=1"}, {"JVM_EXTRA_OPTS": "-Dx=2"})):
         assert same(cmdline, live, role, "50x", "17", node_env, role_env) == (
             False, "the roles would give cassandra-env.sh other options to add (%s)" % list(dict(node_env, **role_env))[0])
-        assert no_effect(changed, files, rendered, cmdline, environ=node_env, role_environ=role_env) == []
+
+
+def test_jvm_opts_of_the_environment_reach_the_proof_through_the_command_line(tmp_path):
+    # (pre-push audit, rc13, round 3) bin/cassandra puts the environment's JVM_OPTS before the options files' words:
+    # the same environment on both sides, the running JVM's arguments with them, proven
+    files, rendered, changed, cmdline = written(tmp_path)
+    java, rest = cmdline.split("\0", 1)
+    cmdline = "\0".join([java, "-Dy=2", rest])
+    assert no_effect(changed, files, rendered, cmdline, environ={"JVM_OPTS": "-Dy=2"})
+
+
+def test_an_environment_file_value_gives_up_on_both_sides_alike(tmp_path):
+    # (pre-push audit, rc13, round 3) JVM_EXTRA_OPTS set outside the unit's Environment (an EnvironmentFile,
+    # /etc/default/cassandra), as the JVM has it: with cassandra-env.sh's lines moved, the import no longer says
+    # "no restart" and apply_config restarts (both read it from the JVM; whatever the unit's mode)
+    files, rendered, changed, cmdline = written(tmp_path)
+    environment = {"JVM_EXTRA_OPTS": "-Dx=1"}
+    assert imported(files, "50x", "17", cmdline)[2]["rewritten"]
+    assert imported(files, "50x", "17", cmdline, environment=environment)[2]["rewritten"] == []
+    assert no_effect(changed, files, rendered, cmdline, environ=environment) == []
 
 
 @pytest.mark.parametrize("java, environ, newer, more", [

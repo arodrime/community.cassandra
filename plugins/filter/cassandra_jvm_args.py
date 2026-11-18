@@ -43,9 +43,9 @@ MAIN_CLASS = "org.apache.cassandra.service.CassandraDaemon"
 ENV = "cassandra-env.sh"
 COMMON = "jvm-server.options"
 HEAP_NAMES = ("MAX_HEAP_SIZE", "HEAP_NEWSIZE", "MAX_DIRECT_MEMORY_SIZE")
-# what the environment gives cassandra-env.sh to add to the JVM's options: the same on both sides, they are carried as
-# they are (before the options files' words, or after them); otherwise the arguments are not shown to be the files'
-# (env_differs: the import's "no restart" and apply_config's proof alike)
+# what the environment gives cassandra-env.sh to add to the JVM's options (bin/cassandra puts JVM_OPTS before the
+# options files' words, cassandra-env.sh JVM_EXTRA_OPTS and MX4J_* after them): the same on both sides, carried as they
+# are; otherwise the arguments are not shown to be the files' (env_differs, cassandra_jvm_args_same)
 JVM_ENV = ("JVM_OPTS", "JVM_EXTRA_OPTS", "MX4J_ADDRESS", "MX4J_PORT")
 # the variable that writes each heap assignment, by series (none: the template has no line for it)
 HEAP_VARS = {
@@ -530,8 +530,11 @@ def options_edits(live, role, series, java):
 
 def env_differs(node_env, role_env):
     """The variables that give cassandra-env.sh options to add (JVM_ENV) the node's environment and the roles' set
-    otherwise ({name: value} each; unset and empty alike) -> [name]."""
-    return [name for name in JVM_ENV if ((node_env or {}).get(name) or "") != ((role_env or {}).get(name) or "")]
+    otherwise ({name: value} each, a value as text: 8081 and "8081" alike; unset, None and empty alike) -> [name]."""
+    def text(env, name):
+        value = (env or {}).get(name)
+        return "" if value is None else str(value)
+    return [name for name in JVM_ENV if text(node_env, name) != text(role_env, name)]
 
 
 def cassandra_jvm_args_same(cmdline, live, role, series, java, node_env=None, role_env=None, apart=()):

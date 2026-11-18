@@ -501,6 +501,10 @@
         done
         # the unit of an init script is "generated": is-enabled asks the init system
         echo "unit_IsEnabled=$(systemctl is-enabled cassandra 2>/dev/null)"
+        # the variables bin/cassandra passes on to cassandra-env.sh as they are, as the JVM has them whatever set them
+        # (an EnvironmentFile, /etc/default/cassandra the init script reads): as apply_config reads them
+        echo "jvm_env=$(tr '\0' '\n' < /proc/$pid/environ 2>/dev/null \
+          | grep -E '^(JVM_EXTRA_OPTS|MX4J_ADDRESS|MX4J_PORT)=' | base64 -w0)"
         # what the drop-ins of the unit itself (cassandra.service.d) set besides Environment= (the roles carry only
         # that with the init script of the package): their lines, cut, each once
         printf 'unit_dropin_other=%s\n' "$(for d in $(systemctl show cassandra -p DropInPaths --value 2>/dev/null); do
@@ -864,6 +868,8 @@
           # everything else the unit sets (e.g. LOCAL_JMX=no), and the files it reads variables from
           env: "{{ _kv.unit_Environment | default('') | community.cassandra.cassandra_unit_environment }}"
           env_files: "{{ _kv.unit_EnvironmentFiles | default('') }}"
+          # what the JVM got for cassandra-env.sh to add (JVM_EXTRA_OPTS, MX4J_*), whatever set it
+          jvm_env: "{{ dict(_kv.jvm_env | default('') | b64decode | split('\n') | select | map('split', '=', 1)) }}"
           # an init script (SysV): its path, the package it comes from as installed, or modified ('': not a package's)
           script: "{{ _kv.unit_SourcePath | default('') }}"
           # drop-ins of the unit (cassandra.service.d): what they set holds only for a unit
@@ -1097,7 +1103,8 @@
             _jvm:
               cmdline: "{{ import_cluster_jvm_cmdline.content | default('') | b64decode }}"
               java: "{{ import_cluster_java | default('') }}"
-              environment: "{{ import_cluster_unit.env | default({}) }}"
+              # (and the variables the JVM got for cassandra-env.sh to add: the next apply_config's proof reads them)
+              environment: "{{ dict(import_cluster_unit.env | default({}), **(import_cluster_unit.jvm_env | default({}))) }}"
               newer: "{{ import_cluster_newer_files | default([]) }}"
               keep: "{{ import_keep_hand_edits | default(false) }}"  # those files not moved
               # the Prometheus exporter's jar and config, read on the node
