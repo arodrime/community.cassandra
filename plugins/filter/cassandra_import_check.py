@@ -53,7 +53,8 @@ except ImportError:  # before, any string not marked unsafe
     def trust_as_template(value):
         return value
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    Unsafe, error_without_message, heap_dump_dir_as_role, log_dir_of, logback_as_log_dir, undefined_name, values_hidden)
+    REMOTE_BRANCH_NOTE, Unsafe, error_without_message, heap_dump_dir_as_role, log_dir_of, logback_as_log_dir,
+    undefined_name, values_hidden)
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
 from ansible_collections.community.cassandra.plugins.filter.cassandra_os import (
     NO_EFFECT, NO_EFFECT_NOTE, cassandra_firewall_changes, cassandra_linux_changes)
@@ -865,7 +866,15 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
         live = dict(live, **{"cassandra-env.sh": heap_dump_dir_as_role(
             live["cassandra-env.sh"], dict(node_environment or {}, **((running or {}).get("environment") or {})),
             bool((running or {}).get("cmdline")))[0]})
+    jvm_live, jvm_rendered = live, rendered  # (the JVM's proof: the files whole)
     if "cassandra-env.sh" in rendered and "cassandra-env.sh" in live:
+        # (the node's lines in the remote JMX branch it takes, the roles' outside it: as the import reads them)
+        mine, theirs = jvm_args.remote_branch_moved(live["cassandra-env.sh"], rendered["cassandra-env.sh"], dict(
+            node_environment or {}, **((running or {}).get("environment") or {})))
+        if mine:
+            live = dict(live, **{"cassandra-env.sh": jvm_args.without_lines(live["cassandra-env.sh"], mine)})
+            rendered = dict(rendered, **{"cassandra-env.sh": jvm_args.without_lines(rendered["cassandra-env.sh"], theirs)})
+            notes.append(REMOTE_BRANCH_NOTE % _out.plural(len(mine), "line"))
         node_heap = _heap(live["cassandra-env.sh"], node_environment)
         role_heap = _heap(rendered["cassandra-env.sh"], role_environment)
         heap = _dict_diff(HEAP_FILE, node_heap, role_heap)
@@ -908,7 +917,7 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
         notes.append("%s: %s set in the other of the two files Java %s reads (bin/cassandra passes them as one list):"
                      " the same for the JVM" % (", ".join(sorted(moved)), ", ".join(sorted(set(
                          k for keys in moved.values() for k in keys))), java))
-    rewritten, apart = _jvm_rewritten(rendered, live, by_file, heap, node_environment, role_environment, java,
+    rewritten, apart = _jvm_rewritten(jvm_rendered, jvm_live, by_file, heap, node_environment, role_environment, java,
                                       running or {})
     if rewritten:
         # but for the options files' own hand edits, said as they are

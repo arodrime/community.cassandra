@@ -238,6 +238,112 @@ def _set_again(line, later):
                                      for other in later[:again])
 
 
+LOCAL_JMX_TEST = 'if [ "$LOCAL_JMX" = yes ]; then'  # (as env_lines writes it)
+LOCAL_JMX_GUARD = re.compile(r'^if \[ "x\$LOCAL_JMX" = x \] ?; then$')
+
+
+# a line adding to JVM_OPTS, whatever it adds (but JVM_OPTS itself)
+APPEND_ANY = re.compile(r'^(?:export )?JVM_OPTS="\$(?:JVM_OPTS|\{JVM_OPTS\}) ([^"]*)"$')
+
+
+def _reads_jvm_opts(lines):
+    """Whether one of lines reads or sets JVM_OPTS otherwise than adding options to it (a grep deciding on it)."""
+    return any("JVM_OPTS" in line["text"] and not (APPEND_ANY.match(line["text"]) and "JVM_OPTS" not in
+                                                   APPEND_ANY.match(line["text"]).group(1)) for line in lines)
+
+
+def _block_end(lines, at):
+    """The index of the line after the block lines[at] opens (after its fi)."""
+    return next(i for i in range(at + 1, len(lines)) if lines[i]["depth"] == lines[at]["depth"])
+
+
+def _local_jmx(lines, environment):
+    """LOCAL_JMX as cassandra-env.sh's test reads it: the environment's, else the default under its stock guard (set
+    there only) -> the value, None when not known."""
+    if (environment or {}).get("LOCAL_JMX"):
+        return environment["LOCAL_JMX"]
+    sets = [i for i, line in enumerate(lines) if re.search(r"\bLOCAL_JMX=", line["text"])]
+    if len(sets) != 1 or not sets[0] or not LOCAL_JMX_GUARD.match(lines[sets[0] - 1]["text"]) \
+            or lines[sets[0]]["depth"] != lines[sets[0] - 1]["depth"] + 1:
+        return None
+    value = lines[sets[0]]["text"].split("=", 1)[1]
+    return None if re.search(r"[$`\s]", value) else value
+
+
+def remote_branch_moved(live, role, environment=None):
+    """The node's lines adding plain options to JVM_OPTS in the remote JMX branch (the else of its LOCAL_JMX test),
+    which bash takes (LOCAL_JMX from the environment, else its stock default, not yes), that the role's file has once
+    outside any block (the rmi hostname above the test, the password and access files below it): the JVM gets the
+    same, when no other line of either file sets their options and none between the two places reads or resets
+    JVM_OPTS (a grep deciding on it) -> ([their line numbers in live], [in role]); ([], []) when not proven (LOCAL_JMX
+    yes, or not known)."""
+    try:
+        node, ours = env_lines(live), env_lines(role)
+    except NotSame:
+        return [], []
+    tests = [[i for i, line in enumerate(lines) if line["text"] == LOCAL_JMX_TEST and not line["depth"]]
+             for lines in (node, ours)]
+    if any(len(found) != 1 for found in tests) or _local_jmx(node, environment) in (None, "yes"):
+        return [], []
+    start, end = tests[0][0], _block_end(node, tests[0][0])
+    at_else = next((i for i in range(start + 1, end) if node[i]["depth"] == 1 and node[i]["text"] == "else"), None)
+    if at_else is None:
+        return [], []
+    r_start, r_end = tests[1][0], _block_end(ours, tests[1][0])
+    moved_live, moved_role = [], []
+    branch = set(line["text"] for line in node[at_else + 1:end] if line["depth"] == 1 and APPEND.match(line["text"]))
+    for i in range(at_else + 1, end):
+        line = node[i]
+        append = APPEND.match(line["text"]) if line["depth"] == 1 else None
+        if not append or not append.group(1).split() or any(g in line["text"] for g in JVM_ENV_GREPS):
+            continue
+        options = append.group(1).split()
+        if any(_jvm_name(o) is None or _jvm_name(o) in LISTS or _jvm_name(o) in JVM_UNLOCK or IN_PLACE.match(o)
+               for o in options):
+            continue
+        theirs = [j for j, other in enumerate(ours) if other["text"] == line["text"]]
+        if len(theirs) != 1 or ours[theirs[0]]["depth"] or [other["text"] for other in node].count(line["text"]) != 1:
+            continue
+        j = theirs[0]
+        names = set(_jvm_name(o) for o in options)
+        if any(_jvm_name(w) in names for lines, k in ((node, i), (ours, j)) for n, other in enumerate(lines) if n != k
+               for w in re.split(r"[\s\"'=]+", other["text"]) if w.startswith("-")):
+            continue  # (set elsewhere too: its place counts)
+        # between the two places: the role's lines from its line to its test's block, the node's own branch lines
+        # from this one to the block's end on that side, and the node's lines from its block to the same anchor
+        # (the anchor: the role's nearest line on the far side of its own, not one of the branch's, found in the
+        # node as the same occurrence of its text counted from the block)
+        if j < r_start:
+            a = next((n for n in range(j - 1, -1, -1) if ours[n]["text"] not in branch), None)
+            count = 0 if a is None else sum(1 for n in range(a, r_start) if ours[n]["text"] == ours[a]["text"])
+            back = [] if a is None else [n for n in range(start) if node[n]["text"] == ours[a]["text"]]
+            if count > len(back):
+                continue
+            between = ours[(a if a is not None else -1) + 1:r_start + 1] + \
+                node[back[-count] + 1 if count else 0:start + 1] + node[at_else:i]
+        elif j >= r_end:
+            a = next((n for n in range(j + 1, len(ours)) if ours[n]["text"] not in branch), None)
+            count = 0 if a is None else sum(1 for n in range(r_end, a + 1) if ours[n]["text"] == ours[a]["text"])
+            ahead = [] if a is None else [n for n in range(end, len(node)) if node[n]["text"] == ours[a]["text"]]
+            if count > len(ahead):
+                continue
+            between = ours[r_end:a if a is not None else len(ours)] + \
+                node[end:ahead[count - 1] if count else len(node)] + node[i + 1:end]
+        else:
+            continue
+        between = [other for other in between if other["text"] not in branch or other["depth"]]
+        if _reads_jvm_opts(between):
+            continue
+        moved_live.append(line["n"])
+        moved_role.append(ours[j]["n"])
+    return moved_live, moved_role
+
+
+def without_lines(text, numbers):
+    """text without its lines of those numbers (1 the first)."""
+    return "\n".join(line for n, line in enumerate(str(text).split("\n")) if n + 1 not in set(numbers))
+
+
 def env_differences(live, role):
     """The lines of the node's cassandra-env.sh not in the role's -> ([its JVM_OPTS lines: {n, text, words}], [its
     heap assignments], [its lines the role's has at another place (_moved_lines)]);

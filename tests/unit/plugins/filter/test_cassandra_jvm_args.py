@@ -1611,3 +1611,89 @@ def test_a_plain_heap_dump_dir_is_not_the_roles_when_the_environment_sets_it(tmp
     inventory, layout, node = imported(files, "41x", "11", "")
     assert "cassandra_heap_dump_dir" not in node["vars"]
     assert check(files, "41x", java="11")["differences"] != []
+
+
+# --- the JMX lines moved into the remote branch, Cassandra not running ------------------------------------------
+
+def jmx_in_remote_branch(files):
+    """Remote JMX by hand (2026-11-18): LOCAL_JMX=no, the password file, access file and rmi hostname lines indented
+    in the remote branch, their stock places commented out."""
+    env = edit(files["cassandra-env.sh"], "    LOCAL_JMX=yes", "    LOCAL_JMX=no")
+    env = edit(env, '\nJVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.password.file=',
+               '\n#JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.password.file=')
+    authenticate = '  JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.authenticate=true"\n'
+    files["cassandra-env.sh"] = edit(env, authenticate, authenticate + "\n"
+                                     '    JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.password.file='
+                                     '/srv/zorglub/jmx/jmxremote.password"\n'
+                                     '    JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file='
+                                     '/srv/zorglub/jmx/jmxremote.access"\n'
+                                     '    JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=10.0.0.1"\n')
+    files["jmxremote.password"] = "ops s3cret\n"
+    files["jmxremote.access"] = "ops readwrite\n"
+
+
+@pytest.mark.parametrize("series", sorted(JAVA))
+def test_jmx_lines_in_the_remote_branch_it_takes_are_the_roles(tmp_path, series):
+    files = node_files(series, jmx_in_remote_branch)
+    inventory, layout, node = imported(files, series, JAVA[series], "")
+    rendered, variables = role_files(inventory, layout, files)
+    assert variables["cassandra_jmx_remote_password_file"] == "/srv/zorglub/jmx/jmxremote.password"
+    assert variables["cassandra_jmx_remote_access_file"] == "/srv/zorglub/jmx/jmxremote.access"
+    assert variables["cassandra_jmx_rmi_hostname"] == IPV4
+    assert node["hand_edits"] == []
+    assert any(line.startswith("cassandra-env.sh: 3 lines adding options to JVM_OPTS in the remote JMX branch")
+               for line in node["normalized"])
+    out = check(files, series, java=JAVA[series])
+    assert out["differences"] == []
+    # (and so they are: bash gives the JVM the same from the role's file)
+    assert settings(launch(rendered, JAVA[series], tmp_path)) == settings(launch(files, JAVA[series], tmp_path))
+
+
+def test_jmx_lines_in_the_remote_branch_not_taken_stay_hand_edits():
+    """LOCAL_JMX=yes from the environment: the local branch runs, the node's lines in the remote one do not."""
+    files = node_files("41x", jmx_in_remote_branch)
+    env = {"LOCAL_JMX": "yes"}
+    inventory, layout, node = imported(files, "41x", "11", "", environment=env)
+    assert any("-Djava.rmi.server.hostname=10.0.0.1" in line for line in node["hand_edits"])
+    assert any("-Djava.rmi.server.hostname=10.0.0.1" in d for d in check(files, "41x", java="11", env=env)["differences"])
+
+
+def test_jmx_lines_in_the_remote_branch_with_jvm_opts_read_between_stay_hand_edits():
+    """A line below them in the branch reads JVM_OPTS (rewrites it): the place of the lines the role writes after the
+    block counts (the rmi hostname, above it in the role's file, does not cross that line)."""
+    files = node_files("41x", jmx_in_remote_branch)
+    files["cassandra-env.sh"] = edit(files["cassandra-env.sh"], '-Djava.rmi.server.hostname=10.0.0.1"\n',
+                                     '-Djava.rmi.server.hostname=10.0.0.1"\n'
+                                     '    JVM_OPTS="$(echo "$JVM_OPTS" | sed s/password/x/)"\n')
+    inventory, layout, node = imported(files, "41x", "11", "")
+    assert any("jmxremote.password.file=/srv/zorglub" in line for line in node["hand_edits"])
+    assert not any("-Djava.rmi.server.hostname=10.0.0.1" in line for line in node["hand_edits"])
+    out = check(files, "41x", java="11")
+    assert out["differences"] != [] and any(n.startswith("cassandra-env.sh: 1 line adding") for n in out["notes"])
+
+
+def heap_in_jvm11_dump_off(files):
+    """The heap in jvm11-server.options (jvm-server.options' own lines commented out at another size), the heap dump
+    on OutOfMemoryError switched off."""
+    text = edit(files["jvm-server.options"], "\n-XX:+HeapDumpOnOutOfMemoryError\n", "\n# -XX:+HeapDumpOnOutOfMemoryError\n")
+    files["jvm-server.options"] = edit(edit(text, "\n#-Xms4G\n", "\n#-Xms8G\n"), "\n#-Xmx4G\n", "\n#-Xmx8G\n")
+    files["jvm11-server.options"] += "-Xms10G\n-Xmx10G\n"
+
+
+@pytest.mark.parametrize("running_jvm", [True, False])
+def test_a_41_rpm_node_with_remote_jmx_by_hand_imports_clean(tmp_path, running_jvm):
+    """(2026-11-18) 4.1, Java 11: the heap in jvm11-server.options, a plain CASSANDRA_HEAPDUMP_DIR, the heap dump
+    switched off, the JMX lines in the remote branch: imported, the self-check clean, whether Cassandra runs or not
+    (not running: CASSANDRA_HEAPDUMP_DIR not proven, the rest is)."""
+    files = node_files("41x", both(jmx_in_remote_branch, HEAPDUMP, heap_in_jvm11_dump_off))
+    cmdline = launch(files, "11", tmp_path) if running_jvm else ""
+    inventory, layout, node = imported(files, "41x", "11", cmdline)
+    rendered, variables = role_files(inventory, layout, files)
+    assert variables["cassandra_jvm_removed_options"] == ["-XX:+HeapDumpOnOutOfMemoryError"]
+    out = check(files, "41x", java="11", cmdline=cmdline)
+    if running_jvm:
+        assert node["hand_edits"] == [] and out["differences"] == []
+        assert variables["cassandra_heap_dump_dir"] == "/srv/zorglub/dumps"
+        assert settings(launch(rendered, "11", tmp_path)) == settings(cmdline)
+    else:
+        assert [d for d in out["differences"] if "HEAPDUMP" not in d] == []
