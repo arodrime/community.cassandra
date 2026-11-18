@@ -1770,3 +1770,31 @@ def test_a_stock_option_commented_out_in_the_file_the_java_reads():
     assert "cassandra_jvm11_removed_options" not in imported["vars"]  # (that file has the line as it is)
     out = check(files, "50x", java="17")
     assert out["differences"] == [] and out["notes"] == []
+
+
+# --- logback.xml: text in an element that takes none ------------------------------------------------------------
+
+@pytest.mark.parametrize("series", sorted(VERSIONS))
+def test_stray_text_in_logback_is_said_in_words(series):
+    """The audit appender uncommented but for the --> after <rollingPolicy>: an operator's error, said in words with
+    its way out (removed on the nodes), never as a value the roles would write empty."""
+    files = seeded(stock(series))
+    audit = "\n".join(line.replace("<!-- <appender", "<appender").replace("</appender> -->", "</appender>")
+                      .replace("<!-- <fileNamePattern>", "<fileNamePattern>").replace("</fileNamePattern> -->",
+                                                                                      "</fileNamePattern>")
+                      .replace("<!-- <maxFileSize>", "<maxFileSize>").replace("<!-- <logger", "<logger")
+                      .replace("</logger> -->", "</logger>") for line in files["logback.xml"].split("\n"))
+    files["logback.xml"] = edit(audit, "SizeAndTimeBasedRollingPolicy\"> -->", "SizeAndTimeBasedRollingPolicy\">")
+    assert check(files, series)["differences"] == []  # (the appender uncommented as a whole: imported)
+    files["logback.xml"] = audit
+    assert check(files, series)["differences"] == [
+        "logback.xml: stray text '-->' inside <rollingPolicy> of appender AUDIT, an element that takes no text (such as"
+        " the end of a comment left when uncommenting a block): remove it on the nodes, then import again (or keep"
+        " logback.xml as it is: -e import_keep_hand_edits=logback.xml)"]
+
+
+def test_text_in_an_element_of_text_is_still_a_value():
+    node = "<configuration><appender name='A'><file>x.log</file><encoder><pattern>%m</pattern></encoder></appender>" \
+           "</configuration>"
+    out = _compare_files({"logback.xml": node}, {"logback.xml": node.replace("x.log", "y.log")})["differences"]
+    assert out == ["logback.xml: /configuration/appender[@name=\"A\"]/file: node has 'y.log', import would write 'x.log'"]

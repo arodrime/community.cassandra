@@ -447,12 +447,13 @@ def _xml_step(key, index, many):
     return ('%s[@%s="%s"]' % (tag, attr, value) if attr else tag) + ("[%d]" % (index + 1) if many else "")
 
 
-def xml_differences(node, role):
+def xml_differences(node, role, stray=None):
     """Where two XML texts differ, element by element as xml_settings reads them (comments out, a level in any case),
     the siblings matched by name=, else ref=, else their place among those of their tag -> [(XPath, the node's,
     the role's)]: an attribute (/configuration/root/@level) or an element's text (.../rollingPolicy/fileNamePattern)
     as a str, an element one side has alone as that element (the other side None). [] when the elements are the
-    same, in another order or not."""
+    same, in another order or not. stray, a list: the node's text in an element that takes none (it holds elements,
+    the role's has no text there) goes in it instead, (XPath, the text)."""
     out = []
 
     def attrs(el):
@@ -464,7 +465,10 @@ def xml_differences(node, role):
         out.extend(("%s/@%s" % (path, k), mine.get(k), theirs.get(k)) for k in sorted(set(mine) | set(theirs))
                    if k != own and mine.get(k) != theirs.get(k))
         if (a.text or "").strip() != (b.text or "").strip():
-            out.append((path, (a.text or "").strip(), (b.text or "").strip()))
+            if stray is not None and len(a) and len(b) and not (b.text or "").strip():
+                stray.append((path, (a.text or "").strip()))
+            else:
+                out.append((path, (a.text or "").strip(), (b.text or "").strip()))
         keys = []
         for child in list(a) + list(b):
             if _xml_key(child) not in keys:

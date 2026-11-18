@@ -258,10 +258,12 @@ def _compare(name, node, role, storage_dir="", left_out=()):
         return _dict_diff(name, dict(("[%s] %s" % k, " / ".join(v)) for k, v in node_u.items()),
                           dict(("[%s] %s" % k, " / ".join(v)) for k, v in role_u.items()))
     if name.endswith(".xml"):
-        found = xml_differences(node, role)
-        if found:  # (else the same elements in another order: the lines below)
-            return ["%s: %s: node has %s, import would write %s" % (name, path, _xml_shown(path, a), _xml_shown(path, b))
-                    for path, a, b in found]
+        stray = []
+        found = xml_differences(node, role, stray)
+        if found or stray:  # (else the same elements in another order: the lines below)
+            return [_stray_text(name, path, text) for path, text in stray] + [
+                "%s: %s: node has %s, import would write %s" % (name, path, _xml_shown(path, a), _xml_shown(path, b))
+                for path, a, b in found]
         a, b = xml_settings(node), xml_settings(role)
     else:  # shell: cassandra-env.sh
         # the heap is compared on its own (see _heap)
@@ -282,6 +284,17 @@ def _compare(name, node, role, storage_dir="", left_out=()):
             out.append("%s: node has %s, import would write %s" % (
                 name, "nothing" if x is None else shown_a[i1 + x], "nothing" if y is None else shown_b[j1 + y]))
     return out
+
+
+def _stray_text(name, path, text):
+    """The node's text in an element that holds elements, where it means nothing (the role's has none): said in
+    words, with the way out (the operator removes it on the nodes)."""
+    appender = re.search(r'/appender\[@name="([^"]*)"\]', path)
+    return ("%s: stray text %s inside <%s>%s, an element that takes no text (such as the end of a comment left when"
+            " uncommenting a block): remove it on the nodes, then import again (or keep %s as it is: -e"
+            " import_keep_hand_edits=%s)" % (name, _out.mask(repr(str(text))), re.sub(r"\[.*$", "", path.rsplit("/", 1)[-1]),
+                                            " of appender %s" % appender.group(1) if appender else "", name,
+                                            name))
 
 
 def _xml_shown(path, value):
