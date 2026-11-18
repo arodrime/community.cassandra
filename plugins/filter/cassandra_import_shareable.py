@@ -34,7 +34,7 @@ DASHED_IPV4 = re.compile(r"(?<!\d)(?<!\d-)(?:\d{1,3}-){3}\d{1,3}(?!\d)(?!-\d)(?!
 # an IPv6 address: a "::" in it, or 4 groups at least (a time, 13:33:20, has 3); its IPv4 tail masked already
 IPV6 = re.compile(r"(?<![\w:])(?:[0-9A-Fa-f]{0,4}:){2,7}(?:IP\b|[0-9A-Fa-f]{0,4}(?![\w:]))")
 URL = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s,;'\"<>)]+")
-PATH = re.compile(r"(?<![\w.~/<>*-])/[\w.@+-]+(?:/[\w.@+*{}<>-]*)*")
+PATH = re.compile(r"(?<![\w.~/<>*}-])/[\w.@+-]+(?:/[\w.@+*{}<>-]*)*")
 # a path as an XML element's value (<file>/srv/x/a.log</file>): up to the closing tag, never the tag itself
 XML_PATH = re.compile(r"(?<![/\w])(<[A-Za-z][\w:.-]*(?:\s[^<>]*)?>)(/[\w.@+-]+(?:/[\w.@+*{}-]*)*)")  # (not <node>/ of a path)
 # a path from the home or the current directory (~/ops/x, ./ops, ../ops): the site's own, always masked
@@ -58,10 +58,11 @@ STOCK_TOPS = ("/etc", "/usr", "/opt", "/var", "/var/lib", "/var/log", "/usr/loca
 EXTENSIONS = ("yaml", "yml", "xml", "options", "sh", "properties", "password", "access", "conf", "ini", "txt", "json",
               "cfg", "log", "jar", "py", "service", "j2", "pem", "crt", "key", "jks", "p12", "keystore", "truststore",
               "md", "rst", "repo", "list", "gpg", "asc", "so", "d", "timer", "socket", "target", "env", "orig", "bak",
-              "tmp", "map", "gz", "tar", "tgz", "zip", "deb", "rpm", "html")
+              "tmp", "map", "gz", "tar", "tgz", "zip", "deb", "rpm", "html", "rules")
 STOCK_DOTTED = ("org.apache.", "org.slf4j", "org.eclipse.", "org.yaml.", "org.jctools", "ch.qos.", "io.netty",
                 "io.dropwizard", "com.codahale", "com.datastax", "com.sun.", "com.google.", "java.", "javax.", "jdk.",
-                "sun.", "net.openhft", "cassandra.", "community.", "ansible.", "ansible_collections.", "rc.local")
+                "sun.", "net.openhft", "cassandra.", "community.", "ansible.", "ansible_collections.", "rc.local",
+                "logback.")
 # the kernel's settings (sysctl, tuned): vm.swappiness = 0, net.core.rmem_max=212992; kept as one only when a value
 # follows (= or :), a host name may start the same way (vm.lab.example.com)
 KERNEL_DOTTED = ("vm.", "net.core.", "net.ipv4.", "net.ipv6.", "kernel.", "fs.")
@@ -298,7 +299,7 @@ def _codes(text, key):
         if SHORT_CODE.match(part) and not OS_CODES.match(part) and not PSEUDONYM.match(part) and part != "IP":
             return key.add(part, "word") or part
         return part
-    return "".join(code(p) for p in re.split(r"([-_.]+)", text))
+    return "".join(code(p) for p in re.split(r"([-_./]+)", text))
 
 
 def _profile(name, key):
@@ -345,9 +346,14 @@ def _unknown_words(text, key):
     masked (word1): the names the other passes cannot know (a keyspace, acme.jks, a user named in free text). The
     pseudonyms of the copy and IP are kept."""
     known = vocabulary()
+    # (a stock dotted name, a -D property of one: -Dorg.apache.cassandra.x, -Dsun.rmi.y, as it is)
+    stock = [m.span() for m in re.finditer(r"(?<![\w.])(?:-D)?(?:%s)[\w.$-]*" % "|".join(
+        re.escape(p) for p in STOCK_DOTTED), text)]
 
     def word(m):
         found = m.group(0)
+        if any(a <= m.start() < b for a, b in stock):
+            return found
         letters = re.match(r"[A-Za-z]+", found).group(0)
         if letters.lower() in known or found == "IP" or PSEUDONYM.match(found):
             return found
@@ -413,43 +419,91 @@ def _file_above(lines, i):
 # the files whose settings are named by keys of their own vocabulary (a YAML key, an INI one): in clear but for the
 # names of the site in them; a JVM option's name, in clear when the JVM's, Cassandra's or a stock library's
 KEYED_FILES = (".yaml", ".yml", ".ini")
+KNOWN_OPTION = re.compile(r"^(-X(mx|ms|mn|ss)|(%s)[+-]?[\w.]+)$" % "|".join(re.escape(k) for k in JVM_KNOWN))
 # an XPath's attribute value (an element named by name= or ref=, another attribute's value): the site's
-XPATH_VALUE = re.compile(r"""(\[@[\w.:-]+=(["']))(.*?)(\2\])""")
+XPATH_VALUE = re.compile(r"""(\[@([\w.:-]+)=(["']))(.*?)(\3\])""")
+# the JMX users of the JDK's own files: the others are the site's
+STOCK_JMX_USERS = ("cassandra", "monitorRole", "controlRole")
+# the names cassandra.yaml leaves to the site in a key: a memtable configuration's (the stock ones kept), a seed
+# provider's parameter (seeds kept)
+YAML_NAMED = ((re.compile(r"(memtable\.configurations\.)([^.\[\s]+)"), ("skiplist", "trie", "default", "skiplist_sharded")),
+              (re.compile(r"(seed_provider(?:\[\d+\])?\.parameters(?:\[\d+\])?\.)([^.\[\s]+)"), ("seeds",)))
+
+
+@functools.lru_cache(maxsize=1)
+def stock_xml_names():
+    """The names (name=, ref=) the role's logback.xml gives its elements (SYSTEMLOG, org.apache.cassandra), and the
+    logger of Cassandra's stock file before 4.0 (com.thinkaurelius.thrift): in clear."""
+    names = set(["com.thinkaurelius.thrift"])
+    templates = os.path.join(ROLES, "cassandra_config", "templates")
+    for series in sorted(os.listdir(templates)):
+        path = os.path.join(templates, series, "logback.xml.j2")
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as f:
+                names.update(re.findall(r'(?:name|ref)="([^"{]+)"', f.read()))
+    return frozenset(names)
+
+
+def _xml_name(name, key):
+    """The name of an XML element (name=, ref=): the role's own and a stock library's package in clear, a package of
+    the site's masked as in any line, another name masked whole (word1)."""
+    if name in stock_xml_names():
+        return name
+    if "." in name and " " not in name:
+        return _masked_names(name, key)
+    return key.add(name, "word") or name
+
+
+def _xpath(text, key):
+    """An XPath's attribute values masked: an element's name (name=, ref=) as _xml_name, another as in any line."""
+    return XPATH_VALUE.sub(lambda m: m.group(1) + (_xml_name(m.group(4), key) if m.group(2) in ("name", "ref")
+                                                   else _masked_names(m.group(4), key)) + m.group(5), text)
 
 
 def setting(text, key, file_name):
     """A setting of file_name named in the file's own words (a line of the self-check's: AUDIT / rollingPolicy, -Dx.y,
     client_encryption_options.enabled): a YAML or INI key, an XML element's tags and attribute names, a JVM option of
-    JVM_KNOWN as they are (but for the names of the site in them, an address); what the site chose masked as in any
-    line: a JMX user, the name= or ref= of an XML element (a logger's package, an appender), any other setting (an
-    environment variable, a kernel setting's file, a device, a JVM option of the site's: -javaagent:/srv/x.jar)."""
-    text = IPV4.sub("IP", key.inside(text, ("n", "c", "dc", "r")))
+    JVM_KNOWN or the heap's as they are (but for the names of the site in them, an address); what the site chose
+    masked as in any line: a JMX user (but the JDK's), the name= or ref= of an XML element (a logger's package, an
+    appender), a memtable configuration, any other setting (an environment variable, a kernel setting's file, a
+    device, a JVM option of the site's: -javaagent:/srv/x.jar)."""
     name = os.path.basename(file_name)
+    if name.endswith(".xml") and not text.startswith("/"):
+        # as xml_where names it (x.y / @level, appender-ref A): the names the XPaths give replaced whole first (a
+        # name may have a space, a slash, a node's name)
+        for real in sorted(key.xml_names, key=len, reverse=True):
+            text = re.sub(r"(?:(?<=^)|(?<= ))%s(?=$| / | \(\d+\))" % re.escape(real),
+                          lambda m: u"\ue002%s\ue003" % _xml_name(real, key), text)
+    text = IPV4.sub("IP", key.inside(text, ("n", "c", "dc", "r")))
     if name.startswith("jmxremote."):  # (the setting is a user)
-        return text if text.lower() in vocabulary() or PSEUDONYM.match(text) else key.add(text, "user") or text
+        return text if text in STOCK_JMX_USERS or PSEUDONYM.match(text) else key.add(text, "user") or text
     if name.endswith(".xml"):
         if text.startswith("/"):  # an XPath: /configuration/logger[@name="x"]/@level
-            return XPATH_VALUE.sub(lambda m: m.group(1) + _masked_names(m.group(3), key) + m.group(4), text)
-        return " / ".join(_step(step, key) for step in text.split(" / "))  # as xml_where names it: x.y / @level
-    if name.endswith(KEYED_FILES) or name.endswith(".options") and re.match(r"^-X[a-z]|%s" % "|".join(
-            re.escape(k) for k in JVM_KNOWN), text):
+            return _xpath(text, key)
+        return " / ".join(_step(step, key) for step in text.split(" / ")).replace(u"\ue002", "").replace(u"\ue003", "")
+    if name.endswith(KEYED_FILES) or name.endswith(".options") and KNOWN_OPTION.match(text):
+        for pattern, stock in YAML_NAMED:
+            text = pattern.sub(lambda m: m.group(1) + (m.group(2) if m.group(2) in stock
+                                                       else key.add(m.group(2), "word") or m.group(2)), text)
         return key.inside(text)
     return _line(text, key)
 
 
 def _step(step, key):
     """A step of an XML setting as the self-check names it (xml_where): a tag (rollingPolicy, immediateFlush) or an
-    attribute (@level) as it is; an element by its name (AUDIT, com.acme.x: one the XPaths of the report name with
-    name= or ref=, key.xml_names, or a package), an appender-ref by its ref (appender-ref ASYNC): the name masked as in
-    any line; its place among its siblings (2) kept."""
+    attribute (@level) as it is; an element by its name (a package, or one the XPaths of the report give: replaced
+    already, between \ue002 and \ue003), an appender-ref by its ref (appender-ref ASYNC): as _xml_name; its place
+    among its siblings (2) kept."""
     m = re.match(r"^(.*?)((?: \(\d+\))?)$", step)
     name, place = m.groups()
     if "[@" in name:  # (an XPath's step left as it is: appender[@name='x'])
-        return XPATH_VALUE.sub(lambda v: v.group(1) + _masked_names(v.group(3), key) + v.group(4), name) + place
-    tag, dummy, value = name.rpartition(" ")
-    if not tag and (name.startswith("@") or name not in key.xml_names and "." not in name):
+        return _xpath(name, key) + place
+    if u"\ue002" in name:
         return step
-    return (tag + " " if tag else "") + _masked_names(value, key) + place
+    tag, dummy, value = name.rpartition(" ")
+    if not tag and (name.startswith("@") or "." not in name):
+        return step
+    return (tag + " " if tag else "") + _xml_name(value, key) + place
 
 
 def _line(text, key):
@@ -472,7 +526,8 @@ def _masked_names(text, key):
     text = PATH.sub(lambda m: _path(m.group(0), key), text)
     text = XML_PATH.sub(lambda m: m.group(1) + _path(m.group(2), key), text)
     text = re.sub(r"\b(tuned:? \(?profile )([\w.-]+)", lambda m: m.group(1) + _profile(m.group(2), key), text)
-    text = re.sub(r"\b((?:device|disk) )([^\s(]+)", lambda m: m.group(1) + _codes(m.group(2), key), text)
+    text = re.sub(r"\b((?:device|disk|read_ahead_kb|IO scheduler|scheduler|LVM read-ahead) )([^\s(]+)",
+                  lambda m: m.group(1) + _codes(m.group(2), key), text)
     text = re.sub(r"(\b(?:device|disk) \S+ \()(.*?)(, (?:SSD|rotational)\))",  # (its labels: (vg-lv (dm-3), SSD))
                   lambda m: m.group(1) + re.sub(r"[\w.-]+", lambda t: _codes(t.group(0), key), m.group(2)) + m.group(3),
                   text)
@@ -517,28 +572,63 @@ def _masked_names(text, key):
     return _unknown_words(text, key)
 
 
+# a self-check difference's values, after a setting's name ("<file>: <setting>: node has 'v', import would write 'w'")
+DIFFERENCE_VALUES = re.compile(r"""((?:node has|import would write|the roles would set) )('[^']*'|"[^"]*"|[^\s,]+)""")
+
+
+def _valued_word(word, kind, key):
+    """A value of a setting that names the site (a bucket, a prefix, an fqdn, a user): masked (bucket1, user1), but
+    a number, a word of the report (absent, nothing, ****...) or a name of the copy."""
+    if (not word or word.startswith("(") or word.lower() in STOCK_WORDS or re.match(r"^[\d.]+$", word)
+            or word in key.taken or word in ("****", "{{", "''", "nothing", "absent", "present")):
+        return word
+    return key.add(word, kind) or word
+
+
 def _valued(text, key):
     """Medusa's bucket, prefix and fqdn values and the user names masked (bucket1, user1), for every such setting the
-    line names: its value, or each "<value> on <nodes>" after it; never a number nor the report's own words."""
+    line names: its value, or each "<value> on <nodes>" after it, or a self-check difference's values (node has 'v',
+    import would write 'w'); never a number nor the report's own words."""
     found = list(VALUED.finditer(text))
     if not found:
         return text
 
-    def value(word, kind):
-        if (word.startswith("(") or word.lower() in STOCK_WORDS or re.match(r"^[\d.]+$", word) or word in key.taken
-                or word in ("****", "{{", "''")):
-            return word
-        return key.add(word, kind) or word
+    def quoted(v, kind):
+        inner = v[1:-1] if len(v) > 1 and v[0] == v[-1] and v[0] in "'\"" else v
+        return v.replace(inner, _valued_word(inner, kind, key), 1) if inner else v
     shown, at = "", 0
     for i, m in enumerate(found):
         end = found[i + 1].start() if i + 1 < len(found) else len(text)
-        kind = {"bucket_name": "bucket", "bucket": "bucket", "prefix": "prefix", "fqdn": "host"}.get(
-            m.group(1).lower(), "user")
-        parts = re.split(r"(; )", text[m.end():end])
-        shown += text[at:m.end()] + "".join(p if p == "; " else re.sub(
-            r"^([^\s,;]+)", lambda v, k=kind: value(v.group(1), k), p) for p in parts)
+        kind = VALUED_KINDS.get(m.group(1).lower(), "user")
+        rest = text[m.end():end]
+        if rest.startswith("node has "):
+            shown += text[at:m.end()] + DIFFERENCE_VALUES.sub(lambda v, k=kind: v.group(1) + quoted(v.group(2), k), rest)
+        else:
+            parts = re.split(r"(; )", rest)
+            shown += text[at:m.end()] + "".join(p if p == "; " else re.sub(
+                r"^([^\s,;]+)", lambda v, k=kind: _valued_word(v.group(1), k, key), p) for p in parts)
         at = end
     return shown + text[at:]
+
+
+VALUE_ROW = re.compile(r"^(\s+(?:Node|Ansible) {2,})(\S.*?)(\s*)$")
+
+
+def _value_rows(lines, named, key):
+    """The rows of the values (Node, Ansible) under a self-check's setting that names the site (a bucket, a user:
+    VALUED): {index of the row: the row, its value masked}."""
+    rows = {}
+    for i in named:
+        m = VALUED.search(lines[i].strip() + ": ")
+        if not m:
+            continue
+        kind = VALUED_KINDS.get(m.group(1).lower(), "user")
+        for k in range(i + 1, len(lines)):
+            row = VALUE_ROW.match(lines[k])
+            if not row or _indent(lines[k]) <= _indent(lines[i]):
+                break
+            rows[k] = row.group(1) + _valued_word(row.group(2), kind, key) + row.group(3)
+    return rows
 
 
 def _aligned(line, key):
@@ -576,14 +666,18 @@ def cassandra_import_shareable(lines, layout, written=None, report_file="", cwd=
             " stays with whoever ran the import.", ""]
     lines = [str(line) for line in lines]
     # the names of XML elements the report's XPaths give (name=, ref=): a self-check's setting names them alone
-    key.xml_names = set(m.group(3) for line in lines for m in XPATH_VALUE.finditer(line)
-                        if re.match(r"\[@(name|ref)=", m.group(1)))
+    key.xml_names = set(m.group(4) for line in lines for m in XPATH_VALUE.finditer(line) if m.group(2) in ("name", "ref"))
     # a self-check's setting, on its own line above its values (Node, Ansible): in the file's own words
     named = set(i for i in range(len(lines) - 1) if lines[i].strip() and VALUES.match(lines[i + 1])
                 and _indent(lines[i]) < _indent(lines[i + 1]))
-    text += [out.mask(_indent(line) * " " + setting(line.strip(), key, _file_above(lines, i)))
-             if i in named and not _site_option(line.strip()) else _masked(_aligned(line, key))
-             for i, line in enumerate(lines)]
+
+    def rendered():
+        rows = _value_rows(lines, named, key)
+        return [out.mask(_indent(line) * " " + setting(line.strip(), key, _file_above(lines, i)))
+                if i in named and not _site_option(line.strip()) else _masked(_aligned(rows.get(i, line), key))
+                for i, line in enumerate(lines)]
+    rendered()  # (a first pass: the names a later line gives, a JMX user, masked on the lines before it too)
+    text += rendered()
     head = ["# The key of report.shareable.txt: what each name of it stands for. Keep it to yourself.",
             "# Addresses are all shown as IP: not listed."]
     return {"text": text, "map": head + key.lines()}

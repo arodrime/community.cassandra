@@ -513,3 +513,77 @@ def test_a_logback_tag_stays_in_clear_its_names_masked():
     assert "/encoder/immediateFlush: node has" in text[0]
     assert text[2].endswith(" / encoder / immediateFlush") and not text[2].strip().startswith("ZORG")
     assert "      ASYNC / neverBlock" in text and "      shutdownHook" in text
+
+
+def test_the_values_of_a_setting_that_names_the_site_masked_in_every_form():
+    # (pre-push audit, rc13, round 3) Medusa's bucket, a CQL user: under the setting's line (Node, Ansible), in the
+    # evidence (node has 'v', import would write 'w'); a later line's name masked on the lines before it too
+    lines = ["  medusa.ini    zorglub-db1", "    [cassandra] cql_username", "      Node     billing_ops",
+             "      Ansible  absent", "  jmxremote.access    zorglub-db1", "    payroll_ops", "      Node     readwrite",
+             "  medusa.ini: [storage] bucket_name: node has 'orders-backups', import would write 'payroll-backups'",
+             "  seen: payroll_ops"]
+    text = cassandra_import_shareable(["  payroll_ops logged in"] + lines, ZORGLUB)["text"][2:]
+    assert not [line for line in text if SITE.search(line)], text
+    assert re.match(r"^  user\d+ logged in$", text[0]) and "      Ansible  absent" in text
+    assert "[storage] bucket_name: node has 'bucket2', import would write 'bucket3'" in text[8]
+
+
+@pytest.mark.parametrize("user, masked", [("london", True), ("admin", True), ("zorglub", True), ("cassandra", False),
+                                          ("monitorRole", False), ("controlRole", False)])
+def test_a_jmx_user_masked_but_the_jdks(user, masked):
+    # (pre-push audit, rc13, round 3) a user named by a word of the collection is the site's all the same
+    text = cassandra_import_shareable(["  jmxremote.access: %s: node has readwrite, import would write nothing" % user],
+                                      ZORGLUB)["text"][2:]
+    assert (": %s: node has" % user not in text[0]) is masked, text
+
+
+def test_an_xml_name_with_a_space_or_a_slash_masked_whole():
+    # (pre-push audit, rc13, round 3) the names the XPaths give, whole, before the steps are read
+    xpaths = ['/configuration/logger[@name="Zorglub Ledger"]/@level', '/configuration/logger[@name="Zorglub / Paris"]',
+              '/configuration/appender[@name="ASYNCDEBUGLOG"]/appender-ref[@ref="zorglub sink"]']
+    lines = ["  logback.xml: %s: node has 'x', import would write nothing" % x for x in xpaths]
+    lines += ["    logback.xml    zorglub-db1", "      Zorglub Ledger / @level", "        Node      x",
+              "      Zorglub / Paris", "        Node      x", "      ASYNCDEBUGLOG / appender-ref zorglub sink", "        Node      x"]
+    text = cassandra_import_shareable(lines, ZORGLUB)["text"][2:]
+    assert not [line for line in text if SITE.search(line)], text
+    assert re.match(r"^      word\d+ / @level$", text[4]) and text[8].startswith("      ASYNCDEBUGLOG / appender-ref word")
+
+
+def test_the_names_cassandra_yaml_leaves_to_the_site_masked_in_its_keys():
+    # (pre-push audit, rc13, round 3) a memtable configuration's name, a seed provider's own parameter; stock ones kept
+    lines = ["  cassandra.yaml: memtable.configurations.zorglub_fast.class_name: node has 'x', import would write nothing",
+             "  cassandra.yaml: memtable.configurations.trie.class_name: node has 'x', import would write nothing",
+             "  cassandra.yaml: seed_provider[0].parameters[0].zorglub_dns: node has 'x', import would write nothing",
+             "  cassandra.yaml: seed_provider[0].parameters[0].seeds: node has 'x', import would write nothing"]
+    text = cassandra_import_shareable(lines, ZORGLUB)["text"][2:]
+    assert not [line for line in text if SITE.search(line)], text
+    assert "memtable.configurations.trie.class_name: node has" in text[1]
+    assert "seed_provider[0].parameters[0].seeds: node has" in text[3]
+
+
+def test_stock_names_and_the_logs_paths_readable():
+    # (pre-push audit, rc13, round 3) a -D property of a stock library, logback's own; a path after ${var}; the role's
+    # udev rules file; the heap's options only among the -X ones of an options file
+    text = cassandra_import_shareable([
+        "  -Dlogback.configurationFile=logback.xml -Dorg.apache.cassandra.x=1 -Dsun.rmi.dgc.server.gcInterval=1"
+        " -Dch.qos.logback.x=1 -Dnet.openhft.x=1",
+        "  ${cassandra.logdir}/system.log ${cassandra.logdir}/audit/audit.log.%d{yyyy-MM-dd}.%i.zip",
+        "  /etc/udev/rules.d/64-cassandra-data-disk.rules",
+        "  jvm17-server.options: -Xloggc:/srv/zorglub/gc.log: node has 'x', import would write nothing",
+        "  jvm17-server.options: -Xmx: node has '8G', import would write '16G'"], ZORGLUB)["text"][2:]
+    assert text[0] == ("  -Dlogback.configurationFile=logback.xml -Dorg.apache.cassandra.x=1"
+                       " -Dsun.rmi.dgc.server.gcInterval=1 -Dch.qos.logback.x=1 -Dnet.openhft.x=1")
+    assert text[1] == "  ${cassandra.logdir}/system.log ${cassandra.logdir}/audit/audit.log.%d{yyyy-MM-dd}.%i.zip"
+    assert text[2] == "  /etc/udev/rules.d/64-cassandra-data-disk.rules"
+    assert "zorglub" not in text[3] and ": -Xmx: node has" in text[4]
+
+
+def test_a_device_after_the_read_ahead_or_the_scheduler_its_codes_masked():
+    # (pre-push audit, rc13, round 3) the short codes of the site in a device's name (zq7), as after "device"
+    text = cassandra_import_shareable([
+        "  cassandra_linux: read_ahead_kb vg_q7-lv_z9 (dm-3) (live): node has 128, the roles would set 8",
+        "  cassandra_linux: IO scheduler zq7 (sdb) (live): node has mq-deadline, the roles would set none",
+        "  cassandra_linux: LVM read-ahead vg_q7/lv_z9 (sectors): node has 256, the roles would set 16"],
+        ZORGLUB)["text"][2:]
+    assert not [line for line in text if re.search(r"\b(q7|z9|zq7)\b", line)], text
+    assert "(dm-3)" in text[0] and "(sdb)" in text[1]
