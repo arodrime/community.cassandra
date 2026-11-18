@@ -1,0 +1,2 @@
+bugfixes:
+  - import_cluster playbook - the self-check takes an option set in the other of the two JVM options files the running Java reads (the heap moved to ``jvm-server.options`` with ``cassandra_heap_in_jvm_options``) as the same for the JVM, read together as ``bin/cassandra`` does (before, differences in both files).

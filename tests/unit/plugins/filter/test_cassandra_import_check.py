@@ -1798,3 +1798,27 @@ def test_text_in_an_element_of_text_is_still_a_value():
            "</configuration>"
     out = _compare_files({"logback.xml": node}, {"logback.xml": node.replace("x.log", "y.log")})["differences"]
     assert out == ["logback.xml: /configuration/appender[@name=\"A\"]/file: node has 'y.log', import would write 'x.log'"]
+
+
+# --- an option moved between the two JVM options files the Java reads ---------------------------------------------
+
+def test_the_heap_moved_between_the_options_files_the_java_reads_is_the_same():
+    """-Xms/-Xmx in jvm11-server.options on the node, in jvm-server.options with cassandra_heap_in_jvm_options: Java 11
+    reads both, one list; the same for the JVM, whether the running JVM is read or not."""
+    files = seeded(stock("41x"))
+    node = dict(files, **{"jvm11-server.options": files["jvm11-server.options"] + "-Xms10G\n-Xmx10G\n"})
+    role = dict(files, **{"jvm-server.options": edit(edit(files["jvm-server.options"], "\n#-Xms4G\n", "\n-Xms10G\n"),
+                                                     "\n#-Xmx4G\n", "\n-Xmx10G\n")})
+    out = _compare_files(role, node, java="11", series="41x")
+    assert out["differences"] == []
+    assert out["notes"] == ["jvm-server.options, jvm11-server.options: (cassandra-env.sh finds), -Xms, -Xmx set in the"
+                            " other of the two files Java 11 reads (bin/cassandra passes them as one list): the same for"
+                            " the JVM"]
+    # set again in the other file, the last one counting: not the same
+    node["jvm-server.options"] = role["jvm-server.options"]
+    node["jvm11-server.options"] = files["jvm11-server.options"] + "-Xmx4G\n"
+    assert "jvm11-server.options: -Xmx: node has '-Xmx4G', import would write nothing" in \
+        _compare_files(role, node, java="11", series="41x")["differences"]
+    # a file the Java does not read (Java 8 reads jvm8-server.options): not the same
+    node = dict(files, **{"jvm11-server.options": files["jvm11-server.options"] + "-Xms10G\n-Xmx10G\n"})
+    assert _compare_files(role, node, java="8", series="41x")["differences"] != []

@@ -899,6 +899,15 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
             continue
         by_file[name] = found
         differences += found
+    moved = _options_moved(rendered, live, series, java, by_file)
+    if moved:
+        differences = [d for d in differences if not any(d in by_file[f] for f in moved)
+                       or not any(d.startswith("%s: %s: node has " % (f, k)) for f, keys in moved.items() for k in keys)]
+        for f in moved:
+            by_file[f] = [d for d in by_file[f] if d in differences]
+        notes.append("%s: %s set in the other of the two files Java %s reads (bin/cassandra passes them as one list):"
+                     " the same for the JVM" % (", ".join(sorted(moved)), ", ".join(sorted(set(
+                         k for keys in moved.values() for k in keys))), java))
     rewritten, apart = _jvm_rewritten(rendered, live, by_file, heap, node_environment, role_environment, java,
                                       running or {})
     if rewritten:
@@ -911,6 +920,23 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
                          ", but for %s, above" % ", ".join(sorted(apart)) if apart else ""))
         heap = []
     return {"differences": differences + heap, "notes": notes}
+
+
+def _options_moved(rendered, live, series, java, by_file):
+    """The settings jvm-server.options and the options file of the running Java differ by each on its own, but not
+    read together as bin/cassandra reads them (the first, then the other, one list, the last of an option counting):
+    an option moved from one to the other (the heap, cassandra_heap_in_jvm_options) -> {file: [its settings]}."""
+    pair = [jvm_args.COMMON, jvm.options_file(series, java)]
+    if not pair[1] or not all(f in rendered and f in live and by_file.get(f) is not None for f in pair):
+        return {}
+    a, b = [jvm_options_settings("\n".join(side[f] for f in pair)) for side in (live, rendered)]
+    moved = {}
+    for f in pair:
+        mine, theirs = jvm_options_settings(live[f]), jvm_options_settings(rendered[f])
+        keys = [k for k in sorted(set(mine) | set(theirs)) if mine.get(k) != theirs.get(k) and a.get(k) == b.get(k)]
+        if keys:
+            moved[f] = keys
+    return moved
 
 
 def _jvm_rewritten(rendered, live, by_file, heap, node_environment, role_environment, java, running):
