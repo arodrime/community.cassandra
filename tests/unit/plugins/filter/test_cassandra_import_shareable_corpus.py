@@ -273,6 +273,53 @@ SITE_DIFFERENCES += [
     "jmxremote.access: operator: node has readwrite, import would write nothing",
     "medusa.ini: [storage] bucket_name: node has 'operator', import would write nothing"]
 
+
+# (round 6) paths with a default, after '-' or '//', relative values, file names, separators in a component
+SITE_DIFFERENCES += [
+    'cassandra.yaml: cdc_raw_directory: node has data/orders/cdc, import would write nothing',
+    "cassandra.yaml: hints_directory: node has 'data/orders/hints extra', import would write nothing",
+    "jvm17-server.options: -Xlog:gc: node has '-Xlog:gc:file=logs/orders-gc.log', import would write nothing",
+    "jvm17-server.options: -XX:HeapDumpPath: node has '-XX:HeapDumpPath=dumps/billing', import would write nothing",
+    'jvm17-server.options: -XX:HeapDumpPath: node has -XX:HeapDumpPath=/var/lib/cassandra/billing/paris, import would write nothing',
+    'cassandra-env.sh: node has JVM_OPTS="$JVM_OPTS -Dcassandra.x=${ROOT:=/srv/orders/billing}", import would write nothing',
+    'cassandra-env.sh: node has JVM_OPTS="$JVM_OPTS -Dcassandra.x=${ROOT-/srv/orders/billing}", import would write nothing',
+    'cassandra-env.sh: node has JVM_OPTS="$JVM_OPTS -Dcassandra.x=$ROOT/orders/billing", import would write nothing',
+    'cassandra-env.sh: node has JVM_OPTS="$JVM_OPTS -Dcassandra.x=${ROOT}orders/billing", import would write nothing',
+    'cassandra-env.sh: node has JVM_OPTS="$JVM_OPTS -Dcassandra.x=$(dirname $0)/../orders", import would write nothing',
+    'cassandra-env.sh: node has JVM_OPTS="$JVM_OPTS -Dcassandra.x=`pwd`/orders/billing", import would write nothing',
+    "cassandra.yaml: data_file_directories: node has ['/var/lib/cassandra/orders', '/var/lib/cassandra/billing'], import would write nothing",
+    'cassandra.yaml: data_file_directories: node has ["data/orders", "data/billing"], import would write nothing',
+    "cassandra.yaml: commitlog_directory: node has '/var/lib/cassandra/commitlog/paris-1', import would write nothing",
+    "cassandra.yaml: commitlog_directory: node has '/var/lib/cassandra/commitlog/london', import would write nothing",
+    "cassandra.yaml: commitlog_directory: node has '/var/lib/cassandra/prod_orders', import would write nothing",
+    "cassandra.yaml: commitlog_directory: node has '/var/lib/cassandra/team.billing', import would write nothing",
+    "cassandra.yaml: commitlog_directory: node has '/var/lib/cassandra/2024orders', import would write nothing",
+    "cassandra.yaml: commitlog_directory: node has '/var/lib/cassandra/orders,billing', import would write nothing",
+    "cassandra.yaml: commitlog_directory: node has '/var/lib/cassandra/orders:billing', import would write nothing",
+    "cassandra.yaml: commitlog_directory: node has '/var/lib/cassandra/orders=billing', import would write nothing",
+    "cassandra.yaml: commitlog_directory: node has '/var/lib/cassandra/orders#billing', import would write nothing",
+    "cassandra.yaml: commitlog_directory: node has '/var/lib/cassandra/orders~billing', import would write nothing",
+    "cassandra.yaml: commitlog_directory: node has '/var/lib/cassandra/ordérs/billing', import would write nothing",
+    "cassandra.yaml: commitlog_directory: node has '/opt/cassandra/../orders', import would write nothing",
+    "cassandra.yaml: commitlog_directory: node has '/var/lib/cassandra/./orders', import would write nothing",
+    "cassandra.yaml: commitlog_directory: node has '/var//lib/orders', import would write nothing",
+    "cassandra.yaml: commitlog_directory: node has '//srv/orders', import would write nothing",
+    "cassandra.yaml: commitlog_directory: node has 'file:/srv/orders', import would write nothing",
+    "cassandra.yaml: commitlog_directory: node has '/var/lib/cassandra-orders/x', import would write nothing",
+    "cassandra.yaml: commitlog_directory: node has '/etc/cassandra/conf.billing/x', import would write nothing",
+    "cassandra.yaml: server_encryption_options.keystore: node has 'conf/billing.keystore', import would write nothing",
+    'cassandra.yaml: server_encryption_options.keystore: node has conf/billing.keystore, import would write nothing',
+    "cassandra.yaml: server_encryption_options.keystore: node has '/etc/cassandra/ssl/billing.jks', import would write nothing",
+    "cassandra.yaml: server_encryption_options.keystore: node has '/etc/cassandra/ssl/paris.jks', import would write nothing",
+    'logback.xml: /configuration/appender[@name="SYSTEMLOG"]/file: node has \'${cassandra.logdir}/system.log.%d{orders}.zip\', import would write nothing',
+    'logback.xml: /configuration/appender[@name="SYSTEMLOG"]/file: node has \'${cassandra.logdir}/orders/system.log\', import would write nothing',
+    'logback.xml: /configuration/appender[@name="SYSTEMLOG"]/file: node has \'${CASSANDRA_LOG_DIR}/billing.log\', import would write nothing',
+    'logback.xml: /configuration/appender[@name="SYSTEMLOG"]/file: node has \'${cassandra.logdir:-/srv/orders}/system.log\', import would write nothing',
+    'logback.xml: /configuration/appender[@name="SYSTEMLOG"]/file: node has \'${cassandra.logdir}/../orders/system.log\', import would write nothing',
+    "cassandra.service: [Service] EnvironmentFile: node has '-/srv/orders/cassandra.env', import would write nothing",
+    "cassandra.service: [Service] ExecStartPre: node has '-/opt/billing/bin/prep.sh', import would write nothing",
+]
+
 SITE_LINES = [
     '  see cassandra.acmecorp.example and sun.acmecorp.example, logback.acmecorp.example',
     '  -Dsun.acmecorp=1 -Dio.netty.acmeflag=2 -Dcom.google.acmeprop=3 -Dcom.datastax.acmething=4',
@@ -417,3 +464,79 @@ def test_a_value_named_as_the_cluster_leaves_the_cluster_masked(kind):
     lines += cassandra_import_report(*args, cwd="/p", in_git=True, width=200, details=True)
     text = cassandra_import_shareable(lines, layout)["text"]
     assert not [line for line in text if re.search(r"(?i)\bmetrics\b", line)]
+
+
+# (round 6) a stock OS's and JDK's paths as they are
+STOCK_PATHS = [
+    '/dev/mapper/vg_data-swap',
+    '/usr/lib/jvm/java-11-openjdk-amd64/bin/java',
+    '/etc/alternatives/java',
+    '/usr/share/cassandra/lib/jamm-0.3.2.jar',
+    '/etc/security/limits.d/cassandra.conf',
+    '/etc/systemd/system/cassandra.service.d/override.conf',
+    '/sys/block/sda/queue/read_ahead_kb',
+    '/proc/sys/vm/max_map_count',
+    '/proc/sys/vm/swappiness',
+    '/etc/default/cassandra',
+    '/usr/sbin/cassandra',
+    '/opt/cassandra/bin/nodetool',
+    '/etc/apt/sources.list.d/cassandra.sources.list',
+    '/etc/yum.repos.d/cassandra.repo',
+    '/sys/kernel/mm/transparent_hugepage/defrag',
+    '/sys/kernel/mm/transparent_hugepage/enabled',
+    '/var/run/cassandra/cassandra.pid',
+    '/usr/lib/jvm/temurin-17-jdk-amd64',
+    '/usr/lib/jvm/java-17-amazon-corretto',
+    '/etc/pki/tls/certs/ca-bundle.crt',
+    '/etc/ssl/certs/java/cacerts',
+    '/usr/lib/jvm/java-17-openjdk-17.0.9.0.9-2.el8.x86_64/bin/java',
+    '/usr/lib/systemd/system/cassandra.service',
+    '/etc/systemd/system/multi-user.target.wants/cassandra.service',
+    '/usr/share/cassandra/cassandra.in.sh',
+    '/etc/cassandra/conf/cassandra-env.sh',
+    '/etc/cassandra/default.conf/cassandra.yaml',
+    '/etc/cassandra/jvm11-server.options',
+    '/usr/share/java/jna.jar',
+    '/var/lib/cassandra/data/system_auth/roles-5bc52802de2535edaeab188eecebb090',
+    '/etc/medusa/medusa.ini',
+    '/etc/medusa/credentials',
+    '/usr/local/bin/medusa',
+    '/etc/udev/rules.d/60-scheduler.rules',
+    '/etc/rc.d/rc.local',
+    '/sys/block/nvme0n1/queue/scheduler',
+    '/sys/class/block/sdb/queue/rotational',
+    '/etc/tuned/cassandra/tuned.conf',
+    '/usr/lib/tuned/throughput-performance/tuned.conf',
+    '/etc/fstab',
+    '/etc/hosts',
+    '/etc/os-release',
+    '/usr/bin/python3',
+    '/usr/libexec/platform-python',
+    '/etc/environment',
+    '/etc/profile.d/java.sh',
+    '/etc/sysconfig/cassandra',
+    '/etc/cassandra/cassandra-topology.properties',
+    '/etc/cassandra/jmxremote.password',
+    '/usr/lib/jvm/jre/lib/management/jmxremote.access',
+    '/etc/security/limits.conf',
+    '/tmp/hsperfdata_cassandra',
+    '/var/log/cassandra/gc.log.0.current',
+    '/var/log/cassandra/debug.log.1.zip',
+    '/usr/share/cassandra/lib/sigar-bin/libsigar-amd64-linux.so',
+]
+
+
+def test_the_stock_paths_stay_as_they_are():
+    text = shared([], ["%s and %s" % (a, b) for a, b in zip(STOCK_PATHS[::2], STOCK_PATHS[1::2] + [""])])
+    for path in STOCK_PATHS:
+        assert [line for line in text if path in line], path
+
+
+def test_the_way_out_commands_and_the_reports_words_stay_intact():
+    # (round 6) a word of a stock path masked there only: the To-pass option, "2 nodes" never touched
+    text = "\n".join(shared(SITE_DIFFERENCES, SITE_LINES))
+    assert "-e import_keep_hand_edits=" in text
+    option = re.search(r"-e import_keep_hand_edits=(\S+)", text).group(1)
+    assert set(option.split(",")) <= {"os", "sysctl", "limits", "swap", "timesync", "disks", "unit", "firewall",
+                                      "cassandra-env.sh", "logback.xml", "cassandra.yaml", "jvm17-server.options"}, option
+    assert not re.search(r"\b\d+ word\d+", text)

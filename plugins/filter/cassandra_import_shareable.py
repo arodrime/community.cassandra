@@ -34,13 +34,20 @@ DASHED_IPV4 = re.compile(r"(?<!\d)(?<!\d-)(?:\d{1,3}-){3}\d{1,3}(?!\d)(?!-\d)(?!
 # an IPv6 address: a "::" in it, or 4 groups at least (a time, 13:33:20, has 3); its IPv4 tail masked already
 IPV6 = re.compile(r"(?<![\w:])(?:[0-9A-Fa-f]{0,4}:){2,7}(?:IP\b|[0-9A-Fa-f]{0,4}(?![\w:]))")
 URL = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s,;'\"<>)]+")
-PATH = re.compile(r"(?<![\w.~/<>*}-])/[\w.@+-]+(?:/[\w.@+*{}<>-]*)*")
+# (a component's , : = # ~ before a word kept in it: /x/orders,billing is one path)
+PATH = re.compile(r"(?<![\w.~/<>*}-])/(?:[\w.@+-]|[,:=#~](?=\w))+(?:/(?:[\w.@+*{}<>-]|[,:=#~](?=\w))*)*")
 # a path after a variable (${HOME}/x, $CASSANDRA_HOME/x): masked, but logback's stock files under the log dir
-VAR_PATH = re.compile(r"\$\{[A-Za-z_]\w*:-[^}]*\}(?:/[\w.@+*{}%-]+)*|\$\{?[A-Za-z_][\w.]*\}?(?:/[\w.@+*{}%-]+)+")
+VAR_PATH = re.compile(r"\$\{[A-Za-z_][\w.]*:?[-=+?][^}]*\}(?:/[\w.@+*{}%-]+)*|\$\{?[A-Za-z_][\w.]*\}?(?:/[\w.@+*{}%-]+)+")
 # (the stock ones: the log files under the log dir, their rolling patterns; cassandra-env.sh's own paths)
 STOCK_LOG_PATH = re.compile(r"^\$\{?(?:cassandra\.logdir|CASSANDRA_LOG_DIR)\}?/(?:system|debug|gc|audit/audit)\.log"
-                            r"(?:\.%d\{[^}]*\})?(?:\.%i)?(?:\.(?:zip|gz))?$"
+                            r"(?:\.%d\{[yMdHhms:._ -]*\})?(?:\.%i)?(?:\.(?:zip|gz))?$"
                             r"|^\$\{?CASSANDRA_HOME\}?/lib/(?:jamm-[\d.]+\.jar|sigar-bin)$|^\$\{?CASSANDRA_CONF\}?/hotspot_compiler$")
+# a path systemd may do without (EnvironmentFile=-/x, ExecStartPre=-/x), one written //x: masked as any absolute path
+OPTIONAL_PATH = re.compile(r"""((?:^|[=\s'"])-?/?)(/[\w.@+-]+(?:/[\w.@+*{}<>-]*)*)""")
+# a relative path as a value (data/x/cdc, file=logs/x.log, ${ROOT}x/y): its words of the site masked
+# (not one from . or ~, nor the inventory's group_vars/host_vars: their own passes)
+RELATIVE_VALUE = re.compile(r"""((?:^|[=:'"\[(,}\s])\s?)(?!(?:group|host)_vars/)"""
+                            r"""(\w[\w.-]*/(?:[\w.-]+/)*[\w.@+*-]*)""")
 # a relative path in a quoted value (data/x/cdc), a Windows one: masked, but the stock keystore of TDE
 QUOTED_RELATIVE = re.compile(r"""(?<=['"])(?!conf/\.keystore['"])[\w.-]+(?:/[\w.@+*-]+)+(?=['"])|[A-Za-z]:\\[^\s'"]+""")
 # a path as an XML element's value (<file>/srv/x/a.log</file>): up to the closing tag, never the tag itself
@@ -294,18 +301,40 @@ def _path(path, key):
 
 def _part(part, key):
     """A component of a path under a stock directory: the names of the site in it replaced, its short codes masked,
-    each word no path of the roles has (orders under /var/lib/cassandra) masked."""
+    each word no path of the roles has (orders under /var/lib/cassandra) masked there (_path_words)."""
     shown = _codes(key.inside(part), key)
-    if shown in stock_path_parts():
-        return shown
+    return shown if shown in stock_path_parts() else _path_words(shown, key)
 
+
+# the words of a stock OS's or JDK's paths, of the report's own files: kept in a path, a file name
+KEPT_PATH_WORDS = ("mapper", "swap", "amd64", "x86_64", "jamm", "override", "read_ahead_kb", "vm", "swappiness",
+                   "defrag", "enabled", "temurin", "amazon", "corretto", "cacerts", "multi", "user", "target", "wants",
+                   "jna", "scheduler", "rotational", "hsperfdata", "sigar", "libsigar", "jre", "jdk", "openjdk", "java",
+                   "jvm", "bin", "lib", "lib64", "sbin", "share", "queue", "block", "class", "kernel", "mm",
+                   "transparent", "hugepage", "max", "map", "count", "pki", "tls", "certs", "ca", "bundle", "ssl",
+                   "current", "platform", "python", "python3", "linux", "so", "management", "alternatives", "sources",
+                   "list", "repo", "repos", "pid", "run", "tuned", "throughput", "performance", "credentials",
+                   "group_vars", "host_vars", "inventories", "inventory", "reports", "report", "details", "shareable",
+                   "secrets", "hosts", "main", "vars", "files", "templates", "roles", "playbooks", "all", "dev", "sys",
+                   "proc", "etc", "usr", "opt", "var", "tmp", "local", "default", "conf", "data", "keystore", "read",
+                   "ahead", "kb", "auth", "topology", "traces", "distributed", "schema", "system", "yum", "repos", "gc")
+
+
+def _path_words(text, key):
+    """A path or a file name with each of its words that no stock path has masked, there only (a word of the report
+    elsewhere stays): its name in the key, reused wherever the key has it already."""
     def word(m):
         found = m.group(0)
-        if (found.lower() in stock_path_words() or found.lower() in EXTENSIONS or found == "IP"
-                or PSEUDONYM.match(found) or OS_CODES.match(found) or not re.search(r"[A-Za-z]{2}", found)):
+        if (found.lower() in stock_path_words() or found.lower() in KEPT_PATH_WORDS or found.lower() in EXTENSIONS
+                or found == "IP" or PSEUDONYM.match(found) or OS_CODES.match(found)
+                or not re.search(r"[A-Za-z]{3}", found) or re.match(r"^[0-9a-f]{32}$", found)):
             return found
-        return key.add(found, "word") or found
-    return re.sub(r"[^-_.]+", word, shown)
+        if key.name(found):
+            return key.name(found)
+        given = key.add(found, "word", force=True)
+        key.quiet.add(found.lower())
+        return given
+    return re.sub(r"[^-_./]+", word, text)
 
 
 @functools.lru_cache(maxsize=1)
@@ -389,7 +418,7 @@ def vocabulary():
                         words.update(w.lower() for w in WORD.findall(f.read()))
                 except OSError:
                     continue
-    return frozenset(words | set(EXTRA_VOCABULARY))
+    return frozenset(words | set(EXTRA_VOCABULARY) | set(KEPT_PATH_WORDS))
 
 
 # a dotted name, a -D property of one (-Dsun.rmi.dgc.server.gcInterval, org.apache.cassandra.auth.PasswordAuthenticator)
@@ -399,7 +428,7 @@ DOTTED_NAME = re.compile(r"(?<![\w.$-])(?:-D)?[A-Za-z_][\w$-]*(?:\.[\w$-]+)+(?![
 EXTRA_VOCABULARY = ("hugepages", "execstartpre", "execstartpost", "execstart", "execstop", "execreload",
                     "workingdirectory", "environmentfile", "limitnofile", "limitmemlock", "limitnproc", "limitas",
                     "timeoutstartsec", "timeoutstopsec", "restartsec", "successexitstatus", "standardoutput",
-                    "standarderror", "east", "west", "north", "south", "central", "southeast", "northeast")
+                    "standarderror", "east", "west", "north", "south", "central", "southeast", "northeast", "yum")
 
 
 # the -D properties bin/cassandra itself gives (not in the role's files)
@@ -609,6 +638,9 @@ def _masked_names(text, key):
     text = URL.sub(lambda m: key.add(m.group(0), "url"), text)
     text = VAR_PATH.sub(lambda m: m.group(0) if STOCK_LOG_PATH.match(m.group(0)) else key.add(m.group(0), "path"), text)
     text = QUOTED_RELATIVE.sub(lambda m: key.add(m.group(0), "path"), text)
+    text = OPTIONAL_PATH.sub(lambda m: m.group(1) + _path(m.group(2), key) if m.group(1).endswith(("-", "/"))
+                             else m.group(0), text)
+    text = RELATIVE_VALUE.sub(lambda m: m.group(1) + _path_words(m.group(2), key), text)
     text = PATH.sub(lambda m: _path(m.group(0), key), text)
     text = XML_PATH.sub(lambda m: m.group(1) + _path(m.group(2), key), text)
     text = re.sub(r"\b(tuned:? \(?profile )([\w.-]+)", lambda m: m.group(1) + _profile(m.group(2), key), text)
@@ -631,11 +663,14 @@ def _masked_names(text, key):
             return word
         if word in key.clear or word in stock_dotted_names():  # (a kernel setting the nodes have, a stock name)
             return word
+        if "." in word and all(w.lower() in KEPT_PATH_WORDS or w.lower() in EXTENSIONS or w.isdigit()
+                               for w in re.split(r"[-_.]+", word) if w):  # (gc.log.0.current, multi-user.target.wants)
+            return word
         if word.startswith("cassandra_") or re.sub(r"^-+D?", "", word).startswith(STOCK_DOTTED):
             return _dotted(word, key) if "." in word else word
         labels = word.split(".")
         if "." in word and labels[-1].lower() in EXTENSIONS:  # (a file: the names in it, cass-pay-01.keystore)
-            return key.inside(word)
+            return _path_words(key.inside(word), key)
         if "." in word and key.get(labels[0]):  # (a node's FQDN: its name, the domain masked)
             return _dotted(word, key)
         if "." in word and key.kinds.get(labels[0].lower()) != "n" and any(
