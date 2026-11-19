@@ -51,3 +51,24 @@
                         _cassandra_repository_credentials_removed | default({})] | select('changed') | list | length > 0
                    or (_cassandra_repository_python_debian | default({})).rc | default(0) != 0
          else 'ok' }}
+
+# What changes, by part (apply_config's plan: the repository beside the config): [{item, before, after}]
+- name: Keep what changes in the repository
+  ansible.builtin.set_fact:
+    _cassandra_repository_items: >-
+      {%- set out = [] -%}
+      {%- for label, result in [['repository ' ~ cassandra_version, _cassandra_repository_yum | default({})],
+                                ['repository ' ~ cassandra_version, _cassandra_repository_apt | default({})],
+                                ['repository, one-line source', _cassandra_repository_one_line | default({})],
+                                ['repository of another series', _cassandra_repository_old | default({})],
+                                ['repository of another series', _cassandra_repository_old_yum | default({})],
+                                ['repository credentials', _cassandra_repository_credentials | default({})],
+                                ['repository credentials', _cassandra_repository_credentials_removed | default({})],
+                                ['repository signing key', _cassandra_repository_key_shipped | default({})],
+                                ['repository signing key', _cassandra_repository_key_downloaded | default({})],
+                                ['package python3-debian', _cassandra_repository_debian_packages | default({})]]
+            if result is changed and label not in out | map(attribute='item') -%}
+      {%-   set _ = out.append({'item': label, 'before': 'other or absent',
+                                'after': 'removed' if label == 'repository of another series' else 'set'}) -%}
+      {%- endfor -%}
+      {{ out if cassandra_repository_manage | bool and cassandra_install_method == 'repository' else [] }}

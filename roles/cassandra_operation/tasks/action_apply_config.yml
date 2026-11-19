@@ -73,6 +73,21 @@
       vars:
         _plan: "{{ cassandra_apply_config_as_started if cassandra_apply_config_as_started | default({}) else cassandra_apply_config_proven }}"
 
+# Another Java (java_plan.yml found it): installed and made the one Cassandra starts with, before the config (its
+# jvm<N>-server.options) is written; the node's one restart below starts it, java_verify.yml checks it
+- name: Install the Java this node moves to
+  ansible.builtin.include_tasks: java_install.yml
+  when: cassandra_apply_config_java | default(false) | bool
+
+# A newer release of its series on a node not running (stopped on purpose, or to start): its package now, Cassandra
+# stopped (a running node gets it in its restart: apply_config_window.yml)
+- name: Update the Cassandra package of a node not running
+  ansible.builtin.include_tasks: package_update.yml
+  when:
+    - cassandra_apply_config_release | default(false) | bool
+    - cassandra_apply_config_then | default('restart') in ['start', 'write']
+    - not ansible_check_mode
+
 - name: Write the config
   ansible.builtin.include_role:
     name: community.cassandra.cassandra_config
@@ -99,6 +114,25 @@
   when:
     - not ansible_check_mode
     - cassandra_apply_config_medusa | default([]) | length > 0
+
+# The repository, the packages and tools, the firewall (their changes found by the plan): not read by the running
+# Cassandra (jemalloc at its next start, said in the plan), no restart for them. The Java is not touched here (a move
+# is java_install.yml's, above)
+- name: Apply the repository, the packages and the firewall
+  ansible.builtin.include_role:
+    name: "community.cassandra.{{ item.role }}"
+  vars:
+    _cassandra_change_report_quiet: true  # shown before the run was confirmed, and in its recap at the end
+    cassandra_install_java: "{{ cassandra_apply_config_java | default(false) | bool }}"
+  loop:
+    - {section: Repository, role: cassandra_repository}
+    - {section: Packages, role: cassandra_install}
+    - {section: Firewall, role: cassandra_firewall}
+  loop_control:
+    label: "{{ item.role }}"
+  when:
+    - not ansible_check_mode
+    - item.section in cassandra_apply_config_extras | default([]) | map(attribute='section')
 
 # what the plan wrote back with no restart is on disk as the running Cassandra started with it, and that
 # Cassandra still runs (restarted during the write, it may have read the files before)
@@ -213,6 +247,17 @@
     _cassandra_change_report_quiet: true
   when: ansible_check_mode
 
+- name: Report what the repository, the packages and the firewall would get
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_change_report
+  vars:
+    cassandra_change_report_role: apply_config_extras
+    cassandra_change_report_items: "{{ cassandra_apply_config_extras | default([]) }}"
+    _cassandra_change_report_quiet: true
+  when:
+    - ansible_check_mode
+    - cassandra_apply_config_extras | default([]) | length > 0
+
 - name: Report what Medusa would get
   ansible.builtin.include_role:
     name: community.cassandra.cassandra_change_report
@@ -230,6 +275,8 @@
   vars:
     _cassandra_restart_timesync: "{{ cassandra_apply_config_timesync | default(false) }}"
     _cassandra_restart_disks: "{{ cassandra_apply_config_disks_window | default([]) | length > 0 }}"
+    # a newer release of its series: the package updated with Cassandra stopped, its config written again
+    _cassandra_service_while_stopped: "{{ 'apply_config_window.yml' if cassandra_apply_config_release | default(false) | bool else '' }}"
     _cassandra_exporter_check_left: not stopped (left running as it is); the config written applies at its next start
   when: cassandra_apply_config_then | default('restart') == 'restart'
 
@@ -268,4 +315,18 @@
     state: absent
   when:
     - not ansible_check_mode
+    - cassandra_apply_config_then | default('restart') in ['restart', 'start']
+
+# the Java it moved to, the release it was updated to: running them (the same failure and way out as update_java's,
+# the upgrade's)
+- name: Check it runs the new Java
+  ansible.builtin.include_tasks: java_verify.yml
+  when:
+    - cassandra_apply_config_java | default(false) | bool
+    - cassandra_apply_config_then | default('restart') == 'restart'
+
+- name: Check it runs the new release
+  ansible.builtin.include_tasks: version_verify.yml
+  when:
+    - cassandra_apply_config_release | default(false) | bool
     - cassandra_apply_config_then | default('restart') in ['restart', 'start']

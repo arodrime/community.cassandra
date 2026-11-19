@@ -28,7 +28,7 @@
   failed_when: false
   check_mode: false
   when:
-    - ansible_check_mode
+    - _cassandra_install_check
     - not cassandra_offline | bool
     - cassandra_install_method in ['repository', 'system']
     - _cassandra_packages | reject('in', _cassandra_install_before) | list | length > 0
@@ -56,7 +56,7 @@
 - name: Install Cassandra Packages
   when:
     - not cassandra_offline | bool
-    - not ansible_check_mode or cassandra_install_method == 'packages' or cassandra_install_available.rc | default(0) == 0
+    - not _cassandra_install_check or cassandra_install_method == 'packages' or cassandra_install_available.rc | default(0) == 0
   vars:
     _cassandra_install_names: >-
       {{ _cassandra_packages if cassandra_package_version == ''
@@ -151,7 +151,7 @@
         # alone (cassandra-<series>): dnf reads no other one (an unreachable OS repository on an air-gapped site);
         # repositories set up by other means: every enabled one, the failure naming those dnf could not read
         - name: Download the Cassandra packages
-          when: not ansible_check_mode
+          when: not _cassandra_install_check
           block:
             - name: Download the Cassandra packages
               ansible.builtin.command:
@@ -180,7 +180,7 @@
             paths: "{{ _rpms }}"
             patterns: "{{ _cassandra_packages | map('regex_replace', '$', '-[0-9]*.rpm') | list }}"
           register: cassandra_install_rpms
-          when: not ansible_check_mode
+          when: not _cassandra_install_check
 
         - name: Every package was downloaded
           ansible.builtin.assert:
@@ -189,13 +189,13 @@
               Downloaded {{ cassandra_install_rpms.files | map(attribute='path') | map('basename') | join(', ') or 'nothing' }}
               for {{ _cassandra_packages | join(', ') }}.
             quiet: true
-          when: not ansible_check_mode
+          when: not _cassandra_install_check
 
         - name: Install them without their Java dependency
           ansible.builtin.command:
             argv: "{{ ['rpm', '-U', '--nodeps', '--oldpackage'] + cassandra_install_rpms.files | map(attribute='path') | list }}"
           changed_when: true
-          when: not ansible_check_mode
+          when: not _cassandra_install_check
 
       always:
         - name: Remove the downloaded packages
@@ -228,7 +228,7 @@
         - ansible_facts['os_family'] == 'Debian'
         - cassandra_package_version != ""
         - cassandra_package_hold | bool
-        - not ansible_check_mode or item in _cassandra_install_before  # not installed under --check
+        - not _cassandra_install_check or item in _cassandra_install_before  # not installed under --check
   always:
     - name: Remove the temporary policy-rc.d (Debian)
       ansible.builtin.file:

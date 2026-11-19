@@ -1,0 +1,17 @@
+---
+# apply_config's restart of a node moving to a newer release of its series (action_restart.yml, Cassandra stopped):
+# its package updated (package_update.yml, as the upgrade does), then its config written again (a package may put
+# its own files in place of the ones it ships); started next, version_verify.yml checks the release it runs
+- name: Update the Cassandra package
+  ansible.builtin.include_tasks: package_update.yml
+
+- name: Write the config again
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_config
+  vars:
+    cassandra_config_confirm: false
+    _cassandra_config_no_question: true  # the run's own question covered it
+    _cassandra_config_no_newsize_warning: true
+    _cassandra_config_no_restart_warning: true
+    _cassandra_config_quiet: true
+    _cassandra_change_report_quiet: true

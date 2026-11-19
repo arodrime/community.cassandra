@@ -1,0 +1,14 @@
+---
+# The node's Cassandra package moved to cassandra_package_version, Cassandra stopped: its series' repository, then
+# the package (cassandra_install, which refuses another version otherwise). The node of an upgrade
+# (action_upgrade.yml), and apply_config's move to a newer release of the same series, in the node's restart
+# (apply_config_window.yml). The caller writes the config and starts it, then checks it with version_verify.yml.
+- name: Add the target series' repository
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_repository
+
+- name: Install the target version
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_install
+  vars:
+    _cassandra_install_upgrade: true

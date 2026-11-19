@@ -44,7 +44,7 @@
   when:
     - ansible_facts['os_family'] == 'RedHat'
     - _cassandra_cqlsh_managed | bool
-    - cassandra_cqlshlib_src.stat.exists or not ansible_check_mode
+    - cassandra_cqlshlib_src.stat.exists or not _cassandra_install_check
     - item.rc == 0
     - item.stdout != '/usr/lib/python3.6/site-packages'
 

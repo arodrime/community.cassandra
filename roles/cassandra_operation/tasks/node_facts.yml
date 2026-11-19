@@ -44,6 +44,11 @@
       live_seeds: >-
         {{ cassandra_node_facts_yaml.content | default('') | b64decode
            | regex_findall('(?m)^\s*- seeds:\s*["\x27]?([^"\x27\n]*)') | first | default('') }}
+      # the initial_token its cassandra.yaml has ('' none): apply_config refuses another token for a joined node
+      live_initial_token: >-
+        {{ cassandra_node_facts_yaml.content | default('') | b64decode
+           | regex_findall('(?m)^initial_token:[ \t]*(.*?)[ \t]*$') | last | default('')
+           | regex_replace('\s+#.*$', '') | replace('"', '') | replace("'", '') | trim }}
       cassandra_dc: "{{ cassandra_dc }}"
       cassandra_rack: "{{ cassandra_rack }}"
       address: "{{ _address }}"

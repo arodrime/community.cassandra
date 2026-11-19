@@ -84,6 +84,12 @@ HEADER_ADDED = "the role's header line added: a comment, no setting changes"
 # Medusa's changes (cassandra_medusa_enabled): a section of the view, and the reason a node is not restarted for them
 MEDUSA_SECTION = "Medusa (no restart)"
 MEDUSA_LIVE = "Medusa: not read by Cassandra"
+# what apply_config covers besides the files and the OS settings (apply_config.yml: cassandra_apply_config_restart_items
+# and cassandra_apply_config_extras): a section each, in this order, with what it needs
+EXTRA_SECTIONS = OrderedDict([("Java", "Java (restart)"), ("Cassandra", "Cassandra package (restart)"),
+                              ("cassandra unit", "cassandra unit (restart)"), ("Repository", "Repository (no restart)"),
+                              ("Packages", "Packages (no restart)"), ("Firewall", "Firewall (no restart)")])
+EXTRAS_LIVE = "the repository, packages, firewall: not read by Cassandra"
 READ_AHEAD_LIVE = "read-ahead set live: the files Cassandra has open keep the old one until it restarts"
 
 
@@ -557,6 +563,8 @@ def _prepare(node, verbose=False):
             "headers": headers,
             "medusa": [(str(i.get("item")), "absent" if i.get("before") is None else str(i.get("before")),
                         str(i.get("after"))) for i in node.get("medusa") or []],
+            "extra": [(str(i.get("section")), str(i.get("item")), "absent" if i.get("before") is None else str(i.get("before")),
+                       str(i.get("after"))) for i in node.get("extra") or []],
             "texts": _live_texts(node), "stats": _stats(node.get("stats"), _file_key),
             "dir_stats": _stats(node.get("dir_stats"), _dir_key),
             "os": [(("service " if i.get("service") else "") + _os_item(i.get("item"), verbose),
@@ -582,7 +590,9 @@ def cassandra_apply_config_diff(nodes, width=None, verbose=False, margin=0):
     each setting that differs on a node, its change "from -> to" (one row per live value), the nodes that change
     last; the owner and the mode as two settings; the directories after the files, the files that only get the
     role's header line (items with header: a section of their own, HEADER_SECTION), Medusa's changes (medusa:
-    cassandra_medusa's items, MEDUSA_SECTION), then the OS settings. [] when
+    cassandra_medusa's items, MEDUSA_SECTION), what else differs (extra: [{section, item, before, after}], a section
+    each, EXTRA_SECTIONS: the Java, the Cassandra package, the unit, the repository, the packages, the firewall), then
+    the OS settings. [] when
     nothing differs. From GROUPS_FROM nodes on (cassandra_output), the node lists by NODE GROUPS defined first.
     width: the lines fit in it (None: as long as they are; "terminal": the terminal's), margin columns kept for the
     caller's indent (the plan's: 2). verbose: a device-mapper
@@ -636,6 +646,15 @@ def cassandra_apply_config_diff(nodes, width=None, verbose=False, margin=0):
     for name in medusa:
         entries.append((name, _rows(dict((n["name"], (i[1], i[2], True)) for n in prepared for i in n["medusa"]
                                          if i[0] == name), str, all_nodes)))
+    for section, title in EXTRA_SECTIONS.items():  # (the Java, the package, the unit, then what applies live)
+        names = []
+        for node in prepared:
+            names.extend(i[1] for i in node["extra"] if i[0] == section and i[1] not in names)
+        if names:
+            entries.append(title)
+        for name in names:
+            entries.append((name, _rows(dict((n["name"], (i[2], i[3], True)) for n in prepared for i in n["extra"]
+                                             if i[0] == section and i[1] == name), str, all_nodes)))
     os_items = []
     for node in prepared:
         os_items.extend(i[0] for i in node["os"] if i[0] not in os_items)

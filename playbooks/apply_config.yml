@@ -44,6 +44,140 @@
         _cassandra_apply_config_start: "{{ now().timestamp() | int }}"
       run_once: true
 
+    # What apply_config covers besides the files (plugin_utils cassandra_apply_config_coverage: every variable of the
+    # roles in its category): what it cannot do on a live cluster, or leaves to a procedure of its own, stops the run
+    # here, before anything is compared (a real run's compare refuses the templates of another series than the one
+    # installed); --check goes on and says it in its recap
+    - name: Load the role defaults
+      ansible.builtin.include_role:
+        name: "community.cassandra.{{ item }}"
+        tasks_from: defaults.yml
+        public: true
+      loop: [cassandra_install, cassandra_operation]
+
+    # (the one running, else the installed package's: a node not running)
+    - name: Read the installed Cassandra package
+      ansible.builtin.command:
+        argv: >-
+          {{ ['dpkg-query', '-W', '-f=${db:Status-Status} ${Version}', 'cassandra'] if ansible_facts['os_family'] == 'Debian'
+             else ['rpm', '-q', '--qf', 'installed %{VERSION}', 'cassandra'] }}
+      register: cassandra_apply_config_package
+      changed_when: false
+      failed_when: false  # none: a host not set up yet
+      check_mode: false  # reads only
+
+    # another series: an upgrade (C); a newer release of the series: the package in the node's restart (B), unless it
+    # would not start with the node's settings or the collection's notes do not cover it (plugin_utils
+    # cassandra_patch_notes); an older release: refused (C)
+    - name: Note the version change
+      ansible.builtin.set_fact:
+        cassandra_apply_config_version: >-
+          {{ cassandra_version | community.cassandra.cassandra_apply_config_version(
+               cassandra_package_version | default(''), _running, _settings, cassandra_allow_unknown_patch | default(false)) }}
+      vars:
+        _described: "{{ cassandra_preflight_describe.stdout | default('') | community.cassandra.cassandra_described_versions }}"
+        _package: "{{ cassandra_apply_config_package.stdout | default('') | trim }}"
+        _installed: "{{ _package.split(' ') | last if _package.startswith('installed ') else '' }}"
+        _running: "{{ _described[_cassandra_preflight.ring_address | default('')] | default(_installed) }}"
+        _settings:
+          cassandra_jvm_options: >-
+            {{ [cassandra_jvm_extra_options | default([]), cassandra_jvm8_extra_options | default([]),
+                cassandra_jvm11_extra_options | default([]), cassandra_jvm17_extra_options | default([])] | flatten }}
+          cassandra_memtable_allocation_type: "{{ cassandra_memtable_allocation_type | default('') }}"
+          cassandra_memtable_offheap_space: "{{ cassandra_memtable_offheap_space | default('') }}"
+
+    # a joined node whose inventory gives another initial_token than its cassandra.yaml: the tokens it owns, to tell a
+    # record of its token (after move_node) from another one
+    - name: Read the tokens of the ring
+      community.cassandra.cassandra_ring:
+      module_defaults:
+        community.cassandra.cassandra_ring: "{{ _cassandra_service_jmx }}"
+      delegate_to: "{{ _cassandra_preflight_from }}"
+      register: cassandra_apply_config_tokens
+      failed_when: false  # not read: no token compared
+      check_mode: false  # reads only
+      run_once: true
+      when:
+        - _cassandra_preflight_running_nodes | default([]) | length > 0
+        - _differ | length > 0
+      vars:
+        _differ: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts if hostvars[h]._cassandra_preflight is defined -%}
+          {%-   set p = hostvars[h]._cassandra_preflight -%}
+          {%-   if p.cassandra_initial_token | default('') not in ['', 'None'] and p.cassandra_initial_token != p.live_initial_token | default('') -%}
+          {%-     set _ = out.append(h) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Note what stops the run before any change
+      ansible.builtin.set_fact:
+        # the ring against the inventory (topology's): the hosts to add or remove, the ring's nodes it lacks
+        _cassandra_apply_config_ring: "{{ _ring }}"
+        _cassandra_apply_config_stops: >-
+          {{ _nodes | community.cassandra.cassandra_apply_config_stops(_ring, {
+               'upgrade': 'upgrade' | community.cassandra.cassandra_command(extra=['-e cassandra_upgrade_phase=preflight'], **_args),
+               'topology_check': 'topology' | community.cassandra.cassandra_command(options=['--check'], **_args),
+               'topology': 'topology' | community.cassandra.cassandra_command(**_args)}) }}
+      run_once: true
+      vars:
+        _args:
+          inventory: "{{ ansible_inventory_sources | default([]) }}"
+          default_inventory: "{{ lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') }}"
+          hosts: "{{ cassandra_hosts | default('') }}"
+          cwd: "{{ lookup('ansible.builtin.env', 'PWD') }}"
+        _status: "{{ (cassandra_preflight_status | default({})).cluster_status | default({}, true) }}"
+        _absent: "{{ query('community.cassandra.cassandra_nodes', state='absent') }}"
+        _ring: >-
+          {%- set nodes, absent, known = [], [], [] -%}
+          {%- for h in ansible_play_hosts -%}
+          {%-   set p = hostvars[h]._cassandra_preflight | default({}) -%}
+          {%-   set _ = nodes.append({'name': h, 'address': p.ring_address | default('')}) -%}
+          {%- endfor -%}
+          {%- for h in query('community.cassandra.cassandra_nodes') + _absent -%}
+          {%-   set v = hostvars[h] -%}
+          {%-   set p = v._cassandra_preflight | default({}) -%}
+          {%-   set addresses = [p.ring_address | default(''), p.address | default(''), v.cassandra_listen_address | default(''),
+                                 (v.cassandra_extra_settings | default({})).broadcast_address | default(''),
+                                 v.ansible_host | default(''), h] | select | list -%}
+          {%-   set _ = known.extend(addresses) -%}
+          {%-   if h in _absent -%}{%- set _ = absent.append({'name': h, 'addresses': addresses}) -%}{%- endif -%}
+          {%- endfor -%}
+          {{ nodes | community.cassandra.cassandra_apply_config_ring(absent, known, _status) }}
+        # by ring address: the tokens each node owns
+        _owned: >-
+          {%- set out = {} -%}
+          {%- for dc, entries in (cassandra_apply_config_tokens.ring | default({})).items() -%}
+          {%-   for e in entries -%}{%- set _ = out.update({e.address: out.get(e.address, []) + [e.token | string]}) -%}{%- endfor -%}
+          {%- endfor -%}
+          {{ out }}
+        _nodes: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts -%}
+          {%-   set v = hostvars[h] -%}
+          {%-   set p = v._cassandra_preflight | default({}) -%}
+          {%-   set _ = out.append({'name': h, 'series': v.cassandra_version | default(''),
+                                    'version': v.cassandra_apply_config_version | default({}),
+                                    'token': p.cassandra_initial_token | default('')
+                                             | community.cassandra.cassandra_apply_config_token(
+                                                 p.live_initial_token | default(''), _owned.get(p.ring_address | default(''), []))}) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Stop before any change
+      ansible.builtin.fail:
+        msg: >-
+          {{ ('apply_config  ' ~ _cluster) | community.cassandra.cassandra_refused(_cassandra_apply_config_stops) | join(_nl) }}
+      run_once: true
+      when:
+        - _cassandra_apply_config_stops | length > 0
+        - not ansible_check_mode
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
+
     # Check mode: shows the diffs, writes nothing
     - name: Compare the config
       ansible.builtin.include_role:
@@ -89,6 +223,62 @@
         _cassandra_change_report_quiet: true  # in the settings that differ
         _cassandra_medusa_compare: true  # (check mode applied to it, which ansible_check_mode does not tell)
       when: cassandra_medusa_enabled | default(false) | bool
+
+    # The package repository, the packages and tools (cassandra_install: cqlsh's Python, dsbulk, jemalloc), the firewall:
+    # not read by the running Cassandra (jemalloc: at its next start), applied at the node's turn, no restart for them.
+    # Compared as Medusa is (check mode applied to them: _cassandra_compare); never on a node whose version changes by
+    # another procedure (stopped before any change), nor a package update (done in its restart)
+    - name: Compare the repository, the packages and the firewall
+      ansible.builtin.include_role:
+        name: "community.cassandra.{{ item }}"
+        apply:
+          check_mode: true
+      loop: [cassandra_repository, cassandra_install, cassandra_firewall]
+      vars:
+        cassandra_change_report_dir: ""  # the real run reports
+        _cassandra_change_report_quiet: true  # in the settings that differ
+        _cassandra_compare: true  # (check mode applied to them, which ansible_check_mode does not tell)
+        cassandra_install_java: false  # a Java move is worked out below (as update_java does)
+      when: cassandra_apply_config_version | default({}) | length == 0
+
+    # A node running another Java than cassandra_java_version (the plan of update_java, shared): installed, made the
+    # one Cassandra starts with, then the node's one restart, checked to run it (action_apply_config.yml)
+    - name: Work out the Java of the nodes running another one
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: java_plan.yml
+      vars:
+        _cassandra_java_plan_run: apply_config  # (its ways out)
+        _cassandra_java_plan_running_only: true  # a node not running starts on the Java its unit gives
+        _cassandra_java_plan_check_all: false
+
+    # What the running Cassandra got from its unit (cassandra_service: its user, its limits, its environment), against
+    # what the role's unit gives at its next start: a difference restarts it, the unit written in that restart
+    # (action_restart.yml); a unit file that differs in systemd's handling only is written at its next restart
+    - name: Compare the cassandra unit
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: unit_compare.yml
+        public: true  # its defaults: what the unit gives, compared below
+      when: cassandra_service_unit_manage | default(true) | bool
+
+    - name: Read what the running Cassandra got from its unit
+      ansible.builtin.shell: |
+        echo "user=$(ps -o user= -p "$CASSANDRA_PID" | tr -d ' ')"
+        echo "group=$(ps -o group= -p "$CASSANDRA_PID" | tr -d ' ')"
+        echo "limits=$(base64 -w0 < "/proc/$CASSANDRA_PID/limits")"
+        echo "environment=$(systemctl show cassandra -p Environment --value 2>/dev/null)"
+      environment:
+        CASSANDRA_PID: "{{ cassandra_jvm.pid }}"
+      register: cassandra_apply_config_unit_read
+      changed_when: false
+      failed_when: false  # not read: nothing compared
+      check_mode: false  # reads only
+      no_log: true  # its environment can hold passwords
+      when:
+        - cassandra_jvm.pid is defined
+        - cassandra_service_unit_manage | default(true) | bool
+        - cassandra_service_start | default('unit') in ['unit', 'package_script']
 
     - name: Look for a restart still pending
       ansible.builtin.include_role:
@@ -269,6 +459,16 @@
         cassandra_apply_config_todo: "{{ _todo }}"
         # Medusa's changes, applied at the node's turn (action_apply_config.yml), no restart for them
         cassandra_apply_config_medusa: "{{ _medusa }}"
+        # the repository, the packages and tools, the firewall: applied at the node's turn, no restart for them
+        # ([{section, item, before, after}], the plan's view)
+        cassandra_apply_config_extras: "{{ _extras }}"
+        # its one restart for these too (restarted): the Java it moves to (java_plan.yml), a newer release of its
+        # series (the package updated with Cassandra stopped), what its unit gives the running Cassandra
+        cassandra_apply_config_java: "{{ _java }}"
+        cassandra_apply_config_release: "{{ _release }}"
+        cassandra_apply_config_unit_changes: "{{ _unit_changes }}"
+        # the Java, the package, the unit, as the plan's view shows the settings ([{section, item, before, after}])
+        cassandra_apply_config_restart_items: "{{ _restart_items }}"
         cassandra_apply_config_then: "{{ _then }}"
         cassandra_apply_config_unit_failed: "{{ _unit_failed }}"  # (the refusal below names it)
         # checked again before the write (action_apply_config.yml): that JVM still runs
@@ -294,9 +494,9 @@
         # the disk settings done in its restart window (cassandra_linux's disk tuning, Cassandra stopped)
         cassandra_apply_config_disks_window: "{{ _disks_window }}"
         # why it is restarted when not for its config alone (said with the restart, in the plan and the recap)
-        cassandra_apply_config_why: "{{ _os_why }}"
+        cassandra_apply_config_why: "{{ (([_os_why] if _os_why else []) + _b_why) | join(', ') }}"
         # (said in the plan and the recap: that, else the JMX access file alone, read at start)
-        cassandra_apply_config_restart_why: "{{ _os_why or _restart_why }}"
+        cassandra_apply_config_restart_why: "{{ (([_os_why] if _os_why else []) + _b_why) | join(', ') or _restart_why }}"
         # (the plan and the --check recap) what a real run does to it, in the order it does it: its intentions,
         # never their outcome; [] for a node not restarted nor started (its usual words)
         cassandra_apply_config_steps: "{{ _steps }}"
@@ -355,7 +555,15 @@
                  ~ ' edits are lost. Restore your copy first to keep them.'] if _keep_missing else [])
              + (['WARNING  Cassandra runs (pid ' ~ cassandra_jvm.pid ~ ') outside its cassandra unit (not in its control group): a real run'
                  ' refuses its restart (it would start a second Cassandra)']
-                if _hand_started | default(false) | bool else []) }}
+                if _hand_started | default(false) | bool else [])
+             + (['next restart: jemalloc loaded (installed now; no effect now)']
+                if _running | bool and _then != 'restart'
+                   and _extras | map(attribute='item') | select('match', 'package (libjemalloc2|jemalloc)$') | list else [])
+             + (["next restart: the cassandra unit written (it differs in systemd's handling of the service only; no effect"
+                 " now)"] if _running | bool and _then != 'restart' and _cassandra_service_unit_differs | default(false) | bool
+                         and not _unit_changes else [])
+             + (cassandra_apply_config_version.notes | default([]) | map('regex_replace', '^', 'Cassandra ') | list
+                if _release | bool else []) }}
         # why a node written while it runs is not restarted, said in the plan (the outcomes' own reason otherwise)
         cassandra_apply_config_kept_running: >-
           {%- set out = ['an owner, group or mode: read at start'] if _perms + _dirs else [] -%}
@@ -368,7 +576,8 @@
           {%- if 'removed' in kinds -%}{%- set _ = out.append('the exporter files removed: the running Cassandra keeps the ones it opened until its next restart') -%}{%- endif -%}
           {{ (out if _jmx or _exporter else []) + (_no_effect if _then == 'none' else [])
              + ([_header_added] if _header and _then == 'none' else [])
-             + ([_medusa_live] if _medusa and _then == 'none' else []) }}
+             + ([_medusa_live] if _medusa and _then == 'none' else [])
+             + ([_extras_live] if _extras and _then == 'none' else []) }}
       vars:
         _files: "{{ _cassandra_config_changes | default([]) }}"
         # the files left as they are that get the role's header line, nothing else: a comment, no restart for it
@@ -379,6 +588,42 @@
         # restart for them
         _medusa: "{{ _cassandra_medusa_items | default([]) if cassandra_medusa_enabled | default(false) | bool else [] }}"
         _medusa_live: "Medusa: not read by Cassandra"
+        _extras_live: "the repository, packages, firewall: not read by Cassandra"  # (EXTRAS_LIVE)
+        # the repository, packages and tools, firewall (compared on a node whose version stays: _cassandra_compare)
+        _seen: "{{ _cassandra_change_report_seen | default({}) }}"
+        _extras: >-
+          {{ ([] if cassandra_apply_config_version | default({}) else
+              _cassandra_repository_items | default([]) | map('combine', {'section': 'Repository'}) | list
+              + _seen.get('cassandra_install', {}).get('items', []) | map('combine', {'section': 'Packages'}) | list
+              + _seen.get('cassandra_firewall', {}).get('items', []) | map('combine', {'section': 'Firewall'}) | list) }}
+        _java: "{{ cassandra_update_java_todo | default(false) | bool and cassandra_jvm.pid is defined }}"
+        _release: "{{ (cassandra_apply_config_version | default({})).kind | default('') == 'release' }}"
+        # what the running Cassandra got from its unit against what the role's unit gives (none read: nothing)
+        _unit_read: "{{ dict(cassandra_apply_config_unit_read.stdout_lines | default([]) | select('search', '=') | map('split', '=', 1)) }}"
+        _unit_changes: >-
+          {{ ({'user': _unit_read.user | default(''), 'group': _unit_read.group | default(''),
+               'limits': _unit_read.limits | default('') | b64decode, 'environment': _unit_read.environment | default('')}
+              if _unit_read.limits is defined else {})
+             | community.cassandra.cassandra_apply_config_unit(
+                 {'user': cassandra_service_user | default(cassandra_user | default('cassandra')),
+                  'group': cassandra_service_group | default(cassandra_group | default('cassandra')),
+                  'limits': {'nofile': cassandra_service_limit_nofile | default(''), 'nproc': cassandra_service_limit_nproc | default(''),
+                             'memlock': cassandra_service_limit_memlock | default(''), 'as': cassandra_service_limit_as | default('')}
+                            if cassandra_service_start | default('unit') == 'unit' else {},
+                  'environment': cassandra_service_environment | default({})}) }}
+        _restart_items: >-
+          {{ ([{'section': 'Java', 'item': 'Java', 'before': cassandra_update_java_major | default('') or 'unknown',
+                'after': cassandra_java_version | string ~ ' (installed)'}] if _java | bool else [])
+             + ([{'section': 'Cassandra', 'item': 'Cassandra', 'before': cassandra_apply_config_version.running,
+                  'after': cassandra_apply_config_version.wanted ~ ' (package)'}] if _release | bool else [])
+             + _unit_changes | map('combine', {'section': 'cassandra unit'}) | list }}
+        # reasons of the node's one restart besides its config and OS settings (said with the restart)
+        _b_why: >-
+          {{ (['Java ' ~ (cassandra_update_java_major | default('') or '?') ~ ' -> ' ~ cassandra_java_version] if _java | bool else [])
+             + (['Cassandra ' ~ cassandra_apply_config_version.running ~ ' -> ' ~ cassandra_apply_config_version.wanted]
+                if _release | bool else [])
+             + (['its unit: ' ~ _unit_changes | map(attribute='item') | map('regex_replace', '^unit ', '') | join(', ')]
+                if _unit_changes else []) }}
         _keep_missing: "{{ _cassandra_config_keep_missing | default([]) }}"
         # the JMX files written (missing, or other users or rights); the access file is read at start: written
         # back or changed, the rights the running Cassandra has are not known to be these (local JMX logs in no one)
@@ -483,7 +728,8 @@
         # a time sync unit that cannot run here (its condition): left out, said
         _no_unit: "{{ _os | selectattr('timesync', 'defined') | list if _clock.condition | default('') == 'no' else [] }}"
         _todo: >-
-          {{ _files | length > 0 or (_perms + _dirs + _jmx + _exporter + _header + _medusa) | length > 0 or _pending | bool
+          {{ _files | length > 0 or (_perms + _dirs + _jmx + _exporter + _header + _medusa + _extras) | length > 0 or _pending | bool
+             or _java | bool or _release | bool or _unit_changes | length > 0
              or _timesync | bool
              or _stopped | bool or _disks_window | length > 0 }}
         # Cassandra running: restart (new settings or a restart pending), none (an owner or mode alone: read at
@@ -491,6 +737,7 @@
         # or the node a resumed run stopped), write (stopped on purpose, or failed with nothing to write: left as it is)
         _then: >-
           {{ ('restart' if _files | reject('in', _as_started + _proven) | list | length > 0 or _rights | length > 0 or _pending | bool
+                            or _b_why | length > 0
                             or _timesync | bool or _disks_window | length > 0 or _exporter_restart | bool
               else 'none') if _running | bool
              else 'start' if _starts | bool else 'write' }}
@@ -511,16 +758,19 @@
         # servers set (timesync.yml), the clock waited for (2 minutes at most: Cassandra starts all the same); started
         _steps: >-
           {%- set ts = _ts_items | map(attribute='item') | list -%}
-          {%- set window = (_timesync | bool or _disks_window | length > 0) -%}
+          {%- set window = (_timesync | bool or _disks_window | length > 0 or _release | bool) -%}
           {%- set drain = cassandra_operation_drain | default(true) | bool or not cassandra_service_unit_manage | default(true) | bool
                           or cassandra_service_start | default('unit') != 'unit' -%}
-          {%- set reason = '' if _os_why else _restart_why -%}
+          {%- set reason = '' if _os_why else (_b_why | join(', ') or _restart_why) -%}
           {%- set os = [] -%}
           {%- for d in _disks_window -%}
           {%-   set _ = os.append('switch the tuned profile' if d.item == 'tuned profiles'
                                   else 'reload the tuned profile' if d.item is match('tuned profile ')
                                   else 'set the LVM read-ahead (lvchange)') -%}
           {%- endfor -%}
+          {%- if _release | bool -%}
+          {%-   set _ = os.append('update Cassandra to ' ~ cassandra_apply_config_version.wanted ~ ', write its config again') -%}
+          {%- endif -%}
           {%- if _timesync | bool -%}
           {%-   for i in ts if i is match('package ') -%}{%- set _ = os.append('install ' ~ i[8:]) -%}{%- endfor -%}
           {%-   for i in ts if i is not match('package ') and i != 'chrony server line' -%}
@@ -531,8 +781,10 @@
           {%- if _timesync | bool or (_then == 'start' and _stopped | bool and _clock.mark_timesync is defined) -%}
           {%-   set _ = os.append('wait up to 2m for clock sync') -%}
           {%- endif -%}
-          {%- set write = (['write the config'] if (_files + _perms + _dirs + _jmx + _exporter + _header) | length > 0 else [])
-                          + (['set up Medusa'] if _medusa else []) -%}
+          {%- set write = (['install Java ' ~ cassandra_java_version] if _java | bool else [])
+                          + (['write the config'] if (_files + _perms + _dirs + _jmx + _exporter + _header) | length > 0 else [])
+                          + (['set up Medusa'] if _medusa else [])
+                          + (['apply the repository, packages, firewall'] if _extras else []) -%}
           {%- if _then == 'restart' and window -%}
           {{ write + [('drain and stop' if drain else 'stop') ~ ' Cassandra'] + os | unique | list + ['start Cassandra'] }}
           {%- elif _then == 'restart' -%}
@@ -760,7 +1012,9 @@
                                     'stats': v.cassandra_config_live_stat.results | default([]),
                                     'dir_stats': v.cassandra_config_dir_stat.results | default([]),
                                     'os': v.cassandra_apply_config_os | default([]),
-                                    'medusa': v.cassandra_apply_config_medusa | default([])}) -%}
+                                    'medusa': v.cassandra_apply_config_medusa | default([]),
+                                    'extra': v.cassandra_apply_config_restart_items | default([])
+                                             + v.cassandra_apply_config_extras | default([])}) -%}
           {%- endfor -%}
           {{ out }}
 
@@ -837,6 +1091,12 @@
           {%- endfor -%}
           {{ out }}
         _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default((_cassandra_preflight | default({})).cassandra_cluster_name | default('')) }}"
+        # the ring's nodes the inventory does not have: left as they are (topology shows them)
+        _ring_unknown: >-
+          {{ ('has ' ~ _cassandra_apply_config_ring.unknown | join(', ') ~ ', which no host of the inventory has: left as'
+              ~ (' it is' if _cassandra_apply_config_ring.unknown | length == 1 else ' they are')
+              ~ ' (topology --check shows the ring against the inventory)')
+             if _cassandra_apply_config_ring.unknown | default([]) else '' }}
         _up_to_date: "{{ ansible_play_hosts | reject('in', _todo) | list }}"
         # the question and the head name the most disruptive effect: a Cassandra restart (the OS settings done with
         # Cassandra stopped are done in that restart), else a start of a Cassandra not running, else no restart
@@ -910,7 +1170,8 @@
                + [{'label': cassandra_apply_config_no_return | default([]) | community.cassandra.cassandra_node_list,
                    'text': ('storage_compatibility_mode moves to NONE: the point of no return. Once a node runs with it,'
                             ~ ' it cannot go back to UPGRADING or CASSANDRA_4, nor to its former Cassandra version.')
-                           if cassandra_apply_config_no_return | default([]) else ''}] }}
+                           if cassandra_apply_config_no_return | default([]) else ''},
+                  {'label': 'the ring', 'text': _ring_unknown}] }}
 
     # first, once the run is confirmed: read at each JMX login (no restart), the checks before a node's turn
     # log in with it; a node it fails on stops the run, as a write at its turn would
@@ -1189,8 +1450,10 @@
              | map(attribute='_cassandra_apply_config_planned') | first | default(none) }}
         # --check: why a real run would refuse (a node not running, restarts to do)
         _refused: >-
-          {{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('_cassandra_apply_config_refused', 'defined')
-             | map(attribute='_cassandra_apply_config_refused') | first | default([]) }}
+          {{ (query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('_cassandra_apply_config_stops', 'defined')
+              | map(attribute='_cassandra_apply_config_stops') | first | default([]))
+             + (query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('_cassandra_apply_config_refused', 'defined')
+                | map(attribute='_cassandra_apply_config_refused') | first | default([])) }}
         # (the TO DO of the nodes whose read-ahead was set live: the cluster named as this run named it)
         _restart_command: >-
           {{ 'rolling_restart' | community.cassandra.cassandra_command(
@@ -1198,10 +1461,17 @@
                hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD')) }}
         # --check: the plan's own warning, said here (no plan shown)
         _more: >-
-          {{ [{'label': _no_return | community.cassandra.cassandra_node_list,
-               'text': 'storage_compatibility_mode moves to NONE: the point of no return. Once a node runs with it,'
-                       ~ ' it cannot go back to UPGRADING or CASSANDRA_4, nor to its former Cassandra version.'}]
-             if ansible_check_mode and _no_return else [] }}
+          {{ ([{'label': _no_return | community.cassandra.cassandra_node_list,
+                'text': 'storage_compatibility_mode moves to NONE: the point of no return. Once a node runs with it,'
+                        ~ ' it cannot go back to UPGRADING or CASSANDRA_4, nor to its former Cassandra version.'}]
+              if ansible_check_mode and _no_return else [])
+             + ([{'label': 'the ring', 'text': _ring_unknown}] if ansible_check_mode else []) }}
+        # the ring's nodes the inventory does not have (the plan's warning, said here under --check)
+        _ring: "{{ hostvars[ansible_play_hosts_all | first]._cassandra_apply_config_ring | default({}) }}"
+        _ring_unknown: >-
+          {{ ('has ' ~ _ring.unknown | join(', ') ~ ', which no host of the inventory has: left as'
+              ~ (' it is' if _ring.unknown | length == 1 else ' they are')
+              ~ ' (topology --check shows the ring against the inventory)') if _ring.unknown | default([]) else '' }}
         _no_return: >-
           {{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('cassandra_apply_config_no_return', 'defined')
              | map(attribute='cassandra_apply_config_no_return') | first | default([]) }}

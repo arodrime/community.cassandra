@@ -42,7 +42,7 @@
       loop: "{{ _cassandra_install_files }}"
       no_log: "{{ cassandra_install_url is search('@|[?]') }}"  # credentials or a signature in the URL
       check_mode: false  # read-only
-      when: ansible_check_mode
+      when: _cassandra_install_check
 
     - name: Install what Cassandra needs besides Java (RedHat)
       ansible.builtin.package:
@@ -60,7 +60,7 @@
         mode: "0700"
       loop: [absent, directory]
       changed_when: false
-      when: not ansible_check_mode
+      when: not _cassandra_install_check
 
     - name: Download the package files
       ansible.builtin.get_url:
@@ -78,7 +78,7 @@
       retries: 3
       changed_when: false  # a temp file: the install below reports the change
       no_log: "{{ cassandra_install_url is search('@|[?]') }}"
-      when: not ansible_check_mode
+      when: not _cassandra_install_check
 
     - name: Install them without their Java dependency (RedHat)
       ansible.builtin.command:
@@ -86,7 +86,7 @@
       changed_when: true
       when:
         - ansible_facts['os_family'] == 'RedHat'
-        - not ansible_check_mode
+        - not _cassandra_install_check
 
     # apt resolves the other dependencies from the configured repositories; Java
     # is a package already (or the local one that stands for the tarball). The
@@ -101,13 +101,13 @@
       changed_when: true
       when:
         - ansible_facts['os_family'] == 'Debian'
-        - not ansible_check_mode
+        - not _cassandra_install_check
 
     - name: Say what would be installed (--check)
       ansible.builtin.debug:
         msg: "{{ inventory_hostname }}: would download and install {{ _cassandra_install_files | join(', ') }}"
       changed_when: true
-      when: ansible_check_mode
+      when: _cassandra_install_check
       vars:
         cassandra_output: true
 

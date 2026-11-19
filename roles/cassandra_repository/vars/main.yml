@@ -24,3 +24,7 @@ _cassandra_repository_shipped_fingerprints:
   - 9099B5CBC2E6B4A459D4AD298B30315F3ACF0F3A
   - F43BD1DCA7D5F5AFF5BBEC1EA4B9C195907CB45B
   - 11064F0220CE812011FE260AAA5897580D582A74
+
+# --check, or apply_config's compare (check_mode applied to the role, which ansible_check_mode does not tell:
+# _cassandra_compare): the role's tasks act as under --check
+_cassandra_repository_check: "{{ ansible_check_mode or _cassandra_compare | default(false) | bool }}"

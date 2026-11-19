@@ -6,3 +6,7 @@ _cassandra_firewall_port_sources: >-
      | combine({(cassandra_prometheus_exporter_port | default(9404) | string) ~ '/tcp': cassandra_prometheus_exporter_sources}
                if cassandra_prometheus_exporter_enabled | default(false) | bool and cassandra_prometheus_exporter_sources | length > 0
                else {}) }}
+
+# --check, or apply_config's compare (check_mode applied to the role, which ansible_check_mode does not tell:
+# _cassandra_compare): the role's tasks act as under --check
+_cassandra_firewall_check: "{{ ansible_check_mode or _cassandra_compare | default(false) | bool }}"

@@ -32,7 +32,7 @@
   changed_when: false
   check_mode: false
   when:
-    - ansible_check_mode
+    - _cassandra_install_check
     - ansible_facts['os_family'] == 'Debian'
 
 - name: Look up candidate versions (check mode, RedHat)
@@ -42,7 +42,7 @@
   register: cassandra_install_candidates_dnf
   check_mode: false
   when:
-    - ansible_check_mode
+    - _cassandra_install_check
     - ansible_facts['os_family'] == 'RedHat'
 
 - name: Keep the candidate versions
@@ -60,7 +60,7 @@
       {%-   set _ = out.update({p: cassandra_package_version}) -%}
       {%- endfor -%}
       {{ out }}
-  when: ansible_check_mode
+  when: _cassandra_install_check
 
 - name: Build the change list
   ansible.builtin.set_fact:
@@ -70,7 +70,7 @@
            'before': 'absent',
            'after': (ansible_facts['packages'][item][0].version
                      ~ (('-' ~ ansible_facts['packages'][item][0].release) if ansible_facts['packages'][item][0].release | default('') else ''))
-                    if (item in ansible_facts['packages'] and not ansible_check_mode)
+                    if (item in ansible_facts['packages'] and not _cassandra_install_check)
                     else (_cassandra_install_candidates[item] | default('') or 'not in configured repos yet')}] }}
   loop: "{{ _cassandra_install_new }}"
 

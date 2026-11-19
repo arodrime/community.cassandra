@@ -82,7 +82,7 @@
 
     - name: Add the deadsnakes PPA (Ubuntu without python3.11)
       when:
-        - not ansible_check_mode  # deb822_repository needs python3-debian even to compare
+        - not _cassandra_install_check  # deb822_repository needs python3-debian even to compare
         - ansible_facts['distribution'] == 'Ubuntu'
         - cassandra_cqlsh_python_repo_uri != ''
         - "'Candidate: (none)' in cassandra_python311_policy.stdout or cassandra_python311_policy.stdout == ''"
@@ -150,5 +150,5 @@
       when:
         - "'python3.11' not in _cassandra_install_before"
         - >-
-          not (ansible_check_mode and ansible_facts['distribution'] == 'Ubuntu' and cassandra_cqlsh_python_repo_uri != ''
+          not (_cassandra_install_check and ansible_facts['distribution'] == 'Ubuntu' and cassandra_cqlsh_python_repo_uri != ''
                and cassandra_python311_policy.stdout is not search('Candidate: [0-9]'))

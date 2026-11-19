@@ -30,3 +30,7 @@ _cassandra_java_home: >-
      if cassandra_java_tarball != '' else '' }}
 
 _cassandra_java_link: "{{ cassandra_java_link | regex_replace('(?<=.)/+$', '') }}"
+
+# --check, or apply_config's compare (check_mode applied to the role, which ansible_check_mode does not tell:
+# _cassandra_compare): the role's tasks act as under --check
+_cassandra_install_check: "{{ ansible_check_mode or _cassandra_compare | default(false) | bool }}"

@@ -1,0 +1,157 @@
+from __future__ import (absolute_import, division, print_function)
+__metaclass__ = type
+
+# What apply_config finds besides the config files: a version change (a release of the series in the node's restart,
+# another series an upgrade, an older release refused), the ring against the inventory (topology's), a joined node's
+# token, what the running Cassandra got from its unit; and the refusal they make before any change.
+
+import pytest
+
+from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config_checks import (
+    cassandra_apply_config_ring, cassandra_apply_config_stops, cassandra_apply_config_token, cassandra_apply_config_unit,
+    cassandra_apply_config_version, cassandra_described_versions)
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_patch_notes as notes
+
+COMMANDS = {"upgrade": "ansible-playbook community.cassandra.upgrade -e cassandra_upgrade_phase=preflight",
+            "topology_check": "ansible-playbook community.cassandra.topology --check",
+            "topology": "ansible-playbook community.cassandra.topology"}
+
+
+@pytest.mark.parametrize("series, package, running, kind, category", [
+    ("41x", "", "4.1.5", "", ""),  # any release of the series: nothing
+    ("41x", "4.1.5", "4.1.5", "", ""),
+    ("41x", "4.1.5", "4.1.5-1", "", ""),  # (an rpm's release suffix)
+    ("41x", "4.1.12", "4.1.11", "release", "B"),
+    ("41x", "4.1.4", "4.1.5", "older", "C"),
+    ("50x", "", "4.1.5", "series", "C"),
+    ("50x", "5.0.6", "4.1.5", "series", "C"),
+    ("41x", "", "5.0.2", "older", "C"),
+    ("41x", "4.1.5", "", "", ""),  # not known (a host not set up): nothing said here
+])
+def test_the_version_change_and_its_category(series, package, running, kind, category):
+    found = cassandra_apply_config_version(series, package, running)
+    assert found.get("kind", "") == kind and found.get("category", "") == category
+
+
+def test_a_release_the_notes_cover_with_what_it_crosses():
+    found = cassandra_apply_config_version("50x", "5.0.9", "5.0.3")
+    assert found["refused"] == [] and found["unknown"] is False
+    assert found["notes"] == ["5.0.4: " + dict((r, t) for s, r, t in notes.NOTES)["5.0.4"],
+                              "5.0.8: " + dict((r, t) for s, r, t in notes.NOTES)["5.0.8"]]
+
+
+def test_a_release_newer_than_the_notes_stops_unless_allowed():
+    newer = "4.1.%d" % (notes.numbers(notes.KNOWN["41x"])[2] + 1)
+    assert cassandra_apply_config_version("41x", newer, "4.1.11")["unknown"] is True
+    assert cassandra_apply_config_version("41x", newer, "4.1.11", allow_unknown="true")["unknown"] is False
+    lines = cassandra_apply_config_stops([{"name": "n1", "series": "41x",
+                                           "version": cassandra_apply_config_version("41x", newer, "4.1.11")}],
+                                         commands=COMMANDS)
+    assert lines[0].startswith("n1: Cassandra %s is newer than the releases the collection's notes cover (up to %s)"
+                               % (newer, notes.KNOWN["41x"]))
+    assert "    -e cassandra_allow_unknown_patch=true" in lines
+
+
+@pytest.mark.parametrize("options, refused", [
+    (["-Dcassandra.auth_bcrypt_gensalt_log2_rounds=31"], True),
+    (["-Dcassandra.auth_bcrypt_gensalt_log2_rounds=30"], False),
+    ([], False),
+])
+def test_a_release_that_would_not_start_stops(options, refused):
+    found = cassandra_apply_config_version("41x", "4.1.12", "4.1.11", {"cassandra_jvm_options": options})
+    assert bool(found["refused"]) is refused
+    lines = cassandra_apply_config_stops([{"name": "n1", "version": found}], commands=COMMANDS)
+    assert bool(lines) is refused
+    if refused:
+        assert "refuses to start" in lines[0] and lines[-1] == "then run apply_config again."
+
+
+def test_the_offheap_refusal_waits_for_its_release():
+    settings = {"cassandra_memtable_allocation_type": "offheap_objects", "cassandra_memtable_offheap_space": "0MiB"}
+    assert notes.refusals("41x", "4.1.11", "4.1.12", settings) == []
+    assert notes.refusals("41x", "4.1.12", "4.1.13", settings)[0].startswith("memtable_offheap_space 0")
+    assert notes.refusals("41x", "4.1.12", "4.1.13", dict(settings, cassandra_memtable_offheap_space="")) == []
+
+
+def test_an_upgrade_and_an_older_release_stop_with_their_way_out():
+    nodes = [{"name": "n1", "version": cassandra_apply_config_version("50x", "5.0.6", "4.1.5")},
+             {"name": "n2", "version": cassandra_apply_config_version("50x", "5.0.6", "4.1.5")},
+             {"name": "n3", "version": cassandra_apply_config_version("41x", "4.1.4", "4.1.5")}]
+    lines = cassandra_apply_config_stops(nodes, commands=COMMANDS)
+    assert lines[0].startswith("n3: runs Cassandra 4.1.5, the inventory asks for 4.1.4: Cassandra does not go back")
+    assert lines[1].startswith("n1, n2: runs Cassandra 4.1.5, the inventory asks for 5.0.6: another series is an upgrade")
+    assert "    " + COMMANDS["upgrade"] in lines
+    # a release of the series, nothing against it: no stop (the node's restart takes it)
+    assert cassandra_apply_config_stops([{"name": "n1", "version": cassandra_apply_config_version(
+        "41x", "4.1.12", "4.1.11")}], commands=COMMANDS) == []
+
+
+RING = {"dc1": {"nodes": [{"address": "10.0.0.1"}, {"address": "10.0.0.2"}, {"address": "10.0.0.9"}]}}
+
+
+def test_the_ring_against_the_inventory():
+    found = cassandra_apply_config_ring([{"name": "n1", "address": "10.0.0.1"}, {"name": "n4", "address": "10.0.0.4"}],
+                                        [{"name": "n2", "addresses": ["10.0.0.2", "n2"]},
+                                         {"name": "n5", "addresses": ["10.0.0.5"]}],
+                                        ["10.0.0.1", "10.0.0.4", "10.0.0.2", "10.0.0.5"], RING)
+    assert found == {"add": ["n4"], "remove": ["n2"], "unknown": ["10.0.0.9"]}
+    lines = cassandra_apply_config_stops([], found, COMMANDS)
+    assert lines[0] == "n4: in the inventory, not in the ring: adding a node is topology's (it bootstraps it)."
+    assert lines[1].startswith("n2: marked cassandra_node_state: absent, still in the ring")
+    assert lines[-4:] == ["the nodes to add or remove, the plan (changing nothing), then the run:",
+                          "    " + COMMANDS["topology_check"], "    " + COMMANDS["topology"], "then run apply_config again."]
+    # a ring node the inventory lacks alone: said, no stop (as topology, which refuses only with steps to do)
+    assert cassandra_apply_config_stops([], dict(found, add=[], remove=[]), COMMANDS) == []
+    # no node running: nothing judged
+    assert cassandra_apply_config_ring([{"name": "n4", "address": "10.0.0.4"}], [], [], {}) == \
+        {"add": [], "remove": [], "unknown": []}
+
+
+@pytest.mark.parametrize("inventory, live, owned, refused", [
+    ("", "-922", ["-922"], False),  # none in the inventory
+    ("-922", "-922", ["100"], False),  # nothing written (import: the file's value)
+    ("100", "-922", ["100"], False),  # the record of the token it owns (after move_node)
+    ("200", "-922", ["100"], True),  # another token: move_node's
+    ("200", "-922", [], False),  # the ring not read: nothing judged
+])
+def test_a_joined_node_s_token(inventory, live, owned, refused):
+    why = cassandra_apply_config_token(inventory, live, owned)
+    assert bool(why) is refused
+    if refused:
+        assert "move_node" in why and "first start only" in why
+
+
+LIMITS = """Limit                     Soft Limit           Hard Limit           Units
+Max processes             32768                32768                processes
+Max open files            100000               100000               files
+Max locked memory         unlimited            unlimited            bytes
+Max address space         unlimited            unlimited            bytes
+"""
+WANTED = {"user": "cassandra", "group": "cassandra",
+          "limits": {"nofile": 100000, "nproc": 32768, "memlock": "infinity", "as": "infinity"}, "environment": {}}
+
+
+def test_the_unit_compared_with_what_the_running_cassandra_got():
+    running = {"user": "cassandra", "group": "cassandra", "limits": LIMITS, "environment": ""}
+    assert cassandra_apply_config_unit(running, WANTED) == []  # (an import: the same)
+    changed = dict(WANTED, limits=dict(WANTED["limits"], nofile=1048576), environment={"JAVA_HOME": "/opt/x"})
+    assert cassandra_apply_config_unit(running, changed) == [
+        {"item": "unit LimitNOFILE", "before": "100000", "after": "1048576"},
+        {"item": "unit Environment JAVA_HOME", "before": "absent", "after": "/opt/x"}]
+    # removed from the inventory: the next start does not get it
+    assert cassandra_apply_config_unit(dict(running, environment='"A=x y"'), WANTED) == [
+        {"item": "unit Environment A", "before": "x y", "after": "absent"}]
+    # memlock in a unit's suffix; the init script (no limits): only its environment
+    assert cassandra_apply_config_unit(dict(running, limits=LIMITS.replace("unlimited            unlimited            bytes\nMax a",
+                                                                           "65536                65536                bytes\nMax a")),
+                                       dict(WANTED, limits=dict(WANTED["limits"], memlock="64K"))) == []
+    assert cassandra_apply_config_unit(running, dict(WANTED, limits={})) == []
+    assert cassandra_apply_config_unit({}, changed) == []  # not read: nothing
+
+
+def test_the_versions_described():
+    text = ("Cluster Information:\n\tName: zorglub\nDatabase versions:\n\t\t4.1.5: [10.0.0.1:7000, 10.0.0.2:7000]\n\n"
+            "\t\t4.1.6: [10.0.0.3:7000]\n\nOther: x\n")
+    assert cassandra_described_versions(text) == {"10.0.0.1": "4.1.5", "10.0.0.2": "4.1.5"}
+    assert cassandra_described_versions("Database versions:\n\t5.0.2: [[2001:db8::1]:7000]\n") == {"2001:db8::1": "5.0.2"}
+    assert cassandra_described_versions("") == {}

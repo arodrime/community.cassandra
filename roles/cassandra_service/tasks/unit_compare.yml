@@ -1,0 +1,33 @@
+---
+# apply_config's plan: whether the unit file (or the drop-in of the package's init script) the role writes differs
+# from the node's, nothing written (apply_config writes it in the node's restart, action_restart.yml). What the
+# running Cassandra got from its unit (its user, limits, environment) is compared on its own, with the running JVM
+# (filter cassandra_apply_config_unit): a file that differs only in systemd's handling of the service (Restart,
+# TimeoutStopSec, the drain on stop) changes nothing for the running Cassandra, and is written at its next restart.
+# Sets _cassandra_service_unit_differs.
+- name: Tell whether the unit file differs
+  ansible.builtin.template:
+    src: cassandra.service.j2
+    dest: /etc/systemd/system/cassandra.service
+    mode: "0644"
+  check_mode: true
+  diff: false
+  register: cassandra_service_unit_compare
+  when: _cassandra_service_own_unit | bool
+
+- name: Tell whether the drop-in of the init script differs
+  ansible.builtin.template:
+    src: cassandra-environment.conf.j2
+    dest: "{{ _cassandra_service_environment_dropin }}"
+    mode: "0644"
+  check_mode: true
+  diff: false
+  register: cassandra_service_dropin_compare
+  when:
+    - cassandra_service_unit_manage | bool
+    - _cassandra_service_dropin_wanted | bool
+
+- name: Note whether they differ
+  ansible.builtin.set_fact:
+    _cassandra_service_unit_differs: >-
+      {{ cassandra_service_unit_compare is changed or cassandra_service_dropin_compare is changed }}

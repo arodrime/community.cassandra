@@ -17,7 +17,7 @@
       {{ _cassandra_repository_removed_yum.results | selectattr('changed') | map(attribute='item')
          | map('regex_replace', '^', 'cassandra-') | list }}
   when:
-    - ansible_check_mode
+    - _cassandra_repository_check
     - ansible_facts['os_family'] == "RedHat"
 
 - name: Remove the Cassandra apt sources (Debian & Ubuntu)
