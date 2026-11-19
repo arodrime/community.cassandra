@@ -205,10 +205,11 @@ def test_check_lets_the_stopped_node_stay_down_for_a_restart_node():
 
 def test_the_check_recap_ends_with_the_refusal():
     t = task("Print the changes")
+    summary = next(p for p in PLAYS if p.get("name") == "Summary")
     hostvars = dict((h, dict(v, _cassandra_apply_config_refused=[REASON] + WAY + [AGAIN], cassandra_op_done=v["cassandra_apply_config_todo"],
                              cassandra_op_result="would apply" if v["cassandra_apply_config_todo"] else "nothing to apply"))
                     for h, v in HOSTVARS.items())
-    variables = dict(trust(t["vars"]), hostvars=hostvars, groups={"prod": HOSTS}, cassandra_hosts="prod",
+    variables = dict(trust(dict(summary["vars"], **t["vars"])), hostvars=hostvars, groups={"prod": HOSTS}, cassandra_hosts="prod",
                      ansible_play_hosts_all=HOSTS, cassandra_cluster_name="c", ansible_check_mode=True)
     # no plan shown (a later play stopped first): the recap says it, last
     lines = render(t["ansible.builtin.debug"]["msg"], variables)

@@ -38,7 +38,8 @@ SITES = [
     ("apply_config.yml", "_cluster"),  # (the stop before any change)
     ("cleanup_batch.yml", "_cluster"), ("clocks_check.yml", "_cluster"),
     ("decommission_node.yml", "_cluster_name"), ("decommission_node.yml", "_cluster_name"),
-    ("node_operation.yml", "_cluster"), ("reset_node.yml", "_cluster"), ("restart_batch.yml", "_cluster"),
+    ("node_operation.yml", "_cluster"), ("node_operation.yml", "_cluster"),  # (the stop, its report)
+    ("reset_node.yml", "_cluster"), ("run_report.yml", "_cluster"), ("restart_batch.yml", "_cluster"),
     ("rolling_reboot.yml", "_cluster"), ("rolling_restart.yml", "_cluster"), ("summary.yml", "_cluster"),
     ("topology.yml", "_plan_cluster"), ("update_java.yml", "_cluster"), ("upgrade.yml", "_cluster"),
 ]

@@ -301,6 +301,22 @@ argument_specs:
         default: 86400
         description:
           - Seconds one node's C(nodetool upgradesstables) may take.
+      cassandra_run_report_dir:
+        type: path
+        default: ""
+        description:
+          - Where C(apply_config) writes the report of each run, on the controller
+            (C(apply_config-<YYYY-MM-DD-HHMM>.txt), C(apply_config-check-...) under C(--check)) with the
+            collection's version and commit, the plan, what was done on each node and when, and every warning
+            in full. A relative path is from the current dir.
+          - Empty (default) means C(reports/<cluster group>) next to the inventory's dir, where
+            C(import_cluster) writes its C(report.txt) by default.
+      cassandra_run_report_keep:
+        type: int
+        default: 20
+        description:
+          - How many reports of an operation are kept in O(cassandra_run_report_dir) (C(--check)'s
+            included); the oldest are removed after a run.
       cassandra_rolling_progress_dir:
         type: path
         default: ""

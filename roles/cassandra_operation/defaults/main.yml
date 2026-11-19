@@ -153,6 +153,12 @@ cassandra_rolling_resume: false
 cassandra_rolling_progress_dir: ""
 cassandra_rolling_progress_days: 30
 
+# apply_config writes the report of each run on the controller (its plan, what was done on each node and when, every
+# warning in full): <dir>/apply_config-<YYYY-MM-DD-HHMM>.txt (--check: apply_config-check-...), the last ones kept.
+# Empty dir: reports/<cluster group> next to the inventory dir, where import_cluster writes its report.txt by default
+cassandra_run_report_dir: ""
+cassandra_run_report_keep: 20
+
 # The upgrade playbook's sstables phase (nodetool upgradesstables, one node at a
 # time): sstables rewritten at once (nodetool's default; 0: every compaction
 # thread), and how long one node may take (seconds)

@@ -149,7 +149,7 @@ COVERAGE = [
       "cassandra_cql_password", "cassandra_cqlsh_command"], NOT_A_SETTING,
      "how the playbooks log in (nodetool, cqlsh); the JMX users of the node are cassandra_jmx_users"),
     ([r"^cassandra_(rolling|stream|clock|move|token|upgrade_sstables|add_node|replace_node|create_cluster"
-      r"|new_node|dead_node|decommission)_\w+$",
+      r"|new_node|dead_node|decommission|run_report)_\w+$",
       "cassandra_operation_confirm", "cassandra_operation_drain", "cassandra_service_allow_new_seed",
       "cassandra_service_enabled", "cassandra_service_state", "cassandra_service_health_force",
       "cassandra_service_health_timeout", "cassandra_service_restart_on_change", "cassandra_service_wait_for_normal",

@@ -1,0 +1,73 @@
+---
+# The report of a run of a changing operation, on the controller, next to the import's report.txt:
+# <cassandra_run_report_dir, default reports/<cluster group> next to the inventory dir>/<operation>-<YYYY-MM-DD-HHMM>.txt
+# (--check: <operation>-check-...), its last cassandra_run_report_keep kept (the oldest removed). Its text:
+# cassandra_run_report (the head: the operation, the cluster, the outcome, the collection's version and commit, when
+# it started and ended; then the sections given, in full). Run once. Under --check too (a file on the controller,
+# nothing on the nodes). Not written (a dir not writable): said, the run goes on.
+# Takes: _cassandra_run_report_operation, _cassandra_run_report_sections ([{title, lines}]),
+# _cassandra_run_report_started (seconds since the epoch), _cassandra_run_report_status (default DONE, CHECK).
+- name: Write the report of the run
+  delegate_to: localhost
+  run_once: true
+  become: false
+  check_mode: false  # the report of --check too, on the controller
+  diff: false
+  vars:
+    ansible_become: false  # (an inventory's ansible_become beats the keyword: a report the user can read)
+    _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
+    _dir: >-
+      {{ ansible_inventory_sources | default([])
+         | community.cassandra.cassandra_reports_dir(lookup('community.cassandra.cassandra_hosts'),
+                                                        cassandra_run_report_dir | default(''),
+                                                        lookup('ansible.builtin.env', 'PWD')) }}
+    _path: >-
+      {{ _dir ~ '/' ~ _cassandra_run_report_operation
+                     | community.cassandra.cassandra_run_report_name(ansible_check_mode, _cassandra_run_report_started) }}
+  block:
+    - name: Make the dir of the reports
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Write the report
+      ansible.builtin.copy:
+        content: >-
+          {{ _cassandra_run_report_sections
+             | community.cassandra.cassandra_run_report(_cassandra_run_report_operation, _cluster,
+                                                        check=ansible_check_mode,
+                                                        status=_cassandra_run_report_status | default(''),
+                                                        started=_cassandra_run_report_started,
+                                                        ended=now().timestamp() | int) }}
+        dest: "{{ _path }}"
+        mode: "0644"
+
+    - name: List the reports of this operation
+      ansible.builtin.find:
+        paths: "{{ _dir }}"
+        patterns: "{{ _cassandra_run_report_operation }}-*.txt"
+      register: _cassandra_run_reports
+
+    - name: Remove the oldest ones
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: >-
+        {{ _cassandra_run_reports.files
+           | community.cassandra.cassandra_run_report_old(_cassandra_run_report_operation,
+                                                          cassandra_run_report_keep | default(20) | int) }}
+
+    - name: Say where the report is
+      ansible.builtin.debug:
+        msg: "Report: {{ _path }}"
+      vars:
+        cassandra_output: true  # an operator message (ops callback)
+  rescue:
+    - name: Say the report was not written
+      ansible.builtin.debug:
+        msg: >-
+          WARNING  the report of this run was not written ({{ ansible_failed_result.msg | default('failed') }}): set
+          cassandra_run_report_dir to a dir you can write.
+      vars:
+        cassandra_output: true

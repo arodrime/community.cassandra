@@ -498,7 +498,7 @@ def test_apply_config_recap():
                  "ansible_play_hosts_all": ["node1", "node2", "node3", "node4"]}
 
     def recap(check):
-        variables.update(trust(t["vars"]), ansible_check_mode=check)
+        variables.update(trust(dict(play["vars"], **t["vars"])), ansible_check_mode=check)  # (the recap's: the play's)
         return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(t["ansible.builtin.debug"]["msg"]))
 
     variables["cassandra_cluster_name"] = "my_cluster"

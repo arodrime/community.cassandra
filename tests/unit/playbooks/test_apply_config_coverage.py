@@ -161,7 +161,7 @@ def test_the_node_s_turn_installs_restarts_once_and_checks():
 
 def test_the_stops_are_said_in_the_check_recap():
     summary = [p for p in load("playbooks", "apply_config.yml") if p.get("name") == "Summary"][0]
-    refused = find(summary["tasks"], "Print the changes")["vars"]["_refused"]
+    refused = summary["vars"]["_refused"]  # (the play's: the recap's and the report's)
     assert "_cassandra_apply_config_stops" in refused and "_cassandra_apply_config_refused" in refused
 
 

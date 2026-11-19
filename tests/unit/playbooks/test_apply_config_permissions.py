@@ -487,7 +487,7 @@ def test_a_batch_node_stopped_by_another_says_so():
     tasks = load("roles", "cassandra_operation", "tasks", "node_operation.yml")
     op = [t for t in tasks if "block" in t][0]
     note = [t for t in op["block"] if t.get("name") == "Note a node of a batch as not finished"][0]
-    record, stop = op["rescue"]
+    record, report, stop = op["rescue"]  # (report: the run's, run_report.yml)
     base = {"cassandra_service_node_action": "apply_config", "cassandra_service_node_batch": True, "inventory_hostname": "n4",
             "_cassandra_op_results": [{"node": "n4", "result": "apply_config FAILED after 3s: check gossip on this node"},
                                       {"node": "n5", "result": "apply_config not finished: the run stopped at another node"}],

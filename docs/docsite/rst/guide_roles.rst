@@ -989,6 +989,16 @@ A real run shows them before its question (which names the most disruptive effec
 Cassandra on node1?``) and ends with what each node got; ``--check`` shows no plan: its recap is the plan, said once (the verdict
 with the restarts first, ``nothing was changed (--check)``, ``DIFFERENCES FOUND`` (what was observed), ``WOULD DO`` (what a real run would do), the warnings).
 
+Each run writes its report on the controller, next to the import's ``report.txt``:
+``reports/<cluster group>/apply_config-<YYYY-MM-DD-HHMM>.txt`` (``apply_config-check-...`` under ``--check``), where
+``reports`` is next to the inventory's dir (``cassandra_run_report_dir`` gives another dir). It has the collection's
+version and commit, when the run started and ended, a real run's plan (``DIFFERENCES FOUND``, ``WILL DO``, the checks'
+notes), its recap (what each node got, every warning in full), and when each node's turn started and how it ended;
+a run that stopped at a node has its stop as said on the screen instead of the recap. ``--check`` writes its recap
+(the differences, what a real run would do, the warnings). The last 20 reports are kept
+(``cassandra_run_report_keep``), the oldest removed after a run. A report that cannot be written is said in a
+warning; the run goes on.
+
 ``apply_config`` ignores no setting: every difference between the inventory and a node falls in one of four
 categories, each shown in the plan and under ``--check``. Every variable of the roles has its category in
 ``plugins/plugin_utils/cassandra_apply_config_coverage.py`` (a unit test fails on a variable without one):

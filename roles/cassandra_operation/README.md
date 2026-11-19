@@ -139,6 +139,12 @@ Set in the inventory, as any role variable.
   operation from its progress file, kept in `cassandra_rolling_progress_dir`
   (default: `.cassandra_progress` next to the inventory) for
   `cassandra_rolling_progress_days` (30).
+* `cassandra_run_report_dir` (default: `reports/<cluster group>` next to the
+  inventory's dir, where `import_cluster` writes its `report.txt`) and
+  `cassandra_run_report_keep` (default 20): `apply_config` writes the report
+  of each run there (`apply_config-<YYYY-MM-DD-HHMM>.txt`,
+  `apply_config-check-...` under `--check`), the last ones kept
+  (`run_report.yml`).
 * `cassandra_storage_mode_running` (5.0, none by default): the
   `storage_compatibility_mode` each node runs, read there by hand
   (`n1:CASSANDRA_4,n2:UPGRADING`), for a node whose mode could not be read
