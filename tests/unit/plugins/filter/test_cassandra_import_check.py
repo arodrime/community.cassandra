@@ -2047,3 +2047,28 @@ def test_rackdc_settings_the_role_cannot_write_back_stay_hand_edits(line):
     imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
     assert "cassandra_rackdc_extra_settings" not in imported["vars"]
     assert imported["hand_edits"] != [] and check(files, "50x")["differences"] != []
+
+
+ELSEWHERE_LINE = 'JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=10.0.0.1"'
+
+
+@pytest.mark.parametrize("series", ["40x", "41x", "50x"])
+def test_a_named_option_appended_outside_any_block_is_the_same_wherever_it_sits(series):
+    # the stock line still commented out, the option appended at the end of the file: bash runs it as well there
+    files = seeded(stock(series))
+    files["cassandra-env.sh"] += "\n" + ELSEWHERE_LINE + "\n"
+    assert host_vars(files, series)["cassandra_jmx_rmi_hostname"] in ("10.0.0.1", IPV4)
+    out = check(files, series)
+    assert out["differences"] == [] and any("at another place outside any block" in n for n in out["notes"])
+
+
+@pytest.mark.parametrize("where, env", [
+    ("in a block", {}),
+    # the unit's extra options: added before the node's line at the end, after the role's at the stock place
+    ("at the end", {"JVM_EXTRA_OPTS": "-Djava.rmi.server.hostname=10.9.9.9"}),
+], ids=["in a block", "the unit adds options"])
+def test_a_named_option_elsewhere_is_not_the_same_when_bash_may_add_another(where, env):
+    files = seeded(stock("50x"))
+    line = 'if [ -n "$CASSANDRA_CONF" ]; then\n%s\nfi' % ELSEWHERE_LINE if where == "in a block" else ELSEWHERE_LINE
+    files["cassandra-env.sh"] += "\n" + line + "\n"
+    assert check(files, "50x", env=env)["differences"] != []

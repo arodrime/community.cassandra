@@ -425,15 +425,45 @@ def without_lines(text, numbers):
     return "\n".join(line for n, line in enumerate(str(text).split("\n")) if n + 1 not in set(numbers))
 
 
+def _ops_of(role, live):
+    """The differing opcodes of env_lines role -> live (a line in a block differs from the same line outside any)."""
+    matcher = difflib.SequenceMatcher(None, [(line["depth"] > 0, line["text"]) for line in role],
+                                      [(line["depth"] > 0, line["text"]) for line in live], autojunk=False)
+    return [op for op in matcher.get_opcodes() if op[0] != "equal"]
+
+
+def named_lines_moved(live, role, names, environment=None):
+    """The node's lines adding to JVM_OPTS, outside any block, options each starting with one of names (the ones a
+    node may switch on at another place than the stock one: cassandra_import's ELSEWHERE), that the role's file has
+    once outside any block at another place (_moved_lines, the JVM-args proof's own test: plain options set by no
+    other line of either file): bash adds the same, wherever the line sits, when no line of either file reads
+    JVM_OPTS but to add options to it or to grep for others (a reset, a grep finding them) and the environment
+    gives cassandra-env.sh nothing to add (JVM_EXTRA_OPTS, MX4J_*: added at the end, before the node's line there
+    and after the role's) -> ([their line numbers in live], [in role]). No running JVM needed: the same for the
+    import, its self-check and apply_config, Cassandra running or not."""
+    try:
+        node, ours = env_lines(live), env_lines(role)
+    except NotSame:
+        return [], []
+    if any((environment or {}).get(name) for name in JVM_ENV if name != "JVM_OPTS"):
+        return [], []
+    greps = [p for lines in (node, ours) for dummy, p in _greps(lines)]
+    others = [line for line in node + ours if not APPEND_ANY.match(line["text"]) and not GREP.match(line["text"])]
+    if _reads_jvm_opts(others):
+        return [], []
+    moved = _moved_lines(node, ours, _ops_of(ours, node))
+    moved = [t for t in moved if all(any(o.startswith(n) for n in names) for o in APPEND.match(t).group(1).split())
+             and not any(p in APPEND.match(t).group(1) for p in greps)
+             and not any(line["depth"] for line in node if line["text"] == t)]
+    return ([line["n"] for line in node if line["text"] in moved], [line["n"] for line in ours if line["text"] in moved])
+
+
 def env_differences(live, role):
     """The lines of the node's cassandra-env.sh not in the role's -> ([its JVM_OPTS lines: {n, text, words}], [its
     heap assignments], [its lines the role's has at another place (_moved_lines)]);
     NotSame when they differ otherwise (only lines outside any block may: a line adding plain options to JVM_OPTS
     on the node's side, a heap assignment on either; and a line adding plain options at another place on both)."""
-    def ops_of(role, live):  # (a line in a block differs from the same line outside any)
-        matcher = difflib.SequenceMatcher(None, [(line["depth"] > 0, line["text"]) for line in role],
-                                          [(line["depth"] > 0, line["text"]) for line in live], autojunk=False)
-        return [op for op in matcher.get_opcodes() if op[0] != "equal"]
+    ops_of = _ops_of
     added, heap = [], []
     live = [line for i, line in enumerate(live)  # (a line set again outside any block, or in its own block)
             if not (_set_again(line, live[i + 1:], in_block=False) or _set_again(line, live[i + 1:], in_block=True))]

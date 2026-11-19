@@ -53,8 +53,8 @@ except ImportError:  # before, any string not marked unsafe
     def trust_as_template(value):
         return value
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    REMOTE_BRANCH_NOTE, REPEATED_NOTE, Unsafe, earlier_env, error_without_message, log_dir_of, logback_as_log_dir,
-    undefined_name, values_hidden)
+    ELSEWHERE, ELSEWHERE_NOTE, REMOTE_BRANCH_NOTE, REPEATED_NOTE, Unsafe, earlier_env, error_without_message,
+    log_dir_of, logback_as_log_dir, undefined_name, values_hidden)
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
 from ansible_collections.community.cassandra.plugins.filter.cassandra_os import (
     NO_EFFECT, NO_EFFECT_NOTE, cassandra_firewall_changes, cassandra_linux_changes)
@@ -875,6 +875,13 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
             "" if "cassandra-env.sh" in ((running or {}).get("newer") or []) else (running or {}).get("cmdline"))
         if mine:
             notes.append(REMOTE_BRANCH_NOTE % _out.plural(len(mine), "line"))
+        # (a line of an option a node may switch on anywhere, outside any block on both sides: the same for bash)
+        named, named_role = jvm_args.named_lines_moved(live["cassandra-env.sh"], rendered["cassandra-env.sh"],
+                                                       ELSEWHERE, _jvm_environments(node_environment, None,
+                                                                                    running or {})[0])
+        if named:
+            notes.append(ELSEWHERE_NOTE % _out.plural(len(named), "line"))
+        mine, theirs = mine + named, theirs + named_role
         # (and a line its block writes again the same below it: the last one counts)
         again = jvm_args.repeated_lines(live["cassandra-env.sh"], rendered["cassandra-env.sh"])
         again_rendered = jvm_args.repeated_lines(rendered["cassandra-env.sh"], live["cassandra-env.sh"])

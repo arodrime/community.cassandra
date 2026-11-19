@@ -1574,6 +1574,10 @@ def _difference_lines(name, rendered, live, ops):
 REMOTE_BRANCH_NOTE = ("cassandra-env.sh: %s adding options to JVM_OPTS in the remote JMX branch (the one the running"
                       " Cassandra started with: its remote JMX port), the role's outside it: the same for the JVM")
 
+# a node's line of an ELSEWHERE option at another place, the role's at the stock one (jvm_args.named_lines_moved)
+ELSEWHERE_NOTE = ("cassandra-env.sh: %s adding an option the role writes at its stock place, at another place outside"
+                  " any block on the node (no other line sets it): the same for the JVM")
+
 # a node's line in a block written again the same below it in that block (jvm_args.repeated_lines)
 REPEATED_NOTE = ("cassandra-env.sh: %s adding options to JVM_OPTS written again the same below in its block: the"
                  " last one counts, the same for the JVM")
@@ -1606,6 +1610,11 @@ def _leftovers(env, series, files, ctx, live_files, rejected=(), skip=(), proven
             mine, theirs = jvm_args.remote_branch_moved(live_text, "\n".join(rendered), environment, cmdline)
             if mine:
                 normalized.append(REMOTE_BRANCH_NOTE % out.plural(len(mine), "line"))
+            # (a line of an option a node may switch on anywhere, outside any block on both sides)
+            named, named_role = jvm_args.named_lines_moved(live_text, "\n".join(rendered), ELSEWHERE, environment)
+            if named:
+                normalized.append(ELSEWHERE_NOTE % out.plural(len(named), "line"))
+            mine, theirs = mine + named, theirs + named_role
             # (and a line its block writes again the same below it: the last one counts)
             again = jvm_args.repeated_lines(live_text, "\n".join(rendered))
             again_rendered = jvm_args.repeated_lines("\n".join(rendered), live_text)
