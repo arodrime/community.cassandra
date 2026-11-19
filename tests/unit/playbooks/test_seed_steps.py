@@ -443,8 +443,20 @@ def test_topology_applies_and_says_the_seeds_picked():
     apply = task(seeds["tasks"], "Apply cassandra_seeds on this node")
     assert apply["vars"]["cassandra_seeds"] == "{{ cassandra_topology_plan.seeds.new }}"
     say = task(play("topology.yml", "Say what is left to do")["tasks"], "Say what is left to do")
-    assert "first=[_plan.seeds | community.cassandra.cassandra_seeds_todo(" in say["ansible.builtin.debug"]["msg"]
-    assert "_done | length > 0 or _plan.seeds.auto | default([])" in say["ansible.builtin.debug"]["msg"]
+    seeds_picked = {"step": True, "new": "10.0.0.1,10.0.0.7", "auto": [{"dc": "dc2"}], "warnings": []}
+    variables = dict(say["vars"], _plan={"add": [], "remove": [], "gone": [], "silent": [], "seeds": seeds_picked},
+                     _plan_cluster="c1", _reload_failed=[], _stays="", _imported=False, _reimport_hosts="", _nl="\n",
+                     ansible_inventory_sources=["/work/inventories"], groups={"all": GROUP, "prod": GROUP},
+                     cassandra_hosts="prod", hostvars={})
+    # the seeds picked (no node removed): the line to put in the inventory
+    assert render(say["ansible.builtin.debug"]["msg"], **variables).splitlines() == [
+        "DONE  topology  c1  ring = inventory: seeds now 10.0.0.1,10.0.0.7", "", "TO DO",
+        "  1. put the seeds the nodes now run with in the inventory (group_vars/prod/, or a re-import writes them),"
+        " else apply_config puts cassandra_seeds back:",
+        '     cassandra_seeds: ["10.0.0.1", "10.0.0.7"]']
+    # none picked: no TO DO
+    variables["_plan"] = dict(variables["_plan"], seeds=dict(seeds_picked, auto=[], new="10.0.0.1"))
+    assert render(say["ansible.builtin.debug"]["msg"], **variables) == "DONE  topology  c1  ring = inventory: seeds now 10.0.0.1"
 
 
 def test_add_node_keeps_the_seeds_picked_for_a_datacenter():
@@ -509,7 +521,7 @@ def test_add_node_keeps_the_seeds_picked_for_a_datacenter():
         assert render("{{ %s }}" % say["when"], _new_seeds=["n2"], ansible_check_mode=False, _cassandra_add_seeds_hold=held,
                       _cassandra_add_seeds=dict(kept, warnings=warnings)) is said
     assert render(say["ansible.builtin.debug"]["msg"], _cassandra_add_seeds=kept, _cassandra_add_seeds_hold=False,
-                  _nl="\n") == "WARNING  " + kept["warnings"][0]
+                  _new_seeds=["n2"], _nl="\n") == "WARNING  " + kept["warnings"][0]
 
 
 # A failed nodetool reloadseeds after the list is written: a WARNING and the run goes on (the list applies at the
@@ -622,7 +634,7 @@ def test_the_todo_names_the_seed_lists_left_to_reload():
                                       ("topology.yml", "Say what is left to do", "Say what is left to do"),
                                       ("add_node.yml", "Summary", "Say which seed lists are left to reload")):
         say = task(play(playbook, play_name)["tasks"], name)
-        assert "community.cassandra.cassandra_seeds_reload_todo(_reload_command)" in say["ansible.builtin.debug"]["msg"]
+        assert "community.cassandra.cassandra_seeds_reload_todo(_reload_command)" in yaml.safe_dump(say, width=1000)
         failed = say["vars"]["_reload_failed"]
         assert render(failed, hostvars=hostvars, groups={"all": GROUP[:3], "prod": GROUP[:3]},
                       cassandra_hosts="prod") == ["n1"], playbook

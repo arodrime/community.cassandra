@@ -118,11 +118,14 @@ def test_no_dash_i_when_the_inventory_is_ansible_cfgs(tmp_path, monkeypatch):
     for playbook, play in (("decommission_node.yml", "Summary"), ("topology.yml", "Say what is left to do")):
         say = task(playbook, play, "Say what is left to do")
         template = say["ansible.builtin.debug"]["msg"]
-        assert template.count(config) == 1, playbook  # the shared rule (cassandra_command's)
+        # the shared rule (cassandra_command's), in the message or in the TO DO it shows
+        assert (template + say["vars"].get("_todo", "")).count(config) == 1, playbook
         plan = {"add": [], "remove": ["node3"], "gone": [], "silent": [], "seeds": {"step": False}}
         hostvars = {"node1": {"cassandra_topology_plan": plan, "inventory_dir": str(inventories), "ansible_host": "10.0.0.1",
                               "_cassandra_preflight": {"cassandra_cluster_name": "my_cluster"}}}
-        variables = dict(say["vars"], ansible_inventory_sources=[str(inventories)], hostvars=hostvars,
+        task_vars = dict((k, v.replace(config, "_ansible_cfg_inventory") if isinstance(v, str) else v)
+                         for k, v in say["vars"].items())
+        variables = dict(task_vars, ansible_inventory_sources=[str(inventories)], hostvars=hostvars,
                          _imported=True, _ansible_cfg_inventory=[str(inventories)],
                          groups={"all": ["node1", "node3"], "my_cluster": ["node1", "node3"],
                                  "my_cluster_dc1": ["node1", "node3"]},
@@ -139,8 +142,9 @@ def test_the_reimport_reads_the_inventory():
     # its connection variables and logins (secrets.yml, vaulted) come with it: no -i <node>, no JMX login to give
     for playbook, play in (("decommission_node.yml", "Summary"), ("topology.yml", "Say what is left to do")):
         say = task(playbook, play, "Say what is left to do")
-        assert "jmx_user" not in say["ansible.builtin.debug"]["msg"], playbook
-        assert "reimport_hosts=_reimport_hosts" in say["ansible.builtin.debug"]["msg"], playbook
+        said = say["ansible.builtin.debug"]["msg"] + say["vars"].get("_todo", "")  # the message, the TO DO it shows
+        assert "jmx_user" not in said, playbook
+        assert "reimport_hosts=_reimport_hosts" in said, playbook
         expr = say["vars"]["_reimport_hosts"].replace("lookup('community.cassandra.cassandra_hosts')", "'prod'")
 
         def hosts(env="", **variables):

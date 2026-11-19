@@ -70,7 +70,7 @@ def test_operator_messages_marked_for_the_ops_callback():
     assert nothing["vars"]["cassandra_output"] is True
     plan = {"gone": ["n5", "n6", "n7"], "silent": [], "unknown": ["10.0.0.9 (dc1 / r1, UN)"]}
     hostvars = {"n1": {"_cassandra_notes": ["WARNING  seeds: dc1 has one seed"]}}
-    msg = render(nothing["ansible.builtin.debug"]["msg"], _tp_cluster="my_cluster", cassandra_topology_plan=plan,
+    msg = render(nothing["ansible.builtin.debug"]["msg"], _tp_cluster="my_cluster", _tp_group="my_cluster", cassandra_topology_plan=plan,
                  ansible_play_hosts_all=["n1", "n2", "n3"], hostvars=hostvars, _nl="\n").split("\n")
     assert msg == ["NOTHING TO DO  topology  my_cluster  the ring has the 3 nodes of the inventory, they run with the"
                    " seeds of cassandra_seeds",
