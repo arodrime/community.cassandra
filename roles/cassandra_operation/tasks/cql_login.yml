@@ -8,7 +8,8 @@
 #     _cassandra_cql_login_host: its CQL address (cqlsh logs in as the operations do)
 #     _cassandra_cql_login_port: its CQL port (default 9042)
 #     _cassandra_cql_login_given: {user, password}, empty strings when none
-#     _cassandra_cql_login_ask: asking allowed (not --check, cassandra_operation_confirm)
+#     _cassandra_cql_login_ask: asking allowed (not --check, cassandra_operation_confirm; the import: when it
+#       goes on to write the inventory)
 # Sets cassandra_cql_login: {state, user, password, asked, why}: state ok,
 # refused, unchecked (cqlsh could not tell, why says what), not_asked,
 # no_terminal or none (no user typed). No password is ever shown (no_log), on

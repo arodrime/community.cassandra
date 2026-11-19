@@ -79,7 +79,7 @@ def test_dnf_cached_metadata_first():
 def test_one_line_per_phase():
     names = ["Say what the run does", "Say what is read on the nodes", "Say what is read next on the nodes",
              "Say the inventory is laid out", "Say the self-check runs", "Say the inventory is written"]
-    found = [t for play in PLAYS for t in play.get("tasks", []) if t.get("name") in names]
+    found = [s for play in PLAYS for t in play.get("tasks", []) for s in [t] + t.get("block", []) if s.get("name") in names]
     assert [t["name"] for t in found] == names
     assert all(t["vars"]["cassandra_output"] is True for t in found)
     phase = found[1]

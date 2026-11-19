@@ -251,10 +251,15 @@ def test_what_is_left_to_do():
     unset = todo({"state": "no_terminal"})[0]
     assert "import again on a terminal, it asks for it" in unset and "group_vars/prod/ (this import wrote it)" in unset
     assert "none typed: import again to type one" in todo({"state": "none"})[0]
-    assert "not asked (cassandra_operation_confirm false)" in todo({"state": "not_asked"})[0]
+    assert "not asked (cassandra_operation_confirm false)" in todo({"state": "not_asked"}, cassandra_operation_confirm=False)[0]
+    # not asked: the self-check failed (import_strict), the inventory is not the one to keep: asked at the one that is
+    assert todo({"state": "not_asked"}) == [
+        "CQL login: asked at the import that passes the self-check (authentication is on), then written to the"
+        " inventory (password in secrets.yml)"]
     # --check writes nothing: no group_vars to set the login in yet (a first import), never sent there
-    checked = todo({"state": "not_asked"}, ansible_check_mode=True)[0]
-    assert "the run without --check asks for it" in checked and "group_vars/prod/" not in checked
+    assert todo({"state": "not_asked"}, ansible_check_mode=True) == [
+        "CQL login: asked at the real import (authentication is on), then written to the inventory (password in"
+        " secrets.yml)"]
     assert "not checked (no cqlsh on n1), written as typed" in todo(
         {"state": "unchecked", "asked": True, "user": "a", "why": "no cqlsh on n1"})[0]
     # the report gets them
@@ -297,7 +302,7 @@ def test_logs_in_as_the_operations_do():
 
 def test_which_login_is_written():
     # typed and accepted, else the one the import wrote before (kept, even refused: never lost); yours: not written
-    write = next(t for t in WRITE["tasks"] if t.get("name") == "Write the CQL login with the cluster's variables")
+    write = task("Write the CQL login with the cluster's variables")
     own = {"user": "alice", "password": GOOD}
 
     def written(login, own_login=None):
@@ -407,3 +412,123 @@ def test_the_login_runs_on_the_node_the_import_names(tmp_path, node, expected):
     output = proc.stdout.decode("utf-8", "replace")
     assert expected in output, output
     assert "is undefined" not in output and GOOD not in output, output
+
+
+# --- asked once, when it is written ---
+
+FILES = next(t for t in WRITE["tasks"] if t.get("name") == "Write the files")
+
+
+def task(name):
+    return next(t for t in WRITE["tasks"] + FILES["block"] + FILES["always"] if t.get("name") == name)
+
+
+def test_asked_after_the_self_check_before_the_files_are_sorted_out():
+    # nothing before needs the login (the read runs cqlsh --version, without one): asked at the write, after the
+    # self-check; the login in the layout before the stops that look at the files (a secrets.yml in clear over a
+    # vaulted one), before anything is written
+    order = [t.get("name") for t in WRITE["tasks"]]
+    assert order.index("Self-check") < order.index("Check the CQL login, or ask for one") < order.index("Write the files")
+    inside = [t.get("name") for t in FILES["block"]]
+    assert inside[:3] == ["Write the CQL login with the cluster's variables", "Lay out again with the CQL login",
+                          "Sort out the files an earlier import wrote"]
+    for name in ("Stop rather than write over another cluster's files", "Stop rather than write in clear over a vaulted file",
+                 "Write the hosts file", "Write group_vars and host_vars"):
+        assert name in inside
+    assert inside[-2:] == ["Write group_vars and host_vars", "Note the CQL login is written"]
+    # the read plays never log in over CQL
+    with open(PLAYBOOK, encoding="utf-8") as f:
+        text = f.read()
+    head = text[:text.index("- name: Write the inventory")]
+    assert "cql_login" not in head and "cassandra_cql_password" not in head
+
+
+@pytest.mark.parametrize("check, confirm, ok, strict, asked", [
+    (False, True, True, True, True),     # the self-check passed: the inventory is written, asked
+    (False, True, False, False, True),   # failed, import_strict false: written all the same (to inspect), asked
+    (False, True, False, True, False),   # failed, import_strict: the run stops, not asked
+    (True, True, True, True, False),     # --check: never asked
+    (False, False, True, True, False),   # cassandra_operation_confirm false: never asked
+])
+def test_asked_only_when_the_run_goes_on_to_write(check, confirm, ok, strict, asked):
+    step = task("Check the CQL login, or ask for one")
+    variables = dict(ansible_check_mode=check, cassandra_operation_confirm=confirm, _self_check_ok=ok,
+                     import_strict=strict)
+    variables["_import_completes"] = render(WRITE["vars"]["_import_completes"], **variables)
+    assert render("{{ (%s) | bool }}" % step["vars"]["_cassandra_cql_login_ask"].strip()[2:-2], **variables) is asked
+
+
+def test_the_login_typed_is_laid_out_again():
+    # the self-check ran before it: the files about to be written (secrets.yml) come from a layout with it
+    relayout = task("Lay out again with the CQL login")
+    assert relayout["ansible.builtin.set_fact"]["_layout"] == "{{ _layout_over }}"
+    assert relayout["when"] == "import_cluster_cql_login_set is not skipped"
+    write = task("Write the CQL login with the cluster's variables")
+    assert write["register"] == "import_cluster_cql_login_set" and write["no_log"] is True
+    nodes = [dict(node("n%d" % i, cassandra_cluster_name="Prod"), dc="dc1", rack="r1") for i in (1, 2)]
+    for n in nodes:
+        n.update(hand_edits=[], normalized=[], notes=[])
+    layout = cassandra_inventory_layout(nodes, "Prod")
+    assert "group_vars/prod/secrets.yml" not in [f["path"] for f in cassandra_inventory_files(layout)]
+    for n in nodes:
+        n["vars"].update(cassandra_cql_username="alice", cassandra_cql_password=GOOD)
+    from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
+    load_collection_filters()
+    values = dict(_nodes=fact(nodes), _layout=fact(layout), _dir="/opt/x/inventories",
+                  import_cluster_existing_vars={"results": []})
+    values["_theirs"] = render(WRITE["vars"]["_theirs"], **values)
+    again = render(WRITE["vars"]["_layout_over"], **values)
+    files = dict((f["path"], f) for f in cassandra_inventory_files(again))
+    assert yaml.safe_load(files["group_vars/prod/secrets.yml"]["content"]) == {"cassandra_cql_password": GOOD}
+
+
+# The import's own tasks, run by ansible-playbook: a login typed (or the import's own), then a stop before the
+# inventory is written (another cluster's files there), or the inventory written. In a block with the import's
+# always, as the import has them.
+def run_the_write(tmp_path, stop, callback="community.cassandra.ops", state="ok", asked=True):
+    setup = {"name": "What the import found", "ansible.builtin.set_fact": {
+        "_nodes": [node("n1", cassandra_authenticator="PasswordAuthenticator")],
+        "_cql_own": {"user": "" if asked else "alice", "password": "" if asked else GOOD},
+        "cassandra_cql_login": {"state": state, "user": "alice", "password": GOOD, "asked": asked, "why": ""},
+        "_leftovers": {"conflicts": ["group_vars/prod/main.yml: another cluster's"] if stop else []},
+        "_dir": "/opt/x/inventories"}}
+    block = dict(FILES, block=[task("Write the CQL login with the cluster's variables"),
+                               task("Stop rather than write over another cluster's files"),
+                               task("Note the CQL login is written")])
+    play = {"name": "Write the inventory", "hosts": "localhost", "connection": "local", "gather_facts": False,
+            "vars": {"_cql_on": True}, "tasks": [setup, block]}
+    (tmp_path / "stop.yml").write_text(yaml.safe_dump([play], sort_keys=False))
+    proc = subprocess.run([sys.executable, "-c", "from ansible.cli.playbook import main; main()", "stop.yml"],
+                          env=env_for(tmp_path, callback=callback), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                          stdin=subprocess.DEVNULL, check=False, cwd=str(tmp_path), timeout=300)
+    return proc.returncode, " ".join(proc.stdout.decode("utf-8", "replace").split())
+
+
+@pytest.mark.parametrize("callback", ["community.cassandra.ops", "default"])
+@pytest.mark.parametrize("state", ["ok", "unchecked"])
+def test_a_stop_after_the_login_typed_says_it_was_not_saved(tmp_path, callback, state):
+    rc, output = run_the_write(tmp_path, stop=True, callback=callback, state=state)
+    assert rc != 0, output
+    assert "another cluster's" in output  # the stop's own message
+    said = "typed and checked" if state == "ok" else "typed (not checked)"
+    assert "CQL login alice: %s, NOT saved: the import stopped before it wrote the inventory." % said in output, output
+    assert "The next import asks for it again, when it writes the inventory." in output
+    for line in ("To give it without typing the password, in a vaulted file: ansible-vault create cql_login.yml",
+                 "cassandra_cql_username: alice", "cassandra_cql_password: <its password>",
+                 "Then add to the playbooks, the import too: -e @cql_login.yml --ask-vault-pass"):
+        assert line in output, line
+    assert GOOD not in output, output  # never the password
+    assert output.index("another cluster's") < output.index("NOT saved")
+
+
+def test_no_note_once_the_login_is_written(tmp_path):
+    rc, output = run_the_write(tmp_path, stop=False)
+    assert rc == 0, output
+    assert "NOT saved" not in output and GOOD not in output, output
+
+
+def test_no_note_without_a_login_typed(tmp_path):
+    # the import's own login (or one given): nothing typed to lose, the stop alone
+    rc, output = run_the_write(tmp_path, stop=True, asked=False)
+    assert rc != 0 and "another cluster's" in output, output
+    assert "NOT saved" not in output and GOOD not in output, output

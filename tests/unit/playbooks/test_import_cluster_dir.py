@@ -252,7 +252,7 @@ def test_user_files_counted_are_the_layouts():
 
 
 def test_files_known_by_their_layout_backed_up_before_removal():
-    names = [t.get("name") for play in PLAYS for t in play.get("tasks", [])]
+    names = [s.get("name") for play in PLAYS for t in play.get("tasks", []) for s in [t] + t.get("block", [])]  # in run order
     backup = TASKS["Keep a backup of the files it removes that do not say they are its"]
     assert names.index("Keep a backup of the files it removes that do not say they are its") < names.index(
         "Remove the files an earlier import wrote and this one does not")
@@ -305,7 +305,7 @@ def test_stop_on_another_clusters_files():
     msg = render(task["fail_msg"], _dir="/inv", _leftovers={"conflicts": [unknown, "x"], "adoptable": [unknown]})
     assert msg.endswith("-e import_adopt=true would take over 1 of them only")
     # before any file is removed or written
-    names = [t.get("name") for play in PLAYS for t in play.get("tasks", [])]
+    names = [s.get("name") for play in PLAYS for t in play.get("tasks", []) for s in [t] + t.get("block", [])]  # in run order
     assert names.index("Stop rather than write over another cluster's files") < names.index(
         "Remove the files an earlier import wrote and this one does not")
 

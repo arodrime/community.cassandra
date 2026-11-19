@@ -102,4 +102,5 @@ def test_the_playbook_applies_it_unless_the_option_is_given():
     assert "cassandra_import_kept_ansible_host(import_cluster_existing_text, _hosts_file" in step["ansible.builtin.set_fact"]["_nodes"]
     # once the files there are read, before the layout the hosts file is written from
     assert names.index("Keep the files already there") < names.index(step["name"]) < names.index(
-        "Lay out again over your own variables") < names.index("Write the hosts file")
+        "Lay out again over your own variables") < names.index("Write the files")
+    assert "Write the hosts file" in [t["name"] for t in play["tasks"][names.index("Write the files")]["block"]]
