@@ -970,8 +970,10 @@ its config when it starts). A file with the same settings as the role's but with
 Ansible ...: change the role variables, not this file``; e.g. taken over by ``import_cluster``) gets that line alone,
 the rest of the file as it is, without a restart: shown apart in the table (``Header "Managed by Ansible" (a comment,
 no restart)``, each file with its nodes) and in what the node gets (``write, no restart (the role's header line added:
-a comment, no setting changes)``). After an import, the first ``apply_config`` does only that; the next one finds
-nothing to do. A file kept by hand (``cassandra_config_keep_files``, ``import_keep_hand_edits``) is not touched. A node where Cassandra is not running gets its config too: started once written when its
+a comment, no setting changes)``). That line is written in place, in the same file (its owner, mode and SELinux
+context kept), not by a new file renamed over it: a write cut short (a full disk, a crash of the host) may leave the
+file part written, which Cassandra reads at its next start; the plan says the files it goes to. After an import, the
+first ``apply_config`` does only that; the next one finds nothing to do. A file kept by hand (``cassandra_config_keep_files``, ``import_keep_hand_edits``) is not touched. A node where Cassandra is not running gets its config too: started once written when its
 unit failed (e.g. Cassandra could not read its config, or it crashed), left stopped when it was stopped (a stop that
 ended in a failed unit too). A Cassandra running outside its ``cassandra`` unit (not in the unit's control group: started by
 hand, or by a script of its own) whose config needs a restart is refused before any change: a restart through the unit
