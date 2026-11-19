@@ -134,15 +134,16 @@ def _shared(layout, path):
 
 
 def _places(layout, key, path=None, target=_ABSENT, same=False):
-    """Where the inventory keeps key below the cluster's group: [the group_vars and host_vars dirs, your files there
-    (not a shared one: _shared)]; path and target: only the ones whose value of path is not target (same: is
+    """Where the inventory keeps key below the cluster's group (for a sub-key path, the cluster's group too): [the
+    group_vars and host_vars dirs, your files there (not a shared one: _shared)]; path and target: only the ones whose value of path is not target (same: is
     target)."""
     cluster = layout["cluster_group"]
 
     def other(variables):
         return key in (variables or {}) and (path is None or (_leaf(key, path, variables[key]) == target) == same)
 
-    groups = sorted(g for g, v in (layout.get("group_vars") or {}).items() if g != cluster and other(v))
+    # (a sub-key: the cluster's own dict too, when it is not the one most nodes have)
+    groups = sorted(g for g, v in (layout.get("group_vars") or {}).items() if (g != cluster or path) and other(v))
     hosts = [h for h, v in (layout.get("host_vars") or {}).items() if other(v)]
     yours = set(v[key]["path"] for v in (layout.get("from_yours") or {}).values()
                 if key in v and not _shared(layout, v[key]["path"])
@@ -440,6 +441,9 @@ def _action(item, layout):
             if shared:
                 what += "%sset it to the collection's default in %s (yours: %s sets it, for every cluster of the" \
                         " inventory)" % ("; " if what else "", where, ", ".join(shared))
+        elif places and item["key"] in ((layout.get("group_vars") or {}).get(cluster) or {}) \
+                and layout["group_vars"][cluster][item["key"]] == item["raw"]:  # (the most common there already)
+            what = "already in %s: remove %s from %s" % (where, item["key"], places)
         else:
             what = "%s: %s in %s%s" % (item["key"], value, where, ", removed from %s" % places if places else "")
     else:

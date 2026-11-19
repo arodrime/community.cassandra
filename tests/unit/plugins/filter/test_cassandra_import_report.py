@@ -176,21 +176,19 @@ def test_values_that_differ_between_nodes_to_review():
     assert review == [  # (a table: every value with its nodes; then how to give them one, step by step)
         "    cassandra_max_heap_size: 8G    node1, node2, node3 (3 nodes)   (the memory Java gives Cassandra)",
         "                             16G   node4, node5 (2 nodes)",
-        "      set in host_vars/<node>/main.yml.",
-        "      to give every node 8G: cassandra_max_heap_size: 8G in group_vars/my_cluster/main.yml, removed from host_vars of"
-        " 5 nodes (node1, node2, node3, node4,",
-        "        node5)",
+        "      set in group_vars/my_cluster/main.yml, host_vars/<node>/main.yml.",
+        "      to give every node 8G: already in group_vars/my_cluster/main.yml: remove cassandra_max_heap_size from"
+        " host_vars of 2 nodes (node4, node5)",
         "      then 2 nodes change, restart unknown (apply_config does not write it); no check (apply_config does not show"
         " it)"]
-    # (the heap per host)
-    assert lines[3] == ("  written: inventories/my_cluster.yml, group_vars/my_cluster*/,"
-                        " host_vars/<node>/ (node1, node2, node3, node4, node5)")
+    # (the most common heap for the cluster, the others per host)
+    assert lines[3] == "  written: inventories/my_cluster.yml, group_vars/my_cluster*/, host_vars/<node>/ (node4, node5)"
     lines = report([node(1, keep={"cassandra_firewall_manage": False}), node(2)])
     # (a part Ansible does not manage on a node: not all verified)
     assert sync(lines) == "in sync with Ansible: not all verified; firewall not managed by Ansible on 1 node"
     assert "  written: inventories/my_cluster.yml, group_vars/my_cluster*/, host_vars/node1/" in lines[:5]
     seven = [node(i) for i in range(1, 5)] + [node(i, "16G") for i in range(5, 8)]
-    assert report(seven, screen=True)[3].endswith("host_vars/<node>/ (node1..node7)")  # the screen: a range
+    assert report(seven, screen=True)[3].endswith("host_vars/<node>/ (node5..node7)")  # the screen: a range
 
 
 def test_where_each_value_is_kept_and_the_dcs_name_the_nodes():
@@ -202,8 +200,7 @@ def test_where_each_value_is_kept_and_the_dcs_name_the_nodes():
         "    cassandra_max_heap_size: 4G    dc3 (3 nodes)   (the memory Java gives Cassandra)",
         "                             16G   dc2 (2 nodes)",
         "                             8G    dc1 (2 nodes)",
-        "      set in group_vars/my_cluster_dc3/main.yml, group_vars/my_cluster_dc2/main.yml,"
-        " group_vars/my_cluster_dc1/main.yml."]
+        "      set in group_vars/my_cluster/main.yml, host_vars/<node>/main.yml."]  # (no setting per DC or rack)
 
 
 def test_things_to_do_and_hand_edits():
@@ -541,7 +538,7 @@ def test_a_logback_hand_edit_says_the_templates_of_yours():
 def test_written_host_vars_counted_on_a_large_cluster():
     nodes = [node(i, "16G" if i % 4 == 1 else "8G") for i in range(1, 60, 2)]  # node1, node3...: no range
     lines = report(nodes, screen=True)
-    assert lines[3].endswith("host_vars/<node>/ of 30 nodes")
+    assert lines[3].endswith("host_vars/<node>/ of 15 nodes")  # (a tie: node1's 16G for the cluster, the 8G ones apart)
     again = {"changed": ["host_vars/node%d/main.yml" % i for i in range(1, 30)] + ["group_vars/my_cluster/main.yml"],
              "removed": [], "existed": ["host_vars/node%d/main.yml" % i for i in range(1, 30)]
              + ["group_vars/my_cluster/main.yml"]}

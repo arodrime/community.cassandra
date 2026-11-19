@@ -1,0 +1,8 @@
+minor_changes:
+  - >-
+    import_cluster playbook - each variable's most common value goes to the cluster group's group_vars and each node's
+    other value to its own host_vars (a dict whole), so emptying a node's host_vars aligns it on the cluster; the
+    datacenter and rack group_vars hold only cassandra_dc and cassandra_rack. On a tie the collection's default wins
+    when it is one of the values, else the first node of the hosts file, one report line per variable. Before, a value
+    went to the highest group where every node agreed, so one odd node spread the others' values over the rack
+    group_vars and host_vars. A re-import moves the values of an earlier layout, every node keeping the same values.

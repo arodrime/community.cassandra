@@ -551,7 +551,9 @@ def test_report_os_differences_between_nodes():
     a = found(file_records("sysctl", "/etc/sysctl.d/99-db.conf", text="vm.swappiness = 5\n"))
     b = found(file_records("sysctl", "/etc/sysctl.d/99-db.conf", text="vm.swappiness = 7\n"))
     layout = cassandra_inventory_layout([node("n1", a, **a["vars"]), node("n2", b, **b["vars"])], "c")
-    assert "cassandra_linux_sysctl" in layout["host_vars"]["n1"]
+    # a tie: n1's (the first node) in the cluster's group_vars, n2's in its host_vars
+    assert layout["group_vars"]["c"]["cassandra_linux_sysctl"]["vm.swappiness"] == 5
+    assert layout["host_vars"]["n2"]["cassandra_linux_sysctl"]["vm.swappiness"] == 7
     assert layout["group_vars"]["c"]["cassandra_linux_sysctl_file"] == "/etc/sysctl.d/99-db.conf"
     assert "cassandra_linux_sysctl:" in layout["differences"]
 
@@ -720,7 +722,7 @@ def test_limits_order_differs_between_nodes():
     b = found(file_records("limits", "/etc/security/limits.d/cassandra.conf", text="cassandra - nofile 5\ncassandra - memlock unlimited\n"),
               own=True)
     layout = cassandra_inventory_layout([node("n1", a, **a["vars"]), node("n2", b, **b["vars"])], "c")
-    assert "cassandra_linux_limits" not in layout["group_vars"]["c"]
+    assert list(layout["group_vars"]["c"]["cassandra_linux_limits"]) == ["memlock", "nofile"]  # (a tie: n1's)
     assert list(layout["host_vars"]["n2"]["cassandra_linux_limits"]) == ["nofile", "memlock"]
     assert "cassandra_linux_limits:" in layout["differences"]
 

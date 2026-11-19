@@ -301,10 +301,17 @@ def test_layout_drift_goes_down_and_is_reported():
              node("n4", "dc2", "r1", cassandra_heap_size="16G", cassandra_concurrent_reads=64),
              node("n5", "dc2", "r1", cassandra_listen_address="10.0.0.5")]
     out = cassandra_inventory_layout(nodes, "c")
-    assert out["group_vars"]["c_dc1"]["cassandra_heap_size"] == "8G"  # DC level
+    # a tie 8G / 16G (2 nodes each): the first node's in the cluster's group_vars, the others in their host_vars,
+    # n5 on the collection's default ('') too; nothing in a DC's or rack's but cassandra_dc and cassandra_rack
+    assert out["group_vars"]["c"] == {"cassandra_heap_size": "8G"}
+    assert out["group_vars"]["c_dc1"] == {"cassandra_dc": "dc1"}
+    assert out["group_vars"]["c_dc2_r1"] == {"cassandra_rack": "r1"}
+    assert "n1" not in out["host_vars"] and "n2" not in out["host_vars"]
     assert out["host_vars"]["n3"] == {"cassandra_heap_size": "16G"}
     assert out["host_vars"]["n4"] == {"cassandra_heap_size": "16G", "cassandra_concurrent_reads": 64}
-    assert out["host_vars"]["n5"] == {"cassandra_listen_address": "10.0.0.5"}
+    assert out["host_vars"]["n5"] == {"cassandra_heap_size": "", "cassandra_listen_address": "10.0.0.5"}
+    assert "A TIE, as many nodes on each value: the one in group_vars/c/" in out["report"]
+    assert "  cassandra_heap_size: the one of n1, the first node in the hosts file" in out["report"]
     # sorted like the vars files (JVM before cassandra.yaml settings), the listen address is per node by nature
     assert out["differences"].split("\n")[1:] == [
         '  cassandra_heap_size: "16G" on n3, n4; "8G" on DC dc1; (role default) on n5',
@@ -1766,9 +1773,17 @@ def test_layout_over_the_users_group_vars_all():
     assert sorted((y["node"], y["key"]) for y in layout["yours"]) == [
         ("n1", "cassandra_config_group"), ("n1", "cassandra_config_user"),
         ("n2", "cassandra_config_group"), ("n2", "cassandra_config_user")]
-    # without theirs: as before
+    # without theirs: the most common value in the cluster's group_vars, the 2 others on the default in host_vars;
+    # cassandra_config_group's default is another variable ({{ cassandra_group }}): kept per node, said
     plain = cassandra_inventory_layout_over(_owner_nodes(), "Orders", [])
-    assert plain["yours"] == [] and sorted(plain["host_vars"]) == ["n3", "n4", "n5"]
+    assert plain["yours"] == [] and plain["group_vars"]["orders"] == {"cassandra_cluster_name": "Orders",
+                                                                      "cassandra_config_user": "cassandra"}
+    assert plain["host_vars"] == {"n1": {"cassandra_config_user": "root"}, "n2": {"cassandra_config_user": "root"},
+                                  "n3": {"cassandra_config_group": "cassandraops"},
+                                  "n4": {"cassandra_config_group": "cassandraops"},
+                                  "n5": {"cassandra_config_group": "cassandraops"}}
+    assert "IN HOST_VARS ONLY, not in group_vars/orders/" in plain["report"]
+    assert "\n  cassandra_config_group\n" in plain["report"]
 
 
 def test_layout_over_a_host_file_of_theirs():
@@ -1985,7 +2000,8 @@ def test_layout_writes_the_template_once_not_unsafe():
     files = dict((f["path"], f["content"]) for f in cassandra_inventory_files(layout))
     assert "cassandra_medusa_nodetool_host: '{{ inventory_hostname }}.example.net'" in files["group_vars/c/main.yml"]
     assert "!unsafe" not in files["group_vars/c/main.yml"]
-    assert "!unsafe" in files["host_vars/db11/secrets.yml"]  # a node's value that looks like one: as it is
+    # a node's value that looks like one: as it is (a tie, db11's in the cluster's, the others in their host_vars)
+    assert "!unsafe" in files["group_vars/c/secrets.yml"] and "!unsafe" in files["host_vars/db12/secrets.yml"]
     assert "Per node, from its name: cassandra_medusa_nodetool_host" in layout["report"]
 
 

@@ -238,8 +238,9 @@ def test_each_node_its_own_secret():
     files_out = written(layout)
     assert files_out["group_vars/c/cassandra-env.sh.snippet.j2"]["content"] == \
         'export KEYSTORE_PASSWORD="{{ cassandra_secret_env_keystore_password }}"\n'
-    for name, pw in (("n1", "pw-one"), ("n2", "pw-two")):
-        assert yaml.safe_load(files_out["host_vars/%s/secrets.yml" % name]["content"]) == {
+    # (a tie: n1's for the cluster, in its secrets.yml; n2's in its host_vars)
+    for path, pw in (("group_vars/c", "pw-one"), ("host_vars/n2", "pw-two")):
+        assert yaml.safe_load(files_out["%s/secrets.yml" % path]["content"]) == {
             "cassandra_secret_env_keystore_password": pw}
     assert "pw-one" not in layout["report"] and "pw-two" not in layout["report"]
     assert "SECRETS OF HAND EDITS PER NODE: cassandra_secret_env_keystore_password are set per node" in layout["report"]
@@ -282,9 +283,9 @@ def test_a_nodes_own_template_text_is_never_templated():
     assert b["trusted"] == [] and b["vars"][ENV_END] == [own]
     layout = cassandra_inventory_layout([na, nb], "c")
     files_out = written(layout)
-    # n1's line made by the import: in its snippet, a template; n2's own text (a secret's name in it): its lines
-    # in secrets.yml, !unsafe, which its snippet renders
-    assert files_out["host_vars/n1/cassandra-env.sh.snippet.j2"]["content"] == a["vars"][ENV_END][0] + "\n"
+    # n1's line made by the import: in its snippet (the cluster's: a tie, the first node's), a template; n2's own
+    # text (a secret's name in it): its lines in secrets.yml, !unsafe, which its snippet renders
+    assert files_out["group_vars/c/cassandra-env.sh.snippet.j2"]["content"] == a["vars"][ENV_END][0] + "\n"
     assert files_out["host_vars/n2/cassandra-env.sh.snippet.j2"]["content"] == "{{ cassandra_secret_env_lines }}\n"
     assert re.search(r"!unsafe '?JVM_OPTS=", files_out["host_vars/n2/secrets.yml"]["content"])
     assert self_check(with_env(own), layout, "n2")["differences"] == []

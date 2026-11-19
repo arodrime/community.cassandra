@@ -137,12 +137,13 @@ def test_each_setting_its_values_action_and_check():
     assert "moved by hand first, the node stopped" in text
     # a top-level variable: to the cluster's group_vars, removed below it
     flat = " ".join(text.split())
-    assert ("cassandra_heap_size: 16G in group_vars/big/main.yml, removed from group_vars of 5 groups (big_dc1,"
-            " big_dc2_r1, big_dc2_r2, big_dc2_r3, big_dc3)") in flat
+    # (the most common value there already: removed from the host_vars that keep another)
+    assert ("16G for all: already in group_vars/big/main.yml: remove cassandra_heap_size from host_vars of 10 nodes"
+            " (cass031,") in flat
     # a sub-key: set in the files that keep another value of it only
     assert "streaming_connections_per_host: 2 in cassandra_extra_settings in host_vars of 6 nodes" in flat
     # a secret: by its number, the value most nodes have
-    assert "cassandra_jmx_password: (in secrets.yml) (its value in group_vars/big_dc1/) in group_vars/big/secrets.yml" in flat
+    assert "already in group_vars/big/secrets.yml: remove cassandra_jmx_password from host_vars of 30 nodes" in flat
 
 
 def test_the_files_kept_by_hand():
@@ -246,8 +247,10 @@ def test_never_remove_from_a_file_of_yours():
     files = [{"path": "group_vars/all/tuning.yml", "content": "cassandra_concurrent_reads: 32\n"}]
     small = cassandra_inventory_layout_over(nodes, "Small", files)
     text = " ".join("\n".join(cassandra_import_convergence(small, {}, width=200)).split())
-    assert "cassandra_concurrent_reads: 64 in group_vars/small/main.yml" in text
-    assert "tuning.yml" not in text.split("cassandra_concurrent_reads: 64 in group_vars/small/main.yml")[1].split(";")[0]
+    # (64 in the cluster's group_vars, which wins over yours: the 2 nodes keep their 32 in their host_vars)
+    action = "already in group_vars/small/main.yml: remove cassandra_concurrent_reads from host_vars of 2 nodes"
+    assert action in text
+    assert "tuning.yml" not in text.split(action)[1].split(";")[0]
 
 
 def _flat(lines):
@@ -260,8 +263,8 @@ def test_a_file_of_yours_below_the_cluster_named_one_above_never():
     nodes[0]["vars"]["cassandra_concurrent_reads"] = 32
     files = [{"path": "host_vars/cass001/tuning.yml", "content": "cassandra_concurrent_reads: 32\n"}]
     text = _flat(cassandra_import_convergence(cassandra_inventory_layout_over(nodes, "Small", files), {}, width=200))
-    assert "cassandra_concurrent_reads: 64 in group_vars/small/main.yml, removed from" in text
-    assert "yours: host_vars/cass001/tuning.yml" in text
+    assert "already in group_vars/small/main.yml: remove cassandra_concurrent_reads from yours:" \
+           " host_vars/cass001/tuning.yml" in text
     # a sub-key a shared file of yours gives: the whole dict in the cluster's group, never that file
     nodes = [fake_node(i) for i in range(6)]
     for n in nodes[:2]:  # (as yours has it: left to it, not written again)
@@ -367,7 +370,9 @@ def test_a_tie_said():
     for n in nodes[:2]:
         n["vars"]["cassandra_concurrent_reads"] = 32
     text = "\n".join(cassandra_import_convergence(_small(nodes), {}, width=200))
-    assert "\u2192 32 for all (a tie: or another of the values): cassandra_concurrent_reads: 32" in text
+    # (the import's tie: the collection's default, 32, in the cluster's group_vars)
+    assert "\u2192 32 for all (a tie: or another of the values): already in group_vars/small/main.yml: remove" \
+           " cassandra_concurrent_reads from" in text
 
 
 def test_a_yaml_block_secret_in_a_kept_edit_masked():

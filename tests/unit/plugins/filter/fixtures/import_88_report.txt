@@ -31,49 +31,58 @@ IMPORT big_cluster  88 nodes  9 entries to review: 3 hand-edit entries, 6 settin
 
     cassandra_config_file_permissions.cassandra.yaml: 0640   dc2 + dc3 - db074 (51 nodes)   (who may read each config file)
                                                       0644   dc1 + db074 (37 nodes)
-      set in host_vars/<node>/main.yml, group_vars/<group>/main.yml of 5 groups, group_vars/big_cluster_dc1/main.yml.
-      to give every node 0640: cassandra.yaml: 0640 in cassandra_config_file_permissions in group_vars/big_cluster_dc1/, host_vars/db074/
+      set in group_vars/big_cluster/main.yml, host_vars/<node>/main.yml.
+      to give every node 0640: cassandra.yaml: 0640 in cassandra_config_file_permissions in host_vars of 37 nodes (db11, db12, db13, db14, db15, db16, db21,
+        db22, db23, db24, db25, db26, db31, db32, db33, db34, db35, db36, db41, db42, db43, db44, db45, db46, db51, db52, db53, db54, db55, db56, db61, db62,
+        db63, db64, db65, db66, db074)
       then 37 nodes change, no restart; check first: ansible-playbook community.cassandra.apply_config --check --diff
 
     cassandra_jmx_password: (in secrets.yml)            dc1 (36 nodes)   (the password nodetool logs in with)
                             (in secrets.yml, value 2)   dc2 (30 nodes)
                             (in secrets.yml, value 3)   dc3 (22 nodes)
-      set in group_vars/big_cluster_dc1/secrets.yml, group_vars/big_cluster_dc2/secrets.yml, group_vars/big_cluster_dc3/secrets.yml.
-      to give every node (in secrets.yml): cassandra_jmx_password: (in secrets.yml) (its value in group_vars/big_cluster_dc1/) in
-        group_vars/big_cluster/secrets.yml, removed from group_vars of 3 groups (big_cluster_dc1, big_cluster_dc2, big_cluster_dc3)
+      set in group_vars/big_cluster/secrets.yml, host_vars/<node>/secrets.yml.
+      to give every node (in secrets.yml): already in group_vars/big_cluster/secrets.yml: remove cassandra_jmx_password from host_vars of 52 nodes (db071,
+        db072, db073, db074, db075, db076, db081, db082, db083, db084, db085, db086, db091, db092, db093, db094, db095, db096, db101, db102, db103, db111,
+        db112, db113, db114, db115, db116, db117, db118, db119, db121, db122, db123, db124, db125, db126, db127, db128, db129, db130, db201, db202, db203,
+        db204, db205, db206, db211, db212, db213, db214, db215, db216)
       then 52 nodes change, none on the nodes: the playbooks' login, which the nodes must accept first (their jmxremote.password, cassandra_jmx_users; their CQL
         role); no check (apply_config does not show it)
 
     cassandra_extra_settings.streaming_connections_per_host: 1   dc2 + dc3 - db111 (51 nodes)   (cassandra.yaml settings without a variable of their own)
                                                              2   dc1 (36 nodes)
                                                              6   db111 (1 node)
-      set in group_vars/<group>/main.yml of 4 groups, host_vars/<node>/main.yml, group_vars/big_cluster_dc1/main.yml.
-      to give every node 1: streaming_connections_per_host: 1 in cassandra_extra_settings in group_vars/big_cluster_dc1/, host_vars/db111/
+      set in group_vars/big_cluster/main.yml, host_vars/<node>/main.yml.
+      to give every node 1: streaming_connections_per_host: 1 in cassandra_extra_settings in host_vars of 37 nodes (db11, db12, db13, db14, db15, db16, db21,
+        db22, db23, db24, db25, db26, db31, db32, db33, db34, db35, db36, db41, db42, db43, db44, db45, db46, db51, db52, db53, db54, db55, db56, db61, db62,
+        db63, db64, db65, db66, db111)
       then 37 nodes change, then restart; check first: ansible-playbook community.cassandra.apply_config --check --diff
 
     cassandra_medusa_extra_settings.storage.bucket_name: backups-b   dc2 + dc3 (52 nodes)   (settings of Medusa, the backup tool)
                                                          backups-a   dc1 (36 nodes)
-      set in group_vars/big_cluster_dc2/main.yml, group_vars/big_cluster_dc3/main.yml, group_vars/big_cluster_dc1/main.yml.
-      to give every node backups-b: storage.bucket_name: backups-b in cassandra_medusa_extra_settings in group_vars/big_cluster_dc1/
+      set in host_vars/<node>/main.yml, group_vars/big_cluster/main.yml.
+      to give every node backups-b: storage.bucket_name: backups-b in cassandra_medusa_extra_settings in group_vars/big_cluster/
       then 36 nodes change, restart unknown (apply_config does not write it); no check (apply_config does not show it)
 
     cassandra_medusa_extra_settings.storage.secret_access_key:
       (in secrets.yml)            dc1 (36 nodes)
       (in secrets.yml, value 2)   dc2 (30 nodes)
       (in secrets.yml, value 3)   dc3 (22 nodes)
-      set in group_vars/big_cluster_dc1/secrets.yml, group_vars/big_cluster_dc2/secrets.yml, group_vars/big_cluster_dc3/secrets.yml.
-      to give every node (in secrets.yml): storage.secret_access_key: (in secrets.yml) (its value in group_vars/big_cluster_dc1/) in
-        cassandra_medusa_extra_settings in group_vars/big_cluster_dc2/, group_vars/big_cluster_dc3/
+      set in group_vars/big_cluster/secrets.yml, host_vars/<node>/secrets.yml.
+      to give every node (in secrets.yml): storage.secret_access_key: (in secrets.yml) (its value in group_vars/big_cluster/) in cassandra_medusa_extra_settings
+        in host_vars of 52 nodes (db071, db072, db073, db074, db075, db076, db081, db082, db083, db084, db085, db086, db091, db092, db093, db094, db095, db096,
+        db101, db102, db103, db111, db112, db113, db114, db115, db116, db117, db118, db119, db121, db122, db123, db124, db125, db126, db127, db128, db129,
+        db130, db201, db202, db203, db204, db205, db206, db211, db212, db213, db214, db215, db216)
       then 52 nodes change, restart unknown (apply_config does not write it); no check (apply_config does not show it)
 
     cassandra_max_heap_size: 31G   dc1 (36 nodes)           (the memory Java gives Cassandra)
                              24G   dc2 (30 nodes)
                              16G   dc3 - db111 (21 nodes)
                              8G    db111 (1 node)
-      set in group_vars/big_cluster_dc1/main.yml, group_vars/big_cluster_dc2/main.yml, group_vars/<group>/main.yml of 3 groups, host_vars/<node>/main.yml.
-      to give every node 31G: cassandra_max_heap_size: 31G in group_vars/big_cluster/main.yml, removed from group_vars of 5 groups (big_cluster_dc1,
-        big_cluster_dc2, big_cluster_dc3_r10, big_cluster_dc3_r12, big_cluster_dc3_r13), host_vars of 9 nodes (db111, db112, db113, db114, db115, db116, db117,
-        db118, db119)
+      set in group_vars/big_cluster/main.yml, host_vars/<node>/main.yml.
+      to give every node 31G: already in group_vars/big_cluster/main.yml: remove cassandra_max_heap_size from host_vars of 52 nodes (db071, db072, db073, db074,
+        db075, db076, db081, db082, db083, db084, db085, db086, db091, db092, db093, db094, db095, db096, db101, db102, db103, db111, db112, db113, db114,
+        db115, db116, db117, db118, db119, db121, db122, db123, db124, db125, db126, db127, db128, db129, db130, db201, db202, db203, db204, db205, db206,
+        db211, db212, db213, db214, db215, db216)
       then 52 nodes change, restart unknown (apply_config does not write it); no check (apply_config does not show it)
 
 

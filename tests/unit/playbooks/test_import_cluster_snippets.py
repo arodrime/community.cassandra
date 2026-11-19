@@ -22,11 +22,12 @@ def test_snippets_per_node_when_their_lines_differ():
     a, na = imported(with_env("export A=1"))
     b, nb = imported(with_env("export B=1"), "n2", "10.0.0.2")
     files_out = written(cassandra_inventory_layout([na, nb], "c"))
-    assert files_out["host_vars/n1/cassandra-env.sh.snippet.j2"]["content"] == "export A=1\n"
+    # a tie: the first node's lines for the cluster, the other node's in its host_vars
+    assert files_out["group_vars/c/cassandra-env.sh.snippet.j2"]["content"] == "export A=1\n"
     assert files_out["host_vars/n2/cassandra-env.sh.snippet.j2"]["content"] == "export B=1\n"
     assert yaml.safe_load(files_out["host_vars/n2/main.yml"]["content"])["cassandra_config_template_snippets"] == {
         "cassandra-env.sh": "{{ inventory_dir }}/host_vars/n2/cassandra-env.sh.snippet.j2"}
-    assert "group_vars/c/cassandra-env.sh.snippet.j2" not in files_out
+    assert "host_vars/n1/cassandra-env.sh.snippet.j2" not in files_out
 
 
 def test_both_files_one_dict_per_node():
@@ -40,8 +41,12 @@ def test_both_files_one_dict_per_node():
     b, nb = imported(other, "n2", "10.0.0.2")
     layout = cassandra_inventory_layout([na, nb], "c")
     files_out = written(layout)
-    assert yaml.safe_load(files_out["host_vars/n1/main.yml"]["content"])["cassandra_config_template_snippets"] == {
-        "cassandra-env.sh": "{{ inventory_dir }}/host_vars/n1/cassandra-env.sh.snippet.j2",
+    # (a tie on cassandra-env.sh's: n1's for the cluster, n2's dict whole in its host_vars)
+    assert yaml.safe_load(files_out["group_vars/c/main.yml"]["content"])["cassandra_config_template_snippets"] == {
+        "cassandra-env.sh": "{{ inventory_dir }}/group_vars/c/cassandra-env.sh.snippet.j2",
+        "logback.xml": "{{ inventory_dir }}/group_vars/c/logback.xml.snippet.j2"}
+    assert yaml.safe_load(files_out["host_vars/n2/main.yml"]["content"])["cassandra_config_template_snippets"] == {
+        "cassandra-env.sh": "{{ inventory_dir }}/host_vars/n2/cassandra-env.sh.snippet.j2",
         "logback.xml": "{{ inventory_dir }}/group_vars/c/logback.xml.snippet.j2"}
     assert self_check(files, layout)["differences"] == [] and self_check(other, layout, "n2")["differences"] == []
 

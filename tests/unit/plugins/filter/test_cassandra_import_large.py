@@ -14,7 +14,7 @@ from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    IPV4, cassandra_inventory_files, cassandra_inventory_layout)
+    IPV4, MISSING, _roles_defaults, cassandra_inventory_files, cassandra_inventory_layout)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import (
     _trusted, cassandra_inventory_host_vars)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import cassandra_import_report
@@ -120,13 +120,16 @@ def test_report_of_88_nodes():
     assert "s3cret" not in text and "k-a" not in text and "k-b" not in text
     # a secret is set in secrets.yml, never in main.yml
     at = [i for i, line in enumerate(report) if line.startswith("    cassandra_jmx_password:")][0]
-    assert "set in group_vars/big_cluster_dc1/secrets.yml" in " ".join(report[at:report.index("", at)])
+    assert "set in group_vars/big_cluster/secrets.yml, host_vars/<node>/secrets.yml" in " ".join(report[at:report.index("", at)])
     # DETAILS: the lines every node has once, under every node's name; then each node's own lines only
     shared = next(line for line in report[details:] if line.startswith("  == ") and "what every one has" in line)
     assert all(re.search(r" %s(,| \()" % n, shared) for n in PART_A + PART_B + PART_C)
     at = report.index("  == db111: its own")
     assert '        + <logger name="org.example.l9" level="WARN"/>' in report[report.index(shared):at]  # (every node's)
     assert "        + concurrent_writes: 48" in report[at:at + 60]  # (db111's own)
+
+
+DEFAULTS = _roles_defaults()
 
 
 def effective(nodes):
@@ -144,9 +147,10 @@ def effective(nodes):
             templar = Templar(loader=DataLoader(), variables=dict(magic, **_trusted(variables)))
             return dict((k, templar.template(_trusted(v))) for k, v in variables.items())
         written = rendered(cassandra_inventory_host_vars(files, layout["hosts"], n["name"]))
-        # (the variables the inventory gives on top: the ring's dc and rack, what is left as it is on the node)
-        extra = set(written) - set(n["vars"]) - {"cassandra_dc", "cassandra_rack", "cassandra_linux_manage",
-                                                 "cassandra_imported_host"}
+        # (the variables the inventory gives on top: the ring's dc and rack, what is left as it is on the node, the
+        # collection's default of a node without a variable the cluster's group_vars set: the same for Ansible)
+        extra = set(k for k in set(written) - set(n["vars"]) if written[k] != DEFAULTS.get(k, MISSING)) - {
+            "cassandra_dc", "cassandra_rack", "cassandra_linux_manage", "cassandra_imported_host"}
         assert not extra, (n["name"], extra)
         out[n["name"]] = (dict((k, written.get(k)) for k in n["vars"]), rendered(n["vars"]))
     return out
@@ -175,8 +179,11 @@ def test_one_node_off_the_rule_keeps_every_value_per_node():
     nodes[5]["vars"]["cassandra_medusa_nodetool_host"] = "other.example.net"
     layout = cassandra_inventory_layout(nodes, "Big Cluster")
     assert "cassandra_medusa_nodetool_host" not in layout["templates"]
+    # one value per node, a tie: the first node's in the cluster's group_vars, the others in their host_vars
     assert layout["host_vars"]["db16"]["cassandra_medusa_nodetool_host"] == "other.example.net"
-    assert layout["host_vars"]["db11"]["cassandra_medusa_nodetool_host"] == "db11.example.net"
+    assert layout["group_vars"]["big_cluster"]["cassandra_medusa_nodetool_host"] == "db11.example.net"
+    assert "cassandra_medusa_nodetool_host" not in layout["host_vars"].get("db11", {})
+    assert "  cassandra_medusa_nodetool_host: the one of db11, the first node in the hosts file" in layout["report"]
     for name, (written, read) in effective(nodes).items():
         assert written == read, name
     # the report: every value with its node; the screen: one row for them, not 88 lines

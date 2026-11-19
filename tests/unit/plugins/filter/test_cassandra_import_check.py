@@ -1221,9 +1221,10 @@ def test_audit_logger_parameters_in_the_group_when_every_node_agrees():
                                     [("key2", 2), ("key1", "value1")]])  # the same, in another order
 def test_audit_logger_parameters_per_node_when_they_differ(second):
     layout = audit_layout([[("key1", "value1"), ("key2", 2)], second])
-    assert "cassandra_audit_logger_parameters" not in layout["group_vars"]["c"]
-    assert [list(layout["host_vars"][n]["cassandra_audit_logger_parameters"]) for n in ("n1", "n2")] == \
-        [["key1", "key2"], [k for k, v in second]]
+    # a tie: n1's in the cluster's group_vars, n2's in its host_vars, each in its order
+    assert list(layout["group_vars"]["c"]["cassandra_audit_logger_parameters"]) == ["key1", "key2"]
+    assert "n1" not in layout["host_vars"] or "cassandra_audit_logger_parameters" not in layout["host_vars"]["n1"]
+    assert list(layout["host_vars"]["n2"]["cassandra_audit_logger_parameters"]) == [k for k, v in second]
 
 
 def test_values_kept_in_their_order_compare_their_types_too():
@@ -1250,9 +1251,8 @@ def test_a_value_following_the_node_names_renders_each_nodes_own():
                       "keep": {"cassandra_service_unit_manage": False}})
     layout = cassandra_inventory_layout(nodes, "c")
     # a directory is never made a template of the names (a renamed host must not move its data): set by hand here
-    assert "cassandra_hints_dir" not in layout["templates"] and "cassandra_hints_dir" in layout["host_vars"]["n1"]
-    for name in ("n1", "n2"):
-        del layout["host_vars"][name]["cassandra_hints_dir"]
+    assert "cassandra_hints_dir" not in layout["templates"] and "cassandra_hints_dir" in layout["host_vars"]["n2"]
+    del layout["host_vars"]["n2"]["cassandra_hints_dir"]
     layout["group_vars"]["c"]["cassandra_hints_dir"] = "/data/{{ inventory_hostname }}/hints"
     layout["templates"] = {"cassandra_hints_dir": "/data/{{ inventory_hostname }}/hints"}
     inventory = cassandra_inventory_files(layout)

@@ -44,6 +44,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import ast
+import copy
 import difflib
 import functools
 import json
@@ -3130,9 +3131,10 @@ def _same(key, a, b):
     return a == b
 
 
-def _place(key, nodes, levels, group_vars, host_vars):
-    """Put key at the highest level where all its nodes agree (levels:
-    cluster, DC, rack, then the node itself). True if that is the cluster."""
+def _place_highest(key, nodes, levels, group_vars, host_vars):
+    """Put key at the highest level where all its nodes agree (levels: cluster, DC, rack, then the node itself):
+    cassandra-rackdc.properties' dc= and rack= (RACKDC), a DC's or a rack's by nature. True if that is the
+    cluster."""
     def walk(level, members):
         values = [n["vars"].get(key, MISSING) for n in members]
         if all(v is MISSING for v in values):
@@ -3150,6 +3152,119 @@ def _place(key, nodes, levels, group_vars, host_vars):
             walk(level + 1, part)
         return False
     return walk(0, nodes)
+
+
+def hosts_order(n):
+    """A node's place in the hosts file the import writes (by DC, rack, name): "the first node" of a tie."""
+    return (n["dc"], n["rack"], n["name"])
+
+
+@functools.lru_cache(maxsize=None)
+def _defaults_once():
+    return _roles_defaults()
+
+
+def _value_groups(key, nodes):
+    """The nodes by value, in hosts file order (MISSING: the nodes without key) -> [(value, [nodes])]."""
+    groups = []
+    for n in sorted(nodes, key=hosts_order):
+        value = n["vars"].get(key, MISSING)
+        group = next((g for g in groups if (g[0] is MISSING) == (value is MISSING)
+                      and (value is MISSING or _same(key, g[0], value))), None)
+        if group is None:
+            groups.append((value, [n]))
+        else:
+            group[1].append(n)
+    return groups
+
+
+def _is_default(key, value, defaults):
+    """value is the collection's default of key: MISSING (not set), or equal to a default that is a value (not
+    made of other variables)."""
+    if value is MISSING:
+        return True
+    return key in defaults and not _templated(defaults[key]) and _same(key, value, defaults[key])
+
+
+# a value your file gives a node over the cluster's group_vars (_given): nothing to write for it
+YOURS_WIN = object()
+
+
+def _fill(key, n, defaults, given):
+    """What node n without key gets when the import does not set it, as a value the import can write in its
+    host_vars (the cluster's group_vars set another): your files' value, else the collection's default -> (True,
+    value), (True, YOURS_WIN) when a file of yours gives it over the cluster's, (False, None) when it cannot be
+    written as a value (made of other variables or facts, a template of yours, no default: Ansible's undefined)."""
+    mine = (given or {}).get(n["name"]) or {}
+    value = mine[key] if key in mine else defaults.get(key, MISSING)
+    if value is YOURS_WIN:
+        return True, value
+    if value is MISSING or not _writable(value):
+        return False, None
+    return True, copy.deepcopy(value)
+
+
+def _writable(value):
+    """value can be written as it is: plain data, no template, nothing vaulted."""
+    if isinstance(value, dict):
+        return all(_writable(k) and _writable(v) for k, v in value.items())
+    if isinstance(value, list):
+        return all(_writable(v) for v in value)
+    if isinstance(value, str):
+        return not isinstance(value, _Unsafe) and not TEMPLATE_MARK.search(value)
+    return value is None or isinstance(value, (bool, int, float))
+
+
+def _place(key, nodes, cluster, group_vars, host_vars, given=None, said=None):
+    """Put key's most common value among the nodes read in the cluster's group_vars and each other node's in its
+    host_vars (the whole value: Ansible replaces a dict). A tie: the collection's default when it is one of the
+    values, else the first node's in the hosts file (said["tie"]). A node without key gets its value without the
+    import written (your files', else the default), or, when that cannot be written as a value, nothing goes to
+    the cluster's group_vars (said["per_node"]). A value per node by nature (PER_NODE) goes there only when
+    several nodes share it. said: {"tie": [(key, how)], "per_node": [key]}, filled in place. True when every node
+    has the same value (or none)."""
+    said = said if said is not None else {}
+    defaults = _defaults_once()
+    groups = _value_groups(key, nodes)
+    if len(groups) == 1:
+        if groups[0][0] is not MISSING:
+            group_vars.setdefault(cluster, {})[key] = groups[0][0]
+        return True
+    top = max(len(members) for dummy, members in groups)
+    tied = [i for i, g in enumerate(groups) if len(g[1]) == top]
+    chosen = next((i for i in tied if _is_default(key, groups[i][0], defaults)), tied[0])  # (its index in groups)
+    value, members = groups[chosen]
+    tie = None
+    if len(tied) > 1:
+        yours = value is MISSING and any(key in ((given or {}).get(n["name"]) or {}) for n in members)
+        tie = (key, "yours" if yours else "default" if _is_default(key, value, defaults) else members[0]["name"])
+    # whether the chosen value goes to the cluster's group_vars (a node's own by nature, or a node without key whose
+    # value cannot be written: every node's in its host_vars)
+    to_cluster = not (key in PER_NODE and top == 1)
+    missing = next((m for v, m in groups if v is MISSING), [])
+    fills = {}
+    if to_cluster and value is not MISSING:
+        for n in missing:
+            ok, fill = _fill(key, n, defaults, given)
+            if not ok:
+                said.setdefault("per_node", []).append(key)
+                to_cluster, fills = False, {}
+                break
+            fills[n["name"]] = fill
+    if tie and to_cluster:
+        said.setdefault("tie", []).append(tie)
+    if to_cluster and value is not MISSING:
+        group_vars.setdefault(cluster, {})[key] = value
+    for i, (other, others) in enumerate(groups):
+        if to_cluster and i == chosen:
+            continue
+        for n in others:
+            if other is not MISSING:
+                host_vars.setdefault(n["name"], {})[key] = other
+            elif n["name"] in fills and fills[n["name"]] is not YOURS_WIN \
+                    and not _same(key, fills[n["name"]], value):  # (the default there already)
+                host_vars.setdefault(n["name"], {})[key] = fills[n["name"]]
+    return False
 
 
 def _show(key, value):
@@ -3396,6 +3511,25 @@ def _layout_notes(cluster_name, cluster, nodes, read, host_vars, medusa, domain,
     return report
 
 
+def _placement_lines(cluster, said):
+    """The report's lines on the variables _place could not give their most common value plainly: a tie, one
+    kept per node only -> [line]."""
+    lines = []
+    if said.get("tie"):
+        lines.append("A TIE, as many nodes on each value: the one in group_vars/%s/ (the others in their nodes'"
+                     " host_vars):" % cluster)
+        words = {"default": "the collection's default", "yours": "the one your files give (not written)"}
+        for key, how in sorted(said["tie"], key=lambda t: vars_sort_key(t[0])):
+            lines.append("  %s: %s" % (key, words.get(how, "the one of %s, the first node in the hosts file" % how)))
+        lines.append("")
+    if said.get("per_node"):
+        lines.append("IN HOST_VARS ONLY, not in group_vars/%s/: the nodes without them get a default made of other"
+                     " variables (or a value of your files), which the import does not write for them alone:" % cluster)
+        lines += ["  %s" % key for key in sorted(said["per_node"], key=vars_sort_key)]
+        lines.append("")
+    return lines
+
+
 def _java_default_line(read, cluster, grouped):
     """The report's line on the system java the roles leave as it is (cassandra_java_set_default: false): on
     which nodes, why, where it is set, what true would do -> [line], [] when on no node."""
@@ -3451,11 +3585,14 @@ def _node_report(n, grouped=()):
 
 
 @values_hidden
-def cassandra_inventory_layout(nodes, cluster_name, group=""):
+def cassandra_inventory_layout(nodes, cluster_name, group="", given=None):
     """nodes: [{name, address?, hostname?, dc, rack, ansible_host?, read: bool, reason?,
     vars, hand_edits, normalized, comments?, notes}] -> {'cluster_group', 'cluster_name', 'hosts', 'group_vars', 'host_vars',
     'differences', 'report', 'names' (address -> name in the hosts file)}. Nodes sharing a name are named by their address instead.
-    group: the cluster's group (import_group, cassandra_import_group's), else the cluster name's.
+    group: the cluster's group (import_group, cassandra_import_group's), else the cluster name's. Each variable's
+    most common value goes to the cluster's group_vars, each other node's to its host_vars (_place); the DC's and
+    rack's group_vars hold their cassandra_dc and cassandra_rack (and rackdc's dc= and rack= where the nodes there
+    share them). given: {node: {variable: value}} your files give the nodes (cassandra_inventory_layout_over).
     e.g. cassandra_inventory_layout(cassandra_import_nodes, "Prod Cluster") -> {"cluster_group": "prod_cluster",
     "hosts": {"all": {"children": {"prod_cluster": {"children": {"prod_cluster_dc1": ...}}}}}, ...}."""
     cluster = cassandra_import_group(group) if group else _slug(cluster_name)
@@ -3474,8 +3611,12 @@ def cassandra_inventory_layout(nodes, cluster_name, group=""):
         for n in read:
             if key in n["vars"]:
                 host_vars.setdefault(n["name"], {})[key] = n["vars"][key]
-    drift = [k for k in keys if k not in NODE_LEVEL and not _place(k, read, levels, group_vars, host_vars)
-             and k not in PER_NODE]
+    said, drift = {}, []  # (the variables whose values differ between nodes)
+    for k in [k for k in keys if k not in NODE_LEVEL]:
+        same = _place_highest(k, read, levels, group_vars, host_vars) if k in RACKDC \
+            else _place(k, read, cluster, group_vars, host_vars, given, said)
+        if not same and k not in PER_NODE:
+            drift.append(k)
     differences = ["DIFFERENCES BETWEEN NODES (kept per group or node, check they are wanted):"]
     differences += _differences(drift, read, dcg, rackg) or ["  none"]
     # the system java left as it is on every node, all read: in the cluster's group (the nodes keep it in "keep")
@@ -3485,6 +3626,7 @@ def cassandra_inventory_layout(nodes, cluster_name, group=""):
         group_vars[cluster][JAVA_DEFAULT] = False
     report = _layout_notes(cluster_name, cluster, nodes, read, host_vars, medusa, domain, templates,
                            shared)
+    report += _placement_lines(cluster, said)
     report += _java_default_line(read, cluster, bool(grouped))
     for n in nodes:
         keep = dict((k, v) for k, v in (n.get("keep") or {}).items() if k not in grouped)
@@ -3540,9 +3682,10 @@ def _snippets_for_layout(read, nodes, cluster):
                   and name.split(":", maxsplit=1)[0] not in ((n.get("keep") or {}).get("cassandra_config_keep_files") or [])]
         texts = [_snippet_of(n, key, name) for n in having]
         # (the same text: a node's own {{ in a raw block, never the same as a line the import made)
-        same = len(having) == len(read) and len(set(texts)) == 1
+        common = _common_snippet(read, having, texts)
         for n, text in zip(having, texts):
-            path = snippet_path("group_vars", cluster, name) if same else snippet_path("host_vars", n["name"], name)
+            path = snippet_path("group_vars", cluster, name) if text == common \
+                else snippet_path("host_vars", n["name"], name)
             snippets[path] = text
             n["snippet_refs"] = list(n.get("snippet_refs") or []) + SECRET_MOVED_REF.findall(text) + re.findall(
                 r"\{\{ (%s\w+) \}\}" % SECRET_VAR, text)
@@ -3562,6 +3705,18 @@ def _snippets_for_layout(read, nodes, cluster):
             n["vars"] = dict((k, v) for k, v in variables.items() if not k.startswith(SECRET_VAR) or k in used)
     nodes = [next((r for r in read if r["name"] == n["name"]), n) for n in nodes]
     return read, nodes, snippets
+
+
+def _common_snippet(read, having, texts):
+    """The snippet text most nodes read have (the one of the first node in the hosts file on a tie), written once
+    in the cluster's group_vars; None when most have none (the collection's default, on a tie too)."""
+    count = {}
+    for n, text in sorted(zip(having, texts), key=lambda p: hosts_order(p[0])):
+        count[text] = count.get(text, 0) + 1
+    if not count:
+        return None
+    text = max(count, key=lambda t: count[t])  # (the first one of the highest count)
+    return text if count[text] > len(read) - len(having) else None
 
 
 def _snippet_of(n, key, name):
@@ -3997,6 +4152,24 @@ def _theirs_win(nodes, layout, user, yours):
     return theirs_win
 
 
+def _given(nodes, layout, user):
+    """{node: {key: value}}: what your files give each node, as Ansible reads them next to the import's dirs;
+    YOURS_WIN when it is a file that wins over the cluster's group_vars/<cluster group>/main.yml (a host's, a DC's
+    or rack's, one of the cluster group's dir sorted after main.yml)."""
+    chains = group_chains(layout["hosts"])
+    out = {}
+    for n in nodes:
+        name = layout["names"].get(n.get("address"), n["name"])
+        chain = chains.get(name, [])
+        mine = out.setdefault(name, {})
+        for key, (value, path) in _effective(name, chain, layout, user, mine=False).items():
+            where = _vars_dir(path)
+            wins = where.startswith("host_vars/") or where.split("/", 1)[1] in chain[1:] or (
+                chain and where == "group_vars/" + chain[0] and path > where + "/main.yml")
+            mine[key] = YOURS_WIN if wins else value
+    return out
+
+
 def _layout_over(nodes, cluster_name, user_files, inventory_dir="", group=""):
     """cassandra_inventory_layout, with the user's own variables files of the inventory dir (user_files: [{path,
     content}], group_vars/all and those of this cluster's groups and hosts) taken into account: a node whose value
@@ -4012,14 +4185,14 @@ def _layout_over(nodes, cluster_name, user_files, inventory_dir="", group=""):
     yours = []
     layout = cassandra_inventory_layout(nodes, cluster_name, group)
     from_yours, differ = _left_to_theirs(nodes, layout, user, inventory_dir, found)
-    layout = cassandra_inventory_layout(nodes, cluster_name, group)
+    layout = cassandra_inventory_layout(nodes, cluster_name, group, _given(nodes, layout, user))
     for dummy in range(3):  # each round writes the values theirs would change; the layout again
         changed, pins = _write_over_theirs(nodes, layout, user, found, yours)
         if not changed:
             for name, key, live in pins:
                 layout["host_vars"].setdefault(name, {})[key] = live
             break
-        layout = cassandra_inventory_layout(nodes, cluster_name, group)
+        layout = cassandra_inventory_layout(nodes, cluster_name, group, _given(nodes, layout, user))
     theirs_win = _theirs_win(nodes, layout, user, yours)
     for d in differ:  # the ones the import writes anyway (a value that differs between nodes) too
         if not any(y["node"] == d["node"] and y["key"] == d["key"] for y in yours):
