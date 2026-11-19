@@ -282,15 +282,22 @@ _MARKS = (
 PROGRESS_COLOR = "cyan"  # the progress, phase and NOTE lines (option progress_color)
 
 
-# the operations with a plan: its title is the operation in capitals ("ADD NODE  node4 into dc1 of my_cluster")
+# The first words of the blocks the playbooks print, each followed by two spaces; the one table _HEADED and _RECAP
+# are built from (the test of the callback checks the operations against the playbooks):
+# - the operations with a plan: its title is the operation in capitals ("ADD NODE  node4 into dc1 of my_cluster");
 _OPERATIONS = ("add_node", "replace_node", "decommission_node", "remove_dead_node", "reset_node", "move_node", "stop_rack",
                "start_rack", "change_seeds", "apply_config", "update_java", "sync_clocks", "add_datacenter",
                "remove_datacenter", "create_cluster", "upgrade", "cleanup", "topology", "rolling_restart", "rolling_reboot")
-# a plan or a screen (its first line), a recap (a stop block: "STOPPED  rolling_restart  prod  at node2", "WAY OUT  ..." too)
-_HEADED = re.compile(r"(PLAN|REFUSED|READY|NOTHING TO DO|%s)  |IMPORT \S+ " % "|".join(
-    operation.replace("_", " ").upper() for operation in _OPERATIONS))
+# - the other first words of a plan or a screen ("REFUSED  topology ..."; import_cluster's "IMPORT prod ..." apart);
+_SCREEN_HEADS = ("PLAN", "REFUSED", "READY", "NOTHING TO DO")
+# - the first words of a recap, a stop block's too ("STOPPED  rolling_restart  prod  at node2", "WAY OUT  ...").
+_RECAP_HEADS = ("DONE", "FAILED", "STOPPED", "CHECK", "HEALTHY", "NOT HEALTHY", "NOTHING TO DO", "WAY OUT")
+# a plan or a screen (its first line): a heavy rule above it
+_HEADED = re.compile(r"(%s)  |IMPORT \S+ " % "|".join(
+    _SCREEN_HEADS + tuple(operation.replace("_", " ").upper() for operation in _OPERATIONS)))
+# a recap: heavy rules around it ("STOPPED at node2: ..." too)
+_RECAP = re.compile(r"(%s)  |(STOPPED|FAILED) at " % "|".join(_RECAP_HEADS))
 _HEAVY = re.compile(r"(?:==== (\S.*?) )?={4,}$")  # a rule of = inside a screen, a title in it or not: its heavy rule
-_RECAP = re.compile(r"(DONE|FAILED|STOPPED|CHECK|HEALTHY|NOT HEALTHY|NOTHING TO DO|WAY OUT)  |(STOPPED|FAILED) at ")
 # a verdict block without rules, coloured by its lines (its blank lines blank): import_cluster's failed self-check
 _BLOCK = re.compile(u"SELF-CHECK FAILED \u2014 ")
 # a progress line: a step of a rolling operation ("[2/5] node2  restart  ..."), or a wait outside one (_WAIT); the
