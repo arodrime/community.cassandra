@@ -124,6 +124,7 @@ import re
 import sys
 import textwrap
 import time
+from collections import namedtuple
 
 try:
     import termios
@@ -343,6 +344,26 @@ def _ring_verdict(texts):
     while above and not above[-1].strip():
         above.pop()
     return above, shown[-size:]
+
+
+# How a message is laid out (_layout), then printed (CallbackModule._print):
+# - texts: its lines (the status report's tables only, its verdict apart in ring); first: its first line with text;
+# - headed: a plan or a screen (a heavy rule above it); recap: a recap (heavy rules around it);
+# - phase: a phase line alone (a blank line above and under it);
+# - ring: the status report's verdict lines (between heavy rules); verdict_first: above its tables (the report
+#   from 2.1.0 on), else under them.
+Layout = namedtuple("Layout", "texts first headed recap phase ring verdict_first")
+
+
+def _layout(texts):
+    """The Layout of a message's lines (not a progress message: _progress_block prints those)."""
+    first = next((t for t in texts if t.strip()), "")
+    tables, ring = _ring_verdict(texts)
+    if ring:  # the status report: its first line is the cluster's name, whatever that name is
+        verdict_first = tables[:1] == [None]
+        return Layout(tables[1:] if verdict_first else tables, first, False, False, False, ring, verdict_first)
+    phase = sum(1 for t in texts if t.strip()) == 1 and bool(_PHASE.match(first))
+    return Layout(texts, first, bool(_HEADED.match(first)), bool(_RECAP.match(first)), phase, [], False)
 
 
 def shade(name, progress=PROGRESS_COLOR, warning=None):
@@ -628,36 +649,42 @@ class CallbackModule(DefaultCallback):
                 self._line(help_line(line, key if i == 0 else "", self._progress, text.startswith(FLOW)), plain=line)
 
     def _print(self, msg, color=None, info=False):
+        """An operator message: a progress message (_progress_block), the status report (_print_ring), else its
+        lines between the rules and blank lines of its _layout. color: the colour of all its lines (a verdict's
+        red), else each line's own; info: an informative summary (its plain lines in the progress colour)."""
         texts = lines(msg)
         if color is None and is_progress(texts):
             return self._progress_block(texts)
-        first = next((t for t in texts if t.strip()), "")
-        headed, recap = _HEADED.match(first), _RECAP.match(first)
-        phase = sum(1 for t in texts if t.strip()) == 1 and _PHASE.match(first)  # a blank line above and under it
-        texts, ring = _ring_verdict(texts)  # the status report: a screen, its verdict printed between rules
-        if ring:
-            headed = recap = phase = None  # its first line is the cluster's name, whatever that name is
-        if headed or recap or ring:
+        layout = _layout(texts)
+        if layout.ring:
+            return self._print_ring(layout, color, info)
+        if layout.headed or layout.recap:
             self._rule(heavy=True)
-        elif self._gap or phase:
+        elif self._gap or layout.phase:
             self._line("")
         self._gap = False
-        if ring and texts[:1] == [None]:  # its verdict first: between rules, then its tables, a rule under them
-            for line in ring:
-                self._line(line, color=color or colour(line, None, self._progress, self._warning))
+        self._print_lines(layout.texts, layout.first, layout.headed, layout.recap, color, info)
+        if layout.recap:
             self._rule(heavy=True)
-            self._print_lines(texts[1:], first, headed, recap, color, info)
-            self._rule(heavy=True)
-            return None
-        self._print_lines(texts, first, headed, recap, color, info)
-        if ring:
-            self._rule(heavy=True)
-            for line in ring:
-                self._line(line, color=color or colour(line, None, self._progress, self._warning))
-        if recap or ring:
-            self._rule(heavy=True)
-        elif phase:
+        elif layout.phase:
             self._gap = True
+        return None
+
+    def _print_ring(self, layout, color, info):
+        """The status report: its verdict lines and its tables, in the order of its layout, a heavy rule above,
+        between and under them."""
+        def verdict():
+            for line in layout.ring:
+                self._line(line, color=color or colour(line, None, self._progress, self._warning))
+
+        def tables():
+            self._print_lines(layout.texts, layout.first, False, False, color, info)
+
+        self._rule(heavy=True)
+        self._gap = False
+        for part in (verdict, tables) if layout.verdict_first else (tables, verdict):
+            part()
+            self._rule(heavy=True)
         return None
 
     def _progress_block(self, texts):
@@ -707,14 +734,17 @@ class CallbackModule(DefaultCallback):
     def _print_lines(self, texts, first, headed, recap, color, info):
         """A message's lines, each in its colour (its own mark, else the one of the less indented line above it);
         in a screen (headed) or a recap, a rule between its blocks, and under a plan's first line."""
+        ruled = headed or recap  # a screen or a recap: rules inside it
+        top = texts.index(first) if ruled else None  # its first line
         shades = []  # (indent, colour) of the lines above, each less indented than the next
         for i, line in enumerate(texts):
-            if (headed or recap) and not line:  # a blank line between paragraphs (not "") stays blank
+            if ruled and not line:  # a blank line between paragraphs (not "") stays blank
                 self._rule()  # the blocks inside
                 shades = []
                 continue
-            if (headed or recap) and _HEAVY.match(line):  # a section of the screen: drawn as the heavy rule
-                self._rule(heavy=True, text=_HEAVY.match(line).group(1) or "")
+            heavy = _HEAVY.match(line) if ruled else None
+            if heavy:  # a section of the screen: drawn as the heavy rule
+                self._rule(heavy=True, text=heavy.group(1) or "")
                 shades = []
                 continue
             shades = _under(shades, line)
@@ -722,13 +752,13 @@ class CallbackModule(DefaultCallback):
             hue = color or colour(line, above, self._progress, self._warning)
             if hue is None and info:  # an informative summary: its plain lines in the progress colour
                 hue = self._progress
-            if hue is None and headed and not recap and i == texts.index(first):  # a plan's or a screen's first line
+            if hue is None and headed and not recap and i == top:  # a plan's or a screen's first line
                 hue = shade(PLAN_COLOUR, self._progress, self._warning)
             # an indented line's own mark: that line only; a FAILED or STOPPED recap: its rows by their own marks
-            failed = recap and i == texts.index(first) and first.startswith(("FAILED", "STOPPED"))
+            failed = recap and i == top and first.startswith(("FAILED", "STOPPED"))
             shades.append((_indent(line), None if failed else (above if _indent(line) and not color else hue)))
             self._line(line, color=hue)
-            if headed and first.startswith("PLAN") and i == texts.index(first) and i + 1 < len(texts) and texts[i + 1].strip():
+            if headed and i == top and first.startswith("PLAN") and i + 1 < len(texts) and texts[i + 1].strip():
                 self._rule()  # under the plan's first line
                 shades = []
 
