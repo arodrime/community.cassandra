@@ -1164,9 +1164,12 @@ def test_scheduler_and_lvm_carried():
 # --- the model with the variables of rc10 ---
 
 def test_thp_unit_template_writes_the_unit_of_earlier_versions():
-    # never/never: the very file earlier versions copied (no rewrite on the nodes they set up)
-    assert hashlib.sha1(thp_unit({"enabled": "never", "defrag": "never"}).encode()).hexdigest() == \
-        "0eb0320872bcba95824374ce4a88b902a9827fea"
+    # never/never: the file earlier versions copied, under the role's header line (3.0.0: written again once on the
+    # nodes they set up, THP the same: no effect)
+    unit = thp_unit({"enabled": "never", "defrag": "never"})
+    header, earlier = unit.split("\n", 1)
+    assert header == "# Managed by Ansible (community.cassandra.cassandra_linux): change the role variables, not this file."
+    assert hashlib.sha1(earlier.encode()).hexdigest() == "0eb0320872bcba95824374ce4a88b902a9827fea"
     assert "echo 'madvise' > /sys/kernel/mm/transparent_hugepage/defrag\"" in thp_unit({"defrag": "madvise"})
     assert "enabled" not in thp_unit({"defrag": "madvise"}).split("ExecStart")[1]
 

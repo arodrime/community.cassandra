@@ -966,10 +966,12 @@ def test_jmx_access_written_back_as_imported(access, exact):
             content = f.read()
         files[name] = Templar(loader=DataLoader(), variables={"cassandra_jmx_users": users}).template(
             trust_as_template(content))
+    # (the role's header line first: a comment, the JVM reads them as properties files)
+    header = "# Managed by Ansible (community.cassandra.cassandra_config): change the role variables, not this file.\n"
     assert _jmx_entries(files["access"]) == _jmx_entries(access)
-    assert files["access"] == access or not exact
+    assert files["access"] == header + access or not exact
     # the roles without a password entry: none written for them
-    assert files["password"] == "ops s3cret\nmon m0n\n"
+    assert files["password"] == header + "ops s3cret\nmon m0n\n"
 
 
 STOCK = {"40x": "stock-4.0.21", "41x": "stock-4.1.12", "50x": "stock-5.0.9"}
