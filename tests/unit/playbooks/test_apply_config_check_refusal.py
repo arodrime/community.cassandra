@@ -251,3 +251,40 @@ def test_the_owner_and_mode_changes_are_not_shown_twice():
     for name in ("Set the owner and mode of the files left as they are", "Set the owner and mode of the existing ones",
                  "Template Cassandra config files"):
         assert tasks[name]["diff"] is False, name
+
+
+OUTSIDE = {"stdout": "not started by the cassandra unit (pid 4242 is not in its control group)"}
+
+
+@pytest.mark.parametrize("unit_running, jvm, cgroup, then, refused", [
+    (False, {"pid": "4242"}, OUTSIDE, "restart", True),  # started by hand, its unit inactive: a restart would start another
+    # its unit not "running" but the JVM in its control group (an init script's unit, active (exited)): its own
+    (False, {"pid": "4242"}, {"stdout": ""}, "restart", False),
+    (True, {"pid": "4242"}, {"skipped": True}, "restart", False),  # the unit's own JVM: restarted by it
+    (False, {}, {"skipped": True}, "restart", False),  # (no JVM: nothing to refuse)
+    (False, {"pid": "4242"}, OUTSIDE, "none", False),  # nothing restarted
+])
+def test_a_cassandra_its_unit_did_not_start_is_not_restarted(unit_running, jvm, cgroup, then, refused):
+    # systemctl restart cassandra next to a JVM outside the unit's control group would start a second one
+    t = task("Refuse to restart a Cassandra its unit did not start")
+    variables = {"cassandra_apply_config_then": then, "_cassandra_preflight_running": unit_running,
+                 "cassandra_jvm": jvm, "cassandra_apply_config_jvm_outside": cgroup, "ansible_check_mode": False,
+                 "inventory_hostname": "node1"}
+    assert all(render("{{ %s }}" % w, variables) for w in t["when"]) is refused
+    assert not render("{{ %s }}" % t["when"][-1], dict(variables, ansible_check_mode=True))  # (--check shows all)
+    if refused:
+        msg = " ".join(render(t["ansible.builtin.fail"]["msg"], variables).split())
+        assert msg.startswith("node1: Cassandra runs (pid 4242) outside its cassandra unit (not in its control group:")
+        assert "would start a second Cassandra" in msg and "Nothing was changed." in msg
+        assert msg.endswith("start it with its unit (systemctl start cassandra), then run apply_config again.")
+    # the plan (--check too) says it on the node
+    note = task("Note what this node needs")
+    hand = render(note["vars"]["_hand_started"], dict(variables, _then=then))
+    assert hand is refused
+
+
+def test_the_jvm_outside_its_unit_is_told_by_its_control_group():
+    t = task("Tell whether its unit started that JVM")
+    assert "jvm_proof.sh" in t["ansible.builtin.shell"] and "jvm_untrusted" in t["ansible.builtin.shell"]
+    assert t["register"] == "cassandra_apply_config_jvm_outside" and t["check_mode"] is False
+    assert t["when"] == ["not _cassandra_preflight_running | default(true) | bool", "cassandra_jvm.pid is defined"]

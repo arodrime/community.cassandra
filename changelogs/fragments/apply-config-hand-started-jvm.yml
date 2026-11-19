@@ -1,0 +1,7 @@
+bugfixes:
+  - >-
+    apply_config - a node whose Cassandra runs outside its ``cassandra`` unit (not in the unit's control group:
+    started by hand, or by a script of its own) and whose config needs a restart is now refused before any change,
+    with the way out (stop that Cassandra, start it with its unit, run again): the restart through the unit would
+    start a second Cassandra next to it. ``--check`` goes on and says it under the node. A JVM in the unit's control
+    group is its own whatever the unit's state (an init script's unit shows ``active (exited)``).

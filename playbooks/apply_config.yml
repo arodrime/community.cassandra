@@ -150,6 +150,21 @@
         tasks_from: jvm_started.yml
       when: not _cassandra_preflight_running | default(true) | bool
 
+    # outside the control group of its unit (started by hand, or by a script of its own), not the unit's own JVM
+    # whatever the unit's state says (an init script's unit shows "active (exited)")
+    - name: Tell whether its unit started that JVM
+      ansible.builtin.shell: |
+        {{ lookup('ansible.builtin.file', playbook_dir ~ '/files/jvm_proof.sh') }}
+        jvm_untrusted "$CASSANDRA_PID" | grep 'not started by the cassandra unit' || true
+      environment:
+        CASSANDRA_PID: "{{ cassandra_jvm.pid }}"
+      register: cassandra_apply_config_jvm_outside
+      changed_when: false
+      check_mode: false  # reads only
+      when:
+        - not _cassandra_preflight_running | default(true) | bool
+        - cassandra_jvm.pid is defined
+
     # failed (it could not start, or crashed) or restarting after a failure: it was to run; else stopped on purpose
     - name: Read the state of its unit
       ansible.builtin.systemd_service:
@@ -337,7 +352,10 @@
                 else [])
              + (['WARNING  ' ~ _keep_missing | join(', ') ~ ' kept by hand (cassandra_config_keep_files) '
                  ~ ('is' if _keep_missing | length == 1 else 'are') ~ ' missing: written back from the template, the hand'
-                 ~ ' edits are lost. Restore your copy first to keep them.'] if _keep_missing else []) }}
+                 ~ ' edits are lost. Restore your copy first to keep them.'] if _keep_missing else [])
+             + (['WARNING  Cassandra runs (pid ' ~ cassandra_jvm.pid ~ ') outside its cassandra unit (not in its control group): a real run'
+                 ' refuses its restart (it would start a second Cassandra)']
+                if _hand_started | default(false) | bool else []) }}
         # why a node written while it runs is not restarted, said in the plan (the outcomes' own reason otherwise)
         cassandra_apply_config_kept_running: >-
           {%- set out = ['an owner, group or mode: read at start'] if _perms + _dirs else [] -%}
@@ -476,6 +494,9 @@
                             or _timesync | bool or _disks_window | length > 0 or _exporter_restart | bool
               else 'none') if _running | bool
              else 'start' if _starts | bool else 'write' }}
+        # a JVM outside its unit's control group (started by hand, or by a script of its own), to restart
+        _hand_started: >-
+          {{ cassandra_apply_config_jvm_outside.stdout | default('') | length > 0 and _then == 'restart' }}
         # a restart for a file read at start alone (no setting of the config changes)
         _restart_why: >-
           {{ 'jmxremote.access: read at start'
@@ -521,6 +542,21 @@
           {%- else -%}
           {{ [] }}
           {%- endif -%}
+
+    # A Cassandra outside its unit's control group (a JVM started by hand or by a script of its own): the restart
+    # through the unit would start a second one next to it. A real run refuses before any change; --check goes on to
+    # show everything (the node's WARNING says it)
+    - name: Refuse to restart a Cassandra its unit did not start
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }}: Cassandra runs (pid {{ cassandra_jvm.pid }}) outside its cassandra unit (not in
+          its control group: started by hand, or by a script of its own). The restart its config needs would start a
+          second Cassandra next to it. Nothing was changed. Stop that Cassandra (nodetool drain, then stop what
+          started it), start it with its unit (systemctl start cassandra), then run apply_config again.
+      when:
+        - cassandra_apply_config_then == 'restart'
+        - cassandra_apply_config_jvm_outside.stdout | default('') | length > 0
+        - not ansible_check_mode
 
     # 5.0: a node not running that this run starts (its unit failed, or an interrupted run stopped it): the mode it
     # last ran against the one it starts with (back, two steps on, into NONE unread), before the plan (the compare
