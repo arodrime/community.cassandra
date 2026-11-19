@@ -1054,13 +1054,58 @@ def test_owner_like_node_is_a_no_op_with_the_roles():
     assert len(cassandra_linux_changes(owner_like(), linux(), RHEL, False)) > 5
 
 
+@pytest.mark.parametrize("own", [False, True])
+def test_a_key_not_carried_is_never_set_live_when_another_changes(own):
+    # (audit of rc13, B) the role sets its own keys live one by one, never loading its file again: a key of that
+    # file not carried (set again by a later file) keeps the later file's value live when a key of the role changes
+    text = site_file_with_a_vendor_override()
+    r = found(text, own=own)
+    wanted = dict(r["vars"]["cassandra_linux_sysctl"], **{"vm.swappiness": 10})
+    r = dict(r, vars=dict(r["vars"], cassandra_linux_sysctl=wanted))
+    assert sysctl_changes(text, r, own) == [
+        {"what": "sysctl vm.swappiness (live)", "now": "1", "would": "10", "effect": "change"},
+        {"what": "sysctl vm.swappiness (/etc/sysctl.d/01-site.conf)", "now": "1", "would": "10", "effect": "change"}]
+
+
+@pytest.mark.parametrize("own", [False, True])
+def test_a_role_key_set_again_later_is_said_not_carried_not_absent(own):
+    # (audit of rc13, C3) a key of the role in the file, set again by a later one: not "as in their file" (it is
+    # there), NOT carried (the note above says why); a key the file lacks: as in their file
+    text = (file_records("sysctl", "/etc/sysctl.d/01-site.conf",
+                         text="vm.max_map_count = 1048575\nvm.swappiness = 1\nvm.zone_reclaim_mode = 0\n")
+            + file_records("sysctl", "/etc/sysctl.d/99-zz.conf", text="vm.swappiness = 10\n"))
+    r = found(text, own=own)
+    assert "vm.swappiness" not in r["vars"]["cassandra_linux_sysctl"]
+    note = next(n for n in r["carried"] if n.startswith("cassandra_linux_sysctl: "))
+    assert note.endswith(", as in their file; without vm.swappiness, NOT carried)")
+    assert "vm.swappiness, as in their file" not in note and "net.core.rmem_max" in note
+
+
+def test_the_role_sets_its_kernel_keys_live_one_by_one():
+    # (audit of rc13, B) the sysctl module never loads the file again (reload: sysctl -p <file> would set its other
+    # keys live too); after a tuned switch, each of the role's keys again, not the file
+    import yaml
+    tasks_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_linux", "tasks")
+    with open(os.path.join(tasks_dir, "os.yml"), encoding="utf-8") as f:
+        task = next(t for t in yaml.safe_load(f) if t.get("name") == "Kernel settings for Cassandra")
+    assert task["ansible.builtin.sysctl"]["reload"] is False
+    assert task["ansible.builtin.sysctl"]["sysctl_set"] == "{{ _cassandra_linux_live }}"
+    with open(os.path.join(tasks_dir, "disks_apply.yml"), encoding="utf-8") as f:
+        text = f.read()
+    assert "sysctl, -p" not in text
+    again = text[text.index("- name: Apply the kernel settings again"):]
+    again = again[:again.index("\n\n")]
+    assert "argv: [sysctl, -w, \"{{ item.key }}={{ item.value }}\"]" in again
+    assert "loop: \"{{ cassandra_linux_sysctl | dict2items }}\"" in again
+
+
 def test_a_file_of_write_only_keys_alone_is_no_file_to_write_in():
     # (audit of rc12, C3) the node's kernel keys file has only a trigger: nothing carried, no sysctl_file override
     text = re.sub(r"(?m)^sysctl\|/etc/sysctl.d/90_cassandra.conf\|.*\n", "", owner_like())
     text += "sysctl|/etc/sysctl.d/90_cassandra.conf|vm.drop_caches = 3\nsysctl_live|vm.drop_caches|\n"
     r = found(text, os_family="RedHat")
     assert "cassandra_linux_sysctl_file" not in r["vars"]
-    assert [n for n in r["carried"] if "write-only" in n and "runs again whenever that file is reloaded" in n]
+    assert [n for n in r["carried"] if "write-only" in n and "runs again whenever that file is loaded (at boot, sysctl --system;" in n]
     alone = ("cassandra_linux_sysctl: {}, the file these nodes set kernel keys in, /etc/sysctl.d/90_cassandra.conf, has"
              " write-only ones alone")
     assert [n for n in r["carried"] if n.startswith(alone)]

@@ -103,7 +103,9 @@ Role Variables
 * `cassandra_linux_sysctl`: kernel settings (swappiness, max_map_count, TCP
   keepalive and buffers...), written to `cassandra_linux_sysctl_file`
   (default `/etc/sysctl.d/60-cassandra.conf`). The same keys are removed from
-  `/etc/sysctl.conf`, which is read last and would win.
+  `/etc/sysctl.conf`, which is read last and would win. Live, each key is
+  set alone: the file is never loaded again, its other lines (in a file of
+  the node's own) are left as the node has them.
 * `cassandra_linux_limits`: limits of the cassandra user, in
   `cassandra_linux_limits_file` (default
   `/etc/security/limits.d/cassandra.conf`), for tools run by hand as

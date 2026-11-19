@@ -92,11 +92,15 @@
           when: cassandra_data_tuned_switch.rc | default(1) == 0
 
         # what the profiles set live again (also when the switch failed: tuned
-        # started them before again), over what the role set earlier in this run
+        # started them before again), over what the role set earlier in this run:
+        # the role's keys, each alone (not its file: see os.yml)
         - name: Apply the kernel settings again
           ansible.builtin.command:
-            argv: [sysctl, -p, "{{ cassandra_linux_sysctl_file }}"]
-          failed_when: false  # no file without settings
+            argv: [sysctl, -w, "{{ item.key }}={{ item.value }}"]
+          loop: "{{ cassandra_linux_sysctl | dict2items }}"
+          loop_control:
+            label: "{{ item.key }}"
+          failed_when: false  # (as before: os.yml set each one this run, refusing an unknown key there)
           when:
             - cassandra_data_tuned_switch is not skipped
             - not _cassandra_linux_check

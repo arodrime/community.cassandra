@@ -173,6 +173,7 @@ def _sysctl(recs, wanted, own):
                          " cassandra_linux sets none")
         return lines, out, notes
     target = _sysctl_target(won_by, order, link, own, own_values, role_file)
+    others = []
     if not (own and own_values) and won_by:
         # the file the role is to write in, its keys exactly (a key of another file would be added there, and a
         # /etc/sysctl.conf line removed)
@@ -198,10 +199,14 @@ def _sysctl(recs, wanted, own):
     if triggers:
         carried = dict((k, v) for k, v in carried.items() if k not in WRITE_ONLY_SYSCTL)
         notes.append("NOT carried: %s, write-only (an action, not a setting: never read back); its line stays in the"
-                     " node's file as it is, and runs again whenever that file is reloaded (another sysctl change, a"
-                     " tuned switch)" % ", ".join(triggers))
+                     " node's file as it is, and runs again whenever that file is loaded (at boot, sysctl --system;"
+                     " cassandra_linux sets its own keys alone)" % ", ".join(triggers))
     changed = sorted(k for k in carried if k not in role or _norm(carried[k]) != _norm(role[k]))
     missing = [k for k in role if k not in carried]
+    # (in the file but not carried: the NOT carried note above says why)
+    dropped = set(k for keys in set_again.values() for k in keys) | set(triggers) | set(others)
+    absent = [k for k in missing if k not in dropped]
+    left = [k for k in missing if k in dropped]
     only_triggers = bool(triggers) and not carried  # (its file has write-only keys alone: nothing to write there)
     if not carried and role and only_triggers:
         out["cassandra_linux_sysctl"] = {}
@@ -215,7 +220,8 @@ def _sysctl(recs, wanted, own):
         out["cassandra_linux_sysctl"] = carried
         notes.append("cassandra_linux_sysctl: %s, as these nodes have them%s" % (
             ", ".join("%s %s" % (k, _norm(carried[k])) for k in changed) or "the same values",
-            (" (without %s, as in their file)" % ", ".join(missing)) if missing
+            (" (%s)" % "; ".join(["without %s, %s" % (", ".join(keys), why) for keys, why in (
+                (absent, "as in their file"), (left, "NOT carried")) if keys])) if missing
             else " (the role's other keys at their default)"))
     if target != role_file and not only_triggers:  # (no file to write in with no key: no override)
         out["cassandra_linux_sysctl_file"] = target
@@ -1262,7 +1268,8 @@ def _live_boot(linux, facts):
 
 
 def _sysctl_changes(recs, linux, live):
-    """cassandra_linux's sysctl module: each key in its file (and set live), the same keys out of /etc/sysctl.conf.
+    """cassandra_linux's sysctl module: each key in its file (and set live, alone), the same keys out of
+    /etc/sysctl.conf.
     A file line is no effect when the value read at boot stays the one the node has now."""
     wanted = [(_sysctl_key(str(k)), _norm(v)) for k, v in (linux.get("sysctl") or {}).items()]
     target = linux.get("sysctl_file") or "/etc/sysctl.d/60-cassandra.conf"
@@ -1285,10 +1292,8 @@ def _sysctl_changes(recs, linux, live):
             at_boot[k] = v
     items = []
     if live:
-        # the module sets each key, and loads its whole file again when it changed it
-        set_live = dict(after.get(target, [])) if any(path == target for dummy, path, dummy2, dummy3 in edits) else {}
-        set_live.update(wanted)
-        for key, value in set_live.items():
+        # the module sets each of its keys live, one by one (never its whole file again: its other keys stay)
+        for key, value in wanted:
             if key in WRITE_ONLY_SYSCTL and key in dict(wanted):  # (cassandra_linux refuses it: set at each run)
                 items.append(_item("sysctl %s (live)" % key, "not read (write-only)", "written at each run: an action"))
             elif key not in WRITE_ONLY_SYSCTL and _norm(now.get(key, "")) != value:

@@ -1,0 +1,10 @@
+bugfixes:
+  - >-
+    cassandra_linux - the kernel settings are set live one key at a time, never by loading
+    ``cassandra_linux_sysctl_file`` again (``sysctl -p``), also after a tuned profile switch. In a file of the
+    node's own, a line the role does not manage (a key a file read later sets again, a write-only action such
+    as ``vm.drop_caches``) no longer gets applied live when one of the role's keys changes.
+  - >-
+    import_cluster - the ``cassandra_linux_sysctl`` note no longer says a key of the role is missing "as in
+    their file" when it is in that file but NOT carried (set again by a later file, write-only, or set in
+    another file): it is listed apart, the NOT carried note saying why.

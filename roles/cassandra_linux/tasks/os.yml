@@ -132,6 +132,9 @@
     group: root
     mode: "0755"
 
+# Each key set live alone (sysctl -w), never the file loaded again (sysctl -p):
+# its other lines (an admin's file) may be keys a later file sets again, or
+# write-only actions
 - name: Kernel settings for Cassandra
   ansible.builtin.sysctl:
     name: "{{ item.key }}"
@@ -139,7 +142,7 @@
     state: present
     sysctl_file: "{{ cassandra_linux_sysctl_file }}"
     sysctl_set: "{{ _cassandra_linux_live }}"
-    reload: "{{ _cassandra_linux_live }}"
+    reload: false
   loop: "{{ cassandra_linux_sysctl | dict2items }}"
 
 # /etc/sysctl.conf is read last: a line left there by an earlier version of
