@@ -405,7 +405,8 @@ def jmx_branch_not_run(live, role, environment=None, cmdline=""):
     port alone, the local one (the remote lines, in the else, not run); its remote port alone, the remote one (the
     local lines, in the then, not run); LOCAL_JMX not set otherwise in the unit's environment (the next start takes
     the same). bash does not run them: no effect, with them or without -> (the branch run: "local" or "remote",
-    [their line numbers in live]); (None, []) when none or not known (no running JVM, both ports or none)."""
+    [their line numbers in live]); (None, []) when none or not known (no running JVM, both ports or none, a branch
+    without its own port line: the port may come from elsewhere)."""
     args = re.split(r"[\0\n]", str(cmdline or ""))
     local = any(a.startswith(LOCAL_PORT) for a in args)
     if local == any(a.startswith(REMOTE_PORT) for a in args) \
@@ -416,6 +417,10 @@ def jmx_branch_not_run(live, role, environment=None, cmdline=""):
     except NotSame:
         return None, []
     if mine is None or theirs is None:
+        return None, []
+    # (each branch with its own port line, as stock: the port the JVM has then tells the branch it ran)
+    if not all(any(line["depth"] == 1 and APPEND_ANY.match(line["text"]) and port in line["text"] for line in branch)
+               for branch, port in zip(mine, (LOCAL_PORT, REMOTE_PORT))):
         return None, []
     side = 1 if local else 0
     known = set(line["text"] for line in theirs[side])

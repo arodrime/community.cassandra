@@ -1698,7 +1698,8 @@ writes 5.0's file with no restart and says under the node what the JVM gets at i
 A ``JVM_OPTS`` line of ``cassandra-env.sh`` only in the branch of its ``LOCAL_JMX`` test the running JVM did not take
 is not run by bash: no effect. The remote branch (the ``else``) on a node whose JVM took the local one (its arguments
 have ``-Dcassandra.jmx.local.port`` and not ``-Dcassandra.jmx.remote.port``, its unit not setting ``LOCAL_JMX`` to
-another value), or the local branch (the ``then``) on a node whose JVM took the remote one (the other way round). The
+another value), or the local branch (the ``then``) on a node whose JVM took the remote one (the other way round),
+each branch with its own port line as in the stock file (else the port may come from elsewhere: not known). The
 import reads no variable from it and says it in one line, the self-check too; ``apply_config`` writes the stock branch
 without it, with no restart (the same JVM arguments). Cassandra not running, its file changed since it started, or
 both ports or none in its arguments: as any other line.

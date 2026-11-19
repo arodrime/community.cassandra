@@ -2439,3 +2439,26 @@ def test_a_line_in_a_jmx_branch_not_known_to_run_or_not_stays_a_plain_difference
     for args in ("java\0-Dcassandra.jmx.local.port=7199\0-Dcassandra.jmx.remote.port=7199", "java"):
         assert jvm.jmx_branch_not_run(files["cassandra-env.sh"], stock("41x")["cassandra-env.sh"], {}, args) \
             == (None, [])
+
+
+def test_a_jmx_branch_without_its_own_port_line_is_not_known_to_be_run_or_not(tmp_path):
+    # LOCAL_JMX=no, the remote port line taken out of the else, the local port from the unit's JVM_EXTRA_OPTS: the
+    # else ran (its rmi line in the JVM), the local port says otherwise. The branch is not read from the port then
+    def change(files):
+        dormant(['JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=10.9.9.9"'])(files)
+        text = files["cassandra-env.sh"].replace("    LOCAL_JMX=yes", "    LOCAL_JMX=no")
+        files["cassandra-env.sh"] = text.replace('  JVM_OPTS="$JVM_OPTS -Dcassandra.jmx.remote.port=$JMX_PORT"\n', "")
+    files = node_files("50x", change)
+    env = {"JVM_EXTRA_OPTS": "-Dcassandra.jmx.local.port=7199"}
+    cmdline = launch(files, "17", tmp_path, environment=env)
+    assert "-Djava.rmi.server.hostname=10.9.9.9" in cmdline.split("\0")
+    assert jvm.jmx_branch_not_run(files["cassandra-env.sh"], stock("50x")["cassandra-env.sh"], env, cmdline) \
+        == (None, [])
+    node = imported(files, "50x", "17", cmdline, environment=env)[2]
+    assert not [n for n in node["normalized"] if "do not run" in n]
+    # the local branch without its port line, the JVM's remote port from elsewhere: not known either
+    files = node_files("50x", lambda f: f.update({"cassandra-env.sh": f["cassandra-env.sh"].replace(
+        '  JVM_OPTS="$JVM_OPTS -Dcassandra.jmx.local.port=$JMX_PORT"\n', '  JVM_OPTS="$JVM_OPTS -Dzorglub=1"\n')}))
+    assert jvm.jmx_branch_not_run(files["cassandra-env.sh"], stock("50x")["cassandra-env.sh"], {},
+                                  "java\0-Dcassandra.jmx.remote.port=7199\0org.apache.cassandra.service.CassandraDaemon") \
+        == (None, [])
