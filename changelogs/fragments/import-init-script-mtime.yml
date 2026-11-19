@@ -1,5 +1,5 @@
 bugfixes:
   - >-
     import_cluster playbook - the init script of the Cassandra package counts as modified only when ``rpm -V`` or
-    ``dpkg --verify`` reports a change of its content (size, digest, digest not checked) or the file missing, no longer
-    for its mtime or mode alone (e.g. ``.......T.`` after a ``touch``).
+    ``dpkg --verify`` reports a change of its size, mode, digest or link target, a test it could not do (``?``), or
+    the file missing; no longer for its mtime alone (e.g. ``.......T.`` after a ``touch``).

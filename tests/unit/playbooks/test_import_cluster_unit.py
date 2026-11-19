@@ -362,14 +362,18 @@ def script_state(tmp_path, tool, verify):
 @pytest.mark.parametrize("verify, state", [
     ("", "pkg_script=zorglub"),
     (".......T.  c %s\n", "pkg_script=zorglub"),  # its mtime only (touched): the same content
-    (".M.....T.    %s\n", "pkg_script=zorglub"),  # its mode
     ("??5??????   c /etc/zorglub.conf\n", "pkg_script=zorglub"),  # another file
     ("S.5....T.  c %s\n", "pkg_script=modified"),
     ("..5......    %s\n", "pkg_script=modified"),
     ("??5?????? c %s\n", "pkg_script=modified"),  # dpkg: its digest
     ("..?......    %s\n", "pkg_script=modified"),  # its digest not checked
     ("missing   c %s (No such file or directory)\n", "pkg_script=modified"),
-], ids=["none", "mtime", "mode", "another file", "size digest", "digest", "dpkg digest", "not checked", "missing"])
+    (".M.......    %s\n", "pkg_script=modified"),  # its mode (chmod -x: a start that fails)
+    ("....L....    %s\n", "pkg_script=modified"),  # a link now (rpm shows only L for it)
+    ("....?....    %s\n", "pkg_script=modified"),  # its link not checked
+    ("...?.....    %s\n", "pkg_script=modified"),  # a test not done: not known as installed
+], ids=["none", "mtime", "another file", "size digest", "digest", "dpkg digest", "not checked", "missing", "mode",
+        "link", "link not checked", "device not checked"])
 def test_read_script_counts_the_init_script_content_only(tmp_path, tool, verify, state):
     assert script_state(tmp_path, tool, verify) == state
 
