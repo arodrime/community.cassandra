@@ -28,6 +28,7 @@ cassandra_node_reset_lines: a node's reset plan -> the lines that say what
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import functools
 import posixpath
 import re
 
@@ -90,6 +91,11 @@ def reset_path_problem(path, mounts=(), protected=()):
     with . or .. in it, the root, a top-level or system directory, a home,
     a directory that holds another mount point or one of the protected paths
     (config, logs, the Cassandra install)."""
+    return _written_problem(path) or _place_problem(_clean(path), mounts, protected)
+
+
+def _written_problem(path):
+    """Why a path is refused as written ('' when it is not): empty, spaces around it, relative, . or .. in it."""
     if not isinstance(path, str) or not path.strip():
         return "an empty path"
     if path != path.strip():
@@ -98,7 +104,11 @@ def reset_path_problem(path, mounts=(), protected=()):
         return "%s: a relative path" % path
     if any(part in (".", "..") for part in path.split("/")):
         return "%s: . or .. in the path" % path
-    clean = _clean(path)
+    return ""
+
+
+def _place_problem(clean, mounts, protected):
+    """Why an absolute path (clean: normalized) is refused for where it is ('' when it may be emptied)."""
     if clean == "/":
         return "/: the root of the file system"
     if any(_under(clean, t) for t in SYSTEM_TREES):
@@ -114,6 +124,11 @@ def reset_path_problem(path, mounts=(), protected=()):
         return "%s: under /var/lib/%s, another program's state" % (clean, parts[3])
     if _under(clean, "/home") and clean.count("/") == 2:
         return "%s: a home directory" % clean
+    return _holds_problem(clean, mounts, protected)
+
+
+def _holds_problem(clean, mounts, protected):
+    """Why a directory is refused for what it holds: another mount point, a protected path ('' when neither)."""
     inner = sorted(m for m in (_clean(m) for m in mounts if m) if m != clean and _under(m, clean))
     if inner:
         return "%s: holds the mount point %s (another file system)" % (clean, ", ".join(inner))
@@ -268,11 +283,27 @@ def cassandra_cluster_reset_check(answers, addresses_of, group="", running=None)
             problems.append("%s sees %s in its ring, a node no host of %s has: the inventory must cover the whole cluster"
                             " (a node left out would keep running with its data)"
                             % (", ".join(sorted(ring[address])), address, group or "the group"))
-    # nodes of one cluster see the same nodes: another ring is another cluster
+    problems += _rings_differ(answered)
+    problems += _running_problems(running, answered, ring, addresses_of)
+    if answered and not problems:
+        info.append("the ring (%s) is all in %s" % (", ".join("%s=%s" % (known[a], a) for a in sorted(ring)), group or "the group"))
+    return {"problems": problems, "info": info, "ring": sorted(ring)}
+
+
+def _rings_differ(answered):
+    """The problem when the nodes that answered see different rings (nodes of one cluster see the same nodes:
+    another ring is another cluster)."""
     seen = dict((a.get("host"), sorted(set(_addr(n.get("address")) for n in _nodes(a.get("status"))))) for a in answered)
     if len(set(tuple(v) for v in seen.values())) > 1:
-        problems.append("the running nodes see different rings (%s): another cluster among them, or one still joining or"
-                        " leaving" % "; ".join("%s: %s" % (h, ", ".join(v)) for h, v in sorted(seen.items())))
+        return ["the running nodes see different rings (%s): another cluster among them, or one still joining or"
+                " leaving" % "; ".join("%s: %s" % (h, ", ".join(v)) for h, v in sorted(seen.items()))]
+    return []
+
+
+def _running_problems(running, answered, ring, addresses_of):
+    """The hosts running Cassandra that can't be checked (nodetool status does not answer there) or are not in
+    the ring the others see."""
+    problems = []
     for host in running or []:
         mine = set(_addr(a) for a in (addresses_of or {}).get(host) or [])
         if not any(a.get("host") == host for a in answered):
@@ -280,10 +311,7 @@ def cassandra_cluster_reset_check(answers, addresses_of, group="", running=None)
                             " cluster can't be checked" % host)
         elif answered and not mine & set(ring):
             problems.append("%s runs Cassandra but is not in the ring the others see: a node of another cluster?" % host)
-    result_ring = sorted(ring)
-    if answered and not problems:
-        info.append("the ring (%s) is all in %s" % (", ".join("%s=%s" % (known[a], a) for a in sorted(ring)), group or "the group"))
-    return {"problems": problems, "info": info, "ring": result_ring}
+    return problems
 
 
 def cassandra_reset_choice(value):
@@ -321,47 +349,79 @@ def cassandra_add_node_refusal(refused, cluster="", operation="add_node", target
     if not refused:
         return []
     op = asked_by or operation
-    names = targets.split(",") if isinstance(targets, str) else list(targets or [])
-    names = [str(n).strip() for n in names if str(n).strip()]
+    names = _target_names(targets)
     former = [r["name"] for r in refused if r.get("former")]
     others = [r["name"] for r in refused if not r.get("former")]
     rest = [n for n in names if n not in others]  # the targets without the nodes refused for another reason
 
-    def command(playbook, extra):
-        return _command(playbook, inventory=inventory, hosts=hosts, cwd=cwd, default_inventory=default_inventory,
-                        extra=extra)
+    run = functools.partial(_command, inventory=inventory, hosts=hosts, cwd=cwd, default_inventory=default_inventory)
 
     def add(nodes, reset=False):
-        extra = {} if asked_by else {"cassandra_target_nodes": ",".join(nodes)}
-        if reset:
-            extra["cassandra_add_node_reset"] = "true"
-        return command(op, extra)
+        return run(op, extra=_add_extra(nodes, asked_by, reset))
 
-    def them(nodes):
-        return "it" if len(nodes) == 1 else "them"
-
-    lines = ["  ".join(x for x in ["REFUSED", op, cluster, "nothing was changed"] if x), ""]
-    lines += ["%s: %s" % (r["title"], " \u2014 ".join(x for x in (r.get("holds"), r.get("why")) if x)) for r in refused]
-    shown = cassandra_output.nodes
-    without = ((" without %s" % shown(others, keep_order=True)) if others and rest and not asked_by
-               else (", once %s %s dealt with" % (shown(others, keep_order=True), "is" if len(others) == 1 else "are"))
-               if others else "")
+    without = _without(others, rest, asked_by)
     items = []
     if former:
-        items.append({"text": "if what %s %s is not needed (snapshot or copy it first if in doubt), empty %s" % (
-            shown(former, keep_order=True), "holds" if len(former) == 1 else "hold", them(former)),
-            "command": command("reset_node", {"cassandra_target_nodes": ",".join(former)})})
-        items.append({"text": "then run %s again%s" % (op, without), "command": add(rest or names)})
-        items.append({"text": "or both in one run (%s empties %s first)" % (op, them(former)),
-                      "command": add(rest or names, reset=True)})
-    for r in refused:
-        if not r.get("former"):
-            items.append({"text": ("%s: %s; then run %s again" % (r["name"], r["way"], op)) if r.get("way")
-                          else "%s: do what its line above says, then run %s again if still needed" % (r["name"], op),
-                          "command": add(names)})
+        items += _former_items(former, op, without, run("reset_node", extra={"cassandra_target_nodes": ",".join(former)}),
+                               add(rest or names), add(rest or names, reset=True))
+    items += [_other_item(r, op, add(names)) for r in refused if not r.get("former")]
     if others and not former and rest and not asked_by:
         items.append({"text": "or add the other nodes now%s" % without, "command": add(rest)})
-    return lines + [""] + cassandra_output.todo(items)
+    return _refusal_lines(refused, op, cluster) + [""] + cassandra_output.todo(items)
+
+
+def _target_names(targets):
+    """cassandra_target_nodes (a list, or names with commas) -> the names."""
+    names = targets.split(",") if isinstance(targets, str) else list(targets or [])
+    return [str(n).strip() for n in names if str(n).strip()]
+
+
+def _refusal_lines(refused, op, cluster):
+    """The refusal block: "REFUSED  add_node  <cluster>  nothing was changed", a blank line, then a line per node:
+    "node7 (dc1/rack_b): <what it holds> \u2014 <why>"."""
+    return (["  ".join(x for x in ["REFUSED", op, cluster, "nothing was changed"] if x), ""]
+            + ["%s: %s" % (r["title"], " \u2014 ".join(x for x in (r.get("holds"), r.get("why")) if x)) for r in refused])
+
+
+def _add_extra(nodes, asked_by, reset):
+    """The -e of add_node run again on nodes (none when a playbook runs it: topology), with the reset when asked."""
+    extra = {} if asked_by else {"cassandra_target_nodes": ",".join(nodes)}
+    if reset:
+        extra["cassandra_add_node_reset"] = "true"
+    return extra
+
+
+def _them(nodes):
+    return "it" if len(nodes) == 1 else "them"
+
+
+def _without(others, rest, asked_by):
+    """The words that leave the nodes refused for another reason (others) out of the run again: " without
+    node8" when other targets are left (rest) and add_node runs on its own, else ", once node8 is dealt with"."""
+    shown = cassandra_output.nodes
+    if others and rest and not asked_by:
+        return " without %s" % shown(others, keep_order=True)
+    if others:
+        return ", once %s %s dealt with" % (shown(others, keep_order=True), "is" if len(others) == 1 else "are")
+    return ""
+
+
+def _former_items(former, op, without, reset_command, again_command, both_command):
+    """The TO DO items for former members only refused as such: empty them, then run add_node again; or both in
+    one run."""
+    shown = cassandra_output.nodes(former, keep_order=True)
+    empty = "if what %s %s is not needed (snapshot or copy it first if in doubt), empty %s" % (
+        shown, "holds" if len(former) == 1 else "hold", _them(former))
+    return [{"text": empty, "command": reset_command},
+            {"text": "then run %s again%s" % (op, without), "command": again_command},
+            {"text": "or both in one run (%s empties %s first)" % (op, _them(former)), "command": both_command}]
+
+
+def _other_item(r, op, again_command):
+    """The TO DO item of a node refused for another reason: its way out, then add_node again."""
+    return {"text": ("%s: %s; then run %s again" % (r["name"], r["way"], op)) if r.get("way")
+            else "%s: do what its line above says, then run %s again if still needed" % (r["name"], op),
+            "command": again_command}
 
 
 def cassandra_inventory_dirs(data_dirs, commitlog, saved_caches, hints, extra=None, cdc_raw="", cdc_enabled=False,
