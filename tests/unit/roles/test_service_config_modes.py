@@ -8,13 +8,15 @@ __metaclass__ = type
 import json
 import os
 import subprocess
-import sys
 
 import pytest
 import yaml
 
+from ansible_collections.community.cassandra.tests.unit.helpers import LOCAL, run_playbook
+
+pytestmark = pytest.mark.playbook
+
 TOP = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-COLLECTIONS = os.path.abspath(os.path.join(TOP, "..", "..", ".."))
 
 with open(os.path.join(TOP, "roles", "cassandra_service", "vars", "main.yml"), encoding="utf-8") as _f:
     PERMS = yaml.safe_load(_f)["_cassandra_service_config_perms"]
@@ -30,16 +32,9 @@ def modes(tmp_path, variables):
                                                         " | map(attribute='mode') | join(' ') }}"}}]}
     (tmp_path / "play.yml").write_text(json.dumps([play]))
     (tmp_path / "hosts.ini").write_text("node1\n")
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_LOCALHOST_WARNING="0",
-               ANSIBLE_STDOUT_CALLBACK="default")
-    env.pop("ANSIBLE_CONFIG", None)
-    proc = subprocess.run([sys.executable, "-c", "from ansible.cli.playbook import main; main()",
-                           "-i", str(tmp_path / "hosts.ini"), "-c", "local",
-                           "-e", "ansible_python_interpreter=" + sys.executable, str(tmp_path / "play.yml")],
-                          cwd=str(tmp_path), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                          timeout=300, check=False)
-    out = proc.stdout.decode("utf-8", "replace")
-    assert proc.returncode == 0, out
+    rc, out = run_playbook(["-i", str(tmp_path / "hosts.ini")] + LOCAL + [str(tmp_path / "play.yml")],
+                           dict(ANSIBLE_STDOUT_CALLBACK="default"), ["ANSIBLE_CONFIG"], cwd=tmp_path, stdin=subprocess.DEVNULL)
+    assert rc == 0, out
     return out.split("MODES ", 1)[1].split('"', 1)[0]
 
 

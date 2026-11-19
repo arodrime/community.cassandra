@@ -7,15 +7,12 @@ __metaclass__ = type
 # burst of whole checks), also across rounds (the include nesting per round).
 
 import os
-import subprocess
-import sys
 
 import pytest
 
-from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
+from ansible_collections.community.cassandra.tests.unit.helpers import LOCAL, run_playbook, templar_for, trust_as_template
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
-COLLECTIONS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", ".."))
 
 PLAYBOOK = """
 - hosts: all
@@ -59,13 +56,8 @@ def run(tmp_path, size, stop):
     playbook.write_text(PLAYBOOK % {"size": size, "check": str(check)})
     inventory = tmp_path / "hosts.ini"
     inventory.write_text("node1\n")
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0",
-               ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_DISPLAY_SKIPPED_HOSTS="1", ANSIBLE_STDOUT_CALLBACK="default")
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", str(inventory),
-            "-c", "local", "-e", "ansible_python_interpreter=" + sys.executable, str(playbook)]
-    result = subprocess.run(argv, env=env, cwd=str(tmp_path), stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, timeout=600, check=False)
-    return result.returncode, result.stdout.decode(errors="replace")
+    env = dict(ANSIBLE_DISPLAY_SKIPPED_HOSTS="1", ANSIBLE_STDOUT_CALLBACK="default")
+    return run_playbook(["-i", str(inventory)] + LOCAL + [str(playbook)], env, cwd=tmp_path, timeout=600)
 
 
 def after_the_end(out):
@@ -75,6 +67,7 @@ def after_the_end(out):
     return lines[1:]  # the first one: that check's own result
 
 
+@pytest.mark.playbook
 @pytest.mark.parametrize("size, stop", [(3, 1), (3, 4), (3, 9), (3, 10), (3, 23), (2, 2)])
 def test_stops_right_after_the_check_that_ends_it(tmp_path, size, stop):
     rc, out = run(tmp_path, size, stop)

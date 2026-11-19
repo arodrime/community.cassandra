@@ -14,7 +14,7 @@ import sys
 
 import pytest
 
-COLLECTIONS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", ".."))
+from ansible_collections.community.cassandra.tests.unit.helpers import LOCAL, run_playbook
 
 PLAYBOOK = """
 - hosts: all
@@ -43,13 +43,8 @@ exec "$@"
 def run(tmp_path, inventory, *extra, cwd=None):
     playbook = tmp_path / "progress.yml"
     playbook.write_text(PLAYBOOK)
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0",
-               ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_INVENTORY_UNPARSED_WARNING="0")
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", inventory,
-            "-c", "local", "-e", "ansible_python_interpreter=" + sys.executable, str(playbook)] + list(extra)
-    result = subprocess.run(argv, env=env, cwd=str(cwd or tmp_path), stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, timeout=300, check=False)
-    return result.returncode, result.stdout.decode(errors="replace")
+    env = dict(ANSIBLE_INVENTORY_UNPARSED_WARNING="0")
+    return run_playbook(["-i", inventory] + LOCAL + [str(playbook)] + list(extra), env, cwd=cwd or tmp_path)
 
 
 def inventory_in(directory, extra=""):
@@ -63,6 +58,7 @@ def progress_dir(output):
     return output.split("DIR=", 1)[1].split(" ", 1)[0]
 
 
+@pytest.mark.playbook
 def test_next_to_the_inventory(tmp_path):
     rc, out = run(tmp_path, inventory_in(tmp_path / "inv"), cwd=tmp_path / "inv" / "..")
     assert rc == 0, out
@@ -70,6 +66,7 @@ def test_next_to_the_inventory(tmp_path):
     assert len(list((tmp_path / "inv" / ".cassandra_progress").glob("cassandra-restart-*.done"))) == 1
 
 
+@pytest.mark.playbook
 @pytest.mark.skipif(os.geteuid() == 0, reason="root writes anywhere")
 def test_current_dir_when_the_inventory_dir_is_not_writable(tmp_path):
     inventory = inventory_in(tmp_path / "inv")
@@ -83,6 +80,7 @@ def test_current_dir_when_the_inventory_dir_is_not_writable(tmp_path):
     assert progress_dir(out) == str(tmp_path / "work" / ".cassandra_progress")
 
 
+@pytest.mark.playbook
 @pytest.mark.skipif(os.geteuid() == 0, reason="root writes anywhere")
 def test_an_existing_dir_in_a_read_only_inventory_dir_is_used(tmp_path):
     inventory = inventory_in(tmp_path / "inv")
@@ -97,6 +95,7 @@ def test_an_existing_dir_in_a_read_only_inventory_dir_is_used(tmp_path):
     assert progress_dir(out) == str(tmp_path / "inv" / ".cassandra_progress")
 
 
+@pytest.mark.playbook
 def test_current_dir_without_an_inventory_dir(tmp_path):
     (tmp_path / "None" / ".cassandra_progress").mkdir(parents=True)  # inventory_dir is 'None' there
     rc, out = run(tmp_path, "node1,node2,", "-e", "cassandra_hosts=all")
@@ -104,12 +103,14 @@ def test_current_dir_without_an_inventory_dir(tmp_path):
     assert progress_dir(out) == str(tmp_path / ".cassandra_progress")
 
 
+@pytest.mark.playbook
 def test_relative_dir_is_from_the_current_dir(tmp_path):
     rc, out = run(tmp_path, inventory_in(tmp_path / "inv"), "-e", "cassandra_rolling_progress_dir=runs/p")
     assert rc == 0, out
     assert progress_dir(out) == str(tmp_path / "runs" / "p")
 
 
+@pytest.mark.playbook
 def test_resume_finds_the_file_again(tmp_path):
     inventory = inventory_in(tmp_path / "inv")
     rc, out = run(tmp_path, inventory)
@@ -123,12 +124,14 @@ def test_resume_finds_the_file_again(tmp_path):
     assert "1 node(s) already done, skipped: node1" in out
 
 
+@pytest.mark.playbook
 def test_absolute_dir_as_given(tmp_path):
     rc, out = run(tmp_path, inventory_in(tmp_path / "inv"), "-e", "cassandra_rolling_progress_dir=%s" % (tmp_path / "abs"))
     assert rc == 0, out
     assert progress_dir(out) == str(tmp_path / "abs")
 
 
+@pytest.mark.playbook
 def test_a_file_in_the_way_is_refused(tmp_path):
     (tmp_path / "inv").mkdir()
     (tmp_path / "inv" / ".cassandra_progress").write_text("")
@@ -137,6 +140,7 @@ def test_a_file_in_the_way_is_refused(tmp_path):
     assert ".cassandra_progress is not a directory: remove it or set cassandra_rolling_progress_dir" in out
 
 
+@pytest.mark.playbook
 @pytest.mark.skipif(os.geteuid() == 0, reason="root writes anywhere")
 def test_a_dir_the_user_cannot_write_is_refused(tmp_path):
     (tmp_path / "inv" / ".cassandra_progress").mkdir(parents=True)
@@ -150,6 +154,7 @@ def test_a_dir_the_user_cannot_write_is_refused(tmp_path):
     assert "sudo chown -R" in out
 
 
+@pytest.mark.playbook
 @pytest.mark.skipif(os.geteuid() == 0, reason="root: Ansible needs no become, the fake sudo is never run")
 def test_no_become_on_the_controller(tmp_path):
     sudo = tmp_path / "bin" / "sudo"
@@ -170,6 +175,7 @@ def test_no_become_on_the_controller(tmp_path):
     assert (tmp_path / "bin" / "sudo.log").exists()
 
 
+@pytest.mark.playbook
 def test_check_mode_creates_and_reads_no_file(tmp_path):
     # --check: the new progress file is not created, and reading it must not fail
     rc, out = run(tmp_path, inventory_in(tmp_path / "inv"), "--check")
@@ -177,6 +183,7 @@ def test_check_mode_creates_and_reads_no_file(tmp_path):
     assert list((tmp_path / "inv").glob(".cassandra_progress/*.done")) == []
 
 
+@pytest.mark.playbook
 def test_check_diff_says_nothing_of_the_progress_dir(tmp_path):
     # --check --diff: no dir made, no diff of it, no warning of a find in a dir that is not there
     rc, out = run(tmp_path, inventory_in(tmp_path / "inv"), "--check", "--diff", cwd=tmp_path)

@@ -9,7 +9,6 @@ __metaclass__ = type
 import hashlib
 import os
 import subprocess
-import sys
 import threading
 
 try:
@@ -21,10 +20,9 @@ import pytest
 import yaml
 
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
-from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
+from ansible_collections.community.cassandra.tests.unit.helpers import LOCAL, run_playbook, templar_for, trust_as_template
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
-COLLECTIONS = os.path.abspath(os.path.join(TOP, "..", "..", ".."))
 TASKS = os.path.join(TOP, "roles", "cassandra_install", "tasks")
 
 
@@ -47,18 +45,15 @@ def _play(tmp_path, tasks, variables, check=False, verbosity=0):
     """Runs tasks on localhost with variables -> (rc, the output, spaces normalised)."""
     play = [{"hosts": "localhost", "gather_facts": False, "vars": variables, "tasks": tasks}]
     (tmp_path / "play.yml").write_text(yaml.safe_dump(play))
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0",
-               ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_INVENTORY_UNPARSED_WARNING="0",
+    env = dict(ANSIBLE_INVENTORY_UNPARSED_WARNING="0",
                ANSIBLE_CALLBACK_RESULT_FORMAT="yaml")  # a msg as text on 2.16 too (its JSON escapes quotes)
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", "localhost,",
-            "-c", "local", "-e", "ansible_python_interpreter=%s" % sys.executable, str(tmp_path / "play.yml")]
+    args = ["-i", "localhost,"] + LOCAL + [str(tmp_path / "play.yml")]
     if check:
-        argv.append("--check")
+        args.append("--check")
     if verbosity:
-        argv.append("-" + "v" * verbosity)
-    result = subprocess.run(argv, env=env, cwd=str(tmp_path), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            timeout=300, check=False)
-    return result.returncode, " ".join(result.stdout.decode(errors="replace").split())
+        args.append("-" + "v" * verbosity)
+    rc, out = run_playbook(args, env, cwd=tmp_path)
+    return rc, " ".join(out.split())
 
 
 def _controller_check(tmp_path, checksum, path=None, **more):
@@ -69,6 +64,7 @@ def _controller_check(tmp_path, checksum, path=None, **more):
     return _play(tmp_path, [_find(_tasks("java_check.yml"), "Check the Java tarball on the controller")], variables)
 
 
+@pytest.mark.playbook
 def test_a_controller_tarball_is_checked_against_its_checksum(tmp_path):
     good = hashlib.sha256(b"not really a tarball\n").hexdigest()
     (tmp_path / "good").mkdir()
@@ -123,6 +119,7 @@ class _NotFound(BaseHTTPRequestHandler if BaseHTTPRequestHandler else object):
         pass
 
 
+@pytest.mark.playbook
 @pytest.mark.parametrize("query", ["?X-Amz-Signature=S1gZorglubQx", ""])
 def test_a_failed_download_says_the_url_and_the_http_status(tmp_path, query):
     server = HTTPServer(("127.0.0.1", 0), _NotFound)
@@ -155,6 +152,7 @@ def _link(tmp_path, home, link, check=False):
                  {"_cassandra_java_home": str(home), "_cassandra_java_link": str(link)}, check=check)
 
 
+@pytest.mark.playbook
 def test_the_java_link_follows_the_java_in_use(tmp_path):
     old, new = tmp_path / "jre" / "jdk-11.0.30", tmp_path / "jre" / "jdk-11.0.32"
     old.mkdir(parents=True)
@@ -292,6 +290,7 @@ def test_a_password_with_an_at_sign_is_masked_whole():
     assert "https://****@mirror.example/java/jdk-17.tar.gz" in msg and "ss@" not in msg
 
 
+@pytest.mark.playbook
 def test_a_usr_lib_jvm_link_imported_then_left_as_it_is(tmp_path):
     # /usr/lib/jvm/java-17 -> /opt/jdk-17 (the alternatives through it): the import writes it as cassandra_java_link
     # (test_import_cluster_java_link), java_check takes it, and the role leaves the link as it is (site.yml no-op)

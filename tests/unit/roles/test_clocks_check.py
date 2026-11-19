@@ -8,13 +8,14 @@ __metaclass__ = type
 
 import os
 import stat
-import subprocess
 import sys
 
+import pytest
 import yaml
 
+from ansible_collections.community.cassandra.tests.unit.helpers import path_with, run_playbook
+
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
-COLLECTIONS = os.path.abspath(os.path.join(TOP, "..", "..", ".."))
 
 SYSTEMCTL = """#!/bin/sh
 d=$FAKE_DIR/$FAKE_NODE
@@ -96,14 +97,8 @@ def run(tmp_path, tasks, *args, extra=None):
             {"hosts": hosts, "gather_facts": False,
              "tasks": [{"ansible.builtin.debug": {"msg": "NEXT PLAY ON {{ inventory_hostname }}"}}]}]
     (tmp_path / "play.yml").write_text(yaml.safe_dump(play))
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0",
-               ANSIBLE_RETRY_FILES_ENABLED="0", FAKE_DIR=str(tmp_path / "fake"),
-               PATH="%s:%s" % (tmp_path / "bin", os.environ.get("PATH", "")))
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", str(tmp_path / "hosts.ini"),
-            str(tmp_path / "play.yml")] + list(args)
-    result = subprocess.run(argv, env=env, cwd=str(tmp_path), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            timeout=300, check=False)
-    return result.returncode, result.stdout.decode(errors="replace")
+    env = dict(FAKE_DIR=str(tmp_path / "fake"), PATH=path_with(tmp_path / "bin"))
+    return run_playbook(["-i", str(tmp_path / "hosts.ini"), str(tmp_path / "play.yml")] + list(args), env, cwd=tmp_path)
 
 
 CHECK = [{"ansible.builtin.include_role": {"name": "community.cassandra.cassandra_operation", "tasks_from": "clocks_check.yml"},
@@ -114,6 +109,7 @@ def synced(seconds=0.002, way="slow"):
     return {"active": "chronyd", "tracking": tracking(seconds, way), "sources": SOURCES}
 
 
+@pytest.mark.playbook
 def test_clocks_in_sync_go_on(tmp_path):
     setup(tmp_path, {"node1": synced(), "node2": synced(0.003, "fast")})
     rc, out = run(tmp_path, CHECK)
@@ -122,6 +118,7 @@ def test_clocks_in_sync_go_on(tmp_path):
     assert "REFUSED" not in out
 
 
+@pytest.mark.playbook
 def test_a_clock_off_refuses_the_start(tmp_path):
     setup(tmp_path, {"node1": synced(), "node2": synced(0.2, "fast")})
     rc, out = run(tmp_path, CHECK)
@@ -135,12 +132,14 @@ def test_a_clock_off_refuses_the_start(tmp_path):
     assert "  node1  " not in out  # in sync: not listed
 
 
+@pytest.mark.playbook
 def test_the_threshold_is_a_variable(tmp_path):
     setup(tmp_path, {"node1": synced(), "node2": synced(0.2, "fast")})
     rc, out = run(tmp_path, CHECK, extra={"cassandra_clock_max_offset_ms": 300})
     assert rc == 0, out
 
 
+@pytest.mark.playbook
 def test_no_synchronised_source_refuses(tmp_path):
     setup(tmp_path, {"node1": synced(), "node2": {"active": "chronyd", "tracking": tracking(0, synced=False),
                                                   "sources": UNREACHED}})
@@ -151,6 +150,7 @@ def test_no_synchronised_source_refuses(tmp_path):
     assert "NOT synchronised: " not in out and "chronyd reaches none of its 1 sources" in out
 
 
+@pytest.mark.playbook
 def test_no_time_sync_refuses_a_real_run_and_is_left_to_it_under_check(tmp_path):
     setup(tmp_path, {"node1": synced(), "node2": {"installed": "chronyd\n"}})
     rc, out = run(tmp_path, CHECK)
@@ -162,6 +162,7 @@ def test_no_time_sync_refuses_a_real_run_and_is_left_to_it_under_check(tmp_path)
     assert "NEXT PLAY ON node2" in out
 
 
+@pytest.mark.playbook
 def test_a_time_sync_just_started_is_waited_for(tmp_path):
     # unsynchronised at the first read, synchronised at the second (5 s later)
     node2 = dict(synced(), **{"tracking.1": tracking(0, synced=False)})
@@ -171,6 +172,7 @@ def test_a_time_sync_just_started_is_waited_for(tmp_path):
     assert (fake / "node2" / "calls").read_text().strip() == "2"
 
 
+@pytest.mark.playbook
 def test_a_wait_that_runs_out_is_judged_not_failed(tmp_path):
     # never synchronised within the wait: the REFUSED verdict, not a failed read that drops the node from the play
     fake = setup(tmp_path, {"node1": synced(), "node2": {"active": "chronyd", "tracking": tracking(0, synced=False),
@@ -181,6 +183,7 @@ def test_a_wait_that_runs_out_is_judged_not_failed(tmp_path):
     assert (fake / "node2" / "calls").read_text().strip() == "3"  # the first read, then the wait's two
 
 
+@pytest.mark.playbook
 def test_the_wait_ends_at_its_timeout_whatever_its_reads_take(tmp_path):
     # each read 4 s: the wait of 10 s stops at its second read (past 10 s), not at the third its retries allow
     fake = setup(tmp_path, {"node1": synced(), "node2": {"active": "chronyd", "tracking": tracking(0, synced=False),
@@ -198,6 +201,7 @@ def converging(dispersion):
             + "Skew            : 1000000.000 ppm\n")
 
 
+@pytest.mark.playbook
 def test_a_daemon_just_started_is_waited_for_while_it_converges(tmp_path):
     # its error bound shrinks over its first samples: said, waited for, then in sync
     node2 = dict(synced(), **{"tracking.1": converging(62.04), "tracking.2": converging(30.5)})
@@ -209,6 +213,7 @@ def test_a_daemon_just_started_is_waited_for_while_it_converges(tmp_path):
     assert (fake / "node2" / "calls").read_text().strip() == "3"
 
 
+@pytest.mark.playbook
 def test_a_daemon_right_after_an_update_is_waited_for_by_its_skew(tmp_path):
     # its bound small for a moment after an update, its skew still 100%: converging, not a far source
     node2 = dict(synced(), **{"tracking.1": converging(0.5)})
@@ -219,6 +224,7 @@ def test_a_daemon_right_after_an_update_is_waited_for_by_its_skew(tmp_path):
     assert (fake / "node2" / "calls").read_text().strip() == "2"
 
 
+@pytest.mark.playbook
 def test_a_bound_that_stays_large_is_refused_once_the_wait_runs_out(tmp_path):
     fake = setup(tmp_path, {"node1": synced(), "node2": {"active": "chronyd", "tracking": converging(62.04),
                                                          "sources": SOURCES}})
@@ -231,6 +237,7 @@ def test_a_bound_that_stays_large_is_refused_once_the_wait_runs_out(tmp_path):
     assert (fake / "node2" / "calls").read_text().strip() == "3"
 
 
+@pytest.mark.playbook
 def test_no_wait_ran_no_longer_wait_said(tmp_path):
     # S28 audit 12 (domain A1, adversarial B2): a daemon converging, but no wait on cassandra_clock_sync_timeout
     # ran (it is 0, create_cluster's check before the wipe, --check): "run again later" alone
@@ -247,6 +254,7 @@ def test_no_wait_ran_no_longer_wait_said(tmp_path):
         assert (fake / "node2" / "calls").read_text().strip() == "1"  # one read, no wait
 
 
+@pytest.mark.playbook
 def test_a_far_source_is_refused_at_once(tmp_path):
     # an error bound over the threshold but under a second (a far source): no wait can win, refused at once
     far = tracking(0.0001, "fast").replace("Root delay      : 0.000800000", "Root delay      : 0.200000000")
@@ -258,6 +266,7 @@ def test_a_far_source_is_refused_at_once(tmp_path):
     assert (fake / "node2" / "calls").read_text().strip() == "1"
 
 
+@pytest.mark.playbook
 def test_a_node_whose_read_fails_is_refused(tmp_path):
     # the probe itself fails there (its Python gone): refused, named, not left out of the comparison
     setup(tmp_path, {"node1": synced(), "node2": synced()})
@@ -267,6 +276,7 @@ def test_a_node_whose_read_fails_is_refused(tmp_path):
     assert "  node2  NOT READ  its clock could not be read" in out
 
 
+@pytest.mark.playbook
 def test_the_check_can_be_skipped(tmp_path):
     fake = setup(tmp_path, {"node1": synced(), "node2": {"installed": "chronyd\n"}})
     rc, out = run(tmp_path, CHECK, extra={"cassandra_clock_check": False})
@@ -281,6 +291,7 @@ FIX = [{"ansible.builtin.include_role": {"name": "community.cassandra.cassandra_
                                          " error={{ _cassandra_clock_fix_error }}"}}]
 
 
+@pytest.mark.playbook
 def test_a_step_sets_the_clock(tmp_path):
     node1 = dict(synced(2.0, "fast"), **{"tracking.stepped": tracking(0.001)})
     fake = setup(tmp_path, {"node1": node1})
@@ -290,6 +301,7 @@ def test_a_step_sets_the_clock(tmp_path):
     assert "node1 chronyc makestep" in (fake / "log").read_text()
 
 
+@pytest.mark.playbook
 def test_a_step_that_does_not_help_says_why(tmp_path):
     fake = setup(tmp_path, {"node1": synced(2.0, "fast")})
     rc, out = run(tmp_path, FIX)
@@ -298,6 +310,7 @@ def test_a_step_that_does_not_help_says_why(tmp_path):
     assert "node1 chronyc makestep" in (fake / "log").read_text()
 
 
+@pytest.mark.playbook
 def test_a_daemon_still_converging_after_the_wait_says_the_longer_wait(tmp_path):
     # S28 audit 11 (adversarial B2): sync_clocks' clock_fix.yml waits on cassandra_clock_sync_timeout; a daemon
     # still converging after it (2 s off, past a slew: stepped, read again): run again later, or raise the timeout
@@ -314,6 +327,7 @@ def test_a_daemon_still_converging_after_the_wait_says_the_longer_wait(tmp_path)
     assert rc == 0 and "error=clock still not in sync" in out and "raise cassandra_clock_sync_timeout" not in out, out
 
 
+@pytest.mark.playbook
 def test_a_clock_in_sync_is_not_stepped(tmp_path):
     fake = setup(tmp_path, {"node1": synced()})
     rc, out = run(tmp_path, FIX)
@@ -338,6 +352,7 @@ def test_no_time_sync_offline_a_warning_elsewhere_a_refusal_for_sync_clocks():
     assert "_cassandra_timesync_required: true" in text
 
 
+@pytest.mark.playbook
 def test_no_time_sync_offline_is_refused_by_sync_clocks(tmp_path):
     # the start path: cassandra_linux's timesync.yml (its vars through include_role), nothing installed, offline
     setup(tmp_path, {"node1": {}})

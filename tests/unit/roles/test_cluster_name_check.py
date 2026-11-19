@@ -12,16 +12,14 @@ __metaclass__ = type
 import os
 import re
 import stat
-import subprocess
 import sys
 
+import pytest
 import yaml
 
-from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given as render, trust_as_template
-
+from ansible_collections.community.cassandra.tests.unit.helpers import path_with, render_as_given as render, run_playbook, trust_as_template
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
-COLLECTIONS = os.path.abspath(os.path.join(TOP, "..", "..", ".."))
 
 NODETOOL = """#!/bin/sh
 echo "$FAKE_NODE $*" >> "$FAKE_LOG"
@@ -69,19 +67,16 @@ def run(tmp_path, inventory_name, node_name, candidates=("gone", "n1", "n2", "n3
     (tmp_path / "play.yml").write_text(yaml.safe_dump(play))
     log = tmp_path / "asked.log"
     log.write_text("")
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0",
-               ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_HOST_KEY_CHECKING="False", ANSIBLE_TIMEOUT="3",
-               PATH="%s:%s" % (bin_dir, os.environ.get("PATH", "")), FAKE_LOG=str(log), FAKE_NAME=node_name)
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", str(tmp_path / "hosts.ini"),
-            str(tmp_path / "play.yml")]
-    result = subprocess.run(argv, env=env, cwd=str(tmp_path), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            timeout=300, check=False)
+    env = dict(ANSIBLE_HOST_KEY_CHECKING="False", ANSIBLE_TIMEOUT="3", PATH=path_with(bin_dir), FAKE_LOG=str(log),
+               FAKE_NAME=node_name)
+    rc, out = run_playbook(["-i", str(tmp_path / "hosts.ini"), str(tmp_path / "play.yml")], env, cwd=tmp_path)
     asked = [line.split()[0] for line in log.read_text().splitlines()]
     # (ansible-core 2.16 prints the msg as JSON: its newlines as \\n)
-    out = " ".join(result.stdout.decode(errors="replace").replace("\\n", " ").split())
-    return result.returncode, out, asked, sorted(set(re.findall(r"NEXT PLAY ON (n\d)", out)))
+    out = " ".join(out.replace("\\n", " ").split())
+    return rc, out, asked, sorted(set(re.findall(r"NEXT PLAY ON (n\d)", out)))
 
 
+@pytest.mark.playbook
 def test_an_inventory_not_loaded_is_named_first(tmp_path):
     rc, out, asked, went_on = run(tmp_path, "Test Cluster", "my_cluster")
     assert rc != 0, out
@@ -96,6 +91,7 @@ def test_an_inventory_not_loaded_is_named_first(tmp_path):
     assert went_on == []
 
 
+@pytest.mark.playbook
 def test_a_stock_instance_is_only_suggested_when_the_node_runs_the_stock_name(tmp_path):
     rc, out, asked, went_on = run(tmp_path, "my_cluster", "Test Cluster", down=())
     assert rc != 0, out
@@ -106,6 +102,7 @@ def test_a_stock_instance_is_only_suggested_when_the_node_runs_the_stock_name(tm
     assert asked == ["n1"]
 
 
+@pytest.mark.playbook
 def test_another_name(tmp_path):
     rc, out, asked, went_on = run(tmp_path, "my_cluster", "other_cluster")
     assert rc != 0, out
@@ -114,6 +111,7 @@ def test_another_name(tmp_path):
     assert went_on == []
 
 
+@pytest.mark.playbook
 def test_the_same_name_passes(tmp_path):
     rc, out, asked, went_on = run(tmp_path, "my_cluster", "my_cluster")
     assert rc == 0, out
@@ -123,6 +121,7 @@ def test_the_same_name_passes(tmp_path):
     assert went_on == ["n0", "n9"]
 
 
+@pytest.mark.playbook
 def test_no_node_answering_is_said(tmp_path):
     rc, out, asked, went_on = run(tmp_path, "my_cluster", "my_cluster", down=("n1", "n2", "n3"))
     assert rc == 0, out
@@ -133,6 +132,7 @@ def test_no_node_answering_is_said(tmp_path):
     assert asked == ["n1", "n2", "n3"] and went_on == ["n0", "n9"]
 
 
+@pytest.mark.playbook
 def test_no_node_answering_under_the_default_name_is_refused(tmp_path):
     # an inventory not loaded has no JMX login either: no node answers
     rc, out, asked, went_on = run(tmp_path, "Test Cluster", "my_cluster", down=("n1", "n2", "n3"))
@@ -145,6 +145,7 @@ def test_no_node_answering_under_the_default_name_is_refused(tmp_path):
     assert rc == 0 and went_on == ["n0", "n9"], out
 
 
+@pytest.mark.playbook
 def test_no_node_to_read_from_is_refused_when_required(tmp_path):
     # start_rack on a rack that is the whole cluster (e.g. every node at the defaults dc1/rack1)
     rc, out, asked, went_on = run(tmp_path, "Test Cluster", "my_cluster", candidates=(),
@@ -155,6 +156,7 @@ def test_no_node_to_read_from_is_refused_when_required(tmp_path):
     assert rc == 0 and went_on == ["n0", "n9"], out
 
 
+@pytest.mark.playbook
 def test_a_description_that_failed_is_refused(tmp_path):
     describe = {"from": "n3", "rc": 1, "stdout": "",
                 "stderr": "error: Authentication failed! Credentials required\n-- StackTrace --\njava.lang.SecurityException: x"}
@@ -168,6 +170,7 @@ def test_a_description_that_failed_is_refused(tmp_path):
     assert asked == [] and went_on == []
 
 
+@pytest.mark.playbook
 def test_a_description_read_already_is_used(tmp_path):
     describe = {"from": "n3", "stdout": "Cluster Information:\n\tName: other_cluster\n"}
     rc, out, asked, went_on = run(tmp_path, "my_cluster", "my_cluster", describe=describe)
@@ -251,6 +254,7 @@ def test_the_playbooks_check_it_before_any_change():
     assert [p["name"] for p in plays].index("Find the rack's nodes") < [p["name"] for p in plays].index("Start the rack")
 
 
+@pytest.mark.playbook
 def test_spaces_around_the_name_are_compared_as_they_are(tmp_path):
     # a cassandra.yaml with cluster_name: 'my_cluster ' (import_cluster writes it so): the same name, spaces kept
     rc, out, asked, went_on = run(tmp_path / "same", "my_cluster ", "my_cluster ")

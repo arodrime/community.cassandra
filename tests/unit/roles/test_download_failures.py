@@ -92,6 +92,7 @@ def _fails(tmp_path, block, variables, query, password):
     return out.replace(str(server.server_port), "PORT")
 
 
+@pytest.mark.playbook
 @pytest.mark.skipif(HTTPServer is None, reason="Python 3")
 @pytest.mark.parametrize("query, shown, password", [
     (SIGNED, "?****", "s3cret"),
@@ -108,6 +109,7 @@ def test_a_failed_dsbulk_download_says_why(tmp_path, query, shown, password):
             " cassandra_dsbulk_install to false), then run again." % shown) in out
 
 
+@pytest.mark.playbook
 @pytest.mark.skipif(HTTPServer is None, reason="Python 3")
 @pytest.mark.parametrize("query, shown, password", [
     (SIGNED, "?****", "s3cret"),
@@ -143,6 +145,7 @@ def _check(tmp_path, role, tasks, name, variable, url):
 
 # get_url would read another URL (a host, a "port" taken from the login), or send the login as it is, and show
 # the URL whole in its error: refused before, the URL not shown (-vvv)
+@pytest.mark.playbook
 @pytest.mark.parametrize("role, tasks, name, variable, way_out", CHECKS)
 @pytest.mark.parametrize("url", [
     'https://reader:s3"cr3t@m.example.com/f.tgz',
@@ -169,6 +172,7 @@ def test_a_login_not_plain_is_refused_unshown(tmp_path, role, tasks, name, varia
 
 
 # ansible-core 2.16 sends a percent-encoded login as it is (401): refused there, taken on 2.19+
+@pytest.mark.playbook
 @pytest.mark.parametrize("role, tasks, name, variable, way_out", CHECKS)
 @pytest.mark.parametrize("url", ["https://reader:s3%2Fcr%22t@m.example.com/f.tgz", "https://reader%40corp.com:s3cr3t@m.example.com/f.tgz"])
 def test_a_login_percent_encoded_needs_2_19(tmp_path, role, tasks, name, variable, way_out, url):
@@ -177,6 +181,7 @@ def test_a_login_percent_encoded_needs_2_19(tmp_path, role, tasks, name, variabl
     assert "cr3t" not in out or rc == 0
 
 
+@pytest.mark.playbook
 @pytest.mark.parametrize("role, tasks, name, variable, way_out", CHECKS)
 @pytest.mark.parametrize("url", ["https://reader:s3cr3t!$&'()*+,;=~@m.example.com:8443/f.tgz", "https://T0KEN@m.example.com/f.tgz",
                                  "https://m.example.com/v%402/f.tgz", "https://m.example.com/f.tgz" + SIGNED, "", "/srv/f.tgz"])
@@ -185,6 +190,7 @@ def test_a_plain_login_passes(tmp_path, role, tasks, name, variable, way_out, ur
     assert rc == 0, out
 
 
+@pytest.mark.playbook
 @pytest.mark.skipif(HTTPServer is None, reason="Python 3")
 @pytest.mark.parametrize("query, shown", [(SIGNED, "?****"), ("", "")])
 def test_a_failed_exporter_download_says_why(tmp_path, query, shown):

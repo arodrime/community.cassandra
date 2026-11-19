@@ -8,14 +8,15 @@ import os
 import re
 import select
 import subprocess
-import sys
 import time
 
 import pytest
 
+from ansible_collections.community.cassandra.tests.unit.helpers import LOCAL, playbook_command
+
 pty = pytest.importorskip("pty")
 
-COLLECTIONS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", ".."))
+pytestmark = pytest.mark.playbook
 
 PLAYBOOK = """
 - hosts: all
@@ -38,11 +39,7 @@ PROMPTS = (b"Answer yes or no", b"Please answer yes or no")
 def command(tmp_path, *extra):
     playbook = tmp_path / "confirm.yml"
     playbook.write_text(PLAYBOOK)
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_NOCOLOR="1", ANSIBLE_HOST_KEY_CHECKING="0",
-               ANSIBLE_LOCALHOST_WARNING="0", ANSIBLE_RETRY_FILES_ENABLED="0")
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()",
-            "-i", "node1,node2,", "-c", "local", "-e", "ansible_python_interpreter=" + sys.executable, str(playbook)]
-    return argv + list(extra), env
+    return playbook_command(["-i", "node1,node2,"] + LOCAL + [str(playbook)] + list(extra), dict(ANSIBLE_HOST_KEY_CHECKING="0"))
 
 
 def prompts(output):

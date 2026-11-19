@@ -8,17 +8,14 @@ __metaclass__ = type
 # drains the node.
 
 import os
-import subprocess
-import sys
 
 import pytest
 import yaml
 
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
-from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
+from ansible_collections.community.cassandra.tests.unit.helpers import LOCAL, run_playbook, templar_for, trust_as_template
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
-COLLECTIONS = os.path.abspath(os.path.join(TOP, "..", "..", ".."))
 
 
 def load(*path):
@@ -26,20 +23,16 @@ def load(*path):
         return yaml.safe_load(f)
 
 
+@pytest.mark.playbook
 @pytest.mark.skipif(os.geteuid() == 0, reason="the run is root")
 def test_rolling_restart_without_become_stops_before_any_drain(tmp_path):
     inventory = tmp_path / "hosts.ini"
     inventory.write_text("[cassandra]\nnode1 cassandra_dc=dc1 cassandra_rack=rack1 ansible_become=false\n"
                          "[cassandra_dc1]\nnode1\n")
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0",
-               ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_BECOME="False")
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", str(inventory), "-c", "local",
-            "-e", "ansible_python_interpreter=" + sys.executable, "-e", "cassandra_operation_confirm=false",
-            "community.cassandra.rolling_restart"]
-    result = subprocess.run(argv, env=env, cwd=str(tmp_path), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            timeout=300, check=False)
-    out = result.stdout.decode(errors="replace")
-    assert result.returncode != 0, out
+    rc, out = run_playbook(["-i", str(inventory)] + LOCAL + ["-e", "cassandra_operation_confirm=false",
+                                                             "community.cassandra.rolling_restart"],
+                           dict(ANSIBLE_BECOME="False"), cwd=tmp_path)
+    assert rc != 0, out
     assert ("These operations need root on the nodes (node1 without it): the playbook asks for it (become), check "
             "the inventory or ansible.cfg does not turn it off there (ansible_become: false, another ansible_become_user). "
             "Nothing was changed.") in out

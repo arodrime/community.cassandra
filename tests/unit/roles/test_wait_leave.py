@@ -8,12 +8,13 @@ __metaclass__ = type
 # few tasks, never a burst of checks), and nothing more printed by the ops
 # callback than the progress lines.
 
-import os
 import re
-import subprocess
-import sys
 
-COLLECTIONS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", ".."))
+import pytest
+
+from ansible_collections.community.cassandra.tests.unit.helpers import LOCAL, fake_nodetool, path_with, run_playbook
+
+pytestmark = pytest.mark.playbook
 
 LEAVING = """Mode: LEAVING
 Unbootstrap 5a8d3a10-7c5e-11ef-9b1c-5f2e8c1d4a7b
@@ -86,25 +87,18 @@ def run(tmp_path, callback, checks):
         (answers / ("answer%d.txt" % i)).write_text(LEAVING % done)
     (answers / "last.txt").write_text(DONE)
     bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    (bin_dir / "nodetool").write_text(NODETOOL % {"dir": answers})
-    (bin_dir / "nodetool").chmod(0o755)
+    fake_nodetool(bin_dir, NODETOOL % {"dir": answers})
     (tmp_path / "wait.yml").write_text(PLAYBOOK)
     (tmp_path / "hosts.ini").write_text("node1\n")
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0",
-               ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_DISPLAY_SKIPPED_HOSTS="1", ANSIBLE_STDOUT_CALLBACK=callback,
-               ANSIBLE_DEPRECATION_WARNINGS="0", PATH="%s:%s" % (bin_dir, os.environ.get("PATH", "")))
-    env.pop("ANSIBLE_CONFIG", None)
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", str(tmp_path / "hosts.ini"),
-            "-c", "local", "-e", "ansible_python_interpreter=" + sys.executable,
-            # no wait between the checks
-            "-e", "cassandra_stream_early_check_interval=0", "-e", "cassandra_stream_check_interval=1",
-            str(tmp_path / "wait.yml")]
-    result = subprocess.run(argv, env=env, cwd=str(tmp_path), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            timeout=600, check=False)
-    output = result.stdout.decode(errors="replace")
+    env = dict(ANSIBLE_DISPLAY_SKIPPED_HOSTS="1", ANSIBLE_STDOUT_CALLBACK=callback, ANSIBLE_DEPRECATION_WARNINGS="0",
+               PATH=path_with(bin_dir))
+    args = ["-i", str(tmp_path / "hosts.ini")] + LOCAL + [
+        # no wait between the checks
+        "-e", "cassandra_stream_early_check_interval=0", "-e", "cassandra_stream_check_interval=1",
+        str(tmp_path / "wait.yml")]
+    rc, output = run_playbook(args, env, ["ANSIBLE_CONFIG"], cwd=tmp_path, timeout=600)
     count = answers / "count"
-    return result.returncode, output, int(count.read_text()) if count.exists() else output
+    return rc, output, int(count.read_text()) if count.exists() else output
 
 
 def test_a_decommission_waited_for_check_by_check_then_no_burst(tmp_path):
