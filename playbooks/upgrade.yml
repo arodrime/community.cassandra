@@ -773,29 +773,15 @@
       ansible.builtin.assert:
         that: cassandra_upgrade_conf_compare.stdout_lines | length == 0
         fail_msg: >-
-          {{ ([inventory_hostname ~ ': ' ~ (('the config ' ~ cassandra_conf_dir ~ ' could not be read whole, the copy is not'
-                                              ~ ' checked') if _unreadable_config | bool
-                                             else ('the config copy ' ~ _copy ~ ' could not be read whole')
-                                             if _lines | select('match', '^unreadable copy ') | list
-                                             else ('the config copy ' ~ _copy ~ ' is not whole (' ~ cassandra_conf_dir
-                                                   ~ ' has more, or other sizes)'))
-               ~ '. The snapshot pre-upgrade-' ~ cassandra_upgrade_from ~ ' is taken; no node was upgraded.']
-              + cassandra_upgrade_conf_compare.stdout_lines[:10] | map('regex_replace', '^', '  ') | list
-              + (['  ... ' ~ (cassandra_upgrade_conf_compare.stdout_lines | length - 10) ~ ' more']
-                 if cassandra_upgrade_conf_compare.stdout_lines | length > 10 else [])
-              + [('WAY OUT  make ' ~ cassandra_conf_dir ~ ' on ' ~ inventory_hostname ~ ' readable (the directory'
-                  ~ ' Cassandra reads: cassandra_conf_dir), then run the prepare phase again:')
-                 if _unreadable_config | bool else
-                 ('WAY OUT  remove ' ~ _copy ~ ' on ' ~ inventory_hostname ~ ' (rm -r), then run the prepare phase again:'),
-                 '  ' ~ 'upgrade' | community.cassandra.cassandra_command(extra=['-e cassandra_upgrade_phase=prepare'],
-                                                                        **_cassandra_run_command_args)]) | join(_nl) }}
+          {{ cassandra_upgrade_conf_compare.stdout_lines | community.cassandra.cassandra_upgrade_copy_refusal(
+               inventory_hostname, cassandra_conf_dir, _copy, cassandra_upgrade_from, _command) }}
         quiet: true
       vars:
         cassandra_output: true  # a verdict: its msg as is (ops callback)
-        _nl: "\n"
         _copy: "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}.pre-upgrade-{{ cassandra_upgrade_from }}"
-        _lines: "{{ cassandra_upgrade_conf_compare.stdout_lines | default([]) }}"
-        _unreadable_config: "{{ _lines | select('match', '^unreadable config ') | list | length > 0 }}"
+        _command: >-
+          {{ 'upgrade' | community.cassandra.cassandra_command(extra=['-e cassandra_upgrade_phase=prepare'],
+                                                                **_cassandra_run_command_args) }}
       when: not ansible_check_mode
 
     - name: Say what the next phase is
