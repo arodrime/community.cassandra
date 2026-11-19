@@ -4,7 +4,8 @@ __metaclass__ = type
 # The plan of the playbook topology: the inventory is the desired state.
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_topology import (
-    FilterModule, cassandra_seed_change, cassandra_seed_host, cassandra_seed_port, cassandra_topology_done,
+    FilterModule, cassandra_seed_change, cassandra_seed_hold_lines, cassandra_seed_host, cassandra_seed_hosts,
+    cassandra_seed_port, cassandra_topology_done,
     cassandra_topology_nothing_to_do, cassandra_topology_plan, cassandra_topology_refusals, cassandra_topology_screen,
     cassandra_topology_steps)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import PARAGRAPH
@@ -614,3 +615,34 @@ def test_done_lines():
         "DONE  topology  c1  ring = inventory: added node5, node4; seeds now 10.0.0.1,10.0.0.5; removed node2"]
     assert cassandra_topology_done(_plan(remove=["node2"]), "c1", ["TO DO", "  1. x"]) == [
         "DONE  topology  c1  ring = inventory: removed node2", "", "TO DO", "  1. x"]
+
+
+def test_seed_hosts_from_the_preflight_facts():
+    def facts(i, dc):
+        return {"_cassandra_service_names": ["node%d" % i, "10.0.0.%d" % i],
+                "_cassandra_preflight": {"address": "10.0.0.%d" % i, "ring_address": "10.0.0.%d" % i, "cassandra_dc": dc,
+                                         "cassandra_rack": "r1", "live_seeds": "10.0.0.1"}}
+    hostvars = {"node1": facts(1, "dc1"), "node2": facts(2, "dc1"), "node3": {}}
+    ring = {"dc1": {"nodes": [entry(1), entry(2, status="D")]}, "dc2": None}
+    assert cassandra_seed_hosts(["node1", "node2", "node3"], hostvars, ring=ring, new=["node2"]) == [
+        {"name": "node1", "absent": False, "dc": "dc1", "rack": "r1", "names": ["node1", "10.0.0.1"], "live": "10.0.0.1",
+         "entry": "10.0.0.1", "up": True},
+        {"name": "node2", "absent": False, "dc": "dc1", "rack": "r1", "names": ["node2", "10.0.0.2"], "live": "",
+         "entry": "10.0.0.2", "up": False},
+        # no preflight facts: no dc, never up
+        {"name": "node3", "absent": False, "dc": "", "rack": "", "names": ["node3"], "live": "", "entry": "", "up": False}]
+    assert [h["name"] for h in cassandra_seed_hosts(["node1", "node3"], hostvars, skip_unread=True)] == ["node1"]
+    # a host that leaves is never up
+    assert cassandra_seed_hosts(["node1"], hostvars, ring=ring, leaving=["node1"])[0]["up"] is False
+
+
+def test_seed_hold_lines_held_or_the_warnings():
+    change = {"problems": [], "auto": [{"dc": "dc2"}], "warnings": ["dc2 kept"]}
+    assert cassandra_seed_hold_lines(change, ["n2"], False, "") == ["WARNING  dc2 kept"]
+    assert cassandra_seed_hold_lines(change, ["n2", "n5"], True, "ansible-playbook x") == [
+        "WARNING  seed lists left as they are: dc2 has no node in cassandra_seeds: change_seeds would pick its seeds",
+        "WARNING  n2, n5 not in the seed lists of the other nodes yet: run change_seeds, its plan (the seeds it picks"
+        " too) comes before its question:",
+        "     ansible-playbook x"]
+    assert cassandra_seed_hold_lines(dict(change, problems=["dc3 x"], auto=[]), ["n2"], True, "c")[1] == (
+        "WARNING  n2 not in the seed lists of the other nodes yet: fix cassandra_seeds, then run change_seeds:")

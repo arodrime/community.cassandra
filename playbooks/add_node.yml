@@ -765,23 +765,9 @@
       when: _new_seeds | length > 0 and not ansible_check_mode
       vars:
         _hosts: >-
-          {%- set l = [] -%}
-          {%- for h in ansible_play_hosts_all -%}
-          {%-   set p = hostvars[h]._cassandra_preflight | default({}) -%}
-          {%-   set _ = l.append({'name': h, 'dc': p.cassandra_dc | default(''), 'rack': p.cassandra_rack | default(''),
-                                  'names': hostvars[h]._cassandra_service_names | default([h]),
-                                  'live': '' if h in query('ansible.builtin.inventory_hostnames', cassandra_target_nodes)
-                                          else p.live_seeds | default(''),
-                                  'entry': p.address | default(''), 'up': p.ring_address | default('') in _un}) -%}
-          {%- endfor -%}
-          {{ l }}
-        _un: >-
-          {%- set out = [] -%}
-          {%- for dc, info in ((cassandra_preflight_status | default({})).cluster_status | default({}, true)).items() -%}
-          {%-   set _ = out.extend(info.nodes | default([]) | selectattr('status', 'equalto', 'U')
-                                   | selectattr('state', 'equalto', 'N') | map(attribute='address') | list) -%}
-          {%- endfor -%}
-          {{ out }}
+          {{ ansible_play_hosts_all | community.cassandra.cassandra_seed_hosts(hostvars,
+               ring=(cassandra_preflight_status | default({})).cluster_status | default({}, true),
+               new=query('ansible.builtin.inventory_hostnames', cassandra_target_nodes)) }}
 
     # a datacenter cassandra_seeds would leave with no seed and none of its nodes up, or seeds to pick that no
     # question covered (add_node's is about the nodes): the seed lists left as they are, change_seeds' job
@@ -797,20 +783,11 @@
     - name: Say what happens to the seed lists
       ansible.builtin.debug:
         msg: >-
-          {{ ((((_cassandra_add_seeds.problems
-                + _cassandra_add_seeds.auto | map(attribute='dc') | map('regex_replace', '$',
-                    ' has no node in cassandra_seeds: change_seeds would pick its seeds') | list)
-               | map('regex_replace', '^', 'seed lists left as they are: ') | list
-               + [_new_seeds | join(', ') ~ ' not in the seed lists of the other nodes yet: '
-                  ~ ('fix cassandra_seeds, then run change_seeds:' if _cassandra_add_seeds.problems
-                     else 'run change_seeds, its plan (the seeds it picks too) comes before its question:')])
-              if _cassandra_add_seeds_hold | bool else _cassandra_add_seeds.warnings)
-             | map('regex_replace', '^', 'WARNING  ') | list
-             + (['     ' ~ 'change_seeds' | community.cassandra.cassandra_command(
-                    inventory=ansible_inventory_sources,
-                    default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
-                    hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD'))]
-                if _cassandra_add_seeds_hold | bool else [])) | join(_nl) }}
+          {{ _cassandra_add_seeds | community.cassandra.cassandra_seed_hold_lines(_new_seeds, _cassandra_add_seeds_hold | bool,
+               'change_seeds' | community.cassandra.cassandra_command(
+                 inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+                 hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD'))
+               if _cassandra_add_seeds_hold | bool else '') | join(_nl) }}
       run_once: true
       when: >-
         _new_seeds | length > 0 and not ansible_check_mode

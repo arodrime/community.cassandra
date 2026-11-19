@@ -14,6 +14,10 @@ cassandra_seed_change: the hosts' live seed lists and cassandra_seeds -> the
 cassandra_topology_hosts: what the topology playbook knows of each host of
     the cluster's group, the input of cassandra_topology_plan and
     cassandra_topology_screen.
+cassandra_seed_hosts: the hosts as cassandra_seed_change takes them, from
+    their preflight facts.
+cassandra_seed_hold_lines: add_node's seed change -> the WARNING lines when
+    the seed lists are left as they are (else its warnings).
 cassandra_topology_refusals: the plan -> why topology refuses it (none: it
     may run).
 cassandra_topology_nothing_to_do: the plan with no step -> the lines that
@@ -234,6 +238,45 @@ def cassandra_seed_change(hosts, seeds):
             "old_hosts": [k for k in old_keys if k in [h["name"] for h in hosts]],
             "removed": removed, "added": added, "differ": differ,
             "step": bool(removed or added or differ), "auto": auto, "warnings": warnings, "problems": problems}
+
+
+def _up_normal(ring):
+    """cassandra_status' cluster_status -> the addresses of the nodes up and normal (the ones that may be a seed)."""
+    return [n.get("address") for info in (ring or {}).values() for n in (info or {}).get("nodes") or []
+            if n.get("status") == "U" and n.get("state") == "N"]
+
+
+def cassandra_seed_hosts(names, hostvars, ring=None, leaving=None, new=None, skip_unread=False):
+    """The hosts names, as cassandra_seed_change takes them, from their preflight facts (_cassandra_preflight):
+    [{name, absent, dc, rack, names, live, entry, up}]. ring: cassandra_status' cluster_status (up: up and normal
+    there); leaving: the hosts that leave (absent, never up); new: the hosts whose seed list is not theirs yet
+    (live: ''); skip_unread: leave out the hosts without preflight facts."""
+    leaving, new, un = leaving or [], new or [], _up_normal(ring)
+    hosts = []
+    for name in names:
+        v = hostvars[name]
+        if skip_unread and "_cassandra_preflight" not in v:
+            continue
+        p = v.get("_cassandra_preflight") or {}
+        hosts.append({"name": name, "absent": name in leaving, "dc": p.get("cassandra_dc", ""),
+                      "rack": p.get("cassandra_rack", ""), "names": v.get("_cassandra_service_names", [name]),
+                      "live": "" if name in new else p.get("live_seeds", ""), "entry": p.get("address", ""),
+                      "up": name not in leaving and p.get("ring_address", "") in un})
+    return hosts
+
+
+def cassandra_seed_hold_lines(change, new_seeds, hold, command):
+    """add_node's seed change (cassandra_seed_change), the new seeds, held (the seed lists left as they are),
+    change_seeds' command line -> the WARNING lines: held, why and what to run; else the change's warnings."""
+    if not hold:
+        return ["WARNING  " + w for w in change["warnings"]]
+    why = list(change["problems"]) + ["%s has no node in cassandra_seeds: change_seeds would pick its seeds" % a["dc"]
+                                      for a in change["auto"]]
+    then = ("fix cassandra_seeds, then run change_seeds:" if change["problems"]
+            else "run change_seeds, its plan (the seeds it picks too) comes before its question:")
+    texts = ["seed lists left as they are: " + w for w in why]
+    texts.append("%s not in the seed lists of the other nodes yet: %s" % (", ".join(new_seeds), then))
+    return ["WARNING  " + t for t in texts] + ["     " + command]
 
 
 def _present_hosts(present, entries):
@@ -783,6 +826,8 @@ class FilterModule(object):
             "cassandra_topology_plan": cassandra_topology_plan,
             "cassandra_topology_screen": cassandra_topology_screen,
             "cassandra_seed_change": cassandra_seed_change,
+            "cassandra_seed_hosts": cassandra_seed_hosts,
+            "cassandra_seed_hold_lines": cassandra_seed_hold_lines,
             "cassandra_seed_host": cassandra_seed_host,
             "cassandra_seed_port": cassandra_seed_port,
             "cassandra_topology_hosts": cassandra_topology_hosts,

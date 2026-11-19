@@ -39,22 +39,9 @@
     _problems: "{{ _keyspaces | community.cassandra.cassandra_replication_problems(_nodes_left) }}"
     # the seeds the nodes run with, cassandra_seeds (filter cassandra_seed_change)
     _dn_seeds: >-
-      {%- set l = [] -%}
-      {%- for h in _cluster if hostvars[h]._cassandra_preflight is defined -%}
-      {%-   set p = hostvars[h]._cassandra_preflight -%}
-      {%-   set _ = l.append({'name': h, 'absent': h in _leaving, 'dc': p.cassandra_dc, 'rack': p.cassandra_rack,
-                              'names': hostvars[h]._cassandra_service_names | default([h]), 'live': p.live_seeds | default(''),
-                              'address': p.address | default(''), 'up': h not in _leaving and p.ring_address | default('') in _dn_un}) -%}
-      {%- endfor -%}
-      {{ l | community.cassandra.cassandra_seed_change(cassandra_seeds) }}
-    # up and normal in the ring: a seed it may get when its datacenter is left with none
-    _dn_un: >-
-      {%- set out = [] -%}
-      {%- for dc, info in ((cassandra_preflight_status | default({})).cluster_status | default({}, true)).items() -%}
-      {%-   set _ = out.extend(info.nodes | default([]) | selectattr('status', 'equalto', 'U') | selectattr('state', 'equalto', 'N')
-                                 | map(attribute='address') | list) -%}
-      {%- endfor -%}
-      {{ out }}
+      {{ _cluster | community.cassandra.cassandra_seed_hosts(hostvars, leaving=_leaving, skip_unread=true,
+           ring=(cassandra_preflight_status | default({})).cluster_status | default({}, true))
+         | community.cassandra.cassandra_seed_change(cassandra_seeds) }}
     # the nodes to remove the others still list as a seed (topology changes the seeds as its own step)
     _dn_seed_step: "{{ [] if _cassandra_screen_asked_by | default('') else _leaving | select('in', _dn_seeds.old_hosts) | list }}"
   tasks:
