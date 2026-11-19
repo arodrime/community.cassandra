@@ -39,9 +39,9 @@ FIND = next(t for t in PLAY["tasks"] if t.get("name") == "Find the JVM options w
 WARN = next(t for t in PLAY["tasks"] if t.get("name") == "Warn about the JVM options")
 with open(os.path.join(TOP, "roles", "cassandra_install", "tasks", "java_check.yml"), encoding="utf-8") as f:
     REFUSE = next(t for t in yaml.safe_load(f) if t.get("name") == "The JVM options suit this Java")
-with open(os.path.join(TOP, "playbooks", "update_java.yml"), encoding="utf-8") as f:
-    UPDATE = next(p for p in yaml.safe_load(f) if p.get("name") == "Check the Java change")
-UPDATE_KEPT = next(t for t in UPDATE["tasks"] if t.get("name") == "The new Java reads an options file the role writes")
+# (update_java's plan and apply_config's Java change share it)
+with open(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "java_plan.yml"), encoding="utf-8") as f:
+    UPDATE_KEPT = next(t for t in yaml.safe_load(f) if t.get("name") == "The new Java reads an options file the role writes")
 with open(os.path.join(TOP, "playbooks", "upgrade.yml"), encoding="utf-8") as f:
     UPGRADE_KEPT = [t for p in yaml.safe_load(f) for t in p.get("tasks") or []
                     if t.get("name") == "The target reads an options file the role writes"]

@@ -25,7 +25,14 @@ except ImportError:
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "update_java.yml")
 with open(PLAYBOOK, encoding="utf-8") as f:
     PLAYS = yaml.safe_load(f)
-TASKS = dict((t["name"], t) for p in PLAYS for t in p.get("tasks", []))
+# the Java change worked out before anything changes (shared with apply_config): its tasks where it is included
+JAVA_PLAN = os.path.join(os.path.dirname(PLAYBOOK), "..", "roles", "cassandra_operation", "tasks", "java_plan.yml")
+with open(JAVA_PLAN, encoding="utf-8") as f:
+    PLAN_TASKS = yaml.safe_load(f)
+TASKS = {}
+for _t in (t for p in PLAYS for t in p.get("tasks", [])):
+    _from = (_t.get("ansible.builtin.include_role") or {}).get("tasks_from")
+    TASKS.update((x["name"], x) for x in (PLAN_TASKS if _from == "java_plan.yml" else [_t]))
 NOTE = TASKS["Note what this node needs"]
 
 
@@ -67,14 +74,21 @@ def test_java_home():
 def test_running_java_found_by_its_process():
     find = TASKS["Find the running Cassandra and its java"]["ansible.builtin.include_role"]
     assert find["tasks_from"] == "jvm_started.yml"
-    assert "systemd_service" not in str(PLAYS[1])
+    assert "systemd_service" not in str(PLAYS[1]) + str(TASKS)
 
 
 # after its restart, the node's Java is read again: a default java not switched (the alternatives entry not found)
 # would leave it on the old Java, reported done
 ACTION = os.path.join(os.path.dirname(PLAYBOOK), "..", "roles", "cassandra_operation", "tasks", "action_update_java.yml")
+ACTION_TASKS = []
 with open(ACTION, encoding="utf-8") as f:
-    ACTION_TASKS = yaml.safe_load(f)
+    for _t in yaml.safe_load(f):  # the Java's install and check, shared with apply_config, where they are included
+        _inc = _t.get("ansible.builtin.include_tasks")
+        if _inc in ("java_install.yml", "java_verify.yml"):
+            with open(os.path.join(os.path.dirname(ACTION), _inc), encoding="utf-8") as g:
+                ACTION_TASKS += yaml.safe_load(g)
+        else:
+            ACTION_TASKS.append(_t)
 
 
 def _template(template, variables):
