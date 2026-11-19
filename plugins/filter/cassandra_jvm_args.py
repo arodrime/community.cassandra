@@ -236,12 +236,13 @@ PLAIN_ASSIGNMENT = re.compile(r"^[A-Za-z_]\w*=[^`;&|<>()]*$")
 
 def _plain_line(line):
     """Whether bash runs line without changing where it goes next nor what JVM_OPTS has but plain options added: a
-    line adding plain options to JVM_OPTS, or NAME=value (export NAME=value), JVM_OPTS aside."""
+    line adding plain options to JVM_OPTS, or NAME=value (export NAME=value) not naming JVM_OPTS (JVM_OPTS=, nor a
+    value that may set it: X=${JVM_OPTS:=...})."""
     if APPEND.match(line["text"]):
         return True
     words = line.get("words") or line["text"].split()
     words = words[1:] if words[:1] == ["export"] else words
-    return len(words) == 1 and bool(PLAIN_ASSIGNMENT.match(words[0])) and not words[0].startswith("JVM_OPTS=")
+    return len(words) == 1 and bool(PLAIN_ASSIGNMENT.match(words[0])) and "JVM_OPTS" not in words[0]
 
 
 def _leaves_if(line):
@@ -541,6 +542,24 @@ def stock_options(greps, heap, why=None):
 UNNAMED_ORDER = "(the order of the options without a name)"
 
 
+def _xlog_output(option):
+    """The output of an -Xlog:<what>:<output>[:...] as the JVM names it: stdout, stderr, else file=<name> (a bare
+    name is a file, its double quotes off, a leading ./ off: the same file); None without an output."""
+    m = re.match(r'^-Xlog:[^:"]+:((?:"[^"]*"|[^:"])+)', option)
+    if not m:
+        return None
+    output = m.group(1)
+    if output in ("stdout", "stderr", "#0", "#1"):
+        return {"#0": "stdout", "#1": "stderr"}.get(output, output)
+    if output.startswith("disable"):
+        return output
+    name = output[len("file="):] if output.startswith("file=") else output
+    name = name.replace('"', "")
+    while name.startswith("./"):
+        name = name[2:]
+    return "file=%s" % name
+
+
 def _kind(option):
     """The kind of an option without a name, its name in a difference: -ea/-da, -esa/-dsa, agents (the Prometheus
     exporter's apart), -Xlog by output (-Xlog:<what>:<output>), the others by their first word."""
@@ -552,9 +571,9 @@ def _kind(option):
         return "(the Prometheus exporter's agent)"
     if re.match(r"^-(javaagent|agentlib|agentpath)[:=]", option):
         return "(agents)"
-    xlog = re.match(r"^-Xlog:[^:]+:([^:]+)", option)
-    if xlog and not xlog.group(1).startswith("disable"):
-        return "-Xlog:%s" % xlog.group(1)
+    output = _xlog_output(option)
+    if output and not output.startswith("disable"):
+        return "-Xlog:%s" % output
     return re.split(r"[:=]", option.split(" ")[0], maxsplit=1)[0]
 
 

@@ -1,0 +1,5 @@
+bugfixes:
+  - >-
+    import_cluster, apply_config - a ``cassandra-env.sh`` assignment whose value names ``JVM_OPTS`` (for example
+    ``X=${JVM_OPTS:=...}``, which may set it) between two copies of a ``JVM_OPTS`` line is no longer taken as a
+    plain line: the first copy is not proven set again by the second.

@@ -1,0 +1,5 @@
+bugfixes:
+  - >-
+    import_cluster, apply_config - two ``-Xlog`` options writing to the same output spelled two ways
+    (``file=gc.log`` and ``gc.log``, a quoted name, ``./gc.log``) are now one output: their order is a
+    difference (the later one sets the levels there), where it was taken as the same JVM.

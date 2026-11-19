@@ -902,6 +902,16 @@ def test_report_moved_cleanup_and_next(tmp_path):
     (["-Xlog:gc:file=a", "-Xlog:safepoint:file=b"], ["-Xlog:safepoint:file=b", "-Xlog:gc:file=a"], []),  # outputs apart
     (["-Xlog:gc:file=a", "-Xlog:gc*:file=a"], ["-Xlog:gc*:file=a", "-Xlog:gc:file=a"], ["-Xlog:file=a"]),
     (["-Xlog:disable", "-Xlog:gc:file=a"], ["-Xlog:gc:file=a", "-Xlog:disable"], ["-Xlog"]),
+    # (audit of rc13, A1) one output however written (file=, bare, quoted, ./): the later -Xlog on it wins
+    (["-Xlog:gc=debug:file=gc.log", "-Xlog:gc=info:gc.log"], ["-Xlog:gc=info:gc.log", "-Xlog:gc=debug:file=gc.log"],
+     ["-Xlog:file=gc.log"]),
+    (["-Xlog:gc=debug:file=\"gc.log\"", "-Xlog:gc=info:file=./gc.log"],
+     ["-Xlog:gc=info:file=./gc.log", "-Xlog:gc=debug:file=\"gc.log\""], ["-Xlog:file=gc.log"]),
+    (["-Xlog:gc=debug:file=\"a:b.log\"", "-Xlog:gc=info:\"a:b.log\""],
+     ["-Xlog:gc=info:\"a:b.log\"", "-Xlog:gc=debug:file=\"a:b.log\""], ["-Xlog:file=a:b.log"]),
+    (["-Xlog:gc=debug:#1", "-Xlog:gc=info:stderr"], ["-Xlog:gc=info:stderr", "-Xlog:gc=debug:#1"], ["-Xlog:stderr"]),
+    # (other outputs stay apart, whatever their spelling)
+    (["-Xlog:gc:gc.log", "-Xlog:safepoint:file=sp.log"], ["-Xlog:safepoint:file=sp.log", "-Xlog:gc:gc.log"], []),
     (["--add-opens", "a=b", "-ea"], ["-ea", "--add-opens", "a=b"], []),
     (["-ea", "-da:x"], ["-da:x", "-ea"], ["(assertions)"]),
     # (2026-11-18) of no family: in any order; in one (-ea/-da, -esa/-dsa, -Xlog, agents): in theirs
@@ -1323,6 +1333,8 @@ def test_a_line_in_a_block_set_again_below(later, outside, inside):
     "fi; if [ -d /x ]; then", "done; for j in; do", "}; [ -d /x ] && {", ";;", ";;&", "b | c)", "a)", "esac",
     "done", "}", "f() {", "x=$(f)", "x=`f`", "x=1 f", "x=1; return", "JVM_OPTS=-Dx=2", "export JVM_OPTS=",
     'JVM_OPTS="$JVM_OPTS $Y"', "elif [ -d / ]; then",
+    # (audit of rc13, C2) a value naming JVM_OPTS may set it (${JVM_OPTS:=...}): no plain line
+    "X=${JVM_OPTS:=-Dx=2}", "export X=${JVM_OPTS:=-Dx=2}", "X=${JVM_OPTS=-Dx=2}", "X=$JVM_OPTS",
 ])
 @pytest.mark.parametrize("in_block", [True, False])
 def test_a_line_with_any_command_in_between_is_not_set_again(between, in_block):
