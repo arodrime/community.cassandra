@@ -13,7 +13,10 @@ import sys
 
 import pytest
 
-COLLECTIONS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", ".."))
+from ansible_collections.community.cassandra.tests.unit.helpers import fake_nodetool, path_with, run_playbook
+
+pytestmark = pytest.mark.playbook
+
 FIXTURES = os.path.join(os.path.dirname(__file__), "..", "plugins", "modules", "fixtures")
 
 NODETOOL = """#!/bin/sh
@@ -80,20 +83,12 @@ def run(tmp_path, playbook, down=True, *args, **answers_given):
     (answers / "describecluster.txt").write_text(answers_given.get("describecluster", DESCRIBE))
     (answers / "status.txt").write_text(STATUS % ("D" if down else "U"))
     bin_dir = tmp_path / "bin"
-    bin_dir.mkdir(exist_ok=True)
-    (bin_dir / "nodetool").write_text(NODETOOL % (answers, answers))
-    (bin_dir / "nodetool").chmod(0o755)
+    fake_nodetool(bin_dir, NODETOOL % (answers, answers))
     (tmp_path / "hosts.ini").write_text(INVENTORY)
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_STDOUT_CALLBACK="community.cassandra.ops",
-               ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0", ANSIBLE_RETRY_FILES_ENABLED="0",
-               ANSIBLE_DEPRECATION_WARNINGS="0", PATH="%s:%s" % (bin_dir, os.environ.get("PATH", "")))
-    env.pop("ANSIBLE_CONFIG", None)
-    env.pop("CASSANDRA_CLUSTER", None)
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", str(tmp_path / "hosts.ini"),
-            "community.cassandra.%s" % playbook, "-e", "ansible_python_interpreter=" + sys.executable] + list(args)
-    proc = subprocess.run(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                          check=False, cwd=str(tmp_path), timeout=600)
-    return proc.returncode, proc.stdout.decode("utf-8", "replace")
+    env = dict(ANSIBLE_STDOUT_CALLBACK="community.cassandra.ops", ANSIBLE_DEPRECATION_WARNINGS="0", PATH=path_with(bin_dir))
+    args = ["-i", str(tmp_path / "hosts.ini"), "community.cassandra.%s" % playbook,
+            "-e", "ansible_python_interpreter=" + sys.executable] + list(args)
+    return run_playbook(args, env, ["ANSIBLE_CONFIG", "CASSANDRA_CLUSTER"], cwd=tmp_path, timeout=600, stdin=subprocess.DEVNULL)
 
 
 # (not a terminal: 79 columns, the Host IDs cut to fit, a line says where they are whole)

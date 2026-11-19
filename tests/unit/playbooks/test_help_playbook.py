@@ -7,14 +7,15 @@ __metaclass__ = type
 # RUNBOOK.md next to the inventory, idempotent, the difference shown under
 # --check --diff.
 
-import os
 import re
 import subprocess
-import sys
+
+import pytest
 
 from ansible.parsing.vault import VaultLib, VaultSecret
+from ansible_collections.community.cassandra.tests.unit.helpers import run_playbook
 
-COLLECTIONS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", ".."))
+pytestmark = pytest.mark.playbook
 
 HOSTS = """\
 all:
@@ -64,19 +65,13 @@ def inventory(tmp_path, vault_password=None):
 
 
 def run(tmp_path, *extra, **kwargs):
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0",
-               ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_INVENTORY_UNPARSED_WARNING="0", ANSIBLE_TIMEOUT="3",
+    env = dict(ANSIBLE_INVENTORY_UNPARSED_WARNING="0", ANSIBLE_TIMEOUT="3",
                ANSIBLE_STDOUT_CALLBACK=kwargs.get("callback", "ansible.builtin.default"),
                ANSIBLE_CALLBACK_RESULT_FORMAT=kwargs.get("result_format", "json"))
     # (ansible-test --color sets ANSIBLE_FORCE_COLOR, which wins over ANSIBLE_NOCOLOR)
-    for name in ("ANSIBLE_VAULT_PASSWORD_FILE", "ANSIBLE_BECOME", "ANSIBLE_CONFIG", "ANSIBLE_INVENTORY", "ANSIBLE_FORCE_COLOR",
-                 "CASSANDRA_CLUSTER"):
-        env.pop(name, None)
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()",
-            "community.cassandra.help"] + list(extra)
-    result = subprocess.run(argv, env=env, cwd=str(tmp_path), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, timeout=300, check=False)
-    return result.returncode, result.stdout.decode(errors="replace")
+    unset = ("ANSIBLE_VAULT_PASSWORD_FILE", "ANSIBLE_BECOME", "ANSIBLE_CONFIG", "ANSIBLE_INVENTORY", "ANSIBLE_FORCE_COLOR",
+             "CASSANDRA_CLUSTER")
+    return run_playbook(["community.cassandra.help"] + list(extra), env, unset, cwd=tmp_path, stdin=subprocess.DEVNULL)
 
 
 def recap(output):

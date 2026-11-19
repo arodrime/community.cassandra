@@ -13,14 +13,14 @@ __metaclass__ = type
 import glob
 import json
 import os
-import subprocess
 import sys
 
 import pytest
 import yaml
 
+from ansible_collections.community.cassandra.tests.unit.helpers import run_playbook
+
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
-COLLECTIONS = os.path.abspath(os.path.join(TOP, "..", "..", ".."))
 # its own name in its facts, under --tags too (not --skip-tags always, nor --start-at-task)
 OWN = {"name": "Give each node its own facts", "tags": ["always"],
        "ansible.builtin.set_fact": {"_cassandra_own_facts": "{{ inventory_hostname }}", "cacheable": True}}
@@ -154,19 +154,16 @@ def run(tmp_path, playbook, hosts, *args):
     lines += ["[cassandra_dc1:children]", "cassandra", "[cassandra:vars]", "ansible_connection=local", "ansible_become=false"]
     (tmp_path / "hosts.ini").write_text("\n".join(lines) + "\n")
     out = tmp_path / "own_facts.json"
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0",
-               ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_BECOME="False", ANSIBLE_CALLBACK_PLUGINS=str(plugins),
-               ANSIBLE_CALLBACKS_ENABLED="own_facts", OWN_FACTS_OUT=str(out))
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", str(tmp_path / "hosts.ini"),
-            "-e", "cassandra_operation_confirm=false"] + list(args) + [playbook]
-    result = subprocess.run(argv, env=env, cwd=str(tmp_path), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            timeout=600, check=False)
-    log = result.stdout.decode(errors="replace")
+    env = dict(ANSIBLE_BECOME="False", ANSIBLE_CALLBACK_PLUGINS=str(plugins), ANSIBLE_CALLBACKS_ENABLED="own_facts",
+               OWN_FACTS_OUT=str(out))
+    args = ["-i", str(tmp_path / "hosts.ini"), "-e", "cassandra_operation_confirm=false"] + list(args) + [playbook]
+    log = run_playbook(args, env, cwd=tmp_path, timeout=600)[1]
     assert out.exists(), log
     with open(str(out)) as f:
         return json.load(f), log
 
 
+@pytest.mark.playbook
 def test_own_facts_kept_after_any_run_once(tmp_path):
     # the task the playbooks start with, then run_once tasks that give facts to
     # every host (debug and set_fact, cacheable or not), then each node's own
@@ -189,6 +186,7 @@ def test_own_facts_kept_after_any_run_once(tmp_path):
     assert record["seen"] == {"n1": ["n1"], "n2": ["n2"], "n3": ["n3"]}, log
 
 
+@pytest.mark.playbook
 @pytest.mark.parametrize("playbook, hosts, args, reached", [
     # its node play: three run_once checks and a phase line, then each node's network facts (then the ring
     # read, which fails here: no Cassandra)
@@ -206,6 +204,7 @@ def test_playbook_nodes_keep_their_own_facts(tmp_path, playbook, hosts, args, re
     assert all(nodes == [host] for host, nodes in record["seen"].items()), record["seen"]
 
 
+@pytest.mark.playbook
 def test_nodes_sharing_their_facts_already_stop_the_run(tmp_path):
     # a play of the operator's before the playbook, in the same run, a run_once task first on the nodes: on
     # ansible-core 2.21 they share one facts object from then on, which the playbook's first node play says

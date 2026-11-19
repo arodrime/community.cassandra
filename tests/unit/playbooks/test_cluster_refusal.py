@@ -7,15 +7,15 @@ __metaclass__ = type
 # nodes (whose hosts would fail on it with a raw Ansible error). Run by
 # ansible-playbook on the collection's playbooks: no node is reached.
 
-import os
 import re
 import subprocess
-import sys
 
 import pytest
 
-TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
-COLLECTIONS = os.path.abspath(os.path.join(TOP, "..", "..", ".."))
+from ansible_collections.community.cassandra.tests.unit.helpers import LOCAL, run_playbook
+
+pytestmark = pytest.mark.playbook
+
 INVENTORY = """
 [orders]
 o1
@@ -39,20 +39,15 @@ NONE_NAMED = ["====", "", "REFUSED  no cluster named: this inventory has 2 clust
 
 def run(tmp_path, playbook, *args, **env_vars):
     (tmp_path / "inventory").write_text(INVENTORY)
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_STDOUT_CALLBACK="community.cassandra.ops",
-               ANSIBLE_NOCOLOR="1", ANSIBLE_HOST_KEY_CHECKING="0", ANSIBLE_LOCALHOST_WARNING="0",
-               ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_FORCE_COLOR="0", PWD=str(tmp_path), COLUMNS="80")
+    env = dict(ANSIBLE_STDOUT_CALLBACK="community.cassandra.ops", ANSIBLE_HOST_KEY_CHECKING="0", ANSIBLE_FORCE_COLOR="0",
+               PWD=str(tmp_path), COLUMNS="80")
     env.update(env_vars)
-    for name in ("ANSIBLE_CONFIG", "ANSIBLE_INVENTORY") + (() if "CASSANDRA_CLUSTER" in env_vars else ("CASSANDRA_CLUSTER",)):
-        env.pop(name, None)
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", "inventory", "-c", "local",
-            "-e", "ansible_python_interpreter=" + sys.executable, "community.cassandra." + playbook] + list(args)
-    proc = subprocess.run(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                          check=False, cwd=str(tmp_path), timeout=300)
-    out = proc.stdout.decode("utf-8", "replace")
+    unset = ("ANSIBLE_CONFIG", "ANSIBLE_INVENTORY") + (() if "CASSANDRA_CLUSTER" in env_vars else ("CASSANDRA_CLUSTER",))
+    rc, out = run_playbook(["-i", "inventory"] + LOCAL + ["community.cassandra." + playbook] + list(args), env, unset,
+                           cwd=tmp_path, stdin=subprocess.DEVNULL)
     assert "Traceback" not in out and "unhandled" not in out and "exception" not in out, out
     # each rule as 4 of its characters (its width is the terminal's)
-    return proc.returncode, [re.sub(r"^([-=])\1{3,}$", lambda m: m.group(1) * 4, line) for line in out.splitlines()]
+    return rc, [re.sub(r"^([-=])\1{3,}$", lambda m: m.group(1) * 4, line) for line in out.splitlines()]
 
 
 @pytest.mark.parametrize("playbook,args", [

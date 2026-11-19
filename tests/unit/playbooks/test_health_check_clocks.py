@@ -13,10 +13,13 @@ import sys
 
 import pytest
 
+from ansible_collections.community.cassandra.tests.unit.helpers import path_with, run_playbook
 from ansible_collections.community.cassandra.tests.unit.playbooks.test_output_golden import (
-    CLUSTER, COLLECTIONS, DESCRIBE, FIXTURES, NODETOOL, STATUS, ruled)
+    CLUSTER, DESCRIBE, FIXTURES, NODETOOL, STATUS, ruled)
 from ansible_collections.community.cassandra.tests.unit.roles.test_clocks_check import (
     CHRONYC, DETECT_VIRT, SOURCES, SYSTEMCTL, TIMEDATECTL, tracking)
+
+pytestmark = pytest.mark.playbook
 
 INVENTORY = """[my_cluster]
 node1 ansible_host=10.100.100.3 cassandra_dc=dc1 cassandra_rack=rack_a ansible_python_interpreter=%(bin)s/python-node1
@@ -83,18 +86,12 @@ def run(tmp_path, port, nodes, unread=(), *args):
         f.chmod(f.stat().st_mode | stat.S_IXUSR)
     (fake / "log").write_text("")
     (tmp_path / "hosts.ini").write_text(INVENTORY % {"bin": bin_dir})
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_STDOUT_CALLBACK="community.cassandra.ops",
-               ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0", ANSIBLE_RETRY_FILES_ENABLED="0",
-               ANSIBLE_DEPRECATION_WARNINGS="0", FAKE_DIR=str(fake), PATH="%s:%s" % (bin_dir, os.environ.get("PATH", "")),
+    env = dict(ANSIBLE_STDOUT_CALLBACK="community.cassandra.ops", ANSIBLE_DEPRECATION_WARNINGS="0", FAKE_DIR=str(fake),
+               PATH=path_with(bin_dir),
                PWD=str(tmp_path))  # (the shell's: the inventory path of the command relative to it)
-    env.pop("ANSIBLE_CONFIG", None)
-    env.pop("CASSANDRA_CLUSTER", None)
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", "hosts.ini",
-            "community.cassandra.health_check", "-e", "cassandra_storage_port=%d" % port,
+    args = ["-i", "hosts.ini", "community.cassandra.health_check", "-e", "cassandra_storage_port=%d" % port,
             "-e", "cassandra_native_transport_port=%d" % port] + list(args)
-    proc = subprocess.run(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                          check=False, cwd=str(tmp_path), timeout=600)
-    return proc.returncode, proc.stdout.decode("utf-8", "replace")
+    return run_playbook(args, env, ["ANSIBLE_CONFIG", "CASSANDRA_CLUSTER"], cwd=tmp_path, timeout=600, stdin=subprocess.DEVNULL)
 
 
 IN_SYNC = ["CLOCKS  in sync: synchronised to a source, offset plus the daemon's error",

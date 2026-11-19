@@ -10,16 +10,16 @@ import json
 import os
 import select
 import subprocess
-import sys
 import time
 
 import pytest
 import yaml
 
+from ansible_collections.community.cassandra.tests.unit.helpers import LOCAL, playbook_command
+
 pty = pytest.importorskip("pty")
 
 TOP = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-COLLECTIONS = os.path.abspath(os.path.join(TOP, "..", "..", ".."))
 
 with open(os.path.join(TOP, "playbooks", "remove_dead_node.yml"), encoding="utf-8") as _f:
     REMOVE = next(p for p in yaml.safe_load(_f) if p.get("name") == "Remove the dead node")
@@ -42,13 +42,9 @@ def playbook(tmp_path, **variables):
             "tasks": [CONFIRM, {"name": "Assassinate", "ansible.builtin.debug": {"msg": "WENT ON"}}]}
     (tmp_path / "confirm.yml").write_text(json.dumps([play]))
     (tmp_path / "hosts.ini").write_text("node1\n")
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0",
-               ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_DEPRECATION_WARNINGS="0", ANSIBLE_STDOUT_CALLBACK="default",
+    env = dict(ANSIBLE_DEPRECATION_WARNINGS="0", ANSIBLE_STDOUT_CALLBACK="default",
                ANSIBLE_CALLBACK_RESULT_FORMAT="yaml")  # a msg as text on 2.16 too (its JSON escapes quotes)
-    env.pop("ANSIBLE_CONFIG", None)
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", str(tmp_path / "hosts.ini"),
-            "-c", "local", "-e", "ansible_python_interpreter=" + sys.executable, str(tmp_path / "confirm.yml")]
-    return argv, env
+    return playbook_command(["-i", str(tmp_path / "hosts.ini")] + LOCAL + [str(tmp_path / "confirm.yml")], env, ["ANSIBLE_CONFIG"])
 
 
 def run(tmp_path, **variables):
@@ -92,6 +88,7 @@ def assert_not_ready_to_copy(out):
     assert "assassinate_confirm=10.0.0.14" not in out and "assassinate_confirm=node4" not in out, out
 
 
+@pytest.mark.playbook
 @pytest.mark.parametrize("given", [ADDRESS, "node4", " 10.0.0.14 "])
 def test_given_without_a_terminal_goes_on(tmp_path, given):
     rc, out = run(tmp_path, cassandra_operation_confirm=False, cassandra_dead_node_assassinate_confirm=given)
@@ -99,6 +96,7 @@ def test_given_without_a_terminal_goes_on(tmp_path, given):
     assert "Type its address" not in out, out
 
 
+@pytest.mark.playbook
 def test_another_address_given_stops(tmp_path):
     rc, out = run(tmp_path, cassandra_operation_confirm=False, cassandra_dead_node_assassinate_confirm="10.0.0.15")
     assert rc != 0 and "WENT ON" not in out, out
@@ -107,6 +105,7 @@ def test_another_address_given_stops(tmp_path):
     assert_not_ready_to_copy(out)
 
 
+@pytest.mark.playbook
 def test_first_question_skipped_does_not_skip_this_one(tmp_path):
     # cassandra_operation_confirm false alone: the address must be given
     rc, out = run(tmp_path, cassandra_operation_confirm=False)
@@ -115,6 +114,7 @@ def test_first_question_skipped_does_not_skip_this_one(tmp_path):
     assert_not_ready_to_copy(out)
 
 
+@pytest.mark.playbook
 def test_no_terminal_to_type_it_on_stops(tmp_path):
     rc, out = run(tmp_path)
     assert rc != 0 and "WENT ON" not in out, out
@@ -122,6 +122,7 @@ def test_no_terminal_to_type_it_on_stops(tmp_path):
     assert_not_ready_to_copy(out)
 
 
+@pytest.mark.playbook
 @pytest.mark.parametrize("answer, goes_on", [(ADDRESS, True), ("node4", True), ("yes", False), ("", False)])
 def test_typed_on_a_terminal(tmp_path, answer, goes_on):
     rc, out = run_typed(tmp_path, answer)

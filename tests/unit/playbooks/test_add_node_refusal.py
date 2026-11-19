@@ -12,12 +12,13 @@ import json
 import os
 import re
 import subprocess
-import sys
 
+import pytest
 import yaml
 
+from ansible_collections.community.cassandra.tests.unit.helpers import LOCAL, run_playbook
+
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
-COLLECTIONS = os.path.abspath(os.path.join(TOP, "..", "..", ".."))
 with open(os.path.join(TOP, "playbooks", "add_node.yml"), encoding="utf-8") as f:
     PLAY = [p for p in yaml.safe_load(f) if p.get("name") == "Check the new nodes"][0]
 TASKS = dict((t.get("name"), t) for t in PLAY["tasks"])
@@ -73,21 +74,15 @@ def run(tmp_path, task, facts):
     (tmp_path / "playbook.yml").write_text(PLAYBOOK)
     (tmp_path / "inventory").write_text("[my_cluster]\nnode7\nnode8\n")
     (tmp_path / "facts.json").write_text(json.dumps({"facts": facts}))
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_STDOUT_CALLBACK="community.cassandra.ops",
-               ANSIBLE_NOCOLOR="1", ANSIBLE_HOST_KEY_CHECKING="0", ANSIBLE_LOCALHOST_WARNING="0",
-               ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_FORCE_COLOR="0", PWD=str(tmp_path), COLUMNS="80")
-    env.pop("ANSIBLE_CONFIG", None)
-    env.pop("ANSIBLE_INVENTORY", None)
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", "inventory", "-c", "local",
-            "-e", "ansible_python_interpreter=" + sys.executable, "-e", "@facts.json",
-            "-e", "cassandra_target_nodes=node7,node8", "playbook.yml"]
-    proc = subprocess.run(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                          check=False, cwd=str(tmp_path), timeout=300)
-    out = proc.stdout.decode("utf-8", "replace")
+    env = dict(ANSIBLE_STDOUT_CALLBACK="community.cassandra.ops", ANSIBLE_HOST_KEY_CHECKING="0", ANSIBLE_FORCE_COLOR="0",
+               PWD=str(tmp_path), COLUMNS="80")
+    args = ["-i", "inventory"] + LOCAL + ["-e", "@facts.json", "-e", "cassandra_target_nodes=node7,node8", "playbook.yml"]
+    rc, out = run_playbook(args, env, ["ANSIBLE_CONFIG", "ANSIBLE_INVENTORY"], cwd=tmp_path, stdin=subprocess.DEVNULL)
     # each rule as 4 of its characters (its width is the terminal's)
-    return proc.returncode, [re.sub(r"^([-=])\1{3,}$", lambda m: m.group(1) * 4, line) for line in out.splitlines()]
+    return rc, [re.sub(r"^([-=])\1{3,}$", lambda m: m.group(1) * 4, line) for line in out.splitlines()]
 
 
+@pytest.mark.playbook
 def test_former_member_and_node_of_another_cluster_one_block(tmp_path):
     rc, lines = run(tmp_path, "Refuse the new nodes add_node may not reset", {"node7": FORMER, "node8": OTHER})
     assert rc != 0
@@ -123,6 +118,7 @@ def test_former_member_and_node_of_another_cluster_one_block(tmp_path):
     ]
 
 
+@pytest.mark.playbook
 def test_two_former_members(tmp_path):
     rc, lines = run(tmp_path, "Refuse the new nodes add_node may not reset", {"node7": FORMER, "node8": dict(
         FORMER, _cassandra_preflight={"cassandra_dc": "dc1", "cassandra_rack": "rack_c"})})
@@ -142,6 +138,7 @@ def test_two_former_members(tmp_path):
     ]
 
 
+@pytest.mark.playbook
 def test_nothing_refused_goes_on(tmp_path):
     fine = dict(FORMER, _cassandra_node_reset_plan={"problems": []}, _cassandra_node_reset_check={"problems": []})
     rc, lines = run(tmp_path, "Refuse the new nodes add_node may not reset", {"node7": fine, "node8": fine})
@@ -149,6 +146,7 @@ def test_nothing_refused_goes_on(tmp_path):
     assert lines == ["went on", "went on"]
 
 
+@pytest.mark.playbook
 def test_a_node_already_in_the_ring_one_block(tmp_path):
     down = {"cassandra_new_node_state": "replace", "_cassandra_preflight": {"cassandra_dc": "dc1", "cassandra_rack": "rack_b"},
             "cassandra_new_node_address": "10.0.0.7",
@@ -201,6 +199,7 @@ def test_the_checks_leave_the_refusal_to_add_node():
     assert refuse["ansible.builtin.fail"]["msg"] == "{{ inventory_hostname }} ({{ _address }}): {{ _cassandra_new_node_refusal }}"
 
 
+@pytest.mark.playbook
 def test_a_former_member_with_a_directory_problem_gets_no_reset_suggested(tmp_path):
     both = dict(FORMER, _cassandra_node_reset_plan={"problems": FORMER["_cassandra_node_reset_plan"]["problems"]
                                                     + ["/data: can not be read (without root?)"]})
