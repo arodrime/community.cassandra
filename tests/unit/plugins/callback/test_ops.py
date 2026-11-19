@@ -785,6 +785,35 @@ def test_the_plan_title_and_the_stop_block_are_blocks_of_their_own():
     assert [x for x in shown if not rule(x[0])] == [(stop[0], C.COLOR_ERROR)] + [(line, None) for line in stop[1:] if line]
 
 
+# the playbooks without a plan titled by their name: a report (health_check, status), the import's own screen
+# ("IMPORT prod ..."), the help text, preflight's checks
+NO_PLAN = ("health_check", "help", "import_cluster", "preflight", "status")
+
+
+def test_the_plan_titles_are_the_operations_the_playbooks_name():
+    """The callback knows a plan by its title, the operation in capitals ("ADD NODE  ..."), from its table of
+    operations: each playbook is either in it or one without a plan, and each playbook name given as an operation
+    in the playbooks, the roles and the filters (operation: add_node, title("topology")...) is in it."""
+    import glob
+
+    from ansible_collections.community.cassandra.plugins.callback.ops import _HEADED, _OPERATIONS
+    from ansible_collections.community.cassandra.tests.unit.helpers import TOP
+
+    books = set(os.path.basename(path)[:-len(".yml")] for path in glob.glob(os.path.join(TOP, "playbooks", "*.yml")))
+    assert set(_OPERATIONS) | set(NO_PLAN) == books and not set(_OPERATIONS) & set(NO_PLAN)
+    named = set()
+    for pattern in ("playbooks/*.yml", "roles/**/*.yml", "plugins/**/*.py"):
+        for path in glob.glob(os.path.join(TOP, pattern), recursive=True):
+            with open(path) as f:
+                text = f.read()
+            named.update(m.group(1) or m.group(2) for m in re.finditer(
+                r"""\boperation["']?\s*[:=]\s*["']?([a-z_]+)\b|\b(?:plan|title)\(["']([a-z_]+)["']""", text))
+    named &= books
+    assert len(named) > 15 and named <= set(_OPERATIONS), sorted(named - set(_OPERATIONS))
+    for operation in _OPERATIONS:
+        assert _HEADED.match("%s  of prod" % operation.replace("_", " ").upper()), operation
+
+
 def test_a_stalled_peer_line_red_the_others_as_the_progress_line():
     from ansible import constants as C
     from ansible_collections.community.cassandra.plugins.callback.ops import colour
