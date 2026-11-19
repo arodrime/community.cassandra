@@ -79,18 +79,8 @@
         {{ cassandra_node_reset_found.files | default([]) | map(attribute='path')
            | reject('search', '/lost[+]found$') | sort | list }}
       dirs: >-
-        {%- set out = [] -%}
-        {%- for d in _cassandra_node_reset_dirs.dirs -%}
-        {%-   set where = d.real -%}
-        {%-   set held = cassandra_node_reset_found.files | default([]) | map(attribute='path')
-                         | select('match', '^' ~ (where ~ '/') | regex_escape ~ '[^/]+$') | reject('search', '/lost[+]found$')
-                         | map('basename') | sort | list -%}
-        {%-   set _ = out.append(d.path ~ ((' -> ' ~ d.real) if d.real != d.path else '') ~ ' (' ~ d.kinds | join(', ')
-                                 ~ '; from ' ~ d.from | join(', ') ~ '): '
-                                 ~ ((held | length | string ~ ' entries: ' ~ held[:8] | join(', ') ~ (', ...' if held | length > 8 else ''))
-                                    if held else 'empty or missing')) -%}
-        {%- endfor -%}
-        {{ out }}
+        {{ _cassandra_node_reset_dirs.dirs | community.cassandra.cassandra_node_reset_dir_lines(
+             cassandra_node_reset_found.files | default([])) }}
   vars:
     _status: "{{ cassandra_node_reset_unit.status | default({}) }}"
     _auto: "{{ _cassandra_node_reset_auto | default(false) }}"
@@ -103,14 +93,8 @@
 - name: What the reset of {{ inventory_hostname }} would do
   ansible.builtin.debug:
     msg: >-
-      {{ (['Reset of ' ~ inventory_hostname ~ (' (replacing ' ~ cassandra_node_reset_replace_address ~ ')'
-          if cassandra_node_reset_replace_address | default('') else '') ~ ':']
-         + (['  stop Cassandra' ~ (' and keep it from starting at boot' if _p.disable | bool else '')] if _p.stop | bool
-            else ['  keep Cassandra from starting at boot'] if _p.disable | bool else [])
-         + _p.dirs | map('regex_replace', '^', '  empty ') | list
-         + ([] if _p.delete else ['  nothing to delete'])
-         + _p.info | map('regex_replace', '^', '  ') | list
-         + _p.problems | map('regex_replace', '^', '  REFUSED: ') | list) | join(_nl) }}
+      {{ _p | community.cassandra.cassandra_node_reset_lines(inventory_hostname,
+           replacing=cassandra_node_reset_replace_address | default('')) | join(_nl) }}
   when:
     - not _cassandra_notes_deferred | default(false) | bool  # topology: in its plan
     # add_node, replace_node, reset_node: on their screen (a node with nothing to do is not on it)

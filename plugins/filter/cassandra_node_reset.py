@@ -19,6 +19,10 @@ cassandra_inventory_dirs: the Cassandra directories the inventory gives a
     node, each with its kind (what a reset empties, node_standing_dirs.yml).
 cassandra_add_node_reset_refusals: the new nodes add_node may not reset,
     each with why (the input of cassandra_add_node_refusal).
+cassandra_node_reset_dir_lines: the directories a reset empties, with what
+    each holds, one line each.
+cassandra_node_reset_lines: a node's reset plan -> the lines that say what
+    it would do.
 """
 
 from __future__ import absolute_import, division, print_function
@@ -30,6 +34,7 @@ import re
 import yaml
 
 from ansible.errors import AnsibleFilterError
+from ansible.module_utils.parsing.convert_bool import boolean
 
 from ansible_collections.community.cassandra.plugins.filter import cassandra_node_standing as standing
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_command as _command
@@ -405,6 +410,46 @@ def cassandra_add_node_reset_refusals(new, hostvars):
     return refusals
 
 
+def _jinja_sorted(names):
+    """names sorted as Jinja's sort filter does: case-insensitive."""
+    return sorted(names, key=lambda n: n.lower())
+
+
+def cassandra_node_reset_dir_lines(dirs, files):
+    """The directories a reset empties (cassandra_node_reset_dirs' dirs: [{path, real, kinds, from}]), the entries
+    found in them (find's files: [{path}]) -> one line each: "<path>[ -> <real>] (<kinds>; from <sources>): <N>
+    entries: <the first 8 names>, ..." or "...: empty or missing". A fresh file system's lost+found is left out.
+    e.g. "/var/lib/cassandra/data (data; from cassandra.yaml): 2 entries: system, system_auth"."""
+    paths = [f["path"] for f in files or []]
+    lines = []
+    for d in dirs:
+        inside = re.compile("^" + re.escape(d["real"] + "/") + "[^/]+$")
+        held = _jinja_sorted(posixpath.basename(p) for p in paths if inside.match(p) and not p.endswith("/lost+found"))
+        where = d["path"] + (" -> " + d["real"] if d["real"] != d["path"] else "")
+        what = ("%d entries: %s%s" % (len(held), ", ".join(held[:8]), ", ..." if len(held) > 8 else "")
+                if held else "empty or missing")
+        lines.append("%s (%s; from %s): %s" % (where, ", ".join(d["kinds"]), ", ".join(d["from"]), what))
+    return lines
+
+
+def cassandra_node_reset_lines(plan, host, replacing=""):
+    """A node's reset plan (_cassandra_node_reset_plan), its name, the address it replaces (replace_node) -> what
+    the reset would do: "Reset of node7:", then stop Cassandra / keep it from starting at boot, "empty <dir>" each,
+    what it holds, the refusals."""
+    stop, disable = boolean(plan["stop"], strict=False), boolean(plan["disable"], strict=False)
+    lines = ["Reset of %s%s:" % (host, " (replacing %s)" % replacing if replacing else "")]
+    if stop:
+        lines.append("  stop Cassandra" + (" and keep it from starting at boot" if disable else ""))
+    elif disable:
+        lines.append("  keep Cassandra from starting at boot")
+    lines.extend("  empty " + d for d in plan["dirs"])
+    if not plan["delete"]:
+        lines.append("  nothing to delete")
+    lines.extend("  " + i for i in plan["info"])
+    lines.extend("  REFUSED: " + p for p in plan["problems"])
+    return lines
+
+
 class FilterModule(object):
     def filters(self):
         return {
@@ -416,4 +461,6 @@ class FilterModule(object):
             "cassandra_node_reset_ring": cassandra_node_reset_ring,
             "cassandra_inventory_dirs": cassandra_inventory_dirs,
             "cassandra_add_node_reset_refusals": cassandra_add_node_reset_refusals,
+            "cassandra_node_reset_dir_lines": cassandra_node_reset_dir_lines,
+            "cassandra_node_reset_lines": cassandra_node_reset_lines,
         }

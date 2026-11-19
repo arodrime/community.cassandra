@@ -7,8 +7,8 @@ from ansible.errors import AnsibleFilterError
 
 from ansible_collections.community.cassandra.plugins.filter import cassandra_node_reset, cassandra_node_standing as standing
 from ansible_collections.community.cassandra.plugins.filter.cassandra_node_reset import (
-    cassandra_add_node_refusal, cassandra_cluster_reset_check, cassandra_node_reset_dirs, cassandra_node_reset_real,
-    cassandra_reset_choice, reset_path_problem)
+    cassandra_add_node_refusal, cassandra_cluster_reset_check, cassandra_node_reset_dir_lines, cassandra_node_reset_dirs,
+    cassandra_node_reset_lines, cassandra_node_reset_real, cassandra_reset_choice, reset_path_problem)
 
 
 def cassandra_node_reset_ring(answers, addresses, replace_address="", running=False, own=None, host="", known=None,
@@ -534,3 +534,26 @@ def test_add_node_refusal_one_block_then_what_to_do():
         "     ansible-playbook -i inventory community.cassandra.topology -e cassandra_add_node_reset=true",
     ]
     assert cassandra_add_node_refusal([]) == []
+
+
+def test_reset_dir_lines_say_what_each_holds():
+    dirs = [{"path": "/d1", "real": "/srv/d1", "kinds": ["data"], "from": ["inventory", "cassandra.yaml"]},
+            {"path": "/cl", "real": "/cl", "kinds": ["commitlog"], "from": ["inventory"]}]
+    files = [{"path": "/srv/d1/system"}, {"path": "/srv/d1/Zeta"}, {"path": "/srv/d1/alpha"},
+             {"path": "/srv/d1/lost+found"}, {"path": "/srv/d1/sub/deep"}, {"path": "/srv/d1x/other"}]
+    assert cassandra_node_reset_dir_lines(dirs, files) == [
+        "/d1 -> /srv/d1 (data; from inventory, cassandra.yaml): 3 entries: alpha, system, Zeta",  # sorted, any case
+        "/cl (commitlog; from inventory): empty or missing"]
+    many = [{"path": "/cl/f%02d" % i} for i in range(9)]
+    assert cassandra_node_reset_dir_lines(dirs[1:], many) == [
+        "/cl (commitlog; from inventory): 9 entries: f00, f01, f02, f03, f04, f05, f06, f07, ..."]
+
+
+def test_reset_lines():
+    plan = {"stop": True, "disable": True, "dirs": ["/cl (commitlog; from inventory): empty or missing"], "delete": [],
+            "info": ["i"], "problems": ["p"]}
+    assert cassandra_node_reset_lines(plan, "node7", replacing="10.0.0.9") == [
+        "Reset of node7 (replacing 10.0.0.9):", "  stop Cassandra and keep it from starting at boot",
+        "  empty /cl (commitlog; from inventory): empty or missing", "  nothing to delete", "  i", "  REFUSED: p"]
+    plan = dict(plan, stop="False", disable="True", dirs=[], delete=["/cl/x"], info=[], problems=[])
+    assert cassandra_node_reset_lines(plan, "node7") == ["Reset of node7:", "  keep Cassandra from starting at boot"]
