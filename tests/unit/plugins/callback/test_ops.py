@@ -15,7 +15,7 @@ import pytest
 
 from ansible.release import __version__ as ansible_version
 
-COLLECTIONS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "..", ".."))
+from ansible_collections.community.cassandra.tests.unit.helpers import LOCAL, playbook_command, run_playbook
 
 PLAYBOOK = """
 - hosts: all
@@ -115,17 +115,12 @@ FAILING = """
 def run(tmp_path, playbook, *args, **env_extra):
     path = tmp_path / "playbook.yml"
     path.write_text(playbook)
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_STDOUT_CALLBACK="community.cassandra.ops",
-               ANSIBLE_NOCOLOR="1", ANSIBLE_HOST_KEY_CHECKING="0", ANSIBLE_LOCALHOST_WARNING="0",
-               ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_DEPRECATION_WARNINGS="0", ANSIBLE_FORCE_COLOR="0")
+    env = dict(ANSIBLE_STDOUT_CALLBACK="community.cassandra.ops", ANSIBLE_HOST_KEY_CHECKING="0",
+               ANSIBLE_DEPRECATION_WARNINGS="0", ANSIBLE_FORCE_COLOR="0")
     env.update(env_extra)
-    env.pop("ANSIBLE_CONFIG", None)
     inventory = env.pop("INVENTORY", "node1,node2,")
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", inventory, "-c", "local",
-            "-e", "ansible_python_interpreter=" + sys.executable, str(path)] + list(args)
-    proc = subprocess.run(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                          check=False, cwd=str(tmp_path), timeout=300)
-    return proc.returncode, proc.stdout.decode("utf-8", "replace")
+    return run_playbook(["-i", inventory] + LOCAL + [str(path)] + list(args), env, ["ANSIBLE_CONFIG"], cwd=tmp_path,
+                        stdin=subprocess.DEVNULL)
 
 
 def shown(output):
@@ -134,6 +129,7 @@ def shown(output):
             for line in output.splitlines()]
 
 
+@pytest.mark.playbook
 def test_only_the_marked_messages(tmp_path):
     rc, output = run(tmp_path, PLAYBOOK)
     assert rc == 0, output
@@ -155,6 +151,7 @@ def test_only_the_marked_messages(tmp_path):
     assert sorted(lines[11:]) == ["handler on node1", "handler on node2"]
 
 
+@pytest.mark.playbook
 def test_check_mode_prints_the_same_messages(tmp_path):
     rc, output = run(tmp_path, PLAYBOOK, "--check")
     assert rc == 0, output
@@ -162,6 +159,7 @@ def test_check_mode_prints_the_same_messages(tmp_path):
     assert "TASK [" not in output and "PLAY RECAP" not in output
 
 
+@pytest.mark.playbook
 def test_failures_in_full_and_the_verdict_as_is(tmp_path):
     rc, output = run(tmp_path, FAILING, INVENTORY="node1,node2,node3,")  # node3 goes on to the verdict
     assert rc != 0
@@ -257,6 +255,7 @@ def test_a_refused_role_argument_keeps_the_reason_of_ansible_core_2_19():
 _GIVEN_3W = "'3w' is " if tuple(int(x) for x in ansible_version.split(".")[:2]) >= (2, 19) else ""
 
 
+@pytest.mark.playbook
 def test_a_refused_role_argument_said_in_short(tmp_path):
     # e2e: "cassandra_concurrent_reads: 3w" in host_vars printed cassandra_config's whole argument spec, 2100 lines,
     # the reason in the middle; the same value on every node (group_vars): one block, not one per node
@@ -272,6 +271,7 @@ def test_a_refused_role_argument_said_in_short(tmp_path):
     assert "argument_spec_data" in output
 
 
+@pytest.mark.playbook
 def test_a_refused_role_argument_said_when_the_run_ends_before_the_next_task(tmp_path):
     # the refusal on the last task of a play, then the next play cannot start (its hosts fail to template): no next
     # task, play or stats to say it at, said at the exit all the same
@@ -293,6 +293,7 @@ def test_a_refused_role_argument_said_when_the_run_ends_before_the_next_task(tmp
     assert output.count("refused these variables") == 1
 
 
+@pytest.mark.playbook
 def test_a_refused_role_argument_in_a_rescued_block_said_in_short(tmp_path):
     # a block whose rescue handles it: one line, the variable refused and why (not the message cut at its colon)
     head, tasks = ARGUMENTS.split("  tasks:\n", maxsplit=1)
@@ -338,6 +339,7 @@ def test_a_refusal_held_at_exit_with_its_output_closed_says_nothing():
         callback._say_refused()
 
 
+@pytest.mark.playbook
 def test_any_errors_fatal_stops_and_shows_the_failure(tmp_path):
     playbook = FAILING.replace("  gather_facts: false\n", "  gather_facts: false\n  any_errors_fatal: true\n", 1)
     rc, output = run(tmp_path, playbook)
@@ -346,6 +348,7 @@ def test_any_errors_fatal_stops_and_shows_the_failure(tmp_path):
     assert "NOT HEALTHY" not in output  # the play stopped at the first failure
 
 
+@pytest.mark.playbook
 def test_unreachable_hosts(tmp_path):
     playbook = """
 - hosts: all
@@ -376,6 +379,7 @@ def test_unreachable_hosts(tmp_path):
     assert "fatal: [node3]: UNREACHABLE!" not in output and "=> {" not in output, output
 
 
+@pytest.mark.playbook
 def test_diff_is_shown(tmp_path):
     target = tmp_path / "file.txt"
     target.write_text("old\n")
@@ -393,6 +397,7 @@ def test_diff_is_shown(tmp_path):
     assert "-old" in output and "+new" in output
 
 
+@pytest.mark.playbook
 def test_verbose_delegates_to_the_default_callback(tmp_path):
     rc, output = run(tmp_path, PLAYBOOK, "-v")
     assert rc == 0, output
@@ -400,6 +405,7 @@ def test_verbose_delegates_to_the_default_callback(tmp_path):
     assert "plain debug output" in output and "...ignoring" in output
 
 
+@pytest.mark.playbook
 def test_a_verdict_without_text_and_one_per_host(tmp_path):
     playbook = """
 - hosts: all
@@ -425,6 +431,7 @@ def test_a_verdict_without_text_and_one_per_host(tmp_path):
     assert "node2: not healthy here" in output.splitlines()
 
 
+@pytest.mark.playbook
 def test_warnings_are_shown(tmp_path):
     (tmp_path / "library").mkdir()
     (tmp_path / "library" / "warner.py").write_text(
@@ -442,6 +449,7 @@ def test_warnings_are_shown(tmp_path):
     assert "WARN-FROM-MODULE" in output
 
 
+@pytest.mark.playbook
 def test_a_rescued_failure_on_one_line(tmp_path):
     playbook = """
 - hosts: all
@@ -508,6 +516,7 @@ def test_a_rescued_failure_on_one_line(tmp_path):
     assert "TASK [Fails again]" in output and "the real failure" in output
 
 
+@pytest.mark.playbook
 @pytest.mark.parametrize("inner, cause", [
     ("""
 - name: Install something
@@ -553,6 +562,7 @@ def test_a_rescue_that_says_the_failure_itself(tmp_path, inner, cause):
     assert output.splitlines() == ["node1: FAILED  op  could not be prepared: " + cause]
 
 
+@pytest.mark.playbook
 def test_the_stop_of_a_verdict_said_already_prints_nothing(tmp_path):
     # replace_node and add_node: the summary says REFUSED, nothing was changed; the task that stops the run after
     # it adds nothing ("node5: Nothing was replaced." after the block)
@@ -576,6 +586,7 @@ def test_the_stop_of_a_verdict_said_already_prints_nothing(tmp_path):
     assert "Nothing was replaced" not in output and "REFUSED  op  c  nothing was changed" in output, output
 
 
+@pytest.mark.playbook
 def test_a_play_with_no_host_says_nothing(tmp_path):
     playbook = """
 - hosts: "{{ groups['nothing_to_do'] | default([]) }}"
@@ -604,6 +615,7 @@ def test_a_play_with_no_host_says_nothing(tmp_path):
     assert output.splitlines() == ["done"]  # no "skipping: no hosts matched", no noop warning
 
 
+@pytest.mark.playbook
 def test_blocks_one_blank_line_apart_never_two(tmp_path):
     playbook = """
 - hosts: node1
@@ -641,6 +653,7 @@ def test_blocks_one_blank_line_apart_never_two(tmp_path):
     assert output.splitlines() == ["first", "", "second", "", "third", "same block", "", "fourth"]
 
 
+@pytest.mark.playbook
 def test_never_two_blank_lines_around_pauses_diffs_loops_and_failures(tmp_path):
     (tmp_path / "same.txt").write_text("same\n")
     playbook = """
@@ -957,6 +970,7 @@ def test_status_verdict_and_table_rows_coloured():
     assert colour("  UN  10.0.0.1  1 GiB", above=C.COLOR_ERROR) == C.COLOR_ERROR
 
 
+@pytest.mark.playbook
 def test_colours_on_a_terminal_only(tmp_path):
     playbook = """
 - hosts: node1
@@ -975,6 +989,7 @@ def test_colours_on_a_terminal_only(tmp_path):
     assert rc == 0 and "\x1b" not in output, repr(output)
 
 
+@pytest.mark.playbook
 def test_an_informative_summary_in_the_progress_colour(tmp_path):
     playbook = """
 - hosts: node1
@@ -1001,6 +1016,7 @@ def test_an_informative_summary_in_the_progress_colour(tmp_path):
     assert "\nplain" in output, repr(output)
 
 
+@pytest.mark.playbook
 @pytest.mark.parametrize("env, code", [
     ({}, "0;36"),  # cyan
     ({"ANSIBLE_CALLBACK_CASSANDRA_OPS_PROGRESS_COLOR": "bright green"}, "1;32"),
@@ -1026,12 +1042,14 @@ def test_the_progress_colour(tmp_path, env, code):
     assert ("is not a colour Ansible knows" in output) == ("no such colour" in str(env)), output
 
 
+@pytest.mark.playbook
 def test_verbose_task_headers_keep_their_blank_line(tmp_path):
     rc, output = run(tmp_path, PLAYBOOK, "-v")
     assert rc == 0, output
     assert "\n\nTASK [A command]" in output and "\n\nTASK [Not marked]" in output
 
 
+@pytest.mark.playbook
 def test_a_warning_then_a_block(tmp_path):
     (tmp_path / "library").mkdir()
     (tmp_path / "library" / "warner.py").write_text(
@@ -1062,6 +1080,7 @@ def test_a_warning_then_a_block(tmp_path):
     assert lines[-2:] == ["", "two"], output  # a blank line between the warning and the block
 
 
+@pytest.mark.playbook
 def test_keys_typed_during_the_run_do_not_reach_the_shell(tmp_path):
     """An answer typed again while the run is quiet is dropped at the end: the
     shell would run it ("yes": y lines forever)."""
@@ -1086,9 +1105,7 @@ def test_keys_typed_during_the_run_do_not_reach_the_shell(tmp_path):
         cassandra_output: true
 """
     (tmp_path / "playbook.yml").write_text(playbook)
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_STDOUT_CALLBACK="community.cassandra.ops",
-               ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0", ANSIBLE_RETRY_FILES_ENABLED="0")
-    env.pop("ANSIBLE_CONFIG", None)
+    env = playbook_command([], dict(ANSIBLE_STDOUT_CALLBACK="community.cassandra.ops"), ["ANSIBLE_CONFIG"])[1]
     # the shell after the run: what it reads from the terminal next
     script = ("%s -c 'from ansible.cli.playbook import main; main()' -i node1, -c local "
               "-e ansible_python_interpreter=%s playbook.yml; read -t 3 left; echo \"LEFT=[$left]\"") % (
@@ -1124,6 +1141,7 @@ def test_keys_typed_during_the_run_do_not_reach_the_shell(tmp_path):
     assert "LEFT=[]" in text, text
 
 
+@pytest.mark.playbook
 def test_the_status_report_is_a_screen_its_verdict_between_rules(tmp_path):
     playbook = u"""
 - hosts: node1
@@ -1145,6 +1163,7 @@ def test_the_status_report_is_a_screen_its_verdict_between_rules(tmp_path):
                              "====", "", "1 NODE DOWN: node2 (dc1/r1)", "", "====", ""]
 
 
+@pytest.mark.playbook
 def test_the_status_verdict_and_its_warning_between_rules(tmp_path):
     playbook = u"""
 - hosts: node1
@@ -1169,6 +1188,7 @@ def test_the_status_verdict_and_its_warning_between_rules(tmp_path):
         repr(output)
 
 
+@pytest.mark.playbook
 def test_no_status_screen_without_a_verdict_last(tmp_path):
     playbook = u"""
 - hosts: node1
@@ -1185,6 +1205,7 @@ def test_no_status_screen_without_a_verdict_last(tmp_path):
     assert shown(output) == ["checked: ALL 3 NODES UP", "", "1 NODE DOWN: node2 (dc1/r1)", "", "then something else"]
 
 
+@pytest.mark.playbook
 def test_the_import_screen_is_ruled(tmp_path):
     playbook = """
 - hosts: node1
@@ -1203,6 +1224,7 @@ def test_the_import_screen_is_ruled(tmp_path):
                              "READY - nothing to change", "", "----", "", "full report: written by the run without --check"]
 
 
+@pytest.mark.playbook
 def test_the_import_screen_sections_heavy_rules_entries_blank(tmp_path):
     # import_cluster's screen: a line of = above each section is the heavy rule, " " between two entries a blank
     # line (not a light rule between every entry)
@@ -1225,6 +1247,7 @@ def test_the_import_screen_sections_heavy_rules_entries_blank(tmp_path):
                              "  1. Read TO REVIEW", "", "----", "", "full report: reports/my_cluster/report.txt"]
 
 
+@pytest.mark.playbook
 def test_air_around_rules_phases_and_paragraphs(tmp_path):
     # a blank line each side of a rule, never two in a row; a phase line a block of its own; a paragraph
     # break (" ", PARAGRAPH) blank inside a screen where "" is a rule
@@ -1263,6 +1286,7 @@ def test_air_around_rules_phases_and_paragraphs(tmp_path):
                              "  node4", "    its line", "after"]
 
 
+@pytest.mark.playbook
 def test_a_phase_line_is_a_block_of_its_own_without_a_gap(tmp_path):
     # no cassandra_output_gap anywhere: the phase line still gets a blank line above and under it
     playbook = """
@@ -1307,6 +1331,7 @@ def test_a_phase_line_is_a_block_of_its_own_without_a_gap(tmp_path):
                              "Starting node5 and waiting for its bootstrap...", "", "[1/2] node5 bootstrap  JOINING"]
 
 
+@pytest.mark.playbook
 def test_the_status_report_of_a_cluster_named_like_a_recap(tmp_path):
     playbook = u"""
 - hosts: node1
@@ -1354,6 +1379,7 @@ PREPARE = """
 """
 
 
+@pytest.mark.playbook
 def test_a_rescue_verdict_reached_at_two_times_is_said_once(tmp_path):
     """add_node's prepare: node2 fails, node1 goes on and comes to the rescue later (any_errors_fatal):
     ansible-core 2.15 and 2.16 run the run_once verdict again for it, the same lines."""
@@ -1558,6 +1584,7 @@ def test_width_of_the_terminal(monkeypatch, columns, width):
     assert callback._width() == width
 
 
+@pytest.mark.playbook
 def test_help_text_in_the_log_without_colours(tmp_path):
     log = tmp_path / "ansible.log"
     rc, output = run(tmp_path, HELP_TEXT, ANSIBLE_NOCOLOR="0", ANSIBLE_FORCE_COLOR="1", ANSIBLE_LOG_PATH=str(log))
@@ -1566,6 +1593,7 @@ def test_help_text_in_the_log_without_colours(tmp_path):
     assert "    -e cassandra_hosts=<group>            the cluster to run on" in text and "\x1b" not in text, text
 
 
+@pytest.mark.playbook
 def test_help_text_laid_out_and_coloured(tmp_path):
     # not a terminal: Ansible's 79 columns, so 78; the rules drawn as the others; the lines laid out there
     rc, output = run(tmp_path, HELP_TEXT)
@@ -1614,6 +1642,7 @@ def help_run(tmp_path, *args, **env):
                **env)
 
 
+@pytest.mark.playbook
 def test_the_help_playbook_under_the_ops_callback(tmp_path):
     rc, output = help_run(tmp_path, ANSIBLE_NOCOLOR="0", ANSIBLE_FORCE_COLOR="1")
     assert rc == 0, output
@@ -1631,6 +1660,7 @@ def test_the_help_playbook_under_the_ops_callback(tmp_path):
     assert said[0] == banner and said.count(banner) == 1, plain
 
 
+@pytest.mark.playbook
 def test_the_help_playbook_of_several_clusters_none_named(tmp_path):
     """The help of any cluster (CLUSTER_GROUP in the commands), the clusters found and how to name one; nothing of
     one cluster's inventory, no CLUSTER line."""
@@ -1657,6 +1687,7 @@ def test_the_help_playbook_of_several_clusters_none_named(tmp_path):
     assert "CLUSTER_GROUP" not in output
 
 
+@pytest.mark.playbook
 def test_the_help_playbook_under_the_default_callback(tmp_path):
     # laid out at 100 columns by the filter, no layout mark left (the ops callback's)
     rc, output = help_run(tmp_path, ANSIBLE_STDOUT_CALLBACK="default", ANSIBLE_CALLBACK_RESULT_FORMAT="yaml")
@@ -1668,6 +1699,7 @@ def test_the_help_playbook_under_the_default_callback(tmp_path):
     assert rc == 0 and "\\u001f" not in output and "\x1f" not in output, output
 
 
+@pytest.mark.playbook
 def test_a_marked_loop_says_its_failed_items_once(tmp_path):
     """preflight's "Every seed is up" (a run_once loop over the seeds): the message of each item that
     failed, one block, no assert dump; the items that pass say nothing."""
@@ -1690,6 +1722,7 @@ def test_a_marked_loop_says_its_failed_items_once(tmp_path):
     assert shown(output) == ["Seed b is not up: bring it back up.", "Seed c is not up: bring it back up."], output
 
 
+@pytest.mark.playbook
 def test_a_marked_verdict_whose_template_fails_is_the_default_output(tmp_path):
     """The task's own template error (e.g. -e cassandra_target_nodes='a:&'): core's message with the task's
     name (the default callback's), not printed bare as if it were the verdict."""
@@ -1769,6 +1802,7 @@ CLUSTER_PLAYBOOK = """
 """ % CLUSTER_LINE
 
 
+@pytest.mark.playbook
 @pytest.mark.parametrize("stop", ["false", "true"])
 def test_the_cluster_line_first_and_once(tmp_path, stop):
     """The run's first line names its cluster, once: nothing after the recap, whether the run ended well or not."""
@@ -1789,6 +1823,7 @@ def test_the_cluster_line_is_recognised_in_the_progress_colour():
     assert colour("prod  2 nodes  1 DC (dc1)  something else") is None
 
 
+@pytest.mark.playbook
 def test_the_cluster_line_with_a_datacenter_only_the_node_knows(tmp_path):
     """A cassandra_dc templated from the node's facts: dc? on the line, not a failed run (an undefined marker)."""
     (tmp_path / "hosts.yml").write_text(
@@ -1817,6 +1852,7 @@ dev:
 """
 
 
+@pytest.mark.playbook
 def test_cassandra_hosts_of_a_playbook_taken_of_the_inventory_refused(tmp_path):
     """A wrapper playbook's vars reach the plays' hosts: taken. The inventory's (group_vars) do not: refused."""
     (tmp_path / "hosts.yml").write_text(TWO_CLUSTERS)
@@ -1834,6 +1870,7 @@ def test_cassandra_hosts_of_a_playbook_taken_of_the_inventory_refused(tmp_path):
     assert rc == 0 and output.split("\n")[0].startswith("prod  1 node  1 DC (dc1)"), output
 
 
+@pytest.mark.playbook
 def test_a_verdict_that_names_its_host_names_it_once(tmp_path):
     # cassandra_config's refusals start with the host (inventory_hostname): not said twice
     playbook = """

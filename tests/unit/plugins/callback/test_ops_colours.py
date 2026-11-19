@@ -105,6 +105,7 @@ def _codes(output):
     return found
 
 
+@pytest.mark.playbook
 @pytest.mark.parametrize("env, warning", [
     ({}, "1;35"),  # Ansible's COLOR_WARN: bright purple
     ({"ANSIBLE_CALLBACK_CASSANDRA_OPS_WARNING_COLOR": "bright yellow"}, "1;33"),
@@ -128,6 +129,7 @@ def test_the_screen_colours(tmp_path, env, warning):
     assert ("warning_color: no such colour is not a colour Ansible knows" in output) == ("no such" in str(env)), output
 
 
+@pytest.mark.playbook
 def test_no_colour_with_nocolor(tmp_path):
     rc, output = run(tmp_path, SCREEN, ANSIBLE_CALLBACK_CASSANDRA_OPS_WARNING_COLOR="bright yellow")  # ANSIBLE_NOCOLOR
     assert rc == 0 and "\x1b" not in output and "WARNING  careful" in output, repr(output)
@@ -160,6 +162,7 @@ FAILED_RECAP = u"""
 """
 
 
+@pytest.mark.playbook
 def test_a_failed_recap_shows_which_node_failed(tmp_path):
     (tmp_path / "ansible.cfg").write_text("[defaults]\n")
     rc, output = run(tmp_path, FAILED_RECAP, ANSIBLE_NOCOLOR="0", ANSIBLE_FORCE_COLOR="1")
@@ -180,6 +183,7 @@ def test_a_failed_row_of_apply_config_is_red():
     assert colour("node1  applied, restarted") == C.COLOR_CHANGED
 
 
+@pytest.mark.playbook
 def test_nothing_to_do_is_a_recap_between_rules(tmp_path):
     playbook = """
 - hosts: node1
