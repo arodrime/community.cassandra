@@ -32,7 +32,7 @@ from ansible_collections.community.cassandra.tests.unit.roles.test_java_tarball_
 MIRROR = ("For a file on the mirror (the server of cassandra_install_url): take the login out of the URL and set"
           " cassandra_install_username and cassandra_install_password.")
 ROLES = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles")
-SIGNED = "?X-Amz-Signature=5ig"
+SIGNED = "?X-Amz-Signature=S1gZorglubQx"
 
 
 def _tasks(role, name):

@@ -122,7 +122,7 @@ class _NotFound(BaseHTTPRequestHandler if BaseHTTPRequestHandler else object):
         pass
 
 
-@pytest.mark.parametrize("query", ["?X-Amz-Signature=5ig", ""])
+@pytest.mark.parametrize("query", ["?X-Amz-Signature=S1gZorglubQx", ""])
 def test_a_failed_download_says_the_url_and_the_http_status(tmp_path, query):
     server = HTTPServer(("127.0.0.1", 0), _NotFound)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -143,7 +143,7 @@ def test_a_failed_download_says_the_url_and_the_http_status(tmp_path, query):
             " HTTP 404, Not Found. Nothing was unpacked. Check that URL (cassandra_java_tarball, or the"
             " cassandra_java_tarballs entry of Java 17) and its checksum, then run again."
             % (server.server_port, "?****" if query else "")) in out
-    assert "s3cret" not in out and "5ig" not in out
+    assert "s3cret" not in out and "S1gZorglubQx" not in out
     # a 404 is final: asked once
     assert "retries left" not in out
 

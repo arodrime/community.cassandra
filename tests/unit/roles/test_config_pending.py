@@ -47,6 +47,10 @@ def tasks(name):
 
 with open(os.path.join(ROLE, "..", "cassandra_service", "files", "config_record.py")) as f:
     RECORD = f.read()
+# config_record.py made to see in /proc only the processes ONLY_PIDS names (its environment)
+RECORD_ONLY_PIDS = RECORD.replace("\n__metaclass__ = type\n", "\n__metaclass__ = type\nimport os\n_listdir = os.listdir\n"
+                                  "os.listdir = lambda p='.': [x for x in _listdir(p) if p != '/proc' or not x.isdigit()"
+                                  " or x in os.environ['ONLY_PIDS'].split()]\n", 1)
 
 
 def task(tasks_file, name):
@@ -321,7 +325,11 @@ def test_the_record_of_a_start_is_that_jvms_and_leaves_out_the_files_written_sin
         (conf / name).write_text(name)
     (tmp_path / "unit").write_text("[Unit]\n")
     out = tmp_path / "record.json"
-    argv = [sys.executable, "-c", RECORD, "start", str(out), str(conf), str(tmp_path / "unit"), str(tmp_path / "none.conf")]
+    assert RECORD_ONLY_PIDS != RECORD
+    # (the processes of this test only: another Cassandra JVM on a shared host, e.g. a test run next to this one,
+    # would be taken first)
+    argv = [sys.executable, "-c", RECORD_ONLY_PIDS, "start", str(out), str(conf), str(tmp_path / "unit"),
+            str(tmp_path / "none.conf")]
     # a process taken for Cassandra (a java, its main class on its command line), started after the files;
     # one that is not a java (a sudo, a grep) with that argument too is not it
     java = tmp_path / "java"
@@ -332,7 +340,7 @@ def test_the_record_of_a_start_is_that_jvms_and_leaves_out_the_files_written_sin
     try:
         time.sleep(1.2)
         (conf / "jvm17-server.options").write_text("edited after the start")
-        subprocess.run(argv, check=True)
+        subprocess.run(argv, check=True, env=dict(os.environ, ONLY_PIDS="%d %d" % (jvm.pid, other.pid)))
         got = json.loads(out.read_text())
         assert got["_jvm"]["pid"] == str(jvm.pid) and abs(got["_jvm"]["start"] - time.time()) < 30
         assert sorted(k for k in got if k != "_jvm") == [str(conf / "cassandra.yaml"), str(tmp_path / "unit")]
@@ -345,7 +353,7 @@ def test_the_record_of_a_start_is_that_jvms_and_leaves_out_the_files_written_sin
             p.kill()
             p.wait()
     # no JVM found: every file, no _jvm (apply_config then trusts it for nothing)
-    subprocess.run(argv, check=True)
+    subprocess.run(argv, check=True, env=dict(os.environ, ONLY_PIDS=""))
     got = json.loads(out.read_text())
     assert "_jvm" not in got and sorted(got) == sorted([str(conf / "cassandra.yaml"), str(conf / "jvm17-server.options"),
                                                         str(tmp_path / "unit")])
