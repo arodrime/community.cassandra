@@ -140,23 +140,8 @@
     # that lacks it: a comment, no restart for it; not to one kept by hand (cassandra_config_keep_files)
     - name: Find the JMX files left as they are without the role's header
       ansible.builtin.command:
-        argv:
-          - "{{ _cassandra_config_python }}"
-          - -c
-          - |
-            import hashlib, json, sys
-            request = json.loads(sys.stdin.read())
-            out = []
-            for f in request:
-                try:
-                    with open(f["path"], "rb") as fh:
-                        data = fh.read()
-                except (IOError, OSError):
-                    continue
-                if f["mark"].encode("utf-8") not in data:
-                    out.append(dict(f, sha1=hashlib.sha1(data).hexdigest()))
-            print(json.dumps(out))
-        stdin: "{{ _files | to_json }}"
+        argv: ["{{ _cassandra_config_python }}", -c, "{{ lookup('ansible.builtin.file', 'config_header.py') }}"]
+        stdin: "{{ {'find': _files} | to_json }}"
       register: cassandra_config_jmx_header
       changed_when: false
       check_mode: false  # reads only
@@ -179,16 +164,17 @@
     - name: List the JMX files that get the role's header
       ansible.builtin.set_fact:
         _cassandra_config_header: "{{ _cassandra_config_header | default([]) + _jmx }}"
-        # (said apart, as confirm.yml says the config files')
-        _cassandra_config_items: >-
-          {%- set out = _cassandra_config_items | default([]) | list -%}
-          {%- for h in _jmx -%}
-          {%-   set _ = out.append({'item': h.path, 'before': 'no header', 'after': 'header added', 'header': true}) -%}
-          {%- endfor -%}
-          {{ out }}
       vars:
         _jmx: "{{ cassandra_config_jmx_header.stdout | default('[]') | from_json }}"
       when: _jmx | length > 0
+
+    # (said apart, as confirm.yml says the config files')
+    - name: Say them among the changes
+      ansible.builtin.set_fact:
+        _cassandra_config_items: >-
+          {{ _cassandra_config_items | default([]) | rejectattr('header', 'defined') | list
+             + _cassandra_config_header_items }}
+      when: cassandra_config_jmx_header.stdout | default('[]') | from_json | length > 0
 
     - name: Add the role's header to them
       ansible.builtin.include_tasks: header.yml

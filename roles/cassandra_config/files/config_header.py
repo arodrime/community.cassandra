@@ -10,6 +10,8 @@
 #       one already; sha1, the file's content as the role compared it (another one now: left as it is)
 #   answer: {path: {status, before, after}}: status added, present (it has one), changed (not what was compared),
 #       link (not followed), missing; before and after, the sha1 of the file before and after
+#   or, to find the files that need it (nothing written): {"find": [{path, mark, ...}]} -> [the items of the files
+#       without the mark (missing or unreadable ones left out), each with its sha1]
 
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
@@ -65,9 +67,25 @@ def add(item):
     return {"status": "added", "before": before, "after": sha1(new)}
 
 
+def find(items):
+    out = []
+    for item in items:
+        try:
+            with open(item["path"], "rb") as f:
+                data = f.read()
+        except (IOError, OSError):
+            continue
+        if item["mark"].encode("utf-8") not in data:
+            out.append(dict(item, sha1=sha1(data)))
+    return out
+
+
 def main():
     request = json.loads(sys.stdin.read())
-    sys.stdout.write(json.dumps(dict((item["path"], add(item)) for item in request)))
+    if isinstance(request, dict):
+        sys.stdout.write(json.dumps(find(request["find"])))
+    else:
+        sys.stdout.write(json.dumps(dict((item["path"], add(item)) for item in request)))
 
 
 if __name__ == "__main__":

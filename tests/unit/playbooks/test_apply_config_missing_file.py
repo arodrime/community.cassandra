@@ -168,7 +168,8 @@ def role_compare(tmp_path, series, deleted, keep=False):
                       "_cassandra_config_links": [], "cassandra_rpm_conf_alternative": "",
                       "cassandra_config_conf_target": {"skipped": True}})
     variables.update(set_facts(find(ROLE, "List the owner, group and mode changes"), variables))
-    variables.update({"_cassandra_config_dir_changes": []})
+    variables.update({"_cassandra_config_dir_changes": [],
+                      "_cassandra_config_header_items": ROLE_VARS["_cassandra_config_header_items"]})
     variables.update(set_facts(find(ROLE, "Record the changes for the report"), variables))
     return variables
 

@@ -186,3 +186,21 @@ def test_the_tuned_profile_has_the_header_from_its_lines():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_disks import cassandra_disk_tuned_profile
     lines = cassandra_disk_tuned_profile(RHEL_TUNED, [LV, SDB], TUNED_STATE, TUNED_UDEV, 4)["lines"]
     assert lines[0] == "# Managed by Ansible (community.cassandra.cassandra_linux): change the role variables, not this file."
+
+
+def test_the_files_that_get_the_header_are_said_by_one_rule():
+    # (confirm.yml's config files and access.yml's JMX files: one list of changes, the same words)
+    items = load("roles", "cassandra_config", "vars", "main.yml")["_cassandra_config_header_items"]
+    header = [{"file": "cassandra.yaml", "path": CONF + "/cassandra.yaml"},
+              {"file": "jmxremote.access", "path": CONF + "/jmxremote.access"}]
+    assert render(items, {"_cassandra_config_header": header}) == [
+        {"item": h["path"], "before": "no header", "after": "header added", "header": True} for h in header]
+    confirm = load_tasks(os.path.join(TOP, "roles", "cassandra_config", "tasks", "confirm.yml"))
+    access = load_tasks(os.path.join(TOP, "roles", "cassandra_config", "tasks", "access.yml"))
+    assert "_cassandra_config_header_items" in find(confirm, "Record the changes for the report")[
+        "ansible.builtin.set_fact"]["_cassandra_config_items"]
+    said = find(access, "Say them among the changes")["ansible.builtin.set_fact"]["_cassandra_config_items"]
+    assert render(said, {"_cassandra_config_items": [{"item": "x", "before": "a", "after": "b"}] + render(
+        items, {"_cassandra_config_header": header[:1]}), "_cassandra_config_header_items": render(
+            items, {"_cassandra_config_header": header})}) == [{"item": "x", "before": "a", "after": "b"}] + render(
+        items, {"_cassandra_config_header": header})

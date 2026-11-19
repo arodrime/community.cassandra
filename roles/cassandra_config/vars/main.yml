@@ -294,3 +294,12 @@ _cassandra_config_jvm_agent: >-
 # A path the agent's option can name: absolute, and none of what bin/cassandra splits an options line on, nor the
 # agent its arguments on (=)
 _cassandra_config_exporter_path: '^/[^\s"''=]*$'
+
+# the role's header added to the files left as they are (_cassandra_config_header), as the list of changes says it:
+# apart, no diff, no setting (confirm.yml, access.yml)
+_cassandra_config_header_items: >-
+  {%- set out = [] -%}
+  {%- for h in _cassandra_config_header | default([]) -%}
+  {%-   set _ = out.append({'item': h.path, 'before': 'no header', 'after': 'header added', 'header': true}) -%}
+  {%- endfor -%}
+  {{ out }}

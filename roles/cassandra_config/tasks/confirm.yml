@@ -195,7 +195,7 @@
     _cassandra_config_items: >-
       {{ ([{'item': '/etc/cassandra/conf', 'before': _conf_target, 'after': cassandra_rpm_conf_alternative}]
           if _conf_target | default(cassandra_rpm_conf_alternative, true) != cassandra_rpm_conf_alternative else [])
-         + _files + _cassandra_config_perm_changes + _cassandra_config_dir_changes + _header }}
+         + _files + _cassandra_config_perm_changes + _cassandra_config_dir_changes + _cassandra_config_header_items }}
   vars:
     _conf_target: "{{ cassandra_config_conf_target.stat.lnk_source | default('') if cassandra_config_conf_target is not skipped else '' }}"
     _files: >-
@@ -204,13 +204,6 @@
         'before': 'current',
         'after': '%d line(s) changed' % (r.stdout_lines | select('match', '^[-+](?![-+]{2} )') | list | length),
         'diff': r.stdout}) %}{% endfor %}{{ out }}
-    # (the role's header added to a file left as it is: said apart, no diff, no setting)
-    _header: >-
-      {%- set out = [] -%}
-      {%- for h in _cassandra_config_header | default([]) -%}
-      {%-   set _ = out.append({'item': h.path, 'before': 'no header', 'after': 'header added', 'header': true}) -%}
-      {%- endfor -%}
-      {{ out }}
 
 # One prompt per batch (with serial, once per batch). run_once: its answer registered on every
 # host of the batch (pause runs once anyway, but without run_once only its own host gets the answer)

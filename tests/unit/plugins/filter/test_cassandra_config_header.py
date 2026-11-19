@@ -121,3 +121,14 @@ def test_the_node_follows_no_link_and_says_a_missing_file(tmp_path):
     done = run(items)
     assert done[str(link)]["status"] == "link" and done[str(tmp_path / "gone.yaml")]["status"] == "missing"
     assert target.read_bytes() == b"num_tokens: 16\n"
+
+
+def test_find_lists_the_files_without_the_mark_with_their_sha1(tmp_path):
+    # (what access.yml asks before the plan: the JMX files left as they are that get the header; nothing written)
+    without, having = tmp_path / "jmxremote.access", tmp_path / "jmxremote.password"
+    without.write_bytes(b"zorglub readwrite\n")
+    having.write_bytes(H + b"\nzorglub s3cret\n")
+    items = [{"file": f.name, "path": str(f), "header": "# header", "mark": "# header"}
+             for f in (without, having, tmp_path / "gone")]
+    assert run({"find": items}) == [dict(items[0], sha1=sha1(b"zorglub readwrite\n"))]
+    assert without.read_bytes() == b"zorglub readwrite\n"
