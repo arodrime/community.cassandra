@@ -1880,9 +1880,16 @@ node gives. They run ``cqlsh`` on a node as root, found in root's ``PATH``; a cq
 its full path in ``cassandra_cqlsh_command`` (e.g. ``/opt/cassandra/venv/bin/cqlsh``). When your inventory (any ``group_vars`` or ``host_vars`` file, vaulted or not) or ``-e`` sets them, the
 import checks them with a real CQL login on one node (as the operations log in) and does not ask, nor write them (a
 refused login is a ``TO DO``). A login an earlier import wrote is kept on a re-import (``-i <node>,`` too). Otherwise it asks for them on the terminal (the password not shown), checks each one
-(3 tries), and writes them with the cluster's variables, the password in ``secrets.yml`` (vaulted as above). Without
-a terminal, under ``--check`` or with ``-e cassandra_operation_confirm=false`` it does not ask: a ``TO DO`` says how
-to set them. No password is shown on the screen, in the report or in a log.
+(3 tries), and writes them with the cluster's variables, the password in ``secrets.yml`` (vaulted as above). Nothing
+before the write needs them (the read runs ``cqlsh --version`` only): it asks once, when it writes the inventory,
+after the self-check. A failed self-check (``import_strict``, the default) writes the inventory marked ``NOT VALID``
+without asking: the import that passes asks. Without a terminal, under ``--check`` or with
+``-e cassandra_operation_confirm=false`` it does not ask: a ``TO DO`` says how to set them (under ``--check``: asked
+at the real import, then written). A stop after the login is typed and before the inventory is written (another
+cluster's files there, a vaulted ``secrets.yml`` without the vault password) says it was not saved: the next import
+asks again, or it can be given without typing it, from a vaulted file (``ansible-vault create cql_login.yml`` with
+``cassandra_cql_username`` and ``cassandra_cql_password``, then ``-e @cql_login.yml --ask-vault-pass``; a login given
+so is used, not written). No password is shown on the screen, in the report or in a log.
 
 The cluster's group is its cluster name's (``test_cluster`` for ``Test Cluster``), or the one ``-e import_group=<name>``
 gives (an Ansible group name: letters, digits and ``_``, not a digit first; written in lower case): the name of its
