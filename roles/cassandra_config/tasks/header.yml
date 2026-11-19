@@ -8,14 +8,14 @@
   ansible.builtin.include_tasks: config_seed.yml
   when: not ansible_check_mode
 
-# (no diff: a line added, said by the caller; skipped under --check, as a command is)
+# (no diff: a line added, said by the caller; skipped under --check, as a command is: its stdout empty, read as {})
 - name: Add the role's header line to the files left as they are
   ansible.builtin.command:
     argv: ["{{ _cassandra_config_python }}", -c, "{{ lookup('ansible.builtin.file', 'config_header.py') }}"]
     stdin: "{{ _cassandra_config_header_files | to_json }}"
   register: cassandra_config_header_added
   changed_when: >-
-    cassandra_config_header_added.stdout | default('{}') | from_json | dict2items | map(attribute='value')
+    cassandra_config_header_added.stdout | default('{}', true) | from_json | dict2items | map(attribute='value')
     | selectattr('status', 'equalto', 'added') | list | length > 0
 
 - name: Say the files the header was not added to
@@ -28,7 +28,7 @@
     label: "{{ item.key }}"
   vars:
     cassandra_output: true
-    _result: "{{ cassandra_config_header_added.stdout | default('{}') | from_json }}"
+    _result: "{{ cassandra_config_header_added.stdout | default('{}', true) | from_json }}"
     _why: {changed: changed since it was compared, link: is a link, missing: is gone}
 
 - name: Read the running Cassandra
@@ -46,7 +46,7 @@
       jvm: {pid: "{{ cassandra_jvm.pid }}", start: "{{ cassandra_jvm.start }}"}
       before: "{{ {item.key: item.value.before} }}"
       files: "{{ {item.key: item.value.after} }}"
-  loop: "{{ cassandra_config_header_added.stdout | default('{}') | from_json | dict2items | selectattr('value.status', 'equalto', 'added') | list }}"
+  loop: "{{ cassandra_config_header_added.stdout | default('{}', true) | from_json | dict2items | selectattr('value.status', 'equalto', 'added') | list }}"
   loop_control:
     label: "{{ item.key }}"
   when:

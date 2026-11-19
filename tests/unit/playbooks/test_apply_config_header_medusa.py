@@ -152,6 +152,17 @@ def test_the_header_is_recorded_as_the_running_cassandra_s_file_by_file():
     assert len(render(record["loop"], {"cassandra_config_header_added": added})) == 1
 
 
+def test_the_header_command_skipped_under_check_is_read_as_nothing_added():
+    # (--check: the command is skipped, its stdout empty; apply_config --check stopped on from_json of '')
+    header = load("roles", "cassandra_config", "tasks", "header.yml")
+    names = [t["name"] for t in header]
+    say = header[names.index("Say the files the header was not added to")]
+    record = header[names.index("Record them with their header as the files the running Cassandra runs with")]
+    skipped = {"cassandra_config_header_added": {"skipped": True, "changed": False, "rc": 0, "stdout": ""}}
+    assert render(say["vars"]["_result"], skipped) == {}
+    assert render(record["loop"], skipped) == []
+
+
 def test_the_header_is_added_after_the_seed_and_not_to_the_jmx_files_kept_by_hand():
     apply = load("roles", "cassandra_config", "tasks", "apply.yml")
     seed = apply[0]
