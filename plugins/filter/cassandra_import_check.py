@@ -53,8 +53,8 @@ except ImportError:  # before, any string not marked unsafe
     def trust_as_template(value):
         return value
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    ELSEWHERE, ELSEWHERE_NOTE, REMOTE_BRANCH_NOTE, REPEATED_NOTE, Unsafe, branch_not_run_note, earlier_env,
-    error_without_message, log_dir_of, logback_as_log_dir, undefined_name, values_hidden)
+    ELSEWHERE, ELSEWHERE_NOTE, PASSWORD_FILE_NOTE, REMOTE_BRANCH_NOTE, REPEATED_NOTE, Unsafe, branch_not_run_note,
+    earlier_env, error_without_message, log_dir_of, logback_as_log_dir, undefined_name, values_hidden)
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
 from ansible_collections.community.cassandra.plugins.filter.cassandra_os import (
     NO_EFFECT, NO_EFFECT_NOTE, cassandra_firewall_changes, cassandra_linux_changes)
@@ -876,6 +876,14 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
             live = dict(live, **{"cassandra-env.sh": text})
             notes.append(branch_not_run_note(count, runs))
     jvm_live, jvm_rendered = live, rendered  # (the JVM's proof: the files whole)
+    if "cassandra-env.sh" in rendered and "cassandra-env.sh" in live \
+            and "cassandra-env.sh" not in ((running or {}).get("newer") or []):
+        # (the stock password file line commented out, the JVM never reading it: as the import reads it)
+        inert = jvm_args.password_file_line_inert(live["cassandra-env.sh"], rendered["cassandra-env.sh"],
+                                                  (running or {}).get("cmdline"))
+        if inert:
+            rendered = dict(rendered, **{"cassandra-env.sh": jvm_args.without_lines(rendered["cassandra-env.sh"], inert)})
+            notes.append(PASSWORD_FILE_NOTE)
     if "cassandra-env.sh" in rendered and "cassandra-env.sh" in live:
         # (the node's lines in the remote JMX branch it takes, the roles' outside it: as the import reads them)
         # (not from a JVM started before its cassandra-env.sh was written: its arguments are not that file's)

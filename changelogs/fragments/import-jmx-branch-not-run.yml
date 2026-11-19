@@ -6,3 +6,9 @@ bugfixes:
     unit), e.g. ``-Djava.rmi.server.hostname``, or the local branch on a node whose JVM took the remote one. No hand
     edit, no self-check difference, said in one line; ``apply_config`` writes the stock branch without it with no
     restart (the same JVM arguments). Cassandra not running, or both ports or none in its arguments: as before.
+  - >-
+    import_cluster playbook - the stock ``-Dcom.sun.management.jmxremote.password.file`` line of ``cassandra-env.sh``
+    commented out has no effect when the running JVM never reads that file (JMX authentication off, no
+    ``-Dcom.sun.management.jmxremote.port`` or ``.config.file``, no JAAS login config, no ``cassandra.jmx.authorizer``):
+    no hand edit, no self-check difference, said in one line; ``apply_config`` writes the stock line back with no
+    restart. Not the access file, which the JMX server reads at start whatever the authentication.
