@@ -82,9 +82,11 @@ def test_lines_a_variable_covers_stay_hand_edits(line):
     files = with_env("export FOO=1", line)
     out, n = imported(files)
     assert ENV_END not in out["vars"]
-    rmi = "rmi.server.hostname" in line  # (read into cassandra_jmx_rmi_hostname: the stock line is on in its place)
+    # (the rmi line: read into cassandra_jmx_rmi_hostname, the role's line at the stock place the same for bash,
+    # jvm_args.named_lines_moved; the other end line stays a hand edit)
+    rmi = "rmi.server.hostname" in line
     assert [x for x in out["hand_edits"] if x.startswith("  +") and x.strip() != "+"] == [
-        '  + # JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=<public name>"'] * rmi + ["  + export FOO=1", "  + " + line]
+        "  + export FOO=1"] + ["  + " + line] * (not rmi)
     assert ("cassandra_jmx_rmi_hostname" in out["vars"]) == rmi
 
 
