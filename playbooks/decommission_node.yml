@@ -139,9 +139,7 @@
             that: _problems | length == 0 or cassandra_decommission_force | default(false) | bool
             # a problem per line
             fail_msg: >-
-              {{ ['Removing ' ~ _leaving | join(', ') ~ ' leaves too few nodes:'] + _problems | map('regex_replace', '^', '  ') | list
-                 + ['Way out, either:', '  lower their replication (ALTER KEYSPACE), then repair, then run this again',
-                    '  -e cassandra_decommission_force=true   (those replicas are then lost, and QUORUM can fail)'] }}
+              {{ _leaving | community.cassandra.cassandra_too_few_nodes(_problems | map('regex_replace', '^', '  ') | list) }}
             quiet: true
           run_once: true
       rescue:

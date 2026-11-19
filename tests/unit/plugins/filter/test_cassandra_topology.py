@@ -6,7 +6,7 @@ __metaclass__ = type
 from ansible_collections.community.cassandra.plugins.filter.cassandra_topology import (
     FilterModule, cassandra_seed_change, cassandra_seed_hold_lines, cassandra_seed_host, cassandra_seed_hosts,
     cassandra_seed_port, cassandra_staying_node, cassandra_topology_done,
-    cassandra_topology_nothing_to_do, cassandra_topology_plan, cassandra_topology_refusals, cassandra_topology_screen,
+    cassandra_topology_nothing_to_do, cassandra_topology_plan, cassandra_topology_refusals, cassandra_topology_screen, cassandra_too_few_nodes,
     cassandra_topology_steps)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import PARAGRAPH
 
@@ -654,3 +654,10 @@ def test_the_staying_node_runs_cassandra_first():
     assert cassandra_staying_node(["node1", "node2", "node3"], hostvars) == "node2"
     assert cassandra_staying_node(["node3", "node1"], hostvars) == "node3"  # none runs: the first
     assert cassandra_staying_node([], hostvars) == ""
+
+
+def test_too_few_nodes_then_the_way_out():
+    assert cassandra_too_few_nodes(["n3"], ["  dc1: ks"]) == [
+        "Removing n3 leaves too few nodes:", "  dc1: ks", "Way out, either:",
+        "  lower their replication (ALTER KEYSPACE), then repair, then run this again",
+        "  -e cassandra_decommission_force=true   (those replicas are then lost, and QUORUM can fail)"]

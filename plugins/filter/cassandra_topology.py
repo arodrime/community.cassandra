@@ -22,6 +22,8 @@ cassandra_staying_node: the node a re-import reads the inventory from, once
     nodes are removed.
 cassandra_topology_refusals: the plan -> why topology refuses it (none: it
     may run).
+cassandra_too_few_nodes: the refusal of a removal that leaves too few nodes
+    for the replication (topology, decommission_node).
 cassandra_topology_nothing_to_do: the plan with no step -> the lines that
     say so.
 cassandra_topology_done: the plan once run -> the DONE lines, then the TO DO
@@ -790,11 +792,16 @@ def cassandra_topology_refusals(plan, keyspaces=None, keyspaces_error="", replic
     if plan["in_ring"] and not isinstance(keyspaces, Mapping):
         problems.append(NO_REPLICATION_READ % keyspaces_error)
     if replication and not force:
-        problems.append("Removing %s leaves too few nodes:" % ", ".join(str(n) for n in plan["in_ring"]))
-        problems.extend(replication)
-        problems.extend(["Way out, either:", "  lower their replication (ALTER KEYSPACE), then repair, then run this again",
-                         "  -e cassandra_decommission_force=true   (those replicas are then lost, and QUORUM can fail)"])
+        problems.extend(cassandra_too_few_nodes(plan["in_ring"], replication))
     return problems
+
+
+def cassandra_too_few_nodes(leaving, replication):
+    """The nodes to remove, the lines of the datacenters they leave with fewer nodes than replicas -> the refusal
+    (topology, decommission_node): what they leave, then the way out."""
+    return (["Removing %s leaves too few nodes:" % ", ".join(str(n) for n in leaving)] + list(replication)
+            + ["Way out, either:", "  lower their replication (ALTER KEYSPACE), then repair, then run this again",
+               "  -e cassandra_decommission_force=true   (those replicas are then lost, and QUORUM can fail)"])
 
 
 def _them(names):
@@ -850,6 +857,7 @@ class FilterModule(object):
             "cassandra_topology_hosts": cassandra_topology_hosts,
             "cassandra_staying_node": cassandra_staying_node,
             "cassandra_topology_refusals": cassandra_topology_refusals,
+            "cassandra_too_few_nodes": cassandra_too_few_nodes,
             "cassandra_topology_nothing_to_do": cassandra_topology_nothing_to_do,
             "cassandra_topology_done": cassandra_topology_done,
         }
