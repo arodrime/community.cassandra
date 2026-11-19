@@ -9,6 +9,7 @@ import pytest
 
 from ansible_collections.community.cassandra.plugins.filter import cassandra_ring
 from ansible_collections.community.cassandra.plugins.filter.cassandra_ring import CUT_HOST_IDS as CUT, cassandra_ring_report
+from ansible_collections.community.cassandra.plugins.filter.cassandra_ring import cassandra_dead_address, cassandra_dead_node_refusal
 from ansible_collections.community.cassandra.plugins.modules.cassandra_status import cluster_up_down
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "..", "modules", "fixtures")
@@ -337,3 +338,32 @@ def test_host_ids_cut_to_fit_say_where_they_are_whole():
     narrow = cassandra_ring_report(status, {"node2": ["10.100.100.4"]}, cluster="c", seen_from="node1", width=79)
     assert not any(long_id in line for line in narrow) and any("4fbaaa06... " in line for line in narrow)
     assert narrow[-1] == CUT and all(len(line) <= 79 for line in narrow), narrow
+
+
+DEAD_RING = {"dc1": {"nodes": [{"address": "10.0.0.1", "host_id": "aaaa-1"}, {"address": "10.0.0.4", "host_id": "dddd-4"}]}}
+DEAD_HOSTVARS = {"node4": {"ansible_host": "node4.example.com", "cassandra_listen_address": "10.0.0.4"},
+                 "node5": {"ansible_host": "node5.example.com"},
+                 "node7": {"cassandra_extra_settings": {"broadcast_address": "10.0.0.7"}, "ansible_host": "10.1.1.7"}}
+
+
+@pytest.mark.parametrize("target, address", [
+    ("dddd-4", "10.0.0.4"),  # a host ID of the ring
+    ("10.0.0.9", "10.0.0.9"),  # an address
+    ("node4", "10.0.0.4"),  # an inventory host: the first of its names that is an address
+    ("node7", "10.0.0.7"),  # its broadcast_address first
+    ("node5", ""),  # none is
+    ("other", "other"),  # as given
+])
+def test_dead_address(target, address):
+    assert cassandra_dead_address(target, DEAD_RING, DEAD_HOSTVARS, list(DEAD_HOSTVARS)) == address
+
+
+def test_dead_node_refusal():
+    hosts = list(DEAD_HOSTVARS)
+    assert cassandra_dead_node_refusal("node5", "", hosts, []).startswith("node5: the inventory gives it no address")
+    assert cassandra_dead_node_refusal("other", "other", hosts, []) == (
+        "other is not an address, a host ID of the ring nor a host of the inventory.")
+    assert cassandra_dead_node_refusal("node7", "10.0.0.7", hosts, ["10.0.0.1"]).startswith(
+        "node7 (10.0.0.7, from the inventory) is not in the ring")
+    assert cassandra_dead_node_refusal("10.0.0.1", "10.0.0.1", hosts, ["10.0.0.1"]).startswith(
+        "10.0.0.1 (10.0.0.1) is a node of this run")

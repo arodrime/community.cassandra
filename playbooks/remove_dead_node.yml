@@ -29,17 +29,8 @@
     _host_id: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
     # its ring address: a host ID of the ring, an inventory host's address (as topology reads it), else as given
     _dead_address: >-
-      {%- set ring = (cassandra_dead_ring | default({})).cluster_status | default({}, true) -%}
-      {%- set by_id = ring.values() | map(attribute='nodes') | flatten | selectattr('host_id', 'defined') | selectattr('host_id', 'equalto', _dead_target)
-                      | map(attribute='address') | list -%}
-      {%- if by_id -%}{{ by_id | first }}
-      {%- elif _dead_target is match(_ip) -%}{{ _dead_target }}
-      {%- elif _dead_target in groups['all'] -%}
-      {%-   set v = hostvars[_dead_target] -%}
-      {{ [(v.cassandra_extra_settings | default({})).broadcast_address | default(''), v.cassandra_listen_address | default(''),
-          v.ansible_host | default(''), _dead_target] | select('match', _ip) | first | default('') }}
-      {%- else -%}{{ _dead_target }}
-      {%- endif -%}
+      {{ _dead_target | community.cassandra.cassandra_dead_address((cassandra_dead_ring | default({})).cluster_status | default({}, true),
+           hostvars, groups['all']) }}
     # removenode(_force) on a node already out of the ring: nothing to do
     _nothing_to_do: "{{ _method in ['removenode', 'removenode_force'] and cassandra_dead_node | default({}) == {} }}"
     # removenode: an earlier run's removal still in progress (on any node) is waited for again
@@ -109,15 +100,7 @@
           # an inventory name: its address must be the ring's, not taken for a node already removed
           - _dead_target is match(_ip) or _dead_target not in groups['all'] or _dead_address in _ring_addresses
         fail_msg: >-
-          {{ (_dead_target ~ ': the inventory gives it no address (ansible_host, cassandra_listen_address):'
-              ~ ' give its address or host ID in cassandra_target_nodes.') if _dead_target in groups['all'] and not _dead_address
-             else (_dead_target ~ ' is not an address, a host ID of the ring nor a host of the inventory.')
-                  if _dead_address is not match(_ip) and _dead_target is not match(_host_id)
-             else (_dead_target ~ ' (' ~ _dead_address ~ ', from the inventory) is not in the ring: give its ring address or'
-                   ~ ' host ID in cassandra_target_nodes (nothing to do if it was removed already).')
-                  if _dead_target is not match(_ip) and _dead_target in groups['all'] and _dead_address not in _ring_addresses
-             else (_dead_target ~ ' (' ~ _dead_address ~ ') is a node of this run: take the dead host out of the'
-                   ~ ' inventory, or mark it cassandra_node_state: absent, first.') }}
+          {{ _dead_target | community.cassandra.cassandra_dead_node_refusal(_dead_address, groups['all'], _ring_addresses) }}
         quiet: true
       vars:
         _ring_addresses: "{{ cassandra_dead_ring.cluster_status.values() | map(attribute='nodes') | flatten | map(attribute='address') | list }}"

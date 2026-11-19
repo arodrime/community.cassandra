@@ -10,7 +10,12 @@ the ring is seen from and when; a WARNING line if the ring and the inventory
 differ), then the nodes per datacenter as nodetool status shows them (the
 ones not UN marked; with names, a node by its name and address), a summary
 table of its racks and the datacenter, and where the inventory and the ring
-differ. Blank lines between the blocks."""
+differ. Blank lines between the blocks.
+
+cassandra_dead_address: remove_dead_node's target -> the ring address of the
+    dead node.
+cassandra_dead_node_refusal: remove_dead_node's target refused -> why.
+"""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -24,6 +29,9 @@ from ansible_collections.community.cassandra.plugins.module_utils.nodetool_statu
 
 _STATES = [("U", "up"), ("D", "down"), ("J", "joining"), ("L", "leaving"), ("M", "moving")]
 _IP = re.compile(r"^[0-9.]+$|:")
+# remove_dead_node's patterns (its _ip and _host_id): an IPv4 or IPv6 address, a host ID
+_DEAD_IP = re.compile(r"^[0-9.]+$|^[0-9a-fA-F:]+:[0-9a-fA-F:]*$")
+_HOST_ID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 _DIFFER = "WARNING  ring and inventory differ"  # the verdict's second line, when they do
 
 
@@ -300,6 +308,42 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
     return lines[1:] if lines[:1] == [""] else lines
 
 
+def cassandra_dead_address(target, ring, hostvars, inventory_hosts):
+    """remove_dead_node's target (cassandra_target_nodes), the ring (cluster_status), hostvars, the inventory's
+    hosts -> the dead node's ring address: the address of a host ID of the ring, an address as is, an inventory
+    host's address (broadcast_address, cassandra_listen_address, ansible_host: the first that is an address; ''
+    when none is), else the target as given."""
+    by_id = [n.get("address") for info in ring.values() for n in info["nodes"]
+             if "host_id" in n and n["host_id"] == target]
+    if by_id:
+        return by_id[0]
+    if _DEAD_IP.match(target):
+        return target
+    if target in inventory_hosts:
+        v = hostvars[target]
+        names = [(v.get("cassandra_extra_settings") or {}).get("broadcast_address", ""),
+                 v.get("cassandra_listen_address", ""), v.get("ansible_host", ""), target]
+        return next((n for n in names if _DEAD_IP.match(str(n))), "")
+    return target
+
+
+def cassandra_dead_node_refusal(target, address, inventory_hosts, ring_addresses):
+    """remove_dead_node's target refused, its address (cassandra_dead_address), the inventory's hosts, the ring's
+    addresses -> why: an inventory host with no address, neither an address nor a host ID, an inventory host
+    whose address is not in the ring, else a node of the run."""
+    if target in inventory_hosts and not address:
+        return ("%s: the inventory gives it no address (ansible_host, cassandra_listen_address): give its address or"
+                " host ID in cassandra_target_nodes." % target)
+    if not _DEAD_IP.match(address) and not _HOST_ID.match(target):
+        return "%s is not an address, a host ID of the ring nor a host of the inventory." % target
+    if not _DEAD_IP.match(target) and target in inventory_hosts and address not in ring_addresses:
+        return ("%s (%s, from the inventory) is not in the ring: give its ring address or host ID in"
+                " cassandra_target_nodes (nothing to do if it was removed already)." % (target, address))
+    return ("%s (%s) is a node of this run: take the dead host out of the inventory, or mark it cassandra_node_state:"
+            " absent, first." % (target, address))
+
+
 class FilterModule(object):
     def filters(self):
-        return {"cassandra_ring_report": cassandra_ring_report, "cassandra_ip": _ip}
+        return {"cassandra_ring_report": cassandra_ring_report, "cassandra_ip": _ip,
+                "cassandra_dead_address": cassandra_dead_address, "cassandra_dead_node_refusal": cassandra_dead_node_refusal}
