@@ -1428,6 +1428,11 @@ def _difference_lines(name, rendered, live, ops):
     return hand, normalized, comments
 
 
+# the node's JVM_OPTS lines in the remote JMX branch its running JVM does not take (jvm_args.jmx_branch_not_run)
+BRANCH_NOT_RUN_NOTE = ("cassandra-env.sh: %s in the remote JMX branch these nodes do not run (LOCAL_JMX=yes): no effect;"
+                       " apply_config writes the stock branch without %s, no restart")
+
+
 # the node's JVM_OPTS lines in the remote JMX branch, the role's outside it (jvm_args.remote_branch_moved)
 REMOTE_BRANCH_NOTE = ("cassandra-env.sh: %s adding options to JVM_OPTS in the remote JMX branch (the one the running"
                       " Cassandra started with: its remote JMX port), the role's outside it: the same for the JVM")
@@ -2052,6 +2057,17 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
             live_files = dict(live_files, **{"cassandra-env.sh": text})
             heap_dump_note = ["cassandra-env.sh: CASSANDRA_HEAPDUMP_DIR=%s read as cassandra_heap_dump_dir (the running"
                               " JVM's environment has no CASSANDRA_HEAPDUMP_DIR: the same dir)" % folder]
+    branch_note = []
+    if cmdline and jvm_args.ENV in live_files and jvm_args.ENV not in (running.get("newer") or []) \
+            and not (keep is True or jvm_args.ENV in keep):
+        # the node's lines in the remote JMX branch its JVM does not take: no effect, not read (the role's: stock)
+        text, count = jvm_args.without_jmx_branch_not_run(
+            live_files[jvm_args.ENV], "\n".join(_render(env, cassandra_version, jvm_args.ENV, ctx)[1]),
+            running.get("environment"), cmdline)
+        if count:
+            live_files = dict(live_files, **{jvm_args.ENV: text})
+            branch_note = [BRANCH_NOT_RUN_NOTE % ("%d line%s" % (count, "s" if count > 1 else ""),
+                                                  "them" if count > 1 else "it")]
     if "logback.xml" in live_files and logback_as_log_dir(live_files["logback.xml"], log_dir) != live_files["logback.xml"]:
         # the log dir written as itself: the same files as ${cassandra.logdir}, read so (its lines too)
         live_files = dict(live_files, **{"logback.xml": logback_as_log_dir(live_files["logback.xml"], log_dir)})
@@ -2141,7 +2157,7 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     hand, normalized, comments = _leftovers(env, cassandra_version, files, render, live_files, rejected,
                                             moved["shown"], HEAP_OPTIONS if moved["shown"] else (),
                                             running.get("environment"), running.get("cmdline"))
-    normalized += log_dir_note + heap_dump_note
+    normalized += log_dir_note + heap_dump_note + branch_note
     normalized += ["%s: %s %s" % (f, "/".join(options), HEAP_MOVED) for f, options in sorted(heap_moved.items())
                    if f != jvm_args.COMMON]
     if jvm_args.ENV in moved["rewritten"] and not moved["moved"]:  # its lines at other places only: the same JVM

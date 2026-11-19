@@ -413,6 +413,44 @@ def without_lines(text, numbers):
     return "\n".join(line for n, line in enumerate(str(text).split("\n")) if n + 1 not in set(numbers))
 
 
+def _local_jmx_branches(lines):
+    """(then lines, else lines) of the one LOCAL_JMX test outside any block; None when not one."""
+    tests = [i for i, line in enumerate(lines) if line["text"] == LOCAL_JMX_TEST and not line["depth"]]
+    if len(tests) != 1:
+        return None
+    end = _block_end(lines, tests[0])
+    at_else = next((i for i in range(tests[0] + 1, end) if lines[i]["depth"] == 1 and lines[i]["text"] == "else"), end)
+    return lines[tests[0] + 1:at_else], lines[at_else + 1:end]
+
+
+def jmx_branch_not_run(live, role, environment=None, cmdline=""):
+    """The node's lines adding to JVM_OPTS in the remote JMX branch (the else of its LOCAL_JMX test) that the role's
+    file does not have there, on a node whose running JVM took the local one: its arguments have the local JMX port
+    and not the remote one (cmdline), LOCAL_JMX not set otherwise in the unit's environment (the next start takes the
+    same). bash does not run them: no effect, with them or without -> [their line numbers in live]; [] when none or
+    not known (no running JVM, the remote branch taken: as before)."""
+    args = re.split(r"[\0\n]", str(cmdline or ""))
+    if not any(a.startswith(LOCAL_PORT) for a in args) or any(a.startswith(REMOTE_PORT) for a in args) \
+            or (environment or {}).get("LOCAL_JMX") not in (None, "", "yes"):
+        return []
+    try:
+        mine, theirs = _local_jmx_branches(env_lines(live)), _local_jmx_branches(env_lines(role))
+    except NotSame:
+        return []
+    if mine is None or theirs is None:
+        return []
+    known = set(line["text"] for line in theirs[1])
+    return [line["n"] for line in mine[1]
+            if line["depth"] == 1 and line["text"] not in known and APPEND_ANY.match(line["text"])]
+
+
+def without_jmx_branch_not_run(live, role, environment=None, cmdline=""):
+    """The node's cassandra-env.sh (live) without its lines of jmx_branch_not_run: what bash runs the same -> (text,
+    how many lines left out)."""
+    lines = jmx_branch_not_run(live, role, environment, cmdline)
+    return (without_lines(live, lines) if lines else live), len(lines)
+
+
 def env_differences(live, role):
     """The lines of the node's cassandra-env.sh not in the role's -> ([its JVM_OPTS lines: {n, text, words}], [its
     heap assignments], [its lines the role's has at another place (_moved_lines)]);
@@ -751,6 +789,8 @@ def cassandra_jvm_args_same(cmdline, live, role, series, java, node_env=None, ro
     differ = env_differs(node_env, role_env)
     if differ:
         return False, "the roles would give cassandra-env.sh other options to add (%s)" % ", ".join(differ)
+    if ENV in live and ENV in role:  # (the node's lines in the remote JMX branch it does not run: no effect)
+        live = dict(live, **{ENV: without_jmx_branch_not_run(live[ENV], role[ENV], node_env, cmdline)[0]})
     try:
         args, after = _launch(cmdline, live, role, series, java, node_env, role_env)
     except NotSame as exc:

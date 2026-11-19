@@ -1605,6 +1605,12 @@ files ``import_keep_hand_edits`` keeps. An ``-javaagent`` added at the end stays
 get it before the agent ``cassandra-env.sh`` adds). ``apply_config`` then rewrites those files in
 the role's layout (and restarts the nodes): the report says so (``MOVED``). The options the running JVM does not use
 (in the options file of another Java, set again later, ignored by its Java version) are listed under ``CLEANUP``.
+A ``JVM_OPTS`` line of ``cassandra-env.sh`` only in the remote JMX branch (the ``else`` of its ``LOCAL_JMX`` test) of
+a node whose running JVM took the local one (its arguments have ``-Dcassandra.jmx.local.port`` and not
+``-Dcassandra.jmx.remote.port``, its unit not setting ``LOCAL_JMX`` otherwise) is not run by bash: no effect. The import
+reads no variable from it and says it in one line; ``apply_config`` writes the stock branch without it, with no
+restart (the same JVM arguments). Cassandra not running, its file changed since it started or the remote branch taken:
+as any other line.
 ``logback.xml`` is read as logback reads it: its root level, the ``org.apache.cassandra`` level, ``debug.log`` and the
 console, the stock ``AUDIT`` appender and its logger uncommented (``cassandra_log_audit_file``, written only when it is
 not its default: on with ``FileAuditLogger``) and the dir of its file (``cassandra_log_audit_dir``), the dirs of ``system.log`` and ``debug.log``
