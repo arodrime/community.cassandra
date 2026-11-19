@@ -187,6 +187,19 @@ def _dc_seeds(dc, members, leaving, wanted, hosts, old_keys):
             _auto_seed_warning(dc, leaving, picked, labels, old_keys))
 
 
+def _seeds_of_their_own(present, old, wanted, hosts, old_keys):
+    """The datacenters that keep nodes but whose seeds cassandra_seeds leaves out, with none of its own there ->
+    [(the seeds picked there or None, the warning or the problem)] (_dc_seeds), in datacenter order."""
+    gone = _seeds_gone(old, wanted, hosts)
+    picks = []
+    for dc in sorted(set(h.get("dc") or "" for h in gone)):
+        members = [h for h in present if h.get("dc") == dc]
+        if not members or [w for w in wanted if _seed_key(w, hosts) in [h["name"] for h in members]]:
+            continue
+        picks.append(_dc_seeds(dc, members, [h["name"] for h in gone if h.get("dc") == dc], wanted, hosts, old_keys))
+    return picks
+
+
 def cassandra_seed_change(hosts, seeds):
     """hosts: [{name, absent, dc, rack, names: the names and addresses it
     answers to, live: the seed list of its cassandra.yaml ('' when unknown),
@@ -217,12 +230,7 @@ def cassandra_seed_change(hosts, seeds):
         problems.append("cassandra_seeds is empty: list a node of each datacenter (one per rack, two or three per"
                         " datacenter).")
     new_entries = list(wanted)
-    gone = _seeds_gone(old, wanted, hosts)
-    for dc in sorted(set(h.get("dc") or "" for h in gone)) if wanted else []:
-        members = [h for h in present if h.get("dc") == dc]
-        if not members or [w for w in wanted if _seed_key(w, hosts) in [h["name"] for h in members]]:
-            continue
-        picked, said = _dc_seeds(dc, members, [h["name"] for h in gone if h.get("dc") == dc], wanted, hosts, old_keys)
+    for picked, said in _seeds_of_their_own(present, old, wanted, hosts, old_keys) if wanted else []:
         if not picked:
             problems.append(said)
             continue
