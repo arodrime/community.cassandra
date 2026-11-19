@@ -132,6 +132,9 @@ def test_the_plan_compares_them_in_check_mode_before_the_needs():
     extras = find(FIND["tasks"], "Compare the repository, the packages and the firewall")
     assert extras["ansible.builtin.include_role"]["apply"] == {"check_mode": True}
     assert extras["vars"]["_cassandra_compare"] is True and extras["vars"]["cassandra_install_java"] is False
+    # (the roles loop over item: the outer loop over item made Ansible warn on screen, 7 lines a run)
+    assert extras["loop_control"]["loop_var"] != "item"
+    assert extras["loop_control"]["loop_var"] in extras["ansible.builtin.include_role"]["name"]
     java = find(FIND["tasks"], "Work out the Java of the nodes running another one")
     assert java["ansible.builtin.include_role"]["tasks_from"] == "java_plan.yml"
     assert java["vars"]["_cassandra_java_plan_run"] == "apply_config" and java["vars"]["_cassandra_java_plan_running_only"]

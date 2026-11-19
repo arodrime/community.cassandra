@@ -226,10 +226,12 @@
     # another procedure (stopped before any change), nor a package update (done in its restart)
     - name: Compare the repository, the packages and the firewall
       ansible.builtin.include_role:
-        name: "community.cassandra.{{ item }}"
+        name: "community.cassandra.{{ _cassandra_compared_role }}"
         apply:
           check_mode: true
       loop: [cassandra_repository, cassandra_install, cassandra_firewall]
+      loop_control:
+        loop_var: _cassandra_compared_role  # their own loops use item (else a warning on screen for each)
       vars:
         cassandra_change_report_dir: ""  # the real run reports
         _cassandra_change_report_quiet: true  # in the settings that differ
