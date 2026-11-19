@@ -768,7 +768,8 @@ def _outcome(node, check, plan):
             text += " (%s)" % node["why"]
         # a file written back as the running Cassandra started with it: its note says why, not "an owner... only"
         written_back = any(_WRITTEN_BACK in str(n) for n in node.get("notes") or [])
-        kept_running = node.get("kept_running") if then == "none" else None  # its own reasons, when given
+        # its own reasons, when given (what its next restart changes: said under it, _later)
+        kept_running = [r for r in node.get("kept_running") or [] if not _later(r)] if then == "none" else None
         # the files written proven to change nothing for the running Cassandra: said in the --check recap and in the
         # recap of a real run too
         proven = [r for r in kept_running or [] if _proven(r)]
@@ -812,7 +813,8 @@ def _grouped(nodes, check=False, plan=False, width=None):
     for node in nodes or []:
         text, word = _outcome(node, check, plan)
         counts[word] = counts.get(word, 0) + 1
-        key = (text, tuple("  " + str(n) for n in node.get("notes") or [] if not out.is_warning(n)))
+        later = [r for r in node.get("kept_running") or [] if _later(r)] if node.get("then") == "none" else []
+        key = (text, tuple("  " + str(n) for n in list(node.get("notes") or []) + later if not out.is_warning(n)))
         if key not in groups:
             groups[key] = []
             order.append(key)
@@ -1007,6 +1009,15 @@ def cassandra_apply_config_down_ok(nodes, hostvars, host, then, check, batch=Fal
 SAME_JVM_ARGUMENTS = "the same JVM arguments"
 NOT_READ_BY_JAVA = "%s not read by Java %s"
 LOGBACK_SCANS = "logback.xml read again by logback (scan)"
+# an option the files written give the JVM at its next start, apart from the proof (jvm_args.jvm_args_compared): said
+# under the node, not among the reasons
+NEXT_RESTART = "next restart: %s (no effect now)"
+
+
+def _later(reason):
+    """Whether reason is a NEXT_RESTART line."""
+    before, after = NEXT_RESTART.split("%s")
+    return str(reason).startswith(before) and str(reason).endswith(after)
 
 
 def _proven(reason):
@@ -1085,11 +1096,12 @@ def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", 
         if facts:  # (a 4.x stock cassandra-env.sh on 5.0, kept on upgrade: as the import reads it)
             from ansible_collections.community.cassandra.plugins.filter.cassandra_import import earlier_env
             earlier = earlier_env(series, node[jvm_args.ENV], role[jvm_args.ENV], facts)
-        same, dummy = jvm_args.cassandra_jvm_args_same(cmdline, node, role, series, java, environ, environ,
-                                                       earlier=earlier["text"] if earlier else None)
+        same, dummy, later = jvm_args.jvm_args_compared(cmdline, node, role, series, java, environ, environ,
+                                                        earlier=earlier["text"] if earlier else None)
         if not same:
             return []
         reasons.insert(0, SAME_JVM_ARGUMENTS)
+        reasons += [NEXT_RESTART % change for change in later]
     return reasons
 
 

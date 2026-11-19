@@ -706,3 +706,17 @@ def test_the_recap_says_the_proofs_by_their_own_words():
             "kept_running": proofs + ["an owner, group or mode: read at start"]}
     text = "\n".join(cassandra_apply_config_recap([node]))
     assert "applied, not restarted (%s)" % "; ".join(proofs) in text, text
+
+
+def test_what_the_next_restart_changes_is_said_under_the_node():
+    # a file written with no restart that gives the JVM another option at its next start (no effect now): one line
+    # under the node, in the plan and the recap, not among the reasons
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import SAME_JVM_ARGUMENTS
+    later = "next restart: -XX:HeapDumpPath=/srv/zorglub/dumps added (no effect now)"
+    node = {"name": "n1", "todo": True, "done": True, "then": "none", "result": "applied",
+            "kept_running": [SAME_JVM_ARGUMENTS, later]}
+    for lines in (cassandra_apply_config_recap([node]),
+                  cassandra_apply_config_outcomes([dict(node, done=False)], plan=True)):
+        text = "\n".join(lines)
+        assert "(%s)" % SAME_JVM_ARGUMENTS in text and "; next restart" not in text, text
+        assert "  " + later in [line.rstrip() for line in lines] or any(line.strip() == later for line in lines), text

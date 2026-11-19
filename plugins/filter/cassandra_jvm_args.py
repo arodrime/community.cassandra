@@ -901,25 +901,45 @@ def cassandra_jvm_args_same(cmdline, live, role, series, java, node_env=None, ro
     the roles; apart: the names of the settings that differ by hand edits of the options files, not counted;
     earlier: the earlier series' stock cassandra-env.sh the node's is, rendered, EARLIER_APART not counted)
     -> (True, '') or (False, why)."""
+    return jvm_args_compared(cmdline, live, role, series, java, node_env, role_env, apart, earlier)[:2]
+
+
+def jvm_args_compared(cmdline, live, role, series, java, node_env=None, role_env=None, apart=(), earlier=None):
+    """cassandra_jvm_args_same, and what the role's files give the JVM at its next start that the comparison leaves
+    out as no effect now: the -XX:HeapDumpPath an earlier series' file did not add (earlier), the role's JMX password
+    file line the JVM never reads (password_file_line_inert) -> (same, why, ["<option> added"])."""
     differ = env_differs(node_env, role_env)
     if differ:
-        return False, "the roles would give cassandra-env.sh other options to add (%s)" % ", ".join(differ)
-    if ENV in live and ENV in role:  # (the node's lines in the remote JMX branch it does not run: no effect)
+        return False, "the roles would give cassandra-env.sh other options to add (%s)" % ", ".join(differ), []
+    inert = []
+    if ENV in live and ENV in role:  # (the node's lines in the JMX branch it does not run: no effect)
         live = dict(live, **{ENV: without_jmx_branch_not_run(live[ENV], role[ENV], node_env, cmdline)[0]})
         # (and the role's password file line where the node has it commented out, the JVM never reading the file)
-        role = dict(role, **{ENV: without_lines(role[ENV], password_file_line_inert(live[ENV], role[ENV], cmdline))})
+        numbers = password_file_line_inert(live[ENV], role[ENV], cmdline)
+        inert = [APPEND.match(line["text"]).group(1) for line in env_lines(role[ENV]) if line["n"] in numbers] \
+            if numbers else []
+        role = dict(role, **{ENV: without_lines(role[ENV], numbers)})
     try:
         args, after = _launch(cmdline, live, role, series, java, node_env, role_env, earlier)
     except NotSame as exc:
-        return False, str(exc)
+        return False, str(exc), []
     apart = tuple(apart) + (EARLIER_APART if earlier is not None else ())
     if args != after and any(IN_PLACE.match(o) for o in args + after):
-        return False, "an option reads a file of options where it is (-XX:VMOptionsFile, -XX:Flags, @file)"
+        return False, "an option reads a file of options where it is (-XX:VMOptionsFile, -XX:Flags, @file)", []
     names = [n for n in differences(args[1:], after[1:]) if n not in apart]
     if names:  # their names only (-Xlog:file=<path>: -Xlog, -Xmaxjitcodesize240M: -Xmaxjitcodesize)
         names = sorted(set(re.sub(r"(?<=^-X[a-z])([a-z]*?)\d.*$", r"\1", re.split(r"[:=]", n)[0]) for n in names))
-        return False, "the JVM would get other values of %s" % ", ".join(out.mask(n) for n in names)
-    return True, ""
+        return False, "the JVM would get other values of %s" % ", ".join(out.mask(n) for n in names), []
+    later = ["%s added" % o for o in inert]
+    if earlier is not None and not any(_jvm_name(a) == "HeapDumpPath" for a in args):
+        # (the later series' file sets it always, in CASSANDRA_HEAPDUMP_DIR: the environment's, else its default)
+        folder = (node_env or {}).get("CASSANDRA_HEAPDUMP_DIR") or next(
+            (m.group(1) for m in re.finditer(r'^\s*CASSANDRA_HEAPDUMP_DIR="([^"]*)"', role[ENV], re.M)), "")
+        logdir = next((a.split("=", 1)[1] for a in args if a.startswith("-Dcassandra.logdir=")), "")
+        if logdir:  # (bin/cassandra's log dir, as the JVM got it)
+            folder = re.sub(r"\$(CASSANDRA_LOG_DIR\b|\{CASSANDRA_LOG_DIR\})", lambda m: logdir, folder)
+        later.insert(0, "-XX:HeapDumpPath=%s/cassandra-<start>-pid<pid>.hprof added" % folder)
+    return True, "", [out.mask(change) for change in later]
 
 
 def _later(args, i, end):

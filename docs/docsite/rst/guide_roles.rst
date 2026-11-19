@@ -1690,7 +1690,9 @@ running JVM's (then ``MOVED``, its own ``JVM_OPTS`` lines moved as above). 5.0's
 set them, and works the heap out with another formula when ``MAX_HEAP_SIZE`` is not set; any of these makes the
 file one hand edit, with the reason (set them in the options, ``cassandra_heap_size``, or keep the file with
 ``import_keep_hand_edits``). 5.0's always sets ``-XX:HeapDumpPath`` (``cassandra_heap_dump_dir``, the log dir by
-default), 4.x's only with ``CASSANDRA_HEAPDUMP_DIR``: said under WORTH A LOOK, not a difference.
+default), 4.x's only with ``CASSANDRA_HEAPDUMP_DIR``: said under WORTH A LOOK, not a difference. ``apply_config``
+writes 5.0's file with no restart and says under the node what the JVM gets at its next restart
+(``next restart: -XX:HeapDumpPath=<dir>/cassandra-<start>-pid<pid>.hprof added (no effect now)``).
 A ``JVM_OPTS`` line of ``cassandra-env.sh`` only in the branch of its ``LOCAL_JMX`` test the running JVM did not take
 is not run by bash: no effect. The remote branch (the ``else``) on a node whose JVM took the local one (its arguments
 have ``-Dcassandra.jmx.local.port`` and not ``-Dcassandra.jmx.remote.port``, its unit not setting ``LOCAL_JMX`` to
@@ -1702,8 +1704,9 @@ The stock ``-Dcom.sun.management.jmxremote.password.file`` line commented out is
 running JVM never reads that file: JMX authentication off (its last ``-Dcom.sun.management.jmxremote.authenticate`` not
 ``true``), and none of ``-Dcom.sun.management.jmxremote.port``, ``-Dcom.sun.management.config.file``,
 ``-Dcassandra.jmx.remote.login.config``, ``-Djava.security.auth.login.config``, ``-Dcassandra.jmx.authorizer``. The
-import says it in one line; ``apply_config`` writes the stock line back with no restart. Not the access file: Cassandra
-gives it to its JMX server whatever the authentication, which reads it at start.
+import says it in one line; ``apply_config`` writes the stock line back with no restart, and says under the node that
+the next restart adds that option (no effect now). Not the access file: Cassandra gives it to its JMX server whatever
+the authentication, which reads it at start.
 ``logback.xml`` is read as logback reads it: its root level, the ``org.apache.cassandra`` level, the lowest level
 ``system.log`` takes (``cassandra_log_system_level``, its ``ThresholdFilter``), ``debug.log`` and the
 console, the stock ``AUDIT`` appender and its logger uncommented (``cassandra_log_audit_file``, written only when it is

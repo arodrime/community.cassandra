@@ -725,8 +725,10 @@ def test_the_production_local_jmx_file_passes_with_no_restart(tmp_path, series):
     flags, others = settings(launch(rendered, java, tmp_path))
     assert flags.pop("-Dcom.sun.management.jmxremote.password.file") == "/etc/cassandra/jmxremote.password"
     assert (flags, others) == settings(cmdline)
+    # (the option the next start adds, said under the node)
     assert cassandra_apply_config_no_effect(["cassandra-env.sh"], files, rendered, cmdline, series, java) \
-        == ["the same JVM arguments"]
+        == ["the same JVM arguments", "next restart: -Dcom.sun.management.jmxremote.password.file="
+            "/etc/cassandra/jmxremote.password added (no effect now)"]
 
 
 @pytest.mark.parametrize("extra", ["-Dcom.sun.management.jmxremote.authenticate=true",
@@ -2330,9 +2332,24 @@ def test_apply_config_proves_a_4x_cassandra_env_on_50_as_the_import_does(tmp_pat
     changed = [f for f in rendered if f in files and rendered[f] != files[f] and not f.startswith("jmxremote.")
                and not cassandra_same_settings(files[f], rendered[f], f, STORAGE)]
     assert "cassandra-env.sh" in changed
-    assert cassandra_apply_config_no_effect(changed, files, rendered, cmdline, "50x", "17", {}, [], FACTS)[:1] == [
-        "the same JVM arguments"]
+    assert cassandra_apply_config_no_effect(changed, files, rendered, cmdline, "50x", "17", {}, [], FACTS) == [
+        "the same JVM arguments", "next restart: -XX:HeapDumpPath=%s/cassandra-<start>-pid<pid>.hprof added (no effect"
+        " now)" % next(a[len("-Dcassandra.logdir="):] for a in cmdline.split("\0") if a.startswith("-Dcassandra.logdir="))]
+    # (the log dir by default: CASSANDRA_HEAPDUMP_DIR="$CASSANDRA_LOG_DIR", bin/cassandra's -Dcassandra.logdir)
+    assert "cassandra_heap_dump_dir" not in variables
     assert cassandra_apply_config_no_effect(changed, files, rendered, cmdline, "50x", "17", {}, []) == []  # (no facts)
+
+
+def test_no_next_restart_line_when_the_jvm_has_its_heap_dump_path(tmp_path):
+    # 4.x's file adds -XX:HeapDumpPath too when the environment gives CASSANDRA_HEAPDUMP_DIR: nothing added later
+    files = node_files("50x", both(env_4x("8G"), SET_IN_OPTIONS))
+    env = {"CASSANDRA_HEAPDUMP_DIR": "/srv/zorglub/dumps"}
+    cmdline = launch(files, "17", tmp_path, environment=env)
+    assert [a for a in cmdline.split("\0") if a.startswith("-XX:HeapDumpPath=/srv/zorglub/dumps/")]
+    inventory, layout, node = imported(files, "50x", "17", cmdline, environment=env)
+    rendered = role_files(inventory, layout, files)[0]
+    found = cassandra_apply_config_no_effect(["cassandra-env.sh"], files, rendered, cmdline, "50x", "17", env, [], FACTS)
+    assert found == ["the same JVM arguments"]
 
 
 @pytest.mark.parametrize("edits, why", [
