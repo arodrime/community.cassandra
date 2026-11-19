@@ -654,17 +654,25 @@ def _group_lines(layout, group, who, width):
     """A file and its nodes, then each setting that differs and its two values -> [line]."""
     name, nodes, items = group
     listed = re.sub(r" \(\d+ nodes?\)$", "", who(nodes))
-    lines = fill_text("%s    %s" % (unbreakable(name or "?"), listed), width, "  ", "      ")
+    head = "%s %s %s    %s" % (unbreakable(name or "?"), DASH, unbreakable(out.plural(len(nodes), "node")), listed)
+    lines = fill_text(head, width, "  ", "      ")
     for item in items:
         if item["sentence"] is not None and item["kind"] == _LAYOUT:
             continue  # (the section says it)
         if item["sentence"] is not None:
-            lines += fill_text(item["sentence"], width, "    ", "  ")
+            lines += _sentence_lines(item["sentence"], width, "    ")
             continue
         lines.append("    " + item["where"])
         lines += _value_lines(VALUE_LABELS[0], item["node"], width)
         lines += _value_lines(VALUE_LABELS[1], item["ansible"], width, _suffix(layout, item))
     return lines
+
+
+def _sentence_lines(text, width, hang):
+    """A sentence of the self-check, a fact on each of its lines (\\n), each wrapped; a line indented (a command to
+    copy) whole -> [line]."""
+    return [line for part in str(text).split("\n")
+            for line in ([hang + part] if part.startswith("  ") else fill_text(part, width, hang, "  "))]
 
 
 def _ways_out(rows, width, review=""):
@@ -820,6 +828,12 @@ def _self_check_lines(layout, self_check, who, width, report_file="", error="", 
         blocks.append(fill_text(error[0].upper() + error[1:], width, "  ", "  ") + [""] + _ways_out(
             [("see the error (it may show passwords), fix it, then import again", debug)], width))
     kinds = [kind for kind in _ORDER if any(i["kind"] == kind for i in items)]
+    # (several problems below, each with its own count of nodes: how they make the total, under the verdict)
+    counted = [len(g[1]) for kind in kinds for g in _groups([i for i in items if i["kind"] == kind])]
+    if len(counted) > 1 and len(differing) > 1:
+        blocks.append(fill_text("%s nodes, counted by problem below" % " + ".join(str(c) for c in counted)
+                                if sum(counted) == len(differing) else "some nodes in more than one problem below",
+                                width, "  ", "  "))
     for kind in kinds:  # (the review command once: in the last kind's ways out)
         mine = [i for i in items if i["kind"] == kind]
         blocks.append(_section(layout, kind, mine, read, who, width, review if kind == kinds[-1] else ""))
@@ -2130,7 +2144,7 @@ def _evidence_lines(report, self_check):
     for members, texts in by_nodes:
         lines += fill_text(_who(report, members), report.width, "  ")
         for d in texts:
-            lines += fill_text(d, report.width, "    ", "  ")
+            lines += _sentence_lines(d, report.width, "    ")
     return lines
 
 

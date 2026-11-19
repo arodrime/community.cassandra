@@ -229,7 +229,7 @@ def test_things_to_do_and_hand_edits():
     # the self-check right under the TO DO steps, as the stop says it
     at = lines.index(u"  SELF-CHECK \u2014 the inventory does not reproduce 1 node yet")
     assert lines[at + 1:at + 6] == ["    1 setting on this node has no inventory variable: apply_config would change it.",
-                                    "", "    cassandra.yaml    node1", "      concurrent_writes", ""]
+                                    "", "    cassandra.yaml — 1 node    node1", "      concurrent_writes", ""]
     assert at < heading(lines, "HAND EDITS")
     # HAND EDITS: each file and its nodes once, what the self-check shows named, the others' values; the ways out once
     review = section(lines, "HAND EDITS")
@@ -715,14 +715,16 @@ def test_self_check_stop_golden():
     # each setting and its two values, its ways out; the nodes not read; what was written; where the evidence is
     assert stop(failed_nodes(), CHECKS, WINS) == [
         u"SELF-CHECK FAILED — the inventory does not reproduce 4 nodes yet",
+        "  some nodes in more than one problem below",
+        "",
         "  2 settings on these nodes have no inventory variable: apply_config would change them.",
         "",
-        "  cassandra-env.sh    node1",
+        "  cassandra-env.sh — 1 node    node1",
         "    KEYSTORE_PASSWORD",
         "      Node     ****",
         "      Ansible  absent",
         "",
-        "  jvm17-server.options    node2, node5",
+        "  jvm17-server.options — 2 nodes    node2, node5",
         "    -XX:+UseFoo",
         "      Node     present",
         "      Ansible  absent",
@@ -735,7 +737,7 @@ def test_self_check_stop_golden():
         "",
         "  1 setting: a file of yours gives another value: apply_config would write it.",
         "",
-        "  cassandra.yaml    node3",
+        "  cassandra.yaml — 1 node    node3",
         "    concurrent_reads",
         "      Node     64",
         "      Ansible  16   (cassandra_concurrent_reads = 16)",
@@ -748,20 +750,20 @@ def test_self_check_stop_golden():
         "",
         "  4 other differences that the import does not explain:",
         "",
-        "  cassandra.yaml    node1",
+        "  cassandra.yaml — 1 node    node1",
         "    server_encryption_options.keystore_password",
         "      Node     ****",
         "      Ansible  ****",
         "",
-        "  jvm17-server.options    node1, node2",
+        "  jvm17-server.options — 2 nodes    node1, node2",
         "    the file",
         "      Node     absent",
         "      Ansible  present",
         "",
-        "  owner, group and mode    node2",
+        "  owner, group and mode — 1 node    node2",
         "    not read on the node, the roles may change them",
         "",
-        "  heap (cassandra-env.sh, else the unit's Environment)    node3",
+        "  heap (cassandra-env.sh, else the unit's Environment) — 1 node    node3",
         "    MAX_HEAP_SIZE",
         "      Node     8G",
         "      Ansible  16G",
@@ -822,7 +824,7 @@ def test_self_check_stop_hand_edits_only():
     lines = stop(nodes, checks, check=True)
     assert lines[:8] == [u"SELF-CHECK FAILED — the inventory does not reproduce 2 nodes yet",
                          "  1 setting on these nodes has no inventory variable: apply_config would change it.", "",
-                         "  logback.xml    all - node3", "    x", "      Node     present (level DEBUG)",
+                         "  logback.xml — 2 nodes    all - node3", "    x", "      Node     present (level DEBUG)",
                          "      Ansible  absent", ""]
     assert "  --check: the inventory not written" in lines
     # (each way out too long for its option beside it: the option on the line under it)
@@ -841,10 +843,11 @@ def test_self_check_stop_kept_files_are_not_hand_edits():
                                         " root:cassandra 0644"]},
               "node2": {"differences": ["cassandra.yaml: concurrent_writes: node has 32, import would write 64"]}}
     lines = stop(nodes, checks)
-    assert lines[1:13] == ["  3 other differences that the import does not explain:", "",
-                           "  logback.xml    node1", "    group", "      Node     root", "      Ansible  cassandra",
+    assert lines[1:15] == ["  1 + 1 nodes, counted by problem below", "",
+                           "  3 other differences that the import does not explain:", "",
+                           "  logback.xml — 1 node    node1", "    group", "      Node     root", "      Ansible  cassandra",
                            "    mode", "      Node     0600", "      Ansible  0644", "",
-                           "  cassandra.yaml    node2", "    concurrent_writes"]
+                           "  cassandra.yaml — 1 node    node2", "    concurrent_writes"]
     assert "keep logback.xml" not in "\n".join(lines)
 
 
@@ -856,12 +859,13 @@ def test_self_check_stop_values_per_node():
               "node4": {"differences": ["cassandra.yaml: concurrent_writes: node has '8', import would write '16'"]},
               "node5": {"differences": ["cassandra.yaml: concurrent_writes: node has '9', import would write '32'"]}}
     lines = stop([node(i) for i in range(1, 6)], checks)
-    assert lines[1] == "  2 other differences that the import does not explain:"
+    assert lines[1:4] == ["  2 + 1 + 1 + 1 nodes, counted by problem below", "",
+                          "  2 other differences that the import does not explain:"]
     groups = [line for line in lines if line.startswith("  cassandra.yaml")]
-    assert groups == ["  cassandra.yaml    node1, node2", "  cassandra.yaml    node3", "  cassandra.yaml    node4",
-                      "  cassandra.yaml    node5"]
-    at = lines.index("  cassandra.yaml    node3")
-    assert lines[at:at + 4] == ["  cassandra.yaml    node3", "    concurrent_reads", "      Node     128",
+    assert groups == ["  cassandra.yaml — 2 nodes    node1, node2", "  cassandra.yaml — 1 node    node3",
+                      "  cassandra.yaml — 1 node    node4", "  cassandra.yaml — 1 node    node5"]
+    at = lines.index("  cassandra.yaml — 1 node    node3")
+    assert lines[at:at + 4] == ["  cassandra.yaml — 1 node    node3", "    concurrent_reads", "      Node     128",
                                 "      Ansible  32"]
 
 
@@ -902,9 +906,10 @@ def test_self_check_report_section():
     at = lines.index(u"  SELF-CHECK — the inventory does not reproduce 4 nodes yet")
     evidence = lines.index("    Evidence (full paths, lines): reports/my_cluster/report.details.txt, SELF-CHECK", at)
     part = lines[at:lines.index("", evidence - 1)]
-    assert part[1:6] == ["    2 settings on these nodes have no inventory variable: apply_config would change them.",
-                         "", "    cassandra-env.sh    node1", "      KEYSTORE_PASSWORD", "        Node     ****"]
-    assert "    jvm17-server.options    node2, node5" in part and max(len(line) for line in part) <= 102
+    assert part[1:8] == ["    some nodes in more than one problem below", "",
+                         "    2 settings on these nodes have no inventory variable: apply_config would change them.",
+                         "", "    cassandra-env.sh — 1 node    node1", "      KEYSTORE_PASSWORD", "        Node     ****"]
+    assert "    jvm17-server.options — 2 nodes    node2, node5" in part and max(len(line) for line in part) <= 102
     assert "  2. Make the self-check pass" in lines and lines.index("  2. Make the self-check pass") < at
     # the screen: the step, the stop below it (import_strict) says how
     screen = report(failed_nodes(), ok=False, self_check=CHECKS, screen=True, strict=True)
@@ -935,7 +940,7 @@ def test_self_check_evidence_same_line_once_for_its_nodes():
     assert " ".join(part).count("node has") == 2
     assert "  all - node7 (19 nodes)" in part and "  node7 (1 node)" in part
     lines = stop(nodes, checks)
-    assert "  jmxremote.access    all - node7" in lines and "  jmxremote.access    node7" in lines
+    assert "  jmxremote.access — 19 nodes    all - node7" in lines and "  jmxremote.access — 1 node    node7" in lines
 
 
 def test_self_check_stop_owner_of_a_hand_edited_file_is_not_a_hand_edit():
@@ -951,7 +956,7 @@ def test_self_check_stop_owner_of_a_hand_edited_file_is_not_a_hand_edit():
         "  1 setting on this node has no inventory variable: apply_config would change it.",
         "  2 other differences that the import does not explain:"]
     at = lines.index("  2 other differences that the import does not explain:")
-    assert lines[at + 2:at + 5] == ["  logback.xml    all", "    group", "      Node     root"]
+    assert lines[at + 2:at + 5] == ["  logback.xml — 1 node    all", "    group", "      Node     root"]
 
 
 def test_self_check_stop_your_file_by_its_exact_variable():
@@ -968,12 +973,12 @@ def test_self_check_stop_your_file_by_its_exact_variable():
                                         " write '10'"]}}
     lines = stop([node(1)], checks, wins, width=160)
     at = lines.index("  1 setting: a file of yours gives another value: apply_config would write it.")
-    assert lines[at + 2:at + 6] == ["  cassandra.service    all", "    [Service] LimitNOFILE", "      Node     100000",
+    assert lines[at + 2:at + 6] == ["  cassandra.service — 1 node    all", "    [Service] LimitNOFILE", "      Node     100000",
                                     "      Ansible  10   (cassandra_service_limit_nofile = 10)"]
     assert [line for line in lines if line.startswith("    in ")] == [
         "    in host_vars/node1/z.yml: cassandra_service_limit_nofile: 100000, or remove that line, then import again"]
     at = lines.index("  2 other differences that the import does not explain:")
-    assert lines[at + 2:at + 9] == ["  cassandra.yaml    all", "    cdc_enabled", "      Node     true",
+    assert lines[at + 2:at + 9] == ["  cassandra.yaml — 1 node    all", "    cdc_enabled", "      Node     true",
                                     "      Ansible  false", "    num_tokens", "      Node     16", "      Ansible  8"]
     # a node not read alone: no way out about your files
     assert not [line for line in stop([node(1), node(2, read=False)], {}, wins) if "your" in line]
@@ -986,9 +991,9 @@ def test_self_check_stop_lines_of_odd_values():
                                         "cassandra.yaml: cannot be read as its program reads it (node's or the roles'"
                                         " version)"]}}
     lines = stop([node(1)], checks, width=160)
-    at = lines.index("  cassandra-env.sh    all")
+    at = lines.index("  cassandra-env.sh — 1 node    all")
     assert lines[at + 1:at + 4] == ["    JVM_OPTS", "      Node     -Dx=a: node has b", "      Ansible  absent"]
-    at = lines.index("  cassandra.yaml    all")
+    at = lines.index("  cassandra.yaml — 1 node    all")
     assert lines[at + 1] == "    cannot be read as its program reads it (node's or the roles' version)"
 
 
@@ -998,7 +1003,7 @@ def test_self_check_stop_large_cluster_node_lists():
     checks = dict(("node%d" % i, {"differences": ["cassandra.yaml: concurrent_reads: node has '64', import would"
                                                   " write '32'"]}) for i in range(1, 15))
     lines = stop(nodes, checks)
-    assert "  cassandra.yaml    dc1 - node15" in lines
+    assert "  cassandra.yaml — 14 nodes    dc1 - node15" in lines
     assert "      Node     64" in lines and not [line for line in lines if re.search(r"\bG\d", line)]
 
 
@@ -1307,7 +1312,7 @@ def test_self_check_stop_os_golden():
         u"SELF-CHECK FAILED \u2014 the inventory does not reproduce 2 nodes yet",
         "  1 setting outside the config files: the roles would change it.",
         "",
-        "  OS (cassandra_linux)    all",
+        "  OS (cassandra_linux) — 2 nodes    all",
         "    transparent_hugepage enabled (live)",
         "      Node     madvise",
         "      Ansible  never",
@@ -1344,7 +1349,7 @@ def test_self_check_stop_unit_way_out():
     script = ("cassandra.service: the node starts Cassandra with the init script /etc/rc.d/init.d/cassandra (modified"
               " since its package installed it), the roles would start it with their systemd unit from its next restart")
     lines = stop([node(1), node(2)], {"node1": {"differences": [script]}}, width=400)
-    assert lines[3:5] == ["  cassandra.service    node1", "    the node starts Cassandra with the init script"
+    assert lines[3:5] == ["  cassandra.service — 1 node    node1", "    the node starts Cassandra with the init script"
                           " /etc/rc.d/init.d/cassandra (modified since its package installed it), the roles would start"
                           " it with their systemd unit from its next restart"]
     assert [line for line in lines if re.match(r"^    keep the unit \(or init script\) Cassandra is started by as on"

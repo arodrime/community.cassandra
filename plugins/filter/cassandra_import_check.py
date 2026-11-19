@@ -595,7 +595,8 @@ def _self_check(files_data, hosts, name, facts, live, node_environment, storage_
                                                  _env_value(key, role_env.get(key))))
     running = dict(running or {}, series=str(dict(_defaults(), **variables).get("cassandra_version")), facts=facts)
     out = _compare_files(rendered, live, node_environment, role_environment, storage_dir, java,
-                         release or SERIES.get(str(variables.get("cassandra_version")), ""), running=running)
+                         release or SERIES.get(str(variables.get("cassandra_version")), ""), running=running,
+                         conf_dir=conf_dir)
     if permissions is None:
         out["differences"].append("owner, group and mode: not read on the node, the roles may change them")
     else:
@@ -844,8 +845,9 @@ def _rejected(live, rendered, release):
 
 
 def _compare_files(rendered, live, node_environment=None, role_environment=None, storage_dir="", java="", release="",
-                   series="", running=None):
-    """running: {cmdline, newer, series} (cassandra_import_self_check's jvm); series: cassandra_version, else running's."""
+                   series="", running=None, conf_dir=""):
+    """running: {cmdline, newer, series} (cassandra_import_self_check's jvm); series: cassandra_version, else running's;
+    conf_dir: where the node's files are (the way out of a line in the JMX branch it does not run names it)."""
     differences, notes, heap, by_file = [], [], [], {}
     series = series or (running or {}).get("series", "")
     # a stock line of a later release the node's file predates: not a difference (the import says it under WORTH A LOOK)
@@ -870,11 +872,18 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
     if "cassandra-env.sh" in rendered and "cassandra-env.sh" in live:
         # (the node's lines in the remote JMX branch it takes, the roles' outside it: as the import reads them)
         # (not from a JVM started before its cassandra-env.sh was written: its arguments are not that file's)
-        mine, theirs = jvm_args.remote_branch_moved(live["cassandra-env.sh"], rendered["cassandra-env.sh"], dict(
-            node_environment or {}, **((running or {}).get("environment") or {})),
-            "" if "cassandra-env.sh" in ((running or {}).get("newer") or []) else (running or {}).get("cmdline"))
+        environment = dict(node_environment or {}, **((running or {}).get("environment") or {}))
+        cmdline = "" if "cassandra-env.sh" in ((running or {}).get("newer") or []) else (running or {}).get("cmdline")
+        mine, theirs = jvm_args.remote_branch_moved(live["cassandra-env.sh"], rendered["cassandra-env.sh"], environment,
+                                                    cmdline)
         if mine:
             notes.append(REMOTE_BRANCH_NOTE % _out.plural(len(mine), "line"))
+        # (the node's lines in the JMX branch it does not run: said on their own, with the way out)
+        not_run = jvm_args.jmx_branch_not_run(live["cassandra-env.sh"], rendered["cassandra-env.sh"], environment,
+                                              cmdline)
+        if not_run:
+            differences += branch_not_run_lines(not_run, live["cassandra-env.sh"], conf_dir)
+            mine = mine + [line["n"] for line in not_run["lines"]]
         # (a line of an option a node may switch on anywhere, outside any block on both sides: the same for bash)
         named, named_role = jvm_args.named_lines_moved(live["cassandra-env.sh"], rendered["cassandra-env.sh"],
                                                        ELSEWHERE, _jvm_environments(node_environment, None,
@@ -958,6 +967,50 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
                          ", but for %s, above" % ", ".join(sorted(apart)) if apart else ""))
         heap = []
     return {"differences": differences + heap, "notes": notes}
+
+
+# the branches of cassandra-env.sh's LOCAL_JMX test: (its name, where it is in the test, the port its JVM gets)
+JMX_BRANCHES = {"local": ("local", 'the "then" of the LOCAL_JMX test', jvm_args.LOCAL_PORT),
+                "remote": ("remote", 'the "else" of the LOCAL_JMX test', jvm_args.REMOTE_PORT)}
+
+
+def _bre(text):
+    """text as a sed basic regular expression matching it as it is (/ the delimiter)."""
+    return re.sub(r"([\\.*\[\]^$/])", r"\\\1", text)
+
+
+def branch_not_run_lines(found, text, conf_dir=""):
+    """A difference for each of the node's lines in the JMX branch its JVM did not take (jvm_args.jmx_branch_not_run's
+    found; text: the node's cassandra-env.sh): one fact per line, the way out (a sed on the nodes, guarded by the
+    running JVM's arguments: only where it took the same branch and has none of the line's options; or keep the
+    file as it is)."""
+    runs, port = JMX_BRANCHES[found["runs"]][0], JMX_BRANCHES[found["runs"]][2]
+    other, where = [JMX_BRANCHES[b][:2] for b in JMX_BRANCHES if b != found["runs"]][0]
+    path = (conf_dir or "/etc/cassandra").rstrip("/") + "/cassandra-env.sh"
+    raw = str(text).split("\n")
+    out = []
+    for line in found["lines"]:
+        written = raw[line["n"] - 1].strip()
+        options = jvm_args.APPEND_ANY.match(line["text"]).group(1).split()
+        names = [o.split("=", 1)[0] + "=" if o.startswith("-D") and "=" in o else o for o in options]
+        pattern = _bre(written)
+        for o in options:  # (a -D option's value: any, the same command on every node)
+            if o.startswith("-D") and "=" in o:
+                pattern = pattern.replace(_bre(o), _bre(o.split("=", 1)[0] + "=") + '[^" ]*', 1)
+        guard = " && ".join(['echo "$c" | grep -qF -- %s' % shlex.quote(port)] + [
+            '! echo "$c" | grep -qF -- %s' % shlex.quote(n) for n in names])
+        command = ("c=$(tr '\\0' '\\n' < /proc/$(systemctl show -p MainPID --value cassandra)/cmdline); %s && sed -i %s"
+                   " %s" % (guard, shlex.quote("/^[[:space:]]*%s[[:space:]]*$/d" % pattern), shlex.quote(path)))
+        out.append("\n".join([
+            "cassandra-env.sh: a line only in the %s JMX branch (%s): %s" % (other, where, _out.mask(written)),
+            "this node runs the %s JMX branch (its JVM has %s): that line has no effect on the running JVM" % (
+                runs, port.rstrip("=")),
+            "remove it on the nodes, as root (it does so only where the JVM has %s and not %s):" % (
+                port.rstrip("="), " nor ".join(n.rstrip("=") for n in names)),
+            "  " + command,
+            "or keep cassandra-env.sh as it is: -e import_keep_hand_edits=cassandra-env.sh",
+            "then import again"]))
+    return out
 
 
 def _options_moved(rendered, live, series, java, by_file):

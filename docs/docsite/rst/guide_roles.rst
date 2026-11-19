@@ -973,7 +973,9 @@ no restart)``, each file with its nodes) and in what the node gets (``write, no 
 a comment, no setting changes)``). After an import, the first ``apply_config`` does only that; the next one finds
 nothing to do. A file kept by hand (``cassandra_config_keep_files``, ``import_keep_hand_edits``) is not touched. A node where Cassandra is not running gets its config too: started once written when its
 unit failed (e.g. Cassandra could not read its config, or it crashed), left stopped when it was stopped (a stop that
-ended in a failed unit too). Each node's health check needs another node up to read the ring from: a cluster with
+ended in a failed unit too). A Cassandra running outside its ``cassandra`` unit (not in the unit's control group: started by
+hand, or by a script of its own) whose config needs a restart is refused before any change: a restart through the unit
+would start a second Cassandra next to it (``--check`` goes on and says it on the node). Each node's health check needs another node up to read the ring from: a cluster with
 no node running is not handled. The settings that differ come in one table (``Item``, ``Node``, ``Inventory``, ``Nodes``; each
 row labelled by what it is: a file, a setting, ``service chronyd``, ``package chrony``), per file (its nodes on its row when all its settings change on the same ones): ``cassandra.yaml`` keys (a
 nested one as ``parent.key``), the lines of the JVM options files and ``cassandra-env.sh`` (``-Xmx``, ``-Dname``,
@@ -1763,9 +1765,13 @@ FAILED`` and the differences: the inventory is then marked ``# NOT VALID`` in it
 ends with a short ``SELF-CHECK FAILED`` block, which says why the inventory does not reproduce the nodes yet: the
 differences by what the import establishes of their cause (settings no inventory variable sets, a file of yours that
 gives another value, parts of the nodes outside the config files, the same settings in another layout, others), each
-with what ``apply_config`` would do; under each, the files and their nodes, each setting in the file's own words (a
+with what ``apply_config`` would do (when there are several, a line under the verdict says how their node counts make
+its total: ``122 + 1 nodes, counted by problem below``); under each, the files with their node count and nodes, each
+setting in the file's own words (a
 YAML key, a JVM option, a variable of ``cassandra-env.sh``, logback's elements: ``AUDIT / rollingPolicy /
-fileNamePattern``) with the node's value and Ansible's (``absent``, ``present``, ``(empty)``); then ``To pass:``, each
+fileNamePattern``) with the node's value and Ansible's (``absent``, ``present``, ``(empty)``; a line of
+``cassandra-env.sh`` only in the branch of the ``LOCAL_JMX`` test the running JVM did not take: said as such, no effect
+on that JVM, with a command that removes it on the nodes where the JVM took the other branch); then ``To pass:``, each
 way out with its option: ``-e import_keep_hand_edits=<files or parts>`` to keep them as the nodes have them, the value
 to set in your file (or the line to remove), ``-e import_allow_unread=true`` for the nodes not read, and
 ``-e import_strict=false`` to take the change (it only writes the inventory: ``apply_config --check --diff`` before

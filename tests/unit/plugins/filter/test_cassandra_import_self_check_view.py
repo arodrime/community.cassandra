@@ -182,7 +182,7 @@ def test_the_stop_golden():
         "  2 settings on these nodes have no inventory variable: apply_config would",
         "  change them.",
         "",
-        "  logback.xml    node1, node5..node7",
+        "  logback.xml — 4 nodes    node1, node5..node7",
         "    AUDIT / rollingPolicy / fileNamePattern",
         "      Node     /var/log/cassandra/audit/audit.log.%d{yyyy-MM-dd}.%i",
         "      Ansible  /var/log/cassandra/audit/audit.log.%d{yyyy-MM-dd}.%i.zip",
@@ -225,13 +225,15 @@ def test_the_stop_groups_by_file_and_nodes():
                                                    " would write nothing"]},
               "node5": {"differences": [yaml % 128]}}
     lines = stop(nodes, checks)
-    assert block(lines, "  cassandra.yaml    node1..node3") == [
-        "  cassandra.yaml    node1..node3", "    concurrent_reads", "      Node     64", "      Ansible  32"]
-    assert "  cassandra.yaml    node5" in lines and "  jvm17-server.options    node3" in lines
-    assert lines[1] == "  2 other differences that the import does not explain:"
+    assert block(lines, "  cassandra.yaml — 3 nodes    node1..node3") == [
+        "  cassandra.yaml — 3 nodes    node1..node3", "    concurrent_reads", "      Node     64", "      Ansible  32"]
+    assert "  cassandra.yaml — 1 node    node5" in lines and "  jvm17-server.options — 1 node    node3" in lines
+    # (node3 in two of them: the head's count is of the nodes)
+    assert lines[1:4] == ["  some nodes in more than one problem below", "",
+                          "  2 other differences that the import does not explain:"]
     all_but = stop([node(i) for i in range(1, 6)], dict(("node%d" % i, {"differences": [yaml % 64]})
                                                         for i in (1, 2, 3, 5)))
-    assert "  cassandra.yaml    all - node4" in all_but
+    assert "  cassandra.yaml — 4 nodes    all - node4" in all_but
 
 
 def test_the_stop_says_a_file_of_yours_after_ansibles_value():
@@ -241,8 +243,8 @@ def test_the_stop_says_a_file_of_yours_after_ansibles_value():
     checks = {"node1": {"differences": ["cassandra.yaml: concurrent_reads: node has '64', import would write '16'"]}}
     lines = stop([node(1), node(2)], checks, layout_extra=wins)
     assert lines[1] == "  1 setting: a file of yours gives another value: apply_config would write it."
-    assert block(lines, "  cassandra.yaml    node1") == [
-        "  cassandra.yaml    node1", "    concurrent_reads", "      Node     64",
+    assert block(lines, "  cassandra.yaml — 1 node    node1") == [
+        "  cassandra.yaml — 1 node    node1", "    concurrent_reads", "      Node     64",
         "      Ansible  16   (cassandra_concurrent_reads = 16)"]
     text = " ".join(" ".join(lines).split())
     assert "in group_vars/all/perf.yml: cassandra_concurrent_reads: 64, or remove that line, then import again" in text
@@ -253,9 +255,10 @@ def test_the_stop_keeps_the_os_parts():
                                         " roles would set removed"]},
               "node2": {"differences": ["cassandra_firewall: port 7000/tcp: node has closed, the roles would set open"]}}
     lines = stop([node(1), node(2)], checks)
-    assert lines[1] == "  2 settings outside the config files: the roles would change them."
-    assert block(lines, "  OS (cassandra_linux)    node1") == [
-        "  OS (cassandra_linux)    node1", "    sysctl vm.swappiness (/etc/sysctl.conf)", "      Node     10",
+    assert lines[1:4] == ["  1 + 1 nodes, counted by problem below", "",
+                          "  2 settings outside the config files: the roles would change them."]
+    assert block(lines, "  OS (cassandra_linux) — 1 node    node1") == [
+        "  OS (cassandra_linux) — 1 node    node1", "    sysctl vm.swappiness (/etc/sysctl.conf)", "      Node     10",
         "      Ansible  removed"]
     assert "      -e import_keep_hand_edits=sysctl,firewall" in lines or \
         [line for line in lines if line.endswith("-e import_keep_hand_edits=sysctl,firewall")]
@@ -293,7 +296,7 @@ def test_the_report_has_the_stop_under_todo_and_the_evidence_in_the_details():
     args = (layout, ["/p/inventories/my_cluster.yml", "/p/inventories"], REPORT, checks, False)
     lines = cassandra_import_report(*args, cwd="/p", in_git=True, details=False)
     at = lines.index(u"  SELF-CHECK — the inventory does not reproduce 2 nodes yet")
-    assert lines[at + 3:at + 6] == ["    logback.xml    all - node3", "      AUDIT / rollingPolicy / fileNamePattern",
+    assert lines[at + 3:at + 6] == ["    logback.xml — 2 nodes    all - node3", "      AUDIT / rollingPolicy / fileNamePattern",
                                     "        Node     /var/log/cassandra/audit/audit.log.%d{yyyy-MM-dd}.%i"]
     assert "configuration/appender" not in "\n".join(lines)  # (the full path: evidence, in the details)
     # HAND EDITS: the file and its nodes once, the settings named where they are, the ways out once

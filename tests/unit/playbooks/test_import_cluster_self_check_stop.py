@@ -83,10 +83,11 @@ def test_the_stop_under_the_ops_callback(tmp_path, check):
     assert rc == 2, out
     lines = block(out)
     text = "\n".join(lines)
-    assert lines[:3] == [u"SELF-CHECK FAILED \u2014 the inventory does not reproduce 3 nodes yet",
+    assert lines[:5] == [u"SELF-CHECK FAILED \u2014 the inventory does not reproduce 3 nodes yet",
+                         "  some nodes in more than one problem below", "",
                          "  2 settings on these nodes have no inventory variable: apply_config would",
                          "  change them."]
-    for line in ("  jvm17-server.options    node2", "    -XX:+UseFoo", "      Node     present", "      Ansible  absent",
+    for line in ("  jvm17-server.options \u2014 1 node    node2", "    -XX:+UseFoo", "      Node     present", "      Ansible  absent",
                  "  1 setting: a file of yours gives another value: apply_config would write it.",
                  "      Ansible  16   (cassandra_concurrent_reads = 16)",
                  "  1 node not read, so not checked: node4 (unreachable).", "  To pass:",
@@ -108,7 +109,7 @@ def test_the_stop_in_colour_red_on_its_verdict_only(tmp_path):
     red = [line for line in out.split("\n") if "\x1b[0;31m" in line]
     assert [re.sub(r"\x1b\[[0-9;]*m", "", line) for line in red] == [
         u"SELF-CHECK FAILED \u2014 the inventory does not reproduce 3 nodes yet",
-        "  2 settings on these nodes have no inventory variable: apply_config would", "  change them."]
+        "  some nodes in more than one problem below"]
     assert "\x1b" not in [line for line in out.split("\n") if "To pass:" in line][0]
     assert SECRET not in out
 

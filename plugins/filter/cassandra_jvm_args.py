@@ -389,6 +389,43 @@ def remote_branch_moved(live, role, environment=None, cmdline=""):
     return moved_live, moved_role
 
 
+def jmx_branch_not_run(live, role, environment=None, cmdline=""):
+    """The node's lines in the branch of its LOCAL_JMX test the running JVM did not take that the role's file does
+    not have in that branch: no effect on that JVM (the running JVM's arguments, cmdline, tell the branch: its local
+    JMX port alone, the local one, LOCAL_JMX not set otherwise in the unit's environment; its remote port alone, the
+    remote one; else not known: none); lines adding to JVM_OPTS only -> {"runs": "local" or "remote", "lines":
+    [{n, text}]}, None when none."""
+    try:
+        node, ours = env_lines(live), env_lines(role)
+    except NotSame:
+        return None
+    args = re.split(r"[\0\n]", str(cmdline or ""))
+    local = any(a.startswith(LOCAL_PORT) for a in args)
+    remote = any(a.startswith(REMOTE_PORT) for a in args)
+    if local == remote:
+        return None
+    runs = "local" if local else "remote"
+    if (environment or {}).get("LOCAL_JMX") not in (None, "", "yes" if local else "no"):
+        return None  # (the next start would take the other one)
+
+    def branches(lines):  # -> (then lines, else lines) of the one LOCAL_JMX test outside any block
+        tests = [i for i, line in enumerate(lines) if line["text"] == LOCAL_JMX_TEST and not line["depth"]]
+        if len(tests) != 1:
+            return None
+        end = _block_end(lines, tests[0])
+        at_else = next((i for i in range(tests[0] + 1, end) if lines[i]["depth"] == 1 and lines[i]["text"] == "else"),
+                       end)
+        return lines[tests[0] + 1:at_else], lines[at_else + 1:end]
+    mine, theirs = branches(node), branches(ours)
+    if mine is None or theirs is None:
+        return None
+    side = 1 if runs == "local" else 0
+    known = set(line["text"] for line in theirs[side])
+    found = [{"n": line["n"], "text": line["text"]} for line in mine[side]
+             if line["depth"] == 1 and line["text"] not in known and APPEND_ANY.match(line["text"])]
+    return {"runs": runs, "lines": found} if found else None
+
+
 HEAPDUMP_SET = re.compile(r'^CASSANDRA_HEAPDUMP_DIR=("?)(/[^\s"\'$`\\#;]*)\1\s*$')
 HEAPDUMP_COMMENT = "# set jvm HeapDumpPath with CASSANDRA_HEAPDUMP_DIR"
 HEAPDUMP_IF = 'if [ "x$CASSANDRA_HEAPDUMP_DIR" != "x" ]; then'
