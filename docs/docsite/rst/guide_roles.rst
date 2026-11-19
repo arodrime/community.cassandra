@@ -1703,10 +1703,15 @@ each branch with its own port line as in the stock file (else the port may come 
 import reads no variable from it and says it in one line, the self-check too; ``apply_config`` writes the stock branch
 without it, with no restart (the same JVM arguments). Cassandra not running, its file changed since it started, or
 both ports or none in its arguments: as any other line.
+Not seen: a ``LOCAL_JMX`` set outside the unit (``cassandra.in.sh``, ``/etc/default/cassandra``, an
+``EnvironmentFile``) changed since Cassandra started, the next start then taking the other branch: change it with a
+restart, or import again after it.
 The stock ``-Dcom.sun.management.jmxremote.password.file`` line commented out is the same as the stock file when the
 running JVM never reads that file: JMX authentication off (its last ``-Dcom.sun.management.jmxremote.authenticate`` not
 ``true``), and none of ``-Dcom.sun.management.jmxremote.port``, ``-Dcom.sun.management.config.file``,
-``-Dcassandra.jmx.remote.login.config``, ``-Djava.security.auth.login.config``, ``-Dcassandra.jmx.authorizer``. The
+``-Dcassandra.jmx.remote.login.config``, ``-Djava.security.auth.login.config``, ``-Dcassandra.jmx.authorizer``; nor
+options its command line does not show (``_JAVA_OPTIONS``, ``JDK_JAVA_OPTIONS`` or ``JAVA_TOOL_OPTIONS`` in its
+environment, an ``@file`` or ``-XX:VMOptionsFile`` in its arguments). The
 import says it in one line; ``apply_config`` writes the stock line back with no restart, and says under the node that
 the next restart adds that option (no effect now). Not the access file: Cassandra gives it to its JMX server whatever
 the authentication, which reads it at start.
