@@ -1504,7 +1504,7 @@ hints, saved caches and log directories not owned by that account (``cassandra_c
 as they are, and creates the missing ones ``cassandra_user:cassandra_group`` mode ``0750``).
 
 How Cassandra is started is imported: the init script of the Cassandra package, as the package installed it (``rpm
--V`` or ``dpkg --verify`` does not list it) and with no drop-in of its own (``cassandra.service.d``), gives
+-V`` or ``dpkg --verify`` lists no change of its content: size, digest, missing; its mtime alone is no change) and with no drop-in of its own (``cassandra.service.d``), gives
 ``cassandra_service_start: package_script`` (the roles start that script, write no unit; they stop on a systemd without
 its SysV generator, ``systemd-sysv-generator``, with the way out). A unit of the roles is kept as theirs. Any other unit, or an init script modified or of no
 package, is compared with the unit the roles would write (the self-check): what differs stops the import, with the way
