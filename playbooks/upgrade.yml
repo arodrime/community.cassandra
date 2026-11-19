@@ -301,30 +301,16 @@
     # and the versions of the cluster's nodes outside the run (another datacenter, --limit), as the ring gave
     # them to preflight (describecluster's Database versions: <version>: [<address>:<port>, ...], each node by its
     # ring address: its broadcast_address, else its address); they do not change during this run.
-    # cassandra_upgrade_outside_nodes: those nodes, [{address, version}]. No backslash: Jinja unescapes its string
-    # literals from ansible-core 2.19 on only
+    # cassandra_upgrade_outside_nodes: those nodes, [{address, version}]
     - name: Note the versions of the nodes outside the run
       ansible.builtin.set_fact:
         cassandra_upgrade_outside_versions: "{{ _outside | map(attribute='version') | unique | list }}"
         cassandra_upgrade_outside_nodes: "{{ _outside }}"
       vars:
-        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         _outside: >-
-          {%- set run = [] -%}
-          {%- for p in ansible_play_hosts_all | map('extract', hostvars) | map(attribute='_cassandra_preflight', default={}) -%}
-          {%-   set _ = run.extend([p.ring_address | default(''), p.address | default('')]) -%}
-          {%- endfor -%}
-          {%- set described = hostvars[ansible_play_hosts_all | first].cassandra_preflight_describe.stdout | default('') -%}
-          {%- set section = ((described ~ _nl).split('Database versions:')[1:] | first | default('')).split(_nl ~ _nl) | first -%}
-          {%- set out = [] -%}
-          {%- for line in section.split(_nl) if ': [' in line and (line | trim)[:1] is match('[0-9]') -%}
-          {%-   set version = line.split(':')[0] | trim -%}
-          {%-   for node in line.split(': [', 1)[1].rsplit(']', 1)[0].split(',') -%}
-          {%-     set address = (node | trim).rsplit(':', 1)[0] | replace('[', '') | replace(']', '') -%}
-          {%-     if address and address not in run -%}{%- set _ = out.append({'address': address, 'version': version}) -%}{%- endif -%}
-          {%-   endfor -%}
-          {%- endfor -%}
-          {{ out }}
+          {{ ansible_play_hosts_all | map('extract', hostvars) | map(attribute='_cassandra_preflight', default={}) | list
+             | community.cassandra.cassandra_upgrade_outside_nodes(
+                 hostvars[ansible_play_hosts_all | first].cassandra_preflight_describe.stdout | default('')) }}
       run_once: true
 
     - name: This playbook upgrades from the series it knows

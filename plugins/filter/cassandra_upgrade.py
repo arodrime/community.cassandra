@@ -1,9 +1,12 @@
 # Copyright: Contributors to the community.cassandra collection
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
-"""cassandra_upgrade_copy_refusal: the upgrade's prepare phase refusing a config copy that is not whole."""
+"""cassandra_upgrade_copy_refusal: the upgrade's prepare phase refusing a config copy that is not whole.
+cassandra_upgrade_outside_nodes: the cluster's nodes outside the run, and their versions."""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
+
+import re
 
 
 def cassandra_upgrade_copy_refusal(lines, node, conf_dir, copy, version, command):
@@ -31,6 +34,27 @@ def cassandra_upgrade_copy_refusal(lines, node, conf_dir, copy, version, command
     return "\n".join(out + ["  " + command])
 
 
+def cassandra_upgrade_outside_nodes(preflights, described):
+    """preflights: the run's nodes' _cassandra_preflight (address, ring_address); described: nodetool describecluster's
+    output (its Database versions: <version>: [<address>:<port>, ...], each node by its ring address) -> [{address,
+    version}] of the nodes it lists that are not in the run."""
+    run = []
+    for p in preflights or []:
+        run += [p.get("ring_address", ""), p.get("address", "")]
+    section = ((described + "\n").split("Database versions:")[1:] or [""])[0].split("\n\n")[0]
+    out = []
+    for line in section.split("\n"):
+        if ": [" not in line or not re.match("[0-9]", line.strip()[:1]):
+            continue
+        version = line.split(":")[0].strip()
+        for node in line.split(": [", 1)[1].rsplit("]", 1)[0].split(","):
+            address = node.strip().rsplit(":", 1)[0].replace("[", "").replace("]", "")
+            if address and address not in run:
+                out.append({"address": address, "version": version})
+    return out
+
+
 class FilterModule(object):
     def filters(self):
-        return {"cassandra_upgrade_copy_refusal": cassandra_upgrade_copy_refusal}
+        return {"cassandra_upgrade_copy_refusal": cassandra_upgrade_copy_refusal,
+                "cassandra_upgrade_outside_nodes": cassandra_upgrade_outside_nodes}
