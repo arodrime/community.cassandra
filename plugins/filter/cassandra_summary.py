@@ -364,14 +364,8 @@ def cassandra_stop_block(results, node, failure, operation="", action="", cluste
     "       -e cassandra_rolling_resume=true", "     progress: .cassandra_progress/..."]."""
     outcomes, operation = _outcomes(results, operation, action, check)
     cause, way_out = _cause_and_way_out(failure)
-    verdict = "STOPPED" if way_out else "FAILED"
-    first_cause = cause[0] if cause else "a task failed (see above)"
-    if not way_out and task:
-        detail = [line.strip() for line in str(stderr or "").split("\n") if line.strip()]
-        first_cause = "%s: %s" % (task, first_cause) + (" (%s)" % detail[-1] if detail and _GENERIC.match(first_cause) else "")
-    head = ["  ".join(x for x in [verdict, operation, str(cluster or ""), "at %s" % node] if x)]
-    for i, line in enumerate([first_cause] + cause[1:]):
-        head += _wrapped(("Why:  " if i == 0 else "") + line.strip(), 2 if i == 0 else 8, 8)
+    head = _stop_head("STOPPED" if way_out else "FAILED", operation, cluster, node, cause, task if not way_out else "",
+                      stderr)
     table = out.recap(operation, str(cluster or ""), outcomes, check=check, head=False, causes=False)
     if not table:  # (the table says which nodes were touched)
         head.append("  " + ("The nodes done at the same time were not finished." if batch else "No node after it was touched."))
@@ -379,32 +373,58 @@ def cassandra_stop_block(results, node, failure, operation="", action="", cluste
     if resume and not hint:  # --check wrote no progress file: the same check again, not a resume
         command = cassandra_command(operation, inventory=inventory, hosts=hosts, cwd=cwd, default_inventory=default_inventory,
                                     extra=["--check"] if check else ["-e cassandra_rolling_resume=true"])
-    again = "check again" if check else "resume"
-    if not way_out:
-        way_out = [hint.strip() if hint else ("fix it, then %s" % again if command else
-                   "fix it, then check where the cluster stands (the status playbook) before running it again")]
-    elif hint and not command:  # the failure's own way out ends "then resume": the hint says how
-        way_out = [re.sub(r",? then resume:?$", ", then:", way_out[0]), hint.strip()] + way_out[1:]
-    elif check:
-        way_out = [re.sub(r"then resume(:?)$", r"then check again\1", way_out[0])] + way_out[1:]
-    lines = ["WAY OUT"]
-    steps = _THEN.match(way_out[0]) if command else None
+    way_out = _stop_way_out(way_out, hint, command, check)
     # the nodes a resume does again (not in the progress file: node_operation.yml adds a node once the cluster
     # check after its action passed, restart_batch.yml a rack once back NORMAL): said when that is a restart
     again_nodes = [o["node"] for o in outcomes if o.get("touched")] if not check and action in AGAIN else []
     again_said = " (%s %s again)" % (out.nodes(again_nodes), AGAIN[action][len(again_nodes) > 1]) if again_nodes else ""
+    lines = _way_out_head(way_out[0], command, again_said, "" if check else progress_file, cwd)
+    return head + table + [""] + lines + _way_out_lines(way_out[1:], 2)
+
+
+def _stop_head(verdict, operation, cluster, node, cause, task, stderr):
+    """The verdict line, then the cause on its own lines under it (Why:); task, stderr: the failed task's name and
+    stderr when not one of our stops, said in its cause (stderr when Ansible's generic cause)."""
+    first_cause = cause[0] if cause else "a task failed (see above)"
+    if task:
+        detail = [line.strip() for line in str(stderr or "").split("\n") if line.strip()]
+        first_cause = "%s: %s" % (task, first_cause) + (" (%s)" % detail[-1] if detail and _GENERIC.match(first_cause) else "")
+    head = ["  ".join(x for x in [verdict, operation, str(cluster or ""), "at %s" % node] if x)]
+    for i, line in enumerate([first_cause] + cause[1:]):
+        head += _wrapped(("Why:  " if i == 0 else "") + line.strip(), 2 if i == 0 else 8, 8)
+    return head
+
+
+def _stop_way_out(way_out, hint, command, check):
+    """The failure's way out (its lines), with the hint, the resume or the check again."""
+    again = "check again" if check else "resume"
+    if not way_out:
+        return [hint.strip() if hint else ("fix it, then %s" % again if command else
+                "fix it, then check where the cluster stands (the status playbook) before running it again")]
+    if hint and not command:  # the failure's own way out ends "then resume": the hint says how
+        return [re.sub(r",? then resume:?$", ", then:", way_out[0]), hint.strip()] + way_out[1:]
+    if check:
+        return [re.sub(r"then resume(:?)$", r"then check again\1", way_out[0])] + way_out[1:]
+    return way_out
+
+
+def _way_out_head(first, command, again_said, progress_file, cwd):
+    """WAY OUT and its first step: with a command, 1. what to fix, 2. the command that goes on when first ends with
+    "then resume", else first then the command; progress_file under the command."""
+    lines = ["WAY OUT"]
+    steps = _THEN.match(first) if command else None
     if steps:  # 1. what to fix, 2. the command that goes on (the progress file under it)
         lines += _wrapped("1. " + steps.group("first"), 2, 5) + ["  2. %s%s:" % (steps.group("again"), again_said)]
         lines += _wrapped(command, 5, 7)
         indent = 5
     else:
-        lines += _wrapped(way_out[0] + (":" if command and not way_out[0].endswith(":") else ""), 2, 4)
+        lines += _wrapped(first + (":" if command and not first.endswith(":") else ""), 2, 4)
         lines += _wrapped(command, 4, 6) if command else []
         indent = 4
-    if command and progress_file and not check:  # (under the command it is for, before the other ways out)
+    if command and progress_file:  # (under the command it is for, before the other ways out)
         lines += _wrapped("progress: %s" % (out.path_from(str(progress_file), cwd) if cwd else progress_file),
                           indent, indent + 2)
-    return head + table + [""] + lines + _way_out_lines(way_out[1:], 2)
+    return lines
 
 
 def cassandra_reset_recap(nodes, check=False, cluster="", add_command=""):
@@ -423,19 +443,7 @@ def cassandra_reset_recap(nodes, check=False, cluster="", add_command=""):
         return ["  ".join(x for x in ("NOTHING TO DO", "reset_node", str(cluster or ""),
                                       "%s: empty, Cassandra stopped and disabled" % idle) if x)]
 
-    def named(key):
-        return out.nodes([n["node"] for n in done if n.get(key)], keep_order=True)
-
-    emptied, stopped, disabled = named("delete"), named("stop"), named("disable")
-    entries = out.plural(sum(len(n.get("delete") or []) for n in done), "entry", "entries")
-    if stopped and stopped == disabled:
-        acts = [("stop and disable Cassandra on %s" if check else "Cassandra stopped and disabled on %s") % stopped]
-    else:
-        acts = ([("stop Cassandra on %s" if check else "Cassandra stopped on %s") % stopped] if stopped else []) + (
-            [("disable Cassandra on %s" if check else "Cassandra disabled on %s") % disabled] if disabled else [])
-    if emptied:
-        acts.insert(0, ("empty %s (%s)" if check else "%s emptied (%s deleted)") % (emptied, entries))
-    said = ("would " if check else "") + ", ".join(acts)
+    said = ("would " if check else "") + ", ".join(_reset_acts(done, check))
     head = [("CHECK" if check else "DONE"), "reset_node", str(cluster or ""), said]
     lines = ["  ".join(x for x in head if x) + ("   nothing was changed" if check else "")]
     if idle:
@@ -444,6 +452,23 @@ def cassandra_reset_recap(nodes, check=False, cluster="", add_command=""):
         lines += [""] + out.todo([{"text": "add %s back to the cluster" % ("it" if len(done) == 1 else "them"),
                                    "command": add_command}])
     return lines
+
+
+def _reset_acts(done, check):
+    """What reset_node did (check: would do) on the nodes done, each part for the nodes it is for."""
+    def named(key):
+        return out.nodes([n["node"] for n in done if n.get(key)], keep_order=True)
+
+    emptied, stopped, disabled = named("delete"), named("stop"), named("disable")
+    if stopped and stopped == disabled:
+        acts = [("stop and disable Cassandra on %s" if check else "Cassandra stopped and disabled on %s") % stopped]
+    else:
+        acts = ([("stop Cassandra on %s" if check else "Cassandra stopped on %s") % stopped] if stopped else []) + (
+            [("disable Cassandra on %s" if check else "Cassandra disabled on %s") % disabled] if disabled else [])
+    if emptied:
+        entries = out.plural(sum(len(n.get("delete") or []) for n in done), "entry", "entries")
+        acts.insert(0, ("empty %s (%s)" if check else "%s emptied (%s deleted)") % (emptied, entries))
+    return acts
 
 
 def cassandra_differs(values, setting, group=""):
