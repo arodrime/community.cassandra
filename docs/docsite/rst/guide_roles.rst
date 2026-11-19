@@ -1634,8 +1634,9 @@ Java the node runs (that Java's only: after ``update_java``, move them to the ne
 gets the same arguments from the role's files: worked out from the running JVM's
 arguments (``/proc/<pid>/cmdline``), what ``cassandra-env.sh`` adds by itself from what it finds in the options (the
 heap, the GC log, the GC threads) included, the last option of a name counting; an option set again later is left out.
-Not when Cassandra is not running or its files changed since it started, when JMX authenticates by JAAS, nor in the
-files ``import_keep_hand_edits`` keeps. An ``-javaagent`` added at the end stays a hand edit (moved, the JVM would
+Not when Cassandra is not running or its files changed since it started, when its JVM is not the ``cassandra`` unit's
+(started by hand: not in the unit's control group) or its environment cannot be read, when JMX authenticates by JAAS,
+nor in the files ``import_keep_hand_edits`` keeps. An ``-javaagent`` added at the end stays a hand edit (moved, the JVM would
 get it before the agent ``cassandra-env.sh`` adds). ``apply_config`` then rewrites those files in
 the role's layout (and restarts the nodes): the report says so (``MOVED``). The options the running JVM does not use
 (in the options file of another Java, set again later, ignored by its Java version) are listed under ``CLEANUP``.

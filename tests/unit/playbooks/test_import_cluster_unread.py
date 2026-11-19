@@ -81,6 +81,22 @@ def test_air_gapped_node_noted():
 
 
 READ = next(p for p in PLAYS if p["name"] == "Read every node")
+READ_TASKS = READ["tasks"]
+
+
+def test_a_jvm_not_the_units_is_noted_and_not_read_for_the_proofs():
+    # (audit of rc13) a JVM started by hand (outside the unit's control group) or with an unreadable environment:
+    # its arguments are not read for the proofs (none read: a difference stays one), said under the node
+    why = "not started by the cassandra unit (pid 42 is not in its control group)"
+    notes = node({"import_cluster_unit": {"jvm_untrusted": why}})["notes"]
+    assert "the running JVM's arguments and environment not used to prove the roles' files give it the same: " + why \
+        in notes
+    assert not [n for n in node({"import_cluster_unit": {"jvm_untrusted": ""}})["notes"] if "not used to prove" in n]
+    read = next(t for t in READ_TASKS if t.get("name") == "Read the running Cassandra (conf dir, Cassandra and Java"
+                " versions)")["ansible.builtin.shell"]
+    assert "/files/jvm_proof.sh" in read and 'echo "jvm_untrusted=$(jvm_untrusted "$pid"' in read
+    files = next(t for t in READ_TASKS if t.get("name", "").startswith("Read the config files, when they were"))
+    assert "import_cluster_unit.jvm_untrusted | default('') == ''" in files["vars"]["_wanted"]
 
 
 @pytest.mark.parametrize("task, field", [

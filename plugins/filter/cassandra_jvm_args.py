@@ -398,11 +398,13 @@ def heap_dump_dir_as_role(text, environment, read):
     """cassandra-env.sh (4.x) with its plain CASSANDRA_HEAPDUMP_DIR=<dir> above the stock if that reads it (its stock
     comment above it, or none) written as the role writes cassandra_heap_dump_dir, "${CASSANDRA_HEAPDUMP_DIR:-<dir>}":
     the same dir for the JVM when its environment gives no CASSANDRA_HEAPDUMP_DIR (read: the running JVM's
-    environment was read, environment holding its CASSANDRA_HEAPDUMP_DIR; else as it is: not proven) -> (text, the
-    dir or ""). The import, its self-check and apply_config's proof of no restart read it so, one rule.
+    environment was read, environment holding its CASSANDRA_HEAPDUMP_DIR, and no cassandra.in.sh bin/cassandra may
+    source names it; else as it is: not proven) -> (text, the dir or ""). The import, its self-check and
+    apply_config's proof of no restart read it so, one rule.
     (The JVM's environment is what bin/cassandra exported after cassandra-env.sh ran: the plain line shows there only
     when something exported the variable before, the unit, an EnvironmentFile, /etc/default/cassandra; absent, nothing
-    did, and the role's line falls back to the same dir.)"""
+    did, and the role's line falls back to the same dir. A cassandra.in.sh, sourced by bin/cassandra in the same shell
+    before cassandra-env.sh, may set it unexported, unseen there: playbooks/files/jvm_proof.sh, heapdump_before.)"""
     lines = str(text or "").split("\n")
     if not read or (environment or {}).get("CASSANDRA_HEAPDUMP_DIR") \
             or sum(1 for line in lines if "CASSANDRA_HEAPDUMP_DIR=" in line) != 1:

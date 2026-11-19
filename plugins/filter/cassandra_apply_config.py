@@ -996,7 +996,7 @@ def _scans(text):
 
 
 def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", java="", environ=None, newer=None,
-                                     facts=None):
+                                     facts=None, heapdump_before=""):
     """Whether the running Cassandra needs no restart for the files apply_config writes, proven file by file with the
     import self-check's proofs -> [the reasons, said in the plan]; [] (a restart, as for any change) when one is not.
     changed: the files written; live, new: {file: text} as the node has them and as written (every file of the JVM's:
@@ -1005,7 +1005,9 @@ def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", 
     ({name: value}: its unit's, systemctl show -p Environment, as the import reads it; JVM_EXTRA_OPTS and MX4J_* as
     the JVM has them, whatever set them); newer: the files written since that JVM started, or with no record of what
     it started with (what it read then is not known); facts: the node's ansible_facts, to read its cassandra-env.sh as
-    an earlier series' stock file, as the import does (none: not read so). The next start gets the same environment:
+    an earlier series' stock file, as the import does (none: not read so); heapdump_before: the cassandra.in.sh files
+    naming CASSANDRA_HEAPDUMP_DIR (set before cassandra-env.sh, unseen in the JVM's environment). The next start gets
+    the same environment:
     apply_config writes no unit (a change of it is cassandra_service's, told pending by the record of the start).
     The proofs: the JVM's files give the JVM the same arguments (bin/cassandra emulated, cassandra_jvm_args_same,
     against the running JVM's, the options the environment adds carried, a plain CASSANDRA_HEAPDUMP_DIR read as the
@@ -1047,7 +1049,7 @@ def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", 
         role = dict((f, new[f] if f in changed else live[f]) for f in group)
         node = dict((f, live[f]) for f in group)
         if series in ("40x", "41x"):  # (a plain CASSANDRA_HEAPDUMP_DIR: as the import reads it)
-            node[jvm_args.ENV] = jvm_args.heap_dump_dir_as_role(node[jvm_args.ENV], environ, True)[0]
+            node[jvm_args.ENV] = jvm_args.heap_dump_dir_as_role(node[jvm_args.ENV], environ, not heapdump_before)[0]
         earlier = None
         if facts:  # (a 4.x stock cassandra-env.sh on 5.0, kept on upgrade: as the import reads it)
             from ansible_collections.community.cassandra.plugins.filter.cassandra_import import earlier_env

@@ -185,6 +185,10 @@
     - name: Read the running JVM's arguments, its Java and the environment of its unit
       ansible.builtin.shell: |
         [ -r "/proc/$CASSANDRA_PID/cmdline" ] || exit 0
+        # (not the arguments and environment of the unit, or not known: no proof, as the import reads them)
+        {{ lookup('ansible.builtin.file', playbook_dir ~ '/files/jvm_proof.sh') }}
+        [ -z "$(jvm_untrusted "$CASSANDRA_PID")" ] || exit 0
+        echo "heapdump_before=$(heapdump_before "$CASSANDRA_PID" | tr '\n' ' ')"
         echo "cmdline=$(base64 -w0 < "/proc/$CASSANDRA_PID/cmdline")"
         echo "java=$("/proc/$CASSANDRA_PID/exe" -XshowSettings:properties -version 2>&1 \
           | sed -n 's/^ *java.specification.version = //p' | head -1)"
@@ -396,7 +400,7 @@
                live, _cassandra_config_new | default({}), _jvm_read.cmdline | default('') | b64decode,
                cassandra_version | default(''), _jvm_read.java | default(''), env,
                cassandra_config_newer_files | default([]) + cassandra_config_unknown_files | default([]),
-               ansible_facts | default({}))
+               ansible_facts | default({}), _jvm_read.heapdump_before | default('') | trim)
              if _jvm_read.cmdline | default('') and _running | bool and not _cassandra_apply_config_conf_switch | bool
              else [] }}
         _proven: "{{ _files | reject('in', _as_started) | list if _no_effect else [] }}"

@@ -565,6 +565,11 @@
         # (an EnvironmentFile, /etc/default/cassandra the init script reads): as apply_config reads them
         echo "jvm_env=$(tr '\0' '\n' < /proc/$pid/environ 2>/dev/null \
           | grep -E '^(JVM_EXTRA_OPTS|MX4J_ADDRESS|MX4J_PORT|CASSANDRA_HEAPDUMP_DIR)=' | base64 -w0)"
+        # what the proofs may not take from the JVM: its arguments and environment when not those of the unit, a
+        # CASSANDRA_HEAPDUMP_DIR set unexported before cassandra-env.sh (as apply_config reads them)
+        {{ lookup('ansible.builtin.file', playbook_dir ~ '/files/jvm_proof.sh') }}
+        echo "jvm_untrusted=$(jvm_untrusted "$pid" | tr '\n' ';')"
+        echo "heapdump_before=$(heapdump_before "$pid" | tr '\n' ' ')"
         # what the drop-ins of the unit itself (cassandra.service.d) set besides Environment= (the roles carry only
         # that with the init script of the package): their lines, cut, each once
         printf 'unit_dropin_other=%s\n' "$(for d in $(systemctl show cassandra -p DropInPaths --value 2>/dev/null); do
@@ -930,6 +935,10 @@
           env_files: "{{ _kv.unit_EnvironmentFiles | default('') }}"
           # what the JVM got for cassandra-env.sh to add (JVM_EXTRA_OPTS, MX4J_*), whatever set it
           jvm_env: "{{ dict(_kv.jvm_env | default('') | b64decode | split('\n') | select | map('split', '=', 1)) }}"
+          # why its arguments and environment are not the unit's ('': they are): not read for the proofs
+          jvm_untrusted: "{{ _kv.jvm_untrusted | default('') | regex_replace(';$', '') }}"
+          # the cassandra.in.sh files that name CASSANDRA_HEAPDUMP_DIR (set before cassandra-env.sh, unseen)
+          heapdump_before: "{{ _kv.heapdump_before | default('') | trim }}"
           # an init script (SysV): its path, the package it comes from as installed, or modified ('': not a package's)
           script: "{{ _kv.unit_SourcePath | default('') }}"
           # drop-ins of the unit (cassandra.service.d): what they set holds only for a unit
@@ -975,7 +984,8 @@
              + ([['config', 'content', _files | zip(_files | map('regex_replace', '^', import_cluster_conf_dir ~ '/')) | list]]
                 if _supported | bool else [])
              + ([['cmdline', 'content', [['cmdline', '/proc/' ~ cassandra_jvm.pid ~ '/cmdline']]]]
-                if _supported | bool and cassandra_jvm.pid | default('') != '' else [])
+                if _supported | bool and cassandra_jvm.pid | default('') != ''
+                   and import_cluster_unit.jvm_untrusted | default('') == '' else [])
              + ([['repo', 'content', _repo | zip(_repo) | list]] if import_cluster_repo_files | default([]) | length > 0 else [])
              + ([['unit', 'content', [['cassandra.service', import_cluster_unit.file]]]]
                 if _supported | bool and 'cassandra_service_unit_manage' not in import_cluster_keep
@@ -1165,6 +1175,7 @@
               java: "{{ import_cluster_java | default('') }}"
               # (and the variables the JVM got for cassandra-env.sh to add: the next apply_config's proof reads them)
               environment: "{{ dict(import_cluster_unit.env | default({}), **(import_cluster_unit.jvm_env | default({}))) }}"
+              heapdump_before: "{{ import_cluster_unit.heapdump_before | default('') }}"
               newer: "{{ import_cluster_newer_files | default([]) }}"
               keep: "{{ import_keep_hand_edits | default(false) }}"  # those files not moved
               # the Prometheus exporter's jar and config, read on the node

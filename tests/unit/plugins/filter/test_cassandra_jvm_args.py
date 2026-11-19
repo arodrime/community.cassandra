@@ -1664,6 +1664,84 @@ def test_a_plain_heap_dump_dir_is_not_the_roles_when_the_environment_sets_it(tmp
     assert check(files, "41x", java="11")["differences"] != []
 
 
+def test_a_plain_heap_dump_dir_a_cassandra_in_sh_may_set_before_is_not_proven(tmp_path):
+    """(audit of rc13) a cassandra.in.sh bin/cassandra sources, in the same shell before cassandra-env.sh, setting
+    CASSANDRA_HEAPDUMP_DIR unexported: the JVM's environment does not show it, the node's plain line overrides it, the
+    role's would not: not proven (the import, its self-check, apply_config)."""
+    files = node_files("41x", HEAPDUMP)
+    shell = {"CASSANDRA_HEAPDUMP_DIR": "/srv/other"}  # (bash sees it as cassandra.in.sh leaves it)
+    cmdline = launch(files, "11", tmp_path, environment=shell)
+    new = dict(files, **{"cassandra-env.sh": heap_dump_dir_of_role("41x", "/srv/zorglub/dumps")})
+    assert dump_path(launch(new, "11", tmp_path, environment=shell)) != dump_path(cmdline)
+    before = "/usr/share/cassandra/cassandra.in.sh"
+    jvm_read = {"cmdline": cmdline, "java": "11", "environment": {}, "newer": [], "heapdump_before": before}
+    inventory, layout = import_node(files, "41x", jvm=jvm_read)
+    assert "cassandra_heap_dump_dir" not in layout["nodes"][0]["vars"]
+    out = cassandra_import_self_check(inventory, layout["hosts"], "n1", FACTS, files, {}, "/var/lib/cassandra", "11",
+                                      "", {}, jvm=jvm_read)
+    assert out["differences"] != []
+    assert cassandra_apply_config_no_effect(["cassandra-env.sh"], files, new, cmdline, "41x", "11", {}, None, None,
+                                            before) == []
+    # (none: proven, as before)
+    assert cassandra_apply_config_no_effect(["cassandra-env.sh"], files, new, cmdline, "41x", "11", {}) != []
+
+
+def test_the_jvm_proof_reads_of_the_node(tmp_path):
+    """(audit of rc13) playbooks/files/jvm_proof.sh: a cassandra.in.sh naming CASSANDRA_HEAPDUMP_DIR found (next to the
+    jars' directory, CASSANDRA_INCLUDE); a JVM outside the unit's control group or with an unreadable environment
+    said not the unit's."""
+    script = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "playbooks", "files", "jvm_proof.sh")
+    with open(script) as f:
+        text = f.read()
+    home = tmp_path / "cassandra"
+    (home / "lib").mkdir(parents=True)
+    (home / "bin").mkdir()
+    (home / "bin" / "cassandra.in.sh").write_text("CASSANDRA_HEAPDUMP_DIR=/srv/other\n")
+    include = tmp_path / "include.sh"
+    include.write_text("CASSANDRA_HEAPDUMP_DIR=/srv/x\n")
+    stub = tmp_path / "stub"
+    stub.mkdir()
+    sd = tmp_path / "systemd"
+    sd.mkdir()
+
+    def run(snippet, cg="", **env):
+        (stub / "systemctl").write_text("#!/bin/sh\necho '%s'\n" % cg)
+        (stub / "systemctl").chmod(0o755)
+        child = subprocess.Popen(["sleep", "30"], env=dict(os.environ, **env), cwd=str(tmp_path))
+        try:
+            body = text.replace("/run/systemd/system", str(sd)) + "\n" + snippet.replace("PID", str(child.pid))
+            return subprocess.run(["sh", "-c", body], stdout=subprocess.PIPE, universal_newlines=True, check=True,
+                                  env=dict(os.environ, PATH="%s:%s" % (stub, os.environ["PATH"]))).stdout
+        finally:
+            child.kill()
+            child.wait()
+
+    # (a sleep stands for the JVM: no classpath in its arguments; CASSANDRA_INCLUDE in its environment)
+    assert run("heapdump_before PID") == ""
+    assert run("heapdump_before PID", CASSANDRA_INCLUDE=str(include)) == "%s\n" % include
+    jars = ["sh", "-c", "sleep 30; :", "java", "-cp", "%s/lib/a.jar:%s/lib/b.jar" % (home, home)]
+    child = subprocess.Popen(jars)
+    try:
+        found = subprocess.run(["sh", "-c", text + "\nheapdump_before %d" % child.pid], stdout=subprocess.PIPE,
+                               universal_newlines=True, check=False).stdout
+    finally:
+        child.kill()
+        child.wait()
+    assert found == "%s/lib/../bin/cassandra.in.sh\n" % home
+    # the unit's control group: the JVM's own (from /proc/self/cgroup, as the child inherits it), or another
+    with open("/proc/self/cgroup") as f:
+        own = f.readline().strip().split(":", 2)[2]
+    assert run("jvm_untrusted PID", cg=own) == ""
+    assert run("jvm_untrusted PID", cg="/system.slice/zorglub.service").startswith(
+        "not started by the cassandra unit")
+    assert run("jvm_untrusted PID", cg="").startswith("not started by the cassandra unit")  # (the unit not running)
+    # not readable: said (as not known, not as empty); pid 1's, run by another user
+    if not os.access("/proc/1/environ", os.R_OK):
+        out = subprocess.run(["sh", "-c", text.replace("/run/systemd/system", "/nonexistent") + "\njvm_untrusted 1"],
+                             stdout=subprocess.PIPE, universal_newlines=True, check=True).stdout
+        assert out == "its environment (/proc/1/environ) not readable\n"
+
+
 # --- the JMX lines moved into the remote branch ----------------------------------------------------------------
 
 def jmx_in_remote_branch(files):
@@ -1744,6 +1822,23 @@ def test_jmx_lines_in_the_remote_branch_not_proven_without_the_jvm_or_its_remote
         assert jvm.remote_branch_moved(files["cassandra-env.sh"], role, {}, other) == ([], [])
     # (LOCAL_JMX yes in the unit's environment: the next start takes the local branch)
     assert jvm.remote_branch_moved(files["cassandra-env.sh"], role, {"LOCAL_JMX": "yes"}, cmdline) == ([], [])
+
+
+def test_jmx_lines_in_the_remote_branch_not_proven_by_a_jvm_older_than_its_file(tmp_path):
+    """(audit of rc13) cassandra-env.sh written since the JVM started: its arguments are not that file's (the branch
+    it takes now not known): hand edits, differences, as with no JVM."""
+    files = node_files("41x", jmx_in_remote_branch)
+    cmdline = launch(files, "11", tmp_path)
+    inventory, layout, node = imported(files, "41x", "11", cmdline, newer=["cassandra-env.sh"])
+    assert any("-Djava.rmi.server.hostname=10.0.0.1" in line for line in node["hand_edits"])
+    jvm_read = {"cmdline": cmdline, "java": "11", "environment": {}, "newer": ["cassandra-env.sh"]}
+    out = cassandra_import_self_check(inventory, layout["hosts"], "n1", FACTS, files, {}, "/var/lib/cassandra", "11",
+                                      "", {}, jvm=jvm_read)
+    assert any("-Djava.rmi.server.hostname=10.0.0.1" in d for d in out["differences"])
+    assert not any("in the remote JMX branch" in line for line in out["notes"])
+    # (another file written since: the proof stands)
+    inventory, layout, node = imported(files, "41x", "11", cmdline, newer=["cassandra.yaml"])
+    assert node["hand_edits"] == []
 
 
 def test_jmx_lines_in_the_remote_branch_with_jvm_opts_read_between_stay_hand_edits(tmp_path):

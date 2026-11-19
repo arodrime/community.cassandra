@@ -551,7 +551,7 @@ def _self_check_node(files_data, hosts, node, names, data, inventory_dir=""):
     name = names[node["address"]]
     cmdline = (hv.get("import_cluster_jvm_cmdline") or {}).get("content")
     running = {"cmdline": b64decode(cmdline) if cmdline else "", "newer": hv.get("import_cluster_newer_files") or [],
-               "environment": unit.get("jvm_env") or {}}
+               "environment": unit.get("jvm_env") or {}, "heapdump_before": unit.get("heapdump_before") or ""}
     return name, _self_check(
         files_data, hosts, name, hv["ansible_facts"], live, unit.get("env", {}),
         hv.get("import_cluster_storage_dir", ""), hv.get("import_cluster_java", ""), hv["import_cluster_conf_dir"],
@@ -865,12 +865,14 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
     if "cassandra-env.sh" in live and series in ("40x", "41x"):  # (a plain CASSANDRA_HEAPDUMP_DIR: as the import reads it)
         live = dict(live, **{"cassandra-env.sh": jvm_args.heap_dump_dir_as_role(
             live["cassandra-env.sh"], dict(node_environment or {}, **((running or {}).get("environment") or {})),
-            bool((running or {}).get("cmdline")))[0]})
+            bool((running or {}).get("cmdline")) and not (running or {}).get("heapdump_before"))[0]})
     jvm_live, jvm_rendered = live, rendered  # (the JVM's proof: the files whole)
     if "cassandra-env.sh" in rendered and "cassandra-env.sh" in live:
         # (the node's lines in the remote JMX branch it takes, the roles' outside it: as the import reads them)
+        # (not from a JVM started before its cassandra-env.sh was written: its arguments are not that file's)
         mine, theirs = jvm_args.remote_branch_moved(live["cassandra-env.sh"], rendered["cassandra-env.sh"], dict(
-            node_environment or {}, **((running or {}).get("environment") or {})), (running or {}).get("cmdline"))
+            node_environment or {}, **((running or {}).get("environment") or {})),
+            "" if "cassandra-env.sh" in ((running or {}).get("newer") or []) else (running or {}).get("cmdline"))
         if mine:
             notes.append(REMOTE_BRANCH_NOTE % _out.plural(len(mine), "line"))
         # (and a line its block writes again the same below it: the last one counts)

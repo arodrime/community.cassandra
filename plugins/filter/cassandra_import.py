@@ -2188,7 +2188,7 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     heap_dump_note = []
     if cassandra_version in ("40x", "41x") and "cassandra-env.sh" in live_files:
         text, folder = jvm_args.heap_dump_dir_as_role(live_files["cassandra-env.sh"], running.get("environment"),
-                                                      bool(running.get("cmdline")))
+                                                      bool(running.get("cmdline")) and not running.get("heapdump_before"))
         if folder:  # (the same dir as the role's line, the JVM's environment giving none)
             live_files = dict(live_files, **{"cassandra-env.sh": text})
             heap_dump_note = ["cassandra-env.sh: CASSANDRA_HEAPDUMP_DIR=%s read as cassandra_heap_dump_dir (the running"
@@ -2286,7 +2286,8 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     # (the heap shown the same from the running JVM's arguments wherever its file has it: not a hand edit there)
     hand, normalized, comments = _leftovers(env, cassandra_version, files, render, live_files, rejected,
                                             moved["shown"], HEAP_OPTIONS if moved["shown"] else (),
-                                            running.get("environment"), running.get("cmdline"))
+                                            running.get("environment"), "" if jvm_args.ENV in (running.get("newer") or [])
+                                            else running.get("cmdline"))  # (else not what its file says)
     if earlier:
         old = SERIES[earlier["series"]].split(".")[0] + ".x"
         if jvm_args.ENV in moved["shown"]:

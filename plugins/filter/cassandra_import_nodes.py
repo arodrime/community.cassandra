@@ -378,6 +378,10 @@ def _notes(item, host, hv, read, config, perms, medusa, repo, set_ansible_host, 
     if read and hv.get("import_cluster_newer_files", []):
         notes.append("%s written after Cassandra started: it may not run what they say. apply_config does not restart"
                      " it for them; rolling_restart applies them" % ", ".join(hv["import_cluster_newer_files"]))
+    untrusted = (hv.get("import_cluster_unit") or {}).get("jvm_untrusted")
+    if read and untrusted:
+        notes.append("the running JVM's arguments and environment not used to prove the roles' files give it the same:"
+                     " %s" % untrusted)
     return notes
 
 

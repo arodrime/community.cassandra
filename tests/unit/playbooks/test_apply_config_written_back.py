@@ -306,7 +306,7 @@ def proven(tmp_path, java="17", heap=None, more_changes=(), unitenv="", jvmenv="
     files, rendered, changed, cmdline = written(tmp_path)
     if heap:
         rendered = dict(rendered, **{"jvm-server.options": rendered["jvm-server.options"].replace("-Xmx23552m", heap)})
-    read = {"stdout_lines": ["cmdline=" + base64.b64encode(cmdline.encode()).decode(), "java=" + java,
+    read = {"stdout_lines": ["heapdump_before=", "cmdline=" + base64.b64encode(cmdline.encode()).decode(), "java=" + java,
                              "unitenv=" + unitenv, "jvmenv=" + base64.b64encode(jvmenv.encode()).decode()]}
     compared = dict((f, base64.b64encode(files[f].encode()).decode()) for f in changed)
     variables = {"_cassandra_config_changes": list(changed) + list(more_changes), "_cassandra_config_new": rendered,
@@ -380,6 +380,12 @@ def test_the_environment_read_is_the_unit_s_not_the_jvm_s(tmp_path):
     assert "systemctl show cassandra -p Environment" in script
     # (from the JVM's environment, the variables bin/cassandra passes on as they are, never JVM_OPTS)
     assert "grep -E '^(JVM_EXTRA_OPTS|MX4J_ADDRESS|MX4J_PORT|CASSANDRA_HEAPDUMP_DIR)='" in script
+    # (audit of rc13) a JVM not the unit's (started by hand) or an environment not readable: nothing read, no proof
+    # (a restart as for any change); the cassandra.in.sh files naming CASSANDRA_HEAPDUMP_DIR passed to the proof
+    assert "/files/jvm_proof.sh" in script
+    assert script.index('[ -z "$(jvm_untrusted "$CASSANDRA_PID")" ] || exit 0') < script.index('echo "cmdline=')
+    assert 'echo "heapdump_before=$(heapdump_before "$CASSANDRA_PID"' in script
+    assert proven(tmp_path, cassandra_apply_config_jvm_read={"stdout_lines": []})[0] == "restart"
     # a unit environment with nothing for cassandra-env.sh to add: proven as before
     assert proven(tmp_path, unitenv="LOCAL_JMX=no")[0] == "none"
     assert proven(tmp_path, jvmenv="MX4J_PORT=")[0] == "none"  # (set empty: nothing added)
