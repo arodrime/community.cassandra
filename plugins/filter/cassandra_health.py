@@ -9,7 +9,8 @@ cassandra_health_wait_line: the progress line of the wait for nodes down to
 come back.
 cassandra_leaving_state: where a node given to decommission_node stands.
 cassandra_removal_state: where a dead node given to remove_dead_node stands.
-cassandra_removal_force_target: the node to run removenode force on."""
+cassandra_removal_force_target: the node to run removenode force on.
+cassandra_health_lost_lines: the way out of cluster_health.yml's stop for a node down that is lost for good."""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
