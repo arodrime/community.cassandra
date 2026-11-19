@@ -1644,7 +1644,7 @@ def _leftovers(env, series, files, ctx, live_files, rejected=(), skip=(), proven
             continue
         live_text = live_files[name]
         if name == jvm_args.ENV:  # (the node's lines in the remote JMX branch it takes, the role's outside it)
-            inert = jvm_args.password_file_line_inert(live_text, "\n".join(rendered), cmdline)
+            inert = jvm_args.password_file_line_inert(live_text, "\n".join(rendered), cmdline, environment)
             if inert:  # (the stock password file line commented out, the JVM never reading it)
                 rendered = jvm_args.without_lines("\n".join(rendered), inert).split("\n")
                 normalized.append(PASSWORD_FILE_NOTE)

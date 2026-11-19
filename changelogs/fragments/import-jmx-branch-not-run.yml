@@ -12,4 +12,10 @@ bugfixes:
     commented out has no effect when the running JVM never reads that file (JMX authentication off, no
     ``-Dcom.sun.management.jmxremote.port`` or ``.config.file``, no JAAS login config, no ``cassandra.jmx.authorizer``):
     no hand edit, no self-check difference, said in one line; ``apply_config`` writes the stock line back with no
-    restart. Not the access file, which the JMX server reads at start whatever the authentication.
+    restart. Not the access file, which the JMX server reads at start whatever the authentication. Not when
+    the JVM may get options its command line does not show (``_JAVA_OPTIONS``, ``JDK_JAVA_OPTIONS`` or
+    ``JAVA_TOOL_OPTIONS`` in its environment, an ``@file`` or ``-XX:VMOptionsFile``).
+  - >-
+    apply_config and import_cluster playbooks - a JVM whose arguments read a file of options where it is (``@file``,
+    ``-XX:VMOptionsFile``, ``-XX:Flags``) is never proven to get the same arguments from the role's files, even when
+    its words are the same: that file may give other options at the next start.

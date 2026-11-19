@@ -562,9 +562,10 @@
         # the unit of an init script is "generated": is-enabled asks the init system
         echo "unit_IsEnabled=$(systemctl is-enabled cassandra 2>/dev/null)"
         # the variables bin/cassandra passes on to cassandra-env.sh as they are, as the JVM has them whatever set them
-        # (an EnvironmentFile, /etc/default/cassandra the init script reads): as apply_config reads them
+        # (an EnvironmentFile, /etc/default/cassandra the init script reads), the ones the Java launcher adds options
+        # from: as apply_config reads them
         echo "jvm_env=$(tr '\0' '\n' < /proc/$pid/environ 2>/dev/null \
-          | grep -E '^(JVM_EXTRA_OPTS|MX4J_ADDRESS|MX4J_PORT|CASSANDRA_HEAPDUMP_DIR)=' | base64 -w0)"
+          | grep -E '^(JVM_EXTRA_OPTS|MX4J_ADDRESS|MX4J_PORT|CASSANDRA_HEAPDUMP_DIR|_JAVA_OPTIONS|JDK_JAVA_OPTIONS|JAVA_TOOL_OPTIONS)=' | base64 -w0)"
         # what the proofs may not take from the JVM: its arguments and environment when not those of the unit, a
         # CASSANDRA_HEAPDUMP_DIR set unexported before cassandra-env.sh (as apply_config reads them)
         {{ lookup('ansible.builtin.file', playbook_dir ~ '/files/jvm_proof.sh') }}

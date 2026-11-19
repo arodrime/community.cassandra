@@ -880,7 +880,8 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
     jvm_live, jvm_rendered = live, rendered  # (the JVM's proof: the files whole)
     if "cassandra-env.sh" in rendered and "cassandra-env.sh" in live:
         # (the stock password file line commented out, the JVM never reading it: as the import reads it)
-        inert = jvm_args.password_file_line_inert(live["cassandra-env.sh"], rendered["cassandra-env.sh"], cmdline)
+        inert = jvm_args.password_file_line_inert(live["cassandra-env.sh"], rendered["cassandra-env.sh"], cmdline,
+                                                  environment)
         if inert:
             rendered = dict(rendered, **{"cassandra-env.sh": jvm_args.without_lines(rendered["cassandra-env.sh"], inert)})
             notes.append(PASSWORD_FILE_NOTE)

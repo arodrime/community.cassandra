@@ -27,6 +27,11 @@ OPTIONS = "jvm17-server.options"
 STARTED_WITH = "-Xss256k\n-XX:+UseG1GC\n"
 
 
+# the variables read from the JVM's environment: bin/cassandra's passed on as they are, the Java launcher's
+JVM_ENV_GREP = ("grep -E '^(JVM_EXTRA_OPTS|MX4J_ADDRESS|MX4J_PORT|CASSANDRA_HEAPDUMP_DIR|_JAVA_OPTIONS|JDK_JAVA_OPTIONS"
+                "|JAVA_TOOL_OPTIONS)='")
+
+
 def sha1(text):
     return hashlib.sha1(text.encode("utf-8")).hexdigest()
 
@@ -379,7 +384,7 @@ def test_the_environment_read_is_the_unit_s_not_the_jvm_s(tmp_path):
     script = read["ansible.builtin.shell"]
     assert "systemctl show cassandra -p Environment" in script
     # (from the JVM's environment, the variables bin/cassandra passes on as they are, never JVM_OPTS)
-    assert "grep -E '^(JVM_EXTRA_OPTS|MX4J_ADDRESS|MX4J_PORT|CASSANDRA_HEAPDUMP_DIR)='" in script
+    assert JVM_ENV_GREP in script
     # (audit of rc13) a JVM not the unit's (started by hand) or an environment not readable: nothing read, no proof
     # (a restart as for any change); the cassandra.in.sh files naming CASSANDRA_HEAPDUMP_DIR passed to the proof
     assert "/files/jvm_proof.sh" in script
@@ -392,7 +397,7 @@ def test_the_environment_read_is_the_unit_s_not_the_jvm_s(tmp_path):
     # (pre-push audit, rc13, round 3) the import reads the same, its "no restart" then as apply_config's proof
     with open(os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")) as f:
         text = f.read()
-    assert "grep -E '^(JVM_EXTRA_OPTS|MX4J_ADDRESS|MX4J_PORT|CASSANDRA_HEAPDUMP_DIR)='" in text
+    assert JVM_ENV_GREP in text
     assert "environment: \"{{ dict(import_cluster_unit.env | default({}), **(import_cluster_unit.jvm_env" in text
 
 

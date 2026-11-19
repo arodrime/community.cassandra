@@ -501,20 +501,28 @@ def named_lines_moved(live, role, names, environment=None):
 PASSWORD_FILE = "-Dcom.sun.management.jmxremote.password.file"
 # what makes a JVM read the JMX password file: JMX authentication (the last -D...authenticate=true: Cassandra's
 # JMXServerUtils reads the file only then), the JDK's own JMX agent (its port, or a management.properties that may
-# give it one), a JAAS login (Cassandra's own, or the JDK's) or Cassandra's JMX authorizer
+# give it one), a JAAS login (Cassandra's own, or the JDK's) or Cassandra's JMX authorizer. Not the JDK's default
+# management.properties (<java home>/conf/management/), which could give the agent a port too: commented out in the
+# JDKs' own, not read here
 PASSWORD_FILE_READERS = ("-Dcom.sun.management.jmxremote.port=", "-Dcom.sun.management.config.file=",
                          "-Dcassandra.jmx.remote.login.config=", "-Djava.security.auth.login.config=",
                          "-Dcassandra.jmx.authorizer=")
 
 
-def password_file_inert(cmdline):
-    """Whether the running JVM (cmdline: its /proc/<pid>/cmdline) never reads -Dcom.sun.management.jmxremote.password
-    .file, so that a JVM with the same arguments but that one gets nothing else: JMX authentication off (the last
-    -Dcom.sun.management.jmxremote.authenticate not true, as Boolean.getBoolean reads it; none: off), none of
-    PASSWORD_FILE_READERS. Not the access file: Cassandra hands it to the JMX server whatever the authentication, which
-    reads it at start."""
+# the variables the Java launcher adds options from, which /proc/<pid>/cmdline does not show
+LAUNCHER_ENV = ("_JAVA_OPTIONS", "JDK_JAVA_OPTIONS", "JAVA_TOOL_OPTIONS")
+
+
+def password_file_inert(cmdline, environment=None):
+    """Whether the running JVM (cmdline: its /proc/<pid>/cmdline; environment: its own, LAUNCHER_ENV read there)
+    never reads -Dcom.sun.management.jmxremote.password.file, so that a JVM with the same arguments but that one gets
+    nothing else: JMX authentication off (the last -Dcom.sun.management.jmxremote.authenticate not true, as
+    Boolean.getBoolean reads it; none: off), none of PASSWORD_FILE_READERS, and no option its command line does not
+    show (a LAUNCHER_ENV variable, a file of options read where it is: IN_PLACE). Not the access file: Cassandra hands
+    it to the JMX server whatever the authentication, which reads it at start."""
     args = [a for a in re.split(r"[\0\n]", str(cmdline or "")) if a]
-    if MAIN_CLASS not in args:
+    if MAIN_CLASS not in args or any(IN_PLACE.match(a) for a in args) \
+            or any((environment or {}).get(name) for name in LAUNCHER_ENV):
         return False
     auth = [a.split("=", 1)[1] if "=" in a else "" for a in args
             if a.split("=", 1)[0] == "-Dcom.sun.management.jmxremote.authenticate"]
@@ -522,11 +530,11 @@ def password_file_inert(cmdline):
         and not any(a.startswith(PASSWORD_FILE_READERS) for a in args)
 
 
-def password_file_line_inert(live, role, cmdline):
+def password_file_line_inert(live, role, cmdline, environment=None):
     """The role's line giving the JVM -Dcom.sun.management.jmxremote.password.file (its stock one, outside any block)
     on a node whose cassandra-env.sh runs none (its stock line commented out) and whose JVM never reads that file
-    (password_file_inert): the same for that JVM -> [its line number in role]; [] when not."""
-    if not password_file_inert(cmdline):
+    (password_file_inert, environment: the JVM's): the same for that JVM -> [its line number in role]; [] when not."""
+    if not password_file_inert(cmdline, environment):
         return []
     try:
         node, ours = env_lines(live), env_lines(role)
@@ -920,7 +928,7 @@ def jvm_args_compared(cmdline, live, role, series, java, node_env=None, role_env
     if ENV in live and ENV in role:  # (the node's lines in the JMX branch it does not run: no effect)
         live = dict(live, **{ENV: without_jmx_branch_not_run(live[ENV], role[ENV], node_env, cmdline)[0]})
         # (and the role's password file line where the node has it commented out, the JVM never reading the file)
-        numbers = password_file_line_inert(live[ENV], role[ENV], cmdline)
+        numbers = password_file_line_inert(live[ENV], role[ENV], cmdline, node_env)
         inert = [APPEND.match(line["text"]).group(1) for line in env_lines(role[ENV]) if line["n"] in numbers] \
             if numbers else []
         role = dict(role, **{ENV: without_lines(role[ENV], numbers)})
@@ -929,7 +937,7 @@ def jvm_args_compared(cmdline, live, role, series, java, node_env=None, role_env
     except NotSame as exc:
         return False, str(exc), []
     apart = tuple(apart) + (EARLIER_APART if earlier is not None else ())
-    if args != after and any(IN_PLACE.match(o) for o in args + after):
+    if any(IN_PLACE.match(o) for o in args + after):  # (read at each start: the same words may give other options)
         return False, "an option reads a file of options where it is (-XX:VMOptionsFile, -XX:Flags, @file)", []
     names = [n for n in differences(args[1:], after[1:]) if n not in apart]
     if names:  # their names only (-Xlog:file=<path>: -Xlog, -Xmaxjitcodesize240M: -Xmaxjitcodesize)

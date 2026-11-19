@@ -2441,6 +2441,35 @@ def test_a_line_in_a_jmx_branch_not_known_to_run_or_not_stays_a_plain_difference
             == (None, [])
 
 
+@pytest.mark.parametrize("env", [{"_JAVA_OPTIONS": "-Dcom.sun.management.jmxremote.authenticate=true"},
+                                 {"JDK_JAVA_OPTIONS": "-Dcom.sun.management.jmxremote.authenticate=true"},
+                                 {"JAVA_TOOL_OPTIONS": "-Dcom.sun.management.jmxremote.authenticate=true"},
+                                 {"JVM_EXTRA_OPTS": "@/etc/zorglub/jmx.args"},
+                                 {"JVM_EXTRA_OPTS": "-XX:VMOptionsFile=/etc/zorglub/jmx.options"}],
+                         ids=["_JAVA_OPTIONS", "JDK_JAVA_OPTIONS", "JAVA_TOOL_OPTIONS", "argfile", "VMOptionsFile"])
+def test_the_password_file_line_matters_when_the_jvm_may_get_options_its_cmdline_does_not_show(tmp_path, env):
+    # the Java launcher reads these variables and files itself: /proc/<pid>/cmdline does not show what they set (an
+    # authentication on), so the JVM may read the password file
+    files = node_files("50x", production_jmx())
+    shown = dict((k, v) for k, v in env.items() if k == "JVM_EXTRA_OPTS")  # (the others would reach the test's JVM)
+    cmdline = launch(files, "17", tmp_path, environment=shown or None)
+    assert not jvm.password_file_inert(cmdline, env)
+    inventory, layout, node = imported(files, "50x", "17", cmdline, environment=env)
+    assert not [n for n in node["normalized"] if "password.file commented out" in n]
+    rendered = role_files(inventory, layout, files)[0]
+    assert cassandra_apply_config_no_effect(["cassandra-env.sh"], files, rendered, cmdline, "50x", "17", env) == []
+
+
+def test_an_option_file_read_where_it_is_is_never_the_same_arguments(tmp_path):
+    # the JVM reads the file at its start: the same words in its arguments may give other options at the next one
+    files = node_files("50x")
+    env = {"JVM_EXTRA_OPTS": "@/etc/zorglub/x.args"}
+    cmdline = launch(files, "17", tmp_path, environment=env)
+    assert "@/etc/zorglub/x.args" in cmdline.split("\0")
+    assert jvm.cassandra_jvm_args_same(cmdline, files, files, "50x", "17", env, env) == (
+        False, "an option reads a file of options where it is (-XX:VMOptionsFile, -XX:Flags, @file)")
+
+
 def test_a_jmx_branch_without_its_own_port_line_is_not_known_to_be_run_or_not(tmp_path):
     # LOCAL_JMX=no, the remote port line taken out of the else, the local port from the unit's JVM_EXTRA_OPTS: the
     # else ran (its rmi line in the JVM), the local port says otherwise. The branch is not read from the port then
