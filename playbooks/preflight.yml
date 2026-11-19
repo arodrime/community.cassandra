@@ -557,6 +557,7 @@
       when:
         - cassandra_preflight_status.cluster_status is defined
         - _cassandra_preflight.ring_address | default('') in _un
+        - not _cassandra_apply_config_compare_only | default(false) | bool  # drift's compare: nothing changed
       vars:
         _un: >-
           {{ cassandra_preflight_status.cluster_status.values() | map(attribute='nodes') | flatten
