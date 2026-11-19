@@ -4,8 +4,9 @@ __metaclass__ = type
 # The plan of the playbook topology: the inventory is the desired state.
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_topology import (
-    FilterModule, cassandra_seed_change, cassandra_seed_host, cassandra_seed_port, cassandra_topology_plan,
-    cassandra_topology_screen, cassandra_topology_steps)
+    FilterModule, cassandra_seed_change, cassandra_seed_host, cassandra_seed_port, cassandra_topology_done,
+    cassandra_topology_nothing_to_do, cassandra_topology_plan, cassandra_topology_refusals, cassandra_topology_screen,
+    cassandra_topology_steps)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import PARAGRAPH
 
 
@@ -567,3 +568,49 @@ def test_screen_notes_one_line_each_once():
     # NOTE lines with the facts, before the WARNING block; every line plain text
     assert lines.index("NOTE  node4, node5: java: installed") < lines.index(warnings_of(lines)[0])
     assert all("\n" not in line for line in lines)
+
+
+def _plan(**extra):
+    plan = {"add": [], "remove": [], "gone": [], "silent": [], "unknown": [], "problems": [], "in_ring": [],
+            "seeds": {"step": False, "auto": [], "warnings": []}}
+    plan.update(extra)
+    return plan
+
+
+def test_refusals_the_plan_s_then_the_replication_s():
+    assert cassandra_topology_refusals(_plan(problems=["p"])) == ["p"]
+    # a removal with the replication unread: refused, with why
+    assert cassandra_topology_refusals(_plan(in_ring=["node4"]), keyspaces=None, keyspaces_error="timeout") == [
+        "the keyspaces' replication could not be read (timeout): a removal is not checked blind. With CQL"
+        " authentication on, set cassandra_cql_username and cassandra_cql_password."]
+    too_few = cassandra_topology_refusals(_plan(in_ring=["node4", "node5"]), keyspaces={}, replication=["  dc1: ks"])
+    assert too_few[:2] == ["Removing node4, node5 leaves too few nodes:", "  dc1: ks"]
+    assert too_few[-1].startswith("  -e cassandra_decommission_force=true")
+    assert cassandra_topology_refusals(_plan(in_ring=["node4"]), keyspaces={}, replication=["  dc1: ks"], force=True) == []
+
+
+def test_nothing_to_do_lines():
+    plan = _plan(gone=["node4"], silent=["node5", "node6"], unknown=["10.0.0.9"],
+                 seeds={"step": True, "new": "10.0.0.1", "auto": ["dc2"], "warnings": ["dc2 has no seed"]})
+    assert cassandra_topology_nothing_to_do(plan, "c1", 3, group="c1", notes=["WARNING  w", "n"]) == [
+        "NOTHING TO DO  topology  c1  the ring has the 3 nodes of the inventory, they run with the seeds of"
+        " cassandra_seeds and the ones below",
+        "  already removed: node4 (marked absent, out of the ring, Cassandra stopped): delete it from the inventory,"
+        " or leave it",
+        "  not answering: node5, node6 (marked absent, out of the ring)",
+        "WARNING  dc2 has no seed",
+        "WARNING  10.0.0.9 is in the ring but in no host of the inventory: never touched",
+        "WARNING  w", "NOTE  n", "", "TO DO",
+        "  1. put the seeds the nodes now run with in the inventory (group_vars/c1/, or a re-import writes them),"
+        " else apply_config puts cassandra_seeds back:",
+        '     cassandra_seeds: ["10.0.0.1"]']
+    assert cassandra_topology_nothing_to_do(_plan(), "c1", 1) == [
+        "NOTHING TO DO  topology  c1  the ring has the 1 node of the inventory, they run with the seeds of cassandra_seeds"]
+
+
+def test_done_lines():
+    plan = _plan(add=["node5", "node4"], remove=["node2"], seeds={"step": True, "new": "10.0.0.1,10.0.0.5"})
+    assert cassandra_topology_done(plan, "c1", []) == [
+        "DONE  topology  c1  ring = inventory: added node5, node4; seeds now 10.0.0.1,10.0.0.5; removed node2"]
+    assert cassandra_topology_done(_plan(remove=["node2"]), "c1", ["TO DO", "  1. x"]) == [
+        "DONE  topology  c1  ring = inventory: removed node2", "", "TO DO", "  1. x"]

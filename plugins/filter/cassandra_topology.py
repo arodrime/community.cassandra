@@ -14,18 +14,28 @@ cassandra_seed_change: the hosts' live seed lists and cassandra_seeds -> the
 cassandra_topology_hosts: what the topology playbook knows of each host of
     the cluster's group, the input of cassandra_topology_plan and
     cassandra_topology_screen.
+cassandra_topology_refusals: the plan -> why topology refuses it (none: it
+    may run).
+cassandra_topology_nothing_to_do: the plan with no step -> the lines that
+    say so.
+cassandra_topology_done: the plan once run -> the DONE lines, then the TO DO
+    lines given.
 """
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import re
+from collections.abc import Mapping
 
 from ansible.module_utils.parsing.convert_bool import boolean
 from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import (
     cassandra_decommission_screen, cassandra_reset_warnings)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_stream import cassandra_add_node_plan
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+
+NO_REPLICATION_READ = ("the keyspaces' replication could not be read (%s): a removal is not checked blind. With CQL"
+                       " authentication on, set cassandra_cql_username and cassandra_cql_password.")
 
 
 def _ring_entries(ring):
@@ -711,6 +721,62 @@ def cassandra_topology_hosts(names, hostvars, play_hosts, absent, single):
     return out
 
 
+def cassandra_topology_refusals(plan, keyspaces=None, keyspaces_error="", replication=None, force=False):
+    """Why topology refuses its plan, one text each (none: it may run): the plan's own problems, a removal while
+    the keyspaces' replication is unread (keyspaces not a mapping: keyspaces_error says why), a removal that
+    leaves fewer nodes than replicas (replication: the lines of cassandra_replication_problems), unless force
+    (cassandra_decommission_force)."""
+    problems = list(plan["problems"])
+    if plan["in_ring"] and not isinstance(keyspaces, Mapping):
+        problems.append(NO_REPLICATION_READ % keyspaces_error)
+    if replication and not force:
+        problems.append("Removing %s leaves too few nodes:" % ", ".join(str(n) for n in plan["in_ring"]))
+        problems.extend(replication)
+        problems.extend(["Way out, either:", "  lower their replication (ALTER KEYSPACE), then repair, then run this again",
+                         "  -e cassandra_decommission_force=true   (those replicas are then lost, and QUORUM can fail)"])
+    return problems
+
+
+def _them(names):
+    return "it" if len(names) == 1 else "them"
+
+
+def cassandra_topology_nothing_to_do(plan, cluster, nodes, group="", notes=None):
+    """The plan has no step -> the lines that say so: "NOTHING TO DO  topology  <cluster>  the ring has the N nodes
+    of the inventory, ...", the hosts already removed or not answering, the seed warnings, the ring's nodes in no
+    host of the inventory, the checks' notes (notes: a WARNING as is, else a NOTE), then the seeds to put in the
+    inventory (the group's) when some were picked. nodes: how many nodes the play has."""
+    seeds = plan.get("seeds") or {}
+    auto = seeds.get("auto") or []
+    lines = ["NOTHING TO DO  topology  %s  the ring has the %s of the inventory, they run with the seeds of "
+             "cassandra_seeds%s" % (cluster, out.plural(nodes, "node"), " and the ones below" if auto else "")]
+    gone, silent = plan["gone"], plan["silent"]
+    if gone:
+        lines.append("  already removed: %s (marked absent, out of the ring, Cassandra stopped): delete %s from the"
+                     " inventory, or leave %s" % (out.nodes(gone), _them(gone), _them(gone)))
+    if silent:
+        lines.append("  not answering: %s (marked absent, out of the ring)" % out.nodes(silent))
+    lines.extend("WARNING  " + w for w in seeds.get("warnings") or [])
+    lines.extend("WARNING  %s is in the ring but in no host of the inventory: never touched" % u for u in plan["unknown"])
+    lines.extend(n if str(n).startswith("WARNING") else "NOTE  %s" % n for n in notes or [])
+    if auto:
+        lines.extend([""] + out.todo([out.seeds_todo(seeds, group=group)]))
+    return lines
+
+
+def cassandra_topology_done(plan, cluster, todo):
+    """The plan once run -> "DONE  topology  <cluster>  ring = inventory: added ...; seeds now ...; removed ...",
+    then the TO DO lines given (todo: cassandra_removed_todo's) after a blank line, when there are any."""
+    done = []
+    if plan["add"]:
+        done.append("added " + out.nodes(plan["add"], keep_order=True))
+    if plan["seeds"]["step"]:
+        done.append("seeds now %s" % plan["seeds"]["new"])
+    if plan["remove"]:
+        done.append("removed " + out.nodes(plan["remove"], keep_order=True))
+    return ["DONE  topology  %s  ring = inventory: %s" % (cluster, "; ".join(done))] + ([""] + list(todo) if todo else [])
+
+
 class FilterModule(object):
     def filters(self):
         return {
@@ -720,4 +786,7 @@ class FilterModule(object):
             "cassandra_seed_host": cassandra_seed_host,
             "cassandra_seed_port": cassandra_seed_port,
             "cassandra_topology_hosts": cassandra_topology_hosts,
+            "cassandra_topology_refusals": cassandra_topology_refusals,
+            "cassandra_topology_nothing_to_do": cassandra_topology_nothing_to_do,
+            "cassandra_topology_done": cassandra_topology_done,
         }

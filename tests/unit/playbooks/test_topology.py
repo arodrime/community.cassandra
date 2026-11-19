@@ -141,9 +141,9 @@ def test_limit_that_hides_part_of_the_group_refused():
 
 
 def problems(plan, keyspaces, force=False, error=""):
-    variables = dict(PLAN["vars"], cassandra_topology_plan=plan, cassandra_keyspaces=keyspaces,
-                     cassandra_decommission_force=force, _cassandra_topology_keyspaces_error=error,
-                     _tp_problems=task("Refuse a plan that can't be done")["vars"]["_tp_problems"])
+    variables = dict(PLAN["vars"], **task("Refuse a plan that can't be done")["vars"])
+    variables.update(cassandra_topology_plan=plan, cassandra_keyspaces=keyspaces, cassandra_decommission_force=force,
+                     _cassandra_topology_keyspaces_error=error)
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
     return templar_for(variables).template(trust_as_template("{{ _tp_problems }}"))
 

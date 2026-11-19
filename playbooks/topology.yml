@@ -313,36 +313,18 @@
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         cassandra_output: true
         _tp_problems: >-
-          {{ cassandra_topology_plan.problems
-             + (["the keyspaces' replication could not be read (" ~ _cassandra_topology_keyspaces_error | default('')
-                 ~ '): a removal is not checked blind. With CQL authentication on, set cassandra_cql_username and'
-                 ~ ' cassandra_cql_password.']
-                if cassandra_topology_plan.in_ring and cassandra_keyspaces is not mapping else [])
-             + ((['Removing ' ~ cassandra_topology_plan.in_ring | join(', ') ~ ' leaves too few nodes:'] + _tp_replication
-                 + ['Way out, either:', '  lower their replication (ALTER KEYSPACE), then repair, then run this again',
-                    '  -e cassandra_decommission_force=true   (those replicas are then lost, and QUORUM can fail)'])
-                if _tp_replication and not cassandra_decommission_force | default(false) | bool else []) }}
+          {{ cassandra_topology_plan | community.cassandra.cassandra_topology_refusals(
+               keyspaces=cassandra_keyspaces | default(none), keyspaces_error=_cassandra_topology_keyspaces_error | default(''),
+               replication=_tp_replication, force=_tp_force) }}
+        # cassandra_decommission_force read only when a removal leaves too few nodes
+        _tp_force: "{{ _tp_replication | length > 0 and cassandra_decommission_force | default(false) | bool }}"
 
     - name: Say there is nothing to do
       ansible.builtin.debug:
         msg: >-
-          {{ (['NOTHING TO DO  topology  ' ~ _tp_cluster ~ '  the ring has the '
-              ~ ansible_play_hosts_all | length ~ (' node' if ansible_play_hosts_all | length == 1 else ' nodes') ~ ' of the inventory,'
-              ~ (' they run with the seeds of cassandra_seeds' if not (cassandra_topology_plan.seeds | default({})).auto | default([])
-                 else ' they run with the seeds of cassandra_seeds and the ones below')]
-             + (['  already removed: ' ~ cassandra_topology_plan.gone | community.cassandra.cassandra_node_list
-                 ~ ' (marked absent, out of the ring, Cassandra stopped): delete '
-                 ~ ('it' if cassandra_topology_plan.gone | length == 1 else 'them') ~ ' from the inventory, or leave '
-                 ~ ('it' if cassandra_topology_plan.gone | length == 1 else 'them')] if cassandra_topology_plan.gone else [])
-             + (['  not answering: ' ~ cassandra_topology_plan.silent | community.cassandra.cassandra_node_list
-                 ~ ' (marked absent, out of the ring)'] if cassandra_topology_plan.silent else [])
-             + ((cassandra_topology_plan.seeds | default({})).warnings | default([]) | map('regex_replace', '^', 'WARNING  ') | list)
-             + (cassandra_topology_plan.unknown | map('regex_replace', '^', 'WARNING  ')
-                | map('regex_replace', '$', ' is in the ring but in no host of the inventory: never touched') | list)
-             + (hostvars[ansible_play_hosts_all[0]]._cassandra_notes | default([])
-                | map('regex_replace', '^(?!WARNING)', 'NOTE  ') | list)
-             + (([''] + [cassandra_topology_plan.seeds | community.cassandra.cassandra_seeds_todo(_tp_group)]
-                 | community.cassandra.cassandra_todo) if (cassandra_topology_plan.seeds | default({})).auto | default([]) else [])) | join(_nl) }}
+          {{ cassandra_topology_plan | community.cassandra.cassandra_topology_nothing_to_do(_tp_cluster,
+               ansible_play_hosts_all | length, group=_tp_group,
+               notes=hostvars[ansible_play_hosts_all[0]]._cassandra_notes | default([])) | join(_nl) }}
       run_once: true
       when: not _tp_todo | bool
       vars:
@@ -506,19 +488,7 @@
     - name: Say what is left to do
       ansible.builtin.debug:
         msg: >-
-          {{ (['DONE  topology  ' ~ _plan_cluster ~ '  ring = inventory: ' ~ ([('added ' ~ _plan.add | community.cassandra.cassandra_node_list(keep_order=true)) if _plan.add else '',
-                                                     'seeds now ' ~ _plan.seeds.new if _plan.seeds.step else '',
-                                                     ('removed ' ~ _plan.remove | community.cassandra.cassandra_node_list(keep_order=true)) if _plan.remove else '']
-                                                    | select | join('; '))]
-             + (([''] + _done | community.cassandra.cassandra_removed_todo(
-                    first=[_plan.seeds | community.cassandra.cassandra_seeds_todo(lookup('community.cassandra.cassandra_hosts')),
-                           _reload_failed | community.cassandra.cassandra_seeds_reload_todo(_reload_command)],
-                    reimport_from=hostvars[_stays].ansible_host | default(_stays) if _stays else '', imported=_imported | bool,
-                    inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
-                    hosts=cassandra_hosts | default(''), inventory_dir=hostvars[_stays].inventory_dir | default('') if _stays else '',
-                    cwd=lookup('ansible.builtin.env', 'PWD'), unreachable=_plan.silent,
-                    reimport_hosts=_reimport_hosts))
-                if _done | length > 0 or _plan.seeds.auto | default([]) or _reload_failed else [])) | join(_nl) }}
+          {{ _plan | community.cassandra.cassandra_topology_done(_plan_cluster, _todo) | join(_nl) }}
       run_once: true
       when:
         - not ansible_check_mode
@@ -530,6 +500,15 @@
         _plan: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_topology_plan }}"
         _plan_cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default((hostvars[ansible_play_hosts_all[0]]._cassandra_preflight | default({})).cassandra_cluster_name | default('')) }}"
         _done: "{{ _plan.remove + _plan.gone + _plan.silent }}"
+        _todo: >-
+          {{ _done | community.cassandra.cassandra_removed_todo(
+               first=[_plan.seeds | community.cassandra.cassandra_seeds_todo(lookup('community.cassandra.cassandra_hosts')),
+                      _reload_failed | community.cassandra.cassandra_seeds_reload_todo(_reload_command)],
+               reimport_from=hostvars[_stays].ansible_host | default(_stays) if _stays else '', imported=_imported | bool,
+               inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+               hosts=cassandra_hosts | default(''), inventory_dir=hostvars[_stays].inventory_dir | default('') if _stays else '',
+               cwd=lookup('ansible.builtin.env', 'PWD'), unreachable=_plan.silent, reimport_hosts=_reimport_hosts)
+             if _done | length > 0 or _plan.seeds.auto | default([]) or _reload_failed else [] }}
         # the nodes whose seed list is written but not reloaded (seeds_apply.yml)
         _reload_failed: "{{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('_cassandra_seeds_reload_failed', 'defined') | selectattr('_cassandra_seeds_reload_failed') | map(attribute='inventory_hostname') | list }}"
         _reload_command: >-
