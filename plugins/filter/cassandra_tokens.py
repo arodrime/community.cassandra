@@ -221,6 +221,40 @@ def _plan_new_cluster(nodes, partitioner, index, rfs, allow_partial, out):
     return planned
 
 
+def _running_positions(ring, hosts, names, first, size):
+    """The running ring ({dc: [{address, token}]}), {address: name}, the nodes' names -> ({name: position} of the
+    nodes in it, ["address (dc)"] of the ring's nodes that are none of them)."""
+    running, strangers = {}, []
+    for dc in sorted(ring or {}):
+        for n in ring[dc]:
+            name = hosts.get(_ip(n["address"]))
+            if name in names:
+                running[name] = position(int(n["token"]), first, size)
+            else:
+                strangers.append("%s (%s)" % (n["address"], dc))
+    return running, strangers
+
+
+def _ring_token_warnings(nodes, running, first, size):
+    """A running node whose cassandra_initial_token is not the token it has in the ring: the inventory to fix."""
+    warnings = []
+    for n in nodes:
+        if n["name"] in running and _has_token(n) and str(n["token"]).strip() != str(token_of(running[n["name"]], first, size)):
+            warnings.append(
+                "%s: cassandra_initial_token %s, the ring has %d (the token a node joined with; initial_token is"
+                " not read again): fix the inventory" % (n["name"], n["token"], token_of(running[n["name"]], first, size)))
+    return warnings
+
+
+def _shared_tokens(planned, first, size):
+    """{name: position} -> a problem per token two nodes or more would have (create_cluster's words)."""
+    by_pos = {}
+    for name, p in planned.items():
+        by_pos.setdefault(p, []).append(name)
+    return ["%s have the same token %d" % (" and ".join(sorted(names)), token_of(p, first, size))
+            for p, names in sorted(by_pos.items()) if len(names) > 1]
+
+
 @_wrap
 def cassandra_token_assign(nodes, partitioner, keyspaces=None, default_rf=DEFAULT_RF, allow_partial=False,
                            ring=None, hosts=None):
@@ -241,22 +275,10 @@ def cassandra_token_assign(nodes, partitioner, keyspaces=None, default_rf=DEFAUL
     index = _dc_index(dcs + list((ring or {}).keys()))
     rfs = _rf_by_dc(keyspaces, dcs, default_rf)
     out = {"tokens": {}, "lines": [], "problems": [], "warnings": [], "placed": {}}
-    names = [n["name"] for n in nodes]
-    running, strangers = {}, []
-    for dc in sorted(ring or {}):
-        for n in ring[dc]:
-            name = hosts.get(_ip(n["address"]))
-            if name in names:
-                running[name] = position(int(n["token"]), first, size)
-            else:
-                strangers.append("%s (%s)" % (n["address"], dc))
-    left = [name for name in names if name not in running]
+    running, strangers = _running_positions(ring, hosts, [n["name"] for n in nodes], first, size)
+    left = [n["name"] for n in nodes if n["name"] not in running]
     planned = _plan_new_cluster(nodes, partitioner, index, rfs, allow_partial, out) if left else {}
-    for n in nodes:
-        if n["name"] in running and _has_token(n) and str(n["token"]).strip() != str(token_of(running[n["name"]], first, size)):
-            out["warnings"].append(
-                "%s: cassandra_initial_token %s, the ring has %d (the token a node joined with; initial_token is"
-                " not read again): fix the inventory" % (n["name"], n["token"], token_of(running[n["name"]], first, size)))
+    out["warnings"] += _ring_token_warnings(nodes, running, first, size)
     if (running or strangers) and left and (strangers or any(planned.get(k) != p for k, p in running.items())):
         out["problems"].append(
             "the cluster runs already (%s in the ring, not with the tokens worked out here): create_cluster only starts"
@@ -264,12 +286,7 @@ def cassandra_token_assign(nodes, partitioner, keyspaces=None, default_rf=DEFAUL
             % (", ".join(sorted(running) + strangers), ", ".join(left)))
     out["placed"] = dict((name, p) for name, p in out["placed"].items() if name not in running)
     planned.update(running)
-    by_pos = {}
-    for name, p in planned.items():
-        by_pos.setdefault(p, []).append(name)
-    for p, names in sorted(by_pos.items()):
-        if len(names) > 1:
-            out["problems"].append("%s have the same token %d" % (" and ".join(sorted(names)), token_of(p, first, size)))
+    out["problems"] += _shared_tokens(planned, first, size)
     for dc in dcs:
         dc_ring = [(planned[n["name"]], n["name"], n["rack"]) for n in nodes if n["dc"] == dc and n["name"] in planned]
         try:
