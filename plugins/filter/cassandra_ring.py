@@ -243,6 +243,19 @@ def _differences(missing, known, leaving, stray, guessed, unreachable, run, outs
     return notes
 
 
+def _dc_tables(cluster_status, owner, guessed, names, width):
+    """The table of each datacenter, in order; when a Host ID was cut to fit width ("terminal": the terminal's),
+    the line that says where they are whole."""
+    if str(width) == "terminal":
+        width = terminal_width()
+    lines, cut = [], False
+    for dc in sorted(cluster_status):
+        block, cut_here = _dc_block(dc, cluster_status[dc].get("nodes", []), owner, guessed, names, width)
+        lines.extend(block)
+        cut = cut or cut_here
+    return lines + (["", CUT_HOST_IDS] if cut else [])
+
+
 def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=False, group="the inventory",
                           outside=None, absent=None, cluster="", seen_from="", places=None, names=None, seen_at=None,
                           width=None):
@@ -278,33 +291,32 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
     owner.update(guessed)
     names = dict((_ip(a), name) for a, name in (names or {}).items() if name)
     in_ring, stray, known, leaving, named = _sort_nodes(cluster_status, owner, elsewhere, guessed, absent, names)
-    if str(width) == "terminal":
-        width = terminal_width()
-    lines, cut = [], False
-    for dc in sorted(cluster_status):
-        block, cut_here = _dc_block(dc, cluster_status[dc].get("nodes", []), owner, guessed, names, width)
-        lines.extend(block)
-        cut = cut or cut_here
-    if cut:
-        lines += ["", CUT_HOST_IDS]
+    lines = _dc_tables(cluster_status, owner, guessed, names, width)
     missing = [h for h in inventory if h not in in_ring]
     run = "this run (--limit)" if limited else group
     notes = _differences(missing, known, leaving, stray, guessed, unreachable, run, outside)
-    matches = not missing and not known and not leaving and not stray and not guessed  # a guess is no match
+    differ = bool(missing or known or leaving or stray)
+    matches = not differ and not guessed  # a guess is no match
     members = "inventory" if run == group else run
-    # the only gap a host not reached, taken for the ring node no host has: unchecked, not seen to differ
-    unchecked = sorted(guessed.values()) if guessed and not (missing or known or leaving or stray) else None
-    head = _header(cluster, seen_from, matches, members, len(named), seen_at, unchecked) if cluster or seen_from else []
+    head = _head(cluster, seen_from, differ, guessed, members, len(named), seen_at) if cluster or seen_from else []
     if not head and matches:
         notes.append("The ring and %s match (%s)" % (run, out.plural(len(inventory), "node")))
-    if notes:
-        lines.extend([""] + notes)
-    if named:  # the verdict first, alone, the cluster and where it was seen from under it, then the tables
-        # a ring node that is another host of the inventory: expected under --limit or a sub-group, not a problem
-        verdict = _verdict(named, bool(missing or stray or leaving), [h for h in inventory if h in unreachable])
-        lines = verdict[:1] + head + verdict[1:] + lines
-    else:
-        lines = head + lines
+    # a ring node that is another host of the inventory: expected under --limit or a sub-group, not a problem
+    verdict = _verdict(named, bool(missing or stray or leaving), [h for h in inventory if h in unreachable]) if named else []
+    return _laid_out(verdict, head, lines, notes)
+
+
+def _head(cluster, seen_from, differ, guessed, members, count, seen_at):
+    """The header lines (_header): the ring and the inventory match when they do not differ and no host was taken
+    for a ring node; the only gap such a host (not reached): unchecked, not seen to differ."""
+    unchecked = sorted(guessed.values()) if guessed and not differ else None
+    return _header(cluster, seen_from, not differ and not guessed, members, count, seen_at, unchecked)
+
+
+def _laid_out(verdict, head, tables, notes):
+    """The report's lines: the verdict first, alone, the header (the cluster and where it was seen from) under it,
+    then the tables, then the notes after a blank line."""
+    lines = verdict[:1] + head + verdict[1:] + tables + ([""] + notes if notes else [])
     return lines[1:] if lines[:1] == [""] else lines
 
 
