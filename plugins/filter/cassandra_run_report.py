@@ -60,10 +60,11 @@ def _stamp(epoch):
 
 
 def cassandra_run_report(sections, operation, cluster="", check=False, status="", started=None, ended=None,
-                         build=None):
+                         build=None, run=""):
     """sections: [{title, lines}] (one without lines left out); operation, cluster, check (--check), status (DONE,
     FAILED, STOPPED...; default CHECK under --check, else DONE), started, ended (seconds since the epoch), build (the
-    collection's version and commit; default cassandra_build's) -> the report's text, its lines as they are (not
+    collection's version and commit; default cassandra_build's), run (what the run is, for an operation that changes
+    nothing: "read only, nothing was changed"; default by check) -> the report's text, its lines as they are (not
     fitted to a terminal).
     e.g. ([{title: "WILL DO", lines: ["node1  will apply"]}], "apply_config", "prod", started=..., ended=...) ->
     "apply_config  prod  DONE\\n  made by:  community.cassandra 3.0.0, commit ...\\n  started:  ...\\n...\\nWILL DO\\n
@@ -75,7 +76,7 @@ def cassandra_run_report(sections, operation, cluster="", check=False, status=""
     if ended not in (None, ""):
         took = " (%s)" % out.duration(int(float(ended)) - int(float(started))) if started not in (None, "") else ""
         head.append("  ended:    %s%s" % (_stamp(ended), took))
-    head.append("  run:      %s" % ("--check, nothing was changed" if check else "a real run"))
+    head.append("  run:      %s" % (run or ("--check, nothing was changed" if check else "a real run")))
     body = []
     for section in sections or []:
         lines = [str(line) for line in section.get("lines") or []]

@@ -280,3 +280,12 @@ def test_a_stopped_run_writes_its_report_with_the_stop_as_said():
                                      "node3  -         not reached"]}]
     assert render("{{ _cassandra_run_report_status }}", **variables) == "STOPPED"
     assert render("{{ _cassandra_run_report_operation }}", **variables) == "apply_config"
+
+
+def test_report_of_an_operation_that_changes_nothing():
+    # drift: neither a real run nor --check, said as it is
+    text = cassandra_run_report([{"title": "", "lines": ["FROM STOCK x"]}], "drift", "prod", status="at stock",
+                                started=1763590000, ended=1763590003, build="b", run="read only, nothing was changed")
+    assert text.splitlines()[0] == "drift  prod  at stock"
+    assert "  run:      read only, nothing was changed" in text.splitlines()
+    assert text.endswith("\n\nFROM STOCK x\n")

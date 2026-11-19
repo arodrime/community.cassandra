@@ -6,7 +6,8 @@
 # it started and ended; then the sections given, in full). Run once. Under --check too (a file on the controller,
 # nothing on the nodes). Not written (a dir not writable): said, the run goes on.
 # Takes: _cassandra_run_report_operation, _cassandra_run_report_sections ([{title, lines}]),
-# _cassandra_run_report_started (seconds since the epoch), _cassandra_run_report_status (default DONE, CHECK).
+# _cassandra_run_report_started (seconds since the epoch), _cassandra_run_report_status (default DONE, CHECK),
+# _cassandra_run_report_run (what the run is, for an operation that changes nothing; default by --check).
 - name: Write the report of the run
   delegate_to: localhost
   run_once: true
@@ -39,6 +40,7 @@
                                                         check=ansible_check_mode,
                                                         status=_cassandra_run_report_status | default(''),
                                                         started=_cassandra_run_report_started,
+                                                        run=_cassandra_run_report_run | default(''),
                                                         ended=now().timestamp() | int) }}
         dest: "{{ _path }}"
         mode: "0644"
