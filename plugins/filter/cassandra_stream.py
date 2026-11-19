@@ -276,22 +276,9 @@ def cassandra_stream_report(state, node="", what="", status="going", names=None,
     files", "", "      from:      node1   40% done  (4.0 / 10.0 GiB)", "", "      Now:       current - <clock>", ...];
     status="done" -> ["node4  bootstrap  done  8.0 GiB in 30s (10.0 GiB in all), 273 MiB/s on average"]."""
     total, done, now = state.get("bytes_total", 0), state.get("bytes_done", 0), state.get("now", 0)
-    start = state.get("start", now)
     rate = state.get("rate")
     if status == "done":
-        moved, elapsed = done - state.get("first_done", 0), now - start
-        if not total:
-            summary = ("in %s, " % _duration(elapsed) if elapsed > 0 else "") + "nothing seen in progress"
-        elif moved <= 0 or elapsed <= 0:
-            # streamed before the first check
-            summary = "%s, %s" % (_size(done), ("after %s" % _duration(elapsed)) if elapsed > 0 else "at the first check")
-        else:
-            moved_text, done_text = out.sizes(moved, done)
-            summary = "%s in %s%s, %s on average" % (
-                moved_text, _duration(elapsed),
-                # part of it streamed before the first check (a resumed wait)
-                (" (%s in all)" % done_text) if moved != done else "", _rate(moved / float(elapsed)))
-        return ["  ".join(x for x in [node, what, "done", summary] if x)]
+        return ["  ".join(x for x in [node, what, "done", _done_summary(state)] if x)]
     going = status == "going"
     lines = [_header([node, what] + ([] if going else [_TROUBLE.get(status, "FAILED")]), done, total, rate if going else None)]
 
@@ -299,21 +286,54 @@ def cassandra_stream_report(state, node="", what="", status="going", names=None,
         lines.append("")
         lines.extend(_ITEM % (label if i == 0 else "", v) for i, v in enumerate(values))
 
-    data = []
-    if not state.get("answered"):
-        data.append("no answer at this check, the figures are from the last answer")
     streams = [dict(s, other=(names or {}).get(s["other"], s["other"])) for s in (state.get("streams") or {}).values()]
-    if total:
-        data.append(out.amount(done, total, " / "))
-        files_total = sum(s["files_total"] for s in streams)
-        if files_label and files_total:
-            data.append("%s / %s %s" % (_count(sum(s["files_done"] for s in streams)), _count(files_total), files_label))
-    else:
-        data.append("nothing in progress yet")
-    block("data:", data)
+    block("data:", _data_values(state, streams, files_label))
     if total and set(s["other"] for s in streams) != set([node]):  # not a node's own tasks (cleanup)
         ways = set(s["way"] for s in streams)
         block((ways.pop() if len(ways) == 1 else "with") + ":", _peers(streams))
+    lines.extend(_times(_time_rows(state, clocks, going), now))
+    if stall:
+        lines.extend(_stall(state, going))
+    return lines
+
+
+def _done_summary(state):
+    """A finished operation's state -> what moved in how long: "8.0 GiB in 30s (10.0 GiB in all), 273 MiB/s on
+    average", or what it can say without progress seen."""
+    total, done, now = state.get("bytes_total", 0), state.get("bytes_done", 0), state.get("now", 0)
+    moved, elapsed = done - state.get("first_done", 0), now - state.get("start", now)
+    if not total:
+        return ("in %s, " % _duration(elapsed) if elapsed > 0 else "") + "nothing seen in progress"
+    if moved <= 0 or elapsed <= 0:
+        # streamed before the first check
+        return "%s, %s" % (_size(done), ("after %s" % _duration(elapsed)) if elapsed > 0 else "at the first check")
+    moved_text, done_text = out.sizes(moved, done)
+    return "%s in %s%s, %s on average" % (
+        moved_text, _duration(elapsed),
+        # part of it streamed before the first check (a resumed wait)
+        (" (%s in all)" % done_text) if moved != done else "", _rate(moved / float(elapsed)))
+
+
+def _data_values(state, streams, files_label):
+    """The data block: the bytes (and files) done of the total, or that nothing is in progress yet; first, when
+    the last check got no answer, that the figures are older."""
+    total, done = state.get("bytes_total", 0), state.get("bytes_done", 0)
+    data = []
+    if not state.get("answered"):
+        data.append("no answer at this check, the figures are from the last answer")
+    if not total:
+        return data + ["nothing in progress yet"]
+    data.append(out.amount(done, total, " / "))
+    files_total = sum(s["files_total"] for s in streams)
+    if files_label and files_total:
+        data.append("%s / %s %s" % (_count(sum(s["files_done"] for s in streams)), _count(files_total), files_label))
+    return data
+
+
+def _time_rows(state, clocks, going):
+    """The [label, relative, epoch or None] rows of the times: Now and Started (clocks), then Finish while it goes."""
+    total, done, now = state.get("bytes_total", 0), state.get("bytes_done", 0), state.get("now", 0)
+    start, rate = state.get("start", now), state.get("rate")
     times = [("Now:", "current", now), ("Started:", "%s ago" % _duration(now - start), start)] if clocks else []
     if going and total:
         left = (total - done) / rate if rate and total > done else None
@@ -323,10 +343,7 @@ def cassandra_stream_report(state, node="", what="", status="going", names=None,
             times.append(("Finish:", "in %s" % _duration(left), now + left))
         else:
             times.append(("Finish:", "unknown, " + ("too slow to tell" if left else "no rate yet"), None))
-    lines.extend(_times(times, now))
-    if stall:
-        lines.extend(_stall(state, going))
-    return lines
+    return times
 
 
 def _stall(state, going):
@@ -659,6 +676,35 @@ def cassandra_ring_seen(results, address):
     return ""
 
 
+def _stream_done(mode, seen_joined, join, leave, job, finished, removal):
+    """The operation is over: joined (NORMAL, or seen UN by the others when its own nodetool can't answer), left
+    (DECOMMISSIONED), its job ended well (with leave, a job that changed nothing is not the end), or no removal is
+    left."""
+    if join and (mode == "NORMAL" or seen_joined):
+        return True
+    if leave and mode == "DECOMMISSIONED":
+        return True
+    if finished and not job.get("failed") and (job.get("changed") or not leave):
+        return True
+    return removal is not None and int(removal.get("rc", 1)) == 0 and "Removing token" not in (removal.get("stdout") or "")
+
+
+def _stream_failed(mode, join, leave, job, finished, stopped):
+    """Why the operation failed, '' when it did not: its job failed or was lost, the join or the leave failed,
+    Cassandra stopped there."""
+    if finished and job.get("failed"):
+        return "job_failed"
+    if job is not None and job.get("failed"):
+        return "job_lost"
+    if join and mode == "JOINING_FAILED":
+        return "join_failed"
+    if leave and mode == "DECOMMISSION_FAILED":
+        return "leave_failed"
+    if (join or leave) and stopped:
+        return "stopped"
+    return ""
+
+
 def cassandra_stream_status(state, join=False, leave=False, own=None, seen="", job=None, removal=None, max_time=0,
                             now=None, refused=None):
     """Where a streaming operation stands after a check (stream_check.yml):
@@ -685,22 +731,11 @@ def cassandra_stream_status(state, join=False, leave=False, own=None, seen="", j
     stopped = cassandra_stream_own_stopped(own)
     job = job if job else None
     finished = job is not None and int(job.get("finished") or 0) == 1
-    if ((join and (mode == "NORMAL" or (error and not stopped and seen == "UN")))
-            or (leave and mode == "DECOMMISSIONED")
-            or (finished and not job.get("failed") and (job.get("changed") or not leave))
-            or (removal is not None and int(removal.get("rc", 1)) == 0
-                and "Removing token" not in (removal.get("stdout") or ""))):
+    if _stream_done(mode, join and error and not stopped and seen == "UN", join, leave, job, finished, removal):
         return "done"
-    if finished and job.get("failed"):
-        return "job_failed"
-    if job is not None and job.get("failed"):
-        return "job_lost"
-    if join and mode == "JOINING_FAILED":
-        return "join_failed"
-    if leave and mode == "DECOMMISSION_FAILED":
-        return "leave_failed"
-    if (join or leave) and stopped:
-        return "stopped"
+    failed = _stream_failed(mode, join, leave, job, finished, stopped)
+    if failed:
+        return failed
     if refused:
         return "jmx_refused"
     if state.get("stalled"):
