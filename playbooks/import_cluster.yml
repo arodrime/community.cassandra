@@ -510,7 +510,8 @@
         printf 'unit_dropin_other=%s\n' "$(for d in $(systemctl show cassandra -p DropInPaths --value 2>/dev/null); do
           case $d in */cassandra.service.d/*) grep -hvE '^[[:space:]]*([#;]|$|\[Service\][[:space:]]*$|Environment=)' "$d" 2>/dev/null ;; esac
         done | cut -c1-120 | sort -u | tr '\n' ';')"
-        # an init script: the package it comes from, as installed (rpm -V, dpkg --verify: not listed), else modified
+        # an init script: the package it comes from, as installed (its content: rpm -V, dpkg --verify list it with no
+        # S size, 5 digest or ? digest not checked, not missing; e.g. .......T. its mtime only), else modified
         src=$(systemctl show cassandra -p SourcePath --value 2>/dev/null)
         if [ -n "$src" ] && [ -f "$src" ]; then
           pkg=
@@ -523,7 +524,10 @@
           if [ -n "$pkg" ]; then
             # (rpm -V names /etc/rc.d/init.d/x, systemd may say /etc/init.d/x: both, and the file itself)
             real=$(readlink -f "$src")
-            if $verify "$pkg" 2>/dev/null | awk '{print $NF}' | grep -qxF -e "$src" -e "$real"; then
+            # (a line: SM5DLUGTP or missing, [c|d|g|l|r], the path, [(an error)])
+            if $verify "$pkg" 2>/dev/null | awk '{ a = $1; sub(/^[^\/]*/, ""); sub(/ [(].*[)]$/, "")
+                  if (a == "missing" || substr(a, 1, 1) == "S" || substr(a, 3, 1) ~ /[5?]/) print }' \
+                | grep -qxF -e "$src" -e "$real"; then
               echo "pkg_script=modified"
             else
               echo "pkg_script=$pkg"

@@ -5,6 +5,8 @@ __metaclass__ = type
 # cassandra_service's unit, and the JMX login goes to the inventory.
 
 import os
+import shutil
+import subprocess
 
 import pytest
 import yaml
@@ -329,6 +331,47 @@ def test_unit_facts_read_the_script_and_its_package():
 def test_read_script_verifies_the_init_script():
     script = task("Read the running Cassandra (conf dir, Cassandra and Java versions)")["ansible.builtin.shell"]
     assert 'rpm -V' in script and 'dpkg --verify' in script and 'echo "pkg_script=modified"' in script
+
+
+def script_state(tmp_path, tool, verify):
+    """pkg_script as the task's own lines say it for an init script of package zorglub, rpm -V or dpkg --verify (tool)
+    printing verify; its path: the one systemd gives."""
+    lines = task("Read the running Cassandra (conf dir, Cassandra and Java versions)")["ansible.builtin.shell"].split("\n")
+    start = next(i for i, line in enumerate(lines) if line.lstrip().startswith("# an init script:"))
+    end = next(i for i in range(start, len(lines)) if lines[i] == "fi")
+    init = tmp_path / "init.d" / "cassandra"
+    init.parent.mkdir()
+    init.write_text("#!/bin/sh\n")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fakes = {"systemctl": "echo %s" % init,
+             "rpm": 'case $1 in -qf) echo zorglub ;; -V) cat %s ;; esac' % (tmp_path / "out"),
+             "dpkg": 'case $1 in -S) echo "zorglub: %s" ;; --verify) cat %s ;; esac' % (init, tmp_path / "out")}
+    for name in ("systemctl", tool):
+        (bin_dir / name).write_text("#!/bin/sh\n%s\n" % fakes[name])
+        (bin_dir / name).chmod(0o755)
+    (tmp_path / "out").write_text(verify.replace("%s", str(init)))
+    for name in ("awk", "cat", "grep", "readlink", "head", "cut"):
+        os.symlink(shutil.which(name), str(bin_dir / name))
+    run = subprocess.run(["/bin/sh", "-c", "\n".join(lines[start:end + 1])],
+                         env={"PATH": str(bin_dir)}, stdout=subprocess.PIPE, check=True)
+    return run.stdout.decode().strip()
+
+
+@pytest.mark.parametrize("tool", ["rpm", "dpkg"])
+@pytest.mark.parametrize("verify, state", [
+    ("", "pkg_script=zorglub"),
+    (".......T.  c %s\n", "pkg_script=zorglub"),  # its mtime only (touched): the same content
+    (".M.....T.    %s\n", "pkg_script=zorglub"),  # its mode
+    ("??5??????   c /etc/zorglub.conf\n", "pkg_script=zorglub"),  # another file
+    ("S.5....T.  c %s\n", "pkg_script=modified"),
+    ("..5......    %s\n", "pkg_script=modified"),
+    ("??5?????? c %s\n", "pkg_script=modified"),  # dpkg: its digest
+    ("..?......    %s\n", "pkg_script=modified"),  # its digest not checked
+    ("missing   c %s (No such file or directory)\n", "pkg_script=modified"),
+], ids=["none", "mtime", "mode", "another file", "size digest", "digest", "dpkg digest", "not checked", "missing"])
+def test_read_script_counts_the_init_script_content_only(tmp_path, tool, verify, state):
+    assert script_state(tmp_path, tool, verify) == state
 
 
 def test_cqlsh_of_the_inventory_is_external():
