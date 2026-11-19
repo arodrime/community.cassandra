@@ -10,7 +10,8 @@ import pytest
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_netstats import parse_netstats
 from ansible_collections.community.cassandra.plugins.filter.cassandra_stream import (
     cassandra_add_node_plan, cassandra_cleanup_view, cassandra_compactionstats, cassandra_stream_progress,
-    cassandra_stream_report, cassandra_host_addresses, cassandra_stream_progress_by_host, cassandra_cleanup_report)
+    cassandra_stream_report, cassandra_host_addresses, cassandra_stream_progress_by_host, cassandra_cleanup_report,
+    cassandra_cleanup_batches)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_progress_line
 
 GIB = 1024 ** 3
@@ -827,3 +828,23 @@ def test_own_stopped_is_a_refused_jmx_not_an_unreachable_host():
     assert not cassandra_stream_own_stopped({"unreachable": True, "msg": "ssh: connect to host n1: Connection refused"})
     assert not cassandra_stream_own_stopped({"failed": True, "stderr": "error: Authentication failed"})
     assert not cassandra_stream_own_stopped(None)
+
+
+def test_cleanup_batches_by_mode():
+    def facts(dc, rack):
+        return {"_cassandra_preflight": {"cassandra_dc": dc, "cassandra_rack": rack}}
+    hostvars = {"n1": facts("dc1", "r1"), "n2": facts("dc2", "r1"), "n3": facts("dc1", "r1"), "n4": facts("dc1", "r2")}
+    hosts = ["n1", "n2", "n3", "n4"]
+    assert cassandra_cleanup_batches(hosts, hostvars, "sequential") == [["n1"], ["n2"], ["n3"], ["n4"]]
+    assert cassandra_cleanup_batches(hosts, hostvars, "rack") == [["n1", "n3"], ["n2"], ["n4"]]  # first node's order
+    assert cassandra_cleanup_batches(hosts, hostvars, "dc") == [["n1", "n3", "n4"], ["n2"]]
+    assert cassandra_cleanup_batches(hosts, hostvars, "all") == [hosts]
+
+
+def test_cleanup_batches_of_none_left_to_add_node():
+    """none has no batches: add_node's task does not call the filter then (its loop is templated before its when,
+    tests/unit/playbooks/test_add_node_cleanup_batches.py); no node to clean up: no batch."""
+    hostvars = {"n1": {"_cassandra_preflight": {"cassandra_dc": "dc1", "cassandra_rack": "r1"}}}
+    with pytest.raises(KeyError):
+        cassandra_cleanup_batches(["n1"], hostvars, "none")
+    assert cassandra_cleanup_batches([], hostvars, "none") == []

@@ -52,14 +52,7 @@
     - name: Work out the batches
       ansible.builtin.set_fact:
         _cassandra_cleanup_batches: >-
-          {%- set batches = {} -%}
-          {%- for h in ansible_play_hosts -%}
-          {%-   set p = hostvars[h]._cassandra_preflight -%}
-          {%-   set key = {'sequential': h, 'rack': p.cassandra_dc ~ '/' ~ p.cassandra_rack,
-                          'dc': p.cassandra_dc, 'all': 'all'}[cassandra_cleanup_mode] -%}
-          {%-   set _ = batches.update({key: batches.get(key, []) + [h]}) -%}
-          {%- endfor -%}
-          {{ batches.values() | list }}
+          {{ ansible_play_hosts | community.cassandra.cassandra_cleanup_batches(hostvars, cassandra_cleanup_mode) }}
       run_once: true
 
     - name: Run the batches

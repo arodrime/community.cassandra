@@ -18,6 +18,8 @@ cassandra_seed_hosts: the hosts as cassandra_seed_change takes them, from
     their preflight facts.
 cassandra_seed_hold_lines: add_node's seed change -> the WARNING lines when
     the seed lists are left as they are (else its warnings).
+cassandra_staying_node: the node a re-import reads the inventory from, once
+    nodes are removed.
 cassandra_topology_refusals: the plan -> why topology refuses it (none: it
     may run).
 cassandra_topology_nothing_to_do: the plan with no step -> the lines that
@@ -772,6 +774,13 @@ def cassandra_topology_hosts(names, hostvars, play_hosts, absent, single):
     return out
 
 
+def cassandra_staying_node(others, hostvars):
+    """The nodes that stay (others), hostvars -> the one a re-import reads the inventory from: the first that runs
+    Cassandra (_cassandra_preflight_running), else the first, '' when none stays."""
+    running = [h for h in others if boolean(hostvars[h].get("_cassandra_preflight_running", False), strict=False)]
+    return (running + list(others) or [""])[0]
+
+
 def cassandra_topology_refusals(plan, keyspaces=None, keyspaces_error="", replication=None, force=False):
     """Why topology refuses its plan, one text each (none: it may run): the plan's own problems, a removal while
     the keyspaces' replication is unread (keyspaces not a mapping: keyspaces_error says why), a removal that
@@ -839,6 +848,7 @@ class FilterModule(object):
             "cassandra_seed_host": cassandra_seed_host,
             "cassandra_seed_port": cassandra_seed_port,
             "cassandra_topology_hosts": cassandra_topology_hosts,
+            "cassandra_staying_node": cassandra_staying_node,
             "cassandra_topology_refusals": cassandra_topology_refusals,
             "cassandra_topology_nothing_to_do": cassandra_topology_nothing_to_do,
             "cassandra_topology_done": cassandra_topology_done,

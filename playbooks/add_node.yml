@@ -937,11 +937,5 @@
       run_once: true
       when: _mode != 'none' and not ansible_check_mode
       vars:
-        _batches: >-
-          {%- set batches = {} -%}
-          {%- for h in _targets -%}
-          {%-   set p = hostvars[h]._cassandra_preflight -%}
-          {%-   set key = {'sequential': h, 'rack': p.cassandra_dc ~ '/' ~ p.cassandra_rack, 'dc': p.cassandra_dc, 'all': 'all'}[_mode] -%}
-          {%-   set _ = batches.update({key: batches.get(key, []) + [h]}) -%}
-          {%- endfor -%}
-          {{ batches.values() | list }}
+        # the loop is templated before the when: none has no batches to work out
+        _batches: "{{ [] if _mode == 'none' else _targets | community.cassandra.cassandra_cleanup_batches(hostvars, _mode) }}"

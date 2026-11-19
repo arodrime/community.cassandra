@@ -5,7 +5,7 @@ __metaclass__ = type
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_topology import (
     FilterModule, cassandra_seed_change, cassandra_seed_hold_lines, cassandra_seed_host, cassandra_seed_hosts,
-    cassandra_seed_port, cassandra_topology_done,
+    cassandra_seed_port, cassandra_staying_node, cassandra_topology_done,
     cassandra_topology_nothing_to_do, cassandra_topology_plan, cassandra_topology_refusals, cassandra_topology_screen,
     cassandra_topology_steps)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import PARAGRAPH
@@ -646,3 +646,11 @@ def test_seed_hold_lines_held_or_the_warnings():
         "     ansible-playbook x"]
     assert cassandra_seed_hold_lines(dict(change, problems=["dc3 x"], auto=[]), ["n2"], True, "c")[1] == (
         "WARNING  n2 not in the seed lists of the other nodes yet: fix cassandra_seeds, then run change_seeds:")
+
+
+def test_the_staying_node_runs_cassandra_first():
+    hostvars = {"node1": {"_cassandra_preflight_running": False}, "node2": {"_cassandra_preflight_running": "true"},
+                "node3": {}}
+    assert cassandra_staying_node(["node1", "node2", "node3"], hostvars) == "node2"
+    assert cassandra_staying_node(["node3", "node1"], hostvars) == "node3"  # none runs: the first
+    assert cassandra_staying_node([], hostvars) == ""

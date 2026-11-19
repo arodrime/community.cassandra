@@ -10,6 +10,7 @@ cassandra_host_addresses: the inventory names of the addresses netstats shows; c
 cassandra_stream_progress_by_host, cassandra_cleanup_report, cassandra_cleanup_view: the cleanups of a batch
     (cleanup_check.yml), a block per node.
 cassandra_add_node_plan: what adding nodes streams, and the cleanup after.
+cassandra_cleanup_batches: the nodes to clean up, by batches of the cleanup mode.
 cassandra_stream_own_error, cassandra_stream_own_stopped, cassandra_jmx_refused, cassandra_ring_seen: what a
     node's own nodetool says (its error, Cassandra stopped, a JMX login refused, the ring it sees).
 cassandra_stream_failure: why a streaming wait stopped (stream_wait.yml), from its status;
@@ -880,6 +881,19 @@ def cassandra_cleanup_failure(status, jobs, refused=None, idle=0, stall_time=0, 
     return "%s Last progress: %s" % (why, last)
 
 
+def cassandra_cleanup_batches(hosts, hostvars, mode):
+    """The nodes to clean up (in inventory order), hostvars, cassandra_cleanup_mode -> the batches, in the order
+    of their first node: sequential, a node each; rack, the nodes of a dc/rack; dc, of a datacenter; all, one
+    batch. e.g. (["n1", "n2", "n3"], <n1, n2 in dc1/r1, n3 in dc1/r2>, "rack") -> [["n1", "n2"], ["n3"]]."""
+    batches = {}
+    for h in hosts:
+        p = hostvars[h]["_cassandra_preflight"]
+        key = {"sequential": h, "rack": "%s/%s" % (p["cassandra_dc"], p["cassandra_rack"]), "dc": p["cassandra_dc"],
+               "all": "all"}[mode]
+        batches.setdefault(key, []).append(h)
+    return list(batches.values())
+
+
 class FilterModule(object):
     def filters(self):
         return {"cassandra_stream_progress": cassandra_stream_progress,
@@ -897,4 +911,5 @@ class FilterModule(object):
                 "cassandra_jmx_refused": cassandra_jmx_refused,
                 "cassandra_stream_own_stopped": cassandra_stream_own_stopped,
                 "cassandra_stream_failure": cassandra_stream_failure,
-                "cassandra_cleanup_failure": cassandra_cleanup_failure}
+                "cassandra_cleanup_failure": cassandra_cleanup_failure,
+                "cassandra_cleanup_batches": cassandra_cleanup_batches}

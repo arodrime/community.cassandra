@@ -523,12 +523,7 @@
                others=groups['all'] | difference(groups[lookup('community.cassandra.cassandra_hosts')] | default([])) | length) }}
         # a node that stays (none: no re-import), its inventory dir the one to re-import into
         _others: "{{ ansible_play_hosts_all | reject('in', _done) | list }}"
-        _stays: >-
-          {%- set up = [] -%}
-          {%- for h in _others if hostvars[h]._cassandra_preflight_running | default(false) | bool -%}
-          {%-   set _ = up.append(h) -%}
-          {%- endfor -%}
-          {{ (up + _others) | first | default('') }}
+        _stays: "{{ _others | community.cassandra.cassandra_staying_node(hostvars) }}"
         # the inventory is import_cluster's: <inventory dir>/<cluster group>.yml, written by it (its first
         # line says so); else the hosts are removed by hand
         _imported: >-
