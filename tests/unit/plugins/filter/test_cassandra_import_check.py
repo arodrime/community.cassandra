@@ -66,11 +66,12 @@ def seeded(files, seeds='"10.0.0.1:7000"'):
     return files
 
 
-def import_node(files, series, facts=None, tamper=None, storage_dir="/var/lib/cassandra", keep=None, jvm=None):
+def import_node(files, series, facts=None, tamper=None, storage_dir="/var/lib/cassandra", keep=None, jvm=None,
+                jmx_files=None):
     """What import_cluster does for one node: its variables, the inventory
-    files. -> (inventory files, layout)"""
+    files (jmx_files: cassandra_jmx_files' as the playbook gives it). -> (inventory files, layout)"""
     facts = facts or FACTS
-    imported = cassandra_config_import(files, series, facts, "", storage_dir, jvm=jvm)
+    imported = cassandra_config_import(files, series, facts, "", storage_dir, jmx_files, jvm=jvm)
     node = {"name": "n1", "address": "10.0.0.1", "hostname": "n1", "dc": "dc1", "rack": "r1", "read": True,
             # (installed from the repositories the node has, as the import writes it when they offer Cassandra)
             "vars": dict(imported["vars"], cassandra_version=series,
@@ -90,13 +91,13 @@ def host_vars(files, series, facts=None):
 
 
 def check(files, series, facts=None, tamper=None, env=None, storage_dir="/var/lib/cassandra", java=None, conf_dir="",
-          keep=None, permissions=None, cmdline=""):
+          keep=None, permissions=None, cmdline="", jmx_files=None):
     """permissions: the node's files' owner, group and mode (None: none compared); cmdline: the running JVM's
-    arguments (the import and the self-check get them)."""
+    arguments (the import and the self-check get them); jmx_files: as import_node."""
     facts = facts or FACTS
     java = java or {"40x": "11", "41x": "11", "50x": "17"}[series]
     jvm = {"cmdline": cmdline, "java": java, "environment": env or {}, "newer": []}
-    inventory, layout = import_node(files, series, facts, tamper, storage_dir, keep, jvm=jvm)
+    inventory, layout = import_node(files, series, facts, tamper, storage_dir, keep, jvm=jvm, jmx_files=jmx_files)
     return cassandra_import_self_check(inventory, layout["hosts"], "n1", facts, files, env or {}, storage_dir, java,
                                        conf_dir, {} if permissions is None else permissions, jvm=jvm)
 

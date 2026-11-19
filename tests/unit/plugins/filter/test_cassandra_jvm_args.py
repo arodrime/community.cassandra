@@ -25,7 +25,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import_che
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
     cassandra_import_report)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    IPV4, cassandra_config_import, cassandra_inventory_layout)
+    IPV4, JMX_FILES_UNREAD_NOTE, cassandra_config_import, cassandra_inventory_layout, cassandra_jmx_files)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import cassandra_same_settings
 
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
@@ -156,9 +156,10 @@ def both(*edits):
     return edit
 
 
-def imported(files, series, java, cmdline, newer=None, environment=None, keep=False):
+def imported(files, series, java, cmdline, newer=None, environment=None, keep=False, jmx_files=None):
     inventory, layout = import_node(files, series, jvm={"cmdline": cmdline, "java": java, "keep": keep,
-                                                        "environment": environment or {}, "newer": newer or []})
+                                                        "environment": environment or {}, "newer": newer or []},
+                                    jmx_files=jmx_files)
     return inventory, layout, layout["nodes"][0]
 
 
@@ -620,10 +621,11 @@ def test_remote_jmx_lines_in_its_branch_are_carried(tmp_path):
     assert settings(launch(rendered, "17", tmp_path)) == settings(cmdline)
     # (the self-check said "not on the node: fi": the block's end paired with another line)
     assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
-    # local JMX: that branch does not run, its rmi line is not read
+    # local JMX: that branch does not run, its rmi line is not read, nor the JMX files the JVM does not read
     files = node_files("50x", remote_jmx("yes"))
     inventory, layout, node = imported(files, "50x", "17", launch(files, "17", tmp_path))
-    assert "cassandra_jmx_rmi_hostname" not in node["vars"] and node["hand_edits"]
+    assert "cassandra_jmx_rmi_hostname" not in node["vars"] and node["hand_edits"] == []
+    assert JMX_FILES_UNREAD_NOTE in node["normalized"] and "cassandra_jmx_users" not in node["vars"]
 
 
 def dormant(lines, password_off=False):
@@ -777,6 +779,81 @@ def test_the_same_file_with_remote_jmx(tmp_path):
     assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
     rendered = role_files(inventory, layout, files)[0]
     assert settings(launch(rendered, "17", tmp_path)) == settings(cmdline)
+    assert cassandra_apply_config_no_effect(["cassandra-env.sh"], files, rendered, cmdline, "50x", "17") \
+        == ["the same JVM arguments"]
+
+
+def playbook_jmx_files(files, cmdline):
+    """cassandra_jmx_files as import_cluster gives it (the node's files as they are, its JVM's arguments)."""
+    options = dict((k, v) for k, v in files.items() if re.match(r"jvm[0-9]*-server[.]options$", k))
+    return cassandra_jmx_files(files["cassandra-env.sh"], options, cmdline, "/etc/cassandra", files["cassandra.yaml"])
+
+
+@pytest.mark.parametrize("series", sorted(JAVA))
+def test_the_jmx_users_of_a_local_jmx_jvm_reading_neither_file_are_not_imported(tmp_path, series):
+    """Local JMX, the files given in the remote branch only, present with their users: the JVM reads neither; as the
+    playbook feeds it, no user imported, said once, no difference, no restart."""
+    files = node_files(series, remote_branch_jmx())
+    java = JAVA[series]
+    cmdline = launch(files, java, tmp_path)
+    jmx_files = playbook_jmx_files(files, cmdline)
+    assert jmx_files["access"] == "/etc/cassandra/jmxremote.access"  # (from the branch the JVM did not take)
+    assert jvm.jmx_files_unread(files["cassandra-env.sh"], cmdline)
+    inventory, layout, node = imported(files, series, java, cmdline, jmx_files=jmx_files)
+    assert "cassandra_jmx_users" not in node["vars"]
+    assert node["normalized"].count(JMX_FILES_UNREAD_NOTE) == 1
+    assert check(files, series, java=java, cmdline=cmdline, jmx_files=jmx_files)["differences"] == []
+    rendered, variables = role_files(inventory, layout, files)
+    assert variables.get("cassandra_jmx_users", []) == []  # (access.yml: the files left as they are)
+    assert '#JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file=' in rendered["cassandra-env.sh"]
+    assert cassandra_apply_config_no_effect(["cassandra-env.sh"], files, rendered, cmdline, series, java) \
+        == ["the same JVM arguments", "next restart: -Dcom.sun.management.jmxremote.password.file="
+            "/etc/cassandra/jmxremote.password added (no effect now)"]
+    # cassandra-env.sh written since it started, LOCAL_JMX=no in the unit, a file named to the JVM: as before
+    for newer, env, extra in ((["cassandra-env.sh"], {}, ""), ([], {"LOCAL_JMX": "no"}, ""),
+                              ([], {}, "-Dcom.sun.management.jmxremote.access.file=/etc/cassandra/jmxremote.access")):
+        args = cmdline.replace(jvm.MAIN_CLASS, extra + "\0" + jvm.MAIN_CLASS) if extra else cmdline
+        node = imported(files, series, java, args, newer, env, jmx_files=playbook_jmx_files(files, args))[2]
+        assert JMX_FILES_UNREAD_NOTE not in node["normalized"]
+
+
+@pytest.mark.parametrize("env, extra", [({"_JAVA_OPTIONS": "-Dzorglub=1"}, ""), ({"JDK_JAVA_OPTIONS": "-Dzorglub=1"}, ""),
+                                        ({"JAVA_TOOL_OPTIONS": "-Dzorglub=1"}, ""), ({}, "@/etc/zorglub/jmx.args"),
+                                        ({}, "-XX:VMOptionsFile=/etc/zorglub/jmx.options")],
+                         ids=["_JAVA_OPTIONS", "JDK_JAVA_OPTIONS", "JAVA_TOOL_OPTIONS", "argfile", "VMOptionsFile"])
+def test_the_jmx_users_are_imported_when_the_jvm_may_get_options_its_cmdline_does_not_show(tmp_path, env, extra):
+    # the Java launcher reads these variables and files itself: an option naming a JMX file may come from there
+    files = node_files("50x", remote_branch_jmx())
+    cmdline = launch(files, "17", tmp_path)
+    assert jvm.jmx_files_unread(files["cassandra-env.sh"], cmdline)
+    args = cmdline.replace(jvm.MAIN_CLASS, extra + "\0" + jvm.MAIN_CLASS) if extra else cmdline
+    assert not jvm.jmx_files_unread(files["cassandra-env.sh"], args, env)
+    node = imported(files, "50x", "17", args, environment=env, jmx_files=playbook_jmx_files(files, args))[2]
+    assert JMX_FILES_UNREAD_NOTE not in node["normalized"]
+
+
+def test_the_jmx_files_are_not_known_unread_without_the_local_branch_own_port_line(tmp_path):
+    # the local port may come from elsewhere (the unit's JVM_EXTRA_OPTS) when the then has no port line of its own
+    files = node_files("50x", remote_branch_jmx())
+    cmdline = launch(files, "17", tmp_path)
+    text = files["cassandra-env.sh"].replace('  JVM_OPTS="$JVM_OPTS -Dcassandra.jmx.local.port=$JMX_PORT"\n',
+                                             '  JVM_OPTS="$JVM_OPTS -Dzorglub=1"\n')
+    assert text != files["cassandra-env.sh"]
+    assert jvm.jmx_branch_run(files["cassandra-env.sh"], {}, cmdline) == "local"
+    assert jvm.jmx_branch_run(text, {}, cmdline) is None
+    assert not jvm.jmx_files_unread(text, cmdline)
+
+
+def test_the_jmx_users_of_a_remote_jmx_jvm_are_imported(tmp_path):
+    files = node_files("50x", remote_branch_jmx("no"))
+    cmdline = launch(files, "17", tmp_path)
+    jmx_files = playbook_jmx_files(files, cmdline)
+    assert not jvm.jmx_files_unread(files["cassandra-env.sh"], cmdline)
+    inventory, layout, node = imported(files, "50x", "17", cmdline, jmx_files=jmx_files)
+    assert [u["name"] for u in node["vars"]["cassandra_jmx_users"]] == ["zorglub"]
+    assert JMX_FILES_UNREAD_NOTE not in node["normalized"]
+    assert check(files, "50x", java="17", cmdline=cmdline, jmx_files=jmx_files)["differences"] == []
+    rendered = role_files(inventory, layout, files)[0]
     assert cassandra_apply_config_no_effect(["cassandra-env.sh"], files, rendered, cmdline, "50x", "17") \
         == ["the same JVM arguments"]
 

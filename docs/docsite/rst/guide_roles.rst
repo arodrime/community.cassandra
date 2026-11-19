@@ -1752,6 +1752,10 @@ environment, an ``@file`` or ``-XX:VMOptionsFile`` in its arguments). The
 import says it in one line; ``apply_config`` writes the stock line back with no restart, and says under the node that
 the next restart adds that option (no effect now). Not the access file: Cassandra gives it to its JMX server whatever
 the authentication, which reads it at start.
+On such a local JMX node whose JVM arguments name neither ``-Dcom.sun.management.jmxremote.password.file`` nor
+``.access.file`` (nor ``-Dcom.sun.management.config.file``), with no option its command line does not show (as above),
+the JVM reads neither JMX users' file: their users are not imported, said in one line, and ``cassandra_config`` leaves
+the files as they are.
 ``logback.xml`` is read as logback reads it: its root level, the ``org.apache.cassandra`` level, the lowest level
 ``system.log`` takes (``cassandra_log_system_level``, its ``ThresholdFilter``), ``debug.log`` and the
 console, the stock ``AUDIT`` appender and its logger uncommented (``cassandra_log_audit_file``, written only when it is

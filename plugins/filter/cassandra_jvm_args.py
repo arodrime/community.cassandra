@@ -399,34 +399,48 @@ def _local_jmx_branches(lines):
     return lines[tests[0] + 1:at_else], lines[at_else + 1:end]
 
 
-def jmx_branch_not_run(live, role, environment=None, cmdline=""):
-    """The node's lines adding to JVM_OPTS in the branch of its LOCAL_JMX test the running JVM did not take that the
-    role's file does not have in that branch. The running JVM's arguments (cmdline) tell the branch: its local JMX
-    port alone, the local one (the remote lines, in the else, not run); its remote port alone, the remote one (the
-    local lines, in the then, not run); LOCAL_JMX not set otherwise in the unit's environment (the next start takes
-    the same). bash does not run them: no effect, with them or without -> (the branch run: "local" or "remote",
-    [their line numbers in live]); (None, []) when none or not known (no running JVM, both ports or none, a branch
-    without its own port line: the port may come from elsewhere)."""
+def jmx_branch_run(live, environment=None, cmdline=""):
+    """The branch of the node's LOCAL_JMX test (live: its cassandra-env.sh) the running JVM took, which the next start
+    takes too. Its arguments (cmdline) tell it: its local JMX port alone, the local one (the then); its remote port
+    alone, the remote one (the else); LOCAL_JMX not set otherwise in the unit's environment -> "local" or "remote";
+    None when not known (no running JVM, both ports or none, not one test, a branch without its own port line at
+    depth 1: the port may come from elsewhere)."""
     args = re.split(r"[\0\n]", str(cmdline or ""))
     local = any(a.startswith(LOCAL_PORT) for a in args)
     if local == any(a.startswith(REMOTE_PORT) for a in args) \
             or (environment or {}).get("LOCAL_JMX") not in (None, "", "yes" if local else "no"):
+        return None
+    try:
+        branches = _local_jmx_branches(env_lines(live))
+    except NotSame:
+        return None
+    # (each branch with its own port line, as stock: the port the JVM has then tells the branch it ran)
+    if branches is None or not all(
+            any(line["depth"] == 1 and APPEND_ANY.match(line["text"]) and port in line["text"] for line in branch)
+            for branch, port in zip(branches, (LOCAL_PORT, REMOTE_PORT))):
+        return None
+    return "local" if local else "remote"
+
+
+def jmx_branch_not_run(live, role, environment=None, cmdline=""):
+    """The node's lines adding to JVM_OPTS in the branch of its LOCAL_JMX test the running JVM did not take
+    (jmx_branch_run) that the role's file does not have in that branch. bash does not run them: no effect, with them
+    or without -> (the branch run: "local" or "remote", [their line numbers in live]); (None, []) when none or not
+    known."""
+    run = jmx_branch_run(live, environment, cmdline)
+    if run is None:
         return None, []
     try:
         mine, theirs = _local_jmx_branches(env_lines(live)), _local_jmx_branches(env_lines(role))
     except NotSame:
         return None, []
-    if mine is None or theirs is None:
+    if theirs is None:
         return None, []
-    # (each branch with its own port line, as stock: the port the JVM has then tells the branch it ran)
-    if not all(any(line["depth"] == 1 and APPEND_ANY.match(line["text"]) and port in line["text"] for line in branch)
-               for branch, port in zip(mine, (LOCAL_PORT, REMOTE_PORT))):
-        return None, []
-    side = 1 if local else 0
+    side = 1 if run == "local" else 0
     known = set(line["text"] for line in theirs[side])
     found = [line["n"] for line in mine[side]
              if line["depth"] == 1 and line["text"] not in known and APPEND_ANY.match(line["text"])]
-    return ("local" if local else "remote") if found else None, found
+    return run if found else None, found
 
 
 HEAPDUMP_SET = re.compile(r'^CASSANDRA_HEAPDUMP_DIR=("?)(/[^\s"\'$`\\#;]*)\1\s*$')
@@ -528,6 +542,23 @@ def password_file_inert(cmdline, environment=None):
             if a.split("=", 1)[0] == "-Dcom.sun.management.jmxremote.authenticate"]
     return not (auth and auth[-1].strip().lower() == "true") \
         and not any(a.startswith(PASSWORD_FILE_READERS) for a in args)
+
+
+# what names the JMX password and access files to a JVM: those options, or a management.properties that may
+JMX_FILE_OPTIONS = ("-Dcom.sun.management.jmxremote.password.file=", "-Dcom.sun.management.jmxremote.access.file=",
+                    "-Dcom.sun.management.config.file=")
+
+
+def jmx_files_unread(live, cmdline, environment=None):
+    """Whether the running JVM reads neither jmxremote.password nor jmxremote.access: the local JMX branch taken
+    (jmx_branch_run, live: the node's cassandra-env.sh; environment: the JVM's own, LAUNCHER_ENV read there), its
+    arguments naming neither file (JMX_FILE_OPTIONS), and no option its command line does not show (a LAUNCHER_ENV
+    variable, IN_PLACE)."""
+    args = [a for a in re.split(r"[\0\n]", str(cmdline or "")) if a]
+    if any(IN_PLACE.match(a) for a in args) or any((environment or {}).get(name) for name in LAUNCHER_ENV):
+        return False
+    return jmx_branch_run(live, environment, cmdline) == "local" \
+        and not any(a.startswith(JMX_FILE_OPTIONS) for a in args)
 
 
 def password_file_line_inert(live, role, cmdline, environment=None):
