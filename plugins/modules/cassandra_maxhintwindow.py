@@ -48,19 +48,19 @@ current:
   description:
     - The max hint window read before any change, in C(unit).
   returned: when the get command succeeds and its output is parsed
-  version_added: 2.1.0
+  version_added: 3.0.0
   type: int
   sample: 10800000
 unit:
   description: The unit printed by nodetool.
   returned: when the get command succeeds and its output is parsed
-  version_added: 2.1.0
+  version_added: 3.0.0
   type: str
   sample: ms
 current_raw:
   description: The line printed by the get command.
   returned: when the get command succeeds and its output is parsed
-  version_added: 2.1.0
+  version_added: 3.0.0
   type: str
   sample: "Current max hint window: 10800000 ms"
 '''

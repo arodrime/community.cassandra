@@ -46,7 +46,7 @@ options:
         keep fewer copies of the data than their replication factor.
     type: bool
     default: False
-    version_added: 2.1.0
+    version_added: 3.0.0
 '''
 
 EXAMPLES = '''

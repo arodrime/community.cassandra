@@ -7,7 +7,7 @@ __metaclass__ = type
 DOCUMENTATION = r"""
 name: cassandra_nodes
 short_description: The hosts of the cluster, without those marked absent
-version_added: 2.1.0
+version_added: 3.0.0
 description:
   - Returns the hosts of the cluster's group (lookup C(community.cassandra.cassandra_hosts)) whose
     C(cassandra_node_state) is C(present), the default, in the inventory's order.

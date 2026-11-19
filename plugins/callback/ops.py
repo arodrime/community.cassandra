@@ -8,7 +8,7 @@ DOCUMENTATION = r"""
 name: ops
 type: stdout
 short_description: Only the operator messages of the community.cassandra playbooks
-version_added: 2.1.0
+version_added: 3.0.0
 description:
   - Prints the plans, progress lines, recaps and TO DO lists of the collection's playbooks, the confirmation
     questions, and every failure in full. Nothing for the tasks that go well otherwise (no task headers, no C(ok),
@@ -93,7 +93,7 @@ options:
         key: progress_color
     env:
       - name: ANSIBLE_CALLBACK_CASSANDRA_OPS_PROGRESS_COLOR
-    version_added: 2.1.0
+    version_added: 3.0.0
   warning_color:
     description:
       - The colour of the C(WARNING) lines, an Ansible colour name (C(bright purple), C(bright yellow)...).
@@ -106,7 +106,7 @@ options:
         key: warning_color
     env:
       - name: ANSIBLE_CALLBACK_CASSANDRA_OPS_WARNING_COLOR
-    version_added: 2.1.0
+    version_added: 3.0.0
 extends_documentation_fragment:
   - default_callback
   - result_format_callback
@@ -225,7 +225,7 @@ LOG_EVERY = 300  # seconds between two lines of a step going on, in a log or a p
 _RING_VERDICT = re.compile(r"ALL \d+ NODES? UP\b|\d+ NODES? (DOWN|NOT REACHED): ")
 _RING_DIFFER = re.compile(r"WARNING  ring and inventory differ$")
 # a row of the status playbook's nodetool table: its colour by the node's state
-_RING_ROW = re.compile(r" (?:\S+ +)?([UD])([NJLM])  \S")  # (its node name first, from 2.1.0 on)
+_RING_ROW = re.compile(r" (?:\S+ +)?([UD])([NJLM])  \S")  # (its node name first, from 3.0.0 on)
 # the help playbook's text: a rule naming a section, an operation (its key), a command
 _HELP_RULE = re.compile(r"(====|----) (\S.*?) [=-]{4,}$")
 _HELP_COMMAND = re.compile(r"\s*\$ ")
@@ -234,7 +234,7 @@ _HELP_COMMAND = re.compile(r"\s*\$ ")
 def _ring_verdict(texts):
     """(the lines above, the verdict lines) of the status playbook's report, its verdict last (its warning
     under it), the blank lines around them left out; (texts, []) for any other message. Its verdict first (the
-    status report from 2.1.0 on: the verdict, the cluster's line, a warning): (["", the rest], the verdict
+    status report from 3.0.0 on: the verdict, the cluster's line, a warning): (["", the rest], the verdict
     lines), the rest printed after them (_print)."""
     first = [t for t in texts if t.strip()][:1]
     if first and _RING_VERDICT.match(first[0]) and texts[0] == first[0]:

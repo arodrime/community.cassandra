@@ -47,13 +47,13 @@ current:
   description:
     - The trace probability read before any change.
   returned: when the get command succeeds and its output is parsed
-  version_added: 2.1.0
+  version_added: 3.0.0
   type: float
   sample: 0.0
 current_raw:
   description: The line printed by the get command.
   returned: when the get command succeeds and its output is parsed
-  version_added: 2.1.0
+  version_added: 3.0.0
   type: str
   sample: "Current trace probability: 0.0"
 '''

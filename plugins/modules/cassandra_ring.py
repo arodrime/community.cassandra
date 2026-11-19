@@ -9,7 +9,7 @@ DOCUMENTATION = '''
 module: cassandra_ring
 author: Alain Rodriguez (@arodrime)
 short_description: Returns the tokens of the ring, per datacenter.
-version_added: 2.1.0
+version_added: 3.0.0
 requirements:
   - nodetool
 description:

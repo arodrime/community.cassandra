@@ -1,0 +1,2 @@
+major_changes:
+  - The release after 2.0.0 is 3.0.0 (its pre-releases were 2.1.0-rc1 to 2.1.0-rc13, the next ones are 3.0.0-rcN) - variables were renamed or removed since 2.0.0 and some defaults changed (see the breaking changes). An inventory that still sets a renamed variable is refused with its new name, one that sets a removed variable with what to do instead, never silently ignored.

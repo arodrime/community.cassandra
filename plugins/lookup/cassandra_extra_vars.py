@@ -7,7 +7,7 @@ __metaclass__ = type
 DOCUMENTATION = r"""
 name: cassandra_extra_vars
 short_description: The names of the extra variables (-e) of the run
-version_added: 2.1.0
+version_added: 3.0.0
 description:
   - Returns the names of the variables given with C(-e)/C(--extra-vars) on the command line (C(key=value),
     YAML/JSON and C(@file) alike), sorted. The variables of the inventory and of the playbooks are not in it.

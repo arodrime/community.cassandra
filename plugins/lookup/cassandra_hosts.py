@@ -7,7 +7,7 @@ __metaclass__ = type
 DOCUMENTATION = r"""
 name: cassandra_hosts
 short_description: The inventory group of the cluster the operation playbooks run on
-version_added: 2.1.0
+version_added: 3.0.0
 description:
   - Returns the variable C(cassandra_hosts) when it is set (C(-e cassandra_hosts=<group>)). It must name a
     group of the inventory with hosts, else the lookup fails. Under C(ansible-playbook), it must not come from the

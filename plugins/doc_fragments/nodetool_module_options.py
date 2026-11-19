@@ -55,7 +55,7 @@ options:
         the user running nodetool (the C(cassandra_config) role writes it for root with C(cassandra_jmx_ssl_enabled)).
     type: bool
     default: false
-    version_added: 2.1.0
+    version_added: 3.0.0
   debug:
     description:
       - Enable additional debug output.

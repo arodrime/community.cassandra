@@ -49,13 +49,13 @@ current:
     - The inter-dc stream throughput read before any change, in C(unit).
     - 0 means unlimited (no throttling).
   returned: when the get command succeeds and its output is parsed
-  version_added: 2.1.0
+  version_added: 3.0.0
   type: float
   sample: 200.0
 unit:
   description: The unit printed by nodetool, null when it prints C(unlimited).
   returned: when the get command succeeds and its output is parsed
-  version_added: 2.1.0
+  version_added: 3.0.0
   type: str
   sample: Mb/s
 current_raw:
@@ -63,7 +63,7 @@ current_raw:
     - The line printed by the get command.
     - Since 4.1, nodetool labels it C(Current stream throughput).
   returned: when the get command succeeds and its output is parsed
-  version_added: 2.1.0
+  version_added: 3.0.0
   type: str
   sample: "Current stream throughput: 200.0 Mb/s"
 '''

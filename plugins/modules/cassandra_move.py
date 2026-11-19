@@ -9,7 +9,7 @@ DOCUMENTATION = '''
 module: cassandra_move
 author: Alain Rodriguez (@arodrime)
 short_description: Moves a single-token node to a new token.
-version_added: 2.1.0
+version_added: 3.0.0
 requirements:
   - nodetool
 description:

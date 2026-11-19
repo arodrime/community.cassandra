@@ -10,7 +10,7 @@ DOCUMENTATION = '''
 module: cassandra_netstats
 author: Alain Rodriguez (@arodrime)
 short_description: Returns the mode of the node and whether it is streaming.
-version_added: 2.1.0
+version_added: 3.0.0
 requirements:
   - nodetool
 description:

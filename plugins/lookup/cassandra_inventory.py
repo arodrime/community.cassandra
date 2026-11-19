@@ -7,7 +7,7 @@ __metaclass__ = type
 DOCUMENTATION = r"""
 name: cassandra_inventory
 short_description: The clusters of an inventory, read without decrypting anything and without the nodes
-version_added: 2.1.0
+version_added: 3.0.0
 description:
   - Reads an inventory as Ansible does (its groups, C(group_vars) and C(host_vars)) and returns,
     per cluster group, its hosts with the variables the C(help) playbook shows (the cluster's name, versions,
