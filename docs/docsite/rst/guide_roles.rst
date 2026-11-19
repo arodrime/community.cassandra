@@ -1617,6 +1617,9 @@ running JVM never reads that file: JMX authentication off (its last ``-Dcom.sun.
 ``-Dcassandra.jmx.remote.login.config``, ``-Djava.security.auth.login.config``, ``-Dcassandra.jmx.authorizer``. The
 import says it in one line; ``apply_config`` writes the stock line back with no restart. Not the access file: Cassandra
 gives it to its JMX server whatever the authentication, which reads it at start.
+On such a local JMX node whose JVM arguments name neither ``-Dcom.sun.management.jmxremote.password.file`` nor
+``.access.file`` (nor ``-Dcom.sun.management.config.file``), the JVM reads neither JMX users' file: their users are not
+imported, said in one line, and ``cassandra_config`` leaves the files as they are.
 ``logback.xml`` is read as logback reads it: its root level, the ``org.apache.cassandra`` level, ``debug.log`` and the
 console, the stock ``AUDIT`` appender and its logger uncommented (``cassandra_log_audit_file``, written only when it is
 not its default: on with ``FileAuditLogger``) and the dir of its file (``cassandra_log_audit_dir``), the dirs of ``system.log`` and ``debug.log``

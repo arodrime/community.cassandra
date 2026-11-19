@@ -423,15 +423,33 @@ def _local_jmx_branches(lines):
     return lines[tests[0] + 1:at_else], lines[at_else + 1:end]
 
 
+def local_jmx_taken(environment=None, cmdline=""):
+    """Whether the running JVM took the local JMX branch and the next start takes it too: its arguments have the local
+    JMX port and not the remote one (cmdline), LOCAL_JMX not set otherwise in the unit's environment."""
+    args = re.split(r"[\0\n]", str(cmdline or ""))
+    return any(a.startswith(LOCAL_PORT) for a in args) and not any(a.startswith(REMOTE_PORT) for a in args) \
+        and (environment or {}).get("LOCAL_JMX") in (None, "", "yes")
+
+
+# what names the JMX password and access files to a JVM: those options, or a management.properties that may
+JMX_FILE_OPTIONS = ("-Dcom.sun.management.jmxremote.password.file=", "-Dcom.sun.management.jmxremote.access.file=",
+                    "-Dcom.sun.management.config.file=")
+
+
+def jmx_files_unread(environment=None, cmdline=""):
+    """Whether the running JVM reads neither jmxremote.password nor jmxremote.access: local JMX (local_jmx_taken), its
+    arguments naming neither file (JMX_FILE_OPTIONS)."""
+    return local_jmx_taken(environment, cmdline) \
+        and not any(a.startswith(JMX_FILE_OPTIONS) for a in re.split(r"[\0\n]", str(cmdline or "")))
+
+
 def jmx_branch_not_run(live, role, environment=None, cmdline=""):
     """The node's lines adding to JVM_OPTS in the remote JMX branch (the else of its LOCAL_JMX test) that the role's
     file does not have there, on a node whose running JVM took the local one: its arguments have the local JMX port
     and not the remote one (cmdline), LOCAL_JMX not set otherwise in the unit's environment (the next start takes the
     same). bash does not run them: no effect, with them or without -> [their line numbers in live]; [] when none or
     not known (no running JVM, the remote branch taken: as before)."""
-    args = re.split(r"[\0\n]", str(cmdline or ""))
-    if not any(a.startswith(LOCAL_PORT) for a in args) or any(a.startswith(REMOTE_PORT) for a in args) \
-            or (environment or {}).get("LOCAL_JMX") not in (None, "", "yes"):
+    if not local_jmx_taken(environment, cmdline):
         return []
     try:
         mine, theirs = _local_jmx_branches(env_lines(live)), _local_jmx_branches(env_lines(role))

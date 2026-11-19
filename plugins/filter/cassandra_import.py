@@ -1968,11 +1968,18 @@ def _yaml_extras(env, series, ctx, cassandra_yaml, release, found, changed):
     return dict((k, v) for k, v in extras.items() if str(k) not in rejected), rejected
 
 
-def _jmx_import(env, live_files, jmx_files):
+# a node whose running JVM runs local JMX and reads neither JMX file (jvm_args.jmx_files_unread)
+JMX_FILES_UNREAD_NOTE = ("jmxremote.* users not imported: this JVM runs local JMX and reads neither file; the files are"
+                         " left as they are")
+
+
+def _jmx_import(env, live_files, jmx_files, running=None):
     """The remote JMX users: the password and access files the JVM reads (jmx_files: cassandra_jmx_files', read
     under the names jmxremote.password and .access; None: cassandra-env.sh's), their paths kept for the role to
-    write them there; the users only when the JVM reads both files and each user's rights are in the access file
-    -> (jmx_files completed, {variable: value}, notes)."""
+    write them there; the users only when the JVM reads both files and each user's rights are in the access file,
+    not when the running JVM reads neither (running: {cmdline, environment, newer}, jvm_args.jmx_files_unread)
+    -> (jmx_files completed, {variable: value}, notes, notes of what has no effect)."""
+    running = running or {}
     if jmx_files is None:  # not read by the caller: cassandra-env.sh's
         jmx_files = cassandra_jmx_files(live_files.get("cassandra-env.sh", ""),
                                         cassandra_yaml=live_files.get("cassandra.yaml", ""))
@@ -1990,6 +1997,9 @@ def _jmx_import(env, live_files, jmx_files):
         jmx_note.append("cassandra-env.sh gives the JMX files through a variable it does not set (%s): their users"
                         " NOT imported, set cassandra_jmx_remote_password_file, _access_file and cassandra_jmx_users"
                         " by hand" % jmx_files["unknown"])
+    elif live_files.get("jmxremote.password") and jvm_args.ENV not in (running.get("newer") or []) \
+            and jvm_args.jmx_files_unread(running.get("environment"), running.get("cmdline")):
+        return jmx_files, changed, jmx_note, [JMX_FILES_UNREAD_NOTE]
     elif live_files.get("jmxremote.password"):
         users = _jmx_users(live_files["jmxremote.password"], live_files.get("jmxremote.access"))
         if users and "jmxremote.access" in live_files and jmx_files["access"]:
@@ -2001,7 +2011,7 @@ def _jmx_import(env, live_files, jmx_files):
                             " cassandra_jmx_users by hand" % (
                                 jmx_files["password"] or JMX_FILE_DEFAULTS["password"],
                                 (", " + jmx_files["access"]) if jmx_files["access"] else ", none given to the JVM"))
-    return jmx_files, changed, jmx_note
+    return jmx_files, changed, jmx_note, []
 
 
 def _inventory_vars(changed, found, ctx, live_files, facts, conf_target, series):
@@ -2149,7 +2159,7 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
         if extras:
             changed["cassandra_extra_settings"] = extras
     where[0] = "jmxremote.password"
-    jmx_files, jmx_vars, jmx_note = _jmx_import(env, live_files, jmx_files)
+    jmx_files, jmx_vars, jmx_note, jmx_unread_note = _jmx_import(env, live_files, jmx_files, running)
     changed.update(jmx_vars)
     where[0] = "comparing the files with the role's"
     render = dict(ctx, **changed)
@@ -2171,7 +2181,7 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
                                             moved["shown"], HEAP_OPTIONS if moved["shown"] else (),
                                             running.get("environment"), running.get("cmdline"),
                                             running.get("newer") or ())
-    normalized += log_dir_note + heap_dump_note + branch_note
+    normalized += log_dir_note + heap_dump_note + branch_note + jmx_unread_note
     normalized += ["%s: %s %s" % (f, "/".join(options), HEAP_MOVED) for f, options in sorted(heap_moved.items())
                    if f != jvm_args.COMMON]
     if jvm_args.ENV in moved["rewritten"] and not moved["moved"]:  # its lines at other places only: the same JVM
