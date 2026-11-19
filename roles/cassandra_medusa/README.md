@@ -24,7 +24,14 @@ The playbooks of the collection (`create_cluster`, and `add_node`,
 `replace_node` and `add_datacenter` for the new nodes) apply the role when
 `cassandra_medusa_enabled` is `true` (default `false`). `import_cluster` sets
 it when it finds Medusa on the nodes, with the version and the settings of
-their `medusa.ini`.
+their `medusa.ini`. `apply_config` applies it to the running cluster: it
+shows what differs (the version, `medusa.ini`, the credentials file, the
+link, profile.d) in its plan, `--check` included, then applies it at each
+node's turn, with no Cassandra restart for it; never on a node where
+`cassandra_medusa_enabled` is false. Right after an import, it finds nothing
+to change. The changes are also in `_cassandra_medusa_items` (`item`,
+`before`, `after`, secrets masked), an owner, group or mode change of
+`medusa.ini` or the credentials file included.
 
 Requirements
 ------------

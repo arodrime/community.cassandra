@@ -1,0 +1,11 @@
+minor_changes:
+  - >-
+    apply_config playbook - covers Medusa too, on the nodes with ``cassandra_medusa_enabled: true`` (never on the
+    others): its version, ``medusa.ini``, the S3 credentials file, the ``medusa`` link and
+    ``/etc/profile.d/cassandra-medusa.sh`` are compared in the plan (``Medusa (no restart)``, secrets masked,
+    ``--check`` included) and applied at the node's turn, with no Cassandra restart for them. ``cassandra_offline``
+    and the PyPI mirror (``cassandra_medusa_pip_index_url``) are followed as the role does; a node that cannot get
+    it (offline without that version installed, an fqdn change) stops the run before anything is done.
+  - >-
+    cassandra_medusa role - lists its changes in ``_cassandra_medusa_items``, and reports an owner, group or mode
+    change of ``medusa.ini`` or the credentials file (they were set silently).

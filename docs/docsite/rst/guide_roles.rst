@@ -966,7 +966,12 @@ checked before and after each one. Nodes whose configuration does not change are
 running with an older configuration than the one on disk (written by the role, or by a run that stopped before the
 restart), or with an older systemd unit (e.g. a new ``cassandra_group`` written by ``cassandra_service``): it is
 restarted too. A node whose files only need another owner, group or mode gets them without a restart (Cassandra reads
-its config when it starts). A node where Cassandra is not running gets its config too: started once written when its
+its config when it starts). A file with the same settings as the role's but without its header line (``Managed by
+Ansible ...: change the role variables, not this file``; e.g. taken over by ``import_cluster``) gets that line alone,
+the rest of the file as it is, without a restart: shown apart in the table (``Header "Managed by Ansible" (a comment,
+no restart)``, each file with its nodes) and in what the node gets (``write, no restart (the role's header line added:
+a comment, no setting changes)``). After an import, the first ``apply_config`` does only that; the next one finds
+nothing to do. A file kept by hand (``cassandra_config_keep_files``, ``import_keep_hand_edits``) is not touched. A node where Cassandra is not running gets its config too: started once written when its
 unit failed (e.g. Cassandra could not read its config, or it crashed), left stopped when it was stopped (a stop that
 ended in a failed unit too). Each node's health check needs another node up to read the ring from: a cluster with
 no node running is not handled. The settings that differ come in one table (``Item``, ``Node``, ``Inventory``, ``Nodes``; each
@@ -1001,6 +1006,15 @@ offset to its time source when it can be read, and warns when the clock is ahead
 can mask later writes until real time passes them). A node the run starts (its unit failed and its config written, a resumed run)
 gets its time sync the same way before its start; a time sync that fails there starts Cassandra again without it and stops the
 run. Nodes being created or added are prepared as before.
+
+``apply_config`` covers Medusa too, on the nodes with ``cassandra_medusa_enabled: true`` (never on the others, Medusa
+left as it is there): its version, ``medusa.ini``, the S3 credentials file, the ``medusa`` link and
+``/etc/profile.d/cassandra-medusa.sh`` are compared by ``cassandra_medusa`` in check mode, the ones that differ shown
+under ``Medusa (no restart)`` (secrets as ``****``), and a real run applies them at the node's turn, after its config,
+with no Cassandra restart for them (``Medusa: not read by Cassandra``). pip follows ``cassandra_offline`` and
+``cassandra_medusa_pip_index_url`` as the role does: an air-gapped node whose Medusa is not the version asked stops
+the run before anything is done, saying how to install it. A ``medusa.ini`` fqdn change is refused there too
+(``cassandra_medusa_fqdn_change``).
 
 Cassandra runs as ``cassandra_user`` and ``cassandra_group`` (default ``cassandra``): the unit's ``User=`` and
 ``Group=``, the group of the config files and the owner of the directories and JMX users' files ``cassandra_config``

@@ -129,7 +129,9 @@
     - cassandra_medusa_venv != ''
     - cassandra_medusa_link_dir != ''
     - not cassandra_medusa_link.stat.exists or cassandra_medusa_link.stat.islnk
-    - not ansible_check_mode or _cassandra_medusa_installed != ''  # nothing to link to yet
+    # nothing to link to yet (_cassandra_medusa_compare: check mode applied by apply_config, which ansible_check_mode
+    # does not tell)
+    - not (ansible_check_mode or _cassandra_medusa_compare | default(false) | bool) or _cassandra_medusa_installed != ''
 
 - name: Say another medusa comes first in the PATH
   ansible.builtin.debug:
@@ -159,12 +161,10 @@
 - name: Write the config
   ansible.builtin.import_tasks: config.yml
 
-- name: Report changes
-  ansible.builtin.include_role:
-    name: community.cassandra.cassandra_change_report
-  vars:
-    cassandra_change_report_role: cassandra_medusa
-    cassandra_change_report_items: >-
+# (apply_config shows them in its plan: _cassandra_medusa_items)
+- name: List the changes
+  ansible.builtin.set_fact:
+    _cassandra_medusa_items: >-
       {{ ([{'item': 'Medusa', 'before': _cassandra_medusa_installed or 'absent', 'after': cassandra_medusa_version | string}]
           if _cassandra_medusa_installed != cassandra_medusa_version | string else [])
          + ([{'item': cassandra_medusa_link_dir ~ '/medusa', 'before': cassandra_medusa_link.stat.lnk_source | default('absent'),
@@ -172,3 +172,10 @@
          + ([{'item': '/etc/profile.d/cassandra-medusa.sh', 'before': 'absent or other', 'after': 'PATH with ' ~ cassandra_medusa_venv ~ '/bin'}]
             if cassandra_medusa_profile is changed else [])
          + _cassandra_medusa_ini_changes }}
+
+- name: Report changes
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_change_report
+  vars:
+    cassandra_change_report_role: cassandra_medusa
+    cassandra_change_report_items: "{{ _cassandra_medusa_items }}"

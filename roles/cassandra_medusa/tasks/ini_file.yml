@@ -33,8 +33,14 @@
     owner: "{{ _cassandra_medusa_ini_owner }}"
     group: "{{ _cassandra_medusa_ini_group }}"
     mode: "{{ _cassandra_medusa_ini_mode }}"
+  register: cassandra_medusa_ini_perm
   when: cassandra_medusa_ini_old.content is defined
 
+# (an owner, group or mode alone too: said, as its settings are)
 - name: Keep the changes for the report
   ansible.builtin.set_fact:
-    _cassandra_medusa_ini_changes: "{{ _cassandra_medusa_ini_changes | default([]) + _cassandra_medusa_ini_file_changes }}"
+    _cassandra_medusa_ini_changes: >-
+      {{ _cassandra_medusa_ini_changes | default([]) + _cassandra_medusa_ini_file_changes
+         + ([{'item': _cassandra_medusa_ini_path ~ ' (owner:group mode)', 'before': 'other',
+              'after': _cassandra_medusa_ini_owner ~ ':' ~ _cassandra_medusa_ini_group ~ ' ' ~ _cassandra_medusa_ini_mode}]
+            if cassandra_medusa_ini_perm is changed and _cassandra_medusa_ini_file_changes | length == 0 else []) }}

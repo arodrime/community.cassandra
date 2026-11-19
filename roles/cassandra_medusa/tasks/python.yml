@@ -37,7 +37,8 @@
     - name: Tell whether python3.11 comes later (--check)
       ansible.builtin.set_fact:
         _cassandra_medusa_python_pending: >-
-          {{ ansible_check_mode and ansible_facts['distribution'] == 'Ubuntu' and not cassandra_offline | bool
+          {{ (ansible_check_mode or _cassandra_medusa_compare | default(false) | bool)
+             and ansible_facts['distribution'] == 'Ubuntu' and not cassandra_offline | bool
              and cassandra_medusa_python311_policy is not skipped
              and cassandra_medusa_python311_policy.stdout | default('') is not search('(Installed|Candidate): [0-9]')
              and cassandra_cqlsh_python_repo_uri | default('deadsnakes') != ''

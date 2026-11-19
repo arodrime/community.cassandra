@@ -76,6 +76,13 @@ _WRITTEN_BACK = " written back as the running Cassandra started with "  # (apply
 # apply_config's notes: a restart pending (said before the run: not after a restart or start of this run), the
 # read-ahead set live with no restart (the recap's TO DO says how to take it)
 _PENDING = "restart pending ("
+# the files left as they are (same settings) that only get the role's header line: a section of the view, and the
+# reason a node is not restarted for them (apply_config's _header_added)
+HEADER_SECTION = "Header \"Managed by Ansible\" (a comment, no restart)"
+HEADER_ADDED = "the role's header line added: a comment, no setting changes"
+# Medusa's changes (cassandra_medusa_enabled): a section of the view, and the reason a node is not restarted for them
+MEDUSA_SECTION = "Medusa (no restart)"
+MEDUSA_LIVE = "Medusa: not read by Cassandra"
 READ_AHEAD_LIVE = "read-ahead set live: the files Cassandra has open keep the old one until it restarts"
 
 
@@ -530,10 +537,12 @@ def _perm_entries(key, nodes, all_nodes, field):
 def _prepare(node, verbose=False):
     """A node's compare data -> its diffs, owner/mode changes, directory
     changes and other items by name, its live files and stats."""
-    diffs, perms, dirs, other, wholes = {}, {}, {}, [], {}
+    diffs, perms, dirs, other, wholes, headers = {}, {}, {}, [], {}, []
     for item in node.get("items") or []:
         name = str(item.get("item") or "")
-        if item.get("whole"):  # a file written whole, no diff shown (the JMX files: passwords)
+        if item.get("header"):  # the role's header line added to a file left as it is (no setting)
+            headers.append(name.rsplit("/", 1)[-1])
+        elif item.get("whole"):  # a file written whole, no diff shown (the JMX files: passwords)
             wholes[name.rsplit("/", 1)[-1]] = str(item.get("before") or "")
         elif item.get("dir"):
             dirs["%s %s" % (item["dir"], item.get("path"))] = (item.get("before"), item.get("after"))
@@ -544,6 +553,9 @@ def _prepare(node, verbose=False):
         else:  # the RPM conf dir alternative, or nothing installed yet
             other.append((name, str(item.get("before") or "(none)"), str(item.get("after") or "")))
     return {"name": str(node.get("name")), "diffs": diffs, "perms": perms, "dirs": dirs, "other": other, "wholes": wholes,
+            "headers": headers,
+            "medusa": [(str(i.get("item")), "absent" if i.get("before") is None else str(i.get("before")),
+                        str(i.get("after"))) for i in node.get("medusa") or []],
             "texts": _live_texts(node), "stats": _stats(node.get("stats"), _file_key),
             "dir_stats": _stats(node.get("dir_stats"), _dir_key),
             "os": [(("service " if i.get("service") else "") + _os_item(i.get("item"), verbose),
@@ -567,7 +579,9 @@ def cassandra_apply_config_diff(nodes, width=None, verbose=False, margin=0):
     cassandra_config_dir_stat results; os, cassandra_linux's items (the OS
     settings that differ: {item, before, after}). -> the lines of one table: per file (named on its first row),
     each setting that differs on a node, its change "from -> to" (one row per live value), the nodes that change
-    last; the owner and the mode as two settings; the directories after the files, then the OS settings. [] when
+    last; the owner and the mode as two settings; the directories after the files, the files that only get the
+    role's header line (items with header: a section of their own, HEADER_SECTION), Medusa's changes (medusa:
+    cassandra_medusa's items, MEDUSA_SECTION), then the OS settings. [] when
     nothing differs. From GROUPS_FROM nodes on (cassandra_output), the node lists by NODE GROUPS defined first.
     width: the lines fit in it (None: as long as they are; "terminal": the terminal's), margin columns kept for the
     caller's indent (the plan's: 2). verbose: a device-mapper
@@ -605,6 +619,22 @@ def cassandra_apply_config_diff(nodes, width=None, verbose=False, margin=0):
         records = dict((o[3], (o[1], o[2], True)) for o in others if o[0] == name)
         entries.append(name)
         entries.append(("points to" if name.startswith("/") else "state", _rows(records, str, all_nodes)))
+    headers = []
+    for node in prepared:
+        headers.extend(f for f in node["headers"] if f not in headers)
+    if headers:  # (apart from the settings: a comment added, nothing else)
+        entries.append(HEADER_SECTION)
+    for name in sorted(headers, key=_order):
+        entries.append((name, _rows(dict((n["name"], ("no header", "header added", True)) for n in prepared
+                                         if name in n["headers"]), str, all_nodes)))
+    medusa = []
+    for node in prepared:
+        medusa.extend(i[0] for i in node["medusa"] if i[0] not in medusa)
+    if medusa:  # (cassandra_medusa's: applied at the node's turn, no restart)
+        entries.append(MEDUSA_SECTION)
+    for name in medusa:
+        entries.append((name, _rows(dict((n["name"], (i[1], i[2], True)) for n in prepared for i in n["medusa"]
+                                         if i[0] == name), str, all_nodes)))
     os_items = []
     for node in prepared:
         os_items.extend(i[0] for i in node["os"] if i[0] not in os_items)
@@ -980,8 +1010,9 @@ LOGBACK_SCANS = "logback.xml read again by logback (scan)"
 
 
 def _proven(reason):
-    """Whether reason (a node's, why it is not restarted) is one of cassandra_apply_config_no_effect's."""
-    return reason in (SAME_JVM_ARGUMENTS, LOGBACK_SCANS) or bool(
+    """Whether reason (a node's, why it is not restarted) is one of cassandra_apply_config_no_effect's, or the role's
+    header line added (no setting changes), Medusa's changes (not read by Cassandra): said in the recap too."""
+    return reason in (SAME_JVM_ARGUMENTS, LOGBACK_SCANS, HEADER_ADDED, MEDUSA_LIVE) or bool(
         re.match("^%s$" % (re.escape(NOT_READ_BY_JAVA) % (r"\S+", r"\S+")), reason))
 
 

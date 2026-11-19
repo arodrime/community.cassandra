@@ -246,8 +246,8 @@ JMX_USERS = [{"name": "ops", "password": "s3cret", "access": "readwrite"}, {"nam
 # (the role's header line first: a comment, the JVM reads them as properties files)
 JMX_HEADER = "# Managed by Ansible (community.cassandra.cassandra_config): change the role variables, not this file.\n"
 JMX_FILES = {"password": JMX_HEADER + "ops s3cret\nmon m0n\n",
-             "access": JMX_HEADER + "ops readwrite \\\n    create javax.management.monitor.*,javax.management.timer.* \\\n"
-                       "    unregister\nmon readonly\n"}
+             "access": (JMX_HEADER + "ops readwrite \\\n    create javax.management.monitor.*,javax.management.timer.* \\\n"
+                        "    unregister\nmon readonly\n")}
 
 
 def jmx_compare(tmp_path, live, initialized=True, extra=None):

@@ -76,6 +76,20 @@
         _cassandra_linux_swap_said: true  # in the plan
         _cassandra_linux_restart_window: true  # what is not done under a running Cassandra: a reason of its restart
 
+    # Medusa (cassandra_medusa_enabled): its version, medusa.ini, its credentials file, its link and profile.d; never
+    # on a node where it is false (left as it is). Not Cassandra's: no restart for it. A node that cannot get it
+    # (cassandra_offline without it installed, its fqdn about to change) stops the run here, before anything is done
+    - name: Compare Medusa
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_medusa
+        apply:
+          check_mode: true
+      vars:
+        cassandra_change_report_dir: ""  # the real run reports
+        _cassandra_change_report_quiet: true  # in the settings that differ
+        _cassandra_medusa_compare: true  # (check mode applied to it, which ansible_check_mode does not tell)
+      when: cassandra_medusa_enabled | default(false) | bool
+
     - name: Look for a restart still pending
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation
@@ -238,6 +252,8 @@
     - name: Note what this node needs
       ansible.builtin.set_fact:
         cassandra_apply_config_todo: "{{ _todo }}"
+        # Medusa's changes, applied at the node's turn (action_apply_config.yml), no restart for them
+        cassandra_apply_config_medusa: "{{ _medusa }}"
         cassandra_apply_config_then: "{{ _then }}"
         cassandra_apply_config_unit_failed: "{{ _unit_failed }}"  # (the refusal below names it)
         # checked again before the write (action_apply_config.yml): that JVM still runs
@@ -332,9 +348,19 @@
           {%- if 'config' in kinds -%}{%- set _ = out.append('the exporter rules: reloaded at its next scrape') -%}{%- endif -%}
           {%- if 'jar' in kinds -%}{%- set _ = out.append('the exporter jar: loaded at the next start') -%}{%- endif -%}
           {%- if 'removed' in kinds -%}{%- set _ = out.append('the exporter files removed: the running Cassandra keeps the ones it opened until its next restart') -%}{%- endif -%}
-          {{ (out if _jmx or _exporter else []) + (_no_effect if _then == 'none' else []) }}
+          {{ (out if _jmx or _exporter else []) + (_no_effect if _then == 'none' else [])
+             + ([_header_added] if _header and _then == 'none' else [])
+             + ([_medusa_live] if _medusa and _then == 'none' else []) }}
       vars:
         _files: "{{ _cassandra_config_changes | default([]) }}"
+        # the files left as they are that get the role's header line, nothing else: a comment, no restart for it
+        # (cassandra_config_header: the file with it has the same settings; recorded as the running Cassandra's)
+        _header: "{{ _cassandra_config_header | default([]) | map(attribute='file') | list }}"
+        _header_added: "the role's header line added: a comment, no setting changes"
+        # Medusa's changes (cassandra_medusa, on a node with cassandra_medusa_enabled): applied at the node's turn, no
+        # restart for them
+        _medusa: "{{ _cassandra_medusa_items | default([]) if cassandra_medusa_enabled | default(false) | bool else [] }}"
+        _medusa_live: "Medusa: not read by Cassandra"
         _keep_missing: "{{ _cassandra_config_keep_missing | default([]) }}"
         # the JMX files written (missing, or other users or rights); the access file is read at start: written
         # back or changed, the rights the running Cassandra has are not known to be these (local JMX logs in no one)
@@ -439,7 +465,8 @@
         # a time sync unit that cannot run here (its condition): left out, said
         _no_unit: "{{ _os | selectattr('timesync', 'defined') | list if _clock.condition | default('') == 'no' else [] }}"
         _todo: >-
-          {{ _files | length > 0 or (_perms + _dirs + _jmx + _exporter) | length > 0 or _pending | bool or _timesync | bool
+          {{ _files | length > 0 or (_perms + _dirs + _jmx + _exporter + _header + _medusa) | length > 0 or _pending | bool
+             or _timesync | bool
              or _stopped | bool or _disks_window | length > 0 }}
         # Cassandra running: restart (new settings or a restart pending), none (an owner or mode alone: read at
         # start); not running: start (_starts: its unit failed and its config is written, e.g. it was unreadable;
@@ -483,7 +510,8 @@
           {%- if _timesync | bool or (_then == 'start' and _stopped | bool and _clock.mark_timesync is defined) -%}
           {%-   set _ = os.append('wait up to 2m for clock sync') -%}
           {%- endif -%}
-          {%- set write = ['write the config'] if (_files + _perms + _dirs + _jmx + _exporter) | length > 0 else [] -%}
+          {%- set write = (['write the config'] if (_files + _perms + _dirs + _jmx + _exporter + _header) | length > 0 else [])
+                          + (['set up Medusa'] if _medusa else []) -%}
           {%- if _then == 'restart' and window -%}
           {{ write + [('drain and stop' if drain else 'stop') ~ ' Cassandra'] + os | unique | list + ['start Cassandra'] }}
           {%- elif _then == 'restart' -%}
@@ -695,7 +723,8 @@
                                     'live': v.cassandra_apply_config_live.results | default([]),
                                     'stats': v.cassandra_config_live_stat.results | default([]),
                                     'dir_stats': v.cassandra_config_dir_stat.results | default([]),
-                                    'os': v.cassandra_apply_config_os | default([])}) -%}
+                                    'os': v.cassandra_apply_config_os | default([]),
+                                    'medusa': v.cassandra_apply_config_medusa | default([])}) -%}
           {%- endfor -%}
           {{ out }}
 

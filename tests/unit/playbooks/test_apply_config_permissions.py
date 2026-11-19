@@ -194,16 +194,18 @@ def test_the_action_restarts_starts_or_only_writes():
     names = [t["name"] for t in tasks]
     # a restart loop is stopped before the write: it would not come up on the former config
     assert names == ["Clear the unit's failed starts", "Check the JVM a file is written back for still runs", "Write the config",
-                     "Check the files written back",
+                     "Set up Medusa", "Check the files written back",
                      "Record the files written with no effect as the ones the running Cassandra runs with",
-                     "Report what would be written",
+                     "Report what would be written", "Report what Medusa would get",
                      "Drain and restart the node", "Start the time sync before Cassandra starts",
                      "Check the Prometheus exporter's agent can start",
                      "Start the node and wait until it has joined", "Forget the restart in progress"]
     # (a file written back with no restart: test_apply_config_written_back.py)
     tasks = [t for t in tasks if t["name"] not in ("Check the JVM a file is written back for still runs", "Check the files written back",
                                                    "Record the files written with no effect as the ones the running Cassandra"
-                                                   " runs with")]
+                                                   " runs with",
+                                                   # (Medusa: test_apply_config_header_medusa.py)
+                                                   "Set up Medusa", "Report what Medusa would get")]
     tasks.pop()  # the mark of a stop in its restart window (os_window.yml), removed once up again
     # (no "Restarting node..." phase line before the restart: its wait line says it)
     tasks.pop(4)  # its time sync before a start (test_apply_config_os.py)
