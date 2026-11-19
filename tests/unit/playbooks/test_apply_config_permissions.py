@@ -193,19 +193,29 @@ def test_the_action_restarts_starts_or_only_writes():
     tasks = load("roles", "cassandra_operation", "tasks", "action_apply_config.yml")
     names = [t["name"] for t in tasks]
     # a restart loop is stopped before the write: it would not come up on the former config
-    assert names == ["Clear the unit's failed starts", "Check the JVM a file is written back for still runs", "Write the config",
-                     "Set up Medusa", "Check the files written back",
+    assert names == ["Clear the unit's failed starts", "Check the JVM a file is written back for still runs",
+                     "Install the Java this node moves to", "Update the Cassandra package of a node not running",
+                     "Write the config", "Set up Medusa", "Apply the repository, the packages and the firewall",
+                     "Check the files written back",
                      "Record the files written with no effect as the ones the running Cassandra runs with",
-                     "Report what would be written", "Report what Medusa would get",
+                     "Report what would be written", "Report what the repository, the packages and the firewall would get",
+                     "Report what Medusa would get",
                      "Drain and restart the node", "Start the time sync before Cassandra starts",
                      "Check the Prometheus exporter's agent can start",
-                     "Start the node and wait until it has joined", "Forget the restart in progress"]
+                     "Start the node and wait until it has joined", "Check it runs the new Java", "Check it runs the new release",
+                     "Forget the restart in progress"]
     # (a file written back with no restart: test_apply_config_written_back.py)
     tasks = [t for t in tasks if t["name"] not in ("Check the JVM a file is written back for still runs", "Check the files written back",
                                                    "Record the files written with no effect as the ones the running Cassandra"
                                                    " runs with",
                                                    # (Medusa: test_apply_config_header_medusa.py)
-                                                   "Set up Medusa", "Report what Medusa would get")]
+                                                   "Set up Medusa", "Report what Medusa would get",
+                                                   # (the Java, a release, the extras: test_apply_config_coverage.py)
+                                                   "Install the Java this node moves to",
+                                                   "Update the Cassandra package of a node not running",
+                                                   "Apply the repository, the packages and the firewall",
+                                                   "Report what the repository, the packages and the firewall would get",
+                                                   "Check it runs the new Java", "Check it runs the new release")]
     tasks.pop()  # the mark of a stop in its restart window (os_window.yml), removed once up again
     # (no "Restarting node..." phase line before the restart: its wait line says it)
     tasks.pop(4)  # its time sync before a start (test_apply_config_os.py)

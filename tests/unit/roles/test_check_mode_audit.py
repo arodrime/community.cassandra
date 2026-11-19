@@ -22,7 +22,7 @@ import yaml
 ROLES = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles")
 SCOPE = {"cassandra_linux": None, "cassandra_service": None, "cassandra_firewall": None, "cassandra_repository": None,
          "cassandra_install": ["cqlsh_python.yml", "cqlsh_links.yml"]}
-CHECK = re.compile(r"ansible_check_mode|_cassandra_linux_check|_cassandra_service_act")
+CHECK = re.compile(r"ansible_check_mode|_cassandra_(linux|install|repository|firewall)_check|_cassandra_service_act")
 
 L, S, F, R, I = "cassandra_linux", "cassandra_service", "cassandra_firewall", "cassandra_repository", "cassandra_install"
 AUDITED = {

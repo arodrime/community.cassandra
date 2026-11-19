@@ -83,6 +83,8 @@
 # stopped (a running node gets it in its restart: apply_config_window.yml)
 - name: Update the Cassandra package of a node not running
   ansible.builtin.include_tasks: package_update.yml
+  vars:
+    cassandra_install_java: false  # (the Java a node not running starts with is left as it is)
   when:
     - cassandra_apply_config_release | default(false) | bool
     - cassandra_apply_config_then | default('restart') in ['start', 'write']
@@ -308,15 +310,6 @@
     _cassandra_storage_mode_checked: true  # (storage_mode_guard.yml, before the plan)
   when: cassandra_apply_config_then | default('restart') == 'start'
 
-# (once Cassandra is up again: the mark of a stop in its restart window)
-- name: Forget the restart in progress
-  ansible.builtin.file:
-    path: /run/cassandra-apply-config.restart
-    state: absent
-  when:
-    - not ansible_check_mode
-    - cassandra_apply_config_then | default('restart') in ['restart', 'start']
-
 # the Java it moved to, the release it was updated to: running them (the same failure and way out as update_java's,
 # the upgrade's)
 - name: Check it runs the new Java
@@ -329,4 +322,13 @@
   ansible.builtin.include_tasks: version_verify.yml
   when:
     - cassandra_apply_config_release | default(false) | bool
+    - cassandra_apply_config_then | default('restart') in ['restart', 'start']
+
+# (once Cassandra is up again: the mark of a stop in its restart window)
+- name: Forget the restart in progress
+  ansible.builtin.file:
+    path: /run/cassandra-apply-config.restart
+    state: absent
+  when:
+    - not ansible_check_mode
     - cassandra_apply_config_then | default('restart') in ['restart', 'start']

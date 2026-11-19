@@ -4,7 +4,7 @@
 # running Cassandra got from its unit (its user, limits, environment) is compared on its own, with the running JVM
 # (filter cassandra_apply_config_unit): a file that differs only in systemd's handling of the service (Restart,
 # TimeoutStopSec, the drain on stop) changes nothing for the running Cassandra, and is written at its next restart.
-# Sets _cassandra_service_unit_differs.
+# Sets cassandra_service_unit_differs.
 - name: Tell whether the unit file differs
   ansible.builtin.template:
     src: cassandra.service.j2
@@ -29,5 +29,5 @@
 
 - name: Note whether they differ
   ansible.builtin.set_fact:
-    _cassandra_service_unit_differs: >-
+    cassandra_service_unit_differs: >-
       {{ cassandra_service_unit_compare is changed or cassandra_service_dropin_compare is changed }}

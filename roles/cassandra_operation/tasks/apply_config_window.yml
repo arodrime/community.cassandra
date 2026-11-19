@@ -4,6 +4,8 @@
 # its own files in place of the ones it ships); started next, version_verify.yml checks the release it runs
 - name: Update the Cassandra package
   ansible.builtin.include_tasks: package_update.yml
+  vars:
+    cassandra_install_java: "{{ cassandra_apply_config_java | default(false) | bool }}"  # (a Java move: installed already)
 
 - name: Write the config again
   ansible.builtin.include_role:

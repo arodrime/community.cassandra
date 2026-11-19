@@ -44,7 +44,7 @@ def needs(changes=(), java=False, version=None, unit_nofile=100000, extras=None,
                  "cassandra_service_limit_nofile": unit_nofile, "cassandra_service_limit_nproc": 32768,
                  "cassandra_service_limit_memlock": "infinity", "cassandra_service_limit_as": "infinity",
                  "cassandra_service_environment": {}, "cassandra_service_start": "unit",
-                 "_cassandra_service_unit_differs": unit_differs,
+                 "cassandra_service_unit_differs": unit_differs,
                  "_cassandra_change_report_seen": {"cassandra_install": {"items": extras or []}},
                  "_cassandra_linux_items": [{"item": "service chronyd", "timesync": True, "before": "inactive",
                                              "after": "active"}] if timesync else []}
@@ -163,3 +163,18 @@ def test_the_stops_are_said_in_the_check_recap():
     summary = [p for p in load("playbooks", "apply_config.yml") if p.get("name") == "Summary"][0]
     refused = find(summary["tasks"], "Print the changes")["vars"]["_refused"]
     assert "_cassandra_apply_config_stops" in refused and "_cassandra_apply_config_refused" in refused
+
+
+def test_the_roles_compared_act_as_under_check_when_applied_to_them():
+    # check_mode applied to a role does not set ansible_check_mode: each role reads its own flag
+    import glob
+    import os
+    for role, flag in (("cassandra_install", "_cassandra_install_check"), ("cassandra_repository", "_cassandra_repository_check"),
+                       ("cassandra_firewall", "_cassandra_firewall_check")):
+        template = load("roles", role, "vars", "main.yml")[flag]
+        for check, compare, expected in ((True, False, True), (False, True, True), (False, False, False)):
+            assert render(template, {"ansible_check_mode": check, "_cassandra_compare": compare}) is expected
+        for path in glob.glob(os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", role, "tasks", "*.yml")):
+            with open(path, encoding="utf-8") as f:
+                code = [line.split("  # ")[0] for line in f if not line.lstrip().startswith("#")]
+            assert not any("ansible_check_mode" in line for line in code), path

@@ -49,7 +49,7 @@ def runs(role, file, name, **variables):
 
 INSTALL = {"cassandra_install_java": True, "_cassandra_java_home": "", "cassandra_offline": False,
            "cassandra_cqlsh_python_manage": True, "cassandra_install_jemalloc": True, "cassandra_check_mode": False,
-           "ansible_check_mode": False, "cassandra_cqlsh_python_repo_uri": "", "cassandra_install_method": "repository",
+           "ansible_check_mode": False, "_cassandra_install_check": False, "cassandra_cqlsh_python_repo_uri": "", "cassandra_install_method": "repository",
            "ansible_facts": {"os_family": "RedHat", "distribution": "RedHat"}, "cassandra_package_version": ""}
 EL8 = {"python3.11": [{"version": "3.11.13"}], "java-11-openjdk-headless": [{"version": "11.0.25"}],
        "cassandra": [{"version": "4.1.5"}], "cassandra-tools": [{"version": "4.1.5"}], "jemalloc": [{"version": "5.2"}],

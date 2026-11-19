@@ -162,10 +162,12 @@ OPERATIONS = [
     {"name": "apply_config", "theme": "cluster", "guide": "Changing the configuration",
      "summary": "Applies the inventory's config: shows the settings that differ (the inventory's value, then each"
                 " other value with its nodes), asks once, then writes the nodes that need it, one at a time,"
-                " restarting only those that need it. The OS settings (cassandra_linux) and Medusa"
-                " (cassandra_medusa_enabled) too, and the role's header line where a file lacks it: no restart for"
-                " them.",
-     "options": [RESUME],
+                " restarting only those that need it. The OS settings (cassandra_linux), Medusa"
+                " (cassandra_medusa_enabled), the repository, packages and firewall too, and the role's header line where"
+                " a file lacks it: no restart for them. A node's Java, a newer release of its series and what its unit"
+                " gives Cassandra are done in its one restart; another series (upgrade), a node to add or remove"
+                " (topology) stop the run before any change, with the command.",
+     "options": [RESUME, ("-e cassandra_allow_unknown_patch=true", "a release past the patch notes", "false")],
      "example": ("the settings that differ, changing nothing", ["--check"])},
     {"name": "change_seeds", "theme": "cluster", "guide": "Changing the seeds",
      "summary": "Applies a new cassandra_seeds list to every node, live (no restart); topology, add_node and"

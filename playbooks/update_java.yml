@@ -41,6 +41,7 @@
         tasks_from: java_plan.yml
       vars:
         _cassandra_java_plan_check_all: true  # every node's Java against its series
+        _cassandra_java_plan_user: "{{ cassandra_user | default('cassandra') }}"
 
     # A node left drained (Cassandra running, gossip and the native transport off: Mode DRAINED) would be seen down
     # by the health check of the first node, which waits for it (cassandra_service_health_timeout) then stops; a

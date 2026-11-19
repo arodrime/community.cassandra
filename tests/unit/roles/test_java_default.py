@@ -73,7 +73,7 @@ def test_none_found_stops_with_the_way_out():
     assert stop["ansible.builtin.assert"]["that"] == "_path != ''"
     # not under --check (the package may not be installed yet), nor when the package is not installed (offline: the
     # role's own refusal follows, the molecule scenario checks it)
-    assert stop["when"] == ["not ansible_check_mode", "cassandra_java_files.rc | default(1) == 0"]
+    assert stop["when"] == ["not _cassandra_install_check", "cassandra_java_files.rc | default(1) == 0"]
     installed = "{{ " + stop["when"][1] + " }}"
     assert render(installed, cassandra_java_files={"rc": 1}) is False
     assert render(installed, cassandra_java_files={"rc": 0}) is True

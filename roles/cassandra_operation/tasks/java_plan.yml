@@ -1,10 +1,11 @@
 ---
 # The Java a node moves to (cassandra_java_version), worked out before anything changes: run by update_java (every
 # node of the cluster) and by apply_config (its nodes running another Java than the inventory's), each one then
-# installing it at the node's turn (java_switch.yml), restarting it once and checking it runs that Java.
+# installing it at the node's turn (java_install.yml, java_verify.yml), restarting it once and checking it runs that Java.
 #   vars: _cassandra_java_plan_run: the playbook to run again in a way out (update_java)
 #         _cassandra_java_plan_running_only: true: a node not running needs no move (apply_config: it starts on the
 #           Java its unit gives, said by its own checks); false: it is restarted onto the new Java (update_java)
+#         _cassandra_java_plan_user: the account Cassandra runs as
 #         _cassandra_java_plan_check_all: true: every node's Java checked against its series (update_java); false:
 #           the nodes to move only
 # Sets cassandra_update_java_todo (the node moves), cassandra_update_java_running (its java), cassandra_update_java_major
@@ -179,7 +180,7 @@
     UNIT_KEPT: >-
       {{ 'yes' if not cassandra_service_unit_manage | default(true) | bool
                   or cassandra_service_start | default('unit') != 'unit' else 'no' }}
-    CASSANDRA_USER: "{{ cassandra_user | default('cassandra') }}"
+    CASSANDRA_USER: "{{ _cassandra_java_plan_user | default('cassandra') }}"  # (Cassandra's account: its home's .cassandra.in.sh)
   register: cassandra_update_java_given
   changed_when: false
   failed_when: false
@@ -254,4 +255,3 @@
       {{ cassandra_version | community.cassandra.cassandra_jvm_options_file(cassandra_update_java_major) }}
     _cassandra_java_now_major: "{{ cassandra_update_java_major }}"
   when: cassandra_update_java_todo | bool
-

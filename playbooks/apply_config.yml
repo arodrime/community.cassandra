@@ -89,13 +89,9 @@
     # a joined node whose inventory gives another initial_token than its cassandra.yaml: the tokens it owns, to tell a
     # record of its token (after move_node) from another one
     - name: Read the tokens of the ring
-      community.cassandra.cassandra_ring:
-      module_defaults:
-        community.cassandra.cassandra_ring: "{{ _cassandra_service_jmx }}"
-      delegate_to: "{{ _cassandra_preflight_from }}"
-      register: cassandra_apply_config_tokens
-      failed_when: false  # not read: no token compared
-      check_mode: false  # reads only
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: ring_tokens.yml
       run_once: true
       when:
         - _cassandra_preflight_running_nodes | default([]) | length > 0
@@ -251,6 +247,7 @@
         _cassandra_java_plan_run: apply_config  # (its ways out)
         _cassandra_java_plan_running_only: true  # a node not running starts on the Java its unit gives
         _cassandra_java_plan_check_all: false
+        _cassandra_java_plan_user: "{{ cassandra_user | default('cassandra') }}"
 
     # What the running Cassandra got from its unit (cassandra_service: its user, its limits, its environment), against
     # what the role's unit gives at its next start: a difference restarts it, the unit written in that restart
@@ -558,12 +555,13 @@
                 if _hand_started | default(false) | bool else [])
              + (['next restart: jemalloc loaded (installed now; no effect now)']
                 if _running | bool and _then != 'restart'
-                   and _extras | map(attribute='item') | select('match', 'package (libjemalloc2|jemalloc)$') | list else [])
+                   and _extras | default([]) | map(attribute='item') | select('match', 'package (libjemalloc2|jemalloc)$') | list
+                else [])
              + (["next restart: the cassandra unit written (it differs in systemd's handling of the service only; no effect"
-                 " now)"] if _running | bool and _then != 'restart' and _cassandra_service_unit_differs | default(false) | bool
-                         and not _unit_changes else [])
+                 " now)"] if _running | bool and _then != 'restart' and cassandra_service_unit_differs | default(false) | bool
+                         and not _unit_changes | default([]) else [])
              + (cassandra_apply_config_version.notes | default([]) | map('regex_replace', '^', 'Cassandra ') | list
-                if _release | bool else []) }}
+                if _release | default(false) | bool else []) }}
         # why a node written while it runs is not restarted, said in the plan (the outcomes' own reason otherwise)
         cassandra_apply_config_kept_running: >-
           {%- set out = ['an owner, group or mode: read at start'] if _perms + _dirs else [] -%}
@@ -1171,7 +1169,7 @@
                    'text': ('storage_compatibility_mode moves to NONE: the point of no return. Once a node runs with it,'
                             ~ ' it cannot go back to UPGRADING or CASSANDRA_4, nor to its former Cassandra version.')
                            if cassandra_apply_config_no_return | default([]) else ''},
-                  {'label': 'the ring', 'text': _ring_unknown}] }}
+                  {'label': 'the ring', 'text': _ring_unknown | default('')}] }}
 
     # first, once the run is confirmed: read at each JMX login (no restart), the checks before a node's turn
     # log in with it; a node it fails on stops the run, as a write at its turn would

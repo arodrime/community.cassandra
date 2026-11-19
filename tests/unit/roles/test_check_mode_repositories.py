@@ -58,7 +58,7 @@ def test_check_mode_lists_only_the_repositories_the_real_run_removes():
     assert removed(results) == ["cassandra-50x", "cassandra-40x"]
     assert removed([{"item": "50x", "changed": False}]) == []
     t = task(load("cassandra_repository", "no_repository.yml"), "Under --check, the repositories dnf leaves out")
-    assert "ansible_check_mode" in t["when"]
+    assert "_cassandra_repository_check" in t["when"]  # (--check, or apply_config's compare)
 
 
 def test_every_install_task_is_under_the_disablerepo_defaults():

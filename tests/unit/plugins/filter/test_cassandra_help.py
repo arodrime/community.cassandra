@@ -255,10 +255,16 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
   ● apply_config       Applies the inventory's config: shows the settings that differ (the
                        inventory's value, then each other value with its nodes), asks once, then
                        writes the nodes that need it, one at a time, restarting only those that need
-                       it. The OS settings (cassandra_linux) and Medusa (cassandra_medusa_enabled)
-                       too, and the role's header line where a file lacks it: no restart for them.
+                       it. The OS settings (cassandra_linux), Medusa (cassandra_medusa_enabled), the
+                       repository, packages and firewall too, and the role's header line where a
+                       file lacks it: no restart for them. A node's Java, a newer release of its
+                       series and what its unit gives Cassandra are done in its one restart; another
+                       series (upgrade), a node to add or remove (topology) stop the run before any
+                       change, with the command.
       $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.apply_config
         -e cassandra_rolling_resume=true      resumes an interrupted run (default: false)
+        -e cassandra_allow_unknown_patch=true
+                                              a release past the patch notes (default: false)
       Example (the settings that differ, changing nothing):
       $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.apply_config --check
 

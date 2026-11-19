@@ -328,7 +328,11 @@ def test_the_restart_window_reuses_the_restart():
     assert restart["vars"] == {"_cassandra_restart_timesync": "{{ cassandra_apply_config_timesync | default(false) }}",
                                "_cassandra_restart_disks": "{{ cassandra_apply_config_disks_window | default([]) | length > 0 }}",
                                "_cassandra_exporter_check_left": "not stopped (left running as it is); the config written"
-                                                                 " applies at its next start"}
+                                                                 " applies at its next start",
+                               # (a newer release of its series: its package, Cassandra stopped)
+                               "_cassandra_service_while_stopped": "{{ 'apply_config_window.yml' if"
+                                                                   " cassandra_apply_config_release | default(false) | bool"
+                                                                   " else '' }}"}
     # a node started (not restarted): the same window before its start
     before = action[anames.index("Start the time sync before Cassandra starts")]
     assert before["ansible.builtin.include_tasks"] == "os_window.yml"

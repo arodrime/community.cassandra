@@ -989,6 +989,42 @@ A real run shows them before its question (which names the most disruptive effec
 Cassandra on node1?``) and ends with what each node got; ``--check`` shows no plan: its recap is the plan, said once (the verdict
 with the restarts first, ``nothing was changed (--check)``, ``DIFFERENCES FOUND`` (what was observed), ``WOULD DO`` (what a real run would do), the warnings).
 
+``apply_config`` ignores no setting: every difference between the inventory and a node falls in one of four
+categories, each shown in the plan and under ``--check``. Every variable of the roles has its category in
+``plugins/plugin_utils/cassandra_apply_config_coverage.py`` (a unit test fails on a variable without one):
+
+- **A, live, no restart**: applied at the node's turn. The owner, group and mode of the config files, the OS settings
+  (``cassandra_linux``), Medusa, the package repository (``cassandra_repository``), the packages and tools
+  (``cassandra_install``: ``cassandra_install_tools``, ``cassandra_install_jemalloc``, cqlsh's Python, dsbulk) and the
+  firewall (``cassandra_firewall``), each in a section of the table (``Repository (no restart)``, ``Packages (no
+  restart)``, ``Firewall (no restart)``). What Cassandra only reads when it starts (jemalloc) is said under the node:
+  ``next restart: jemalloc loaded``, with no restart for it.
+- **B, a restart**: the config files (none when a proof says the running Cassandra already runs with them), the Java
+  (``cassandra_java_version``, ``cassandra_java_home``: as ``update_java`` does, the Java installed and made the one
+  Cassandra starts with, then checked after the restart, ``Java (restart)``), a newer release of the node's series
+  (``cassandra_package_version``: the package updated with Cassandra stopped, its config written again, the release it
+  runs checked after, ``Cassandra package (restart)``), and what the ``cassandra`` unit gives the running Cassandra
+  (its user and group, its limits, its environment, compared with the running JVM's: ``cassandra unit (restart)``).
+  Whatever the reasons, a node restarts once, all of them done in that restart. A unit file that differs only in
+  systemd's handling of the service (``Restart``, ``TimeoutStopSec``, the drain on stop) changes nothing for the
+  running Cassandra: written at its next restart, said under the node.
+- **C, a procedure of its own**: the run stops before changing anything and gives the command. Another series
+  (``cassandra_version``): ``upgrade -e cassandra_upgrade_phase=preflight``. An older release than the one a node runs:
+  set ``cassandra_package_version`` back to it. A host of the cluster's group not in the ring, or one marked
+  ``cassandra_node_state: absent`` still in it: ``topology --check``, then ``topology``. A node of the ring that no host
+  of the inventory has is said in the plan's warnings (``topology --check`` shows it), not a stop. A newer release
+  of the series also stops when it would not start with the node's settings, or when it is newer than the releases
+  the collection's notes cover (``plugins/plugin_utils/cassandra_patch_notes.py``: what each release refuses to start
+  with, the defaults it changes, said in the plan when a node crosses it): read its ``NEWS.txt``, then ``-e
+  cassandra_allow_unknown_patch=true``.
+- **D, refused**: what a joined node keeps for life, ``cassandra_cluster_name``, ``cassandra_num_tokens``,
+  ``cassandra_partitioner``, the snitch, its dc and rack (refused by ``cassandra_config``, see `Inventory`_), and a
+  ``cassandra_initial_token`` that is neither the one its ``cassandra.yaml`` has nor the token it owns in the ring
+  (Cassandra reads it at a node's first start only: ``move_node`` moves a node; after it, the inventory gets the node's
+  new token, which ``apply_config`` writes).
+
+Options of the runs (``cassandra_rolling_resume``, the logins of nodetool and cqlsh...) are not node settings.
+
 ``apply_config`` covers the OS settings of ``cassandra_linux`` too (kernel settings, limits, transparent huge pages,
 swap, time sync, the read-ahead and IO scheduler of the data devices), except on a node with ``cassandra_linux_manage:
 false`` (its OS settings kept as they are, e.g. set by ``import_cluster``). The ones that differ come after the config's,

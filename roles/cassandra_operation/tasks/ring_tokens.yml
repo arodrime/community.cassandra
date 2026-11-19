@@ -1,0 +1,12 @@
+---
+# The tokens of the ring, read on the node preflight read the cluster from (apply_config: a joined node's
+# cassandra_initial_token against the token it owns). Sets cassandra_apply_config_tokens (not read: no ring).
+- name: Read the tokens of the ring
+  community.cassandra.cassandra_ring:
+  module_defaults:
+    community.cassandra.cassandra_ring: "{{ _cassandra_service_jmx }}"
+  delegate_to: "{{ _cassandra_preflight_from }}"
+  register: cassandra_apply_config_tokens
+  failed_when: false  # not read: no token compared
+  check_mode: false  # reads only
+  run_once: true
