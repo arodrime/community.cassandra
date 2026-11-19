@@ -13,16 +13,9 @@ import pytest
 import yaml
 
 from ansible.errors import AnsibleError
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
 
 from ansible_collections.community.cassandra.plugins.lookup.cassandra_hosts import RUNTIME
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
@@ -30,11 +23,6 @@ TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 def load(*path):
     with open(os.path.join(TOP, *path), encoding="utf-8") as f:
         return yaml.safe_load(f)
-
-
-def render(template, **variables):
-    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
 CHECK = next(t for t in load("roles", "cassandra_operation", "tasks", "hosts_check.yml")

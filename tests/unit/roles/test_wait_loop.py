@@ -12,6 +12,8 @@ import sys
 
 import pytest
 
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
+
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 COLLECTIONS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", ".."))
 
@@ -91,13 +93,6 @@ def test_stops_right_after_the_check_that_ends_it(tmp_path, size, stop):
 def test_rounds_of_6_hours_up_to_720_checks(interval, round_size, group):
     """At the default 30 s, a round holds 720 checks (6 hours): a multi-day wait nests a few includes, not hundreds."""
     import yaml
-    from ansible.parsing.dataloader import DataLoader
-    from ansible.template import Templar
-    try:
-        from ansible.template import trust_as_template
-    except ImportError:  # ansible-core < 2.19
-        def trust_as_template(value):
-            return value
     # the collection's own files, next to this test (their path as given: the same under a symlinked checkout)
     variables = {}
     for kind in ("defaults", "vars"):  # the public settings, then the private ones computed from them
@@ -105,6 +100,6 @@ def test_rounds_of_6_hours_up_to_720_checks(interval, round_size, group):
             variables.update(yaml.safe_load(f))
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
     variables["cassandra_stream_check_interval"] = interval
-    templar = Templar(loader=DataLoader(), variables=variables)
+    templar = templar_for(variables)
     assert int(templar.template(trust_as_template("{{ _cassandra_stream_round_size }}"))) == round_size
     assert int(templar.template(trust_as_template("{{ _cassandra_wait_size }}"))) == group

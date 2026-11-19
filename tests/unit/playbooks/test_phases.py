@@ -12,18 +12,11 @@ import warnings
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
-from ansible.template import Templar
 
 from ansible_collections.community.cassandra.plugins.callback.ops import colour
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -49,11 +42,6 @@ def phases(*path):
     data = load(*path)
     tasks = [t for p in data for t in walk(p.get("tasks"))] if path[0] == "playbooks" else list(walk(data))
     return [t for t in tasks if "cassandra_phase" in str((t.get("ansible.builtin.debug") or {}).get("msg", ""))]
-
-
-def render(template, **variables):
-    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
 def test_the_words():

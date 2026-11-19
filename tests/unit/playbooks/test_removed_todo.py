@@ -11,16 +11,9 @@ import warnings
 
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
-from ansible.template import Templar
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import PARAGRAPH as P
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render, templar_for, trust_as_template
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -33,11 +26,6 @@ def task(playbook, play, name):
     with open(os.path.join(TOP, "playbooks", playbook), encoding="utf-8") as f:
         found = next(p for p in yaml.safe_load(f) if p.get("name") == play)
     return next(t for t in found["tasks"] if t.get("name") == name)
-
-
-def render(template, **variables):
-    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
 def test_decommission_node_says_reset_then_reimport(tmp_path, monkeypatch):
@@ -114,7 +102,7 @@ def test_reset_node_takes_a_host_marked_absent():
     groups = {"my_cluster": ["node1", "node2", "node3"], "my_cluster_dc1": ["node1", "node2", "node3"]}
     for host, ok in (("node3", True), ("other", False)):
         variables = {"inventory_hostname": host, "groups": groups}
-        templar = Templar(loader=DataLoader(), variables=variables)
+        templar = templar_for(variables)
         # the cluster's group, as lookup('community.cassandra.cassandra_hosts') finds it
         expr = that.replace("lookup('community.cassandra.cassandra_hosts')", "'my_cluster'")
         assert templar.template(trust_as_template("{{ %s }}" % expr)) is ok

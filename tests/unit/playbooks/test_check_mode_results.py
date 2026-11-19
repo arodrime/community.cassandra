@@ -10,14 +10,7 @@ import os
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 ROLES = os.path.join(TOP, "roles")
@@ -35,7 +28,7 @@ def defaults():
 
 
 def render(template, **variables):
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
+    return render_as_given(template, variables)
 
 
 def find(tasks, name):

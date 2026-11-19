@@ -14,15 +14,8 @@ import warnings
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -33,11 +26,6 @@ TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 with open(os.path.join(TOP, "playbooks", "preflight.yml"), encoding="utf-8") as f:
     PLAY = next(p for p in yaml.safe_load(f) if p.get("name") == "Cassandra preflight checks")
 RACKS = next(t for t in PLAY["tasks"] if t.get("name") == "Racks per datacenter")
-
-
-def render(template, **variables):
-    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
 def passes(inventory, ring, hint=3, **extra):

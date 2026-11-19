@@ -13,6 +13,7 @@ from ansible.parsing.vault import VaultLib, VaultSecret
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import GENERATED, GENERATED_UNNAMED
 from ansible_collections.community.cassandra.plugins.lookup.cassandra_inventory import read
+from ansible_collections.community.cassandra.tests.unit.helpers import trust_as_template
 
 HOSTS = """\
 all:
@@ -202,11 +203,6 @@ def test_lookup_through_another_variable_not_run(tmp_path):
     # control: the same template does run the lookup when templated plainly (the test can't pass vacuously)
     from ansible.parsing.dataloader import DataLoader
     from ansible.template import Templar
-    try:
-        from ansible.template import trust_as_template
-    except ImportError:
-        def trust_as_template(template):
-            return template
     Templar(loader=DataLoader()).template(trust_as_template("{{ lookup('pipe', 'touch %s') }}" % marker))
     assert marker.exists()
     assert vars_["cassandra_endpoint_snitch"].startswith("{{") and vars_["cassandra_dc"].startswith("{{")

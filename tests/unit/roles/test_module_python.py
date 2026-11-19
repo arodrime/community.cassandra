@@ -13,15 +13,8 @@ import pytest
 import yaml
 
 from ansible import constants as C
-from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -37,7 +30,7 @@ def load(*path):
 
 
 def runs(task, variables):
-    templar = Templar(loader=DataLoader(), variables=variables)
+    templar = templar_for(variables)
     return all(templar.template(trust_as_template("{{ %s }}" % w)) for w in task["when"])
 
 
@@ -106,7 +99,7 @@ def test_cassandra_config_runs_its_python_scripts_with_it():
     facts = {"python": {"executable": "/usr/bin/python3.11"}}
 
     def render(**variables):
-        templar = Templar(loader=DataLoader(), variables=dict(variables, ansible_facts=facts))
+        templar = templar_for(dict(variables, ansible_facts=facts))
         return templar.template(trust_as_template(value)).strip()
 
     assert render(ansible_python_interpreter="/usr/bin/python3") == "/usr/bin/python3"

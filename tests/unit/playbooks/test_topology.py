@@ -9,16 +9,9 @@ import warnings
 
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
-from ansible.template import Templar
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import PARAGRAPH as P
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, templar_for, trust_as_template
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")
@@ -38,7 +31,7 @@ def task(name):
 
 
 def render(template, **variables):
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
+    return render_as_given(template, variables)
 
 
 def test_the_plan_asks_once_and_the_steps_ask_nothing():
@@ -94,7 +87,7 @@ def test_operator_messages_marked_for_the_ops_callback():
                      groups={"all": ["n1", "n2", "n4"], "my_cluster": ["n1", "n2", "n4"],
                              "my_cluster_dc1": ["n1", "n2", "n4"]})
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    msg = Templar(loader=DataLoader(), variables=variables).template(trust_as_template(done["ansible.builtin.debug"]["msg"]))
+    msg = templar_for(variables).template(trust_as_template(done["ansible.builtin.debug"]["msg"]))
     assert msg.split("\n") == [
         "DONE  topology  my_cluster  ring = inventory: added n4; seeds now n1,n4; removed n2", "", "TO DO",
         "  1. empty n2 before reusing the host (its data is left in place):",
@@ -152,7 +145,7 @@ def problems(plan, keyspaces, force=False, error=""):
                      cassandra_decommission_force=force, _cassandra_topology_keyspaces_error=error,
                      _tp_problems=task("Refuse a plan that can't be done")["vars"]["_tp_problems"])
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template("{{ _tp_problems }}"))
+    return templar_for(variables).template(trust_as_template("{{ _tp_problems }}"))
 
 
 PLAN_REMOVE = {"add": [], "remove": ["n3"], "in_ring": ["n3"], "nodes_left": {"dc1": 2}, "problems": []}
@@ -272,7 +265,7 @@ def test_a_refused_host_to_add_gives_its_problems_and_the_reset_hint():
         variables = dict(record["vars"], ansible_failed_result={"msg": msg},
                          _cassandra_new_node_check={"problems": problems})
         variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-        return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template)).strip()
+        return templar_for(variables).template(trust_as_template(template)).strip()
 
     assert refused(["data directory /d is not empty", "port 7000 in use"]) == (
         "data directory /d is not empty; port 7000 in use; -e cassandra_add_node_reset=true empties it first, if it"

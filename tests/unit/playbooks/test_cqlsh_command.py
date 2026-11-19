@@ -9,6 +9,8 @@ import os
 
 import yaml
 
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
+
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 MODULE = "community.cassandra.cassandra_cqlsh"
 
@@ -57,13 +59,6 @@ def test_no_cqlsh_names_the_variable():
 
 def _why(err="", msg="", rc=1, command=None):
     """The why of the login's outcome for that result of cqlsh, rendered as Ansible does."""
-    from ansible.parsing.dataloader import DataLoader
-    from ansible.template import Templar
-    try:  # ansible-core 2.19+ renders trusted templates only
-        from ansible.template import trust_as_template
-    except ImportError:
-        def trust_as_template(template):
-            return template
     with open(os.path.join(ROOT, "roles", "cassandra_operation", "tasks", "cql_login_try.yml")) as f:
         outcome = next(t for t in yaml.safe_load(f) if t.get("name") == "Keep the outcome of the CQL login")
     variables = dict((k, trust_as_template(v)) for k, v in outcome["vars"].items())
@@ -72,7 +67,7 @@ def _why(err="", msg="", rc=1, command=None):
     if command is not None:
         variables["cassandra_cqlsh_command"] = command
     why = outcome["ansible.builtin.set_fact"]["cassandra_cql_login"]["why"]
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(why)).strip()
+    return templar_for(variables).template(trust_as_template(why)).strip()
 
 
 def test_not_found_only_when_cqlsh_itself_is_missing():

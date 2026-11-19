@@ -12,17 +12,10 @@ import warnings
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
-from ansible.template import Templar
 
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, templar_for, trust_as_template, trusted
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -48,16 +41,6 @@ def load(*path):
 SCREEN = load("roles", "cassandra_operation", "tasks", "screen.yml")[0]
 
 
-def trust(value):
-    if isinstance(value, str):
-        return trust_as_template(value)
-    if isinstance(value, dict):
-        return dict((k, trust(v)) for k, v in value.items())
-    if isinstance(value, list):
-        return [trust(v) for v in value]
-    return value
-
-
 def walk(tasks):
     for t in tasks or []:
         yield t
@@ -78,10 +61,10 @@ def screen(variables, task_vars, play_vars=None, check=False, confirm=True):
     """The text of screen.yml for the task's vars."""
     variables = dict(variables, ansible_check_mode=check, cassandra_operation_confirm=confirm,
                      _cassandra_session_warning=SESSION)
-    variables.update(trust(play_vars or {}))
-    variables.update(trust(task_vars))
-    variables.update(trust(SCREEN["vars"]))
-    templar = Templar(loader=DataLoader(), variables=variables)
+    variables.update(trusted(play_vars or {}))
+    variables.update(trusted(task_vars))
+    variables.update(trusted(SCREEN["vars"]))
+    templar = templar_for(variables)
     return templar.template(trust_as_template("{{ _cassandra_screen_text }}"))
 
 
@@ -326,11 +309,11 @@ APPLY_DIFF = ["cassandra.yaml  concurrent_reads  48 -> 32  node1"]
 
 
 def variables_of(t, play, cluster):
-    return dict(trust(t["vars"]), **trust(play["vars"]), hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS, **cluster)
+    return dict(trusted(t["vars"]), **trusted(play["vars"]), hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS, **cluster)
 
 
 def render_question(t, variables):
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(t["vars"]["cassandra_screen_question"]))
+    return render_as_given(t["vars"]["cassandra_screen_question"], variables)
 
 
 def test_apply_config_and_update_java_screens(monkeypatch):
@@ -349,8 +332,8 @@ def test_apply_config_and_update_java_screens(monkeypatch):
                     "  Cassandra restarts one node at a time.\n\n"
                     "DIFFERENCES FOUND\n  " + APPLY_DIFF[0] + "\n\n"  # titled as --check's, WILL DO a plan's
                     "WILL DO\n  node1  write + restart\n  node2  up to date")
-    question = Templar(loader=DataLoader(), variables=dict(trust(t["vars"]), **trust(play["vars"]), ansible_play_hosts=hosts,
-                                                           hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS, **cluster))
+    question = templar_for(dict(trusted(t["vars"]), **trusted(play["vars"]), ansible_play_hosts=hosts,
+                                hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS, **cluster))
     # the question names the most disruptive effect, on which nodes: a Cassandra restart, a start
     # no cluster (the head names it), 61 columns at most (" Answer yes or no:" after it fits 79): too
     # long, the counts (the plan's rows name the nodes), the starts left out before the restarts
@@ -427,7 +410,7 @@ def test_datacenter_screens():
     hostvars = {"node9": {"_cassandra_preflight": preflight(9, cassandra_dc="dc2")}}
     variables = {"ansible_play_hosts_all": ["node9"], "hostvars": hostvars, "cassandra_rebuild_source_dc": "dc1",
                  "cassandra_new_dc_alter": ["ALTER KEYSPACE \"orders\" ..."], "cassandra_new_dc_tokens": {"lines": ["+ new node", "dc2 ring"]}}
-    variables.update(trust(play["vars"]))
+    variables.update(trusted(play["vars"]))
     variables["_p0"] = {"cassandra_num_tokens": 1}
     variables["_new_dc"] = "dc2"
     text = screen(variables, t["vars"])
@@ -513,8 +496,8 @@ def test_apply_config_recap():
                  "ansible_play_hosts_all": ["node1", "node2", "node3", "node4"]}
 
     def recap(check):
-        variables.update(trust(dict(play["vars"], **t["vars"])), ansible_check_mode=check)  # (the recap's: the play's)
-        return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(t["ansible.builtin.debug"]["msg"]))
+        variables.update(trusted(dict(play["vars"], **t["vars"])), ansible_check_mode=check)  # (the recap's: the play's)
+        return templar_for(variables).template(trust_as_template(t["ansible.builtin.debug"]["msg"]))
 
     variables["cassandra_cluster_name"] = "my_cluster"
     # the plan once: the verdict naming the restart, DIFFERENCES FOUND, WOULD DO
@@ -577,9 +560,9 @@ def test_apply_config_reads_every_node_and_puts_the_settings_side_by_side():
         {"cassandra_apply_config_file": "cassandra.yaml", "content": base64.b64encode(live[h].encode()).decode()}]}})
         for h in items)
     variables = {"ansible_play_hosts": list(items), "hostvars": hostvars, "ansible_verbosity": 0}
-    templar = Templar(loader=DataLoader(), variables=variables)
+    templar = templar_for(variables)
     assert templar.template(trust_as_template(listed["ansible.builtin.set_fact"]["_cassandra_apply_config_differ"])) == ["cassandra.yaml"]
-    templar = Templar(loader=DataLoader(), variables=dict(variables, **trust(side["vars"])))
+    templar = templar_for(dict(variables, **trusted(side["vars"])))
     lines = templar.template(trust_as_template(side["ansible.builtin.set_fact"]["cassandra_apply_config_diff"]))
     assert lines == ["Item                Node  Inventory",
                      "cassandra.yaml  on node1",
@@ -594,7 +577,7 @@ def test_batch_result_under_check(tasks_file, would, done):
 
     def result(check):
         variables = {"ansible_check_mode": check, "_cassandra_restart_start": 0, "_cassandra_cleanup_start": 0}
-        return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(record["cassandra_op_result"]))
+        return templar_for(variables).template(trust_as_template(record["cassandra_op_result"]))
 
     assert result(True) == would
     assert result(False).startswith(done)
@@ -623,7 +606,7 @@ def test_apply_config_shows_the_changes_once():
                          _cassandra_config_perm_changes=[{"item": "cassandra.yaml (owner:group mode)"}],
                          _cassandra_config_dir_changes=[], _cassandra_config_dir_notes=[], _cassandra_config_ask=False,
                          ansible_check_mode=False)
-        templar = Templar(loader=DataLoader(), variables=variables)
+        templar = templar_for(variables)
         return all(templar.template(trust_as_template("{{ (%s) | bool }}" % c)) for c in show["when"])
 
     assert [shown(s) for s in shows] == [True, True, True]  # site.yml and the other callers: as before
@@ -636,10 +619,10 @@ def test_apply_config_counts_a_directory_owner_change():
     t, play = task("apply_config.yml", "Note what this node needs")
     dirs = [{"item": "data dir /srv/data (owner:group mode)", "path": "/srv/data", "dir": "data dir",
              "before": "root:cassandra 0750", "after": "cassandra:cassandra 0750"}]
-    variables = dict(trust(t["vars"]), _cassandra_config_changes=[], _cassandra_config_perm_changes=[],
+    variables = dict(trusted(t["vars"]), _cassandra_config_changes=[], _cassandra_config_perm_changes=[],
                      _cassandra_config_dir_changes=dirs, cassandra_config_restart_pending=False, cassandra_jvm={},
                      _cassandra_preflight_running=True)
-    templar = Templar(loader=DataLoader(), variables=variables)
+    templar = templar_for(variables)
     facts = t["ansible.builtin.set_fact"]
     assert templar.template(trust_as_template(facts["cassandra_apply_config_todo"])) is True
     assert templar.template(trust_as_template(facts["cassandra_apply_config_then"])) == "none"

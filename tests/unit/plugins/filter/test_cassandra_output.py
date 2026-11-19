@@ -5,6 +5,7 @@ __metaclass__ = type
 # terminal's width, after a blank line; the cassandra_normal_wait_line filter: the wait for a node to be NORMAL.
 
 from ansible_collections.community.cassandra.plugins.filter import cassandra_output as module
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 GIB = 1024.0 ** 3
 
@@ -111,13 +112,6 @@ def test_preflight_mixed_versions_as_rows_with_exact_ways_out():
     # the versions as rows (no "5.0.9: [..]" inline), each way out a command or an exact option
     import os
     import yaml
-    from ansible.parsing.dataloader import DataLoader
-    from ansible.template import Templar
-    try:
-        from ansible.template import trust_as_template
-    except ImportError:
-        def trust_as_template(template):
-            return template
     root = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
     with open(os.path.join(root, "playbooks", "preflight.yml")) as f:
         tasks = [t for play in yaml.safe_load(f) for t in play.get("tasks", []) for t in [t] + t.get("block", [])]
@@ -125,7 +119,7 @@ def test_preflight_mixed_versions_as_rows_with_exact_ways_out():
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in task["vars"].items()
                      if k not in ("_section", "_versions"))
     variables["_versions"] = ["5.0.9: [10.0.0.1, 10.0.0.2]", "4.1.10: [10.0.0.3]"]
-    text = Templar(loader=DataLoader(), variables=variables).template(
+    text = templar_for(variables).template(
         trust_as_template(task["ansible.builtin.assert"]["fail_msg"]))
     assert text.split("\n")[:4] == [
         "REFUSED  the cluster runs 2 Cassandra versions (an upgrade is not finished)  nothing was changed",

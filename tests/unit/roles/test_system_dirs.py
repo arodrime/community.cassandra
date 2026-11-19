@@ -12,15 +12,8 @@ import warnings
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -39,11 +32,6 @@ def walk(tasks):
         yield t
         for key in ("block", "rescue", "always"):
             yield from walk(t.get(key))
-
-
-def render(template, **variables):
-    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
 DIRS = load("roles", "cassandra_service", "vars", "main.yml")["_cassandra_service_system_dirs"]

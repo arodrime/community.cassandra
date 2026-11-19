@@ -9,17 +9,9 @@ import re
 
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
 
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
-
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 load_collection_filters()
 
@@ -43,7 +35,7 @@ def templar_with(**inventory):
         "cassandra_install_url": "https://mirror.example.com/cassandra/",
     })
     variables.update(inventory)
-    return Templar(loader=DataLoader(), variables=variables)
+    return templar_for(variables)
 
 
 def resolve(**inventory):

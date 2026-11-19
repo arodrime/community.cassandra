@@ -7,14 +7,8 @@ __metaclass__ = type
 import os
 
 import yaml
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
 
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 PATH = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_operation", "tasks", "cluster_health.yml")
 
@@ -26,7 +20,7 @@ def said(check, problems, **more):
     variables.update(_absent=[], ansible_check_mode=check, cassandra_health_problems=problems,
                      _cassandra_run_command_args={"inventory": ["/inv/hosts.yml"], "default_inventory": "/etc/ansible/hosts",
                                                   "hosts": "prod", "cwd": "/inv"}, **more)
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(stop["ansible.builtin.fail"]["msg"]))
+    return templar_for(variables).template(trust_as_template(stop["ansible.builtin.fail"]["msg"]))
 
 
 def test_the_way_out_under_check():
@@ -86,7 +80,7 @@ def test_each_problem_and_the_wait_on_a_line_of_their_own():
                      cassandra_health_problems=["n4 (10.0.0.4, r1) is DN, seen from n1", "the schema differs"],
                      _cassandra_health_waited=True, _cassandra_health_wait_start=0,
                      _cassandra_run_command_args={"hosts": "prod"})
-    lines = Templar(loader=DataLoader(), variables=variables).template(trust_as_template(stop["ansible.builtin.fail"]["msg"]))
+    lines = templar_for(variables).template(trust_as_template(stop["ansible.builtin.fail"]["msg"]))
     assert lines[:2] == ["n4 (10.0.0.4, r1) is DN, seen from n1", "the schema differs"]
     assert lines[2].startswith("waited ") and lines[2].endswith(" (cassandra_service_health_timeout: 600s)")
     assert lines[3] == "WAY OUT  bring n4 back to UN (its host and/or Cassandra), then resume"
@@ -101,7 +95,7 @@ def test_a_check_that_only_stops_reads_nothing_and_stops_on_the_problems_given()
         when = task.get("when", [])
         variables = dict(dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in task.get("vars", {}).items()),
                          cassandra_service_health_force=False, cassandra_health_problems=["the ring read before"], **variables)
-        return all(Templar(loader=DataLoader(), variables=variables).template(trust_as_template("{{ %s }}" % w))
+        return all(templar_for(variables).template(trust_as_template("{{ %s }}" % w))
                    for w in (when if isinstance(when, list) else [when]))
     given = dict(_cassandra_health_stop_on=["n3 (10.0.0.3, r2) is DN, seen from n2"])
     assert [t["name"] for t in tasks if runs(t, **given)] == ["Name the stop for the table of the stop block",
@@ -156,7 +150,7 @@ def test_forced_after_a_check_that_only_stops_it_does_not_say_a_node_is_taken_do
     def msg(**variables):
         variables = dict(dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in task["vars"].items()),
                          cassandra_health_problems=["n3 is DN"], **variables)
-        return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(task["ansible.builtin.debug"]["msg"]))
+        return templar_for(variables).template(trust_as_template(task["ansible.builtin.debug"]["msg"]))
     assert msg(_cassandra_health_stop_on=["n3 is DN"]).splitlines() == [
         "WARNING  cassandra_service_health_force is set, going on with an unhealthy cluster:", "  n3 is DN"]
     assert "taking this node down now" in msg()

@@ -8,15 +8,8 @@ import os
 
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, templar_for, trust_as_template
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "upgrade.yml")
 
@@ -28,7 +21,7 @@ ASSERT = next(t for play in PLAYS for t in play.get("tasks", []) if t.get("name"
 
 def render(name, hostvars):
     variables = dict(ASSERT["vars"], hostvars=hostvars, ansible_play_hosts_all=list(hostvars))
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(ASSERT["vars"][name]))
+    return render_as_given(ASSERT["vars"][name], variables)
 
 
 def results(*items):
@@ -79,7 +72,7 @@ LOOK = next(t for play in PLAYS for t in play.get("tasks", [])
 
 
 def template(text, **variables):
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(text))
+    return templar_for(variables).template(trust_as_template(text))
 
 
 def looked(**node):

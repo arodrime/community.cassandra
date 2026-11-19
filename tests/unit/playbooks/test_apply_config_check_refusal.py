@@ -11,19 +11,12 @@ import warnings
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
-from ansible.template import Templar
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import cassandra_apply_config_outcomes
 from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import cassandra_apply_config_recap
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given as render, trusted
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -42,16 +35,6 @@ def wide_terminal(monkeypatch):
     monkeypatch.setattr(cassandra_apply_config, "terminal_width", lambda: 200)
 
 
-def trust(value):
-    if isinstance(value, str):
-        return trust_as_template(value)
-    if isinstance(value, dict):
-        return dict((k, trust(v)) for k, v in value.items())
-    if isinstance(value, list):
-        return [trust(v) for v in value]
-    return value
-
-
 def task(name, play_name=None):
     for play in PLAYS:
         if play_name and play.get("name") != play_name:
@@ -60,10 +43,6 @@ def task(name, play_name=None):
             if t.get("name") == name:
                 return t
     raise AssertionError("no task %s" % name)
-
-
-def render(template, variables):
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
 # node5 stopped on purpose (left stopped: write), node1 and node2 to restart
@@ -88,7 +67,7 @@ AGAIN = "then run again."
 
 def refused(hostvars):
     t = task("Note whether restarts are refused while a node is not running")
-    variables = dict(trust(t["vars"]), hostvars=hostvars, ansible_play_hosts=HOSTS)
+    variables = dict(trusted(t["vars"]), hostvars=hostvars, ansible_play_hosts=HOSTS)
     return render(t["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"], variables)
 
 
@@ -98,7 +77,7 @@ def test_the_refusal_reason_and_its_way_out():
     started = dict(HOSTVARS, node0={"cassandra_apply_config_todo": True, "cassandra_apply_config_then": "start"})
     started.pop("node5")
     t = task("Note whether restarts are refused while a node is not running")
-    variables = dict(trust(t["vars"]), hostvars=started, ansible_play_hosts=sorted(started))
+    variables = dict(trusted(t["vars"]), hostvars=started, ansible_play_hosts=sorted(started))
     assert render(t["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"], variables) == []
 
 
@@ -109,7 +88,7 @@ def test_the_refusal_names_a_failed_unit_this_run_does_not_start():
               "_cassandra_preflight": {"ring_address": "10.0.0.7", "cassandra_dc": "dc1", "cassandra_rack": "r2"}}
     hostvars = dict(HOSTVARS, node7=failed)
     t = task("Note whether restarts are refused while a node is not running")
-    variables = dict(trust(t["vars"]), hostvars=hostvars, ansible_play_hosts=sorted(hostvars))
+    variables = dict(trusted(t["vars"]), hostvars=hostvars, ansible_play_hosts=sorted(hostvars))
     reason, *way = render(t["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"], variables)
     assert reason == "node5, node7: Cassandra not running, and node1, node2 would be restarted, which needs every other node up."
     # --limit names node5 only (the config applied there, started if stopped on purpose); node7's way out is on the node
@@ -120,7 +99,7 @@ def test_the_refusal_names_a_failed_unit_this_run_does_not_start():
     assert way == WAY + failed_way + [AGAIN]
     # node7 the only node down: no --limit sentence (nothing to apply there)
     hostvars.pop("node5")
-    variables = dict(trust(t["vars"]), hostvars=hostvars, ansible_play_hosts=sorted(hostvars))
+    variables = dict(trusted(t["vars"]), hostvars=hostvars, ansible_play_hosts=sorted(hostvars))
     assert render(t["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"], variables) == [
         "node7: Cassandra not running, and node1, node2 would be restarted, which needs every other node up."] + failed_way + [AGAIN]
     # the fact the refusal reads, set with the node's needs
@@ -137,7 +116,7 @@ def test_a_node_left_stopped_by_an_interrupted_run_has_one_way_out_the_resume():
     hostvars = dict((k, v) for k, v in HOSTVARS.items() if k != "node5")
     hostvars["node7"] = marked
     t = task("Note whether restarts are refused while a node is not running")
-    variables = dict(trust(t["vars"]), hostvars=hostvars, ansible_play_hosts=sorted(hostvars))
+    variables = dict(trusted(t["vars"]), hostvars=hostvars, ansible_play_hosts=sorted(hostvars))
     # node1 restarted before node7 in a resume too: the resume on node7 alone first, said at once
     assert render(t["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"], variables) == [
         "node7: Cassandra not running, and node1, node2 would be restarted, which needs every other node up.",
@@ -180,7 +159,7 @@ def test_the_start_rack_of_the_way_out_starts_these_nodes_alone():
                     node8=dict(down, _cassandra_preflight={"ring_address": "10.0.0.8", "cassandra_dc": "dc2",
                                                            "cassandra_rack": "r1"}))
     t = task("Note whether restarts are refused while a node is not running")
-    variables = dict(trust(t["vars"]), hostvars=hostvars, ansible_play_hosts=sorted(hostvars),
+    variables = dict(trusted(t["vars"]), hostvars=hostvars, ansible_play_hosts=sorted(hostvars),
                      ansible_inventory_sources=["/srv/inv/prod.yml"], cassandra_hosts="prod")
     way = render(t["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"], variables)[2:4]
     assert way == ["    ansible-playbook -i /srv/inv/prod.yml community.cassandra.start_rack -e cassandra_hosts=prod"
@@ -214,7 +193,7 @@ def test_a_real_run_refuses_before_any_change_check_goes_on():
     for check, refused, runs in ((False, [REASON] + WAY, True), (True, [REASON] + WAY, False), (False, [], False)):
         variables = {"ansible_check_mode": check, "_cassandra_apply_config_refused": refused}
         assert all(render("{{ %s | bool }}" % w, variables) in (True, "True") for w in t["when"]) is runs
-    variables = dict(trust(t["vars"]), _cassandra_apply_config_refused=[REASON] + WAY + [AGAIN], hostvars={"localhost": {}},
+    variables = dict(trusted(t["vars"]), _cassandra_apply_config_refused=[REASON] + WAY + [AGAIN], hostvars={"localhost": {}},
                      cassandra_cluster_name="c")
     # a block: its verdict, then the reason and the way out, at 79 columns; the command cut between its arguments,
     # a continuation at the end of each line but the last (it pastes as one command)
@@ -249,7 +228,7 @@ def test_the_check_recap_ends_with_the_refusal():
     hostvars = dict((h, dict(v, _cassandra_apply_config_refused=[REASON] + WAY + [AGAIN], cassandra_op_done=v["cassandra_apply_config_todo"],
                              cassandra_op_result="would apply" if v["cassandra_apply_config_todo"] else "nothing to apply"))
                     for h, v in HOSTVARS.items())
-    variables = dict(trust(dict(summary["vars"], **t["vars"])), hostvars=hostvars, groups={"prod": HOSTS}, cassandra_hosts="prod",
+    variables = dict(trusted(dict(summary["vars"], **t["vars"])), hostvars=hostvars, groups={"prod": HOSTS}, cassandra_hosts="prod",
                      ansible_play_hosts_all=HOSTS, cassandra_cluster_name="c", ansible_check_mode=True)
     # no plan shown (a later play stopped first): the recap says it, last
     lines = render(t["ansible.builtin.debug"]["msg"], variables)

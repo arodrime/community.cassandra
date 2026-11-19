@@ -8,15 +8,8 @@ __metaclass__ = type
 import json
 import os
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 load_collection_filters()
 
@@ -75,7 +68,7 @@ def plan(py3, distribution="Ubuntu", os_family="Debian", **overrides):
     variables.update(overrides)
     with open(PLAN, encoding="utf-8") as f:
         text = f.read()
-    return json.loads(Templar(loader=DataLoader(), variables=variables).template(trust_as_template(text)))
+    return json.loads(templar_for(variables).template(trust_as_template(text)))
 
 
 def needs(out):

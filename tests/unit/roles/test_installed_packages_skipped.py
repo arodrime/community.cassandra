@@ -10,15 +10,8 @@ import os
 
 import pytest
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 ROLES = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles")
 
@@ -42,7 +35,7 @@ def runs(role, file, name, **variables):
     conditions = conditions if isinstance(conditions, list) else [conditions]
     variables.update(dict((k, v) for k, v in (found.get("vars") or {}).items() if k not in variables))
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    templar = Templar(loader=DataLoader(), variables=variables)
+    templar = templar_for(variables)
     return all(templar.template(trust_as_template("{{ %s }}" % c)) is True or
                str(templar.template(trust_as_template("{{ %s }}" % c))) == "True" for c in conditions)
 

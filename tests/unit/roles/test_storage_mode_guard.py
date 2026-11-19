@@ -8,17 +8,10 @@ __metaclass__ = type
 import os
 
 import yaml
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
 from ansible_collections.community.cassandra.plugins.filter.cassandra_storage_mode import (
     cassandra_storage_mode_back, cassandra_storage_mode_jump, cassandra_storage_mode_unsure)
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render as _render
 
 load_collection_filters()
 
@@ -55,11 +48,6 @@ def test_back_on_evidence_only():
     assert cassandra_storage_mode_back(_host("UPGRADING"), "CASSANDRA_4") == ""
     failed = dict(_host("UPGRADING"), cassandra_storage_mode_cql={"failed": True, "msg": "module execution failed"})
     assert cassandra_storage_mode_back(failed, "CASSANDRA_4") == ""
-
-
-def _render(template, **variables):
-    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
 GUARD = "roles/cassandra_operation/tasks/storage_mode_guard.yml"

@@ -14,17 +14,10 @@ import warnings
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
-from ansible.template import Templar
 
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -47,11 +40,6 @@ with open(os.path.join(TOP, "playbooks", "upgrade.yml"), encoding="utf-8") as f:
                     if t.get("name") == "The target reads an options file the role writes"]
 with open(os.path.join(TOP, "roles", "cassandra_install", "tasks", "java_options_kept.yml"), encoding="utf-8") as f:
     KEPT, KEPT_READ, HEAP, HEAP_LINE = yaml.safe_load(f)
-
-
-def render(template, **variables):
-    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
 def found(**variables):

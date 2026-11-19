@@ -9,14 +9,7 @@ import os
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_repository", "tasks", "repository.yml")
 
@@ -25,7 +18,7 @@ with open(TASKS, encoding="utf-8") as f:
 
 
 def condition(expr, codes):
-    return Templar(loader=DataLoader(), variables={"_codes": codes}).template(trust_as_template("{{ %s }}" % expr))
+    return templar_for({"_codes": codes}).template(trust_as_template("{{ %s }}" % expr))
 
 
 @pytest.mark.parametrize("codes, accepted, warned", [

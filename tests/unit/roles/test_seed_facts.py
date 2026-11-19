@@ -11,16 +11,9 @@ import os
 
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
 
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
+from ansible_collections.community.cassandra.tests.unit.helpers import render
 
 load_collection_filters()
 
@@ -43,11 +36,6 @@ def flat(tasks):
 
 def task(tasks, name):
     return next(t for t in flat(tasks) if t.get("name") == name)
-
-
-def render(template, **variables):
-    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
 FACTS = {"fqdn": "node4.example.net", "hostname": "node4", "all_ipv4_addresses": ["10.0.0.4"],

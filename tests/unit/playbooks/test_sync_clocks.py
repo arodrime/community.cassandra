@@ -8,6 +8,8 @@ import os
 
 import yaml
 
+from ansible_collections.community.cassandra.tests.unit.helpers import render
+
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
 
@@ -52,18 +54,6 @@ def test_a_node_unreachable_or_not_read_stops_the_run_before_the_screen():
     # the result words of the live play, as the recap knows them (test_cassandra_clocks)
     live = " ".join(str(play("Set the clocks live")["tasks"]).split())
     assert "'clock_' ~ (_cassandra_clock_did | join('_') or 'slew')" in live
-
-
-def render(template, **variables):
-    from ansible.parsing.dataloader import DataLoader
-    from ansible.template import Templar
-    try:  # ansible-core 2.19+ renders trusted templates only
-        from ansible.template import trust_as_template
-    except ImportError:
-        def trust_as_template(template):
-            return template
-    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
 def test_a_stale_window_mark_is_removed_not_a_window():

@@ -8,14 +8,8 @@ __metaclass__ = type
 import os
 
 import yaml
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
 
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render
 
 TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_operation", "tasks")
 
@@ -23,11 +17,6 @@ TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cass
 def load(name):
     with open(os.path.join(TASKS, name)) as f:
         return yaml.safe_load(f)
-
-
-def render(template, **variables):
-    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
 def test_each_check_reads_the_refusals_and_stops_on_them():

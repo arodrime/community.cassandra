@@ -8,16 +8,9 @@ __metaclass__ = type
 import os
 
 import yaml
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
 
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 PATH = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_install", "tasks", "cassandra.yml")
 
@@ -44,11 +37,11 @@ def test_dnf_only_when_the_download_command_is_missing():
     stop = _find(install["rescue"], "Stop where the dnf download command could not be installed")
     failed = {"failed": True, "rc": 1, "results": [],
               "msg": "Failed to download metadata for repo 'epel': Cannot download repomd.xml: Curl error (6): Couldn't resolve host name"}
-    msg = Templar(loader=DataLoader(), variables={"ansible_failed_result": failed}).template(
+    msg = templar_for({"ansible_failed_result": failed}).template(
         trust_as_template(stop["ansible.builtin.fail"]["msg"]))
     assert "dnf could not install it: repository 'epel' unreachable" in " ".join(msg.split())
     # not dnf's failure (a variable, say): not called one
-    msg = Templar(loader=DataLoader(), variables={"ansible_failed_result": {"failed": True, "msg": "'x' is undefined"}}).template(
+    msg = templar_for({"ansible_failed_result": {"failed": True, "msg": "'x' is undefined"}}).template(
         trust_as_template(stop["ansible.builtin.fail"]["msg"]))
     assert msg == "Install the dnf download command: 'x' is undefined"
 
@@ -63,7 +56,7 @@ def test_the_download_reads_the_role_s_repository_alone():
     def argv(**variables):
         variables = dict(dict((k, trust_as_template(v)) for k, v in download["vars"].items()), _rpms="/var/tmp/r",
                          _cassandra_install_names=["cassandra-5.0.9"], cassandra_version="50x", **variables)
-        return Templar(loader=DataLoader(), variables=variables).template(
+        return templar_for(variables).template(
             trust_as_template(download["ansible.builtin.command"]["argv"]))
     assert argv(cassandra_repository_manage=True) == [
         "dnf", "-q", "download", "--disableexcludes=all", "--destdir", "/var/tmp/r", "--disablerepo=*",
@@ -74,6 +67,6 @@ def test_the_download_reads_the_role_s_repository_alone():
     failed = {"failed": True, "rc": 1, "msg": "non-zero return code",
               "stderr": "Error: Failed to download metadata for repo 'appstream': Cannot download repomd.xml"}
     variables = {"ansible_failed_result": failed, "_cassandra_install_names": ["cassandra-5.0.9"]}
-    msg = Templar(loader=DataLoader(), variables=variables).template(
+    msg = templar_for(variables).template(
         trust_as_template(stop["ansible.builtin.fail"]["msg"]))
     assert msg.startswith("dnf could not download cassandra-5.0.9: repository 'appstream' unreachable")

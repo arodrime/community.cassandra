@@ -10,17 +10,10 @@ import warnings
 
 import pytest
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
-from ansible.template import Templar
 
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -37,11 +30,6 @@ ALTERNATIVES = ["java - auto mode", "  link best version is /usr/lib/jvm/java-11
                 "/usr/lib/jvm/temurin-17-jdk-amd64/bin/java - priority 1"]
 TEMURIN_FILES = ["/.", "/usr", "/usr/lib/jvm", "/usr/lib/jvm/temurin-17-jdk-amd64/bin/java",
                  "/usr/lib/jvm/temurin-17-jdk-amd64/bin/javac"]
-
-
-def render(template, **variables):
-    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
 def path(alternatives, files, version="17"):

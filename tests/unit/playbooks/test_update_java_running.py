@@ -13,14 +13,7 @@ import subprocess
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "update_java.yml")
 with open(PLAYBOOK, encoding="utf-8") as f:
@@ -49,7 +42,7 @@ def todo(exe, version, wanted="17", java_home="", resolved=""):
                  "cassandra_java_plan_home": {"stdout": resolved}}
     for k, v in NOTE["vars"].items():
         variables[k] = trust_as_template(v)
-    return Templar(loader=DataLoader(), variables=variables).template(
+    return templar_for(variables).template(
         trust_as_template(NOTE["ansible.builtin.set_fact"]["cassandra_java_plan_todo"]))
 
 
@@ -93,7 +86,7 @@ with open(ACTION, encoding="utf-8") as f:
 
 def _template(template, variables):
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
+    return templar_for(variables).template(trust_as_template(template))
 
 
 def _java(path, version, home=None):
@@ -217,7 +210,7 @@ def _kept(**variables):
     base.update(variables)
     for k, v in note["vars"].items():
         base[k] = trust_as_template(v)
-    return " ".join(Templar(loader=DataLoader(), variables=base).template(
+    return " ".join(templar_for(base).template(
         trust_as_template(note["ansible.builtin.set_fact"]["cassandra_java_plan_kept"])).split())
 
 
@@ -384,18 +377,18 @@ def test_refused_before_any_restart_when_the_system_java_is_kept():
     assert read["environment"]["GIVEN"] == "{{ cassandra_service_environment.JAVA_HOME | default('') }}"
     for manage, start, kept in ((False, "unit", "yes"), (True, "unit", "no"), ("false", "unit", "yes"),
                                 (True, "package_script", "yes")):
-        assert Templar(loader=DataLoader(), variables={"cassandra_service_unit_manage": manage,
-                                                       "cassandra_service_start": start}).template(
+        assert templar_for({"cassandra_service_unit_manage": manage,
+                            "cassandra_service_start": start}).template(
             trust_as_template(read["environment"]["UNIT_KEPT"])) == kept
     assert check["run_once"] is True
     hosts = {"n1": {"cassandra_java_plan_kept": "no JAVA_HOME in cassandra_service_environment"}, "n2": {},
              "n3": {"cassandra_java_plan_kept": ""}}
     variables = {"ansible_play_hosts_all": list(hosts), "hostvars": hosts, "cassandra_java_version": "17",
                  "_nl": "\n", "cassandra_java_set_default": False}
-    kept = Templar(loader=DataLoader(), variables=variables).template(trust_as_template(check["vars"]["_kept"]))
+    kept = templar_for(variables).template(trust_as_template(check["vars"]["_kept"]))
     assert kept == ["n1: no JAVA_HOME in cassandra_service_environment"]
     variables["_kept"] = kept
-    text = Templar(loader=DataLoader(), variables=variables).template(
+    text = templar_for(variables).template(
         trust_as_template(check["ansible.builtin.assert"]["fail_msg"]))
     assert text.split("\n") == [
         "Cassandra would not restart on Java 17: the JAVA_HOME this node starts Cassandra with does not lead to it."
@@ -404,7 +397,7 @@ def test_refused_before_any_restart_when_the_system_java_is_kept():
         " cassandra_java_link, or the package one, installed), or remove cassandra_java_set_default: false to make it"
         " the system java; then run update_java again"]
     variables.update(_kept=["n1: x", "n2: y"], cassandra_java_set_default=True)
-    text = Templar(loader=DataLoader(), variables=variables).template(
+    text = templar_for(variables).template(
         trust_as_template(check["ansible.builtin.assert"]["fail_msg"]))
     assert "the JAVA_HOME these nodes start Cassandra with" in text
     assert text.endswith(", or remove it there: the new Java is made the system java; then run update_java again")

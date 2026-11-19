@@ -12,15 +12,8 @@ import warnings
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render_with as render
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")
@@ -36,11 +29,6 @@ MODE = next(t for t in PLAY["tasks"] if t.get("name") == "A new 5.0 cluster star
 SET = {"cassandra_cluster_name": "c", "cassandra_version": "50x", "cassandra_num_tokens": 16,
        "cassandra_partitioner": "p", "cassandra_endpoint_snitch": "s", "cassandra_dc": "dc1", "cassandra_rack": "r1",
        "cassandra_allocate_tokens_for_local_replication_factor": 3}
-
-
-def render(template, variables):
-    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
 def variables(inventory, running, reset=False, task=IDENTITY, others=None, play=None, group=None, data=(), elsewhere=()):

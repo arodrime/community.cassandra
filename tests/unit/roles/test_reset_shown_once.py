@@ -9,14 +9,7 @@ import os
 
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
@@ -30,7 +23,7 @@ def shown(**variables):
     say = next(t for t in load("roles", "cassandra_operation", "tasks", "reset_node_plan.yml")
                if t["name"] == "What the reset of {{ inventory_hostname }} would do")
     variables.setdefault("_p", {"delete": ["/var/lib/cassandra/data/system"]})
-    templar = Templar(loader=DataLoader(), variables=variables)
+    templar = templar_for(variables)
     return all(templar.template(trust_as_template("{{ %s }}" % w)) for w in say["when"])
 
 
@@ -55,8 +48,8 @@ def test_reset_node_shows_it_on_its_screen_in_a_real_run():
                    if t.get("name") == "Work out the reset")
     on_screen = include["vars"]["_cassandra_node_reset_on_screen"]
     for check, whole, expected in ((False, False, True), (True, False, False), (False, True, False)):
-        templar = Templar(loader=DataLoader(), variables={"ansible_check_mode": check,
-                                                          "_cassandra_node_reset_whole_cluster": whole})
+        templar = templar_for({"ansible_check_mode": check,
+                               "_cassandra_node_reset_whole_cluster": whole})
         assert templar.template(trust_as_template(on_screen)) is expected
     # on its screen: printed once there; a node with nothing to do is not on it, said here
     assert not shown(_cassandra_node_reset_on_screen=True)

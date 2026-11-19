@@ -13,16 +13,9 @@ import warnings
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
-from ansible.template import Templar
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, trusted
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -47,18 +40,8 @@ def find(tasks, name):
     return next(t for t in walk(tasks) if t.get("name") == name)
 
 
-def trust(value):
-    if isinstance(value, str):
-        return trust_as_template(value)
-    if isinstance(value, dict):
-        return dict((k, trust(v)) for k, v in value.items())
-    if isinstance(value, list):
-        return [trust(v) for v in value]
-    return value
-
-
 def render(template, variables):
-    return Templar(loader=DataLoader(), variables=trust(variables)).template(trust_as_template(template))
+    return render_as_given(template, trusted(variables))
 
 
 def with_task_vars(task, variables):

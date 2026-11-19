@@ -15,14 +15,7 @@ import re
 
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 ROLES = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles")
 # defined once, in cassandra_service's defaults or vars, loaded by the task files that read them (Cassandra's account:
@@ -81,10 +74,10 @@ def test_the_conf_dir_has_no_trailing_slash():
     facts = {"ansible_facts": {"os_family": "Debian"}}
     for conf, expected in (("/etc/cassandra/", "/etc/cassandra"), ("/etc/cassandra", "/etc/cassandra"),
                            (" /etc/cassandra/conf// ", "/etc/cassandra/conf")):
-        assert Templar(loader=DataLoader(), variables=dict(facts, cassandra_conf_dir=conf)).template(template) == expected
+        assert templar_for(dict(facts, cassandra_conf_dir=conf)).template(template) == expected
     for family, expected in (("RedHat", "/etc/cassandra/conf"), ("Debian", "/etc/cassandra")):
         variables = {"ansible_facts": {"os_family": family}}
-        assert Templar(loader=DataLoader(), variables=variables).template(template) == expected
+        assert templar_for(variables).template(template) == expected
 
 
 def test_one_record_of_the_config_at_start():

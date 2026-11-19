@@ -9,15 +9,8 @@ import warnings
 
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -37,7 +30,7 @@ def block(found, n1=None):
     variables = dict(task["vars"], ansible_play_hosts=["n1"], cassandra_cluster_name="Demo Cluster",
                      hostvars={"n1": dict(n1 or {}, _cassandra_cluster_found=found)})
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    templar = Templar(loader=DataLoader(), variables=variables)
+    templar = templar_for(variables)
     return templar.template(trust_as_template(task["ansible.builtin.assert"]["fail_msg"])).split("\n")
 
 
@@ -95,7 +88,7 @@ def test_the_password_file_is_looked_at_only_for_a_refused_login_of_jmx_users():
         variables = dict(task["vars"], inventory_hostname="n1", ansible_play_hosts=["n1", "n2"], _cassandra_cluster_found=found,
                          hostvars={"n1": {"cassandra_jmx_users": users}})
         variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-        templar = Templar(loader=DataLoader(), variables=variables)
+        templar = templar_for(variables)
         return all(templar.template(trust_as_template("{{ %s }}" % w)) in (True, "True") for w in task["when"])
     assert runs(REFUSED, [{"name": "ops"}])
     assert not runs(REFUSED, [])

@@ -9,18 +9,12 @@ import warnings
 
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
-from ansible.template import Templar
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_health import (
     cassandra_health_findings, cassandra_health_wait_line, cassandra_health_waiting)
 
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given as render, trusted
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -32,20 +26,6 @@ TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 def load(*path):
     with open(os.path.join(TOP, *path), encoding="utf-8") as f:
         return yaml.safe_load(f)
-
-
-def trust(value):
-    if isinstance(value, str):
-        return trust_as_template(value)
-    if isinstance(value, dict):
-        return dict((k, trust(v)) for k, v in value.items())
-    if isinstance(value, list):
-        return [trust(v) for v in value]
-    return value
-
-
-def render(template, variables):
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
 def includes(tasks):
@@ -79,8 +59,8 @@ def screen_text(playbook, check=False, confirm=True, resume=False, mode="node", 
                  "ansible_play_hosts": hosts, "cassandra_rolling_resume": resume, "cassandra_rolling_mode": mode,
                  "_cassandra_preflight": {"cassandra_cluster_name": "Orders"}}
     variables.update(more)
-    variables.update(trust(t["vars"]))
-    variables.update(trust(screen["vars"]))
+    variables.update(trusted(t["vars"]))
+    variables.update(trusted(screen["vars"]))
     return render("{{ _cassandra_screen_text }}", variables), render(t["vars"]["cassandra_screen_question"], variables)
 
 
@@ -257,7 +237,7 @@ CHECK = next(t for t in HEALTH if t["name"] == "Check the cluster state")
 
 def wait_on(**given):
     variables = dict({"ansible_check_mode": False, "cassandra_service_health_timeout": 600}, **given)
-    variables.update(trust(CHECK["vars"]))
+    variables.update(trusted(CHECK["vars"]))
     return render("{{ _cassandra_health_wait_on | bool }}", variables)
 
 
@@ -302,7 +282,7 @@ DOWN = [{"kind": "state", "address": "10.0.0.4", "state": "DN", "rack": "r1", "s
 
 def test_it_waits_only_when_allowed_and_while_something_is_down():
     going = check_task("Note what is waited for")["ansible.builtin.set_fact"]["_cassandra_health_going"]
-    base = dict(trust(CHECK["vars"]), ansible_check_mode=False, cassandra_service_health_timeout=600, inventory_hostname="node2",
+    base = dict(trusted(CHECK["vars"]), ansible_check_mode=False, cassandra_service_health_timeout=600, inventory_hostname="node2",
                 ansible_play_hosts=["node2"], hostvars={"node2": {"cassandra_health_findings": DOWN}})
     assert render(going, base) in (True, "True")
     assert render(going, dict(base, ansible_check_mode=True)) in (False, "False")  # not allowed: no wait, even with a node down
@@ -331,7 +311,7 @@ def test_each_check_goes_on_while_something_is_down_and_time_is_left():
     going = tasks[-1]["ansible.builtin.set_fact"]["_cassandra_health_going"]
     import time
     now = int(time.time())
-    base = dict(trust(CHECK["vars"]), ansible_check_mode=False, cassandra_service_health_timeout=600, inventory_hostname="node2",
+    base = dict(trusted(CHECK["vars"]), ansible_check_mode=False, cassandra_service_health_timeout=600, inventory_hostname="node2",
                 ansible_play_hosts=["node2"], hostvars={"node2": {"cassandra_health_findings": DOWN}})
     assert render(going, dict(base, _cassandra_health_wait_start=now - 30)) in (True, "True")
     assert render(going, dict(base, _cassandra_health_wait_start=now - 601)) in (False, "False")  # the timeout: the stop follows
@@ -345,7 +325,7 @@ def test_each_check_goes_on_while_something_is_down_and_time_is_left():
         variables = dict(cassandra_stream_early_check_interval=10, cassandra_stream_check_interval=30,
                          cassandra_stream_early_time=300, cassandra_service_health_timeout=limit,
                          _cassandra_health_wait_start=int(time.time()) - waited)  # (now: a slow run takes seconds)
-        variables.update(trust(wait["vars"]))
+        variables.update(trusted(wait["vars"]))
         return int(render(timeout, variables))
     assert pause(20) == 10 and pause(400) == 30 and pause(595) in (4, 5, 6) and pause(700) == 1
 

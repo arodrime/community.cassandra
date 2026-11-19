@@ -16,18 +16,11 @@ try:
 except ImportError:  # Python 2: not run there (the controller's Python only)
     HTTPServer = None
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.release import __version__ as ansible_version
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
 
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 from ansible_collections.community.cassandra.tests.unit.roles.test_java_tarball_checks import _NotFound, _play
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 MIRROR = ("For a file on the mirror (the server of cassandra_install_url): take the login out of the URL and set"
           " cassandra_install_username and cassandra_install_password.")
@@ -81,7 +74,7 @@ def test_no_log_where_the_url_holds_a_secret(role, tasks, name, variable, checks
         variables[checksum] = sums
     elif sums:  # no checksum there
         return
-    assert Templar(loader=DataLoader(), variables=variables).template(trust_as_template(download["no_log"])) is hidden
+    assert templar_for(variables).template(trust_as_template(download["no_log"])) is hidden
 
 
 def _fails(tmp_path, block, variables, query, password):
@@ -215,5 +208,5 @@ def test_what_the_download_said_ends_without_a_dot(role, tasks, name):
     # the message adds its own: "... did not match.." otherwise
     said = _find(_tasks(role, tasks), name)["vars"]["_said"]
     failed = {"msg": "The checksum for /x did not match 0abc; it was 1def. "}
-    assert Templar(loader=DataLoader(), variables={"ansible_failed_result": failed}).template(
+    assert templar_for({"ansible_failed_result": failed}).template(
         trust_as_template(said)) == "The checksum for /x did not match 0abc; it was 1def"

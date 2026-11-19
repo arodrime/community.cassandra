@@ -11,15 +11,8 @@ import warnings
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template, trusted
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -33,16 +26,6 @@ TASK = [t for p in PLAYS for t in p.get("tasks", []) if t.get("name") == "Show t
 with open(os.path.join(os.path.dirname(PLAYBOOK), "..", "roles", "cassandra_operation", "tasks", "screen.yml"),
           encoding="utf-8") as f:
     SCREEN = yaml.safe_load(f)[0]
-
-
-def trust(value):
-    if isinstance(value, str):
-        return trust_as_template(value)
-    if isinstance(value, dict):
-        return dict((k, trust(v)) for k, v in value.items())
-    if isinstance(value, list):
-        return [trust(v) for v in value]
-    return value
 
 
 def summary(new_nodes=("node7",), joining=(), **inventory):
@@ -61,9 +44,9 @@ def summary(new_nodes=("node7",), joining=(), **inventory):
         "_single": False, "_auto": "false", "ansible_check_mode": False, "cassandra_operation_confirm": True,
     }
     variables.update(inventory)
-    variables.update(trust(TASK["vars"]))
-    variables.update(trust(SCREEN["vars"]))
-    templar = Templar(loader=DataLoader(), variables=variables)
+    variables.update(trusted(TASK["vars"]))
+    variables.update(trusted(SCREEN["vars"]))
+    templar = templar_for(variables)
     return templar.template(trust_as_template("{{ _cassandra_screen_text }}"))
 
 
@@ -104,7 +87,7 @@ def test_medusa_on(inventory, line, fqdn):
 def test_shown_and_confirmed_when_there_is_something_to_do(new, joining, cleanup, shown):
     variables = {"_new": new, "_joining": joining, "_joined": [], "cassandra_add_node_cleanup": cleanup}
     condition = "{{ %s }}" % TASK["when"]
-    assert Templar(loader=DataLoader(), variables=variables).template(trust_as_template(condition)) is shown
+    assert templar_for(variables).template(trust_as_template(condition)) is shown
 
 
 CLEANUP_PLAN = {"estimate": [], "cleanup": {"dc1": ["node1", "node2"]}, "scope": {"dc1": "dc"}, "warnings": []}
@@ -183,7 +166,7 @@ CHOICE = [t for p in PLAYS for t in p.get("tasks", []) for t in t.get("block", [
 ])
 def test_token_choice_checked(auto, confirm, no_token, ok, says):
     variables = {"_auto": auto, "cassandra_operation_confirm": confirm, "_new": ["node7"], "_no_token": no_token}
-    templar = Templar(loader=DataLoader(), variables=variables)
+    templar = templar_for(variables)
     passed = all(templar.template(trust_as_template("{{ %s }}" % c)) for c in CHOICE["ansible.builtin.assert"]["that"])
     assert passed is ok
     if not ok:
@@ -210,12 +193,12 @@ def test_check_mode_follows_bisect_without_asking():
         when = next(t for t in tasks if t.get("name") == name)["when"]
         for check, runs in ((False, True), (True, False)):
             variables = {"_single": True, "_auto": "true", "_new": ["node7"], "ansible_check_mode": check}
-            assert Templar(loader=DataLoader(), variables=variables).template(trust_as_template("{{ %s }}" % when)) is runs
+            assert templar_for(variables).template(trust_as_template("{{ %s }}" % when)) is runs
     kind = next(t for t in tasks if t.get("name") == "Give the new node its token")["vars"]["_kind"]
     for check, expected in ((True, "bisect"), (False, "balanced")):
         variables = {"_auto": "true", "ansible_check_mode": check, "ansible_play_hosts_all": ["node7"],
                      "hostvars": {"node7": {"cassandra_token_choice": {"user_input": " Balanced "}}}}
-        assert Templar(loader=DataLoader(), variables=variables).template(trust_as_template(kind)).strip() == expected
+        assert templar_for(variables).template(trust_as_template(kind)).strip() == expected
     text = summary(_single=True, _auto="true", cassandra_add_node_tokens=TOKENS, ansible_check_mode=True)
     assert "--check: a real run asks next, bisect or balanced; this one follows bisect." in flat(text)
 

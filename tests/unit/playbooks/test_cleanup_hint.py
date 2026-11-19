@@ -10,15 +10,8 @@ import warnings
 
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -45,7 +38,7 @@ def hint(playbook, **variables):
     if "_hosts_option" in (task.get("vars") or {}):
         values["_hosts_option"] = trust_as_template(task["vars"]["_hosts_option"])
     values.update(variables)
-    templar = Templar(loader=DataLoader(), variables=values)
+    templar = templar_for(values)
     msg = task["ansible.builtin.debug"]["msg"]
     if isinstance(msg, str):  # one multi-line string (plain text under any callback)
         assert (task.get("vars") or {}).get("cassandra_output") is True
@@ -86,9 +79,9 @@ def test_the_nodes_to_clean_up_in_inventory_order():
         play = next(p for p in yaml.safe_load(f) if p.get("name") == "Clean up the nodes that handed data over")
     variables = {"ansible_play_hosts": ["node1", "node2", "node3", "node4"],
                  "_plan": {"cleanup": {"dc1": ["node4", "node1"], "dc2": ["node3"]}}}
-    templar = Templar(loader=DataLoader(), variables=variables)
+    templar = templar_for(variables)
     assert templar.template(trust_as_template(play["vars"]["_targets"])) == ["node1", "node3", "node4"]
     with open(os.path.join(PLAYBOOKS, "move_node.yml"), encoding="utf-8") as f:
         move = next(p for p in yaml.safe_load(f) if "_targets" in (p.get("vars") or {}))
-    templar = Templar(loader=DataLoader(), variables={"ansible_play_hosts": ["n1", "n2", "n3"], "_listed": ["n3", "n2"]})
+    templar = templar_for({"ansible_play_hosts": ["n1", "n2", "n3"], "_listed": ["n3", "n2"]})
     assert templar.template(trust_as_template(move["vars"]["_targets"])) == ["n2", "n3"]

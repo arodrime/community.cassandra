@@ -8,16 +8,9 @@ __metaclass__ = type
 import os
 
 import yaml
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
 
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 load_collection_filters()  # (done under ansible-test; under plain pytest too, this checkout's collection)
 
@@ -33,7 +26,7 @@ def _task(path, name):
 
 def _when(task, **variables):
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    templar = Templar(loader=DataLoader(), variables=variables)
+    templar = templar_for(variables)
     return all(templar.template(trust_as_template("{{ %s }}" % w)) for w in task["when"])
 
 
@@ -82,7 +75,7 @@ def _role_vars(**variables):
 
 def _assert(task, **variables):
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in _role_vars(**variables).items())
-    templar = Templar(loader=DataLoader(), variables=variables)
+    templar = templar_for(variables)
     return templar.template(trust_as_template("{{ %s }}" % task["ansible.builtin.assert"]["that"]))
 
 
@@ -149,7 +142,7 @@ def _wrong(**variables):
     found = _role_vars(cassandra_version="50x", **variables)
     found["_wrong"] = task["vars"]["_wrong"]
     found = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in found.items())
-    return Templar(loader=DataLoader(), variables=found).template(trust_as_template("{{ _wrong }}"))
+    return templar_for(found).template(trust_as_template("{{ _wrong }}"))
 
 
 def test_g1_tuning_values_message():
@@ -157,7 +150,7 @@ def test_g1_tuning_values_message():
     for wrong, said in ((["cassandra_jvm_max_gc_pause_millis 300ms"], "A value cassandra_config does not take: "),
                         (["a 1", "b 2"], "Values cassandra_config does not take: a 1; b 2 (written as they are in the"
                                          " JVM options file, the JVM would not start).")):
-        templar = Templar(loader=DataLoader(), variables={"_wrong": wrong})
+        templar = templar_for({"_wrong": wrong})
         assert said in templar.template(trust_as_template(task["ansible.builtin.assert"]["fail_msg"]))
 
 

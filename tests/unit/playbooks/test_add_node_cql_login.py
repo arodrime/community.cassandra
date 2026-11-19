@@ -12,15 +12,8 @@ import warnings
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -52,8 +45,8 @@ def test_a_cql_login_refused_stops_at_once(err, msg, stops):
     assert "cassandra_cql_username" in stop["ansible.builtin.fail"]["msg"]
     assert "cassandra_cql_password" in stop["ansible.builtin.fail"]["msg"]
     variables = {"ansible_failed_result": {"err": err, "msg": msg}}
-    variables["_err"] = Templar(loader=DataLoader(), variables=variables).template(trust_as_template(stop["vars"]["_err"]))
-    templar = Templar(loader=DataLoader(), variables=variables)
+    variables["_err"] = templar_for(variables).template(trust_as_template(stop["vars"]["_err"]))
+    templar = templar_for(variables)
     assert templar.template(trust_as_template("{{ %s }}" % stop["when"])) is stops
 
 
@@ -65,7 +58,7 @@ def test_new_nodes_prepared_without_a_change_list_per_role():
     prepare = next(t for t in block if t.get("name") == "Prepare this node")
     quiet = prepare["vars"]["_cassandra_change_report_quiet"]
     for verbosity, expected in ((0, True), (1, False)):
-        templar = Templar(loader=DataLoader(), variables={"ansible_verbosity": verbosity})
+        templar = templar_for({"ansible_verbosity": verbosity})
         assert templar.template(trust_as_template(quiet)) is expected
     with open(os.path.join(os.path.dirname(PLAYBOOK), "..", "roles", "cassandra_change_report", "tasks", "main.yml"),
               encoding="utf-8") as f:

@@ -21,6 +21,7 @@ import pytest
 import yaml
 
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 COLLECTIONS = os.path.abspath(os.path.join(TOP, "..", "..", ".."))
@@ -176,13 +177,6 @@ def test_the_java_link_follows_the_java_in_use(tmp_path):
 
 
 def test_the_java_link_refusals(tmp_path):
-    from ansible.parsing.dataloader import DataLoader
-    from ansible.template import Templar
-    try:
-        from ansible.template import trust_as_template
-    except ImportError:
-        def trust_as_template(template):
-            return template
     tasks = _tasks("java_check.yml")
     home = _find(tasks, "The Java link is for a Java home")
 
@@ -190,7 +184,7 @@ def test_the_java_link_refusals(tmp_path):
         variables = dict(_system=trust_as_template(home["vars"]["_system"]), _conf=trust_as_template(home["vars"]["_conf"]),
                          cassandra_java_link=link, _cassandra_java_link=link.rstrip("/") or "/",
                          _cassandra_java_home=java_home, cassandra_conf_dir=conf, inventory_hostname="n1")
-        templar = Templar(loader=DataLoader(), variables=variables)
+        templar = templar_for(variables)
         if all(templar.template(trust_as_template("{{ %s }}" % t)) for t in home["ansible.builtin.assert"]["that"]):
             return ""
         return " ".join(templar.template(trust_as_template(home["ansible.builtin.assert"]["fail_msg"])).split())
@@ -270,8 +264,8 @@ def test_the_java_link_refusals(tmp_path):
     check = _find(tasks, "The Java link is a link to a Java, or not there yet")
 
     def allowed(stdout):
-        templar = Templar(loader=DataLoader(), variables={"cassandra_java_check_link": {"stdout": stdout},
-                                                          "_cassandra_java_link": "/apps/jre/jdk", "inventory_hostname": "n1"})
+        templar = templar_for({"cassandra_java_check_link": {"stdout": stdout},
+                               "_cassandra_java_link": "/apps/jre/jdk", "inventory_hostname": "n1"})
         return (templar.template(trust_as_template("{{ %s }}" % check["ansible.builtin.assert"]["that"])),
                 " ".join(templar.template(trust_as_template(check["ansible.builtin.assert"]["fail_msg"])).split()))
     assert all(allowed(k)[0] for k in ("absent", "link to a Java", "link leading nowhere"))
@@ -289,18 +283,11 @@ def test_the_java_link_refusals(tmp_path):
 
 
 def test_a_password_with_an_at_sign_is_masked_whole():
-    from ansible.parsing.dataloader import DataLoader
-    from ansible.template import Templar
-    try:
-        from ansible.template import trust_as_template
-    except ImportError:
-        def trust_as_template(template):
-            return template
     load_collection_filters()  # (the message uses the collection's filters)
     stop = _find(_tasks("java_tarball.yml"), "Stop on the failed download")
     variables = {"cassandra_java_tarball": "https://svc:p@ss@mirror.example/java/jdk-17.tar.gz",
                  "cassandra_java_version": "17", "_status": "404", "_said": "Not Found"}
-    msg = " ".join(Templar(loader=DataLoader(), variables=variables).template(
+    msg = " ".join(templar_for(variables).template(
         trust_as_template(stop["ansible.builtin.fail"]["msg"])).split())
     assert "https://****@mirror.example/java/jdk-17.tar.gz" in msg and "ss@" not in msg
 

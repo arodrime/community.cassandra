@@ -8,16 +8,9 @@ import os
 
 import pytest
 import yaml
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
 
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render_with
 
 load_collection_filters()
 
@@ -30,9 +23,7 @@ def stop(name, file):
 
 
 def render(task, **variables):
-    variables = dict(task.get("vars") or {}, **variables)
-    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(task["ansible.builtin.fail"]["msg"]))
+    return render_with(task["ansible.builtin.fail"]["msg"], dict(task.get("vars") or {}, **variables))
 
 
 STREAM = dict(inventory_hostname="n1", _cassandra_stream_what="bootstrap of n1", _cassandra_stream_report=["r1 50%"],

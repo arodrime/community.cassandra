@@ -10,16 +10,9 @@ import re
 import pytest
 
 from ansible.errors import AnsibleError
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
 
 from ansible_collections.community.cassandra.plugins.lookup.cassandra_nodes import node_states
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, trust_as_template
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
 GROUPS = {"all": ["n1", "n2", "n3", "m1"], "ungrouped": [], "prod": ["n1", "n2", "n3"], "prod_dc1": ["n1", "n2", "n3"],
@@ -45,7 +38,7 @@ def test_node_states_refuses_other_values():
 def render(template, hostvars, **variables):
     variables = dict({"cassandra_hosts": "prod"}, **variables)
     variables.update(groups=variables.get("groups", GROUPS), hostvars=hostvars)
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
+    return render_as_given(template, variables)
 
 
 def test_lookup():

@@ -9,17 +9,11 @@ import os
 
 import pytest
 import yaml
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_repository_import import (
     DEB_KEY, DEB_URL, RPM_KEY, RPM_URL, YUM_KEYS, cassandra_repository_import)
 
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 KEYS = "k" * 40  # sha1 of the role's KEYS
 REPO = "/etc/yum.repos.d/cassandra-50x.repo"
@@ -54,7 +48,7 @@ def test_series_in_the_url(url, written):
     text = _vars_yaml({"cassandra_install_url": written})
     assert "!unsafe" not in text
     value = yaml.safe_load(text)["cassandra_install_url"]
-    templar = Templar(loader=DataLoader(), variables={"cassandra_version": "50x"})
+    templar = templar_for({"cassandra_version": "50x"})
     assert templar.template(trust_as_template(value)) == url
 
 
@@ -164,9 +158,8 @@ def test_what_the_role_writes():
     with open(os.path.join(role, "defaults", "main.yml")) as fh:
         defaults = yaml.safe_load(fh)
     url = trust_as_template(defaults["cassandra_install_url"])
-    assert Templar(loader=DataLoader(), variables={"ansible_facts": {"os_family": "Debian"}}).template(url) == DEB_URL
-    assert Templar(loader=DataLoader(), variables={"ansible_facts": {"os_family": "RedHat"}, "cassandra_version": "41x"}
-                   ).template(url) == RPM_URL % "41x"
+    assert templar_for({"ansible_facts": {"os_family": "Debian"}}).template(url) == DEB_URL
+    assert templar_for({"ansible_facts": {"os_family": "RedHat"}, "cassandra_version": "41x"}).template(url) == RPM_URL % "41x"
     assert (defaults["cassandra_rpm_key_path"], defaults["cassandra_apt_keyring_path"]) == (RPM_KEY, DEB_KEY)
     with open(os.path.join(role, "tasks", "repository.yml")) as fh:
         tasks = yaml.safe_load(fh)

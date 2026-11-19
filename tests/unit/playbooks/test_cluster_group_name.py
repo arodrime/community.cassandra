@@ -12,15 +12,8 @@ import warnings
 
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -86,7 +79,7 @@ def sites():
 
 
 def render(template, **variables):
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
+    return render_as_given(template, variables)
 
 
 def test_every_display_site_names_the_group_of_the_first_line():

@@ -11,15 +11,8 @@ import warnings
 
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -31,11 +24,6 @@ TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 def load(*path):
     with open(os.path.join(TOP, *path), encoding="utf-8") as f:
         return yaml.safe_load(f)
-
-
-def render(template, **variables):
-    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
 PLAYS = dict((p.get("name"), p) for p in load("playbooks", "add_node.yml"))

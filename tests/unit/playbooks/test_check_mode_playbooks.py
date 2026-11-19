@@ -10,14 +10,7 @@ import os
 
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "decommission_node.yml")
 
@@ -32,7 +25,7 @@ def others_in_ring(check_mode, host, in_ring=(True, True), done=None, hosts=("n2
                  "hostvars": hostvars}
     if done is not None:
         variables["cassandra_progress_done"] = done
-    return int(Templar(loader=DataLoader(), variables=variables).template(trust_as_template(task["vars"]["_others_in_ring"])))
+    return int(templar_for(variables).template(trust_as_template(task["vars"]["_others_in_ring"])))
 
 
 def test_the_nodes_before_are_gone():
@@ -62,7 +55,7 @@ def add_node_pending(check_mode, host):
     task = next(t for p in plays for t in p.get("tasks", []) if t.get("name") == "Add this node")
     variables = {"ansible_check_mode": check_mode, "ansible_play_hosts_all": ["n2", "n5"], "inventory_hostname": host,
                  "hostvars": {"n2": {"cassandra_new_node_state": "new"}, "n5": {"cassandra_new_node_state": "new"}}}
-    return int(Templar(loader=DataLoader(), variables=variables).template(trust_as_template(task["vars"]["_pending"])))
+    return int(templar_for(variables).template(trust_as_template(task["vars"]["_pending"])))
 
 
 def test_add_node_pending_nodes():
@@ -77,7 +70,7 @@ def test_add_datacenter_done_nodes():
     task = next(t for p in plays for t in p.get("tasks", []) if t.get("name") == "Add this node")
     for check_mode, expected in ((False, 1), (True, 0)):
         variables = {"ansible_check_mode": check_mode, "ansible_play_hosts_all": ["n2", "n5"], "inventory_hostname": "n5"}
-        assert int(Templar(loader=DataLoader(), variables=variables).template(trust_as_template(task["vars"]["_done"]))) == expected
+        assert int(templar_for(variables).template(trust_as_template(task["vars"]["_done"]))) == expected
 
 
 def test_decommission_reads_the_replication_under_check():
