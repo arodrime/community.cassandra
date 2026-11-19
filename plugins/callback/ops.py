@@ -754,11 +754,7 @@ class CallbackModule(DefaultCallback):
                 continue
             shades = _under(shades, line)
             above = shades[-1][1] if shades else None
-            hue = color or colour(line, above, self._progress, self._warning)
-            if hue is None and info:  # an informative summary: its plain lines in the progress colour
-                hue = self._progress
-            if hue is None and headed and not recap and i == top:  # a plan's or a screen's first line
-                hue = shade(PLAN_COLOUR, self._progress, self._warning)
+            hue = self._hue(line, above, color, info, headed and not recap and i == top)
             # an indented line's own mark: that line only; a FAILED or STOPPED recap: its rows by their own marks
             failed = recap and i == top and first.startswith(("FAILED", "STOPPED"))
             shades.append((_indent(line), None if failed else (above if _indent(line) and not color else hue)))
@@ -766,6 +762,17 @@ class CallbackModule(DefaultCallback):
             if headed and i == top and first.startswith("PLAN") and i + 1 < len(texts) and texts[i + 1].strip():
                 self._rule()  # under the plan's first line
                 shades = []
+
+    def _hue(self, line, above, color, info, title):
+        """The colour of a message line: color when given, else its own (colour, above: the colour of the line it
+        is indented under); a plain line of an informative summary (info) in the progress colour, the first line
+        of a plan or a screen (title) as PLAN_COLOUR."""
+        hue = color or colour(line, above, self._progress, self._warning)
+        if hue is None and info:
+            hue = self._progress
+        if hue is None and title:
+            hue = shade(PLAN_COLOUR, self._progress, self._warning)
+        return hue
 
     def _shown(self):
         """Something else printed a line: a blank line may follow, a progress block above is left as it is."""
