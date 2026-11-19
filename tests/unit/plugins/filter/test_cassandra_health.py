@@ -7,18 +7,11 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_health imp
     cassandra_health_findings, cassandra_health_report, cassandra_health_sentences, cassandra_leaving_state,
     cassandra_removal_force_target, cassandra_removal_state)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import PARAGRAPH as P
+from ansible_collections.community.cassandra.tests.unit.helpers import ring_node as node, view
 
 UP = {"is_up": True}
 IDLE = {"mode": "NORMAL", "streaming": False}
 AGREED = {"failed": False}
-
-
-def node(address, status="U", state="N", rack="r1"):
-    return {"address": address, "status": status, "state": state, "rack": rack}
-
-
-def view(host, *nodes):
-    return {"from": host, "result": {"cluster_status": {"dc1": {"nodes": list(nodes)}}}}
 
 
 def problems(views, expected=3, **kwargs):

@@ -14,7 +14,7 @@ from ansible.plugins.loader import init_plugin_loader
 from ansible_collections.community.cassandra.plugins.filter.cassandra_health import (
     cassandra_health_findings, cassandra_health_wait_line, cassandra_health_waiting)
 
-from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given as render, trusted
+from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given as render, ring_node as node, trusted, view
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -102,14 +102,6 @@ def test_rolling_reboot_screen_and_question():
     text, question = screen_text("rolling_reboot.yml")
     assert text.startswith("ROLLING REBOOT  node1..node3 of Orders, one host at a time")
     assert question == "Reboot node1..node3 of Orders, one host at a time?"
-
-
-def node(address, status="U", state="N"):
-    return {"address": address, "status": status, "state": state, "rack": "r1"}
-
-
-def view(host, *nodes):
-    return {"from": host, "result": {"cluster_status": {"dc1": {"nodes": list(nodes)}}}}
 
 
 def test_the_wait_is_for_nodes_down_and_ports_only():
