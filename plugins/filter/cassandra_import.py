@@ -3211,20 +3211,15 @@ def _place_highest(key, nodes, levels, group_vars, host_vars):
     return walk(0, nodes)
 
 
-def hosts_order(n):
+def _hosts_order(n):
     """A node's place in the hosts file the import writes (by DC, rack, name): "the first node" of a tie."""
     return (n["dc"], n["rack"], n["name"])
-
-
-@functools.lru_cache(maxsize=None)
-def _defaults_once():
-    return _roles_defaults()
 
 
 def _value_groups(key, nodes):
     """The nodes by value, in hosts file order (MISSING: the nodes without key) -> [(value, [nodes])]."""
     groups = []
-    for n in sorted(nodes, key=hosts_order):
+    for n in sorted(nodes, key=_hosts_order):
         value = n["vars"].get(key, MISSING)
         group = next((g for g in groups if (g[0] is MISSING) == (value is MISSING)
                       and (value is MISSING or _same(key, g[0], value))), None)
@@ -3281,7 +3276,7 @@ def _place(key, nodes, cluster, group_vars, host_vars, given=None, said=None):
     several nodes share it. said: {"tie": [(key, how)], "per_node": [key]}, filled in place. True when every node
     has the same value (or none)."""
     said = said if said is not None else {}
-    defaults = _defaults_once()
+    defaults = _roles_defaults()
     groups = _value_groups(key, nodes)
     if len(groups) == 1:
         if groups[0][0] is not MISSING:
@@ -3768,7 +3763,7 @@ def _common_snippet(read, having, texts):
     """The snippet text most nodes read have (the one of the first node in the hosts file on a tie), written once
     in the cluster's group_vars; None when most have none (the collection's default, on a tie too)."""
     count = {}
-    for n, text in sorted(zip(having, texts), key=lambda p: hosts_order(p[0])):
+    for n, text in sorted(zip(having, texts), key=lambda p: _hosts_order(p[0])):
         count[text] = count.get(text, 0) + 1
     if not count:
         return None
@@ -3818,8 +3813,9 @@ def _trusted_lines(read):
     return sorted(made - own)
 
 
+@functools.lru_cache(maxsize=None)
 def _roles_defaults():
-    """Every role's defaults (the variables a host gets when nothing sets them)."""
+    """Every role's defaults (the variables a host gets when nothing sets them), read once: not to be changed."""
     out = {}
     for role in roles_with_defaults():
         out.update(role_file(role) or {})

@@ -312,7 +312,7 @@
       {%- endfor -%}
       {%- for key, var in _old.items() if key in cassandra_extra_settings and key not in _keys
                                          and (lookup('ansible.builtin.vars', var) | string not in ['', 'None']
-                                              or var[10:] in _always) -%}
+                                              or var | regex_replace('^cassandra_', '') in _always) -%}
       {%-   set _ = out.append(key) -%}
       {%- endfor -%}
       {%- for section, own in _cassandra_config_extra_sections.items() if section in cassandra_extra_settings -%}

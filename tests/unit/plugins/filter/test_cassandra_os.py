@@ -1058,7 +1058,7 @@ def test_owner_like_node_is_a_no_op_with_the_roles():
 
 @pytest.mark.parametrize("own", [False, True])
 def test_a_key_not_carried_is_never_set_live_when_another_changes(own):
-    # (audit of rc13, B) the role sets its own keys live one by one, never loading its file again: a key of that
+    # the role sets its own keys live one by one, never loading its file again: a key of that
     # file not carried (set again by a later file) keeps the later file's value live when a key of the role changes
     text = site_file_with_a_vendor_override()
     r = found(text, own=own)
@@ -1071,7 +1071,7 @@ def test_a_key_not_carried_is_never_set_live_when_another_changes(own):
 
 @pytest.mark.parametrize("own", [False, True])
 def test_a_role_key_set_again_later_is_said_not_carried_not_absent(own):
-    # (audit of rc13, C3) a key of the role in the file, set again by a later one: not "as in their file" (it is
+    # a key of the role in the file, set again by a later one: not "as in their file" (it is
     # there), NOT carried (the note above says why); a key the file lacks: as in their file
     text = (file_records("sysctl", "/etc/sysctl.d/01-site.conf",
                          text="vm.max_map_count = 1048575\nvm.swappiness = 1\nvm.zone_reclaim_mode = 0\n")
@@ -1084,7 +1084,7 @@ def test_a_role_key_set_again_later_is_said_not_carried_not_absent(own):
 
 
 def test_the_role_sets_its_kernel_keys_live_one_by_one():
-    # (audit of rc13, B) the sysctl module never loads the file again (reload: sysctl -p <file> would set its other
+    # the sysctl module never loads the file again (reload: sysctl -p <file> would set its other
     # keys live too); after a tuned switch, each of the role's keys again, not the file
     import yaml
     tasks_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_linux", "tasks")

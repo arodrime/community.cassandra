@@ -1,2 +1,7 @@
 minor_changes:
-  - import_cluster playbook - a 4.x ``jvm11-server.options`` on 5.0 (Java 11) lacks the lines 5.0's stock file added (``-XX:-UseBiasedLocking``, ``--add-exports java.base/jdk.internal.util=ALL-UNNAMED``, ``-Dio.netty.allocator.useCacheForAllThreads=true``, ``-Dio.netty.allocator.maxOrder=11``) - no hand edit any more, apply_config adds them and the report says so under WORTH A LOOK, as for 5.0's ``-Dchronicle.analytics.disable=true``. A file naming the option otherwise keeps its own value.
+  - >-
+    import_cluster playbook - a 4.x ``jvm11-server.options`` on 5.0 (Java 11) lacks the lines 5.0's stock file added
+    (``-XX:-UseBiasedLocking``, ``--add-exports java.base/jdk.internal.util=ALL-UNNAMED``,
+    ``-Dio.netty.allocator.useCacheForAllThreads=true``, ``-Dio.netty.allocator.maxOrder=11``) - no hand edit any
+    more, apply_config adds them and the report says so under WORTH A LOOK, as for 5.0's
+    ``-Dchronicle.analytics.disable=true``. A file naming the option otherwise keeps its own value.

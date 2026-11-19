@@ -561,18 +561,17 @@ def env_differences(live, role):
     heap assignments], [its lines the role's has at another place (_moved_lines)]);
     NotSame when they differ otherwise (only lines outside any block may: a line adding plain options to JVM_OPTS
     on the node's side, a heap assignment on either; and a line adding plain options at another place on both)."""
-    ops_of = _ops_of
     added, heap = [], []
     live = [line for i, line in enumerate(live)  # (a line set again outside any block, or in its own block)
             if not (_set_again(line, live[i + 1:], in_block=False) or _set_again(line, live[i + 1:], in_block=True))]
-    moved = _moved_lines(live, role, ops_of(role, live))
+    moved = _moved_lines(live, role, _ops_of(role, live))
     moved_lines = [line for line in live if line["text"] in moved]
     if any(line["text"] in moved and GREP.match(lines[i - 1]["text"]) for lines in (role, live)
            for i, line in enumerate(lines) if i):
         raise NotSame("cassandra-env.sh differs right after a grep (its $? read on the next line)")
     # the rest compared without them (a line moved into a block would else pair the block's end with another)
     role, live = [line for line in role if line["text"] not in moved], [line for line in live if line["text"] not in moved]
-    for op, i1, i2, j1, j2 in ops_of(role, live):
+    for op, i1, i2, j1, j2 in _ops_of(role, live):
         if (i1 and GREP.match(role[i1 - 1]["text"])) or (j1 and GREP.match(live[j1 - 1]["text"])):
             raise NotSame("cassandra-env.sh differs right after a grep (its $? read on the next line)")
         for line in role[i1:i2]:
@@ -796,8 +795,6 @@ def _analyse(args, live, role, series, java, node_env, earlier=None):
     if ENV not in live or ENV not in role:
         raise NotSame("cassandra-env.sh not read")
     live_lines, role_lines = env_lines(live[ENV]), env_lines(role[ENV])
-    if earlier is not None and int(str(java or 0)) < 11:
-        raise NotSame("an earlier series' cassandra-env.sh is compared on Java 11+ only")
     added, heap_lines, moved = env_differences(live_lines, role_lines if earlier is None else env_lines(earlier))
     # options the unit gives cassandra-env.sh to add (JVM_EXTRA_OPTS, MX4J_*): a line moved to the options files
     # would go before them, and an option of another spelling among them (-Xint and -Xmixed, -Xrs and

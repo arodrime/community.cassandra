@@ -1349,8 +1349,9 @@ nature (an address, ``cassandra_initial_token``) goes to the cluster only when s
 default of the nodes without a variable is made of other variables (``cassandra_config_group``: ``{{ cassandra_group
 }}``) or there is none, the import cannot write it for them alone: the variable stays in the ``host_vars`` of the
 nodes that set it, and the report lists it. Passwords follow the same rule, in ``secrets.yml``. A re-import of an
-inventory an earlier release laid out (values in rack ``group_vars``) moves the values with the same effect on every
-node: ``--check --diff`` shows them leaving the rack's files and the ``host_vars`` and arriving in the cluster's.
+inventory a 2.1.0 release candidate laid out (the pre-releases of 3.0.0: values in rack ``group_vars``) moves the values
+with the same effect on every node: ``--check --diff`` shows them leaving the rack's files and the ``host_vars`` and
+arriving in the cluster's.
 
 The report's
 ``TO REVIEW`` lists the settings that differ between nodes, each with its values and the nodes, DC or rack that

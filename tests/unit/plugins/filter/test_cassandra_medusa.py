@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 from ansible.errors import AnsibleFilterError
+from ansible.module_utils.parsing.convert_bool import boolean
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_medusa import (
     ROLE,
@@ -68,6 +69,7 @@ def render(variables=None, facts=None):
     ctx.update(variables or {})
     ctx.update({"ansible_facts": facts or FACTS})
     env = jinja2.Environment(trim_blocks=True, undefined=jinja2.StrictUndefined)
+    env.filters["bool"] = lambda value: boolean(value, strict=False)  # (Ansible's)
     for dummy in range(3):  # defaults built from other defaults
         for key, value in list(ctx.items()):
             if isinstance(value, str) and "{{" in value and key not in (variables or {}):

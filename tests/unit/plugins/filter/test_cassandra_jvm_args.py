@@ -627,7 +627,7 @@ def test_remote_jmx_lines_in_its_branch_are_carried(tmp_path):
 
 
 def dormant(lines, password_off=False):
-    """(2026-11-19, a 5.0 node) local JMX (LOCAL_JMX=yes, #LOCAL_JMX=no above it), lines in the remote branch below
+    """(a 5.0 node) local JMX (LOCAL_JMX=yes, #LOCAL_JMX=no above it), lines in the remote branch below
     its authentication line, which bash does not run; password_off: the stock password file line commented out."""
     auth = '  JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.authenticate=true"'
     password = 'JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.password.file=/etc/cassandra/jmxremote.password"'
@@ -693,8 +693,8 @@ def test_the_jmx_files_of_a_local_jmx_node_are_left_as_they_are(tmp_path):
     assert [t for t in block["block"] if t.get("name") == "List the JMX files to write"]  # (_cassandra_config_jmx_changes)
 
 
-def production_jmx(local_jmx="yes"):
-    """(2026-11-19, 122 nodes, 5.0) the stock file but: in the remote JMX branch, after its authentication line, the
+def remote_branch_jmx(local_jmx="yes"):
+    """(5.0) the stock file but: in the remote JMX branch, after its authentication line, the
     password file, access file and rmi hostname lines; the stock password file line commented out; LOCAL_JMX=yes with
     #LOCAL_JMX=no above it (local_jmx: the one line changed); the JMX files with their users."""
     def change(files):
@@ -706,8 +706,8 @@ def production_jmx(local_jmx="yes"):
 
 
 @pytest.mark.parametrize("series", sorted(JAVA))
-def test_the_production_local_jmx_file_passes_with_no_restart(tmp_path, series):
-    files = node_files(series, production_jmx())
+def test_a_local_jmx_file_with_remote_branch_lines_passes_with_no_restart(tmp_path, series):
+    files = node_files(series, remote_branch_jmx())
     java = JAVA[series]
     cmdline = launch(files, java, tmp_path)
     args = cmdline.split("\0")
@@ -738,7 +738,7 @@ def test_the_production_local_jmx_file_passes_with_no_restart(tmp_path, series):
                                    "-Djava.security.auth.login.config=/etc/zorglub/jaas.config",
                                    "-Dcassandra.jmx.authorizer=org.apache.cassandra.auth.jmx.AuthorizationProxy"])
 def test_the_password_file_line_commented_out_matters_when_the_jvm_may_read_it(tmp_path, extra):
-    files = node_files("50x", production_jmx())
+    files = node_files("50x", remote_branch_jmx())
     env = {"JVM_EXTRA_OPTS": extra}
     cmdline = launch(files, "17", tmp_path, environment=env)
     assert not jvm.password_file_inert(cmdline)
@@ -757,9 +757,9 @@ def test_the_password_file_line_commented_out_matters_when_the_jvm_may_read_it(t
         == extra.startswith("-Dcom.sun.management.jmxremote.authenticate=")
 
 
-def test_the_production_file_with_remote_jmx(tmp_path):
+def test_the_same_file_with_remote_jmx(tmp_path):
     """The same file, LOCAL_JMX=no its one change: those nodes run remote JMX (the lines of its branch run)."""
-    files = node_files("50x", production_jmx("no"))
+    files = node_files("50x", remote_branch_jmx("no"))
     cmdline = launch(files, "17", tmp_path)
     args = cmdline.split("\0")
     for option in ("-Dcassandra.jmx.remote.port=7199", "-Dcom.sun.management.jmxremote.rmi.port=7199",
@@ -794,7 +794,7 @@ def test_lines_in_the_remote_jmx_branch_not_proven_without_the_jvm(tmp_path):
     rendered = role_files(*imported(files, "50x", "17", cmdline)[:2], files)[0]
     assert cassandra_apply_config_no_effect(["cassandra-env.sh"], files, rendered, cmdline, "50x", "17",
                                             {"LOCAL_JMX": "no"}) == []
-    # the remote branch run (LOCAL_JMX=no): rc13's reading, its rmi line read into cassandra_jmx_rmi_hostname
+    # the remote branch run (LOCAL_JMX=no): its rmi line read into cassandra_jmx_rmi_hostname
     files = node_files("50x", remote_jmx())
     node = imported(files, "50x", "17", launch(files, "17", tmp_path))[2]
     assert node["vars"]["cassandra_jmx_rmi_hostname"] == IPV4 and not [n for n in node["normalized"] if "do not run" in n]
@@ -1079,7 +1079,7 @@ def test_report_moved_cleanup_and_next(tmp_path):
     (["-Xlog:gc:file=a", "-Xlog:safepoint:file=b"], ["-Xlog:safepoint:file=b", "-Xlog:gc:file=a"], []),  # outputs apart
     (["-Xlog:gc:file=a", "-Xlog:gc*:file=a"], ["-Xlog:gc*:file=a", "-Xlog:gc:file=a"], ["-Xlog:file=a"]),
     (["-Xlog:disable", "-Xlog:gc:file=a"], ["-Xlog:gc:file=a", "-Xlog:disable"], ["-Xlog"]),
-    # (audit of rc13, A1) one output however written (file=, bare, quoted, ./): the later -Xlog on it wins
+    # one output however written (file=, bare, quoted, ./): the later -Xlog on it wins
     (["-Xlog:gc=debug:file=gc.log", "-Xlog:gc=info:gc.log"], ["-Xlog:gc=info:gc.log", "-Xlog:gc=debug:file=gc.log"],
      ["-Xlog:file=gc.log"]),
     (["-Xlog:gc=debug:file=\"gc.log\"", "-Xlog:gc=info:file=./gc.log"],
@@ -1510,7 +1510,7 @@ def test_a_line_in_a_block_set_again_below(later, outside, inside):
     "fi; if [ -d /x ]; then", "done; for j in; do", "}; [ -d /x ] && {", ";;", ";;&", "b | c)", "a)", "esac",
     "done", "}", "f() {", "x=$(f)", "x=`f`", "x=1 f", "x=1; return", "JVM_OPTS=-Dx=2", "export JVM_OPTS=",
     'JVM_OPTS="$JVM_OPTS $Y"', "elif [ -d / ]; then",
-    # (audit of rc13, C2) a value naming JVM_OPTS may set it (${JVM_OPTS:=...}): no plain line
+    # a value naming JVM_OPTS may set it (${JVM_OPTS:=...}): no plain line
     "X=${JVM_OPTS:=-Dx=2}", "export X=${JVM_OPTS:=-Dx=2}", "X=${JVM_OPTS=-Dx=2}", "X=$JVM_OPTS",
 ])
 @pytest.mark.parametrize("in_block", [True, False])
@@ -1843,7 +1843,7 @@ def test_a_plain_heap_dump_dir_is_not_the_roles_when_the_environment_sets_it(tmp
 
 
 def test_a_plain_heap_dump_dir_a_cassandra_in_sh_may_set_before_is_not_proven(tmp_path):
-    """(audit of rc13) a cassandra.in.sh bin/cassandra sources, in the same shell before cassandra-env.sh, setting
+    """a cassandra.in.sh bin/cassandra sources, in the same shell before cassandra-env.sh, setting
     CASSANDRA_HEAPDUMP_DIR unexported: the JVM's environment does not show it, the node's plain line overrides it, the
     role's would not: not proven (the import, its self-check, apply_config)."""
     files = node_files("41x", HEAPDUMP)
@@ -1865,7 +1865,7 @@ def test_a_plain_heap_dump_dir_a_cassandra_in_sh_may_set_before_is_not_proven(tm
 
 
 def test_the_jvm_proof_reads_of_the_node(tmp_path):
-    """(audit of rc13) playbooks/files/jvm_proof.sh: a cassandra.in.sh naming CASSANDRA_HEAPDUMP_DIR found (next to the
+    """playbooks/files/jvm_proof.sh: a cassandra.in.sh naming CASSANDRA_HEAPDUMP_DIR found (next to the
     jars' directory, CASSANDRA_INCLUDE); a JVM outside the unit's control group or with an unreadable environment
     said not the unit's."""
     script = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "playbooks", "files", "jvm_proof.sh")
@@ -2016,7 +2016,7 @@ def test_jmx_lines_in_the_remote_branch_not_proven_without_the_jvm_or_its_remote
 
 
 def test_jmx_lines_in_the_remote_branch_not_proven_by_a_jvm_older_than_its_file(tmp_path):
-    """(audit of rc13) cassandra-env.sh written since the JVM started: its arguments are not that file's (the branch
+    """cassandra-env.sh written since the JVM started: its arguments are not that file's (the branch
     it takes now not known): hand edits, differences, as with no JVM."""
     files = node_files("41x", jmx_in_remote_branch)
     cmdline = launch(files, "11", tmp_path)
@@ -2322,7 +2322,7 @@ def test_a_4x_cassandra_env_on_50_giving_the_same_arguments_is_rewritten(tmp_pat
 
 
 def test_apply_config_proves_a_4x_cassandra_env_on_50_as_the_import_does(tmp_path):
-    """(rc14 on rc13) the import says the rewrite gives the same arguments, no restart: apply_config's proof reads
+    """The import says the rewrite gives the same arguments, no restart: apply_config's proof reads
     the node's file as 4.x's too (with its facts), the heap dump path apart as the import says it."""
     files = node_files("50x", both(env_4x("8G"), SET_IN_OPTIONS))
     cmdline = launch(files, "17", tmp_path)
@@ -2450,7 +2450,7 @@ def test_a_line_in_a_jmx_branch_not_known_to_run_or_not_stays_a_plain_difference
 def test_the_password_file_line_matters_when_the_jvm_may_get_options_its_cmdline_does_not_show(tmp_path, env):
     # the Java launcher reads these variables and files itself: /proc/<pid>/cmdline does not show what they set (an
     # authentication on), so the JVM may read the password file
-    files = node_files("50x", production_jmx())
+    files = node_files("50x", remote_branch_jmx())
     shown = dict((k, v) for k, v in env.items() if k == "JVM_EXTRA_OPTS")  # (the others would reach the test's JVM)
     cmdline = launch(files, "17", tmp_path, environment=shown or None)
     assert not jvm.password_file_inert(cmdline, env)

@@ -1,4 +1,11 @@
 minor_changes:
-  - 'import_cluster playbook - ``-e import_group=<name>`` chooses the cluster''s group (its hosts file, ``group_vars`` directories, report directory and the ``-e cassandra_hosts`` of the commands it prints), for two clusters of one name such as the default ``Test Cluster``; a re-import finds that group again. Default, as before, the cluster name''s.'
+  - >-
+    import_cluster playbook - ``-e import_group=<name>`` chooses the cluster's group (its hosts file, ``group_vars``
+    directories, report directory and the ``-e cassandra_hosts`` of the commands it prints), for two clusters of one
+    name such as the default ``Test Cluster``; a re-import finds that group again. Default, as before, the cluster
+    name's.
 bugfixes:
-  - 'import_cluster playbook - ``import_force=true`` no longer writes over another cluster''s inventory of the same group (two clusters of one name): it stops when none of the hosts of the ``<cluster group>.yml`` there is a node of this cluster, and offers ``-e import_group=<another name>``.'
+  - >-
+    import_cluster playbook - ``import_force=true`` no longer writes over another cluster's inventory of the same
+    group (two clusters of one name): it stops when none of the hosts of the ``<cluster group>.yml`` there is a node
+    of this cluster, and offers ``-e import_group=<another name>``.

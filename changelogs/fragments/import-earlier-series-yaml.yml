@@ -1,3 +1,16 @@
 minor_changes:
-  - import_cluster playbook - a ``cassandra.yaml`` of an earlier series (kept by the package on upgrade) is read into the variables of the series the node runs - every 4.0 name of a key a variable writes (``*_in_ms``, ``*_in_kb``, ``*_in_mb``, ``*_mb_per_sec``, ``*_in_minutes``, ``tracetype_*_ttl``, ``enable_*``, ``server_encryption_options.enable_legacy_ssl_storage_port``) converted as Cassandra converts it, no value or a -1 Cassandra reads as none as the variable unset, and the 4.0 sections indented by four spaces read as the role's; the keys a later stock file added whose absence is Cassandra's default (``auto_hints_cleanup_enabled``, ``uuid_sstable_identifiers_enabled``, 4.1's ``compaction_tombstone_warning_threshold``, 5.0's ``cidr_authorizer``, ``memtable``, ``commitlog_disk_access_mode``, ``storage_compatibility_mode``) are no difference. Before, such a file failed the self-check, and its 4.0 names went to ``cassandra_extra_settings`` next to their new names.
-  - cassandra_config role - refuses a 4.0 name in ``cassandra_extra_settings`` on 4.1+ when the template writes its key, its variable set or not (``key_cache_size_in_mb`` next to ``key_cache_size:``), as for every 4.0 name of a key a variable writes (Cassandra refuses both names).
+  - >-
+    import_cluster playbook - a ``cassandra.yaml`` of an earlier series (kept by the package on upgrade) is read
+    into the variables of the series the node runs - every 4.0 name of a key a variable writes (``*_in_ms``,
+    ``*_in_kb``, ``*_in_mb``, ``*_mb_per_sec``, ``*_in_minutes``, ``tracetype_*_ttl``, ``enable_*``,
+    ``server_encryption_options.enable_legacy_ssl_storage_port``) converted as Cassandra converts it, no value or a
+    -1 Cassandra reads as none as the variable unset, and the 4.0 sections indented by four spaces read as the
+    role's; the keys a later stock file added whose absence is Cassandra's default (``auto_hints_cleanup_enabled``,
+    ``uuid_sstable_identifiers_enabled``, 4.1's ``compaction_tombstone_warning_threshold``, 5.0's
+    ``cidr_authorizer``, ``memtable``, ``commitlog_disk_access_mode``, ``storage_compatibility_mode``) are no
+    difference. Before, such a file failed the self-check, and its 4.0 names went to ``cassandra_extra_settings``
+    next to their new names.
+  - >-
+    cassandra_config role - refuses a 4.0 name in ``cassandra_extra_settings`` on 4.1+ when the template writes its
+    key, its variable set or not (``key_cache_size_in_mb`` next to ``key_cache_size:``), as for every 4.0 name of a
+    key a variable writes (Cassandra refuses both names).

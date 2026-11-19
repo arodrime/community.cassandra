@@ -38,6 +38,7 @@ from collections import OrderedDict
 
 from ansible.module_utils.parsing.convert_bool import boolean
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import import earlier_env
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import terminal_width
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import stat_fields
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import DEFAULT_WHEN_ABSENT, BOOLS
@@ -1040,7 +1041,8 @@ def _scans(text):
 def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", java="", environ=None, newer=None,
                                      facts=None, heapdump_before=""):
     """Whether the running Cassandra needs no restart for the files apply_config writes, proven file by file with the
-    import self-check's proofs -> [the reasons, said in the plan]; [] (a restart, as for any change) when one is not.
+    import self-check's proofs -> [the reasons, said in the plan, then the NEXT_RESTART lines: an option the JVM gets
+    at its next start, no effect now, said under the node]; [] (a restart, as for any change) when one is not.
     changed: the files written; live, new: {file: text} as the node has them and as written (every file of the JVM's:
     cassandra-env.sh, jvm-server.options and the one of its Java, changed or not); cmdline: the running JVM's
     /proc/<pid>/cmdline; series; java: the version of the running Java; environ: the environment cassandra-env.sh gets
@@ -1094,7 +1096,6 @@ def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", 
             node[jvm_args.ENV] = jvm_args.heap_dump_dir_as_role(node[jvm_args.ENV], environ, cmdline, heapdump_before)[0]
         earlier = None
         if facts:  # (a 4.x stock cassandra-env.sh on 5.0, kept on upgrade: as the import reads it)
-            from ansible_collections.community.cassandra.plugins.filter.cassandra_import import earlier_env
             earlier = earlier_env(series, node[jvm_args.ENV], role[jvm_args.ENV], facts)
         same, dummy, later = jvm_args.jvm_args_compared(cmdline, node, role, series, java, environ, environ,
                                                         earlier=earlier["text"] if earlier else None)

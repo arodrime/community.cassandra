@@ -1994,8 +1994,9 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     report.details.txt instead (the settings, versions, convergence, OS, what was read on each node); look: more
     WORTH A LOOK entries, [(what, what to do)] (the configured inventory a -i <node>, run did not read); run_time:
     when the run started (epoch seconds), on the head line with its date and zone (a report rewritten by a run
-    that found the same says so: its time is new); build: the collection's version and the git commit it was built
-    from on a line of the head ("made by:", cassandra_build.label). Returns the lines.
+    that found the same says so: its time is new); build: true for a line of the head with the collection's version
+    and the git commit it was built from ("made by:", cassandra_build.label; the playbook's calls give it, false by
+    default: no git or galaxy.yml read). Returns the lines.
     e.g. -> ["IMPORT big_cluster  88 nodes  3 to act on: 3 hand edits", "  self-check passed: ...", ...]."""
     cluster = layout["cluster_group"]
     nodes = layout.get("nodes") or []

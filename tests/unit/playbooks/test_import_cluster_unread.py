@@ -85,7 +85,7 @@ READ_TASKS = READ["tasks"]
 
 
 def test_a_jvm_not_the_units_is_noted_and_not_read_for_the_proofs():
-    # (audit of rc13) a JVM started by hand (outside the unit's control group) or with an unreadable environment:
+    # a JVM started by hand (outside the unit's control group) or with an unreadable environment:
     # its arguments are not read for the proofs (none read: a difference stays one), said under the node
     why = "not started by the cassandra unit (pid 42 is not in its control group)"
     notes = node({"import_cluster_unit": {"jvm_untrusted": why}})["notes"]

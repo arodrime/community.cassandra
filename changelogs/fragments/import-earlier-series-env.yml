@@ -1,2 +1,9 @@
 minor_changes:
-  - import_cluster playbook - a 5.0 node still running 4.x's stock ``cassandra-env.sh`` (kept by the package on upgrade, with 5.0's jamm agent line) is read with 4.x's template, and ``cassandra_config`` writes 5.0's when the running JVM's arguments show that the JVM gets the same arguments from it (its own ``JVM_OPTS`` lines moved as for 5.0's file), a rewrite the ``apply_config`` playbook proves the same way (no restart for it); else the file is one hand edit naming what 5.0's would add (``-XX:MaxDirectMemorySize``, the G1 GC threads, a heap worked out by 5.0's formula). 5.0's ``-XX:HeapDumpPath``, which 4.x's sets only with ``CASSANDRA_HEAPDUMP_DIR``, is said under WORTH A LOOK. Before, every line of such a file was a hand edit (over a hundred).
+  - >-
+    import_cluster playbook - a 5.0 node still running 4.x's stock ``cassandra-env.sh`` (kept by the package on
+    upgrade, with 5.0's jamm agent line) is read with 4.x's template, and ``cassandra_config`` writes 5.0's when the
+    running JVM's arguments show that the JVM gets the same arguments from it (its own ``JVM_OPTS`` lines moved as
+    for 5.0's file), a rewrite the ``apply_config`` playbook proves the same way (no restart for it); else the file
+    is one hand edit naming what 5.0's would add (``-XX:MaxDirectMemorySize``, the G1 GC threads, a heap worked out
+    by 5.0's formula). 5.0's ``-XX:HeapDumpPath``, which 4.x's sets only with ``CASSANDRA_HEAPDUMP_DIR``, is said
+    under WORTH A LOOK. Before, every line of such a file was a hand edit (over a hundred).

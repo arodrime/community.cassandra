@@ -385,7 +385,7 @@ def test_the_environment_read_is_the_unit_s_not_the_jvm_s(tmp_path):
     assert "systemctl show cassandra -p Environment" in script
     # (from the JVM's environment, the variables bin/cassandra passes on as they are, never JVM_OPTS)
     assert JVM_ENV_GREP in script
-    # (audit of rc13) a JVM not the unit's (started by hand) or an environment not readable: nothing read, no proof
+    # a JVM not the unit's (started by hand) or an environment not readable: nothing read, no proof
     # (a restart as for any change); the cassandra.in.sh files naming CASSANDRA_HEAPDUMP_DIR passed to the proof
     assert "/files/jvm_proof.sh" in script
     assert script.index('[ -z "$(jvm_untrusted "$CASSANDRA_PID")" ] || exit 0') < script.index('echo "cmdline=')
