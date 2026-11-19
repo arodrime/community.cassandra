@@ -509,6 +509,11 @@ def drop_typeahead():
     again while the run was quiet): the shell would run them once the run is
     over, "yes" then printing y lines forever. Only on a terminal the run is
     in the foreground of."""
+    # Called once, when the run is over (v2_playbook_on_stats). A pause reads its answer from the terminal; keys
+    # typed while no pause is waiting stay in the terminal's input queue, and the shell reads them as a command
+    # line after the run. tcflush(TCIFLUSH) empties that queue (what was typed but not read; nothing is written).
+    # Left alone: an input that is not a terminal (redirected), and a terminal the run is in the background of
+    # (another process group in the foreground reads what is typed). Without termios (not POSIX): nothing dropped.
     if termios is None:
         return
     try:
@@ -782,9 +787,14 @@ class CallbackModule(DefaultCallback):
         when one is printed already."""
         if self._verbose() or not self._blank:
             return super(CallbackModule, self)._print_task_banner(task)
-        # The default callback's banner is private, and prints its blank line itself (Display.banner): no public
-        # API leaves that line out. Its own behaviour kept (its _last_task_banner, which the results use), only
-        # this display call is wrapped, on this instance, for this call
+        # This overrides a private method of the default callback, an ansible-core internal. Without -v, the only
+        # task headers printed are those of the failures shown as the default callback shows them (_default) and
+        # those of the diffs (--diff). _print_task_banner prints them with Display.banner, which puts a blank line
+        # of its own above the header ("\n" + the header), and no public API leaves that line out. So this one
+        # display call is wrapped, on this instance and for this call only, to drop the leading newline; the rest
+        # of the default callback's banner is kept as it is (its _last_task_banner, which the results read).
+        # Should a later ansible-core rename the method, this override is no longer called: the header then has
+        # one more blank line above it, nothing else changes.
         display = self._display
 
         def shown(msg, *args, **kwargs):
