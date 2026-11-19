@@ -1,0 +1,203 @@
+---
+# Show how far the cluster is from stock, changing nothing.
+#
+#   ansible-playbook community.cassandra.drift
+#
+# FROM STOCK: each setting off the collection's default, where it is set, the
+# edit back and whether apply_config restarts for it. BETWEEN NODES: the
+# settings not the same on every node. IN SYNC: apply_config's compare, no
+# question, nothing changed. -e drift_nodes=false: the inventory alone, no
+# node contacted. Also written to reports/<cluster>/drift-<date>.txt.
+#
+# Options and defaults: ansible-playbook community.cassandra.help -e help_topic=drift
+- name: Check the cluster's group
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars:
+    ansible_become: false  # an inventory ansible_become beats the become keyword
+  tasks:
+    - name: Check the cluster's group
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: hosts_check.yml
+      tags: [always]  # its variables check under --tags too
+
+# The inventory as Ansible resolves it for each node, read before apply_config's compare sets facts of its own (a
+# fact named as a variable would hide the inventory's); its vars files (where each setting is set) read as they are,
+# a vaulted one with the run's vault password
+- name: Read the inventory
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars:
+    ansible_become: false  # an inventory ansible_become beats the become keyword
+    ansible_connection: local  # never an inventory's ssh to localhost
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _cluster: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+    _nodes: "{{ query('community.cassandra.cassandra_nodes') }}"
+    # the cluster's groups and hosts (the ones marked absent too: their files are the cluster's)
+    _hosts: "{{ groups[_cluster] | default([]) }}"
+    _groups: "{{ _hosts | map('extract', hostvars, 'group_names') | flatten | unique | list }}"
+    _dirs: "{{ ansible_inventory_sources | default([]) | community.cassandra.cassandra_drift_dirs(lookup('ansible.builtin.env', 'PWD')) }}"
+  tasks:
+    - name: Note when the run started
+      ansible.builtin.set_fact:
+        _cassandra_drift_start: "{{ now().timestamp() | int }}"
+
+    - name: Say which cluster the run is on
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: cluster_banner.yml
+
+    # (the hosts files at the top of the dir; group_vars, host_vars: a file, or a dir of files)
+    - name: Find the inventory's vars files and hosts files
+      ansible.builtin.find:
+        paths: "{{ _paths }}"
+        patterns: "{{ item.patterns }}"
+        recurse: "{{ item.depth > 1 }}"
+        depth: "{{ item.depth }}"
+        file_type: file
+        follow: true
+      loop:
+        - {dirs: [group_vars, host_vars], patterns: ['*.yml', '*.yaml', '*.json'], depth: 2}
+        - {dirs: [''], patterns: ['*.yml', '*.yaml'], depth: 1}
+      register: _cassandra_drift_found
+      check_mode: false  # reads only
+      when: _paths | length > 0
+      vars:
+        _paths: >-
+          {{ _dirs | product(item.dirs) | map('join', '/') | map('regex_replace', '/$', '') | select('directory') | list }}
+
+    - name: Read the inventory and its vars files
+      ansible.builtin.set_fact:
+        _cassandra_drift_values: "{{ hostvars | community.cassandra.cassandra_drift_values(_nodes) }}"
+        _cassandra_drift_files: >-
+          {%- set out = {} -%}
+          {%- set found = _cassandra_drift_found.results | map(attribute='files', default=[]) | flatten
+                          | map(attribute='path') | list -%}
+          {%- for dir in _dirs -%}
+          {%-   for path in found | community.cassandra.cassandra_drift_paths(dir, _groups, _hosts) -%}
+          {#-     (not read: a vaulted file the run has no password for; said in the report) -#}
+          {%-     set _ = out.update({path: query('ansible.builtin.file', dir ~ '/' ~ path, errors='ignore')
+                                            | first | default(none)}) -%}
+          {%-   endfor -%}
+          {%- endfor -%}
+          {{ out }}
+        # the groups that have hosts of other clusters too: a value set there reaches them
+        _cassandra_drift_shared: "{{ groups | community.cassandra.cassandra_drift_shared(_groups, _hosts) }}"
+      no_log: true  # the values and the vars files hold secrets (shown masked in the lines below)
+
+# apply_config's compare, as a real run does it before its plan: read only (no question, nothing written, no stop)
+- name: Compare the nodes with the inventory
+  ansible.builtin.import_playbook: community.cassandra.apply_config
+  when: drift_nodes | default(true) | bool
+  vars:
+    _cassandra_apply_config_compare_only: true
+    # (-e drift_nodes=false: the preflight's plays on no host, the compare's tasks skipped)
+    _cassandra_preflight_skip: "{{ not drift_nodes | default(true) | bool }}"
+
+- name: Drift
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars:
+    ansible_become: false  # an inventory ansible_become beats the become keyword
+    ansible_connection: local  # never an inventory's ssh to localhost
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _cluster: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+    _nodes: "{{ query('community.cassandra.cassandra_nodes') }}"
+    _compared: "{{ drift_nodes | default(true) | bool }}"
+    _args:
+      inventory: "{{ ansible_inventory_sources | default([]) }}"
+      default_inventory: "{{ lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') }}"
+      hosts: "{{ cassandra_hosts | default('') }}"
+      cwd: "{{ lookup('ansible.builtin.env', 'PWD') }}"
+    # each node's groups, its DC and rack (the node lists say "dc1", "dc1/rack2")
+    _info: >-
+      {%- set out = [] -%}
+      {%- for h in _nodes -%}
+      {%-   set v = _cassandra_drift_values[h] | default({}) -%}
+      {%-   set _ = out.append({'name': h, 'groups': hostvars[h].group_names | default([]),
+                                'dc': v.cassandra_dc | default('dc1'), 'rack': v.cassandra_rack | default('rack1')}) -%}
+      {%- endfor -%}
+      {{ out }}
+    # what the defaults made of facts need, read by the compare (none: those defaults not known here)
+    _facts: >-
+      {%- set out = {} -%}
+      {%- for h in _nodes if hostvars[h].ansible_facts.os_family | default('') -%}
+      {%-   set _ = out.update({h: {'os_family': hostvars[h].ansible_facts.os_family,
+                                    'hostname': hostvars[h].ansible_facts.hostname | default(h)}}) -%}
+      {%- endfor -%}
+      {{ out }}
+    # the compare's view of each node (apply_config's facts; none when the compare did not run)
+    _sync: >-
+      {%- set out = [] -%}
+      {%- for h in _nodes -%}
+      {%-   set v = hostvars[h] -%}
+      {%-   set _ = out.append({'name': h, 'todo': v.cassandra_apply_config_todo | default(false) | bool,
+                                'then': v.cassandra_apply_config_then | default('none'),
+                                'files': v._cassandra_config_items | default([]) | map(attribute='item', default='')
+                                         | select | map('basename') | unique | list,
+                                'os': v.cassandra_apply_config_os | default([]) | map(attribute='item', default='')
+                                      | select | list,
+                                'medusa': v.cassandra_apply_config_medusa | default([]),
+                                'extras': v.cassandra_apply_config_extras | default([]),
+                                'restart': v.cassandra_apply_config_restart_items | default([])}) -%}
+      {%- endfor -%}
+      {{ out }}
+    _stops: >-
+      {{ _nodes | map('extract', hostvars) | selectattr('_cassandra_apply_config_stops', 'defined')
+         | map(attribute='_cassandra_apply_config_stops') | first | default([]) }}
+    _command: "{{ 'apply_config' | community.cassandra.cassandra_command(options=['--check', '--diff'], **_args) }}"
+    _dash: "\u2014"
+    _verdict: >-
+      {%- set c = _cassandra_drift_report.counts -%}
+      {%- set out = [c.stock ~ (' setting' if c.stock == 1 else ' settings') ~ ' off stock' if c.stock else 'at stock'] -%}
+      {%- set _ = out.append(c.between ~ (' differs' if c.between == 1 else ' differ') ~ ' between nodes' if c.between
+                             else 'nodes alike') -%}
+      {%- if c.kept -%}{%- set _ = out.append(c.kept ~ (' file' if c.kept == 1 else ' files') ~ ' kept by hand') -%}{%- endif -%}
+      {%- if _compared | bool -%}
+      {%-   set off = _sync | selectattr('todo') | list | length + _sync | rejectattr('todo') | selectattr('os') | list | length -%}
+      {%-   set _ = out.append(('in sync' if not off and not _stops else
+                                (off ~ (' node' if off == 1 else ' nodes') ~ ' not in sync' if off else 'not in sync'))) -%}
+      {%- else -%}{%- set _ = out.append('nodes not checked') -%}{%- endif -%}
+      {{ out | join(', ') }}
+  tasks:
+    - name: Work out the drift
+      ansible.builtin.set_fact:
+        # laid out at the terminal's width on the screen, at the report's in its file
+        _cassandra_drift_screen: >-
+          {{ _cassandra_drift_values | community.cassandra.cassandra_drift_sections(
+               _info, _cassandra_drift_files, _cluster, _cassandra_drift_shared, _facts, width='terminal', **_args) }}
+        _cassandra_drift_report: >-
+          {{ _cassandra_drift_values | community.cassandra.cassandra_drift_sections(
+               _info, _cassandra_drift_files, _cluster, _cassandra_drift_shared, _facts, **_args) }}
+        _cassandra_drift_in_sync: >-
+          {{ _sync | community.cassandra.cassandra_drift_sync(_stops, _command) if _compared | bool
+             else ['IN SYNC ' ~ _dash ~ ' not checked (-e drift_nodes=false: the inventory alone, no node contacted)'] }}
+      no_log: true  # (its inputs hold secrets; its lines mask them, shown next)
+
+    - name: Show the drift
+      ansible.builtin.debug:
+        msg: >-
+          {{ ['DRIFT  ' ~ _cluster ~ '  ' ~ _verdict, '']
+             + _cassandra_drift_screen.stock + [''] + _cassandra_drift_screen.between + [''] + _cassandra_drift_in_sync }}
+      vars:
+        cassandra_output: true  # its lines as they are (ops callback)
+
+    # the report on the controller (run_report.yml): reports/<cluster>/drift-<date>.txt
+    - name: Write the report
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: run_report.yml
+      vars:
+        _cassandra_run_report_operation: drift
+        _cassandra_run_report_started: "{{ _cassandra_drift_start }}"
+        _cassandra_run_report_status: "{{ _verdict }}"
+        _cassandra_run_report_run: >-
+          read only, nothing was changed{{ '' if _compared | bool else ' (-e drift_nodes=false: no node contacted)' }}
+        _cassandra_run_report_sections:
+          - lines: "{{ _cassandra_drift_report.stock }}"
+          - lines: "{{ _cassandra_drift_report.between }}"
+          - lines: "{{ _cassandra_drift_in_sync }}"

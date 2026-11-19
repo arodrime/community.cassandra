@@ -106,6 +106,17 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
                        match, racks for the token allocator, versions, seeds.
       $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.preflight
 
+  ● drift              How far the cluster is from stock: each setting the inventory gives a node
+                       another value than the collection's default (where it is set, the edit back,
+                       whether apply_config restarts for it), the settings not the same on every
+                       node, and whether the nodes still match the inventory (apply_config's
+                       compare, nothing changed).
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.drift
+        -e drift_nodes=false                  inventory only, no node contacted (default: true)
+      Example (the inventory alone):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.drift \\
+          -e drift_nodes=false
+
 ==== Nodes =========================================================================================
 
   ● add_node           Adds new hosts to the running cluster: all prepared at once, then each
@@ -446,7 +457,7 @@ def documented(name):
     """The variables the playbook's comments (its header, the ones next to its tasks) give with -e."""
     with open(os.path.join(TOP, "playbooks", name + ".yml"), encoding="utf-8") as f:
         comments = [line.split("#", 1)[1] for line in f if "#" in line and line.lstrip().startswith("#")]
-    return set(re.findall(r"-e +'?\{?\"?((?:cassandra|import|help)_\w+)", "".join(comments)))
+    return set(re.findall(r"-e +'?\{?\"?((?:cassandra|import|help|drift)_\w+)", "".join(comments)))
 
 
 def test_operation_variables_are_the_playbooks_own():
@@ -456,7 +467,7 @@ def test_operation_variables_are_the_playbooks_own():
         args = [o[0] for o in op.get("options") or []] + list((op.get("example") or ("", []))[1])
         for arg in args:
             if arg != "--check":
-                name = re.search(r"(?:cassandra|help|import|status)_\w+", arg).group(0)
+                name = re.search(r"(?:cassandra|help|import|status|drift)_\w+", arg).group(0)
                 assert reads(op["name"], name), (op["name"], name)
 
 

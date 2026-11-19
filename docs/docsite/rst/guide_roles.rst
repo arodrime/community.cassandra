@@ -1076,6 +1076,44 @@ holds. Keyspace and table directories another account owns are named in ``apply_
 are.
 
 
+Drift from stock
+----------------
+
+``drift`` answers two questions for a cluster you want to bring back to the collection's defaults step by step: how
+far is it from stock, and are its nodes alike? It changes nothing, on the nodes or in the inventory::
+
+   $ ansible-playbook -i inventory community.cassandra.drift
+   $ ansible-playbook -i inventory community.cassandra.drift -e drift_nodes=false   # the inventory alone
+
+Its lines, on the screen and in ``reports/<cluster group>/drift-<YYYY-MM-DD-HHMM>.txt`` (next to the inventory's
+dir, as ``apply_config``'s reports; ``cassandra_run_report_dir`` gives another dir), come in three sections:
+
+- **FROM STOCK**: every setting whose value on a node, as Ansible resolves the inventory for it, is not the
+  collection's default (a role default made of other variables resolved for each node, as ``import_cluster``
+  resolves them: ``cassandra_data_file_directories`` from that node's ``cassandra_data_dir``; one made of the node's
+  facts is known only when the nodes are read). Each one with its values and nodes, the default, the files that set it
+  (``group_vars/<group>/...``, ``host_vars/<node>/...``, a hosts file; none: ``-e`` or another source), the exact edit
+  back (``remove cassandra_concurrent_reads from group_vars/prod/main.yml``; for a dict, its key in it; a file read by
+  other clusters too, such as ``group_vars/all.yml``, with the way to leave them as they are) and what it costs, in
+  ``import_cluster``'s convergence words (``then restart``, ``no restart (cassandra_linux, applied live)``, an upgrade,
+  a data move) with the ``apply_config --check --diff`` that shows it. The settings per node by nature (the cluster's
+  name, the addresses, dc and rack) are listed apart, and so are the variables that are not node settings (the
+  playbooks' logins, the options of the runs). The files kept as edited by hand (``cassandra_config_keep_files``, which
+  ``import_keep_hand_edits`` sets) come last: Ansible does not manage them, their settings are the file's on the node.
+- **BETWEEN NODES**: the settings not the same on every node, as ``import_cluster``'s convergence says them (a node
+  without the variable has the default): each value with its nodes, then what gives every node the value most of them
+  have, what it costs and its check.
+- **IN SYNC**: whether the nodes still match the inventory, from ``apply_config``'s own compare (the one a real run
+  does before its plan, read only: no question, no stop, nothing written): ``in sync``, or each node with what differs
+  (its config files, OS settings, Medusa, packages, Java, its unit) and whether ``apply_config`` would restart it, then
+  the ``apply_config --check --diff`` command that shows the values. A change that is a procedure of its own (an
+  upgrade, a host to add or remove) is said with its command. ``-e drift_nodes=false`` leaves this section out: the
+  inventory alone, no node contacted.
+
+Secrets are never shown (``****``). The run reads the inventory's vars files to tell where a setting is set (a vaulted
+one with the run's vault password; one it cannot read is named).
+
+
 Restricted networks (air-gapped)
 --------------------------------
 

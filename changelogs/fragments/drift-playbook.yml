@@ -1,0 +1,9 @@
+minor_changes:
+  - >-
+    New drift playbook - read only: shows how far the cluster is from the collection's defaults (FROM STOCK: each
+    setting the inventory gives a node another value than the role default, a default made of other variables resolved
+    per node, with its values and nodes, the files that set it, the exact edit back and whether ``apply_config``
+    restarts for it; the files kept by hand apart), the settings not the same on every node (BETWEEN NODES), and
+    whether the nodes still match the inventory (IN SYNC: ``apply_config``'s compare, no question, nothing changed;
+    ``-e drift_nodes=false`` reads the inventory alone, no node contacted). Secrets are never shown. The same lines are
+    written to ``reports/<cluster>/drift-<date>.txt`` next to the inventory.

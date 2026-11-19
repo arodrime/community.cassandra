@@ -202,7 +202,7 @@ def test_every_playbook_on_the_group_checks_it():
         # the nodes' plays take their hosts from the same lookups (or what the run gives)
         for play in plays[1:]:
             hosts = str(play.get("hosts", ""))
-            if hosts and "import_playbook" not in str(play.keys()):
+            if hosts and hosts != "localhost" and "import_playbook" not in str(play.keys()):  # (localhost: the controller)
                 # a lookup, cassandra_target_nodes, a group the playbooks make: never a group of a fixed name
                 assert re.search(r"community\.cassandra\.cassandra_(hosts|nodes)|cassandra_target_nodes", hosts) \
                     or any(RUNTIME.match(group) for group in re.findall(r"cassandra_\w+", hosts)), (name, play["name"], hosts)
@@ -217,7 +217,7 @@ def _checking():
 
 
 def test_the_checking_playbooks():
-    assert _checking() == ["health_check.yml", "preflight.yml", "start_rack.yml", "status.yml"]
+    assert _checking() == ["drift.yml", "health_check.yml", "preflight.yml", "start_rack.yml", "status.yml"]
 
 
 @pytest.mark.parametrize("playbook", _checking())
