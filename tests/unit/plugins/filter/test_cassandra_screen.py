@@ -92,6 +92,14 @@ def test_minimal_spec():
     assert cassandra_screen({}) == ""
 
 
+def test_the_build_under_the_title(monkeypatch):
+    from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_build
+    monkeypatch.setattr(cassandra_build, "label", lambda: "community.cassandra 3.0.0-rc1, commit 1a2b3c4d5e6f")
+    assert cassandra_screen({"operation": "apply_config", "summary": "prod", "build": True, "intro": ["Live changes."]}) \
+        .split("\n") == ["APPLY CONFIG  prod", "  made by:  community.cassandra 3.0.0-rc1, commit 1a2b3c4d5e6f",
+                         "  Live changes."]
+
+
 NODES = [{"name": "node%d" % i, "address": "10.0.0.%d" % i, "dc": "dc1" if i < 7 else "dc2",
           "rack": "rack%d" % (i % 2 + 1), "seed": i == 1} for i in range(1, 9)]
 

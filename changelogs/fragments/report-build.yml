@@ -1,0 +1,2 @@
+minor_changes:
+  - import_cluster playbook, apply_config playbook - the import reports (``report.txt``, ``report.details.txt``, the screen) and the apply_config plan name the collection's version and the git commit it was built from on a ``made by:`` line under their head. ``tools/build.sh`` builds the tar.gz with that commit written in it; a collection built otherwise says ``commit unknown``, a git clone its HEAD.

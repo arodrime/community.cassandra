@@ -11,7 +11,8 @@ cassandra_screen: spec -> the text, the same layout for every operation (the
     text", two lines at most each; then, in the question's place, what
     --check or cassandra_operation_confirm false means for this run. The
     cluster and its version are the banner's, not said again.
-    spec: {operation, summary: str, intro: [item],
+    spec: {operation, summary: str, build: bool (a "made by:" line under the
+           title: the collection's version and commit), intro: [item],
            blocks: [{title, row: str, lines: [item]}] (a block with a row is
            a row of the table: its title's fields then the row; without one,
            its title then its lines indented under it),
@@ -45,6 +46,7 @@ import textwrap
 from collections.abc import Mapping
 
 from ansible.module_utils.parsing.convert_bool import boolean
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_build
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 WIDTH = 100
@@ -148,7 +150,9 @@ def cassandra_screen(spec, check=False, asks=True, session="", asked_by="", note
     under check, "(A real run would also warn about: data loss.)" and the --check line instead of the warning."""
     spec = spec or {}
     plain = [line for n in notes or [] if str(n).strip() and not out.is_warning(n) for line in out.warning_text(n).split("\n")]
-    sections = [[out.title(spec.get("operation") or "", spec.get("summary") or "")] + _items(spec.get("intro"), "  ")]
+    made_by = ["  made by:  %s" % cassandra_build.label()] if spec.get("build") else []
+    sections = [[out.title(spec.get("operation") or "", spec.get("summary") or "")] + made_by
+                + _items(spec.get("intro"), "  ")]
     sections.append(_table_block(spec.get("blocks") or [], list(spec.get("after") or []) + plain))
     for section in spec.get("sections") or []:
         sections.append(_items(section, "  "))

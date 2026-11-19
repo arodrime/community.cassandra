@@ -804,6 +804,7 @@
           {{ (fit + ask[-1:]) | first }}
         cassandra_screen:
           operation: apply_config
+          build: true  # (the collection's version and commit under the title)
           # (the effects first, the most disruptive first, then the nodes up to date: "prod  Cassandra restarts on
           # 1 node, 2 up to date"; the table below says what each node gets)
           summary: >-

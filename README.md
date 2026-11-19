@@ -214,6 +214,17 @@ ansible-galaxy collection build && ansible-galaxy collection install community-c
 cd roles/cassandra_install && molecule test
 ```
 
+## Building the collection
+
+```
+tools/build.sh [output dir]
+```
+
+builds the tar.gz from the commit checked out (`git archive HEAD`: local changes are left out, and said), with that
+commit written into the copy built. The import reports and the apply_config plan name the collection's version and
+that commit ("made by:"); a plain `ansible-galaxy collection build` works too, its reports then say "commit unknown".
+Run from a git clone, they name its HEAD (with a `+` when tracked files differ from it).
+
 ## License
 
 GNU General Public License v3.0 or later

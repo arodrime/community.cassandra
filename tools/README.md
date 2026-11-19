@@ -52,3 +52,13 @@ After a new release (every patch release of a series is needed):
 
 The fields can be checked against a release jar:
 `javap -p -cp apache-cassandra-<release>.jar org.apache.cassandra.config.Config`.
+
+build.sh
+--------
+
+Builds the collection's tar.gz from the commit checked out, that commit written
+in `plugins/plugin_utils/cassandra_build.py` of the copy built (the import
+reports and the apply_config plan name it: an installed collection has no
+`.git`). Use it for a release or a release candidate:
+
+    tools/build.sh ~/builds

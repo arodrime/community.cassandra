@@ -35,6 +35,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_os import 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_suspicious import (
     LINES as SUSPICIOUS_LINES, REPLACE, finding_lines, suspicious)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import terminal_width
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_build
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_differences as differences
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
@@ -906,7 +907,7 @@ def report_sections(layout, self_check):
 # relative to it), the values of yours that differ and whether they all are in group_vars/all (standard), the
 # names already said in plain words (said, filled as the report goes)
 _Report = namedtuple("_Report", "layout read unread names everyone groups chains full width screen check cwd"
-                                " yours standard said report_name inventory hosts when")
+                                " yours standard said report_name inventory hosts when build")
 
 
 def _who(report, members, full=None):
@@ -1788,7 +1789,12 @@ def _head_lines(report, cluster, hosts_file, report_file, self_check_ok, same, s
                        report.width, "  ", "  ")
     if not report.screen:  # (the screen ends with it)
         lines.append("  report:  %s" % out.path_from(report_file, report.cwd))
-    return lines
+    return lines + _made_by(report)
+
+
+def _made_by(report):
+    """The head's line naming the collection's version and commit that made the report (none: not asked)."""
+    return ["  made by:  %s" % report.build] if report.build else []
 
 
 def _about_lines(report, cluster):
@@ -1964,7 +1970,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
                             leftovers=None, check=False, inventory="", hosts="", allow_unread=False, screen=False,
                             self_check_error="", cwd=None, in_git=None, changes=None, todo=None, width=None,
                             strict=False, convergence=None, shareable=False, details=False, look=None,
-                            run_time=None):
+                            run_time=None, build=False):
     """layout: cassandra_inventory_layout's (its nodes); written: [the hosts file, the inventory dir];
     report_file: where report.txt goes (report.check.txt under --check); self_check: {node: {differences, notes}};
     self_check_ok; secrets_clear: the secrets.yml files written in clear; leftovers: cassandra_inventory_leftovers';
@@ -1981,7 +1987,8 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     report.details.txt instead (the settings, versions, convergence, OS, what was read on each node); look: more
     WORTH A LOOK entries, [(what, what to do)] (the configured inventory a -i <node>, run did not read); run_time:
     when the run started (epoch seconds), on the head line with its date and zone (a report rewritten by a run
-    that found the same says so: its time is new). Returns the lines.
+    that found the same says so: its time is new); build: the collection's version and the git commit it was built
+    from on a line of the head ("made by:", cassandra_build.label). Returns the lines.
     e.g. -> ["IMPORT big_cluster  88 nodes  3 to act on: 3 hand edits", "  self-check passed: ...", ...]."""
     cluster = layout["cluster_group"]
     nodes = layout.get("nodes") or []
@@ -1995,7 +2002,8 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     report = _Report(layout, read, [n for n in nodes if n not in read], [n["name"] for n in read], data["everyone"],
                      data["groups"], group_chains(layout.get("hosts") or {}), not screen, width, screen, check, cwd,
                      yours, _standard(yours), set(), out.path_from(report_file, cwd), inventory, hosts,
-                     out.clock(float(run_time), now=0) if run_time not in (None, "") else "")
+                     out.clock(float(run_time), now=0) if run_time not in (None, "") else "",
+                     cassandra_build.label() if boolean(build, strict=False) else "")
     changed, removed, same = _inventory_changes(changes)
     moves = sorted({f for n in read for f in n.get("rewritten") or []})
 
@@ -2074,7 +2082,7 @@ def _details_report(report, data, layout, self_check, leftovers, convergence, cl
     convergence and OS (FOR INFO), then what was read on each node (DETAILS) -> [line]."""
     lines = ["IMPORT %s%s  %sthe details of %s" % (
         cluster, " (--check, inventory not written)" if report.check else "", report.when + "  " if report.when else "",
-        os.path.basename(report.report_name)), ""] + _about_lines(report, cluster)
+        os.path.basename(report.report_name))] + _made_by(report) + [""] + _about_lines(report, cluster)
     evidence = _evidence_lines(report, self_check)
     if evidence:  # (what the stop and report.txt's SELF-CHECK show, as the self-check found it)
         lines += ["", "SELF-CHECK  (each difference as the self-check found it: full paths, both values as written; the"

@@ -322,7 +322,9 @@ def render_question(t, variables):
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(t["vars"]["cassandra_screen_question"]))
 
 
-def test_apply_config_and_update_java_screens():
+def test_apply_config_and_update_java_screens(monkeypatch):
+    from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_build
+    monkeypatch.setattr(cassandra_build, "label", lambda: "community.cassandra 3.0.0-rc1, commit 1a2b3c4d5e6f")
     t, play = task("apply_config.yml", "Show the plan and confirm the run")
     hosts = ["node1", "node2", "node3", "node4", "node5"]
     cluster = {"_cassandra_preflight": {"cassandra_cluster_name": "Orders"}}
@@ -332,6 +334,7 @@ def test_apply_config_and_update_java_screens():
     text = screen(dict(cluster, ansible_play_hosts=["node1", "node2"], hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS,
                        cassandra_apply_config_diff=APPLY_DIFF), t["vars"], play["vars"])
     assert text == ("APPLY CONFIG  Orders  Cassandra restarts on 1 node, 1 up to date\n"
+                    "  made by:  community.cassandra 3.0.0-rc1, commit 1a2b3c4d5e6f\n"  # (the version and commit)
                     "  Cassandra restarts one node at a time.\n\n"
                     "DIFFERENCES FOUND\n  " + APPLY_DIFF[0] + "\n\n"  # (review 4) titled as --check's, WILL DO a plan's
                     "WILL DO\n  node1  write + restart\n  node2  up to date")

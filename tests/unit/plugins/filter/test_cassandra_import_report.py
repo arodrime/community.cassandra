@@ -1454,6 +1454,27 @@ def test_the_run_time_with_its_zone_heads_every_report(monkeypatch):
         time.tzset()
 
 
+def test_the_build_heads_every_report(monkeypatch):
+    # the collection's version and the commit it was built from, on a line of the head of report.txt,
+    # report.details.txt and the screen (asked by import_cluster: build=true)
+    from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_build
+    monkeypatch.setattr(cassandra_build, "label", lambda: "community.cassandra 3.0.0-rc1, commit 1a2b3c4d5e6f")
+    made_by = "  made by:  community.cassandra 3.0.0-rc1, commit 1a2b3c4d5e6f"
+    nodes = [node(1), node(2)]
+    lines = report(nodes, build=True)
+    heads = [i for i, line in enumerate(lines) if line.startswith("IMPORT my_cluster")]
+    assert len(heads) == 2 and lines.count(made_by) == 2
+    assert lines[heads[1] + 1] == made_by  # (the details: under its head line)
+    assert made_by in report(nodes, build=True, screen=True)
+    assert made_by not in report(nodes)  # (not asked: not said)
+
+
+def test_import_cluster_asks_for_the_build():
+    with open(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "playbooks", "import_cluster.yml")) as f:
+        text = f.read()
+    assert text.count("cassandra_import_report(") == text.count("build=true") == 3
+
+
 def test_import_cluster_notes_the_run_time_once():
     import yaml
     with open(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "playbooks", "import_cluster.yml")) as f:

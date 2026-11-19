@@ -598,3 +598,16 @@ def test_a_site_value_that_is_a_word_of_the_report_masked_everywhere():
     text = cassandra_import_shareable(lines, ZORGLUB)["text"][2:]
     assert re.match(r"^  jmxremote\.access: user\d+: node has user\d+, import would write nothing$", text[0]), text
     assert not [line for line in text if re.search(r"\b(ansible|readwrite)\b", line)], text
+
+
+def test_the_build_kept(monkeypatch):
+    # the collection's version and commit: stock, kept as they are for whoever reads the copy
+    from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_build
+    monkeypatch.setattr(cassandra_build, "label", lambda: "community.cassandra 3.0.0-rc1, commit 1a2b3c4d5e6f")
+    nodes = [site_node(i, "paris") for i in range(1, 3)]
+    layout = cassandra_inventory_layout(nodes, "Orders Prod")
+    lines = cassandra_import_report(layout, ["/home/ops/sites/inventories/orders_prod.yml", "/home/ops/sites/inventories"],
+                                    "/home/ops/sites/reports/orders_prod/report.txt", {}, True, cwd="/home/ops/sites",
+                                    in_git=True, width=160, build=True)
+    assert "  made by:  community.cassandra 3.0.0-rc1, commit 1a2b3c4d5e6f" in \
+        cassandra_import_shareable(lines, layout)["text"]

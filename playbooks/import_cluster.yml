@@ -1940,7 +1940,7 @@
            inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
            allow_unread=_report_args.allow_unread | bool,
            self_check_error=_self_check_error | default(''), changes=_changes, todo=_report_args.todo,
-           look=_report_args.look, run_time=_report_args.run_time | default(''),
+           look=_report_args.look, run_time=_report_args.run_time | default(''), build=true,
            convergence=_convergence) | join(_newline) }}
     # report.details.txt: what report.txt leaves out (the settings, versions, convergence, OS, each node's lines)
     _report_details: >-
@@ -1950,7 +1950,7 @@
            inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
            allow_unread=_report_args.allow_unread | bool,
            self_check_error=_self_check_error | default(''), changes=_changes, todo=_report_args.todo,
-           look=_report_args.look, run_time=_report_args.run_time | default(''),
+           look=_report_args.look, run_time=_report_args.run_time | default(''), build=true,
            convergence=_convergence, details=true) | join(_newline) }}
     # CONVERGENCE (report.txt, FOR INFO): how far the cluster is from one group, every setting in group_vars (what to
     # change, and how); output only: the inventory is written as it is
@@ -2600,7 +2600,7 @@
                inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
                allow_unread=_report_args.allow_unread | bool,
                self_check_error=_self_check_error | default(''), changes=_changes, todo=_report_args.todo,
-               look=_report_args.look, run_time=_report_args.run_time | default(''),
+               look=_report_args.look, run_time=_report_args.run_time | default(''), build=true,
                screen=true, strict=import_strict | default(true) | bool,
                shareable=import_report_shareable | default(true) | bool) }}
       vars:
