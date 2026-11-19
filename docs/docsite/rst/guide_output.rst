@@ -404,6 +404,8 @@ Task variables the callback reads, each a literal ``true`` in the task's own ``v
 - ``cassandra_output``: the task is an operator message;
 - ``cassandra_output_gap``: a block of its own (above);
 - ``cassandra_output_rescued``: on a block, its rescue says what failed (the failure inside is not printed);
+- ``cassandra_output_said``: on a task, its failure is the stop of a verdict printed just before (a summary
+  ``REFUSED  ...``): not printed;
 - ``cassandra_output_info``: a summary that only informs (``cassandra_linux``'s data disks), its plain lines in
   the progress colour;
 - ``cassandra_output_help``: the help playbook's text, laid out as above.
@@ -426,6 +428,11 @@ Colours (Ansible's, so ``ANSIBLE_NOCOLOR``, ``ANSIBLE_FORCE_COLOR`` and an outpu
   too, as Ansible's own ``[WARNING]`` lines; apart from the yellow of the changes.
 
 The lines indented under a coloured one keep its colour, unless they carry a mark of their own or a ``WARNING``.
+
+The callback knows a block by its first words, from one table in ``plugins/callback/ops.py``: the operations
+with a plan (their title, the operation in capitals: a heavy rule above it), the other first words of a plan or a
+screen, and those of a recap (heavy rules around it). A new playbook with a plan goes in its operations; the
+callback's unit test fails until it does.
 
 With ``-v`` or more, it is the default callback. Under the default callback, the same messages show as the
 ``msg`` of their task (as plain text with ``callback_result_format = yaml``).
