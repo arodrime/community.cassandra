@@ -2365,19 +2365,19 @@ def test_a_4x_cassandra_env_on_50_giving_other_arguments_is_one_hand_edit(tmp_pa
     files = node_files("50x", both(*edits))
     cmdline = launch(files, "17", tmp_path)
     inventory, layout, node = imported(files, "50x", "17", cmdline)
-    assert node["hand_edits"] == ["cassandra-env.sh: the stock file of 4.x (kept on upgrade), its values read; 5.0's not"
-                                  " shown to give the JVM the same arguments: " + why]
-    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == [
-        "cassandra-env.sh: the stock file of 4.x (kept on upgrade), its values read: 5.0's not shown to give the JVM"
-        " the same arguments: " + why]
+    said = ["cassandra-env.sh: the stock file of 4.x (kept on upgrade), its values read; 5.0's not shown to give the JVM"
+            " the same arguments: " + why]
+    assert node["hand_edits"] == said
+    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == said  # (the same words)
 
 
 def test_a_4x_cassandra_env_on_50_cassandra_not_running():
     files = node_files("50x", both(env_4x("8G"), SET_IN_OPTIONS))
     imported_node = imported(files, "50x", "17", "")[2]
-    assert imported_node["hand_edits"] == [
-        "cassandra-env.sh: the stock file of 4.x (kept on upgrade), its values read; 5.0's not shown to give the JVM the"
-        " same arguments: Cassandra not running, or its files changed since it started"]
+    said = ["cassandra-env.sh: the stock file of 4.x (kept on upgrade), its values read; 5.0's not shown to give the JVM"
+            " the same arguments: Cassandra not running, or its files changed since it started"]
+    assert imported_node["hand_edits"] == said
+    assert check(files, "50x", java="17", cmdline="")["differences"] == said
 
 
 def test_a_4x_cassandra_env_with_a_hand_edit_in_a_block_is_not_one():

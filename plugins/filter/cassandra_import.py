@@ -663,6 +663,25 @@ def earlier_env(series, live, role, facts):
     return None
 
 
+# why a node's earlier series' stock cassandra-env.sh is not shown to give the JVM the same arguments, with no JVM to
+# work it out from
+NOT_RUNNING_OR_CHANGED = "Cassandra not running, or its files changed since it started"
+
+
+def earlier_env_not_shown(earlier, series, why):
+    """The one line said for a node's earlier series' stock cassandra-env.sh (earlier: earlier_env's) whose values
+    are read but that is not shown to give the JVM the same arguments as the series' one (why) -> the line."""
+    return ("cassandra-env.sh: the stock file of %s.x (kept on upgrade), its values read; %s's not shown to give the"
+            " JVM the same arguments: %s" % (SERIES[earlier["series"]].split(".")[0], SERIES.get(series, series), why))
+
+
+def env_cmdline(running):
+    """The running JVM's arguments (running: {cmdline, newer}) as what cassandra-env.sh gave it: none when that file
+    was written since it started (its arguments are not that file's)."""
+    running = running or {}
+    return "" if jvm_args.ENV in (running.get("newer") or []) else running.get("cmdline") or ""
+
+
 def _without_file_hunks(hand, name):
     """Hand edits (_difference_lines') without the ones of the file name."""
     out, mine = [], False
@@ -2226,12 +2245,11 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
             heap_dump_note = ["cassandra-env.sh: CASSANDRA_HEAPDUMP_DIR=%s read as cassandra_heap_dump_dir (the running"
                               " JVM's environment has no CASSANDRA_HEAPDUMP_DIR: the same dir)" % folder]
     branch_note = []
-    if cmdline and jvm_args.ENV in live_files and jvm_args.ENV not in (running.get("newer") or []) \
-            and not (keep is True or jvm_args.ENV in keep):
+    if env_cmdline(running) and jvm_args.ENV in live_files and not (keep is True or jvm_args.ENV in keep):
         # the node's lines in the JMX branch its JVM does not take: no effect, not read (the role's: stock)
         text, count, runs = jvm_args.without_jmx_branch_not_run(
             live_files[jvm_args.ENV], "\n".join(_render(env, cassandra_version, jvm_args.ENV, ctx)[1]),
-            running.get("environment"), cmdline)
+            running.get("environment"), env_cmdline(running))
         if count:
             live_files = dict(live_files, **{jvm_args.ENV: text})
             branch_note = [branch_not_run_note(count, runs)]
@@ -2328,8 +2346,7 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     # (the heap shown the same from the running JVM's arguments wherever its file has it: not a hand edit there)
     hand, normalized, comments = _leftovers(env, cassandra_version, files, render, live_files, rejected,
                                             moved["shown"], HEAP_OPTIONS if moved["shown"] else (),
-                                            running.get("environment"), "" if jvm_args.ENV in (running.get("newer") or [])
-                                            else running.get("cmdline"))  # (else not what its file says)
+                                            running.get("environment"), env_cmdline(running))
     if earlier:
         old = SERIES[earlier["series"]].split(".")[0] + ".x"
         if jvm_args.ENV in moved["shown"]:
@@ -2343,10 +2360,9 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
                                                                 render.get("cassandra_heap_dump_dir"), old))
         else:
             # one line for the file: its values are read, the JVM's arguments are what is not shown the same
-            hand = _without_file_hunks(hand, jvm_args.ENV) + [
-                "cassandra-env.sh: the stock file of %s (kept on upgrade), its values read; %s's not shown to give the"
-                " JVM the same arguments: %s" % (old, SERIES[cassandra_version], moved["not_moved"] or (
-                    "Cassandra not running, or its files changed since it started" if not cmdline else "not worked out"))]
+            hand = _without_file_hunks(hand, jvm_args.ENV) + [earlier_env_not_shown(
+                earlier, cassandra_version, moved["not_moved"] or (NOT_RUNNING_OR_CHANGED if not cmdline
+                                                                   else "not worked out"))]
             moved["not_moved"] = ""
     normalized += log_dir_note + heap_dump_note + branch_note
     normalized += ["%s: %s %s" % (f, "/".join(options), HEAP_MOVED) for f, options in sorted(heap_moved.items())

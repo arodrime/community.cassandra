@@ -53,8 +53,9 @@ except ImportError:  # before, any string not marked unsafe
     def trust_as_template(value):
         return value
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    ELSEWHERE, ELSEWHERE_NOTE, PASSWORD_FILE_NOTE, REMOTE_BRANCH_NOTE, REPEATED_NOTE, Unsafe, branch_not_run_note,
-    earlier_env, error_without_message, log_dir_of, logback_as_log_dir, undefined_name, values_hidden)
+    ELSEWHERE, ELSEWHERE_NOTE, NOT_RUNNING_OR_CHANGED, PASSWORD_FILE_NOTE, REMOTE_BRANCH_NOTE, REPEATED_NOTE, Unsafe,
+    branch_not_run_note, earlier_env, earlier_env_not_shown, env_cmdline, error_without_message, log_dir_of,
+    logback_as_log_dir, undefined_name, values_hidden)
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
 from ansible_collections.community.cassandra.plugins.filter.cassandra_os import (
     NO_EFFECT, NO_EFFECT_NOTE, cassandra_firewall_changes, cassandra_linux_changes)
@@ -866,29 +867,25 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
         live = dict(live, **{"cassandra-env.sh": jvm_args.heap_dump_dir_as_role(
             live["cassandra-env.sh"], dict(node_environment or {}, **((running or {}).get("environment") or {})),
             bool((running or {}).get("cmdline")) and not (running or {}).get("heapdump_before"))[0]})
-    if "cassandra-env.sh" in rendered and "cassandra-env.sh" in live \
-            and "cassandra-env.sh" not in ((running or {}).get("newer") or []):
+    # (not from a JVM started before its cassandra-env.sh was written: its arguments are not that file's)
+    environment = dict(node_environment or {}, **((running or {}).get("environment") or {}))
+    cmdline = env_cmdline(running)
+    if "cassandra-env.sh" in rendered and "cassandra-env.sh" in live:
         # (the node's lines in the JMX branch its JVM does not take: no effect, as the import reads them)
-        text, count, runs = jvm_args.without_jmx_branch_not_run(
-            live["cassandra-env.sh"], rendered["cassandra-env.sh"],
-            dict(node_environment or {}, **((running or {}).get("environment") or {})), (running or {}).get("cmdline"))
+        text, count, runs = jvm_args.without_jmx_branch_not_run(live["cassandra-env.sh"], rendered["cassandra-env.sh"],
+                                                                environment, cmdline)
         if count:
             live = dict(live, **{"cassandra-env.sh": text})
             notes.append(branch_not_run_note(count, runs))
     jvm_live, jvm_rendered = live, rendered  # (the JVM's proof: the files whole)
-    if "cassandra-env.sh" in rendered and "cassandra-env.sh" in live \
-            and "cassandra-env.sh" not in ((running or {}).get("newer") or []):
+    if "cassandra-env.sh" in rendered and "cassandra-env.sh" in live:
         # (the stock password file line commented out, the JVM never reading it: as the import reads it)
-        inert = jvm_args.password_file_line_inert(live["cassandra-env.sh"], rendered["cassandra-env.sh"],
-                                                  (running or {}).get("cmdline"))
+        inert = jvm_args.password_file_line_inert(live["cassandra-env.sh"], rendered["cassandra-env.sh"], cmdline)
         if inert:
             rendered = dict(rendered, **{"cassandra-env.sh": jvm_args.without_lines(rendered["cassandra-env.sh"], inert)})
             notes.append(PASSWORD_FILE_NOTE)
     if "cassandra-env.sh" in rendered and "cassandra-env.sh" in live:
         # (the node's lines in the remote JMX branch it takes, the roles' outside it: as the import reads them)
-        # (not from a JVM started before its cassandra-env.sh was written: its arguments are not that file's)
-        environment = dict(node_environment or {}, **((running or {}).get("environment") or {}))
-        cmdline = "" if "cassandra-env.sh" in ((running or {}).get("newer") or []) else (running or {}).get("cmdline")
         mine, theirs = jvm_args.remote_branch_moved(live["cassandra-env.sh"], rendered["cassandra-env.sh"], environment,
                                                     cmdline)
         if mine:
@@ -956,7 +953,7 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
                                       running or {}, earlier["text"] if earlier else None)
     if earlier and jvm_args.ENV not in rewritten:
         # one line for the file: the JVM's arguments are what is not shown the same
-        why = "Cassandra not running, or its files changed since it started"
+        why = NOT_RUNNING_OR_CHANGED
         if (running or {}).get("cmdline") and not set((running or {}).get("newer") or []) & set(jvm_live):
             why = jvm_args.cassandra_jvm_args_same(
                 running["cmdline"], jvm_live, dict(dict((f, jvm_live[f]) for f in jvm_live if f not in jvm_rendered),
@@ -964,8 +961,7 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
                 series, java, *_jvm_environments(node_environment, role_environment, running),
                 apart=(), earlier=earlier["text"])[1] or why
         differences = [d for d in differences if d not in by_file[jvm_args.ENV]] + [
-            "cassandra-env.sh: the stock file of %s.x (kept on upgrade), its values read: %s's not shown to give the"
-            " JVM the same arguments: %s" % (SERIES[earlier["series"]].split(".")[0], SERIES.get(series, series), why)]
+            earlier_env_not_shown(earlier, series, why)]
     if rewritten:
         # but for the options files' own hand edits, said as they are
         differences = [d for d in differences if not any(d in by_file.get(name, []) for name in rewritten)
