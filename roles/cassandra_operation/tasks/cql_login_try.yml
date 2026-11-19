@@ -23,49 +23,20 @@
   check_mode: false  # a SELECT
   no_log: true  # the password
 
-# the reason from a fixed list, each from a matched error text (never from the exit code alone: 127 is also a cqlsh
-# script whose interpreter is missing); nothing of cqlsh's own text (it could quote the login)
+# ok, refused, or unchecked and why: the reason from a fixed list, each from a matched error text (never from the
+# exit code alone); nothing of cqlsh's own text (it could quote the login)
 - name: Keep the outcome of the CQL login
   ansible.builtin.set_fact:
     cassandra_cql_login:
-      state: >-
-        {{ 'ok' if _cassandra_cql_try.rc | default(1) == 0
-           else 'refused' if _err is search(_refused)
-           else 'unchecked' }}
-      why: >-
-        {{ '' if _cassandra_cql_try.rc | default(1) == 0 or _err is search(_refused)
-           else 'cqlsh could not reach ' ~ _cassandra_cql_login_host ~ ' port ' ~ _cassandra_cql_login_port | default(9042)
-                ~ ' from ' ~ _cassandra_cql_login_from if _err is search('Unable to connect|Connection refused|timed out|NoHostAvailable')
-           else 'no cqlsh in the PATH of root on ' ~ _cassandra_cql_login_from ~ ': cassandra_cqlsh_command gives the'
-                ~ ' full path of one' if _cqlsh == 'cqlsh' and _err is search(_not_found)
-           else _cqlsh ~ ' not found on ' ~ _cassandra_cql_login_from ~ ' (cassandra_cqlsh_command): give the full path'
-                ~ ' of a cqlsh there' if _err is search(_not_found)
-           else 'cqlsh failed on ' ~ _cassandra_cql_login_from ~ ': no ' ~ _interpreter ~ ' for its first line (#!'
-                ~ ' /usr/bin/env ' ~ _interpreter ~ ')' ~ _see if _interpreter
-           else 'cqlsh failed on ' ~ _cassandra_cql_login_from ~ ': it could not open a file it needs as root'
-                ~ ' (cqlshrc, certificate...)' ~ _see if _err is search('No such file or directory|FileNotFoundError')
-           else 'cqlsh failed on ' ~ _cassandra_cql_login_from ~ ': its Python could not load a module it needs' ~ _see
-                if _err is search('No module named|ImportError|ModuleNotFoundError')
-           else 'cqlsh failed on ' ~ _cassandra_cql_login_from ~ ' (exit code ' ~ _cassandra_cql_try.rc | default('?')
-                ~ ')' ~ _see }}
+      state: "{{ _outcome.state }}"
+      why: "{{ _outcome.why }}"
       user: "{{ _cassandra_cql_try_user }}"
       password: "{{ _cassandra_cql_try_password }}"
       asked: "{{ _cassandra_cql_try_asked | bool }}"
   run_once: true
   no_log: true
   vars:
-    _err: "{{ (_cassandra_cql_try.err | default('')) ~ ' ' ~ (_cassandra_cql_try.msg | default('')) }}"
-    _refused: "AuthenticationFailed|Bad credentials|username and/or password are incorrect"
-    # the program run: not found only when the error names it (cqlsh ran and missed another file: not this)
-    _cqlsh: "{{ (cassandra_cqlsh_command | default('cqlsh', true)).split() | first | default('cqlsh') }}"
-    _not_found: >-
-      {{ "No such file or directory: b?'([^']*/)?" ~ (_cqlsh | basename | regex_escape) ~ "'|(^|[ /])"
-         ~ (_cqlsh | basename | regex_escape) ~ ": (command )?not found" }}
-    # the interpreter env did not find for the cqlsh script (/usr/bin/env: 'python3': No such file or directory)
-    _interpreter: >-
-      {{ _err | regex_findall("/env: '?([^': ]+)'?: No such file or directory") | first | default('') }}
-    # its error is not quoted (it could hold the login): the same command as root shows it
-    _see: >-
-      {{ '; to see its error, run as root on ' ~ _cassandra_cql_login_from ~ ': '
-         ~ cassandra_cqlsh_command | default('cqlsh', true) ~ ' ' ~ _cassandra_cql_login_host ~ ' '
-         ~ _cassandra_cql_login_port | default(9042) ~ ' -u ' ~ _cassandra_cql_try_user }}
+    _outcome: >-
+      {{ _cassandra_cql_try | community.cassandra.cassandra_cql_login_outcome(
+           _cassandra_cql_login_from, _cassandra_cql_login_host, _cassandra_cql_login_port | default(9042),
+           _cassandra_cql_try_user, cassandra_cqlsh_command | default('cqlsh', true)) }}

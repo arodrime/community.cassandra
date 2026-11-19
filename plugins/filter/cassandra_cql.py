@@ -1,11 +1,13 @@
 # Copyright: Contributors to the community.cassandra collection
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 """cassandra_cql_host: the address cqlsh, run on a node, reaches that node's Cassandra at: the one Cassandra binds
-its native transport to, by its own rule (rpc_interface, else rpc_address)."""
+its native transport to, by its own rule (rpc_interface, else rpc_address).
+cassandra_cql_login_outcome: what one CQL login of cql_login_try.yml says: ok, refused, or unchecked and why."""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import os
 import re
 
 # the names of loopback (the address itself, 127.0.0.2 or ::1, is taken as written)
@@ -58,6 +60,49 @@ def cassandra_cql_host(variables, facts=None, address=""):
     return rpc
 
 
+_REFUSED = "AuthenticationFailed|Bad credentials|username and/or password are incorrect"
+_UNREACHED = "Unable to connect|Connection refused|timed out|NoHostAvailable"
+
+
+def _login_why(err, rc, node, host, port, user, command):
+    """The why of a login not checked (cqlsh failed): from a fixed list, each from a matched error text, never from the
+    exit code alone (127 is also a cqlsh script whose interpreter is missing); nothing of cqlsh's own text (it could
+    quote the login)."""
+    if re.search(_UNREACHED, err):
+        return "cqlsh could not reach %s port %s from %s" % (host, port, node)
+    # the program run: not found only when the error names it (cqlsh ran and missed another file: not this)
+    cqlsh = (command.split() or ["cqlsh"])[0]
+    name = re.escape(os.path.basename(cqlsh))
+    if re.search("No such file or directory: b?'([^']*/)?" + name + "'|(^|[ /])" + name + ": (command )?not found", err):
+        if cqlsh == "cqlsh":
+            return "no cqlsh in the PATH of root on %s: cassandra_cqlsh_command gives the full path of one" % node
+        return "%s not found on %s (cassandra_cqlsh_command): give the full path of a cqlsh there" % (cqlsh, node)
+    # its error is not quoted (it could hold the login): the same command as root shows it
+    see = "; to see its error, run as root on %s: %s %s %s -u %s" % (node, command, host, port, user)
+    # the interpreter env did not find for the cqlsh script (/usr/bin/env: 'python3': No such file or directory)
+    interpreter = (re.findall("/env: '?([^': ]+)'?: No such file or directory", err) + [""])[0]
+    if interpreter:
+        return "cqlsh failed on %s: no %s for its first line (#! /usr/bin/env %s)%s" % (node, interpreter, interpreter, see)
+    if re.search("No such file or directory|FileNotFoundError", err):
+        return "cqlsh failed on %s: it could not open a file it needs as root (cqlshrc, certificate...)%s" % (node, see)
+    if re.search("No module named|ImportError|ModuleNotFoundError", err):
+        return "cqlsh failed on %s: its Python could not load a module it needs%s" % (node, see)
+    return "cqlsh failed on %s (exit code %s)%s" % (node, rc, see)
+
+
+def cassandra_cql_login_outcome(result, node, host, port, user, command):
+    """result: cql_login_try.yml's cassandra_cqlsh result; node: where cqlsh ran; host, port: where it connected;
+    user: the login tried; command: cassandra_cqlsh_command -> {state: ok, refused (a refused login) or unchecked
+    (cqlsh failed), why: "" unless unchecked}."""
+    err = "%s %s" % (result.get("err", ""), result.get("msg", ""))
+    if result.get("rc", 1) == 0:
+        return {"state": "ok", "why": ""}
+    if re.search(_REFUSED, err):
+        return {"state": "refused", "why": ""}
+    return {"state": "unchecked", "why": _login_why(err, result.get("rc", "?"), node, host, port, user, command)}
+
+
 class FilterModule(object):
     def filters(self):
-        return {"cassandra_cql_host": cassandra_cql_host}
+        return {"cassandra_cql_host": cassandra_cql_host,
+                "cassandra_cql_login_outcome": cassandra_cql_login_outcome}
