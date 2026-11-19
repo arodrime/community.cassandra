@@ -24,7 +24,10 @@ its last start, or its file unchanged since that start); a 4.x JVM: CASSANDRA_4 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import hashlib
 import re
+
+from ansible.module_utils.common.text.converters import to_bytes
 
 # the order of the move (5.0): CASSANDRA_4, then UPGRADING, then NONE
 _ORDER = ("CASSANDRA_4", "UPGRADING", "NONE")
@@ -928,6 +931,93 @@ def cassandra_storage_mode_way_out_lines(stops):
     return ["WAY OUT  " + lines[0]] + lines[1:] + ["  " + again]
 
 
+def _reads(name, variables, given=None, **more):
+    """A node's storage_mode_read.yml reads, as the stops above take them; given: -e cassandra_storage_mode_running
+    (None: the node's own)."""
+    host = {"inventory_hostname": name,
+            "cassandra_storage_mode_read": variables.get("cassandra_storage_mode_read", {}),
+            "cassandra_storage_mode_cql": variables.get("cassandra_storage_mode_cql", {}),
+            "cassandra_storage_mode_running": variables.get("cassandra_storage_mode_running", "") if given is None
+            else given}
+    host.update(more)
+    return host
+
+
+def _inventory(variables):
+    return variables.get("cassandra_storage_compatibility_mode", "NONE")
+
+
+def _check_back(name, variables, written, announced):
+    return cassandra_storage_mode_back_stop(_reads(name, variables), _inventory(variables),
+                                            cassandra_storage_mode_written(variables, written))
+
+
+def _check_jump(name, variables, written, announced):
+    return cassandra_storage_mode_jump_stop(_reads(name, variables), _inventory(variables),
+                                            cassandra_storage_mode_written(variables, written))
+
+
+def _check_into_none(name, variables, written, announced):
+    return cassandra_storage_mode_into_none_stop(_reads(name, variables), _inventory(variables),
+                                                 cassandra_storage_mode_written(variables, written), announced)
+
+
+def _check_kept(name, variables, written, announced):
+    # (update_java: the inventory's config always written)
+    return cassandra_storage_mode_kept_stop(_reads(name, variables), str(_inventory(variables)),
+                                            cassandra_storage_mode_written(variables))
+
+
+def _sha1(text):
+    """As ansible's hash('sha1')."""
+    return hashlib.sha1(to_bytes(text, errors="surrogate_or_strict")).hexdigest()
+
+
+def _check_unsure(name, variables, written, announced):
+    target = cassandra_storage_mode_written(variables, written)
+    rendered = variables.get("_cassandra_config_new", {}).get("cassandra.yaml") if target["mode"] is not None else None
+    host = _reads(name, variables,
+                  cassandra_rpc_address=variables.get("cassandra_rpc_address", ""),
+                  cassandra_listen_address=variables.get("cassandra_listen_address", ""),
+                  cassandra_native_transport_port=variables.get("cassandra_native_transport_port", 9042))
+    unsure = cassandra_storage_mode_unsure(host, target, None if rendered is None else _sha1(rendered))
+    return unsure and {"node": name, "rows": unsure["rows"], "where": "     %s  cqlsh on %s" % (name, unsure["cql"])}
+
+
+def _check_stopped_unsure(name, variables, written, announced):
+    host = _reads(name, variables)
+    del host["cassandra_storage_mode_cql"]  # stopped: no CQL
+    unsure = cassandra_storage_mode_stopped_unsure(host, cassandra_storage_mode_written(variables, written))
+    return unsure and {"node": name, "rows": unsure["rows"], "where": "     %s  %s" % (name, unsure["log"])}
+
+
+_CHECKS = {"back": _check_back, "jump": _check_jump, "into_none": _check_into_none, "kept": _check_kept,
+           "unsure": _check_unsure, "stopped_unsure": _check_stopped_unsure}
+
+
+def _nodes_50(hosts, hostvars):
+    """-> [(name, its variables)] of the hosts that run 5.0 (cassandra_version 50x), in order."""
+    return [(name, hostvars[name]) for name in hosts or [] if hostvars[name].get("cassandra_version", "") == "50x"]
+
+
+def cassandra_storage_mode_guard(hosts, hostvars, check, written=False, announced=True):
+    """hosts: the nodes the run restarts (stopped_unsure: the stopped ones it starts); hostvars; check: one of
+    storage_mode_guard.yml's (back, jump, into_none, kept, unsure, stopped_unsure); written: the run writes the config
+    first (_cassandra_storage_mode_written); announced: a plan warns of NONE (not _cassandra_storage_mode_unannounced)
+    -> what the check says of each 5.0 node it refuses, [] when none: back, jump, into_none and kept: the stop above;
+    unsure, stopped_unsure: {node, rows, where} (where: the line of the way out that says where to read the mode)."""
+    stops = [_CHECKS[check](name, variables, written, announced) for name, variables in _nodes_50(hosts, hostvars)]
+    return [stop for stop in stops if stop]
+
+
+def cassandra_storage_mode_given_rows(hosts, hostvars, given):
+    """hosts: the nodes the run restarts; hostvars; given: -e cassandra_storage_mode_running -> a row per 5.0 node
+    whose item cannot be taken (cassandra_storage_mode_given_wrong's)."""
+    rows = [cassandra_storage_mode_given_wrong(_reads(name, variables, given))
+            for name, variables in _nodes_50(hosts, hostvars)]
+    return [row for row in rows if row]
+
+
 class FilterModule(object):
     def filters(self):
         return {"cassandra_storage_mode_from_4x": cassandra_storage_mode_from_4x,
@@ -954,4 +1044,6 @@ class FilterModule(object):
                 "cassandra_storage_mode_given_unknown": cassandra_storage_mode_given_unknown,
                 "cassandra_storage_mode_given_plus": cassandra_storage_mode_given_plus,
                 "cassandra_storage_mode_written": cassandra_storage_mode_written,
-                "cassandra_storage_mode_restarts_into_none": cassandra_storage_mode_restarts_into_none}
+                "cassandra_storage_mode_restarts_into_none": cassandra_storage_mode_restarts_into_none,
+                "cassandra_storage_mode_guard": cassandra_storage_mode_guard,
+                "cassandra_storage_mode_given_rows": cassandra_storage_mode_given_rows}

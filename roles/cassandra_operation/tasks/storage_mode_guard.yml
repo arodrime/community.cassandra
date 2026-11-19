@@ -45,17 +45,9 @@
     _nl: "\n"
     _given: "{{ cassandra_storage_mode_running | default('') }}"
     _wrong: >-
-      {%- set out = [] -%}
-      {%- for h in _cassandra_storage_mode_hosts | default(ansible_play_hosts)
-            if hostvars[h].cassandra_version | default('') == '50x' -%}
-      {%-   set hv = hostvars[h] -%}
-      {%-   set row = {'inventory_hostname': h,
-                       'cassandra_storage_mode_read': hv.cassandra_storage_mode_read | default({}),
-                       'cassandra_storage_mode_cql': hv.cassandra_storage_mode_cql | default({}),
-                       'cassandra_storage_mode_running': _given} | community.cassandra.cassandra_storage_mode_given_wrong -%}
-      {%-   if row -%}{%- set _ = out.append(row) -%}{%- endif -%}
-      {%- endfor -%}
-      {{ out + _given | community.cassandra.cassandra_storage_mode_given_unknown(
+      {{ _cassandra_storage_mode_hosts | default(ansible_play_hosts)
+           | community.cassandra.cassandra_storage_mode_given_rows(hostvars, _given)
+         + _given | community.cassandra.cassandra_storage_mode_given_unknown(
                  _cassandra_storage_mode_given_nodes | default(_cassandra_storage_mode_hosts | default(ansible_play_hosts_all))) }}
   when:
     - cassandra_version | default('') == '50x'
@@ -79,20 +71,8 @@
     _nl: "\n"
     _written: "{{ _cassandra_storage_mode_written | default(false) | bool }}"
     _back: >-
-      {%- set out = [] -%}
-      {%- for h in _cassandra_storage_mode_hosts | default(ansible_play_hosts)
-            if hostvars[h].cassandra_version | default('') == '50x' -%}
-      {%-   set hv = hostvars[h] -%}
-      {%-   set stop = {'inventory_hostname': h,
-                        'cassandra_storage_mode_read': hv.cassandra_storage_mode_read | default({}),
-                        'cassandra_storage_mode_cql': hv.cassandra_storage_mode_cql | default({}),
-                        'cassandra_storage_mode_running': hv.cassandra_storage_mode_running | default('')}
-                       | community.cassandra.cassandra_storage_mode_back_stop(
-                           hv.cassandra_storage_compatibility_mode | default('NONE'),
-                           hv | community.cassandra.cassandra_storage_mode_written(_written)) -%}
-      {%-   if stop -%}{%- set _ = out.append(stop) -%}{%- endif -%}
-      {%- endfor -%}
-      {{ out }}
+      {{ _cassandra_storage_mode_hosts | default(ansible_play_hosts)
+         | community.cassandra.cassandra_storage_mode_guard(hostvars, 'back', _written) }}
   when: cassandra_version | default('') == '50x'
 
 # ... nor more than one step after it (CASSANDRA_4 to NONE: its cassandra.yaml written ahead of it, by an apply_config
@@ -115,20 +95,8 @@
     _nl: "\n"
     _written: "{{ _cassandra_storage_mode_written | default(false) | bool }}"
     _jump: >-
-      {%- set out = [] -%}
-      {%- for h in _cassandra_storage_mode_hosts | default(ansible_play_hosts)
-            if hostvars[h].cassandra_version | default('') == '50x' -%}
-      {%-   set hv = hostvars[h] -%}
-      {%-   set stop = {'inventory_hostname': h,
-                        'cassandra_storage_mode_read': hv.cassandra_storage_mode_read | default({}),
-                        'cassandra_storage_mode_cql': hv.cassandra_storage_mode_cql | default({}),
-                        'cassandra_storage_mode_running': hv.cassandra_storage_mode_running | default('')}
-                       | community.cassandra.cassandra_storage_mode_jump_stop(
-                           hv.cassandra_storage_compatibility_mode | default('NONE'),
-                           hv | community.cassandra.cassandra_storage_mode_written(_written)) -%}
-      {%-   if stop -%}{%- set _ = out.append(stop) -%}{%- endif -%}
-      {%- endfor -%}
-      {{ out }}
+      {{ _cassandra_storage_mode_hosts | default(ansible_play_hosts)
+         | community.cassandra.cassandra_storage_mode_guard(hostvars, 'jump', _written) }}
   when: cassandra_version | default('') == '50x'
 
 # ... nor into NONE from the mode it runs while the inventory has another mode, with a file the inventory does not
@@ -156,20 +124,8 @@
     _written: "{{ _cassandra_storage_mode_written | default(false) | bool }}"
     _announced: "{{ not _cassandra_storage_mode_unannounced | default(false) | bool }}"
     _none: >-
-      {%- set out = [] -%}
-      {%- for h in _cassandra_storage_mode_hosts | default(ansible_play_hosts)
-            if hostvars[h].cassandra_version | default('') == '50x' -%}
-      {%-   set hv = hostvars[h] -%}
-      {%-   set stop = {'inventory_hostname': h,
-                        'cassandra_storage_mode_read': hv.cassandra_storage_mode_read | default({}),
-                        'cassandra_storage_mode_cql': hv.cassandra_storage_mode_cql | default({}),
-                        'cassandra_storage_mode_running': hv.cassandra_storage_mode_running | default('')}
-                       | community.cassandra.cassandra_storage_mode_into_none_stop(
-                           hv.cassandra_storage_compatibility_mode | default('NONE'),
-                           hv | community.cassandra.cassandra_storage_mode_written(_written), _announced) -%}
-      {%-   if stop -%}{%- set _ = out.append(stop) -%}{%- endif -%}
-      {%- endfor -%}
-      {{ out }}
+      {{ _cassandra_storage_mode_hosts | default(ansible_play_hosts)
+         | community.cassandra.cassandra_storage_mode_guard(hostvars, 'into_none', _written, _announced) }}
   when: cassandra_version | default('') == '50x'
 
 # update_java writes the inventory's config before each restart, without showing it: a storage_compatibility_mode
@@ -200,19 +156,8 @@
       {{ 'Then run this again without -e cassandra_storage_mode_running.'
          if cassandra_storage_mode_running | default('') | length > 0 else 'Then run this again.' }}
     _changed: >-
-      {%- set out = [] -%}
-      {%- for h in _cassandra_storage_mode_hosts | default(ansible_play_hosts)
-            if hostvars[h].cassandra_version | default('') == '50x' -%}
-      {%-   set stop = {'inventory_hostname': h,
-                        'cassandra_storage_mode_read': hostvars[h].cassandra_storage_mode_read | default({}),
-                        'cassandra_storage_mode_cql': hostvars[h].cassandra_storage_mode_cql | default({}),
-                        'cassandra_storage_mode_running': hostvars[h].cassandra_storage_mode_running | default('')}
-                       | community.cassandra.cassandra_storage_mode_kept_stop(
-                           hostvars[h].cassandra_storage_compatibility_mode | default('NONE') | string,
-                           hostvars[h] | community.cassandra.cassandra_storage_mode_written) -%}
-      {%-   if stop -%}{%- set _ = out.append(stop) -%}{%- endif -%}
-      {%- endfor -%}
-      {{ out }}
+      {{ _cassandra_storage_mode_hosts | default(ansible_play_hosts)
+         | community.cassandra.cassandra_storage_mode_guard(hostvars, 'kept') }}
   when:
     - cassandra_version | default('') == '50x'
     - _cassandra_storage_mode_kept | default(false) | bool
@@ -250,27 +195,8 @@
     _written: "{{ _cassandra_storage_mode_written | default(false) | bool }}"
     _given: "{{ cassandra_storage_mode_running | default('') }}"  # its items kept in the -e of the way out
     _unsure: >-
-      {%- set out = [] -%}
-      {%- for h in _cassandra_storage_mode_hosts | default(ansible_play_hosts)
-            if hostvars[h].cassandra_version | default('') == '50x' -%}
-      {%-   set hv = hostvars[h] -%}
-      {%-   set read = {'inventory_hostname': h,
-                        'cassandra_storage_mode_read': hv.cassandra_storage_mode_read | default({}),
-                        'cassandra_storage_mode_cql': hv.cassandra_storage_mode_cql | default({}),
-                        'cassandra_storage_mode_running': hv.cassandra_storage_mode_running | default(''),
-                        'cassandra_rpc_address': hv.cassandra_rpc_address | default(''),
-                        'cassandra_listen_address': hv.cassandra_listen_address | default(''),
-                        'cassandra_native_transport_port': hv.cassandra_native_transport_port | default(9042)} -%}
-      {%-   set w = hv | community.cassandra.cassandra_storage_mode_written(_written) -%}
-      {%-   set rendered = (hv._cassandra_config_new | default({})).get('cassandra.yaml') if w.mode is not none else none -%}
-      {%-   set unsure = read | community.cassandra.cassandra_storage_mode_unsure(
-                w, rendered | hash('sha1') if rendered is not none else none) -%}
-      {%-   if unsure -%}
-      {%-     set _ = out.append({'node': h, 'rows': unsure.rows,
-                                  'where': '     ' ~ h ~ '  cqlsh on ' ~ unsure.cql}) -%}
-      {%-   endif -%}
-      {%- endfor -%}
-      {{ out }}
+      {{ _cassandra_storage_mode_hosts | default(ansible_play_hosts)
+         | community.cassandra.cassandra_storage_mode_guard(hostvars, 'unsure', _written) }}
   when: cassandra_version | default('') == '50x'
 
 # ... nor, stopped, the start of a node (apply_config: its unit failed, or an interrupted run stopped it) when nothing
@@ -303,20 +229,8 @@
     _written: "{{ _cassandra_storage_mode_written | default(false) | bool }}"
     _given: "{{ cassandra_storage_mode_running | default('') }}"  # its items kept in the -e of the way out
     _unsure: >-
-      {%- set out = [] -%}
-      {%- for h in _cassandra_storage_mode_starts | default([])
-            if hostvars[h].cassandra_version | default('') == '50x' -%}
-      {%-   set hv = hostvars[h] -%}
-      {%-   set read = {'inventory_hostname': h,
-                        'cassandra_storage_mode_read': hv.cassandra_storage_mode_read | default({}),
-                        'cassandra_storage_mode_running': hv.cassandra_storage_mode_running | default('')} -%}
-      {%-   set unsure = read | community.cassandra.cassandra_storage_mode_stopped_unsure(
-                hv | community.cassandra.cassandra_storage_mode_written(_written)) -%}
-      {%-   if unsure -%}
-      {%-     set _ = out.append({'node': h, 'rows': unsure.rows, 'where': '     ' ~ h ~ '  ' ~ unsure.log}) -%}
-      {%-   endif -%}
-      {%- endfor -%}
-      {{ out }}
+      {{ _cassandra_storage_mode_starts | default([])
+         | community.cassandra.cassandra_storage_mode_guard(hostvars, 'stopped_unsure', _written) }}
   when:
     - cassandra_version | default('') == '50x'
     - _cassandra_storage_mode_starts | default([]) | length > 0
