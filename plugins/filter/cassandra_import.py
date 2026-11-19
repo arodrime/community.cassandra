@@ -1433,6 +1433,13 @@ BRANCH_NOT_RUN_NOTE = ("cassandra-env.sh: %s in the remote JMX branch these node
                        " apply_config writes the stock branch without %s, no restart")
 
 
+# the role's JMX password file line on a node with that line commented out, its JVM never reading the file
+# (jvm_args.password_file_line_inert)
+PASSWORD_FILE_NOTE = ("cassandra-env.sh: -Dcom.sun.management.jmxremote.password.file commented out, the JVM never reads"
+                      " it (JMX authentication off, no JMX agent, JAAS login or authorizer): no effect; apply_config"
+                      " writes the stock line, no restart")
+
+
 # the node's JVM_OPTS lines in the remote JMX branch, the role's outside it (jvm_args.remote_branch_moved)
 REMOTE_BRANCH_NOTE = ("cassandra-env.sh: %s adding options to JVM_OPTS in the remote JMX branch (the one the running"
                       " Cassandra started with: its remote JMX port), the role's outside it: the same for the JVM")
@@ -1442,11 +1449,12 @@ REPEATED_NOTE = ("cassandra-env.sh: %s adding options to JVM_OPTS written again 
                  " last one counts, the same for the JVM")
 
 
-def _leftovers(env, series, files, ctx, live_files, rejected=(), skip=(), proven=(), environment=None, cmdline=""):
+def _leftovers(env, series, files, ctx, live_files, rejected=(), skip=(), proven=(), environment=None, cmdline="",
+               newer=()):
     """What the role would still change in the node's files, rendered with ctx: rejected: the cassandra.yaml keys
     its Cassandra rejects; skip: files not compared here (the JVM's, its arguments shown to be the same); environment:
-    the one cassandra-env.sh gets; cmdline: the running JVM's arguments -> (hand edits, normalized lines, comment
-    lines)."""
+    the one cassandra-env.sh gets; cmdline: the running JVM's arguments; newer: the files written since it started
+    -> (hand edits, normalized lines, comment lines)."""
     hand, normalized, comments = [], [], []
     extras = ctx.get("cassandra_extra_settings") or {}
     for name in files:
@@ -1466,6 +1474,11 @@ def _leftovers(env, series, files, ctx, live_files, rejected=(), skip=(), proven
             continue
         live_text = live_files[name]
         if name == jvm_args.ENV:  # (the node's lines in the remote JMX branch it takes, the role's outside it)
+            inert = jvm_args.password_file_line_inert(live_text, "\n".join(rendered),
+                                                      "" if name in (newer or ()) else cmdline)
+            if inert:  # (the stock password file line commented out, the JVM never reading it)
+                rendered = jvm_args.without_lines("\n".join(rendered), inert).split("\n")
+                normalized.append(PASSWORD_FILE_NOTE)
             mine, theirs = jvm_args.remote_branch_moved(live_text, "\n".join(rendered), environment, cmdline)
             if mine:
                 normalized.append(REMOTE_BRANCH_NOTE % out.plural(len(mine), "line"))
@@ -2156,7 +2169,8 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     # (the heap shown the same from the running JVM's arguments wherever its file has it: not a hand edit there)
     hand, normalized, comments = _leftovers(env, cassandra_version, files, render, live_files, rejected,
                                             moved["shown"], HEAP_OPTIONS if moved["shown"] else (),
-                                            running.get("environment"), running.get("cmdline"))
+                                            running.get("environment"), running.get("cmdline"),
+                                            running.get("newer") or ())
     normalized += log_dir_note + heap_dump_note + branch_note
     normalized += ["%s: %s %s" % (f, "/".join(options), HEAP_MOVED) for f, options in sorted(heap_moved.items())
                    if f != jvm_args.COMMON]

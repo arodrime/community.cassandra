@@ -444,6 +444,49 @@ def jmx_branch_not_run(live, role, environment=None, cmdline=""):
             if line["depth"] == 1 and line["text"] not in known and APPEND_ANY.match(line["text"])]
 
 
+PASSWORD_FILE = "-Dcom.sun.management.jmxremote.password.file"
+# what makes a JVM read the JMX password file: JMX authentication (the last -D...authenticate=true: Cassandra's
+# JMXServerUtils reads the file only then), the JDK's own JMX agent (its port, or a management.properties that may
+# give it one), a JAAS login (Cassandra's own, or the JDK's) or Cassandra's JMX authorizer
+PASSWORD_FILE_READERS = ("-Dcom.sun.management.jmxremote.port=", "-Dcom.sun.management.config.file=",
+                         "-Dcassandra.jmx.remote.login.config=", "-Djava.security.auth.login.config=",
+                         "-Dcassandra.jmx.authorizer=")
+
+
+def password_file_inert(cmdline):
+    """Whether the running JVM (cmdline: its /proc/<pid>/cmdline) never reads -Dcom.sun.management.jmxremote.password
+    .file, so that a JVM with the same arguments but that one gets nothing else: JMX authentication off (the last
+    -Dcom.sun.management.jmxremote.authenticate not true, as Boolean.getBoolean reads it; none: off), none of
+    PASSWORD_FILE_READERS. Not the access file: Cassandra hands it to the JMX server whatever the authentication, which
+    reads it at start."""
+    args = [a for a in re.split(r"[\0\n]", str(cmdline or "")) if a]
+    if MAIN_CLASS not in args:
+        return False
+    auth = [a.split("=", 1)[1] if "=" in a else "" for a in args
+            if a.split("=", 1)[0] == "-Dcom.sun.management.jmxremote.authenticate"]
+    return not (auth and auth[-1].strip().lower() == "true") \
+        and not any(a.startswith(PASSWORD_FILE_READERS) for a in args)
+
+
+def password_file_line_inert(live, role, cmdline):
+    """The role's line giving the JVM -Dcom.sun.management.jmxremote.password.file (its stock one, outside any block)
+    on a node whose cassandra-env.sh runs none (its stock line commented out) and whose JVM never reads that file
+    (password_file_inert): the same for that JVM -> [its line number in role]; [] when not."""
+    if not password_file_inert(cmdline):
+        return []
+    try:
+        node, ours = env_lines(live), env_lines(role)
+    except NotSame:
+        return []
+    if any(PASSWORD_FILE in line["text"] for line in node):
+        return []
+    found = [line for line in ours if PASSWORD_FILE in line["text"]]
+    if len(found) != 1 or found[0]["depth"] or not APPEND.match(found[0]["text"]) \
+            or len(APPEND.match(found[0]["text"]).group(1).split()) != 1:
+        return []
+    return [found[0]["n"]]
+
+
 def without_jmx_branch_not_run(live, role, environment=None, cmdline=""):
     """The node's cassandra-env.sh (live) without its lines of jmx_branch_not_run: what bash runs the same -> (text,
     how many lines left out)."""
@@ -791,6 +834,8 @@ def cassandra_jvm_args_same(cmdline, live, role, series, java, node_env=None, ro
         return False, "the roles would give cassandra-env.sh other options to add (%s)" % ", ".join(differ)
     if ENV in live and ENV in role:  # (the node's lines in the remote JMX branch it does not run: no effect)
         live = dict(live, **{ENV: without_jmx_branch_not_run(live[ENV], role[ENV], node_env, cmdline)[0]})
+        # (and the role's password file line where the node has it commented out, the JVM never reading the file)
+        role = dict(role, **{ENV: without_lines(role[ENV], password_file_line_inert(live[ENV], role[ENV], cmdline))})
     try:
         args, after = _launch(cmdline, live, role, series, java, node_env, role_env)
     except NotSame as exc:

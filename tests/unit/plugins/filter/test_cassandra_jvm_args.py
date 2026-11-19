@@ -690,6 +690,92 @@ def test_the_jmx_files_of_a_local_jmx_node_are_left_as_they_are(tmp_path):
     assert [t for t in block["block"] if t.get("name") == "List the JMX files to write"]  # (_cassandra_config_jmx_changes)
 
 
+def production_jmx(local_jmx="yes"):
+    """(2026-11-19, 122 nodes, 5.0) the stock file but: in the remote JMX branch, after its authentication line, the
+    password file, access file and rmi hostname lines; the stock password file line commented out; LOCAL_JMX=yes with
+    #LOCAL_JMX=no above it (local_jmx: the one line changed); the JMX files with their users."""
+    def change(files):
+        dormant(BRANCH_LINES, password_off=True)(files)
+        files["cassandra-env.sh"] = edit(files["cassandra-env.sh"], "    LOCAL_JMX=yes", "    LOCAL_JMX=" + local_jmx)
+        files["jmxremote.password"] = "zorglub s3cret\n"
+        files["jmxremote.access"] = "zorglub readwrite\n"
+    return change
+
+
+@pytest.mark.parametrize("series", sorted(JAVA))
+def test_the_production_local_jmx_file_passes_with_no_restart(tmp_path, series):
+    files = node_files(series, production_jmx())
+    java = JAVA[series]
+    cmdline = launch(files, java, tmp_path)
+    args = cmdline.split("\0")
+    assert "-Dcom.sun.management.jmxremote.authenticate=false" in args
+    assert not [a for a in args if "password.file" in a or "rmi.server.hostname" in a or "access.file" in a]
+    inventory, layout, node = imported(files, series, java, cmdline)
+    assert not [k for k in node["vars"] if "jmx" in k]  # (local JMX, the stock port: nothing to write)
+    assert not [h for h in node["hand_edits"] if "cassandra-env.sh" in h]
+    notes = [n for n in node["normalized"] if n.startswith("cassandra-env.sh: ")]
+    assert [n for n in notes if "3 lines in the remote JMX branch" in n] and [n for n in notes if "password.file" in n]
+    assert check(files, series, java=java, cmdline=cmdline)["differences"] == []
+    # apply_config: the role's file, the stock password file line back, the same JVM but for that option; no restart
+    rendered = role_files(inventory, layout, files)[0]
+    assert rendered["cassandra-env.sh"] != files["cassandra-env.sh"]
+    flags, others = settings(launch(rendered, java, tmp_path))
+    assert flags.pop("-Dcom.sun.management.jmxremote.password.file") == "/etc/cassandra/jmxremote.password"
+    assert (flags, others) == settings(cmdline)
+    assert cassandra_apply_config_no_effect(["cassandra-env.sh"], files, rendered, cmdline, series, java) \
+        == ["the same JVM arguments"]
+
+
+@pytest.mark.parametrize("extra", ["-Dcom.sun.management.jmxremote.authenticate=true",
+                                   "-Dcom.sun.management.jmxremote.port=7299",
+                                   "-Dcom.sun.management.config.file=/etc/zorglub/management.properties",
+                                   "-Dcassandra.jmx.remote.login.config=CassandraLogin",
+                                   "-Djava.security.auth.login.config=/etc/zorglub/jaas.config",
+                                   "-Dcassandra.jmx.authorizer=org.apache.cassandra.auth.jmx.AuthorizationProxy"])
+def test_the_password_file_line_commented_out_matters_when_the_jvm_may_read_it(tmp_path, extra):
+    files = node_files("50x", production_jmx())
+    env = {"JVM_EXTRA_OPTS": extra}
+    cmdline = launch(files, "17", tmp_path, environment=env)
+    assert not jvm.password_file_inert(cmdline)
+    inventory, layout, node = imported(files, "50x", "17", cmdline, environment=env)
+    assert not [n for n in node["normalized"] if "password.file commented out" in n]
+    rendered = role_files(inventory, layout, files)[0]
+    assert cassandra_apply_config_no_effect(["cassandra-env.sh"], files, rendered, cmdline, "50x", "17", env) == []
+    # the file written since the JVM started: not proven
+    started = launch(files, "17", tmp_path)
+    node = imported(files, "50x", "17", started, newer=["cassandra-env.sh"])[2]
+    assert not [n for n in node["normalized"] if "password.file commented out" in n]
+    # authentication set again to false after it: not read
+    assert jvm.password_file_inert(cmdline.replace(
+        "org.apache.cassandra.service.CassandraDaemon",
+        "-Dcom.sun.management.jmxremote.authenticate=false\0org.apache.cassandra.service.CassandraDaemon")) \
+        == extra.startswith("-Dcom.sun.management.jmxremote.authenticate=")
+
+
+def test_the_production_file_with_remote_jmx(tmp_path):
+    """The same file, LOCAL_JMX=no its one change: those nodes run remote JMX (the lines of its branch run)."""
+    files = node_files("50x", production_jmx("no"))
+    cmdline = launch(files, "17", tmp_path)
+    args = cmdline.split("\0")
+    for option in ("-Dcassandra.jmx.remote.port=7199", "-Dcom.sun.management.jmxremote.rmi.port=7199",
+                   "-Dcom.sun.management.jmxremote.authenticate=true",
+                   "-Dcom.sun.management.jmxremote.password.file=/etc/cassandra/jmxremote.password",
+                   "-Dcom.sun.management.jmxremote.access.file=/etc/cassandra/jmxremote.access",
+                   "-Djava.rmi.server.hostname=10.0.0.1"):
+        assert option in args
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    variables = cassandra_inventory_host_vars(inventory, layout["hosts"], "n1")
+    assert variables["cassandra_local_jmx"] is False and variables["cassandra_jmx_rmi_hostname"] == IPV4
+    assert node["vars"]["cassandra_jmx_rmi_hostname"] == IPV4  # (each node its own address)
+    assert [u["name"] for u in variables["cassandra_jmx_users"]] == ["zorglub"]
+    assert node["hand_edits"] == [] and not [n for n in node["normalized"] if "do not run" in n or "commented out" in n]
+    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
+    rendered = role_files(inventory, layout, files)[0]
+    assert settings(launch(rendered, "17", tmp_path)) == settings(cmdline)
+    assert cassandra_apply_config_no_effect(["cassandra-env.sh"], files, rendered, cmdline, "50x", "17") \
+        == ["the same JVM arguments"]
+
+
 def test_lines_in_the_remote_jmx_branch_not_proven_without_the_jvm(tmp_path):
     files = node_files("50x", dormant([RMI]))
     # not running: the branch it takes not known, a hand edit as before
@@ -1788,13 +1874,15 @@ def jmx_lines_are_hand_edits(files, cmdline, env=None):
 
 def jmx_lines_not_run(files, cmdline, env=None):
     """The node's JMX lines in the remote branch its JVM did not take: no effect, neither hand edits nor differences
-    (the stock password file line it has commented out: the JVM has no such option, a difference of its own)."""
+    (nor the stock password file line it has commented out: JMX authentication off, the JVM never reads it)."""
     inventory, layout, node = imported(files, "41x", "11", cmdline, environment=env)
-    assert not any("/srv/zorglub/jmx" in line or "rmi.server" in line for line in node["hand_edits"])
+    assert not any("/srv/zorglub/jmx" in line or "rmi.server" in line or "password.file" in line
+                   for line in node["hand_edits"])
     assert [n for n in node["normalized"] if n.startswith("cassandra-env.sh: 3 lines in the remote JMX branch these")]
+    assert [n for n in node["normalized"] if n.startswith("cassandra-env.sh: -Dcom.sun.management.jmxremote.password"
+                                                          ".file commented out")]
     out = check(files, "41x", java="11", env=env, cmdline=cmdline)
-    assert out["differences"] == ['cassandra-env.sh: node has nothing, import would write JVM_OPTS="$JVM_OPTS'
-                                  ' -Dcom.sun.management.jmxremote.password.file=/etc/cassandra/jmxremote.password"']
+    assert out["differences"] == []
 
 
 def test_jmx_lines_in_the_remote_branch_not_taken_have_no_effect(tmp_path):
