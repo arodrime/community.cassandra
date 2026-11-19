@@ -182,17 +182,23 @@ failed:
   returned: on failure
   type: bool
 out:
-  description: Raw stdout from cqlsh.
-  returned: when debug is set to true
+  description: Raw stdout from cqlsh, the password masked; on failure without debug, its last 20 lines.
+  returned: when debug is set to true, or on failure
   type: str
 err:
-  description: Raw stderr from cqlsh.
-  returned: when debug is set to true
+  description: Raw stderr from cqlsh, the password masked; on failure without debug, its last 20 lines.
+  returned: when debug is set to true, or on failure
   type: str
 rc:
-  description: Return code from cqlsh.
-  returned: when debug is set to true
+  description: >-
+    Return code from cqlsh. When cqlsh could not be started at all (the program, or the interpreter its first line
+    names, missing), the error number of that failure (2: not found) with C(msg) saying it and no C(out) or C(err).
+  returned: when debug is set to true, or on failure
   type: int
+cmd:
+  description: The command line run, the password masked.
+  returned: when debug is set to true, or on failure
+  type: str
 '''
 
 from ansible.module_utils.basic import AnsibleModule
@@ -238,6 +244,14 @@ def masked(text, args):
         if secret:
             text = text.replace(secret, "********")
     return text
+
+
+TAIL_LINES = 20
+
+
+def tail(text, lines=TAIL_LINES):
+    """The last lines of text (all of it when shorter)."""
+    return "\n".join(str(text or "").rstrip("\n").split("\n")[-lines:])
 
 
 def transform_output(output, transform_type, split_char):
@@ -348,17 +362,20 @@ def main():
     # an argv list, run without a shell; no $VAR or ~ expanded in the values (a password)
     (rc, out, err) = module.run_command(args, check_rc=False, expand_user_and_vars=False)
 
+    # (cqlsh does not echo the password; masked anyway, as a password given in additional_args)
     if module.params['debug']:
-        result['out'] = out
-        result['err'] = err
+        result['out'] = masked(out, args)
+        result['err'] = masked(err, args)
         result['rc'] = rc
         result['cmd'] = shown_cmd(args)
 
     if rc != 0:
-        # why, without debug: its rc and standard error (cqlsh does not echo the password; masked anyway, as a
-        # password given in additional_args)
+        # why, without debug: the command, its rc and the end of its output (an error of a statement goes to
+        # stderr, a warning before it may go to stdout)
         result.setdefault('rc', rc)
-        result.setdefault('err', masked(err, args))
+        result.setdefault('cmd', shown_cmd(args))
+        result.setdefault('out', tail(masked(out, args)))
+        result.setdefault('err', tail(masked(err, args)))
         module.fail_json(msg="module execution failed", **result)
     else:
         result['changed'] = True

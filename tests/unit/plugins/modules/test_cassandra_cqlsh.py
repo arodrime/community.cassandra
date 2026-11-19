@@ -106,12 +106,25 @@ def test_a_failure_says_why_without_debug(monkeypatch):
     # cqlsh failing (no cqlshlib for this python): its rc and standard error kept, debug off
     err = "Traceback ...\nModuleNotFoundError: No module named 'cqlshlib'\n"
     args, kwargs, result = run(monkeypatch, answer=(1, "", err), debug=False, username="alice", password=NASTY)
-    assert result["msg"] == "module execution failed" and result["rc"] == 1 and result["err"] == err
-    assert "cmd" not in result and "out" not in result
+    assert result["msg"] == "module execution failed" and result["rc"] == 1 and result["err"] == err.rstrip("\n")
+    # the command, the password masked, and its standard output too (a statement error with --execute: rc 2)
+    assert result["cmd"] == "cqlsh 127.0.0.1 9042 --username=alice --password=******** --encoding=utf-8" \
+        " --connect-timeout=5 --request-timeout=10" and result["out"] == ""
+    assert not [v for v in result.values() if NASTY in str(v)]
     # never the password, even if cqlsh printed it
     args, kwargs, result = run(monkeypatch, answer=(2, "", "Bad credentials %s for alice" % NASTY), debug=False,
                                password=NASTY)
     assert NASTY not in str(result) and result["err"] == "Bad credentials ******** for alice"
+    # the last 20 lines of each, the password masked there too
+    out = "".join("line %d\n" % n for n in range(1, 31)) + "zorglub %s\n" % NASTY
+    err = "".join("e%d\n" % n for n in range(1, 26))
+    args, kwargs, result = run(monkeypatch, answer=(2, out, err), debug=False, password=NASTY)
+    assert result["out"].split("\n") == ["line %d" % n for n in range(12, 31)] + ["zorglub ********"]
+    assert result["err"].split("\n") == ["e%d" % n for n in range(6, 26)] and result["rc"] == 2
+    # with debug: all of it, masked
+    args, kwargs, result = run(monkeypatch, answer=(2, out, err), debug=True, password=NASTY)
+    assert result["out"] == out.replace(NASTY, "********") and result["err"] == err
+    assert not [v for v in result.values() if NASTY in str(v)]
     # a success: as before, no err without debug
     args, kwargs, result = run(monkeypatch, debug=False)
     assert "err" not in result and "rc" not in result
