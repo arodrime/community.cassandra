@@ -78,7 +78,8 @@ def test_a_change_of_the_drop_in_restarts_as_one_of_the_unit():
         main = f.read()
     with open(os.path.join(ROLE, "tasks", "wait_normal.yml"), encoding="utf-8") as f:
         wait = f.read()
-    assert "cassandra_service_unit is changed" not in main.replace("if cassandra_service_unit is changed else", "")
+    before_report = main.split("\n- name: Report\n")[0]  # the change report says the unit written, not a restart
+    assert "cassandra_service_unit is changed" not in before_report
     assert main.count("_cassandra_service_unit_changed") == 2 and "_cassandra_service_unit_changed" in wait
 
 

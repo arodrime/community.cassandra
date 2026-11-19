@@ -12,6 +12,7 @@ import pytest
 import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import cassandra_unreadable_config
+from ansible_collections.community.cassandra.tests.unit.helpers import render_with
 
 ROLE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_service")
 
@@ -31,20 +32,9 @@ ENV.filters["bool"] = lambda value: value if isinstance(value, bool) else str(va
 ENV.tests["defined"] = lambda value: not isinstance(value, jinja2.Undefined)
 
 
-def value(template, variables):
-    """A variable's template, its value back (rendered to JSON)."""
-    body = template.strip()
-    assert body.startswith("{{") and body.endswith("}}")
-    return yaml.safe_load(ENV.from_string("{{ (%s) | tojson }}" % body[2:-2]).render(**variables))
-
-
-def condition(text, variables):
-    """A when/that condition, as ansible-core before 2.19 evaluates it (inside {% if %})."""
-    return ENV.from_string("{%% if %s %%}True{%% else %%}False{%% endif %%}" % text).render(**variables) == "True"
-
-
 def check(account, check_mode=False, must_exist=True, **inventory):
-    """(passes, message) of the check, for what the node said (account: its key=value lines)."""
+    """(passes, message) of the check, for what the node said (account: its key=value lines), rendered as the task
+    renders them (its own vars, its conditions, its message)."""
     v = {"cassandra_user": "cassandra", "cassandra_group": "cassandra", "cassandra_version": "50x",
          "cassandra_service_unit_manage": True, "inventory_hostname": "n1", "ansible_check_mode": check_mode,
          "_cassandra_account_must_exist": must_exist}
@@ -56,11 +46,10 @@ def check(account, check_mode=False, must_exist=True, **inventory):
         rendered = ENV.from_string(template).render(**v)
         perms[key] = yaml.safe_load(rendered) if key == "files" else rendered
     v["_cassandra_service_config_perms"] = perms
-    v["_account"] = dict(line.split("=", 1) for line in account)
-    for name in ("_groups", "_unreadable"):
-        v[name] = value(VARS[name], v)
-    passes = all(condition(c.split("  #")[0], v) for c in CHECK["that"])
-    return passes, ENV.from_string(CHECK["fail_msg"]).render(**v).strip()
+    v["cassandra_service_account"] = {"stdout_lines": account}
+    v.update(VARS)
+    passes = all(render_with("{{ %s }}" % c.split("  #")[0], v) in (True, "True") for c in CHECK["that"])
+    return passes, render_with(CHECK["fail_msg"], v).strip()
 
 
 DEFAULT = ["user=cassandra", "group=cassandra", "uid=990", "gid=990", "gname=cassandra", "others="]

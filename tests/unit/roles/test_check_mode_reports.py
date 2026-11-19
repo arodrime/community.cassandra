@@ -57,7 +57,8 @@ def test_unit_left_active_with_no_cassandra_shown_under_check():
     items = task("cassandra_service", "Report", "main.yml")["vars"]
     common = {"cassandra_service_unit": {"changed": False}, "cassandra_service_enabled": True,
               "_cassandra_service_before": {"active": "active", "enabled": "enabled", "unit": "SysV /etc/init.d/cassandra"},
-              "ansible_check_mode": True, "_would": "would be "}
+              "ansible_check_mode": True, "_would": "would be ",
+              "_cassandra_service_environment_dropin": "/etc/systemd/system/cassandra.service.d/zz-ansible-environment.conf"}
     for rc, state, expected in ((1, "started", [{"item": "cassandra", "before": "active, no Cassandra running",
                                                  "after": "would be started again"}]),
                                 (0, "started", []), (1, "stopped", [])):

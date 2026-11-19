@@ -83,7 +83,8 @@ def test_change_report(check, expected):
     task = find(load("main.yml"), "Report")
     variables = dict(task["vars"], cassandra_service_state="restarted", ansible_check_mode=check,
                      cassandra_service_unit=_Unchanged(), cassandra_service_enabled=True,
-                     _cassandra_service_before={"unit": "", "active": "active", "enabled": "enabled"})
+                     _cassandra_service_before={"unit": "", "active": "active", "enabled": "enabled"},
+                     _cassandra_service_environment_dropin="/etc/systemd/system/cassandra.service.d/zz-ansible-environment.conf")
     items = render(task["vars"]["cassandra_change_report_items"], **variables)
     assert [i["after"] for i in items if i["item"] == "cassandra"] == [expected]
 

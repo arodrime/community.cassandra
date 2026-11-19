@@ -19,6 +19,7 @@ with warnings.catch_warnings():  # already done under ansible-test
     init_plugin_loader()  # the collection's filters, under plain pytest too
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
+DROPIN = "/etc/systemd/system/cassandra.service.d/zz-ansible-environment.conf"  # cassandra_service's vars
 
 
 def load(*path):
@@ -53,9 +54,11 @@ def test_the_service_report_says_would_under_check():
 
     def items(check, state, enabled, before):
         variables = dict(v, ansible_check_mode=check, cassandra_service_state=state, cassandra_service_enabled=enabled,
-                         _cassandra_service_before=before, cassandra_service_unit={"changed": True})
-        variables["_want_active"] = render(v["_want_active"], **variables)
-        variables["_would"] = render(v["_would"], **variables)
+                         _cassandra_service_before=before, cassandra_service_unit={"changed": True},
+                         _cassandra_service_environment_dropin=DROPIN)
+        for name, template in v.items():  # the task's own vars, rendered as the task renders them
+            if name != "cassandra_change_report_items":
+                variables[name] = render(template, **variables)
         return [(i["item"], i["after"]) for i in render(v["cassandra_change_report_items"], **variables)]
 
     before = {"unit": "/run/systemd/generator.late/cassandra.service", "active": "inactive", "enabled": "generated"}
