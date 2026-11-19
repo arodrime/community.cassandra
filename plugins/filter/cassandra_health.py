@@ -77,7 +77,23 @@ def cassandra_health_findings(views, expected, node, gossip=None, binary=None, n
     target version the nodes agree again on).
     e.g. (the same) -> [{kind: "state", address: "10.0.0.4", dc: "dc1", rack: "r1", state: "DN", seen_from: "node1", text:
     "node4 (10.0.0.4, r1) is DN, seen from node1"}]."""
-    names = _by_ip(names)
+    return (_ring_findings(views, expected, _by_ip(names), down_ok, joining_ok, leaving_ok, any_ok)
+            + _port_findings(ports, node) + _check_findings(views, node, gossip, binary) + _netstats_findings(netstats, node)
+            + _schema_findings(schema, mixed_versions, target))
+
+
+def _expected_state(n, down_ok, joining_ok, leaving_ok, any_ok):
+    """A node of the ring in a state the run expects: down (being replaced), joining or leaving (still running),
+    or any state (not judged)."""
+    state = n["status"] + n["state"]
+    return (n["address"] in (any_ok or [])
+            or (n["status"] == "D" and n["address"] in (down_ok or []))
+            or (state == "UJ" and n["address"] in (joining_ok or []))
+            or (state == "UL" and n["address"] in (leaving_ok or [])))
+
+
+def _ring_findings(views, expected, names, down_ok, joining_ok, leaving_ok, any_ok):
+    """Each view of the ring: nodetool status failed, a node not UN (not expected so), a ring of another size."""
     found = []
     for view in views:
         result = view["result"]
@@ -87,15 +103,7 @@ def cassandra_health_findings(views, expected, node, gossip=None, binary=None, n
             continue
         nodes = [(dc, n) for dc, value in result["cluster_status"].items() for n in value.get("nodes", [])]
         for dc, n in nodes:
-            if n["address"] in (any_ok or []):
-                continue
-            if n["status"] == "D" and n["address"] in (down_ok or []):
-                continue
-            if n["status"] + n["state"] == "UJ" and n["address"] in (joining_ok or []):
-                continue
-            if n["status"] + n["state"] == "UL" and n["address"] in (leaving_ok or []):
-                continue
-            if n["status"] != "U" or n["state"] != "N":
+            if (n["status"] != "U" or n["state"] != "N") and not _expected_state(n, down_ok, joining_ok, leaving_ok, any_ok):
                 # by its inventory name when it has one: "node4 (10.0.0.4, rack1) is DN"
                 name = names.get(_ip(n["address"]))
                 where = ("%s, %s" % (n["address"], n["rack"])) if name else n["rack"]
@@ -107,11 +115,22 @@ def cassandra_health_findings(views, expected, node, gossip=None, binary=None, n
             found.append({"kind": "count", "ring": len(nodes), "expected": int(expected), "seen_from": view["from"],
                           "text": "the ring has %d nodes, the inventory %d (seen from %s): a node is missing from the ring, "
                                   "or the inventory is incomplete" % (len(nodes), int(expected), view["from"])})
+    return found
+
+
+def _port_findings(ports, node):
+    found = []
     for port in (ports or {}).get("results", []):
         if port.get("failed"):
             item = port["item"]
             found.append({"kind": "port", "name": item["name"], "port": item["port"], "on": node, "host": item["host"],
                           "text": "%s port %s is not answering on %s (%s)" % (item["name"], item["port"], node, item["host"])})
+    return found
+
+
+def _check_findings(views, node, gossip, binary):
+    """This node's gossip and native transport: not running, or not asked."""
+    found = []
     # a check that could not ask: when nodetool status failed on this node too (e.g. a JMX login refused), that
     # failure says it; else its own failure (not "not running": not known)
     node_failed = any(view["from"] == node and not view["result"].get("cluster_status") for view in views)
@@ -123,26 +142,38 @@ def cassandra_health_findings(views, expected, node, gossip=None, binary=None, n
         found.append({"kind": "gossip", "on": node, "text": "gossip is not running on %s" % node})
     if binary is not None and not binary.get("is_up") and not _unasked(binary):
         found.append({"kind": "cql", "on": node, "text": "the native transport (CQL) is not running on %s" % node})
-    if netstats is not None:
-        if netstats.get("failed") or "streaming" not in netstats:
-            found.append({"kind": "netstats", "on": node, "error": _error(netstats),
-                          "text": "nodetool netstats failed on %s: %s" % (node, _error(netstats))})
-        elif netstats["streaming"]:
-            found.append({"kind": "streams", "on": node, "text": "streams in progress on %s (nodetool netstats)" % node})
-    # cassandra_schema's agreed: the play reads it with failed_when false, which clears failed. unreachable: Ansible's
-    # (the peer not reached, said by its own finding); the nodes describecluster lists UNREACHABLE are the module's
-    # unreachable_nodes, not counted by it: the others disagreeing, or its nodetool error, still said here
-    if schema is not None and not schema.get("unreachable") and (
-            schema.get("failed") or schema.get("agreed") is False
-            or ("agreed" not in schema and "schema_status" not in schema and bool(schema.get("msg")) and not schema.get("skipped"))):
-        msg = schema.get("msg", "")
-        if mixed_versions and not msg.startswith("nodetool error"):
-            found.append({"kind": "warning", "what": "schema", "msg": msg,
-                          "text": "schema versions differ: expected while the versions are mixed, agreed again once every node "
-                                  "runs %s" % (target or "the same version")})
-        else:
-            found.append({"kind": "schema", "msg": msg, "text": "schema disagreement: %s" % msg})
     return found
+
+
+def _netstats_findings(netstats, node):
+    if netstats is None:
+        return []
+    if netstats.get("failed") or "streaming" not in netstats:
+        return [{"kind": "netstats", "on": node, "error": _error(netstats),
+                 "text": "nodetool netstats failed on %s: %s" % (node, _error(netstats))}]
+    if netstats["streaming"]:
+        return [{"kind": "streams", "on": node, "text": "streams in progress on %s (nodetool netstats)" % node}]
+    return []
+
+
+def _schema_disagrees(schema):
+    """cassandra_schema's agreed: the play reads it with failed_when false, which clears failed. unreachable: Ansible's
+    (the peer not reached, said by its own finding); the nodes describecluster lists UNREACHABLE are the module's
+    unreachable_nodes, not counted by it: the others disagreeing, or its nodetool error, still said here."""
+    return schema is not None and not schema.get("unreachable") and (
+        schema.get("failed") or schema.get("agreed") is False
+        or ("agreed" not in schema and "schema_status" not in schema and bool(schema.get("msg")) and not schema.get("skipped")))
+
+
+def _schema_findings(schema, mixed_versions, target):
+    if not _schema_disagrees(schema):
+        return []
+    msg = schema.get("msg", "")
+    if mixed_versions and not msg.startswith("nodetool error"):
+        return [{"kind": "warning", "what": "schema", "msg": msg,
+                 "text": "schema versions differ: expected while the versions are mixed, agreed again once every node "
+                         "runs %s" % (target or "the same version")}]
+    return [{"kind": "schema", "msg": msg, "text": "schema disagreement: %s" % msg}]
 
 
 # A nodetool failure a restart explains, as nodetool_cmd_objects.version_error says it: JMX refused (not up
