@@ -146,7 +146,9 @@ def test_the_screen_rows_and_warnings_within_79_columns():
     young = tracking(0.0013, "slow", dispersion="0.054300000", skew="1000000.000")
     verdicts = cassandra_clock_verdicts([node("h-n1", probe_text(tracking_text=young)),
                                          node("h-n2", probe_text(tracking_text=tracking(0.2, "fast")))])
-    rows = render(screen["_rows"], _cassandra_clock_verdicts=verdicts)
+    after = render(screen["cassandra_screen"]["after"], _cassandra_clock_verdicts=verdicts, groups={}, _stale=[],
+                   ansible_check_mode=False)
+    rows = after[0]["pre"]
     assert rows[0].startswith("  h-n1  OFF  chronyd") and all(len(row) <= 77 for row in rows)
     each = render(screen["cassandra_screen"]["warnings"][0]["each"], _cassandra_clock_verdicts=verdicts, _nl=screen["_nl"])
     assert [w[0] for w in each] == ["h-n2's clock is AHEAD by about 200.0 ms"]

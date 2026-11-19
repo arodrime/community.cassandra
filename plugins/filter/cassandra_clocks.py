@@ -42,6 +42,8 @@ cassandra_clock_health: the verdicts -> health_check's CLOCKS block (the
     in sync.
 cassandra_clock_nodes: the nodes whose clock was read (clocks_read.yml), as
     cassandra_clock_verdicts takes them.
+cassandra_clock_plan: the verdicts and the nodes of each kind -> what the plan
+    of sync_clocks says after its question.
 """
 
 from __future__ import absolute_import, division, print_function
@@ -1007,6 +1009,27 @@ def cassandra_clock_nodes(hosts, hostvars):
     return nodes
 
 
+def cassandra_clock_plan(verdicts, live, left, window, stale, check=False):
+    """verdicts: cassandra_clock_verdicts'; live: the nodes whose clock sync_clocks sets live; left: those an
+    interrupted run left in a restart window (ended first); window: those it sets in a restart window; stale: those
+    whose window mark it removes; check: --check -> what the plan of sync_clocks says after its question: the table,
+    the verdicts' notes, then a line per group of nodes."""
+    # a row per node, shown 2 columns in: within 77 columns, 79 in all
+    lines = [{"pre": cassandra_clock_lines(verdicts, width=77)}] + verdicts["notes"]
+    if live:
+        lines.append("Live, on those nodes at once: %s." % ", ".join(live))
+    if left:
+        lines.append("Left open by an interrupted run (Cassandra drained or stopped there), ended first: %s."
+                     % ", ".join(left))
+    if window:
+        lines.append("In a restart window, one node at a time (cluster checked, drained, stopped, clock set, started,"
+                     " cluster checked): %s." % ", ".join(window))
+    if stale:
+        lines.append("A window mark of an interrupted run (the node runs, its clock in sync), %s: %s." % (
+            "would be removed (--check)" if check else "removed", ", ".join(stale)))
+    return lines
+
+
 class FilterModule(object):
     def filters(self):
         return {"cassandra_clock_probe": cassandra_clock_probe, "cassandra_clock_settled": cassandra_clock_settled,
@@ -1015,4 +1038,4 @@ class FilterModule(object):
                 "cassandra_clock_verdicts": cassandra_clock_verdicts, "cassandra_clock_lines": cassandra_clock_lines,
                 "cassandra_clock_refusal": cassandra_clock_refusal, "cassandra_clock_health": cassandra_clock_health,
                 "cassandra_clock_warnings": cassandra_clock_warnings,
-                "cassandra_clock_nodes": cassandra_clock_nodes}
+                "cassandra_clock_nodes": cassandra_clock_nodes, "cassandra_clock_plan": cassandra_clock_plan}
