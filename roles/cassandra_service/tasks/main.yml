@@ -287,5 +287,5 @@
          + ([{'item': 'cassandra', 'before': 'active, no Cassandra running', 'after': _would ~ 'started again'}]
             if cassandra_service_jvm.rc | default(0) == 1 and cassandra_service_state == 'started'
                and _cassandra_service_before.active == _want_active else [])
-         + ([{'item': 'cassandra at boot', 'before': _cassandra_service_before.enabled or 'unknown', 'after': _would ~ ('enabled' if cassandra_service_enabled else 'disabled')}]
+         + ([{'item': 'cassandra at boot', 'before': _cassandra_service_before.enabled or 'unknown', 'after': _would ~ ('enabled' if cassandra_service_enabled | bool else 'disabled')}]
             if (_cassandra_service_before.enabled == 'enabled') != (cassandra_service_enabled | bool) else []) }}

@@ -71,6 +71,13 @@ def test_the_service_report_says_would_under_check():
     assert items(False, "started", True, before) == [("/etc/systemd/system/cassandra.service", "native unit"),
                                                      ("cassandra", "active"), ("cassandra at boot", "enabled")]
     assert items(True, "restarted", True, dict(before, active="active", enabled="enabled"))[1:] == [("cassandra", "would restart")]
+    # given as a string on the command line (-e cassandra_service_enabled=false): read as a bool, as systemd gets it
+    enabled = dict(before, active="active", enabled="enabled")
+    for value in ("false", "False", "no", "0", False):
+        assert items(False, "started", value, enabled)[1:] == [("cassandra at boot", "disabled")]
+    for value in ("true", "yes", True):
+        assert items(False, "started", value, enabled)[1:] == []
+        assert items(False, "started", value, dict(enabled, enabled="disabled"))[1:] == [("cassandra at boot", "enabled")]
 
 
 def test_reset_node_ends_with_a_verdict_and_the_add_node_command():

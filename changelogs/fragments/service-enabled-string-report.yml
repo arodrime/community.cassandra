@@ -1,0 +1,5 @@
+bugfixes:
+  - >-
+    cassandra_service role - the change report said ``cassandra at boot: enabled -> enabled`` when
+    ``cassandra_service_enabled`` was given as a string (``-e cassandra_service_enabled=false``) while systemd
+    disabled it: the report now reads the value as a boolean, as the task does.
