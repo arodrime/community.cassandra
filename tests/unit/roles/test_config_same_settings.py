@@ -419,3 +419,15 @@ def test_rackdc_lines_are_the_node_dc_and_rack_under_a_snitch_that_reads_them(sn
     assert render("{{ %s }}" % that, cassandra_endpoint_snitch=snitch, cassandra_dc="datacenter1", cassandra_rack="rack1",
                   cassandra_rackdc_dc=rackdc[0], cassandra_rackdc_rack=rackdc[1],
                   _cassandra_config_snitches_without_rackdc=unread) is ok
+
+
+@pytest.mark.parametrize("series", ["4.1", "5.0"])
+def test_every_former_name_with_a_unit_has_its_key_read_in_any_unit(series):
+    # (QUANTITY_KEYS in step with the role's _cassandra_config_old_names: a former name holding a number in a unit
+    # is the 4.0 name of a key 4.1+ reads in any unit, the same amount the same setting)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
+        FORMER_UNITS, QUANTITY_KEYS, former_names)
+    missing = sorted(var[len("cassandra_"):] for name, var in former_names(series).items()
+                     if any(name.endswith(end) for end, dummy in FORMER_UNITS)
+                     and var[len("cassandra_"):] not in QUANTITY_KEYS)
+    assert missing == []

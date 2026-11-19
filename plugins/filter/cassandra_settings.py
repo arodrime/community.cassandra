@@ -66,7 +66,8 @@ QUANTITY_KEYS = {
     "hints_flush_period": "ms", "max_hints_file_size": "MiB", "trickle_fsync_interval": "KiB",
     "sstable_preemptive_open_interval": "MiB", "key_cache_size": "MiB", "row_cache_size": "MiB",
     "counter_cache_size": "MiB", "index_summary_capacity": "MiB", "index_summary_resize_interval": "m",
-    "trace_type_query_ttl": "d", "trace_type_repair_ttl": "d", "prepared_statements_cache_size": "MiB"}
+    "trace_type_query_ttl": "d", "trace_type_repair_ttl": "d", "prepared_statements_cache_size": "MiB",
+    "compaction_large_partition_warning_threshold": "MiB"}
 # Top-level settings the role leaves out at Cassandra's default, which a node may write: {key: that value}
 DEFAULT_WHEN_ABSENT = {"auto_bootstrap": "true"}
 # Keys a later series' stock cassandra.yaml added, which the role writes, that Cassandra reads the same when absent (its
