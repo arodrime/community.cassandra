@@ -19,15 +19,16 @@ from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm
 from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import cassandra_apply_config_no_effect
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import (
     _render as role_render,
-    branch_not_run_lines,
     cassandra_import_self_check,
     cassandra_inventory_host_vars,
 )
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
-    cassandra_import_report, cassandra_import_self_check_advice)
+    cassandra_import_report)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     IPV4, cassandra_config_import, cassandra_inventory_layout)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import cassandra_same_settings
+
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 from .test_cassandra_import_check import FACTS, check, edit, import_node, seeded, stock
 from .test_cassandra_import_logback import audit_on, file_auditing
@@ -623,6 +624,92 @@ def test_remote_jmx_lines_in_its_branch_are_carried(tmp_path):
     files = node_files("50x", remote_jmx("yes"))
     inventory, layout, node = imported(files, "50x", "17", launch(files, "17", tmp_path))
     assert "cassandra_jmx_rmi_hostname" not in node["vars"] and node["hand_edits"]
+
+
+def dormant(lines, password_off=False):
+    """(2026-11-19, a 5.0 node) local JMX (LOCAL_JMX=yes, #LOCAL_JMX=no above it), lines in the remote branch below
+    its authentication line, which bash does not run; password_off: the stock password file line commented out."""
+    auth = '  JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.authenticate=true"'
+    password = 'JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.password.file=/etc/cassandra/jmxremote.password"'
+
+    def edit(files):
+        text = files["cassandra-env.sh"].replace("    LOCAL_JMX=yes", "    #LOCAL_JMX=no\n    LOCAL_JMX=yes")
+        text = text.replace(auth, "\n  ".join([auth] + lines))
+        if password_off:
+            text = text.replace("\n%s\n" % password, "\n#%s\n" % password)
+        files["cassandra-env.sh"] = text
+    return edit
+
+
+BRANCH_LINES = ['JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.password.file=/etc/cassandra/jmxremote.password"',
+                'JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file=/etc/cassandra/jmxremote.access"', RMI]
+
+
+@pytest.mark.parametrize("series", sorted(JAVA))
+@pytest.mark.parametrize("lines", [[RMI], BRANCH_LINES, ['JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=10.9.9.9"']],
+                         ids=["rmi", "password access rmi", "another address"])
+def test_lines_in_the_remote_jmx_branch_not_run_have_no_effect(tmp_path, series, lines):
+    files = node_files(series, dormant(lines))
+    java = JAVA[series]
+    cmdline = launch(files, java, tmp_path)
+    assert "-Dcassandra.jmx.local.port=7199" in cmdline.split("\0") and "rmi.server.hostname" not in cmdline
+    inventory, layout, node = imported(files, series, java, cmdline)
+    # not read (no variable), no hand edit, said once
+    assert node["hand_edits"] == [] and not [k for k in node["vars"] if "rmi" in k or k == "cassandra_jmx_users"]
+    said = [n for n in node["normalized"] if "remote JMX branch these nodes do not run" in n]
+    assert said == ["cassandra-env.sh: %d line%s in the remote JMX branch these nodes do not run (LOCAL_JMX=yes): no"
+                    " effect; apply_config writes the stock branch without %s, no restart"
+                    % (len(lines), "" if len(lines) == 1 else "s", "it" if len(lines) == 1 else "them")]
+    out = check(files, series, java=java, cmdline=cmdline)
+    assert out["differences"] == [] and [n for n in out["notes"] if "do not run" in n]
+    # the role's file: the stock branch, the same JVM arguments; apply_config writes it with no restart
+    rendered = role_files(inventory, layout, files)[0]
+    assert "rmi.server.hostname=10" not in rendered["cassandra-env.sh"]
+    assert settings(launch(rendered, java, tmp_path)) == settings(cmdline)
+    group = ["cassandra-env.sh", "jvm-server.options", jvm.options_file(series, java)]
+    assert cassandra_apply_config_no_effect(["cassandra-env.sh"], files, rendered, cmdline, series, java) \
+        == ["the same JVM arguments"]
+    assert all(f in files for f in group)
+
+
+def test_the_jmx_files_of_a_local_jmx_node_are_left_as_they_are(tmp_path):
+    # the remote branch's password and access lines not run: the JVM reads no JMX file, the users are not imported
+    # (said), so cassandra_config writes no JMX file (access.yml: only with cassandra_jmx_users, the password file
+    # apply_config writes first: only one access.yml listed) and the nodes' files stay as they are
+    files = node_files("50x", dormant(BRANCH_LINES))
+    files["jmxremote.password"] = "zorglub s3cret\n"
+    files["jmxremote.access"] = "zorglub readwrite\n"
+    cmdline = launch(files, "17", tmp_path)
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    assert "cassandra_jmx_users" not in node["vars"]
+    assert [h for h in node["hand_edits"] if h.startswith("jmxremote.password (/etc/cassandra/jmxremote.password): its"
+                                                          " users NOT imported")]
+    rendered, variables = role_files(inventory, layout, files)
+    assert not variables.get("cassandra_jmx_users") and "jmxremote.password" not in rendered
+    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
+    tasks = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_config", "tasks")
+    block = [t for t in load_tasks(os.path.join(tasks, "access.yml")) if t.get("name") == "Write the JMX users"][0]
+    assert block["when"] == "cassandra_jmx_users | length > 0"
+    assert [t for t in block["block"] if t.get("name") == "List the JMX files to write"]  # (_cassandra_config_jmx_changes)
+
+
+def test_lines_in_the_remote_jmx_branch_not_proven_without_the_jvm(tmp_path):
+    files = node_files("50x", dormant([RMI]))
+    # not running: the branch it takes not known, a hand edit as before
+    inventory, layout, node = imported(files, "50x", "17", "")
+    assert node["hand_edits"] and not [n for n in node["normalized"] if "do not run" in n]
+    # the file written since the JVM started: not proven either
+    cmdline = launch(files, "17", tmp_path)
+    inventory, layout, node = imported(files, "50x", "17", cmdline, newer=["cassandra-env.sh"])
+    assert node["hand_edits"]
+    # the unit says LOCAL_JMX=no (the next start takes the remote branch): not proven
+    rendered = role_files(*imported(files, "50x", "17", cmdline)[:2], files)[0]
+    assert cassandra_apply_config_no_effect(["cassandra-env.sh"], files, rendered, cmdline, "50x", "17",
+                                            {"LOCAL_JMX": "no"}) == []
+    # the remote branch run (LOCAL_JMX=no): rc13's reading, its rmi line read into cassandra_jmx_rmi_hostname
+    files = node_files("50x", remote_jmx())
+    node = imported(files, "50x", "17", launch(files, "17", tmp_path))[2]
+    assert node["vars"]["cassandra_jmx_rmi_hostname"] == IPV4 and not [n for n in node["normalized"] if "do not run" in n]
 
 
 def test_a_hand_edit_of_an_options_file_does_not_stop_a_move(tmp_path):
@@ -1793,21 +1880,32 @@ def jmx_lines_are_hand_edits(files, cmdline, env=None):
     assert any("-Djava.rmi.server.hostname=10.0.0.1" in d for d in out["differences"])
 
 
-def test_jmx_lines_in_the_remote_branch_not_taken_stay_hand_edits(tmp_path):
+def jmx_lines_not_run(files, cmdline, env=None):
+    """The node's JMX lines in the remote branch its JVM did not take: no effect, neither hand edits nor differences
+    (the stock password file line it has commented out: the JVM has no such option, a difference of its own)."""
+    inventory, layout, node = imported(files, "41x", "11", cmdline, environment=env)
+    assert not any("/srv/zorglub/jmx" in line or "rmi.server" in line for line in node["hand_edits"])
+    assert [n for n in node["normalized"] if n.startswith("cassandra-env.sh: 3 lines in the remote JMX branch these")]
+    out = check(files, "41x", java="11", env=env, cmdline=cmdline)
+    assert out["differences"] == ['cassandra-env.sh: node has nothing, import would write JVM_OPTS="$JVM_OPTS'
+                                  ' -Dcom.sun.management.jmxremote.password.file=/etc/cassandra/jmxremote.password"']
+
+
+def test_jmx_lines_in_the_remote_branch_not_taken_have_no_effect(tmp_path):
     """LOCAL_JMX=yes from the environment: the local branch runs, the node's lines in the remote one do not."""
     files = node_files("41x", jmx_in_remote_branch)
     env = {"LOCAL_JMX": "yes"}
-    jmx_lines_are_hand_edits(files, launch(files, "11", tmp_path, environment=env), env)
+    jmx_lines_not_run(files, launch(files, "11", tmp_path, environment=env), env)
 
 
-def test_jmx_lines_in_the_remote_branch_unseen_local_jmx_stay_hand_edits(tmp_path):
+def test_jmx_lines_in_the_remote_branch_unseen_local_jmx_have_no_effect(tmp_path):
     """(pre-push audit, rc13, round 9) LOCAL_JMX=yes from an EnvironmentFile or /etc/default/cassandra, in no
     environment the import reads: the running JVM's arguments (its local JMX port) say the local branch ran, not the
     file's default (no)."""
     files = node_files("41x", jmx_in_remote_branch)
     cmdline = launch(files, "11", tmp_path, environment={"LOCAL_JMX": "yes"})
     assert "-Djava.rmi.server.hostname=10.0.0.1" not in cmdline
-    jmx_lines_are_hand_edits(files, cmdline)
+    jmx_lines_not_run(files, cmdline)
 
 
 def test_jmx_lines_in_the_remote_branch_not_proven_without_the_jvm_or_its_remote_port_alone(tmp_path):
@@ -2186,54 +2284,42 @@ def test_a_4x_cassandra_env_with_a_hand_edit_in_a_block_is_not_one():
     assert len(hand) > 10 and not any("the stock file of 4.x" in line for line in hand)
 
 
-# (2026-11-19, the owner's 123 nodes) a line only in the JMX branch a node does not run, said plainly
+# a line only in the branch of the LOCAL_JMX test the running JVM did not take: no effect, either way round
 AUTH_TRUE = '  JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.authenticate=true"'
 RMI_IN_BRANCH = '  JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=10.0.0.1"'
-RMI_SED = ("c=$(tr '\\0' '\\n' < /proc/$(systemctl show -p MainPID --value cassandra)/cmdline);"
-           " echo \"$c\" | grep -qF -- -Dcassandra.jmx.local.port= && ! echo \"$c\" | grep -qF --"
-           " -Djava.rmi.server.hostname= && sed -i"
-           " '/^[[:space:]]*JVM_OPTS=\"\\$JVM_OPTS -Djava\\.rmi\\.server\\.hostname=[^\" ]*\"[[:space:]]*$/d'"
-           " /etc/cassandra/cassandra-env.sh")
 
 
 @pytest.mark.parametrize("series", sorted(JAVA))
-def test_a_line_only_in_the_remote_jmx_branch_of_a_local_jmx_node_is_said_plainly(tmp_path, series):
+def test_a_line_only_in_the_remote_jmx_branch_of_a_local_jmx_node_is_no_difference(tmp_path, series):
     files = node_files(series, after_line(AUTH_TRUE, RMI_IN_BRANCH))
     cmdline = launch(files, JAVA[series], tmp_path)
     assert "-Dcassandra.jmx.local.port=7199" in cmdline.split("\0")
     out = check(files, series, java=JAVA[series], cmdline=cmdline, conf_dir="/etc/cassandra")
-    assert out["differences"] == ["\n".join([
-        'cassandra-env.sh: a line only in the remote JMX branch (the "else" of the LOCAL_JMX test):'
-        ' JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=10.0.0.1"',
-        "this node runs the local JMX branch (its JVM has -Dcassandra.jmx.local.port): that line has no effect on the"
-        " running JVM",
-        "remove it on the nodes, as root (it does so only where the JVM has -Dcassandra.jmx.local.port and not"
-        " -Djava.rmi.server.hostname):",
-        "  " + RMI_SED,
-        "or keep cassandra-env.sh as it is: -e import_keep_hand_edits=cassandra-env.sh",
-        "then import again"])]
-    # the stop: a fact on each line, the command whole (to copy), the node's address as such
-    layout = import_node(files, series, jvm={"cmdline": cmdline, "java": JAVA[series], "environment": {},
-                                             "newer": []})[1]
-    lines = cassandra_import_self_check_advice(layout, {"n1": out}, width=80)
-    assert "    a line only in the remote JMX branch (the \"else\" of the LOCAL_JMX test):" in lines
-    assert "      " + RMI_SED in lines
-    assert "    then import again" in lines
+    assert out["differences"] == []
+    assert [n for n in out["notes"] if "JMX branch" in n] == [
+        "cassandra-env.sh: 1 line in the remote JMX branch these nodes do not run (LOCAL_JMX=yes): no effect;"
+        " apply_config writes the stock branch without it, no restart"]
 
 
-def test_a_line_only_in_the_local_jmx_branch_of_a_remote_jmx_node_is_said_plainly(tmp_path):
+def test_a_line_only_in_the_local_jmx_branch_of_a_remote_jmx_node_has_no_effect(tmp_path):
     files = node_files("50x", after_line('  JVM_OPTS="$JVM_OPTS -Dcassandra.jmx.local.port=$JMX_PORT"',
                                          '  JVM_OPTS="$JVM_OPTS -Dzorglub.trace=1"'))
     files["cassandra-env.sh"] = edit(files["cassandra-env.sh"], "    LOCAL_JMX=yes", "    LOCAL_JMX=no")
     cmdline = launch(files, "17", tmp_path)
-    found = check(files, "50x", java="17", cmdline=cmdline)["differences"]
-    assert [d.split("\n")[:3] for d in found] == [[
-        'cassandra-env.sh: a line only in the local JMX branch (the "then" of the LOCAL_JMX test):'
-        ' JVM_OPTS="$JVM_OPTS -Dzorglub.trace=1"',
-        "this node runs the remote JMX branch (its JVM has -Dcassandra.jmx.remote.port): that line has no effect on"
-        " the running JVM",
-        "remove it on the nodes, as root (it does so only where the JVM has -Dcassandra.jmx.remote.port and not"
-        " -Dzorglub.trace):"]]
+    assert "-Dcassandra.jmx.remote.port=7199" in cmdline.split("\0") and "zorglub" not in cmdline
+    note = ("cassandra-env.sh: 1 line in the local JMX branch these nodes do not run (LOCAL_JMX=no): no effect;"
+            " apply_config writes the stock branch without it, no restart")
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    assert node["hand_edits"] == [] and note in node["normalized"]
+    out = check(files, "50x", java="17", cmdline=cmdline)
+    assert out["differences"] == [] and note in out["notes"]
+    rendered = role_files(inventory, layout, files)[0]
+    assert "zorglub" not in rendered["cassandra-env.sh"]
+    assert settings(launch(rendered, "17", tmp_path)) == settings(cmdline)
+    assert cassandra_apply_config_no_effect(["cassandra-env.sh"], files, rendered, cmdline, "50x", "17") \
+        == ["the same JVM arguments"]
+    # the unit says LOCAL_JMX=yes (the next start takes the local branch): not proven, a difference
+    assert check(files, "50x", java="17", cmdline=cmdline, env={"LOCAL_JMX": "yes"})["differences"]
 
 
 def test_a_line_in_a_jmx_branch_not_known_to_run_or_not_stays_a_plain_difference(tmp_path):
@@ -2243,31 +2329,8 @@ def test_a_line_in_a_jmx_branch_not_known_to_run_or_not_stays_a_plain_difference
     for kwargs in ({}, {"env": {"LOCAL_JMX": "no"}}):
         found = check(files, "41x", java="11", cmdline=kwargs and cmdline or "", **kwargs)["differences"]
         assert found and not any("JMX branch" in d for d in found)
-    assert jvm.jmx_branch_not_run(files["cassandra-env.sh"], files["cassandra-env.sh"], {}, cmdline) is None
-
-
-def run_way_out(conf, command, cmdline_args):
-    """The way out's command on a node: its JVM a process with those arguments (the unit's MainPID)."""
-    child = subprocess.Popen(["bash", "-c", "sleep 60; :"] + cmdline_args)
-    try:
-        subprocess.run(["bash", "-c", "systemctl() { echo %d; }\n%s" % (child.pid, command)], check=False)
-    finally:
-        child.kill()
-        child.wait()
-    return conf.join("cassandra-env.sh").read()
-
-
-@pytest.mark.skipif(not os.path.exists("/proc/self/cmdline"), reason="reads /proc/<pid>/cmdline")
-def test_the_way_out_removes_the_line_only_where_the_jvm_took_the_other_branch(tmpdir):
-    before = node_files("41x", after_line(AUTH_TRUE, RMI_IN_BRANCH))["cassandra-env.sh"]
-    conf = tmpdir.mkdir("conf")
-    conf.join("cassandra-env.sh").write(before)
-    found = jvm.jmx_branch_not_run(before, stock("41x")["cassandra-env.sh"], {}, "java\0-Dcassandra.jmx.local.port=7199")
-    command = branch_not_run_lines(found, before, str(conf))[0].split("\n")[3].strip()
-    # (the JVM has the option, or not the local port: left as it is)
-    for args in (["-Dcassandra.jmx.local.port=7199", "-Djava.rmi.server.hostname=10.0.0.1"],
-                 ["-Dcassandra.jmx.remote.port=7199"]):
-        assert run_way_out(conf, command, args) == before
-    after = run_way_out(conf, command, ["-Dcassandra.jmx.local.port=7199"])
-    assert after == before.replace(RMI_IN_BRANCH + "\n", "", 1)
-    assert run_way_out(conf, command, ["-Dcassandra.jmx.local.port=7199"]) == after  # (again: nothing more)
+    assert jvm.jmx_branch_not_run(files["cassandra-env.sh"], files["cassandra-env.sh"], {}, cmdline) == (None, [])
+    # both ports, or none, in the JVM's arguments: not known
+    for args in ("java\0-Dcassandra.jmx.local.port=7199\0-Dcassandra.jmx.remote.port=7199", "java"):
+        assert jvm.jmx_branch_not_run(files["cassandra-env.sh"], stock("41x")["cassandra-env.sh"], {}, args) \
+            == (None, [])

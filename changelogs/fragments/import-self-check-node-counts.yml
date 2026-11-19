@@ -1,0 +1,5 @@
+minor_changes:
+  - >-
+    import_cluster - the self-check's stop gives each file's node count with its nodes, and under the verdict how
+    the nodes counted there make the total (``122 + 1 nodes, counted by problem below``, or that some nodes are in
+    more than one problem).

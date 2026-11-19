@@ -1682,6 +1682,13 @@ set them, and works the heap out with another formula when ``MAX_HEAP_SIZE`` is 
 file one hand edit, with the reason (set them in the options, ``cassandra_heap_size``, or keep the file with
 ``import_keep_hand_edits``). 5.0's always sets ``-XX:HeapDumpPath`` (``cassandra_heap_dump_dir``, the log dir by
 default), 4.x's only with ``CASSANDRA_HEAPDUMP_DIR``: said under WORTH A LOOK, not a difference.
+A ``JVM_OPTS`` line of ``cassandra-env.sh`` only in the branch of its ``LOCAL_JMX`` test the running JVM did not take
+is not run by bash: no effect. The remote branch (the ``else``) on a node whose JVM took the local one (its arguments
+have ``-Dcassandra.jmx.local.port`` and not ``-Dcassandra.jmx.remote.port``, its unit not setting ``LOCAL_JMX`` to
+another value), or the local branch (the ``then``) on a node whose JVM took the remote one (the other way round). The
+import reads no variable from it and says it in one line, the self-check too; ``apply_config`` writes the stock branch
+without it, with no restart (the same JVM arguments). Cassandra not running, its file changed since it started, or
+both ports or none in its arguments: as any other line.
 ``logback.xml`` is read as logback reads it: its root level, the ``org.apache.cassandra`` level, the lowest level
 ``system.log`` takes (``cassandra_log_system_level``, its ``ThresholdFilter``), ``debug.log`` and the
 console, the stock ``AUDIT`` appender and its logger uncommented (``cassandra_log_audit_file``, written only when it is
@@ -1766,12 +1773,9 @@ ends with a short ``SELF-CHECK FAILED`` block, which says why the inventory does
 differences by what the import establishes of their cause (settings no inventory variable sets, a file of yours that
 gives another value, parts of the nodes outside the config files, the same settings in another layout, others), each
 with what ``apply_config`` would do (when there are several, a line under the verdict says how their node counts make
-its total: ``122 + 1 nodes, counted by problem below``); under each, the files with their node count and nodes, each
-setting in the file's own words (a
-YAML key, a JVM option, a variable of ``cassandra-env.sh``, logback's elements: ``AUDIT / rollingPolicy /
-fileNamePattern``) with the node's value and Ansible's (``absent``, ``present``, ``(empty)``; a line of
-``cassandra-env.sh`` only in the branch of the ``LOCAL_JMX`` test the running JVM did not take: said as such, no effect
-on that JVM, with a command that removes it on the nodes where the JVM took the other branch); then ``To pass:``, each
+its total: ``122 + 1 nodes, counted by problem below``); under each, the files with their node count and nodes,
+each setting in the file's own words (a YAML key, a JVM option, a variable of ``cassandra-env.sh``, logback's elements: ``AUDIT / rollingPolicy /
+fileNamePattern``) with the node's value and Ansible's (``absent``, ``present``, ``(empty)``); then ``To pass:``, each
 way out with its option: ``-e import_keep_hand_edits=<files or parts>`` to keep them as the nodes have them, the value
 to set in your file (or the line to remove), ``-e import_allow_unread=true`` for the nodes not read, and
 ``-e import_strict=false`` to take the change (it only writes the inventory: ``apply_config --check --diff`` before

@@ -660,19 +660,12 @@ def _group_lines(layout, group, who, width):
         if item["sentence"] is not None and item["kind"] == _LAYOUT:
             continue  # (the section says it)
         if item["sentence"] is not None:
-            lines += _sentence_lines(item["sentence"], width, "    ")
+            lines += fill_text(item["sentence"], width, "    ", "  ")
             continue
         lines.append("    " + item["where"])
         lines += _value_lines(VALUE_LABELS[0], item["node"], width)
         lines += _value_lines(VALUE_LABELS[1], item["ansible"], width, _suffix(layout, item))
     return lines
-
-
-def _sentence_lines(text, width, hang):
-    """A sentence of the self-check, a fact on each of its lines (\\n), each wrapped; a line indented (a command to
-    copy) whole -> [line]."""
-    return [line for part in str(text).split("\n")
-            for line in ([hang + part] if part.startswith("  ") else fill_text(part, width, hang, "  "))]
 
 
 def _ways_out(rows, width, review=""):
@@ -2144,7 +2137,7 @@ def _evidence_lines(report, self_check):
     for members, texts in by_nodes:
         lines += fill_text(_who(report, members), report.width, "  ")
         for d in texts:
-            lines += _sentence_lines(d, report.width, "    ")
+            lines += fill_text(d, report.width, "    ", "  ")
     return lines
 
 
