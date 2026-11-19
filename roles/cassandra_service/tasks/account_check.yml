@@ -46,19 +46,9 @@
       - _account.nogroup is not defined or ansible_check_mode or not _cassandra_account_must_exist | default(true)
       - _unreadable | length == 0
     fail_msg: >-
-      {{ ('the user ' ~ _account.user ~ ' does not exist on ' ~ inventory_hostname
-          ~ (': create it (the Cassandra package creates cassandra), or set cassandra_user'
-             if (cassandra_service_unit_manage | bool and cassandra_service_start | default('unit') == 'unit') else ' (the User= of the unit it starts with, not the one of the role): create it, or fix the unit'))
-         if _account.nouser is defined
-         else ('the group ' ~ _account.group ~ ' does not exist on ' ~ inventory_hostname
-               ~ (': create it, or set cassandra_group'
-                  if (cassandra_service_unit_manage | bool and cassandra_service_start | default('unit') == 'unit') else ' (the Group= of the unit it starts with, not the one of the role): create it, or fix the unit'))
-         if _account.nogroup is defined
-         else ('Cassandra ' ~ ('would run' if (cassandra_service_unit_manage | bool and cassandra_service_start | default('unit') == 'unit') else 'runs (the unit it starts with, not the one of the role)')
-               ~ ' as ' ~ _account.user ~ ':' ~ _account.group ~ ' (groups: ' ~ _groups | join(', ')
-               ~ '), which could not read ' ~ _unreadable | join(', ')
-               ~ '. Set cassandra_user and cassandra_group (one setting for the unit and the config files),'
-               ~ ' or make the group of the unit and cassandra_config_group agree.') }}
+      {{ _account | community.cassandra.cassandra_service_account_refusal(
+           inventory_hostname, _groups, _unreadable,
+           role_unit=cassandra_service_unit_manage | bool and cassandra_service_start | default('unit') == 'unit') }}
     quiet: true
   vars:
     _account: "{{ dict(cassandra_service_account.stdout_lines | select('search', '=') | map('split', '=', 1)) }}"

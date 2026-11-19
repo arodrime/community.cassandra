@@ -162,13 +162,7 @@
           {{ [inventory_hostname, ansible_host | default('')]
              + ansible_facts['all_ipv4_addresses'] | default([]) + ansible_facts['all_ipv6_addresses'] | default([]) }}
         # the seed entries that are not this node (whatever port they carry)
-        _others: >-
-          {%- set out = [] -%}
-          {%- for e in ((cassandra_seeds | default([])) if cassandra_seeds | default([]) is not string else cassandra_seeds.split(','))
-                       | map('trim') | select if e | community.cassandra.cassandra_seed_host not in _mine -%}
-          {%-   set _ = out.append(e) -%}
-          {%- endfor -%}
-          {{ out }}
+        _others: "{{ cassandra_seeds | default([]) | community.cassandra.cassandra_service_other_seeds(_mine) }}"
       when:
         - _cassandra_service_is_seed | bool
         - not cassandra_service_was_initialized | bool
@@ -269,23 +263,13 @@
     name: community.cassandra.cassandra_change_report
   vars:
     cassandra_change_report_role: cassandra_service
-    _want_active: "{{ 'inactive' if cassandra_service_state == 'stopped' else 'active' }}"
-    _would: "{{ 'would be ' if ansible_check_mode else '' }}"  # --check changed nothing
     cassandra_change_report_items: >-
-      {{ ([{'item': '/etc/systemd/system/cassandra.service',
-            'before': (_cassandra_service_before.unit or 'absent') if '/etc/systemd/system/' not in _cassandra_service_before.unit else 'different',
-            'after': 'would be a native unit' if ansible_check_mode else 'native unit'}]
-          if cassandra_service_unit is changed else [])
-         + ([{'item': _cassandra_service_environment_dropin,
-              'before': 'different' if cassandra_service_dropin_found.stat.exists | default(false) else 'absent',
-              'after': _would ~ 'written'}] if cassandra_service_dropin | default({}) is changed else [])
-         + ([{'item': _cassandra_service_environment_dropin, 'before': 'present', 'after': _would ~ 'removed'}]
-            if cassandra_service_dropin_removed | default({}) is changed else [])
-         + ([{'item': 'cassandra', 'before': _cassandra_service_before.active or 'unknown',
-              'after': ('would restart' if ansible_check_mode else 'restarted') if cassandra_service_state == 'restarted' else _would ~ _want_active}]
-            if cassandra_service_state == 'restarted' or _cassandra_service_before.active != _want_active else [])
-         + ([{'item': 'cassandra', 'before': 'active, no Cassandra running', 'after': _would ~ 'started again'}]
-            if cassandra_service_jvm.rc | default(0) == 1 and cassandra_service_state == 'started'
-               and _cassandra_service_before.active == _want_active else [])
-         + ([{'item': 'cassandra at boot', 'before': _cassandra_service_before.enabled or 'unknown', 'after': _would ~ ('enabled' if cassandra_service_enabled | bool else 'disabled')}]
-            if (_cassandra_service_before.enabled == 'enabled') != (cassandra_service_enabled | bool) else []) }}
+      {{ _cassandra_service_before | community.cassandra.cassandra_service_changes(
+           state=cassandra_service_state, check=ansible_check_mode,
+           unit_written=cassandra_service_unit is changed,
+           dropin=_cassandra_service_environment_dropin,
+           dropin_existed=cassandra_service_dropin_found.stat.exists | default(false),
+           dropin_written=cassandra_service_dropin | default({}) is changed,
+           dropin_removed=cassandra_service_dropin_removed | default({}) is changed,
+           jvm_rc=cassandra_service_jvm.rc | default(0),
+           enabled=cassandra_service_enabled | bool) }}
