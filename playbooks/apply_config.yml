@@ -223,13 +223,16 @@
     # The package repository, the packages and tools (cassandra_install: cqlsh's Python, dsbulk, jemalloc), the firewall:
     # not read by the running Cassandra (jemalloc: at its next start), applied at the node's turn, no restart for them.
     # Compared as Medusa is (check mode applied to them: _cassandra_compare); never on a node whose version changes by
-    # another procedure (stopped before any change), nor a package update (done in its restart)
+    # another procedure (stopped before any change), nor a package update (done in its restart). The firewall only
+    # with cassandra_manage_firewall, as create_cluster and add_node run it
     - name: Compare the repository, the packages and the firewall
       ansible.builtin.include_role:
         name: "community.cassandra.{{ _cassandra_compared_role }}"
         apply:
           check_mode: true
-      loop: [cassandra_repository, cassandra_install, cassandra_firewall]
+      loop: >-
+        {{ ['cassandra_repository', 'cassandra_install']
+           + (['cassandra_firewall'] if cassandra_manage_firewall | default(false) | bool else []) }}
       loop_control:
         loop_var: _cassandra_compared_role  # their own loops use item (else a warning on screen for each)
       vars:

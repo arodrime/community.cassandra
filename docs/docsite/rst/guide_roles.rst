@@ -1006,9 +1006,10 @@ categories, each shown in the plan and under ``--check``. Every variable of the 
 - **A, live, no restart**: applied at the node's turn. The owner, group and mode of the config files, the OS settings
   (``cassandra_linux``), Medusa, the package repository (``cassandra_repository``), the packages and tools
   (``cassandra_install``: ``cassandra_install_tools``, ``cassandra_install_jemalloc``, cqlsh's Python, dsbulk) and the
-  firewall (``cassandra_firewall``), each in a section of the table (``Repository (no restart)``, ``Packages (no
-  restart)``, ``Firewall (no restart)``). What Cassandra only reads when it starts (jemalloc) is said under the node:
-  ``next restart: jemalloc loaded``, with no restart for it.
+  firewall (``cassandra_firewall``, with ``cassandra_manage_firewall: true``, as ``create_cluster`` and ``add_node``
+  run it), each in a section of the table (``Repository (no restart)``, ``Packages (no restart)``, ``Firewall (no
+  restart)``). What Cassandra only reads when it starts (jemalloc) is said under the node: ``next restart: jemalloc
+  loaded``, with no restart for it.
 - **B, a restart**: the config files (none when a proof says the running Cassandra already runs with them), the Java
   (``cassandra_java_version``, ``cassandra_java_home``: as ``update_java`` does, the Java installed and made the one
   Cassandra starts with, then checked after the restart, ``Java (restart)``), a newer release of the node's series

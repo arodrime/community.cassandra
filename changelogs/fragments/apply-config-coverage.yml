@@ -2,8 +2,8 @@ minor_changes:
   - >-
     apply_config - ignores no setting: every variable of the roles has its category (live, a restart, a procedure of
     its own, refused) in ``plugins/plugin_utils/cassandra_apply_config_coverage.py``, which a unit test keeps complete.
-    The repository, the packages and tools (jemalloc, cqlsh's Python, dsbulk) and the firewall are compared in the
-    plan and applied live (jemalloc said for the next restart); a node running another Java than
+    The repository, the packages and tools (jemalloc, cqlsh's Python, dsbulk) and the firewall (with
+    ``cassandra_manage_firewall``, as ``create_cluster`` and ``add_node`` run it) are compared in the plan and applied live (jemalloc said for the next restart); a node running another Java than
     ``cassandra_java_version`` gets it installed and checked in its one restart, as ``update_java`` does (their plan,
     install and check now shared); what the ``cassandra`` unit gives the running Cassandra (user, limits,
     environment) is compared with the running JVM's, a difference restarting it, the unit written in that restart.
