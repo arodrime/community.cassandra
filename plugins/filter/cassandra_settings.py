@@ -13,12 +13,18 @@ cassandra_same_settings: the text of a live file, the role's, the file name
     settings from both.
 cassandra_yaml_rejected: top-level cassandra.yaml keys, a Cassandra version
     -> the ones it refuses to start with (not one of its properties).
+cassandra_config_header: the text of a live file left as it is (same
+    settings), the role's, the file name -> the role's header line to add to
+    it ("Managed by Ansible..."), "" when it has one, the role's file has none,
+    or the file with it would not have the same settings.
 """
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import functools
+import importlib.util
+import os
 import re
 import xml.etree.ElementTree as ET
 
@@ -673,7 +679,46 @@ def cassandra_yaml_rejected(keys, version):
     return yaml_rejected(list(keys or []), version)
 
 
+# cassandra_config's header line, and the node-side writer that adds it (files/config_header.py: where it goes)
+HEADER_MARK = "Managed by Ansible (community.cassandra.cassandra_config)"
+CONFIG_HEADER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "cassandra_config", "files",
+                             "config_header.py")
+
+
+@functools.lru_cache(maxsize=None)
+def _config_header():
+    spec = importlib.util.spec_from_file_location("cassandra_config_header", CONFIG_HEADER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def header_line(new):
+    """The role's header line in its rendered file new (its comment syntax: # or <!-- -->), "" when it has none
+    (e.g. a template of your own)."""
+    for line in str(new).splitlines():
+        if HEADER_MARK in line:
+            return line.rstrip("\r")
+    return ""
+
+
+def cassandra_config_header(live, new, name, storage_dir=""):
+    """Filter: see the module. The header line goes where the node puts it (config_header.py); the file with it
+    must have the same settings as the role's (its proof that the header changes nothing: no restart).
+    "num_tokens: 16\n", "# Managed by Ansible (community.cassandra.cassandra_config): ...\nnum_tokens: 16\n",
+    "cassandra.yaml" -> "# Managed by Ansible (community.cassandra.cassandra_config): ..."."""
+    live, new = str(live or ""), str(new or "")
+    line = header_line(new)
+    if not live or not line or HEADER_MARK in live:
+        return ""
+    added = _config_header().with_header(live.encode("utf-8", "surrogateescape"), line.encode("utf-8"))
+    if not same_settings(str(name), added.decode("utf-8", "surrogateescape"), new, str(storage_dir or "")):
+        return ""
+    return line
+
+
 class FilterModule(object):
     def filters(self):
         return {"cassandra_same_settings": cassandra_same_settings,
-                "cassandra_yaml_rejected": cassandra_yaml_rejected}
+                "cassandra_yaml_rejected": cassandra_yaml_rejected,
+                "cassandra_config_header": cassandra_config_header}

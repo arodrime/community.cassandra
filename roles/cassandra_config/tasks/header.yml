@@ -1,0 +1,54 @@
+---
+# The role's header line added to files left as they are (_cassandra_config_header_files: [{file, path, header, mark,
+# sha1}], from confirm.yml or access.yml): the header alone, in place, the rest of the file byte for byte
+# (files/config_header.py), only to a file still as it was compared. A comment: no restart for it. When the
+# running Cassandra started with that file (the record of its start has it as it was), it is recorded with its
+# header, so that no restart is said pending for it later.
+- name: Record the config the running Cassandra started with
+  ansible.builtin.include_tasks: config_seed.yml
+  when: not ansible_check_mode
+
+# (no diff: a line added, said by the caller; skipped under --check, as a command is)
+- name: Add the role's header line to the files left as they are
+  ansible.builtin.command:
+    argv: ["{{ _cassandra_config_python }}", -c, "{{ lookup('ansible.builtin.file', 'config_header.py') }}"]
+    stdin: "{{ _cassandra_config_header_files | to_json }}"
+  register: cassandra_config_header_added
+  changed_when: >-
+    cassandra_config_header_added.stdout | default('{}') | from_json | dict2items | map(attribute='value')
+    | selectattr('status', 'equalto', 'added') | list | length > 0
+
+- name: Say the files the header was not added to
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ item.key }} {{ _why[item.value.status] }}: the role's header line not added, the
+      file left as it is
+  loop: "{{ _result | dict2items | rejectattr('value.status', 'in', ['added', 'present']) | list }}"
+  loop_control:
+    label: "{{ item.key }}"
+  vars:
+    cassandra_output: true
+    _result: "{{ cassandra_config_header_added.stdout | default('{}') | from_json }}"
+    _why: {changed: changed since it was compared, link: is a link, missing: is gone}
+
+- name: Read the running Cassandra
+  ansible.builtin.include_tasks: jvm_started.yml
+  when: cassandra_config_header_added is changed
+
+# one file at a time: a file the record has otherwise (written since that start, a restart pending for it) is
+# not recorded, the others are
+- name: Record them with their header as the files the running Cassandra runs with
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_service
+    tasks_from: config_record_update.yml
+  vars:
+    _cassandra_service_record_request:
+      jvm: {pid: "{{ cassandra_jvm.pid }}", start: "{{ cassandra_jvm.start }}"}
+      before: "{{ {item.key: item.value.before} }}"
+      files: "{{ {item.key: item.value.after} }}"
+  loop: "{{ cassandra_config_header_added.stdout | default('{}') | from_json | dict2items | selectattr('value.status', 'equalto', 'added') | list }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - cassandra_config_header_added is changed
+    - cassandra_jvm.pid is defined

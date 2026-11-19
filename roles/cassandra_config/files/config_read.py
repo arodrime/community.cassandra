@@ -14,7 +14,8 @@
 #   dirs:    the system keyspace in the candidate data dirs, the dirs tried as
 #            Cassandra's account, the data dirs' subdirs another account owns
 #   compare: the new files (rendered on the controller) checked and diffed
-#            against the live ones (secrets masked), the live ones that differ,
+#            against the live ones (secrets masked), the live ones that differ
+#            (and their sha1: the role's header is added to them only as read),
 #            the settings a joined node must keep
 
 from __future__ import (absolute_import, division, print_function)
@@ -24,6 +25,7 @@ import base64
 import difflib
 import errno
 import grp
+import hashlib
 import io
 import json
 import os
@@ -108,11 +110,17 @@ def lines(output):
 
 def read_b64(path):
     """The base64 of a file as slurp registers it, None when slurp fails (missing, unreadable)."""
+    return read_b64_sha1(path)[0]
+
+
+def read_b64_sha1(path):
+    """(read_b64's, the sha1 of the file's bytes), (None, None) when it cannot be read."""
     try:
         with open(fs(path), "rb") as f:
-            return base64.b64encode(f.read()).decode("ascii")
+            data = f.read()
     except (IOError, OSError):
-        return None
+        return None, None
+    return base64.b64encode(data).decode("ascii"), hashlib.sha1(data).hexdigest()
 
 
 # The fstab mount points not mounted: a dir there would land on the filesystem below
@@ -487,7 +495,7 @@ def identity(req):
 def step_compare(req):
     new = req["files"]  # {name: text}, compared in the order of names
     answer = {"yaml_error": validate(universal(new["cassandra.yaml"])) if "cassandra.yaml" in new else None,
-              "preview": [], "live": {}, "identity": None}
+              "preview": [], "live": {}, "live_sha1": {}, "identity": None}
     for name in req["names"]:
         new_text = new[name]
         live = req["conf_dir"] + "/" + name
@@ -497,7 +505,7 @@ def step_compare(req):
             rc, out = 1, ""  # as the diff command that fails (rc 1, nothing on stdout): not a change
         answer["preview"].append({"cassandra_config_file": name, "rc": rc, "stdout": out.rstrip("\r\n")})
         if rc == 1 and req["compare"]:  # its settings compared on the controller
-            answer["live"][name] = read_b64(live)
+            answer["live"][name], answer["live_sha1"][name] = read_b64_sha1(live)
     if req.get("identity"):
         try:
             answer["identity"] = {"rc": 0, "changes": identity(req["identity"])}

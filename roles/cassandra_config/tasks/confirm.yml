@@ -1,6 +1,7 @@
 ---
 # On a node that is not blank, a file with the same settings (only comments,
 # blank lines or their layout differ, e.g. no header: set up by hand) is left as it is
+# (but for the role's header line, added below)
 - name: List the files to change and whether to ask first
   ansible.builtin.set_fact:
     _cassandra_config_kept: "{{ _kept }}"
@@ -34,6 +35,25 @@
     _keep: >-
       {{ cassandra_config_keep_stat.results | selectattr('stat.exists', 'defined') | selectattr('stat.exists')
          | map(attribute='item') | list if _cassandra_config_initialized | bool else [] }}
+
+# A file left as it is (same settings) without the role's header line ("Managed by Ansible ...: change the role
+# variables, not this file"): the header added, nothing else (header.yml), no restart for it: a comment, the file with
+# it has the same settings (cassandra_config_header checks it). Not a file kept by hand (cassandra_config_keep_files):
+# left exactly as it is
+- name: List the files left as they are that get the role's header
+  ansible.builtin.set_fact:
+    _cassandra_config_header: >-
+      {%- set out = [] -%}
+      {%- set compared = _cassandra_config_compared | default({}) -%}
+      {%- for f in _cassandra_config_kept if f not in cassandra_config_keep_files and compared.get(f) is not none -%}
+      {%-   set line = compared[f] | b64decode | community.cassandra.cassandra_config_header(
+                         _cassandra_config_new[f], f, cassandra_config_storage_dir or cassandra_jvm.storagedir | default('')) -%}
+      {%-   if line -%}
+      {%-     set _ = out.append({'file': f, 'path': cassandra_conf_dir ~ '/' ~ f, 'header': line, 'mark': _cassandra_config_header_mark,
+                                  'sha1': (_cassandra_config_live_sha1 | default({})).get(f, '')}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
 
 # cassandra_log_audit_file left to its default (on with FileAuditLogger) while the node's logback.xml has the AUDIT
 # appender commented out (an inventory imported by a 2.1.0 release candidate): the audit events would leave
@@ -102,9 +122,11 @@
   ansible.builtin.debug:
     msg: >-
       {{ inventory_hostname }}: {{ _same | join(', ') }} left as they are: same settings as the
-      role's, written another way (cassandra_config_normalize: true rewrites them).
+      role's, written another way (cassandra_config_normalize: true rewrites them){{
+      ("; the role's header line added to " ~ _header | join(', ') ~ ' (a comment, nothing else changed)') if _header else '' }}.
   vars:
     _same: "{{ _cassandra_config_kept | reject('in', cassandra_config_keep_files) | list }}"
+    _header: "{{ _cassandra_config_header | default([]) | map(attribute='file') | list }}"
   when: _same | length > 0
 
 - name: Say which files are kept as they are (cassandra_config_keep_files)
@@ -173,7 +195,7 @@
     _cassandra_config_items: >-
       {{ ([{'item': '/etc/cassandra/conf', 'before': _conf_target, 'after': cassandra_rpm_conf_alternative}]
           if _conf_target | default(cassandra_rpm_conf_alternative, true) != cassandra_rpm_conf_alternative else [])
-         + _files + _cassandra_config_perm_changes + _cassandra_config_dir_changes }}
+         + _files + _cassandra_config_perm_changes + _cassandra_config_dir_changes + _header }}
   vars:
     _conf_target: "{{ cassandra_config_conf_target.stat.lnk_source | default('') if cassandra_config_conf_target is not skipped else '' }}"
     _files: >-
@@ -182,6 +204,13 @@
         'before': 'current',
         'after': '%d line(s) changed' % (r.stdout_lines | select('match', '^[-+](?![-+]{2} )') | list | length),
         'diff': r.stdout}) %}{% endfor %}{{ out }}
+    # (the role's header added to a file left as it is: said apart, no diff, no setting)
+    _header: >-
+      {%- set out = [] -%}
+      {%- for h in _cassandra_config_header | default([]) -%}
+      {%-   set _ = out.append({'item': h.path, 'before': 'no header', 'after': 'header added', 'header': true}) -%}
+      {%- endfor -%}
+      {{ out }}
 
 # One prompt per batch (with serial, once per batch). run_once: its answer registered on every
 # host of the batch (pause runs once anyway, but without run_once only its own host gets the answer)

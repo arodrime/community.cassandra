@@ -5,7 +5,8 @@
   ansible.builtin.include_tasks: config_seed.yml
   when:
     - not ansible_check_mode
-    - (_cassandra_config_changes + _cassandra_config_perm_changes + _cassandra_config_exporter_changes | default([])) | length > 0
+    - (_cassandra_config_changes + _cassandra_config_perm_changes + _cassandra_config_exporter_changes | default([])
+       + _cassandra_config_header | default([])) | length > 0
 
 # Once the changes are confirmed, so that nothing changes on a refusal
 - name: Set up the RPM conf dir alternative
@@ -85,6 +86,13 @@
     loop_var: cassandra_config_file
   vars:
     _cassandra_config_perm_file: "{{ cassandra_config_file }}"
+
+# their content stays, but for the role's header line where they lack it (a comment: no restart)
+- name: Add the role's header to the files left as they are
+  ansible.builtin.include_tasks: header.yml
+  vars:
+    _cassandra_config_header_files: "{{ _cassandra_config_header }}"
+  when: _cassandra_config_header | default([]) | length > 0
 
 # Missing directories (looked for in read.yml): created once the files are written
 - name: Create the parents of the missing ones

@@ -243,8 +243,11 @@ def test_the_role_reads_a_missing_live_cassandra_yaml_as_none():
 
 ACCESS_TASKS = load("roles", "cassandra_config", "tasks", "access.yml")
 JMX_USERS = [{"name": "ops", "password": "s3cret", "access": "readwrite"}, {"name": "mon", "password": "m0n", "access": "readonly"}]
-JMX_FILES = {"password": "ops s3cret\nmon m0n\n",
-             "access": "ops readwrite \\\n    create javax.management.monitor.*,javax.management.timer.* \\\n    unregister\nmon readonly\n"}
+# (the role's header line first: a comment, the JVM reads them as properties files)
+JMX_HEADER = "# Managed by Ansible (community.cassandra.cassandra_config): change the role variables, not this file.\n"
+JMX_FILES = {"password": JMX_HEADER + "ops s3cret\nmon m0n\n",
+             "access": JMX_HEADER + "ops readwrite \\\n    create javax.management.monitor.*,javax.management.timer.* \\\n"
+                       "    unregister\nmon readonly\n"}
 
 
 def jmx_compare(tmp_path, live, initialized=True, extra=None):

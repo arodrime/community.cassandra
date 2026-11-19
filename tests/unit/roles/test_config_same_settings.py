@@ -242,6 +242,8 @@ with open(os.path.join(TEMPLATES, "jmxremote.access.j2"), encoding="utf-8") as f
 with open(os.path.join(TEMPLATES, "jmxremote.password.j2"), encoding="utf-8") as f:
     PASSWORD = f.read()
 JMX_SCRIPT = task("Compare the JMX files with the users", "access.yml")["ansible.builtin.command"]["argv"][2]
+# the role's header line, first in both JMX files (# comments: the JVM reads them as properties files)
+JMX_HEADER = "# Managed by Ansible (community.cassandra.cassandra_config): change the role variables, not this file.\n"
 
 
 @pytest.mark.parametrize("create_unregister, access", [
@@ -251,17 +253,17 @@ JMX_SCRIPT = task("Compare the JMX files with the users", "access.yml")["ansible
 def test_jmx_access_rights(create_unregister, access):
     users = [{"name": "ops", "password": "s3cret", "access": "readwrite", "create_unregister": create_unregister},
              {"name": "mon", "password": "m0n", "access": "readonly"}]
-    assert render(ACCESS, cassandra_jmx_users=users) == access
+    assert render(ACCESS, cassandra_jmx_users=users) == JMX_HEADER + access
 
 
 def test_jmx_rights_only_and_rights_of_their_own():
     # an entry without a password (the JDK's stock controlRole): its rights, no password line; other rights as they are
     users = [{"name": "ops", "password": "s3cret", "access": "readwrite unregister"},
              {"name": "controlRole", "access": "readwrite"}, {"name": "monitorRole", "access": "readonly"}]
-    assert render(ACCESS, cassandra_jmx_users=users) == (
+    assert render(ACCESS, cassandra_jmx_users=users) == JMX_HEADER + (
         "ops readwrite unregister\ncontrolRole readwrite \\\n    create javax.management.monitor.*,"
         "javax.management.timer.* \\\n    unregister\nmonitorRole readonly\n")
-    assert render(PASSWORD, cassandra_jmx_users=users) == "ops s3cret\n"
+    assert render(PASSWORD, cassandra_jmx_users=users) == JMX_HEADER + "ops s3cret\n"
 
 
 @pytest.mark.parametrize("users, bad", [

@@ -132,6 +132,9 @@ _cassandra_config_snapshot_files: [cassandra.yaml, cassandra-env.sh, jvm*-server
 # _cassandra_service_environment_dropin)
 _cassandra_config_snapshot_units: [/etc/systemd/system/cassandra.service,
                                    /etc/systemd/system/cassandra.service.d/zz-ansible-environment.conf]
+# the text that says a file has the role's header line (its templates' first line: "# Managed by Ansible
+# (community.cassandra.cassandra_config): change the role variables, not this file.", or as an XML comment)
+_cassandra_config_header_mark: Managed by Ansible (community.cassandra.cassandra_config)
 # A duration above zero Cassandra 4.1+ reads in milliseconds (DurationSpec.IntMillisecondsBound)
 _cassandra_config_duration_ms: '^0*[1-9][0-9]*(ms|s|m|h|d)$'
 # Installed Cassandra release ('' if not from a package), read with the node (rpm, else dpkg)

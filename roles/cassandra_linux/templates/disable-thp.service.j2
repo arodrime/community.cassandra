@@ -1,3 +1,4 @@
+# Managed by Ansible (community.cassandra.cassandra_linux): change the role variables, not this file.
 [Unit]
 Description={{ 'Disable' if _cassandra_linux_thp_set.values() | unique | list == ['never'] else 'Set' }} Transparent Huge Pages (THP)
 

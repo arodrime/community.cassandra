@@ -66,6 +66,8 @@
         {{ out }}
     # the live files that differ, read on a node that is not blank: {name: base64 content, none when unreadable}
     _cassandra_config_compared: "{{ _compare.live }}"
+    # (their sha1: the header is added to a file left as it is only when it is still as compared)
+    _cassandra_config_live_sha1: "{{ _compare.live_sha1 | default({}) }}"
     cassandra_config_identity: "{{ {'stdout': _compare.identity.changes | to_json} if _compare.identity is not none else {'skipped': true} }}"
   vars:
     _compare: "{{ cassandra_config_compare.stdout | from_json }}"

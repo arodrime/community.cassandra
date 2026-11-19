@@ -1485,7 +1485,8 @@ def written(tmp_path, node_edit=OWNERS_CASE, rc12=True):
     if rc12:  # (an inventory an rc12 import wrote: the audit dir not read, the role's own, the stray text gone)
         rendered["logback.xml"] = files["logback.xml"].replace("/var/log/cassandra/audit/", "${cassandra.logdir}/audit/") \
             .replace("</root> >", "</root>")
-    changed = [f for f in rendered if f in files and rendered[f] != files[f]
+    # (the JMX files: compared by their users and rights, apart, access.yml; not config files that restart)
+    changed = [f for f in rendered if f in files and rendered[f] != files[f] and not f.startswith("jmxremote.")
                and not cassandra_same_settings(files[f], rendered[f], f, STORAGE)]
     return files, rendered, changed, cmdline
 
@@ -2138,7 +2139,7 @@ def test_apply_config_proves_a_4x_cassandra_env_on_50_as_the_import_does(tmp_pat
     inventory, layout, node = imported(files, "50x", "17", cmdline)
     assert "cassandra-env.sh" in node["rewritten"]
     rendered, variables = role_files(inventory, layout, files)
-    changed = [f for f in rendered if f in files and rendered[f] != files[f]
+    changed = [f for f in rendered if f in files and rendered[f] != files[f] and not f.startswith("jmxremote.")
                and not cassandra_same_settings(files[f], rendered[f], f, STORAGE)]
     assert "cassandra-env.sh" in changed
     assert cassandra_apply_config_no_effect(changed, files, rendered, cmdline, "50x", "17", {}, [], FACTS)[:1] == [

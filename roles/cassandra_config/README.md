@@ -51,7 +51,15 @@ On a node that is not blank, a file whose settings are the same as the
 role's (only comments, blank lines or their layout differ, e.g. a config
 written by hand, without the role's header line) is left as it is:
 `cassandra_config_normalize: true` rewrites it. Its owner, group and mode
-are set all the same.
+are set all the same. When it lacks the role's header line (`# Managed by
+Ansible (community.cassandra.cassandra_config): change the role variables,
+not this file.`, an XML comment in `logback.xml`), that line alone is added
+on top (after a `#!` or `<?xml` first line), the rest of the file kept byte
+for byte, in place: a comment, so no restart is needed for it (the file with
+it is checked to have the same settings, and is recorded as the one the
+running Cassandra runs with). The JMX users' files left as they are get it
+too. A file kept by hand (`cassandra_config_keep_files`) is never touched,
+nor a file changed since it was compared, nor a link.
 
 Values of keys named like `*password*` or `*secret*` are shown as `****` in
 that diff, and Ansible's own `--diff` is off for these files. The files are

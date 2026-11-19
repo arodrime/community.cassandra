@@ -1,3 +1,4 @@
+# Managed by Ansible (community.cassandra.cassandra_config): change the role variables, not this file.
 {% for user in cassandra_jmx_users %}
 {% set access = user.access | default('readwrite') %}
 {% if access == 'readwrite' and user.create_unregister | default(true) | bool %}
