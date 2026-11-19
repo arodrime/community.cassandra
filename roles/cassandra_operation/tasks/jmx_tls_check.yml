@@ -1,0 +1,53 @@
+---
+# JMX over TLS on each running node (its JVM's last -Dcom.sun.management.jmxremote.ssl, as import_cluster reads it)
+# against the inventory's cassandra_jmx_ssl_enabled. nodetool and the modules reach every node with the inventory's
+# (--ssl or not), the reads of the ring on another node with the current node's: a running node with the other one
+# does not answer them, and a run switching it would lose the node between its drain and the check after its
+# restart. A switch on a running cluster is not handled: stop before any nodetool call, with the way out.
+- name: Read whether the running Cassandra serves JMX over TLS
+  ansible.builtin.shell: |
+    for p in $(pgrep -x java); do
+      # not one of a container on this host
+      [ "$(readlink /proc/$p/ns/pid)" = "$(readlink /proc/self/ns/pid)" ] || continue
+      tr '\0' '\n' < /proc/$p/cmdline 2>/dev/null | grep -qx org.apache.cassandra.service.CassandraDaemon || continue
+      ssl=$(tr '\0' '\n' < /proc/$p/cmdline | sed -n 's/^-Dcom[.]sun[.]management[.]jmxremote[.]ssl=//p' | tail -1)
+      [ "$ssl" = true ] && echo "ssl=true" || echo "ssl=false"
+      break
+    done
+    exit 0
+  register: cassandra_jmx_tls_read
+  changed_when: false
+  failed_when: false  # not read: nodetool says it
+  check_mode: false  # reads only
+  when: _cassandra_preflight_running | bool
+
+- name: Stop on a JMX TLS the running nodes do not have
+  ansible.builtin.fail:
+    msg: |
+      JMX over TLS differs between the running Cassandra and the inventory (cassandra_jmx_ssl_enabled):
+      {% for h in _differ %}
+      {%   set on = hostvars[h].cassandra_jmx_ssl_enabled | default(false) | bool %}
+        {{ h }}    running: {{ 'off' if on else 'on' }}    inventory: {{ 'on' if on else 'off' }}
+      {% endfor %}
+      nodetool reaches each node with the inventory's setting (--ssl or not): it cannot reach these nodes.
+      A switch of JMX TLS on a running cluster is not handled by the collection's runs.
+      Nothing was changed.
+      To pass:
+        set cassandra_jmx_ssl_enabled to what these nodes run ({{ _running_value | join(' or ') }}), then run again
+        or switch it with the whole cluster stopped (guide: Roles, JMX access, switching JMX TLS)
+  run_once: true
+  when: _differ | length > 0
+  vars:
+    cassandra_output: true  # a verdict: its msg as is (ops callback)
+    _differ: >-
+      {%- set out = [] -%}
+      {%- for h in ansible_play_hosts -%}
+      {%-   set read = hostvars[h].cassandra_jmx_tls_read.stdout_lines | default([]) -%}
+      {%-   if read and (('ssl=true' in read) != (hostvars[h].cassandra_jmx_ssl_enabled | default(false) | bool)) -%}
+      {%-     set _ = out.append(h) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+    _running_value: >-
+      {{ _differ | map('extract', hostvars) | map(attribute='cassandra_jmx_ssl_enabled', default=false) | map('bool')
+         | map('ternary', 'false', 'true') | unique | list }}

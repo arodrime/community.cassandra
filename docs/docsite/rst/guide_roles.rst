@@ -1179,6 +1179,15 @@ to ``true``. JMX and its RMI connector keep sharing one port: Cassandra 4.0+ giv
 to ``secrets.yml``), finds TLS from the running JVM's options before it runs nodetool, and stops with the way out
 when root has no ``nodetool-ssl.properties`` there.
 
+Switching JMX TLS on a running cluster (``cassandra_jmx_ssl_enabled`` from ``false`` to ``true``, or back) is not
+handled by the collection's runs: nodetool reaches every node with the inventory's setting (``--ssl`` or not), the
+ring read on another node with the current node's, so a node restarted with the new setting and one not yet would not
+both answer. The preflight of the operation playbooks reads each running node's JMX TLS (its JVM's last
+``-Dcom.sun.management.jmxremote.ssl``) and stops before any change when it is not the inventory's, listing those
+nodes. Switch it with the whole cluster stopped: drain and stop Cassandra on every node, set the variable, run
+``apply_config`` (a node stopped on purpose gets its config and stays stopped), then start Cassandra on every node,
+the seeds first.
+
 
 Monitoring with Prometheus
 --------------------------

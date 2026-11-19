@@ -1,0 +1,7 @@
+minor_changes:
+  - >-
+    preflight - each running node's JMX over TLS (its JVM's last ``-Dcom.sun.management.jmxremote.ssl``) is compared
+    with ``cassandra_jmx_ssl_enabled`` before the first nodetool call: a node that runs the other one stops the run
+    before any change, with the nodes and the way out (set the variable to what they run, or switch it with the whole
+    cluster stopped, as the roles guide says). nodetool reaches every node with the inventory's setting, so a switch
+    on a running cluster failed later with an unrelated error.

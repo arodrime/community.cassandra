@@ -189,7 +189,9 @@ def test_the_playbooks_check_it_before_any_change():
     # preflight, first thing after reading the nodes: from a running node of the run, else from a node --limit left out
     play = load("playbooks", "preflight.yml")[1]
     names = [t.get("name") for t in play["tasks"]]
-    assert names.index("Read this node's settings") + 2 == names.index("Look for the JMX password file") + 1 \
+    # (the JMX TLS of the running nodes checked before any nodetool call)
+    assert names.index("Read this node's settings") + 3 == names.index("Check the JMX TLS of the running nodes") + 2 \
+        == names.index("Look for the JMX password file") + 1 \
         == names.index("Read the cluster from a running node") \
         == names.index("Check the running node belongs to this cluster") - 1 \
         < names.index("Check the account Cassandra runs as can read the config") < names.index("Check the running cluster")

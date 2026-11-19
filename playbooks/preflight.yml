@@ -144,6 +144,12 @@
         tasks_from: node_facts.yml
         public: true
 
+    # before the first nodetool call: nodetool reaches each node with the inventory's JMX TLS
+    - name: Check the JMX TLS of the running nodes
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: jmx_tls_check.yml
+
     # (read at each JMX login: a running node without it refuses nodetool, the cluster is read on another)
     - name: Look for the JMX password file
       ansible.builtin.stat:
