@@ -86,6 +86,54 @@ def _unit_mounts(unit_files):
     return mounts
 
 
+def _not_mounted(kind, path, real, on, expected):
+    """A directory on the mount on, the mounts expected ({mount point: what mounts it}) -> the problem when the
+    mount expected for it is not there: it would land on the file system below."""
+    want = _mount_of(real, expected)
+    if want and (on is None or len(want) > len(on)):
+        return ["%s directory %s%s: %s (%s) is not mounted, it would go to %s"
+                % (kind, path, " (%s)" % real if real != path else "", want, expected[want], on or "the root file system")]
+    return []
+
+
+def _space(kind, path, on, actual, min_free_gb):
+    """A directory on the mount on (None: not found), the mounts -> (its info line, [the problem when a data
+    directory has less free space than cassandra_new_node_min_free_gb])."""
+    if on is None:
+        return "%s %s: mount not found" % (kind, path), []
+    free = actual[on].get("size_available")
+    if kind == "data" and float(min_free_gb or 0) > 0 and free is not None and free < float(min_free_gb) * GIB:
+        return _mount_line(kind, path, on, actual[on]), [
+            "data directory %s: %s free on %s, cassandra_new_node_min_free_gb asks for %s GiB" % (path, _size(free), on, min_free_gb)]
+    return _mount_line(kind, path, on, actual[on]), []
+
+
+def _mount_line(kind, path, on, mount):
+    """A directory on its mount (an ansible_facts['mounts'] entry) -> "data /d: on /srv (xfs /dev/sdb), 10 GiB free
+    of 100 GiB"."""
+    free, total = mount.get("size_available"), mount.get("size_total")
+    if free is None:
+        space = ""
+    elif total:
+        space = ", %s free of %s" % _sizes(free, total)
+    else:
+        space = ", %s free" % _size(free)
+    return "%s %s: on %s (%s %s)%s" % (kind, path, on, mount.get("fstype", "?"), mount.get("device", "?"), space)
+
+
+def _held(path, paths, found):
+    """What a directory holds (found: the paths found in the directories), besides the other Cassandra directories
+    (paths) and a new file system's lost+found."""
+    return [p for p in found if os.path.dirname(p) == path and os.path.basename(p) != "lost+found"
+            and not any(_under(other, p) for other in paths if other != path)]
+
+
+def _first_names(held):
+    """The names of the paths held, sorted, the first 5: "a, b, c, d, e..."."""
+    names = sorted(os.path.basename(p) for p in held)
+    return "%s%s" % (", ".join(names[:5]), "..." if len(names) > 5 else "")
+
+
 def cassandra_new_node_dirs(dirs, mounts, fstab="", unit_files="", found=None, min_free_gb=0, reset=False):
     """dirs: [{'kind': 'data', 'path', 'real'}] (kinds: data, commitlog, hints,
     saved_caches; real: the link's target when path is a link); mounts: ansible_facts['mounts']; found: the paths found in
@@ -108,43 +156,21 @@ def cassandra_new_node_dirs(dirs, mounts, fstab="", unit_files="", found=None, m
         path, kind = _norm(d["path"]), d["kind"]
         real = _norm(d.get("real") or path)
         on = _mount_of(real, actual)
-        want = _mount_of(real, expected)
-        if actual and want and (on is None or len(want) > len(on)):
-            problems.append("%s directory %s%s: %s (%s) is not mounted, it would go to %s"
-                            % (kind, path, " (%s)" % real if real != path else "", want, expected[want],
-                               on or "the root file system"))
-        if not actual:
-            pass
-        elif on is None:
-            info.append("%s %s: mount not found" % (kind, path))
-        else:
-            m = actual[on]
-            free = m.get("size_available")
-            if kind == "data" and free is not None:
-                data_mounts[on] = free
-            total = m.get("size_total")
-            if free is None:
-                space = ""
-            elif total:
-                space = ", %s free of %s" % _sizes(free, total)
-            else:
-                space = ", %s free" % _size(free)
-            info.append("%s %s: on %s (%s %s)%s" % (kind, path, on, m.get("fstype", "?"), m.get("device", "?"), space))
-            if kind == "data" and float(min_free_gb or 0) > 0 and free is not None and free < float(min_free_gb) * GIB:
-                problems.append("data directory %s: %s free on %s, cassandra_new_node_min_free_gb asks for %s GiB"
-                                % (path, _size(free), on, min_free_gb))
-        # what the directory holds, besides the other Cassandra directories and a new file system's lost+found
-        held = [p for p in found if os.path.dirname(p) == path and os.path.basename(p) != "lost+found"
-                and not any(_under(other, p) for other in paths if other != path)]
+        if actual:
+            problems.extend(_not_mounted(kind, path, real, on, expected))
+            line, low_space = _space(kind, path, on, actual, min_free_gb)
+            info.append(line)
+            problems.extend(low_space)
+            if on is not None and kind == "data" and actual[on].get("size_available") is not None:
+                data_mounts[on] = actual[on]["size_available"]
+        held = _held(path, paths, found)
         if held and reset:
-            names = sorted(os.path.basename(p) for p in held)
             # the plan says what the reset deletes (or why it is refused): a note, not a warning
-            info.append("%s directory %s is not empty (%s%s): the reset empties it first, unless it is refused"
-                        % (kind, path, ", ".join(names[:5]), "..." if len(names) > 5 else ""))
+            info.append("%s directory %s is not empty (%s): the reset empties it first, unless it is refused"
+                        % (kind, path, _first_names(held)))
         elif held:
-            names = sorted(os.path.basename(p) for p in held)
-            problems.append("%s directory %s is not empty (%s%s): a new node starts empty. Move the data away, or empty it"
-                            " if it is not needed" % (kind, path, ", ".join(names[:5]), "..." if len(names) > 5 else ""))
+            problems.append("%s directory %s is not empty (%s): a new node starts empty. Move the data away, or empty it"
+                            " if it is not needed" % (kind, path, _first_names(held)))
     result = _result(problems, warnings, info)
     result["data_free"] = sum(data_mounts.values())
     return result
