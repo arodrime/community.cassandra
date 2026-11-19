@@ -1309,7 +1309,7 @@ Taking over an existing cluster
 Give it any reachable nodes; it finds the others in the ring. It writes ``<cluster group>.yml`` (the hosts),
 ``group_vars/`` and ``host_vars/`` to ``import_dir`` (default ``inventories``, the inventory of every cluster,
 see `Project setup`_), and a ``report.txt`` to ``import_report_dir`` (default ``reports/<cluster group>``
-next to ``import_dir``, out of the inventory) listing, per node, the Cassandra and Java versions, drift
+next to ``import_dir``, out of the inventory) listing, per node, the Cassandra and Java versions, the differences
 between nodes and the hand edits no variable covers (``cassandra_config`` would revert them).
 
 In ``<cluster group>.yml`` every node is named by its hostname, the short one it reports, with ``ansible_host`` set to its
@@ -1322,7 +1322,24 @@ hosts`` there) when the controller can reach that name (it resolves it, or the s
 port, key, ssh arguments, become), at their ring address when the given node has an ``ansible_host`` of its own. A node that could not be reached keeps the name it was given, or its address, and is listed in
 TO DO. In the ``group_vars`` and
 ``host_vars`` files, the variables are grouped by subject (cluster and topology, versions, directories, network,
-JMX, JVM, ``cassandra.yaml`` settings, logging, service, Medusa), one commented block each. The report's
+JMX, JVM, ``cassandra.yaml`` settings, logging, service, Medusa), one commented block each.
+
+Each variable's most common value among the nodes read goes to ``group_vars/<cluster group>/``, and each node with
+another value gets its own in ``host_vars/<node>/`` (a dict whole: Ansible replaces a dict, it does not merge it), a
+node on the collection's default where the cluster has another value gets that default written. Emptying a node's
+``host_vars`` therefore aligns it on the cluster: ``apply_config --check --diff`` shows exactly the settings that move.
+The datacenter's and rack's ``group_vars`` hold their ``cassandra_dc`` and ``cassandra_rack`` only (and
+``cassandra-rackdc.properties``' own ``dc=`` and ``rack=`` where they are not the ring's). On a tie, the value in the
+cluster's ``group_vars`` is the collection's default when it is one of the tied values, else the first node's of the
+hosts file (by datacenter, rack, name); the report's details say which, one line per variable. A value per node by
+nature (an address, ``cassandra_initial_token``) goes to the cluster only when several nodes share it. When the
+default of the nodes without a variable is made of other variables (``cassandra_config_group``: ``{{ cassandra_group
+}}``) or there is none, the import cannot write it for them alone: the variable stays in the ``host_vars`` of the
+nodes that set it, and the report lists it. Passwords follow the same rule, in ``secrets.yml``. A re-import of an
+inventory an earlier release laid out (values in rack ``group_vars``) moves the values with the same effect on every
+node: ``--check --diff`` shows them leaving the rack's files and the ``host_vars`` and arriving in the cluster's.
+
+The report's
 ``TO REVIEW`` lists the settings that differ between nodes, each with its values and the nodes, DC or rack that
 have them. A node's own address or hostname is written as the fact that gives it, not as a difference.
 
@@ -1594,8 +1611,8 @@ self-check, with its way out (``-e import_keep_hand_edits=repo``).
 
 The lines a node has at the end of ``cassandra-env.sh`` (an ``export``, a ``JVM_OPTS="$JVM_OPTS -javaagent:..."``)
 or of ``logback.xml``'s ``<configuration>`` (a ``<logger>``) are carried in a template piece next to the inventory,
-not in its YAML: ``group_vars/<cluster group>/cassandra-env.sh.snippet.j2`` (``logback.xml.snippet.j2``) when every
-node has the same lines, else ``host_vars/<node>/``, which ``cassandra_config_template_snippets`` names (the role
+not in its YAML: ``group_vars/<cluster group>/cassandra-env.sh.snippet.j2`` (``logback.xml.snippet.j2``) for the lines most
+nodes have, else ``host_vars/<node>/``, which ``cassandra_config_template_snippets`` names (the role
 renders it where the lines were). Ansible reads
 no ``.j2`` there as variables or as an inventory. A node's own ``{{`` is written in a ``{% raw %}`` block, rendered as
 it is; the snippet's first line, a Jinja comment, says the import wrote it, and a re-import rewrites (or removes) it.
