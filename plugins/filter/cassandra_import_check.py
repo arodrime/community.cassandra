@@ -866,7 +866,7 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
     if "cassandra-env.sh" in live and series in ("40x", "41x"):  # (a plain CASSANDRA_HEAPDUMP_DIR: as the import reads it)
         live = dict(live, **{"cassandra-env.sh": jvm_args.heap_dump_dir_as_role(
             live["cassandra-env.sh"], dict(node_environment or {}, **((running or {}).get("environment") or {})),
-            bool((running or {}).get("cmdline")) and not (running or {}).get("heapdump_before"))[0]})
+            (running or {}).get("cmdline"), (running or {}).get("heapdump_before"))[0]})
     # (not from a JVM started before its cassandra-env.sh was written: its arguments are not that file's)
     environment = dict(node_environment or {}, **((running or {}).get("environment") or {}))
     cmdline = env_cmdline(running)

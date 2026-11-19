@@ -1091,7 +1091,7 @@ def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", 
         role = dict((f, new[f] if f in changed else live[f]) for f in group)
         node = dict((f, live[f]) for f in group)
         if series in ("40x", "41x"):  # (a plain CASSANDRA_HEAPDUMP_DIR: as the import reads it)
-            node[jvm_args.ENV] = jvm_args.heap_dump_dir_as_role(node[jvm_args.ENV], environ, not heapdump_before)[0]
+            node[jvm_args.ENV] = jvm_args.heap_dump_dir_as_role(node[jvm_args.ENV], environ, cmdline, heapdump_before)[0]
         earlier = None
         if facts:  # (a 4.x stock cassandra-env.sh on 5.0, kept on upgrade: as the import reads it)
             from ansible_collections.community.cassandra.plugins.filter.cassandra_import import earlier_env

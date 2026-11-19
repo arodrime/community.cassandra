@@ -2239,7 +2239,7 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     heap_dump_note = []
     if cassandra_version in ("40x", "41x") and "cassandra-env.sh" in live_files:
         text, folder = jvm_args.heap_dump_dir_as_role(live_files["cassandra-env.sh"], running.get("environment"),
-                                                      bool(running.get("cmdline")) and not running.get("heapdump_before"))
+                                                      running.get("cmdline"), running.get("heapdump_before"))
         if folder:  # (the same dir as the role's line, the JVM's environment giving none)
             live_files = dict(live_files, **{"cassandra-env.sh": text})
             heap_dump_note = ["cassandra-env.sh: CASSANDRA_HEAPDUMP_DIR=%s read as cassandra_heap_dump_dir (the running"
