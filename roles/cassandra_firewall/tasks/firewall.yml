@@ -76,14 +76,9 @@
   environment:
     OPEN: "{{ open_ports | reject('in', _cassandra_firewall_port_sources) | join(' ') }}"
     CLOSE: "{{ _cassandra_firewall_port_sources | list | join(' ') }}"
-    RULES: >-
-      {%- set out = [] -%}
-      {%- for item in _cassandra_firewall_port_sources | dict2items | subelements('value') -%}
-      {%-   set _ = out.append('rule family="' ~ ('ipv6' if ':' in item.1 else 'ipv4') ~ '" source address="' ~ item.1
-                               ~ '" port port="' ~ item.0.key | split('/') | first ~ '" protocol="'
-                               ~ item.0.key | split('/') | last ~ '" accept') -%}
-      {%- endfor -%}
-      {{ out | join('\n') }}
+    RULES: "{{ _cassandra_firewall_rich_rules | map(attribute='rule') | join(_nl) }}"  # (one per line)
+  vars:
+    _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
   register: cassandra_firewall_offline
   changed_when: "'changed=1' in cassandra_firewall_offline.stdout"
   when:
@@ -122,15 +117,13 @@
   block:
     - name: Open them to their sources (RedHat)
       ansible.posix.firewalld:
-        rich_rule: >-
-          rule family="{{ 'ipv6' if ':' in item.1 else 'ipv4' }}" source address="{{ item.1 }}"
-          port port="{{ item.0.key | split('/') | first }}" protocol="{{ item.0.key | split('/') | last }}" accept
+        rich_rule: "{{ item.rule }}"
         permanent: true
         immediate: true
         state: enabled
-      loop: "{{ _cassandra_firewall_port_sources | dict2items | subelements('value') }}"
+      loop: "{{ _cassandra_firewall_rich_rules }}"
       loop_control:
-        label: "{{ item.0.key }} from {{ item.1 }}"
+        label: "{{ item.port }} from {{ item.source }}"
       when:
         - ansible_facts['os_family'] == "RedHat"
         - _cassandra_firewall_before.active not in _cassandra_firewall_stopped  # (else written offline, above)
@@ -179,13 +172,13 @@
 - name: Say the Cassandra ports the role does not open
   ansible.builtin.debug:
     msg: >-
-      WARNING  {{ inventory_hostname }}: Cassandra listens on {{ _cassandra_firewall_own_unopened | join(', ') }}, not in
-      open_ports nor among the ports open to some sources: the firewall role does not open {{ 'it' if
-      _cassandra_firewall_own_unopened | length == 1 else 'them' }}. Add {{ 'it' if _cassandra_firewall_own_unopened
-      | length == 1 else 'them' }} to open_ports, unless the node reaches {{ 'it' if _cassandra_firewall_own_unopened
-      | length == 1 else 'them' }} by other means.
+      {{ ['WARNING  ' ~ inventory_hostname ~ ': Cassandra is set to use ' ~ (_cassandra_firewall_own_unopened | join(', '))
+          ~ ', not in open_ports nor among the ports open to some sources.',
+          'The firewall role does not open ' ~ _them ~ '.',
+          'Way out: add ' ~ _them ~ ' to open_ports, unless the node reaches ' ~ _them ~ ' by other means.'] }}
   vars:
     cassandra_output: true
+    _them: "{{ 'it' if _cassandra_firewall_own_unopened | length == 1 else 'them' }}"
   when: _cassandra_firewall_own_unopened | length > 0
 
 # open to no one by default: Prometheus scrapes it from other hosts

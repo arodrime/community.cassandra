@@ -24,12 +24,6 @@ Role Variables
   (`cassandra_storage_port`, `cassandra_ssl_storage_port`,
   `cassandra_native_transport_port`, a remote JMX's `cassandra_jmx_port`) that
   is in neither list is said in a warning, not opened.
-
-The ports are opened (and those of `cassandra_firewall_port_sources` opened to
-their sources, then closed to the others) before the firewall service is
-started: a firewall that starts never blocks them, and a port moved to some
-sources is never closed to them in between. `apply_config` applies a firewall
-change one node at a time, the cluster checked around each.
 * `cassandra_firewall_port_sources`: ports open only to some sources instead,
   e.g. JMX for a remote repair scheduler:
   `{"7199/tcp": ["10.0.9.0/24", "10.0.10.5"]}`. A port listed here is closed to
@@ -38,6 +32,14 @@ change one node at a time, the cluster checked around each.
   (`cassandra_prometheus_exporter_enabled`, see cassandra_config), its port
   open to these sources only, e.g. `["10.0.20.0/24"]` for the Prometheus
   servers. Default `[]`: the port stays closed, and a warning says so.
+
+The ports are opened (and those of `cassandra_firewall_port_sources` opened to
+their sources, then closed to the others) before the firewall service is
+started: a firewall that starts never blocks them, and a port moved to some
+sources is never closed to them in between. `apply_config` applies a firewall
+change one node at a time, the cluster checked around each. With firewalld,
+the ports and rules go to its default zone: a node whose interface is bound to
+another zone does not get them there.
 
 Dependencies
 ------------

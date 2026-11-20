@@ -6,11 +6,14 @@ __metaclass__ = type
 # carries the firewall of the nodes it reads (rc10), and keeps it as it is on the nodes it could not read.
 
 import os
+import subprocess
 
 import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout
 from ansible_collections.community.cassandra.tests.unit.import_nodes import node
+from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import (
+    find, load, render, with_task_vars, walk)
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
@@ -43,12 +46,18 @@ def test_import_keeps_the_firewall_of_the_nodes_not_read():
 
 
 def _firewall():
-    from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import load, walk
-    return [t.get("name") for t in walk(load("roles", "cassandra_firewall", "tasks", "firewall.yml"))], load
+    return [t.get("name") for t in walk(load("roles", "cassandra_firewall", "tasks", "firewall.yml"))]
+
+
+def _variables(**inventory):
+    variables = dict(load("roles", "cassandra_firewall", "defaults", "main.yml"))
+    variables.update(load("roles", "cassandra_firewall", "vars", "main.yml"))
+    variables.update(inventory)
+    return variables
 
 
 def test_the_ports_are_open_before_the_firewall_starts_and_never_closed_first():
-    names, load = _firewall()
+    names = _firewall()
     start = names.index("Ensure firewall service is started")
     for name in ("Ensure ports for cassandra open (RedHat)", "Ensure ports for cassandra open (Debian)",
                  "Open them to their sources (RedHat)", "Open them to their sources (Debian)"):
@@ -61,22 +70,57 @@ def test_the_ports_are_open_before_the_firewall_starts_and_never_closed_first():
 def test_the_node_s_moved_ports_are_said_not_opened():
     # (opened to everyone, an imported node reaching them through a zone of its own got them on its public side:
     # a change after the import)
-    from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import load, render
-    variables = dict(load("roles", "cassandra_firewall", "defaults", "main.yml"))
-    variables.update(load("roles", "cassandra_firewall", "vars", "main.yml"))
     unopened = "{{ _cassandra_firewall_own_unopened }}"
-    assert render(unopened, variables) == []
-    moved = dict(variables, cassandra_storage_port=7100, cassandra_native_transport_port=9142, cassandra_jmx_port=7299,
-                 cassandra_local_jmx=False)
-    assert render(unopened, moved) == ["7100/tcp", "9142/tcp", "7299/tcp"]
+    assert render(unopened, _variables()) == []
+    moved = _variables(cassandra_storage_port=7100, cassandra_native_transport_port=9142, cassandra_jmx_port=7299,
+                       cassandra_local_jmx=False)
+    assert render(unopened, moved) == ["7100/tcp (cassandra_storage_port)", "9142/tcp (cassandra_native_transport_port)",
+                                       "7299/tcp (cassandra_jmx_port)"]
     assert render(unopened, dict(moved, open_ports=["7100/tcp"], cassandra_firewall_port_sources={"7299/tcp": ["10.0.0.1"]})) \
-        == ["9142/tcp"]
-    tasks = load("roles", "cassandra_firewall", "tasks", "firewall.yml")
-    assert "_cassandra_firewall_open_ports" not in str(tasks)
+        == ["9142/tcp (cassandra_native_transport_port)"]
+    # said as set (not as listened on), one fact per line, the way out on its own line
+    task = find(load("roles", "cassandra_firewall", "tasks", "firewall.yml"), "Say the Cassandra ports the role does not open")
+    said = render(task["ansible.builtin.debug"]["msg"], with_task_vars(task, dict(moved, inventory_hostname="n1")))
+    assert said == ["WARNING  n1: Cassandra is set to use 7100/tcp (cassandra_storage_port), 9142/tcp"
+                    " (cassandra_native_transport_port), 7299/tcp (cassandra_jmx_port), not in open_ports nor among the"
+                    " ports open to some sources.",
+                    "The firewall role does not open them.",
+                    "Way out: add them to open_ports, unless the node reaches them by other means."]
+
+
+def test_the_rich_rules_written_offline_are_one_per_line(tmp_path):
+    # (firewalld stopped: the rules go through firewall-offline-cmd, one line each; two sources once gave one line
+    # with a literal \n, which firewalld refused)
+    sources = {"7199/tcp": ["10.0.9.0/24", "10.0.10.5"], "9404/udp": ["fd00::1"]}
+    variables = _variables(cassandra_firewall_port_sources=sources, open_ports=["22/tcp", "7199/tcp", "9042/tcp"])
+    rules = render("{{ _cassandra_firewall_rich_rules }}", variables)
+    assert [r["rule"] for r in rules] == [
+        'rule family="ipv4" source address="10.0.9.0/24" port port="7199" protocol="tcp" accept',
+        'rule family="ipv4" source address="10.0.10.5" port port="7199" protocol="tcp" accept',
+        'rule family="ipv6" source address="fd00::1" port port="9404" protocol="udp" accept']
+    task = find(load("roles", "cassandra_firewall", "tasks", "firewall.yml"),
+                "Ensure ports for cassandra open, before firewalld starts (RedHat)")
+    variables = with_task_vars(task, variables)
+    env = dict((k, render(v, variables)) for k, v in task["environment"].items())
+    assert env["RULES"].split("\n") == [r["rule"] for r in rules]
+    # the shell itself, against a firewall-offline-cmd that has nothing yet: each rule added as it is
+    fake = tmp_path / "firewall-offline-cmd"
+    fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$LOG"\ncase "$2" in --query-*) exit 1;; esac\nexit 0\n')
+    fake.chmod(0o755)
+    log = tmp_path / "log"
+    out = subprocess.run(["bash", "-c", task["ansible.builtin.shell"]], capture_output=True, text=True,
+                         env=dict(env, PATH="%s:/usr/bin:/bin" % tmp_path, LOG=str(log)))
+    assert (out.returncode, out.stdout) == (0, "changed=1\n")
+    calls = log.read_text().splitlines()
+    for r in rules:
+        assert "-q --add-rich-rule=" + r["rule"] in calls
+    assert "-q --add-port=22/tcp" in calls and "-q --add-port=9042/tcp" in calls and "-q --add-port=7199/tcp" not in calls
+    # the live path takes the same rules
+    live = find(load("roles", "cassandra_firewall", "tasks", "firewall.yml"), "Open them to their sources (RedHat)")
+    assert live["loop"] == "{{ _cassandra_firewall_rich_rules }}" and live["ansible.posix.firewalld"]["rich_rule"] == "{{ item.rule }}"
 
 
 def test_a_firewall_starting_or_reloading_gets_its_ports_live():
-    from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import find, load, render
     tasks = load("roles", "cassandra_firewall", "tasks", "firewall.yml")
     stopped = load("roles", "cassandra_firewall", "vars", "main.yml")["_cassandra_firewall_stopped"]
     offline = find(tasks, "Ensure ports for cassandra open, before firewalld starts (RedHat)")

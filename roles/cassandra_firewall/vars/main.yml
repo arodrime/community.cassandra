@@ -12,15 +12,36 @@ _cassandra_firewall_port_sources: >-
 _cassandra_firewall_check: "{{ ansible_check_mode or _cassandra_compare | default(false) | bool }}"
 
 # the node's own Cassandra ports moved from the stock ones (storage, its TLS one, the native transport's, a remote
-# JMX's) that neither open_ports nor the ports open to some sources open: said, not opened (a node may reach them
-# through a zone of its own)
+# JMX's) that neither open_ports nor the ports open to some sources open, each "<port> (<its variable>)": said, not
+# opened (a node may reach them through a zone of its own)
 _cassandra_firewall_own_unopened: >-
-  {{ ([cassandra_storage_port | default(7000), cassandra_ssl_storage_port | default(7001),
-       cassandra_native_transport_port | default(9042)]
-      + ([] if cassandra_local_jmx | default(true) | bool else [cassandra_jmx_port | default(7199)]))
-     | map('string') | reject('in', ['7000', '7001', '9042', '7199']) | map('regex_replace', '$', '/tcp')
-     | reject('in', open_ports | map('string') | list)
-     | reject('in', _cassandra_firewall_port_sources) | unique | list }}
+  {%- set out = [] -%}
+  {%- for port, name, stock in [(cassandra_storage_port | default(7000), 'cassandra_storage_port', 7000),
+                                (cassandra_ssl_storage_port | default(7001), 'cassandra_ssl_storage_port', 7001),
+                                (cassandra_native_transport_port | default(9042), 'cassandra_native_transport_port', 9042)]
+                               + ([] if cassandra_local_jmx | default(true) | bool
+                                  else [(cassandra_jmx_port | default(7199), 'cassandra_jmx_port', 7199)]) -%}
+  {%-   set p = port | string ~ '/tcp' -%}
+  {%-   if port | string != stock | string and p not in open_ports | map('string') | list
+           and p not in _cassandra_firewall_port_sources and p not in out | map('first') | list -%}
+  {%-     set _ = out.append([p, name]) -%}
+  {%-   endif -%}
+  {%- endfor -%}
+  {{ out | map('join', ' (') | map('regex_replace', '$', ')') | list }}
+
+# the firewalld rich rule of each source of _cassandra_firewall_port_sources: {port, source, rule} (written offline
+# or live, the same rule)
+_cassandra_firewall_rich_rules: >-
+  {%- set out = [] -%}
+  {%- for port, sources in _cassandra_firewall_port_sources.items() -%}
+  {%-   for source in sources -%}
+  {%-     set _ = out.append({'port': port, 'source': source,
+                              'rule': 'rule family="' ~ ('ipv6' if ':' in source else 'ipv4') ~ '" source address="'
+                                      ~ source ~ '" port port="' ~ port | split('/') | first ~ '" protocol="'
+                                      ~ port | split('/') | last ~ '" accept'}) -%}
+  {%-   endfor -%}
+  {%- endfor -%}
+  {{ out }}
 
 # what systemctl is-active says of a firewall not running (its rules written offline then); activating or reloading:
 # running, its rules changed live
