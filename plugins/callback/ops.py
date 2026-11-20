@@ -217,6 +217,7 @@ def refused_line(role, rows):
     line = "%s refused %s" % (role, "; ".join(rows))
     if len(line) <= SHORT:
         return line
+
     def first(count):  # the first count rows whole, the others by their name
         names = [row.split(":")[0] for row in rows[count:]]
         return "%s refused %d: %s; -v shows all" % (role, len(rows), "; ".join(list(rows[:count]) + [", ".join(names)]))

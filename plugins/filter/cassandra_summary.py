@@ -148,8 +148,8 @@ def _limits_text(node, changed):
         return ["%s: the Cassandra package update created %s (there was none)" % (node, path),
                 "left as the package wrote it (cassandra_linux_manage: false)",
                 "check it holds the limits you want for the cassandra user, or %s" % manage]
-    lines = ["%s: the Cassandra package update %s %s" % (node, "removed" if changed.get("removed") else "replaced",
-                                                          path),
+    done = "removed" if changed.get("removed") else "replaced"
+    lines = ["%s: the Cassandra package update %s %s" % (node, done, path),
              "left as the package wrote it (cassandra_linux_manage: false)"]
     link = str(changed.get("link") or "")
     if link:
