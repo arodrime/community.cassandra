@@ -79,7 +79,7 @@ AUDITED = {
     (F, "firewall.yml", "Read the current firewall state (change report)", "forced"): ("read",),
     (F, "firewall.yml", "Read the installed packages", "forced"): ("read",),
     (F, "firewall.yml", "Ensure firewall service is started", "skipped"): ("report",),
-    (F, "firewall.yml", "Ensure ports for cassandra open (RedHat)", "skipped"): ("report",),
+    (F, "firewall.yml", "Ensure ports for cassandra open, before firewalld starts (RedHat)", "skipped,writer"): ("report",),
     (F, "firewall.yml", "Ensure ports for cassandra open (Debian)", "skipped"): ("report",),
     (F, "firewall.yml", "Ports open to some sources only", "skipped"): ("gap",),
     (F, "no_firewall.yml", "Read the firewall state (change report)", "forced"): ("read",),

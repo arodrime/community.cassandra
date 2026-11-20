@@ -1056,12 +1056,15 @@
       changed_when: false
       when: not _cassandra_apply_config_compare_only | default(false) | bool  # drift's compare: no node to do
 
-    # the ones no restart or start takes down, and every one under --check (nothing is restarted): done at once
+    # the ones no restart or start takes down, and every one under --check (nothing is restarted): done at once; but
+    # a firewall change (a wrong port cuts the node off): one node at a time, the cluster checked around each
     - name: Group the nodes to do at once
       ansible.builtin.group_by:
-        key: "cassandra_apply_config_batch_{{ cassandra_apply_config_todo | bool and (ansible_check_mode or _then in ['none', 'write']) }}"
+        key: "cassandra_apply_config_batch_{{ cassandra_apply_config_todo | bool and (ansible_check_mode or _at_once | bool) }}"
       vars:
         _then: "{{ cassandra_apply_config_then }}"
+        _firewall: "{{ cassandra_apply_config_extras | default([]) | selectattr('section', 'equalto', 'Firewall') | list | length > 0 }}"
+        _at_once: "{{ _then in ['none', 'write'] and not _firewall | bool }}"
       changed_when: false
       when: not _cassandra_apply_config_compare_only | default(false) | bool  # drift's compare: no node to do
 
@@ -1219,6 +1222,10 @@
               {%- elif _restarts or _starts -%} Cassandra {{ serial }} one node at a time.
               {%- elif _then_nodes['write'] | default([]) -%} No Cassandra restart; a Cassandra stopped stays stopped.
               {%- else -%} Live changes, no restart.
+              {%- endif -%}
+              {%- if _todo | map('extract', hostvars) | map(attribute='cassandra_apply_config_extras', default=[]) | flatten
+                     | selectattr('section', 'equalto', 'Firewall') | list -%}
+                {{ ' ' }}The firewall one node at a time, the cluster checked around each.
               {%- endif -%}
           # a real run: the settings that differ before its question (--check: in the recap, no question)
           sections:

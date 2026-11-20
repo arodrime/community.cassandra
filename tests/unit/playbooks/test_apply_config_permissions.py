@@ -359,6 +359,15 @@ def test_the_nodes_written_at_once_let_down_the_nodes_started_later():
                                     (True, "start", False, False), (True, "restart", True, True), (False, "none", True, False)):
         values = dict(cassandra_apply_config_todo=todo, cassandra_apply_config_then=t, ansible_check_mode=check)
         assert render(key, with_task_vars(group, values)) == "cassandra_apply_config_batch_%s" % at_once
+    # a firewall change: one node at a time (the cluster checked around each), never on every node at once
+    firewall = [{"section": "Firewall", "item": "port 7000/tcp", "before": "closed", "after": "open"}]
+    for t, check, at_once in (("none", False, False), ("write", False, False), ("none", True, True)):
+        values = dict(cassandra_apply_config_todo=True, cassandra_apply_config_then=t, ansible_check_mode=check,
+                      cassandra_apply_config_extras=firewall)
+        assert render(key, with_task_vars(group, values)) == "cassandra_apply_config_batch_%s" % at_once
+    values = dict(cassandra_apply_config_todo=True, cassandra_apply_config_then="none", ansible_check_mode=False,
+                  cassandra_apply_config_extras=[dict(firewall[0], section="Packages")])
+    assert render(key, with_task_vars(group, values)) == "cassandra_apply_config_batch_True"
 
 
 def plan(nodes):

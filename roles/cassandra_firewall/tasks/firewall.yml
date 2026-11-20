@@ -59,13 +59,37 @@
           install it from your image or internal mirror first.
         quiet: true
 
-# Under --check nothing is installed, so the service and its rules can't be queried
-- name: Ensure firewall service is started
-  ansible.builtin.service:
-    name: "{{ _cassandra_firewall_service }}"
-    state: started
-    enabled: yes
-  when: not (_cassandra_firewall_check and cassandra_firewall_install is changed)
+# The ports open (and those open to some sources only) before the firewall starts: never a running firewall without
+# them. firewalld not running yet: its permanent config written offline, loaded when it starts
+- name: Ensure ports for cassandra open, before firewalld starts (RedHat)
+  ansible.builtin.shell: |
+    c=0
+    for p in $OPEN; do firewall-offline-cmd -q --query-port="$p" || { firewall-offline-cmd -q --add-port="$p" || exit 1; c=1; }; done
+    while IFS= read -r r; do
+      [ -n "$r" ] || continue
+      firewall-offline-cmd -q --query-rich-rule="$r" || { firewall-offline-cmd -q --add-rich-rule="$r" || exit 1; c=1; }
+    done <<EOF
+    $RULES
+    EOF
+    for p in $CLOSE; do ! firewall-offline-cmd -q --query-port="$p" || { firewall-offline-cmd -q --remove-port="$p" || exit 1; c=1; }; done
+    echo "changed=$c"
+  environment:
+    OPEN: "{{ _cassandra_firewall_open_ports | reject('in', _cassandra_firewall_port_sources) | join(' ') }}"
+    CLOSE: "{{ _cassandra_firewall_port_sources | list | join(' ') }}"
+    RULES: >-
+      {%- set out = [] -%}
+      {%- for item in _cassandra_firewall_port_sources | dict2items | subelements('value') -%}
+      {%-   set _ = out.append('rule family="' ~ ('ipv6' if ':' in item.1 else 'ipv4') ~ '" source address="' ~ item.1
+                               ~ '" port port="' ~ item.0.key | split('/') | first ~ '" protocol="'
+                               ~ item.0.key | split('/') | last ~ '" accept') -%}
+      {%- endfor -%}
+      {{ out | join('\n') }}
+  register: cassandra_firewall_offline
+  changed_when: "'changed=1' in cassandra_firewall_offline.stdout"
+  when:
+    - ansible_facts['os_family'] == "RedHat"
+    - _cassandra_firewall_before.active != 'active'
+    - not _cassandra_firewall_check
 
 - name: Ensure ports for cassandra open (RedHat)
   ansible.posix.firewalld:
@@ -74,10 +98,10 @@
     immediate: yes
     state: enabled
   with_items:
-    - "{{ open_ports | reject('in', _cassandra_firewall_port_sources) | list }}"
+    - "{{ _cassandra_firewall_open_ports | reject('in', _cassandra_firewall_port_sources) | list }}"
   when:
     - ansible_facts['os_family'] == "RedHat"
-    - not (_cassandra_firewall_check and _cassandra_firewall_before.active != 'active')
+    - _cassandra_firewall_before.active == 'active'
 
 - name: Ensure ports for cassandra open (Debian)
   community.general.ufw:
@@ -85,7 +109,7 @@
     proto: "{{ item | split('/') | last }}"
     rule: "allow"
   with_items:
-    - "{{ open_ports | reject('in', _cassandra_firewall_port_sources) | list }}"
+    - "{{ _cassandra_firewall_open_ports | reject('in', _cassandra_firewall_port_sources) | list }}"
   when:
     - ansible_facts['os_family'] == "Debian"
     - not (_cassandra_firewall_check and cassandra_firewall_install is changed)
@@ -94,16 +118,8 @@
   when:
     - _cassandra_firewall_port_sources | length > 0
     - not (_cassandra_firewall_check and cassandra_firewall_install is changed)
+  # (to their sources first, then closed to everyone else: no moment closed to them)
   block:
-    - name: Close them to everyone (RedHat)
-      ansible.posix.firewalld:
-        port: "{{ item }}"
-        permanent: true
-        immediate: true
-        state: disabled
-      loop: "{{ _cassandra_firewall_port_sources | list }}"
-      when: ansible_facts['os_family'] == "RedHat"
-
     - name: Open them to their sources (RedHat)
       ansible.posix.firewalld:
         rich_rule: >-
@@ -115,16 +131,20 @@
       loop: "{{ _cassandra_firewall_port_sources | dict2items | subelements('value') }}"
       loop_control:
         label: "{{ item.0.key }} from {{ item.1 }}"
-      when: ansible_facts['os_family'] == "RedHat"
+      when:
+        - ansible_facts['os_family'] == "RedHat"
+        - _cassandra_firewall_before.active == 'active'  # (else written offline, above)
 
-    - name: Close them to everyone (Debian)
-      community.general.ufw:
-        port: "{{ item | split('/') | first }}"
-        proto: "{{ item | split('/') | last }}"
-        rule: allow
-        delete: true
+    - name: Close them to everyone (RedHat)
+      ansible.posix.firewalld:
+        port: "{{ item }}"
+        permanent: true
+        immediate: true
+        state: disabled
       loop: "{{ _cassandra_firewall_port_sources | list }}"
-      when: ansible_facts['os_family'] == "Debian"
+      when:
+        - ansible_facts['os_family'] == "RedHat"
+        - _cassandra_firewall_before.active == 'active'  # (else written offline, above)
 
     - name: Open them to their sources (Debian)
       community.general.ufw:
@@ -136,6 +156,23 @@
       loop_control:
         label: "{{ item.0.key }} from {{ item.1 }}"
       when: ansible_facts['os_family'] == "Debian"
+
+    - name: Close them to everyone (Debian)
+      community.general.ufw:
+        port: "{{ item | split('/') | first }}"
+        proto: "{{ item | split('/') | last }}"
+        rule: allow
+        delete: true
+      loop: "{{ _cassandra_firewall_port_sources | list }}"
+      when: ansible_facts['os_family'] == "Debian"
+
+# Started once its ports are open. Under --check nothing is installed, so the service can't be queried
+- name: Ensure firewall service is started
+  ansible.builtin.service:
+    name: "{{ _cassandra_firewall_service }}"
+    state: started
+    enabled: yes
+  when: not (_cassandra_firewall_check and cassandra_firewall_install is changed)
 
 # open to no one by default: Prometheus scrapes it from other hosts
 - name: Say the exporter's port is not opened
@@ -149,7 +186,7 @@
   when:
     - cassandra_prometheus_exporter_enabled | default(false) | bool
     - _port not in _cassandra_firewall_port_sources
-    - _port not in open_ports
+    - _port not in _cassandra_firewall_open_ports
 
 - name: Build the change list
   ansible.builtin.set_fact:
@@ -167,7 +204,7 @@
 - name: Add the ports to open
   ansible.builtin.set_fact:
     _cassandra_firewall_items: "{{ _cassandra_firewall_items + [{'item': 'port ' ~ item, 'before': 'closed', 'after': 'open'}] }}"
-  loop: "{{ open_ports | reject('in', _cassandra_firewall_port_sources) | reject('in', _cassandra_firewall_before.ports.split()) | list }}"
+  loop: "{{ _cassandra_firewall_open_ports | reject('in', _cassandra_firewall_port_sources) | reject('in', _cassandra_firewall_before.ports.split()) | list }}"
 
 - name: Report
   ansible.builtin.include_role:

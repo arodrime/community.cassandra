@@ -10,3 +10,12 @@ _cassandra_firewall_port_sources: >-
 # --check, or apply_config's compare (check_mode applied to the role, which ansible_check_mode does not tell:
 # _cassandra_compare): the role's tasks act as under --check
 _cassandra_firewall_check: "{{ ansible_check_mode or _cassandra_compare | default(false) | bool }}"
+
+# open_ports, and the node's own Cassandra ports when not the stock ones (moved: cassandra_storage_port, its TLS one,
+# the native transport's, a remote JMX's) unless open to some sources only; the stock ones as open_ports says
+_cassandra_firewall_open_ports: >-
+  {%- set own = [cassandra_storage_port | default(7000), cassandra_ssl_storage_port | default(7001),
+                 cassandra_native_transport_port | default(9042)]
+                + ([] if cassandra_local_jmx | default(true) | bool else [cassandra_jmx_port | default(7199)]) -%}
+  {{ (open_ports + own | map('string') | reject('in', ['7000', '7001', '9042', '7199']) | map('regex_replace', '$', '/tcp')
+                   | reject('in', _cassandra_firewall_port_sources) | list) | unique | list }}
