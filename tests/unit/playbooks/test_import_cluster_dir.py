@@ -571,15 +571,25 @@ def test_under_check_the_shareable_copy_is_only_said(tmp_path):
                                                  "report.shareable.txt", "report.txt"]
 
 
-def test_a_shareable_copy_whose_new_name_is_taken_is_left_in_place(tmp_path):
-    plant_shareable(tmp_path, "c1", names=["report.shareable.txt"])
+def test_a_shareable_key_whose_new_name_is_taken_is_moved_aside_under_another(tmp_path):
+    # a run again within the same second: the name with the stamp is taken (twice here): .1, then .2, never a
+    # file overwritten, the key never left where this import writes its own
+    stamp = "2026-11-20@10:11:12"
+    for taken in ("", ".1"):
+        (tmp_path / ("report.shareable.key.txt.%s%s~" % (stamp, taken))).write_text("an earlier key\n")
+    plant_shareable(tmp_path, "c1", names=["report.shareable.key.txt"])
+    with open(str(tmp_path / "report.shareable.key.txt"), "a") as f:
+        f.write("n2 = db2\n")
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import_shareable import (
         cassandra_import_old_shareable, cassandra_import_old_shareable_lines)
-    (tmp_path / "report.shareable.txt.2026-11-20@10:11:12~").write_text("x\n")
-    found = cassandra_import_old_shareable(str(tmp_path), "c1", "2026-11-20@10:11:12")
-    assert [f["action"] for f in found] == ["exists"]
-    assert cassandra_import_old_shareable_lines(found, str(tmp_path), "c1")[2:] == [
-        "  report.shareable.txt  the copy  left in place", "    (report.shareable.txt.2026-11-20@10:11:12~ exists)"]
+    found = cassandra_import_old_shareable(str(tmp_path), "c1", stamp, True, {"report.shareable.key.txt": "new\n"})
+    assert [(f["action"], os.path.basename(f["backup"])) for f in found] == [
+        ("move", "report.shareable.key.txt.%s.2~" % stamp)]
+    assert cassandra_import_old_shareable_lines(found, str(tmp_path), "c1", True)[2:] == [
+        "  report.shareable.key.txt  the key  moved aside", "    to report.shareable.key.txt.%s.2~" % stamp]
+    os.rename(found[0]["path"], found[0]["backup"])  # (the move task: mv -n, creates the name chosen)
+    for taken in ("", ".1"):
+        assert (tmp_path / ("report.shareable.key.txt.%s%s~" % (stamp, taken))).read_text() == "an earlier key\n"
 
 
 def test_a_shareable_copy_that_is_a_link_is_kept(tmp_path):

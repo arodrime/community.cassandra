@@ -851,6 +851,15 @@ def _read(path):
         return None
 
 
+def _free_name(path, stamp):
+    """path.<stamp>~, else path.<stamp>.1~, .2~...: the first name nothing has (a run again within the second)."""
+    name, n = "%s.%s~" % (path, stamp), 0
+    while os.path.lexists(name):
+        n += 1
+        name = "%s.%s.%d~" % (path, stamp, n)
+    return name
+
+
 def cassandra_import_old_shareable(report_dir, cluster, stamp, shareable=False, new=None, check=False):
     """The report dir, the cluster's group, a time stamp ("2026-11-20@10:11:12"), import_report_shareable, new:
     {name: the text this import writes there}, --check -> what to do, before this import writes its
@@ -858,9 +867,9 @@ def cassandra_import_old_shareable(report_dir, cluster, stamp, shareable=False, 
     of a copy already shared must not be lost): [{name, path, what (copy, key), action, report, report_for,
     backup}] in the order of SHAREABLE_FILES. A file whose first line is not the import's own is not listed, nor,
     shareable, one this import does not write (but the .map key) or writes the same again.
-    action: move (to backup: its path with .<stamp>~), would_move (under --check, unless new writes it: the
-    write is real), exists (backup is there already: left in place), link (kept as it is; linked: the file it
-    points to, when that one is moved). report_for: whose report.txt is next to it (the cluster's group; ""
+    action: move (to backup: its path with .<stamp>~, .<stamp>.1~... when that name is taken), would_move (under
+    --check, unless new writes it: the write is real), link (kept as it is; linked: the file it points to, when
+    that one is moved). report_for: whose report.txt is next to it (the cluster's group; ""
     an import's naming none, None not an import's, False none)."""
     said = []
     for name, report, what, head in SHAREABLE_FILES:
@@ -869,11 +878,9 @@ def cassandra_import_old_shareable(report_dir, cluster, stamp, shareable=False, 
             continue
         if shareable and not name.endswith(".map") and (name not in (new or {}) or _read(path) == new[name]):
             continue
-        backup = "%s.%s~" % (path, stamp)
+        backup = _free_name(path, stamp)
         if os.path.islink(path):
             action = "link"
-        elif os.path.lexists(backup):
-            action = "exists"
         else:
             action = "would_move" if check and name not in (new or {}) else "move"
         report_path = os.path.join(str(report_dir), report)
@@ -894,15 +901,12 @@ def cassandra_import_old_shareable_lines(found, report_dir, cluster, shareable=F
     backup: "/inv/report.shareable.txt.2026-11-20@10:11:12~", ...}], "/inv", "c1") -> ["An earlier import's
     shareable copy (import_report_shareable is off),", "in /inv:", "  report.shareable.txt  the copy  moved aside",
     "    to report.shareable.txt.2026-11-20@10:11:12~"]."""
-    outcomes = {"move": "moved aside", "would_move": "would be moved aside", "exists": "left in place",
-                "link": "kept: a link"}
+    outcomes = {"move": "moved aside", "would_move": "would be moved aside", "link": "kept: a link"}
     rows, below = [], {}
     for f in found or []:
         outcome = outcomes[f["action"]] + (" to a file moved aside" if f.get("linked") else "")
         if f["action"] in ("move", "would_move"):
             below[len(rows)] = ["    to %s" % os.path.basename(f["backup"])]
-        elif f["action"] == "exists":
-            below[len(rows)] = ["    (%s exists)" % os.path.basename(f["backup"])]
         if f["action"] != "link" and f["report_for"] != cluster:
             below.setdefault(len(rows), []).append("    (%s)" % (
                 "no %s next to it" % f["report"] if f["report_for"] is False
