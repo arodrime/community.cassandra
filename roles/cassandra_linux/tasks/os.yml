@@ -123,7 +123,8 @@
     state: absent
   when: cassandra_linux_swap_off | bool
 
-# Absent on minimal images
+# Absent on minimal images (no kernel settings: no file written, nor its directory; else every --check and drift
+# showed it to create on such a node, which the real run never did)
 - name: Directory of the kernel settings file
   ansible.builtin.file:
     path: "{{ cassandra_linux_sysctl_file | dirname }}"
@@ -131,6 +132,7 @@
     owner: root
     group: root
     mode: "0755"
+  when: cassandra_linux_sysctl | length > 0
 
 # Each key set live alone (sysctl -w), never the file loaded again (sysctl -p):
 # its other lines (an admin's file) may be keys a later file sets again, or

@@ -249,3 +249,11 @@ def test_replace_unit_checked_before_the_question():
     assert at < names.index(("Reset the host first (cassandra_replace_node_reset)", "reset_node.yml"))
     with open(os.path.join(COLLECTION, "roles", "cassandra_operation", "tasks", "action_replace.yml")) as f:
         assert "cassandra_service_start" not in f.read()
+
+
+def test_no_kernel_settings_no_directory_for_their_file():
+    # (e2e: an imported node with none, cassandra_linux_sysctl: {}, on an image without /etc/sysctl.d: every --check
+    # and drift showed the directory to create, which no real run did) no file written: no directory either
+    directory = task("Directory of the kernel settings file", "os.yml")
+    assert when(directory, cassandra_linux_sysctl={}) is False
+    assert when(directory, cassandra_linux_sysctl=defaults()["cassandra_linux_sysctl"]) is True
