@@ -177,9 +177,9 @@
           {{ ansible_play_hosts | map('extract', hostvars) | map(attribute='cassandra_health_findings', default=[]) | flatten
              | selectattr('what', 'defined') | selectattr('what', 'equalto', 'exporter') | map(attribute='host') | list }}
 
-    # a secret in the environment the unit (or the drop-in of the package's init script) is written with, as
-    # apply_config says it: the file readable by every local user, systemctl show prints it; one block for the nodes
-    # that share it
+    # a secret in the inventory's cassandra_service_environment, which apply_config writes to the unit (or the
+    # drop-in of the package's init script): the file readable by every local user, systemctl show prints it; one
+    # block for the nodes that share it (the inventory's value: the file on the node is not read)
     - name: Say a secret in the unit's environment
       ansible.builtin.debug:
         msg: "{{ _secrets | community.cassandra.cassandra_warnings }}"
@@ -187,22 +187,7 @@
       when: _secrets | length > 0
       vars:
         cassandra_output: true  # a warning of the report (ops callback)
-        _secrets: >-
-          {%- set by = {} -%}
-          {%- for h in ansible_play_hosts -%}
-          {%-   set v = hostvars[h] -%}
-          {%-   set text = v.cassandra_service_environment | default({}) | community.cassandra.cassandra_unit_secret_warning(
-                             '/etc/systemd/system/cassandra.service' if v.cassandra_service_start | default('unit') == 'unit'
-                             else '/etc/systemd/system/cassandra.service.d/zz-ansible-environment.conf')
-                           if v.cassandra_service_unit_manage | default(true) | bool
-                              and v.cassandra_service_start | default('unit') in ['unit', 'package_script'] else '' -%}
-          {%-   if text -%}{%- set _ = by.setdefault(text, []).append(h) -%}{%- endif -%}
-          {%- endfor -%}
-          {%- set out = [] -%}
-          {%- for text, hosts in by.items() -%}
-          {%-   set _ = out.append({'label': hosts | community.cassandra.cassandra_node_list, 'text': text}) -%}
-          {%- endfor -%}
-          {{ out }}
+        _secrets: "{{ ansible_play_hosts | community.cassandra.cassandra_unit_secret_warnings(hostvars) }}"
 
     # each node's clock as its time sync daemon reports it (the CLOCKS block); a
     # clock not in sync is a problem of the report. -e cassandra_clock_check=false skips it

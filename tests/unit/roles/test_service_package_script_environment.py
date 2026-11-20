@@ -153,16 +153,17 @@ def test_a_secret_in_the_unit_environment_is_warned_with_its_way_out():
     names = [t.get("name") for t in load("tasks", "unit.yml")]
     assert names.index("Say a secret in the unit's environment") < names.index("Install the cassandra systemd unit")
     env = {"JVM_EXTRA_OPTS": "-Dzorglub.trustStorePassword=zorglub"}
-    for own, dropin, path in ((True, False, "/etc/systemd/system/cassandra.service"),
-                              (False, True, "/etc/systemd/system/cassandra.service.d/zz.conf")):
-        variables = dict(cassandra_service_environment=env, _cassandra_service_own_unit=own,
-                         _cassandra_service_dropin_wanted=dropin, inventory_hostname="n1",
-                         _cassandra_service_environment_dropin="/etc/systemd/system/cassandra.service.d/zz.conf")
+    # the file the role writes it to: its own unit, or the drop-in of the package's init script
+    dropin = load("vars", "main.yml")["_cassandra_service_environment_dropin"]
+    for start, path in (("unit", "/etc/systemd/system/cassandra.service"), ("package_script", dropin)):
+        variables = dict(cassandra_service_environment=env, cassandra_service_start=start,
+                         cassandra_service_unit_manage=True, inventory_hostname="n1")
         variables["_warning"] = render(task["vars"]["_warning"], **variables)
-        assert path in variables["_warning"]
-        assert all(render("{{ %s }}" % w, **variables) is True for w in task["when"])
+        assert "written to %s, mode 0644" % path in variables["_warning"]
+        assert render("{{ %s }}" % task["when"], **variables) is True
         assert render(task["ansible.builtin.debug"]["msg"], **variables).startswith(
             "WARNING  n1: a secret in cassandra_service_environment: JVM_EXTRA_OPTS")
-    # the role's unit not written (kept, or the package's script without environment): none
-    variables.update(_cassandra_service_own_unit=False, _cassandra_service_dropin_wanted=False)
-    assert render("{{ %s }}" % task["when"][0], **variables) is False
+    # the role's unit not written (kept, or another start): none
+    for start, manage in (("unit", False), ("package_script", "false"), ("none", True)):
+        variables.update(cassandra_service_start=start, cassandra_service_unit_manage=manage)
+        assert render(task["vars"]["_warning"], **variables) == ""

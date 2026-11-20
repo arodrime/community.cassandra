@@ -62,11 +62,8 @@
     cassandra_output: true  # (ops callback: its msg as is)
     _warning: >-
       {{ cassandra_service_environment | community.cassandra.cassandra_unit_secret_warning(
-           '/etc/systemd/system/cassandra.service' if _cassandra_service_own_unit | bool
-           else _cassandra_service_environment_dropin) }}
-  when:
-    - _cassandra_service_own_unit | bool or _cassandra_service_dropin_wanted | bool
-    - _warning | length > 0
+           cassandra_service_start, cassandra_service_unit_manage) }}
+  when: _warning | length > 0
 
 # Same name as the package's init script: systemd prefers a native unit
 # over the SysV-generated one, so service/systemctl both use this.

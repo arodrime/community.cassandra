@@ -666,10 +666,7 @@
         _lines_nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         _unit_secret: >-
           {{ cassandra_service_environment | default({}) | community.cassandra.cassandra_unit_secret_warning(
-               '/etc/systemd/system/cassandra.service' if cassandra_service_start | default('unit') == 'unit'
-               else '/etc/systemd/system/cassandra.service.d/zz-ansible-environment.conf')
-             if cassandra_service_unit_manage | default(true) | bool
-                and cassandra_service_start | default('unit') in ['unit', 'package_script'] else '' }}
+               cassandra_service_start | default('unit'), cassandra_service_unit_manage | default(true)) }}
         # the release it runs (a node stopped: the one it last ran, as the ring knows it) and the package installed
         # when that is another one (updated by a run that stopped before its start)
         _release_installed: "{{ (cassandra_apply_config_version | default({})).installed | default('') }}"

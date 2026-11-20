@@ -17,7 +17,8 @@ cassandra_refused, cassandra_not_reached: a refusal before any change (the hosts
 cassandra_cqlsh_words: cassandra_cqlsh_command split as the cassandra_cqlsh module splits it.
 cassandra_holds_secret: whether a value is or holds a secret (shown ****): a file's diff that would show it is not
 shown.
-cassandra_unit_secret_warning: the warning of a secret in the cassandra unit's environment (its file is world-readable).
+cassandra_unit_secret_warning, cassandra_unit_secret_warnings: the warning of a secret in the cassandra unit's
+environment (its file is world-readable): a node's, the nodes' (by their inventory).
 """
 
 from __future__ import absolute_import, division, print_function
@@ -287,22 +288,61 @@ def cassandra_holds_secret(value, name=""):
     return out.hidden(str(name or ""), value)
 
 
-def cassandra_unit_secret_warning(environment, path="/etc/systemd/system/cassandra.service"):
-    """The warning of a secret in the environment the cassandra unit (or the drop-in of the package's init script, at
-    path) is written with (cassandra_service_environment), one fact per line, then the way out -> text ("" when none
-    holds a secret): the unit files are mode 0644, every local user reads them, and systemctl show prints them.
-    e.g. ({"JVM_EXTRA_OPTS": "-Dx.trustStorePassword=y"}) -> "a secret in cassandra_service_environment: JVM_EXTRA_OPTS
-    \nwritten to /etc/systemd/system/cassandra.service, mode 0644: every local user can read it\n..."."""
-    names = sorted(str(k) for k, v in (environment or {}).items() if out.hidden(str(k), v)) \
-        if isinstance(environment, dict) else []
-    if not names:
+# the files the cassandra_service role writes cassandra_service_environment to: its own unit, or the drop-in of the
+# unit systemd generates for the package's init script (roles/cassandra_service/vars/main.yml)
+UNIT_FILE = "/etc/systemd/system/cassandra.service"
+UNIT_ENVIRONMENT_DROPIN = "/etc/systemd/system/cassandra.service.d/zz-ansible-environment.conf"
+
+
+def unit_environment_file(start="unit", manage=True):
+    """cassandra_service_start, cassandra_service_unit_manage -> the file the cassandra_service role writes
+    cassandra_service_environment to, "" when it writes none (a unit it does not manage, another start)."""
+    if not boolean(manage, strict=False):
         return ""
-    return "\n".join([
-        "a secret in cassandra_service_environment: %s" % ", ".join(names),
-        "written to %s, mode 0644: every local user can read it" % path,
-        "systemctl show cassandra prints it too",
+    return {"unit": UNIT_FILE, "package_script": UNIT_ENVIRONMENT_DROPIN}.get(str(start), "")
+
+
+def cassandra_unit_secret_warning(environment, start="unit", manage=True, inventory=False):
+    """A secret in cassandra_service_environment, as the cassandra_service role writes it (start, manage:
+    cassandra_service_start, cassandra_service_unit_manage) -> its warning, one fact per line, then the way out
+    ("" when none holds a secret, or the role writes no file of it): the unit files are mode 0644, every local
+    user reads them, and systemctl show prints them. inventory: said of the inventory's value (health_check: the
+    file on the node not read), not of the file being written (the cassandra_service role, apply_config).
+    e.g. ({"JVM_EXTRA_OPTS": "-Dx.trustStorePassword=y"}) -> "a secret in cassandra_service_environment:
+    JVM_EXTRA_OPTS\nwritten to /etc/systemd/system/cassandra.service, mode 0644: every local user can read it\n..."."""
+    path = unit_environment_file(start, manage)
+    names = sorted(str(k) for k, v in environment.items() if out.hidden(str(k), v)) \
+        if isinstance(environment, dict) else []
+    if not names or not path:
+        return ""
+    if inventory:
+        said = ["the inventory's cassandra_service_environment holds a secret: %s" % ", ".join(names),
+                "apply_config writes it to %s, mode 0644: every local user can read it" % path,
+                "once written, systemctl show cassandra prints it too"]
+    else:
+        said = ["a secret in cassandra_service_environment: %s" % ", ".join(names),
+                "written to %s, mode 0644: every local user can read it" % path,
+                "systemctl show cassandra prints it too"]
+    return "\n".join(said + [
         "way out: keep it out of cassandra_service_environment, e.g. in a file of mode 0600 that a drop-in of your own"
         " reads (EnvironmentFile=), or in a file of mode 0600 the option itself reads"])
+
+
+def cassandra_unit_secret_warnings(hosts, hostvars):
+    """The nodes, their hostvars -> the warnings of a secret in the inventory's cassandra_service_environment
+    (cassandra_unit_secret_warning, inventory), one for the nodes that share it: [{label: the nodes, text}], in
+    the order of the nodes; [] for none."""
+    by_text, order = {}, []
+    for h in hosts or []:
+        variables = hostvars.get(h) or {}
+        text = cassandra_unit_secret_warning(variables.get("cassandra_service_environment") or {},
+                                             variables.get("cassandra_service_start", "unit"),
+                                             variables.get("cassandra_service_unit_manage", True), inventory=True)
+        if text and text not in by_text:
+            order.append(text)
+        if text:
+            by_text.setdefault(text, []).append(str(h))
+    return [{"label": cassandra_node_list(by_text[text]), "text": text} for text in order]
 
 
 class FilterModule(object):
@@ -328,4 +368,5 @@ class FilterModule(object):
             "cassandra_seeds_todo": cassandra_seeds_todo,
             "cassandra_holds_secret": cassandra_holds_secret,
             "cassandra_unit_secret_warning": cassandra_unit_secret_warning,
+            "cassandra_unit_secret_warnings": cassandra_unit_secret_warnings,
         }
