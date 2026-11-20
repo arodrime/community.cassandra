@@ -687,8 +687,8 @@ def test_a_backup_name_taken_after_it_was_chosen_stops_before_anything_is_writte
     def taken(found):
         (tmp_path / os.path.basename(found[1]["backup"])).write_text("another run's\n")
     found, said = old_shareable(tmp_path, meanwhile=taken)
-    assert said == ["report.shareable.key.txt was not moved aside: nothing is written over it, the run stops",
-                    "in %s" % tmp_path, "mv -n to %s:" % os.path.basename(found[1]["backup"]),
+    assert said == ["report.shareable.key.txt was not moved aside", "nothing is written over it: the run stops",
+                    "in:", "  %s" % tmp_path, "mv -n to %s:" % os.path.basename(found[1]["backup"]),
                     "  that name is taken", "WAY OUT  run the import again (it takes the next free name)"]
     assert (tmp_path / "report.shareable.key.txt").read_text().startswith("# The key of report.shareable.txt")
     assert (tmp_path / os.path.basename(found[1]["backup"])).read_text() == "another run's\n"

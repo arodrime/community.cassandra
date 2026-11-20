@@ -2634,8 +2634,10 @@
     - name: Stop when a shareable copy or key was not moved aside
       ansible.builtin.fail:
         msg:
-          - "{{ item.item.name }} was not moved aside: nothing is written over it, the run stops"
-          - "in {{ item.item.path | dirname }}"
+          - "{{ item.item.name }} was not moved aside"
+          - "nothing is written over it: the run stops"
+          - "in:"
+          - "  {{ item.item.path | dirname }}"
           - "mv -n to {{ item.item.backup | basename }}:"
           - "  {{ item.stderr | default('', true) or ('that name is taken' if item.item.backup is exists else 'no error') }}"
           - "WAY OUT  run the import again (it takes the next free name)"

@@ -755,7 +755,8 @@ of the cluster is only a warning, unless a node could be one of the rack. The ta
   rack, just started, sees not UN is waited for first;
 - with every node of the rack in the ring and UN, a ring of another size than the inventory is a warning line, and
   a schema disagreement a warning row per node on another version, when the rack is on one version that more than
-  half of the nodes are on (the rack alone on its version may be the one behind: it stops);
+  half of the nodes are on, a node outside the rack among them (the rack alone on its version may be the one
+  behind: it stops);
 - the rest stops the run, as in any cluster check: streams on the node of the rack it checks from (a bootstrap
   elsewhere streaming to it), ``nodetool status`` failing on every node read from, a ring size or schema
   disagreement otherwise.

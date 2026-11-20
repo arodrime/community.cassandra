@@ -553,8 +553,10 @@ def test_a_schema_disagreement_of_nodes_outside_the_rack_is_a_warning():
     assert problems == ["schema disagreement: " + SCHEMA["msg"]]
     # the rack alone on its version (the others' majority on another one, or the cluster split even): the rack
     # may be the one behind, a stop
+    # the rack's version the majority by the rack's own nodes alone (n1 not listed: unreachable): a stop too
     for status in ({"aaaa": ["10.0.0.2", "10.0.0.3"], "bbbb": ["10.0.0.1", "10.0.0.4", "10.0.0.9"]},
-                   {"aaaa": ["10.0.0.2", "10.0.0.3"], "bbbb": ["10.0.0.1", "10.0.0.4"]}):
+                   {"aaaa": ["10.0.0.2", "10.0.0.3"], "bbbb": ["10.0.0.1", "10.0.0.4"]},
+                   {"aaaa": ["10.0.0.2", "10.0.0.3"], "bbbb": ["10.0.0.4"]}):
         schema = dict(SCHEMA, schema_status=status)
         assert check_read(ring(), schema=schema, ok=dict(schema=schema))[0] == ["schema disagreement: " + SCHEMA["msg"]]
     # a node of the rack not listed (UNREACHABLE for describecluster), none listed, or the last read failed: a stop

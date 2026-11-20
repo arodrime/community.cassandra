@@ -31,12 +31,14 @@ at an address it gives:
     the ring and UN
   a schema disagreement, the rack in the ring, UN and on        WARNING
     one version that more than half of the nodes listed are
-    on (the nodes on another one named)
+    on, a node outside the rack among them (the nodes on
+    another one named)
   anything else (streams on the rack node, the ring size or     STOP
     the schema otherwise, no ring read at all...)
 
 The schema's majority, not the version of the node outside the rack read from: that node may be the one behind.
-A rack alone on its version, or a cluster split even, may be the rack behind: a stop.
+The rack just came back: its own nodes never make the majority alone (a node outside the rack, listed, so reached
+by describecluster, must be on its version). A rack alone on its version, or a cluster split even: a stop.
 
 Not covered (two faults, or rare): a rack node out of the ring while a node no host has keeps the ring's size
 even (no stop); a host outside the rack reached over ssh whose ping or fact gathering fails fails the run.
@@ -113,7 +115,8 @@ def _without_port(address):
 def _other_versions(schema, rack_addresses):
     """cassandra_schema's result (its last read succeeded) and the rack's ring addresses -> the addresses on
     another schema version than the rack's, when every rack node is on one version that more than half of the
-    nodes listed are on; else None (the disagreement may be the rack's: see the module docstring)."""
+    nodes listed are on, a node outside the rack among them; else None (the disagreement may be the rack's: see
+    the module docstring)."""
     versions = dict((v, [_ip(_without_port(a)) for a in hosts])
                     for v, hosts in ((schema or {}).get("schema_status") or {}).items())
     ours = [v for v, hosts in versions.items() if rack_addresses & set(hosts)]
@@ -121,6 +124,8 @@ def _other_versions(schema, rack_addresses):
         return None  # (a rack node not listed, or on two versions)
     if 2 * len(versions[ours[0]]) <= sum(len(hosts) for hosts in versions.values()):
         return None  # the rack's version is not the majority's
+    if not set(versions[ours[0]]) - rack_addresses:
+        return None  # the rack alone on its version
     return [a for v in sorted(versions) if v != ours[0] for a in versions[v]]
 
 

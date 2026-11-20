@@ -13,10 +13,10 @@ bugfixes:
     shows it), not reached over ssh, or whose ``nodetool status`` fails, then the ``health_check`` command. A node
     only the just-started node of the rack sees not UN is waited for first. With every node of the rack in the ring
     and UN, a ring of another size than the inventory is a warning line, and a schema disagreement a warning row per
-    node on another version when the rack is on one version that more than half of the nodes are on. The ssh probe
-    runs without become, whatever the inventory's ``ansible_become``.
+    node on another version when the rack is on one version that more than half of the nodes are on, a node
+    outside the rack among them. The ssh probe runs without become, whatever the inventory's ``ansible_become``.
   - >-
     start_rack - what still stops the run: streams on the node of the rack the check runs from, ``nodetool status``
     failing on a node of the rack, or on every node read from, and a ring size or schema disagreement while a node
     of the rack is not UN or not in the ring, a schema disagreement with the rack on two versions, or on a version
-    half of the nodes or fewer are on (it may be the rack that is behind).
+    half of the nodes or fewer are on, or no node outside the rack is on (it may be the rack that is behind).
