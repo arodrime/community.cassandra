@@ -361,3 +361,10 @@ def test_the_java_plan_of_apply_config_moves_running_nodes_and_checks_only_them(
     assert render(when, {"_cassandra_java_plan_check_all": False, "cassandra_java_plan_todo": False}) is False
     assert render(when, {"_cassandra_java_plan_check_all": False, "cassandra_java_plan_todo": True}) is True
     assert render(when, {"cassandra_java_plan_todo": False}) is True  # update_java: every node checked
+
+
+def test_the_recap_says_why_live_extras_need_no_restart():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import cassandra_apply_config_recap
+    node = {"name": "n1", "todo": True, "then": "none", "done": True, "kept_running": [EXTRAS_LIVE], "result": "applied"}
+    assert "n1  applied, not restarted (%s)" % EXTRAS_LIVE in "\n".join(cassandra_apply_config_recap([node]))
+    assert "would apply, no restart (%s)" % EXTRAS_LIVE in "\n".join(cassandra_apply_config_recap([node], check=True))

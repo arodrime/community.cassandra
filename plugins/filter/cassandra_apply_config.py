@@ -1081,8 +1081,9 @@ def _later(reason):
 
 def _proven(reason):
     """Whether reason (a node's, why it is not restarted) is one of cassandra_apply_config_no_effect's, or the role's
-    header line added (no setting changes), Medusa's changes (not read by Cassandra): said in the recap too."""
-    return reason in (SAME_JVM_ARGUMENTS, LOGBACK_SCANS, HEADER_ADDED, MEDUSA_LIVE) or bool(
+    header line added (no setting changes), Medusa's changes, the repository, packages and firewall (not read by
+    Cassandra): said in the recap too."""
+    return reason in (SAME_JVM_ARGUMENTS, LOGBACK_SCANS, HEADER_ADDED, MEDUSA_LIVE, EXTRAS_LIVE) or bool(
         re.match("^%s$" % (re.escape(NOT_READ_BY_JAVA) % (r"\S+", r"\S+")), reason))
 
 
