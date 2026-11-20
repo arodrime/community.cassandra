@@ -2568,3 +2568,12 @@ def test_a_jmx_branch_without_its_own_port_line_is_not_known_to_be_run_or_not(tm
     assert jvm.jmx_branch_not_run(files["cassandra-env.sh"], stock("50x")["cassandra-env.sh"], {},
                                   "java\0-Dcassandra.jmx.remote.port=7199\0org.apache.cassandra.service.CassandraDaemon") \
         == (None, [])
+
+
+def test_one_rule_for_the_options_a_command_line_does_not_show():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_jvm_args import MAIN_CLASS, _shown_args
+    cmdline = "\0".join(["java", "-Xss256k", MAIN_CLASS])
+    assert _shown_args(cmdline) == ["java", "-Xss256k", MAIN_CLASS]
+    assert _shown_args(cmdline, {"JAVA_TOOL_OPTIONS": "-Dx=1"}) is None
+    assert _shown_args(cmdline.replace("-Xss256k", "@/opt/x/args")) is None
+    assert _shown_args("java\0-Xss256k") is None  # not Cassandra's: nothing proven

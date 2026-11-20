@@ -527,6 +527,17 @@ PASSWORD_FILE_READERS = ("-Dcom.sun.management.jmxremote.port=", "-Dcom.sun.mana
 LAUNCHER_ENV = ("_JAVA_OPTIONS", "JDK_JAVA_OPTIONS", "JAVA_TOOL_OPTIONS")
 
 
+def _shown_args(cmdline, environment=None):
+    """A Cassandra JVM's arguments (cmdline: its /proc/<pid>/cmdline) when they are all it gets -> the list; None
+    when not known to be: not Cassandra's (no MAIN_CLASS), a file of options read where it is (IN_PLACE), or a
+    LAUNCHER_ENV variable set in its environment (options its command line does not show)."""
+    args = [a for a in re.split(r"[\0\n]", str(cmdline or "")) if a]
+    if MAIN_CLASS not in args or any(IN_PLACE.match(a) for a in args) \
+            or any((environment or {}).get(name) for name in LAUNCHER_ENV):
+        return None
+    return args
+
+
 def password_file_inert(cmdline, environment=None):
     """Whether the running JVM (cmdline: its /proc/<pid>/cmdline; environment: its own, LAUNCHER_ENV read there)
     never reads -Dcom.sun.management.jmxremote.password.file, so that a JVM with the same arguments but that one gets
@@ -534,9 +545,8 @@ def password_file_inert(cmdline, environment=None):
     Boolean.getBoolean reads it; none: off), none of PASSWORD_FILE_READERS, and no option its command line does not
     show (a LAUNCHER_ENV variable, a file of options read where it is: IN_PLACE). Not the access file: Cassandra hands
     it to the JMX server whatever the authentication, which reads it at start."""
-    args = [a for a in re.split(r"[\0\n]", str(cmdline or "")) if a]
-    if MAIN_CLASS not in args or any(IN_PLACE.match(a) for a in args) \
-            or any((environment or {}).get(name) for name in LAUNCHER_ENV):
+    args = _shown_args(cmdline, environment)
+    if args is None:
         return False
     auth = [a.split("=", 1)[1] if "=" in a else "" for a in args
             if a.split("=", 1)[0] == "-Dcom.sun.management.jmxremote.authenticate"]
@@ -554,8 +564,8 @@ def jmx_files_unread(live, cmdline, environment=None):
     (jmx_branch_run, live: the node's cassandra-env.sh; environment: the JVM's own, LAUNCHER_ENV read there), its
     arguments naming neither file (JMX_FILE_OPTIONS), and no option its command line does not show (a LAUNCHER_ENV
     variable, IN_PLACE)."""
-    args = [a for a in re.split(r"[\0\n]", str(cmdline or "")) if a]
-    if any(IN_PLACE.match(a) for a in args) or any((environment or {}).get(name) for name in LAUNCHER_ENV):
+    args = _shown_args(cmdline, environment)
+    if args is None:
         return False
     return jmx_branch_run(live, environment, cmdline) == "local" \
         and not any(a.startswith(JMX_FILE_OPTIONS) for a in args)
