@@ -138,24 +138,32 @@ def _outcomes(results, operation, action, check=False):
 
 def _limits_text(node, changed):
     """One node's warning of its limits file changed by the package update (changed: package_update.yml's
-    cassandra_package_limits_changed, {path, saved, created, error}; a path alone as well) -> its lines."""
+    cassandra_package_limits_changed, {path, saved, created, removed, link, error}; a path alone as well) -> its
+    lines. link: the target of the link the file was (its saved content read through it), the link to put back."""
     if not isinstance(changed, dict):
         changed = {"path": changed}
     path = str(changed.get("path") or "")
+    manage = "set cassandra_linux_manage: true (cassandra_linux writes it)"
     if changed.get("created"):
         return ["%s: the Cassandra package update created %s (there was none)" % (node, path),
                 "left as the package wrote it (cassandra_linux_manage: false)",
-                "check it holds the limits you want for the cassandra user, or set cassandra_linux_manage: true"
-                " (cassandra_linux writes it)"]
-    lines = ["%s: the Cassandra package update replaced %s" % (node, path),
+                "check it holds the limits you want for the cassandra user, or %s" % manage]
+    lines = ["%s: the Cassandra package update %s %s" % (node, "removed" if changed.get("removed") else "replaced",
+                                                          path),
              "left as the package wrote it (cassandra_linux_manage: false)"]
+    link = str(changed.get("link") or "")
+    if link:
+        lines.append("it was a link to %s" % link)
     if changed.get("saved"):
-        return lines + ["its former content: %s" % changed["saved"],
-                        "copy it back to %s if it held the limits of the cassandra user, or set"
-                        " cassandra_linux_manage: true (cassandra_linux writes it)" % path]
-    return lines + ["its former content was not saved (%s)" % (changed.get("error") or "not read"),
-                    "check it holds the limits you want for the cassandra user, or set cassandra_linux_manage: true"
-                    " (cassandra_linux writes it)"]
+        lines.append("its former content%s: %s" % (" (read through the link)" if link else "", changed["saved"]))
+    else:
+        lines.append("its former content was not saved (%s)" % (changed.get("error") or "not read"))
+    if link:
+        return lines + ["put the link back (ln -sfn %s %s) if it held the limits of the cassandra user, or %s"
+                        % (link, path, manage)]
+    if changed.get("saved"):
+        return lines + ["copy it back to %s if it held the limits of the cassandra user, or %s" % (path, manage)]
+    return lines + ["check it holds the limits you want for the cassandra user, or %s" % manage]
 
 
 def cassandra_limits_changed(hosts, hostvars):

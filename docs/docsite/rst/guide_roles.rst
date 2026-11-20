@@ -1000,7 +1000,9 @@ file is written mode ``0600`` (its owner only). The reports are the record of th
 inventory as an audit trail, or leave ``reports/`` out of it (``.gitignore``); they hold no secret in clear but name
 the hosts. The last 20 reports are kept
 (``cassandra_run_report_keep``), the oldest removed after a run. A report that cannot be written is said in a
-warning; the run goes on.
+warning; the run goes on. The former limits file of a node with ``cassandra_linux_manage: false`` that a package update
+replaced (``<report name>-<node>-limits.conf``, next to the reports) is kept, never removed with the reports: it may be
+the only copy of that file.
 
 ``apply_config`` ignores no setting: every difference between the inventory and a node falls in one of four
 categories, each shown in the plan and under ``--check``. Every variable of the roles has its category in

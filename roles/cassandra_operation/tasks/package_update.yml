@@ -20,6 +20,16 @@
   check_mode: false  # reads only
   when: not cassandra_linux_manage | default(true) | bool
 
+# (a link: its target read above, the link itself here; the package may put a plain file in its place)
+- name: Read whether it is a link before the update
+  ansible.builtin.stat:
+    path: /etc/security/limits.d/cassandra.conf
+    get_checksum: false
+    follow: false
+  register: cassandra_package_limits_link_before
+  check_mode: false  # reads only
+  when: not cassandra_linux_manage | default(true) | bool
+
 - name: Read its content
   ansible.builtin.slurp:
     src: /etc/security/limits.d/cassandra.conf
@@ -45,6 +55,15 @@
   check_mode: false  # reads only
   when: not cassandra_linux_manage | default(true) | bool
 
+- name: Read whether it is a link after the update
+  ansible.builtin.stat:
+    path: /etc/security/limits.d/cassandra.conf
+    get_checksum: false
+    follow: false
+  register: cassandra_package_limits_link_after
+  check_mode: false  # reads only
+  when: not cassandra_linux_manage | default(true) | bool
+
 - name: Say the package changed the limits file
   when:
     - not cassandra_linux_manage | default(true) | bool
@@ -54,7 +73,8 @@
     _created: "{{ not (cassandra_package_limits_before.stat | default({})).exists | default(false) }}"
     _read: "{{ (cassandra_package_limits_content | default({})).content is defined }}"
   block:
-    # <the reports' dir>/<operation>-<the run's start>-<node>-limits.conf, as the run's report (run_report.yml)
+    # <the reports' dir>/<operation>-<the run's start>-<node>-limits.conf, named as the run's report (run_report.yml,
+    # apply_config's start), kept: never removed with the reports (the only copy of the operator's former file)
     - name: Keep its former content on the controller
       delegate_to: localhost
       become: false
@@ -71,7 +91,8 @@
         _saved: >-
           {{ _dir ~ '/' ~ (cassandra_service_node_action | default('cassandra')
                            | community.cassandra.cassandra_run_report_name(false,
-                               hostvars['localhost']._cassandra_run_start | default(''))
+                               hostvars['localhost']._cassandra_run_report_started
+                               | default(hostvars['localhost']._cassandra_run_start | default('')))
                            | regex_replace('[.]txt$', '')) ~ '-' ~ inventory_hostname ~ '-limits.conf' }}
       block:
         - name: Make the dir of the reports
@@ -96,11 +117,20 @@
       ansible.builtin.set_fact:
         cassandra_package_limits_changed: >-
           {{ {'path': '/etc/security/limits.d/cassandra.conf', 'created': _created | bool, 'saved': _saved,
+              'removed': _removed | bool, 'link': _link,
               'error': '' if _saved or _created | bool else _kept.msg | default(_unread.msg | default('not read'))} }}
       vars:
         _kept: "{{ cassandra_package_limits_kept | default({}) }}"
         _saved: "{{ '' if _kept.failed | default(false) else _kept.dest | default('') }}"
         _unread: "{{ cassandra_package_limits_content | default({}) }}"  # (its msg when it could not be read)
+        _removed: "{{ not _created | bool and not (cassandra_package_limits_after.stat | default({})).exists | default(false) }}"
+        # a link before, no longer the same link: its target (the saved content is the one read through it)
+        _link_before: "{{ cassandra_package_limits_link_before.stat | default({}) }}"
+        _link_after: "{{ cassandra_package_limits_link_after.stat | default({}) }}"
+        _link: >-
+          {{ _link_before.lnk_target | default('') if _link_before.islnk | default(false)
+             and not (_link_after.islnk | default(false) and _link_after.lnk_target | default('') == _link_before.lnk_target | default(''))
+             else '' }}
 
     - name: Say it now
       ansible.builtin.debug:
