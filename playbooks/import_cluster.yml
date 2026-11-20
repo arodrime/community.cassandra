@@ -2328,7 +2328,7 @@
         tasks_from: cql_login.yml
       when: _cql_on | bool
       vars:
-        # the node the operator gave (-i), read: the question names it, not another one (hostile R1); else the first
+        # the node the operator gave (-i), read: the question names it, not another one; else the first
         _cql_node: >-
           {{ (_nodes | selectattr('read') | selectattr('host', 'in', _given | default([])) | list
               + _nodes | selectattr('read') | list) | first | default({}) }}

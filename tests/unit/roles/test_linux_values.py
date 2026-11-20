@@ -233,7 +233,7 @@ def test_replace_way_out_for_the_init_script():
 
 
 def test_replace_unit_checked_before_the_question():
-    """The init script refused in the checks, before the question and the reset (hostile S16: it came after both)."""
+    """The init script refused in the checks, before the question and the reset (it came after both)."""
     with open(os.path.join(COLLECTION, "playbooks", "replace_node.yml")) as f:
         plays = yaml.safe_load(f)
     check = next(p for p in plays if p.get("name") == "Check the replacement")

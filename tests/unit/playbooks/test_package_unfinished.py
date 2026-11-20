@@ -2,7 +2,7 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 # A Cassandra package left half done (two rpm packages, a dpkg run interrupted): every restart or start of that node
-# refused before any change, not only a release update (audit r5: a config restart ran Cassandra on two packages'
+# refused before any change, not only a release update (a config restart ran Cassandra on two packages'
 # jars, or a silent upgrade on dpkg's half-configured files). apply_config, rolling_restart, update_java. Rendered by
 # Ansible from the playbooks and the task files.
 
@@ -45,7 +45,7 @@ def test_apply_config_refuses_a_restart_or_a_start_on_a_package_left_half_done()
     assert lines[1].endswith("its start would run Cassandra from that state.")
     assert lines[-1] == "then run the same command again."
     # n4 (stopped, nothing to apply) is refused when another node restarts: the refusal of restarts with a node down
-    # would send it to start_rack (audit r7)
+    # would send it to start_rack
     assert _refusal(task, dict((k, v) for k, v in hostvars.items() if k in ("n3", "n4", "n6")))[0].startswith("n4: ")
     assert _refusal(task, dict((k, v) for k, v in hostvars.items() if k in ("n3", "n4"))) == []
     # --check too (it stops where the real run stops); drift's compare: nothing stopped

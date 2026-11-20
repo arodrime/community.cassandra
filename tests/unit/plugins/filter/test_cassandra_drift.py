@@ -44,7 +44,7 @@ def test_a_setting_off_its_default_with_where_the_edit_and_the_cost():
     assert lines[0] == "  cassandra_concurrent_reads   64 on all (3 nodes)"
     assert lines[1] == "      default: 32; set in group_vars/prod/main.yml"
     assert lines[2] == u"      → remove cassandra_concurrent_reads from group_vars/prod/main.yml"
-    # (every node: no --limit naming them all, hostile R3)
+    # (every node: no --limit naming them all)
     assert lines[3] == ("      3 nodes change, then restart; check: ansible-playbook -i inventories/prod.yml"
                         " community.cassandra.apply_config --check --diff")
     # some nodes only: --limit to them
@@ -329,7 +329,7 @@ def test_in_sync():
 
 
 def test_a_node_not_running_said_so():
-    # hostile R3: h-n4 stopped, its files in sync: "h-n1..h-n5 in sync", no word of it not running
+    # h-n4 stopped, its files in sync: "h-n1..h-n5 in sync", no word of it not running
     lines = cassandra_drift_sync([{"name": "db1", "then": "none"}, {"name": "db2", "then": "write"},
                                   {"name": "db3", "then": "start"}], [], "x")
     assert lines[1:] == ["  db1  in sync", "  db2, db3  in sync, Cassandra not running",

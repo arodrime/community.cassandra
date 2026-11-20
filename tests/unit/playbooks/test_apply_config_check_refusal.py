@@ -138,7 +138,7 @@ def test_a_node_left_stopped_by_an_interrupted_run_has_one_way_out_the_resume():
     hostvars["node7"] = marked
     t = task("Note whether restarts are refused while a node is not running")
     variables = dict(trust(t["vars"]), hostvars=hostvars, ansible_play_hosts=sorted(hostvars))
-    # (owner r6-Q1) node1 restarted before node7 in a resume too: the resume on node7 alone first, said at once
+    # node1 restarted before node7 in a resume too: the resume on node7 alone first, said at once
     assert render(t["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"], variables) == [
         "node7: Cassandra not running, and node1, node2 would be restarted, which needs every other node up.",
         "node7: left stopped by an interrupted apply_config (in its restart window), reached by a resume only"

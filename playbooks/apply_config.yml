@@ -372,7 +372,7 @@
       vars:
         cassandra_output: true
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
-        # (77 columns: the next lines are 2 in. Hostile R4: "not restarted for them" read as a contradiction when
+        # (77 columns: the next lines are 2 in. "not restarted for them" read as a contradiction when
         # the plan restarts the node for the inventory's changes; one line of ~240 columns per node)
         # (5.0: not cassandra.yaml when Cassandra runs an earlier storage_compatibility_mode than it has: restarted)
         _unknown: >-

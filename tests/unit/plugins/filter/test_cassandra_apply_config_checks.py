@@ -109,7 +109,7 @@ def test_a_package_left_half_done_stops_a_release_before_any_change():
     (["half-configured 5.0.9"], {"installed": "", "unfinished": "half-configured 5.0.9"}),
     (["unpacked 5.0.9"], {"installed": "", "unfinished": "unpacked 5.0.9"}),
     (["half-installed 5.0.9"], {"installed": "", "unfinished": "half-installed 5.0.9"}),
-    # (audit r5) dpkg: a trigger pending is an install (its files in place, configured)
+    # dpkg: a trigger pending is an install (its files in place, configured)
     (["triggers-pending 5.0.8"], {"installed": "5.0.8", "unfinished": ""}),
     (["triggers-awaited 5.0.8"], {"installed": "5.0.8", "unfinished": ""}),
     (["config-files 5.0.8"], {"installed": "", "unfinished": ""}),  # removed, its config left
@@ -121,7 +121,7 @@ def test_the_package_state_read(lines, state):
 
 
 def test_a_package_left_half_done_refuses_every_restart_and_start():
-    # (audit r5) not a release only: a config restart or a start runs Cassandra on two packages' jars, or on the new
+    # not a release only: a config restart or a start runs Cassandra on two packages' jars, or on the new
     # release's files with no plan (a silent upgrade)
     nodes = [{"name": "n1", "unfinished": "installed 5.0.8, installed 5.0.9", "what": "restart"},
              {"name": "n2", "unfinished": "", "what": "restart"},

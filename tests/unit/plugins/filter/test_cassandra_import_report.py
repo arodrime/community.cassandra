@@ -346,7 +346,7 @@ def test_differs_from_your_group_vars_all():
         "   node1, node2 (2 nodes)",
         "      kept as the nodes have it (in host_vars/<node>/main.yml); to apply yours, delete it there, then apply_config"]
     assert lines[0].endswith("2 entries to review: 2 things worth a look")  # (not again as settings that differ)
-    # hostile R1: a head that wraps keeps each count whole ("2" never at a line's end, its words below)
+    # a head that wraps keeps each count whole ("2" never at a line's end, its words below)
     for width in range(40, 90):
         head = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, width=width)
         head = head[:head.index("  in sync with Ansible: yes") if "  in sync with Ansible: yes" in head else 3]
@@ -1398,7 +1398,7 @@ def test_next_step_with_files_moved_and_rewrites_names_the_section():
 
 
 def test_parts_kept_said_in_one_sentence():
-    """sysctl,firewall: "the kernel settings and the firewall", not joined by a semicolon (hostile S15)."""
+    """sysctl,firewall: "the kernel settings and the firewall", not joined by a semicolon."""
     sysctl = "cassandra_linux: sysctl vm.swappiness (/etc/sysctl.conf): node has 10, the roles would set removed"
     rule = "cassandra_firewall: firewall rule (not carried): node has iptables: -A INPUT, the roles would set not written"
     flat = " ".join(" ".join(stop([node(1)], {"node1": {"differences": [sysctl, rule]}}, width=400)).split())
@@ -1563,7 +1563,7 @@ def test_a_dict_key_most_nodes_do_not_set_is_given_as_the_collections_default():
 
 
 def test_a_dict_one_node_sets_shows_only_the_sub_keys_that_differ_from_the_default():
-    """e2e (hostile S15): vm.swappiness set again in h-n1's /etc/sysctl.conf, not carried: h-n1 alone gets
+    """e2e: vm.swappiness set again in h-n1's /etc/sysctl.conf, not carried: h-n1 alone gets
     cassandra_linux_sysctl, the default's other keys as they are. Its 12 keys at the default's value were listed as
     differing, the one dropped was not; a node's own limits the same (only nofile differs)."""
     from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file

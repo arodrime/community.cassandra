@@ -357,7 +357,7 @@ def test_the_import_reads_the_jar_and_config_of_the_agent():
 
 @pytest.mark.parametrize("live", ["jvm17-server.options", "cassandra-env.sh"])
 def test_the_agent_read_is_the_one_the_running_java_gets(live):
-    # (audit r6) 5.0 on Java 17: an old agent in jvm11-server.options (not read), the live one in jvm17 or
+    # 5.0 on Java 17: an old agent in jvm11-server.options (not read), the live one in jvm17 or
     # cassandra-env.sh: the paths read are the live one's
     from ansible_collections.community.cassandra.plugins.filter.cassandra_prometheus import cassandra_prometheus_agent_paths
     old = "-javaagent:/opt/old/jmx_prometheus_javaagent-0.20.0.jar=9404:/opt/old/old.yml"
@@ -380,7 +380,7 @@ def test_the_agent_read_is_the_one_the_running_java_gets(live):
 
 
 def test_the_agent_read_skips_the_ones_the_import_skips():
-    # (audit r7) an agent of a version cassandra_config does not take, left as it is: the next one's paths read
+    # an agent of a version cassandra_config does not take, left as it is: the next one's paths read
     from ansible_collections.community.cassandra.plugins.filter.cassandra_prometheus import cassandra_prometheus_agent_paths
     rc = "-javaagent:/opt/rc/jmx_prometheus_javaagent-1.0.1-rc.jar=9404:/opt/rc/rc.yml"
     files = {"jvm-server.options": rc + "\n", "cassandra-env.sh": 'JVM_OPTS="$JVM_OPTS %s"\n' % OPTION}

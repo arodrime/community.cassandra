@@ -316,7 +316,7 @@ def test_a_release_node_compares_its_extras_and_applies_the_firewall_live():
     # repository and packages with its package kept at the release installed (the package itself in its window)
     extras = find(ACTION, "Apply the repository, the packages and the firewall")
     kept = find(ACTION, "Apply the packages, its Cassandra release kept")
-    # (audit r5) the repository of a release node at the top of its turn (with its release check); a node not
+    # the repository of a release node at the top of its turn (with its release check); a node not
     # running (then start, write) has its package updated already: its packages with the others', never with the
     # release it had (cassandra_install would refuse the version its package now has)
     for section, release, then, applied, applied_kept in (
@@ -344,7 +344,7 @@ def test_a_release_node_compares_its_extras_and_applies_the_firewall_live():
 
 
 def test_a_package_update_writes_the_limits_file_again():
-    # e2e (hostile S20): the 5.0.9 RPM's update put its own /etc/security/limits.d/cassandra.conf (nofile 100000, a
+    # e2e: the 5.0.9 RPM's update put its own /etc/security/limits.d/cassandra.conf (nofile 100000, a
     # plain file of the package) in place of cassandra_linux's (1048576): the next apply_config --check found it. The
     # window of a running node, a node not running and the upgrade all update the package with package_update.yml
     update = load("roles", "cassandra_operation", "tasks", "package_update.yml")
@@ -366,7 +366,7 @@ def test_a_package_update_writes_the_limits_file_again():
 def test_a_release_with_its_repository_changed_is_looked_for_before_the_stop():
     # (audit) the plan cannot look in a repository this run writes: looked for once written live, before the drain
     # and the stop, so that a release it lacks stops the run with Cassandra running and its package unchanged
-    # (audit r5) before any other change on the node: its Java, its config, a stopped node's package, the unit's
+    # before any other change on the node: its Java, its config, a stopped node's package, the unit's
     # failed starts cleared
     names = [t.get("name") for t in ACTION]
     look = find(ACTION, "Apply the repository of the release, then look for the release in it")
@@ -416,7 +416,7 @@ def test_a_release_with_its_repository_changed_is_looked_for_before_the_stop():
     # the plan's own stop and a plain run: the way out with its "run again"
     assert said[2] == ("Way out: set cassandra_package_version to a release it lists (dnf --showduplicates list cassandra"
                        " there), or add that release to the repository, then run again.")
-    # (audit r5) apply_config's node turn: one way out, as the stop block takes it (STOPPED, 1. fix it, 2. resume),
+    # apply_config's node turn: one way out, as the stop block takes it (STOPPED, 1. fix it, 2. resume),
     # with what the run changed on it before
     said = render(stop["ansible.builtin.fail"]["msg"], with_task_vars(stop, dict(
         variables, cassandra_install_release={"rc": 1, "stdout_lines": ["Error: No matching Packages to list"]},
@@ -482,7 +482,7 @@ def test_a_failed_release_window_starts_back_or_leaves_the_mark_and_the_way_out(
         "Note the files of the package and the time before the update", "Note that the package is being updated",
         "Update the Cassandra package", "Note that the config is being written", "Write the config again",
         "Note that the config is written", "Forget the mark of the update"]
-    # (owner r6-Q3) the stop's row says how far it went, as observed
+    # the stop's row says how far it went, as observed
     assert block[3]["ansible.builtin.set_fact"]["_cassandra_op_stage"] == "writing"
     assert block[5]["ansible.builtin.set_fact"] == {"_cassandra_op_stage": "written"}
     assert block[-1]["ansible.builtin.file"] == {"path": "/run/cassandra-apply-config.update", "state": "absent"}
@@ -605,7 +605,7 @@ def test_the_release_window_under_check_writes_no_mark_and_claims_no_stop():
     fact = state[1]["ansible.builtin.set_fact"]["cassandra_start_failed_state"]
     for check, rc, line in ((False, 1, "Cassandra left stopped."), (False, 0, "A Cassandra JVM runs (its start not confirmed)."),
                             (True, 1, "Under --check: Cassandra was not stopped."),
-                            # (audit r5) pgrep's error (rc 2, 3) is no "no process": not known, never "left stopped"
+                            # pgrep's error (rc 2, 3) is no "no process": not known, never "left stopped"
                             (False, 2, "Whether a Cassandra JVM runs is not known (pgrep failed)."),
                             (False, 3, "Whether a Cassandra JVM runs is not known (pgrep failed).")):
         assert render(fact, {"ansible_check_mode": check, "cassandra_start_failed_jvm": {"rc": rc}}) == line
@@ -847,7 +847,7 @@ def test_the_files_written_since_the_update_are_files_of_the_package_s_dirs(tmp_
 
 
 def test_a_dpkg_rollback_of_the_old_package_s_files_is_no_file_written(tmp_path):
-    # (audit r5) apt-get install of the new release failed during its unpack: dpkg hard-links each old file
+    # apt-get install of the new release failed during its unpack: dpkg hard-links each old file
     # (file.dpkg-tmp) and renames it back on rollback, both bumping its change time; dpkg --verify is clean, the old
     # package installed: no file of the update, the old release started again (it was left stopped)
     import os
@@ -878,7 +878,7 @@ def test_a_dpkg_rollback_of_the_old_package_s_files_is_no_file_written(tmp_path)
 
 
 def test_the_plan_of_a_release_with_its_repository_says_it_first():
-    # (audit r5) the repository of the release written first, the release looked for in it, before the Java and the
+    # the repository of the release written first, the release looked for in it, before the Java and the
     # config: the plan's steps in that order
     repo = [{"item": "baseurl", "before": "a", "after": "b"}]
     jemalloc = [{"item": "package jemalloc", "before": "absent", "after": "5.2.1"}]

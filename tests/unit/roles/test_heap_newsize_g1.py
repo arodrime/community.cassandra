@@ -117,7 +117,7 @@ def test_no_young_generation_with_g1_when_the_heap_is_in_the_jvm_options():
 
 
 def test_the_heap_in_the_jvm_options_writes_the_young_generation_with_the_heap():
-    # (audit r5) -Xmn is written with -Xms/-Xmx only: cassandra_heap_newsize alone would be lost
+    # -Xmn is written with -Xms/-Xmx only: cassandra_heap_newsize alone would be lost
     heap = _task("roles/cassandra_config/tasks/checks.yml", "Assert heap settings are consistent")
     on = dict(cassandra_version="50x", cassandra_heap_in_jvm_options=True)
     assert _assert(heap, cassandra_heap_size="", cassandra_heap_newsize="2G", **on) is False
@@ -125,7 +125,7 @@ def test_the_heap_in_the_jvm_options_writes_the_young_generation_with_the_heap()
 
 
 def test_the_heap_in_the_jvm_options_needs_no_young_generation():
-    # (audit r4) CMS with the heap in the JVM options: cassandra-env.sh works the young generation out itself
+    # CMS with the heap in the JVM options: cassandra-env.sh works the young generation out itself
     heap = _task("roles/cassandra_config/tasks/checks.yml", "Assert heap settings are consistent")
     cms = dict(cassandra_version="41x", cassandra_heap_size="8G")
     assert _assert(heap, cassandra_heap_in_jvm_options=True, **cms) is True
@@ -162,7 +162,7 @@ def test_g1_tuning_values_message():
 
 
 def test_g1_tuning_values_the_jvm_takes():
-    # (audit r4) "" comments the line out; a unit or a percent sign: the JVM would refuse the line
+    # "" comments the line out; a unit or a percent sign: the JVM would refuse the line
     assert _wrong() == [] and _wrong(cassandra_jvm17_max_gc_pause_millis="", cassandra_jvm_g1_heap_region_size="32m") == []
     assert _wrong(cassandra_jvm_max_gc_pause_millis="300ms", cassandra_jvm17_g1_new_size_percent="50%",
                   cassandra_jvm11_g1_heap_region_size="abc") == [

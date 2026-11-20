@@ -281,7 +281,7 @@ def _cost_line(key, kind, cost, changing, commands):
     --diff (change_seeds --check for the seeds) where it shows it, its coverage category too (a setting the import's
     convergence does not know: apply_config writes it), else NO_CHECK -> text."""
     shown = _KINDS.get(kind, (0, "", False))[2] or (kind == "unknown" and bool(category(key)))
-    # every node of the cluster: no --limit naming them all (hostile R3: 5 names on each of 20 lines)
+    # every node of the cluster: no --limit naming them all (5 names on each of 20 lines)
     changing = [] if set(changing) >= set(commands.get("everyone") or [None]) else changing
     check = unbreakable(_check(changing, kind if _KINDS.get(kind, (0, "", False))[2] else "restart",
                                commands["inventory"], commands["hosts"], commands["cwd"])) if shown else NO_CHECK
@@ -515,7 +515,7 @@ def cassandra_drift_sync(nodes, stops=None, command=""):
             off += 1
             then = THEN.get(str(node.get("then") or "none"), ("no restart",))[0]
             text = "%s; %s" % ("; ".join(parts) or "its config files", then)
-        else:  # (a node not running: its files compared, said so; hostile R3)
+        else:  # (a node not running: its files compared, said so)
             text = "in sync" + (", " + NOT_RUNNING if str(node.get("then")) in ("write", "start") else "")
         if text not in rows:
             order.append(text)

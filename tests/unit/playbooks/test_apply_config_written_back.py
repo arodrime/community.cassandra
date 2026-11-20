@@ -258,7 +258,7 @@ def test_a_storage_mode_written_ahead_of_the_node_is_restarted_without_a_record(
 
 
 def test_the_note_of_files_written_after_the_start_fits_and_promises_no_restart():
-    # hostile R4: "not restarted for them" above a plan that restarts the node for the inventory's changes read as a
+    # "not restarted for them" above a plan that restarts the node for the inventory's changes read as a
     # contradiction; one line of ~240 columns per node
     say = find(FIND["tasks"], "Say which files changed since Cassandra started, with no record of the ones it started with")
     variables = with_task_vars(say, {"inventory_hostname": "h-n1", "cassandra_version": "41x",
@@ -390,7 +390,7 @@ def test_the_proven_files_are_recorded_only_as_planned_for_that_jvm():
 
 
 def test_the_environment_read_is_the_unit_s_not_the_jvm_s(tmp_path):
-    # (hostile S18, 2026-11-17) bin/cassandra exports JVM_OPTS: the JVM's own environment always has it, which no
+    # bin/cassandra exports JVM_OPTS: the JVM's own environment always has it, which no
     # proof would ever pass; the unit's (systemctl show -p Environment) is what cassandra-env.sh gets, as the import
     # reads it
     from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import load

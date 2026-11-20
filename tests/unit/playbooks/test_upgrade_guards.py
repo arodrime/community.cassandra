@@ -678,7 +678,7 @@ def test_a_down_node_with_the_target_package_is_pointed_to_apply_config():
     two = dict(variables, hostvars=dict(hostvars, n2=node("n2", 1, "installed 4.1.12\ninstalled 5.0.9\n")))
     assert "n2" not in render(check["vars"]["_installed"], **two)
     assert render(check["vars"]["_on_target"], **two) == []
-    # (audit r5) neither start_rack (it would start Cassandra on both packages' files): the package's way out first
+    # neither start_rack (it would start Cassandra on both packages' files): the package's way out first
     said = render(check["ansible.builtin.assert"]["fail_msg"], **two).split("\n")
     assert said[1] == ("  n2  package rpm -q cassandra lists 2 packages (4.1.12, 5.0.9): a transaction left half done"
                        "  " + REFUSED)

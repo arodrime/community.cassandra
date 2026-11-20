@@ -292,7 +292,7 @@ def test_cql_address_of_the_node():
 
 
 def test_logs_in_on_the_node_the_operator_gave():
-    # hostile R1: -i h-n1, and the question said "It is checked on h-n2" (the first node read, in ring order)
+    # -i h-n1, and the question said "It is checked on h-n2" (the first node read, in ring order)
     step = next(t for t in WRITE["tasks"] if t.get("name") == "Check the CQL login, or ask for one")
     cql_node = step["vars"]["_cql_node"]
     nodes = fact([node("n2"), node("n3"), node("n1"), node("n4", read=False)])

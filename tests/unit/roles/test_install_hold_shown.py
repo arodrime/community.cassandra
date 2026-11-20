@@ -1,7 +1,7 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-# (audit r5) the plan of a newer release whose repository the run writes skips the package install (it cannot look
+# the plan of a newer release whose repository the run writes skips the package install (it cannot look
 # in that repository yet): the Debian hold of the pinned packages is shown there all the same, not applied unplanned
 # by the release window.
 

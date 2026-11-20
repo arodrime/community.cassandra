@@ -347,7 +347,7 @@ def heap_lines_on(xmn=""):
 
 @pytest.mark.parametrize("xmn", ["", "-Xmn2G"], ids=["without -Xmn", "with -Xmn"])
 def test_a_cms_heap_in_the_jvm_options_the_role_takes(tmp_path, xmn):
-    # (audit r4) 4.1 on CMS, its stock heap lines uncommented: the heap in the JVM options, which the role's heap
+    # 4.1 on CMS, its stock heap lines uncommented: the heap in the JVM options, which the role's heap
     # assert takes without cassandra_heap_newsize (cassandra-env.sh works -Xmn out); -Xmn there: the young generation
     from ansible_collections.community.cassandra.tests.unit.roles.test_heap_newsize_g1 import _assert, _task
     files = node_files("41x", heap_lines_on(xmn))
@@ -369,7 +369,7 @@ def test_a_cms_heap_in_the_jvm_options_the_role_takes(tmp_path, xmn):
     both(before_extra('JVM_OPTS="$JVM_OPTS -Xmx$MYHEAP"'), on_top("MYHEAP=16G")),
     on_top(": ${MAX_HEAP_SIZE:=16G}")], ids=["-Xmx through a variable", "MAX_HEAP_SIZE given a default"])
 def test_a_heap_of_cassandra_env_however_written_keeps_the_heap_as_it_is(tmp_path, edit):
-    # (audit r6) -Xmx through a variable in cassandra-env.sh, (audit r7) MAX_HEAP_SIZE given a default (:=): the pair
+    # -Xmx through a variable in cassandra-env.sh, MAX_HEAP_SIZE given a default (:=): the pair
     # left in the extra options
     files = node_files("50x", both(edit, add_to("jvm-server.options", "-Xms16G\n-Xmx16G")))
     node = imported(files, "50x", "17", launch(files, "17", tmp_path))[2]
@@ -390,7 +390,7 @@ def test_the_heap_moved_names_what_each_file_had(tmp_path, series, java, edit, s
 
 
 def test_a_heap_size_in_cassandra_env_keeps_the_heap_as_it_is(tmp_path):
-    # (audit r5) MAX_HEAP_SIZE set at the top of cassandra-env.sh, the heap in jvm-server.options: not moved
+    # MAX_HEAP_SIZE set at the top of cassandra-env.sh, the heap in jvm-server.options: not moved
     files = node_files("50x", both(on_top("MAX_HEAP_SIZE=16G"), add_to("jvm-server.options", "-Xms16G\n-Xmx16G")))
     cmdline = launch(files, "17", tmp_path)
     node = imported(files, "50x", "17", cmdline)[2]
@@ -400,7 +400,7 @@ def test_a_heap_size_in_cassandra_env_keeps_the_heap_as_it_is(tmp_path):
 
 
 def test_g1_with_a_young_generation_in_cassandra_env_keeps_the_heap_as_it_is(tmp_path):
-    # (audit r4) 5.0 on G1, HEAP_NEWSIZE in cassandra-env.sh (G1 ignores it), the heap in jvm-server.options: not
+    # 5.0 on G1, HEAP_NEWSIZE in cassandra-env.sh (G1 ignores it), the heap in jvm-server.options: not
     # moved to cassandra_heap_in_jvm_options (it would write -Xmn there, with which cassandra-env.sh stops)
     files = node_files("50x", both(on_top('HEAP_NEWSIZE="10G"'), add_to("jvm-server.options", "-Xms16G\n-Xmx16G")))
     cmdline = launch(files, "17", tmp_path)
@@ -411,7 +411,7 @@ def test_g1_with_a_young_generation_in_cassandra_env_keeps_the_heap_as_it_is(tmp
 
 
 def test_the_report_says_the_heap_moves_to_jvm_server_options(tmp_path):
-    # (audit r4) the heap pair at the end of jvm17-server.options: the role writes it in jvm-server.options
+    # the heap pair at the end of jvm17-server.options: the role writes it in jvm-server.options
     files = node_files("50x", add_to("jvm17-server.options", "-Xms16G\n-Xmx16G"))
     nodes = [dict(imported(files, "50x", "17", launch(files, "17", tmp_path))[2], name="n1", address="10.0.0.1")]
     lines = cassandra_import_report(cassandra_inventory_layout(nodes, "c"), ["c.yml", "."], "report.txt", {}, True,
@@ -419,7 +419,7 @@ def test_the_report_says_the_heap_moves_to_jvm_server_options(tmp_path):
     assert [line for line in lines if "jvm-server.options, jvm17-server.options rewritten, no restart (the same JVM"
             " arguments; the heap moves to jvm-server.options), nothing else" in line]
     assert not [line for line in lines if "see HAND EDITS" in line]
-    # (audit r5) the heap already in jvm-server.options, a JVM_OPTS line moved: it does not move
+    # the heap already in jvm-server.options, a JVM_OPTS line moved: it does not move
     files = node_files("50x", both(add_to("jvm-server.options", "-Xms16G\n-Xmx16G"),
                                    before_extra('JVM_OPTS="$JVM_OPTS -XX:+AlwaysPreTouch"')))
     nodes = [dict(imported(files, "50x", "17", launch(files, "17", tmp_path))[2], name="n1", address="10.0.0.1")]
@@ -435,7 +435,7 @@ def test_the_report_says_the_heap_moves_to_jvm_server_options(tmp_path):
                                        ("41x", "11", "jvm11-server.options", "-Xms8G\n-Xmx8G\n-Xmn2G"))
     for k in (f, "cassandra-env.sh", "jvm-server.options")])
 def test_the_heap_of_an_options_file_stays_with_a_jvm_file_kept(tmp_path, series, java, where, heap, keep):
-    # (audit r5) a JVM file kept as it is: the heap left in the extra options where the node has it (moved to
+    # a JVM file kept as it is: the heap left in the extra options where the node has it (moved to
     # jvm-server.options, it was set twice, the self-check passing while apply_config changed the file)
     files = node_files(series, add_to(where, heap))
     cmdline = launch(files, java, tmp_path)
@@ -516,7 +516,7 @@ CHRONICLE = ("-Dchronicle.analytics.disable=true (jvm-server.options): added by 
     (("-Dchronicle.analytics.disable=true", "-Dchronicle.analytics.disable=false"), False, False)],  # (carried)
     ids=["line removed", "older file", "commented out", "set false"])
 def test_a_later_stock_line_only_when_the_file_predates_it(tmp_path, edit, said, differs):
-    # (audit r4) only a file with nothing of the line (its option, its stock comment) predates it
+    # only a file with nothing of the line (its option, its stock comment) predates it
     files = node_files("50x", lambda f: f.update({"jvm-server.options": f["jvm-server.options"].replace(*edit)}))
     cmdline = launch(files, "17", tmp_path)
     assert (CHRONICLE in cassandra_config_import(files, "50x", FACTS, java="17", cmdline=cmdline)["jvm_warnings"]) is said
@@ -1026,7 +1026,7 @@ def test_the_owner_dev_node_in_full_sync(tmp_path):
     ("jvm-server.options", ["cassandra-env.sh"], True), ("jvm17-server.options", ["cassandra-env.sh"], True),
     ("jvm17-server.options", ["jvm17-server.options"], False), ("jvm17-server.options", ["jvm-server.options"], False)])
 def test_the_exporter_s_agent_imported_unless_its_file_is_kept(tmp_path, where, keep, imported_too):
-    # (audit r4) the agent in an options file, another file kept: imported (it was carried as an extra option, the
+    # the agent in an options file, another file kept: imported (it was carried as an extra option, the
     # exporter off, and the role's cleanup removed its jar); its own file kept, or jvm-server.options where the role
     # writes it: not imported, the file gives it as it does
     files = node_files("50x", add_to(where, AGENT))
@@ -1041,7 +1041,7 @@ def test_the_exporter_s_agent_imported_unless_its_file_is_kept(tmp_path, where, 
 
 
 def test_the_exporter_s_agent_in_a_file_its_java_does_not_read(tmp_path):
-    # (audit r5) the agent in jvm11-server.options on Java 17: the JVM does not load it, no exporter imported; the
+    # the agent in jvm11-server.options on Java 17: the JVM does not load it, no exporter imported; the
     # line imported as it is, the file's other options (the role writes it the same, the JVM keeps not reading it)
     files = node_files("50x", add_to("jvm11-server.options", AGENT))
     cmdline = launch(files, "17", tmp_path)

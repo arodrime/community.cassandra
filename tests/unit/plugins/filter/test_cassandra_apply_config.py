@@ -438,7 +438,7 @@ def test_the_os_settings_alone_no_restart():
              {"name": "node3", "todo": False, "result": "nothing to apply"}]
     assert cassandra_apply_config_outcomes(nodes, plan=True) == [
         'node2  write + restart',
-        'node1  OS settings, live (no restart)',  # (hostile R2: never "OS settings" twice)
+        'node1  OS settings, live (no restart)',  # (never "OS settings" twice)
         '  read-ahead set live: the files Cassandra has open keep the old one until it restarts',
         'node3  up to date']
     nodes[0]["os_done"] = True
@@ -455,7 +455,7 @@ def test_the_os_settings_alone_no_restart():
 
 
 def test_a_node_not_running_said_so():
-    # hostile R3: h-n4 stopped: "would apply, no restart" (its OS settings only), "up to date" (in sync): no word of
+    # h-n4 stopped: "would apply, no restart" (its OS settings only), "up to date" (in sync): no word of
     # Cassandra not running there
     nodes = [{"name": "node1", "todo": False, "os": True, "then": "write"},
              {"name": "node2", "todo": False, "then": "write"},

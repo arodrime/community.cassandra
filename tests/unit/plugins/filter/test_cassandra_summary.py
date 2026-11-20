@@ -348,7 +348,7 @@ def test_a_resumed_node_s_partial_time_is_never_compared():
 
 
 def test_an_apply_config_row_says_only_what_was_observed_of_its_config():
-    # (owner r6-Q3) "config write started, not finished" was said when the config was fully written (a restart that
+    # "config write started, not finished" was said when the config was fully written (a restart that
     # failed after), or not written at all (a release check before it): the stage of the write as noted
     from ansible_collections.community.cassandra.plugins.filter.cassandra_summary import _failed_row, outcome
     assert _failed_row("apply_config", "during", "release check failed") == "config not written; release check failed"

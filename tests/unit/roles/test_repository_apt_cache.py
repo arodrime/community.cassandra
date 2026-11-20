@@ -2,7 +2,7 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 # Debian: the apt cache is read again after the repository is written when its credentials or its signing key
-# changed alone too (audit r5: a release check of the same run read a cache refreshed before them, at most hourly,
+# changed alone too (a release check of the same run read a cache refreshed before them, at most hourly,
 # and said the release was missing from the repository).
 
 from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import (

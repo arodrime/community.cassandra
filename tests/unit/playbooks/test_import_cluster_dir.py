@@ -340,7 +340,7 @@ def test_report_of_another_kept(tmp_path):
 
 
 def test_report_readable_by_its_owner_only():
-    # hostile R6: report.txt and report.details.txt were 0644 next to the run reports' 0600 (run_report.yml)
+    # report.txt and report.details.txt were 0644 next to the run reports' 0600 (run_report.yml)
     import yaml
     path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_operation", "tasks",
                         "run_report.yml")

@@ -787,7 +787,7 @@ def _outcome(node, check, plan):
     os_only = bool(node.get("os") and not node.get("todo"))  # the OS settings alone, applied live
     done_key = "os_done" if os_only else "done"
     todo_done = bool(node.get("todo") or os_only) and bool(plan or node.get(done_key))
-    # Cassandra not running there (hostile R3: "no restart" or "up to date" said nothing of it)
+    # Cassandra not running there ("no restart" or "up to date" said nothing of it)
     stopped = node.get("then") in ("write", "start")
     if todo_done and os_only and stopped:  # (its OS settings applied, nothing started)
         word = "would apply" if check else "will apply" if plan else "applied"
