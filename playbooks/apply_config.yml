@@ -244,7 +244,10 @@
         _cassandra_change_report_quiet: true  # in the settings that differ
         _cassandra_compare: true  # (check mode applied to them, which ansible_check_mode does not tell)
         cassandra_install_java: false  # a Java move is worked out below (as update_java does)
-      when: cassandra_apply_config_version | default({}) | length == 0
+        # a newer release of its series: compared as its restart window installs it (the package itself is the
+        # Cassandra row of the restart)
+        _cassandra_install_upgrade: "{{ (cassandra_apply_config_version | default({})).kind | default('') == 'release' }}"
+      when: (cassandra_apply_config_version | default({})).kind | default('') in ['', 'release']
 
     # A node running another Java than cassandra_java_version (the plan of update_java, shared): installed, made the
     # one Cassandra starts with, then the node's one restart, checked to run it (action_apply_config.yml)
@@ -600,7 +603,7 @@
         # the repository, packages and tools, firewall (compared on a node whose version stays: _cassandra_compare)
         _seen: "{{ _cassandra_change_report_seen | default({}) }}"
         _extras: >-
-          {{ ([] if cassandra_apply_config_version | default({}) else
+          {{ ([] if (cassandra_apply_config_version | default({})).kind | default('') not in ['', 'release'] else
               _cassandra_repository_items | default([]) | map('combine', {'section': 'Repository'}) | list
               + _seen.get('cassandra_install', {}).get('items', []) | map('combine', {'section': 'Packages'}) | list
               + _seen.get('cassandra_firewall', {}).get('items', []) | map('combine', {'section': 'Firewall'}) | list) }}
@@ -776,8 +779,10 @@
                                   else 'reload the tuned profile' if d.item is match('tuned profile ')
                                   else 'set the LVM read-ahead (lvchange)') -%}
           {%- endfor -%}
+          {#- (a Java move with it: installed there too, Cassandra stopped, by the same cassandra_install run) -#}
           {%- if _release | bool -%}
-          {%-   set _ = os.append('update Cassandra to ' ~ cassandra_apply_config_version.wanted ~ ', write its config again') -%}
+          {%-   set _ = os.append(('install Java ' ~ cassandra_java_version ~ ', ' if _java | bool else '')
+                                  ~ 'update Cassandra to ' ~ cassandra_apply_config_version.wanted ~ ', write its config again') -%}
           {%- endif -%}
           {%- if _timesync | bool -%}
           {%-   for i in ts if i is match('package ') -%}{%- set _ = os.append('install ' ~ i[8:]) -%}{%- endfor -%}
@@ -789,10 +794,13 @@
           {%- if _timesync | bool or (_then == 'start' and _stopped | bool and _clock.mark_timesync is defined) -%}
           {%-   set _ = os.append('wait up to 2m for clock sync') -%}
           {%- endif -%}
-          {%- set write = (['install Java ' ~ cassandra_java_version] if _java | bool else [])
+          {#- (a release: the repository and packages in its window, with the package; the firewall live) -#}
+          {%- set write = (['install Java ' ~ cassandra_java_version] if _java | bool and not _release | bool else [])
                           + (['write the config'] if (_files + _perms + _dirs + _jmx + _exporter + _header) | length > 0 else [])
                           + (['set up Medusa'] if _medusa else [])
-                          + (['apply the repository, packages, firewall'] if _extras else []) -%}
+                          + (['apply the firewall'] if _release | bool and _extras | selectattr('section', 'equalto', 'Firewall') | list
+                             else [] if _release | bool
+                             else ['apply the repository, packages, firewall'] if _extras else []) -%}
           {%- if _then == 'restart' and window -%}
           {{ write + [('drain and stop' if drain else 'stop') ~ ' Cassandra'] + os | unique | list + ['start Cassandra'] }}
           {%- elif _then == 'restart' -%}

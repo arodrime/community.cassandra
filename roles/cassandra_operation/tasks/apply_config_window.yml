@@ -1,19 +1,84 @@
 ---
 # apply_config's restart of a node moving to a newer release of its series (action_restart.yml, Cassandra stopped):
-# its package updated (package_update.yml, as the upgrade does), then its config written again (a package may put
-# its own files in place of the ones it ships); started next, version_verify.yml checks the release it runs
-- name: Update the Cassandra package
-  ansible.builtin.include_tasks: package_update.yml
+# its package updated (package_update.yml, as the upgrade does; with the repository and packages the plan showed,
+# and the Java it moves to, if any), then its config written again (a package may put its own files in place of the
+# ones it ships); started next, version_verify.yml checks the release it runs.
+# A mark in /run (as os_window.yml's, its reasons in it) lets a resumed run start a node left stopped here. A
+# failure with the release it ran still installed (its package unchanged): Cassandra started again on it, the mark
+# removed, the run stopped; else (the package changed, or not known) left stopped, the mark kept, the run stopped
+# with the way out: fix, then resume (which starts it, the package updated first if it is still to do).
+- name: Update the release with Cassandra stopped
   vars:
-    cassandra_install_java: "{{ cassandra_apply_config_java | default(false) | bool }}"  # (a Java move: installed already)
+    _why: "{{ cassandra_apply_config_why | default('', true) or 'Cassandra ' ~ cassandra_package_version }}"
+    _running: "{{ (cassandra_apply_config_version | default({})).running | default('') }}"
+    _installed: >-
+      {{ (ansible_facts.packages['cassandra'] | default([{}]) | first).version | default('')
+         | regex_replace('^([0-9]+\.[0-9]+\.[0-9]+).*$', '\1') }}
+    # the release it ran still installed, no Cassandra JVM left (one the unit did not start): started again
+    _back: >-
+      {{ _running != '' and cassandra_window_packages is succeeded and _installed == _running
+         and cassandra_window_jvm.rc | default(0) == 1 }}
+  block:
+    - name: Mark the node stopped by this run
+      ansible.builtin.copy:
+        dest: /run/cassandra-apply-config.restart
+        content: "{{ _why }}\n"
+        mode: "0600"
 
-- name: Write the config again
-  ansible.builtin.include_role:
-    name: community.cassandra.cassandra_config
-  vars:
-    cassandra_config_confirm: false
-    _cassandra_config_no_question: true  # the run's own question covered it
-    _cassandra_config_no_newsize_warning: true
-    _cassandra_config_no_restart_warning: true
-    _cassandra_config_quiet: true
-    _cassandra_change_report_quiet: true
+    - name: Update the Cassandra package
+      ansible.builtin.include_tasks: package_update.yml
+      vars:
+        cassandra_install_java: "{{ cassandra_apply_config_java | default(false) | bool }}"  # (a Java move: installed here)
+
+    - name: Write the config again
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+      vars:
+        cassandra_config_confirm: false
+        _cassandra_config_no_question: true  # the run's own question covered it
+        _cassandra_config_no_newsize_warning: true
+        _cassandra_config_no_restart_warning: true
+        _cassandra_config_quiet: true
+        _cassandra_change_report_quiet: true
+  rescue:
+    - name: Read the installed packages
+      ansible.builtin.package_facts:
+      register: cassandra_window_packages
+      failed_when: false
+      check_mode: false
+
+    # (pgrep: no shell, whose own command line would match)
+    - name: Look for a Cassandra JVM
+      ansible.builtin.command:
+        argv: [pgrep, -f, org.apache.cassandra.service.CassandraDaemon]
+      register: cassandra_window_jvm
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Start Cassandra again on the release it ran
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: main.yml
+        rolespec_validate: false  # as the include it was: no argument check
+      vars:
+        cassandra_service_state: started
+        _cassandra_storage_mode_checked: true  # (storage_mode_guard.yml, before the plan)
+      when: _back | bool
+
+    - name: Forget the mark of the stop
+      ansible.builtin.file:
+        path: /run/cassandra-apply-config.restart
+        state: absent
+      when: _back | bool
+
+    - name: Stop the run
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }}: the update to Cassandra {{ cassandra_package_version }} with Cassandra stopped failed
+          ({{ ansible_failed_task.name | default('') }}: {{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}){{
+          ('; Cassandra ' ~ _running ~ ' still installed, started again on it. Fix it, then run apply_config again')
+          if _back | bool else
+          ('; Cassandra not started (installed: ' ~ (_installed or 'not known')
+           ~ (', a Cassandra JVM the unit did not start runs' if cassandra_window_jvm.rc | default(1) == 0 else '')
+           ~ '). Fix it, then resume: the same command plus -e cassandra_rolling_resume=true') }}.

@@ -10,8 +10,10 @@ minor_changes:
     (an environment value that holds a secret shown masked).
   - >-
     apply_config - a newer release of the node's series (``cassandra_package_version``) is applied in the node's one
-    restart: the package updated with Cassandra stopped (the upgrade's own step), the config written again, the
-    release it runs checked. It stops before any change when the release would not start with the node's settings,
+    restart: the package updated with Cassandra stopped (the upgrade's own step; with the repository and packages
+    the plan showed, and the Java it moves to, if any), the config written again, the release it runs checked; its
+    firewall applied live, before. A failure there starts Cassandra again when its package is unchanged, else leaves
+    it stopped with a mark that ``-e cassandra_rolling_resume=true`` starts it from. It stops before any change when the release would not start with the node's settings,
     or is newer than the releases the collection's notes cover (``-e cassandra_allow_unknown_patch=true`` once its
     NEWS.txt is read); the notes of the releases a node crosses are said in the plan.
 bugfixes:
