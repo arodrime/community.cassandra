@@ -66,7 +66,7 @@ def test_the_map_has_no_row_that_matches_nothing():
     ("cassandra_linux_swap_off", "A"), ("cassandra_medusa_version", "A"), ("cassandra_config_mode", "A"),
     ("cassandra_rolling_resume", "-"), ("cassandra_jmx_password", "-"), ("cassandra_offline", "-"),
 ])
-def test_the_categories_of_the_owner_s_classes(name, expected):
+def test_the_categories_of_the_classes_asked_for(name, expected):
     assert name in VARIABLES
     assert coverage.category(name)[0] == expected
 

@@ -130,7 +130,7 @@
     name: "community.cassandra.{{ item.role }}"
   vars:
     _cassandra_change_report_quiet: true  # shown before the run was confirmed, and in its recap at the end
-    cassandra_install_java: "{{ cassandra_apply_config_java | default(false) | bool }}"
+    cassandra_install_java: false  # (a Java move: java_install.yml's, or its restart window's)
   loop:
     - {section: Repository, role: cassandra_repository}
     - {section: Packages, role: cassandra_install}

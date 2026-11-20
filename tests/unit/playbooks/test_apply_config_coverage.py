@@ -171,6 +171,7 @@ def test_the_node_s_turn_installs_restarts_once_and_checks():
             in ("package_update.yml", "version_verify.yml")] == ["package_update.yml", "version_verify.yml"]
     extras = find(ACTION, "Apply the repository, the packages and the firewall")
     assert "not ansible_check_mode" in extras["when"]
+    assert extras["vars"]["cassandra_install_java"] is False  # (a Java move installed it already, or does in its window)
 
 
 def test_the_node_turns_load_the_java_variables_of_java_install():

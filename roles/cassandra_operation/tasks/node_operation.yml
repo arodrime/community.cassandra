@@ -231,6 +231,7 @@
         _starts: >-
           {{ dict(ansible_play_hosts_all | zip(ansible_play_hosts_all | map('extract', hostvars)
                                                | map(attribute='_cassandra_op_start', default='') | list)) }}
+        # (a YAML anchor: the same text again as the stop's msg below, rendered there with that task's variables)
         _cassandra_stop_said: &cassandra_stop_said >-
           {{ _cassandra_op_results | community.cassandra.cassandra_stop_block(
                inventory_hostname, ansible_failed_result.msg | default(''), check=ansible_check_mode,
