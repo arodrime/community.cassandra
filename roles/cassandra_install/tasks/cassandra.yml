@@ -57,10 +57,15 @@
 - name: Check the release is in the repository
   ansible.builtin.import_tasks: release_check.yml
 
+# (the plan of another release, the repository changed by this run: the release is not judged on the repository there
+# now, which may lack it (a mirror re-pointed for that release); apply_config looks for it once that repository is
+# written, before the stop)
 - name: Install Cassandra Packages
   when:
     - not cassandra_offline | bool
     - not _cassandra_install_check or cassandra_install_method == 'packages' or cassandra_install_available.rc | default(0) == 0
+    - not (_cassandra_install_check and _cassandra_install_upgrade | default(false) | bool
+           and _cassandra_repository_items | default([]) | length > 0)
   vars:
     _cassandra_install_names: >-
       {{ _cassandra_packages if cassandra_package_version == ''

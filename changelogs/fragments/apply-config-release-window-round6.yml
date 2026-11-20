@@ -10,7 +10,9 @@ bugfixes:
     apply_config - a newer release with its repository changed by the same run: the release is looked for in that
     repository once it is written live, before the drain and the stop, so that a release it lacks stops the run with
     Cassandra running and its package unchanged; its way out leaves the resume to the run's stop block (no "run
-    again" next to it).
+    again" next to it). Its plan (and ``--check``) no longer installs that release, in check mode, from the
+    repository still on the node, which may lack it (a mirror re-pointed for that release: "No package
+    cassandra-5.0.9 available").
   - >-
     apply_config - under ``--check``, the release window writes and removes no mark in ``/run``, starts nothing, and
     a failure there says the update failed under ``--check`` and that Cassandra was not stopped, never "with

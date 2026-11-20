@@ -138,3 +138,16 @@ def test_a_release_the_node_excludes_is_said_excluded(tmp_path):
     assert said[2] == ("Way out: lift the exclusion of cassandra on the node (excludepkgs in dnf.conf or the repository"
                        " file, or dnf versionlock delete cassandra), then run again.")
     assert _listed(tmp_path, excluded=False).returncode == 0
+
+
+def test_the_plan_does_not_install_another_release_from_a_repository_this_run_rewrites():
+    # e2e: the repository re-pointed together with cassandra_package_version (the old one lacks the release): the
+    # plan's install, under check mode, read the repository on disk and failed ("No package cassandra-5.0.9
+    # available"); apply_config looks for the release once that repository is written, before the stop
+    install = find(load("roles", "cassandra_install", "tasks", "cassandra.yml"), "Install Cassandra Packages")
+    base = {"cassandra_offline": False, "_cassandra_install_check": True, "cassandra_install_method": "repository",
+            "cassandra_install_available": {"rc": 0}, "_cassandra_install_upgrade": True,
+            "_cassandra_repository_items": [{"item": "baseurl"}]}
+    for changes, runs in (({}, False), ({"_cassandra_repository_items": []}, True), ({"_cassandra_install_upgrade": False}, True),
+                          ({"_cassandra_install_check": False}, True)):
+        assert all(render("{{ %s }}" % w, dict(base, **changes)) for w in install["when"]) is runs, changes
