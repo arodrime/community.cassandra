@@ -207,6 +207,7 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
             "problems": cassandra_health_sentences(stops),
             "not_readers": [h for h in _unique([n.get("name") for n in outside] + seen_down + failed_on) if h]}
 
+
 def _unknown_lines(findings, judged, rack):
     """The findings and how they were judged -> why each node judged of the rack only for want of a host known
     by its address is, then the way out; [] for none.
