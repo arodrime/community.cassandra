@@ -6,4 +6,4 @@ minor_changes:
     the recap. Its former content is saved on the controller, mode 0600, next to the run's reports
     (``<report name>-<node>-limits.conf``, the same time stamp as the run's report), kept when the reports rotate,
     and the WARNING names that file; a link replaced (by a file of the same content too) is named with the command
-    that puts it back. The node's file is never written back.
+    that puts it back (a link that pointed to no file said so). The node's file is never written back.

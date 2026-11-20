@@ -443,10 +443,15 @@ def test_a_package_update_on_a_node_with_its_own_os_settings_says_a_changed_limi
     after = {"cassandra_package_limits_after": {"stat": {"exists": True, "checksum": "bbb"}}}
     assert noted(dict(kept, **after)) == {
         "path": "/etc/security/limits.d/cassandra.conf", "created": False, "saved": "/r/a-n1-limits.conf", "error": "",
-        "removed": False, "link": ""}
+        "removed": False, "link": "", "dangling": False}
     # removed by the package: said so, not "replaced"
     gone = noted(dict(kept, cassandra_package_limits_after={"stat": {"exists": False}}))
     assert gone["removed"] is True
+    # a link left in place, its target gone (nothing read through it after): not removed, the link said
+    left = noted(dict(kept, cassandra_package_limits_after={"stat": {"exists": False}},
+                      cassandra_package_limits_link_before={"stat": {"exists": True, "islnk": True, "lnk_target": "/srv/l.conf"}},
+                      cassandra_package_limits_link_after={"stat": {"exists": True, "islnk": True, "lnk_target": "/srv/m.conf"}}))
+    assert left["removed"] is False and left["link"] == "/srv/l.conf"
     # a link before (its content read through it): the link to put back, unless it is still the same link
     link = {"cassandra_package_limits_link_before": {"stat": {"exists": True, "islnk": True, "lnk_target": "/srv/l.conf"}}}
     for link_after, said_link in (({"stat": {"exists": True, "islnk": False}}, "/srv/l.conf"),
@@ -472,7 +477,11 @@ def test_a_package_update_on_a_node_with_its_own_os_settings_says_a_changed_limi
                                                                         "lnk_target": "/srv/gone.conf"}},
                       "cassandra_package_limits_link_after": {"stat": {"exists": True, "islnk": False}},
                       "cassandra_package_limits_kept": {"skipped": True}})
-    assert dangling["created"] is False and dangling["link"] == "/srv/gone.conf"
+    assert dangling["created"] is False and dangling["link"] == "/srv/gone.conf" and dangling["dangling"] is True
+    lines = cassandra_warnings(cassandra_limits_changed(["h-n6"], {"h-n6": {"cassandra_package_limits_changed": dangling}}))
+    text = " ".join(" ".join(lines).split())
+    assert "it was a link to /srv/gone.conf, which pointed to no file" in text
+    assert "former content" not in text and "ln -sfn /srv/gone.conf" in text
     assert lost["saved"] == "" and lost["error"] == "Permission denied"
     # said at once on that node (a later stop or Ctrl-C would lose the recap), and in the recap
     now = find(update, "Say it now")

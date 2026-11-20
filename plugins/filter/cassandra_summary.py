@@ -139,8 +139,9 @@ def _outcomes(results, operation, action, check=False):
 
 def _limits_text(node, changed):
     """One node's warning of its limits file changed by the package update (changed: package_update.yml's
-    cassandra_package_limits_changed, {path, saved, created, removed, link, error}; a path alone as well) -> its
-    lines. link: the target of the link the file was (its saved content read through it), the link to put back."""
+    cassandra_package_limits_changed, {path, saved, created, removed, link, dangling, error}; a path alone as well)
+    -> its lines. link: the target of the link the file was (its saved content read through it), the link to put
+    back; dangling: that link pointed to no file (no former content)."""
     if not isinstance(changed, dict):
         changed = {"path": changed}
     path = str(changed.get("path") or "")
@@ -156,11 +157,12 @@ def _limits_text(node, changed):
         lines = ["%s: the Cassandra package update replaced %s" % (node, path),
                  "left as the package wrote it (cassandra_linux_manage: false)"]
     link = str(changed.get("link") or "")
+    dangling = bool(link and changed.get("dangling"))  # (no former content: nothing to save)
     if link:
-        lines.append("it was a link to %s" % link)
+        lines.append("it was a link to %s%s" % (link, ", which pointed to no file" if dangling else ""))
     if changed.get("saved"):
         lines.append("its former content%s: %s" % (" (read through the link)" if link else "", changed["saved"]))
-    else:
+    elif not dangling:
         lines.append("its former content was not saved (%s)" % (changed.get("error") or "not read"))
     if link:
         return lines + ["put the link back (ln -sfn %s %s) if it held the limits of the cassandra user, or %s"
