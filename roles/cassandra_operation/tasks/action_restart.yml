@@ -79,14 +79,28 @@
     - name: Note the step that failed
       ansible.builtin.set_fact:
         _cassandra_stop_word: start failed after the package update
+        _cassandra_restart_cause: >-
+          {{ ansible_failed_result | default({}) | community.cassandra.cassandra_failure_cause(ansible_failed_task.name | default('')) }}
+
+    # (a start that timed out waiting for the node to join may have left it running: said as observed)
+    - name: Look for a Cassandra JVM after the failed start
+      ansible.builtin.command:
+        argv: [pgrep, -f, org.apache.cassandra.service.CassandraDaemon]
+      register: cassandra_restart_jvm
+      changed_when: false
+      failed_when: false
+      check_mode: false
 
     - name: Stop the run on the failed start
       ansible.builtin.fail:
-        msg: "{{ [_failed, _installed, 'Cassandra left stopped.', 'WAY OUT  fix it, then resume'] | join(_nl) }}"
+        msg: "{{ [_failed, _installed, _state, 'WAY OUT  fix it, then resume'] | join(_nl) }}"
       vars:
         cassandra_output: true  # a verdict: its msg as is (ops callback)
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         _failed: >-
-          {{ inventory_hostname }}: Cassandra did not start after the update to {{ cassandra_package_version }}:
-          {{ ansible_failed_result | default({}) | community.cassandra.cassandra_failure_cause(ansible_failed_task.name | default('')) }}
+          {{ inventory_hostname }}: the start after the update to {{ cassandra_package_version }} failed:
+          {{ _cassandra_restart_cause }}
+        _state: >-
+          {{ 'A Cassandra JVM runs (its start not confirmed).' if cassandra_restart_jvm.rc | default(1) == 0
+             else 'Cassandra left stopped.' }}
         _installed: "Package installed: Cassandra {{ cassandra_package_version }}."

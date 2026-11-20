@@ -195,4 +195,7 @@
             _seeds_started: "{{ cassandra_seeds_snapshot.content | b64decode | from_json }}"
           when:
             - cassandra_seeds_snapshot.content is defined
-            - _seeds_started[_seeds_file] | default('') == cassandra_seeds_file_before.stat.checksum
+            # (as recorded, or the role's rendering of the settings it started with: written back since)
+            - >-
+              cassandra_seeds_file_before.stat.checksum in [_seeds_started[_seeds_file] | default(''),
+                                                            (_seeds_started._same_settings | default({})).get(_seeds_file, '')]

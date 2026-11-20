@@ -493,8 +493,10 @@ def cassandra_drift_sync(nodes, stops=None, command=""):
                 order.append(text)
             rows.setdefault(text, []).append(str(node.get("name")))
             continue
-        # (the unit file, or the drop-in of the package's init script, that differs from the role's: by its name)
-        files = list(node.get("files") or []) + [u for u in node.get("unit") or [] if u]
+        # (the unit file, or the drop-in of the package's init script, that differs from the role's: by its name; one
+        # apply_config writes only at the node's next restart, nothing else to do: said so, the node in sync)
+        units = [u for u in node.get("unit") or [] if u]
+        files = list(node.get("files") or []) + units
         parts = [", ".join(files)] if files else []
         if node.get("os"):
             parts.append("OS settings: %s" % ", ".join(str(i) for i in node["os"]))
@@ -503,7 +505,10 @@ def cassandra_drift_sync(nodes, stops=None, command=""):
         parts += sorted(set(str(i.get("section", "")) for i in (node.get("extras") or []) + (node.get("restart") or [])
                             if i.get("section") and not (i["section"] == "cassandra unit" and node.get("unit"))))
         todo = boolean(node.get("todo", False), strict=False) or bool(parts)
-        if todo:
+        later = units and parts == [", ".join(units)] and not boolean(node.get("todo", False), strict=False)
+        if later:
+            text = "in sync; %s written at its next restart (no effect now)" % ", ".join(units)
+        elif todo:
             off += 1
             then = THEN.get(str(node.get("then") or "none"), ("no restart",))[0]
             text = "%s; %s" % ("; ".join(parts) or "its config files", then)
@@ -512,7 +517,7 @@ def cassandra_drift_sync(nodes, stops=None, command=""):
         if text not in rows:
             order.append(text)
         rows.setdefault(text, []).append(str(node.get("name")))
-    for text in sorted(order, key=lambda t: t == "in sync"):
+    for text in sorted(order, key=lambda t: t.startswith("in sync")):
         lines.append("  %s  %s" % (out.nodes(rows[text]), text))
     if not off and not unseen and not stops:
         lines.append("  every node matches the inventory: apply_config has nothing to apply")

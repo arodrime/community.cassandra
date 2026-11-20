@@ -346,7 +346,11 @@ def test_a_unit_file_that_differs_is_named():
               "restart": [{"section": "cassandra unit"}]},
              {"name": "db2", "todo": False, "then": "none", "unit": ["zz-ansible-environment.conf"]}]
     assert cassandra_drift_sync(nodes, [], "x")[1:3] == ["  db1  cassandra.yaml, cassandra.service; then restart",
-                                                         "  db2  zz-ansible-environment.conf; no restart"]
+                                                         "  db2  in sync; zz-ansible-environment.conf written at its next"
+                                                         " restart (no effect now)"]
+    # (audit) a unit apply_config writes only at the next restart: as apply_config says it, the node in sync
+    nodes[1]["todo"] = True
+    assert cassandra_drift_sync(nodes, [], "x")[2] == "  db2  zz-ansible-environment.conf; no restart"
 
 
 def test_a_procedure_of_its_own_said_with_its_command():

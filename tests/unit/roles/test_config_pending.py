@@ -459,3 +459,15 @@ def test_an_update_of_a_file_keeps_its_rendering_only_when_given(tmp_path):
     assert out == "recorded" and got["_same_settings"] == {a: "ra2", b: "rb"}
     out, got = update(tmp_path, dict(record, _same_settings={a: "ra"}), request)
     assert "_same_settings" not in got
+
+
+def test_live_seeds_recorded_over_a_file_written_back_with_its_start_s_settings():
+    # (audit) the record has the file the start read (y1) and its rendering (r1), cassandra.yaml written back as r1:
+    # the seeds reloaded live are recorded too, else "restart pending" came back
+    rec = task("seeds_apply.yml", "Record the live seeds in it")
+    when = "{{ %s }}" % rec["when"][-1].strip()
+    path = "/etc/cassandra/conf/cassandra.yaml"
+    started = {path: "y1", "_same_settings": {path: "r1"}}
+    for before, recorded in (("y1", True), ("r1", True), ("other", False)):
+        assert render(when, {"_seeds_started": started, "_seeds_file": path,
+                             "cassandra_seeds_file_before": {"stat": {"checksum": before}}}) is recorded

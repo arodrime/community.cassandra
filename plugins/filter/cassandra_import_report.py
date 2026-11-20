@@ -1717,9 +1717,10 @@ _DORMANT_NOTES = (re.compile("^%s$" % re.escape(BRANCH_NOT_RUN_NOTE).replace(re.
 
 
 def _dormant(report):
-    """Whether a node read has lines of cassandra-env.sh with no effect that the role's stock file has otherwise
-    (_DORMANT_NOTES)."""
-    return any(p.match(note) for n in report.read for note in n.get("normalized") or [] for p in _DORMANT_NOTES)
+    """The kinds of lines of cassandra-env.sh with no effect that the role's stock file has otherwise, on a node read
+    (_DORMANT_NOTES: 0 a JMX branch not run, 1 the password file line) -> sorted [index]."""
+    return sorted(set(i for n in report.read for note in n.get("normalized") or []
+                      for i, p in enumerate(_DORMANT_NOTES) if p.match(note)))
 
 
 def _jvm_rewrites(report, self_check):
@@ -1852,17 +1853,18 @@ WORDS_USED = (
 REWRITES = "APPLY_CONFIG WILL REWRITE (no effect)"
 
 
-def _apply_config_expects(files, heap_moved, rewrites, dormant=False):
+def _apply_config_expects(files, heap_moved, rewrites, dormant=()):
     """What apply_config --check --diff shows on the nodes imported: the JVM's files it rewrites with the same
     arguments, no restart (files, _jvm_rewrites'; the heap moved among them: heap_moved; cassandra-env.sh written as
-    stock, its lines of no effect dropped or the stock ones back: dormant), the rewrites with no effect (rewrites)
+    stock, its lines of no effect dropped or the stock ones back: dormant, _dormant's), the rewrites with no effect (rewrites)
     -> text."""
     if not files:
         return "only the rewrites under %s" % REWRITES if rewrites else "every node up to date (header lines aside: a comment, no restart)"
     text = "%s rewritten, no restart (the same JVM arguments%s%s)" % (
         ", ".join(files), "; the heap moves to jvm-server.options" if heap_moved else "",
-        "; cassandra-env.sh as stock: lines of a JMX branch the nodes do not run dropped, the stock JMX password file"
-        " line back, an option of the next restart the JVM never reads" if dormant else "")
+        "; cassandra-env.sh as stock: " + ", ".join(
+            ["lines of a JMX branch the nodes do not run dropped", "the stock JMX password file line back, an option of"
+             " the next restart the JVM never reads"][i] for i in dormant) if dormant else "")
     if rewrites:
         return text + ", and the rewrites under %s" % REWRITES
     return text + ", nothing else (header lines aside: a comment, no restart)"
