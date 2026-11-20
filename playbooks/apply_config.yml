@@ -144,6 +144,10 @@
           {%-   if h in _absent -%}{%- set _ = absent.append({'name': h, 'addresses': addresses}) -%}{%- endif -%}
           {%- endfor -%}
           {{ nodes | community.cassandra.cassandra_apply_config_ring(absent, known, _status) }}
+        # the ring's tokens read and failed (not read, no node running: nothing judged)
+        _ring_unread: >-
+          {{ cassandra_apply_config_tokens is defined and cassandra_apply_config_tokens is not skipped
+             and cassandra_apply_config_tokens.ring is not defined }}
         # by ring address: the tokens each node owns
         _owned: >-
           {%- set out = {} -%}
@@ -160,7 +164,8 @@
                                     'version': v.cassandra_apply_config_version | default({}),
                                     'token': p.cassandra_initial_token | default('')
                                              | community.cassandra.cassandra_apply_config_token(
-                                                 p.live_initial_token | default(''), _owned.get(p.ring_address | default(''), []))}) -%}
+                                                 p.live_initial_token | default(''),
+                                                 none if _ring_unread | bool else _owned.get(p.ring_address | default(''), []))}) -%}
           {%- endfor -%}
           {{ out }}
 

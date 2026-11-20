@@ -111,11 +111,20 @@ def _tokens(value):
 
 def cassandra_apply_config_token(inventory, live, owned):
     """A joined node: its cassandra_initial_token in the inventory, the one of its cassandra.yaml, the tokens it owns
-    in the ring ([] unknown) -> '' when apply_config may write it, else why it is refused. Cassandra reads
+    in the ring ([]: not in it; None: the ring read and failed) -> '' when apply_config may write it, else why it is
+    refused. Cassandra reads
     initial_token at a node's first start only: writing the tokens it owns (after move_node) or nothing new is fine;
     another token would be a wrong record, and moving a node is move_node's."""
     want = _tokens(inventory)
-    if not want or want == _tokens(live) or not owned or want == _tokens(",".join(owned)):
+    if not want or want == _tokens(live):
+        return ""
+    if owned is None:  # the ring read and failed: not known to be the token it owns
+        now = ",".join(_tokens(live))
+        return ("cassandra_initial_token %s is not the one of its cassandra.yaml (%s), and the ring's tokens could not be"
+                " read to tell whether it owns it: Cassandra reads initial_token at a node's first start only. Run"
+                " again once nodetool ring answers, or set cassandra_initial_token to %s"
+                % (",".join(want), now or "none", now or "''"))
+    if not owned or want == _tokens(",".join(owned)):
         return ""
     shown = ", ".join(owned) if len(owned) <= 3 else "%d tokens" % len(owned)
     return ("cassandra_initial_token %s is not the token it owns in the ring (%s): Cassandra reads initial_token at a"

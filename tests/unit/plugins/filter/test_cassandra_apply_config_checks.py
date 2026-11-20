@@ -112,13 +112,15 @@ def test_the_ring_against_the_inventory():
     ("-922", "-922", ["100"], False),  # nothing written (import: the file's value)
     ("100", "-922", ["100"], False),  # the record of the token it owns (after move_node)
     ("200", "-922", ["100"], True),  # another token: move_node's
-    ("200", "-922", [], False),  # the ring not read: nothing judged
+    ("200", "-922", [], False),  # not in the ring: nothing judged
+    ("200", "-922", None, True),  # the ring read and failed: not known, refused
+    ("-922", "-922", None, False),
 ])
 def test_a_joined_node_s_token(inventory, live, owned, refused):
     why = cassandra_apply_config_token(inventory, live, owned)
     assert bool(why) is refused
     if refused:
-        assert "move_node" in why and "first start only" in why
+        assert ("move_node" in why or "could not be read" in why) and "first start only" in why
 
 
 LIMITS = """Limit                     Soft Limit           Hard Limit           Units
