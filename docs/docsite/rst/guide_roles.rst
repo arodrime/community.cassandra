@@ -995,7 +995,8 @@ Each run writes its report on the controller, next to the import's ``report.txt`
 version and commit, when the run started and ended, a real run's plan (``DIFFERENCES FOUND``, ``WILL DO``, the checks'
 notes), its recap (what each node got, every warning in full), and when each node's turn started and how it ended;
 a run that stopped at a node has its stop as said on the screen instead of the recap. ``--check`` writes its recap
-(the differences, what a real run would do, the warnings). The last 20 reports are kept
+(the differences, what a real run would do, the warnings). Secrets are masked in it, as on the screen, and the
+file is written mode ``0600`` (its owner only). The last 20 reports are kept
 (``cassandra_run_report_keep``), the oldest removed after a run. A report that cannot be written is said in a
 warning; the run goes on.
 
