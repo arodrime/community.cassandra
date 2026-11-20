@@ -644,8 +644,6 @@
               + _seen.get('cassandra_firewall', {}).get('items', []) | map('combine', {'section': 'Firewall'}) | list) }}
         _java: "{{ cassandra_java_plan_todo | default(false) | bool and cassandra_jvm.pid is defined }}"
         _release: "{{ (cassandra_apply_config_version | default({})).kind | default('') == 'release' }}"
-        # the release it runs (a node stopped: the one it last ran, as the ring knows it) and the package installed
-        # when that is another one (updated by a run that stopped before its start)
         # a secret in the environment the unit (or the drop-in of the package's init script) is written with: its file
         # world-readable, systemctl show prints it (cassandra_service says it too, when it writes it)
         # the storage_compatibility_mode it runs not read over CQL (storage_mode_read.yml said it, its lines): in the
@@ -655,10 +653,11 @@
         _unit_secret: >-
           {{ cassandra_service_environment | default({}) | community.cassandra.cassandra_unit_secret_warning(
                '/etc/systemd/system/cassandra.service' if cassandra_service_start | default('unit') == 'unit'
-               else _cassandra_service_environment_dropin
-                    | default('/etc/systemd/system/cassandra.service.d/zz-ansible-environment.conf'))
+               else '/etc/systemd/system/cassandra.service.d/zz-ansible-environment.conf')
              if cassandra_service_unit_manage | default(true) | bool
                 and cassandra_service_start | default('unit') in ['unit', 'package_script'] else '' }}
+        # the release it runs (a node stopped: the one it last ran, as the ring knows it) and the package installed
+        # when that is another one (updated by a run that stopped before its start)
         _release_installed: "{{ (cassandra_apply_config_version | default({})).installed | default('') }}"
         _release_before: >-
           {{ cassandra_apply_config_version.running

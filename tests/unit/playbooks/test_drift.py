@@ -269,7 +269,6 @@ def test_in_sync_names_a_unit_that_differs_and_its_command_reads_as_the_others()
     hostvars = {"db1": {"cassandra_apply_config_todo": True, "cassandra_service_unit_compare": {"changed": True},
                         "cassandra_service_dropin_compare": {"skipped": True, "changed": False}},
                 "db2": {"cassandra_apply_config_todo": False, "cassandra_service_unit_compare": {"skipped": True},
-                        "cassandra_service_dropin_compare": {"changed": True},
-                        "_cassandra_service_environment_dropin": "/etc/systemd/system/cassandra.service.d/zz.conf"}}
+                        "cassandra_service_dropin_compare": {"changed": True}}}
     sync = render(play["vars"]["_sync"], dict(trust(play["vars"]), hostvars=hostvars, _nodes=["db1", "db2"]))
-    assert [n["unit"] for n in sync] == [["cassandra.service"], ["zz.conf"]]
+    assert [n["unit"] for n in sync] == [["cassandra.service"], ["zz-ansible-environment.conf"]]

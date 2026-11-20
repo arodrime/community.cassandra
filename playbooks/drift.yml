@@ -148,7 +148,7 @@
                                 'restart': v.cassandra_apply_config_restart_items | default([]),
                                 'unit': (['cassandra.service'] if v.cassandra_service_unit_compare | default({}) is changed
                                          else [])
-                                        + ([v._cassandra_service_environment_dropin | default('') | basename]
+                                        + (['zz-ansible-environment.conf']
                                            if v.cassandra_service_dropin_compare | default({}) is changed else [])}) -%}
       {%- endfor -%}
       {{ out }}

@@ -46,7 +46,7 @@ def pending(snapshot, unit_sum="u1", unit_ctime=100, jvm_start=50, dropin=None):
                                        if snapshot is not None else {}),
         "cassandra_jvm": {"pid": "123", "start": str(jvm_start)},
     }
-    for name in ("_record", "_record_current", "_started", "_units", "_files", "_newer"):
+    for name in ("_record", "_record_current", "_started", "_settings", "_units", "_files", "_newer"):
         variables[name] = trust_as_template(NOTE["vars"][name])
     templar = Templar(loader=DataLoader(), variables=variables)
     return (templar.template(trust_as_template(NOTE["vars"]["_changed"])),
