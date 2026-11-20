@@ -15,7 +15,7 @@
     - name: Read the ring from this node
       community.cassandra.cassandra_status:
         poll: 1  # once: cluster_health.yml reads again while it waits
-        down: "{{ _down_ok | length }}"
+        down: "{{ _down_ok | length + cassandra_service_health_any_ok | default([]) | length }}"  # (any_ok: any state)
       register: cassandra_health_self_job
       async: "{{ _async }}"
       poll: 0
@@ -56,7 +56,7 @@
     - name: Read the ring from {{ _cassandra_health_peer }}
       community.cassandra.cassandra_status:
         poll: 1
-        down: "{{ _down_ok | length }}"
+        down: "{{ _down_ok | length + cassandra_service_health_any_ok | default([]) | length }}"  # (any_ok: any state)
       register: cassandra_health_peer_read
       delegate_to: "{{ _cassandra_health_peer }}"
       run_once: "{{ _batch }}"

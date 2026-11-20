@@ -142,10 +142,9 @@ def _same_sources(a, b):
     return norm(a) == norm(b)
 
 
-def cassandra_ping_command(names, inventory=None, default_inventory=None, cwd=None, hosts=None):
+def cassandra_ping_command(names, inventory=None, default_inventory=None, cwd=None):
     """Hosts (names), the run's inventory -> the command that shows all of Ansible's error reaching them: "ansible -i
-    inv.yml node3 -m ping -vvv" (no -i when the run's inventory is ansible.cfg's, default_inventory). hosts: the
-    run's cluster group, as cassandra_command takes it (the same arguments): not needed here."""
+    inv.yml node3 -m ping -vvv" (no -i when the run's inventory is ansible.cfg's, default_inventory)."""
     names = [names] if isinstance(names, str) else [str(h) for h in names or []]
     if default_inventory and _same_sources(inventory, default_inventory):
         inventory = None

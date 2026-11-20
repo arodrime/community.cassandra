@@ -20,6 +20,8 @@
 # cassandra_service_health_leaving_ok: addresses expected leaving (UL: a decommission to wait for).
 # cassandra_service_health_any_ok: addresses not judged, whatever their state
 # (UN, DN, UJ, UL, UM...; not waited for).
+# _cassandra_health_prefer_peers: hosts read from first, when they may be;
+# _cassandra_health_why: lines the stop says after the problems (why they are problems).
 # cassandra_service_health_report_only: true only sets cassandra_health_problems
 # and cassandra_health_findings (no failure; it waits as above unless told not to).
 # cassandra_service_health_batch: true for the hosts of a play checked at once:
@@ -51,9 +53,12 @@
       {%-   if (hostvars[h]._cassandra_preflight | default({})).ring_address | default('') in down -%}{%- set _ = out.append(h) -%}{%- endif -%}
       {%- endfor -%}
       {{ out }}
-    _candidates: >-
+    _allowed: >-
       {{ _nodes | reject('in', (query('ansible.builtin.inventory_hostnames', _not_peers) if _not_peers | length > 0 else []))
          | reject('in', _down_hosts) | list }}
+    _prefer: "{{ _cassandra_health_prefer_peers | default([]) }}"
+    # the hosts allowed, the ones preferred first
+    _candidates: "{{ _allowed | select('in', _prefer) | list + _allowed | reject('in', _prefer) | list }}"
 
 # Each read is a nodetool run (a JVM, seconds each): the ones on this node run at once (async), then are collected
 # (cluster_health_read.yml). Read once; a real run reads again while a node is down or a port of this node does
@@ -162,6 +167,7 @@
          + (['Not counted, marked cassandra_node_state: absent: ' ~ _absent | join(', ')
              ~ '. Still in the ring? The playbook topology removes them.']
             if _absent and cassandra_health_problems | select('search', '^the ring has ') | list else [])
+         + _cassandra_health_why | default([])
          + (['WAY OUT  bring ' ~ _down | join(', ') ~ ' back to UN (' ~ ('its' if _down | length == 1 else 'their')
              ~ ' host and/or Cassandra), then ' ~ _again] + _lost
             if _down else ['WAY OUT  fix it (the lines above say what), then ' ~ _again]) }}

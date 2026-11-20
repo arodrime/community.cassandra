@@ -19,13 +19,13 @@ except ImportError:
 PATH = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_operation", "tasks", "cluster_health.yml")
 
 
-def said(check, problems):
+def said(check, problems, **more):
     with open(PATH, encoding="utf-8") as f:
         stop = next(t for t in yaml.safe_load(f) if t.get("name") == "Stop on an unhealthy cluster")
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in stop["vars"].items() if k != "_absent")
     variables.update(_absent=[], ansible_check_mode=check, cassandra_health_problems=problems,
                      _cassandra_run_command_args={"inventory": ["/inv/hosts.yml"], "default_inventory": "/etc/ansible/hosts",
-                                                  "hosts": "prod", "cwd": "/inv"})
+                                                  "hosts": "prod", "cwd": "/inv"}, **more)
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(stop["ansible.builtin.fail"]["msg"]))
 
 
@@ -35,6 +35,15 @@ def test_the_way_out_under_check():
     assert said(True, down)[1] == "WAY OUT  bring n4 back to UN (its host and/or Cassandra), then check again"
     assert said(True, ["the schema differs"])[1] == "WAY OUT  fix it (the lines above say what), then check again"
     assert said(False, ["the schema differs"])[1] == "WAY OUT  fix it (the lines above say what), then resume"
+
+
+def test_why_a_problem_is_one_said_before_the_way_out():
+    # start_rack: why a node the ring puts outside the rack is judged as one of it (_cassandra_health_why)
+    why = ["10.0.0.4 (dc1, r3): no inventory host has this address,", "  so it is judged as a node of rack r2"]
+    lines = said(False, ["10.0.0.4 (r3) is DN, seen from n1"], _cassandra_health_why=why)
+    assert lines[:4] == ["10.0.0.4 (r3) is DN, seen from n1"] + why + [
+        "WAY OUT  bring 10.0.0.4 back to UN (its host and/or Cassandra), then resume"]
+    assert said(False, ["x"])[1].startswith("WAY OUT")  # (none: as before)
 
 
 def test_a_node_lost_for_good_gets_full_commands():

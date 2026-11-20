@@ -1,11 +1,16 @@
 bugfixes:
   - >-
     start_rack - the check after the start runs from a node of the rack and succeeds once every node of the rack is
-    UN. A node of the rack is every node the inventory or the ring puts in it, under ``--limit`` too, and a node
-    of the ring no host is known by; one not UN or not reached over ssh still stops the run. A node outside the
-    rack seen not UN (down, joining, leaving, moving or any other state) by every node the check reads from, or
-    not reached over ssh, is no longer waited for and no longer fails the run (an unreachable host outside the
-    rack is counted ignored, the exit code stays 0, under ``--check`` too): a warning lists it (node, state as
-    ``nodetool status`` shows it, ``not reached over ssh``), then the ``health_check`` command. Streams on the
-    node of the rack the check runs from, a ring of another size than the inventory, or ``nodetool status``
-    failing on a node the check reads from still stop the run.
+    UN. A node of the rack is every node the inventory or the ring puts in it, under ``--limit`` too, a node at an
+    address a node of the rack gives, and a node of the ring no host is known by unless the ring puts it in another
+    rack and every node of the rack is in the ring (the stop says why, and to give that host its address). One not
+    UN or not reached over ssh still stops the run.
+  - >-
+    start_rack - a node outside the rack seen not UN (down, joining, leaving, moving or any other state) by a node
+    outside the rack up for long, not reached over ssh, or whose ``nodetool status`` fails, is no longer waited for
+    and no longer fails the run (an unreachable host outside the rack is counted ignored, the exit code stays 0,
+    under ``--check`` too): a warning lists it (node, state as ``nodetool status`` shows it, ``not reached over
+    ssh``, ``nodetool status failed``), then the ``health_check`` command. The ssh probe runs without become,
+    whatever the inventory's ``ansible_become``. Streams on the node of the rack the check runs from, a ring of
+    another size than the inventory, or ``nodetool status`` failing on that node or on the node of the second read
+    (another node of the rack first) still stop the run.

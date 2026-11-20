@@ -738,12 +738,18 @@ when the ring (``nodetool status``) does not have the datacenter, or a node of t
 names them (``cassandra_dc``, ``cassandra_rack``). With RF 2 it warns that
 (LOCAL_)QUORUM fails while the rack is down. ``start_rack`` starts the rack again and checks the cluster from a node
 of the rack: it stops when a node of the rack is not UN or not reached over ssh. A node of the rack is every node
-the inventory or the ring puts in it, under ``--limit`` too, and a node of the ring no host is known by. A node
-outside the rack seen not UN (down, joining, leaving, moving...) by every node the check reads from, or not reached
-over ssh, is a warning, not waited for, and the run succeeds (``health_check`` checks the cluster). As in any
-cluster check, the run still stops on streams on the node of the rack it checks from (a bootstrap elsewhere
-streaming to it), on a ring of another size than the inventory, and on ``nodetool status`` failing on a node it
-reads from. Repair the rack's nodes if they were down longer than ``max_hint_window``. It first checks the cluster
+the inventory or the ring puts in it, under ``--limit`` too, a node at an address a node of the rack gives in its
+variables, and a node of the ring no host is known by, unless the ring puts it in another rack and every node of
+the rack is in the ring at an address it gives (judged so while the ring puts it in another rack, the stop says
+why, and to give its host that address: ``cassandra_listen_address`` or ``ansible_host``). The ring is read from that node and from a node outside the
+rack, up for long. A node outside the rack that this second node sees not UN (down, joining, leaving, moving...),
+not reached over ssh, or whose ``nodetool status`` fails, is a warning, not waited for, and the run succeeds
+(``health_check`` checks the cluster); one only the node of the rack, just started, sees not UN is waited for
+(when the second read fails, the node of the rack's view alone counts). As in any cluster check, the run still
+stops on streams on the node of the rack it checks from (a bootstrap elsewhere streaming to it), on a ring of
+another size than the inventory, and on ``nodetool status`` failing on the node of the rack it checks from or, when
+it reads the ring again, on the node it reads it from then (another node of the rack first). Repair the rack's
+nodes if they were down longer than ``max_hint_window``. It first checks the cluster
 name on a node of another rack; when none answers (or the rack is the whole cluster) and ``cassandra_cluster_name``
 is the role default ``Test Cluster``, it stops (``-e cassandra_accept_default_identity=true`` goes on).
 

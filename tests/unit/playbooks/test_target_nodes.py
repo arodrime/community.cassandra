@@ -179,6 +179,9 @@ HEALTH = load("roles", "cassandra_operation", "tasks", "cluster_health.yml")[0]
     ({"cassandra_target_nodes": "n2"}, "n3"),  # a node added or removed is not the peer
     ({"cassandra_target_nodes": "10.0.0.4", "_cassandra_health_not_peers": ""}, "n2"),  # remove_dead_node
     ({"_cassandra_health_not_peers": "n2,n3"}, "n1"),  # remove_datacenter: its group; else this node
+    # start_rack's second read: another node of the rack first, when it may be read from
+    ({"_cassandra_health_prefer_peers": ["n1", "n3"]}, "n3"),
+    ({"_cassandra_health_prefer_peers": ["n3"], "_cassandra_health_not_peers": "n3"}, "n2"),
 ])
 def test_health_peer_leaves_out_the_target_nodes(extra, peer):
     task = HEALTH["ansible.builtin.set_fact"]

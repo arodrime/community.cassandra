@@ -187,6 +187,8 @@
       {%-   endif -%}
       {%- endfor -%}
       {{ out }}
+    # the hosts of the cluster out of the play (--limit): not probed, not read from
+    _cassandra_start_rack_not_probed: "{{ query('community.cassandra.cassandra_nodes') | reject('in', ansible_play_hosts_all) | list }}"
     # the run's inventory and cluster, for the commands said
     _cassandra_start_rack_command_args:
       inventory: "{{ ansible_inventory_sources }}"
@@ -220,19 +222,22 @@
         cassandra_output: true
 
     # a host not reached is not an error here: ignored, the exit code stays 0 (under --check too: ping changes
-    # nothing); without root (only ssh is probed: a host whose sudo fails is still reached)
+    # nothing); without root, whatever the inventory's ansible_become (only ssh is probed: a host whose sudo fails
+    # is still reached)
     - name: Reach each node over ssh
       ansible.builtin.ping:
       register: _cassandra_start_rack_ssh
       become: false
       ignore_unreachable: true
+      vars:
+        ansible_become: false  # an inventory ansible_become beats the become keyword
 
     - name: Stop when a node of the rack is not reached over ssh
       ansible.builtin.fail:
         msg:
           - "{{ inventory_hostname }} (rack {{ cassandra_target_rack }}) is not reached over ssh"
           - "all of the error:"
-          - "  {{ inventory_hostname | community.cassandra.cassandra_ping_command(**_cassandra_start_rack_command_args) }}"
+          - "  {{ inventory_hostname | community.cassandra.cassandra_ping_command(_args.inventory, _args.default_inventory, _args.cwd) }}"
           - "WAY OUT  reach it, then run start_rack again"
       any_errors_fatal: true  # the rack is not checked without it
       when:
@@ -240,6 +245,7 @@
         - inventory_hostname in _cassandra_start_rack_members
       vars:
         cassandra_output: true
+        _args: "{{ _cassandra_start_rack_command_args }}"
 
     # said in the warning below; nothing more is asked of it
     - name: Leave out a node outside the rack not reached over ssh
@@ -250,9 +256,11 @@
       ansible.builtin.setup:
         gather_subset: [network]
       become: false  # (no root needed)
+      vars:
+        ansible_become: false  # an inventory ansible_become beats the become keyword
 
     # from a node of the rack (just started: up), read once; its second view from a node outside the rack when
-    # there is one (up for long: its view of the others settled)
+    # there is one (up for long: its view of the others settled), reached over ssh by the probe
     - name: Read the cluster once from a node of the rack
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation
@@ -260,34 +268,68 @@
       vars:
         cassandra_service_health_report_only: true  # cassandra_health_findings only
         _cassandra_health_no_wait: true
-        _cassandra_health_not_peers: "{{ (_cassandra_start_rack_members + _cassandra_start_rack_unreached) | join(':') }}"
+        _cassandra_health_not_peers: >-
+          {{ (_cassandra_start_rack_members + _cassandra_start_rack_unreached + _cassandra_start_rack_not_probed)
+             | join(',') }}
       when:
         - inventory_hostname == _cassandra_start_rack_checker
         - not ansible_check_mode  # the rack was not started
 
-    # the nodes seen not UN that are surely outside the rack (by their inventory name and by the ring's dc and
-    # rack; a node no host is known by: one of the rack), seen so by every view read (else waited for below)
+    # the nodes seen not UN that are surely outside the rack (by their inventory name and address, the ring's dc
+    # and rack; a node no host is known by: one of the rack unless every node of the rack is in the ring), seen so
+    # by the node outside the rack read from (else by this one alone: waited for below); and the nodes outside the
+    # rack whose nodetool status failed
     - name: Note the nodes outside the rack not UN
       ansible.builtin.set_fact:
-        _cassandra_start_rack_outside: >-
-          {{ cassandra_health_findings | community.cassandra.cassandra_rack_outside(_cassandra_start_rack_members,
-               cassandra_target_dc, cassandra_target_rack, [inventory_hostname, _cassandra_health_peer]) }}
+        _cassandra_start_rack_outside: "{{ cassandra_health_findings | community.cassandra.cassandra_rack_outside(**_judged) }}"
+        _cassandra_start_rack_unknown: "{{ cassandra_health_findings | community.cassandra.cassandra_rack_unknown_lines(**_judged) }}"
+        _cassandra_start_rack_failed: >-
+          {{ cassandra_health_findings | selectattr('kind', 'equalto', 'nodetool') | map(attribute='on')
+             | reject('in', _cassandra_start_rack_members) | unique | list }}
       when:
         - inventory_hostname == _cassandra_start_rack_checker
         - not ansible_check_mode
+      vars:
+        _judged:
+          members: "{{ _cassandra_start_rack_members }}"
+          dc: "{{ cassandra_target_dc }}"
+          rack: "{{ cassandra_target_rack }}"
+          checker: "{{ inventory_hostname }}"
+          peer: "{{ _cassandra_health_peer }}"
+          addresses: "{{ _cassandra_start_rack_members | community.cassandra.cassandra_host_addresses(hostvars) }}"
+          reads: "{{ [cassandra_health_self | default({}), cassandra_health_peer | default({})] }}"
+
+    # said before the wait too: why a node the ring puts outside the rack is waited for
+    - name: Say the nodes judged as the rack's for want of a host known by their address
+      ansible.builtin.debug:
+        msg: "{{ _cassandra_start_rack_unknown }}"
+      when:
+        - inventory_hostname == _cassandra_start_rack_checker
+        - not ansible_check_mode
+        - _cassandra_start_rack_unknown | length > 0
+      vars:
+        cassandra_output: true
 
     # the rack's nodes waited for until UN (else the run stops, the way out said); the nodes outside the rack
-    # noted above not judged, in any state, and not read from (nor a node whose nodetool failed)
+    # noted above not judged, in any state; read again from another node of the rack when there is one, else
+    # from a node outside it; not from a node seen down, not reached or not probed, nor one whose nodetool failed
     - name: Check the rack's nodes and the rest of the cluster
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation
         tasks_from: cluster_health.yml
       vars:
         cassandra_service_health_any_ok: "{{ _cassandra_start_rack_outside | map(attribute='address') | list }}"
+        _cassandra_health_why: "{{ _cassandra_start_rack_unknown }}"  # (said in the stop)
+        _cassandra_health_prefer_peers: "{{ _cassandra_start_rack_members }}"
         _cassandra_health_not_peers: >-
-          {{ (_cassandra_start_rack_outside | map(attribute='name') | select | list + _cassandra_start_rack_unreached
-              + cassandra_health_findings | selectattr('kind', 'equalto', 'nodetool') | map(attribute='on') | list)
-             | unique | join(':') }}
+          {{ (_outside + _seen_down + _failed + _cassandra_start_rack_unreached + _cassandra_start_rack_not_probed)
+             | unique | join(',') }}
+        # (by their inventory name)
+        _outside: "{{ _cassandra_start_rack_outside | map(attribute='name') | select | list }}"
+        _seen_down: >-
+          {{ cassandra_health_findings | selectattr('kind', 'equalto', 'state') | selectattr('state', 'match', 'D')
+             | map(attribute='name') | select | list }}
+        _failed: "{{ cassandra_health_findings | selectattr('kind', 'equalto', 'nodetool') | map(attribute='on') | list }}"
       when:
         - inventory_hostname == _cassandra_start_rack_checker
         - not ansible_check_mode
@@ -298,10 +340,11 @@
         msg: >-
           {{ _cassandra_start_rack_outside | community.cassandra.cassandra_rack_outside_lines(
                _cassandra_start_rack_unreached, cassandra_target_dc, cassandra_target_rack,
-               'health_check' | community.cassandra.cassandra_command(**_cassandra_start_rack_command_args)) }}
+               'health_check' | community.cassandra.cassandra_command(**_cassandra_start_rack_command_args),
+               _cassandra_start_rack_failed) }}
       when:
         - inventory_hostname == _cassandra_start_rack_checker
         - not ansible_check_mode
-        - _cassandra_start_rack_outside | length > 0 or _cassandra_start_rack_unreached | length > 0
+        - (_cassandra_start_rack_outside + _cassandra_start_rack_unreached + _cassandra_start_rack_failed) | length > 0
       vars:
         cassandra_output: true

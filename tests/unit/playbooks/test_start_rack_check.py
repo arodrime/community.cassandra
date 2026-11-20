@@ -5,9 +5,10 @@ __metaclass__ = type
 # a node outside the rack not UN (down, joining, leaving, moving...) or not
 # reached over ssh is said in a warning, not waited for, and does not stop the
 # run. A node that may be of the rack (the inventory, the ring, or no host known
-# by its address) is judged as one. The expressions are read from the playbook,
-# rendered by Ansible, with the findings cassandra_health_findings gives; the
-# ssh probe is run by ansible-playbook on local hosts and one not reached.
+# by its address, unless every node of the rack is in the ring) is judged as one.
+# The expressions are read from the playbook, rendered by Ansible, with the
+# findings cassandra_health_findings gives; the ssh probe is run by
+# ansible-playbook on local hosts and one not reached.
 
 import os
 import subprocess
@@ -54,6 +55,11 @@ OK = dict(gossip={"is_up": True}, binary={"is_up": True}, netstats={"streaming":
 COMMAND_ARGS = {"inventory": ["/inv/hosts.yml"], "default_inventory": "/etc/ansible/hosts", "hosts": "", "cwd": "/inv"}
 
 
+def load_tasks(*path):
+    with open(os.path.join(TOP, *path), encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
 def render(template, **variables):
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
@@ -82,23 +88,49 @@ def members(groups=None, hostvars=None):
                   groups=GROUPS if groups is None else groups, cassandra_target_dc="dc1", cassandra_target_rack="r2")
 
 
-def check(unreached=(), peer=None, then=None, names=None, groups=None, racks=None, **states):
-    """the first read (peer: n1's ring, when it differs), the nodes outside the rack noted, the check again with
-    them not judged (when the first read found a problem; then: the ring read then, else the same) -> (the
-    problems that stop the run, the lines said or None)"""
-    read = ring(racks, **states)
-    first = findings(read, peer, names)
-    variables = dict(groups=GROUPS if groups is None else groups, cassandra_health_findings=first,
+def with_addresses(names):
+    """the hostvars of the nodes, each with the address names gives it (its ansible_host)"""
+    hostvars = dict((n, dict(v)) for n, v in HOSTVARS.items())
+    for address, name in names.items():
+        hostvars[name].setdefault("ansible_host", address)
+    return hostvars
+
+
+def noted(read, peer=None, names=None, unreached=(), groups=None, hostvars=None):
+    """the variables after the first read (peer: n1's result, when it differs) and the note of the nodes outside
+    the rack"""
+    names = ADDRESSES if names is None else names
+    variables = dict(groups=GROUPS if groups is None else groups, cassandra_health_findings=findings(read, peer, names),
                      cassandra_target_rack="r2", cassandra_target_dc="dc1", inventory_hostname="n2",
                      _cassandra_health_peer="n1", _cassandra_start_rack_unreached=list(unreached),
-                     _cassandra_start_rack_members=members(groups),
-                     _cassandra_start_rack_command_args=COMMAND_ARGS)
-    outside = render(TASKS[NOTE]["ansible.builtin.set_fact"]["_cassandra_start_rack_outside"], **variables)
-    variables["_cassandra_start_rack_outside"] = outside
+                     _cassandra_start_rack_members=members(groups), _cassandra_start_rack_not_probed=[],
+                     _cassandra_start_rack_command_args=COMMAND_ARGS,
+                     hostvars=with_addresses(names) if hostvars is None else hostvars,
+                     cassandra_health_self=read, cassandra_health_peer=peer or read)
+    variables["_judged"] = dict((k, render(v, **variables)) for k, v in TASKS[NOTE]["vars"]["_judged"].items())
+    for fact, template in TASKS[NOTE]["ansible.builtin.set_fact"].items():
+        variables[fact] = render(template, **variables)
+    return variables
+
+
+def check_var(name, variables):
+    """a variable of the check again, its parts rendered first"""
+    parts = dict((k, render(v, **variables)) for k, v in TASKS[CHECK]["vars"].items() if k in ("_outside", "_seen_down", "_failed"))
+    return render(TASKS[CHECK]["vars"][name], **dict(variables, **parts))
+
+
+def check(unreached=(), peer=None, then=None, names=None, groups=None, racks=None, hostvars=None, **states):
+    """the first read (peer: n1's result, when it differs), the nodes outside the rack noted, the check again with
+    them not judged (when the first read found a problem; then: the ring read then, else the same) -> (the
+    problems that stop the run, then the lines that say why (the stop's), the lines said or None)"""
+    read = ring(racks, **states)
+    variables = noted(read, peer, names, unreached, groups, hostvars)
     problems = []
-    if cassandra_health_sentences(first):
+    if cassandra_health_sentences(variables["cassandra_health_findings"]):
         any_ok = render(TASKS[CHECK]["vars"]["cassandra_service_health_any_ok"], **variables)
         problems = cassandra_health_sentences(findings(then or read, then or peer, names, any_ok=any_ok))
+        if problems:
+            problems += render(TASKS[CHECK]["vars"]["_cassandra_health_why"], **variables)
     say = TASKS[SAY]
     if problems or not all(render("{{ %s }}" % w, ansible_check_mode=False, **variables) for w in say["when"][1:]):
         return problems, None
@@ -163,14 +195,75 @@ def test_a_node_of_the_rack_not_un_stops_the_run():
         assert problems and all(p.startswith("n2 ") for p in problems)
 
 
+WHY = ["10.0.0.%s (dc1, %s): no inventory host has this address,", "  so it is judged as a node of rack r2",
+       "if it is outside rack r2: give its host this address",
+       "  (cassandra_listen_address or ansible_host), then run start_rack again"]
+
+
 def test_a_node_no_host_is_known_by_is_one_of_the_rack():
     # n3 of the rack listens on an address no host has (another NIC): its finding has no name; it is still
-    # judged as a node of the rack, here in another rack as the ring says, and stops the run
+    # judged as a node of the rack, here in another rack as the ring says, and stops the run, saying why
     names = dict((a, n) for a, n in ADDRESSES.items() if n != "n3")
-    for racks in ({}, {"n3": "r9"}):
-        problems, said = check(names=names, racks=racks, n3="DN")
-        assert problems == ["10.0.0.3 (%s) is DN, seen from n1 and n2" % racks.get("n3", "r2")]
-        assert said is None
+    problems, said = check(names=names, n3="DN")
+    assert (problems, said) == (["10.0.0.3 (r2) is DN, seen from n1 and n2"], None)
+    problems, said = check(names=names, racks={"n3": "r9"}, n3="DN")
+    assert problems == ["10.0.0.3 (r9) is DN, seen from n1 and n2", WHY[0] % (3, "r9")] + WHY[1:]
+    assert said is None and all(len(line) <= 79 for line in problems)
+    # said before the wait too
+    variables = noted(ring({"n3": "r9"}, n3="DN"), names=names)
+    say = TASKS["Say the nodes judged as the rack's for want of a host known by their address"]
+    assert render(say["ansible.builtin.debug"]["msg"], **variables) == [WHY[0] % (3, "r9")] + WHY[1:]
+    assert all(render("{{ %s }}" % w, ansible_check_mode=False, **variables) for w in say["when"][1:])
+    assert NAMES.index(NOTE) < NAMES.index(say["name"]) < NAMES.index(CHECK)
+    assert say["vars"]["cassandra_output"] is True
+    # n3 now gives its address: n3 found, the rest as before
+    assert check(racks={"n3": "r9"}, n3="DN")[0] == ["n3 (10.0.0.3, r9) is DN, seen from n1 and n2"]
+
+
+def test_a_node_outside_the_rack_no_host_is_known_by_is_a_warning_when_every_rack_node_is_in_the_ring():
+    # n4 of r3 is down and not reached over ssh, its address from its facts (none): its finding has no name; the
+    # ring puts it in r3 and n2, n3 (the rack) are in the ring at their addresses: surely outside, a warning
+    names = dict((a, n) for a, n in ADDRESSES.items() if n != "n4")
+    problems, said = check(names=names, unreached=["n4"], n4="DN")
+    assert problems == []
+    assert said[1:4] == ["WARNING  outside the rack, not waited for:", "  10.0.0.4  DN",
+                         "  n4        not reached over ssh"]
+    # a node of the rack not in the ring at an address it gives (n3: none known): 10.0.0.4 may be n3, judged
+    # as one of the rack, why said
+    names = dict((a, n) for a, n in ADDRESSES.items() if n not in ("n3", "n4"))
+    problems, said = check(names=names, unreached=["n4"], n4="DN")
+    assert problems == ["10.0.0.4 (r3) is DN, seen from n1 and n2", WHY[0] % (4, "r3")] + WHY[1:]
+    assert said is None
+
+
+def test_a_node_at_an_address_a_node_of_the_rack_gives_is_one_of_the_rack():
+    # n3 (the rack) is in r9 for the ring and DN; n4 (outside) gives n3's address too (a stale ansible_host),
+    # first: the finding is named n4; n3 gives that address: judged as a node of the rack, it stops the run
+    names = dict(ADDRESSES, **{"10.0.0.3": "n4"})
+    hostvars = with_addresses(ADDRESSES)
+    problems, said = check(names=names, racks={"n3": "r9"}, hostvars=hostvars, n3="DN")
+    assert problems == ["n4 (10.0.0.3, r9) is DN, seen from n1 and n2"]
+    assert said is None
+
+
+def test_a_node_outside_the_rack_the_settled_view_sees_not_un_is_a_warning():
+    # n1 (outside the rack, up for long) sees n4 DN, n2 (just started) sees it UN: a partition between n1 and
+    # n4, outside the rack: a warning, not waited for
+    problems, said = check(peer=ring(n4="DN"))
+    assert problems == []
+    assert said[1:3] == ["WARNING  outside the rack, not waited for:", "  n4  DN"]
+
+
+def test_a_reader_whose_nodetool_failed_does_not_count():
+    # n1's nodetool status fails: n2's view alone; n4 seen DN by it is outside the rack: a warning, n1's failure
+    # said in it; the check again does not read from n1
+    failed = {"msg": "nodetool gets no answer from JMX on 127.0.0.1 (connection refused): x"}
+    problems, said = check(peer=failed, then=ring(n4="DN"), n4="DN")
+    assert problems == []
+    assert said[1:4] == ["WARNING  outside the rack, not waited for:", "  n4  DN",
+                         "  n1  nodetool status failed"]
+    variables = noted(ring(n4="DN"), peer=failed)
+    assert check_var("_cassandra_health_not_peers", variables) == "n4,n1"
 
 
 def test_a_node_the_ring_puts_in_the_rack_is_one_of_the_rack():
@@ -199,18 +292,46 @@ def test_a_healthy_cluster_reads_once_and_says_nothing():
 
 
 def test_the_nodes_read_from():
-    # the first read's second view: a node outside the rack (up for long), not one not reached
+    # the first read's second view: a node outside the rack (up for long), not one not reached, nor one out of
+    # the play (--limit: not probed)
     assert render(TASKS[READ]["vars"]["_cassandra_health_not_peers"], _cassandra_start_rack_members=["n2", "n3"],
-                  _cassandra_start_rack_unreached=["n5"]) == "n2:n3:n5"
-    # the check again: not from a node outside the rack noted, nor one not reached, nor one whose nodetool failed
-    read = ring(n1="DN", n4="UL")
-    first = findings(read) + [{"kind": "nodetool", "on": "n6", "error": "x", "text": "x"}]
-    outside = render(TASKS[NOTE]["ansible.builtin.set_fact"]["_cassandra_start_rack_outside"],
-                     cassandra_health_findings=first, _cassandra_start_rack_members=["n2", "n3"],
-                     cassandra_target_dc="dc1", cassandra_target_rack="r2", inventory_hostname="n2",
-                     _cassandra_health_peer="n1")
-    assert render(TASKS[CHECK]["vars"]["_cassandra_health_not_peers"], _cassandra_start_rack_outside=outside,
-                  cassandra_health_findings=first, _cassandra_start_rack_unreached=["n5", "n4"]) == "n1:n4:n5:n6"
+                  _cassandra_start_rack_unreached=["n5"], _cassandra_start_rack_not_probed=["n6"]) == "n2,n3,n5,n6"
+    not_probed = PLAY["vars"]["_cassandra_start_rack_not_probed"].replace(
+        "query('community.cassandra.cassandra_nodes')", "_nodes")
+    assert render(not_probed, _nodes=["n1", "n2", "n3"], ansible_play_hosts_all=["n2", "n3"]) == ["n1"]
+    # the check again: from another node of the rack first; not from a node outside the rack noted, nor one seen
+    # down, not reached, not probed, or whose nodetool failed
+    variables = noted(ring(n1="DN", n3="DN", n4="UL"))
+    variables["cassandra_health_findings"].append({"kind": "nodetool", "on": "n6", "error": "x", "text": "x"})
+    variables.update(_cassandra_start_rack_unreached=["n5", "n4"], _cassandra_start_rack_not_probed=["n7"])
+    assert check_var("_cassandra_health_not_peers", variables) == "n1,n4,n3,n6,n5,n7"
+    assert render(TASKS[CHECK]["vars"]["_cassandra_health_prefer_peers"], **variables) == ["n2", "n3"]
+
+
+def test_host_names_that_are_ipv6_addresses_are_left_out_as_peers():
+    # the patterns joined with "," (":" would split an IPv6 address)
+    from ansible.inventory.manager import InventoryManager
+    inventory = InventoryManager(loader=DataLoader(), sources="2001:db8::5,2001:db8::6,2001:db8::7,")
+    pattern = render(TASKS[READ]["vars"]["_cassandra_health_not_peers"], _cassandra_start_rack_members=["2001:db8::5"],
+                     _cassandra_start_rack_unreached=["2001:db8::6"], _cassandra_start_rack_not_probed=[])
+    assert sorted(h.name for h in inventory.get_hosts(pattern)) == ["2001:db8::5", "2001:db8::6"]
+
+
+def test_a_node_outside_the_rack_accepted_is_not_counted_down():
+    # cassandra_status fails past its count of nodes allowed down: the nodes accepted in any state count in it
+    read = load_tasks("roles", "cassandra_operation", "tasks", "cluster_health_read.yml")[0]["block"]
+    for name in ("Read the ring from this node", "Read the ring from {{ _cassandra_health_peer }}"):
+        task = next(t for t in read if t["name"] == name)
+        down = task["community.cassandra.cassandra_status"]["down"]
+        assert render(down, _down_ok=["10.0.0.9"], cassandra_service_health_any_ok=["10.0.0.4", "10.0.0.5"]) == 3
+        assert render(down, _down_ok=[]) == 0
+
+
+def test_the_defaults_are_the_cassandra_config_role_s():
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_start_rack
+    defaults = load_tasks("roles", "cassandra_config", "defaults", "main.yml")
+    assert (cassandra_start_rack.DEFAULT_DC, cassandra_start_rack.DEFAULT_RACK) == (
+        defaults["cassandra_dc"], defaults["cassandra_rack"])
 
 
 def test_checked_from_a_node_of_the_rack_and_not_under_check():
@@ -228,7 +349,9 @@ def test_checked_from_a_node_of_the_rack_and_not_under_check():
     assert [NAMES.index(n) for n in PROBE] == sorted(NAMES.index(n) for n in PROBE) and NAMES.index(PROBE[-1]) < NAMES.index(READ)
     for name in PROBE:
         assert "ansible_check_mode" not in str(TASKS[name].get("when", "")), name
-    assert TASKS[PROBE[0]]["become"] is False and TASKS[PROBE[-1]]["become"] is False
+    # (an inventory ansible_become beats the keyword: the variable too)
+    for name in (PROBE[0], PROBE[-1]):
+        assert TASKS[name]["become"] is False and TASKS[name]["vars"]["ansible_become"] is False
 
 
 # the probe run by ansible-playbook: node1 (the rack) and node2 local, node3 an ssh port nothing listens on
@@ -239,7 +362,7 @@ all:
     cluster1:
       hosts:
         node1: {ansible_connection: local}
-        node2: {ansible_connection: local}
+        node2: {ansible_connection: local, ansible_become: true, ansible_become_exe: /bin/false}
         node3: {ansible_connection: ssh, ansible_host: 127.0.0.1, ansible_port: 1, ansible_user: nobody}
     cassandra_target_rack_nodes:
       hosts:
