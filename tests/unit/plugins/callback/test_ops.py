@@ -13,6 +13,8 @@ import time
 
 import pytest
 
+from ansible.release import __version__ as ansible_version
+
 COLLECTIONS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "..", ".."))
 
 PLAYBOOK = """
@@ -200,6 +202,10 @@ def test_a_refused_role_argument_said_in_short_its_older_words_too(tmp_path):
     assert argument_errors({"msg": "anything else"}) == []
 
 
+# (the value given is in ansible-core's message since 2.19 only)
+_GIVEN_3W = "'3w' is " if tuple(int(x) for x in ansible_version.split(".")[:2]) >= (2, 19) else ""
+
+
 def test_a_refused_role_argument_said_in_short(tmp_path):
     # e2e (hostile S21): "cassandra_concurrent_reads: 3w" in host_vars printed cassandra_config's whole argument spec,
     # 2100 lines, the reason in the middle
@@ -207,7 +213,7 @@ def test_a_refused_role_argument_said_in_short(tmp_path):
     assert rc != 0
     assert shown(output.strip()) == [
         "node1: the role refused these values before it changed anything (fix them in the inventory):",
-        "  cassandra_concurrent_reads: '3w' is a text, not a whole number"]
+        "  cassandra_concurrent_reads: %sa text, not a whole number" % _GIVEN_3W]
     rc, output = run(tmp_path, ARGUMENTS, "-v", INVENTORY="node1,")  # -v: the default callback's, the spec too
     assert "argument_spec_data" in output
 
