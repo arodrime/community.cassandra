@@ -62,8 +62,8 @@ def cassandra_health_findings(views, expected, node, gossip=None, binary=None, n
     bootstrap still running). leaving_ok: addresses expected up and leaving (a
     decommission still running). names: {address: inventory name}
     (cassandra_host_addresses), a node of the ring named by it. The problems as
-    [{kind, text (its sentence), ...}]: kind state (address, rack, state,
-    seen_from), count (ring, expected, seen_from), nodetool (on, error), port
+    [{kind, text (its sentence), ...}]: kind state (address, name (None
+    when no host has it), rack, state, seen_from), count (ring, expected, seen_from), nodetool (on, error), port
     (name, port, on, host), gossip, cql, streams (on), netstats (on, error),
     schema (msg); and warning (what, msg): not a problem, said as such (a
     schema disagreement while an upgrade mixes versions: mixed_versions, the
@@ -90,7 +90,7 @@ def cassandra_health_findings(views, expected, node, gossip=None, binary=None, n
                 # by its inventory name when it has one: "node4 (10.0.0.4, rack1) is DN"
                 name = names.get(_ip(n["address"]))
                 where = ("%s, %s" % (n["address"], n["rack"])) if name else n["rack"]
-                found.append({"kind": "state", "address": n["address"], "rack": n["rack"],
+                found.append({"kind": "state", "address": n["address"], "name": name, "rack": n["rack"],
                               "state": n["status"] + n["state"], "seen_from": view["from"],
                               "text": "%s (%s) is %s%s, seen from %s" % (
                                   name or n["address"], where, n["status"], n["state"], view["from"])})

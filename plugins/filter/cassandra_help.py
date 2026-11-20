@@ -162,7 +162,8 @@ OPERATIONS = [
                  ("-e cassandra_rack_force=true", "allows 2+ replicas down", "false")],
      "example": CHECK},
     {"name": "start_rack", "theme": "cluster", "confirm": False, "guide": "Rack maintenance",
-     "summary": "Starts the nodes of a rack stop_rack stopped, then checks the whole cluster.",
+     "summary": "Starts the nodes of a rack stop_rack stopped, then checks they are UN; a node outside"
+                " the rack not UN is a warning, not waited for.",
      "options": [("-e cassandra_target_dc=<dc>", "the rack's datacenter", None),
                  ("-e cassandra_target_rack=<rack>", "the rack to start", None),
                  ("-e cassandra_accept_default_identity=true", "accepts the name 'Test Cluster'", "false")],

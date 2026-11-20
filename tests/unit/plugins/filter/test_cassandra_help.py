@@ -252,7 +252,8 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
       $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.stop_rack \\
           -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3 --check
 
-  ● start_rack         Starts the nodes of a rack stop_rack stopped, then checks the whole cluster.
+  ● start_rack         Starts the nodes of a rack stop_rack stopped, then checks they are UN; a node
+                       outside the rack not UN is a warning, not waited for.
       $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.start_rack \\
           -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3
         -e cassandra_target_dc=<dc>           the rack's datacenter (required)

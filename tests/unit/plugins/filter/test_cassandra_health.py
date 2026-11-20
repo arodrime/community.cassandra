@@ -419,7 +419,8 @@ def test_findings_carry_the_sentences():
     ring = [node("10.0.0.1"), node("10.0.0.2", status="D")]
     found = findings("n1", [view("n1", *ring)])
     assert [f["text"] for f in found] == problems([view("n1", *ring)])
-    assert found[0] == {"kind": "state", "address": "10.0.0.2", "rack": "r1", "state": "DN", "seen_from": "n1",
+    assert found[0] == {"kind": "state", "address": "10.0.0.2", "name": None, "rack": "r1", "state": "DN",
+                        "seen_from": "n1",
                         "text": "10.0.0.2 (r1) is DN, seen from n1"}
     assert found[1]["kind"] == "count" and found[1]["ring"] == 2
 
