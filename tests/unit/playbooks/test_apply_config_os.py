@@ -265,8 +265,13 @@ def test_the_intro_says_the_order_in_one_line(todo, os_nodes, restarts, starts, 
     screen = FIND["tasks"][TASKS.index("Show the plan and confirm the run")]
     intro = screen["vars"]["cassandra_screen"]["intro"]
     variables = {"_todo": todo, "_os_nodes": os_nodes, "_restarts": restarts, "_starts": starts,
-                 "_then_nodes": {"write": write} if write else {}}
+                 "_then_nodes": {"write": write} if write else {}, "hostvars": dict((h, {}) for h in todo)}
     assert [" ".join(render(i, variables).split()) for i in intro] == [said]
+    # a firewall change: said one node at a time
+    if todo:
+        variables["hostvars"][todo[0]] = {"cassandra_apply_config_extras": [{"section": "Firewall"}]}
+        assert " ".join(render(intro[0], variables).split()) == said + (
+            " The firewall one node at a time, the cluster checked around each.")
 
 
 # time sync (chrony, timesyncd) installed or started under a running Cassandra: a restart, its window

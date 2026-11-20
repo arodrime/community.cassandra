@@ -198,8 +198,8 @@ def test_a_release_update_it_started_is_not_refused_as_an_unfinished_upgrade():
     def passes(versions, **variables):
         variables = dict(variables, _versions=versions, _cassandra_preflight_release_update=variables.get("apply", False))
         variables.pop("apply", None)
-        return render(check, with_task_vars({"vars": dict((k, v) for k, v in task["vars"].items()
-                                                         if k in ("_releases", "_release_update"))}, variables))
+        own = dict((k, v) for k, v in task["vars"].items() if k in ("_releases", "_release_update"))
+        return render(check, with_task_vars({"vars": own}, variables))
 
     assert passes(["5.0.9: [10.0.0.1, 10.0.0.2]"])
     assert passes(mixed, apply=True, cassandra_package_version="5.0.9")

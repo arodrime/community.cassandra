@@ -1205,9 +1205,9 @@ def test_no_cluster_named_the_help_of_any():
 
 def test_the_overview_names_the_collection_installed():
     from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_build
-    first = cassandra_help(MODEL, PLAYBOOKS, cwd=CWD, build=True).split("\n\n")[0]
+    first = cassandra_help(MODEL, PLAYBOOKS, cwd=CWD, build=True).split("\n\n", maxsplit=1)[0]
     assert " ".join(first.split()).endswith("no node contacted); made by %s" % cassandra_build.label())
-    assert "made by" not in cassandra_help(MODEL, PLAYBOOKS, cwd=CWD).split("\n\n")[0]
+    assert "made by" not in cassandra_help(MODEL, PLAYBOOKS, cwd=CWD).split("\n\n", maxsplit=1)[0]
 
 
 def test_the_import_topic_says_import_strict():

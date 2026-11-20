@@ -19,8 +19,7 @@ def _tasks(tasks, inherited=False):
         hidden = inherited or "no_log" in task
         for key in ("block", "rescue", "always", "tasks", "pre_tasks", "post_tasks", "handlers"):
             if isinstance(task.get(key), list):
-                for found in _tasks(task[key], hidden):
-                    yield found
+                yield from _tasks(task[key], hidden)
         yield task, hidden
 
 
@@ -30,8 +29,8 @@ def test_every_nodetool_with_its_password_hides_its_command():
         with open(path) as f:
             data = yaml.safe_load(f) or []
         for task, hidden in _tasks(data):
-            own = dict((k, v) for k, v in task.items() if k not in ("block", "rescue", "always", "tasks", "pre_tasks",
-                                                                     "post_tasks", "handlers"))
+            nested = ("block", "rescue", "always", "tasks", "pre_tasks", "post_tasks", "handlers")
+            own = dict((k, v) for k, v in task.items() if k not in nested)
             if "_cassandra_service_nodetool" in yaml.safe_dump(own) and not hidden:
                 shown.append("%s: %s" % (os.path.relpath(path, TOP), task.get("name")))
     assert shown == []
