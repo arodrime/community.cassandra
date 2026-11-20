@@ -5,7 +5,9 @@ repository that can't be reached named as such); cassandra_failure_report:
 the failures of several nodes at the same step, identical causes grouped,
 then what to check (add_node's prepare step). cassandra_failure_repos names
 the repositories an error (or a command's output) could not read;
-cassandra_nodetool_failure: a nodetool task's failure, hidden by no_log (-pw), said with its password masked."""
+cassandra_nodetool_failure: a nodetool task's failure, hidden by no_log (-pw), said with its password masked;
+cassandra_package_errors: the package manager's own error lines (its log since the update, else the failed task's
+output); cassandra_package_verify: the files of a package that differ from it (rpm -V, dpkg --verify)."""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -142,9 +144,62 @@ def cassandra_failure_report(failures, operation="", cluster="", what="could not
     return lines + [""] + out.todo(items) if items else lines
 
 
+# the lines of dnf's rpm log (/var/log/dnf.rpm.log): "2026-11-20T03:54:30+0100 INFO error: unpacking of archive ..."
+_RPM_LOG = re.compile(r"^(?P<time>\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)\S*\s+[A-Z]+\s+(?P<text>.*)$")
+_PACKAGE_ERROR = re.compile(r"\berror\b|\bfailed\b|^E: ", re.IGNORECASE)
+# at most that many error lines said (the first ones: the cause comes first, the rest repeats it)
+_PACKAGE_ERRORS = 5
+
+
+def cassandra_package_errors(result, log="", since=""):
+    """The package manager's own words on a failed install, which its module's message ("Failed to install some of
+    the specified packages") leaves out: the error lines of dnf's rpm log (log, its tail) from since on (the node's
+    time when the install started, 2026-11-20T03:54:20), their time and level dropped; else (no log: apt, whose
+    output the module returns) the error lines of the failed result (stderr, stdout, failures). Each once, at most
+    5, secrets and a URL's login masked.
+    e.g. "2026-11-20T03:54:30+0100 INFO error: unpacking of archive failed on file /usr/share/x.jar: cpio: rename
+    failed" -> ["error: unpacking of archive failed on file /usr/share/x.jar: cpio: rename failed"]."""
+    lines = []
+    if log:
+        for line in str(log).splitlines():
+            m = _RPM_LOG.match(line.strip())
+            if m and (not since or m.group("time") >= str(since)[:19]) and _PACKAGE_ERROR.search(m.group("text")):
+                lines.append(m.group("text").strip())
+    if not lines and isinstance(result, dict):
+        for part in [result.get("stderr"), result.get("stdout")] + list(result.get("failures") or []):
+            lines += [line.strip() for line in str(part or "").splitlines() if _PACKAGE_ERROR.search(line)]
+    said = []
+    for line in lines:
+        line = _URL_LOGIN.sub(r"\1****@", out.mask(line))
+        if line and line not in said:
+            said.append(line)
+    return said[:_PACKAGE_ERRORS]
+
+
+# a line of rpm -V or dpkg --verify: its attributes (S size, 5 digest... or "missing"), a file type (c: config)
+_VERIFY = re.compile(r"^(?P<attrs>missing|\S{9})\s+(?:(?P<type>[cdglr])\s+)?(?P<path>/.*)$")
+
+
+def cassandra_package_verify(text):
+    """rpm -V <package> or dpkg --verify <package> output -> the paths of its files (not its config files) whose
+    content differs from the package's (size or digest) or that are missing, in order.
+    e.g. "S.5....T.    /usr/bin/cqlsh\n.M.......  c /etc/cassandra/conf/cassandra.yaml" -> ["/usr/bin/cqlsh"]."""
+    out_paths = []
+    for line in str(text or "").splitlines():
+        m = _VERIFY.match(line.rstrip())
+        if not m or m.group("type") == "c":
+            continue
+        attrs = m.group("attrs")
+        if (attrs == "missing" or attrs[0] == "S" or attrs[2] == "5") and m.group("path") not in out_paths:
+            out_paths.append(m.group("path"))
+    return out_paths
+
+
 class FilterModule(object):
     def filters(self):
         return {"cassandra_failure_cause": cassandra_failure_cause,
                 "cassandra_failure_repos": cassandra_failure_repos,
                 "cassandra_nodetool_failure": cassandra_nodetool_failure,
-                "cassandra_failure_report": cassandra_failure_report}
+                "cassandra_failure_report": cassandra_failure_report,
+                "cassandra_package_errors": cassandra_package_errors,
+                "cassandra_package_verify": cassandra_package_verify}

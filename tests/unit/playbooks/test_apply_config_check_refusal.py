@@ -82,8 +82,7 @@ REASON = ("node5: Cassandra not running, and node1, node2 would be restarted, wh
 WAY = ["stopped on purpose: apply the config there first (--limit node5), then start it with start_rack, which checks"
        " the start first:",
        "    ansible-playbook community.cassandra.start_rack --limit node5 -e cassandra_target_dc=dc1"
-       " -e cassandra_target_rack=r1",
-       "stopped by an interrupted run: resume it (-e cassandra_rolling_resume=true)"]
+       " -e cassandra_target_rack=r1"]
 AGAIN = "then run again."
 
 
@@ -127,6 +126,29 @@ def test_the_refusal_names_a_failed_unit_this_run_does_not_start():
     # the fact the refusal reads, set with the node's needs
     note = task("Note what this node needs")
     assert note["ansible.builtin.set_fact"]["cassandra_apply_config_unit_failed"] == "{{ _unit_failed }}"
+
+
+def test_a_node_left_stopped_by_an_interrupted_run_has_one_way_out_the_resume():
+    # e2e: its start failed in its restart window (the mark kept, its unit failed): --check said resume in a WARNING,
+    # and start_rack then run again in the refusal; the resume starts it first
+    marked = {"cassandra_apply_config_todo": False, "cassandra_apply_config_then": "write",
+              "cassandra_apply_config_unit_failed": True, "cassandra_apply_config_marked": True,
+              "_cassandra_preflight": {"ring_address": "10.0.0.7", "cassandra_dc": "dc1", "cassandra_rack": "r2"}}
+    hostvars = dict((k, v) for k, v in HOSTVARS.items() if k != "node5")
+    hostvars["node7"] = marked
+    t = task("Note whether restarts are refused while a node is not running")
+    variables = dict(trust(t["vars"]), hostvars=hostvars, ansible_play_hosts=sorted(hostvars))
+    assert render(t["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"], variables) == [
+        "node7: Cassandra not running, and node1, node2 would be restarted, which needs every other node up.",
+        "node7: left stopped by an interrupted apply_config (in its restart window): see systemctl status cassandra /"
+        " journalctl -u cassandra there, fix what stopped its start, then resume (the same command plus"
+        " -e cassandra_rolling_resume=true), which starts it first."]
+    # that resume, node7 still down (after the restarts in the inventory's order): the other way out
+    refused = render(t["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"],
+                     dict(variables, cassandra_rolling_resume=True))
+    assert refused[1].startswith("node7: the cassandra unit failed") and refused[-1] == AGAIN
+    note = task("Note what this node needs")["ansible.builtin.set_fact"]
+    assert note["cassandra_apply_config_marked"] == "{{ not _running | bool and _clock.mark is defined }}"
 
 
 def test_the_start_rack_of_the_way_out_starts_these_nodes_alone():
@@ -185,7 +207,6 @@ def test_a_real_run_refuses_before_any_change_check_goes_on():
         "    it with start_rack, which checks the start first:",
         "      ansible-playbook community.cassandra.start_rack --limit node5 \\",
         "        -e cassandra_target_dc=dc1 -e cassandra_target_rack=r1",
-        "  stopped by an interrupted run: resume it (-e cassandra_rolling_resume=true)",
         "  then run again."]
     # the refusal comes before anything is written: in the first play, before the plan and its question
     names = [x.get("name") for x in PLAYS[1]["tasks"]]

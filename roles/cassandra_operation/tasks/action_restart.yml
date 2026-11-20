@@ -58,3 +58,35 @@
     cassandra_service_state: restarted
     _cassandra_storage_mode_checked: true  # (storage_mode_guard.yml, before the plan)
     _cassandra_service_unit_written: true
+  when: _cassandra_service_while_stopped | default('') != 'apply_config_window.yml'
+
+# apply_config's release window: the package updated, a failed start said as such (the release installed, Cassandra
+# left stopped, the mark kept: a resume starts it), not as the start task's own words alone
+- name: Start it on the new release and wait until it has joined
+  when: _cassandra_service_while_stopped | default('') == 'apply_config_window.yml'
+  block:
+    - name: Start it on the new release and wait until it has joined
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: main.yml
+        rolespec_validate: false  # as the include it was: no argument check
+      vars:
+        _cassandra_change_report_quiet: "{{ ansible_verbosity | int == 0 }}"  # the recap says it (-v shows it)
+        cassandra_service_state: restarted
+        _cassandra_storage_mode_checked: true  # (storage_mode_guard.yml, before the plan)
+        _cassandra_service_unit_written: true
+  rescue:
+    - name: Note the step that failed
+      ansible.builtin.set_fact:
+        _cassandra_stop_word: start failed after the package update
+
+    - name: Stop the run on the failed start
+      ansible.builtin.fail:
+        msg: "{{ [_failed, _installed, 'Cassandra left stopped.', 'WAY OUT  fix it, then resume'] | join(_nl) }}"
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _failed: >-
+          {{ inventory_hostname }}: Cassandra did not start after the update to {{ cassandra_package_version }}:
+          {{ ansible_failed_result | default({}) | community.cassandra.cassandra_failure_cause(ansible_failed_task.name | default('')) }}
+        _installed: "Package installed: Cassandra {{ cassandra_package_version }}."

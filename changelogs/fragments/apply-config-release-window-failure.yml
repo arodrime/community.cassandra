@@ -1,0 +1,16 @@
+bugfixes:
+  - >-
+    apply_config - a failed package update in a node's release window says the package manager's own error lines (from
+    dnf's rpm log, or apt's output), not only "Failed to install some of the specified packages"; Cassandra is started
+    again on the release it ran only when its package is unchanged and none of its files were changed by the update
+    (``rpm -V`` / ``dpkg --verify`` before and after), else it is left stopped and the files changed are named, never
+    "still installed"; the stop gives one way out, fix then resume.
+  - >-
+    apply_config - a start that fails after the package update of a node's release window says the release installed
+    and that Cassandra was left stopped (one way out: fix, then resume), the nodes' table the step
+    (``start failed after the package update``) instead of a task name.
+  - >-
+    apply_config - a node an interrupted run left stopped in its restart window has one way out in the refusal and
+    ``--check``: the resume, which starts it first (no longer also start_rack then run again), and the plan's
+    ``Cassandra`` row says the release installed when it is another than the one the node ran (``5.0.8, 5.0.9
+    installed`` to ``5.0.9 (installed)``).

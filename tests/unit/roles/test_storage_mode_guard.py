@@ -802,6 +802,9 @@ def test_cassandra_service_checks_each_start_it_does():
                        ("roles/cassandra_operation/tasks/action_upgrade.yml", "Start it and wait until it has joined")):
         task = next(t for t in _load(path) if t.get("name") == name)
         assert task["vars"]["_cassandra_storage_mode_checked"] is True, path
+    window = next(t for t in _load("roles/cassandra_operation/tasks/action_restart.yml")
+                  if t.get("name") == "Start it on the new release and wait until it has joined")
+    assert window["block"][0]["vars"]["_cassandra_storage_mode_checked"] is True
     # start_rack, site.yml: the role as is, checked there
     start = next(t for p in _load("playbooks/start_rack.yml") for t in p.get("tasks", [])
                  if t.get("name") == "Start Cassandra and wait until the node has joined")

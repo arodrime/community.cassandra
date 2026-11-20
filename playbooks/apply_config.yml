@@ -539,6 +539,8 @@
         cassandra_apply_config_steps: "{{ _steps }}"
         # stopped by an interrupted run in its window for its time sync: its clock let sync before the start
         cassandra_apply_config_resumed_stop: "{{ _stopped | bool and _clock.mark_timesync is defined }}"
+        # left stopped by an interrupted run of its own (the mark of its restart window: a resume starts it)
+        cassandra_apply_config_marked: "{{ not _running | bool and _clock.mark is defined }}"
         cassandra_apply_config_timesync_items: "{{ _os | selectattr('timesync', 'defined') | list }}"
         # said under the node's outcome, in the plan and the recap (whatever the outcome); its WARNING lines in
         # the plan's warnings only (the recap says how many)
@@ -636,6 +638,13 @@
               + _seen.get('cassandra_firewall', {}).get('items', []) | map('combine', {'section': 'Firewall'}) | list) }}
         _java: "{{ cassandra_java_plan_todo | default(false) | bool and cassandra_jvm.pid is defined }}"
         _release: "{{ (cassandra_apply_config_version | default({})).kind | default('') == 'release' }}"
+        # the release it runs (a node stopped: the one it last ran, as the ring knows it) and the package installed
+        # when that is another one (updated by a run that stopped before its start)
+        _release_installed: "{{ (cassandra_apply_config_version | default({})).installed | default('') }}"
+        _release_before: >-
+          {{ cassandra_apply_config_version.running
+             ~ (', ' ~ _release_installed ~ ' installed' if _release_installed not in ['', cassandra_apply_config_version.running]
+                else '') if _release | bool else '' }}
         # what the running Cassandra got from its unit against what the role's unit gives (none read: nothing)
         _unit_read: "{{ dict(cassandra_apply_config_unit_read.stdout_lines | default([]) | select('search', '=') | map('split', '=', 1)) }}"
         _unit_changes: >-
@@ -654,8 +663,10 @@
         _restart_items: >-
           {{ ([{'section': 'Java', 'item': 'Java', 'before': cassandra_java_plan_major | default('') or 'unknown',
                 'after': cassandra_java_version | string ~ ' (to install)'}] if _java | bool else [])
-             + ([{'section': 'Cassandra', 'item': 'Cassandra', 'before': cassandra_apply_config_version.running,
-                  'after': cassandra_apply_config_version.wanted ~ ' (package)'}] if _release | bool else [])
+             + ([{'section': 'Cassandra', 'item': 'Cassandra', 'before': _release_before,
+                  'after': cassandra_apply_config_version.wanted
+                           ~ (' (installed)' if _release_installed == cassandra_apply_config_version.wanted else ' (package)')}]
+                if _release | bool else [])
              + _unit_changes | map('combine', {'section': 'cassandra unit'}) | list }}
         # reasons of the node's one restart besides its config and OS settings (said with the restart)
         _b_why: >-
@@ -900,10 +911,13 @@
           {{ [] if not _down else
              [_down | join(', ') ~ ': Cassandra not running, and ' ~ _restart | join(', ') ~ ' would be restarted, which needs'
               ~ ' every other node up.']
+             + ([_marked | join(', ') ~ ': left stopped by an interrupted apply_config (in its restart window): see'
+                 ~ ' systemctl status cassandra / journalctl -u cassandra there, fix what stopped its start, then resume'
+                 ~ ' (the same command plus -e cassandra_rolling_resume=true), which starts '
+                 ~ ('them' if _marked | length > 1 else 'it') ~ ' first.'] if _marked else [])
              + (['stopped on purpose: apply the config there first (--limit ' ~ _limit | join(',') ~ '), then start '
                  ~ _them ~ ' with start_rack, which checks the start first:']
-                + _start_rack.limit | map('regex_replace', '^', '    ') | list
-                + ['stopped by an interrupted run: resume it (-e cassandra_rolling_resume=true)'] if _limit else [])
+                + _start_rack.limit | map('regex_replace', '^', '    ') | list if _limit else [])
              + ([_failed | join(', ') ~ ': the cassandra unit failed and nothing is to apply: see systemctl status cassandra'
                  ~ ' / journalctl -u cassandra there, fix it, then start it with start_rack, which checks the start first:']
                 + _start_rack.failed | map('regex_replace', '^', '    ') | list if _failed else [])
@@ -911,7 +925,7 @@
                  '    -e cassandra_linux_tuned_switch_restart=false -e cassandra_data_lvchange_restart=false']
                 if _restart | map('extract', hostvars) | map(attribute='cassandra_apply_config_disks_window', default=[])
                    | select | list else [])
-             + ['then run again.'] }}
+             + (['then run again.'] if _limit or _failed else []) }}
       run_once: true
       vars:
         _restart: >-
@@ -935,15 +949,24 @@
           {%-   endfor -%}
           {%- endif -%}
           {{ out }}
+        # the nodes an interrupted run of apply_config left stopped (its mark): a resume starts them, unless this run
+        # is that resume (still down here: after a restart in the inventory's order, the other ways out then)
+        _marked: >-
+          {%- set out = [] -%}
+          {%- for h in _down if hostvars[h].cassandra_apply_config_marked | default(false) | bool
+                              and not cassandra_rolling_resume | default(false) | bool -%}
+          {%-   set _ = out.append(h) -%}
+          {%- endfor -%}
+          {{ out }}
         # the nodes down whose unit failed with nothing to write: this run does not start them
         _failed: >-
           {%- set out = [] -%}
-          {%- for h in _down if hostvars[h].cassandra_apply_config_unit_failed | default(false) | bool -%}
+          {%- for h in _down if hostvars[h].cassandra_apply_config_unit_failed | default(false) | bool and h not in _marked -%}
           {%-   set _ = out.append(h) -%}
           {%- endfor -%}
           {{ out }}
         # the other nodes down: their config applied with --limit, then started
-        _limit: "{{ _down | reject('in', _failed) | list }}"
+        _limit: "{{ _down | reject('in', _failed + _marked) | list }}"
         _them: "{{ 'them' if _limit | length > 1 else 'it' }}"
         # start_rack on these nodes alone, a command per rack (without --limit, it starts every stopped node of the
         # rack, one stopped on purpose too)

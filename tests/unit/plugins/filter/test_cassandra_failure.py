@@ -6,7 +6,8 @@ __metaclass__ = type
 # what to check and the command to run again.
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_failure import (
-    cassandra_failure_cause, cassandra_failure_repos, cassandra_failure_report)
+    cassandra_failure_cause, cassandra_failure_repos, cassandra_failure_report, cassandra_package_errors,
+    cassandra_package_verify)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import PARAGRAPH as P
 
 # what the dnf module says when a repository's mirror can't be reached (EL 8)
@@ -88,3 +89,39 @@ def test_other_failures_only_the_run_again():
     # no node with a failure of its own: still a verdict
     assert cassandra_failure_report([], operation="add_node", cluster="c", rerun=RERUN)[0] == (
         "FAILED  add_node  c  the new nodes could not be prepared: nothing was started")
+
+
+def test_the_files_a_package_verify_finds_changed_its_config_files_aside():
+    rpm = ("S.5....T.    /usr/bin/cqlsh\n.M.......  c /etc/cassandra/conf/cassandra.yaml\n"
+           "S.5....T.  c /etc/cassandra/conf/jvm-server.options\n.......T.    /usr/share/cassandra/lib/a.jar\n"
+           "missing     /usr/share/cassandra/apache-cassandra-5.0.9.jar\n..5......    /usr/bin/nodetool\n"
+           "package cassandra is not installed")
+    assert cassandra_package_verify(rpm) == ["/usr/bin/cqlsh", "/usr/share/cassandra/apache-cassandra-5.0.9.jar",
+                                             "/usr/bin/nodetool"]
+    dpkg = "??5??????   /usr/bin/cqlsh\n??5?????? c /etc/cassandra/cassandra.yaml\nmissing     /usr/sbin/cassandra"
+    assert cassandra_package_verify(dpkg) == ["/usr/bin/cqlsh", "/usr/sbin/cassandra"]
+    assert cassandra_package_verify("") == [] and cassandra_package_verify(None) == []
+
+
+def test_the_package_managers_own_errors_its_log_first():
+    # e2e: dnf's module said "Failed to install some of the specified packages", failures: an rpmnew warning only;
+    # rpm's unpack error was in /var/log/dnf.rpm.log
+    dnf = {"msg": "Failed to install some of the specified packages",
+           "failures": ["warning: /etc/cassandra/default.conf/cassandra.yaml created as .../cassandra.yaml.rpmnew"]}
+    log = ("2026-11-20T03:40:00+0100 INFO error: an earlier run\n"
+           "2026-11-20T03:54:31+0100 INFO error: unpacking of archive failed on file /usr/share/x.jar: cpio: rename\n"
+           "2026-11-20T03:54:31+0100 SUBDEBUG Error unpacking rpm package cassandra-5.0.9-1.noarch\n"
+           "2026-11-20T03:54:32+0100 INFO error: cassandra-5.0.9-1.noarch: install failed\n")
+    assert cassandra_package_errors(dnf, log, "2026-11-20T03:54:20") == [
+        "error: unpacking of archive failed on file /usr/share/x.jar: cpio: rename",
+        "Error unpacking rpm package cassandra-5.0.9-1.noarch", "error: cassandra-5.0.9-1.noarch: install failed"]
+    assert len(cassandra_package_errors(dnf, log, "")) == 4  # (no time: the whole tail)
+    assert cassandra_package_errors(dnf, "", "") == []  # (an rpmnew warning is no error)
+    # apt: dpkg's words in the module's own output; a URL's login masked
+    apt = {"msg": "'/usr/bin/apt-get -y install cassandra=5.0.9' failed: E: Sub-process /usr/bin/dpkg returned an error",
+           "stdout": "Unpacking cassandra (5.0.9) ...\ndpkg: error processing archive /var/cache/x.deb (--unpack):\n",
+           "stderr": "E: Failed to fetch https://zorglub:s3cr3t@10.0.0.9/x.deb\nE: Sub-process /usr/bin/dpkg returned an error code (1)"}
+    assert cassandra_package_errors(apt) == [
+        "E: Failed to fetch https://zorglub:****@10.0.0.9/x.deb", "E: Sub-process /usr/bin/dpkg returned an error code (1)",
+        "dpkg: error processing archive /var/cache/x.deb (--unpack):"]
+    assert len(cassandra_package_errors({"stderr": "\n".join("error %d" % i for i in range(9))})) == 5
