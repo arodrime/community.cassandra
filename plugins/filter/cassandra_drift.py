@@ -438,7 +438,8 @@ def cassandra_drift_sections(values, nodes, files=None, cluster="", shared=None,
 
 
 def cassandra_drift_sync(nodes, stops=None, command=""):
-    """nodes: [{name, todo, then, files: [the config files that differ], os: [the OS settings], medusa: [Medusa's],
+    """nodes: [{name, compared (false: the compare left it no facts, unreachable or failed there: "not compared",
+    never in sync), todo, then, files: [the config files that differ], os: [the OS settings], medusa: [Medusa's],
     extras: [{section}] (the repository, packages, firewall), restart: [{section}] (its Java, Cassandra's package,
     its unit)}] as apply_config's compare left them; stops: apply_config's stops before any change (a procedure of
     its own: its lines); command: apply_config --check --diff's -> IN SYNC's lines.
@@ -446,8 +447,15 @@ def cassandra_drift_sync(nodes, stops=None, command=""):
     "  db1  cassandra.yaml; then restart", "  db2  in sync", ...]."""
     title = "IN SYNC %s the nodes against the inventory (apply_config's compare, nothing changed)" % DASH
     lines, order, rows = [title], [], {}
-    off = 0
+    off = unseen = 0
     for node in nodes or []:
+        if not boolean(node.get("compared", True), strict=False):
+            unseen += 1
+            text = "not compared (the compare gave nothing for it)"
+            if text not in rows:
+                order.append(text)
+            rows.setdefault(text, []).append(str(node.get("name")))
+            continue
         parts = [", ".join(node.get("files") or [])] if node.get("files") else []
         if node.get("os"):
             parts.append("OS settings: %s" % ", ".join(str(i) for i in node["os"]))
@@ -467,7 +475,7 @@ def cassandra_drift_sync(nodes, stops=None, command=""):
         rows.setdefault(text, []).append(str(node.get("name")))
     for text in sorted(order, key=lambda t: t == "in sync"):
         lines.append("  %s  %s" % (out.nodes(rows[text]), text))
-    if not off and not stops:
+    if not off and not unseen and not stops:
         lines.append("  every node matches the inventory: apply_config has nothing to apply")
     if stops:
         lines.append("  apply_config would stop before any change (a procedure of its own first):")

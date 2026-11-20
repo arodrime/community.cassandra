@@ -135,7 +135,8 @@
       {%- set out = [] -%}
       {%- for h in _nodes -%}
       {%-   set v = hostvars[h] -%}
-      {%-   set _ = out.append({'name': h, 'todo': v.cassandra_apply_config_todo | default(false) | bool,
+      {%-   set _ = out.append({'name': h, 'compared': v.cassandra_apply_config_todo is defined,
+                                'todo': v.cassandra_apply_config_todo | default(false) | bool,
                                 'then': v.cassandra_apply_config_then | default('none'),
                                 'files': v._cassandra_config_items | default([]) | map(attribute='item', default='')
                                          | select | map('basename') | unique | list,
@@ -158,9 +159,14 @@
                              else 'nodes alike') -%}
       {%- if c.kept -%}{%- set _ = out.append(c.kept ~ (' file' if c.kept == 1 else ' files') ~ ' kept by hand') -%}{%- endif -%}
       {%- if _compared | bool -%}
-      {%-   set off = _sync | selectattr('todo') | list | length + _sync | rejectattr('todo') | selectattr('os') | list | length -%}
-      {%-   set _ = out.append(('in sync' if not off and not _stops else
-                                (off ~ (' node' if off == 1 else ' nodes') ~ ' not in sync' if off else 'not in sync'))) -%}
+      {%-   set seen = _sync | selectattr('compared') | list -%}
+      {%-   set off = seen | selectattr('todo') | list | length + seen | rejectattr('todo') | selectattr('os') | list | length -%}
+      {%-   set unseen = _sync | length - seen | length -%}
+      {%-   if off or _stops -%}
+      {%-     set _ = out.append(off ~ (' node' if off == 1 else ' nodes') ~ ' not in sync' if off else 'not in sync') -%}
+      {%-   elif not unseen -%}{%- set _ = out.append('in sync') -%}
+      {%-   endif -%}
+      {%-   if unseen -%}{%- set _ = out.append(unseen ~ (' node' if unseen == 1 else ' nodes') ~ ' not compared') -%}{%- endif -%}
       {%- else -%}{%- set _ = out.append('nodes not checked') -%}{%- endif -%}
       {{ out | join(', ') }}
   tasks:

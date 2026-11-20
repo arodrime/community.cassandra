@@ -221,3 +221,18 @@ def test_the_compare_summed_up_in_sync():
     verdict = render(play["vars"]["_verdict"], dict(variables, _compared=False,
                                                     _cassandra_drift_report={"counts": {"stock": 1, "between": 0, "kept": 0}}))
     assert verdict == "1 setting off stock, nodes alike, nodes not checked"
+
+
+
+def test_a_node_the_compare_did_not_reach_is_not_in_sync():
+    # (unreachable with cassandra_allow_down_nodes, or its compare failed: no facts of the compare)
+    play = next(p for p in load("drift.yml") if p.get("name") == "Drift")
+    hostvars = dict(HOSTVARS, db1={}, db2={"cassandra_apply_config_todo": False, "_cassandra_apply_config_stops": []})
+    variables = dict(trust(play["vars"]), hostvars=hostvars, _nodes=["db1", "db2", "db3"])
+    sync = render(play["vars"]["_sync"], variables)
+    assert [(n["name"], n["compared"]) for n in sync] == [("db1", False), ("db2", True), ("db3", True)]
+    assert cassandra_drift_sync(sync, [], "CMD")[1:] == [
+        "  db1  not compared (the compare gave nothing for it)", "  db2, db3  in sync"]
+    verdict = render(play["vars"]["_verdict"], dict(variables, _compared=True,
+                                                    _cassandra_drift_report={"counts": {"stock": 0, "between": 0, "kept": 0}}))
+    assert verdict == "at stock, nodes alike, 1 node not compared"
