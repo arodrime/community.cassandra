@@ -243,15 +243,7 @@
       unreached: "{{ _cassandra_start_rack_unreached }}"
       # each node of the run's nodetool info, by name (its Host ID: the node placed in the ring by it); read again
       # after the wait when a Host ID was not read
-      infos: >-
-        {%- set out = {} -%}
-        {%- for h in _cassandra_start_rack_members -%}
-        {%-   set r = hostvars[h]._cassandra_start_rack_info_again | default({'skipped': true}) -%}
-        {%-   set r = hostvars[h]._cassandra_start_rack_info | default({}) if r.skipped | default(false) else r -%}
-        {%-   set _ = out.update({h: {'rc': r.rc | default(none), 'stdout': r.stdout | default(''),
-                                      'stderr': r.stderr | default(''), 'msg': r.msg | default('')}}) -%}
-        {%- endfor -%}
-        {{ out }}
+      infos: "{{ _cassandra_start_rack_members | community.cassandra.cassandra_rack_infos(hostvars) }}"
     # the run's own command again (its inventory, cluster, --limit), for the way out of a stop; the same as
     # _cassandra_start_rack_again of the play "Start the rack"
     _cassandra_start_rack_again: >-

@@ -73,6 +73,7 @@ by describecluster, must be on its version). A rack alone on its version, or a c
 Not covered: a host outside the rack reached over ssh whose ping or fact gathering fails fails the run.
 
 cassandra_host_racks: each host's dc and rack in the inventory.
+cassandra_rack_infos: each rack node's nodetool info, the read after the wait unless skipped, else the first.
 cassandra_rack_members: the nodes the inventory puts in a rack (every node of the cluster, under --limit too).
 cassandra_rack_verdict: the tables above applied to a read of the cluster.
 cassandra_rack_outside_lines: the rack's nodes UN (those of the run under --limit), then the warnings (a node of the
@@ -111,6 +112,25 @@ def cassandra_host_racks(hosts, hostvars):
         variables = hostvars.get(h) or {}
         racks[h] = [str(variables.get("cassandra_dc", DEFAULT_DC)), str(variables.get("cassandra_rack", DEFAULT_RACK))]
     return racks
+
+
+def cassandra_rack_infos(members, hostvars):
+    """The rack's nodes, their hostvars -> {node: its nodetool info (rc, stdout, stderr, msg)}: the read again after
+    the wait (_cassandra_start_rack_info_again) unless skipped, else the first (_cassandra_start_rack_info); a node
+    read neither time: rc None, the texts empty.
+    e.g. (["n1"], {"n1": {"_cassandra_start_rack_info": {"rc": 0, "stdout": "ID : x"}}})
+    -> {"n1": {"rc": 0, "stdout": "ID : x", "stderr": "", "msg": ""}}."""
+    infos = {}
+    for h in members or []:
+        variables = hostvars.get(h) or {}
+        read = variables.get("_cassandra_start_rack_info_again")
+        if read is None:
+            read = {"skipped": True}
+        if read.get("skipped", False):
+            read = variables.get("_cassandra_start_rack_info") or {}
+        infos[h] = {"rc": read.get("rc"), "stdout": read.get("stdout", ""), "stderr": read.get("stderr", ""),
+                    "msg": read.get("msg", "")}
+    return infos
 
 
 def cassandra_rack_members(hosts, hostvars, dc, rack):
@@ -674,6 +694,7 @@ def cassandra_rack_stop_refused(problems, warnings, nodes, dc, rack, cluster, co
 class FilterModule(object):
     def filters(self):
         return {"cassandra_host_racks": cassandra_host_racks,
+                "cassandra_rack_infos": cassandra_rack_infos,
                 "cassandra_rack_members": cassandra_rack_members,
                 "cassandra_rack_verdict": cassandra_rack_verdict,
                 "cassandra_rack_outside_lines": cassandra_rack_outside_lines,
