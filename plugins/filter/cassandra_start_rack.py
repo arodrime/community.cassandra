@@ -100,7 +100,7 @@ def _without_port(address):
     address = str(address).strip()
     if address.startswith("[") and "]" in address:
         return address[1:address.index("]")]
-    return address.split(":")[0] if address.count(":") == 1 else address
+    return address.split(":", maxsplit=1)[0] if address.count(":") == 1 else address
 
 
 def _other_versions(schema, rack_addresses):
@@ -196,8 +196,8 @@ def _unknown_lines(findings, judged, rack):
                   "  so it is judged as a node of rack %s" % rack]
     if not lines:
         return []
-    return out.fit(lines + ["if %s outside rack %s: give its inventory host that address" % (
-                                "it is" if len(said) == 1 else "one is", rack),
+    which = "it is" if len(said) == 1 else "one is"
+    return out.fit(lines + ["if %s outside rack %s: give its inventory host that address" % (which, rack),
                             "  (broadcast_address in cassandra_extra_settings, else",
                             "  cassandra_listen_address or ansible_host), then run start_rack again"], WIDTH)
 

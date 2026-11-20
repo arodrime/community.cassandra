@@ -446,9 +446,10 @@ def old_shareable(where, check=False, shareable=None, text="IMPORT y"):
         variables["import_report_shareable"] = shareable
     if render("{{ %s }}" % make["when"], **variables):
         variables["_import_shareable"] = render(make["ansible.builtin.set_fact"]["_import_shareable"], **variables)
-    found = render(find["ansible.builtin.set_fact"]["_import_old_shareable"], **dict(variables, **dict(
-        (k, render(v, **dict(variables, _stem=render(find["vars"]["_stem"], **variables))))
-        for k, v in find["vars"].items())))
+    local = dict(variables)
+    for k, v in find["vars"].items():  # (in their order: each one may use the ones above)
+        local[k] = render(v, **local)
+    found = render(find["ansible.builtin.set_fact"]["_import_old_shareable"], **local)
     variables["_import_old_shareable"] = found
     assert move["check_mode"] is False and "when" not in move
     for item in render(move["loop"], **variables):

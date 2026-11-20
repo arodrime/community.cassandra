@@ -2606,14 +2606,15 @@
       ansible.builtin.set_fact:
         _import_old_shareable: >-
           {{ _report_args.report_file | dirname | community.cassandra.cassandra_import_old_shareable(
-               _layout.cluster_group, now(fmt='%Y-%m-%d@%H:%M:%S'), _new, ansible_check_mode) }}
+               _layout.cluster_group, now(fmt='%Y-%m-%d@%H:%M:%S'), _on, _new, ansible_check_mode) }}
       vars:
         _stem: "{{ (_report_args.report_file | basename | regex_replace('[.]txt$', '')) ~ '.shareable.' }}"
+        _on: "{{ import_report_shareable | default(false) | bool }}"
         # what this import writes there (its key: not under --check)
         _new: >-
           {{ {_stem ~ 'txt': _import_shareable.text | join(_newline) ~ _newline}
              | combine({} if ansible_check_mode else {_stem ~ 'key.txt': _import_shareable.map | join(_newline) ~ _newline})
-             if import_report_shareable | default(false) | bool else None }}
+             if _on | bool else {} }}
 
     - name: Move aside the shareable copy and key of an earlier import
       ansible.builtin.command:

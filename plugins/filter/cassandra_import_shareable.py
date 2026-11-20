@@ -851,13 +851,13 @@ def _read(path):
         return None
 
 
-def cassandra_import_old_shareable(report_dir, cluster, stamp, new=None, check=False):
-    """The report dir, the cluster's group, a time stamp ("2026-11-20@10:11:12"), new: {name: the text this import
-    writes there} (None: import_report_shareable off), --check -> what to do, before this import writes its
+def cassandra_import_old_shareable(report_dir, cluster, stamp, shareable=False, new=None, check=False):
+    """The report dir, the cluster's group, a time stamp ("2026-11-20@10:11:12"), import_report_shareable, new:
+    {name: the text this import writes there}, --check -> what to do, before this import writes its
     report, with the shareable copy and key an earlier import wrote there, never removed nor overwritten (the key
     of a copy already shared must not be lost): [{name, path, what (copy, key), action, report, report_for,
     backup}] in the order of SHAREABLE_FILES. A file whose first line is not the import's own is not listed, nor,
-    new given, one this import does not write (but the .map key) or writes the same again.
+    shareable, one this import does not write (but the .map key) or writes the same again.
     action: move (to backup: its path with .<stamp>~), would_move (under --check, unless new writes it: the
     write is real), exists (backup is there already: left in place), link (kept as it is; linked: the file it
     points to, when that one is moved). report_for: whose report.txt is next to it (the cluster's group; ""
@@ -867,7 +867,7 @@ def cassandra_import_old_shareable(report_dir, cluster, stamp, new=None, check=F
         path = os.path.join(str(report_dir), name)
         if not os.path.isfile(path) or not _first_line(path).startswith(head):
             continue
-        if new is not None and not name.endswith(".map") and (name not in new or _read(path) == new[name]):
+        if shareable and not name.endswith(".map") and (name not in (new or {}) or _read(path) == new[name]):
             continue
         backup = "%s.%s~" % (path, stamp)
         if os.path.islink(path):
