@@ -110,7 +110,7 @@ def test_clean_import_nothing_to_act_on():
     assert after[1:] == [
         "  2. Check that the inventory changes nothing on the nodes (both commands only look):",
         "       ansible-playbook community.cassandra.apply_config --check --diff",
-        "     expected:  every node up to date",
+        "     expected:  every node up to date (header lines aside: a comment, no restart)",
         "       ansible-playbook community.cassandra.topology --check",
         "     expected:  nothing to do"]
     lines = report([node(1)], inventory="/p/inventories", hosts="my_cluster", width=300)

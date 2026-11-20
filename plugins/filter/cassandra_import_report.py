@@ -1842,7 +1842,7 @@ def _apply_config_expects(files, heap_moved, rewrites):
     arguments, no restart (files, _jvm_rewrites'; the heap moved among them: heap_moved), the rewrites with no effect
     (rewrites) -> text."""
     if not files:
-        return "only the rewrites under %s" % REWRITES if rewrites else "every node up to date"
+        return "only the rewrites under %s" % REWRITES if rewrites else "every node up to date (header lines aside: a comment, no restart)"
     text = "%s rewritten, no restart (the same JVM arguments%s)" % (
         ", ".join(files), "; the heap moves to jvm-server.options" if heap_moved else "")
     if rewrites:
