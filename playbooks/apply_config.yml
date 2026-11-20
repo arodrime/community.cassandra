@@ -279,7 +279,7 @@
         echo "group=$(ps -o group= -p "$CASSANDRA_PID" | tr -d ' ')"
         echo "limits=$(base64 -w0 < "/proc/$CASSANDRA_PID/limits")"
         echo "environment=$(systemctl show cassandra -p Environment --value 2>/dev/null)"
-        # (the JVM's own: a unit reloaded since its start is not what it runs)
+        # (the environment of the JVM itself: a unit reloaded since its start is not what it runs)
         echo "environ=$(base64 -w0 < "/proc/$CASSANDRA_PID/environ")"
         # in a container, systemd gives no more than its own hard limits (a limit above them: the JVM gets the cap)
         systemd-detect-virt -cq 2>/dev/null && echo "ceiling=$(base64 -w0 < /proc/1/limits)"
@@ -1118,21 +1118,7 @@
       when: not _cassandra_apply_config_compare_only | default(false) | bool  # drift's compare: drift reports
       vars:
         ansible_become: false
-        _nodes: >-
-          {%- set out = [] -%}
-          {%- for h in ansible_play_hosts -%}
-          {%-   set v = hostvars[h] -%}
-          {%-   set _ = out.append({'name': h, 'todo': v.cassandra_apply_config_todo | default(false) | bool,
-                                    'os': v.cassandra_apply_config_os | default([]) | length > 0,
-                                    'why': v.cassandra_apply_config_restart_why | default(''),
-                                    'steps': v.cassandra_apply_config_steps | default([]),
-                                    'then': v.cassandra_apply_config_then | default(''),
-                                    'result': v.cassandra_op_result | default('nothing to apply'),
-                                    'notes': v.cassandra_apply_config_notes | default([]),
-                                    'kept_running': v.cassandra_apply_config_kept_running | default([]),
-                                    'unit_failed': v.cassandra_apply_config_unit_failed | default(false) | bool}) -%}
-          {%- endfor -%}
-          {{ out }}
+        _nodes: "{{ ansible_play_hosts | community.cassandra.cassandra_apply_config_nodes(hostvars) }}"
 
     # a real run: the plan, then its question; --check: none, the recap at the end is the plan, said once
     - name: Show the plan and confirm the run
@@ -1143,28 +1129,10 @@
         - _todo | length > 0
         - not ansible_check_mode
       vars:
-        _nodes: >-
-          {%- set out = [] -%}
-          {%- for h in ansible_play_hosts -%}
-          {%-   set v = hostvars[h] -%}
-          {%-   set _ = out.append({'name': h, 'todo': v.cassandra_apply_config_todo | default(false) | bool,
-                                    'os': v.cassandra_apply_config_os | default([]) | length > 0,
-                                    'why': v.cassandra_apply_config_restart_why | default(''),
-                                    'steps': v.cassandra_apply_config_steps | default([]),
-                                    'then': v.cassandra_apply_config_then | default(''),
-                                    'result': v.cassandra_op_result | default('nothing to apply'),
-                                    'notes': v.cassandra_apply_config_notes | default([]),
-                                    'kept_running': v.cassandra_apply_config_kept_running | default([]),
-                                    'unit_failed': v.cassandra_apply_config_unit_failed | default(false) | bool}) -%}
-          {%- endfor -%}
-          {{ out }}
+        _nodes: "{{ ansible_play_hosts | community.cassandra.cassandra_apply_config_nodes(hostvars) }}"
         _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default((_cassandra_preflight | default({})).cassandra_cluster_name | default('')) }}"
         # the ring's nodes the inventory does not have: left as they are (topology shows them)
-        _ring_unknown: >-
-          {{ ('has ' ~ _cassandra_apply_config_ring.unknown | join(', ') ~ ', which no host of the inventory has: left as'
-              ~ (' it is' if _cassandra_apply_config_ring.unknown | length == 1 else ' they are')
-              ~ ' (topology --check shows the ring against the inventory)')
-             if _cassandra_apply_config_ring.unknown | default([]) else '' }}
+        _ring_unknown: "{{ _cassandra_apply_config_ring | default({}) | community.cassandra.cassandra_apply_config_ring_unknown }}"
         _up_to_date: "{{ ansible_play_hosts | reject('in', _todo) | list }}"
         # the question and the head name the most disruptive effect: a Cassandra restart (the OS settings done with
         # Cassandra stopped are done in that restart), else a start of a Cassandra not running, else no restart
@@ -1540,10 +1508,7 @@
          + ([{'label': 'the ring', 'text': _ring_unknown}] if ansible_check_mode else []) }}
     # the ring's nodes the inventory does not have (the plan's warning, said here under --check)
     _ring: "{{ hostvars[ansible_play_hosts_all | first]._cassandra_apply_config_ring | default({}) }}"
-    _ring_unknown: >-
-      {{ ('has ' ~ _ring.unknown | join(', ') ~ ', which no host of the inventory has: left as'
-          ~ (' it is' if _ring.unknown | length == 1 else ' they are')
-          ~ ' (topology --check shows the ring against the inventory)') if _ring.unknown | default([]) else '' }}
+    _ring_unknown: "{{ _ring | community.cassandra.cassandra_apply_config_ring_unknown }}"
     _no_return: >-
       {{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('cassandra_apply_config_no_return', 'defined')
          | map(attribute='cassandra_apply_config_no_return') | first | default([]) }}
@@ -1552,21 +1517,8 @@
       {{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('cassandra_apply_config_diff', 'defined')
          | map(attribute='cassandra_apply_config_diff') | first | default([]) }}
     _nodes: >-
-      {%- set out = [] -%}
-      {%- for h in query('community.cassandra.cassandra_nodes') -%}
-      {%-   set v = hostvars[h] -%}
-      {%-   set _ = out.append({'name': h, 'todo': v.cassandra_apply_config_todo | default(false) | bool,
-                                'os': v.cassandra_apply_config_os | default([]) | length > 0,
-                                'why': v.cassandra_apply_config_restart_why | default(''),
-                                'steps': v.cassandra_apply_config_steps | default([]),
-                                'os_done': v.cassandra_apply_config_os_done | default(false),
-                                'done': v.cassandra_op_done | default(false), 'then': v.cassandra_apply_config_then | default(''),
-                                'result': v.cassandra_op_result | default('not done (the run stopped before it)' if h in ansible_play_hosts_all
-                                                                            else 'not in this run (--limit)'),
-                                'notes': v.cassandra_apply_config_notes | default([]),
-                                'kept_running': v.cassandra_apply_config_kept_running | default([])}) -%}
-      {%- endfor -%}
-      {{ out }}
+      {{ query('community.cassandra.cassandra_nodes')
+         | community.cassandra.cassandra_apply_config_nodes(hostvars, ran=ansible_play_hosts_all) }}
   tasks:
     # first: each node its own facts before any run_once task (ansible/ansible#87148)
     - name: Give each node its own facts

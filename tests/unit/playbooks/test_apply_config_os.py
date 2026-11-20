@@ -615,8 +615,10 @@ def test_the_restart_reasons_named_in_the_plan_and_the_recap():
     done = [dict(nodes[0], done=True), dict(nodes[1], os_done=True)]
     assert "n1  applied, restarted (LVM read-ahead, tuned profile)" in "\n".join(cassandra_apply_config_recap(done))
     for play in ("Find what each node needs", "Summary"):
-        text = str(PLAYS[NAMES.index(play)])
-        assert "'why': v.cassandra_apply_config_restart_why | default('')" in text, play
+        assert "community.cassandra.cassandra_apply_config_nodes(hostvars" in str(PLAYS[NAMES.index(play)]), play
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import cassandra_apply_config_nodes
+    assert cassandra_apply_config_nodes(["n1"], {"n1": {"cassandra_apply_config_restart_why": "tuned profile"}})[0][
+        "why"] == "tuned profile"
 
 
 def test_a_refusal_for_a_node_down_names_the_opt_outs_for_a_disk_restart():

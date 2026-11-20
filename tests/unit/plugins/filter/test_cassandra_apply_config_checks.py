@@ -204,3 +204,23 @@ def test_the_unit_environment_is_the_one_the_jvm_runs_with():
     assert cassandra_apply_config_unit(same, dict(WANTED, environment={"JAVA_HOME": "/opt/x", "JVM_OPTS": "-Dz=1"})) == []
     # the JVM's environment not read: the unit's, as loaded
     assert cassandra_apply_config_unit(dict(running, environ=""), wanted) == []
+
+
+def test_the_nodes_and_the_ring_sentence_are_built_once():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import (
+        cassandra_apply_config_nodes, cassandra_apply_config_ring_unknown)
+    hostvars = {"n1": {"cassandra_apply_config_todo": "True", "cassandra_apply_config_then": "restart",
+                       "cassandra_apply_config_os": [{"item": "x"}], "cassandra_op_result": "applied"},
+                "n2": {}}
+    plan = cassandra_apply_config_nodes(["n1", "n2"], hostvars)
+    assert plan[0]["todo"] is True and plan[0]["os"] is True and plan[0]["result"] == "applied"
+    assert plan[1] == {"name": "n2", "todo": False, "os": False, "why": "", "steps": [], "then": "",
+                       "result": "nothing to apply", "notes": [], "kept_running": [], "unit_failed": False,
+                       "os_done": False, "done": False}
+    recap = cassandra_apply_config_nodes(["n1", "n2", "n3"], dict(hostvars, n3={}), ran=["n1", "n2"])
+    assert [n["result"] for n in recap] == ["applied", "not done (the run stopped before it)", "not in this run (--limit)"]
+    assert cassandra_apply_config_ring_unknown({}) == ""
+    assert cassandra_apply_config_ring_unknown({"unknown": ["10.0.0.9"]}) == (
+        "has 10.0.0.9, which no host of the inventory has: left as it is (topology --check shows the ring against the"
+        " inventory)")
+    assert "left as they are" in cassandra_apply_config_ring_unknown({"unknown": ["10.0.0.8", "10.0.0.9"]})

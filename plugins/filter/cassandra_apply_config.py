@@ -16,6 +16,8 @@ cassandra_apply_config_warnings: the nodes -> their warnings, for the plan
 cassandra_apply_config_recap: the end of apply_config: a verdict line, then
     under --check the settings that differ and the outcomes, after a real run
     the outcomes (its plan showed the settings, before its question).
+cassandra_apply_config_nodes: the nodes as the outcomes and the recap take them, from their variables.
+cassandra_apply_config_ring_unknown: the ring's nodes no host of the inventory has, said once.
 cassandra_apply_config_down_ok: the other nodes the health checks of
     apply_config let be down while a node is done (their ring addresses).
 cassandra_apply_config_no_return: the nodes whose storage_compatibility_mode
@@ -999,6 +1001,43 @@ def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, d
     return shown + lines + ([] if check else _read_ahead_todo(nodes, restart_command, _width(width)))
 
 
+def cassandra_apply_config_nodes(hosts, hostvars, ran=None):
+    """hosts (in their order), hostvars -> [{name, todo, os, why, steps, then, result, notes, kept_running,
+    unit_failed, os_done, done}] from their cassandra_apply_config_* variables, as cassandra_apply_config_outcomes
+    and cassandra_apply_config_recap take them. ran: the hosts of the run (the recap): a node with no result is
+    "not done (the run stopped before it)", or "not in this run (--limit)" when not in it; none (the plan): "nothing
+    to apply"."""
+    out = []
+    for name in hosts or []:
+        v = hostvars[name]
+        if ran is None:
+            result = "nothing to apply"
+        else:
+            result = "not done (the run stopped before it)" if name in ran else "not in this run (--limit)"
+        out.append({"name": name, "todo": boolean(v.get("cassandra_apply_config_todo", False), strict=False),
+                    "os": len(v.get("cassandra_apply_config_os") or []) > 0,
+                    "why": v.get("cassandra_apply_config_restart_why", ""),
+                    "steps": v.get("cassandra_apply_config_steps") or [],
+                    "then": v.get("cassandra_apply_config_then", ""),
+                    "result": v.get("cassandra_op_result", result),
+                    "notes": v.get("cassandra_apply_config_notes") or [],
+                    "kept_running": v.get("cassandra_apply_config_kept_running") or [],
+                    "unit_failed": boolean(v.get("cassandra_apply_config_unit_failed", False), strict=False),
+                    "os_done": v.get("cassandra_apply_config_os_done", False),
+                    "done": v.get("cassandra_op_done", False)})
+    return out
+
+
+def cassandra_apply_config_ring_unknown(ring):
+    """The ring against the inventory (cassandra_apply_config_ring's) -> the sentence on its nodes no host of the
+    inventory has ('' when none): left as they are."""
+    unknown = list((ring or {}).get("unknown") or [])
+    if not unknown:
+        return ""
+    return ("has %s, which no host of the inventory has: left as %s (topology --check shows the ring against the"
+            " inventory)" % (", ".join(unknown), "it is" if len(unknown) == 1 else "they are"))
+
+
 def cassandra_apply_config_down_ok(nodes, hostvars, host, then, check, batch=False):
     """nodes: the cluster's nodes, in the order apply_config does them; hostvars; host: the node done now; then: its
     cassandra_apply_config_then; check: --check; batch: the nodes done at once (its first play), else one at a time.
@@ -1132,6 +1171,8 @@ class FilterModule(object):
             "cassandra_apply_config_outcomes": cassandra_apply_config_outcomes,
             "cassandra_apply_config_recap": cassandra_apply_config_recap,
             "cassandra_apply_config_warnings": cassandra_apply_config_warnings,
+            "cassandra_apply_config_nodes": cassandra_apply_config_nodes,
+            "cassandra_apply_config_ring_unknown": cassandra_apply_config_ring_unknown,
             "cassandra_apply_config_down_ok": cassandra_apply_config_down_ok,
             "cassandra_apply_config_no_return": cassandra_apply_config_no_return,
             "cassandra_apply_config_no_effect": cassandra_apply_config_no_effect,
