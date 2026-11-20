@@ -438,7 +438,7 @@ def test_the_os_settings_alone_no_restart():
              {"name": "node3", "todo": False, "result": "nothing to apply"}]
     assert cassandra_apply_config_outcomes(nodes, plan=True) == [
         'node2  write + restart',
-        'node1  OS settings, live (OS settings only, applied live)',
+        'node1  OS settings, live (no restart)',  # (hostile R2: never "OS settings" twice)
         '  read-ahead set live: the files Cassandra has open keep the old one until it restarts',
         'node3  up to date']
     nodes[0]["os_done"] = True

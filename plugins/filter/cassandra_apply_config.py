@@ -74,7 +74,7 @@ PLANNED = {"restart": "write + restart", "start": "write + start", "write": "wri
 _WHY = {"start": "Cassandra not running: started once written (down over max_hint_window? repair it)",
         "write": "Cassandra stopped: left stopped, reads its config when it starts",
         "none": "owner or mode only, read at start",
-        "os": "OS settings only, applied live"}
+        "os": "no restart"}
 _WRITTEN_BACK = " written back as the running Cassandra started with "  # (apply_config's note)
 # apply_config's notes: a restart pending (said before the run: not after a restart or start of this run), the
 # read-ahead set live with no restart (the recap's TO DO says how to take it)
