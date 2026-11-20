@@ -9,10 +9,11 @@ few defaults that change.
 
 KNOWN: the last release of each series these notes cover. A newer one stops apply_config (its NEWS.txt not read
 here): -e cassandra_allow_unknown_patch=true goes on.
-REFUSALS: (series, the first release that refuses, the check, why): a node that would move to that release or a
-later one with that setting stops before any change. check: a function of the node's settings
+REFUSALS: (series, the first release that refuses, the check, what is said): a node that would move to that
+release or a later one with that setting stops before any change. check: a function of the node's settings
 ({cassandra_jvm_options: [every -D/-XX option the inventory gives], cassandra_memtable_allocation_type,
-cassandra_memtable_offheap_space}) -> True when it refuses.
+cassandra_memtable_offheap_space}) -> True when it refuses; what is said: a function of the target release and the
+settings -> the reason, with its way out.
 NOTES: (series, release, text): said in the plan when a node crosses that release (runs an older one, moves to it
 or a later one).
 """
@@ -41,19 +42,25 @@ def _offheap_zero(settings):
             and space != "" and int(space) == 0)
 
 
-_BCRYPT = ("-Dcassandra.auth_bcrypt_gensalt_log2_rounds above 30 (cassandra_jvm_*extra_options): Cassandra"
-           " %s refuses to start with it. Set it to 30 or below, or remove it")
-_OFFHEAP = ("memtable_offheap_space 0 with memtable_allocation_type %s: Cassandra %s refuses to start with it. Give"
-            " cassandra_memtable_offheap_space a size, or leave it empty")
+def _bcrypt_said(target, settings):
+    return ("-Dcassandra.auth_bcrypt_gensalt_log2_rounds above 30 (cassandra_jvm_*extra_options): Cassandra %s refuses"
+            " to start with it. Set it to 30 or below, or remove it" % target)
+
+
+def _offheap_said(target, settings):
+    return ("memtable_offheap_space 0 with memtable_allocation_type %s: Cassandra %s refuses to start with it. Give"
+            " cassandra_memtable_offheap_space a size, or leave it empty"
+            % (settings.get("cassandra_memtable_allocation_type"), target))
+
 
 REFUSALS = [
-    ("40x", "4.0.2", _bcrypt_rounds, _BCRYPT),
-    ("41x", "4.1.0", _bcrypt_rounds, _BCRYPT),
-    ("50x", "5.0.0", _bcrypt_rounds, _BCRYPT),
-    # (from these releases on, not out yet when the notes were read: kept for when they are)
-    ("40x", "4.0.22", _offheap_zero, _OFFHEAP),
-    ("41x", "4.1.13", _offheap_zero, _OFFHEAP),
-    ("50x", "5.0.10", _offheap_zero, _OFFHEAP),
+    ("40x", "4.0.2", _bcrypt_rounds, _bcrypt_said),
+    ("41x", "4.1.0", _bcrypt_rounds, _bcrypt_said),
+    ("50x", "5.0.0", _bcrypt_rounds, _bcrypt_said),
+    # (CASSANDRA-21019, from these releases on, not out yet when the notes were read: kept for when they are)
+    ("40x", "4.0.22", _offheap_zero, _offheap_said),
+    ("41x", "4.1.13", _offheap_zero, _offheap_said),
+    ("50x", "5.0.10", _offheap_zero, _offheap_said),
 ]
 
 NOTES = [
@@ -85,15 +92,12 @@ def known(series, target):
     return bool(last) and numbers(target) <= numbers(last)
 
 
-def refusals(series, running, target, settings):
-    """The reasons the target release would refuse to start with these settings (it, or a release crossed on the way
-    from running: the node starts the target only)."""
-    out = []
-    for s, since, check, text in REFUSALS:
-        if s == series and numbers(target) >= numbers(since) and check(settings or {}):
-            out.append(text % ((target,) if check is _bcrypt_rounds
-                               else (settings.get("cassandra_memtable_allocation_type"), target)))
-    return out
+def refusals(series, target, settings):
+    """The reasons the target release would refuse to start with these settings (the node starts the target only:
+    the releases crossed on the way do not matter)."""
+    settings = settings or {}
+    return [said(target, settings) for s, since, check, said in REFUSALS
+            if s == series and numbers(target) >= numbers(since) and check(settings)]
 
 
 def notes(series, running, target):

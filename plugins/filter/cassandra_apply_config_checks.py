@@ -61,7 +61,7 @@ def cassandra_apply_config_version(series, package_version, running, settings=No
         return {}
     out = {"kind": kind, "category": VERSION_CATEGORY[kind], "running": str(running).strip(), "wanted": shown}
     if kind == "release":
-        out.update(refused=patch_notes.refusals(series, running, shown, settings or {}),
+        out.update(refused=patch_notes.refusals(series, shown, settings or {}),
                    unknown=not patch_notes.known(series, shown) and not boolean(allow_unknown, strict=False),
                    notes=patch_notes.notes(series, running, shown))
     return out

@@ -68,9 +68,9 @@ def test_a_release_that_would_not_start_stops(options, refused):
 
 def test_the_offheap_refusal_waits_for_its_release():
     settings = {"cassandra_memtable_allocation_type": "offheap_objects", "cassandra_memtable_offheap_space": "0MiB"}
-    assert notes.refusals("41x", "4.1.11", "4.1.12", settings) == []
-    assert notes.refusals("41x", "4.1.12", "4.1.13", settings)[0].startswith("memtable_offheap_space 0")
-    assert notes.refusals("41x", "4.1.12", "4.1.13", dict(settings, cassandra_memtable_offheap_space="")) == []
+    assert notes.refusals("41x", "4.1.12", settings) == []
+    assert notes.refusals("41x", "4.1.13", settings)[0].startswith("memtable_offheap_space 0")
+    assert notes.refusals("41x", "4.1.13", dict(settings, cassandra_memtable_offheap_space="")) == []
 
 
 def test_an_upgrade_and_an_older_release_stop_with_their_way_out():
