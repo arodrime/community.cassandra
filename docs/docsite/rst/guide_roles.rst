@@ -2076,7 +2076,7 @@ because of the file's name (``jmxremote.password: 0400``). The run ends with ``r
 kept by hand as its line, their steps in ``report.txt``) and where the report is; nothing else is printed under the
 ``community.cassandra.ops`` callback, which draws each section's rule.
 
-The import also writes ``report.shareable.txt`` next to the report (``-e import_report_shareable=false`` turns it off), a copy of
+With ``-e import_report_shareable=true`` (off by default), the import also writes ``report.shareable.txt`` next to the report (mode ``0644``), a copy of
 ``report.txt`` and ``report.details.txt`` in one file to send to someone who helps (a colleague, a forum, an issue):
 the same sections, hand edits and their lines,
 versions and the import's own notes, with the node names as ``n1``, ``n2``... (in the order of their names, whatever

@@ -2606,7 +2606,7 @@
       # (--check with the report in an inventory dir not there yet: not created)
       when: not ansible_check_mode or _report_args.report_file | dirname is directory
 
-    # import_report_shareable: true (default; false writes none) also writes a copy of the report to share, next to it
+    # import_report_shareable: true (default false: none written) also writes a copy of the report to share, next to it
     # (report.shareable.txt; report.check.shareable.txt under --check): node names n1.., clusters c1.., addresses
     # IP, the site's host names, domains, URLs, paths, buckets and user names replaced, secrets masked; and its key
     # (the real names), for the operator only: report.shareable.key.txt, mode 0600 before anything is in it, never in
@@ -2619,7 +2619,7 @@
         access_time: preserve
         modification_time: preserve
       when:
-        - import_report_shareable | default(true) | bool
+        - import_report_shareable | default(false) | bool
         - not ansible_check_mode
 
     # the key of the shareable copy of an earlier release candidate (real names, a .map that Ansible would read as
@@ -2635,7 +2635,7 @@
       ansible.builtin.debug:
         msg: >-
           Removed {{ import_cluster_old_key.path }}: the key of an earlier import's shareable copy (it held the real
-          names){{ "; this import's is report.shareable.key.txt" if import_report_shareable | default(true) | bool else '' }}.
+          names){{ "; this import's is report.shareable.key.txt" if import_report_shareable | default(false) | bool else '' }}.
       when: import_cluster_old_key is changed
       vars:
         cassandra_output: true
@@ -2653,7 +2653,7 @@
       check_mode: false
       diff: false
       when:
-        - import_report_shareable | default(true) | bool
+        - import_report_shareable | default(false) | bool
         - not ansible_check_mode or _report_args.report_file | dirname is directory
         - item.part == 'text' or not ansible_check_mode
       vars:
@@ -2673,7 +2673,7 @@
                self_check_error=_self_check_error | default(''), changes=_changes, todo=_report_args.todo,
                look=_report_args.look, run_time=_report_args.run_time | default(''), build=true,
                screen=true, strict=import_strict | default(true) | bool,
-               shareable=import_report_shareable | default(true) | bool) }}
+               shareable=import_report_shareable | default(false) | bool) }}
       vars:
         cassandra_output: true  # printed as is by the ops callback
         cassandra_output_gap: true  # a block of its own (ops callback)

@@ -95,8 +95,15 @@ def test_the_convergence_on_a_failed_self_check(tmp_path):
 
 @pytest.mark.parametrize("check", [False, True])
 def test_the_shareable_copy(tmp_path, check):
-    # written by default (import_report_shareable: true)
-    rc, out = run(tmp_path, *(["--check"] if check else []))
+    # written on request only (import_report_shareable: true; false by default: none, nor its key)
+    default = tmp_path / "default"
+    default.mkdir()
+    rc, out = run(default, *(["--check"] if check else []))
+    assert rc == 0, out
+    assert list((default / "reports" / "big").glob("report*.txt")), out
+    assert not list((default / "reports" / "big").glob("*shareable*")), out
+    assert "a copy to share" not in out
+    rc, out = run(tmp_path, "-e", "import_report_shareable=true", *(["--check"] if check else []))
     assert rc == 0, out
     stem = tmp_path / "reports" / "big" / ("report.check" if check else "report")
     copy, key = stem.with_name(stem.name + ".shareable.txt"), stem.with_name(stem.name + ".shareable.key.txt")
@@ -119,7 +126,7 @@ def test_the_tasks_pass_the_section_on():
     assert "_convergence_screen" not in WRITE["vars"]
     shareable = next(t for t in WRITE["tasks"] if t["name"] == "Write the shareable copy of the report")
     assert [i["mode"] for i in shareable["loop"]] == ["0644", "0600"]
-    assert "import_report_shareable | default(true) | bool" in shareable["when"]
+    assert "import_report_shareable | default(false) | bool" in shareable["when"]
     # the key made 0600 before anything is written in it (no window where it is readable by others)
     names = [t["name"] for t in WRITE["tasks"]]
     touch = WRITE["tasks"][names.index("Make the key of the shareable copy readable by its owner only")]

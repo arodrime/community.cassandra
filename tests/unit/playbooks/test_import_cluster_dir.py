@@ -413,12 +413,13 @@ def test_the_key_of_an_earlier_shareable_copy_is_removed():
     said = TASKS["Say the key of an earlier shareable copy is removed"]
     assert said["when"] == "import_cluster_old_key is changed"
     old = {"path": "/r/report.shareable.map"}
-    assert render(said["ansible.builtin.debug"]["msg"], import_cluster_old_key=old) == (
+    assert render(said["ansible.builtin.debug"]["msg"], import_cluster_old_key=old, import_report_shareable=True) == (
         "Removed /r/report.shareable.map: the key of an earlier import's shareable copy (it held the real names); this"
         " import's is report.shareable.key.txt.")
-    # no copy this time: no key named
-    assert render(said["ansible.builtin.debug"]["msg"], import_cluster_old_key=old, import_report_shareable=False) == (
-        "Removed /r/report.shareable.map: the key of an earlier import's shareable copy (it held the real names).")
+    # no copy this time (the default): no key named
+    for given in ({}, {"import_report_shareable": False}):
+        assert render(said["ansible.builtin.debug"]["msg"], import_cluster_old_key=old, **given) == (
+            "Removed /r/report.shareable.map: the key of an earlier import's shareable copy (it held the real names).")
 
 
 def test_the_former_force_name_does_not_force():

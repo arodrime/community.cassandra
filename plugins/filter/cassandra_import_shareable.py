@@ -1,6 +1,6 @@
 # Copyright: Contributors to the community.cassandra collection
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
-"""A copy of the import's report that can be shared (import_cluster writes it unless -e import_report_shareable=false).
+"""A copy of the import's report that can be shared (import_cluster writes it with -e import_report_shareable=true).
 
 cassandra_import_shareable: the report's lines and the import's layout -> {text: the lines of the copy, map: the
     lines of its key}. In the copy the node names become n1, n2.. (in the order of their names), the clusters c1,

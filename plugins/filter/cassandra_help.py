@@ -235,7 +235,7 @@ OPERATIONS = [
                  ("-e import_keep_hand_edits=true", "keeps hand edits, parts (=<names>)", "false"),
                  ("-e import_carry_exporter_config=true", "carries the exporter's config file",
                   "false"),
-                 ("-e import_report_shareable=false", "no anonymised report copy to share", "true"),
+                 ("-e import_report_shareable=true", "an anonymised report copy to share", "false"),
                  ("-e import_strict=false", "writes it even if self-check fails", "true")]},
 ]
 # an option's text and its default on one line from column 46 at 98 columns (a terminal of 100)
