@@ -115,6 +115,9 @@ def test_the_rich_rules_written_offline_are_one_per_line(tmp_path):
     for r in rules:
         assert "-q --add-rich-rule=" + r["rule"] in calls
     assert "-q --add-port=22/tcp" in calls and "-q --add-port=9042/tcp" in calls and "-q --add-port=7199/tcp" not in calls
+    # a single source given as a string, none: as a list of one, nothing
+    one = _variables(cassandra_firewall_port_sources={"7199/tcp": "10.0.9.5", "9404/tcp": None})
+    assert [r["source"] for r in render("{{ _cassandra_firewall_rich_rules }}", one)] == ["10.0.9.5"]
     # the live path takes the same rules
     live = find(load("roles", "cassandra_firewall", "tasks", "firewall.yml"), "Open them to their sources (RedHat)")
     assert live["loop"] == "{{ _cassandra_firewall_rich_rules }}" and live["ansible.posix.firewalld"]["rich_rule"] == "{{ item.rule }}"

@@ -34,7 +34,7 @@ _cassandra_firewall_own_unopened: >-
 _cassandra_firewall_rich_rules: >-
   {%- set out = [] -%}
   {%- for port, sources in _cassandra_firewall_port_sources.items() -%}
-  {%-   for source in sources -%}
+  {%-   for source in ([sources] if sources is string else sources or []) -%}
   {%-     set _ = out.append({'port': port, 'source': source,
                               'rule': 'rule family="' ~ ('ipv6' if ':' in source else 'ipv4') ~ '" source address="'
                                       ~ source ~ '" port port="' ~ port | split('/') | first ~ '" protocol="'

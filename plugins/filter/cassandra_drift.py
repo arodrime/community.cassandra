@@ -342,8 +342,8 @@ def _between_lines(drift, nodes, user, cluster, everyone, who, width, commands):
 
     def where(secret):  # the cluster group's file for a value of every node: one there, else a new one
         mine = [p for p, dummy in user if VARS_FILE.match(p).groups() == ("group_vars", cluster)]
-        named = [p for p in mine if re.search(r"(secret|vault)", os.path.basename(p)) is not None] if secret \
-            else [p for p in mine if re.search(r"(secret|vault)", os.path.basename(p)) is None]
+        named = [p for p in mine if re.search(r"(?i)(secret|vault)", os.path.basename(p)) is not None] if secret \
+            else [p for p in mine if re.search(r"(?i)(secret|vault)", os.path.basename(p)) is None]
         return named[0] if named else "group_vars/%s/%s (a new file)" % (cluster, "secrets.yml" if secret else "main.yml")
 
     layout = {"cluster_group": cluster, "group_vars": group_vars, "host_vars": host_vars, "from_yours": {},
