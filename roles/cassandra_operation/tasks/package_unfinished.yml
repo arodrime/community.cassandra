@@ -5,7 +5,8 @@
 # cassandra_package_unfinished_refusal). rolling_restart, update_java, rolling_reboot, sync_clocks, start_rack
 # (apply_config reads it with its version).
 # _cassandra_package_unfinished_hosts: the nodes the run restarts; _cassandra_package_unfinished_run: its playbook;
-# _cassandra_package_unfinished_what: what it does to them, said in the refusal (restart, the default; start; reboot).
+# _cassandra_package_unfinished_what: what it does to them, said in the refusal (restart, the default; start; reboot),
+# or {node: that word} when it differs from node to node.
 - name: Read the installed Cassandra package
   ansible.builtin.command:
     argv: >-
@@ -17,7 +18,7 @@
   check_mode: false  # reads only
   when: inventory_hostname in _cassandra_package_unfinished_hosts
 
-- name: Refuse to restart a node whose Cassandra package is left half done
+- name: Refuse a node whose Cassandra package is left half done
   ansible.builtin.fail:
     msg: >-
       {{ (_cassandra_package_unfinished_run ~ '  ' ~ _cluster) | community.cassandra.cassandra_refused(_refusal)
@@ -33,6 +34,8 @@
       {%- for h in ansible_play_hosts if h in _cassandra_package_unfinished_hosts -%}
       {%-   set state = hostvars[h].cassandra_package_read.stdout_lines | default([])
                         | community.cassandra.cassandra_package_state -%}
-      {%-   set _ = out.append({'name': h, 'unfinished': state.unfinished, 'what': _cassandra_package_unfinished_what | default('restart')}) -%}
+      {%-   set what = _cassandra_package_unfinished_what | default('restart') -%}
+      {%-   set what = what[h] | default('restart') if what is mapping else what -%}
+      {%-   set _ = out.append({'name': h, 'unfinished': state.unfinished, 'what': what}) -%}
       {%- endfor -%}
       {{ out | community.cassandra.cassandra_package_unfinished_refusal }}

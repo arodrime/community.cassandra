@@ -153,7 +153,8 @@
       when: groups['cassandra_sync_clock_window_True'] | default([]) | length > 0
 
     # a Cassandra package left half done (an interrupted rpm or dpkg run) on a node set in a restart window: refused
-    # before the question (its restart would run Cassandra on those files)
+    # before the question (its restart, or its start where a window left open stopped it, would run Cassandra on
+    # those files)
     - name: Refuse to restart a node whose Cassandra package is left half done
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation
@@ -161,6 +162,10 @@
       vars:
         _cassandra_package_unfinished_hosts: "{{ groups['cassandra_sync_clock_window_True'] | default([]) }}"
         _cassandra_package_unfinished_run: sync_clocks
+        _cassandra_package_unfinished_what: >-
+          {{ dict(_window | zip(_window | map('extract', hostvars, '_cassandra_clock_running') | map('bool')
+                                 | map('ternary', 'restart', 'start'))) }}
+        _window: "{{ groups['cassandra_sync_clock_window_True'] | default([]) }}"
 
     # a node whose clock is ahead is said in a warning: what it stamped meanwhile
     # carries future timestamps
