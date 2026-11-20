@@ -28,6 +28,10 @@ description:
     C(cassandra_output_rescued) to C(true) (its rescue says what failed). Nothing for a failed task with the task
     variable C(cassandra_output_said) set to C(true), the stop of a run whose verdict was printed just before (a
     summary C(REFUSED  ...)). Diffs (C(--diff)) too.
+  - A role's argument check that refuses a variable (a value of the wrong type, from the inventory or C(-e), a
+    required one missing) is printed short once its task is over, one block for the nodes refused the same way (the
+    role, each variable and why, its value and the type it needs or ansible-core's reason, the nodes, then the way
+    out). With C(-v), the default callback's output, the role's whole argument spec included.
   - The warnings of the tasks are printed too.
   - The operator messages are coloured by the start of their lines (Ansible's colours, so C(ANSIBLE_NOCOLOR),
     C(ANSIBLE_FORCE_COLOR) and a non-terminal output apply). C(WARNING) in O(warning_color), indented or not; C(DONE), C(HEALTHY),
@@ -117,6 +121,7 @@ requirements:
 import os
 import re
 import sys
+import textwrap
 import time
 
 try:
@@ -149,34 +154,55 @@ _CORE_ERRORS = ("Task failed: ", "The conditional check ", "The task includes an
                 "the field 'args' has an invalid value", "Unexpected failure during module execution")
 
 
-# a role's argument check that refused a value (its spec printed whole by the default callback: thousands of lines)
-# ("is of type <class 'ansible...AnsibleUnicode'> ... to int: <class ...> cannot be..." before ansible-core 2.19,
-# "is of type str ... to int: \"'3w'\" cannot be converted to an int" since: the value said)
-_TYPE = re.compile(r"argument '([^']+)' is of type (?:<class '(?:[\w.]+\.)?(\w+)'>|(\w+)) and we were unable to"
-                   r" convert to (\w+)(?:: \"(.*)\" cannot be converted.*|: .*)?$")
-_TYPE_NAMES = {"AnsibleUnicode": "a text", "str": "a text", "_AnsibleTaggedStr": "a text", "AnsibleSequence": "a list",
-               "list": "a list", "AnsibleMapping": "a dict", "dict": "a dict", "int": "a whole number", "float": "a number",
-               "bool": "a boolean"}
+# a role's argument check that refused a value (its spec printed whole by the default callback: thousands of lines):
+# "argument 'x' is of type <given> and we were unable to convert to <needed>: <reason>", <given> "<class '...'>"
+# before ansible-core 2.19, its name since
+_ARG_TYPE = re.compile(r"argument '([^']+)' is of type (?:<class '(?:[\w.]+\.)?(\w+)'>|(\w+)) and we were unable to"
+                       r" convert to (\w+)(?:: (.*))?$")
+# a reason that only echoes a type: "<class 'str'> cannot be converted to an int"; since 2.19, the value for an int
+# ("\"'3w'\" cannot be converted to an int")
+_ARG_ECHO = re.compile(r"(?:<class '[\w.]+'>|\"(.*)\") cannot be converted to ")
+_ARG_TYPE_NAMES = {
+    "AnsibleUnicode": "a text", "str": "a text", "_AnsibleTaggedStr": "a text", "AnsibleSequence": "a list",
+    "list": "a list", "AnsibleMapping": "a dict", "dict": "a dict", "int": "a whole number", "float": "a number",
+    "bool": "a boolean"}
+ARGUMENTS_WAY_OUT = "fix them where they are set (inventory or -e), then run again."
 
 
 def argument_errors(result):
-    """A failed role argument check (ansible-core's validate_argument_spec) -> its lines, short: which role, then
-    each variable refused and why; [] for any other failure."""
+    """A failed role argument check (ansible-core's validate_argument_spec) -> (its role, its rows: each variable
+    refused and why, short), None for any other failure."""
     errors = result.get("argument_errors") if "argument_spec_data" in result else None
     if not errors:
-        return []
+        return None
     role = (result.get("validate_args_context") or {}).get("name") or "the role"
     said = []
     for error in errors:
-        found = _TYPE.match(str(error))
-        if found:
-            given = found.group(2) or found.group(3)
-            value = found.group(5) + " is " if found.group(5) else ""
-            needed = _TYPE_NAMES.get(found.group(4), "a " + found.group(4))
-            said.append("  %s: %s%s, not %s" % (found.group(1), value, _TYPE_NAMES.get(given, given), needed))
+        found = _ARG_TYPE.match(str(error))
+        if not found:  # (missing required arguments: x...)
+            said.append(re.sub(r"<class '(?:[\w.]+\.)?(\w+)'>", r"\1", str(error)))
+            continue
+        name, given, needed = found.group(1), found.group(2) or found.group(3), found.group(4)
+        needed = _ARG_TYPE_NAMES.get(needed, "a " + needed)
+        reason = " ".join((found.group(5) or "").split())
+        echo = _ARG_ECHO.match(reason)
+        if reason and not echo:  # its own words (a bool: the value and the valid ones; a dict: why)
+            said.append("%s: not %s: %s" % (name, needed, reason))
         else:
-            said.append("  " + re.sub(r"<class '(?:[\w.]+\.)?(\w+)'>", r"\1", str(error)))
-    return ["%s refused these values before it changed anything (fix them in the inventory):" % role] + said
+            value = echo.group(1) + " is " if echo and echo.group(1) else ""
+            said.append("%s: %s%s, not %s" % (name, value, _ARG_TYPE_NAMES.get(given, given), needed))
+    return role, tuple(said)
+
+
+def argument_lines(role, rows, hosts):
+    """The block of a refused role argument check: what was refused (rows, said once for the hosts that share
+    them), the hosts, the way out; 79 columns."""
+    out = ["%s refused these variables (it changed nothing):" % role]
+    for row in rows:
+        out += textwrap.wrap(row, 79, initial_indent="  ", subsequent_indent="    ", break_on_hyphens=False)
+    out += textwrap.wrap(", ".join(hosts), 79, initial_indent="node%s: " % ("s" if len(hosts) > 1 else ""),
+                         subsequent_indent="  ", break_on_hyphens=False)
+    return out + [ARGUMENTS_WAY_OUT]
 
 
 def _task(result):
@@ -498,6 +524,7 @@ class CallbackModule(DefaultCallback):
         self._said = (None, None, 0)  # (node, state, when) of the progress line last given to the log or the pipe
         self._progress = PROGRESS_COLOR
         self._warning = C.COLOR_WARN
+        self._refused = {}  # the refused role arguments of the task running: {(role, rows): [hosts]}, said after it
 
     def set_options(self, task_keys=None, var_options=None, direct=None):
         super(CallbackModule, self).set_options(task_keys=task_keys, var_options=var_options, direct=direct)
@@ -730,7 +757,24 @@ class CallbackModule(DefaultCallback):
             self._display.display(str(res["user_input"]))
         self._line("")
 
+    def _say_refused(self):
+        """The refused role arguments of the task that just ran, a block for the hosts that share them."""
+        refused, self._refused = self._refused, {}
+        for (role, rows), hosts in refused.items():
+            self._print(argument_lines(role, rows, hosts), color=C.COLOR_ERROR)
+
+    def v2_playbook_on_handler_task_start(self, task):
+        self._say_refused()
+        if self._verbose():
+            return super(CallbackModule, self).v2_playbook_on_handler_task_start(task)
+        return None
+
+    def v2_playbook_on_cleanup_task_start(self, task):
+        self._say_refused()
+        return super(CallbackModule, self).v2_playbook_on_cleanup_task_start(task)
+
     def v2_playbook_on_task_start(self, task, is_conditional):
+        self._say_refused()
         if self._verbose():
             return super(CallbackModule, self).v2_playbook_on_task_start(task, is_conditional)
         if task.action in _PAUSES and _flag(task, GAP):  # a rule above its question (skipped too: one at most)
@@ -797,9 +841,9 @@ class CallbackModule(DefaultCallback):
         if rescued(_task(result)):  # its rescue handles it: one line, never silent
             return self._handled(result)
         refused = argument_errors(_result(result))
-        if refused:  # (-v: the default callback's, the whole spec)
-            host = (getattr(result, "host", None) or result._host).get_name()
-            return self._print(["%s: %s" % (host, refused[0])] + refused[1:], color=C.COLOR_ERROR)
+        if refused:  # (-v: the default callback's, the whole spec); said once the task is over, once for its hosts
+            self._refused.setdefault(refused, []).append((getattr(result, "host", None) or result._host).get_name())
+            return None
         return self._default("v2_runner_on_failed", result, ignore_errors)
 
     def _handled(self, result):
@@ -879,7 +923,6 @@ class CallbackModule(DefaultCallback):
     v2_runner_on_async_poll = _quiet("v2_runner_on_async_poll")
     v2_runner_on_async_ok = _quiet("v2_runner_on_async_ok")
     v2_playbook_on_start = _quiet("v2_playbook_on_start")
-    v2_playbook_on_handler_task_start = _quiet("v2_playbook_on_handler_task_start")
     v2_playbook_on_include = _quiet("v2_playbook_on_include")
     v2_playbook_on_notify = _quiet("v2_playbook_on_notify")
     v2_playbook_on_no_hosts_remaining = _quiet("v2_playbook_on_no_hosts_remaining")  # after the failures shown
@@ -887,12 +930,14 @@ class CallbackModule(DefaultCallback):
     del _quiet
 
     def v2_playbook_on_play_start(self, play):
+        self._say_refused()
         self._verdicts = set()  # a verdict said again by another play is its own
         if self._verbose():
             return super(CallbackModule, self).v2_playbook_on_play_start(play)
         return None
 
     def v2_playbook_on_stats(self, stats):
+        self._say_refused()
         drop_typeahead()  # the run is over: the shell reads the terminal next
         if self._verbose():
             return super(CallbackModule, self).v2_playbook_on_stats(stats)

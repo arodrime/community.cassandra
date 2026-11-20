@@ -190,16 +190,65 @@ ARGUMENTS = """
 """
 
 
-def test_a_refused_role_argument_said_in_short_its_older_words_too(tmp_path):
+# ansible-core's own messages (validate_argument_spec): 2.16 says the type of the value given, 2.19+ its name, and the
+# value for an int
+_CORE_216 = {
+    "int": "argument 'cassandra_concurrent_reads' is of type <class 'ansible.parsing.yaml.objects.AnsibleUnicode'> and"
+           " we were unable to convert to int: <class 'ansible.parsing.yaml.objects.AnsibleUnicode'> cannot be"
+           " converted to an int",
+    "bool": "argument 'cassandra_flag' is of type <class 'str'> and we were unable to convert to bool: The value"
+            " 'maybe' is not a valid boolean.  Valid booleans include: 0, 1, 'off', 'yes', '1', 't', 'on', 'y',"
+            " 'false', 'n', '0', 'f', 'no', 'true'",
+    "dict": "argument 'cassandra_linux_limits' is of type <class 'str'> and we were unable to convert to dict:"
+            " dictionary requested, could not parse JSON or key=value",
+    "list": "argument 'cassandra_seeds' is of type <class 'dict'> and we were unable to convert to list:"
+            " <class 'dict'> cannot be converted to a list"}
+_CORE_219 = {
+    "int": "argument 'cassandra_concurrent_reads' is of type str and we were unable to convert to int:"
+           " \"'3w'\" cannot be converted to an int",
+    "bool": "argument 'cassandra_flag' is of type str and we were unable to convert to bool: The value 'maybe' is"
+            " not a valid boolean. Valid booleans include: '1', 1, 0, 'yes', 't', 'true', '0', 'f', 'no', 'off',"
+            " 'on', 'false', 'y', 'n'",
+    "dict": "argument 'cassandra_linux_limits' is of type str and we were unable to convert to dict: dictionary"
+            " requested, could not parse JSON or key=value",
+    "list": "argument 'cassandra_seeds' is of type dict and we were unable to convert to list: <class 'dict'> cannot"
+            " be converted to a list"}
+
+
+def test_a_refused_role_argument_said_in_short_its_older_words_too():
+    from ansible_collections.community.cassandra.plugins.callback.ops import argument_errors, argument_lines
+    core = [_CORE_216[k] for k in ("int", "bool", "dict", "list")] + ["missing required arguments: x"]
+    role, rows = argument_errors({"argument_spec_data": {}, "argument_errors": core,
+                                  "validate_args_context": {"name": "cassandra_config"}})
+    assert role == "cassandra_config"
+    assert rows == (
+        "cassandra_concurrent_reads: a text, not a whole number",
+        # the converter's own reason: the value refused and the valid ones (a text such as "yes" is a boolean)
+        "cassandra_flag: not a boolean: The value 'maybe' is not a valid boolean. Valid booleans include: 0, 1, 'off',"
+        " 'yes', '1', 't', 'on', 'y', 'false', 'n', '0', 'f', 'no', 'true'",
+        "cassandra_linux_limits: not a dict: dictionary requested, could not parse JSON or key=value",
+        "cassandra_seeds: a dict, not a list",
+        "missing required arguments: x")
+    lines = argument_lines(role, rows, ["h-n1"])
+    assert lines[0] == "cassandra_config refused these variables (it changed nothing):"
+    assert lines[2] == "  cassandra_flag: not a boolean: The value 'maybe' is not a valid boolean."
+    assert lines[3].startswith("    Valid booleans include: 0, 1, ")
+    assert lines[-2:] == ["node: h-n1", "fix them where they are set (inventory or -e), then run again."]
+    assert max(len(x) for x in lines) <= 79
+    assert "in the inventory" not in "\n".join(lines)  # (a value given with -e too)
+    assert argument_errors({"msg": "anything else"}) is None
+
+
+def test_a_refused_role_argument_keeps_the_reason_of_ansible_core_2_19():
     from ansible_collections.community.cassandra.plugins.callback.ops import argument_errors
-    old = ("argument 'cassandra_concurrent_reads' is of type <class 'ansible.parsing.yaml.objects.AnsibleUnicode'> and"
-           " we were unable to convert to int: <class 'ansible.parsing.yaml.objects.AnsibleUnicode'> cannot be converted"
-           " to an int")  # (ansible-core 2.16)
-    assert argument_errors({"argument_spec_data": {}, "argument_errors": [old, "missing required arguments: x"],
-                            "validate_args_context": {"name": "cassandra_config"}}) == [
-        "cassandra_config refused these values before it changed anything (fix them in the inventory):",
-        "  cassandra_concurrent_reads: a text, not a whole number", "  missing required arguments: x"]
-    assert argument_errors({"msg": "anything else"}) == []
+    _, rows = argument_errors({"argument_spec_data": {}, "argument_errors": [
+        _CORE_219[k] for k in ("int", "bool", "dict", "list")]})
+    assert rows == (
+        "cassandra_concurrent_reads: '3w' is a text, not a whole number",
+        "cassandra_flag: not a boolean: The value 'maybe' is not a valid boolean. Valid booleans include: '1', 1, 0,"
+        " 'yes', 't', 'true', '0', 'f', 'no', 'off', 'on', 'false', 'y', 'n'",
+        "cassandra_linux_limits: not a dict: dictionary requested, could not parse JSON or key=value",
+        "cassandra_seeds: a dict, not a list")
 
 
 # (the value given is in ansible-core's message since 2.19 only)
@@ -207,13 +256,16 @@ _GIVEN_3W = "'3w' is " if tuple(int(x) for x in ansible_version.split(".")[:2]) 
 
 
 def test_a_refused_role_argument_said_in_short(tmp_path):
-    # e2e (hostile S21): "cassandra_concurrent_reads: 3w" in host_vars printed cassandra_config's whole argument spec,
-    # 2100 lines, the reason in the middle
-    rc, output = run(tmp_path, ARGUMENTS, INVENTORY="node1,")
+    # e2e: "cassandra_concurrent_reads: 3w" in host_vars printed cassandra_config's whole argument spec, 2100 lines,
+    # the reason in the middle; the same value on every node (group_vars): one block, not one per node
+    rc, output = run(tmp_path, ARGUMENTS)
     assert rc != 0
-    assert shown(output.strip()) == [
-        "node1: the role refused these values before it changed anything (fix them in the inventory):",
+    lines = shown(output.strip())
+    assert lines[:2] == [
+        "the role refused these variables (it changed nothing):",
         "  cassandra_concurrent_reads: %sa text, not a whole number" % _GIVEN_3W]
+    assert lines[2] in ("nodes: node1, node2", "nodes: node2, node1")
+    assert lines[3:] == ["fix them where they are set (inventory or -e), then run again."]
     rc, output = run(tmp_path, ARGUMENTS, "-v", INVENTORY="node1,")  # -v: the default callback's, the spec too
     assert "argument_spec_data" in output
 
