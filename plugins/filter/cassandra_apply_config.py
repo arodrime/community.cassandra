@@ -75,6 +75,8 @@ _WHY = {"start": "Cassandra not running: started once written (down over max_hin
         "write": "Cassandra stopped: left stopped, reads its config when it starts",
         "none": "owner or mode only, read at start",
         "os": "no restart"}
+# a node whose Cassandra is not running (cassandra_apply_config_then write or start), said with its outcome
+NOT_RUNNING = "Cassandra not running"
 _WRITTEN_BACK = " written back as the running Cassandra started with "  # (apply_config's note)
 # apply_config's notes: a restart pending (said before the run: not after a restart or start of this run), the
 # read-ahead set live with no restart (the recap's TO DO says how to take it)
@@ -785,6 +787,11 @@ def _outcome(node, check, plan):
     os_only = bool(node.get("os") and not node.get("todo"))  # the OS settings alone, applied live
     done_key = "os_done" if os_only else "done"
     todo_done = bool(node.get("todo") or os_only) and bool(plan or node.get(done_key))
+    # Cassandra not running there (hostile R3: "no restart" or "up to date" said nothing of it)
+    stopped = node.get("then") in ("write", "start")
+    if todo_done and os_only and stopped:  # (its OS settings applied, nothing started)
+        word = "would apply" if check else "will apply" if plan else "applied"
+        return ("OS settings, live (%s)" % NOT_RUNNING if plan and not check else "%s, left stopped" % word), word
     if todo_done:
         then = "os" if os_only else node.get("then")
         word = "would apply" if check else "will apply" if plan else "applied"  # (plan: before a real run's question)
@@ -823,7 +830,9 @@ def _outcome(node, check, plan):
     # (not done: the run stopped before it, never "not reached", which is said of a host Ansible does not reach)
     for word in ("nothing to apply", "not done", "not in this run", "skipped"):
         if word in result:
-            return ("up to date", "up to date") if word == "nothing to apply" else (result, word)
+            if word == "nothing to apply":
+                return ("up to date, " + NOT_RUNNING if stopped else "up to date"), "up to date"
+            return result, word
     return result, "not touched"
 
 

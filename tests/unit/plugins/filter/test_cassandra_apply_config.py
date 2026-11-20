@@ -454,6 +454,25 @@ def test_the_os_settings_alone_no_restart():
     assert "node2  not done (the run stopped before it), its OS settings applied" in cassandra_apply_config_recap(nodes)
 
 
+def test_a_node_not_running_said_so():
+    # hostile R3: h-n4 stopped: "would apply, no restart" (its OS settings only), "up to date" (in sync): no word of
+    # Cassandra not running there
+    nodes = [{"name": "node1", "todo": False, "os": True, "then": "write"},
+             {"name": "node2", "todo": False, "then": "write"},
+             {"name": "node3", "todo": False, "then": "none"}]
+    assert cassandra_apply_config_outcomes(nodes, plan=True, check=True) == [
+        "node1  would apply, left stopped", "node2  up to date, Cassandra not running", "node3  up to date"]
+    assert cassandra_apply_config_outcomes(nodes, plan=True) == [
+        "node1  OS settings, live (Cassandra not running)", "node2  up to date, Cassandra not running",
+        "node3  up to date"]
+    nodes[0]["os_done"] = True
+    assert cassandra_apply_config_recap(nodes, check=True)[0] == "CHECK  apply_config  1 would apply, 2 up to date"
+    assert "node1  applied, left stopped" in cassandra_apply_config_recap(nodes)
+    # (a node to start, nothing to write: not running either)
+    assert cassandra_apply_config_outcomes([{"name": "node4", "then": "start"}], check=True) == [
+        "node4  up to date, Cassandra not running"]
+
+
 def test_an_os_value_unknown_before():
     change = {"item": "LVM read-ahead vg/lv (sectors)", "before": None, "after": "8"}
     lines = cassandra_apply_config_diff([{"name": "node1", "os": [change]}])

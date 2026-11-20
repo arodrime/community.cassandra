@@ -26,7 +26,7 @@ import yaml
 
 from ansible.module_utils.parsing.convert_bool import boolean
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import THEN
+from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import NOT_RUNNING, THEN
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     MISSING, _resolved, _roles_defaults, _user_data)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_convergence import (
@@ -281,6 +281,8 @@ def _cost_line(key, kind, cost, changing, commands):
     --diff (change_seeds --check for the seeds) where it shows it, its coverage category too (a setting the import's
     convergence does not know: apply_config writes it), else NO_CHECK -> text."""
     shown = _KINDS.get(kind, (0, "", False))[2] or (kind == "unknown" and bool(category(key)))
+    # every node of the cluster: no --limit naming them all (hostile R3: 5 names on each of 20 lines)
+    changing = [] if set(changing) >= set(commands.get("everyone") or [None]) else changing
     check = unbreakable(_check(changing, kind if _KINDS.get(kind, (0, "", False))[2] else "restart",
                                commands["inventory"], commands["hosts"], commands["cwd"])) if shown else NO_CHECK
     return "%s; check: %s" % (cost, check)
@@ -454,7 +456,7 @@ def cassandra_drift_sections(values, nodes, files=None, cluster="", shared=None,
     shared = set(shared or []) | set(["all"])
     if default_inventory and _same_sources(inventory, default_inventory):
         inventory = None
-    commands = {"inventory": inventory or None, "hosts": hosts or None, "cwd": cwd,
+    commands = {"inventory": inventory or None, "hosts": hosts or None, "cwd": cwd, "everyone": everyone,
                 "unmanaged": dict((n, not boolean(values.get(n, {}).get("cassandra_linux_manage", True), strict=False))
                                   for n in everyone)}
     groups = named_groups([{"name": n, "dc": by_name[n].get("dc"), "rack": by_name[n].get("rack")} for n in everyone])
@@ -513,8 +515,8 @@ def cassandra_drift_sync(nodes, stops=None, command=""):
             off += 1
             then = THEN.get(str(node.get("then") or "none"), ("no restart",))[0]
             text = "%s; %s" % ("; ".join(parts) or "its config files", then)
-        else:
-            text = "in sync"
+        else:  # (a node not running: its files compared, said so; hostile R3)
+            text = "in sync" + (", " + NOT_RUNNING if str(node.get("then")) in ("write", "start") else "")
         if text not in rows:
             order.append(text)
         rows.setdefault(text, []).append(str(node.get("name")))

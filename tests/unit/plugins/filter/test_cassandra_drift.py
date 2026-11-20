@@ -44,8 +44,14 @@ def test_a_setting_off_its_default_with_where_the_edit_and_the_cost():
     assert lines[0] == "  cassandra_concurrent_reads   64 on all (3 nodes)"
     assert lines[1] == "      default: 32; set in group_vars/prod/main.yml"
     assert lines[2] == u"      → remove cassandra_concurrent_reads from group_vars/prod/main.yml"
-    assert lines[3].startswith("      3 nodes change, then restart; check: ansible-playbook -i inventories/prod.yml"
-                               " community.cassandra.apply_config --limit db1,db2,db3 --check --diff")
+    # (every node: no --limit naming them all, hostile R3)
+    assert lines[3] == ("      3 nodes change, then restart; check: ansible-playbook -i inventories/prod.yml"
+                        " community.cassandra.apply_config --check --diff")
+    # some nodes only: --limit to them
+    one = sections(dict(every(), db2={"cassandra_concurrent_reads": 64}),
+                   {"host_vars/db2.yml": "cassandra_concurrent_reads: 64\n"})
+    assert row(one["stock"], "cassandra_concurrent_reads")[3].endswith(
+        "community.cassandra.apply_config --limit db2 --check --diff")
     assert result["counts"] == {"stock": 1, "between": 0, "kept": 0}
     assert "every node has the same value of every setting" in result["between"][1]
 
@@ -320,6 +326,14 @@ def test_dirs_and_shared_groups(tmp_path):
 def test_in_sync():
     lines = cassandra_drift_sync([{"name": "db1"}, {"name": "db2", "todo": False}], [], "ansible-playbook x")
     assert lines[1:] == ["  db1, db2  in sync", "  every node matches the inventory: apply_config has nothing to apply"]
+
+
+def test_a_node_not_running_said_so():
+    # hostile R3: h-n4 stopped, its files in sync: "h-n1..h-n5 in sync", no word of it not running
+    lines = cassandra_drift_sync([{"name": "db1", "then": "none"}, {"name": "db2", "then": "write"},
+                                  {"name": "db3", "then": "start"}], [], "x")
+    assert lines[1:] == ["  db1  in sync", "  db2, db3  in sync, Cassandra not running",
+                         "  every node matches the inventory: apply_config has nothing to apply"]
 
 
 def test_the_nodes_that_differ_and_the_command():
