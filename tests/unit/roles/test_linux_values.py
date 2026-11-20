@@ -97,7 +97,7 @@ def test_switches_off_skip_their_task(name, variable):
 
 
 def test_limits_file_and_none():
-    t = task("Limits of the cassandra user", "os.yml")
+    t = task("Limits of the cassandra user", "limits.yml")
     assert t["ansible.builtin.copy"]["dest"] == "{{ cassandra_linux_limits_file }}"
     assert not when(t, cassandra_linux_limits={})
     assert when(t, cassandra_linux_limits={"nofile": 1})

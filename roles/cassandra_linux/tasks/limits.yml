@@ -1,0 +1,15 @@
+---
+# For what runs as cassandra outside the systemd unit (tools run by hand):
+# the unit sets its own limits, systemd ignores these files. Also written again
+# by apply_config's release window: the package ships this file as a plain one
+# (not a config file), which its update puts back.
+- name: Limits of the cassandra user
+  ansible.builtin.copy:
+    content: |
+      # Managed by Ansible (community.cassandra.cassandra_linux)
+      {% for name, value in cassandra_linux_limits.items() %}
+      cassandra - {{ name }} {{ value }}
+      {% endfor %}
+    dest: "{{ cassandra_linux_limits_file }}"
+    mode: "0644"
+  when: cassandra_linux_limits | length > 0

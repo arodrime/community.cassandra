@@ -167,18 +167,8 @@
   ansible.builtin.include_tasks: timesync.yml
   when: not _cassandra_linux_timesync_later | default(false) | bool
 
-# For what runs as cassandra outside the systemd unit (tools run by hand):
-# the unit sets its own limits, systemd ignores these files
 - name: Limits of the cassandra user
-  ansible.builtin.copy:
-    content: |
-      # Managed by Ansible (community.cassandra.cassandra_linux)
-      {% for name, value in cassandra_linux_limits.items() %}
-      cassandra - {{ name }} {{ value }}
-      {% endfor %}
-    dest: "{{ cassandra_linux_limits_file }}"
-    mode: "0644"
-  when: cassandra_linux_limits | length > 0
+  ansible.builtin.import_tasks: limits.yml
 
 - name: Remove the block earlier versions of the role wrote to limits.conf
   ansible.builtin.blockinfile:

@@ -1,0 +1,6 @@
+bugfixes:
+  - >-
+    apply_config - a release update in a node's restart window writes cassandra_linux's limits file
+    (``/etc/security/limits.d/cassandra.conf``) again after the package update: the RPM ships that file as a plain one,
+    and its update put the package's own (``nofile 100000``) in place of the inventory's, which the next apply_config
+    --check then found.
