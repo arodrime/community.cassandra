@@ -477,7 +477,8 @@ def cassandra_drift_sync(nodes, stops=None, command=""):
     """nodes: [{name, compared (false: the compare left it no facts, unreachable or failed there: "not compared",
     never in sync), todo, then, files: [the config files that differ], os: [the OS settings], medusa: [Medusa's],
     extras: [{section}] (the repository, packages, firewall), restart: [{section}] (its Java, Cassandra's package,
-    its unit), unit: [the unit files that differ from the role's, by name]}] as apply_config's compare left them; stops: apply_config's stops before any change (a procedure of
+    its unit), unit: [the unit files that differ from the role's, by name]}] as apply_config's compare left them;
+    stops: apply_config's stops before any change (a procedure of
     its own: its lines); command: apply_config --check --diff's -> IN SYNC's lines.
     e.g. ([{name: db1, todo: True, then: restart, files: [cassandra.yaml]}, {name: db2}]) -> ["IN SYNC — ...",
     "  db1  cassandra.yaml; then restart", "  db2  in sync", ...]."""

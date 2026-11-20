@@ -77,8 +77,8 @@ def test_every_cost_line_ends_with_its_check_the_same_words_in_both_sections():
     result = sections(values, {"group_vars/prod/main.yml": "cassandra_service_limit_nofile: 524288\n"
                                                            "cassandra_linux_timesync: chrony\n",
                                "host_vars/db1.yml": "cassandra_service_limit_nofile: 500000\n"})
-    stock, between = row(result["stock"], "cassandra_service_limit_nofile"), row(result["between"],
-                                                                                  "cassandra_service_limit_nofile")
+    stock = row(result["stock"], "cassandra_service_limit_nofile")
+    between = row(result["between"], "cassandra_service_limit_nofile")
     assert stock[-1].startswith("      3 nodes change, apply_config: ") and "; check: ansible-playbook" in stock[-1]
     assert between[-1].startswith("      1 node changes, apply_config: ") and "; check: ansible-playbook" in between[-1]
     assert stock[-1].split(", apply_config: ")[1].split(";")[0] == between[-1].split(", apply_config: ")[1].split(";")[0]

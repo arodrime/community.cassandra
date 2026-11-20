@@ -164,5 +164,5 @@ def test_a_secret_in_the_unit_environment_is_warned_with_its_way_out():
         assert render(task["ansible.builtin.debug"]["msg"], **variables).startswith(
             "WARNING  n1: a secret in cassandra_service_environment: JVM_EXTRA_OPTS")
     # the role's unit not written (kept, or the package's script without environment): none
-    variables = dict(variables, _cassandra_service_own_unit=False, _cassandra_service_dropin_wanted=False)
+    variables.update(_cassandra_service_own_unit=False, _cassandra_service_dropin_wanted=False)
     assert render("{{ %s }}" % task["when"][0], **variables) is False

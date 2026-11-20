@@ -2417,7 +2417,8 @@ def test_apply_config_proves_a_4x_cassandra_env_on_50_as_the_import_does(tmp_pat
     assert "cassandra-env.sh" in changed
     assert cassandra_apply_config_no_effect(changed, files, rendered, cmdline, "50x", "17", {}, [], FACTS) == [
         "the same JVM arguments, but for the next restart's option below",
-        "next restart: -XX:HeapDumpPath=%s/cassandra-<start>-pid<pid>.hprof added (no effect until a heap dump)" % next(a[len("-Dcassandra.logdir="):] for a in cmdline.split("\0") if a.startswith("-Dcassandra.logdir="))]
+        "next restart: -XX:HeapDumpPath=%s/cassandra-<start>-pid<pid>.hprof added (no effect until a heap dump)"
+        % next(a[len("-Dcassandra.logdir="):] for a in cmdline.split("\0") if a.startswith("-Dcassandra.logdir="))]
     # (the log dir by default: CASSANDRA_HEAPDUMP_DIR="$CASSANDRA_LOG_DIR", bin/cassandra's -Dcassandra.logdir)
     assert "cassandra_heap_dump_dir" not in variables
     assert cassandra_apply_config_no_effect(changed, files, rendered, cmdline, "50x", "17", {}, []) == []  # (no facts)

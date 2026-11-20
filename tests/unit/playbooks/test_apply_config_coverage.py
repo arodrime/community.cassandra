@@ -342,14 +342,14 @@ def test_a_failed_release_window_starts_back_or_leaves_the_mark_and_the_way_out(
     start = rescue[6]
     assert start["when"] == "_back | bool"
     assert [t["name"] for t in start["block"]] == ["Start Cassandra again on the release it ran", "Forget the mark of the stop"]
-    assert [t["name"] for t in block] == ["Note the files of the package and the time before the update",
-                                         "Note that the config is being written", "Update the Cassandra package",
-                                         "Note that the config is being written", "Write the config again"]
+    assert [t["name"] for t in block] == [
+        "Note the files of the package and the time before the update", "Note that the config is being written",
+        "Update the Cassandra package", "Note that the config is being written", "Write the config again"]
     assert block[1]["ansible.builtin.set_fact"]["_cassandra_window_config"] is False
     assert block[3]["ansible.builtin.set_fact"]["_cassandra_window_config"] is True
     failure = {"msg": "no repo at https://zorglub:s3cr3t@10.0.0.9/el9", "stderr": "", "rc": 1, "attempts": 3}
     noted = dict((k, render(v, {"ansible_failed_task": {"name": "Install the target version"},
-                               "ansible_failed_result": failure}))
+                                "ansible_failed_result": failure}))
                  for k, v in rescue[0]["ansible.builtin.set_fact"].items())
     variables = dict(window[0]["vars"], cassandra_apply_config_version=RELEASE, cassandra_package_version="4.1.12",
                      cassandra_window_jvm={"rc": 1}, inventory_hostname="n1", ansible_facts={"os_family": "RedHat"},
