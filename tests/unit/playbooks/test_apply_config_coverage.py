@@ -376,6 +376,7 @@ def test_a_failed_release_window_starts_back_or_leaves_the_mark_and_the_way_out(
         "Cassandra 4.1.11 still installed, its start failed too: timeout.",
         "Way out: fix it, then resume: the same command plus -e cassandra_rolling_resume=true."]
 
+
 def test_version_verify_says_the_way_out():
     verify = load("roles", "cassandra_operation", "tasks", "version_verify.yml")
     msg = find(verify, "Check it runs the target version")["ansible.builtin.assert"]["fail_msg"]
@@ -418,7 +419,7 @@ def _unit_mtime(tmp_path, shown, mtimes):
                                 + " ".join("%s) echo %d;;" % (p, t) for p, t in mtimes.items()) + " esac; done")):
         (tmp_path / name).write_text("#!/bin/sh\n%s\n" % body)
         (tmp_path / name).chmod(0o755)
-    out = subprocess.run(["bash", "-c", line], capture_output=True, text=True, env={"PATH": "%s:/usr/bin:/bin" % tmp_path})
+    out = subprocess.run(["bash", "-c", line], capture_output=True, text=True, check=False, env={"PATH": "%s:/usr/bin:/bin" % tmp_path})
     return out.stdout.strip()
 
 

@@ -108,7 +108,7 @@ def test_the_rich_rules_written_offline_are_one_per_line(tmp_path):
     fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$LOG"\ncase "$2" in --query-*) exit 1;; esac\nexit 0\n')
     fake.chmod(0o755)
     log = tmp_path / "log"
-    out = subprocess.run(["bash", "-c", task["ansible.builtin.shell"]], capture_output=True, text=True,
+    out = subprocess.run(["bash", "-c", task["ansible.builtin.shell"]], capture_output=True, text=True, check=False,
                          env=dict(env, PATH="%s:/usr/bin:/bin" % tmp_path, LOG=str(log)))
     assert (out.returncode, out.stdout) == (0, "changed=1\n")
     calls = log.read_text().splitlines()

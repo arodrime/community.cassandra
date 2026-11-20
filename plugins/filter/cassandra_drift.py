@@ -337,6 +337,7 @@ def _between_lines(drift, nodes, user, cluster, everyone, who, width, commands):
     for path, data in user:
         kind, owner = VARS_FILE.match(path).groups()
         (group_vars if kind == "group_vars" else host_vars).setdefault(owner, {}).update(data)
+
     def real(kind, owner, key):  # (the inventory's own files, not the import's layout)
         return [p for p, data in user if key in data and VARS_FILE.match(p).groups() == (kind, owner)]
 

@@ -83,11 +83,11 @@ def test_the_check_honours_the_excludes_the_install_honours():
 
 
 def test_dnf_reads_the_role_s_repository_alone():
-    shell = render(LOOK["ansible.builtin.shell"], with_task_vars(LOOK, dict(BASE, cassandra_repository_manage=True,
-                                                                           cassandra_version="41x")))
+    variables = dict(BASE, cassandra_repository_manage=True, cassandra_version="41x")
+    shell = render(LOOK["ansible.builtin.shell"], with_task_vars(LOOK, variables))
     assert "--disablerepo='*' --enablerepo=cassandra-41x cassandra-4.1.12" in " ".join(shell.split())
-    shell = render(LOOK["ansible.builtin.shell"], with_task_vars(LOOK, dict(BASE, cassandra_repository_manage=False,
-                                                                           cassandra_version="41x")))
+    variables = dict(BASE, cassandra_repository_manage=False, cassandra_version="41x")
+    shell = render(LOOK["ansible.builtin.shell"], with_task_vars(LOOK, variables))
     assert "--enablerepo" not in shell
 
 
@@ -100,7 +100,7 @@ def _listed(tmp_path, excluded, **variables):
                    ' exit 0;; esac\n%s\n' % ('echo "Error: No matching Packages to list"; exit 1' if excluded else
                                              'echo "cassandra.noarch 4.1.12-1 cassandra-41x"'))
     dnf.chmod(0o755)
-    return subprocess.run(["sh", "-c", shell], capture_output=True, text=True, env={"PATH": "%s:/usr/bin:/bin" % tmp_path})
+    return subprocess.run(["sh", "-c", shell], capture_output=True, text=True, check=False, env={"PATH": "%s:/usr/bin:/bin" % tmp_path})
 
 
 def test_a_release_the_node_excludes_is_said_excluded(tmp_path):

@@ -223,7 +223,6 @@ def test_the_compare_summed_up_in_sync():
     assert verdict == "1 setting off stock, nodes alike, nodes not checked"
 
 
-
 def test_a_node_the_compare_did_not_reach_is_not_in_sync():
     # (unreachable with cassandra_allow_down_nodes, or its compare failed: no facts of the compare)
     play = next(p for p in load("drift.yml") if p.get("name") == "Drift")
