@@ -26,5 +26,5 @@ bugfixes:
     cassandra_version to the installed series" (and ``--check`` showed the other series' config as differences); it
     now stops before any change with the upgrade's command (``upgrade -e cassandra_upgrade_phase=preflight``). An
     older release, a host not in the ring, a host marked absent still in it, and a joined node's
-    ``cassandra_initial_token`` that is not its token stop it too, with the way out; ``--check`` stops at the same
+    ``cassandra_initial_token`` that is not its token (or cannot be checked: the ring's tokens unread) stop it too, with the way out; ``--check`` stops at the same
     point with the same refusal.
