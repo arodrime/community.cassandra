@@ -990,7 +990,7 @@ Cassandra on node1?``) and ends with what each node got; ``--check`` shows no pl
 with the restarts first, ``nothing was changed (--check)``, ``DIFFERENCES FOUND`` (what was observed), ``WOULD DO`` (what a real run would do), the warnings).
 
 Each run writes its report on the controller, next to the import's ``report.txt``:
-``reports/<cluster group>/apply_config-<YYYY-MM-DD-HHMM>.txt`` (``apply_config-check-...`` under ``--check``), where
+``reports/<cluster group>/apply_config-<YYYY-MM-DD-HHMMSS>.txt`` (``apply_config-check-...`` under ``--check``), where
 ``reports`` is next to the inventory's dir (``cassandra_run_report_dir`` gives another dir). It has the collection's
 version and commit, when the run started and ended, a real run's plan (``DIFFERENCES FOUND``, ``WILL DO``, the checks'
 notes), its recap (what each node got, every warning in full), and when each node's turn started and how it ended;
@@ -1086,7 +1086,7 @@ far is it from stock, and are its nodes alike? It changes nothing, on the nodes 
    $ ansible-playbook -i inventory community.cassandra.drift
    $ ansible-playbook -i inventory community.cassandra.drift -e drift_nodes=false   # the inventory alone
 
-Its lines, on the screen and in ``reports/<cluster group>/drift-<YYYY-MM-DD-HHMM>.txt`` (next to the inventory's
+Its lines, on the screen and in ``reports/<cluster group>/drift-<YYYY-MM-DD-HHMMSS>.txt`` (next to the inventory's
 dir, as ``apply_config``'s reports; ``cassandra_run_report_dir`` gives another dir), come in three sections:
 
 - **FROM STOCK**: every setting whose value on a node, as Ansible resolves the inventory for it, is not the

@@ -142,7 +142,7 @@ Set in the inventory, as any role variable.
 * `cassandra_run_report_dir` (default: `reports/<cluster group>` next to the
   inventory's dir, where `import_cluster` writes its `report.txt`) and
   `cassandra_run_report_keep` (default 20): `apply_config` writes the report
-  of each run there (`apply_config-<YYYY-MM-DD-HHMM>.txt`,
+  of each run there (`apply_config-<YYYY-MM-DD-HHMMSS>.txt`,
   `apply_config-check-...` under `--check`), the last ones kept
   (`run_report.yml`).
 * `cassandra_storage_mode_running` (5.0, none by default): the

@@ -55,11 +55,11 @@ def test_the_reports_go_next_to_the_inventory_dir(tmp_path):
     assert cassandra_reports_dir([str(inventories)], "prod", "out/", str(tmp_path)) == str(tmp_path / "out")
 
 
-def test_the_name_says_the_operation_check_and_minute():
+def test_the_name_says_the_operation_check_and_second():
     started = epoch("2026-11-19 23:58:41")
-    assert cassandra_run_report_name("apply_config", False, started) == "apply_config-2026-11-19-2358.txt"
-    assert cassandra_run_report_name("apply_config", True, started) == "apply_config-check-2026-11-19-2358.txt"
-    assert cassandra_run_report_name("apply_config", True, str(started)) == "apply_config-check-2026-11-19-2358.txt"
+    assert cassandra_run_report_name("apply_config", False, started) == "apply_config-2026-11-19-235841.txt"
+    assert cassandra_run_report_name("apply_config", True, started) == "apply_config-check-2026-11-19-235841.txt"
+    assert cassandra_run_report_name("apply_config", True, str(started)) == "apply_config-check-2026-11-19-235841.txt"
     assert cassandra_run_report_name("apply_config").startswith("apply_config-%s" % time.strftime("%Y-%m-%d"))
 
 
@@ -122,6 +122,9 @@ def test_the_oldest_reports_past_the_kept_ones():
               {"path": "/r/apply_config-notes.txt", "mtime": 1}]  # not a report of the run
     old = cassandra_run_report_old(files, "apply_config")
     assert old == ["/r/apply_config-2026-11-%02d-1200.txt" % d for d in range(1, 5)]  # (24 reports, 20 kept)
+    # (the reports named to the minute by an earlier version: kept and removed the same way)
+    assert cassandra_run_report_old([{"path": "/r/apply_config-2026-11-25-120000.txt", "mtime": 2000}] + files,
+                                    "apply_config")[:5] == old + ["/r/apply_config-2026-11-05-1200.txt"]
     assert cassandra_run_report_old(files, "apply_config", keep=30) == []
     assert cassandra_run_report_old(files, "rolling_restart", keep=0) == ["/r/rolling_restart-2026-11-01-1200.txt"]
 
@@ -161,7 +164,7 @@ def test_run_report_writes_the_report_and_keeps_the_last_ones(tmp_path):
     (reports / "rolling_restart-2026-10-01-1200.txt").write_text("other\n")
     rc, output = run_report(tmp_path)
     assert rc == 0, output
-    report = reports / "apply_config-2026-11-19-2358.txt"
+    report = reports / "apply_config-2026-11-19-235841.txt"
     assert report.is_file(), output
     text = report.read_text()
     assert text.startswith("apply_config  Orders  DONE\n  made by:  community.cassandra ") and "\nRECAP\nDONE  apply_config\n" in text
@@ -173,9 +176,9 @@ def test_run_report_writes_the_report_and_keeps_the_last_ones(tmp_path):
     # --check: its own name, written too (on the controller)
     rc, output = run_report(tmp_path, check=True, keep=2)
     assert rc == 0, output
-    assert (reports / "apply_config-check-2026-11-19-2358.txt").read_text().startswith("apply_config  Orders  CHECK\n")
+    assert (reports / "apply_config-check-2026-11-19-235841.txt").read_text().startswith("apply_config  Orders  CHECK\n")
     assert sorted(p.name for p in reports.glob("apply_config-*.txt")) == [
-        "apply_config-2026-11-19-2358.txt", "apply_config-check-2026-11-19-2358.txt"]
+        "apply_config-2026-11-19-235841.txt", "apply_config-check-2026-11-19-235841.txt"]
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root writes anywhere")

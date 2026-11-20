@@ -1,7 +1,7 @@
 # Copyright: Contributors to the community.cassandra collection
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 """The report a changing operation writes on the controller (run_report.yml of cassandra_operation), next to the
-import's: reports/<cluster group>/<operation>-<YYYY-MM-DD-HHMM>.txt (--check: <operation>-check-...).
+import's: reports/<cluster group>/<operation>-<YYYY-MM-DD-HHMMSS>.txt (--check: <operation>-check-...).
 
 cassandra_reports_dir: the dir of the reports: the one given, else reports/<cluster group> next to the
     inventory dir (as import_cluster writes its report.txt by default).
@@ -50,9 +50,10 @@ def _local(epoch):
 
 def cassandra_run_report_name(operation, check=False, epoch=None):
     """The file name of the report of a run of operation that started at epoch (seconds; default now), the
-    controller's local time: "apply_config-2026-11-19-2358.txt", "apply_config-check-2026-11-19-2358.txt"."""
+    controller's local time, to the second (two runs in the same minute: two reports):
+    "apply_config-2026-11-19-235841.txt", "apply_config-check-2026-11-19-235841.txt"."""
     when = _local(epoch) if epoch not in (None, "") else datetime.datetime.now()
-    return "%s-%s%s.txt" % (operation, "check-" if check else "", when.strftime("%Y-%m-%d-%H%M"))
+    return "%s-%s%s.txt" % (operation, "check-" if check else "", when.strftime("%Y-%m-%d-%H%M%S"))
 
 
 def _stamp(epoch):
@@ -103,7 +104,7 @@ def cassandra_run_report_times(nodes, starts=None):
 def cassandra_run_report_old(files, operation, keep=KEEP):
     """files: the dir's files (ansible.builtin.find's: [{path, mtime}]); operation -> the paths of its reports
     (cassandra_run_report_name's, --check's too) past the keep newest, the oldest first."""
-    mine = re.compile(r"^%s-(check-)?\d{4}-\d{2}-\d{2}-\d{4}\.txt$" % re.escape(str(operation)))
+    mine = re.compile(r"^%s-(check-)?\d{4}-\d{2}-\d{2}-\d{4}(\d{2})?\.txt$" % re.escape(str(operation)))
     reports = sorted((f for f in files or [] if mine.match(os.path.basename(str(f.get("path", ""))))),
                      key=lambda f: (float(f.get("mtime") or 0), os.path.basename(str(f["path"]))))
     return [str(f["path"]) for f in reports[:max(len(reports) - int(keep), 0)]]

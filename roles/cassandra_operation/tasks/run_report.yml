@@ -1,6 +1,6 @@
 ---
 # The report of a run of a changing operation, on the controller, next to the import's report.txt:
-# <cassandra_run_report_dir, default reports/<cluster group> next to the inventory dir>/<operation>-<YYYY-MM-DD-HHMM>.txt
+# <cassandra_run_report_dir, default reports/<cluster group> next to the inventory dir>/<operation>-<YYYY-MM-DD-HHMMSS>.txt
 # (--check: <operation>-check-...), its last cassandra_run_report_keep kept (the oldest removed). Its text:
 # cassandra_run_report (the head: the operation, the cluster, the outcome, the collection's version and commit, when
 # it started and ended; then the sections given, in full). Run once. Under --check too (a file on the controller,

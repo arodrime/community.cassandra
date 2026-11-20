@@ -306,7 +306,7 @@ argument_specs:
         default: ""
         description:
           - Where C(apply_config) writes the report of each run, on the controller
-            (C(apply_config-<YYYY-MM-DD-HHMM>.txt), C(apply_config-check-...) under C(--check)) with the
+            (C(apply_config-<YYYY-MM-DD-HHMMSS>.txt), C(apply_config-check-...) under C(--check)) with the
             collection's version and commit, the plan, what was done on each node and when, and every warning
             in full. A relative path is from the current dir.
           - Empty (default) means C(reports/<cluster group>) next to the inventory's dir, where
