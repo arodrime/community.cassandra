@@ -24,7 +24,7 @@ with open(os.path.join(TOP, "playbooks", "import_cluster.yml"), encoding="utf-8"
     WRITE = next(p for p in yaml.safe_load(f) if p["name"] == "Write the inventory")
 TASKS = [t for t in WRITE["tasks"] if t["name"] in (
     "Make the shareable copy of the report", "Find the shareable copy and key of an earlier import",
-    "Move aside the shareable copy and key of an earlier import",
+    "Move aside the shareable copy and key of an earlier import", "Stop when a shareable copy or key was not moved aside",
     "Say what was done with the shareable copy and key of an earlier import",
     "Write report.txt and report.details.txt", "Make the key of the shareable copy readable by its owner only",
     "Write the shareable copy of the report", "Show the summary")]

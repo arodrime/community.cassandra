@@ -434,13 +434,22 @@ def plant_shareable(where, cluster, report="report.txt", names=("report.shareabl
 SHAREABLE_TASKS = ["Make the shareable copy of the report",
                    "Find the shareable copy and key of an earlier import",
                    "Move aside the shareable copy and key of an earlier import",
+                   "Stop when a shareable copy or key was not moved aside",
                    "Say what was done with the shareable copy and key of an earlier import"]
 
 
-def old_shareable(where, check=False, shareable=None, text="IMPORT y"):
+def mv_n(argv):
+    """mv -n -- source target: never over a file (a link renamed itself) -> its result as registered"""
+    assert argv[:3] == ["mv", "-n", "--"]
+    if not os.path.lexists(argv[4]):
+        os.rename(argv[3], argv[4])
+    return {"rc": 0, "stderr": ""}
+
+
+def old_shareable(where, check=False, shareable=None, text="IMPORT y", meanwhile=None):
     """the tasks on an earlier import's files in where (cluster c1; shareable: import_report_shareable, the copy
-    made of text): (what was found, the lines said)"""
-    make, find, move, say = (TASKS[n] for n in SHAREABLE_TASKS)
+    made of text; meanwhile: run between the find and the move): (what was found, the lines said, or the stop's)"""
+    make, find, move, stop, say = (TASKS[n] for n in SHAREABLE_TASKS)
     variables = share_vars(where, check, text)
     if shareable is not None:
         variables["import_report_shareable"] = shareable
@@ -451,11 +460,15 @@ def old_shareable(where, check=False, shareable=None, text="IMPORT y"):
         local[k] = render(v, **local)
     found = render(find["ansible.builtin.set_fact"]["_import_old_shareable"], **local)
     variables["_import_old_shareable"] = found
-    assert move["check_mode"] is False and "when" not in move
-    for item in render(move["loop"], **variables):
-        assert move["ansible.builtin.command"]["argv"][:3] == ["mv", "-n", "--"]
-        assert render(move["ansible.builtin.command"]["creates"], item=item) == item["backup"]
-        os.rename(item["path"], item["backup"])
+    assert move["check_mode"] is False and "when" not in move and "creates" not in move["ansible.builtin.command"]
+    if meanwhile:
+        meanwhile(found)
+    variables["_import_moved_aside"] = {"results": [
+        dict(mv_n([render(a, item=item) for a in move["ansible.builtin.command"]["argv"]]), item=item)
+        for item in render(move["loop"], **variables)]}
+    for item in render(stop["loop"], **variables):
+        if render("{{ %s }}" % stop["when"], item=item):
+            return found, [render(line, item=item) for line in stop["ansible.builtin.fail"]["msg"]]
     if not render("{{ %s }}" % say["when"], **variables):
         return found, None
     assert say["vars"]["cassandra_output"] is True
@@ -504,9 +517,18 @@ def test_on_the_shareable_copy_and_key_written_again_are_moved_aside_when_they_c
     # the key is not written under --check: only the copy --check writes, moved for real (its write is real)
     plant_shareable(tmp_path, "c1", report="report.check.txt", names=["report.check.shareable.txt",
                                                                       "report.shareable.key.txt"])
+    with open(str(tmp_path / "report.shareable.key.txt"), "a") as f:
+        f.write("n2 = db2\n")  # (another key than this import's: still left alone)
     found, said = old_shareable(tmp_path, check=True, shareable=True)
     assert [(f["name"], f["action"]) for f in found] == [("report.check.shareable.txt", "move")]
-    assert os.path.isfile(str(tmp_path / "report.shareable.key.txt"))
+    assert (tmp_path / "report.shareable.key.txt").read_text().endswith("n2 = db2\n")
+    # what --check writes, as the finder is told: the check copy alone, no key (report.check.shareable.key.txt)
+    find = TASKS[SHAREABLE_TASKS[1]]
+    local = dict(share_vars(tmp_path, check=True), import_report_shareable=True)
+    local["_import_shareable"] = render(TASKS[SHAREABLE_TASKS[0]]["ansible.builtin.set_fact"]["_import_shareable"], **local)
+    for k, v in find["vars"].items():
+        local[k] = render(v, **local)
+    assert list(local["_new"]) == ["report.check.shareable.txt"]
 
 
 def test_the_key_of_an_earlier_release_candidate_is_moved_aside(tmp_path):
@@ -527,6 +549,8 @@ def test_the_key_of_an_earlier_release_candidate_is_moved_aside(tmp_path):
             ("report.shareable.map", "move")]
         assert [" ".join(line.split()) for line in rows(said)[-2:]] == [
             "report.shareable.map the key moved aside", "to " + os.path.basename(found[-1]["backup"])]
+        assert said[0] == ("An earlier import's shareable key (report.shareable.map, a former name)," if shareable
+                           else "An earlier import's shareable copy (import_report_shareable is off),")
     (tmp_path / "x").mkdir()
     (tmp_path / "x" / "report.shareable.map").write_text("db1 = n1\n")  # (not the import's: not listed)
     assert old_shareable(tmp_path / "x") == ([], None)
@@ -612,6 +636,64 @@ def test_a_shareable_copy_that_is_a_link_is_kept(tmp_path):
     os.symlink("report.shareable.txt", str(here / "report.check.shareable.txt"))
     found, said = old_shareable(here)
     assert rows(said)[-1] == "  report.check.shareable.txt  the copy  kept: a link to a file moved aside"
+
+
+def test_on_a_link_written_over_is_moved_aside_never_the_file_it_points_to(tmp_path):
+    # import_report_shareable on: the copy and key written where links are (same text or not) would replace the
+    # links; each link is moved aside itself (mv renames the link), the files they point to unchanged, said so;
+    # the key's mode set on the file written only (follow: false)
+    elsewhere = tmp_path / "shared"
+    elsewhere.mkdir()
+    plant_shareable(elsewhere, None)
+    with open(str(elsewhere / "report.shareable.txt"), "a") as f:
+        f.write("an older text\n")
+    os.chmod(str(elsewhere / "report.shareable.key.txt"), 0o640)
+    here = tmp_path / "inv"
+    here.mkdir()
+    plant_shareable(here, "c1", names=[])
+    for name in ("report.shareable.txt", "report.shareable.key.txt"):
+        os.symlink(str(elsewhere / name), str(here / name))
+    found, said = old_shareable(here, shareable=True, text="IMPORT x")
+    assert [(f["name"], f["action"]) for f in found] == [("report.shareable.txt", "move"),
+                                                         ("report.shareable.key.txt", "move")]
+    assert rows(said)[:3] == ["  report.shareable.txt      the copy  moved aside",
+                              "    to " + os.path.basename(found[0]["backup"]),
+                              "    (a link: moved, the file it points to unchanged)"]
+    assert not os.path.lexists(str(here / "report.shareable.txt"))
+    assert os.path.islink(found[0]["backup"]) and os.path.islink(found[1]["backup"])
+    assert sorted(os.listdir(str(elsewhere))) == ["report.shareable.key.txt", "report.shareable.txt"]
+    assert (elsewhere / "report.shareable.txt").read_text().endswith("an older text\n")
+    assert os.stat(str(elsewhere / "report.shareable.key.txt")).st_mode & 0o777 == 0o640
+    touch = TASKS["Make the key of the shareable copy readable by its owner only"]["ansible.builtin.file"]
+    assert touch["follow"] is False
+
+
+def test_on_a_copy_differing_only_by_the_run_s_time_and_build_is_left_alone(tmp_path):
+    # each run writes its time and build in the report's head: a run again does not pile up moved copies
+    run = "IMPORT x  %s  1 node  nothing to act on\n  made by:  community.cassandra 3.0.0-rc1, commit %s"
+    plant_shareable(tmp_path, "c1", names=[])
+    for name, text in shareable_texts(tmp_path, text=run % ("2026-11-19 10:11 CET", "1a2b3c4d")).items():
+        (tmp_path / name).write_text(text)
+    for when in ("10:12 CET", "2026-11-20 10:12 +01:00"):
+        assert old_shareable(tmp_path, shareable=True, text=run % (when, "5e6f7a8b")) == ([], None)
+    found, said = old_shareable(tmp_path, shareable=True, text=run.replace("1 node", "2 nodes") % ("10:12 CET", "x"))
+    assert [f["name"] for f in found] == ["report.shareable.txt"]
+
+
+def test_a_backup_name_taken_after_it_was_chosen_stops_before_anything_is_written(tmp_path):
+    # another import in the dir at the same time takes the name chosen: mv -n leaves the file, the run stops
+    plant_shareable(tmp_path, "c1")
+
+    def taken(found):
+        (tmp_path / os.path.basename(found[1]["backup"])).write_text("another run's\n")
+    found, said = old_shareable(tmp_path, meanwhile=taken)
+    assert said == ["report.shareable.key.txt was not moved aside: nothing is written over it, the run stops",
+                    "in %s" % tmp_path, "mv -n to %s:" % os.path.basename(found[1]["backup"]),
+                    "  that name is taken", "WAY OUT  run the import again (it takes the next free name)"]
+    assert (tmp_path / "report.shareable.key.txt").read_text().startswith("# The key of report.shareable.txt")
+    assert (tmp_path / os.path.basename(found[1]["backup"])).read_text() == "another run's\n"
+    names = [t.get("name") for t in next(p for p in PLAYS if p.get("name") == "Write the inventory")["tasks"]]
+    assert names.index(SHAREABLE_TASKS[3]) < names.index("Write report.txt and report.details.txt")
 
 
 def test_the_former_force_name_does_not_force():

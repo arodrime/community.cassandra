@@ -2598,10 +2598,12 @@
 
     # the shareable copy and key an earlier import wrote (each known by its first line, the import's own), read
     # before report.txt is written (whose cluster it was: said), never removed nor overwritten (the key of a copy
-    # already shared must not be lost): moved aside as <file>.<date>@<time>~ when import_report_shareable is off
-    # (they describe that import), or when this import writes another text in their place; a link kept as it is;
-    # the key of an earlier release candidate (report.shareable.map) moved aside too; under --check only said,
-    # but for the copy --check writes
+    # already shared must not be lost). Moved aside as <file>.<date>@<time>~:
+    # - with import_report_shareable off (they describe that import);
+    # - when this import writes another text in their place (the run's time and build left out);
+    # - a link this import writes over (the link itself; a link it does not write over is kept);
+    # - the key of an earlier release candidate (report.shareable.map).
+    # Under --check only said, except the copy --check writes itself (report.check.shareable.txt).
     - name: Find the shareable copy and key of an earlier import
       ansible.builtin.set_fact:
         _import_old_shareable: >-
@@ -2616,14 +2618,33 @@
              | combine({} if ansible_check_mode else {_stem ~ 'key.txt': _import_shareable.map | join(_newline) ~ _newline})
              if _on | bool else {} }}
 
+    # mv -n: never over a file; when the name found above is taken since (another import in this dir at the same
+    # time), the file stays where it is, and the run stops below before anything is written over it
     - name: Move aside the shareable copy and key of an earlier import
       ansible.builtin.command:
         argv: [mv, -n, --, "{{ item.path }}", "{{ item.backup }}"]
-        creates: "{{ item.backup }}"
+      register: _import_moved_aside
+      changed_when: true
+      failed_when: false  # (judged below: whether the file is still there)
       loop: "{{ _import_old_shareable | selectattr('action', 'equalto', 'move') | list }}"
       loop_control:
         label: "{{ item.name }}"
       check_mode: false  # (under --check: only the copy --check writes, found so)
+
+    - name: Stop when a shareable copy or key was not moved aside
+      ansible.builtin.fail:
+        msg:
+          - "{{ item.item.name }} was not moved aside: nothing is written over it, the run stops"
+          - "in {{ item.item.path | dirname }}"
+          - "mv -n to {{ item.item.backup | basename }}:"
+          - "  {{ item.stderr | default('', true) or ('that name is taken' if item.item.backup is exists else 'no error') }}"
+          - "WAY OUT  run the import again (it takes the next free name)"
+      loop: "{{ _import_moved_aside.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when: item.item.path is exists
+      vars:
+        cassandra_output: true
 
     - name: Say what was done with the shareable copy and key of an earlier import
       ansible.builtin.debug:
@@ -2662,6 +2683,7 @@
         path: "{{ _report_args.report_file | regex_replace('[.]txt$', '') ~ '.shareable.key.txt' }}"
         state: touch
         mode: "0600"
+        follow: false  # (a link kept: never the mode of the file it points to)
         access_time: preserve
         modification_time: preserve
       when:

@@ -860,33 +860,57 @@ def _free_name(path, stamp):
     return name
 
 
+# the stamps of a run in the report's head, left out when an earlier copy is compared with the new one: the run's
+# time on the IMPORT lines (cassandra_output.clock: "10:11 CET", "2026-11-20 10:11 +01:00") and the made by line
+RUN_TIME = re.compile(r"(\d{4}-\d{2}-\d{2} )?\d{2}:\d{2} ([A-Za-z]+|[+-]\d{2}:\d{2})  ")
+
+
+def _unstamped(text):
+    """A copy's or key's text without the stamps of the run that wrote it (the key has none)."""
+    return [RUN_TIME.sub("", line, count=1) if line.startswith("IMPORT ") else line
+            for line in str(text).split("\n") if not line.strip().startswith("made by:")]
+
+
 def cassandra_import_old_shareable(report_dir, cluster, stamp, shareable=False, new=None, check=False):
     """The report dir, the cluster's group, a time stamp ("2026-11-20@10:11:12"), import_report_shareable, new:
-    {name: the text this import writes there}, --check -> what to do, before this import writes its
-    report, with the shareable copy and key an earlier import wrote there, never removed nor overwritten (the key
-    of a copy already shared must not be lost): [{name, path, what (copy, key), action, report, report_for,
-    backup}] in the order of SHAREABLE_FILES. A file whose first line is not the import's own is not listed, nor,
-    shareable, one this import does not write (but the .map key) or writes the same again.
-    action: move (to backup: its path with .<stamp>~, .<stamp>.1~... when that name is taken), would_move (under
-    --check, unless new writes it: the write is real), link (kept as it is; linked: the file it points to, when
-    that one is moved). report_for: whose report.txt is next to it (the cluster's group; ""
-    an import's naming none, None not an import's, False none)."""
+    {name: the text this import writes there}, --check -> what to do, before this import writes its report, with
+    the shareable copy and key an earlier import wrote there (known by their first line), never removed nor
+    overwritten (the key of a copy already shared must not be lost): [{name, path, what (copy, key), action,
+    is_link, backup, report, report_for, linked}] in the order of SHAREABLE_FILES.
+
+      the file found                                        action
+      shareable: one this import does not write (but the    not listed
+        .map key), or a file (not a link) it writes the
+        same again (but the run's time and build)
+      a link nothing is written over (off, the .map key)    link: kept (linked: the file it points to is moved)
+      a link this import writes over                        move: the link itself, never the file it points to
+      under --check, one --check does not write             would_move
+      any other                                             move
+
+    backup: where it is moved, its path with .<stamp>~, else .<stamp>.1~, .2~... (the first name free; "" for a
+    link kept). report_for: whose report.txt (report.check.txt) is next to it:
+
+      the report next to it                                 report_for
+      an import's, naming the cluster's group               the group
+      an import's of an earlier release (no group named)    ""
+      not an import's                                       None
+      none                                                  False"""
     said = []
     for name, report, what, head in SHAREABLE_FILES:
         path = os.path.join(str(report_dir), name)
         if not os.path.isfile(path) or not _first_line(path).startswith(head):
             continue
-        if shareable and not name.endswith(".map") and (name not in (new or {}) or _read(path) == new[name]):
+        writes = shareable and name in (new or {})
+        link = os.path.islink(path)
+        if shareable and not name.endswith(".map") and not writes:
             continue
-        backup = _free_name(path, stamp)
-        if os.path.islink(path):
-            action = "link"
-        else:
-            action = "would_move" if check and name not in (new or {}) else "move"
+        if writes and not link and _unstamped(_read(path)) == _unstamped(new[name]):
+            continue
+        action = "link" if link and not writes else "would_move" if check and not writes else "move"
         report_path = os.path.join(str(report_dir), report)
-        said.append({"name": name, "path": path, "what": what, "action": action, "report": report,
+        said.append({"name": name, "path": path, "what": what, "action": action, "is_link": link, "report": report,
                      "report_for": written_for(_first_line(report_path)) if os.path.isfile(report_path) else False,
-                     "backup": backup if action != "link" else ""})
+                     "backup": _free_name(path, stamp) if action != "link" else ""})
     moved = set(os.path.realpath(f["path"]) for f in said if f["action"] in ("move", "would_move"))
     for f in said:
         f["linked"] = f["action"] == "link" and os.path.realpath(f["path"]) in moved
@@ -912,12 +936,19 @@ def cassandra_import_old_shareable_lines(found, report_dir, cluster, shareable=F
                 "no %s next to it" % f["report"] if f["report_for"] is False
                 else "the %s next to it is %s's" % (f["report"], f["report_for"]) if f["report_for"]
                 else "the %s next to it is not this cluster's" % f["report"]))
+        if f.get("is_link") and f["action"] != "link":
+            below.setdefault(len(rows), []).append("    (a link: moved, the file it points to unchanged)")
         rows.append([f["name"], "the " + f["what"], outcome])
     lines = []
     for i, line in enumerate(out.table(rows, indent="  ")):
         lines += [line] + below.get(i, [])
-    why = "this import writes new ones" if shareable else "import_report_shareable is off"
-    return out.fit(["An earlier import's shareable copy (%s)," % why, "in %s:" % report_dir] + lines, 79)
+    if not shareable:
+        why = "An earlier import's shareable copy (import_report_shareable is off),"
+    elif all(f["name"].endswith(".map") for f in found or []):
+        why = "An earlier import's shareable key (report.shareable.map, a former name),"
+    else:
+        why = "An earlier import's shareable copy (this import writes new ones),"
+    return out.fit([why, "in %s:" % report_dir] + lines, 79)
 
 
 def cassandra_import_shareable(lines, layout, written=None, report_file="", cwd=None):
