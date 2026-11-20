@@ -3,14 +3,17 @@
 # its package updated (package_update.yml, as the upgrade does; with the repository and packages the plan showed;
 # a Java move installed before the stop), then its config written again (a package may put its own files in place of the
 # ones it ships); started next, version_verify.yml checks the release it runs.
-# A mark in /run (as os_window.yml's, its reasons in it) lets a resumed run start a node left stopped here. A
-# failure with the release it ran still installed (its package unchanged): Cassandra started again on it, the mark
-# removed, the run stopped; else (the package changed, or not known) left stopped, the mark kept, the run stopped
-# with the way out: fix, then resume (which starts it, the package updated first if it is still to do).
+# A mark in /run (as os_window.yml's, written before the stop: action_restart.yml) lets a resumed run start a node
+# left stopped here. A failure with the release it ran still installed (its package unchanged): Cassandra started
+# again on it, the mark removed, the run stopped; else (the package changed, or not known) left stopped, the mark
+# kept, the run stopped with the way out: fix, then resume (which starts it, the package updated first if it is
+# still to do).
 - name: Update the release with Cassandra stopped
   vars:
-    _why: "{{ cassandra_apply_config_why | default('', true) or 'Cassandra ' ~ cassandra_package_version }}"
-    _running: "{{ (cassandra_apply_config_version | default({})).running | default('') }}"
+    # the release installed when Cassandra was stopped (the one it ran, or one updated by other means since its start)
+    _running: >-
+      {{ (cassandra_apply_config_version | default({})).installed
+         | default((cassandra_apply_config_version | default({})).running | default('')) }}
     # (read again in the rescue; not read: not known, the node left stopped)
     _installed: >-
       {{ ((cassandra_window_packages.ansible_facts.packages | default({})).get('cassandra', [{}]) | first).version | default('')
@@ -20,16 +23,12 @@
       {{ _running != '' and cassandra_window_packages.ansible_facts.packages is defined and _installed == _running
          and cassandra_window_jvm.rc | default(0) == 1 }}
   block:
-    - name: Mark the node stopped by this run
-      ansible.builtin.copy:
-        dest: /run/cassandra-apply-config.restart
-        content: "{{ _why }}\n"
-        mode: "0600"
-
+    # (installed already, by other means since Cassandra started: nothing to install, its start runs it)
     - name: Update the Cassandra package
       ansible.builtin.include_tasks: package_update.yml
       vars:
         cassandra_install_java: false  # (a Java move: installed before the stop, java_install.yml)
+      when: _running != cassandra_package_version
 
     - name: Write the config again
       ansible.builtin.include_role:
@@ -42,11 +41,12 @@
         _cassandra_config_quiet: true
         _cassandra_change_report_quiet: true
   rescue:
-    # (kept: a failed start below would take its place)
+    # (noted now: the start below has a failure of its own, which would take the place of this one; secrets and a
+    # URL's login masked)
     - name: Note what failed
       ansible.builtin.set_fact:
         _cassandra_window_cause: >-
-          {{ ansible_failed_task.name | default('') }}: {{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}
+          {{ ansible_failed_result | default({}) | community.cassandra.cassandra_failure_cause(ansible_failed_task.name | default('')) }}
 
     - name: Read the installed packages
       ansible.builtin.package_facts:
@@ -83,18 +83,26 @@
       rescue:
         - name: Note the start failed
           ansible.builtin.set_fact:
-            _cassandra_window_start_failed: "{{ ansible_failed_result.msg | default('failed') }}"
+            _cassandra_window_start_failed: "{{ ansible_failed_result | default({}) | community.cassandra.cassandra_failure_cause }}"
 
+    # one fact per line: what failed, the state it left, the way out
     - name: Stop the run
       ansible.builtin.fail:
-        msg: >-
-          {{ inventory_hostname }}: the update to Cassandra {{ cassandra_package_version }} with Cassandra stopped failed
-          ({{ _cassandra_window_cause }}){{
-          ('; Cassandra ' ~ _running ~ ' still installed, started again on it. Fix it, then run apply_config again')
-          if _back | bool and _cassandra_window_start_failed is not defined else
-          ('; Cassandra ' ~ _running ~ ' still installed, but its start failed too (' ~ _cassandra_window_start_failed
-           ~ '). Fix it, then resume: the same command plus -e cassandra_rolling_resume=true')
-          if _back | bool else
-          ('; Cassandra not started (installed: ' ~ (_installed or 'not known')
-           ~ (', a Cassandra JVM the unit did not start runs' if cassandra_window_jvm.rc | default(1) == 0 else '')
-           ~ '). Fix it, then resume: the same command plus -e cassandra_rolling_resume=true') }}.
+        msg: "{{ [_failed, _state, _way_out] | join(_nl) }}"
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _failed: >-
+          {{ inventory_hostname }}: the update to Cassandra {{ cassandra_package_version }} with Cassandra stopped
+          failed: {{ _cassandra_window_cause }}
+        _state: >-
+          {{ ('Cassandra ' ~ _running ~ ' still installed, started again on it.')
+             if _back | bool and _cassandra_window_start_failed is not defined else
+             ('Cassandra ' ~ _running ~ ' still installed, its start failed too: ' ~ _cassandra_window_start_failed ~ '.')
+             if _back | bool else
+             ('Cassandra not started (installed: ' ~ (_installed or 'not known')
+              ~ (', a Cassandra JVM the unit did not start runs' if cassandra_window_jvm.rc | default(1) == 0 else '') ~ ').') }}
+        _way_out: >-
+          {{ 'Way out: fix it, then run apply_config again.'
+             if _back | bool and _cassandra_window_start_failed is not defined else
+             'Way out: fix it, then resume: the same command plus -e cassandra_rolling_resume=true.' }}

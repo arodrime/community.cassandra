@@ -31,6 +31,15 @@
 - name: Do what is done while it is stopped
   when: _cassandra_service_while_stopped | default('') | length > 0
   block:
+    # apply_config's release window: the mark before the stop (a stop interrupted, its JVM slow to exit, leaves a node
+    # a resumed run starts), its reasons in it (apply_config_window.yml removes it once Cassandra runs again)
+    - name: Mark the node stopped by this run
+      ansible.builtin.copy:
+        dest: /run/cassandra-apply-config.restart
+        content: "{{ cassandra_apply_config_why | default('', true) or 'Cassandra ' ~ cassandra_package_version }}\n"
+        mode: "0600"
+      when: _cassandra_service_while_stopped == 'apply_config_window.yml'
+
     - name: Stop cassandra
       ansible.builtin.systemd_service:
         name: cassandra

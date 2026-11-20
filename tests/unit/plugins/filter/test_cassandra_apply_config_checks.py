@@ -52,6 +52,20 @@ def test_a_release_newer_than_the_notes_stops_unless_allowed():
     assert "    -e cassandra_allow_unknown_patch=true" in lines
 
 
+def test_a_package_updated_by_other_means_since_the_start():
+    # (dnf update, Cassandra not restarted: installed 4.1.12 or 4.1.13, the JVM 4.1.11)
+    same = cassandra_apply_config_version("41x", "4.1.12", "4.1.11", installed="4.1.12")
+    assert (same["kind"], same["installed"], same["refused"]) == ("release", "4.1.12", [])
+    assert cassandra_apply_config_version("41x", "4.1.12", "4.1.11")["installed"] == "4.1.11"  # (not read: the running)
+    assert cassandra_apply_config_version("41x", "4.1.12", "4.1.11", installed="4.1.11-1")["installed"] == "4.1.11"
+    # newer than the inventory's: refused before any change (its window would downgrade with Cassandra stopped)
+    newer = cassandra_apply_config_version("41x", "4.1.12", "4.1.11", installed="4.1.13")
+    lines = cassandra_apply_config_stops([{"name": "n1", "version": newer}], commands=COMMANDS)
+    assert lines == ["n1: its package is Cassandra 4.1.13, newer than the inventory's 4.1.12: this run does not go back"
+                     " to an older package. Set cassandra_package_version to 4.1.13 (its restart then runs it), or"
+                     " install 4.1.12 by hand (now 4.1.11).", "then run apply_config again."]
+
+
 @pytest.mark.parametrize("options, refused", [
     (["-Dcassandra.auth_bcrypt_gensalt_log2_rounds=31"], True),
     (["-Dcassandra.auth_bcrypt_gensalt_log2_rounds=30"], False),

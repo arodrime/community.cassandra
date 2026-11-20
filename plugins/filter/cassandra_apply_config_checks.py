@@ -33,7 +33,7 @@ from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_appl
 VERSION_CATEGORY = {"series": PROCEDURE, "release": RESTART, "older": PROCEDURE}
 
 
-def cassandra_apply_config_version(series, package_version, running, settings=None, allow_unknown=False):
+def cassandra_apply_config_version(series, package_version, running, settings=None, allow_unknown=False, installed=""):
     """The inventory's series (cassandra_version, '50x'), its version (cassandra_package_version, '' for any of the
     series) and the version the node runs ('' unknown: nothing said) -> {} when it is the same, else {kind: series
     (another series), release (a newer release of the series), older (below the one it runs), category
@@ -42,7 +42,10 @@ def cassandra_apply_config_version(series, package_version, running, settings=No
     and not allow_unknown: -e cassandra_allow_unknown_patch=true) and notes (the releases crossed).
     e.g. ("50x", "", "4.1.5") -> {kind: "series", category: "C", running: "4.1.5", wanted: "5.0"};
     ("41x", "4.1.12", "4.1.11") -> {kind: "release", category: "B", running: "4.1.11", wanted: "4.1.12", refused: [],
-    unknown: False, notes: []}."""
+    unknown: False, notes: []}.
+    installed: the version of the node's package ('' not read): a release also has installed (that one, else running:
+    the release kept until its restart window, which has nothing to install when it is the wanted one); a package
+    newer than the wanted release (updated by other means since Cassandra started) is refused, before any change."""
     now = patch_notes.numbers(running, partial=True)
     if not now:
         return {}
@@ -61,9 +64,16 @@ def cassandra_apply_config_version(series, package_version, running, settings=No
         return {}
     out = {"kind": kind, "category": VERSION_CATEGORY[kind], "running": str(running).strip(), "wanted": shown}
     if kind == "release":
+        on_disk = patch_notes.numbers(installed)
         out.update(refused=patch_notes.refusals(series, shown, settings or {}),
                    unknown=not patch_notes.known(series, shown) and not boolean(allow_unknown, strict=False),
-                   notes=patch_notes.notes(series, running, shown))
+                   notes=patch_notes.notes(series, running, shown),
+                   installed="%d.%d.%d" % on_disk if on_disk else out["running"])
+        if on_disk and on_disk > want:
+            out["refused"] = out["refused"] + [
+                "its package is Cassandra %s, newer than the inventory's %s: this run does not go back to an older"
+                " package. Set cassandra_package_version to %s (its restart then runs it),"
+                " or install %s by hand" % (out["installed"], shown, out["installed"], shown)]
     return out
 
 

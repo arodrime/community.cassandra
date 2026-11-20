@@ -168,7 +168,7 @@ def test_the_node_s_turn_installs_restarts_once_and_checks():
     assert render(restart, {"cassandra_apply_config_release": True}) == "apply_config_window.yml"
     assert render(restart, {"cassandra_apply_config_release": False}) == ""
     window = load("roles", "cassandra_operation", "tasks", "apply_config_window.yml")
-    assert window[0]["block"][1]["ansible.builtin.include_tasks"] == "package_update.yml"
+    assert window[0]["block"][0]["ansible.builtin.include_tasks"] == "package_update.yml"
     # the upgrade's own node uses the same package step and check
     upgrade = load("roles", "cassandra_operation", "tasks", "action_upgrade.yml")
     assert [t.get("ansible.builtin.include_tasks") for t in upgrade if t.get("ansible.builtin.include_tasks")
@@ -252,6 +252,9 @@ def test_a_java_move_with_a_release_installs_java_first_its_release_kept():
     assert not runs(alone, cassandra_apply_config_java=True, cassandra_apply_config_release=True)
     assert runs(kept, cassandra_apply_config_java=True, cassandra_apply_config_release=True)
     assert render(kept["vars"]["cassandra_package_version"], {"cassandra_apply_config_version": RELEASE}) == "4.1.11"
+    # (the package updated by other means since Cassandra started: kept at that one, which cassandra_install has)
+    assert render(kept["vars"]["cassandra_package_version"],
+                  {"cassandra_apply_config_version": dict(RELEASE, installed="4.1.12")}) == "4.1.12"
     names = [t.get("name") for t in ACTION]
     assert names.index("Install the Java this node moves to, its Cassandra release kept") < names.index("Drain and restart the node")
     window = load("roles", "cassandra_operation", "tasks", "apply_config_window.yml")[0]["block"]
@@ -266,10 +269,14 @@ def test_a_release_node_compares_its_extras_and_applies_the_firewall_live():
     jemalloc = [{"item": "package jemalloc", "before": "absent", "after": "5.2.1"}]
     found = needs(version=RELEASE, extras=jemalloc, firewall=port)
     assert found["extras"] == [dict(jemalloc[0], section="Packages"), dict(port[0], section="Firewall")]
-    assert found["steps"] == ["apply the firewall", "drain and stop Cassandra",
+    assert found["steps"] == ["apply the repository, packages, firewall", "drain and stop Cassandra",
                               "update Cassandra to 4.1.12, write its config again", "start Cassandra"]
-    found = needs(version=RELEASE, extras=jemalloc)
-    assert found["steps"][0] == "drain and stop Cassandra"  # (the packages in the window, with the package)
+    found = needs(version=dict(RELEASE, installed="4.1.11"))
+    assert found["steps"] == ["drain and stop Cassandra", "update Cassandra to 4.1.12, write its config again",
+                              "start Cassandra"]
+    # installed already (by other means since Cassandra started): nothing to install in its window
+    found = needs(version=dict(RELEASE, installed="4.1.12"))
+    assert found["steps"][1] == "Cassandra 4.1.12 installed already, write its config again"
     # compared as the window installs them: the version change allowed there, under check mode
     compare = find(FIND["tasks"], "Compare the repository, the packages and the firewall")
     for kind, compared in (("", True), ("release", True), ("series", False), ("older", False)):
@@ -277,23 +284,52 @@ def test_a_release_node_compares_its_extras_and_applies_the_firewall_live():
         assert render("{{ %s }}" % compare["when"], {"cassandra_apply_config_version": version}) is compared
         assert render(compare["vars"]["_cassandra_install_upgrade"],
                       {"cassandra_apply_config_version": version}) is (kind == "release")
-    # live: the firewall alone on a release node (the repository and packages in its window)
+    # live, before the stop (a failure among the tools never leaves a node stopped): on a release node, the
+    # repository and packages with its package kept at the release installed (the package itself in its window)
     extras = find(ACTION, "Apply the repository, the packages and the firewall")
-    for section, release, applied in (("Firewall", True, True), ("Packages", True, False), ("Repository", True, False),
-                                      ("Packages", False, True)):
+    kept = find(ACTION, "Apply the repository and the packages, its Cassandra release kept")
+    for section, release, applied, applied_kept in (
+            ("Firewall", True, True, False), ("Packages", True, False, True), ("Repository", True, False, True),
+            ("Packages", False, True, False), ("Firewall", False, True, False)):
         variables = {"ansible_check_mode": False, "item": {"section": section}, "cassandra_apply_config_release": release,
                      "cassandra_apply_config_extras": [{"section": section}]}
         assert all(render("{{ %s }}" % w, variables) for w in extras["when"]) is applied, (section, release)
+        if section != "Firewall" or applied_kept:
+            assert all(render("{{ %s }}" % w, variables) for w in kept["when"]) is applied_kept, (section, release)
+    assert [i["section"] for i in kept["loop"]] == ["Repository", "Packages"]
+    assert render(kept["vars"]["cassandra_package_version"],
+                  {"cassandra_apply_config_version": dict(RELEASE, installed="4.1.11")}) == "4.1.11"
+    names = [t.get("name") for t in ACTION]
+    assert names.index("Apply the repository and the packages, its Cassandra release kept") \
+        < names.index("Drain and restart the node")
+    # its window: nothing to install when the release wanted is installed already
+    update = find(load("roles", "cassandra_operation", "tasks", "apply_config_window.yml")[0]["block"],
+                  "Update the Cassandra package")
+    window_vars = load("roles", "cassandra_operation", "tasks", "apply_config_window.yml")[0]["vars"]
+    for installed, runs in (("4.1.11", True), ("4.1.12", False)):
+        variables = with_task_vars({"vars": window_vars}, {"cassandra_apply_config_version": dict(RELEASE, installed=installed),
+                                                           "cassandra_package_version": "4.1.12"})
+        assert render("{{ %s }}" % update["when"], variables) is runs
 
 
 def test_a_failed_release_window_starts_back_or_leaves_the_mark_and_the_way_out():
     window = load("roles", "cassandra_operation", "tasks", "apply_config_window.yml")
     assert len(window) == 1
     block, rescue = window[0]["block"], window[0]["rescue"]
-    # the mark first (a resumed run starts a node left stopped), with the reasons (not empty: not a time sync)
-    assert block[0]["ansible.builtin.copy"]["dest"] == "/run/cassandra-apply-config.restart"
-    assert render(window[0]["vars"]["_why"], {"cassandra_apply_config_why": "Cassandra 4.1.11 -> 4.1.12",
-                                              "cassandra_package_version": "4.1.12"}) == "Cassandra 4.1.11 -> 4.1.12"
+    # the mark before the stop (a resumed run starts a node left stopped, its stop interrupted too), with the reasons
+    # (not empty: not a time sync)
+    restart = load("roles", "cassandra_operation", "tasks", "action_restart.yml")
+    stopped = find(restart, "Do what is done while it is stopped")["block"]
+    assert [t["name"] for t in stopped] == ["Mark the node stopped by this run", "Stop cassandra",
+                                            "Run what is done while it is stopped"]
+    mark = stopped[0]
+    assert mark["ansible.builtin.copy"]["dest"] == "/run/cassandra-apply-config.restart"
+    assert render("{{ %s }}" % mark["when"], {"_cassandra_service_while_stopped": "apply_config_window.yml"}) is True
+    assert render("{{ %s }}" % mark["when"], {"_cassandra_service_while_stopped": "sync_clock_window.yml"}) is False
+    assert render(mark["ansible.builtin.copy"]["content"], {"cassandra_apply_config_why": "Cassandra 4.1.11 -> 4.1.12",
+                                                            "cassandra_package_version": "4.1.12"}) == "Cassandra 4.1.11 -> 4.1.12\n"
+    assert render(mark["ansible.builtin.copy"]["content"], {"cassandra_apply_config_why": "",
+                                                            "cassandra_package_version": "4.1.12"}) == "Cassandra 4.1.12\n"
     assert [t["name"] for t in rescue] == ["Note what failed", "Read the installed packages", "Look for a Cassandra JVM",
                                            "Start Cassandra again on the release it ran", "Stop the run"]
     # a package read that fails is not taken for the old snapshot
@@ -305,7 +341,9 @@ def test_a_failed_release_window_starts_back_or_leaves_the_mark_and_the_way_out(
                      cassandra_window_jvm={"rc": 1}, inventory_hostname="n1",
                      _cassandra_window_cause=render(rescue[0]["ansible.builtin.set_fact"]["_cassandra_window_cause"], {
                          "ansible_failed_task": {"name": "Install the target version"},
-                         "ansible_failed_result": {"msg": "no repo"}}))
+                         "ansible_failed_result": {"msg": "no repo at https://zorglub:s3cr3t@10.0.0.9/el9"}}))
+    # (secrets and a URL's login masked: the screen shows it)
+    assert variables["_cassandra_window_cause"] == "Install the target version: no repo at https://zorglub:****@10.0.0.9/el9"
 
     def read(installed):
         return {"ansible_facts": {"packages": {"cassandra": [{"version": installed}]}}} if installed else {"failed": True}
@@ -318,17 +356,25 @@ def test_a_failed_release_window_starts_back_or_leaves_the_mark_and_the_way_out(
     assert back("4.1.12") is False  # updated: left stopped, resumed once fixed
     assert back("") is False  # not read: not known
     assert back("4.1.11", cassandra_window_jvm={"rc": 0}) is False  # another JVM runs
-    stop = rescue[-1]["ansible.builtin.fail"]["msg"]
-    said = render(stop, dict(variables, cassandra_window_packages=read("4.1.12-1")))
-    assert "Cassandra not started (installed: 4.1.12)" in said and "-e cassandra_rolling_resume=true" in said
-    assert "failed (Install the target version: no repo)" in said
-    said = render(stop, dict(variables, cassandra_window_packages=read("")))
-    assert "Cassandra not started (installed: not known)" in said
-    said = render(stop, dict(variables, cassandra_window_packages=read("4.1.11")))
-    assert "Cassandra 4.1.11 still installed, started again on it" in said and "run apply_config again" in said
-    said = render(stop, dict(variables, cassandra_window_packages=read("4.1.11"), _cassandra_window_start_failed="timeout"))
-    assert "its start failed too (timeout)" in said and "-e cassandra_rolling_resume=true" in said
+    # the release installed before the stop (updated by other means since Cassandra started): the one to go back to
+    assert back("4.1.12", cassandra_apply_config_version=dict(RELEASE, installed="4.1.12")) is True
+    stop = rescue[-1]
 
+    def said(**more):
+        return render(stop["ansible.builtin.fail"]["msg"], with_task_vars(stop, dict(variables, **more))).split("\n")
+
+    # one fact per line, the way out on its own line
+    assert said(cassandra_window_packages=read("4.1.12-1")) == [
+        "n1: the update to Cassandra 4.1.12 with Cassandra stopped failed: Install the target version: no repo at"
+        " https://zorglub:****@10.0.0.9/el9",
+        "Cassandra not started (installed: 4.1.12).",
+        "Way out: fix it, then resume: the same command plus -e cassandra_rolling_resume=true."]
+    assert said(cassandra_window_packages=read(""))[1] == "Cassandra not started (installed: not known)."
+    assert said(cassandra_window_packages=read("4.1.11"))[1:] == [
+        "Cassandra 4.1.11 still installed, started again on it.", "Way out: fix it, then run apply_config again."]
+    assert said(cassandra_window_packages=read("4.1.11"), _cassandra_window_start_failed="timeout")[1:] == [
+        "Cassandra 4.1.11 still installed, its start failed too: timeout.",
+        "Way out: fix it, then resume: the same command plus -e cassandra_rolling_resume=true."]
 
 def test_version_verify_says_the_way_out():
     verify = load("roles", "cassandra_operation", "tasks", "version_verify.yml")

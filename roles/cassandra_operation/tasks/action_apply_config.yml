@@ -82,12 +82,12 @@
     - cassandra_apply_config_java | default(false) | bool
     - not cassandra_apply_config_release | default(false) | bool
 
-# with a newer release of its series: the same, its Cassandra package kept at the release it runs (cassandra_install
+# with a newer release of its series: the same, its Cassandra package kept at the release installed (cassandra_install
 # refuses another version outside the restart window, which updates it: apply_config_window.yml)
 - name: Install the Java this node moves to, its Cassandra release kept
   ansible.builtin.include_tasks: java_install.yml
   vars:
-    cassandra_package_version: "{{ cassandra_apply_config_version.running }}"
+    cassandra_package_version: "{{ cassandra_apply_config_version.installed | default(cassandra_apply_config_version.running) }}"
   when:
     - cassandra_apply_config_java | default(false) | bool
     - cassandra_apply_config_release | default(false) | bool
@@ -132,8 +132,9 @@
 
 # The repository, the packages and tools, the firewall (their changes found by the plan): not read by the running
 # Cassandra (jemalloc at its next start, said in the plan), no restart for them. The Java is not touched here (a move
-# is java_install.yml's, above). A newer release of its series: the repository and packages with the package,
-# Cassandra stopped (package_update.yml, in its window or above for a node not running); the firewall here
+# is java_install.yml's, above). A newer release of its series: the same, Cassandra running, its package kept at the
+# release installed (below; the package itself in its window, package_update.yml: a failure among the tools never
+# leaves it stopped)
 - name: Apply the repository, the packages and the firewall
   ansible.builtin.include_role:
     name: "community.cassandra.{{ item.role }}"
@@ -150,6 +151,23 @@
     - not ansible_check_mode
     - item.section in cassandra_apply_config_extras | default([]) | map(attribute='section')
     - item.section == 'Firewall' or not cassandra_apply_config_release | default(false) | bool
+
+- name: Apply the repository and the packages, its Cassandra release kept
+  ansible.builtin.include_role:
+    name: "community.cassandra.{{ item.role }}"
+  vars:
+    _cassandra_change_report_quiet: true  # shown before the run was confirmed, and in its recap at the end
+    cassandra_install_java: false  # (a Java move: java_install.yml's, above)
+    cassandra_package_version: "{{ cassandra_apply_config_version.installed | default(cassandra_apply_config_version.running) }}"
+  loop:
+    - {section: Repository, role: cassandra_repository}
+    - {section: Packages, role: cassandra_install}
+  loop_control:
+    label: "{{ item.role }}"
+  when:
+    - not ansible_check_mode
+    - item.section in cassandra_apply_config_extras | default([]) | map(attribute='section')
+    - cassandra_apply_config_release | default(false) | bool
 
 # what the plan wrote back with no restart is on disk as the running Cassandra started with it, and that
 # Cassandra still runs (restarted during the write, it may have read the files before)

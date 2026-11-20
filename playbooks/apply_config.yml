@@ -76,7 +76,8 @@
       ansible.builtin.set_fact:
         cassandra_apply_config_version: >-
           {{ cassandra_version | community.cassandra.cassandra_apply_config_version(
-               cassandra_package_version | default(''), _running, _settings, cassandra_allow_unknown_patch | default(false)) }}
+               cassandra_package_version | default(''), _running, _settings, cassandra_allow_unknown_patch | default(false),
+               _installed) }}
       vars:
         _described: "{{ cassandra_preflight_describe.stdout | default('') | community.cassandra.cassandra_described_versions }}"
         _package: "{{ cassandra_apply_config_package.stdout | default('') | trim }}"
@@ -233,9 +234,9 @@
     # The package repository, the packages and tools (cassandra_install: cqlsh's Python, dsbulk, jemalloc), the firewall:
     # not read by the running Cassandra (jemalloc: at its next start), applied at the node's turn, no restart for them.
     # Compared as Medusa is (check mode applied to them: _cassandra_compare); never on a node whose version changes by
-    # another procedure (stopped before any change); on a newer release of its series, as its restart window installs
-    # them with the package (the firewall live). The firewall only
-    # with cassandra_manage_firewall, as create_cluster and add_node run it
+    # another procedure (stopped before any change); on a newer release of its series, with the release check of its
+    # restart window (applied live all the same, its package kept at the release installed). The firewall only with
+    # cassandra_manage_firewall, as create_cluster and add_node run it
     - name: Compare the repository, the packages and the firewall
       ansible.builtin.include_role:
         name: "community.cassandra.{{ _cassandra_compared_role }}"
@@ -797,7 +798,9 @@
                                   else 'set the LVM read-ahead (lvchange)') -%}
           {%- endfor -%}
           {%- if _release | bool -%}
-          {%-   set _ = os.append('update Cassandra to ' ~ cassandra_apply_config_version.wanted ~ ', write its config again') -%}
+          {%-   set v = cassandra_apply_config_version -%}
+          {%-   set _ = os.append(('Cassandra ' ~ v.wanted ~ ' installed already' if v.installed | default('') == v.wanted
+                                   else 'update Cassandra to ' ~ v.wanted) ~ ', write its config again') -%}
           {%- endif -%}
           {%- if _timesync | bool -%}
           {%-   for i in ts if i is match('package ') -%}{%- set _ = os.append('install ' ~ i[8:]) -%}{%- endfor -%}
@@ -809,13 +812,11 @@
           {%- if _timesync | bool or (_then == 'start' and _stopped | bool and _clock.mark_timesync is defined) -%}
           {%-   set _ = os.append('wait up to 2m for clock sync') -%}
           {%- endif -%}
-          {#- (a release: the repository and packages in its window, with the package; the firewall live) -#}
+          {#- (a release: the repository and packages too, its package kept at the release installed) -#}
           {%- set write = (['install Java ' ~ cassandra_java_version] if _java | bool else [])
                           + (['write the config'] if (_files + _perms + _dirs + _jmx + _exporter + _header) | length > 0 else [])
                           + (['set up Medusa'] if _medusa else [])
-                          + (['apply the firewall'] if _release | bool and _extras | selectattr('section', 'equalto', 'Firewall') | list
-                             else [] if _release | bool
-                             else ['apply the repository, packages, firewall'] if _extras else []) -%}
+                          + (['apply the repository, packages, firewall'] if _extras else []) -%}
           {%- if _then == 'restart' and window -%}
           {{ write + [('drain and stop' if drain else 'stop') ~ ' Cassandra'] + os | unique | list + ['start Cassandra'] }}
           {%- elif _then == 'restart' -%}
