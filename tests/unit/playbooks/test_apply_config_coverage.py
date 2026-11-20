@@ -85,9 +85,9 @@ def test_several_restart_reasons_make_one_restart():
     found = needs(changes=["cassandra.yaml"], java=True, version=RELEASE, unit_nofile=1048576)
     assert found["then"] == "restart"
     # one window: the package with Cassandra stopped, once
-    # (the Java with the package, Cassandra stopped: cassandra_install refuses another Cassandra outside the window)
-    assert found["steps"] == ["write the config", "drain and stop Cassandra",
-                              "install Java 17, update Cassandra to 4.1.12, write its config again", "start Cassandra"]
+    # (the Java first, Cassandra running, its release kept; the package with Cassandra stopped)
+    assert found["steps"] == ["install Java 17", "write the config", "drain and stop Cassandra",
+                              "update Cassandra to 4.1.12, write its config again", "start Cassandra"]
     assert found["restart_why"] == "Java 11 -> 17, Cassandra 4.1.11 -> 4.1.12, its unit: LimitNOFILE"
     assert [i["section"] for i in found["restart_items"]] == ["Java", "Cassandra", "cassandra unit"]
     # with the time sync of the OS settings: the same window, the same restart
@@ -234,21 +234,26 @@ def test_the_roles_compared_act_as_under_check_when_applied_to_them():
             assert not any("ansible_check_mode" in line for line in code), path
 
 
-def test_a_java_move_with_a_release_installs_java_in_the_window():
-    install = find(ACTION, "Install the Java this node moves to")
-    later = install["vars"]["_cassandra_java_install_later"]
-    assert render(later, {"cassandra_apply_config_release": True}) is True
-    assert render(later, {"cassandra_apply_config_release": False}) is False
-    java = load("roles", "cassandra_operation", "tasks", "java_install.yml")
-    # the Java noted (java_verify.yml checks it after the start), not installed before the window
-    assert find(java, "Note the Java this node moves to").get("when") is None
-    when = "{{ %s }}" % find(java, "Install Java")["when"]
-    assert render(when, {"_cassandra_java_install_later": True}) is False
-    assert render(when, {}) is True  # (update_java)
+def test_a_java_move_with_a_release_installs_java_first_its_release_kept():
+    # (cassandra_install refused the other version: the Java installed, then the run stopped mid-way)
+    alone = find(ACTION, "Install the Java this node moves to")
+    kept = find(ACTION, "Install the Java this node moves to, its Cassandra release kept")
+    for task in (alone, kept):
+        assert task["ansible.builtin.include_tasks"] == "java_install.yml"
+
+    def runs(task, **variables):
+        return all(render("{{ %s }}" % w, variables) for w in task["when"])
+
+    assert runs(alone, cassandra_apply_config_java=True, cassandra_apply_config_release=False)
+    assert not runs(alone, cassandra_apply_config_java=True, cassandra_apply_config_release=True)
+    assert runs(kept, cassandra_apply_config_java=True, cassandra_apply_config_release=True)
+    assert render(kept["vars"]["cassandra_package_version"], {"cassandra_apply_config_version": RELEASE}) == "4.1.11"
+    names = [t.get("name") for t in ACTION]
+    assert names.index("Install the Java this node moves to, its Cassandra release kept") < names.index("Drain and restart the node")
     window = load("roles", "cassandra_operation", "tasks", "apply_config_window.yml")[0]["block"]
     update = find(window, "Update the Cassandra package")
     assert update["ansible.builtin.include_tasks"] == "package_update.yml"
-    assert render(update["vars"]["cassandra_install_java"], {"cassandra_apply_config_java": True}) is True
+    assert update["vars"]["cassandra_install_java"] is False
     assert load("roles", "cassandra_operation", "tasks", "package_update.yml")[1]["vars"]["_cassandra_install_upgrade"] is True
 
 

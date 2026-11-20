@@ -1,7 +1,7 @@
 ---
 # apply_config's restart of a node moving to a newer release of its series (action_restart.yml, Cassandra stopped):
-# its package updated (package_update.yml, as the upgrade does; with the repository and packages the plan showed,
-# and the Java it moves to, if any), then its config written again (a package may put its own files in place of the
+# its package updated (package_update.yml, as the upgrade does; with the repository and packages the plan showed;
+# a Java move installed before the stop), then its config written again (a package may put its own files in place of the
 # ones it ships); started next, version_verify.yml checks the release it runs.
 # A mark in /run (as os_window.yml's, its reasons in it) lets a resumed run start a node left stopped here. A
 # failure with the release it ran still installed (its package unchanged): Cassandra started again on it, the mark
@@ -28,7 +28,7 @@
     - name: Update the Cassandra package
       ansible.builtin.include_tasks: package_update.yml
       vars:
-        cassandra_install_java: "{{ cassandra_apply_config_java | default(false) | bool }}"  # (a Java move: installed here)
+        cassandra_install_java: false  # (a Java move: installed before the stop, java_install.yml)
 
     - name: Write the config again
       ansible.builtin.include_role:

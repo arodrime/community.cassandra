@@ -194,7 +194,8 @@ def test_the_action_restarts_starts_or_only_writes():
     names = [t["name"] for t in tasks]
     # a restart loop is stopped before the write: it would not come up on the former config
     assert names == ["Clear the unit's failed starts", "Check the JVM a file is written back for still runs",
-                     "Install the Java this node moves to", "Update the Cassandra package of a node not running",
+                     "Install the Java this node moves to", "Install the Java this node moves to, its Cassandra release kept",
+                     "Update the Cassandra package of a node not running",
                      "Write the config", "Set up Medusa", "Apply the repository, the packages and the firewall",
                      "Check the files written back",
                      "Record the files written with no effect as the ones the running Cassandra runs with",
@@ -212,6 +213,7 @@ def test_the_action_restarts_starts_or_only_writes():
                                                    "Set up Medusa", "Report what Medusa would get",
                                                    # (the Java, a release, the extras: test_apply_config_coverage.py)
                                                    "Install the Java this node moves to",
+                                                   "Install the Java this node moves to, its Cassandra release kept",
                                                    "Update the Cassandra package of a node not running",
                                                    "Apply the repository, the packages and the firewall",
                                                    "Report what the repository, the packages and the firewall would get",

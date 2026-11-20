@@ -74,14 +74,23 @@
         _plan: "{{ cassandra_apply_config_as_started if cassandra_apply_config_as_started | default({}) else cassandra_apply_config_proven }}"
 
 # Another Java (java_plan.yml found it): installed and made the one Cassandra starts with, before the config (its
-# jvm<N>-server.options) is written; the node's one restart below starts it, java_verify.yml checks it. With a newer
-# release of its series: installed in its restart window instead, Cassandra stopped, with the package
-# (apply_config_window.yml: one cassandra_install run, which refuses another Cassandra version outside it)
+# jvm<N>-server.options) is written, Cassandra still running (a failure leaves it up); the node's one restart below
+# starts it, java_verify.yml checks it
 - name: Install the Java this node moves to
   ansible.builtin.include_tasks: java_install.yml
+  when:
+    - cassandra_apply_config_java | default(false) | bool
+    - not cassandra_apply_config_release | default(false) | bool
+
+# with a newer release of its series: the same, its Cassandra package kept at the release it runs (cassandra_install
+# refuses another version outside the restart window, which updates it: apply_config_window.yml)
+- name: Install the Java this node moves to, its Cassandra release kept
+  ansible.builtin.include_tasks: java_install.yml
   vars:
-    _cassandra_java_install_later: "{{ cassandra_apply_config_release | default(false) | bool }}"
-  when: cassandra_apply_config_java | default(false) | bool
+    cassandra_package_version: "{{ cassandra_apply_config_version.running }}"
+  when:
+    - cassandra_apply_config_java | default(false) | bool
+    - cassandra_apply_config_release | default(false) | bool
 
 # A newer release of its series on a node not running (stopped on purpose, or to start): its package now, Cassandra
 # stopped (a running node gets it in its restart: apply_config_window.yml)

@@ -13,7 +13,7 @@ minor_changes:
   - >-
     apply_config - a newer release of the node's series (``cassandra_package_version``) is applied in the node's one
     restart: the package updated with Cassandra stopped (the upgrade's own step; with the repository and packages
-    the plan showed, and the Java it moves to, if any), the config written again, the release it runs checked; its
+    the plan showed; a Java move installed before, Cassandra running), the config written again, the release it runs checked; its
     firewall applied live, before. A failure there starts Cassandra again when its package is unchanged, else leaves
     it stopped with a mark that ``-e cassandra_rolling_resume=true`` starts it from. A release the node's repository
     does not have stops the plan (``--check`` too, and the upgrade's node) with the package manager's own words and

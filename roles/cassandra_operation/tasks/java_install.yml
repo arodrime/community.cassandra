@@ -15,9 +15,6 @@
   vars:
     _given: "{{ (cassandra_java_plan_given.stdout_lines | default([''], true) | first) | regex_replace('(?<=.)/+$', '') }}"
 
-# (_cassandra_java_install_later: apply_config's node moving to a newer release too, Java installed with it in its
-# restart window, apply_config_window.yml)
 - name: Install Java
   ansible.builtin.include_role:
     name: community.cassandra.cassandra_install
-  when: not _cassandra_java_install_later | default(false) | bool

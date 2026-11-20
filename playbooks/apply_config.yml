@@ -792,10 +792,8 @@
                                   else 'reload the tuned profile' if d.item is match('tuned profile ')
                                   else 'set the LVM read-ahead (lvchange)') -%}
           {%- endfor -%}
-          {#- (a Java move with it: installed there too, Cassandra stopped, by the same cassandra_install run) -#}
           {%- if _release | bool -%}
-          {%-   set _ = os.append(('install Java ' ~ cassandra_java_version ~ ', ' if _java | bool else '')
-                                  ~ 'update Cassandra to ' ~ cassandra_apply_config_version.wanted ~ ', write its config again') -%}
+          {%-   set _ = os.append('update Cassandra to ' ~ cassandra_apply_config_version.wanted ~ ', write its config again') -%}
           {%- endif -%}
           {%- if _timesync | bool -%}
           {%-   for i in ts if i is match('package ') -%}{%- set _ = os.append('install ' ~ i[8:]) -%}{%- endfor -%}
@@ -808,7 +806,7 @@
           {%-   set _ = os.append('wait up to 2m for clock sync') -%}
           {%- endif -%}
           {#- (a release: the repository and packages in its window, with the package; the firewall live) -#}
-          {%- set write = (['install Java ' ~ cassandra_java_version] if _java | bool and not _release | bool else [])
+          {%- set write = (['install Java ' ~ cassandra_java_version] if _java | bool else [])
                           + (['write the config'] if (_files + _perms + _dirs + _jmx + _exporter + _header) | length > 0 else [])
                           + (['set up Medusa'] if _medusa else [])
                           + (['apply the firewall'] if _release | bool and _extras | selectattr('section', 'equalto', 'Firewall') | list

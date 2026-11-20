@@ -1018,7 +1018,7 @@ categories, each shown in the plan and under ``--check``. Every variable of the 
   Cassandra starts with, then checked after the restart, ``Java (restart)``; an inventory written by hand without
   ``cassandra_java_version`` gets the series' default Java, a move shown in the plan like any other: set it to the
   Java the nodes run to keep it), a newer release of the node's series (``cassandra_package_version``: the package
-  updated with Cassandra stopped, with the repository and packages the plan shows and the Java it moves to, its
+  updated with Cassandra stopped, with the repository and packages the plan shows (a Java move installed before), its
   config written again, the release it runs checked after, ``Cassandra package (restart)``; a failure there starts
   Cassandra again when its package is unchanged, else leaves it stopped for ``-e cassandra_rolling_resume=true``),
   and what the ``cassandra`` unit gives the running Cassandra (its user and group, its limits, its environment, read
