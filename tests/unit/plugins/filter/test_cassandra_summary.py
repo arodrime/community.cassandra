@@ -216,6 +216,10 @@ def test_a_task_that_failed_is_failed_with_the_hint_or_the_resume():
         "FAILED  at node2", "  Why:  boom", "  No node after it was touched."]
     assert cassandra_stop_block([], "node2", "boom", resume=False, batch=True)[2] == (
         "  The nodes done at the same time were not finished.")
+    # a cause said twice (the same check failed from two nodes): said once
+    twice = "the ring has 2 nodes, the inventory 3 (seen from node1)"
+    assert cassandra_stop_block([], "node2", [twice, twice, "other"], resume=False)[:4] == [
+        "FAILED  at node2", "  Why:  " + twice, "        other", "  No node after it was touched."]
 
 
 NODES = [{"node": "node4", "delete": ["a", "b"], "stop": True, "disable": True},

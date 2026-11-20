@@ -144,15 +144,19 @@ _GENERIC = re.compile(r"^(non-zero return code|MODULE FAILURE)")
 
 
 def _cause_and_way_out(failure):
-    """A failed task's msg (a string or lines) -> (the cause's lines, the way out's lines: from its WAY OUT line
-    on, the mark removed from the first; none: [])."""
+    """A failed task's msg (a string or lines) -> (the cause's lines, each once (the same check failed from two
+    nodes), the way out's lines: from its WAY OUT line on, the mark removed from the first; none: [])."""
     lines = []
     for item in failure if isinstance(failure, (list, tuple)) else [failure]:
         lines += [line.rstrip() for line in str(item or "").split("\n") if line.strip()]
     for i, line in enumerate(lines):
         if line.startswith(WAY_OUT.strip()):
-            return lines[:i], [line[len(WAY_OUT.strip()):].strip()] + lines[i + 1:]
-    return lines, []
+            return _once(lines[:i]), [line[len(WAY_OUT.strip()):].strip()] + lines[i + 1:]
+    return _once(lines), []
+
+
+def _once(lines):
+    return [line for i, line in enumerate(lines) if line not in lines[:i]]
 
 
 # what a resume does again to a node its run touched and did not record done: (one node, several)

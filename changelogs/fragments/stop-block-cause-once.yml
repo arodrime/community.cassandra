@@ -1,0 +1,4 @@
+bugfixes:
+  - >-
+    Stop block - a cause said twice by the failure (the same cluster check failed as seen from two nodes) is shown
+    once under ``Why:``.
