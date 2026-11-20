@@ -2590,7 +2590,7 @@
       ansible.builtin.copy:
         content: "{{ (item.text ~ '\n') | community.cassandra.cassandra_inventory_generated(_layout.cluster_group) }}"
         dest: "{{ item.path }}"
-        mode: "0644"
+        mode: "0600"  # (secrets masked; what it says of the nodes stays its owner's, as the run reports)
         backup: >-
           {{ item.path is file
              and not lookup('ansible.builtin.file', item.path).startswith(

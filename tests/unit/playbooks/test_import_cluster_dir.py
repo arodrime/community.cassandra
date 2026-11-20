@@ -339,6 +339,19 @@ def test_report_of_another_kept(tmp_path):
         assert render(task["ansible.builtin.copy"]["backup"], **variables) is backup, text
 
 
+def test_report_readable_by_its_owner_only():
+    # hostile R6: report.txt and report.details.txt were 0644 next to the run reports' 0600 (run_report.yml)
+    import yaml
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_operation", "tasks",
+                        "run_report.yml")
+    with open(path) as f:
+        runs = [t for b in yaml.safe_load(f) for t in b.get("block") or [b] if "ansible.builtin.copy" in t]
+    assert [t["ansible.builtin.copy"]["mode"] for t in runs] == ["0600"]
+    assert TASKS["Write report.txt and report.details.txt"]["ansible.builtin.copy"]["mode"] == "0600"
+    # (the shareable copy is made to be shared: its key only is the owner's)
+    assert [i["mode"] for i in TASKS["Write the shareable copy of the report"]["loop"]] == ["0644", "0600"]
+
+
 def test_check_diff_writes_nothing():
     """--check --diff reviews a re-import: the tasks that write or remove run in check mode (their diff shown, the
     secrets hidden); only the report is written, as report.check.txt (on the controller, report.txt left), and its
