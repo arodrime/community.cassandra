@@ -98,9 +98,44 @@ def test_host_vars_exception_named_with_its_file():
     assert "remove cassandra_concurrent_reads from group_vars/prod/main.yml, host_vars/db3/main.yml" in lines[2]
     between = row(result["between"], "cassandra_concurrent_reads")
     assert between[0] == "  cassandra_concurrent_reads   64 on db1, db2 (2 nodes); 128 on db3 (1 node)"
-    assert "remove cassandra_concurrent_reads from host_vars/db3/" in between[1]
+    assert "remove cassandra_concurrent_reads from host_vars/db3/main.yml" in between[1]
     assert "--limit db3 --check --diff" in between[2]
     assert result["counts"]["between"] == 1
+
+
+def test_between_nodes_names_the_inventory_s_own_files():
+    # (a hand-made inventory, group_vars/prod.yml and host_vars/db1.yml: the edits name them, never the import's
+    # group_vars/prod/secrets.yml or host_vars/db1/; a secret shown ****, as FROM STOCK shows it)
+    values = {"db1": {"cassandra_server_keystore_password": "zorglubA", "cassandra_concurrent_reads": 64},
+              "db2": {"cassandra_server_keystore_password": "zorglubB", "cassandra_concurrent_reads": 64},
+              "db3": {"cassandra_server_keystore_password": "zorglubB",
+                      "cassandra_service_environment": {"JVM_EXTRA_OPTS": "-Djavax.net.ssl.keyStorePassword=zz"}}}
+    files = {"group_vars/prod.yml": "cassandra_server_keystore_password: zorglubB\n",
+             "host_vars/db1.yml": "cassandra_server_keystore_password: zorglubA\ncassandra_concurrent_reads: 64\n",
+             "host_vars/db2.yml": "cassandra_concurrent_reads: 64\n",
+             "host_vars/db3.yml": "cassandra_service_environment:\n  JVM_EXTRA_OPTS: -Djavax.net.ssl.keyStorePassword=zz\n"}
+    between = sections(values, files)["between"]
+    assert row(between, "cassandra_concurrent_reads")[1] == (
+        u"      \u2192 64 for all: cassandra_concurrent_reads: 64 in group_vars/prod.yml, removed from host_vars/db1.yml,"
+        u" host_vars/db2.yml")
+    secret = row(between, "cassandra_server_keystore_password")
+    assert secret[0] == u"  cassandra_server_keystore_password   **** (value 2) on db2, db3 (2 nodes); **** on db1 (1 node)"
+    assert secret[1] == (u"      \u2192 **** (value 2) for all: already in group_vars/prod.yml: remove"
+                         u" cassandra_server_keystore_password from host_vars/db1.yml")
+    assert row(between, "cassandra_service_environment.JVM_EXTRA_OPTS")[1] == (
+        u"      \u2192 default for all: remove JVM_EXTRA_OPTS from cassandra_service_environment in host_vars/db3.yml")
+    assert "secrets.yml" not in "\n".join(between) and "zorglub" not in "\n".join(between)
+    # no file of the cluster's group: where to put it named as a new file
+    del files["group_vars/prod.yml"]
+    values["db3"]["cassandra_server_keystore_password"] = values["db2"]["cassandra_server_keystore_password"] = "zorglubA"
+    files["host_vars/db2.yml"] += "cassandra_server_keystore_password: zorglubA\n"
+    files["host_vars/db3.yml"] += "cassandra_server_keystore_password: zorglubA\n"
+    values["db3"]["cassandra_concurrent_reads"] = 64
+    files["host_vars/db3.yml"] += "cassandra_concurrent_reads: 64\n"
+    values["db1"]["cassandra_concurrent_reads"] = 128
+    files["host_vars/db1.yml"] = files["host_vars/db1.yml"].replace("64", "128")
+    reads = row(sections(values, files)["between"], "cassandra_concurrent_reads")
+    assert "in group_vars/prod/main.yml (a new file)" in reads[1]
 
 
 def test_a_node_on_the_default_differs_from_the_others():

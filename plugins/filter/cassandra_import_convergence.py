@@ -135,7 +135,8 @@ def _shared(layout, path):
 
 def _places(layout, key, path=None, target=_ABSENT, same=False):
     """Where the inventory keeps key below the cluster's group (for a sub-key path, the cluster's group too): [the
-    group_vars and host_vars dirs, your files there (not a shared one: _shared)]; path and target: only the ones whose value of path is not target (same: is
+    group_vars and host_vars dirs, your files there (not a shared one: _shared); the layout's real(kind, owner, key):
+    the files themselves, drift's]; path and target: only the ones whose value of path is not target (same: is
     target)."""
     cluster = layout["cluster_group"]
 
@@ -152,6 +153,9 @@ def _places(layout, key, path=None, target=_ABSENT, same=False):
         yours |= set(y["path"] for y in layout.get("yours") or [] if y["key"] == key and not _shared(layout, y["path"])
                      and (path is None or _leaf(key, path, y["yours"]) != target))
     yours = sorted(yours)
+    if layout.get("real"):  # (drift: the inventory's own files, as they are named, not the import's layout)
+        return [f for kind, owners in (("group_vars", groups), ("host_vars", hosts)) for o in sorted(owners)
+                for f in layout["real"](kind, o, key)] + ["yours: %s" % p for p in sorted(yours)]
     places = []
     if len(groups) <= 2:
         places += ["group_vars/%s/" % g for g in groups]
@@ -427,6 +431,8 @@ def _action(item, layout):
     sub = item["name"][len(item["key"]) + 1:] if item["name"] != item["key"] else ""
     secret = target.startswith("(in secrets.yml")
     where = "group_vars/%s/%s" % (cluster, "secrets.yml" if secret else "main.yml")
+    if layout.get("real"):  # (drift: the cluster group's file that sets it, else the one the layout names)
+        where = (layout["real"]("group_vars", cluster, item["key"]) or [layout["where"]["secret" if secret else "main"]])[0]
     value = target
     if secret:
         source = _places(layout, item["key"], item["name"], item["raw"], same=True) or [where]

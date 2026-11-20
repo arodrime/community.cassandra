@@ -322,6 +322,14 @@ def _stock_lines(rows, other, per_node, kept, cluster, shared, who, width, comma
     return lines
 
 
+def _secret_text(text):
+    """A secret as the convergence names it, "(in secrets.yml, value 2)", as drift shows it: "**** (value 2)" (the
+    inventory's secrets need not be in a secrets.yml)."""
+    space = r"[\s%s]" % out.NBSP  # (kept on one line: unbreakable's)
+    return re.sub(r"\(in%ssecrets\.yml(?:,%s(value%s\d+))?\)" % (space, space, space),
+                  lambda m: out.MASK + (out.NBSP + "(%s)" % m.group(1) if m.group(1) else ""), text)
+
+
 def _between_lines(drift, nodes, user, cluster, everyone, who, width, commands):
     """BETWEEN NODES' lines: the settings not the same on every node, import_cluster's convergence over the values
     off the default (a node without one has the default)."""
@@ -329,7 +337,17 @@ def _between_lines(drift, nodes, user, cluster, everyone, who, width, commands):
     for path, data in user:
         kind, owner = VARS_FILE.match(path).groups()
         (group_vars if kind == "group_vars" else host_vars).setdefault(owner, {}).update(data)
+    def real(kind, owner, key):  # (the inventory's own files, not the import's layout)
+        return [p for p, data in user if key in data and VARS_FILE.match(p).groups() == (kind, owner)]
+
+    def where(secret):  # the cluster group's file for a value of every node: one there, else a new one
+        mine = [p for p, dummy in user if VARS_FILE.match(p).groups() == ("group_vars", cluster)]
+        named = [p for p in mine if re.search(r"(secret|vault)", os.path.basename(p)) is not None] if secret \
+            else [p for p in mine if re.search(r"(secret|vault)", os.path.basename(p)) is None]
+        return named[0] if named else "group_vars/%s/%s (a new file)" % (cluster, "secrets.yml" if secret else "main.yml")
+
     layout = {"cluster_group": cluster, "group_vars": group_vars, "host_vars": host_vars, "from_yours": {},
+              "real": real, "where": {"main": where(False), "secret": where(True)},
               "yours": [], "nodes": [{"name": n, "read": True, "vars": drift.get(n) or {}, "hand_edits": [],
                                       "dc": (nodes.get(n) or {}).get("dc"), "rack": (nodes.get(n) or {}).get("rack"),
                                       "keep": {"cassandra_linux_manage": False} if commands["unmanaged"].get(n) else {}}
@@ -343,8 +361,8 @@ def _between_lines(drift, nodes, user, cluster, everyone, who, width, commands):
                                 " node the value most of them have" % out.plural(len(items), "setting"),
                                 width, "  ", "  ")
     for item in items:
-        lines += aligned_rows([(item["name"], _values_text(item, who))], "  ", width)
-        action = _action(item, layout)
+        lines += aligned_rows([(item["name"], _secret_text(_values_text(item, who)))], "  ", width)
+        action = _secret_text(_action(item, layout))
         if action.endswith(":"):  # (no file sets it apart for these nodes)
             action += " no vars file sets it apart for these nodes: a value made of each node's own variables"
         lines += fill_text(action, width, "      ", "  ")
