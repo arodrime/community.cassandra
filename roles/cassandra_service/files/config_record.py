@@ -138,6 +138,7 @@ def update(record, request):
 
 def main(argv):
     if argv[1] == "start":
+        # (--same= anywhere after the conf dir, the unit files the other arguments; the first --same= only)
         same = [json.loads(a[len("--same="):]) for a in argv[4:] if a.startswith("--same=")]
         return start(path_of(argv[2]), path_of(argv[3]), [path_of(u) for u in argv[4:] if not u.startswith("--same=")],
                      same[0] if same else None)

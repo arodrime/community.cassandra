@@ -142,12 +142,12 @@
     - name: Open them to their sources (Debian)
       community.general.ufw:
         rule: allow
-        from_ip: "{{ item.1 }}"
-        to_port: "{{ item.0.key | split('/') | first }}"
-        proto: "{{ item.0.key | split('/') | last }}"
-      loop: "{{ _cassandra_firewall_port_sources | dict2items | subelements('value') }}"
+        from_ip: "{{ item.source }}"
+        to_port: "{{ item.port | split('/') | first }}"
+        proto: "{{ item.port | split('/') | last }}"
+      loop: "{{ _cassandra_firewall_rich_rules }}"  # (a port's sources a list or one string, as on RedHat)
       loop_control:
-        label: "{{ item.0.key }} from {{ item.1 }}"
+        label: "{{ item.port }} from {{ item.source }}"
       when: ansible_facts['os_family'] == "Debian"
 
     - name: Close them to everyone (Debian)

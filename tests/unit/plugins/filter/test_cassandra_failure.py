@@ -108,15 +108,14 @@ def test_the_package_managers_own_errors_its_log_first():
     # rpm's unpack error was in /var/log/dnf.rpm.log
     dnf = {"msg": "Failed to install some of the specified packages",
            "failures": ["warning: /etc/cassandra/default.conf/cassandra.yaml created as .../cassandra.yaml.rpmnew"]}
-    log = ("2026-11-20T03:40:00+0100 INFO error: an earlier run\n"
-           "2026-11-20T03:54:31+0100 INFO error: unpacking of archive failed on file /usr/share/x.jar: cpio: rename\n"
+    log = ("2026-11-20T03:54:31+0100 INFO error: unpacking of archive failed on file /usr/share/x.jar: cpio: rename\n"
            "2026-11-20T03:54:31+0100 SUBDEBUG Error unpacking rpm package cassandra-5.0.9-1.noarch\n"
            "2026-11-20T03:54:32+0100 INFO error: cassandra-5.0.9-1.noarch: install failed\n")
-    assert cassandra_package_errors(dnf, log, "2026-11-20T03:54:20") == [
+    # (the log's tail since the update started: its earlier lines are not read)
+    assert cassandra_package_errors(dnf, log) == [
         "error: unpacking of archive failed on file /usr/share/x.jar: cpio: rename",
         "Error unpacking rpm package cassandra-5.0.9-1.noarch", "error: cassandra-5.0.9-1.noarch: install failed"]
-    assert len(cassandra_package_errors(dnf, log, "")) == 4  # (no time: the whole tail)
-    assert cassandra_package_errors(dnf, "", "") == []  # (an rpmnew warning is no error)
+    assert cassandra_package_errors(dnf, "") == []  # (an rpmnew warning is no error)
     # apt: dpkg's words in the module's own output; a URL's login masked
     apt = {"msg": "'/usr/bin/apt-get -y install cassandra=5.0.9' failed: E: Sub-process /usr/bin/dpkg returned an error",
            "stdout": "Unpacking cassandra (5.0.9) ...\ndpkg: error processing archive /var/cache/x.deb (--unpack):\n",

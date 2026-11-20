@@ -145,25 +145,25 @@ def cassandra_failure_report(failures, operation="", cluster="", what="could not
 
 
 # the lines of dnf's rpm log (/var/log/dnf.rpm.log): "2026-11-20T03:54:30+0100 INFO error: unpacking of archive ..."
-_RPM_LOG = re.compile(r"^(?P<time>\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)\S*\s+[A-Z]+\s+(?P<text>.*)$")
+_RPM_LOG = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\S*\s+[A-Z]+\s+(?P<text>.*)$")
 _PACKAGE_ERROR = re.compile(r"\berror\b|\bfailed\b|^E: ", re.IGNORECASE)
 # at most that many error lines said (the first ones: the cause comes first, the rest repeats it)
 _PACKAGE_ERRORS = 5
 
 
-def cassandra_package_errors(result, log="", since=""):
+def cassandra_package_errors(result, log=""):
     """The package manager's own words on a failed install, which its module's message ("Failed to install some of
-    the specified packages") leaves out: the error lines of dnf's rpm log (log, its tail) from since on (the node's
-    time when the install started, 2026-11-20T03:54:20), their time and level dropped; else (no log: apt, whose
-    output the module returns) the error lines of the failed result (stderr, stdout, failures). Each once, at most
-    5, secrets and a URL's login masked.
+    the specified packages") leaves out: the error lines of log, dnf's rpm log since the update started (its tail,
+    read from the size it had then), their time and level dropped; else (no log: apt, whose output the module
+    returns) the error lines of the failed result (stderr, stdout, failures). Each once, at most 5, secrets and a
+    URL's login masked.
     e.g. "2026-11-20T03:54:30+0100 INFO error: unpacking of archive failed on file /usr/share/x.jar: cpio: rename
     failed" -> ["error: unpacking of archive failed on file /usr/share/x.jar: cpio: rename failed"]."""
     lines = []
     if log:
         for line in str(log).splitlines():
             m = _RPM_LOG.match(line.strip())
-            if m and (not since or m.group("time") >= str(since)[:19]) and _PACKAGE_ERROR.search(m.group("text")):
+            if m and _PACKAGE_ERROR.search(m.group("text")):
                 lines.append(m.group("text").strip())
     if not lines and isinstance(result, dict):
         for part in [result.get("stderr"), result.get("stdout")] + list(result.get("failures") or []):
