@@ -291,6 +291,18 @@ def test_cql_address_of_the_node():
     assert host(cassandra_rpc_address="::") == "127.0.0.1"
 
 
+def test_logs_in_on_the_node_the_operator_gave():
+    # hostile R1: -i h-n1, and the question said "It is checked on h-n2" (the first node read, in ring order)
+    step = next(t for t in WRITE["tasks"] if t.get("name") == "Check the CQL login, or ask for one")
+    cql_node = step["vars"]["_cql_node"]
+    nodes = fact([node("n2"), node("n3"), node("n1"), node("n4", read=False)])
+    assert render(cql_node, _nodes=nodes, _given=["n1"])["host"] == "n1"
+    assert render(cql_node, _nodes=nodes, _given=["n4", "n3"])["host"] == "n3"  # (n4 given, not read)
+    assert render(cql_node, _nodes=nodes, _given=["n4"])["host"] == "n2"  # none given read: the first read
+    assert render(cql_node, _nodes=nodes)["host"] == "n2"
+    assert render(cql_node, _nodes=fact([node("n1", read=False)]), _given=["n1"]) == {}
+
+
 def test_logs_in_as_the_operations_do():
     # no quoting, port or TLS of its own: a login that works here works for keyspaces.yml's cqlsh too
     with open(os.path.join(os.path.dirname(PLAYBOOK), "..", "roles", "cassandra_operation", "tasks", "cql_login_try.yml")) as f:

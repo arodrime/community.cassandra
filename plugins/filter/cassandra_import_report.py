@@ -1819,8 +1819,9 @@ def _head_lines(report, cluster, hosts_file, report_file, self_check_ok, same, s
     """The head: the verdict with its counts, in sync with Ansible or not (sync), the self-check, the files
     written, where the report is -> [line]."""
     acted = len(steps) + sum(n for dummy, n, dummy2 in reviews)
-    counts = (["%d TO DO" % len(steps)] if steps else []) + [
-        "%d %s" % (n, kind.one if n == 1 else kind.many) for kind, n, dummy in reviews]
+    # (each count kept on one line when the head wraps: never "2" at a line's end, "things worth a look" below)
+    counts = [c.replace(" ", out.NBSP) for c in (["%d TO DO" % len(steps)] if steps else []) + [
+        "%d %s" % (n, kind.one if n == 1 else kind.many) for kind, n, dummy in reviews]]
     nodes = out.plural(len(report.read) + len(report.unread), "node") + (
         " (%d read)" % len(report.read) if report.unread else "")
     verdict = "%s to %s: %s" % (out.plural(acted, "entry", "entries"), "act on" if steps else "review", ", ".join(counts)) \

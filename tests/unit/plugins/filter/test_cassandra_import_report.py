@@ -346,6 +346,14 @@ def test_differs_from_your_group_vars_all():
         "   node1, node2 (2 nodes)",
         "      kept as the nodes have it (in host_vars/<node>/main.yml); to apply yours, delete it there, then apply_config"]
     assert lines[0].endswith("2 entries to review: 2 things worth a look")  # (not again as settings that differ)
+    # hostile R1: a head that wraps keeps each count whole ("2" never at a line's end, its words below)
+    for width in range(40, 90):
+        head = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, width=width)
+        head = head[:head.index("  in sync with Ansible: yes") if "  in sync with Ansible: yes" in head else 3]
+        text = " ".join(x.strip() for x in head)
+        assert "2 things worth a look" in text, (width, head)
+        assert not any(re.search(r"\b2$", x) for x in head), (width, head)
+        assert all(u"\xa0" not in x for x in head)
     # the screen has it too
     screen = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, screen=True, width=160)
     assert review[0] in screen and screen[-3:] == ["", "details: reports/my_cluster/report.details.txt", "report: reports/my_cluster/report.txt"]
