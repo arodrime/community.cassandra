@@ -556,7 +556,10 @@ def test_a_schema_disagreement_of_nodes_outside_the_rack_is_a_warning():
     # the rack's version the majority by the rack's own nodes alone (n1 not listed: unreachable): a stop too
     for status in ({"aaaa": ["10.0.0.2", "10.0.0.3"], "bbbb": ["10.0.0.1", "10.0.0.4", "10.0.0.9"]},
                    {"aaaa": ["10.0.0.2", "10.0.0.3"], "bbbb": ["10.0.0.1", "10.0.0.4"]},
-                   {"aaaa": ["10.0.0.2", "10.0.0.3"], "bbbb": ["10.0.0.4"]}):
+                   {"aaaa": ["10.0.0.2", "10.0.0.3"], "bbbb": ["10.0.0.4"]},
+                   {"aaaa": ["10.0.0.1", "10.0.0.2", "10.0.0.3"], "bbbb": ["10.0.0.4", "10.0.0.8", "10.0.0.9"]},
+                   {"aaaa": ["10.0.0.1", "10.0.0.2", "10.0.0.3"],
+                    "bbbb": ["10.0.0.4", "10.0.0.7", "10.0.0.8", "10.0.0.9"]}):
         schema = dict(SCHEMA, schema_status=status)
         assert check_read(ring(), schema=schema, ok=dict(schema=schema))[0] == ["schema disagreement: " + SCHEMA["msg"]]
     # a node of the rack not listed (UNREACHABLE for describecluster), none listed, or the last read failed: a stop
@@ -564,6 +567,16 @@ def test_a_schema_disagreement_of_nodes_outside_the_rack_is_a_warning():
                    dict(SCHEMA, schema_status={"aaaa": ["10.0.0.1"], "bbbb": ["10.0.0.4"]}),
                    dict(SCHEMA, rc=1, schema_status={"aaaa": ["10.0.0.1", "10.0.0.2", "10.0.0.3"], "bbbb": ["10.0.0.4"]})):
         assert check_read(ring(), schema=schema, ok=dict(schema=schema))[0] == ["schema disagreement: " + SCHEMA["msg"]]
+
+
+def test_a_schema_disagreement_while_the_versions_are_mixed_is_a_warning_row():
+    # cassandra_allow_mixed_versions: the disagreement is a warning finding, said as a row, not dropped
+    schema = dict(SCHEMA, schema_status={"aaaa": ["10.0.0.2", "10.0.0.3"], "bbbb": ["10.0.0.1", "10.0.0.4"]})
+    problems, said = check_read(ring(), schema=schema, ok=dict(schema=schema, mixed_versions=True, target="5.0.6"))
+    assert problems == []
+    assert said[1:3] == ["WARNING  the rest of the cluster:",
+                         "  schema  versions differ: expected while the versions are mixed, agreed again"]
+    assert said[3].startswith("  ") and "5.0.6" in " ".join(said[3:5])
 
 
 def test_ccm_like_hosts_at_one_ansible_host_are_judged_by_their_own_address():

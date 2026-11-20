@@ -30,9 +30,11 @@ at an address it gives:
   a ring of another size than the inventory, the rack in        WARNING
     the ring and UN
   a schema disagreement, the rack in the ring, UN and on        WARNING
-    one version that more than half of the nodes listed are
-    on, a node outside the rack among them (the nodes on
-    another one named)
+    one version held by more than half of the nodes
+    describecluster lists, a node outside the rack among them
+    (the nodes on another one named)
+  a schema disagreement while the versions are mixed            WARNING
+    (cassandra_allow_mixed_versions)
   anything else (streams on the rack node, the ring size or     STOP
     the schema otherwise, no ring read at all...)
 
@@ -114,8 +116,8 @@ def _without_port(address):
 
 def _other_versions(schema, rack_addresses):
     """cassandra_schema's result (its last read succeeded) and the rack's ring addresses -> the addresses on
-    another schema version than the rack's, when every rack node is on one version that more than half of the
-    nodes listed are on, a node outside the rack among them; else None (the disagreement may be the rack's: see
+    another schema version than the rack's, when every rack node is on one version held by more than half of the
+    nodes describecluster lists, a node outside the rack among them; else None (the disagreement may be the rack's: see
     the module docstring)."""
     versions = dict((v, [_ip(_without_port(a)) for a in hosts])
                     for v, hosts in ((schema or {}).get("schema_status") or {}).items())
@@ -148,6 +150,12 @@ def _names(findings, addresses):
     return names
 
 
+def _note_row(finding):
+    """A warning finding -> its row: [what, the rest of its text]."""
+    what, text = str(finding.get("what") or "the cluster"), str(finding.get("text", ""))
+    return [what, text[len(what) + 1:] if text.startswith(what + " ") else text]
+
+
 def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses=None, reads=None, schema=None,
                            first_verdict=None):
     """cassandra_health_findings' result of a read, the rack's nodes (cassandra_rack_members), its dc and rack, the
@@ -160,7 +168,8 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
       failed: the nodes outside the rack whose nodetool status failed (the first verdict's too), when a ring was
         read.
       warnings: the other rows of the warning, [[name, fact]]: the nodes on another schema version (a node by its
-        inventory name, else its address).
+        inventory name, else its address), then the warning findings (schema versions differing while the
+        versions are mixed: cassandra_allow_mixed_versions).
       ring_size: [[the ring's size, the inventory's]] when they differ and that is a warning.
       unknown_lines: why each node judged of the rack only for want of a host known by its address is, then the
         way out; [] for none.
@@ -180,7 +189,7 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
     outside = [dict(n, states=list(n["states"])) for n in (first_verdict or {}).get("outside", [])]
     by_address = dict((n["address"], n) for n in outside)
     seen_by = {}  # the views that saw each node outside not UN, by its address
-    stops, ring_size = [], []
+    stops, ring_size, notes = [], [], []
     for f in findings:
         kind = f.get("kind")
         if kind == "state" and judged[f["address"]] == "outside":
@@ -196,6 +205,8 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
             ring_size.append([f["ring"], f["expected"]])
         elif kind == "schema" and other_schema:
             continue  # (in warnings)
+        elif kind == "warning":  # (a schema disagreement while the versions are mixed: cassandra_health_findings)
+            notes.append(f)
         else:
             stops.append(f)
     if first_verdict is None:  # before the wait: the nodes the counted view saw not UN; the others are waited for
@@ -206,7 +217,7 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
     on_other_schema = [[names.get(a, a), "on another schema version than the rack"] for a in other_schema or []]
     return {"outside": outside,
             "failed": _unique(failed),
-            "warnings": _unique(on_other_schema),
+            "warnings": _unique(on_other_schema + [_note_row(f) for f in notes]),
             "ring_size": _unique(ring_size),
             "unknown_lines": _unknown_lines(findings, judged, rack),
             "problems": cassandra_health_sentences(stops),
