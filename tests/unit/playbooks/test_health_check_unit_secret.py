@@ -5,8 +5,17 @@ __metaclass__ = type
 # cassandra unit: the unit file readable by every local user, systemctl show prints it. Said as the inventory's
 # value (the file on the node is not read), never as what the file holds.
 
+import os
+import subprocess
+import sys
+
+import yaml
+
+from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_unit_secret_warning
 from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import (
     find, load, render)
+
+COLLECTIONS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", ".."))
 
 TASKS = [t for p in load("playbooks", "health_check.yml") for t in p.get("tasks") or []]
 SAY = find(TASKS, "Say a secret in the unit's environment")
@@ -43,7 +52,6 @@ def test_a_secret_in_the_unit_environment_is_a_warning_of_the_health_check():
 
 
 def test_the_health_check_says_the_file_apply_config_writes():
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_unit_secret_warning
     lines = said({"node1": {"cassandra_service_environment": SECRET, "cassandra_service_start": "package_script"}})
     text = " ".join(" ".join(lines).split())
     expected = cassandra_unit_secret_warning(SECRET, "package_script", True, inventory=True)
@@ -63,3 +71,56 @@ def test_apply_config_and_the_role_pick_the_file_with_the_same_filter():
     assert "cassandra_unit_secret_warning(" in text
     assert "zz-ansible-environment.conf" not in text
     assert "zz-ansible-environment.conf" not in str(SAY)
+
+
+
+class _Undefined(dict):
+    """a node's hostvars as ansible-core 2.19+ gives them when cassandra_service_environment uses a variable not in
+    hostvars (a role default): reading it raises"""
+
+    def get(self, key, default=None):
+        if key == "cassandra_service_environment":
+            from ansible.errors import AnsibleUndefinedVariable
+            raise AnsibleUndefinedVariable("'cassandra_data_dir' is undefined")
+        return dict.get(self, key, default)
+
+
+class _Broken(dict):
+    """a value whose use fails with an error that quotes it"""
+
+    def items(self):
+        raise ValueError("bad template: -Djavax.net.ssl.trustStorePassword=zorglub {{")
+
+
+def test_a_value_that_cannot_be_read_is_said_not_checked_for_that_node():
+    # the run goes on, the other nodes checked; the node said not checked, with the name of the variable missing,
+    # never the value's text (it may hold a secret)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_unit_secret_warnings
+    hostvars = {"node1": _Undefined(cassandra_dc="dc1"), "node2": {"cassandra_service_environment": SECRET},
+                "node3": {"cassandra_service_environment": _Broken(JVM_EXTRA_OPTS="x")}}
+    said = cassandra_unit_secret_warnings(["node1", "node2", "node3"], hostvars)
+    assert said == [
+        {"label": "node1", "text": "the inventory's cassandra_service_environment is not checked for a secret\n"
+                                   "its value could not be read ('cassandra_data_dir' is undefined)"},
+        {"label": "node2", "text": cassandra_unit_secret_warning(SECRET, inventory=True)},
+        {"label": "node3", "text": "the inventory's cassandra_service_environment is not checked for a secret\n"
+                                   "its value could not be read (ValueError)"}]
+
+
+def test_a_value_that_cannot_be_read_does_not_fail_the_run(tmp_path):
+    # the task run by ansible-playbook: a variable the value uses is not in hostvars (2.19+: an error on use;
+    # before: the template left as it is, nothing said)
+    task = dict((k, v) for k, v in SAY.items() if k != "when")
+    play = [{"hosts": "all", "gather_facts": False, "tasks": [task]}]
+    (tmp_path / "play.yml").write_text(yaml.safe_dump(play))
+    (tmp_path / "hosts.yml").write_text(yaml.safe_dump({"all": {"hosts": {"node1": {
+        "ansible_connection": "local",
+        "cassandra_service_environment": {"JVM_EXTRA_OPTS": "-Dx={{ cassandra_data_dir }}/x"}}}}}))
+    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_NOCOLOR="1", ANSIBLE_RETRY_FILES_ENABLED="0",
+               ANSIBLE_LOCALHOST_WARNING="0")
+    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", str(tmp_path / "hosts.yml"),
+            "-e", "ansible_python_interpreter=" + sys.executable, str(tmp_path / "play.yml")]
+    run = subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120,
+                         check=False, cwd=str(tmp_path))
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "failed=0" in run.stdout.replace(" ", "")

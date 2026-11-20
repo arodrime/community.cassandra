@@ -25,6 +25,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import os
+import re
 import shlex
 
 from ansible.module_utils.parsing.convert_bool import boolean
@@ -327,16 +328,28 @@ def cassandra_unit_secret_warning(environment, start="unit", manage=True, invent
         " reads (EnvironmentFile=), or in a file of mode 0600 the option itself reads"])
 
 
+# Jinja's words for a variable not defined: "'cassandra_data_dir' is undefined"
+_UNDEFINED = re.compile(r"'[A-Za-z_][A-Za-z0-9_]*' is undefined")
+
+
 def cassandra_unit_secret_warnings(hosts, hostvars):
     """The nodes, their hostvars -> the warnings of a secret in the inventory's cassandra_service_environment
     (cassandra_unit_secret_warning, inventory), one for the nodes that share it: [{label: the nodes, text}], in
-    the order of the nodes; [] for none."""
+    the order of the nodes; [] for none. A node whose value can't be read (ansible-core 2.19+: a variable it uses
+    is not in hostvars, e.g. a role default) is said not checked, with the error."""
     by_text, order = {}, []
     for h in hosts or []:
-        variables = hostvars.get(h) or {}
-        text = cassandra_unit_secret_warning(variables.get("cassandra_service_environment") or {},
-                                             variables.get("cassandra_service_start", "unit"),
-                                             variables.get("cassandra_service_unit_manage", True), inventory=True)
+        try:
+            variables = hostvars.get(h) or {}
+            text = cassandra_unit_secret_warning(variables.get("cassandra_service_environment") or {},
+                                                 variables.get("cassandra_service_start", "unit"),
+                                                 variables.get("cassandra_service_unit_manage", True), inventory=True)
+        except Exception as exc:  # pylint: disable=broad-except  # undefined, or a marker of it raised on use
+            # the name of a variable undefined, else the error's type (no text of the value: it may hold a secret)
+            undefined = _UNDEFINED.search(str(exc))
+            text = "\n".join(["the inventory's cassandra_service_environment is not checked for a secret",
+                              "its value could not be read (%s)" % (undefined.group(0) if undefined
+                                                                    else type(exc).__name__)])
         if text and text not in by_text:
             order.append(text)
         if text:
