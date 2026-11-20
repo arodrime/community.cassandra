@@ -1566,7 +1566,7 @@
                                                                         restart_command=_restart_command, more=_more) }}
         _cassandra_run_report_sections: >-
           {{ hostvars['localhost']._cassandra_run_report_plan | default([])
-             + [{'title': 'RECAP', 'lines': _recap}]
+             + [{'title': 'RECAP', 'lines': _recap, 'mask': true}]
              + ([] if ansible_check_mode else [{'title': 'NODES', 'lines': _times}]) }}
         # (when each node's turn started: node_operation.yml's start)
         _times: >-

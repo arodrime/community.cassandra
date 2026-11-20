@@ -243,7 +243,8 @@ SECRET = re.compile(r"password|passwd|secret|sse_c_key|access_key|private_key|ke
 _HIDDEN = SECRET
 MASK = "****"
 # A secret inside a line of text (a config file line, a JVM option): its name (as above, inside a longer one;
-# not a path: a name ending in file or path, e.g. -Dcom.sun.management.jmxremote.password.file), a quote between
+# not a path: a name ending in file or path, e.g. -Dcom.sun.management.jmxremote.password.file; not a YAML file's
+# name: group_vars/prod/secrets.yml:), a quote between
 # the name and the colon (JSON, Python), then its value
 # (the names secret on their own only, not inside a longer one: num_tokens, AuthorizationProxy)
 _OWN_NAME = r"(?<![\w.-])(?:authorization|headers|token)(?![\w.-])"
@@ -253,7 +254,7 @@ _END_NAME = r"(?:(?<!initial)[._]token|[._]?pwd|[._]pass|credentials?)(?![\w.-])
 _HIDDEN_NAME = (r"(?<![\w.-])[\w.-]*(?:password|passwd|secret|private_key|sse_c_key|access_key|key_material|auth_token"
                 r"|api_?token|api_?key|access_token|bearer_token|refresh_token|session_token|private_token"
                 r"|passphrase|encryption_key|ca_key|_kspw|_tspw|_pw|_pass|" + _END_NAME + "|" + _OWN_NAME
-                + r")[\w.-]*(?<![._-]file)(?<![._-]path)[\"']?")
+                + r")[\w.-]*(?<![._-]file)(?<![._-]path)(?<!\.yml)(?<!\.yaml)[\"']?")
 # (its name and the = or : after it: import_cluster takes the value out of a line)
 SECRET_NAME = r"(?i)(" + _HIDDEN_NAME + r"\s*[:=]\s*)"
 _HIDDEN_KEY = (SECRET_NAME +

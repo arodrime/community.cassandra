@@ -99,9 +99,22 @@ def test_the_text_has_the_head_then_the_sections_in_full():
 def test_the_report_masks_a_secret_a_section_lets_through():
     text = cassandra_run_report([{"title": "STOPPED", "lines": [
         "node1: nodetool -u cassandra -pw zorglub1 status failed", "  keystore_password: zorglub2",
-        "  cassandra_jmx_password_file: /opt/x/jmxremote.password"]}], "apply_config", "prod", build=BUILD)
+        "  cassandra_jmx_password_file: /opt/x/jmxremote.password"], "mask": True}], "apply_config", "prod", build=BUILD)
     assert "zorglub" not in text
     assert "-pw ****" in text and "keystore_password: ****" in text and "/opt/x/jmxremote.password" in text
+
+
+def test_lines_built_masked_are_not_masked_again():
+    # (drift's sections, the plan: their values masked already; masked again, the way out of a line naming
+    # secrets.yml, or a "token:" text, was eaten)
+    lines = ["cassandra_server_keystore_password   **** (value 2) on db2, db3; **** on db1",
+             "  -> already in group_vars/prod/secrets.yml: remove cassandra_server_keystore_password from host_vars/db1.yml",
+             "db1  token: abc def"]
+    text = cassandra_run_report([{"title": "BETWEEN NODES", "lines": lines}], "drift", "prod", build=BUILD)
+    assert text.split("\n")[-4:-1] == lines
+    # a raw section (a stop's text): masked, a YAML file's name not taken for a secret's
+    text = cassandra_run_report([{"title": "", "lines": lines[1:2] + ["  ssl.pwd: zorglub"], "mask": True}], "x", build=BUILD)
+    assert lines[1] in text and "zorglub" not in text
 
 
 def test_the_times_say_when_each_turn_started():
@@ -286,7 +299,7 @@ def test_a_stopped_run_writes_its_report_with_the_stop_as_said():
     sections = render("{{ _cassandra_run_report_sections }}", **variables)
     assert sections == [
         {"title": "WILL DO", "lines": ["node1, node2  will apply"]},
-        {"title": "", "lines": ["STOPPED  apply_config  prod  at node2", "  cluster health check failed"]},
+        {"title": "", "lines": ["STOPPED  apply_config  prod  at node2", "  cluster health check failed"], "mask": True},
         {"title": "NODES", "lines": ["node1  23:58:41  apply_config done in 42s",
                                      "node2  -         apply_config FAILED after 3s: cluster health check failed",
                                      "node3  -         not reached"]}]

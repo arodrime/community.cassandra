@@ -62,7 +62,9 @@ def _stamp(epoch):
 
 def cassandra_run_report(sections, operation, cluster="", check=False, status="", started=None, ended=None,
                          build=None, run=""):
-    """sections: [{title, lines}] (one without lines left out); operation, cluster, check (--check), status (DONE,
+    """sections: [{title, lines, mask}] (one without lines left out; mask: true for lines of raw text, a failure's
+    message, masked here; the others are built from masked text, as they are: masked again, a line naming
+    secrets.yml or a "token:" text would lose its end); operation, cluster, check (--check), status (DONE,
     FAILED, STOPPED...; default CHECK under --check, else DONE), started, ended (seconds since the epoch), build (the
     collection's version and commit; default cassandra_build's), run (what the run is, for an operation that changes
     nothing: "read only, nothing was changed"; default by check) -> the report's text, its lines as they are (not
@@ -80,7 +82,7 @@ def cassandra_run_report(sections, operation, cluster="", check=False, status=""
     head.append("  run:      %s" % (run or ("--check, nothing was changed" if check else "a real run")))
     body = []
     for section in sections or []:
-        lines = [out.mask(line) for line in section.get("lines") or []]  # (masked already: again, to be sure)
+        lines = [out.mask(line) if section.get("mask") else str(line) for line in section.get("lines") or []]
         if not lines:
             continue
         body += [""] + ([str(section["title"])] if section.get("title") else []) + lines

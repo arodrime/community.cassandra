@@ -220,7 +220,7 @@
         _cassandra_run_report_status: "{{ ([_cassandra_stop_said] | flatten | first | default('')).split() | first | default('STOPPED') }}"
         _cassandra_run_report_sections: >-
           {{ hostvars['localhost']._cassandra_run_report_plan | default([])
-             + [{'title': '', 'lines': [_cassandra_stop_said] | flatten}]
+             + [{'title': '', 'lines': [_cassandra_stop_said] | flatten, 'mask': true}]
              + [{'title': 'NODES', 'lines': _nodes | community.cassandra.cassandra_run_report_times(_starts)}] }}
         _nodes: >-
           {%- set out = [] -%}
