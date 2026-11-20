@@ -4,13 +4,13 @@
 have it; nodetool prints it in full), anything else as is.
 
 cassandra_ring_report: the cassandra_status module's cluster_status as
-readable lines for the status playbook: header lines (the cluster, the node
-the ring is seen from and when), the nodes per datacenter as nodetool status shows them
-(the ones not UN marked; with names, a node by its name and address), a
-summary table of its racks and the datacenter, where the inventory and the
-ring differ, and last the verdict (the nodes down, joining, leaving or moving;
-under it, a WARNING line if the ring and the inventory differ). Blank lines
-between the blocks."""
+readable lines for the status playbook: first the verdict (the nodes down,
+joining, leaving or moving), the header lines under it (the cluster, the node
+the ring is seen from and when; a WARNING line if the ring and the inventory
+differ), then the nodes per datacenter as nodetool status shows them (the
+ones not UN marked; with names, a node by its name and address), a summary
+table of its racks and the datacenter, and where the inventory and the ring
+differ. Blank lines between the blocks."""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type

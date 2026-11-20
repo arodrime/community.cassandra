@@ -3,10 +3,10 @@
 #
 #   ansible-playbook community.cassandra.status
 #
-# Read from the first node that answers: each datacenter's nodes with their
-# state and load (each by its name and address: -e status_resolve_ip=false for
-# the addresses alone), where the inventory and the ring differ, then the
-# verdict (ALL 5 NODES UP, 1 NODE DOWN: node1...).
+# Read from the first node that answers: the verdict first (ALL 5 NODES UP,
+# 1 NODE DOWN: node1...), then each datacenter's nodes with their state and
+# load (each by its name and address: -e status_resolve_ip=false for the
+# addresses alone), and where the inventory and the ring differ.
 #
 # A down node is shown, not an error (health_check is the check): it fails
 # only when no node answers.
@@ -250,15 +250,15 @@
       when: cassandra_status_raw | default(false) | bool
       run_once: true
 
-    # header lines (the node it is seen from and when, whether the ring and the
-    # group match), then per datacenter the nodetool table (a node not UN marked
-    # "<- down", "<- joining"...) and a summary per rack and datacenter (nodes
-    # up, down, joining, leaving, moving, total load), where the group and the
-    # ring differ (a ring node that is another host of the inventory is named),
-    # and last the verdict (ALL 5 NODES UP, 1 NODE DOWN: node1 (dc1/rack1),
+    # first the verdict (ALL 5 NODES UP, 1 NODE DOWN: node1 (dc1/rack1),
     # 1 NODE NOT REACHED: node3 (by Ansible: never ALL UP then), the nodes
-    # joining, leaving or moving; under it "WARNING  ring and inventory
-    # differ" when they do)
+    # joining, leaving or moving), the header lines under it (the node it is
+    # seen from and when, whether the ring and the group match; "WARNING  ring
+    # and inventory differ" when they do), then per datacenter the nodetool
+    # table (a node not UN marked "<- down", "<- joining"...) and a summary per
+    # rack and datacenter (nodes up, down, joining, leaving, moving, total
+    # load), and where the group and the ring differ (a ring node that is
+    # another host of the inventory is named)
     - name: Show the ring
       ansible.builtin.debug:
         msg: >-
