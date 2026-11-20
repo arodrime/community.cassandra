@@ -422,33 +422,122 @@ def test_the_key_of_an_earlier_shareable_copy_is_removed():
             "Removed /r/report.shareable.map: the key of an earlier import's shareable copy (it held the real names).")
 
 
-def test_the_shareable_copy_of_an_earlier_import_is_removed_when_off(tmp_path):
-    # an earlier import wrote report.shareable.txt and its key (on by default in earlier release candidates): with
-    # import_report_shareable off they describe that import, not this one: removed (the import's own files only,
-    # by their first line), each said on a line
-    remove = TASKS["Remove the shareable copy of an earlier import"]
-    said = TASKS["Say the shareable copy of an earlier import is removed"]
+def plant_shareable(where, cluster, report="report.txt", names=("report.shareable.txt", "report.shareable.key.txt")):
+    """an earlier import's files of cluster in where, as the import writes them: its report (none for cluster
+    None), its shareable copy and key"""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
+        cassandra_inventory_generated, cassandra_inventory_layout)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_shareable import cassandra_import_shareable
+    nodes = [{"name": "db1", "address": "10.0.0.1", "dc": "dc1", "rack": "r1", "read": True, "hand_edits": [],
+              "normalized": [], "notes": [], "vars": {"cassandra_version": "50x"}}]
+    shareable = cassandra_import_shareable(["IMPORT x"], cassandra_inventory_layout(nodes, "zorglub"))
+    if cluster is not None:
+        (where / report).write_text(str(cassandra_inventory_generated("IMPORT x\n", cluster)))
+    for name in names:
+        (where / name).write_text("\n".join(shareable["map" if ".key." in name else "text"]) + "\n")
+
+
+SHAREABLE_TASKS = ["Find the shareable copy and key of an earlier import",
+                   "Remove the shareable copy and key of an earlier import of this cluster",
+                   "Keep aside the shareable copy and key of another import",
+                   "Say what was done with the shareable copy and key of an earlier import"]
+
+
+def old_shareable(where, check=False, shareable=None):
+    """the tasks on an earlier import's files in where (cluster c1): (what was found, the lines said)"""
+    find, remove, keep, say = (TASKS[n] for n in SHAREABLE_TASKS)
+    variables = dict(_report_args={"report_file": str(where / "report.txt")}, _layout={"cluster_group": "c1"},
+                     ansible_check_mode=check)
+    if shareable is not None:
+        variables["import_report_shareable"] = shareable
+    if not render("{{ %s }}" % find["when"], **variables):
+        return None, None
+    found = render(find["ansible.builtin.set_fact"]["_import_old_shareable"], **variables)
+    variables["_import_old_shareable"] = found
+    for task in (remove, keep):
+        if render("{{ %s }}" % task["when"], **variables):
+            for item in render(task["loop"], **variables):
+                if task is remove:
+                    os.remove(item["path"])
+                else:
+                    assert task["ansible.builtin.command"]["argv"][:3] == ["mv", "-n", "--"]
+                    assert render(task["ansible.builtin.command"]["creates"], item=item) == item["backup"]
+                    os.rename(item["path"], item["backup"])
+    if not render("{{ %s }}" % say["when"], **variables):
+        return found, None
+    assert say["vars"]["cassandra_output"] is True
+    return found, render(say["ansible.builtin.debug"]["msg"], **variables)
+
+
+def test_the_shareable_copy_of_an_earlier_import_of_this_cluster_is_removed_when_off(tmp_path):
+    # an earlier import of this cluster wrote report.shareable.txt and its key (on by default in earlier release
+    # candidates): with import_report_shareable off they describe that import, not this one: removed, said in rows;
+    # decided before report.txt is written again
     names = [t.get("name") for t in next(p for p in PLAYS if p.get("name") == "Write the inventory")["tasks"]]
-    assert names.index(remove["name"]) < names.index("Write the shareable copy of the report")
-    (tmp_path / "report.shareable.txt").write_text("SHAREABLE COPY of an import_cluster report: nodes n1..\n")
-    (tmp_path / "report.shareable.key.txt").write_text("# The key of report.shareable.txt: what each name...\nn1 = a\n")
-    (tmp_path / "report.check.shareable.txt").write_text("my own notes\n")  # (not the import's: kept)
-    variables = dict(_heads=remove["vars"]["_heads"],
-                     _dir=render(remove["vars"]["_dir"], _report_args={"report_file": str(tmp_path / "report.txt")}))
-    assert variables["_dir"] == str(tmp_path)
-    ours = render(remove["vars"]["_ours"], **variables)
-    assert sorted(ours) == [str(tmp_path / "report.shareable.key.txt"), str(tmp_path / "report.shareable.txt")]
-    assert remove["ansible.builtin.file"] == {"path": "{{ item }}", "state": "absent"}
-    assert remove["loop"] == "{{ _ours }}"
-    for given, removed in (({}, True), ({"import_report_shareable": False}, True), ({"import_report_shareable": True}, False)):
-        assert all(render("{{ %s }}" % w, ansible_check_mode=False, **given) for w in remove["when"]) is removed
-    assert render("{{ %s }}" % remove["when"][1], ansible_check_mode=True) is False  # (--check: nothing removed)
-    results = {"results": [{"item": ours[0], "changed": True}, {"item": "/x/report.check.shareable.txt", "changed": False}]}
-    rendered = render(said["loop"], import_cluster_old_shareable=results)
-    assert [r["item"] for r in rendered] == [ours[0]]
-    assert render(said["ansible.builtin.debug"]["msg"], item=rendered[0]) == (
-        "Removed %s: the shareable copy of an earlier import (import_report_shareable is off)." % ours[0])
-    assert said["vars"]["cassandra_output"] is True
+    assert [names.index(n) for n in SHAREABLE_TASKS] == sorted(names.index(n) for n in SHAREABLE_TASKS)
+    assert names.index(SHAREABLE_TASKS[-1]) < names.index("Write report.txt and report.details.txt")
+    plant_shareable(tmp_path, "c1")
+    (tmp_path / "report.check.shareable.txt").write_text("my own notes\n")  # (not the import's: kept, not said)
+    found, said = old_shareable(tmp_path)
+    assert said == ["An earlier import's shareable copy (import_report_shareable is off),",
+                    "in %s:" % tmp_path,
+                    "  report.shareable.txt      the copy  removed",
+                    "  report.shareable.key.txt  the key   removed"]
+    assert sorted(os.listdir(str(tmp_path))) == ["report.check.shareable.txt", "report.txt"]
+    for given in (True, "true"):
+        plant_shareable(tmp_path, "c1")
+        assert old_shareable(tmp_path, shareable=given) == (None, None)  # (on: written again, nothing removed)
+
+
+def rows(said):
+    """the lines said after the dir's (a long one goes on over lines)"""
+    return said[next(i for i, line in enumerate(said) if line.startswith("  report.")):]
+
+
+def test_the_shareable_copy_of_another_cluster_is_kept_aside(tmp_path):
+    # report.txt of another cluster's import (or none): its copy and key are not this import's to drop: kept as
+    # <file>.<date>~ (as report.txt itself), said
+    for cluster in ("c2", None):
+        where = tmp_path / str(cluster)
+        where.mkdir()
+        plant_shareable(where, cluster)
+        found, said = old_shareable(where)
+        assert [f["action"] for f in found] == ["back_up", "back_up"]
+        stamp = found[0]["backup"].rsplit("report.shareable.txt.", 1)[1]
+        assert len(stamp) == len("2026-11-20@10:11:12~") and stamp.endswith("~")
+        assert rows(said) == ["  report.shareable.txt      the copy  backed up",
+                              "    as report.shareable.txt.%s" % stamp, "    (no report.txt of c1)",
+                              "  report.shareable.key.txt  the key   backed up",
+                              "    as report.shareable.key.txt.%s" % stamp, "    (no report.txt of c1)"]
+        assert sorted(os.listdir(str(where))) == sorted(
+            ["report.shareable.txt." + stamp, "report.shareable.key.txt." + stamp]
+            + (["report.txt"] if cluster else []))
+        assert all(len(line) <= 79 for line in rows(said))  # (the dir: a long path stays whole)
+
+
+def test_under_check_the_shareable_copy_is_only_said(tmp_path):
+    plant_shareable(tmp_path, "c1", report="report.check.txt", names=["report.check.shareable.txt"])
+    plant_shareable(tmp_path, "c2", names=["report.shareable.txt"])
+    found, said = old_shareable(tmp_path, check=True)
+    assert rows(said) == ["  report.shareable.txt        the copy  would be backed up",
+                          "    as " + os.path.basename(found[0]["backup"]), "    (no report.txt of c1)",
+                          "  report.check.shareable.txt  the copy  would be removed"]
+    assert sorted(os.listdir(str(tmp_path))) == ["report.check.shareable.txt", "report.check.txt",
+                                                 "report.shareable.txt", "report.txt"]
+
+
+def test_a_shareable_copy_that_is_a_link_is_kept(tmp_path):
+    # nothing removed through a link (its target may be in a shared dir): kept, said
+    elsewhere = tmp_path / "shared"
+    elsewhere.mkdir()
+    plant_shareable(elsewhere, None, names=["report.shareable.txt"])
+    here = tmp_path / "inv"
+    here.mkdir()
+    plant_shareable(here, "c1", names=[])
+    os.symlink(str(elsewhere / "report.shareable.txt"), str(here / "report.shareable.txt"))
+    found, said = old_shareable(here)
+    assert rows(said) == ["  report.shareable.txt  the copy  kept: a link"]
+    assert os.path.islink(str(here / "report.shareable.txt")) and os.path.isfile(str(elsewhere / "report.shareable.txt"))
 
 
 def test_the_former_force_name_does_not_force():

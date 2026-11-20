@@ -23,7 +23,7 @@ import re
 
 import yaml
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import group_chains
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import import group_chains, written_for
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import LATER_STOCK
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import ROLES
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
@@ -823,6 +823,67 @@ def _masked(line):
     return line if rest != line and out.mask(rest) == rest else out.mask(line)
 
 
+# the first words of the copy and of its key: an earlier import's files known by them
+COPY_HEAD = "SHAREABLE COPY of an import_cluster report"
+KEY_HEAD = "# The key of report.shareable.txt"
+
+# the files of a shareable copy: (its name, the report it goes with, what it is, its first words)
+SHAREABLE_FILES = (("report.shareable.txt", "report.txt", "copy", COPY_HEAD),
+                   ("report.shareable.key.txt", "report.txt", "key", KEY_HEAD),
+                   ("report.check.shareable.txt", "report.check.txt", "copy", COPY_HEAD))
+
+
+def _first_line(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.readline()
+    except (IOError, OSError):
+        return ""
+
+
+def cassandra_import_old_shareable(report_dir, cluster, stamp):
+    """The report dir, the cluster's group, a time stamp ("2026-11-20@10:11:12") -> what to do with the shareable
+    copy and key an earlier import wrote there, read before this import writes its report: [{name, path, what
+    (copy, key), action, backup}] in the order of SHAREABLE_FILES. A file whose first line is not the import's own
+    is not listed (not the import's). action: remove (the report next to it is this cluster's), back_up (it is
+    another cluster's, or there is none: backup, its path with .<stamp>~), link (a link: kept, nothing removed
+    through it)."""
+    said = []
+    for name, report, what, head in SHAREABLE_FILES:
+        path = os.path.join(str(report_dir), name)
+        if not os.path.isfile(path) or not _first_line(path).startswith(head):
+            continue
+        ours = written_for(_first_line(os.path.join(str(report_dir), report))) == str(cluster)
+        action = "link" if os.path.islink(path) else "remove" if ours else "back_up"
+        said.append({"name": name, "path": path, "what": what, "action": action, "report": report,
+                     "backup": "%s.%s~" % (path, stamp) if action == "back_up" else ""})
+    return said
+
+
+def cassandra_import_old_shareable_lines(found, report_dir, cluster, check=False):
+    """cassandra_import_old_shareable's result, the report dir, the cluster's group, --check -> the lines that say
+    it, a row per file (under --check: what would be done).
+    e.g. ([{name: "report.shareable.txt", what: "copy", action: "remove", ...}], "/inv", "c1") -> ["An earlier
+    import's shareable copy (import_report_shareable is off),", "in /inv:", "  report.shareable.txt  the copy
+    removed"]."""
+    would = "would be " if check else ""
+    rows, below = [], {}
+    for f in found or []:
+        if f["action"] == "link":
+            outcome = "kept: a link"
+        elif f["action"] == "remove":
+            outcome = would + "removed"
+        else:
+            outcome = would + "backed up"
+            below[len(rows)] = ["    as %s" % os.path.basename(f["backup"]), "    (no %s of %s)" % (f["report"], cluster)]
+        rows.append([f["name"], "the " + f["what"], outcome])
+    lines = []
+    for i, line in enumerate(out.table(rows, indent="  ")):
+        lines += [line] + below.get(i, [])
+    return out.fit(["An earlier import's shareable copy (import_report_shareable is off),", "in %s:" % report_dir]
+                   + lines, 79)
+
+
 def cassandra_import_shareable(lines, layout, written=None, report_file="", cwd=None):
     """lines: the report's (cassandra_import_report's, or its text); layout: cassandra_inventory_layout's; written,
     report_file, cwd: cassandra_import_report's (the names of the inventory and report dirs, as the report shows
@@ -832,7 +893,7 @@ def cassandra_import_shareable(lines, layout, written=None, report_file="", cwd=
         lines = lines.split("\n")
     shown = [out.path_from(p, cwd) for p in list(written or [])[1:] + ([report_file] if report_file else [])]
     key = _key(layout, [p.rsplit("/", 1)[0] if p.endswith(".txt") else p for p in shown])
-    text = ["SHAREABLE COPY of an import_cluster report: nodes n1.., clusters c1.., addresses IP, the site's host"
+    text = [COPY_HEAD + ": nodes n1.., clusters c1.., addresses IP, the site's host"
             " names, domains, URLs, paths, buckets and user names replaced (domain1, url1, path1, bucket1, user1..),"
             " secrets masked. A short host name that is not a node's may remain: check before sharing. Its key"
             " stays with whoever ran the import.", ""]
@@ -850,11 +911,13 @@ def cassandra_import_shareable(lines, layout, written=None, report_file="", cwd=
                 for i, line in enumerate(lines)]
     rendered()  # (a first pass: the names a later line gives, a JMX user, masked on the lines before it too)
     text += rendered()
-    head = ["# The key of report.shareable.txt: what each name of it stands for. Keep it to yourself.",
+    head = [KEY_HEAD + ": what each name of it stands for. Keep it to yourself.",
             "# Addresses are all shown as IP: not listed."]
     return {"text": text, "map": head + key.lines()}
 
 
 class FilterModule(object):
     def filters(self):
-        return {"cassandra_import_shareable": cassandra_import_shareable}
+        return {"cassandra_import_shareable": cassandra_import_shareable,
+                "cassandra_import_old_shareable": cassandra_import_old_shareable,
+                "cassandra_import_old_shareable_lines": cassandra_import_old_shareable_lines}

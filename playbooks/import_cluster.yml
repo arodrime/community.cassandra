@@ -2584,6 +2584,44 @@
             cassandra_output: true
             cassandra_output_gap: true  # a block of its own (ops callback)
 
+    # import_report_shareable off: the shareable copy and key an earlier import wrote (on by default in earlier
+    # release candidates) describe that import, not this one. Each known by its first line (the import's own),
+    # read before report.txt is written: removed when the report next to it is this cluster's, else (another
+    # cluster's, or none) kept as <file>.<date>~; a link kept as it is; under --check only said
+    - name: Find the shareable copy and key of an earlier import
+      ansible.builtin.set_fact:
+        _import_old_shareable: >-
+          {{ _report_args.report_file | dirname
+             | community.cassandra.cassandra_import_old_shareable(_layout.cluster_group, now(fmt='%Y-%m-%d@%H:%M:%S')) }}
+      when: not import_report_shareable | default(false) | bool
+
+    - name: Remove the shareable copy and key of an earlier import of this cluster
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ _import_old_shareable | default([]) | selectattr('action', 'equalto', 'remove') | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: not ansible_check_mode
+
+    - name: Keep aside the shareable copy and key of another import
+      ansible.builtin.command:
+        argv: [mv, -n, --, "{{ item.path }}", "{{ item.backup }}"]
+        creates: "{{ item.backup }}"
+      loop: "{{ _import_old_shareable | default([]) | selectattr('action', 'equalto', 'back_up') | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: not ansible_check_mode
+
+    - name: Say what was done with the shareable copy and key of an earlier import
+      ansible.builtin.debug:
+        msg: >-
+          {{ _import_old_shareable | community.cassandra.cassandra_import_old_shareable_lines(
+               _report_args.report_file | dirname, _layout.cluster_group, ansible_check_mode) }}
+      when: _import_old_shareable | default([]) | length > 0
+      vars:
+        cassandra_output: true
+
     # a report.txt of the user's, or of another cluster's import: kept as <file>.<date>~; under --check,
     # report.check.txt (on the controller only: the inventory is not written)
     - name: Write report.txt and report.details.txt
@@ -2637,43 +2675,6 @@
           Removed {{ import_cluster_old_key.path }}: the key of an earlier import's shareable copy (it held the real
           names){{ "; this import's is report.shareable.key.txt" if import_report_shareable | default(false) | bool else '' }}.
       when: import_cluster_old_key is changed
-      vars:
-        cassandra_output: true
-
-    # import_report_shareable off: the shareable copy and key an earlier import wrote (on by default in earlier
-    # release candidates) describe that import, not this one: removed, each one checked by its first line (the
-    # import's own file only)
-    - name: Remove the shareable copy of an earlier import
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: absent
-      loop: "{{ _ours }}"
-      register: import_cluster_old_shareable
-      when:
-        - not import_report_shareable | default(false) | bool
-        - not ansible_check_mode
-      vars:
-        _dir: "{{ _report_args.report_file | dirname }}"
-        _heads:
-          report.shareable.txt: SHAREABLE COPY of an import_cluster report
-          report.check.shareable.txt: SHAREABLE COPY of an import_cluster report
-          report.shareable.key.txt: "# The key of report.shareable.txt"
-        _ours: >-
-          {%- set out = [] -%}
-          {%- for name, head in _heads.items() -%}
-          {%-   set path = _dir ~ '/' ~ name -%}
-          {%-   if path is file and lookup('ansible.builtin.file', path).startswith(head) -%}
-          {%-     set _ = out.append(path) -%}
-          {%-   endif -%}
-          {%- endfor -%}
-          {{ out }}
-
-    - name: Say the shareable copy of an earlier import is removed
-      ansible.builtin.debug:
-        msg: "Removed {{ item.item }}: the shareable copy of an earlier import (import_report_shareable is off)."
-      loop: "{{ import_cluster_old_shareable.results | default([]) | selectattr('changed') | list }}"
-      loop_control:
-        label: "{{ item.item | basename }}"
       vars:
         cassandra_output: true
 
