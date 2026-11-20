@@ -43,7 +43,7 @@
                                                         run=_cassandra_run_report_run | default(''),
                                                         ended=now().timestamp() | int) }}
         dest: "{{ _path }}"
-        mode: "0644"
+        mode: "0600"  # (secrets masked; what it says of the nodes stays its owner's)
 
     - name: List the reports of this operation
       ansible.builtin.find:

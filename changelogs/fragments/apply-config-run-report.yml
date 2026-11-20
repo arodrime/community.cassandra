@@ -4,5 +4,5 @@ minor_changes:
     ``reports/<cluster group>/apply_config-<YYYY-MM-DD-HHMM>.txt`` (``apply_config-check-...`` under ``--check``;
     ``cassandra_run_report_dir`` gives another dir), with the collection's version and commit, when the run started
     and ended, the plan, the recap with every warning in full, and when each node's turn started and how it ended
-    (a stopped run: its stop as said). The last 20 are kept (``cassandra_run_report_keep``). The task file
+    (a stopped run: its stop as said). Secrets are masked in it, and it is written mode 0600. The last 20 are kept (``cassandra_run_report_keep``). The task file
     (``run_report.yml`` of ``cassandra_operation``) is ready for the other changing operations.

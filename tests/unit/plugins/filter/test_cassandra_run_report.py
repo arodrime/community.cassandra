@@ -96,6 +96,14 @@ def test_the_text_has_the_head_then_the_sections_in_full():
     assert "  made by:  community.cassandra " in cassandra_run_report([], "apply_config")
 
 
+def test_the_report_masks_a_secret_a_section_lets_through():
+    text = cassandra_run_report([{"title": "STOPPED", "lines": [
+        "node1: nodetool -u cassandra -pw zorglub1 status failed", "  keystore_password: zorglub2",
+        "  cassandra_jmx_password_file: /opt/x/jmxremote.password"]}], "apply_config", "prod", build=BUILD)
+    assert "zorglub" not in text
+    assert "-pw ****" in text and "keystore_password: ****" in text and "/opt/x/jmxremote.password" in text
+
+
 def test_the_times_say_when_each_turn_started():
     starts = {"node1": epoch("2026-11-19 23:58:41"), "node10": ""}
     assert cassandra_run_report_times([{"name": "node1", "result": "apply_config done in 42s"},
@@ -158,6 +166,7 @@ def test_run_report_writes_the_report_and_keeps_the_last_ones(tmp_path):
     text = report.read_text()
     assert text.startswith("apply_config  Orders  DONE\n  made by:  community.cassandra ") and "\nRECAP\nDONE  apply_config\n" in text
     assert "Report: %s" % report in output
+    assert report.stat().st_mode & 0o777 == 0o600  # (it may name a node's secrets' places: its owner only)
     # 20 kept: the oldest one removed, the other operation's left
     assert not (reports / "apply_config-2026-10-01-1200.txt").exists()
     assert len(list(reports.glob("apply_config-*.txt"))) == 20 and (reports / "rolling_restart-2026-10-01-1200.txt").exists()

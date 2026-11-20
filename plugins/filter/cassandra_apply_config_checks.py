@@ -22,6 +22,7 @@ import re
 
 from ansible.module_utils.parsing.convert_bool import boolean
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_unit_environment
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as output
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_patch_notes as patch_notes
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_apply_config_coverage import (
     PROCEDURE, RESTART)
@@ -169,25 +170,34 @@ def cassandra_apply_config_unit(running, wanted):
     running, wanted = dict(running or {}), dict(wanted or {})
     if not running:
         return []
-    out = []
+    changes = []
     for key in ("user", "group"):
         have, want = str(running.get(key) or ""), str(wanted.get(key) or "")
         if have and want and have != want:
-            out.append({"item": "unit " + ("User" if key == "user" else "Group"), "before": have, "after": want})
+            changes.append({"item": "unit " + ("User" if key == "user" else "Group"), "before": have, "after": want})
     limits = _proc_limits(running.get("limits"))
     for key, value in sorted((wanted.get("limits") or {}).items()):
         if key in limits and value not in (None, ""):
             want = _limit(value, key in ("memlock", "as"))
             if limits[key] != want:
                 shown = "%s" % limits[key][0] if limits[key][0] == limits[key][1] else "%s:%s" % limits[key]
-                out.append({"item": "unit Limit%s" % key.upper(), "before": shown, "after": str(value)})
+                changes.append({"item": "unit Limit%s" % key.upper(), "before": shown, "after": str(value)})
     have = cassandra_unit_environment(running.get("environment") or "")
     want = dict((str(k), str(v)) for k, v in (wanted.get("environment") or {}).items())
     for name in sorted(set(have) | set(want)):
         if have.get(name) != want.get(name):
-            out.append({"item": "unit Environment %s" % name, "before": have.get(name, "absent"),
-                        "after": want.get(name, "absent")})
-    return out
+            changes.append(dict({"item": "unit Environment %s" % name}, **_env_shown(name, have.get(name), want.get(name))))
+    return changes
+
+
+def _env_shown(name, before, after):
+    """A unit Environment variable's two values (None: absent) as the plan and the run report show them: a secret
+    masked (its name, or one inside its value: JVM_EXTRA_OPTS=-D...Password=), two secrets that differ said so."""
+    shown = dict((side, "absent" if value is None else output.shown(name, value))
+                 for side, value in (("before", before), ("after", after)))
+    if shown["before"] == shown["after"] == output.MASK:
+        shown["after"] = output.MASK + " (another)"
+    return shown
 
 
 def cassandra_apply_config_stops(nodes, ring=None, commands=None):

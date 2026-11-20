@@ -149,6 +149,20 @@ def test_the_unit_compared_with_what_the_running_cassandra_got():
     assert cassandra_apply_config_unit({}, changed) == []  # not read: nothing
 
 
+def test_the_unit_environment_masks_its_secrets():
+    running = {"user": "cassandra", "group": "cassandra", "limits": LIMITS,
+               "environment": "AWS_SECRET_ACCESS_KEY=zorglub1 JAVA_HOME=/opt/x"}
+    wanted = dict(WANTED, environment={"AWS_SECRET_ACCESS_KEY": "zorglub2", "JAVA_HOME": "/opt/x",
+                                       "JVM_EXTRA_OPTS": "-Djavax.net.ssl.keyStorePassword=zorglub3"})
+    assert cassandra_apply_config_unit(running, wanted) == [
+        {"item": "unit Environment AWS_SECRET_ACCESS_KEY", "before": "****", "after": "**** (another)"},
+        {"item": "unit Environment JVM_EXTRA_OPTS", "before": "absent", "after": "****"}]
+    # removed: absent after; a value in clear when it holds no secret
+    assert cassandra_apply_config_unit(running, dict(WANTED, environment={"JAVA_HOME": "/opt/y"})) == [
+        {"item": "unit Environment AWS_SECRET_ACCESS_KEY", "before": "****", "after": "absent"},
+        {"item": "unit Environment JAVA_HOME", "before": "/opt/x", "after": "/opt/y"}]
+
+
 def test_the_versions_described():
     text = ("Cluster Information:\n\tName: zorglub\nDatabase versions:\n\t\t4.1.5: [10.0.0.1:7000, 10.0.0.2:7000]\n\n"
             "\t\t4.1.6: [10.0.0.3:7000]\n\nOther: x\n")

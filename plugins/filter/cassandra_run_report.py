@@ -79,7 +79,7 @@ def cassandra_run_report(sections, operation, cluster="", check=False, status=""
     head.append("  run:      %s" % (run or ("--check, nothing was changed" if check else "a real run")))
     body = []
     for section in sections or []:
-        lines = [str(line) for line in section.get("lines") or []]
+        lines = [out.mask(line) for line in section.get("lines") or []]  # (masked already: again, to be sure)
         if not lines:
             continue
         body += [""] + ([str(section["title"])] if section.get("title") else []) + lines
