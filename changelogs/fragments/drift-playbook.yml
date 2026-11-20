@@ -6,4 +6,4 @@ minor_changes:
     restarts for it; the files kept by hand apart), the settings not the same on every node (BETWEEN NODES), and
     whether the nodes still match the inventory (IN SYNC: ``apply_config``'s compare, no question, nothing changed;
     ``-e drift_nodes=false`` reads the inventory alone, no node contacted). Secrets are never shown. The same lines are
-    written to ``reports/<cluster>/drift-<date>.txt`` next to the inventory.
+    written to ``reports/<cluster>/drift-<YYYY-MM-DD-HHMMSS>.txt`` next to the inventory.

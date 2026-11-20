@@ -7,7 +7,7 @@
 # edit back and whether apply_config restarts for it. BETWEEN NODES: the
 # settings not the same on every node. IN SYNC: apply_config's compare, no
 # question, nothing changed. -e drift_nodes=false: the inventory alone, no
-# node contacted. Also written to reports/<cluster>/drift-<date>.txt.
+# node contacted. Also written to reports/<cluster>/drift-<YYYY-MM-DD-HHMMSS>.txt.
 #
 # Options and defaults: ansible-playbook community.cassandra.help -e help_topic=drift
 - name: Check the cluster's group
@@ -192,7 +192,7 @@
       vars:
         cassandra_output: true  # its lines as they are (ops callback)
 
-    # the report on the controller (run_report.yml): reports/<cluster>/drift-<date>.txt
+    # the report on the controller (run_report.yml): reports/<cluster>/drift-<YYYY-MM-DD-HHMMSS>.txt
     - name: Write the report
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation
