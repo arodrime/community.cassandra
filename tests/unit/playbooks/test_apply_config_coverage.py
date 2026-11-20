@@ -301,7 +301,15 @@ def test_a_release_node_compares_its_extras_and_applies_the_firewall_live():
     compare = find(FIND["tasks"], "Compare the repository, the packages and the firewall")
     for kind, compared in (("", True), ("release", True), ("series", False), ("older", False)):
         version = {"kind": kind} if kind else {}
-        assert render("{{ %s }}" % compare["when"], {"cassandra_apply_config_version": version}) is compared
+        for role in ("cassandra_repository", "cassandra_install"):
+            assert all(render("{{ %s }}" % w, {"cassandra_apply_config_version": version, "_cassandra_compared_role": role})
+                       for w in compare["when"]) is compared
+    # (e2e r7) a package left half done: its install not compared ("has Cassandra 5.0.8, the inventory asks for
+    # 5.0.9" from the first of two packages stopped the plan before the refusal of its start); the others are
+    for role, compared in (("cassandra_install", False), ("cassandra_repository", True), ("cassandra_firewall", True)):
+        assert all(render("{{ %s }}" % w, {"cassandra_apply_config_version": {}, "_cassandra_compared_role": role,
+                                           "cassandra_apply_config_unfinished": "installed 5.0.8, installed 5.0.9"})
+                   for w in compare["when"]) is compared, role
         assert render(compare["vars"]["_cassandra_install_upgrade"],
                       {"cassandra_apply_config_version": version}) is (kind == "release")
     # live, before the stop (a failure among the tools never leaves a node stopped): on a release node, the

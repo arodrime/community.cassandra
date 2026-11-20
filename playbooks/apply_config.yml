@@ -272,7 +272,11 @@
         # (a release its repository does not list: refused before any change, as the run's other stops say it)
         _cassandra_install_refused_head: >-
           apply_config  {{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}
-      when: (cassandra_apply_config_version | default({})).kind | default('') in ['', 'release']
+      when:
+        - (cassandra_apply_config_version | default({})).kind | default('') in ['', 'release']
+        # a package left half done: its install not compared (its version is not one; e2e: "has Cassandra 5.0.8, the
+        # inventory asks for 5.0.9" from the first of two packages, before the refusal of its start below)
+        - _cassandra_compared_role != 'cassandra_install' or not cassandra_apply_config_unfinished | default('')
 
     # A node running another Java than cassandra_java_version (the plan of update_java, shared): installed, made the
     # one Cassandra starts with, then the node's one restart, checked to run it (action_apply_config.yml)
