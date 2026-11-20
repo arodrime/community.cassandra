@@ -197,6 +197,7 @@ def test_the_action_restarts_starts_or_only_writes():
                      "Install the Java this node moves to", "Install the Java this node moves to, its Cassandra release kept",
                      "Update the Cassandra package of a node not running",
                      "Write the config", "Set up Medusa", "Apply the repository, the packages and the firewall",
+                     "Apply the repository and the packages, its Cassandra release kept",
                      "Check the files written back",
                      "Record the files written with no effect as the ones the running Cassandra runs with",
                      "Report what would be written", "Report what the repository, the packages and the firewall would get",
@@ -216,6 +217,7 @@ def test_the_action_restarts_starts_or_only_writes():
                                                    "Install the Java this node moves to, its Cassandra release kept",
                                                    "Update the Cassandra package of a node not running",
                                                    "Apply the repository, the packages and the firewall",
+                                                   "Apply the repository and the packages, its Cassandra release kept",
                                                    "Report what the repository, the packages and the firewall would get",
                                                    "Check it runs the new Java", "Check it runs the new release")]
     tasks.pop()  # the mark of a stop in its restart window (os_window.yml), removed once up again
