@@ -40,7 +40,7 @@ def needs(changes=(), java=False, version=None, unit_nofile=100000, extras=None,
                  "cassandra_jvm": {"pid": "42", "start": "100.00"} if running else {}, "inventory_hostname": "n1",
                  "_cassandra_apply_config_as_started": [], "_cassandra_apply_config_conf_switch": False,
                  # the Java plan (java_plan.yml), the version, the unit, the extras
-                 "cassandra_update_java_todo": java, "cassandra_update_java_major": "11", "cassandra_java_version": "17",
+                 "cassandra_java_plan_todo": java, "cassandra_java_plan_major": "11", "cassandra_java_version": "17",
                  "cassandra_apply_config_version": version or {}, "cassandra_apply_config_unit_read": unit,
                  "cassandra_service_limit_nofile": unit_nofile, "cassandra_service_limit_nproc": 32768,
                  "cassandra_service_limit_memlock": "infinity", "cassandra_service_limit_as": "infinity",
@@ -314,7 +314,7 @@ def test_a_failed_release_window_starts_back_or_leaves_the_mark_and_the_way_out(
 def test_version_verify_says_the_way_out():
     verify = load("roles", "cassandra_operation", "tasks", "version_verify.yml")
     msg = find(verify, "Check it runs the target version")["ansible.builtin.assert"]["fail_msg"]
-    said = render(msg, {"inventory_hostname": "n1", "cassandra_upgrade_version": {"stdout": "ReleaseVersion: 4.1.11"},
+    said = render(msg, {"inventory_hostname": "n1", "cassandra_version_verify": {"stdout": "ReleaseVersion: 4.1.11"},
                         "cassandra_package_version": "4.1.12", "ansible_facts": {"os_family": "RedHat"}})
     assert said.startswith("n1 runs ReleaseVersion: 4.1.11, not 4.1.12") and "rpm -q cassandra" in said
     assert said.endswith("fix it, then run the same command again.")
@@ -349,15 +349,15 @@ def test_the_node_s_turn_runs_the_java_and_package_steps_only_when_planned():
 def test_the_java_plan_of_apply_config_moves_running_nodes_and_checks_only_them():
     plan = load("roles", "cassandra_operation", "tasks", "java_plan.yml")
     note = find(plan, "Note what this node needs")
-    variables = {"cassandra_java_version": "17", "_cassandra_java_home": "", "cassandra_update_java_spec":
+    variables = {"cassandra_java_version": "17", "_cassandra_java_home": "", "cassandra_java_plan_spec":
                  {"stderr": "    java.specification.version = 11\n"}, "_cassandra_java_plan_running_only": True}
     variables = with_task_vars(note, variables)
-    todo = note["ansible.builtin.set_fact"]["cassandra_update_java_todo"]
+    todo = note["ansible.builtin.set_fact"]["cassandra_java_plan_todo"]
     assert render(todo, dict(variables, cassandra_jvm={"pid": "42", "exe": "/usr/lib/jvm/java-11/bin/java"})) is True
     assert render(todo, dict(variables, cassandra_jvm={})) is False  # not running: starts on what its unit gives
     assert render(todo, dict(variables, cassandra_jvm={}, _cassandra_java_plan_running_only=False)) is True
     check = find(plan, "The series supports this Java, and a tarball is on offer for it")
     when = "{{ %s }}" % check["when"]
-    assert render(when, {"_cassandra_java_plan_check_all": False, "cassandra_update_java_todo": False}) is False
-    assert render(when, {"_cassandra_java_plan_check_all": False, "cassandra_update_java_todo": True}) is True
-    assert render(when, {"cassandra_update_java_todo": False}) is True  # update_java: every node checked
+    assert render(when, {"_cassandra_java_plan_check_all": False, "cassandra_java_plan_todo": False}) is False
+    assert render(when, {"_cassandra_java_plan_check_all": False, "cassandra_java_plan_todo": True}) is True
+    assert render(when, {"cassandra_java_plan_todo": False}) is True  # update_java: every node checked

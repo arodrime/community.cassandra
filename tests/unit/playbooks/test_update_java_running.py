@@ -44,13 +44,13 @@ def spec(version):
 
 
 def todo(exe, version, wanted="17", java_home="", resolved=""):
-    variables = {"cassandra_jvm": {"exe": exe} if exe else {}, "cassandra_update_java_spec": spec(version) if exe else {},
+    variables = {"cassandra_jvm": {"exe": exe} if exe else {}, "cassandra_java_plan_spec": spec(version) if exe else {},
                  "cassandra_java_version": wanted, "_cassandra_java_home": java_home,
-                 "cassandra_update_java_home": {"stdout": resolved}}
+                 "cassandra_java_plan_home": {"stdout": resolved}}
     for k, v in NOTE["vars"].items():
         variables[k] = trust_as_template(v)
     return Templar(loader=DataLoader(), variables=variables).template(
-        trust_as_template(NOTE["ansible.builtin.set_fact"]["cassandra_update_java_todo"]))
+        trust_as_template(NOTE["ansible.builtin.set_fact"]["cassandra_java_plan_todo"]))
 
 
 @pytest.mark.parametrize("exe, version, wanted, expected", [
@@ -121,8 +121,8 @@ def _restarted(tmp_path, running, expected, java_home=""):
 
 def _checked(restarted, wanted="11", expected="/opt/new/bin/java", version="11"):
     check = ACTION_TASKS[[t["name"] for t in ACTION_TASKS].index("Check it runs the Java installed for it")]
-    variables = dict(check["vars"], cassandra_update_java_restarted=restarted, cassandra_java_version=version,
-                     _cassandra_update_java_wanted=wanted, _cassandra_update_java_expected=expected,
+    variables = dict(check["vars"], cassandra_java_plan_restarted=restarted, cassandra_java_version=version,
+                     _cassandra_java_plan_wanted=wanted, _cassandra_java_plan_expected=expected,
                      inventory_hostname="n2")
     ok = all(_template("{{ %s }}" % that, variables) for that in check["ansible.builtin.assert"]["that"])
     return ok, _template(check["ansible.builtin.assert"]["fail_msg"], variables)
@@ -193,14 +193,14 @@ def test_the_java_it_moves_to_with_the_role_defaults_only():
     note = ACTION_TASKS[0]["ansible.builtin.set_fact"]
     variables = dict(defaults, cassandra_version="41x", ansible_facts={"os_family": "RedHat", "distribution": "Rocky"},
                      **ACTION_TASKS[0]["vars"])
-    assert _template(note["_cassandra_update_java_wanted"], variables) == "11"
-    assert _template(note["_cassandra_update_java_expected"], variables).strip() == "/usr/bin/java"
+    assert _template(note["_cassandra_java_plan_wanted"], variables) == "11"
+    assert _template(note["_cassandra_java_plan_expected"], variables).strip() == "/usr/bin/java"
     variables["cassandra_java_home"] = "/opt/jdk-11.0.30/"
-    assert _template(note["_cassandra_update_java_expected"], variables).strip() == "/opt/jdk-11.0.30/bin/java"
+    assert _template(note["_cassandra_java_plan_expected"], variables).strip() == "/opt/jdk-11.0.30/bin/java"
     # a JAVA_HOME read for the node (the plan checked it leads to the new Java): its java, as the plan compared it
-    variables["cassandra_update_java_given"] = {"stdout_lines": ["/usr/lib/jvm/temurin-17/", "/usr/lib/jvm/temurin-17"]}
+    variables["cassandra_java_plan_given"] = {"stdout_lines": ["/usr/lib/jvm/temurin-17/", "/usr/lib/jvm/temurin-17"]}
     variables.update(dict((k, v) for k, v in ACTION_TASKS[0]["vars"].items()))
-    assert _template(note["_cassandra_update_java_expected"], variables).strip() == "/usr/lib/jvm/temurin-17/bin/java"
+    assert _template(note["_cassandra_java_plan_expected"], variables).strip() == "/usr/lib/jvm/temurin-17/bin/java"
     # the play that runs it loads the role defaults first (play scoped: the first play's are gone)
     move = PLAYS[[p["name"] for p in PLAYS].index("Move to the new Java, one node at a time")]
     names = [t["name"] for t in move["tasks"]]
@@ -211,28 +211,28 @@ def test_the_java_it_moves_to_with_the_role_defaults_only():
 
 def _kept(**variables):
     note = TASKS["Note what JAVA_HOME Cassandra restarts with"]
-    base = {"cassandra_update_java_todo": True, "cassandra_java_set_default": False, "cassandra_java_version": "17",
-            "_cassandra_java_home": "", "cassandra_update_java_home": {}, "cassandra_update_java_given": {},
+    base = {"cassandra_java_plan_todo": True, "cassandra_java_set_default": False, "cassandra_java_version": "17",
+            "_cassandra_java_home": "", "cassandra_java_plan_home": {}, "cassandra_java_plan_given": {},
             "cassandra_service_unit_manage": True, "cassandra_java_package": "java-17-openjdk-headless"}
     base.update(variables)
     for k, v in note["vars"].items():
         base[k] = trust_as_template(v)
     return " ".join(Templar(loader=DataLoader(), variables=base).template(
-        trust_as_template(note["ansible.builtin.set_fact"]["cassandra_update_java_kept"])).split())
+        trust_as_template(note["ansible.builtin.set_fact"]["cassandra_java_plan_kept"])).split())
 
 
 def given(*lines):
-    return {"cassandra_update_java_given": {"stdout_lines": list(lines)}}
+    return {"cassandra_java_plan_given": {"stdout_lines": list(lines)}}
 
 
-TARBALL = {"_cassandra_java_home": "/opt/java/jdk-17.0.9", "cassandra_update_java_home": {"stdout": "/opt/java/jdk-17.0.9"}}
+TARBALL = {"_cassandra_java_home": "/opt/java/jdk-17.0.9", "cassandra_java_plan_home": {"stdout": "/opt/java/jdk-17.0.9"}}
 KEPT = {"cassandra_service_unit_manage": False}
 WHERE_KEPT = "its unit (kept: cassandra_service_unit_manage false; edit it by hand, systemctl edit cassandra)"
 
 
 @pytest.mark.parametrize("variables, why", [
     ({"cassandra_java_set_default": True}, ""),  # the new Java made the system java
-    ({"cassandra_update_java_todo": False}, ""),  # already on it: not restarted
+    ({"cassandra_java_plan_todo": False}, ""),  # already on it: not restarted
     (given(), "no JAVA_HOME in cassandra_service_environment"),
     (dict(KEPT, **given()), "no JAVA_HOME in " + WHERE_KEPT),
     # a tarball: JAVA_HOME resolved is its home (a "current" link to it)
@@ -388,8 +388,8 @@ def test_refused_before_any_restart_when_the_system_java_is_kept():
                                                        "cassandra_service_start": start}).template(
             trust_as_template(read["environment"]["UNIT_KEPT"])) == kept
     assert check["run_once"] is True
-    hosts = {"n1": {"cassandra_update_java_kept": "no JAVA_HOME in cassandra_service_environment"}, "n2": {},
-             "n3": {"cassandra_update_java_kept": ""}}
+    hosts = {"n1": {"cassandra_java_plan_kept": "no JAVA_HOME in cassandra_service_environment"}, "n2": {},
+             "n3": {"cassandra_java_plan_kept": ""}}
     variables = {"ansible_play_hosts_all": list(hosts), "hostvars": hosts, "cassandra_java_version": "17",
                  "_nl": "\n", "cassandra_java_set_default": False}
     kept = Templar(loader=DataLoader(), variables=variables).template(trust_as_template(check["vars"]["_kept"]))
@@ -410,7 +410,7 @@ def test_refused_before_any_restart_when_the_system_java_is_kept():
     assert text.endswith(", or remove it there: the new Java is made the system java; then run update_java again")
     # read whatever cassandra_java_set_default says
     read_when = read["when"] if isinstance(read["when"], list) else [read["when"]]
-    assert read_when == ["cassandra_update_java_todo | bool"]
+    assert read_when == ["cassandra_java_plan_todo | bool"]
 
 
 def test_a_node_left_drained_is_refused_before_the_question():
@@ -428,7 +428,7 @@ def test_a_node_left_drained_is_refused_before_the_question():
         when = task["when"] if isinstance(task["when"], list) else [task["when"]]
         return all(_template("{{ %s }}" % w, variables) for w in when)
     # every node of the run, one already on the new Java too; none under a resume (it takes that node from DRAINED)
-    assert runs(read, cassandra_update_java_todo=False, cassandra_jvm={"pid": "1"}) is True
+    assert runs(read, cassandra_java_plan_todo=False, cassandra_jvm={"pid": "1"}) is True
     assert runs(read, cassandra_jvm={"pid": "1"}, cassandra_rolling_resume=True) is False
     assert runs(read, cassandra_jvm={}) is False
     assert check["run_once"] is True

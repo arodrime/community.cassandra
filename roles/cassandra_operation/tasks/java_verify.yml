@@ -22,8 +22,8 @@
     exit 0
   environment:
     PID: "{{ cassandra_jvm.pid | default('') }}"
-    EXPECTED: "{{ _cassandra_update_java_expected }}"
-  register: cassandra_update_java_restarted
+    EXPECTED: "{{ _cassandra_java_plan_expected }}"
+  register: cassandra_java_plan_restarted
   changed_when: false
   check_mode: false  # read-only
   when:
@@ -33,27 +33,27 @@
 - name: Check it runs the Java installed for it
   ansible.builtin.assert:
     that:
-      - _found.running_spec | default('') | community.cassandra.cassandra_java_major == _cassandra_update_java_wanted
+      - _found.running_spec | default('') | community.cassandra.cassandra_java_major == _cassandra_java_plan_wanted
       - _found.running | default('') | regex_replace(_home_re, '') == _found.installed | default('') | regex_replace(_home_re, '')
       - _found.running_version | default('') == _found.installed_version | default('')
     fail_msg: >-
       {{ ([inventory_hostname ~ ' restarted on ' ~ (_found.running | default('') or 'no java found')
            ~ ' (Java ' ~ (_found.running_version | default('') or 'unknown') ~ '), not on the Java installed for it: '
-           ~ (_found.installed | default('') or _cassandra_update_java_expected) ~ ' (Java '
+           ~ (_found.installed | default('') or _cassandra_java_plan_expected) ~ ' (Java '
            ~ (_found.installed_version | default('') or 'unknown') ~ ').']
           + (['It was started with JAVA_HOME=' ~ _found.java_home ~ '.'] if _found.java_home | default('') != '' else [])
           + ['WAY OUT  ' ~ ('point that JAVA_HOME at ' ~ _home ~ ' (or remove it) where it is set (the unit: systemctl'
                             ~ ' cat cassandra; cassandra.in.sh), restart Cassandra on ' ~ inventory_hostname
                             if _found.java_home | default('') != ''
-                            else 'make ' ~ _cassandra_update_java_expected ~ ' the java Cassandra starts with'
+                            else 'make ' ~ _cassandra_java_plan_expected ~ ' the java Cassandra starts with'
                                  ~ ' (update-alternatives --display java; alternatives on RedHat), or set'
                                  ~ ' cassandra_java_home to the Java ' ~ cassandra_java_version ~ ' home')
              ~ ', then resume']) | join(_nl) }}
     quiet: true
   vars:
     _nl: "\n"
-    _found: "{{ dict(cassandra_update_java_restarted.stdout_lines | default([]) | map('split', '=', 1)) }}"
-    _home: "{{ _cassandra_update_java_expected | regex_replace('/bin/java$', '') }}"
+    _found: "{{ dict(cassandra_java_plan_restarted.stdout_lines | default([]) | map('split', '=', 1)) }}"
+    _home: "{{ _cassandra_java_plan_expected | regex_replace('/bin/java$', '') }}"
     # compared by their Java homes: a Java 8 JDK runs its jre/bin/java for its bin/java
     _home_re: "(/jre)?/bin/java$"
   when: not ansible_check_mode

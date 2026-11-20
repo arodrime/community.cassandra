@@ -4,7 +4,7 @@
 # --check upgrades nothing: no new version to find
 - name: Read the version it runs
   ansible.builtin.command: "{{ _cassandra_service_nodetool }} version"
-  register: cassandra_upgrade_version
+  register: cassandra_version_verify
   changed_when: false
   when: not ansible_check_mode
   no_log: "{{ cassandra_jmx_password | default('') | length > 0 }}"  # (nodetool -pw)
@@ -12,9 +12,9 @@
 - name: Check it runs the target version
   ansible.builtin.assert:
     that: >-
-      cassandra_upgrade_version.stdout is search('ReleaseVersion: ' ~ cassandra_package_version | regex_escape ~ '$', multiline=True)
+      cassandra_version_verify.stdout is search('ReleaseVersion: ' ~ cassandra_package_version | regex_escape ~ '$', multiline=True)
     fail_msg: >-
-      {{ inventory_hostname }} runs {{ cassandra_upgrade_version.stdout | default('') | trim }}, not
+      {{ inventory_hostname }} runs {{ cassandra_version_verify.stdout | default('') | trim }}, not
       {{ cassandra_package_version }}, once its package was updated and Cassandra started. See which package is installed
       there ({{ 'dpkg -s cassandra' if ansible_facts['os_family'] | default('') == 'Debian' else 'rpm -q cassandra' }}) and
       what its cassandra unit starts (systemctl cat cassandra); fix it, then run the same command again.

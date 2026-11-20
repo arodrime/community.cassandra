@@ -7,13 +7,13 @@
 # home's, else the system java
 - name: Note the Java this node moves to
   ansible.builtin.set_fact:
-    _cassandra_update_java_wanted: "{{ cassandra_java_version | community.cassandra.cassandra_java_major }}"
-    _cassandra_update_java_expected: >-
+    _cassandra_java_plan_wanted: "{{ cassandra_java_version | community.cassandra.cassandra_java_major }}"
+    _cassandra_java_plan_expected: >-
       {{ (_given ~ '/bin/java') if _given != ''
          else (_cassandra_java_home ~ '/bin/java') if _cassandra_java_home != ''
          else '/usr/bin/java' }}
   vars:
-    _given: "{{ (cassandra_update_java_given.stdout_lines | default([''], true) | first) | regex_replace('(?<=.)/+$', '') }}"
+    _given: "{{ (cassandra_java_plan_given.stdout_lines | default([''], true) | first) | regex_replace('(?<=.)/+$', '') }}"
 
 # (_cassandra_java_install_later: apply_config's node moving to a newer release too, Java installed with it in its
 # restart window, apply_config_window.yml)

@@ -127,13 +127,13 @@
     # the nodes already running that Java are skipped
     - name: Group the nodes to do
       ansible.builtin.group_by:
-        key: "cassandra_update_java_{{ cassandra_update_java_todo | bool }}"
+        key: "cassandra_update_java_{{ cassandra_java_plan_todo | bool }}"
       changed_when: false
 
     - name: Nothing to do on this node
       ansible.builtin.set_fact:
         cassandra_op_result: "already on Java {{ cassandra_java_version }}"
-      when: not cassandra_update_java_todo | bool
+      when: not cassandra_java_plan_todo | bool
 
     # The Prometheus exporter's port free before anything is done (the agent would make the JVM exit; its jar and
     # config are put in place with the config, checked again before the restart)
@@ -145,7 +145,7 @@
         _cassandra_exporter_check_option: "{{ _cassandra_config_jvm_agent }}"
         _cassandra_exporter_check_kinds: [port]
         _cassandra_exporter_check_left: nothing was done
-      when: cassandra_update_java_todo | bool
+      when: cassandra_java_plan_todo | bool
 
     # a node to update whose cassandra.yaml has another storage_compatibility_mode than the one it runs, back or more
     # than one step ahead, or than the inventory's (each node's config is written before its restart, unshown):
@@ -170,7 +170,7 @@
         _blocks: >-
           {%- set l = [] -%}
           {%- for h in _todo -%}
-          {%-   set _ = l.append({'title': h | community.cassandra.cassandra_screen_title(hostvars[h]._cassandra_preflight | default({})), 'lines': ['runs ' ~ hostvars[h].cassandra_update_java_running] + hostvars[h]._cassandra_java_heap_lines | default([])}) -%}
+          {%-   set _ = l.append({'title': h | community.cassandra.cassandra_screen_title(hostvars[h]._cassandra_preflight | default({})), 'lines': ['runs ' ~ hostvars[h].cassandra_java_plan_running] + hostvars[h]._cassandra_java_heap_lines | default([])}) -%}
           {%- endfor -%}
           {{ l }}
         _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default((_cassandra_preflight | default({})).cassandra_cluster_name | default('')) }}"

@@ -8,8 +8,8 @@
 #         _cassandra_java_plan_user: the account Cassandra runs as
 #         _cassandra_java_plan_check_all: true: every node's Java checked against its series (update_java); false:
 #           the nodes to move only
-# Sets cassandra_update_java_todo (the node moves), cassandra_update_java_running (its java), cassandra_update_java_major
-# (the Java it runs), cassandra_update_java_given (the JAVA_HOME it is given) and cassandra_update_java_kept.
+# Sets cassandra_java_plan_todo (the node moves), cassandra_java_plan_running (its java), cassandra_java_plan_major
+# (the Java it runs), cassandra_java_plan_given (the JAVA_HOME it is given) and cassandra_java_plan_kept.
 # by its process, whatever started it (the unit's main PID may be another process, or none)
 - name: Find the running Cassandra and its java
   ansible.builtin.include_role:
@@ -19,7 +19,7 @@
 - name: Read the Java version the running Cassandra uses
   ansible.builtin.command:
     argv: ["/proc/{{ cassandra_jvm.pid }}/exe", -XshowSettings:properties, -version]  # even replaced since
-  register: cassandra_update_java_spec
+  register: cassandra_java_plan_spec
   changed_when: false
   failed_when: false
   check_mode: false  # read-only
@@ -30,7 +30,7 @@
 - name: Resolve the wanted Java home
   ansible.builtin.command:
     argv: [readlink, -m, "{{ _cassandra_java_home }}"]
-  register: cassandra_update_java_home
+  register: cassandra_java_plan_home
   changed_when: false
   failed_when: false
   check_mode: false
@@ -39,17 +39,17 @@
 # its major version as the import reads it (a package path may not name it: zulu17, temurin-17-jdk)
 - name: Note what this node needs
   ansible.builtin.set_fact:
-    cassandra_update_java_running: "{{ _running }}"
-    cassandra_update_java_major: "{{ _major }}"
-    cassandra_update_java_todo: >-
+    cassandra_java_plan_running: "{{ _running }}"
+    cassandra_java_plan_major: "{{ _major }}"
+    cassandra_java_plan_todo: >-
       {{ (_major != cassandra_java_version | string
           or (_cassandra_java_home != ''
-              and not _running.startswith((cassandra_update_java_home.stdout | default('', true) or _cassandra_java_home) ~ '/')))
+              and not _running.startswith((cassandra_java_plan_home.stdout | default('', true) or _cassandra_java_home) ~ '/')))
          and (cassandra_jvm.pid is defined or not _cassandra_java_plan_running_only | default(false) | bool) }}
   vars:
     _running: "{{ cassandra_jvm.exe | default('', true) or 'not running' }}"
     _spec: >-
-      {{ cassandra_update_java_spec.stderr | default('') | regex_findall('java[.]specification[.]version = ([0-9.]+)')
+      {{ cassandra_java_plan_spec.stderr | default('') | regex_findall('java[.]specification[.]version = ([0-9.]+)')
          | first | default('') }}
     _major: "{{ _spec.split('.')[1] if _spec.startswith('1.') else _spec }}"
 
@@ -60,7 +60,7 @@
   ansible.builtin.include_role:
     name: community.cassandra.cassandra_install
     tasks_from: java_check.yml
-  when: _cassandra_java_plan_check_all | default(true) | bool or cassandra_update_java_todo | bool
+  when: _cassandra_java_plan_check_all | default(true) | bool or cassandra_java_plan_todo | bool
 
 # The JAVA_HOME Cassandra restarts with, whatever sets it: bin/cassandra runs $JAVA_HOME/bin/java, else the
 # system java. In the order it is applied, the last one found wins: the unit's Environment
@@ -181,23 +181,23 @@
       {{ 'yes' if not cassandra_service_unit_manage | default(true) | bool
                   or cassandra_service_start | default('unit') != 'unit' else 'no' }}
     CASSANDRA_USER: "{{ _cassandra_java_plan_user | default('cassandra') }}"  # (Cassandra's account: its home's .cassandra.in.sh)
-  register: cassandra_update_java_given
+  register: cassandra_java_plan_given
   changed_when: false
   failed_when: false
   check_mode: false  # read-only
-  when: cassandra_update_java_todo | bool
+  when: cassandra_java_plan_todo | bool
 
 # why Cassandra would restart on another Java than the new one, "" when it would not: no JAVA_HOME is the system
 # java, the new one unless cassandra_java_set_default is false; a JAVA_HOME that is cassandra_java_link follows it
 - name: Note what JAVA_HOME Cassandra restarts with
   ansible.builtin.set_fact:
-    cassandra_update_java_kept: "{{ _why }}"
+    cassandra_java_plan_kept: "{{ _why }}"
   vars:
-    _given: "{{ cassandra_update_java_given.stdout_lines | default([]) }}"
+    _given: "{{ cassandra_java_plan_given.stdout_lines | default([]) }}"
     _set: "JAVA_HOME={{ _given[0] | default('') }}"
     _home: "{{ _given[1] | default('') }}"
     _given_major: "{{ _given[2] | default('') | regex_replace('^1[.]', '') | regex_replace('[._+-].*$', '') }}"
-    _wanted: "{{ cassandra_update_java_home.stdout | default('', true) or _cassandra_java_home }}"
+    _wanted: "{{ cassandra_java_plan_home.stdout | default('', true) or _cassandra_java_home }}"
     _kept_unit: >-
       {{ not cassandra_service_unit_manage | default(true) | bool or cassandra_service_start | default('unit') != 'unit' }}
     _from: "{{ _given[3] | default('') }}"
@@ -210,7 +210,7 @@
          else _from ~ ' (edit it by hand)' }}
     _link: "{{ _cassandra_java_link | default('') }}"
     _why: >-
-      {{ '' if not cassandra_update_java_todo | bool
+      {{ '' if not cassandra_java_plan_todo | bool
          else ('' if cassandra_java_set_default | bool else 'no JAVA_HOME in ' ~ _where) if _given[0] | default('') == ''
          else '' if _cassandra_java_home != '' and _link != '' and _given[0] | regex_replace('(?<=.)/+$', '') == _link
          else (_set ~ ' in ' ~ _where ~ ' is not the new Java (' ~ _wanted ~ ')')
@@ -240,8 +240,8 @@
     _nl: "\n"
     _kept: >-
       {%- set out = [] -%}
-      {%- for host in ansible_play_hosts_all if hostvars[host].cassandra_update_java_kept | default('') != '' -%}
-      {%-   set _ = out.append(host ~ ': ' ~ hostvars[host].cassandra_update_java_kept) -%}
+      {%- for host in ansible_play_hosts_all if hostvars[host].cassandra_java_plan_kept | default('') != '' -%}
+      {%-   set _ = out.append(host ~ ': ' ~ hostvars[host].cassandra_java_plan_kept) -%}
       {%- endfor -%}
       {{ out }}
   run_once: true
@@ -252,6 +252,6 @@
     tasks_from: java_options_kept.yml
   vars:
     _cassandra_java_options_now: >-
-      {{ cassandra_version | community.cassandra.cassandra_jvm_options_file(cassandra_update_java_major) }}
-    _cassandra_java_now_major: "{{ cassandra_update_java_major }}"
-  when: cassandra_update_java_todo | bool
+      {{ cassandra_version | community.cassandra.cassandra_jvm_options_file(cassandra_java_plan_major) }}
+    _cassandra_java_now_major: "{{ cassandra_java_plan_major }}"
+  when: cassandra_java_plan_todo | bool

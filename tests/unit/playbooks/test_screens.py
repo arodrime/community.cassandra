@@ -364,7 +364,7 @@ def test_apply_config_and_update_java_screens(monkeypatch):
         assert text.split("\n")[0] == head
     t, play = task("update_java.yml", "Show the plan and confirm the run")
     text = screen(dict(cluster, groups={"cassandra_update_java_True": ["node2"]}, cassandra_java_version=17,
-                       hostvars={"node2": {"cassandra_update_java_running": "Java 11"}}), t["vars"], play.get("vars"))
+                       hostvars={"node2": {"cassandra_java_plan_running": "Java 11"}}), t["vars"], play.get("vars"))
     assert text == ("UPDATE JAVA  node2 of Orders to Java 17\n"
                     "  Moves these nodes to the new Java, one at a time (install, config, drain, restart).\n\n"
                     "  node2\n    runs Java 11")

@@ -121,8 +121,8 @@ def test_a_java_change_with_the_role_s_own_line():
 
 
 def kept_ok(running, target, keep, todo=True, series="50x"):
-    variables = dict(cassandra_version=series, cassandra_java_version=target, cassandra_update_java_major=running,
-                     cassandra_update_java_todo=todo, cassandra_config_keep_files=keep)
+    variables = dict(cassandra_version=series, cassandra_java_version=target, cassandra_java_plan_major=running,
+                     cassandra_java_plan_todo=todo, cassandra_config_keep_files=keep)
     if not render("{{ %s }}" % UPDATE_KEPT["when"], **variables):
         return True, variables
     variables.update((k, render(v, **variables)) for k, v in UPDATE_KEPT["vars"].items())
@@ -180,7 +180,7 @@ def switch(hostvars, running="17", target="11", series="50x", upgrade_from=None,
                                                                   % ("1.8" if running == "8" else running)}
         variables.update((k, render(v, **variables)) for k, v in UPGRADE_KEPT[0]["vars"].items())
     else:
-        variables["cassandra_update_java_major"] = running
+        variables["cassandra_java_plan_major"] = running
         variables.update((k, render(v, **variables)) for k, v in UPDATE_KEPT["vars"].items())
     variables["hostvars"] = {"node1": dict(hostvars)}
     variables["inventory_hostname"] = "node1"
@@ -218,8 +218,8 @@ def test_the_heap_of_jvm11_imported_on_java_17_is_in_the_plan_of_the_move_to_jav
         plan = next(t for p in yaml.safe_load(f) for t in p.get("tasks") or []
                     if t.get("name") == "Show the plan and confirm the run")
     lines_n1 = render(HEAP_LINE["ansible.builtin.set_fact"]["_cassandra_java_heap_lines"], **switch(IMPORTED))
-    hostvars = {"n1": {"_cassandra_java_heap_lines": lines_n1, "cassandra_update_java_running": "/usr/lib/jvm/java-17/bin/java"},
-                "n2": {"_cassandra_java_heap_lines": [], "cassandra_update_java_running": "/usr/lib/jvm/java-17/bin/java"}}
+    hostvars = {"n1": {"_cassandra_java_heap_lines": lines_n1, "cassandra_java_plan_running": "/usr/lib/jvm/java-17/bin/java"},
+                "n2": {"_cassandra_java_heap_lines": [], "cassandra_java_plan_running": "/usr/lib/jvm/java-17/bin/java"}}
     blocks = render(plan["vars"]["_blocks"], _todo=["n1", "n2"], hostvars=hostvars)
     text = cassandra_screen({"operation": "update_java", "summary": "n1, n2 of c to Java 11", "blocks": blocks})
     lines = text.split("\n")

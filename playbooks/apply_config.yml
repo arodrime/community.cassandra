@@ -614,7 +614,7 @@
               _cassandra_repository_items | default([]) | map('combine', {'section': 'Repository'}) | list
               + _seen.get('cassandra_install', {}).get('items', []) | map('combine', {'section': 'Packages'}) | list
               + _seen.get('cassandra_firewall', {}).get('items', []) | map('combine', {'section': 'Firewall'}) | list) }}
-        _java: "{{ cassandra_update_java_todo | default(false) | bool and cassandra_jvm.pid is defined }}"
+        _java: "{{ cassandra_java_plan_todo | default(false) | bool and cassandra_jvm.pid is defined }}"
         _release: "{{ (cassandra_apply_config_version | default({})).kind | default('') == 'release' }}"
         # what the running Cassandra got from its unit against what the role's unit gives (none read: nothing)
         _unit_read: "{{ dict(cassandra_apply_config_unit_read.stdout_lines | default([]) | select('search', '=') | map('split', '=', 1)) }}"
@@ -631,14 +631,14 @@
                             if cassandra_service_start | default('unit') == 'unit' else {},
                   'environment': cassandra_service_environment | default({})}) }}
         _restart_items: >-
-          {{ ([{'section': 'Java', 'item': 'Java', 'before': cassandra_update_java_major | default('') or 'unknown',
+          {{ ([{'section': 'Java', 'item': 'Java', 'before': cassandra_java_plan_major | default('') or 'unknown',
                 'after': cassandra_java_version | string ~ ' (to install)'}] if _java | bool else [])
              + ([{'section': 'Cassandra', 'item': 'Cassandra', 'before': cassandra_apply_config_version.running,
                   'after': cassandra_apply_config_version.wanted ~ ' (package)'}] if _release | bool else [])
              + _unit_changes | map('combine', {'section': 'cassandra unit'}) | list }}
         # reasons of the node's one restart besides its config and OS settings (said with the restart)
         _b_why: >-
-          {{ (['Java ' ~ (cassandra_update_java_major | default('') or '?') ~ ' -> ' ~ cassandra_java_version] if _java | bool else [])
+          {{ (['Java ' ~ (cassandra_java_plan_major | default('') or '?') ~ ' -> ' ~ cassandra_java_version] if _java | bool else [])
              + (['Cassandra ' ~ cassandra_apply_config_version.running ~ ' -> ' ~ cassandra_apply_config_version.wanted]
                 if _release | bool else [])
              + (['its unit: ' ~ _unit_changes | map(attribute='item') | map('regex_replace', '^unit ', '') | join(', ')]
