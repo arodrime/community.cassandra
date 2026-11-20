@@ -44,7 +44,11 @@ included from these.
 | `cluster_clocks.yml` | `health_check` |
 | `clocks_read.yml`, `clock_fix.yml` | `sync_clocks` |
 | `cql_login.yml` | `import_cluster` |
-| `config_pending.yml` | `apply_config` |
+| `config_pending.yml`, `ring_tokens.yml` | `apply_config` |
+| `java_plan.yml` | `update_java`, `apply_config` |
+| `run_report.yml` | `apply_config`, `drift` |
+| `jmx_tls_check.yml` | `preflight` |
+| `package_unfinished.yml` | `rolling_restart`, `rolling_reboot`, `sync_clocks`, `start_rack`, `update_java` |
 | `exporter_check.yml` | `apply_config`, `update_java` |
 | `node_standing.yml` | `create_cluster`, `replace_node` |
 | `replace_unit_check.yml` | `replace_node` |
@@ -65,8 +69,8 @@ cluster health again. The action is the file named after
 | `reboot` | `rolling_reboot` | `drain.yml`, the reboot, `cassandra_service` `main.yml` |
 | `apply_config` | `apply_config` | `action_apply_config.yml`, through `action_restart.yml` when the change needs a restart |
 | `sync_clock` | `sync_clocks` | `action_restart.yml`, the clock set while Cassandra is stopped (`_cassandra_service_while_stopped`) |
-| `update_java` | `update_java` | `cassandra_install`, `cassandra_config`, `action_restart.yml` |
-| `upgrade` | `upgrade` | `drain.yml`, the packages, the config, `cassandra_service` `main.yml` |
+| `update_java` | `update_java` | `java_install.yml`, `cassandra_config`, `action_restart.yml`, `java_verify.yml` |
+| `upgrade` | `upgrade` | `drain.yml`, `package_update.yml`, the config, `cassandra_service` `main.yml`, `version_verify.yml` |
 | `upgradesstables` | `upgrade` | `nodetool upgradesstables` |
 
 The actions start and restart Cassandra through `cassandra_service`
