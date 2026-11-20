@@ -77,7 +77,7 @@ def test_a_java_move_is_one_restart_installed_first():
     found = needs(java=True)
     assert (found["todo"], found["then"]) == (True, "restart")
     assert found["steps"] == ["install Java 17", "drain and restart Cassandra (Java 11 -> 17)"]
-    assert found["restart_items"] == [{"section": "Java", "item": "Java", "before": "11", "after": "17 (installed)"}]
+    assert found["restart_items"] == [{"section": "Java", "item": "Java", "before": "11", "after": "17 (to install)"}]
 
 
 def test_several_restart_reasons_make_one_restart():
@@ -114,14 +114,14 @@ def test_the_packages_apply_live_jemalloc_at_the_next_restart():
 
 
 def test_they_show_in_the_settings_that_differ():
-    nodes = [{"name": "n1", "extra": [{"section": "Java", "item": "Java", "before": "11", "after": "17 (installed)"},
+    nodes = [{"name": "n1", "extra": [{"section": "Java", "item": "Java", "before": "11", "after": "17 (to install)"},
                                       {"section": "Packages", "item": "package jemalloc", "before": "absent",
                                        "after": "5.2.1"}]},
              {"name": "n2", "extra": []}]
     text = "\n".join(cassandra_apply_config_diff(nodes))
     assert EXTRA_SECTIONS["Java"] in text and EXTRA_SECTIONS["Packages"] in text
     assert text.index("Java (restart)") < text.index("Packages (no restart)")
-    assert "17 (installed)" in text and "package jemalloc" in text
+    assert "17 (to install)" in text and "package jemalloc" in text
 
 
 def test_the_plan_compares_them_in_check_mode_before_the_needs():

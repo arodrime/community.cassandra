@@ -626,7 +626,7 @@
                   'environment': cassandra_service_environment | default({})}) }}
         _restart_items: >-
           {{ ([{'section': 'Java', 'item': 'Java', 'before': cassandra_update_java_major | default('') or 'unknown',
-                'after': cassandra_java_version | string ~ ' (installed)'}] if _java | bool else [])
+                'after': cassandra_java_version | string ~ ' (to install)'}] if _java | bool else [])
              + ([{'section': 'Cassandra', 'item': 'Cassandra', 'before': cassandra_apply_config_version.running,
                   'after': cassandra_apply_config_version.wanted ~ ' (package)'}] if _release | bool else [])
              + _unit_changes | map('combine', {'section': 'cassandra unit'}) | list }}
