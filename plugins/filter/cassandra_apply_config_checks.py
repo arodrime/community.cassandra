@@ -97,6 +97,8 @@ def cassandra_apply_config_version(series, package_version, running, settings=No
 _DPKG_USABLE = ("installed", "triggers-pending", "triggers-awaited")
 _DPKG_UNFINISHED = ("half-installed", "unpacked", "half-configured")
 # what cassandra_install writes around a dpkg run: the package's scripts do not start or restart Cassandra
+# the config files Ansible wrote kept without a question (as the apt module that cassandra_install runs does)
+APT_CONFOLD = "-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
 POLICY_RC_D = ["printf '#!/bin/sh\\nexit 101\\n' > /usr/sbin/policy-rc.d", "chmod 755 /usr/sbin/policy-rc.d"]
 
 
@@ -127,18 +129,18 @@ def cassandra_package_unfinished(unfinished, node=""):
         return {}
     on = "on %s, " % node if node else ""
     if len(parts) > 1:  # (rpm -q: "installed X" per package)
-        return {"why": "rpm -q cassandra lists %d packages (%s): a transaction left half done, the files of both on disk"
+        return {"why": "rpm -q cassandra lists %d packages (%s): a transaction left half done"
                        % (len(parts), ", ".join(x.split(" ")[-1] for x in parts)),
                 "way_out": [on + "remove the older package by hand (yum: package-cleanup --cleandupes), then check the"
                             " files of the one left:", "    dnf remove --duplicates cassandra", "    rpm -V cassandra"]}
     state, version = (parts[0].split(" ", 1) + [""])[:2]
-    guard = ", a policy-rc.d keeping its scripts from starting Cassandra (as cassandra_install does; one there already:" \
+    guard = ", with a policy-rc.d keeping its scripts from starting Cassandra (as cassandra_install does; one there already:" \
             " keep it, leave out the first two commands and the last):"
     if state == "half-installed":  # (dpkg: an unpack interrupted)
         why, do, command = "its unpack was interrupted", "reinstall it by hand", \
-            "apt-get install --reinstall --allow-change-held-packages cassandra=%s" % version
+            "apt-get install --reinstall --allow-change-held-packages %s cassandra=%s" % (APT_CONFOLD, version)
     else:
-        why, do, command = "its configuration was not finished", "finish it by hand", "dpkg --configure -a"
+        why, do, command = "its configuration was not finished", "finish it by hand", "dpkg --force-confdef --force-confold --configure -a"
     return {"why": "its Cassandra package is %s (dpkg): %s" % (parts[0], why),
             "way_out": [on + do + guard] + ["    " + x for x in POLICY_RC_D + [command, "rm /usr/sbin/policy-rc.d"]]}
 

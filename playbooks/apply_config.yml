@@ -897,7 +897,8 @@
         - not _cassandra_apply_config_compare_only | default(false) | bool  # drift's compare: nothing changed, no stop
 
     # A Cassandra package left half done (two rpm packages, a dpkg run interrupted): a node this run restarts or starts
-    # (a node left stopped by an interrupted run too: its resume starts it) would start Cassandra on those files (two
+    # (a node left stopped by an interrupted run too: its resume starts it; a node down while another one restarts:
+    # the way out below would start it with start_rack) would start Cassandra on those files (two
     # releases' jars, or the new release's with no plan). Refused before any change, --check too, with the way out of
     # that state
     - name: Refuse to restart or start a node whose Cassandra package is left half done
@@ -917,12 +918,18 @@
           {%- for h in ansible_play_hosts if hostvars[h].cassandra_apply_config_unfinished | default('') -%}
           {%-   set v = hostvars[h] -%}
           {%-   if v.cassandra_apply_config_then | default('') in ['restart', 'start']
-                   or v.cassandra_apply_config_marked | default(false) | bool -%}
+                   or v.cassandra_apply_config_marked | default(false) | bool
+                   or (v.cassandra_apply_config_then | default('') == 'write' and _restarts | bool) -%}
           {%-     set _ = out.append({'name': h, 'unfinished': v.cassandra_apply_config_unfinished,
                                       'what': 'restart' if v.cassandra_apply_config_then == 'restart' else 'start'}) -%}
           {%-   endif -%}
           {%- endfor -%}
           {{ out | community.cassandra.cassandra_package_unfinished_refusal }}
+        # (a restart refuses the nodes down, whose way out would then be to start them with start_rack: on that package
+        # too, a node stopped with nothing to apply among them)
+        _restarts: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('cassandra_apply_config_then', 'defined')
+             | selectattr('cassandra_apply_config_then', 'equalto', 'restart') | list | length > 0 }}
 
     # 5.0: a node not running that this run starts (its unit failed, or an interrupted run stopped it): the mode it
     # last ran against the one it starts with (back, two steps on, into NONE unread), before the plan (the compare

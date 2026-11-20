@@ -342,7 +342,10 @@ def test_a_release_with_its_repository_changed_is_looked_for_before_the_stop():
     # failed starts cleared
     names = [t.get("name") for t in ACTION]
     look = find(ACTION, "Apply the repository of the release, then look for the release in it")
-    assert names.index("Apply the repository of the release, then look for the release in it") == 0
+    # (after the checks that change nothing: "Nothing was changed on it" stays true there)
+    assert names.index("Clear the unit's failed starts") < names.index("Check the JVM a file is written back for still runs") \
+        < names.index("Apply the repository of the release, then look for the release in it") \
+        < names.index("Install the Java this node moves to")
     assert names.index("Install the Java this node moves to, its Cassandra release kept") > 0
     assert names.index("Write the config") > names.index("Update the Cassandra package of a node not running") > 0
     for release, sections, check, looked in ((True, ["Repository"], False, True),

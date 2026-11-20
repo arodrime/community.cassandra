@@ -4,9 +4,10 @@ bugfixes:
     packages, a dpkg state ``half-installed``, ``unpacked`` or ``half-configured``) refuses every restart or start of
     that node before any change (``--check`` too), not only a release update: a config restart or a start no longer
     runs Cassandra on two releases' files, or on a new release with no plan; a node left stopped by an interrupted
-    apply_config is refused for its resume the same way. The way out gives the commands of that state on lines of
-    their own; on Debian with a ``policy-rc.d`` that keeps the package's scripts from starting Cassandra, as
-    cassandra_install does, the version dpkg has pinned and a held package allowed. A dpkg package with a trigger
+    apply_config is refused for its resume the same way, and a node down while another one restarts (the way out
+    would start it with start_rack). The way out gives the commands of that state on lines of their own; on Debian
+    with a ``policy-rc.d`` that keeps the package's scripts from starting Cassandra, as cassandra_install does, the
+    config files kept with no question, the version dpkg has pinned and a held package allowed. A dpkg package with a trigger
     pending counts as installed.
   - >-
     upgrade - a node nodetool fails on with a Cassandra package left half done gets the way out of that state, then

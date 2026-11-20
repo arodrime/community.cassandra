@@ -680,8 +680,8 @@ def test_a_down_node_with_the_target_package_is_pointed_to_apply_config():
     assert render(check["vars"]["_on_target"], **two) == []
     # (audit r5) neither start_rack (it would start Cassandra on both packages' files): the package's way out first
     said = render(check["ansible.builtin.assert"]["fail_msg"], **two).split("\n")
-    assert said[1] == ("  n2  package rpm -q cassandra lists 2 packages (4.1.12, 5.0.9): a transaction left half done,"
-                       " the files of both on disk  " + REFUSED)
+    assert said[1] == ("  n2  package rpm -q cassandra lists 2 packages (4.1.12, 5.0.9): a transaction left half done"
+                       "  " + REFUSED)
     assert "on n2," not in " ".join(x for x in said if "start_rack" in x)
     assert said[-5:-2] == ["  on n2, remove the older package by hand (yum: package-cleanup --cleandupes), then check"
                            " the files of the one left:", "      dnf remove --duplicates cassandra", "      rpm -V cassandra"]

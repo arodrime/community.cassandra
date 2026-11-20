@@ -1037,10 +1037,11 @@ categories, each shown in the plan and under ``--check``. Every variable of the 
   Whatever the reasons, a node restarts once, all of them done in that restart. A Cassandra package left half
   done (two ``rpm -q cassandra`` lines, a dpkg state ``half-installed``, ``unpacked`` or ``half-configured``; a
   trigger pending counts as installed) refuses every restart or start of that node before any change (``--check``
-  too, a node left stopped by an interrupted run included): it would start Cassandra on two releases' files, or on
+  too, a node left stopped by an interrupted run included, and a node down while another one restarts, whose way
+  out would start it): it would start Cassandra on two releases' files, or on
   a release with no plan. The refusal gives the way out of that state, its commands on lines of their own (Debian:
   with a ``policy-rc.d`` that keeps the package's scripts from starting Cassandra, as ``cassandra_install`` does,
-  at the version dpkg has). ``rolling_restart`` and ``update_java`` refuse it the same way before their question;
+  the config files kept with no question, at the version dpkg has). ``rolling_restart`` and ``update_java`` refuse it the same way before their question;
   ``upgrade`` gives that way out, never ``start_rack``, for a node nodetool fails on. A unit file that differs only in
   systemd's handling of the service (``Restart``, ``TimeoutStopSec``, the drain on stop) changes nothing for the
   running Cassandra: written at its next restart, said under the node.

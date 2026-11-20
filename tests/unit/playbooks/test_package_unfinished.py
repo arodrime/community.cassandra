@@ -31,7 +31,7 @@ def test_apply_config_refuses_a_restart_or_a_start_on_a_package_left_half_done()
         "n1": {"cassandra_apply_config_unfinished": two, "cassandra_apply_config_then": "restart"},
         # its unit failed, its config written then started
         "n2": {"cassandra_apply_config_unfinished": "half-configured 5.0.9", "cassandra_apply_config_then": "start"},
-        # not restarted nor started: its config written, nothing refused
+        # not restarted nor started: its config written, nothing refused (n4: unless another node restarts)
         "n3": {"cassandra_apply_config_unfinished": "unpacked 5.0.9", "cassandra_apply_config_then": "none"},
         "n4": {"cassandra_apply_config_unfinished": "unpacked 5.0.9", "cassandra_apply_config_then": "write"},
         # left stopped by the window of an interrupted run (its mark): a resume starts it
@@ -40,11 +40,14 @@ def test_apply_config_refuses_a_restart_or_a_start_on_a_package_left_half_done()
         "n6": {"cassandra_apply_config_unfinished": "", "cassandra_apply_config_then": "restart"},
     }
     lines = _refusal(task, hostvars)
-    assert [x.split(":")[0] for x in lines if x.startswith("n")] == ["n1", "n2", "n5"]
+    assert [x.split(":")[0] for x in lines if x.startswith("n")] == ["n1", "n2", "n4", "n5"]
     assert lines[0].endswith("its restart would run Cassandra from that state.")
     assert lines[1].endswith("its start would run Cassandra from that state.")
     assert lines[-1] == "then run the same command again."
-    assert _refusal(task, dict((k, v) for k, v in hostvars.items() if k in ("n3", "n4", "n6"))) == []
+    # n4 (stopped, nothing to apply) is refused when another node restarts: the refusal of restarts with a node down
+    # would send it to start_rack (audit r7)
+    assert _refusal(task, dict((k, v) for k, v in hostvars.items() if k in ("n3", "n4", "n6")))[0].startswith("n4: ")
+    assert _refusal(task, dict((k, v) for k, v in hostvars.items() if k in ("n3", "n4"))) == []
     # --check too (it stops where the real run stops); drift's compare: nothing stopped
     assert task["when"] == ["_refusal | length > 0",
                             "not _cassandra_apply_config_compare_only | default(false) | bool"]

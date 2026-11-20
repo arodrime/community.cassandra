@@ -81,22 +81,22 @@ def test_a_package_left_half_done_stops_a_release_before_any_change():
     # lines of their own; Debian: the package's scripts kept from restarting Cassandra, the version dpkg has pinned,
     # a held package allowed)
     assert lines == [
-        "n1: rpm -q cassandra lists 2 packages (4.1.11, 4.1.12): a transaction left half done, the files of both on"
-        " disk; its update would start from it (now 4.1.11).",
+        "n1: rpm -q cassandra lists 2 packages (4.1.11, 4.1.12): a transaction left half done; its update would start from it (now 4.1.11).",
         "n2: its Cassandra package is half-configured 4.1.12 (dpkg): its configuration was not finished; its update"
         " would start from it (now 4.1.11).",
         "n3: its Cassandra package is half-installed 4.1.12 (dpkg): its unpack was interrupted; its update would start"
         " from it (now 4.1.11).",
         "on n1, remove the older package by hand (yum: package-cleanup --cleandupes), then check the files of the one"
         " left:", "    dnf remove --duplicates cassandra", "    rpm -V cassandra",
-        "on n2, finish it by hand, a policy-rc.d keeping its scripts from starting Cassandra (as cassandra_install"
+        "on n2, finish it by hand, with a policy-rc.d keeping its scripts from starting Cassandra (as cassandra_install"
         " does; one there already: keep it, leave out the first two commands and the last):",
         "    printf '#!/bin/sh\\nexit 101\\n' > /usr/sbin/policy-rc.d", "    chmod 755 /usr/sbin/policy-rc.d",
-        "    dpkg --configure -a", "    rm /usr/sbin/policy-rc.d",
-        "on n3, reinstall it by hand, a policy-rc.d keeping its scripts from starting Cassandra (as cassandra_install"
+        "    dpkg --force-confdef --force-confold --configure -a", "    rm /usr/sbin/policy-rc.d",
+        "on n3, reinstall it by hand, with a policy-rc.d keeping its scripts from starting Cassandra (as cassandra_install"
         " does; one there already: keep it, leave out the first two commands and the last):",
         "    printf '#!/bin/sh\\nexit 101\\n' > /usr/sbin/policy-rc.d", "    chmod 755 /usr/sbin/policy-rc.d",
-        "    apt-get install --reinstall --allow-change-held-packages cassandra=4.1.12", "    rm /usr/sbin/policy-rc.d",
+        "    apt-get install --reinstall --allow-change-held-packages -o Dpkg::Options::=--force-confdef"
+        " -o Dpkg::Options::=--force-confold cassandra=4.1.12", "    rm /usr/sbin/policy-rc.d",
         "then run apply_config again."]
     # no release to install: nothing refused for it here (the restart's own refusal: cassandra_package_unfinished_refusal)
     assert cassandra_apply_config_version("41x", "4.1.11", "4.1.11", unfinished="half-configured 4.1.11") == {}
@@ -128,11 +128,10 @@ def test_a_package_left_half_done_refuses_every_restart_and_start():
              {"name": "n3", "unfinished": "unpacked 5.0.9", "what": "start"}]
     lines = cassandra_package_unfinished_refusal(nodes)
     assert lines[:2] == [
-        "n1: rpm -q cassandra lists 2 packages (5.0.8, 5.0.9): a transaction left half done, the files of both on disk;"
-        " its restart would run Cassandra from that state.",
+        "n1: rpm -q cassandra lists 2 packages (5.0.8, 5.0.9): a transaction left half done; its restart would run Cassandra from that state.",
         "n3: its Cassandra package is unpacked 5.0.9 (dpkg): its configuration was not finished; its start would run"
         " Cassandra from that state."]
-    assert lines[2].startswith("on n1, ") and "    dpkg --configure -a" in lines
+    assert lines[2].startswith("on n1, ") and "    dpkg --force-confdef --force-confold --configure -a" in lines
     assert lines[-1] == "then run the same command again."
     assert cassandra_package_unfinished_refusal([nodes[1]]) == []
     assert cassandra_package_unfinished("") == {}
