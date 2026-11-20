@@ -1,0 +1,5 @@
+minor_changes:
+  - >-
+    help playbook - its first line names the collection that wrote it, as installed (version and commit), and the
+    ``import_cluster`` topic lists ``-e import_strict=false``. ``import_cluster``'s report expects every node up to
+    date "header lines aside" (the first ``apply_config`` adds the role's header line, a comment, no restart).

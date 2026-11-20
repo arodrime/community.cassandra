@@ -29,6 +29,7 @@ from ansible.errors import AnsibleFilterError
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_java import cassandra_java_major
 from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import WIDTH
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_build
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import (
     BULLET, NBSP, command as _full_command, command_flow, extra_var as _e, flow as _flow, is_command, laid_out,
     path_from as _path, seed_layout)
@@ -234,7 +235,8 @@ OPERATIONS = [
                  ("-e import_keep_hand_edits=true", "keeps hand edits, parts (=<names>)", "false"),
                  ("-e import_carry_exporter_config=true", "carries the exporter's config file",
                   "false"),
-                 ("-e import_report_shareable=false", "no anonymised report copy to share", "true")]},
+                 ("-e import_report_shareable=false", "no anonymised report copy to share", "true"),
+                 ("-e import_strict=false", "writes it even if self-check fails", "true")]},
 ]
 # an option's text and its default on one line from column 46 at 98 columns (a terminal of 100)
 OPTION_ROOM = 52
@@ -783,19 +785,22 @@ def _cluster_lines(cluster):
     return lines
 
 
-def _header(model, cwd):
+def _header(model, cwd, build=False):
+    """The help's first line; build: with the collection that wrote it (its version and commit), as installed."""
     sources = ", ".join(_path(s, cwd) for s in model.get("sources") or [])
-    return "Cassandra help for the inventory %s (read from the inventory only: no node contacted)" % sources
+    made_by = "; made by %s" % cassandra_build.label() if build else ""
+    return "Cassandra help for the inventory %s (read from the inventory only: no node contacted)%s" % (sources, made_by)
 
 
 def cassandra_help(model, playbooks=None, topic="", header="", markdown=False, cwd=None, runbook_dir="", flow=False,
-                   cut=True):
+                   cut=True, build=False):
     """model: lookup community.cassandra.cassandra_inventory; playbooks: the
     names of the playbooks there are; topic: one operation in detail, with
     header the comment that starts its playbook; markdown: RUNBOOK.md, in
     runbook_dir (default the inventory's dir); flow: the lines for the ops
     callback (laid out at the terminal's width there), else laid out at WIDTH;
-    cut false: each command whole on one line (a list of lines to copy from).
+    cut false: each command whole on one line (a list of lines to copy from);
+    build: the overview's first line names the collection installed (its version and commit).
     -> the help text: its sections under rules, the commands filled for this inventory."""
     model = model or {}
     cwd = os.getcwd() if cwd is None else cwd
@@ -843,7 +848,7 @@ def cassandra_help(model, playbooks=None, topic="", header="", markdown=False, c
 
     if markdown:
         return _markdown(_header(model, cwd), sections, model, cwd, runbook_dir or _inventory_dir(model))
-    return _text(_header(model, cwd), sections, _common(model, clusters), flow, cut)
+    return _text(_header(model, cwd, build), sections, _common(model, clusters), flow, cut)
 
 
 _INTRO = ("Run the commands from the directory help was run from (the one with ansible.cfg, if any). Each"

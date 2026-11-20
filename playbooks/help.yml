@@ -123,7 +123,7 @@
         _plain: "Plain text, without the quotes: callback_result_format = yaml in ansible.cfg ([defaults])"
         _text: >-
           {{ _cassandra_help_model | community.cassandra.cassandra_help(
-               _playbooks, topic=help_topic | default(''), flow=_flow | bool, cut=_flow | bool or _yaml | bool,
+               _playbooks, topic=help_topic | default(''), flow=_flow | bool, cut=_flow | bool or _yaml | bool, build=true,
                header=lookup('ansible.builtin.file', playbook_dir ~ '/' ~ help_topic ~ '.yml')
                       if help_topic | default('') in _playbooks else '') }}
 

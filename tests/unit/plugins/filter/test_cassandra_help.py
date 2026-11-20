@@ -367,6 +367,7 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
         -e import_keep_hand_edits=true        keeps hand edits, parts (=<names>) (default: false)
         -e import_carry_exporter_config=true  carries the exporter's config file (default: false)
         -e import_report_shareable=false      no anonymised report copy to share (default: true)
+        -e import_strict=false                writes it even if self-check fails (default: true)
 
 ==== Advice ========================================================================================
 
@@ -1200,3 +1201,15 @@ def test_no_cluster_named_the_help_of_any():
     imported = " ".join(cassandra_help(model, topic="import_cluster", cwd="/", cut=False).split())
     assert "Replace NEW_DIR, NODE with your own values." in imported
     assert "CLUSTER_GROUP" in cassandra_help(model, markdown=True, cwd="/", runbook_dir="/")
+
+
+def test_the_overview_names_the_collection_installed():
+    from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_build
+    first = cassandra_help(MODEL, PLAYBOOKS, cwd=CWD, build=True).split("\n\n")[0]
+    assert " ".join(first.split()).endswith("no node contacted); made by %s" % cassandra_build.label())
+    assert "made by" not in cassandra_help(MODEL, PLAYBOOKS, cwd=CWD).split("\n\n")[0]
+
+
+def test_the_import_topic_says_import_strict():
+    text = " ".join(cassandra_help(MODEL, PLAYBOOKS, topic="import_cluster", cwd=CWD).split())
+    assert "-e import_strict=false writes it even if self-check fails (default: true)" in text
