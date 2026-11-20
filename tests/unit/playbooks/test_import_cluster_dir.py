@@ -386,7 +386,7 @@ def test_check_diff_writes_nothing():
 @pytest.mark.parametrize("check", [False, True])
 def test_a_re_import_leaves_every_report_file_alone(check):
     # the report in the inventory dir (import_report_dir): none of its files taken for another's, the
-    # shareable copy and its key too (written by default); the key a .txt, which Ansible skips in an inventory dir
+    # shareable copy and its key too (import_report_shareable); the key a .txt, which Ansible skips in an inventory dir
     report = render(WRITE_VARS["_report_args"]["report_file"], ansible_check_mode=check, _report_dir="/inv")
     stem = report[:-len(".txt")]
     ours = set("/inv/" + f for f in render(TASKS["Sort out the files an earlier import wrote"]["vars"]["_report_files"],
@@ -420,6 +420,35 @@ def test_the_key_of_an_earlier_shareable_copy_is_removed():
     for given in ({}, {"import_report_shareable": False}):
         assert render(said["ansible.builtin.debug"]["msg"], import_cluster_old_key=old, **given) == (
             "Removed /r/report.shareable.map: the key of an earlier import's shareable copy (it held the real names).")
+
+
+def test_the_shareable_copy_of_an_earlier_import_is_removed_when_off(tmp_path):
+    # an earlier import wrote report.shareable.txt and its key (on by default in earlier release candidates): with
+    # import_report_shareable off they describe that import, not this one: removed (the import's own files only,
+    # by their first line), each said on a line
+    remove = TASKS["Remove the shareable copy of an earlier import"]
+    said = TASKS["Say the shareable copy of an earlier import is removed"]
+    names = [t.get("name") for t in next(p for p in PLAYS if p.get("name") == "Write the inventory")["tasks"]]
+    assert names.index(remove["name"]) < names.index("Write the shareable copy of the report")
+    (tmp_path / "report.shareable.txt").write_text("SHAREABLE COPY of an import_cluster report: nodes n1..\n")
+    (tmp_path / "report.shareable.key.txt").write_text("# The key of report.shareable.txt: what each name...\nn1 = a\n")
+    (tmp_path / "report.check.shareable.txt").write_text("my own notes\n")  # (not the import's: kept)
+    variables = dict(_heads=remove["vars"]["_heads"],
+                     _dir=render(remove["vars"]["_dir"], _report_args={"report_file": str(tmp_path / "report.txt")}))
+    assert variables["_dir"] == str(tmp_path)
+    ours = render(remove["vars"]["_ours"], **variables)
+    assert sorted(ours) == [str(tmp_path / "report.shareable.key.txt"), str(tmp_path / "report.shareable.txt")]
+    assert remove["ansible.builtin.file"] == {"path": "{{ item }}", "state": "absent"}
+    assert remove["loop"] == "{{ _ours }}"
+    for given, removed in (({}, True), ({"import_report_shareable": False}, True), ({"import_report_shareable": True}, False)):
+        assert all(render("{{ %s }}" % w, ansible_check_mode=False, **given) for w in remove["when"]) is removed
+    assert render("{{ %s }}" % remove["when"][1], ansible_check_mode=True) is False  # (--check: nothing removed)
+    results = {"results": [{"item": ours[0], "changed": True}, {"item": "/x/report.check.shareable.txt", "changed": False}]}
+    rendered = render(said["loop"], import_cluster_old_shareable=results)
+    assert [r["item"] for r in rendered] == [ours[0]]
+    assert render(said["ansible.builtin.debug"]["msg"], item=rendered[0]) == (
+        "Removed %s: the shareable copy of an earlier import (import_report_shareable is off)." % ours[0])
+    assert said["vars"]["cassandra_output"] is True
 
 
 def test_the_former_force_name_does_not_force():

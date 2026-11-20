@@ -2640,6 +2640,43 @@
       vars:
         cassandra_output: true
 
+    # import_report_shareable off: the shareable copy and key an earlier import wrote (on by default in earlier
+    # release candidates) describe that import, not this one: removed, each one checked by its first line (the
+    # import's own file only)
+    - name: Remove the shareable copy of an earlier import
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ _ours }}"
+      register: import_cluster_old_shareable
+      when:
+        - not import_report_shareable | default(false) | bool
+        - not ansible_check_mode
+      vars:
+        _dir: "{{ _report_args.report_file | dirname }}"
+        _heads:
+          report.shareable.txt: SHAREABLE COPY of an import_cluster report
+          report.check.shareable.txt: SHAREABLE COPY of an import_cluster report
+          report.shareable.key.txt: "# The key of report.shareable.txt"
+        _ours: >-
+          {%- set out = [] -%}
+          {%- for name, head in _heads.items() -%}
+          {%-   set path = _dir ~ '/' ~ name -%}
+          {%-   if path is file and lookup('ansible.builtin.file', path).startswith(head) -%}
+          {%-     set _ = out.append(path) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Say the shareable copy of an earlier import is removed
+      ansible.builtin.debug:
+        msg: "Removed {{ item.item }}: the shareable copy of an earlier import (import_report_shareable is off)."
+      loop: "{{ import_cluster_old_shareable.results | default([]) | selectattr('changed') | list }}"
+      loop_control:
+        label: "{{ item.item | basename }}"
+      vars:
+        cassandra_output: true
+
     - name: Write the shareable copy of the report
       ansible.builtin.copy:
         content: "{{ _shareable[item.part] | join(_newline) ~ _newline }}"

@@ -2082,21 +2082,22 @@ because of the file's name (``jmxremote.password: 0400``). The run ends with ``r
 kept by hand as its line, their steps in ``report.txt``) and where the report is; nothing else is printed under the
 ``community.cassandra.ops`` callback, which draws each section's rule.
 
-With ``-e import_report_shareable=true`` (off by default), the import also writes ``report.shareable.txt`` next to the report (mode ``0644``), a copy of
-``report.txt`` and ``report.details.txt`` in one file to send to someone who helps (a colleague, a forum, an issue):
-the same sections, hand edits and their lines,
-versions and the import's own notes, with the node names as ``n1``, ``n2``... (in the order of their names, whatever
-their case, a node named by its address too), the clusters as ``c1`` (its name with spaces, ``-`` or ``_``), a data
-center or rack named after the site as ``dc1``, ``r1``... (after the ``dc1`` already in use), every address as
-``IP``, the host names and domains that are not a node's as ``domain1``..., URLs as ``url1``..., the absolute paths
-outside the stock Cassandra and OS directories (``/etc/cassandra``, ``/var/lib/cassandra``, ``/var/log/cassandra``,
-``/usr/bin``...) as ``/path1``..., the names of the inventory and report directories and of your own groups and
-hosts, Medusa's bucket, prefix and fqdn values and the user names (``bucket1``, ``user1``); a name inside a file
-name, a stock path or a compound word too (``/etc/cassandra/ssl/n1.jks``, ``n1-old``); secrets stay masked, every
-line masked again. Common words (``cassandra``, ``data``, a rack ``a``, a cluster named ``cassandra``) are kept; a short host name that is not a
+With ``-e import_report_shareable=true`` (off by default), the import also writes ``report.shareable.txt`` next to the
+report (mode ``0644``), a copy of ``report.txt`` and ``report.details.txt`` in one file to send to someone who helps
+(a colleague, a forum, an issue): the same sections, hand edits and their lines, versions and the import's own notes,
+with the node names as ``n1``, ``n2``... (in the order of their names, whatever their case, a node named by its
+address too), the clusters as ``c1`` (its name with spaces, ``-`` or ``_``), a data center or rack named after the
+site as ``dc1``, ``r1``... (after the ``dc1`` already in use), every address as ``IP``, the host names and domains
+that are not a node's as ``domain1``..., URLs as ``url1``..., the absolute paths outside the stock Cassandra and OS
+directories (``/etc/cassandra``, ``/var/lib/cassandra``, ``/var/log/cassandra``, ``/usr/bin``...) as ``/path1``...,
+the names of the inventory and report directories and of your own groups and hosts, Medusa's bucket, prefix and fqdn
+values and the user names (``bucket1``, ``user1``); a name inside a file name, a stock path or a compound word too
+(``/etc/cassandra/ssl/n1.jks``, ``n1-old``); secrets stay masked, every line masked again. Common words
+(``cassandra``, ``data``, a rack ``a``, a cluster named ``cassandra``) are kept; a short host name that is not a
 node's may remain: read the copy before sharing it. Its key (``n1 = db-paris-01``...) is ``report.shareable.key.txt``,
 mode ``0600`` before anything is written in it, for you only, never in the copy; under ``--check`` only the copy is
-written.
+written. With it off, an import removes the copy and key an earlier import wrote next to the report (known by their
+first line) and says so: they described that import.
 
 The report's convergence (under ``FOR INFO``) is the way from an imported cluster, with values kept per DC, rack or node, to one
 group with every setting in ``group_vars/<cluster group>/``; it is worked out from what the import found and changes
