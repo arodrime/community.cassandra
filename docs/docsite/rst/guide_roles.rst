@@ -2112,10 +2112,12 @@ values and the user names (``bucket1``, ``user1``); a name inside a file name, a
 (``cassandra``, ``data``, a rack ``a``, a cluster named ``cassandra``) are kept; a short host name that is not a
 node's may remain: read the copy before sharing it. Its key (``n1 = db-paris-01``...) is ``report.shareable.key.txt``,
 mode ``0600`` before anything is written in it, for you only, never in the copy; under ``--check`` only the copy is
-written. With it off, an import keeps the copy and key an earlier import wrote next to the report (known by their
-first line) aside as ``<file>.<date>@<time>~``, never removed (the key of a copy already shared must not be lost),
-and says so, with whose report was there when it is not this cluster's: they described that import. A link is kept
-as it is; under ``--check`` it only says what it would do.
+written. The copy and key an earlier import wrote next to the report (known by their first line), and
+``report.shareable.map`` (an earlier release candidate's key), are never removed nor overwritten (the key of a copy
+already shared must not be lost): with it off (they described that import), or when this import writes another text
+in their place, they are moved aside as ``<file>.<date>@<time>~`` and said, with whose report is next to them when it
+is not this cluster's. A link is kept as it is; under ``--check`` it only says what it would do, but for the copy
+``--check`` writes.
 
 The report's convergence (under ``FOR INFO``) is the way from an imported cluster, with values kept per DC, rack or node, to one
 group with every setting in ``group_vars/<cluster group>/``; it is worked out from what the import found and changes

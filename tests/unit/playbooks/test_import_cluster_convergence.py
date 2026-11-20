@@ -23,6 +23,9 @@ COLLECTIONS = os.path.abspath(os.path.join(TOP, "..", "..", ".."))
 with open(os.path.join(TOP, "playbooks", "import_cluster.yml"), encoding="utf-8") as f:
     WRITE = next(p for p in yaml.safe_load(f) if p["name"] == "Write the inventory")
 TASKS = [t for t in WRITE["tasks"] if t["name"] in (
+    "Make the shareable copy of the report", "Find the shareable copy and key of an earlier import",
+    "Move aside the shareable copy and key of an earlier import",
+    "Say what was done with the shareable copy and key of an earlier import",
     "Write report.txt and report.details.txt", "Make the key of the shareable copy readable by its owner only",
     "Write the shareable copy of the report", "Show the summary")]
 
@@ -32,7 +35,7 @@ def playbook(tmp_path, self_check_ok=True):
     layout = cassandra_inventory_layout_over([fake_node(i) for i in range(90)], "Big", [
         {"path": "group_vars/all/tuning.yml", "content": "cassandra_concurrent_reads: 32\n"}])
     (tmp_path / "layout.json").write_text(json.dumps(layout))
-    (tmp_path / "reports" / "big").mkdir(parents=True)
+    (tmp_path / "reports" / "big").mkdir(parents=True, exist_ok=True)  # (a run again: kept)
     report_dir = str(tmp_path / "reports" / "big")
     variables = dict((k, WRITE["vars"][k]) for k in ("_report", "_report_details", "_convergence", "_newline"))
     variables.update(_self_check_ok=self_check_ok, _changes={"changed": [], "removed": [], "existed": []})
@@ -118,6 +121,19 @@ def test_the_shareable_copy(tmp_path, check):
     assert not re.search(r"cass\d{3}|10\.0\.\d+\.\d+|\b[Bb]ig\b|\bbig_", text)
     assert "cass001" not in text
     assert "a copy to share (names, addresses and secrets replaced; check it before sharing): reports/big/%s.shareable.txt" % stem.name in out
+    # run again: the same texts written again, nothing moved aside; the one shared before differs (its key a node
+    # less): moved aside first, said, the new one written
+    files = sorted(p.name for p in stem.parent.iterdir())
+    rc, out = run(tmp_path, "-e", "import_report_shareable=true", *(["--check"] if check else []))
+    assert rc == 0 and sorted(p.name for p in stem.parent.iterdir()) == files, out
+    assert "An earlier import's shareable copy" not in out
+    (key if not check else copy).write_text((key if not check else copy).read_text() + "n91 = cass091\n")
+    rc, out = run(tmp_path, "-e", "import_report_shareable=true", *(["--check"] if check else []))
+    assert rc == 0, out
+    moved = [p for p in stem.parent.iterdir() if p.name.endswith("~")]
+    assert len(moved) == 1 and moved[0].read_text().endswith("n91 = cass091\n"), out
+    assert "An earlier import's shareable copy (this import writes new ones)," in out
+    assert "n91" not in (key if not check else copy).read_text()
 
 
 def test_the_tasks_pass_the_section_on():

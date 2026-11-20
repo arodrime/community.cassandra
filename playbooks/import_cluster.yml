@@ -2584,32 +2584,52 @@
             cassandra_output: true
             cassandra_output_gap: true  # a block of its own (ops callback)
 
-    # import_report_shareable off: the shareable copy and key an earlier import wrote (on by default in earlier
-    # release candidates) describe that import, not this one. Each known by its first line (the import's own),
-    # read before report.txt is written (whose cluster it was: said); kept as <file>.<date>@<time>~, never removed
-    # (the key of a copy already shared must not be lost); a link kept as it is; under --check only said
+    # import_report_shareable: true (default false: none written) also writes a copy of the report to share, next to it
+    # (report.shareable.txt; report.check.shareable.txt under --check): node names n1.., clusters c1.., addresses
+    # IP, the site's host names, domains, URLs, paths, buckets and user names replaced, secrets masked; and its key
+    # (the real names), for the operator only: report.shareable.key.txt, mode 0600 before anything is in it, never in
+    # the copy, not written under --check (.txt: an inventory dir that holds them, Ansible skips them)
+    - name: Make the shareable copy of the report
+      ansible.builtin.set_fact:
+        _import_shareable: >-
+          {{ (_report ~ _newline ~ _newline ~ _report_details) | community.cassandra.cassandra_import_shareable(_layout, _report_args.written,
+               _report_args.report_file, _report_args.cwd) }}
+      when: import_report_shareable | default(false) | bool
+
+    # the shareable copy and key an earlier import wrote (each known by its first line, the import's own), read
+    # before report.txt is written (whose cluster it was: said), never removed nor overwritten (the key of a copy
+    # already shared must not be lost): moved aside as <file>.<date>@<time>~ when import_report_shareable is off
+    # (they describe that import), or when this import writes another text in their place; a link kept as it is;
+    # the key of an earlier release candidate (report.shareable.map) moved aside too; under --check only said,
+    # but for the copy --check writes
     - name: Find the shareable copy and key of an earlier import
       ansible.builtin.set_fact:
         _import_old_shareable: >-
-          {{ _report_args.report_file | dirname
-             | community.cassandra.cassandra_import_old_shareable(_layout.cluster_group, now(fmt='%Y-%m-%d@%H:%M:%S')) }}
-      when: not import_report_shareable | default(false) | bool
+          {{ _report_args.report_file | dirname | community.cassandra.cassandra_import_old_shareable(
+               _layout.cluster_group, now(fmt='%Y-%m-%d@%H:%M:%S'), _new, ansible_check_mode) }}
+      vars:
+        _stem: "{{ (_report_args.report_file | basename | regex_replace('[.]txt$', '')) ~ '.shareable.' }}"
+        # what this import writes there (its key: not under --check)
+        _new: >-
+          {{ {_stem ~ 'txt': _import_shareable.text | join(_newline) ~ _newline}
+             | combine({} if ansible_check_mode else {_stem ~ 'key.txt': _import_shareable.map | join(_newline) ~ _newline})
+             if import_report_shareable | default(false) | bool else None }}
 
-    - name: Keep aside the shareable copy and key of an earlier import
+    - name: Move aside the shareable copy and key of an earlier import
       ansible.builtin.command:
         argv: [mv, -n, --, "{{ item.path }}", "{{ item.backup }}"]
         creates: "{{ item.backup }}"
-      loop: "{{ _import_old_shareable | default([]) | selectattr('action', 'equalto', 'back_up') | list }}"
+      loop: "{{ _import_old_shareable | selectattr('action', 'equalto', 'move') | list }}"
       loop_control:
         label: "{{ item.name }}"
-      when: not ansible_check_mode
+      check_mode: false  # (under --check: only the copy --check writes, found so)
 
     - name: Say what was done with the shareable copy and key of an earlier import
       ansible.builtin.debug:
         msg: >-
           {{ _import_old_shareable | community.cassandra.cassandra_import_old_shareable_lines(
-               _report_args.report_file | dirname, _layout.cluster_group, ansible_check_mode) }}
-      when: _import_old_shareable | default([]) | length > 0
+               _report_args.report_file | dirname, _layout.cluster_group, import_report_shareable | default(false) | bool) }}
+      when: _import_old_shareable | length > 0
       vars:
         cassandra_output: true
 
@@ -2635,11 +2655,7 @@
       # (--check with the report in an inventory dir not there yet: not created)
       when: not ansible_check_mode or _report_args.report_file | dirname is directory
 
-    # import_report_shareable: true (default false: none written) also writes a copy of the report to share, next to it
-    # (report.shareable.txt; report.check.shareable.txt under --check): node names n1.., clusters c1.., addresses
-    # IP, the site's host names, domains, URLs, paths, buckets and user names replaced, secrets masked; and its key
-    # (the real names), for the operator only: report.shareable.key.txt, mode 0600 before anything is in it, never in
-    # the copy, not written under --check (.txt: an inventory dir that holds them, Ansible skips them)
+    # (the copy made above)
     - name: Make the key of the shareable copy readable by its owner only
       ansible.builtin.file:
         path: "{{ _report_args.report_file | regex_replace('[.]txt$', '') ~ '.shareable.key.txt' }}"
@@ -2650,24 +2666,6 @@
       when:
         - import_report_shareable | default(false) | bool
         - not ansible_check_mode
-
-    # the key of the shareable copy of an earlier release candidate (real names, a .map that Ansible would read as
-    # inventory in an inventory dir): the import's own file, removed
-    - name: Remove the key of an earlier shareable copy
-      ansible.builtin.file:
-        path: "{{ _report_args.report_file | regex_replace('[.]txt$', '') ~ '.shareable.map' }}"
-        state: absent
-      register: import_cluster_old_key
-      when: not ansible_check_mode
-
-    - name: Say the key of an earlier shareable copy is removed
-      ansible.builtin.debug:
-        msg: >-
-          Removed {{ import_cluster_old_key.path }}: the key of an earlier import's shareable copy (it held the real
-          names){{ "; this import's is report.shareable.key.txt" if import_report_shareable | default(false) | bool else '' }}.
-      when: import_cluster_old_key is changed
-      vars:
-        cassandra_output: true
 
     - name: Write the shareable copy of the report
       ansible.builtin.copy:
@@ -2686,9 +2684,7 @@
         - not ansible_check_mode or _report_args.report_file | dirname is directory
         - item.part == 'text' or not ansible_check_mode
       vars:
-        _shareable: >-
-          {{ (_report ~ _newline ~ _newline ~ _report_details) | community.cassandra.cassandra_import_shareable(_layout, _report_args.written,
-               _report_args.report_file, _report_args.cwd) }}
+        _shareable: "{{ _import_shareable }}"
 
     # the end of the run: report.txt shorter (the differences and the files kept without their steps)
     - name: Show the summary
