@@ -207,6 +207,22 @@ def argument_lines(role, rows, hosts):
     return out + [ARGUMENTS_WAY_OUT]
 
 
+SHORT = 160  # the most of a handled failure's line
+
+
+def refused_line(role, rows):
+    """A refused role argument check in one line (a failure the playbook handles): its rows, else the ones that fit
+    whole then the names of the others, never a name cut: "the role refused 3: a: a text, not a whole number; b, c;
+    -v shows all"."""
+    line = "%s refused %s" % (role, "; ".join(rows))
+    if len(line) <= SHORT:
+        return line
+    def first(count):  # the first count rows whole, the others by their name
+        names = [row.split(":")[0] for row in rows[count:]]
+        return "%s refused %d: %s; -v shows all" % (role, len(rows), "; ".join(list(rows[:count]) + [", ".join(names)]))
+    return next((first(count) for count in range(len(rows) - 1, 0, -1) if len(first(count)) <= SHORT), first(0))
+
+
 def _task(result):
     """The task of a result (task since ansible-core 2.19, _task before)."""
     return getattr(result, "task", None) or result._task
@@ -527,7 +543,7 @@ class CallbackModule(DefaultCallback):
         self._progress = PROGRESS_COLOR
         self._warning = C.COLOR_WARN
         self._refused = {}  # the refused role arguments of the task running: {(role, rows): [hosts]}, said after it
-        atexit.register(self._say_refused)  # (and at exit: a run that ends before any next task or its stats)
+        atexit.register(self._say_refused_at_exit)  # (a run that ends before any next task or its stats)
 
     def set_options(self, task_keys=None, var_options=None, direct=None):
         super(CallbackModule, self).set_options(task_keys=task_keys, var_options=var_options, direct=direct)
@@ -766,6 +782,14 @@ class CallbackModule(DefaultCallback):
         for (role, rows), hosts in refused.items():
             self._print(argument_lines(role, rows, hosts), color=C.COLOR_ERROR)
 
+    def _say_refused_at_exit(self):
+        """_say_refused at the exit of the process: its output closed already (a pipe gone) says nothing, rather
+        than Python's "Exception ignored in atexit callback" under Ansible's last line."""
+        try:
+            self._say_refused()
+        except (IOError, OSError, ValueError):
+            pass
+
     def v2_playbook_on_handler_task_start(self, task):
         self._say_refused()
         if self._verbose():
@@ -859,11 +883,11 @@ class CallbackModule(DefaultCallback):
         said = err[-1:] if err and (not msg or msg[0] == "non-zero return code") else msg
         refused = argument_errors(res)
         if refused:  # (a role's argument check: its rows, not its message cut at a colon)
-            said = ["%s refused %s" % (refused[0], "; ".join(refused[1]))]
+            said = [refused_line(*refused)]
         host = getattr(result, "host", None) or result._host
         first = said[0] if said else "failed"
         # the playbook says it in full itself (a summary, a refusal): a short line here
-        first = first if len(first) <= 160 else first[:157].rstrip() + "..."
+        first = first if len(first) <= SHORT or refused else first[:SHORT - 3].rstrip() + "..."
         self._display.display("%s: %s: %s (the playbook handles it)" % (host.get_name(), _task(result).get_name(), first))
         self._shown()
         return None

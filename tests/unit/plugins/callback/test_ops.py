@@ -305,6 +305,39 @@ def test_a_refused_role_argument_in_a_rescued_block_said_in_short(tmp_path):
             " number (the playbook handles it)" % _GIVEN_3W) in output, output
 
 
+def test_a_long_rescued_refusal_says_its_count_and_whole_names():
+    # a refusal of many variables in a rescued block: the line keeps whole rows, then the names of the others (never
+    # a name cut half way), the count and where to see all
+    from ansible_collections.community.cassandra.plugins.callback.ops import SHORT, refused_line
+    rows = tuple("%s: '3w' is a text, not a whole number" % name
+                 for name in ("cassandra_num_tokens", "cassandra_heap_new", "cassandra_rpc_port", "cassandra_jmx_port"))
+    line = refused_line("the role", rows)
+    assert len(line) <= SHORT
+    assert line == ("the role refused 4: cassandra_num_tokens: '3w' is a text, not a whole number;"
+                    " cassandra_heap_new, cassandra_rpc_port, cassandra_jmx_port; -v shows all")
+    # no row fits whole with the names of the others: the names alone, whole
+    many = tuple("cassandra_variable_number_%d: 'q' is a text, not a whole number" % i for i in range(5))
+    assert refused_line("the role", many) == "the role refused 5: %s; -v shows all" % ", ".join(
+        "cassandra_variable_number_%d" % i for i in range(5))
+    assert refused_line("the role", rows[:1]) == "the role refused " + rows[0]  # (short: as it is)
+
+
+def test_a_refusal_held_at_exit_with_its_output_closed_says_nothing():
+    # the run's output closed before the exit (a pipe gone): no "Exception ignored in atexit callback"
+    from ansible_collections.community.cassandra.plugins.callback.ops import CallbackModule
+    callback = CallbackModule()
+
+    def closed(self, *args, **kwargs):
+        raise ValueError("I/O operation on closed file.")
+    callback._display = type("D", (), {"verbosity": 0, "columns": 80, "display": closed})()
+    callback._refused = {("the role", ("cassandra_concurrent_reads: a text, not a whole number",)): ["node1"]}
+    callback._say_refused_at_exit()
+    assert callback._refused == {}
+    with pytest.raises(ValueError):  # (anywhere else: not hidden)
+        callback._refused = {("the role", ("x: y",)): ["node1"]}
+        callback._say_refused()
+
+
 def test_any_errors_fatal_stops_and_shows_the_failure(tmp_path):
     playbook = FAILING.replace("  gather_facts: false\n", "  gather_facts: false\n  any_errors_fatal: true\n", 1)
     rc, output = run(tmp_path, playbook)
