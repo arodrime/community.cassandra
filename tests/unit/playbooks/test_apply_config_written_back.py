@@ -257,6 +257,22 @@ def test_a_storage_mode_written_ahead_of_the_node_is_restarted_without_a_record(
         assert variables["_unknown"] == said
 
 
+def test_the_note_of_files_written_after_the_start_fits_and_promises_no_restart():
+    # hostile R4: "not restarted for them" above a plan that restarts the node for the inventory's changes read as a
+    # contradiction; one line of ~240 columns per node
+    say = find(FIND["tasks"], "Say which files changed since Cassandra started, with no record of the ones it started with")
+    variables = with_task_vars(say, {"inventory_hostname": "h-n1", "cassandra_version": "41x",
+                                     "cassandra_config_unknown_files": ["cassandra.yaml", "jvm-server.options",
+                                                                        "jvm17-server.options"]})
+    lines = render(say["ansible.builtin.debug"]["msg"], variables).split("\n")
+    assert all(len(line) <= 79 for line in lines), lines
+    assert lines[0].startswith("h-n1: cassandra.yaml, jvm-server.options, jvm17-server.options written after")
+    assert all(line.startswith("  ") for line in lines[1:])
+    text = " ".join(line.strip() for line in lines)
+    assert "not restarted for them" not in text
+    assert text.endswith("No restart is planned for them alone; rolling_restart applies them.")
+
+
 def test_the_way_out_of_the_jump_guard_and_apply_config_converge():
     # the jump guard's way out (On n1, run rolling_restart --limit n1: it restarts it in the UPGRADING its
     # cassandra.yaml has) passes the guards of rolling_restart; apply_config with UPGRADING in the inventory restarts

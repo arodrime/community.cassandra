@@ -365,11 +365,15 @@
     - name: Say which files changed since Cassandra started, with no record of the ones it started with
       ansible.builtin.debug:
         msg: >-
-          {{ inventory_hostname }}: {{ _unknown | join(', ') }} written after Cassandra started
-          (not by the roles, which keep a record of the files it starts with): not restarted for them. If they
-          changed a setting, run rolling_restart to apply it.
+          {{ (inventory_hostname ~ ': ' ~ _unknown | join(', ') ~ ' written after Cassandra started, not by the roles'
+              ~ ' (they record the files it starts with): it may not run what they say. No restart is planned for'
+              ~ ' them alone; rolling_restart applies them.')
+             | wordwrap(77, break_long_words=false, wrapstring=_nl ~ '  ', break_on_hyphens=false) }}
       vars:
         cassandra_output: true
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        # (77 columns: the next lines are 2 in. Hostile R4: "not restarted for them" read as a contradiction when
+        # the plan restarts the node for the inventory's changes; one line of ~240 columns per node)
         # (5.0: not cassandra.yaml when Cassandra runs an earlier storage_compatibility_mode than it has: restarted)
         _unknown: >-
           {{ cassandra_config_unknown_files | reject('equalto', 'cassandra.yaml') | list
