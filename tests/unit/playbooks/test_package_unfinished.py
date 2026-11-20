@@ -94,3 +94,44 @@ def test_rolling_restart_and_update_java_refuse_it_before_their_question():
     # a node the run does not restart (update_java: on that Java already): not judged
     variables["_cassandra_package_unfinished_hosts"] = ["n2"]
     assert render(stop["vars"]["_refusal"], variables) == []
+
+
+def test_start_rack_rolling_reboot_and_sync_clocks_refuse_it_before_any_change():
+    # (owner r7-Q2) every playbook that starts or restarts Cassandra: start_rack starts it, rolling_reboot's reboot
+    # starts it, sync_clocks restarts the nodes set in a window
+    for playbook, hosts, what, before in (
+            ("start_rack", "{{ ansible_play_hosts }}", "start", "Start Cassandra and wait until the node has joined"),
+            ("rolling_reboot", "{{ ansible_play_hosts }}", "reboot", "Show the plan and confirm the run"),
+            ("sync_clocks", "{{ groups['cassandra_sync_clock_window_True'] | default([]) }}", None,
+             "Show the clocks and confirm the run")):
+        tasks = _tasks(load("playbooks", playbook + ".yml"))
+        names = [t.get("name") for t in tasks]
+        task = [t for t in tasks if (t.get("ansible.builtin.include_role") or {}).get("tasks_from")
+                == "package_unfinished.yml"]
+        assert len(task) == 1, playbook
+        task = task[0]
+        assert names.index(task["name"]) < names.index(before), playbook
+        assert task["ansible.builtin.include_role"]["name"] == "community.cassandra.cassandra_operation"
+        expected = {"_cassandra_package_unfinished_hosts": hosts, "_cassandra_package_unfinished_run": playbook}
+        if what:
+            expected["_cassandra_package_unfinished_what"] = what
+        assert task["vars"] == expected, playbook
+    # start_rack: the start before any node is started, its own words
+    start = _tasks(load("playbooks", "start_rack.yml"))
+    names = [t.get("name") for t in start]
+    assert names.index("Check the run has root on the nodes") < names.index(
+        "Refuse to start a node whose Cassandra package is left half done")
+    stop = load("roles", "cassandra_operation", "tasks", "package_unfinished.yml")[1]
+    hostvars = {"n1": {"cassandra_package_read": {"stdout_lines": ["half-configured 4.1.12"]}},
+                "n2": {"cassandra_package_read": {"stdout_lines": ["installed 4.1.12"]}}}
+    for what, said in ((None, "its restart"), ("start", "its start"), ("reboot", "its reboot")):
+        variables = dict(hostvars=hostvars, ansible_play_hosts=sorted(hostvars),
+                         _cassandra_package_unfinished_hosts=["n1", "n2"])
+        if what:
+            variables["_cassandra_package_unfinished_what"] = what
+        lines = render(stop["vars"]["_refusal"], variables)
+        assert lines[0].startswith("n1: its Cassandra package is half-configured 4.1.12 (dpkg)"), lines
+        assert lines[0].endswith("; %s would run Cassandra from that state." % said)
+        assert "dpkg --force-confdef --force-confold --configure -a" in "\n".join(lines)
+        assert lines[-1] == "then run the same command again."
+        assert not [x for x in lines if x.startswith("n2")]

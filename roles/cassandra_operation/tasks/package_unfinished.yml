@@ -2,8 +2,10 @@
 # A Cassandra package left half done (two rpm packages, a dpkg run interrupted) on a node the run restarts (or starts:
 # the node a resumed run finds stopped): its start would run Cassandra on those files (two releases' jars, or a new
 # release with no plan). Refused before any change, --check too, with the way out of that state (the filter
-# cassandra_package_unfinished_refusal). rolling_restart, update_java (apply_config reads it with its version).
-# _cassandra_package_unfinished_hosts: the nodes the run restarts; _cassandra_package_unfinished_run: its playbook.
+# cassandra_package_unfinished_refusal). rolling_restart, update_java, rolling_reboot, sync_clocks, start_rack
+# (apply_config reads it with its version).
+# _cassandra_package_unfinished_hosts: the nodes the run restarts; _cassandra_package_unfinished_run: its playbook;
+# _cassandra_package_unfinished_what: what it does to them, said in the refusal (restart, the default; start; reboot).
 - name: Read the installed Cassandra package
   ansible.builtin.command:
     argv: >-
@@ -31,6 +33,6 @@
       {%- for h in ansible_play_hosts if h in _cassandra_package_unfinished_hosts -%}
       {%-   set state = hostvars[h].cassandra_package_read.stdout_lines | default([])
                         | community.cassandra.cassandra_package_state -%}
-      {%-   set _ = out.append({'name': h, 'unfinished': state.unfinished, 'what': 'restart'}) -%}
+      {%-   set _ = out.append({'name': h, 'unfinished': state.unfinished, 'what': _cassandra_package_unfinished_what | default('restart')}) -%}
       {%- endfor -%}
       {{ out | community.cassandra.cassandra_package_unfinished_refusal }}

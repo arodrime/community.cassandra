@@ -123,6 +123,17 @@
         name: community.cassandra.cassandra_operation
         tasks_from: root_check.yml
 
+    # a Cassandra package left half done (an interrupted rpm or dpkg run): refused before any node is started (its
+    # start would run Cassandra on those files)
+    - name: Refuse to start a node whose Cassandra package is left half done
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: package_unfinished.yml
+      vars:
+        _cassandra_package_unfinished_hosts: "{{ ansible_play_hosts }}"
+        _cassandra_package_unfinished_run: start_rack
+        _cassandra_package_unfinished_what: start
+
     - name: Start Cassandra and wait until the node has joined
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
