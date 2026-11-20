@@ -149,6 +149,8 @@ def test_start_rack_refuses_only_a_node_it_starts():
     read = tasks[names.index("Read the cassandra unit state")]
     assert read["ansible.builtin.systemd_service"] == {"name": "cassandra"}  # a read: no state asked
     assert read["register"] == "_cassandra_start_rack_unit" and read["check_mode"] is False
+    # a unit systemd cannot load, no systemctl: not a raw error stopping the run, the node checked (unread below)
+    assert read["failed_when"] is False
     task = tasks[names.index(refuse)]
     assert task["ansible.builtin.include_role"] == {"name": "community.cassandra.cassandra_operation",
                                                     "tasks_from": "package_unfinished.yml"}
@@ -179,8 +181,11 @@ def test_start_rack_refuses_only_a_node_it_starts():
 
 
 def test_start_rack_checks_a_running_jvm_its_unit_would_still_start():
-    # the start is decided by the unit: a JVM outside it (unit inactive), or a node being stopped or started (unit
-    # deactivating, activating), is started on the half-done files all the same, so its package is checked
+    # the start is decided by the unit (cassandra_service starts no active unit): a JVM outside it (unit inactive),
+    # a node being stopped or started (unit deactivating, activating), a unit active with no JVM (its reset, then its
+    # start) or not read, is started on the half-done files all the same, so its package is checked; a unit active
+    # with a Cassandra JVM is left running, whatever its main process (MainPID 0 of the package's init script, a
+    # wrapper's pid)
     task = [t for t in _tasks(load("playbooks", "start_rack.yml"))
             if t.get("name") == "Refuse to start a node whose Cassandra package is left half done"][0]
     jvm = {"pid": "4242"}
@@ -188,12 +193,15 @@ def test_start_rack_checks_a_running_jvm_its_unit_would_still_start():
                 "stopping": {"cassandra_jvm": jvm, "_cassandra_start_rack_unit": _unit("deactivating", "4242")},
                 "starting": {"cassandra_jvm": jvm, "_cassandra_start_rack_unit": _unit("activating", "4242")},
                 "other_pid": {"cassandra_jvm": jvm, "_cassandra_start_rack_unit": _unit("active", "77")},
+                "script": {"cassandra_jvm": jvm, "_cassandra_start_rack_unit": _unit("active", "0")},
+                "script_no_jvm": {"cassandra_jvm": {}, "_cassandra_start_rack_unit": _unit("active", "0")},
                 "unit_only": {"cassandra_jvm": {}, "_cassandra_start_rack_unit": _unit("active", "77")},
                 "unread": {"cassandra_jvm": jvm},
+                "unloadable": {"cassandra_jvm": jvm, "_cassandra_start_rack_unit": {"failed": True, "msg": "x"}},
                 "running": {"cassandra_jvm": jvm, "_cassandra_start_rack_unit": _unit("active", "4242")}}
     variables = dict(hostvars=hostvars, ansible_play_hosts=sorted(hostvars))
     assert render(task["vars"]["_cassandra_package_unfinished_hosts"], variables) == [
-        "other_pid", "outside", "starting", "stopping", "unit_only", "unread"]
+        "outside", "script_no_jvm", "starting", "stopping", "unit_only", "unloadable", "unread"]
 
 
 def test_sync_clocks_says_start_of_a_window_node_left_stopped():

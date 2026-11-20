@@ -134,11 +134,12 @@
         name: cassandra
       register: _cassandra_start_rack_unit
       changed_when: false
+      failed_when: false  # (a unit systemd cannot load, no systemctl: not read, the node's package checked)
       check_mode: false  # a read
 
     # a Cassandra package left half done (an interrupted rpm or dpkg run): refused before any node is started (its
-    # start would run Cassandra on those files); a node is not checked only when its unit is active and its main
-    # process is the Cassandra JVM found (the start below leaves it as it is)
+    # start would run Cassandra on those files); a node is not checked only when its unit is active and a Cassandra
+    # JVM runs (the start below leaves it as it is, whatever the unit's main process: cassandra_service)
     - name: Refuse to start a node whose Cassandra package is left half done
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation
@@ -149,8 +150,7 @@
           {%- for h in ansible_play_hosts -%}
           {%-   set pid = (hostvars[h].cassandra_jvm | default({})).pid | default('') | string -%}
           {%-   set unit = (hostvars[h]._cassandra_start_rack_unit | default({})).status | default({}) -%}
-          {%-   if not (pid and unit.ActiveState | default('') == 'active'
-                        and unit.MainPID | default('0') | string == pid) -%}
+          {%-   if not (pid and unit.ActiveState | default('') == 'active') -%}
           {%-     set _ = out.append(h) -%}
           {%-   endif -%}
           {%- endfor -%}
