@@ -163,6 +163,7 @@
     - not cassandra_service_health_force | bool
     - not cassandra_service_health_report_only | default(false) | bool
   vars:
+    # what the check stops on: start_rack's verdict, else this check's problems (the same in the two tasks below)
     _problems: "{{ _cassandra_health_stop_on | default(cassandra_health_problems) }}"
 
 - name: Stop on an unhealthy cluster

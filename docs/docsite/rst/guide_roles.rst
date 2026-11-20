@@ -739,12 +739,13 @@ names them (``cassandra_dc``, ``cassandra_rack``). With RF 2 it warns that
 (LOCAL_)QUORUM fails while the rack is down.
 
 ``start_rack`` starts the rack again and checks the cluster from a node of the rack and from a node outside it, up
-for long; when it waits, it reads again from another node of the rack first. The rack's nodes must be UN; the rest of the
-cluster is only a warning, unless a node could be one of the rack. The tables of the ``cassandra_start_rack`` filter
+for long; when it waits, it reads again from another node of the rack first. The rack's nodes must be UN; the rest
+of the cluster is only a warning, unless a node could be one of the rack. The tables of the ``cassandra_start_rack`` filter
 (``plugins/filter/cassandra_start_rack.py``) give the whole rule; in short:
 
 - a node of the rack is every node the inventory or the ring puts in it, under ``--limit`` too, a node at an address
-  a node of the rack gives in its variables, and a node of the ring no host is known by while a node of the rack is
+  a node of the rack gives in its variables (read from every host: one host's ``ansible_host``, ``127.0.0.1`` on
+  every host with ccm, never takes another node's ring address), and a node of the ring no host is known by while a node of the rack is
   not in the ring at an address it gives (the stop says why, and to give its host the address the ring shows:
   ``broadcast_address`` in ``cassandra_extra_settings``, else ``cassandra_listen_address`` or ``ansible_host``);
 - a node of the rack not reached over ssh stops the run at once; one not UN, or whose ``nodetool status`` fails,
@@ -752,8 +753,9 @@ cluster is only a warning, unless a node could be one of the rack. The tables of
 - a node outside the rack not UN for the node outside the rack read from (down, joining, leaving, moving...), not
   reached over ssh, or whose ``nodetool status`` fails, is a warning row, not waited for; one only the node of the
   rack, just started, sees not UN is waited for first;
-- with every node of the rack in the ring and UN, a ring of another size than the inventory and a schema
-  disagreement of nodes outside the rack only are warning rows too;
+- with every node of the rack in the ring and UN, a ring of another size than the inventory is a warning line, and
+  a schema disagreement a warning row per node on another version, when the rack is on one version that more than
+  half of the nodes are on (the rack alone on its version may be the one behind: it stops);
 - the rest stops the run, as in any cluster check: streams on the node of the rack it checks from (a bootstrap
   elsewhere streaming to it), ``nodetool status`` failing on every node read from, a ring size or schema
   disagreement otherwise.

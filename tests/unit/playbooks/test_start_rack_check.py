@@ -117,7 +117,8 @@ def noted(read, peer=None, names=None, unreached=(), groups=None, hostvars=None,
 def set_facts(name, variables):
     """the facts a set_fact task of the play sets, the play's filter arguments rendered with the last read"""
     variables["_cassandra_start_rack_filter_args"] = dict(
-        (k, render(v, **variables)) for k, v in PLAY["vars"]["_cassandra_start_rack_filter_args"].items())
+        (k, render(v.replace("query('community.cassandra.cassandra_nodes')", "_nodes"), _nodes=sorted(RACKS), **variables))
+        for k, v in PLAY["vars"]["_cassandra_start_rack_filter_args"].items())
     for fact, template in TASKS[name]["ansible.builtin.set_fact"].items():
         variables[fact] = render(template, **variables)
 
@@ -143,7 +144,7 @@ def check(unreached=(), peer=None, then=None, then_peer=None, names=None, groups
                          cassandra_health_self=second, cassandra_health_peer=second_peer)
     assert all(render("{{ %s }}" % w, ansible_check_mode=False, **variables) for w in TASKS[AFTER]["when"])
     set_facts(AFTER, variables)
-    verdict = variables["_cassandra_start_rack_verdict"]
+    verdict = variables["_cassandra_start_rack_last_verdict"]
     stop = TASKS[STOP]
     if all(render("{{ %s }}" % w, ansible_check_mode=False, **variables) for w in stop["when"]):
         return render(stop["vars"]["_cassandra_health_stop_on"], **variables) + render(
@@ -161,7 +162,7 @@ def test_a_node_down_outside_the_rack_is_a_warning_not_a_failure():
     assert problems == []
     assert said == [
         "Rack r2 (dc1): every node is UN.",
-        "WARNING  outside the rack, not waited for:",
+        "WARNING  the rest of the cluster:",
         "  n4  DN",
         "Check the cluster:",
         "  ansible-playbook -i hosts.yml community.cassandra.health_check"]
@@ -188,7 +189,7 @@ def test_a_node_outside_the_rack_seen_in_two_states_is_not_judged_in_either():
 def test_a_node_outside_the_rack_seen_up_by_one_view_is_waited_for():
     # just started, n2 may still see a healthy peer DN for a few seconds; n1 (up for long) sees it UN: not noted,
     # waited for (judged in the check again); seen UN then: nothing said
-    assert noted(ring(n4="DN"), peer=ring())["_cassandra_start_rack_noted"]["outside"] == []
+    assert noted(ring(n4="DN"), peer=ring())["_cassandra_start_rack_first_verdict"]["outside"] == []
     problems, said = check(peer=ring(), then=ring(), n4="DN")
     assert (problems, said) == ([], None)
 
@@ -197,7 +198,7 @@ def test_a_node_outside_the_rack_not_reached_over_ssh():
     # its ring state when the read has one for it, else the probe's fact alone
     problems, said = check(unreached=["n4"])
     assert problems == []
-    assert said[1:3] == ["WARNING  outside the rack, not waited for:", "  n4  not reached over ssh"]
+    assert said[1:3] == ["WARNING  the rest of the cluster:", "  n4  not reached over ssh"]
     problems, said = check(unreached=["n4"], n4="DN", n1="UL")
     assert problems == []
     assert said[2:4] == ["  n1  UL", "  n4  DN  not reached over ssh"]
@@ -245,7 +246,7 @@ def test_a_node_outside_the_rack_no_host_is_known_by_is_a_warning_when_every_rac
     names = dict((a, n) for a, n in ADDRESSES.items() if n != "n4")
     problems, said = check(names=names, unreached=["n4"], n4="DN")
     assert problems == []
-    assert said[1:4] == ["WARNING  outside the rack, not waited for:", "  10.0.0.4  DN",
+    assert said[1:4] == ["WARNING  the rest of the cluster:", "  10.0.0.4  DN",
                          "  n4        not reached over ssh"]
     # a node of the rack not in the ring at an address it gives (n3: none known): 10.0.0.4 may be n3, judged
     # as one of the rack, why said
@@ -270,7 +271,7 @@ def test_a_node_outside_the_rack_the_settled_view_sees_not_un_is_a_warning():
     # n4, outside the rack: a warning, not waited for
     problems, said = check(peer=ring(n4="DN"))
     assert problems == []
-    assert said[1:3] == ["WARNING  outside the rack, not waited for:", "  n4  DN"]
+    assert said[1:3] == ["WARNING  the rest of the cluster:", "  n4  DN"]
 
 
 def test_an_outside_node_still_not_un_after_the_wait_is_a_warning():
@@ -278,7 +279,7 @@ def test_an_outside_node_still_not_un_after_the_wait_is_a_warning():
     # a warning row, not a stop
     problems, said = check(peer=ring(), then=ring(n4="DN"), n4="DN")
     assert problems == []
-    assert said[1:3] == ["WARNING  outside the rack, not waited for:", "  n4  DN"]
+    assert said[1:3] == ["WARNING  the rest of the cluster:", "  n4  DN"]
     # n1 joins outside the rack during the wait: its row too, with n4's
     problems, said = check(peer=ring(), then=ring(n1="UJ", n4="DN"), n4="DN")
     assert problems == [] and said[2:4] == ["  n1  UJ", "  n4  DN"]
@@ -290,7 +291,7 @@ def test_an_outside_node_still_not_un_after_the_wait_is_a_warning():
 def test_after_the_wait_a_nodetool_failing_outside_the_rack_is_a_warning_unless_no_ring_was_read():
     failing = [{"kind": "nodetool", "on": "n1", "error": "x", "text": "nodetool status failed on n1: x"}]
     args = dict(members=["n2", "n3"], dc="dc1", rack="r2", checker="n2", peer="n1",
-                addresses=dict((a, n) for a, n in ADDRESSES.items()), noted={})
+                addresses=dict((a, n) for a, n in ADDRESSES.items()), first_verdict={})
     verdict = cassandra_rack_verdict(failing, reads=[ring()], **args)
     assert (verdict["problems"], verdict["failed"]) == ([], ["n1"])
     # no ring read at all: nothing judged, the failure stops the run
@@ -306,14 +307,14 @@ def test_only_after_the_wait_the_peer_failing_outside_the_rack_is_said():
     failed = {"msg": "nodetool gets no answer from JMX on 127.0.0.1 (connection refused): x"}
     problems, said = check(peer=ring(), then=ring(), then_peer=failed, n4="DN")
     assert problems == []
-    assert said[1:3] == ["WARNING  outside the rack, not waited for:", "  n1  nodetool status failed"]
+    assert said[1:3] == ["WARNING  the rest of the cluster:", "  n1  nodetool status failed"]
 
 
 def test_after_the_wait_a_node_outside_the_rack_seen_not_un_by_one_view_is_said():
     # n2 alone sees n4 DN before and after the wait (n1 sees it UN): not a stop, and not lost: its row
     problems, said = check(peer=ring(), then=ring(n4="DN"), then_peer=ring(), n4="DN")
     assert problems == []
-    assert said[1:3] == ["WARNING  outside the rack, not waited for:", "  n4  DN"]
+    assert said[1:3] == ["WARNING  the rest of the cluster:", "  n4  DN"]
 
 
 def test_a_node_noted_before_the_wait_keeps_its_row_after_it():
@@ -329,12 +330,12 @@ def test_a_reader_whose_nodetool_failed_does_not_count():
     failed = {"msg": "nodetool gets no answer from JMX on 127.0.0.1 (connection refused): x"}
     problems, said = check(peer=failed, then=ring(n4="DN"), n4="DN")
     assert problems == []
-    assert said[1:4] == ["WARNING  outside the rack, not waited for:", "  n4  DN",
+    assert said[1:4] == ["WARNING  the rest of the cluster:", "  n4  DN",
                          "  n1  nodetool status failed"]
     variables = noted(ring(n4="DN"), peer=failed)
     assert check_var("_cassandra_health_not_peers", variables) == "n4,n1"
     # n4 seen DN by n2 alone counts, n1's read failed: noted (not waited for)
-    assert [n["name"] for n in variables["_cassandra_start_rack_noted"]["outside"]] == ["n4"]
+    assert [n["name"] for n in variables["_cassandra_start_rack_first_verdict"]["outside"]] == ["n4"]
 
 
 def test_a_node_the_ring_puts_in_the_rack_is_one_of_the_rack():
@@ -419,7 +420,7 @@ def test_checked_from_a_node_of_the_rack_and_not_under_check():
     # the check again waits, reports; the stop after it, on the rack's own problems (the role's stop alone)
     assert TASKS[CHECK]["vars"]["cassandra_service_health_report_only"] is True
     assert NAMES.index(CHECK) < NAMES.index(AFTER) < NAMES.index(STOP) < NAMES.index(SAY)
-    assert TASKS[STOP]["vars"]["_cassandra_health_stop_on"] == "{{ _cassandra_start_rack_verdict.problems }}"
+    assert TASKS[STOP]["vars"]["_cassandra_health_stop_on"] == "{{ _cassandra_start_rack_last_verdict.problems }}"
     assert TASKS[STOP]["vars"]["_cassandra_health_again"] == "run start_rack again"
     assert TASKS[STOP]["ansible.builtin.include_role"]["tasks_from"] == "cluster_health.yml"
     assert "cassandra_service_health_report_only" not in TASKS[STOP]["vars"]
@@ -495,7 +496,7 @@ def test_a_rack_node_given_by_an_ipv6_address_written_otherwise_is_found_in_the_
     read = {"cluster_status": {"dc1": {"nodes": nodes}}}
     found = cassandra_health_findings([{"from": "n2", "result": read}, {"from": "n1", "result": read}], 4, "n2",
                                       names={}, **OK)
-    verdict = cassandra_rack_verdict(found, ["n2", "n3"], "dc1", "r2", "n2", "n1", reads=[read], noted={},
+    verdict = cassandra_rack_verdict(found, ["n2", "n3"], "dc1", "r2", "n2", "n1", reads=[read], first_verdict={},
                                      addresses={"2001:db8::2": "n2", "2001:db8::3": "n3"})
     assert verdict["problems"] == [] and verdict["unknown_lines"] == []
     assert [n["address"] for n in verdict["outside"]] == ["2001:db8:0:0:0:0:0:4"]
@@ -506,11 +507,14 @@ def test_the_ring_size_is_a_warning_when_the_rack_is_in_the_ring_and_up():
     read = ring()
     read["cluster_status"]["dc1"]["nodes"] = [n for n in read["cluster_status"]["dc1"]["nodes"] if n["address"] != "10.0.0.4"]
     variables = noted(read)
-    assert variables["_cassandra_start_rack_noted"]["problems"] == []
-    assert variables["_cassandra_start_rack_noted"]["warnings"] == [["the ring", "3 nodes, the inventory 4"]]
+    assert variables["_cassandra_start_rack_first_verdict"]["problems"] == []
+    assert variables["_cassandra_start_rack_first_verdict"]["ring_size"] == [[3, 4]]
     problems, said = check_read(read)
     assert problems == []
-    assert said[1:3] == ["WARNING  outside the rack, not waited for:", "  the ring  3 nodes, the inventory 4"]
+    assert said[1:3] == ["WARNING  the ring has 3 nodes, the inventory 4", "Check the cluster:"]
+    # with a node outside the rack down too: each under its own heading
+    problems, said = check_read(ring(n1="DN"), count=3)
+    assert said[1:4] == ["WARNING  the rest of the cluster:", "  n1  DN", "WARNING  the ring has 4 nodes, the inventory 3"]
     # a node of the rack (n3) is the one missing: a stop
     read = ring()
     read["cluster_status"]["dc1"]["nodes"] = [n for n in read["cluster_status"]["dc1"]["nodes"] if n["address"] != "10.0.0.3"]
@@ -534,7 +538,12 @@ def test_a_schema_disagreement_of_nodes_outside_the_rack_is_a_warning():
                                          "bbbb": ["10.0.0.4:7000"]})
     problems, said = check_read(ring(), schema=schema, ok=dict(schema=schema))
     assert problems == []
-    assert said[2] == "  10.0.0.4  on another schema version than the rack"
+    assert said[1:3] == ["WARNING  the rest of the cluster:", "  n4  on another schema version than the rack"]
+    # n4 down too: one row; an address no host has: the address
+    schema = dict(SCHEMA, schema_status={"aaaa": ["10.0.0.1", "10.0.0.2", "10.0.0.3"], "bbbb": ["10.0.0.4", "10.0.0.9"]})
+    problems, said = check_read(ring(n4="DN"), schema=schema, ok=dict(schema=schema))
+    assert said[1:4] == ["WARNING  the rest of the cluster:", "  n4        DN  on another schema version than the rack",
+                         "  10.0.0.9  on another schema version than the rack"]
     # a node of the rack not UN: the schema is not judged the rest of the cluster's either
     problems, dummy = check_read(ring(n3="DN"), schema=schema, ok=dict(schema=schema))
     assert problems == ["n3 (10.0.0.3, r2) is DN, seen from n1 and n2", "schema disagreement: " + SCHEMA["msg"]]
@@ -542,10 +551,30 @@ def test_a_schema_disagreement_of_nodes_outside_the_rack_is_a_warning():
     schema = dict(SCHEMA, schema_status={"aaaa": ["10.0.0.1", "10.0.0.2", "10.0.0.4"], "bbbb": ["10.0.0.3"]})
     problems, dummy = check_read(ring(), schema=schema, ok=dict(schema=schema))
     assert problems == ["schema disagreement: " + SCHEMA["msg"]]
-    # a node of the rack not listed (UNREACHABLE for describecluster), or the last read failed: a stop
+    # the rack alone on its version (the others' majority on another one, or the cluster split even): the rack
+    # may be the one behind, a stop
+    for status in ({"aaaa": ["10.0.0.2", "10.0.0.3"], "bbbb": ["10.0.0.1", "10.0.0.4", "10.0.0.9"]},
+                   {"aaaa": ["10.0.0.2", "10.0.0.3"], "bbbb": ["10.0.0.1", "10.0.0.4"]}):
+        schema = dict(SCHEMA, schema_status=status)
+        assert check_read(ring(), schema=schema, ok=dict(schema=schema))[0] == ["schema disagreement: " + SCHEMA["msg"]]
+    # a node of the rack not listed (UNREACHABLE for describecluster), none listed, or the last read failed: a stop
     for schema in (dict(SCHEMA, schema_status={"aaaa": ["10.0.0.1", "10.0.0.2"], "bbbb": ["10.0.0.4"]}),
+                   dict(SCHEMA, schema_status={"aaaa": ["10.0.0.1"], "bbbb": ["10.0.0.4"]}),
                    dict(SCHEMA, rc=1, schema_status={"aaaa": ["10.0.0.1", "10.0.0.2", "10.0.0.3"], "bbbb": ["10.0.0.4"]})):
         assert check_read(ring(), schema=schema, ok=dict(schema=schema))[0] == ["schema disagreement: " + SCHEMA["msg"]]
+
+
+def test_ccm_like_hosts_at_one_ansible_host_are_judged_by_their_own_address():
+    # every ansible_host 127.0.0.1, each node listening on 127.0.0.<n>: n1 (r1, down) is outside the rack, not
+    # taken for a node of the rack by n2's or n3's ansible_host
+    ccm = dict((n, dict(v, ansible_host="127.0.0.1", cassandra_listen_address="127.0.0.%s" % n[1:]))
+               for n, v in HOSTVARS.items())
+    names = dict(("127.0.0.%s" % n[1:], n) for n in RACKS)
+    nodes = [{"address": a, "rack": RACKS[n], "status": "D" if n == "n1" else "U", "state": "N"}
+             for a, n in sorted(names.items())]
+    verdict = noted({"cluster_status": {"dc1": {"nodes": nodes}}}, names=names, hostvars=ccm)[
+        "_cassandra_start_rack_first_verdict"]
+    assert verdict["problems"] == [] and [n["name"] for n in verdict["outside"]] == ["n1"]
 
 
 def test_why_lines_are_from_the_last_read():
@@ -564,19 +593,22 @@ def test_under_force_the_rack_is_not_said_up():
     verdict = {"outside": [{"address": "10.0.0.4", "name": "n4", "states": ["DN"]}], "failed": [], "warnings": [],
                "problems": ["n3 (10.0.0.3, r2) is DN, seen from n1"]}
     assert cassandra_rack_outside_lines(verdict, [], "dc1", "r2", "x")[:2] == [
-        "WARNING  outside the rack, not waited for:", "  n4  DN"]
+        "WARNING  the rest of the cluster:", "  n4  DN"]
 
 
-def check_read(read, schema=None, ok=None):
-    """check() with a first read given (the same after the wait), a schema result"""
+def check_read(read, schema=None, ok=None, count=4):
+    """check() with a first read given (the same after the wait), a schema result, the inventory's node count"""
     variables = noted(read, schema=schema)
     variables["cassandra_health_findings"] = cassandra_health_findings(
-        [{"from": "n2", "result": read}, {"from": "n1", "result": read}], 4, "n2", names=ADDRESSES, **dict(OK, **(ok or {})))
+        [{"from": "n2", "result": read}, {"from": "n1", "result": read}], count, "n2", names=ADDRESSES,
+        **dict(OK, **(ok or {})))
     set_facts(NOTE, variables)
     set_facts(AFTER, variables)
-    verdict = variables["_cassandra_start_rack_verdict"]
+    verdict = variables["_cassandra_start_rack_last_verdict"]
     if verdict["problems"]:
         return verdict["problems"], None
     say = TASKS[SAY]
     variables.update((k, render(v, **variables)) for k, v in say["vars"].items() if k.startswith("_"))
+    if not all(render("{{ %s }}" % w, ansible_check_mode=False, **variables) for w in say["when"]):
+        return [], None
     return [], render(say["ansible.builtin.debug"]["msg"], **variables)
