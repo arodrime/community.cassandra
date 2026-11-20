@@ -5,6 +5,8 @@ __metaclass__ = type
 # repository first; missing, a stop with the package manager's words and the way out, before any change (else dnf
 # or apt failed later, under --check at "Install Cassandra Packages", its reason dropped).
 
+import subprocess
+
 import pytest
 
 from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import (
@@ -70,15 +72,45 @@ def test_a_repository_dnf_cannot_read_is_not_said_missing_the_release():
 def test_the_check_honours_the_excludes_the_install_honours():
     # (versionlock or excludepkgs on cassandra: the package module refuses the release; dnf download, with
     # cassandra_java_home, ignores them)
-    shell = " ".join(render(LOOK["ansible.builtin.shell"], dict(BASE, _own_repo=False, cassandra_version="41x")).split())
-    assert "--disableexcludes" not in shell
-    shell = render(LOOK["ansible.builtin.shell"], dict(BASE, _own_repo=False, cassandra_version="41x",
-                                                       _cassandra_java_home="/opt/x/jdk"))
-    assert "--disableexcludes=all" in shell
+    def shell(**more):
+        variables = with_task_vars(LOOK, dict(BASE, cassandra_repository_manage=False, cassandra_version="41x", **more))
+        return " ".join(render(LOOK["ansible.builtin.shell"], variables).split())
+
+    # (the list as the install sees it first; the exclusions lifted only to tell an excluded release apart)
+    assert shell().startswith("dnf -q --showduplicates list available cassandra-4.1.12 2>&1 ||")
+    assert shell(_cassandra_java_home="/opt/x/jdk") == \
+        "dnf -q --showduplicates list available --disableexcludes=all cassandra-4.1.12 2>&1"
 
 
 def test_dnf_reads_the_role_s_repository_alone():
-    shell = render(LOOK["ansible.builtin.shell"], dict(BASE, _own_repo=True, cassandra_version="41x"))
+    shell = render(LOOK["ansible.builtin.shell"], with_task_vars(LOOK, dict(BASE, cassandra_repository_manage=True,
+                                                                           cassandra_version="41x")))
     assert "--disablerepo='*' --enablerepo=cassandra-41x cassandra-4.1.12" in " ".join(shell.split())
-    shell = render(LOOK["ansible.builtin.shell"], dict(BASE, _own_repo=False, cassandra_version="41x"))
+    shell = render(LOOK["ansible.builtin.shell"], with_task_vars(LOOK, dict(BASE, cassandra_repository_manage=False,
+                                                                           cassandra_version="41x")))
     assert "--enablerepo" not in shell
+
+
+def _listed(tmp_path, excluded, **variables):
+    """The look-up's shell run against a dnf that has cassandra-4.1.12, behind an exclusion or not."""
+    variables = with_task_vars(LOOK, dict(BASE, cassandra_version="41x", cassandra_repository_manage=True, **variables))
+    shell = render(LOOK["ansible.builtin.shell"], variables)
+    dnf = tmp_path / "dnf"
+    dnf.write_text('#!/bin/sh\ncase "$*" in *--disableexcludes=all*) echo "cassandra.noarch 4.1.12-1 cassandra-41x";'
+                   ' exit 0;; esac\n%s\n' % ('echo "Error: No matching Packages to list"; exit 1' if excluded else
+                                             'echo "cassandra.noarch 4.1.12-1 cassandra-41x"'))
+    dnf.chmod(0o755)
+    return subprocess.run(["sh", "-c", shell], capture_output=True, text=True, env={"PATH": "%s:/usr/bin:/bin" % tmp_path})
+
+
+def test_a_release_the_node_excludes_is_said_excluded(tmp_path):
+    # (versionlock or excludepkgs: the install refuses it; "add it to the repository" would send the operator the
+    # wrong way)
+    run = _listed(tmp_path, excluded=True)
+    assert run.returncode == 1 and run.stdout.splitlines() == [
+        "Error: No matching Packages to list",
+        "cassandra-4.1.12 is in the repository, excluded on this node (dnf excludepkgs or versionlock)"]
+    said = _said(cassandra_install_release={"rc": 1, "stdout": run.stdout, "stdout_lines": run.stdout.splitlines()})
+    assert said[2] == ("Way out: lift the exclusion of cassandra on the node (excludepkgs in dnf.conf or the repository"
+                       " file, or dnf versionlock delete cassandra), then run again.")
+    assert _listed(tmp_path, excluded=False).returncode == 0

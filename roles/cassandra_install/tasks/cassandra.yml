@@ -65,15 +65,20 @@
     || { apt-cache madison cassandra 2>&1 | head -5; echo "no cassandra {{ cassandra_package_version }} in apt-cache madison cassandra"; exit 1; }
     {% else %}
     dnf -q --showduplicates list available
-    {{ '--disableexcludes=all' if _cassandra_java_home != '' else '' }}
-    {{ ("--disablerepo='*' --enablerepo=" ~ ('cassandra-' ~ cassandra_version) | quote) if _own_repo | bool else '' }}
-    {{ ('cassandra-' ~ cassandra_package_version) | quote }} 2>&1
+    {{ '--disableexcludes=all' if _cassandra_java_home != '' else '' }} {{ _repos }} {{ _name }} 2>&1
+    {% if _cassandra_java_home == '' %}
+    || { dnf -q --showduplicates list available --disableexcludes=all {{ _repos }} {{ _name }} >/dev/null 2>&1 &&
+    echo "{{ _name }} is in the repository, excluded on this node (dnf excludepkgs or versionlock)"; exit 1; }
+    {% endif %}
     {% endif %}
   vars:
     # the repository the role manages alone, as the download reads it (an unreachable OS repository on an
     # air-gapped site is not read); the excludes and versionlock as the install honours them (the package module),
     # not the download (cassandra_java_home: dnf download ignores them)
     _own_repo: "{{ cassandra_repository_manage | default(not cassandra_offline | default(false) | bool) | bool }}"
+    _repos: >-
+      {{ ("--disablerepo='*' --enablerepo=" ~ ('cassandra-' ~ cassandra_version) | quote) if _own_repo | bool else '' }}
+    _name: "{{ ('cassandra-' ~ cassandra_package_version) | quote }}"
   register: cassandra_install_release
   changed_when: false
   failed_when: false
@@ -107,8 +112,11 @@
     _changed: >-
       Its Cassandra package was not changed{{ '; its repository file was written by this run'
       if not _cassandra_install_check and _cassandra_repository_items | default([]) | length > 0 else '' }}.
+    _excluded: "{{ cassandra_install_release.stdout | default('') is search('excluded on this node') }}"
     _way_out: >-
       {{ 'Way out: make that repository answer on the node, then run again.' if _unread | bool else
+         'Way out: lift the exclusion of cassandra on the node (excludepkgs in dnf.conf or the repository file, or'
+         ~ ' dnf versionlock delete cassandra), then run again.' if _excluded | bool else
          'Way out: set cassandra_package_version to a release it lists (' ~ ('apt-cache madison cassandra'
          if ansible_facts['os_family'] == 'Debian' else 'dnf --showduplicates list cassandra') ~ ' there), or add that'
          ~ ' release to the repository, then run again.' }}
