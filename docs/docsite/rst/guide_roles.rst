@@ -1027,7 +1027,8 @@ categories, each shown in the plan and under ``--check``. Every variable of the 
   Whatever the reasons, a node restarts once, all of them done in that restart. A unit file that differs only in
   systemd's handling of the service (``Restart``, ``TimeoutStopSec``, the drain on stop) changes nothing for the
   running Cassandra: written at its next restart, said under the node.
-- **C, a procedure of its own**: the run stops before changing anything and gives the command. Another series
+- **C, a procedure of its own**: the run stops before changing anything and gives the command (``--check`` stops
+  at the same point, with the same words). Another series
   (``cassandra_version``): ``upgrade -e cassandra_upgrade_phase=preflight``. An older release than the one a node runs:
   set ``cassandra_package_version`` back to it. A host of the cluster's group not in the ring, or one marked
   ``cassandra_node_state: absent`` still in it: ``topology --check``, then ``topology``. A node of the ring that no host
@@ -1035,7 +1036,8 @@ categories, each shown in the plan and under ``--check``. Every variable of the 
   of the series also stops when it would not start with the node's settings, or when it is newer than the releases
   the collection's notes cover (``plugins/plugin_utils/cassandra_patch_notes.py``: what each release refuses to start
   with, the defaults it changes, said in the plan when a node crosses it): read its ``NEWS.txt``, then ``-e
-  cassandra_allow_unknown_patch=true``.
+  cassandra_allow_unknown_patch=true``. A release the node's repository does not have stops the plan with the
+  package manager's words.
 - **D, refused**: what a joined node keeps for life, ``cassandra_cluster_name``, ``cassandra_num_tokens``,
   ``cassandra_partitioner``, the snitch, its dc and rack (refused by ``cassandra_config``, see `Inventory`_), and a
   ``cassandra_initial_token`` that is neither the one its ``cassandra.yaml`` has nor the token it owns in the ring
