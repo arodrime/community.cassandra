@@ -7,7 +7,8 @@ minor_changes:
     ``cassandra_java_version`` gets it installed and checked in its one restart, as ``update_java`` does (their plan,
     install and check now shared); what the ``cassandra`` unit gives the running Cassandra (user, limits,
     environment) is compared with the running JVM's, a difference restarting it, the unit written in that restart
-    (an environment value that holds a secret shown masked).
+    (an environment value that holds a secret shown masked; in a container, a limit above what its systemd may give
+    compared at that cap, so that no restart is planned at every run).
   - >-
     apply_config - a newer release of the node's series (``cassandra_package_version``) is applied in the node's one
     restart: the package updated with Cassandra stopped (the upgrade's own step; with the repository and packages

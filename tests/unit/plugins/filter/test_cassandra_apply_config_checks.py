@@ -169,3 +169,21 @@ def test_the_versions_described():
     assert cassandra_described_versions(text) == {"10.0.0.1": "4.1.5", "10.0.0.2": "4.1.5"}
     assert cassandra_described_versions("Database versions:\n\t5.0.2: [[2001:db8::1]:7000]\n") == {"2001:db8::1": "5.0.2"}
     assert cassandra_described_versions("") == {}
+
+
+def test_a_limit_the_host_caps_plans_no_restart():
+    # (a container: the unit's LimitNOFILE above what the host lets systemd give, the JVM gets the host's cap; a
+    # restart would give it the same: none planned, every run)
+    capped = LIMITS.replace("100000               100000", "524288               524288")
+    host = LIMITS.replace("100000               100000", "524288               524288")
+    running = {"user": "cassandra", "group": "cassandra", "limits": capped, "environment": "", "ceiling": host}
+    wanted = dict(WANTED, limits=dict(WANTED["limits"], nofile=1048576))
+    assert cassandra_apply_config_unit(running, wanted) == []
+    # under the cap: compared as it is
+    assert cassandra_apply_config_unit(dict(running, limits=LIMITS), wanted) == [
+        {"item": "unit LimitNOFILE", "before": "100000", "after": "1048576 (524288: the host's cap)"}]
+    # a privileged container: its systemd gave the unit's limit past its own: the same, nothing to do
+    raised = LIMITS.replace("100000               100000", "1048576              1048576")
+    assert cassandra_apply_config_unit(dict(running, limits=raised), wanted) == []
+    # no cap read: as before
+    assert len(cassandra_apply_config_unit(dict(running, ceiling=""), wanted)) == 1

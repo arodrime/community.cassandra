@@ -160,11 +160,19 @@ def _proc_limits(text):
     return out
 
 
+def _lower(value, cap):
+    """The lower of a limit and the cap over it ('unlimited' above any number)."""
+    if cap == "unlimited" or not isinstance(cap, int):
+        return value
+    return cap if value == "unlimited" or (isinstance(value, int) and value > cap) else value
+
+
 def cassandra_apply_config_unit(running, wanted):
     """What the running Cassandra got from its unit and what the role's unit gives at its next start -> [{item,
     before, after}] of what differs (empty: the unit changes nothing for it, whatever its file says).
-    running: {user, group, limits: /proc/<pid>/limits, environment: systemctl show -p Environment --value} (read on
-    the node; none read: nothing compared); wanted: {user, group, limits: {nofile, nproc, memlock, as} (none: the
+    running: {user, group, limits: /proc/<pid>/limits, environment: systemctl show -p Environment --value, ceiling:
+    /proc/1/limits in a container, the most its systemd may give (a limit above it compared at it)} (read on the
+    node; none read: nothing compared); wanted: {user, group, limits: {nofile, nproc, memlock, as} (none: the
     unit sets none, the package's init script), environment: {name: value}}. The environment compared is the unit's
     (what the unit sets), not all of the JVM's (bin/cassandra adds its own)."""
     running, wanted = dict(running or {}), dict(wanted or {})
@@ -176,12 +184,15 @@ def cassandra_apply_config_unit(running, wanted):
         if have and want and have != want:
             changes.append({"item": "unit " + ("User" if key == "user" else "Group"), "before": have, "after": want})
     limits = _proc_limits(running.get("limits"))
+    ceiling = _proc_limits(running.get("ceiling"))  # (what systemd itself may give: a container's cap)
     for key, value in sorted((wanted.get("limits") or {}).items()):
         if key in limits and value not in (None, ""):
             want = _limit(value, key in ("memlock", "as"))
-            if limits[key] != want:
+            capped = tuple(_lower(w, ceiling[key][1]) for w in want) if key in ceiling else want
+            if limits[key] not in (want, capped):  # (a privileged container's systemd raises past its own cap)
                 shown = "%s" % limits[key][0] if limits[key][0] == limits[key][1] else "%s:%s" % limits[key]
-                changes.append({"item": "unit Limit%s" % key.upper(), "before": shown, "after": str(value)})
+                cap = " (%s: the host's cap)" % ceiling[key][1] if capped != want else ""
+                changes.append({"item": "unit Limit%s" % key.upper(), "before": shown, "after": str(value) + cap})
     have = cassandra_unit_environment(running.get("environment") or "")
     want = dict((str(k), str(v)) for k, v in (wanted.get("environment") or {}).items())
     for name in sorted(set(have) | set(want)):

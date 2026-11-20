@@ -25,10 +25,11 @@ ACTION = load("roles", "cassandra_operation", "tasks", "action_apply_config.yml"
 
 
 def needs(changes=(), java=False, version=None, unit_nofile=100000, extras=None, running=True, unit_differs=False,
-          timesync=False, firewall=None):
+          timesync=False, firewall=None, ceiling=None):
     """What the plan finds for a running node imported (no record of its start): its facts by name."""
     unit = {"stdout_lines": ["user=cassandra", "group=cassandra",
-                             "limits=" + base64.b64encode(LIMITS.encode()).decode(), "environment="]} if running else {}
+                             "limits=" + base64.b64encode(LIMITS.encode()).decode(), "environment="]
+            + (["ceiling=" + base64.b64encode(ceiling.encode()).decode()] if ceiling else [])} if running else {}
     variables = {"_cassandra_config_changes": list(changes), "_cassandra_config_new": {}, "cassandra_conf_dir": CONF,
                  "_cassandra_config_header": [], "cassandra_medusa_enabled": False,
                  "cassandra_pending_snapshot": {"failed": True}, "_cassandra_config_perm_changes": [],
@@ -317,3 +318,11 @@ def test_version_verify_says_the_way_out():
                         "cassandra_package_version": "4.1.12", "ansible_facts": {"os_family": "RedHat"}})
     assert said.startswith("n1 runs ReleaseVersion: 4.1.11, not 4.1.12") and "rpm -q cassandra" in said
     assert said.endswith("fix it, then run the same command again.")
+
+
+def test_a_limit_a_container_caps_restarts_nothing():
+    # (rootless docker, LXC: the unit's LimitNOFILE above the container's cap; the JVM got the cap)
+    assert needs(unit_nofile=1048576, ceiling=LIMITS)["then"] == "none"
+    assert needs(unit_nofile=1048576)["then"] == "restart"
+    read = find(FIND["tasks"], "Read what the running Cassandra got from its unit")["ansible.builtin.shell"]
+    assert 'systemd-detect-virt -cq 2>/dev/null && echo "ceiling=$(base64 -w0 < /proc/1/limits)"' in read
