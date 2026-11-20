@@ -194,11 +194,12 @@ def test_the_action_restarts_starts_or_only_writes():
     names = [t["name"] for t in tasks]
     # a restart loop is stopped before the write: it would not come up on the former config
     assert names == ["Clear the unit's failed starts", "Check the JVM a file is written back for still runs",
+                     "Apply the repository of the release, then look for the release in it",
                      "Install the Java this node moves to", "Install the Java this node moves to, its Cassandra release kept",
-                     "Update the Cassandra package of a node not running",
-                     "Write the config", "Set up Medusa", "Apply the repository, the packages and the firewall",
-                     "Apply the repository and the packages, its Cassandra release kept",
-                     "Look for the release in the repository written", "Check the files written back",
+                     "Update the Cassandra package of a node not running", "Note that the config is being written",
+                     "Write the config", "Note that the config is written", "Set up Medusa",
+                     "Apply the repository, the packages and the firewall",
+                     "Apply the packages, its Cassandra release kept", "Check the files written back",
                      "Record the files written with no effect as the ones the running Cassandra runs with",
                      "Report what would be written", "Report what the repository, the packages and the firewall would get",
                      "Report what Medusa would get",
@@ -217,8 +218,10 @@ def test_the_action_restarts_starts_or_only_writes():
                                                    "Install the Java this node moves to, its Cassandra release kept",
                                                    "Update the Cassandra package of a node not running",
                                                    "Apply the repository, the packages and the firewall",
-                                                   "Apply the repository and the packages, its Cassandra release kept",
-                                                   "Look for the release in the repository written",
+                                                   "Apply the packages, its Cassandra release kept",
+                                                   "Apply the repository of the release, then look for the release in it",
+                                                   # (the stage of the stop's row: test_cassandra_summary.py)
+                                                   "Note that the config is being written", "Note that the config is written",
                                                    "Report what the repository, the packages and the firewall would get",
                                                    "Check it runs the new Java", "Check it runs the new release")]
     tasks.pop()  # the mark of a stop in its restart window (os_window.yml), removed once up again
