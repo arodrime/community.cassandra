@@ -5,13 +5,17 @@
 # The record of the config the running Cassandra started with (the sha1 of each file, by its path, and _jvm: the
 # pid and start of that JVM, the only one the record is trusted for), written on the node with its Python
 # (python -c, one of these commands in argv). Python 2.7 and 3.6+.
-#   start <record> <conf dir> <unit file>...: after a start, every file of the conf dir (not hidden) and the unit
-#       files (the unit, its drop-in) that exist, but the ones written since that JVM started (what it read is
-#       unknown); the JVM, when one runs
+#   start <record> <conf dir> [--same=<JSON>] <unit file>...: after a start, every file of the conf dir (not
+#       hidden) and the unit files (the unit, its drop-in) that exist, but the ones written since that JVM started
+#       (what it read is unknown); the JVM, when one runs. --same: {file name: {disk, same}}, a file cassandra_config
+#       left as it is (the same settings as its rendering, written another way): when the file read has the sha1
+#       disk, the sha1 same of that rendering is recorded in _same_settings ({path: sha1}), so that the file written
+#       back later as the role renders it is known to hold the settings that start read
 #   update <record> <request>: some files recorded as the running Cassandra's, the request (JSON) saying when:
 #       jvm, that JVM's {pid, start} (else any JVM the record has); before, {path: sha1} the record has now;
-#       files, {path: sha1 on disk, or null for whatever it is} (a file missing: nothing recorded). Prints
-#       recorded, or why not
+#       files, {path: sha1 on disk, or null for whatever it is} (a file missing: nothing recorded); same, {path:
+#       sha1 of the rendering with the same settings} (else none kept for those paths). Prints recorded, or why
+#       not
 # Paths are expanded (~, $VAR) and normalised as the readers of the record do (config_pending.yml).
 
 from __future__ import (absolute_import, division, print_function)
@@ -78,7 +82,7 @@ def save(record, data):
         raise
 
 
-def start(record, conf, units):
+def start(record, conf, units, same=None):
     started = running_jvm()
     out = {}
     names = sorted(os.listdir(conf)) if os.path.isdir(conf) else []
@@ -89,6 +93,13 @@ def start(record, conf, units):
                 out[path] = sha1(path)
         except (IOError, OSError):  # gone or unreadable meanwhile: left out (pending until a restart)
             continue
+    settings = {}
+    for name, sums in (same or {}).items():
+        path = os.path.normpath(os.path.join(conf, name))
+        if out.get(path) and out[path] == sums.get("disk") and sums.get("same"):
+            settings[path] = sums["same"]
+    if settings:
+        out["_same_settings"] = settings
     if started is not None:
         out["_jvm"] = started
     save(record, out)
@@ -114,13 +125,22 @@ def update(record, request):
         if found[path] is None or s is not None and found[path] != s:
             return "written otherwise"
     data.update(found)
+    settings = dict((k, v) for k, v in (data.get("_same_settings") or {}).items() if k not in found)
+    for p, s in (request.get("same") or {}).items():
+        if s and path_of(p) in found:
+            settings[path_of(p)] = s
+    data.pop("_same_settings", None)
+    if settings:
+        data["_same_settings"] = settings
     save(record, data)
     return "recorded"
 
 
 def main(argv):
     if argv[1] == "start":
-        return start(path_of(argv[2]), path_of(argv[3]), [path_of(u) for u in argv[4:]])
+        same = [json.loads(a[len("--same="):]) for a in argv[4:] if a.startswith("--same=")]
+        return start(path_of(argv[2]), path_of(argv[3]), [path_of(u) for u in argv[4:] if not u.startswith("--same=")],
+                     same[0] if same else None)
     return update(path_of(argv[2]), json.loads(argv[3]))
 
 

@@ -333,13 +333,15 @@
           {%- set conf = cassandra_conf_dir | trim | regex_replace('/+$', '') -%}
           {%- for f in _cassandra_config_changes | default([]) if f in _new and not _switch -%}
           {%-   for path, sum in _record.items() if path | basename == f and path | dirname | regex_replace('/+$', '') == conf -%}
-          {%-     if sum == _new[f] | hash('sha1') and f not in out -%}{%- set _ = out.append(f) -%}{%- endif -%}
+          {%-     if _new[f] | hash('sha1') in [sum, _settings.get(path)] and f not in out -%}{%- set _ = out.append(f) -%}{%- endif -%}
           {%-   endfor -%}
           {%- endfor -%}
           {{ out }}
       vars:
         _record: "{{ cassandra_pending_snapshot.content | b64decode | from_json if cassandra_pending_snapshot.content is defined else {} }}"
         _new: "{{ _cassandra_config_new | default({}) }}"  # the files as cassandra_config renders them
+        # (a file that start read, left as it is by cassandra_config: the sha1 of the role's rendering of its settings)
+        _settings: "{{ _record._same_settings | default({}) }}"
         _target: "{{ cassandra_config_conf_target.stat.lnk_source | default('') if cassandra_config_conf_target is defined
                      and cassandra_config_conf_target is not skipped else '' }}"
         _switch: >-
@@ -692,7 +694,9 @@
           {%- for f in _cassandra_config_kept | default([]) if f in new and f not in cassandra_config_keep_files | default([])
                                                                 and _current | bool -%}
           {%-   for path, sum in _record.items() if path | basename == f and path | dirname | regex_replace('/+$', '') == conf -%}
-          {%-     if sum == new[f] | hash('sha1') and f not in out -%}{%- set _ = out.append(f) -%}{%- endif -%}
+          {%-     if new[f] | hash('sha1') in [sum, (_record._same_settings | default({})).get(path)] and f not in out -%}
+          {%-       set _ = out.append(f) -%}
+          {%-     endif -%}
           {%-   endfor -%}
           {%- endfor -%}
           {{ out }}

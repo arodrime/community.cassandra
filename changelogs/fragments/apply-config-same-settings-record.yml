@@ -1,0 +1,6 @@
+bugfixes:
+  - >-
+    apply_config - a file ``cassandra_config`` left as it is at a start (the same settings as the role's, written
+    another way, e.g. the previous release's file after a release update) is recorded with the checksum of the role's
+    rendering of those settings: edited by hand later and written back as the role renders it, it is
+    ``written back as the running Cassandra started with it: no restart``, no longer ``restart pending``.

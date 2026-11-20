@@ -5,6 +5,17 @@
 - name: List the files to change and whether to ask first
   ansible.builtin.set_fact:
     _cassandra_config_kept: "{{ _kept }}"
+    # those (not the ones kept by hand) with the sha1 of the file read and of the rendering of the same settings:
+    # {file: {disk, same}}, recorded with the next start (config_snapshot.yml of cassandra_service; header.yml when
+    # the header is added), so that the file written back later as the role renders it is known to hold the
+    # settings that start read
+    _cassandra_config_same_as: >-
+      {%- set out = {} -%}
+      {%- set live = _cassandra_config_live_sha1 | default({}) -%}
+      {%- for f in _kept if f not in _keep and live.get(f) and f in _cassandra_config_new -%}
+      {%-   set _ = out.update({f: {'disk': live[f], 'same': _cassandra_config_new[f] | hash('sha1')}}) -%}
+      {%- endfor -%}
+      {{ out }}
     # kept as the node has them, but not there: written from the template, the hand edits lost
     _cassandra_config_keep_missing: >-
       {{ cassandra_config_keep_stat.results | selectattr('stat.exists', 'defined') | rejectattr('stat.exists')

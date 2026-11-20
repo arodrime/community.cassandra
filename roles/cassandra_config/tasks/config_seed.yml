@@ -60,13 +60,26 @@
       ansible.builtin.copy:
         content: >-
           {{ dict(_files | map(attribute='path') | zip(_files | map(attribute='checksum')))
-             | combine({'_jvm': {'pid': cassandra_jvm.pid, 'start': cassandra_jvm.start | float}}) | to_nice_json }}
+             | combine({'_jvm': {'pid': cassandra_jvm.pid, 'start': cassandra_jvm.start | float}})
+             | combine({'_same_settings': _same} if _same else {}) | to_nice_json }}
         dest: "{{ _cassandra_config_snapshot }}"
         mode: "0600"  # root only: the checksum of the JMX password file
       vars:
         _files: >-
           {{ (cassandra_seed_files.files + cassandra_seed_units.results | map(attribute='stat') | selectattr('exists') | list)
              | rejectattr('ctime', '>', cassandra_jvm.start | float) | list }}
+        # a file left as it is, as compared (cassandra_config's _cassandra_config_same_as): the sha1 of the role's
+        # rendering of the same settings (config_snapshot.yml of cassandra_service)
+        _same: >-
+          {%- set out = {} -%}
+          {%- set same = _cassandra_config_same_as | default({}) -%}
+          {%- for f in _files if f.path | basename in same and (f.path | dirname | regex_replace('/+$', ''))
+                                 == (cassandra_conf_dir | regex_replace('/+$', '')) -%}
+          {%-   if f.checksum | default('') == same[f.path | basename].disk -%}
+          {%-     set _ = out.update({f.path: same[f.path | basename].same}) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
       when:
         - cassandra_jvm.start is defined
         - cassandra_seed_dir.stat.isdir | default(false)

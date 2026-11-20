@@ -409,3 +409,23 @@ def test_the_proof_compares_with_the_environment_the_next_start_gets(tmp_path, m
     # cassandra_service's to write, told pending by its record
     assert proven(tmp_path, unitenv='"JVM_OPTS=-Dy=2"', given={"JVM_OPTS": "-Dy=3"}, **mode)[0] == "none"
     assert proven(tmp_path, jvmenv="JVM_EXTRA_OPTS=-Dx=1", **mode)[0] == "restart"  # (cassandra-env.sh's lines moved)
+
+
+@pytest.mark.parametrize("settings, then", [
+    # e2e (a release update, then a hand edit): the record of the start has the file cassandra_config left as it is
+    # (same settings, written another way) and the sha1 of the role's rendering of those settings
+    ("num_tokens: 16\n", "none"),
+    ("num_tokens: 32\n", "restart"),  # the rendering of other settings
+    (None, "restart"),  # none recorded: only the content read is known
+])
+def test_a_file_written_back_with_the_settings_its_start_read_is_no_restart(settings, then):
+    record = {CONF + "/cassandra.yaml": sha1("# by hand\nnum_tokens:   16\n")}
+    if settings is not None:
+        record["_same_settings"] = {CONF + "/cassandra.yaml": sha1(settings)}
+    said = needs(changes=["cassandra.yaml"], new={"cassandra.yaml": "num_tokens: 16\n"}, record=record, pending=True,
+                 newer=["cassandra.yaml"])
+    assert said[0] == then
+    if then == "none":
+        assert said[1] == ["cassandra.yaml written back as the running Cassandra started with it: no restart for it"]
+    else:
+        assert "restart pending (cassandra.yaml changed since the running Cassandra started)" in said[1]

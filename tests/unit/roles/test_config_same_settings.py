@@ -431,3 +431,33 @@ def test_every_former_name_with_a_unit_has_its_key_read_in_any_unit(series):
                      if any(name.endswith(end) for end, dummy in FORMER_UNITS)
                      and var[len("cassandra_"):] not in QUANTITY_KEYS)
     assert missing == []
+
+
+def test_the_files_left_as_they_are_carry_the_sha1_of_their_rendering():
+    # the record of the next start has it (config_snapshot.yml): written back later as the role renders it, the file
+    # holds the settings that start read (e2e: a release update, then a hand edit, said "restart pending")
+    import hashlib
+    confirm = task("List the files to change and whether to ask first", "confirm.yml")
+    new = {"cassandra.yaml": HEADER + "x: 1\n", "jvm-server.options": HEADER + "-Xss256k\n", "logback.xml": "<b/>"}
+    variables = dict(_kept=["cassandra.yaml", "jvm-server.options", "logback.xml"], _keep=["logback.xml"],
+                     _cassandra_config_new=new, _cassandra_config_live_sha1={"cassandra.yaml": "d1", "logback.xml": "d3"})
+    assert render(confirm["ansible.builtin.set_fact"]["_cassandra_config_same_as"], **variables) == {
+        "cassandra.yaml": {"disk": "d1", "same": hashlib.sha1(new["cassandra.yaml"].encode()).hexdigest()}}
+    # the role's header added to it: the file read at the next start is the one with it
+    note = task("Note the files left as they are with their header", "header.yml")
+    header = dict(_cassandra_config_same_as={"cassandra.yaml": {"disk": "d1", "same": "r1"}},
+                  _cassandra_config_header_files=[{"file": "cassandra.yaml", "path": "/etc/cassandra/conf/cassandra.yaml"},
+                                                  {"file": "jmxremote.access", "path": "/etc/cassandra/jmxremote.access"}],
+                  cassandra_config_header_added={"stdout": json.dumps({
+                      "/etc/cassandra/conf/cassandra.yaml": {"status": "added", "before": "d1", "after": "d2"},
+                      "/etc/cassandra/jmxremote.access": {"status": "added", "before": "a", "after": "b"}})})
+    header["_result"] = trust_as_template(note["vars"]["_result"])
+    assert render(note["ansible.builtin.set_fact"]["_cassandra_config_same_as"], **header) == {
+        "cassandra.yaml": {"disk": "d2", "same": "r1"}}
+    record = task("Record them with their header as the files the running Cassandra runs with", "header.yml")
+    same = record["vars"]["_cassandra_service_record_request"]["same"]
+    for path, expected in (("/etc/cassandra/conf/cassandra.yaml", {"/etc/cassandra/conf/cassandra.yaml": "r1"}),
+                           ("/etc/cassandra/conf/logback.xml", {"/etc/cassandra/conf/logback.xml": ""}),
+                           ("/etc/cassandra/cassandra.yaml", {})):
+        assert render(same, item={"key": path}, cassandra_conf_dir="/etc/cassandra/conf",
+                      _cassandra_config_same_as={"cassandra.yaml": {"disk": "d2", "same": "r1"}}) == expected

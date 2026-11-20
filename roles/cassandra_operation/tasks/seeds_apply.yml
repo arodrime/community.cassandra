@@ -183,7 +183,12 @@
 
         - name: Record the live seeds in it
           ansible.builtin.copy:
-            content: "{{ _seeds_started | combine({_seeds_file: cassandra_seeds_file_after.stat.checksum}) | to_nice_json }}"
+            # (no other rendering of the same settings kept for it: its seeds are the new ones)
+            content: >-
+              {{ _seeds_started | combine({_seeds_file: cassandra_seeds_file_after.stat.checksum,
+                                           '_same_settings': _seeds_started._same_settings | default({}) | dict2items
+                                                             | rejectattr('key', 'equalto', _seeds_file) | items2dict})
+                 | to_nice_json }}
             dest: "{{ _cassandra_service_config_snapshot }}"
             mode: "0600"  # root only: the checksum of the JMX password file
           vars:

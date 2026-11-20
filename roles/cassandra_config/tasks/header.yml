@@ -31,6 +31,20 @@
     _result: "{{ cassandra_config_header_added.stdout | default('{}', true) | from_json }}"
     _why: {changed: changed since it was compared, link: is a link, missing: is gone}
 
+# (the file read at the next start has its header: the sha1 of its rendering recorded with it, config_snapshot.yml)
+- name: Note the files left as they are with their header
+  ansible.builtin.set_fact:
+    _cassandra_config_same_as: >-
+      {%- set out = dict(_cassandra_config_same_as | default({})) -%}
+      {%- for h in _cassandra_config_header_files if h.file | default('') in out -%}
+      {%-   set r = _result.get(h.path, {}) -%}
+      {%-   if r.status | default('') == 'added' -%}{%- set _ = out.update({h.file: dict(out[h.file], disk=r.after)}) -%}{%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+  vars:
+    _result: "{{ cassandra_config_header_added.stdout | default('{}', true) | from_json }}"
+  when: cassandra_config_header_added is changed
+
 - name: Read the running Cassandra
   ansible.builtin.include_tasks: jvm_started.yml
   when: cassandra_config_header_added is changed
@@ -46,6 +60,10 @@
       jvm: {pid: "{{ cassandra_jvm.pid }}", start: "{{ cassandra_jvm.start }}"}
       before: "{{ {item.key: item.value.before} }}"
       files: "{{ {item.key: item.value.after} }}"
+      # (the sha1 of the role's rendering of the same settings, for a file left as it is)
+      same: >-
+        {{ {item.key: (_cassandra_config_same_as | default({})).get(item.key | basename, {}).same | default('')}
+           if (item.key | dirname | regex_replace('/+$', '')) == (cassandra_conf_dir | regex_replace('/+$', '')) else {} }}
   loop: "{{ cassandra_config_header_added.stdout | default('{}', true) | from_json | dict2items | selectattr('value.status', 'equalto', 'added') | list }}"
   loop_control:
     label: "{{ item.key }}"

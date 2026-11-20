@@ -98,6 +98,9 @@
          and _record._jvm.pid | default('') | string == cassandra_jvm.pid | default('-') | string
          and (_record._jvm.start | default(0) | float - cassandra_jvm.start | float) | abs < 2 }}
     _started: "{{ _record if _record_current | bool else {} }}"
+    # a file that start read left as it is by cassandra_config (same settings, written another way): the sha1 of the
+    # role's rendering of those settings (config_snapshot.yml), the file written back so no change for that JVM
+    _settings: "{{ _started._same_settings | default({}) }}"
     _units: "{{ cassandra_pending_unit_files | map(attribute='path') | list }}"
     _files: "{{ cassandra_pending_files.files + cassandra_pending_unit_files | selectattr('exists') | list }}"
     _newer: "{{ _files | selectattr('ctime', '>', cassandra_jvm.start | float) | map(attribute='path') | list if cassandra_jvm.start is defined else [] }}"
@@ -108,7 +111,9 @@
       {%- for f in _files if _record_current | bool -%}
       {%-   if f.path | basename == 'jmx_prometheus.at_start' and f.path not in _started -%}
       {%-   elif f.path in _started or f.path not in _units -%}
-      {%-     if _started.get(f.path) != f.checksum -%}{%- set _ = out.append(f.path | basename) -%}{%- endif -%}
+      {%-     if _started.get(f.path) != f.checksum and _settings.get(f.path) != f.checksum -%}
+      {%-       set _ = out.append(f.path | basename) -%}
+      {%-     endif -%}
       {%-   elif f.path in _newer -%}
       {%-     set _ = out.append(f.path | basename) -%}
       {%-   endif -%}

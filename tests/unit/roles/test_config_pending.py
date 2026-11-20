@@ -82,7 +82,7 @@ def pending(snapshot, files, jvm=None, recorded=("42", 100.5)):
         "cassandra_pending_unit_files": [],
         "cassandra_jvm": JVM if jvm is None else jvm,
     }
-    for name in ("_record", "_record_current", "_started", "_units", "_files", "_newer"):
+    for name in ("_record", "_record_current", "_started", "_settings", "_units", "_files", "_newer"):
         variables[name] = trust_as_template(NOTE["vars"][name])
     return render(NOTE["vars"]["_changed"], variables), render(NOTE["vars"]["_unknown"], variables)
 
@@ -188,9 +188,17 @@ def test_seed_leaves_out_the_files_written_since_the_start():
                                              {"stat": {"exists": False}}]},
         "cassandra_jvm": {"pid": "42", "start": "100.00"},
     }
-    variables["_files"] = trust_as_template(rec["vars"]["_files"])
+    for name in ("_files", "_same"):
+        variables[name] = trust_as_template(rec["vars"][name])
     jvm = {"pid": "42", "start": 100.0}  # the JVM it records, as config_snapshot.yml does
     assert json.loads(render(rec["ansible.builtin.copy"]["content"], variables)) == {YAML: "y1", UNIT: "u1", "_jvm": jvm}
+    # cassandra.yaml left as it is by cassandra_config, as compared (y1): the sha1 of its rendering recorded with it
+    same = dict(variables, cassandra_conf_dir="/etc/cassandra/conf/",
+                _cassandra_config_same_as={"cassandra.yaml": {"disk": "y1", "same": "r1"}})
+    assert json.loads(render(rec["ansible.builtin.copy"]["content"], same)) == {
+        YAML: "y1", UNIT: "u1", "_jvm": jvm, "_same_settings": {YAML: "r1"}}
+    same["_cassandra_config_same_as"] = {"cassandra.yaml": {"disk": "y0", "same": "r1"}}  # changed since the compare
+    assert "_same_settings" not in json.loads(render(rec["ansible.builtin.copy"]["content"], same))
     # the unit written since the start: left out too
     variables["cassandra_seed_units"]["results"][0]["stat"]["ctime"] = 105.0
     assert json.loads(render(rec["ansible.builtin.copy"]["content"], variables)) == {YAML: "y1", "_jvm": jvm}
@@ -318,6 +326,7 @@ def test_the_record_of_a_start_is_that_jvms_and_leaves_out_the_files_written_sin
     start), for which apply_config trusts the record only."""
     record = task("config_snapshot.yml", "Record the config Cassandra started with")["ansible.builtin.command"]["argv"]
     assert record[3:] == ["start", "{{ _cassandra_service_config_snapshot }}", "{{ _cassandra_service_conf_dir }}",
+                          "--same={{ _cassandra_config_same_as | default({}) | to_json }}",
                           "/etc/systemd/system/cassandra.service", "{{ _cassandra_service_environment_dropin }}"]
     conf = tmp_path / "conf"
     conf.mkdir()
@@ -402,3 +411,51 @@ def test_every_update_of_the_record_goes_through_the_one_helper():
     assert tasks("unit_no_restart.yml")[0]["ansible.builtin.include_tasks"] == "config_record_update.yml"
     proven = task("action_apply_config.yml", "Record them when they are on disk as planned and that Cassandra still runs")
     assert proven["ansible.builtin.include_role"]["tasks_from"] == "config_record_update.yml"
+
+
+@pytest.mark.parametrize("settings, expected", [("y2", []), ("y3", ["cassandra.yaml"]), (None, ["cassandra.yaml"])])
+def test_a_file_with_the_settings_its_start_read_is_not_pending(settings, expected):
+    # the start read y1, a file cassandra_config left as it is whose settings the role renders as y2: y2 on disk
+    # (written back by apply_config) holds the settings that start read
+    record = {YAML: "y1"}
+    if settings:
+        record["_same_settings"] = {YAML: settings}
+    assert pending(record, [(YAML, "y2", 999)]) == (expected, [])
+
+
+def test_the_record_of_a_start_has_the_rendering_of_a_file_left_as_it_is(tmp_path):
+    record = task("config_snapshot.yml", "Record the config Cassandra started with")["ansible.builtin.command"]["argv"]
+    assert record[6] == "--same={{ _cassandra_config_same_as | default({}) | to_json }}"
+    conf = tmp_path / "conf"
+    conf.mkdir()
+    for name in ("cassandra.yaml", "jvm-server.options", "logback.xml"):
+        (conf / name).write_text(name)
+    out = tmp_path / "record.json"
+    same = {"cassandra.yaml": {"disk": hashlib.sha1(b"cassandra.yaml").hexdigest(), "same": "r1"},
+            "jvm-server.options": {"disk": "another file", "same": "r2"},  # (changed since the compare: none)
+            "gone.xml": {"disk": "x", "same": "r3"}}
+    argv = [sys.executable, "-c", RECORD_ONLY_PIDS, "start", str(out), str(conf), "--same=" + json.dumps(same),
+            str(tmp_path / "unit")]
+    subprocess.run(argv, check=True, env=dict(os.environ, ONLY_PIDS=""))
+    got = json.loads(out.read_text())
+    assert got["_same_settings"] == {str(conf / "cassandra.yaml"): "r1"}
+    assert sorted(k for k in got if not k.startswith("_")) == [str(conf / n) for n in
+                                                               ("cassandra.yaml", "jvm-server.options", "logback.xml")]
+    # none to record: no key (as before)
+    subprocess.run(argv[:6] + ["--same={}", str(tmp_path / "unit")], check=True, env=dict(os.environ, ONLY_PIDS=""))
+    assert "_same_settings" not in json.loads(out.read_text())
+
+
+def test_an_update_of_a_file_keeps_its_rendering_only_when_given(tmp_path):
+    jvm = {"pid": "42", "start": 100.0}
+    (tmp_path / "a").write_text("a2")
+    (tmp_path / "b").write_text("b")
+    a, b = str(tmp_path / "a"), str(tmp_path / "b")
+    record = {"_jvm": jvm, a: "a1", b: "b", "_same_settings": {a: "ra", b: "rb"}}
+    request = {"jvm": {"pid": "42", "start": "100"}, "files": {a: None}}
+    out, got = update(tmp_path, record, request)
+    assert out == "recorded" and got["_same_settings"] == {b: "rb"}  # a recorded anew: its old rendering dropped
+    out, got = update(tmp_path, record, dict(request, same={a: "ra2"}))
+    assert out == "recorded" and got["_same_settings"] == {a: "ra2", b: "rb"}
+    out, got = update(tmp_path, dict(record, _same_settings={a: "ra"}), request)
+    assert "_same_settings" not in got
