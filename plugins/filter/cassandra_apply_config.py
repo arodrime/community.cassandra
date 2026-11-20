@@ -83,6 +83,7 @@ def not_running(node):
     """Whether a node's Cassandra is not running (its then: write, left stopped; start, started once written)."""
     return str(node.get("then")) in ("write", "start")
 
+
 _WRITTEN_BACK = " written back as the running Cassandra started with "  # (apply_config's note)
 # apply_config's notes: a restart pending (said before the run: not after a restart or start of this run), the
 # read-ahead set live with no restart (the recap's TO DO says how to take it)

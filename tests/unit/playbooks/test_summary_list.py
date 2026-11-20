@@ -54,7 +54,8 @@ def test_operation_summary_is_a_recap():
     assert lines == ["DONE add_node my_cluster 1 added, 2 not touched", "n1 added in 5s", "n2 not touched (not reached)",
                      "n3 not touched (left out by --limit)"]
     # a package update that changed a limits file left to the node (cassandra_linux_manage: false): said last
-    changed = dict(variables, hostvars=dict(hostvars, n1=dict(hostvars["n1"], cassandra_package_limits_changed="/etc/x.conf")))
+    changed = dict(variables)
+    changed["hostvars"] = dict(hostvars, n1=dict(hostvars["n1"], cassandra_package_limits_changed="/etc/x.conf"))
     changed["_warnings"] = render(task["vars"]["_warnings"], **changed)
     said = render(task["ansible.builtin.debug"]["msg"], **changed)
     assert said[:len(lines)] == render(task["ansible.builtin.debug"]["msg"], **variables)

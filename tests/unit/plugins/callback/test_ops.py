@@ -241,8 +241,8 @@ def test_a_refused_role_argument_said_in_short_its_older_words_too():
 
 def test_a_refused_role_argument_keeps_the_reason_of_ansible_core_2_19():
     from ansible_collections.community.cassandra.plugins.callback.ops import argument_errors
-    _, rows = argument_errors({"argument_spec_data": {}, "argument_errors": [
-        _CORE_219[k] for k in ("int", "bool", "dict", "list")]})
+    rows = argument_errors({"argument_spec_data": {}, "argument_errors": [
+        _CORE_219[k] for k in ("int", "bool", "dict", "list")]})[1]
     assert rows == (
         "cassandra_concurrent_reads: '3w' is a text, not a whole number",
         "cassandra_flag: not a boolean: The value 'maybe' is not a valid boolean. Valid booleans include: '1', 1, 0,"

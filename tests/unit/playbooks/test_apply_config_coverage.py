@@ -398,7 +398,8 @@ def test_a_package_update_on_a_node_with_its_own_os_settings_says_a_changed_limi
                                 {"node": "h-n2", "result": "upgrade done in 95s"}], cluster="zorglub",
                                operation="upgrade", warnings=warnings)
     said = " ".join(" ".join(lines).split())
-    assert ("WARNING h-n1: the Cassandra package update changed /etc/security/limits.d/cassandra.conf, not written"
+    assert [x for x in lines if x.startswith("WARNING  h-n1: the Cassandra package update changed")]
+    assert ("h-n1: the Cassandra package update changed /etc/security/limits.d/cassandra.conf, not written"
             " back (cassandra_linux_manage: false). Put your own settings back in it, or set cassandra_linux_manage:"
             " true (cassandra_linux writes it).") in said
     assert max(len(x) for x in lines) <= 79
