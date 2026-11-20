@@ -73,7 +73,6 @@ def test_apply_config_and_the_role_pick_the_file_with_the_same_filter():
     assert "zz-ansible-environment.conf" not in str(SAY)
 
 
-
 class _Undefined(dict):
     """a node's hostvars as ansible-core 2.19+ gives them when cassandra_service_environment uses a variable not in
     hostvars (a role default): reading it raises"""

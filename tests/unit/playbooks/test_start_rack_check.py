@@ -323,8 +323,9 @@ def test_a_node_outside_the_rack_accepted_is_not_counted_down():
     for name in ("Read the ring from this node", "Read the ring from {{ _cassandra_health_peer }}"):
         task = next(t for t in read if t["name"] == name)
         down = task["community.cassandra.cassandra_status"]["down"]
-        assert render(down, _down_ok=["10.0.0.9"], cassandra_service_health_any_ok=["10.0.0.4", "10.0.0.5"]) == 3
-        assert render(down, _down_ok=[]) == 0
+        # (an int; text before ansible-core 2.19)
+        assert int(render(down, _down_ok=["10.0.0.9"], cassandra_service_health_any_ok=["10.0.0.4", "10.0.0.5"])) == 3
+        assert int(render(down, _down_ok=[])) == 0
 
 
 def test_the_defaults_are_the_cassandra_config_role_s():
