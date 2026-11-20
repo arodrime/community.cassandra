@@ -785,9 +785,9 @@ def test_the_plan_title_and_the_stop_block_are_blocks_of_their_own():
     assert [x for x in shown if not rule(x[0])] == [(stop[0], C.COLOR_ERROR)] + [(line, None) for line in stop[1:] if line]
 
 
-# the playbooks without a plan titled by their name: a report (health_check, status), the import's own screen
+# the playbooks without a plan titled by their name: a report (health_check, status, drift), the import's own screen
 # ("IMPORT prod ..."), the help text, preflight's checks
-NO_PLAN = ("health_check", "help", "import_cluster", "preflight", "status")
+NO_PLAN = ("drift", "health_check", "help", "import_cluster", "preflight", "status")
 
 
 def test_the_plan_titles_are_the_operations_the_playbooks_name():
