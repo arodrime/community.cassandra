@@ -196,7 +196,8 @@ def test_the_disk_warnings_said_under_the_node():
     variables = {"cassandra_config_newer_files": [], "_newer": [], "_as_started": [], "_pending": False, "_running": True,
                  "_then": "none", "_os": [],
                  "_cassandra_config_dir_notes": [], "_cassandra_disk_summary": {"warnings": ["tuned: not switched"]},
-                 "_stopped": False, "_timesync": False, "_no_unit": [], "_keep_missing": [], "_unit_failed": False, "_todo": False}
+                 "_stopped": False, "_timesync": False, "_no_unit": [], "_keep_missing": [], "_unit_failed": False, "_todo": False,
+                 "_unit_secret": "", "_cql_warning": []}
     assert render(notes, variables) == ["WARNING  data disks: tuned: not switched"]
 
 
@@ -241,7 +242,8 @@ def test_swap_left_on_said_under_the_node_once(live, swapoff, said):
     variables = {"cassandra_config_newer_files": [], "_newer": [], "_as_started": [], "_pending": False, "_running": True,
                  "_then": "none", "_os": [],
                  "_cassandra_config_dir_notes": [], "_cassandra_linux_before": {"swap|active": "1"},
-                 "_stopped": False, "_timesync": False, "_no_unit": [], "_keep_missing": [], "_unit_failed": False, "_todo": False}
+                 "_stopped": False, "_timesync": False, "_no_unit": [], "_keep_missing": [], "_unit_failed": False, "_todo": False,
+                 "_unit_secret": "", "_cql_warning": []}
     if live is not None:  # (not set on a node with cassandra_linux_manage false)
         variables.update({"_cassandra_linux_live": live, "_cassandra_linux_swapoff": swapoff})
     warned = [n for n in render(notes, variables) if n.startswith("WARNING  swap left on")]

@@ -1,0 +1,5 @@
+minor_changes:
+  - >-
+    apply_config - the plan's table of differences gives the node lists in one place: on each file's row when every
+    file's settings change on the same nodes, else on every setting's row, never some on a file's row and others on
+    its settings' rows.

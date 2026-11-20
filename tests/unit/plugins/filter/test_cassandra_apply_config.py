@@ -154,8 +154,9 @@ def test_secrets_masked_a_changed_password_still_said(tmp_path):
         'cassandra.yaml',
         '  client_encryption_options.keystore_password  ****  **** (another)  node2',
         '  ssl_private_key                              ****  **** (another)  node3',
-        'jvm-server.options                                                   node2',
-        '  -Djavax.net.ssl.keyStorePassword=****        ****  **** (another)']
+        'jvm-server.options',
+        '  -Djavax.net.ssl.keyStorePassword=****        ****  **** (another)  node2']
+    # (the node lists in one place: every setting's row, never some on a file's row; e2e, review of the plan)
 
 
 def test_nested_keys_lists_and_layout_only(tmp_path):
@@ -422,8 +423,8 @@ def test_the_os_settings_that_differ_after_the_config(tmp_path):
     node3 = Node(tmp_path, "node3").data()
     assert cassandra_apply_config_diff([node1, node2, node3]) == [
         'Item                                                      Node    Inventory  Nodes',
-        'cassandra.yaml                                                               node1',
-        '  max_hint_window                                         6h      3h',
+        'cassandra.yaml',
+        '  max_hint_window                                         6h      3h         node1',
         'OS settings',
         '  read-ahead vg_data/cassandra                            128 KB  4 KB       node1',
         '                                                          256 KB  4 KB       node2',

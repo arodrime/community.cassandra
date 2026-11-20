@@ -688,7 +688,18 @@ def _named(entries, all_nodes, width=None):
             return "all %d nodes" % len(all_nodes)  # (the whole run, its list said nowhere else)
         return out.who(names, all_nodes, groups) if groups else out.nodes(names)
 
-    # shown: a row of cells, a file's row (its nodes in the last cell when all its settings change on the same
+    # each file's settings: whether they all change on the same nodes (its nodes then on its own row)
+    sections, mine = [], None
+    for entry in entries:
+        if isinstance(entry, str) and not entry.startswith(" "):
+            mine = []
+            sections.append(mine)
+        elif not isinstance(entry, str) and mine is not None:
+            mine += [tuple(r[2]) for r in entry[1]]
+    # the node lists in one place: on every file's row when each file's settings change on the same nodes, else
+    # on every setting's row (never some on a file's row, others on its settings' rows)
+    by_file = all(len(set(m)) <= 1 for m in sections)
+    # shown: a row of cells, a file's row (its nodes in the last cell when every file's settings change on the same
     # nodes, else ""), or a line of its own (a node not read)
     shown, cells, heading = [], [], ""
     for at, entry in enumerate(entries):
@@ -705,7 +716,7 @@ def _named(entries, all_nodes, width=None):
                     if isinstance(e, str):
                         break
                     mine += [tuple(r[2]) for r in e[1]]
-                once = len(set(mine)) == 1
+                once = by_file and len(set(mine)) == 1
                 shown.append([heading, "", "", named(list(mine[0])) if once else ""])
                 heading = ""
             for node, inventory, names in found:
