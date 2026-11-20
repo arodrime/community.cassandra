@@ -171,9 +171,9 @@ def argument_errors(result):
         found = _TYPE.match(str(error))
         if found:
             given = found.group(2) or found.group(3)
-            said.append("  %s: %s%s, not %s" % (found.group(1), found.group(5) + " is " if found.group(5) else "",
-                                                 _TYPE_NAMES.get(given, given),
-                                                 _TYPE_NAMES.get(found.group(4), "a " + found.group(4))))
+            value = found.group(5) + " is " if found.group(5) else ""
+            needed = _TYPE_NAMES.get(found.group(4), "a " + found.group(4))
+            said.append("  %s: %s%s, not %s" % (found.group(1), value, _TYPE_NAMES.get(given, given), needed))
         else:
             said.append("  " + re.sub(r"<class '(?:[\w.]+\.)?(\w+)'>", r"\1", str(error)))
     return ["%s refused these values before it changed anything (fix them in the inventory):" % role] + said
