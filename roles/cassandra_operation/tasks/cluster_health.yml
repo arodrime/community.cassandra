@@ -22,6 +22,8 @@
 # (UN, DN, UJ, UL, UM...; not waited for).
 # _cassandra_health_prefer_peers: hosts read from first, when they may be;
 # _cassandra_health_why: lines the stop says after the problems (why they are problems).
+# _cassandra_health_stop_only: true only stops (or goes on, forced) on cassandra_health_problems
+# as set by the caller after a report_only check (start_rack: the rack's own problems).
 # cassandra_service_health_report_only: true only sets cassandra_health_problems
 # and cassandra_health_findings (no failure; it waits as above unless told not to).
 # cassandra_service_health_batch: true for the hosts of a play checked at once:
@@ -59,6 +61,7 @@
     _prefer: "{{ _cassandra_health_prefer_peers | default([]) }}"
     # the hosts allowed, the ones preferred first
     _candidates: "{{ _allowed | select('in', _prefer) | list + _allowed | reject('in', _prefer) | list }}"
+  when: not _cassandra_health_stop_only | default(false) | bool
 
 # Each read is a nodetool run (a JVM, seconds each): the ones on this node run at once (async), then are collected
 # (cluster_health_read.yml). Read once; a real run reads again while a node is down or a port of this node does
@@ -101,6 +104,7 @@
       operation: >-
         {{ {'apply_config': 'write_config'}.get(cassandra_service_node_action, cassandra_service_node_action)
            if cassandra_service_node_action is defined else 'cluster check' }}
+  when: not _cassandra_health_stop_only | default(false) | bool
   block:
     - name: Read the cluster state
       ansible.builtin.include_tasks: cluster_health_read.yml

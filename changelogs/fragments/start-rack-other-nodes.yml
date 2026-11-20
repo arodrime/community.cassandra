@@ -8,6 +8,7 @@ bugfixes:
   - >-
     start_rack - a node outside the rack seen not UN (down, joining, leaving, moving or any other state) by a node
     outside the rack up for long, not reached over ssh, or whose ``nodetool status`` fails, is no longer waited for
+    (a node only the just-started node of the rack sees not UN is waited for, then a warning if still not UN)
     and no longer fails the run (an unreachable host outside the rack is counted ignored, the exit code stays 0,
     under ``--check`` too): a warning lists it (node, state as ``nodetool status`` shows it, ``not reached over
     ssh``, ``nodetool status failed``), then the ``health_check`` command. The ssh probe runs without become,

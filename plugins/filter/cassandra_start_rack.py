@@ -5,6 +5,7 @@ reached over ssh, is a warning.
 
 cassandra_rack_members: the nodes the inventory puts in a rack (every node of the cluster, under --limit too).
 cassandra_rack_outside: the nodes a read of the cluster saw not UN that are surely outside the rack.
+cassandra_rack_inside: the findings that are not only about nodes outside the rack (what stops the run).
 cassandra_rack_unknown_lines: why a node of the ring no host is known by is judged as a node of the rack.
 cassandra_rack_outside_lines: the lines that say the nodes outside the rack, once the rack is UN.
 """
@@ -65,13 +66,16 @@ def _judge(findings, members, dc, rack, addresses, reads):
     return judged
 
 
-def cassandra_rack_outside(findings, members, dc, rack, checker="", peer="", addresses=None, reads=None):
+def cassandra_rack_outside(findings, members, dc, rack, checker="", peer="", addresses=None, reads=None, any_view=False,
+                           known=None):
     """cassandra_health_findings' result of the first read, the rack's nodes (cassandra_rack_members), its dc and
     rack, the node of the rack it was read from (checker) and its second view (peer: a node outside the rack, up
     for long), the addresses of the rack's nodes and the reads (see _judge) -> the nodes surely outside the rack
     the settled view saw not UN, in the order seen: [{address, name, states}]. The settled view: the peer's,
     unless its read failed (then the checker's). A node only the checker saw not UN is left out: just started, it
-    may still see a peer DN for a few seconds (waited for, not said). states: as every view saw it.
+    may still see a peer DN for a few seconds (waited for, not said). states: as every view saw it. any_view:
+    every view counts (after the wait). known: the nodes noted before (this function's result), kept first, the
+    states seen now added.
     e.g. ([<n4 DN from n2>, <n4 DN from n1>], ["n2", "n3"], "dc1", "r2", "n2", "n1") -> [{address: "10.0.0.4",
     name: "n4", states: ["DN"]}]."""
     findings = findings or []
@@ -79,6 +83,10 @@ def cassandra_rack_outside(findings, members, dc, rack, checker="", peer="", add
     settled = peer if peer and peer not in failed else checker
     judged = _judge(findings, members, dc, rack, addresses, reads)
     order, nodes, seen_by = [], {}, {}  # (nodes, seen_by: by address)
+    for node in known or []:
+        order.append(node["address"])
+        nodes[node["address"]] = dict(node, states=list(node["states"]))
+        seen_by[node["address"]] = set([settled])
     for f in findings:
         if f.get("kind") != "state" or judged[f["address"]] != "outside":
             continue
@@ -90,7 +98,19 @@ def cassandra_rack_outside(findings, members, dc, rack, checker="", peer="", add
         if f["state"] not in nodes[address]["states"]:
             nodes[address]["states"].append(f["state"])
         seen_by[address].add(f.get("seen_from"))
-    return [nodes[a] for a in order if settled in seen_by[a]]
+    return [nodes[a] for a in order if any_view or settled in seen_by[a]]
+
+
+def cassandra_rack_inside(findings, members, dc, rack, checker="", peer="", addresses=None, reads=None):
+    """The same arguments as cassandra_rack_outside -> the findings left once those only about nodes surely
+    outside the rack are taken out (their states, in any view; a nodetool status failing on a node outside the
+    rack, when another read of the ring succeeded (reads): what still stops the run after the wait."""
+    findings = findings or []
+    judged = _judge(findings, members, dc, rack, addresses, reads)
+    ring_read = any(isinstance(r, dict) and r.get("cluster_status") for r in reads or [])
+    return [f for f in findings
+            if not (f.get("kind") == "state" and judged[f["address"]] == "outside")
+            and not (ring_read and f.get("kind") == "nodetool" and f.get("on") not in (members or []))]
 
 
 def cassandra_rack_unknown_lines(findings, members, dc, rack, checker="", peer="", addresses=None, reads=None):
@@ -146,5 +166,6 @@ class FilterModule(object):
     def filters(self):
         return {"cassandra_rack_members": cassandra_rack_members,
                 "cassandra_rack_outside": cassandra_rack_outside,
+                "cassandra_rack_inside": cassandra_rack_inside,
                 "cassandra_rack_unknown_lines": cassandra_rack_unknown_lines,
                 "cassandra_rack_outside_lines": cassandra_rack_outside_lines}

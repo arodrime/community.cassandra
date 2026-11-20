@@ -744,8 +744,9 @@ the rack is in the ring at an address it gives (judged so while the ring puts it
 why, and to give its host that address: ``cassandra_listen_address`` or ``ansible_host``). The ring is read from that node and from a node outside the
 rack, up for long. A node outside the rack that this second node sees not UN (down, joining, leaving, moving...),
 not reached over ssh, or whose ``nodetool status`` fails, is a warning, not waited for, and the run succeeds
-(``health_check`` checks the cluster); one only the node of the rack, just started, sees not UN is waited for
-(when the second read fails, the node of the rack's view alone counts). As in any cluster check, the run still
+(``health_check`` checks the cluster); one only the node of the rack, just started, sees not UN is waited for, and
+joins the warning if still not UN after the wait, as does a node outside the rack that changed meanwhile (when the
+second read fails, the node of the rack's view alone counts). As in any cluster check, the run still
 stops on streams on the node of the rack it checks from (a bootstrap elsewhere streaming to it), on a ring of
 another size than the inventory, and on ``nodetool status`` failing on the node of the rack it checks from or, when
 it reads the ring again, on the node it reads it from then (another node of the rack first). Repair the rack's

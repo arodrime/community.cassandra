@@ -43,6 +43,8 @@ READ = "Read the cluster once from a node of the rack"
 NOTE = "Note the nodes outside the rack not UN"
 CHECK = "Check the rack's nodes and the rest of the cluster"
 SAY = "Say the nodes outside the rack not UN or not reached"
+AFTER = "Note the nodes outside the rack still not UN after the wait"
+STOP = "Stop on the rack's nodes not UN"
 PROBE = ["Reach each node over ssh", "Stop when a node of the rack is not reached over ssh",
          "Leave out a node outside the rack not reached over ssh", "Gather the network facts"]
 
@@ -107,10 +109,18 @@ def noted(read, peer=None, names=None, unreached=(), groups=None, hostvars=None)
                      _cassandra_start_rack_command_args=COMMAND_ARGS,
                      hostvars=with_addresses(names) if hostvars is None else hostvars,
                      cassandra_health_self=read, cassandra_health_peer=peer or read)
-    variables["_judged"] = dict((k, render(v, **variables)) for k, v in TASKS[NOTE]["vars"]["_judged"].items())
+    judge(variables)
+    assert TASKS[NOTE]["vars"]["_judged"] == "{{ _cassandra_start_rack_judged }}"
+    variables["_judged"] = variables["_cassandra_start_rack_judged"]
     for fact, template in TASKS[NOTE]["ansible.builtin.set_fact"].items():
         variables[fact] = render(template, **variables)
     return variables
+
+
+def judge(variables):
+    """the play's _cassandra_start_rack_judged, rendered with the last read"""
+    variables["_cassandra_start_rack_judged"] = dict(
+        (k, render(v, **variables)) for k, v in PLAY["vars"]["_cassandra_start_rack_judged"].items())
 
 
 def check_var(name, variables):
@@ -127,10 +137,21 @@ def check(unreached=(), peer=None, then=None, names=None, groups=None, racks=Non
     variables = noted(read, peer, names, unreached, groups, hostvars)
     problems = []
     if cassandra_health_sentences(variables["cassandra_health_findings"]):
+        # the check again (its findings once the wait ends), then the stop on what is not only outside the rack
         any_ok = render(TASKS[CHECK]["vars"]["cassandra_service_health_any_ok"], **variables)
-        problems = cassandra_health_sentences(findings(then or read, then or peer, names, any_ok=any_ok))
+        second = findings(then or read, then or peer, names, any_ok=any_ok)
+        variables.update(cassandra_health_findings=second, cassandra_health_problems=cassandra_health_sentences(second),
+                         cassandra_health_self=then or read, cassandra_health_peer=then or peer or read)
+        judge(variables)
+        after = TASKS[AFTER]
+        if all(render("{{ %s }}" % w, ansible_check_mode=False, **variables) for w in after["when"][1:]):
+            for fact, template in after["ansible.builtin.set_fact"].items():
+                variables[fact + "+"] = render(template, **variables)
+            for fact in after["ansible.builtin.set_fact"]:
+                variables[fact] = variables.pop(fact + "+")
+        problems = variables["cassandra_health_problems"]
         if problems:
-            problems += render(TASKS[CHECK]["vars"]["_cassandra_health_why"], **variables)
+            problems = problems + render(TASKS[STOP]["vars"]["_cassandra_health_why"], **variables)
     say = TASKS[SAY]
     if problems or not all(render("{{ %s }}" % w, ansible_check_mode=False, **variables) for w in say["when"][1:]):
         return problems, None
@@ -167,10 +188,10 @@ def test_a_node_outside_the_rack_seen_in_two_states_is_not_judged_in_either():
 
 
 def test_a_node_outside_the_rack_seen_up_by_one_view_is_waited_for():
-    # just started, n2 may still see a healthy peer DN for a few seconds; n1 (up for long) sees it UN: not said,
-    # and waited for (a problem until it is seen UN)
-    problems, said = check(peer=ring(), n4="DN")
-    assert said is None and problems == ["n4 (10.0.0.4, r3) is DN, seen from n2"]
+    # just started, n2 may still see a healthy peer DN for a few seconds; n1 (up for long) sees it UN: not noted,
+    # waited for (judged in the check again); seen UN then: nothing said
+    assert render(TASKS[NOTE]["ansible.builtin.set_fact"]["_cassandra_start_rack_outside"],
+                  **noted(ring(n4="DN"), peer=ring())) == []
     problems, said = check(peer=ring(), then=ring(), n4="DN")
     assert (problems, said) == ([], None)
 
@@ -252,6 +273,32 @@ def test_a_node_outside_the_rack_the_settled_view_sees_not_un_is_a_warning():
     problems, said = check(peer=ring(n4="DN"))
     assert problems == []
     assert said[1:3] == ["WARNING  outside the rack, not waited for:", "  n4  DN"]
+
+
+def test_an_outside_node_still_not_un_after_the_wait_is_a_warning():
+    # n1 sees n4 UN, n2 (just started) DN: waited for; after the wait both see it DN (it went down meanwhile):
+    # a warning row, not a stop
+    problems, said = check(peer=ring(), then=ring(n4="DN"), n4="DN")
+    assert problems == []
+    assert said[1:3] == ["WARNING  outside the rack, not waited for:", "  n4  DN"]
+    # n1 joins outside the rack during the wait: its row too, with n4's
+    problems, said = check(peer=ring(), then=ring(n1="UJ", n4="DN"), n4="DN")
+    assert problems == [] and said[2:4] == ["  n1  UJ", "  n4  DN"]
+    # a node of the rack still not UN after the wait: the stop, its rows only
+    problems, said = check(peer=ring(), then=ring(n3="DN", n4="DN"), n4="DN")
+    assert (problems, said) == (["n3 (10.0.0.3, r2) is DN, seen from n1 and n2"], None)
+
+
+def test_after_the_wait_a_nodetool_failing_outside_the_rack_is_a_warning_unless_no_ring_was_read():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_start_rack import cassandra_rack_inside
+    failing = [{"kind": "nodetool", "on": "n1", "error": "x", "text": "nodetool status failed on n1: x"}]
+    judged = dict(members=["n2", "n3"], dc="dc1", rack="r2", addresses=dict((a, n) for a, n in ADDRESSES.items()))
+    assert cassandra_rack_inside(failing, reads=[ring()], **judged) == []
+    # no ring read at all: nothing judged, the failure stops the run
+    assert cassandra_rack_inside(failing, reads=[{"msg": "x"}], **judged) == failing
+    # a node of the rack whose nodetool fails: a stop
+    on_n3 = [dict(failing[0], on="n3")]
+    assert cassandra_rack_inside(on_n3, reads=[ring()], **judged) == on_n3
 
 
 def test_a_reader_whose_nodetool_failed_does_not_count():
@@ -344,7 +391,14 @@ def test_checked_from_a_node_of_the_rack_and_not_under_check():
     for name in (READ, NOTE, CHECK, SAY):
         assert "not ansible_check_mode" in TASKS[name]["when"]
     assert TASKS[READ]["vars"]["cassandra_service_health_report_only"] is True
-    assert "cassandra_service_health_report_only" not in TASKS[CHECK]["vars"]
+    # the check again waits, reports; the stop after it, on the rack's own problems (the role's stop alone)
+    assert TASKS[CHECK]["vars"]["cassandra_service_health_report_only"] is True
+    assert NAMES.index(CHECK) < NAMES.index(AFTER) < NAMES.index(STOP) < NAMES.index(SAY)
+    assert TASKS[STOP]["vars"]["_cassandra_health_stop_only"] is True
+    assert TASKS[STOP]["ansible.builtin.include_role"]["tasks_from"] == "cluster_health.yml"
+    assert "cassandra_service_health_report_only" not in TASKS[STOP]["vars"]
+    for name in (AFTER, STOP):
+        assert "not ansible_check_mode" in TASKS[name]["when"] and "cassandra_health_problems | length > 0" in TASKS[name]["when"]
     # the facts gathered after the probe, before any read; the probe under --check too, without root
     assert PLAY["gather_facts"] is False
     assert [NAMES.index(n) for n in PROBE] == sorted(NAMES.index(n) for n in PROBE) and NAMES.index(PROBE[-1]) < NAMES.index(READ)
