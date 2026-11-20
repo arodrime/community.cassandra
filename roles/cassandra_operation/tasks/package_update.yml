@@ -12,3 +12,11 @@
     name: community.cassandra.cassandra_install
   vars:
     _cassandra_install_upgrade: true
+
+# (the package ships /etc/security/limits.d/cassandra.conf as a plain file: its update puts its own back in place of
+# cassandra_linux's, which the next run would find changed)
+- name: Write the limits file of the cassandra user again
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_linux
+    tasks_from: limits.yml
+  when: cassandra_linux_manage | default(true) | bool

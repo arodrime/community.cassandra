@@ -1,8 +1,8 @@
 ---
 # For what runs as cassandra outside the systemd unit (tools run by hand):
 # the unit sets its own limits, systemd ignores these files. Also written again
-# by apply_config's release window: the package ships this file as a plain one
-# (not a config file), which its update puts back.
+# after a package update (cassandra_operation's package_update.yml): the package
+# ships this file as a plain one (not a config file), which its update puts back.
 - name: Limits of the cassandra user
   ansible.builtin.copy:
     content: |

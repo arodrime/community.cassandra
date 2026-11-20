@@ -85,16 +85,6 @@
       ansible.builtin.set_fact:
         _cassandra_op_stage: written
 
-    # (the package's own limits file put back by its update, in place of cassandra_linux's: the next run would find it
-    # changed)
-    - name: Write the limits file of the cassandra user again
-      ansible.builtin.include_role:
-        name: community.cassandra.cassandra_linux
-        tasks_from: limits.yml
-      when:
-        - _running != cassandra_package_version
-        - cassandra_linux_manage | default(true) | bool
-
     - name: Forget the mark of the update
       ansible.builtin.file:
         path: /run/cassandra-apply-config.update

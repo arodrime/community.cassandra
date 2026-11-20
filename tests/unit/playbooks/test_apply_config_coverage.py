@@ -343,20 +343,21 @@ def test_a_release_node_compares_its_extras_and_applies_the_firewall_live():
         assert render("{{ %s }}" % update["when"], variables) is runs
 
 
-def test_the_window_writes_the_limits_file_again_after_the_package_update():
+def test_a_package_update_writes_the_limits_file_again():
     # e2e (hostile S20): the 5.0.9 RPM's update put its own /etc/security/limits.d/cassandra.conf (nofile 100000, a
-    # plain file of the package) in place of cassandra_linux's (1048576): the next apply_config --check found it
-    window = load("roles", "cassandra_operation", "tasks", "apply_config_window.yml")[0]
-    names = [t.get("name") for t in window["block"]]
-    limits = find(window["block"], "Write the limits file of the cassandra user again")
-    assert names.index("Update the Cassandra package") < names.index("Write the limits file of the cassandra user again")
+    # plain file of the package) in place of cassandra_linux's (1048576): the next apply_config --check found it. The
+    # window of a running node, a node not running and the upgrade all update the package with package_update.yml
+    update = load("roles", "cassandra_operation", "tasks", "package_update.yml")
+    names = [t.get("name") for t in update]
+    limits = find(update, "Write the limits file of the cassandra user again")
+    assert names.index("Install the target version") < names.index("Write the limits file of the cassandra user again")
     assert limits["ansible.builtin.include_role"] == {"name": "community.cassandra.cassandra_linux",
                                                       "tasks_from": "limits.yml"}
-    for installed, manage, runs in (("4.1.11", True, True), ("4.1.12", True, False), ("4.1.11", False, False)):
-        variables = with_task_vars({"vars": window["vars"]}, {
-            "cassandra_apply_config_version": dict(RELEASE, installed=installed), "cassandra_package_version": "4.1.12",
-            "cassandra_linux_manage": manage})
-        assert all(render("{{ %s }}" % w, variables) for w in limits["when"]) is runs, (installed, manage)
+    for manage, runs in ((True, True), (False, False)):
+        assert render("{{ %s }}" % limits["when"], {"cassandra_linux_manage": manage}) is runs
+    assert render("{{ %s }}" % limits["when"], {}) is True  # (the role's default: managed)
+    for path in (("apply_config_window.yml",), ("action_apply_config.yml",), ("action_upgrade.yml",)):
+        assert "package_update.yml" in str(load("roles", "cassandra_operation", "tasks", *path))
     # (the one task cassandra_linux's os.yml runs for them too)
     os_tasks = load("roles", "cassandra_linux", "tasks", "os.yml")
     assert {"name": "Limits of the cassandra user", "ansible.builtin.import_tasks": "limits.yml"} in os_tasks
@@ -480,8 +481,7 @@ def test_a_failed_release_window_starts_back_or_leaves_the_mark_and_the_way_out(
     assert [t["name"] for t in block] == [
         "Note the files of the package and the time before the update", "Note that the package is being updated",
         "Update the Cassandra package", "Note that the config is being written", "Write the config again",
-        "Note that the config is written", "Write the limits file of the cassandra user again",
-        "Forget the mark of the update"]
+        "Note that the config is written", "Forget the mark of the update"]
     # (owner r6-Q3) the stop's row says how far it went, as observed
     assert block[3]["ansible.builtin.set_fact"]["_cassandra_op_stage"] == "writing"
     assert block[5]["ansible.builtin.set_fact"] == {"_cassandra_op_stage": "written"}
