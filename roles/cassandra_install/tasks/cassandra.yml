@@ -99,8 +99,13 @@
 # changed, the way out
 - name: Stop when the release is not in the repository
   ansible.builtin.fail:
-    msg: "{{ [_said, _changed, _way_out] | join(_nl) }}"
+    # (nothing changed, the caller's head given, its plan: the REFUSED block of a stop before any change)
+    msg: >-
+      {{ (_cassandra_install_refused_head | community.cassandra.cassandra_refused([_said, _way_out]) | join(_nl))
+         if _cassandra_install_refused_head | default('') | trim and not _written | bool
+         else [_said, _changed, _way_out] | join(_nl) }}
   vars:
+    _written: "{{ not _cassandra_install_check and _cassandra_repository_items | default([]) | length > 0 }}"
     cassandra_output: true  # a verdict: its msg as is (ops callback)
     _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
     _tool: "{{ 'apt-cache madison cassandra' if ansible_facts['os_family'] == 'Debian' else 'dnf' }}"
@@ -110,8 +115,7 @@
       {{ inventory_hostname }}: {{ _tool }} did not list Cassandra {{ cassandra_package_version }}{{
       ' (it could not read a repository)' if _unread | bool else '' }}: {{ _lines | join('; ') or 'nothing listed' }}.
     _changed: >-
-      Its Cassandra package was not changed{{ '; its repository file was written by this run'
-      if not _cassandra_install_check and _cassandra_repository_items | default([]) | length > 0 else '' }}.
+      Its Cassandra package was not changed{{ '; its repository file was written by this run' if _written | bool else '' }}.
     _excluded: "{{ cassandra_install_release.stdout | default('') is search('excluded on this node') }}"
     _way_out: >-
       {{ 'Way out: make that repository answer on the node, then run again.' if _unread | bool else

@@ -60,6 +60,27 @@ def test_a_missing_release_stops_with_the_package_manager_s_words():
                         "Its Cassandra package was not changed; its repository file was written by this run."]
 
 
+def test_apply_config_s_plan_refuses_a_missing_release_in_the_block_of_its_stops():
+    # e2e: apply_config --check said dnf's words as a bare "fatal" per node, its other stops a REFUSED block
+    plan = [p for p in load("playbooks", "apply_config.yml") if p.get("name") == "Find what each node needs"][0]
+    compare = find(plan["tasks"], "Compare the repository, the packages and the firewall")
+    head = render(compare["vars"]["_cassandra_install_refused_head"], {"hostvars": {"localhost": {
+        "_cassandra_cluster_shown": "zorglub"}}})
+    assert head == "apply_config  zorglub"
+    listed = {"rc": 1, "stdout": "Error: No matching Packages to list", "stdout_lines": ["Error: No matching Packages to list"]}
+    said = _said(cassandra_install_release=listed, _cassandra_install_refused_head=head, _cassandra_install_check=True)
+    assert said[:2] == ["REFUSED  apply_config  zorglub  nothing was changed",
+                        "  n1: dnf did not list Cassandra 4.1.12: Error: No matching Packages to list."]
+    assert " ".join(x.strip() for x in said[2:]) == (
+        "Way out: set cassandra_package_version to a release it lists (dnf --showduplicates list cassandra there), or"
+        " add that release to the repository, then run again.")
+    assert all(len(x) <= 79 for x in said)
+    # its repository written by this run (not the plan's: the window's), or no head given: the plain lines
+    assert _said(cassandra_install_release=listed, _cassandra_install_refused_head=head,
+                 _cassandra_repository_items=[{"item": "baseurl"}])[0].startswith("n1: dnf did not list")
+    assert _said(cassandra_install_release=listed)[0].startswith("n1: dnf did not list")
+
+
 def test_a_repository_dnf_cannot_read_is_not_said_missing_the_release():
     out = ("Error: Failed to download metadata for repo 'cassandra-41x': Cannot download repomd.xml: Curl error (7):"
            " Couldn't connect to server")

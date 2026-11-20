@@ -263,6 +263,9 @@
         # a newer release of its series: compared as its restart window installs it (the package itself is the
         # Cassandra row of the restart)
         _cassandra_install_upgrade: "{{ (cassandra_apply_config_version | default({})).kind | default('') == 'release' }}"
+        # (a release its repository does not list: refused before any change, as the run's other stops say it)
+        _cassandra_install_refused_head: >-
+          apply_config  {{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}
       when: (cassandra_apply_config_version | default({})).kind | default('') in ['', 'release']
 
     # A node running another Java than cassandra_java_version (the plan of update_java, shared): installed, made the
