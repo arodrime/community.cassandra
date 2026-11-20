@@ -4,7 +4,8 @@
 repository that can't be reached named as such); cassandra_failure_report:
 the failures of several nodes at the same step, identical causes grouped,
 then what to check (add_node's prepare step). cassandra_failure_repos names
-the repositories an error (or a command's output) could not read."""
+the repositories an error (or a command's output) could not read;
+cassandra_nodetool_failure: a nodetool task's failure, hidden by no_log (-pw), said with its password masked."""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -74,6 +75,24 @@ def cassandra_failure_cause(result, task=""):
     return line if len(line) <= _WIDTH else line[:_WIDTH - 3].rstrip() + "..."
 
 
+def cassandra_nodetool_failure(result, host, what):
+    """A nodetool task run with failed_when: false and no_log (its -pw hidden): its failure, the password masked
+    -> [] when it did not fail, else the lines of the stop: "<host>: nodetool <what> failed (rc N): <its error's
+    first line>", then the way out. result: the registered result (a loop's: each failed item)."""
+    result = result if isinstance(result, dict) else {}
+    runs = result.get("results") if isinstance(result.get("results"), list) else [result]
+    failed = [r for r in runs if isinstance(r, dict) and not r.get("skipped") and r.get("rc") not in (None, 0)]
+    if not failed:
+        return []
+    lines = []
+    for run in failed:
+        said = [line.strip() for line in out.mask(str(run.get("stderr") or run.get("stdout") or "")).splitlines()
+                if line.strip()]
+        lines.append("%s: nodetool %s failed (rc %s): %s" % (host, what, run.get("rc"), _URL_LOGIN.sub(
+            r"\1****@", said[0]) if said else "no output"))
+    return lines + ["Way out: fix it (nodetool %s on %s shows it), then run the same command again." % (what, host)]
+
+
 def cassandra_failure_report(failures, operation="", cluster="", what="could not be prepared",
                              nothing="nothing was started", rerun="", ad_hoc="", python311=False):
     """failures: [{host, task, result, family}] (family: the OS family, for
@@ -127,4 +146,5 @@ class FilterModule(object):
     def filters(self):
         return {"cassandra_failure_cause": cassandra_failure_cause,
                 "cassandra_failure_repos": cassandra_failure_repos,
+                "cassandra_nodetool_failure": cassandra_nodetool_failure,
                 "cassandra_failure_report": cassandra_failure_report}

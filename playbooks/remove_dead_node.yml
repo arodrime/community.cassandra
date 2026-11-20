@@ -395,12 +395,26 @@
 
     - name: Finish a stuck removal (removenode force, on the node chosen above)
       ansible.builtin.command: "{{ _cassandra_service_nodetool }} removenode force"
+      register: cassandra_dead_force_run
       changed_when: true
+      failed_when: false  # said below, the password masked
       no_log: "{{ cassandra_jmx_password | length > 0 }}"
       when:
         - _method == 'removenode_force'
         - not _nothing_to_do | bool
         - inventory_hostname == cassandra_dead_force.on
+
+    # (no_log hides its failure: said here, the password masked)
+    - name: Stop where nodetool removenode force failed
+      ansible.builtin.fail:
+        msg: "{{ _failed | join(_nl) }}"
+      when: _failed | length > 0
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _failed: >-
+          {{ cassandra_dead_force_run | default({}) | community.cassandra.cassandra_nodetool_failure(inventory_hostname,
+                                                                                                    'removenode force') }}
 
     - name: Read the ring after removenode force
       community.cassandra.cassandra_status:

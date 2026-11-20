@@ -6,8 +6,19 @@
   ansible.builtin.command: "{{ _cassandra_service_nodetool }} version"
   register: cassandra_version_verify
   changed_when: false
+  failed_when: false  # said below, the password masked
   when: not ansible_check_mode
   no_log: "{{ cassandra_jmx_password | default('') | length > 0 }}"  # (nodetool -pw)
+
+# (no_log hides its failure: said here, the password masked)
+- name: Stop where nodetool version failed
+  ansible.builtin.fail:
+    msg: "{{ _failed | join(_nl) }}"
+  when: _failed | length > 0
+  vars:
+    cassandra_output: true  # a verdict: its msg as is (ops callback)
+    _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+    _failed: "{{ cassandra_version_verify | default({}) | community.cassandra.cassandra_nodetool_failure(inventory_hostname, 'version') }}"
 
 - name: Check it runs the target version
   ansible.builtin.assert:
