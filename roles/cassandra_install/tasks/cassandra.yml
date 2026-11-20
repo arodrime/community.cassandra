@@ -53,6 +53,49 @@
           {{ (ansible_facts.packages['cassandra'] | default([{}]) | first).version | default('')
              | regex_replace('^([0-9]+\.[0-9]+\.[0-9]+).*$', '\1') }}
 
+# Another release of an installed node (the upgrade's, apply_config's in its restart; under --check, at its plan): in
+# the repository the node reads, else a stop with the package manager's own words, before any change (else dnf or
+# apt failed later, its reason dropped)
+- name: Look for the release in the repository
+  ansible.builtin.shell: >-
+    {% if ansible_facts['os_family'] == 'Debian' %}
+    apt-cache madison cassandra 2>&1 | grep -E "[|] *{{ cassandra_package_version | regex_escape }}([-~+][^ ]*)? *[|]"
+    || { apt-cache madison cassandra 2>&1 | head -5; echo "no cassandra {{ cassandra_package_version }} in apt-cache madison cassandra"; exit 1; }
+    {% else %}
+    dnf -q --showduplicates list available --disableexcludes=all
+    {{ ("--disablerepo='*' --enablerepo=" ~ ('cassandra-' ~ cassandra_version) | quote) if _own_repo | bool else '' }}
+    {{ ('cassandra-' ~ cassandra_package_version) | quote }} 2>&1
+    {% endif %}
+  vars:
+    # the repository the role manages alone, as the download reads it (an unreachable OS repository on an
+    # air-gapped site is not read)
+    _own_repo: "{{ cassandra_repository_manage | default(not cassandra_offline | default(false) | bool) | bool }}"
+  register: cassandra_install_release
+  changed_when: false
+  failed_when: false
+  check_mode: false  # a read
+  when:
+    - _cassandra_install_upgrade | default(false) | bool
+    - cassandra_package_version != ''
+    - not cassandra_offline | bool
+    - cassandra_install_method in ['repository', 'system']
+    - "'cassandra' in _cassandra_install_before"
+    - >-
+      (_cassandra_install_before['cassandra'][0].version | regex_replace('^([0-9]+\.[0-9]+\.[0-9]+).*$', '\1'))
+      != cassandra_package_version
+
+- name: Stop when the release is not in the repository
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }}: Cassandra {{ cassandra_package_version }} is not in the repository the node reads
+      ({{ (cassandra_install_release.stdout_lines | default([]) | select | list)[-3:] | join('; ') or 'nothing listed' }}).
+      Nothing was changed. Set cassandra_package_version to a release it has ({{ 'apt-cache madison cassandra'
+      if ansible_facts['os_family'] == 'Debian' else 'dnf --showduplicates list cassandra' }} lists them there), or add
+      that release to the repository, then run again.
+  when:
+    - cassandra_install_release is not skipped
+    - cassandra_install_release.rc | default(0) != 0
+
 - name: Install Cassandra Packages
   when:
     - not cassandra_offline | bool

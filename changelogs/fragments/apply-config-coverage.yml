@@ -13,7 +13,9 @@ minor_changes:
     restart: the package updated with Cassandra stopped (the upgrade's own step; with the repository and packages
     the plan showed, and the Java it moves to, if any), the config written again, the release it runs checked; its
     firewall applied live, before. A failure there starts Cassandra again when its package is unchanged, else leaves
-    it stopped with a mark that ``-e cassandra_rolling_resume=true`` starts it from. It stops before any change when the release would not start with the node's settings,
+    it stopped with a mark that ``-e cassandra_rolling_resume=true`` starts it from. A release the node's repository
+    does not have stops the plan (``--check`` too, and the upgrade's node) with the package manager's own words and
+    the way out. It stops before any change when the release would not start with the node's settings,
     or is newer than the releases the collection's notes cover (``-e cassandra_allow_unknown_patch=true`` once its
     NEWS.txt is read); the notes of the releases a node crosses are said in the plan.
 bugfixes:
