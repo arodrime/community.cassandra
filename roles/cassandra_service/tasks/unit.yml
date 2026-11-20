@@ -61,6 +61,7 @@
     src: cassandra.service.j2
     dest: /etc/systemd/system/cassandra.service
     mode: "0644"
+  diff: "{{ _cassandra_service_diff | bool }}"
   register: cassandra_service_unit
   when: _cassandra_service_own_unit | bool
 
@@ -79,6 +80,7 @@
         src: cassandra-environment.conf.j2
         dest: "{{ _cassandra_service_environment_dropin }}"
         mode: "0644"
+      diff: "{{ _cassandra_service_diff | bool }}"
       register: cassandra_service_dropin
       when: _cassandra_service_dropin_wanted | bool
 

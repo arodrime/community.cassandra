@@ -15,6 +15,8 @@ cassandra_reimport_hosts: what is left to do, and the commands for it.
 cassandra_refused, cassandra_not_reached: a refusal before any change (the hosts Ansible did not reach), as a block of
 79 columns.
 cassandra_cqlsh_words: cassandra_cqlsh_command split as the cassandra_cqlsh module splits it.
+cassandra_holds_secret: whether a value is or holds a secret (shown ****): a file's diff that would show it is not
+shown.
 """
 
 from __future__ import absolute_import, division, print_function
@@ -270,6 +272,12 @@ def cassandra_todo(items, title="TO DO"):
     return out.todo(items, title=title)
 
 
+def cassandra_holds_secret(value, name=""):
+    """True when value (of the variable name) is or holds a secret, as the output masks it (plugin_utils
+    cassandra_output hidden): {"JVM_EXTRA_OPTS": "-Dx.trustStorePassword=y"} | cassandra_holds_secret -> True."""
+    return out.hidden(str(name or ""), value)
+
+
 class FilterModule(object):
     def filters(self):
         return {
@@ -290,4 +298,5 @@ class FilterModule(object):
             "cassandra_removed_todo": cassandra_removed_todo,
             "cassandra_reimport_hosts": cassandra_reimport_hosts,
             "cassandra_seeds_todo": cassandra_seeds_todo,
+            "cassandra_holds_secret": cassandra_holds_secret,
         }

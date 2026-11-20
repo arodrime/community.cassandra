@@ -63,3 +63,8 @@ _cassandra_service_environment_dropin: /etc/systemd/system/cassandra.service.d/z
 _cassandra_service_dropin_wanted: >-
   {{ cassandra_service_unit_manage | bool and cassandra_service_start == 'package_script'
      and cassandra_service_environment | length > 0 }}
+# --diff shows the unit and its drop-in as written, unless their environment holds a secret (JVM_EXTRA_OPTS with a
+# -D...Password=): the plan shows its change masked (****)
+_cassandra_service_diff: >-
+  {{ ansible_diff_mode | default(false) | bool
+     and not cassandra_service_environment | community.cassandra.cassandra_holds_secret('cassandra_service_environment') }}

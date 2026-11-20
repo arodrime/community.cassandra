@@ -14,11 +14,15 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
 
+from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
+
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
 except ImportError:
     def trust_as_template(template):
         return template
+
+load_collection_filters()
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 ROLE = os.path.join(TOP, "roles", "cassandra_service")
@@ -112,3 +116,20 @@ def test_the_unit_writes_the_environment_as_its_drop_in_does():
         said = [render(lines[0], name=k, value=v) for k, v in env.items()]
         assert said == ['Environment="JAVA_HOME=/opt/x/jdk"',
                         'Environment="JVM_EXTRA_OPTS=-Dzorglub.fmt=%%d -Dz=\\"a b\\""'], name
+
+
+@pytest.mark.parametrize("env, diff_mode, shown", [
+    ({"JAVA_HOME": "/usr/lib/jvm/jre-17"}, True, True),
+    ({"JAVA_HOME": "/usr/lib/jvm/jre-17"}, False, False),  # (no --diff: none)
+    # e2e: --check --diff showed Environment="JVM_EXTRA_OPTS=-Dzorglub.trustStorePassword=zorglub" in clear
+    ({"JVM_EXTRA_OPTS": "-Dzorglub.trustStorePassword=zorglub"}, True, False),
+    ({"DB_PASSWORD": "zorglub"}, True, False),
+])
+def test_the_unit_and_drop_in_diff_never_show_a_secret(env, diff_mode, shown):
+    tasks = load("tasks", "unit.yml")
+    writes = [next(t for t in tasks if t.get("name") == "Install the cassandra systemd unit"),
+              TASKS["Write the drop-in with its environment"]]
+    for task in writes:
+        assert task["diff"] == "{{ _cassandra_service_diff | bool }}", task["name"]
+    assert render(load("vars", "main.yml")["_cassandra_service_diff"], cassandra_service_environment=env,
+                  ansible_diff_mode=diff_mode) is shown
