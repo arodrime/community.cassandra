@@ -308,11 +308,11 @@ def test_a_refused_role_argument_in_a_rescued_block_said_in_short(tmp_path):
 def test_a_long_rescued_refusal_says_its_count_and_whole_names():
     # a refusal of many variables in a rescued block: the line keeps whole rows, then the names of the others (never
     # a name cut half way), the count and where to see all
-    from ansible_collections.community.cassandra.plugins.callback.ops import SHORT, refused_line
+    from ansible_collections.community.cassandra.plugins.callback.ops import HANDLED_LINE_MAX, refused_line
     rows = tuple("%s: '3w' is a text, not a whole number" % name
                  for name in ("cassandra_num_tokens", "cassandra_heap_new", "cassandra_rpc_port", "cassandra_jmx_port"))
     line = refused_line("the role", rows)
-    assert len(line) <= SHORT
+    assert len(line) <= HANDLED_LINE_MAX
     assert line == ("the role refused 4: cassandra_num_tokens: '3w' is a text, not a whole number;"
                     " cassandra_heap_new, cassandra_rpc_port, cassandra_jmx_port; -v shows all")
     # no row fits whole with the names of the others: the names alone, whole

@@ -387,7 +387,7 @@ def _is_secret(key, keys, value):
     return _secret(key, value) or any(_secret(k, value) for k in keys if not out.file_mode(k, value))
 
 
-def _plain_default(key):
+def plain_default(key):
     """A dict variable's collection default when it is plain (no template) -> {path: (keys, value)} as _leaves gives
     it, else None."""
     value = _roles_defaults().get(key)
@@ -403,15 +403,16 @@ def empty_on_own_row(key):
     """A dict variable whose collection default is plain (cassandra_linux_limits): a node's {} (none of the default's
     sub-keys, as import writes it for files not the role's) is said on the variable's own row only, never in its
     sub-keys' rows nor among their places (a change of a sub-key does not reach that node)."""
-    return _plain_default(key) is not None
+    return plain_default(key) is not None
 
 
-def _alike(a, b):
+def alike(a, b):
     """Two leaf values alike as a file of the roles writes them: 1048575 and "1048575"; case kept (the role writes
     "Unlimited" and "unlimited" as two different lines)."""
     return json.dumps(a, sort_keys=True, default=str).strip('"') == json.dumps(b, sort_keys=True, default=str).strip('"')
 
 
+COLLECTION_DEFAULT = "(collection's default)"  # a node's value that is the collection's default
 OWN_KEYS = "(its own keys, below)"  # a dict variable's own row: a node that sets it, by sub-key
 
 
@@ -426,7 +427,7 @@ def _settings_pairs(read, keys, from_yours):
     pairs, secrets, variable = [], {}, {}
     for key in keys:
         found, paths, empty = {}, [], set()
-        default = _plain_default(key)
+        default = plain_default(key)
         for n in read:
             mine = (n.get("vars") or {})
             if key not in mine and key in from_yours.get(n["name"], {}):  # left to a file of yours
@@ -443,7 +444,7 @@ def _settings_pairs(read, keys, from_yours):
         if compared:
             paths += [path for path in default if path not in paths]
         for path in paths:
-            if compared and path in default and all(path in mine and _alike(mine[path][1], default[path][1])
+            if compared and path in default and all(path in mine and alike(mine[path][1], default[path][1])
                                                     for name, mine in found.items() if name not in empty):
                 continue  # (the default's value on every node, set or not: no difference)
             variable[path] = key
@@ -451,7 +452,7 @@ def _settings_pairs(read, keys, from_yours):
                 if n["name"] in empty and path != key and default is not None:
                     continue  # (said once, on the variable's own row: empty_on_own_row)
                 if n["name"] not in found:
-                    text = "(collection's default)"
+                    text = COLLECTION_DEFAULT
                 elif path == key and path not in found[n["name"]]:
                     text = OWN_KEYS  # (a dict of its own, next to another node's {})
                 elif path not in found[n["name"]]:
@@ -1548,7 +1549,7 @@ def _differs_entries(report, differs):
     entries = []
     plans = _differs_plans(report) if differs and not report.screen else {}
     for path, values in differs:
-        own = [(v, m) for v, m in values if len(m) == 1 and v not in ("(collection's default)", "(not set)")]
+        own = [(v, m) for v, m in values if len(m) == 1 and v not in (COLLECTION_DEFAULT, "(not set)")]
         own = own if report.screen and len(own) > 5 else []
         rows = [(_shown_value(v, path), _who(report, members), "") for v, members in values if (v, members) not in own]
         if own:

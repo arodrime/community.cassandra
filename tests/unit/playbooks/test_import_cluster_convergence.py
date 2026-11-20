@@ -132,3 +132,20 @@ def test_the_tasks_pass_the_section_on():
     touch = WRITE["tasks"][names.index("Make the key of the shareable copy readable by its owner only")]
     assert names.index(touch["name"]) < names.index(shareable["name"])
     assert touch["ansible.builtin.file"]["mode"] == "0600" and touch["ansible.builtin.file"]["state"] == "touch"
+
+
+def test_a_dict_whose_rest_is_the_default_can_go():
+    # cassandra_linux_limits without its nofile: the rest the collection's default (1048575 as "1048575" too) or not
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_convergence import _rest_is_default
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
+        COLLECTION_DEFAULT, alike, plain_default)
+    assert COLLECTION_DEFAULT == "(collection's default)"
+    assert alike(32768, "32768") and not alike("Unlimited", "unlimited")
+    assert plain_default("cassandra_linux_limits")["cassandra_linux_limits.nofile"][1] == 1048576
+    key, name = "cassandra_linux_limits", "cassandra_linux_limits.nofile"
+    rest = {"memlock": "unlimited", "nproc": "32768", "as": "unlimited"}
+    assert _rest_is_default(key, name, [dict(rest, nofile=65536), rest])
+    assert not _rest_is_default(key, name, [dict(rest, nproc=4096)])  # (another value)
+    assert not _rest_is_default(key, name, [dict(rest, core=0)])  # (a key the default has not)
+    assert not _rest_is_default(key, name, [{"memlock": "unlimited"}])  # (a key of the default left out)
+    assert not _rest_is_default(key, name, ["x"])

@@ -207,7 +207,13 @@ def argument_lines(role, rows, hosts):
     return out + [ARGUMENTS_WAY_OUT]
 
 
-SHORT = 160  # the most of a handled failure's line
+HANDLED_LINE_MAX = 160  # the most of a handled failure's line
+
+
+def _refused_with_names(role, rows, whole):
+    """A refused role argument check in one line: its first whole rows as they are, the others by their name."""
+    names = [row.split(":")[0] for row in rows[whole:]]
+    return "%s refused %d: %s; -v shows all" % (role, len(rows), "; ".join(list(rows[:whole]) + [", ".join(names)]))
 
 
 def refused_line(role, rows):
@@ -215,13 +221,13 @@ def refused_line(role, rows):
     whole then the names of the others, never a name cut: "the role refused 3: a: a text, not a whole number; b, c;
     -v shows all"."""
     line = "%s refused %s" % (role, "; ".join(rows))
-    if len(line) <= SHORT:
+    if len(line) <= HANDLED_LINE_MAX:
         return line
-
-    def first(count):  # the first count rows whole, the others by their name
-        names = [row.split(":")[0] for row in rows[count:]]
-        return "%s refused %d: %s; -v shows all" % (role, len(rows), "; ".join(list(rows[:count]) + [", ".join(names)]))
-    return next((first(count) for count in range(len(rows) - 1, 0, -1) if len(first(count)) <= SHORT), first(0))
+    for whole in range(len(rows) - 1, 0, -1):
+        line = _refused_with_names(role, rows, whole)
+        if len(line) <= HANDLED_LINE_MAX:
+            return line
+    return _refused_with_names(role, rows, 0)
 
 
 def _task(result):
@@ -888,7 +894,7 @@ class CallbackModule(DefaultCallback):
         host = getattr(result, "host", None) or result._host
         first = said[0] if said else "failed"
         # the playbook says it in full itself (a summary, a refusal): a short line here
-        first = first if len(first) <= SHORT or refused else first[:SHORT - 3].rstrip() + "..."
+        first = first if len(first) <= HANDLED_LINE_MAX or refused else first[:HANDLED_LINE_MAX - 3].rstrip() + "..."
         self._display.display("%s: %s: %s (the playbook handles it)" % (host.get_name(), _task(result).get_name(), first))
         self._shown()
         return None

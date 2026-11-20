@@ -23,8 +23,8 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_conf
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     JAVA_DEFAULT, KEEP, ROLE, SERIES, group_chains, hand_edits_kept, template_vars, undefined_name)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
-    ARROW_RIGHT, DASH, NOT_COUNTED, REPORT_WIDTH, _alike, _plain_default, aligned_rows, empty_on_own_row, fill_text,
-    report_sections, unbreakable, unread_by, who_text)
+    ARROW_RIGHT, COLLECTION_DEFAULT, DASH, NOT_COUNTED, REPORT_WIDTH, aligned_rows, alike, empty_on_own_row,
+    fill_text, plain_default, report_sections, unbreakable, unread_by, who_text)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 
@@ -430,7 +430,7 @@ def _shown(text):
     inventory by its path there."""
     text = re.sub(r"[\r\n]+", " ", str(text))  # (a line of its own would be read as another one)
     text = text.replace("{{ inventory_dir }}/", "")
-    return {"(collection's default)": "default", "(not set)": "not set"}.get(text, text)
+    return {COLLECTION_DEFAULT: "default", "(not set)": "not set"}.get(text, text)
 
 
 def _check(nodes, kind, inventory, hosts, cwd):
@@ -439,6 +439,20 @@ def _check(nodes, kind, inventory, hosts, cwd):
     playbook, extra = ("change_seeds", ["--check"]) if kind == "seeds" else ("apply_config", ["--check", "--diff"])
     limit = nodes if 0 < len(nodes) <= LIMIT_MOST and kind != "seeds" else None
     return out.command(playbook, inventory=inventory or None, hosts=hosts or None, limit=limit, extra=extra, cwd=cwd)
+
+
+def _rest_is_default(key, name, values):
+    """A dict variable whose collection default is plain (plain_default), one of its sub-keys (name, its path), the
+    nodes' values of the variable -> whether every node's dict has the default's other sub-keys, at the default's
+    values, and no other: without that sub-key, each one is the collection's default (the dict can go)."""
+    others = dict((path, v[1]) for path, v in plain_default(key).items() if path != name)
+    for value in values:
+        if not isinstance(value, dict):
+            return False
+        mine = dict((path, v) for path, v in out.leaves(key, value) if path != name)
+        if set(mine) != set(others) or not all(alike(v, others[path]) for path, v in mine.items()):
+            return False
+    return True
 
 
 def _action(item, layout):
@@ -471,20 +485,16 @@ def _action(item, layout):
             what = "already in %s: remove %s from %s" % (where, item["key"], places)
         else:
             what = "%s: %s in %s%s" % (item["key"], value, where, ", removed from %s" % places if places else "")
-    elif item["raw"] is _ABSENT and item["target"] == "(collection's default)" \
-            and item["name"] in (_plain_default(item["key"]) or {}):
+    elif item["raw"] is _ABSENT and item["target"] == COLLECTION_DEFAULT \
+            and item["name"] in (plain_default(item["key"]) or {}):
         # (a dict such as cassandra_linux_limits is written as given, never merged with the collection's default:
         # the default's value of the sub-key written in it, or the dict removed when the rest of it is the default's)
-        stock = _plain_default(item["key"])
-        places = ", ".join(_places(layout, item["key"], item["name"], stock[item["name"]][1])) or "the inventory"
-        others = dict((p, v[1]) for p, v in stock.items() if p != item["name"])
-        if all(isinstance(d, dict) and set(dict(out.leaves(item["key"], d))) - {item["name"]} == set(others)
-               and all(_alike(v, others[p]) for p, v in out.leaves(item["key"], d) if p != item["name"])
-               for d in item["dicts"]):
+        default_value = plain_default(item["key"])[item["name"]][1]
+        places = ", ".join(_places(layout, item["key"], item["name"], default_value)) or "the inventory"
+        if _rest_is_default(item["key"], item["name"], item["dicts"]):
             what = "remove %s from %s (the rest of it is the collection's default)" % (item["key"], places)
         else:
-            what = "%s: %s (the collection's default) in %s in %s" % (
-                sub, _shown(stock[item["name"]][1]), item["key"], places)
+            what = "%s: %s (the collection's default) in %s in %s" % (sub, _shown(default_value), item["key"], places)
     else:
         places = ", ".join(_places(layout, item["key"], item["name"], item["raw"]))
         if item["raw"] is _ABSENT:
