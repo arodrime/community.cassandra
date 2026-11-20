@@ -20,10 +20,11 @@
 # cassandra_service_health_leaving_ok: addresses expected leaving (UL: a decommission to wait for).
 # cassandra_service_health_any_ok: addresses not judged, whatever their state
 # (UN, DN, UJ, UL, UM...; not waited for).
-# _cassandra_health_prefer_peers: hosts read from first, when they may be;
-# _cassandra_health_why: lines the stop says after the problems (why they are problems).
-# _cassandra_health_stop_only: true only stops (or goes on, forced) on cassandra_health_problems
-# as set by the caller after a report_only check (start_rack: the rack's own problems).
+# _cassandra_health_prefer_peers: hosts read from first, when they may be.
+# _cassandra_health_stop_on: problems to stop on (or go on, forced), nothing read: the
+# caller's judgment of a report_only check (start_rack: the rack's own problems);
+# _cassandra_health_why: lines the stop says after them (why they are problems);
+# _cassandra_health_again: what the way out ends with (default: resume).
 # cassandra_service_health_report_only: true only sets cassandra_health_problems
 # and cassandra_health_findings (no failure; it waits as above unless told not to).
 # cassandra_service_health_batch: true for the hosts of a play checked at once:
@@ -33,10 +34,11 @@
   ansible.builtin.set_fact:
     _cassandra_health_expected: >-
       {{ cassandra_service_health_expected_nodes | default(query('community.cassandra.cassandra_nodes') | length) | int }}
-    # the nodes of a batch, checked at once (cassandra_service_health_batch): the ring and the schema read
-    # once, from the same node, not one of them when another is up
+    # the host the ring and the schema are read from too (its reads: cassandra_health_peer and
+    # cassandra_health_schema); the nodes of a batch, checked at once (cassandra_service_health_batch): the
+    # ring and the schema read once, from the same node, not one of them when another is up
     # (each variable read once: the node list costs every node's variables)
-    _cassandra_health_peer: >-
+    _cassandra_health_peer_host: >-
       {%- set c = _candidates -%}
       {{ (c | reject('in', ansible_play_hosts) | list + c) | first | default(inventory_hostname)
          if cassandra_service_health_batch | default(false) | bool
@@ -61,7 +63,7 @@
     _prefer: "{{ _cassandra_health_prefer_peers | default([]) }}"
     # the hosts allowed, the ones preferred first
     _candidates: "{{ _allowed | select('in', _prefer) | list + _allowed | reject('in', _prefer) | list }}"
-  when: not _cassandra_health_stop_only | default(false) | bool
+  when: _cassandra_health_stop_on is not defined
 
 # Each read is a nodetool run (a JVM, seconds each): the ones on this node run at once (async), then are collected
 # (cluster_health_read.yml). Read once; a real run reads again while a node is down or a port of this node does
@@ -104,7 +106,7 @@
       operation: >-
         {{ {'apply_config': 'write_config'}.get(cassandra_service_node_action, cassandra_service_node_action)
            if cassandra_service_node_action is defined else 'cluster check' }}
-  when: not _cassandra_health_stop_only | default(false) | bool
+  when: _cassandra_health_stop_on is not defined
   block:
     - name: Read the cluster state
       ansible.builtin.include_tasks: cluster_health_read.yml
@@ -157,40 +159,44 @@
   ansible.builtin.set_fact:
     _cassandra_stop_word: cluster health check failed
   when:
-    - cassandra_health_problems | length > 0
+    - _problems | length > 0
     - not cassandra_service_health_force | bool
     - not cassandra_service_health_report_only | default(false) | bool
+  vars:
+    _problems: "{{ _cassandra_health_stop_on | default(cassandra_health_problems) }}"
 
 - name: Stop on an unhealthy cluster
   ansible.builtin.fail:
-    msg: >-
-      {{ cassandra_health_problems
-         + (['waited ' ~ (now().timestamp() | int - _cassandra_health_wait_start | int) | community.cassandra.cassandra_duration
-             ~ ' (cassandra_service_health_timeout: ' ~ cassandra_service_health_timeout ~ 's)']
-            if _cassandra_health_waited | default(false) | bool else [])
-         + (['Not counted, marked cassandra_node_state: absent: ' ~ _absent | join(', ')
-             ~ '. Still in the ring? The playbook topology removes them.']
-            if _absent and cassandra_health_problems | select('search', '^the ring has ') | list else [])
-         + _cassandra_health_why | default([])
-         + (['WAY OUT  bring ' ~ _down | join(', ') ~ ' back to UN (' ~ ('its' if _down | length == 1 else 'their')
-             ~ ' host and/or Cassandra), then ' ~ _again] + _lost
-            if _down else ['WAY OUT  fix it (the lines above say what), then ' ~ _again]) }}
+    msg: "{{ _problems + _waited + _not_counted + _cassandra_health_why | default([]) + _way_out }}"
   vars:
     cassandra_output: true
+    _problems: "{{ _cassandra_health_stop_on | default(cassandra_health_problems) }}"
+    _waited: >-
+      {{ ['waited ' ~ (now().timestamp() | int - _cassandra_health_wait_start | int) | community.cassandra.cassandra_duration
+          ~ ' (cassandra_service_health_timeout: ' ~ cassandra_service_health_timeout ~ 's)']
+         if _cassandra_health_waited | default(false) | bool else [] }}
+    _not_counted: >-
+      {{ ['Not counted, marked cassandra_node_state: absent: ' ~ _absent | join(', ')
+          ~ '. Still in the ring? The playbook topology removes them.']
+         if _absent and _problems | select('search', '^the ring has ') | list else [] }}
     _absent: "{{ query('community.cassandra.cassandra_nodes', state='absent') }}"
+    _way_out: >-
+      {{ ['WAY OUT  bring ' ~ _down | join(', ') ~ ' back to UN (' ~ ('its' if _down | length == 1 else 'their')
+          ~ ' host and/or Cassandra), then ' ~ _again] + _lost
+         if _down else ['WAY OUT  fix it (the lines above say what), then ' ~ _again] }}
     # the cluster's group, where replace_node wants the new host (replace_node.yml)
     _group: >-
       {{ _cassandra_run_command_args.hosts | default('', true) or "the cluster's group" }}
     # --check wrote no progress file: the same check again, not a resume
-    _again: "{{ 'check again' if ansible_check_mode else 'resume' }}"
+    _again: "{{ _cassandra_health_again | default('check again' if ansible_check_mode else 'resume') }}"
     # the nodes down, as the problems name them ("node4 (10.0.0.4, r1) is DN, seen from node1")
     _down: >-
-      {{ cassandra_health_problems | select('search', ' is D[NLJM],') | map('regex_replace', ' \(.*$', '') | unique | list }}
+      {{ _problems | select('search', ' is D[NLJM],') | map('regex_replace', ' \(.*$', '') | unique | list }}
     # a node lost for good, apart from the resume (a block of its own in the stop block): the full
     # commands with the conditions their playbooks state, replace_node first, remove_dead_node last
     _lost: >-
       {%- set out = [] -%}
-      {%- for p in cassandra_health_problems | select('search', ' is D[NLJM],') | unique -%}
+      {%- for p in _problems | select('search', ' is D[NLJM],') | unique -%}
       {%-   set name = p | regex_replace(' \(.*$', '') -%}
       {%-   set address = (p | regex_findall('^\S+ \(([^,)]+)') + [name]) | first -%}
       {%-   set _ = out.extend(['IF ' ~ name ~ ' IS LOST FOR GOOD',
@@ -207,20 +213,24 @@
       {%- endfor -%}
       {{ out }}
   when:
-    - cassandra_health_problems | length > 0
+    - _problems | length > 0
     - not cassandra_service_health_force | bool
     - not cassandra_service_health_report_only | default(false) | bool
 
 - name: Go on despite the problems (cassandra_service_health_force)
   ansible.builtin.debug:
     msg: >-
-      {{ (['WARNING  cassandra_service_health_force is set, going on with an unhealthy cluster: taking this node down'
-           ~ ' now can make data unavailable (reads/writes failing at QUORUM) or lose writes:']
-          + cassandra_health_problems | map('regex_replace', '^', '  ') | list) | join(_nl) }}
+      {{ (['WARNING  cassandra_service_health_force is set, going on with an unhealthy cluster' ~ _risk]
+          + _problems | map('regex_replace', '^', '  ') | list) | join(_nl) }}
   when:
-    - cassandra_health_problems | length > 0
+    - _problems | length > 0
     - cassandra_service_health_force | bool
     - not cassandra_service_health_report_only | default(false) | bool
   vars:
+    _problems: "{{ _cassandra_health_stop_on | default(cassandra_health_problems) }}"
+    # what goes on next: a node taken down, except after a check that only stops (start_rack: nothing more)
+    _risk: >-
+      {{ ':' if _cassandra_health_stop_on is defined else ': taking this node down now can make data unavailable'
+         ~ ' (reads/writes failing at QUORUM) or lose writes:' }}
     _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
     cassandra_output: true

@@ -53,12 +53,12 @@
 
     # while those run: the reads from the other node, one after the other there (the nodes of a parallel
     # play all read from it); a batch reads them once, at once
-    - name: Read the ring from {{ _cassandra_health_peer }}
+    - name: Read the ring from {{ _cassandra_health_peer_host }}
       community.cassandra.cassandra_status:
         poll: 1
         down: "{{ _down_ok | length + cassandra_service_health_any_ok | default([]) | length }}"  # (any_ok: any state)
       register: cassandra_health_peer_read
-      delegate_to: "{{ _cassandra_health_peer }}"
+      delegate_to: "{{ _cassandra_health_peer_host }}"
       run_once: "{{ _batch }}"
       async: "{{ _async if _batch else 0 }}"
       poll: 0
@@ -73,7 +73,7 @@
         poll: "{{ 1 if cassandra_allow_mixed_versions | default(false) | bool else 6 }}"
         interval: "{{ _cassandra_health_schema_interval | default(10) }}"  # (the unit tests: 0)
       register: cassandra_health_schema_read
-      delegate_to: "{{ _cassandra_health_peer }}"
+      delegate_to: "{{ _cassandra_health_peer_host }}"
       run_once: "{{ _batch }}"
       async: "{{ _async if _batch else 0 }}"
       poll: 0
@@ -156,14 +156,14 @@
       check_mode: false
       when: _node_checks
 
-    - name: Wait for the ring read on {{ _cassandra_health_peer }}
+    - name: Wait for the ring read on {{ _cassandra_health_peer_host }}
       ansible.builtin.async_status:
         jid: "{{ cassandra_health_peer_read.ansible_job_id | default('') }}"
       register: cassandra_health_peer_job
       until: cassandra_health_peer_job.finished | default(1) | bool
       retries: "{{ _async }}"
       delay: 1
-      delegate_to: "{{ _cassandra_health_peer }}"
+      delegate_to: "{{ _cassandra_health_peer_host }}"
       run_once: true
       changed_when: false
       failed_when: false
@@ -177,24 +177,24 @@
       until: cassandra_health_schema_job.finished | default(1) | bool
       retries: "{{ _async }}"
       delay: 1
-      delegate_to: "{{ _cassandra_health_peer }}"
+      delegate_to: "{{ _cassandra_health_peer_host }}"
       run_once: true
       changed_when: false
       failed_when: false
       check_mode: false
       when: _batch
 
-    - name: Note what was read from {{ _cassandra_health_peer }}
+    - name: Note what was read from {{ _cassandra_health_peer_host }}
       ansible.builtin.set_fact:
         cassandra_health_peer: "{{ cassandra_health_peer_job if _batch else cassandra_health_peer_read }}"
         cassandra_health_schema: "{{ cassandra_health_schema_job if _batch else cassandra_health_schema_read }}"
 
-    - name: Remove the files of the reads from {{ _cassandra_health_peer }}
+    - name: Remove the files of the reads from {{ _cassandra_health_peer_host }}
       ansible.builtin.command:
         argv: >-
           {{ ['rm', '-f', '--'] + [cassandra_health_peer_read, cassandra_health_schema_read] | selectattr('results_file', 'defined')
              | map(attribute='results_file') | list }}
-      delegate_to: "{{ _cassandra_health_peer }}"
+      delegate_to: "{{ _cassandra_health_peer_host }}"
       run_once: true
       changed_when: false
       failed_when: false  # only files
@@ -215,9 +215,7 @@
     - name: List the problems
       ansible.builtin.set_fact:
         cassandra_health_findings: >-
-          {{ (([{'from': inventory_hostname, 'result': cassandra_health_self}] if _node_checks else [])
-              + [{'from': _cassandra_health_peer, 'result': cassandra_health_peer}])
-             | community.cassandra.cassandra_health_findings(_cassandra_health_expected, inventory_hostname,
+          {{ _views | community.cassandra.cassandra_health_findings(_cassandra_health_expected, inventory_hostname,
                  gossip=cassandra_health_gossip if _node_checks else None,
                  binary=cassandra_health_binary if _node_checks else None,
                  netstats=cassandra_health_netstats if _node_checks else None,
@@ -231,6 +229,11 @@
                        else query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_host_addresses(hostvars),
                  mixed_versions=cassandra_allow_mixed_versions | default(false) | bool,
                  target=cassandra_package_version | default('')) }}
+      vars:
+        # the rings read: from this node, from the other one
+        _views: >-
+          {{ ([{'from': inventory_hostname, 'result': cassandra_health_self}] if _node_checks else [])
+             + [{'from': _cassandra_health_peer_host, 'result': cassandra_health_peer}] }}
 
     # the same as sentences (cassandra_health_findings: as data, for the health_check report)
     - name: Word the problems

@@ -79,3 +79,38 @@ def test_each_problem_and_the_wait_on_a_line_of_their_own():
     assert lines[:2] == ["n4 (10.0.0.4, r1) is DN, seen from n1", "the schema differs"]
     assert lines[2].startswith("waited ") and lines[2].endswith(" (cassandra_service_health_timeout: 600s)")
     assert lines[3] == "WAY OUT  bring n4 back to UN (its host and/or Cassandra), then resume"
+
+
+def test_a_check_that_only_stops_reads_nothing_and_stops_on_the_problems_given():
+    # start_rack: the problems it judged after a report_only check; the reads and the wait skipped
+    with open(PATH, encoding="utf-8") as f:
+        tasks = yaml.safe_load(f)
+
+    def runs(task, **variables):
+        when = task.get("when", [])
+        variables = dict(dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in task.get("vars", {}).items()),
+                         cassandra_service_health_force=False, cassandra_health_problems=["the ring read before"], **variables)
+        return all(Templar(loader=DataLoader(), variables=variables).template(trust_as_template("{{ %s }}" % w))
+                   for w in (when if isinstance(when, list) else [when]))
+    given = dict(_cassandra_health_stop_on=["n3 (10.0.0.3, r2) is DN, seen from n2"])
+    assert [t["name"] for t in tasks if runs(t, **given)] == ["Name the stop for the table of the stop block",
+                                                              "Stop on an unhealthy cluster"]
+    assert [t["name"] for t in tasks if runs(t, _cassandra_health_stop_on=[])] == []
+    # not given: every task as before (the first two read, the stop on what they found)
+    assert all(runs(t) for t in tasks[:2])
+    lines = said(False, ["the ring read before"], _cassandra_health_again="run start_rack again", **given)
+    assert lines[:2] == ["n3 (10.0.0.3, r2) is DN, seen from n2",
+                         "WAY OUT  bring n3 back to UN (its host and/or Cassandra), then run start_rack again"]
+
+
+def test_forced_after_a_check_that_only_stops_it_does_not_say_a_node_is_taken_down():
+    with open(PATH, encoding="utf-8") as f:
+        task = next(t for t in yaml.safe_load(f) if t.get("name") == "Go on despite the problems (cassandra_service_health_force)")
+
+    def msg(**variables):
+        variables = dict(dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in task["vars"].items()),
+                         cassandra_health_problems=["n3 is DN"], **variables)
+        return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(task["ansible.builtin.debug"]["msg"]))
+    assert msg(_cassandra_health_stop_on=["n3 is DN"]).splitlines() == [
+        "WARNING  cassandra_service_health_force is set, going on with an unhealthy cluster:", "  n3 is DN"]
+    assert "taking this node down now" in msg()

@@ -187,7 +187,7 @@ def test_health_peer_leaves_out_the_target_nodes(extra, peer):
     task = HEALTH["ansible.builtin.set_fact"]
     variables = dict(HEALTH["vars"], inventory_hostname="n1", groups={"all": ["n1", "n2", "n3"], "prod": ["n1", "n2", "n3"]},
                      cassandra_hosts="prod", hostvars={}, **extra)
-    assert render(task["_cassandra_health_peer"], **variables) == peer
+    assert render(task["_cassandra_health_peer_host"], **variables) == peer
 
 
 def test_a_former_name_set_for_any_node_refused_in_preflight():

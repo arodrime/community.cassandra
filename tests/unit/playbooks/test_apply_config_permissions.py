@@ -420,7 +420,7 @@ def test_the_second_node_checked_from_is_not_one_expected_down():
     hosts = ["n1", "n2", "n3"]
     hostvars = dict((h, {"_cassandra_preflight": {"ring_address": "10.100.100.%s" % h[1]}}) for h in hosts)
     variables = {"groups": {"all": hosts, "cassandra": hosts, "cassandra_dc1": hosts}, "hostvars": hostvars, "inventory_hostname": "n2"}
-    peer = work["ansible.builtin.set_fact"]["_cassandra_health_peer"]
+    peer = work["ansible.builtin.set_fact"]["_cassandra_health_peer_host"]
     assert render(peer, with_task_vars(work, variables)) == "n1"
     # n1 stopped (apply_config writes it, left stopped): the ring is read from n3
     variables["cassandra_service_health_down_ok"] = ["10.100.100.1"]
@@ -432,7 +432,7 @@ def test_a_batch_reads_the_ring_and_schema_once_from_a_node_outside_it():
     work = load("roles", "cassandra_operation", "tasks", "cluster_health.yml")[0]
     hosts = ["n1", "n2", "n3"]
     hostvars = dict((h, {"_cassandra_preflight": {"ring_address": "10.100.100.%s" % h[1]}}) for h in hosts)
-    peer = work["ansible.builtin.set_fact"]["_cassandra_health_peer"]
+    peer = work["ansible.builtin.set_fact"]["_cassandra_health_peer_host"]
     for batch, play, me, expected in ((True, ["n1", "n2"], "n1", "n3"), (True, ["n1", "n2"], "n2", "n3"),
                                       (True, hosts, "n2", "n1"),  # all in the batch: the same node for all
                                       (False, ["n1", "n2"], "n1", "n2")):  # one node at a time: another node
@@ -440,8 +440,8 @@ def test_a_batch_reads_the_ring_and_schema_once_from_a_node_outside_it():
                      "ansible_play_hosts": play, "cassandra_service_health_batch": batch}
         assert render(peer, with_task_vars(work, variables)) == expected
     block = load("roles", "cassandra_operation", "tasks", "cluster_health_read.yml")[0]
-    shared = [t for t in block["block"] if t.get("delegate_to") == "{{ _cassandra_health_peer }}" and "async" in t]
-    assert [t["name"] for t in shared] == ["Read the ring from {{ _cassandra_health_peer }}",
+    shared = [t for t in block["block"] if t.get("delegate_to") == "{{ _cassandra_health_peer_host }}" and "async" in t]
+    assert [t["name"] for t in shared] == ["Read the ring from {{ _cassandra_health_peer_host }}",
                                            "Check schema agreement (same answer from any node)"]
     for t in shared:  # a batch: once, both at once; else one after the other there (every node of a parallel play reads there)
         assert t["run_once"] == "{{ _batch }}" and t["async"] == "{{ _async if _batch else 0 }}" and t["poll"] == 0

@@ -3,15 +3,18 @@ bugfixes:
     start_rack - the check after the start runs from a node of the rack and succeeds once every node of the rack is
     UN. A node of the rack is every node the inventory or the ring puts in it, under ``--limit`` too, a node at an
     address a node of the rack gives, and a node of the ring no host is known by unless the ring puts it in another
-    rack and every node of the rack is in the ring (the stop says why, and to give that host its address). One not
-    UN or not reached over ssh still stops the run.
+    rack and every node of the rack is in the ring (the stop says why, and to give that host the address the ring
+    shows: ``broadcast_address`` first). One not UN or not reached over ssh still stops the run, with the way out
+    ``run start_rack again``.
   - >-
-    start_rack - a node outside the rack seen not UN (down, joining, leaving, moving or any other state) by a node
-    outside the rack up for long, not reached over ssh, or whose ``nodetool status`` fails, is no longer waited for
-    (a node only the just-started node of the rack sees not UN is waited for, then a warning if still not UN)
-    and no longer fails the run (an unreachable host outside the rack is counted ignored, the exit code stays 0,
-    under ``--check`` too): a warning lists it (node, state as ``nodetool status`` shows it, ``not reached over
-    ssh``, ``nodetool status failed``), then the ``health_check`` command. The ssh probe runs without become,
-    whatever the inventory's ``ansible_become``. Streams on the node of the rack the check runs from, a ring of
-    another size than the inventory, or ``nodetool status`` failing on that node or on the node of the second read
-    (another node of the rack first) still stop the run.
+    start_rack - the rest of the cluster is a warning, no longer waited for and no longer failing the run (an
+    unreachable host outside the rack is counted ignored, the exit code stays 0, under ``--check`` too). The warning
+    lists each node outside the rack not UN (down, joining, leaving, moving or any other state, as ``nodetool status``
+    shows it), not reached over ssh, or whose ``nodetool status`` fails, then the ``health_check`` command. A node
+    only the just-started node of the rack sees not UN is waited for first. With every node of the rack in the ring
+    and UN, a ring of another size than the inventory, and a schema disagreement of nodes outside the rack only
+    (named), are warning rows too. The ssh probe runs without become, whatever the inventory's ``ansible_become``.
+  - >-
+    start_rack - what still stops the run: streams on the node of the rack the check runs from, ``nodetool status``
+    failing on a node of the rack, or on every node read from, and a ring size or schema disagreement while a node
+    of the rack is not UN, not in the ring, or not on the version of the others.
