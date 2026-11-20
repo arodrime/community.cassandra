@@ -185,6 +185,14 @@
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
 
+    # (drift's compare: where a real run stops, no compare either, which another series would fail; drift says the
+    # stop in IN SYNC)
+    - name: End the compare where a real run stops
+      ansible.builtin.meta: end_play
+      when:
+        - _cassandra_apply_config_stops | length > 0
+        - _cassandra_apply_config_compare_only | default(false) | bool
+
     # Check mode: shows the diffs, writes nothing
     - name: Compare the config
       ansible.builtin.include_role:

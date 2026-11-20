@@ -470,7 +470,8 @@ def cassandra_drift_sync(nodes, stops=None, command=""):
     for node in nodes or []:
         if not boolean(node.get("compared", True), strict=False):
             unseen += 1
-            text = "not compared (the compare gave nothing for it)"
+            text = ("not compared (apply_config stops first)" if stops  # (it stops before its compare: none made)
+                    else "not compared (the compare gave nothing for it)")
             if text not in rows:
                 order.append(text)
             rows.setdefault(text, []).append(str(node.get("name")))

@@ -235,3 +235,27 @@ def test_a_node_the_compare_did_not_reach_is_not_in_sync():
     verdict = render(play["vars"]["_verdict"], dict(variables, _compared=True,
                                                     _cassandra_drift_report={"counts": {"stock": 0, "between": 0, "kept": 0}}))
     assert verdict == "at stock, nodes alike, 1 node not compared"
+
+
+def test_a_stop_ends_the_compare_and_is_said_not_in_sync():
+    # e2e: an inventory asking another series (the upgrade planned) failed drift at cassandra_config's series check;
+    # the compare now ends where a real run stops, its nodes said not compared, the stop with its command
+    find = next(p for p in load("apply_config.yml") if p.get("name") == "Find what each node needs")
+    names = [t.get("name") for t in find["tasks"]]
+    end = find["tasks"][names.index("End the compare where a real run stops")]
+    assert end["ansible.builtin.meta"] == "end_play"
+    assert whens(end) == ["_cassandra_apply_config_stops | length > 0",
+                          "_cassandra_apply_config_compare_only | default(false) | bool"]
+    assert names.index("Stop before any change") < names.index("End the compare where a real run stops") \
+        < names.index("Compare the config")
+    play = next(p for p in load("drift.yml") if p.get("name") == "Drift")
+    stops = ["db1, db2: runs Cassandra 4.1.12, the inventory asks for 5.0.9: another series is an upgrade."]
+    stopped = dict((n, {"_cassandra_apply_config_stops": stops}) for n in ("db1", "db2"))
+    variables = dict(trust(play["vars"]), hostvars=stopped, _nodes=["db1", "db2"])
+    sync = render(play["vars"]["_sync"], variables)
+    assert cassandra_drift_sync(sync, render(play["vars"]["_stops"], variables), "CMD")[1:] == [
+        "  db1, db2  not compared (apply_config stops first)",
+        "  apply_config would stop before any change (a procedure of its own first):", "    " + stops[0]]
+    verdict = render(play["vars"]["_verdict"], dict(variables, _compared=True,
+                                                    _cassandra_drift_report={"counts": {"stock": 0, "between": 0, "kept": 0}}))
+    assert verdict == "at stock, nodes alike, not in sync, 2 nodes not compared"
