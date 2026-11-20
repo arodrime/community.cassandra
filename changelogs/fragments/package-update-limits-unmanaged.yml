@@ -5,5 +5,5 @@ minor_changes:
     said as a WARNING on that node right after the update (a later stop of the run keeps it on screen) and again in
     the recap. Its former content is saved on the controller, mode 0600, next to the run's reports
     (``<report name>-<node>-limits.conf``, the same time stamp as the run's report), kept when the reports rotate,
-    and the WARNING names that file; a link replaced is named with the command that puts it back. The node's file is
-    left as the package wrote it.
+    and the WARNING names that file; a link replaced (by a file of the same content too) is named with the command
+    that puts it back. The node's file is never written back.

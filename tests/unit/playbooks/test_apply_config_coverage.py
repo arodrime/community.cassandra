@@ -8,6 +8,7 @@ __metaclass__ = type
 # joined node's other token: stopped before any change. Rendered by Ansible from the playbook and the task files.
 
 import base64
+import fnmatch
 import os
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import (
@@ -392,11 +393,20 @@ def test_a_package_update_on_a_node_with_its_own_os_settings_says_a_changed_limi
         assert all(render("{{ %s }}" % w, variables) for w in content["when"]) is runs
     said = find(update, "Say the package changed the limits file")
 
-    def changed(before, after, manage=False):
+    def changed(before, after, manage=False, link_before=None, link_after=None):
         variables = {"cassandra_linux_manage": manage, "cassandra_package_limits_before": {"stat": before},
-                     "cassandra_package_limits_after": {"stat": after}}
+                     "cassandra_package_limits_after": {"stat": after},
+                     "cassandra_package_limits_link_before": {"stat": link_before or {}},
+                     "cassandra_package_limits_link_after": {"stat": link_after or {}}}
+        variables = with_task_vars(said, variables)
         return all(render("{{ %s }}" % w, variables) for w in said["when"])
     assert changed({"exists": True, "checksum": "aaa"}, {"exists": True, "checksum": "bbb"})
+    # the operator's link replaced by a plain file of the same content: the link is lost, said
+    lnk = {"exists": True, "islnk": True, "lnk_target": "/srv/l.conf"}
+    assert changed({"exists": True, "checksum": "aaa"}, {"exists": True, "checksum": "aaa"}, link_before=lnk,
+                   link_after={"exists": True, "islnk": False})
+    assert not changed({"exists": True, "checksum": "aaa"}, {"exists": True, "checksum": "aaa"}, link_before=lnk,
+                       link_after=lnk)
     assert not changed({"exists": True, "checksum": "aaa"}, {"exists": True, "checksum": "aaa"})
     assert not changed({"exists": False}, {"exists": False})
     assert changed({"exists": False}, {"exists": True, "checksum": "bbb"})
@@ -410,24 +420,32 @@ def test_a_package_update_on_a_node_with_its_own_os_settings_says_a_changed_limi
                  "hostvars": {"localhost": {"_cassandra_run_start": "1763600000"}}}
     from ansible_collections.community.cassandra.plugins.filter.cassandra_run_report import cassandra_run_report_name
     stamp = cassandra_run_report_name("upgrade", False, 1763600000)[:-len(".txt")]
-    assert render(keep["vars"]["_saved"], variables) == "/inv/reports/prod/%s-n1-limits.conf" % stamp
+
+    def saved(given):
+        return render(keep["vars"]["_saved"], with_task_vars({"vars": {"_started": keep["vars"]["_started"]}}, given))
+    assert saved(variables) == "/inv/reports/prod/%s-n1-limits.conf" % stamp
     # apply_config: the same time stamp as its report of the run (its own start, a little after the run's)
     variables["cassandra_service_node_action"] = "apply_config"
     variables["hostvars"]["localhost"]["_cassandra_run_report_started"] = "1763600042"
     stamp = cassandra_run_report_name("apply_config", False, 1763600042)[:-len(".txt")]
-    assert render(keep["vars"]["_saved"], variables) == "/inv/reports/prod/%s-n1-limits.conf" % stamp
+    assert saved(variables) == "/inv/reports/prod/%s-n1-limits.conf" % stamp
     for created, read, runs in ((False, True, True), (True, False, False), (False, False, False)):
         assert render("{{ %s }}" % keep["when"], {"_created": created, "_read": read}) is runs
     # the fact: replaced and kept, created, not kept
     note = find(update, "Note the package changed the limits file")
     fact = note["ansible.builtin.set_fact"]["cassandra_package_limits_changed"]
+
+    def noted(variables):
+        """the fact as the note sets it: the block's vars (given ones kept), then the note's"""
+        block = dict(said, vars=dict((k, v) for k, v in said["vars"].items() if k not in variables))
+        return render(fact, with_task_vars(note, with_task_vars(block, variables)))
     kept = {"_created": "False", "cassandra_package_limits_kept": {"dest": "/r/a-n1-limits.conf", "changed": True}}
     after = {"cassandra_package_limits_after": {"stat": {"exists": True, "checksum": "bbb"}}}
-    assert render(fact, with_task_vars(note, dict(kept, **after))) == {
+    assert noted(dict(kept, **after)) == {
         "path": "/etc/security/limits.d/cassandra.conf", "created": False, "saved": "/r/a-n1-limits.conf", "error": "",
         "removed": False, "link": ""}
     # removed by the package: said so, not "replaced"
-    gone = render(fact, with_task_vars(note, dict(kept, cassandra_package_limits_after={"stat": {"exists": False}})))
+    gone = noted(dict(kept, cassandra_package_limits_after={"stat": {"exists": False}}))
     assert gone["removed"] is True
     # a link before (its content read through it): the link to put back, unless it is still the same link
     link = {"cassandra_package_limits_link_before": {"stat": {"exists": True, "islnk": True, "lnk_target": "/srv/l.conf"}}}
@@ -436,18 +454,25 @@ def test_a_package_update_on_a_node_with_its_own_os_settings_says_a_changed_limi
                                   ({"stat": {"exists": True, "islnk": True, "lnk_target": "/srv/l.conf"}}, ""),
                                   ({"stat": {"exists": True, "islnk": True, "lnk_target": "/srv/m.conf"}}, "/srv/l.conf")):
         variables = dict(kept, cassandra_package_limits_link_after=link_after, **dict(after, **link))
-        assert render(fact, with_task_vars(note, variables))["link"] == said_link, link_after
-    assert render(fact, with_task_vars(note, dict(kept, **after)))["link"] == ""  # (a plain file: none)
+        assert noted(variables)["link"] == said_link, link_after
+    assert noted(dict(kept, **after))["link"] == ""  # (a plain file: none)
     for name in ("Read whether it is a link before the update", "Read whether it is a link after the update"):
         read = find(update, name)
         assert read["ansible.builtin.stat"]["follow"] is False and read["check_mode"] is False
         assert read["ansible.builtin.stat"]["path"] == "/etc/security/limits.d/cassandra.conf"
     assert names.index("Read whether it is a link before the update") < names.index("Install the target version") \
         < names.index("Read whether it is a link after the update") < names.index("Say the package changed the limits file")
-    created = render(fact, with_task_vars(note, {"_created": "True", "cassandra_package_limits_kept": {"skipped": True}}))
+    created = noted({"_created": "True", "cassandra_package_limits_kept": {"skipped": True}})
     assert created["created"] is True and created["saved"] == ""
-    lost = render(fact, with_task_vars(note, {"_created": "False",
-                                              "cassandra_package_limits_kept": {"failed": True, "msg": "Permission denied"}}))
+    lost = noted({"_created": "False", "cassandra_package_limits_kept": {"failed": True, "msg": "Permission denied"}})
+    # a dangling link before (nothing read through it): a link was there, not "created"
+    dangling = noted({"cassandra_package_limits_before": {"stat": {"exists": False}},
+                      "cassandra_package_limits_after": {"stat": {"exists": True, "checksum": "bbb"}},
+                      "cassandra_package_limits_link_before": {"stat": {"exists": True, "islnk": True,
+                                                                        "lnk_target": "/srv/gone.conf"}},
+                      "cassandra_package_limits_link_after": {"stat": {"exists": True, "islnk": False}},
+                      "cassandra_package_limits_kept": {"skipped": True}})
+    assert dangling["created"] is False and dangling["link"] == "/srv/gone.conf"
     assert lost["saved"] == "" and lost["error"] == "Permission denied"
     # said at once on that node (a later stop or Ctrl-C would lose the recap), and in the recap
     now = find(update, "Say it now")
@@ -501,10 +526,28 @@ def test_a_package_update_on_a_node_with_its_own_os_settings_says_a_changed_limi
     assert "put the link back (ln -sfn /srv/limits/cassandra.conf /etc/security/limits.d/cassandra.conf) if it held" \
         " the limits of the cassandra user, or set cassandra_linux_manage: true" in one
     assert "copy it back" not in one
-    # the copies are kept, not rotated with the reports: the docs say so
-    with open(os.path.join(os.path.dirname(__file__), "..", "..", "..", "docs", "docsite", "rst", "guide_roles.rst")) as f:
-        guide = " ".join(f.read().split())
-    assert "(``<report name>-<node>-limits.conf``, next to the reports) is kept, never removed with the reports" in guide
+    # removed: not written back (nothing left "as the package wrote it")
+    said_one = cassandra_warnings(cassandra_limits_changed(["h-n5"], {"h-n5": {
+        "cassandra_package_limits_changed": dict(path_said, removed=True)}}))
+    assert "not written back (cassandra_linux_manage: false)" in " ".join(" ".join(said_one).split())
+    assert "left as the package wrote it" not in " ".join(said_one)
+    # a link target with a space: the command to copy quotes it
+    said_one = cassandra_warnings(cassandra_limits_changed(["h-n5"], {"h-n5": {
+        "cassandra_package_limits_changed": dict(path_said, link="/srv/my limits.conf")}}))
+    assert "ln -sfn '/srv/my limits.conf' /etc/security/limits.d/cassandra.conf" in " ".join(" ".join(said_one).split())
+    # the copies are kept, not rotated with the reports (the only copy of the operator's file): the rotation of the
+    # reports never picks one, nor does the find of their files
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_run_report import cassandra_run_report_old
+    stamp = cassandra_run_report_name("upgrade", False, 1763600000)[:-len(".txt")]
+    reports = ["/r/" + cassandra_run_report_name("upgrade", False, 1763600000 + 60 * i) for i in range(5)]
+    copies = ["/r/%s-h-n%d-limits.conf" % (stamp, i) for i in range(5)]
+    files = [{"path": f, "mtime": i} for i, f in enumerate(reports + copies)]
+    assert cassandra_run_report_old(files, "upgrade", 0) == reports  # (every report, no copy)
+    run_report = load("roles", "cassandra_operation", "tasks", "run_report.yml")
+    listed = find(run_report, "List the reports of this operation")["ansible.builtin.find"]
+    pattern = render(listed["patterns"], {"_cassandra_run_report_operation": "upgrade"})
+    assert fnmatch.fnmatch(os.path.basename(reports[0]), pattern)
+    assert not [c for c in copies if fnmatch.fnmatch(os.path.basename(c), pattern)]
     lines = cassandra_op_recap([{"node": "h-n1", "result": "upgrade done in 90s"},
                                 {"node": "h-n2", "result": "upgrade done in 95s"}], cluster="zorglub",
                                operation="upgrade", warnings=cassandra_limits_changed(["h-n1", "h-n2"], hostvars))

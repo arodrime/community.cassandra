@@ -22,6 +22,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import re
+import shlex
 import textwrap
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_command
@@ -148,9 +149,12 @@ def _limits_text(node, changed):
         return ["%s: the Cassandra package update created %s (there was none)" % (node, path),
                 "left as the package wrote it (cassandra_linux_manage: false)",
                 "check it holds the limits you want for the cassandra user, or %s" % manage]
-    done = "removed" if changed.get("removed") else "replaced"
-    lines = ["%s: the Cassandra package update %s %s" % (node, done, path),
-             "left as the package wrote it (cassandra_linux_manage: false)"]
+    if changed.get("removed"):
+        lines = ["%s: the Cassandra package update removed %s" % (node, path),
+                 "not written back (cassandra_linux_manage: false)"]
+    else:
+        lines = ["%s: the Cassandra package update replaced %s" % (node, path),
+                 "left as the package wrote it (cassandra_linux_manage: false)"]
     link = str(changed.get("link") or "")
     if link:
         lines.append("it was a link to %s" % link)
@@ -160,7 +164,7 @@ def _limits_text(node, changed):
         lines.append("its former content was not saved (%s)" % (changed.get("error") or "not read"))
     if link:
         return lines + ["put the link back (ln -sfn %s %s) if it held the limits of the cassandra user, or %s"
-                        % (link, path, manage)]
+                        % (shlex.quote(link), shlex.quote(path), manage)]
     if changed.get("saved"):
         return lines + ["copy it back to %s if it held the limits of the cassandra user, or %s" % (path, manage)]
     return lines + ["check it holds the limits you want for the cassandra user, or %s" % manage]

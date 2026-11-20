@@ -64,13 +64,24 @@
   check_mode: false  # reads only
   when: not cassandra_linux_manage | default(true) | bool
 
+# a change of its content (read through a link), or a link no longer the same link (a plain file of the same
+# content in its place: the operator's link lost)
 - name: Say the package changed the limits file
   when:
     - not cassandra_linux_manage | default(true) | bool
-    - (cassandra_package_limits_before.stat | default({})).checksum | default('')
-      != (cassandra_package_limits_after.stat | default({})).checksum | default('')
+    - _before.checksum | default('') != _after.checksum | default('') or _link | length > 0
   vars:
-    _created: "{{ not (cassandra_package_limits_before.stat | default({})).exists | default(false) }}"
+    _before: "{{ cassandra_package_limits_before.stat | default({}) }}"
+    _after: "{{ cassandra_package_limits_after.stat | default({}) }}"
+    _link_before: "{{ cassandra_package_limits_link_before.stat | default({}) }}"
+    _link_after: "{{ cassandra_package_limits_link_after.stat | default({}) }}"
+    _was_link: "{{ _link_before.islnk | default(false) }}"
+    _same_link: >-
+      {{ _link_after.islnk | default(false) and _link_after.lnk_target | default('') == _link_before.lnk_target | default('') }}
+    # empty: no link before, or still the same link after; else the target of the link that was there
+    _link: "{{ _link_before.lnk_target | default('') if _was_link | bool and not _same_link | bool else '' }}"
+    # (a dangling link: nothing read through it, but a link was there: not created)
+    _created: "{{ not _before.exists | default(false) and not _was_link | bool }}"
     _read: "{{ (cassandra_package_limits_content | default({})).content is defined }}"
   block:
     # <the reports' dir>/<operation>-<the run's start>-<node>-limits.conf, named as the run's report (run_report.yml,
@@ -88,11 +99,12 @@
              | community.cassandra.cassandra_reports_dir(lookup('community.cassandra.cassandra_hosts'),
                                                             cassandra_run_report_dir | default(''),
                                                             lookup('ansible.builtin.env', 'PWD')) }}
+        # the run's start, as its report is named (apply_config: the start of its run report)
+        _started: >-
+          {{ hostvars['localhost']._cassandra_run_report_started | default(hostvars['localhost']._cassandra_run_start | default('')) }}
         _saved: >-
           {{ _dir ~ '/' ~ (cassandra_service_node_action | default('cassandra')
-                           | community.cassandra.cassandra_run_report_name(false,
-                               hostvars['localhost']._cassandra_run_report_started
-                               | default(hostvars['localhost']._cassandra_run_start | default('')))
+                           | community.cassandra.cassandra_run_report_name(false, _started)
                            | regex_replace('[.]txt$', '')) ~ '-' ~ inventory_hostname ~ '-limits.conf' }}
       block:
         - name: Make the dir of the reports
@@ -123,14 +135,7 @@
         _kept: "{{ cassandra_package_limits_kept | default({}) }}"
         _saved: "{{ '' if _kept.failed | default(false) else _kept.dest | default('') }}"
         _unread: "{{ cassandra_package_limits_content | default({}) }}"  # (its msg when it could not be read)
-        _removed: "{{ not _created | bool and not (cassandra_package_limits_after.stat | default({})).exists | default(false) }}"
-        # a link before, no longer the same link: its target (the saved content is the one read through it)
-        _link_before: "{{ cassandra_package_limits_link_before.stat | default({}) }}"
-        _link_after: "{{ cassandra_package_limits_link_after.stat | default({}) }}"
-        _link: >-
-          {{ _link_before.lnk_target | default('') if _link_before.islnk | default(false)
-             and not (_link_after.islnk | default(false) and _link_after.lnk_target | default('') == _link_before.lnk_target | default(''))
-             else '' }}
+        _removed: "{{ not _created | bool and not _after.exists | default(false) and not _link_after.islnk | default(false) }}"
 
     - name: Say it now
       ansible.builtin.debug:
