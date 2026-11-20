@@ -1616,7 +1616,10 @@ def test_an_empty_dict_one_node_sets_is_one_row_not_the_defaults_sub_keys():
     assert rows(lines, "cassandra_linux_limits.nofile") == [("(collection's default)", "node3"), ("65536", "node2")]
     # the advice: only node2 changes (node1 keeps its {})
     said = " ".join(" ".join(line.split()) for line in lines)
-    assert "remove nofile from cassandra_linux_limits in host_vars/node2/ then 1 node changes" in said, said
+    # (the dict written as given, not merged with the default: removing nofile would leave the file without it)
+    assert "remove cassandra_linux_limits from host_vars/node2/ (the rest of it is the collection's default) then 1" \
+        " node changes" in said, said
+    assert "remove nofile" not in said
     assert "--limit node2 --check" in said and "node1,node2" not in said
     # every node sets it (one {}): the same, no "(not set) node1" row per sub-key of the default
     nodes = [with_vars(1, cassandra_linux_limits={}), with_vars(2, cassandra_linux_limits=limits),
@@ -1660,3 +1663,36 @@ def test_the_next_step_expects_cassandra_env_as_stock_when_its_dormant_lines_go(
         assert "in sync with Ansible: yes; the next apply_config: 1 file rewritten, no restart" in said
     said = " ".join(" ".join(line.split()) for line in report([node(1), node(2)], details=False))
     assert "expected: every node up to date (header lines aside: a comment, no restart)" in said
+
+
+def test_a_sub_key_of_a_dict_not_merged_with_its_default_is_advised_as_written():
+    """cassandra_linux_limits is written as given (limits.yml), never merged with the collection's default: a node
+    whose dict has another nofile, or lacks some of the default's keys, is told to set the default's value in it (or
+    to remove the dict when the rest of it is the default's), never to remove a sub-key it does not have."""
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
+    stock = role_file("cassandra_linux")["cassandra_linux_limits"]
+
+    def with_vars(i, **more):
+        return dict(node(i), vars=dict(node(i)["vars"], **more))
+
+    def said(nodes):
+        return " ".join(" ".join(line.split()) for line in section(report(nodes), "DIFFERENT ON SOME NODES"))
+    # only nofile of its own: memlock, nproc, as not there (not removed: set to the default's)
+    text = said([with_vars(1), with_vars(2, cassandra_linux_limits={"nofile": 65536}), with_vars(3)])
+    assert "nofile: %s (the collection's default) in cassandra_linux_limits in host_vars/node2/" % stock["nofile"] \
+        in text, text
+    assert "memlock: unlimited (the collection's default) in cassandra_linux_limits in host_vars/node2/" in text, text
+    assert not re.search(r"remove (nofile|memlock|nproc|as) from", text), text
+    assert "remove cassandra_linux_limits" not in text
+    # another value besides nofile: the default's nofile written, the dict kept
+    other = dict(stock, nofile=65536, nproc=4096)
+    text = said([with_vars(1), with_vars(2, cassandra_linux_limits=other), with_vars(3)])
+    assert "nofile: %s (the collection's default) in cassandra_linux_limits in host_vars/node2/" % stock["nofile"] \
+        in text, text
+    assert "remove cassandra_linux_limits" not in text and "remove nofile" not in text
+    # the same for cassandra_linux_sysctl, written as given too
+    sysctl = role_file("cassandra_linux")["cassandra_linux_sysctl"]
+    text = said([with_vars(1), with_vars(2, cassandra_linux_sysctl=dict(sysctl, **{"vm.swappiness": 10})),
+                 with_vars(3)])
+    assert "remove cassandra_linux_sysctl from host_vars/node2/ (the rest of it is the collection's default)" in text, \
+        text

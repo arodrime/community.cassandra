@@ -23,8 +23,8 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_conf
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     JAVA_DEFAULT, KEEP, ROLE, SERIES, group_chains, hand_edits_kept, template_vars, undefined_name)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
-    ARROW_RIGHT, DASH, NOT_COUNTED, REPORT_WIDTH, aligned_rows, empty_on_own_row, fill_text, report_sections,
-    unbreakable, unread_by, who_text)
+    ARROW_RIGHT, DASH, NOT_COUNTED, REPORT_WIDTH, _alike, _plain_default, aligned_rows, empty_on_own_row, fill_text,
+    report_sections, unbreakable, unread_by, who_text)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 
@@ -248,6 +248,7 @@ def _setting_items(layout, data, read):
                       "raw": _ABSENT if value is _ABSENT else _leaf(key, path, value),
                       "changing": [n["name"] for n in changing],
                       "without": [n["name"] for n in changing if _value_of(layout, n, key) is _ABSENT],
+                      "dicts": [_value_of(layout, n, key) for n in changing],
                       "unmanaged": [n["name"] for n in changing
                                     if (n.get("keep") or {}).get("cassandra_linux_manage") is False]})
         kind = items[-1]["kind"]
@@ -470,6 +471,20 @@ def _action(item, layout):
             what = "already in %s: remove %s from %s" % (where, item["key"], places)
         else:
             what = "%s: %s in %s%s" % (item["key"], value, where, ", removed from %s" % places if places else "")
+    elif item["raw"] is _ABSENT and item["target"] == "(collection's default)" \
+            and item["name"] in (_plain_default(item["key"]) or {}):
+        # (a dict such as cassandra_linux_limits is written as given, never merged with the collection's default:
+        # the default's value of the sub-key written in it, or the dict removed when the rest of it is the default's)
+        stock = _plain_default(item["key"])
+        places = ", ".join(_places(layout, item["key"], item["name"], stock[item["name"]][1])) or "the inventory"
+        others = dict((p, v[1]) for p, v in stock.items() if p != item["name"])
+        if all(isinstance(d, dict) and set(dict(out.leaves(item["key"], d))) - {item["name"]} == set(others)
+               and all(_alike(v, others[p]) for p, v in out.leaves(item["key"], d) if p != item["name"])
+               for d in item["dicts"]):
+            what = "remove %s from %s (the rest of it is the collection's default)" % (item["key"], places)
+        else:
+            what = "%s: %s (the collection's default) in %s in %s" % (
+                sub, _shown(stock[item["name"]][1]), item["key"], places)
     else:
         places = ", ".join(_places(layout, item["key"], item["name"], item["raw"]))
         if item["raw"] is _ABSENT:
