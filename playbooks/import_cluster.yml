@@ -253,6 +253,7 @@
       changed_when: false
       failed_when: false
       check_mode: false  # read only
+      no_log: "{{ cassandra_jmx_password | default('') | length > 0 }}"  # (nodetool -pw)
 
     - name: Refuse a DataStax Enterprise or ScyllaDB cluster
       ansible.builtin.assert:
@@ -840,6 +841,7 @@
       changed_when: false
       failed_when: false
       check_mode: false
+      no_log: "{{ cassandra_jmx_password | default('') | length > 0 }}"  # (nodetool -pw)
 
     # a node found in the ring, or re-imported, that runs DataStax Enterprise or ScyllaDB: refused as the given ones
     - name: Refuse a DataStax Enterprise or ScyllaDB node

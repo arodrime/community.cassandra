@@ -171,6 +171,7 @@
       changed_when: false
       failed_when: false  # a node not running: said below
       check_mode: false  # a read
+      no_log: "{{ cassandra_jmx_password | default('') | length > 0 }}"  # (nodetool -pw)
 
     # a node nodetool fails on: its package already the target (an interrupted canary or rolling phase) starts
     # only once apply_config wrote the target's config
@@ -425,6 +426,7 @@
       when:
         - _phase in ['canary', 'rolling']
         - not cassandra_upgrade_done | bool
+      no_log: "{{ cassandra_jmx_password | default('') | length > 0 }}"  # (nodetool -pw)
 
     - name: Every node to upgrade has its pre-upgrade snapshot
       ansible.builtin.assert:
@@ -637,6 +639,7 @@
       register: cassandra_upgrade_snapshots
       changed_when: false
       check_mode: false  # a read
+      no_log: "{{ cassandra_jmx_password | default('') | length > 0 }}"  # (nodetool -pw)
 
     - name: Snapshot every keyspace
       ansible.builtin.command: "{{ _cassandra_service_nodetool }} snapshot -t pre-upgrade-{{ cassandra_upgrade_from }}"
@@ -644,6 +647,7 @@
       when: ('pre-upgrade-' ~ cassandra_upgrade_from) not in _tags
       vars:
         _tags: "{{ cassandra_upgrade_snapshots.stdout | community.cassandra.cassandra_snapshot_names('pre-upgrade-') }}"
+      no_log: "{{ cassandra_jmx_password | default('') | length > 0 }}"  # (nodetool -pw)
 
     # (one from a weeks-old attempt is the operator's call: the date where nodetool prints one, and the way out)
     - name: Say the snapshot is already there
@@ -981,11 +985,13 @@
       register: cassandra_upgrade_snapshots
       changed_when: false
       check_mode: false  # a read
+      no_log: "{{ cassandra_jmx_password | default('') | length > 0 }}"  # (nodetool -pw)
 
     - name: Remove the pre-upgrade snapshots
       ansible.builtin.command: "{{ _cassandra_service_nodetool }} clearsnapshot -t {{ item }}"
       loop: "{{ cassandra_upgrade_snapshots.stdout | community.cassandra.cassandra_snapshot_names('pre-upgrade-') }}"
       changed_when: true
+      no_log: "{{ cassandra_jmx_password | default('') | length > 0 }}"  # (nodetool -pw)
 
     - name: Say what was removed
       ansible.builtin.debug:

@@ -114,6 +114,7 @@
           register: cassandra_seeds_live
           changed_when: false
           failed_when: false  # only to tell whether the live list moves: the reload says what went wrong
+          no_log: "{{ cassandra_jmx_password | default('') | length > 0 }}"  # (nodetool -pw)
 
         # SimpleSeedProvider re-reads the whole cassandra.yaml, as at startup: a file the running node can no longer
         # load (a key it does not know, a hand edit, unreadable) fails here, and would fail its next start too
@@ -132,6 +133,7 @@
           changed_when: cassandra_seeds_reloaded.stdout != cassandra_seeds_live.stdout
           failed_when: false  # the reload succeeded: only to tell whether the live list moved
           when: not _seeds_reload_bad | bool
+          no_log: "{{ cassandra_jmx_password | default('') | length > 0 }}"  # (nodetool -pw)
 
         - name: Clear the mark of the owed reload
           ansible.builtin.file:
