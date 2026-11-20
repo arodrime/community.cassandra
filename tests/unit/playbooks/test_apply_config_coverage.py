@@ -180,6 +180,32 @@ def test_the_node_turns_load_the_java_variables_of_java_install():
         assert names.index("Load the cassandra_install defaults") < names.index(task)
 
 
+def test_a_release_update_it_started_is_not_refused_as_an_unfinished_upgrade():
+    # (a node updated to the inventory's release, the run stopped before the others: its resume and --check were
+    # refused, "the cluster runs 2 Cassandra versions (an upgrade is not finished)", the way out naming upgrade)
+    plays = load("playbooks", "preflight.yml")
+    task = find([t for p in plays for t in p.get("tasks") or []], "One Cassandra version in the cluster")
+    check = "{{ %s }}" % task["ansible.builtin.assert"]["that"]
+    mixed = ["5.0.8: [10.0.0.2]", "5.0.9: [10.0.0.1]"]
+
+    def passes(versions, **variables):
+        variables = dict(variables, _versions=versions, _cassandra_preflight_release_update=variables.get("apply", False))
+        variables.pop("apply", None)
+        return render(check, with_task_vars({"vars": dict((k, v) for k, v in task["vars"].items()
+                                                         if k in ("_releases", "_release_update"))}, variables))
+
+    assert passes(["5.0.9: [10.0.0.1, 10.0.0.2]"])
+    assert passes(mixed, apply=True, cassandra_package_version="5.0.9")
+    assert passes(mixed, apply=True, cassandra_package_version="5.0.8")  # (back: refused later, by the plan)
+    assert not passes(mixed, cassandra_package_version="5.0.9")  # another playbook
+    assert not passes(mixed, apply=True, cassandra_package_version="5.0.10")  # none of them
+    assert not passes(mixed, apply=True)  # no release asked
+    assert not passes(["4.1.12: [10.0.0.2]", "5.0.9: [10.0.0.1]"], apply=True, cassandra_package_version="5.0.9")  # an upgrade
+    assert passes(mixed, cassandra_allow_mixed_versions=True)
+    preflight = load("playbooks", "apply_config.yml")[0]
+    assert preflight["vars"]["_cassandra_preflight_release_update"] is True
+
+
 def test_the_stops_are_said_in_the_check_recap():
     summary = [p for p in load("playbooks", "apply_config.yml") if p.get("name") == "Summary"][0]
     refused = summary["vars"]["_refused"]  # (the play's: the recap's and the report's)

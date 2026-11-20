@@ -16,6 +16,7 @@
   vars:
     _cassandra_notes_in_plan: true  # the checks' WARNING lines in the plan, before the question
     _cassandra_preflight_seeds_down_ok: true  # a seed of this run not running: written, maybe started
+    _cassandra_preflight_release_update: true  # releases of one series, the inventory's among them: its own update
 
 # (a node that fails here would be left out of the plan: nothing done then)
 - name: Find what each node needs

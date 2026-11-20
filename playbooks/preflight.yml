@@ -512,10 +512,11 @@
           loop: "{{ _cassandra_service_seeds }}"
 
         # Streaming and schema changes between versions are not supported;
-        # an upgrade in progress sets cassandra_allow_mixed_versions itself
+        # an upgrade in progress sets cassandra_allow_mixed_versions itself, and apply_config takes the releases
+        # of one series with the inventory's among them (a release update it started: its resume finishes it)
         - name: One Cassandra version in the cluster
           ansible.builtin.assert:
-            that: _versions | length <= 1 or cassandra_allow_mixed_versions | default(false) | bool
+            that: _versions | length <= 1 or cassandra_allow_mixed_versions | default(false) | bool or _release_update | bool
             # (UX audit B16) the versions as rows, the ways out as exact commands
             fail_msg: >-
               {{ (['REFUSED  the cluster runs ' ~ _versions | length ~ ' Cassandra versions (an upgrade is not finished)'
@@ -540,6 +541,11 @@
               {{ out }}
             _section: "{{ (cassandra_preflight_describe.stdout ~ '\\n').split('Database versions:')[1:] | first | default('') }}"
             _versions: "{{ _section.split('\\n\\n') | first | regex_findall('(?m)^\\s+(\\S+: \\[.*\\])$') }}"
+            _releases: "{{ _versions | map('split', ': ', 1) | map('first') | list }}"
+            _release_update: >-
+              {{ _cassandra_preflight_release_update | default(false) | bool
+                 and _releases | map('regex_replace', '^(\d+\.\d+)\..*$', '\1') | unique | list | length == 1
+                 and (cassandra_package_version | default('') | string) in _releases }}
 
     # A node up and normal in the ring is a member: the mark of a bootstrap add_node started there (a wait
     # that stopped before the end) goes, or a removal of the node later would read it as a failed bootstrap
