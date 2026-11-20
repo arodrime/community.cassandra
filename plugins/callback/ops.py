@@ -149,6 +149,36 @@ _CORE_ERRORS = ("Task failed: ", "The conditional check ", "The task includes an
                 "the field 'args' has an invalid value", "Unexpected failure during module execution")
 
 
+# a role's argument check that refused a value (its spec printed whole by the default callback: thousands of lines)
+# ("is of type <class 'ansible...AnsibleUnicode'> ... to int: <class ...> cannot be..." before ansible-core 2.19,
+# "is of type str ... to int: \"'3w'\" cannot be converted to an int" since: the value said)
+_TYPE = re.compile(r"argument '([^']+)' is of type (?:<class '(?:[\w.]+\.)?(\w+)'>|(\w+)) and we were unable to"
+                   r" convert to (\w+)(?:: \"(.*)\" cannot be converted.*|: .*)?$")
+_TYPE_NAMES = {"AnsibleUnicode": "a text", "str": "a text", "_AnsibleTaggedStr": "a text", "AnsibleSequence": "a list",
+               "list": "a list", "AnsibleMapping": "a dict", "dict": "a dict", "int": "a whole number", "float": "a number",
+               "bool": "a boolean"}
+
+
+def argument_errors(result):
+    """A failed role argument check (ansible-core's validate_argument_spec) -> its lines, short: which role, then
+    each variable refused and why; [] for any other failure."""
+    errors = result.get("argument_errors") if "argument_spec_data" in result else None
+    if not errors:
+        return []
+    role = (result.get("validate_args_context") or {}).get("name") or "the role"
+    said = []
+    for error in errors:
+        found = _TYPE.match(str(error))
+        if found:
+            given = found.group(2) or found.group(3)
+            said.append("  %s: %s%s, not %s" % (found.group(1), found.group(5) + " is " if found.group(5) else "",
+                                                 _TYPE_NAMES.get(given, given),
+                                                 _TYPE_NAMES.get(found.group(4), "a " + found.group(4))))
+        else:
+            said.append("  " + re.sub(r"<class '(?:[\w.]+\.)?(\w+)'>", r"\1", str(error)))
+    return ["%s refused these values before changing anything (fix them in the inventory):" % role] + said
+
+
 def _task(result):
     """The task of a result (task since ansible-core 2.19, _task before)."""
     return getattr(result, "task", None) or result._task
@@ -766,6 +796,10 @@ class CallbackModule(DefaultCallback):
             return None  # each failed item was printed already
         if rescued(_task(result)):  # its rescue handles it: one line, never silent
             return self._handled(result)
+        refused = argument_errors(_result(result))
+        if refused:  # (-v: the default callback's, the whole spec)
+            host = (getattr(result, "host", None) or result._host).get_name()
+            return self._print(["%s: %s" % (host, refused[0])] + refused[1:], color=C.COLOR_ERROR)
         return self._default("v2_runner_on_failed", result, ignore_errors)
 
     def _handled(self, result):

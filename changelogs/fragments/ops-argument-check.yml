@@ -1,0 +1,5 @@
+minor_changes:
+  - >-
+    ops callback - a role's argument check that refuses an inventory value (``cassandra_concurrent_reads: 3w``) says
+    the role, each variable refused, its value and the type it needs, in a few lines; it printed the role's whole
+    argument spec, thousands of lines (``-v``: as before).

@@ -174,6 +174,44 @@ def test_failures_in_full_and_the_verdict_as_is(tmp_path):
     assert "TASK [Verdict]" not in output and "PLAY RECAP" not in output and "NO MORE HOSTS LEFT" not in output
 
 
+ARGUMENTS = """
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: Check the role's arguments
+      ansible.builtin.validate_argument_spec:
+        argument_spec:
+          cassandra_concurrent_reads: {type: int, description: [a long description, of every variable of the role]}
+          cassandra_heap_size: {type: str}
+        provided_arguments:
+          cassandra_concurrent_reads: 3w
+"""
+
+
+def test_a_refused_role_argument_said_in_short_its_older_words_too(tmp_path):
+    from ansible_collections.community.cassandra.plugins.callback.ops import argument_errors
+    old = ("argument 'cassandra_concurrent_reads' is of type <class 'ansible.parsing.yaml.objects.AnsibleUnicode'> and"
+           " we were unable to convert to int: <class 'ansible.parsing.yaml.objects.AnsibleUnicode'> cannot be converted"
+           " to an int")  # (ansible-core 2.16)
+    assert argument_errors({"argument_spec_data": {}, "argument_errors": [old, "missing required arguments: x"],
+                            "validate_args_context": {"name": "cassandra_config"}}) == [
+        "cassandra_config refused these values before changing anything (fix them in the inventory):",
+        "  cassandra_concurrent_reads: a text, not a whole number", "  missing required arguments: x"]
+    assert argument_errors({"msg": "anything else"}) == []
+
+
+def test_a_refused_role_argument_said_in_short(tmp_path):
+    # e2e (hostile S21): "cassandra_concurrent_reads: 3w" in host_vars printed cassandra_config's whole argument spec,
+    # 2100 lines, the reason in the middle
+    rc, output = run(tmp_path, ARGUMENTS, INVENTORY="node1,")
+    assert rc != 0
+    assert shown(output.strip()) == [
+        "node1: the role refused these values before changing anything (fix them in the inventory):",
+        "  cassandra_concurrent_reads: '3w' is a text, not a whole number"]
+    rc, output = run(tmp_path, ARGUMENTS, "-v", INVENTORY="node1,")  # -v: the default callback's, the spec too
+    assert "argument_spec_data" in output
+
+
 def test_any_errors_fatal_stops_and_shows_the_failure(tmp_path):
     playbook = FAILING.replace("  gather_facts: false\n", "  gather_facts: false\n  any_errors_fatal: true\n", 1)
     rc, output = run(tmp_path, playbook)
