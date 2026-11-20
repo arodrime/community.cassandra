@@ -73,7 +73,11 @@ _KINDS = {"none": (0, THEN["none"][0], True),
           "unknown": (3, "restart unknown (apply_config does not write it)", False),
           "login": (4, "none on the nodes: the playbooks' login, which the nodes must accept first (their"
                        " jmxremote.password, cassandra_jmx_users; their CQL role)", False),
-          "version": (5, "an upgrade (upgrade, update_java), never down", False),
+          # (a newer release of the series, another Java: apply_config, in the node's one restart)
+          "release": (1, "then restart (apply_config updates the package in it), never down", True),
+          "java": (1, "then restart (apply_config moves the Java in it, as update_java)", True),
+          "tool": (0, "no restart (apply_config installs it, live), never down", True),
+          "version": (5, "an upgrade (upgrade, its preflight phase first), never down", False),
           "move": (5, "moved by hand first, the node stopped (apply_config would restart it on the new path): a data"
                    " move, for an experienced operator", True)}
 
@@ -92,7 +96,8 @@ def _kind(key):
     if key in LOGINS:
         return "login"
     if key in VERSIONS:
-        return "version"
+        return {"cassandra_version": "version", "cassandra_package_version": "release",
+                "cassandra_java_version": "java"}.get(key, "tool")
     if key in SWITCHES:
         return "switch"
     if key == "cassandra_linux_timesync":  # (synced in the node's restart window: apply_config restarts it)

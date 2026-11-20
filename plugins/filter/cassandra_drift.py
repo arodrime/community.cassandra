@@ -305,6 +305,9 @@ def _stock_lines(rows, other, per_node, kept, cluster, shared, who, width, comma
         kind, cost = _cost(key, changing, unmanaged)
         check = unbreakable(_check(changing, kind, commands["inventory"], commands["hosts"], commands["cwd"])) \
             if _KINDS.get(kind, (0, "", False))[2] else ""
+        if key == "cassandra_package_version" and set(row["stock"].values()) <= {""}:  # (any release of the series)
+            cost, check = "no node changes: the default keeps the release each node runs (a node added later gets" \
+                          " the repository's newest of the series)", ""
         lines += fill_text("%s %s" % (ARROW_RIGHT, _edit(path, row, cluster, shared)), width, "      ", "  ")
         lines += fill_text("%s%s" % (cost, "; check: " + check if check else ""), width, "      ", "  ")
     if per_node:

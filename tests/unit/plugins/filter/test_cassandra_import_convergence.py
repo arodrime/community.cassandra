@@ -172,7 +172,9 @@ def test_the_restart_kinds():
     assert _kind("cassandra_linux_timesync") == "restart"  # (synced in the restart window)
     assert _kind("cassandra_rpm_conf_alternative") == "restart"
     assert _kind("cassandra_internode_encryption") == "switch" and _kind("cassandra_authenticator") == "switch"
-    assert _kind("cassandra_package_version") == "version" and _kind("cassandra_java_version") == "version"
+    assert _kind("cassandra_version") == "version"  # (another series: the upgrade)
+    assert _kind("cassandra_package_version") == "release" and _kind("cassandra_java_version") == "java"
+    assert _kind("cassandra_dsbulk_version") == "tool" and _kind("cassandra_medusa_version") == "tool"
     assert _kind("cassandra_medusa_extra_settings") == "unknown"
 
 
@@ -314,7 +316,13 @@ def test_the_newest_version_never_down():
     for n in nodes:
         n["vars"]["cassandra_package_version"] = "4.1.10" if n["name"] in ("cass001", "cass002") else "4.1.5"
     text = _flat(cassandra_import_convergence(_small(nodes), {}, width=200))
-    assert "\u2192 4.1.10 for all:" in text and "3 nodes change, an upgrade (upgrade, update_java), never down" in text
+    assert "\u2192 4.1.10 for all:" in text
+    # a newer release of the series is apply_config's (e2e: drift said "an upgrade (upgrade, update_java)"), its check
+    assert "3 nodes change, then restart (apply_config updates the package in it), never down; check: " in text
+    for n in nodes:
+        n["vars"]["cassandra_version"] = "50x" if n["name"] in ("cass001", "cass002") else "41x"
+    text = _flat(cassandra_import_convergence(_small(nodes), {}, width=200))
+    assert "3 nodes change, an upgrade (upgrade, its preflight phase first), never down" in text
 
 
 def test_the_dc_of_rackdc_not_counted_and_the_unmanaged_os_said():

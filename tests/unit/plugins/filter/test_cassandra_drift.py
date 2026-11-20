@@ -50,6 +50,23 @@ def test_a_setting_off_its_default_with_where_the_edit_and_the_cost():
     assert "every node has the same value of every setting" in result["between"][1]
 
 
+def test_a_release_and_a_java_cost_what_apply_config_does():
+    # e2e: drift said "an upgrade (upgrade, update_java)" for both; apply_config updates a release of the series and
+    # moves the Java in the node's restart, and the default release ("": any of the series) changes no node
+    result = sections(every(cassandra_package_version="4.1.12", cassandra_java_version=8, cassandra_version="41x"),
+                      {"group_vars/prod/main.yml": "cassandra_package_version: 4.1.12\ncassandra_java_version: 8\n"
+                                                   "cassandra_version: 41x\n"})
+    lines = row(result["stock"], "cassandra_package_version")
+    assert lines[3] == ("      no node changes: the default keeps the release each node runs (a node added later gets"
+                        " the repository's newest of the series)")
+    lines = row(result["stock"], "cassandra_java_version")
+    assert lines[3].startswith("      3 nodes change, then restart (apply_config moves the Java in it, as update_java);"
+                               " check: ansible-playbook -i inventories/prod.yml community.cassandra.apply_config")
+    lines = row(result["stock"], "cassandra_version")
+    assert lines[3] == "      3 nodes change, an upgrade (upgrade, its preflight phase first), never down"
+    assert "update_java)," not in text(result)
+
+
 def test_a_value_equal_to_its_default_is_at_stock_whatever_its_type():
     # "32" (a string in the inventory) is the default 32; "true" is True: nothing off stock
     result = sections(every(cassandra_concurrent_reads="32", cassandra_linux_swap_off="true"))
