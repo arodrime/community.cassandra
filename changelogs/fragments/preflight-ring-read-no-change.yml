@@ -1,0 +1,4 @@
+bugfixes:
+  - >-
+    preflight - the ring reads started in the background are no change: a read-only run (drift, ``--check``) no
+    longer counts them as ``changed`` in its PLAY RECAP.

@@ -203,6 +203,9 @@ def test_the_playbooks_check_it_before_any_change():
     # the ring read meanwhile (collected by "Check the running cluster"), once the node answered
     ring = first["block"][2]
     assert ring["async"] > 0 and ring["poll"] == 0 and ring["delegate_to"] == "{{ _cassandra_preflight_from }}"
+    # e2e: drift (read only) said changed=1 for it in its PLAY RECAP: a read
+    views = play["tasks"][names.index("Start reading the ring this node sees")]
+    assert ring["changed_when"] is False and views["changed_when"] is False
     check_ring = play["tasks"][names.index("Check the running cluster")]["block"][0]
     assert check_ring["ansible.builtin.async_status"]["jid"] == "{{ cassandra_preflight_status_job.ansible_job_id | default('') }}"
     assert check_ring["register"] == "cassandra_preflight_status" and check_ring["delegate_to"] == "{{ _from }}"
