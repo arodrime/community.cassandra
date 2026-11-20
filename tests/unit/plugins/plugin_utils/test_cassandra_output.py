@@ -163,7 +163,7 @@ NOT_SECRETS = [("cassandra_jmx_password_file", "/etc/x"), ("cassandra_jmx_passwo
                ("cassandra_initial_token", "-9223372036854775808"), ("initial_token", "1"), ("num_tokens", 16),
                ("cassandra_credentials_validity", "2000ms"), ("credentials_update_interval", "1s"),
                ("allocate_tokens_for_keyspace", "ks"), ("cassandra_token_rf", 3), ("JVM_OPTS", "-Dcom.x.passive=true"),
-               ("JVM_OPTS", "-Dcassandra.initial_token=1")]
+               ("JVM_OPTS", "-Dcassandra.initial_token=1"), ("PWD", "/opt/x"), ("OLDPWD", "/opt/x")]
 
 
 def test_one_rule_for_secrets():
@@ -838,7 +838,8 @@ def test_hidden_values_in_lists_dicts_and_a_dict_becoming_a_value():
 
 @pytest.mark.parametrize("text", ["nodetool -p 7199 status", "mkdir -p /var/lib/cassandra", "ssh -p 2222 host",
                                   "credentials_validity_in_ms: 2000", "num_tokens: 16", "initial_token: 3074457345618258602",
-                                  "allocate_tokens_for_local_replication_factor: 3", "-Dcassandra.initial_token=1"])
+                                  "allocate_tokens_for_local_replication_factor: 3", "-Dcassandra.initial_token=1",
+                                  "~/.cassandra/credentials: written", "PWD=/opt/x"])
 def test_mask_leaves_ports_paths_and_settings(text):
     assert out.mask(text) == text
 
@@ -1307,3 +1308,10 @@ def test_a_urls_password_is_masked(line, shown):
     # (rc9 audit) the userinfo password of a URL (an HTTP proxy, an appender's URL), in a diff or a report
     from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import mask
     assert mask(line) == shown
+
+
+@pytest.mark.parametrize("line", ["-Dcassandra.config=file://$(pwd)/conf/cassandra.yaml", 'cd "$PWD"',
+                                  "# rotate the credentials yearly", "<!-- see credentials -->", "x.token_aware=true"])
+def test_a_secret_word_alone_is_no_secret(line):
+    # (import_cluster files a hand edit holding a secret word in secrets.yml: these name none)
+    assert not out.SECRET_WORD.search(line) and out.mask(line) == line
