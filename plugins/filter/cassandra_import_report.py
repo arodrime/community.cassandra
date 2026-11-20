@@ -30,7 +30,7 @@ from ansible.module_utils.parsing.convert_bool import boolean
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     BRANCH_NOT_RUN_NOTE, HEAP_MOVED, IDENTITY, PASSWORD_FILE_NOTE, KEEP, KEPT_PART_WORDS, KEPT_PARTS, KEPT_PARTS_VAR,
     NODE_LEVEL, NOT_READ, PER_NODE, group_chains,
-    hand_edits_kept, _secret, vars_sort_key, values_hidden)
+    hand_edits_kept, _roles_defaults, _secret, _templated, vars_sort_key, values_hidden)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import CONFIG_FILE, RESTART_DOES
 from ansible_collections.community.cassandra.plugins.filter.cassandra_os import NO_EFFECT_NOTE
 from ansible_collections.community.cassandra.plugins.filter.cassandra_suspicious import (
@@ -387,13 +387,34 @@ def _is_secret(key, keys, value):
     return _secret(key, value) or any(_secret(k, value) for k in keys if not out.file_mode(k, value))
 
 
+def _plain_default(key):
+    """A dict variable's collection default when it is plain (no template) -> {path: (keys, value)} as _leaves gives
+    it, else None."""
+    value = _roles_defaults().get(key)
+    if not isinstance(value, dict) or not value:
+        return None
+    leaves = _leaves(key, value)
+    if any(_templated(v) for dummy, dummy2, v in leaves):
+        return None
+    return dict((path, (names, v)) for path, names, v in leaves)
+
+
+def _alike(a, b):
+    """Two leaf values alike as a file of the roles writes them: 1048575 and "1048575"."""
+    return json.dumps(a, sort_keys=True, default=str).strip('"').lower() == \
+        json.dumps(b, sort_keys=True, default=str).strip('"').lower()
+
+
 def _settings_pairs(read, keys, from_yours):
     """The SETTINGS of the nodes read -> ([(node, setting, value text)], {setting: its variable}): a dict value one
     setting per sub-key (cassandra_extra_settings.sstable.selected_format), "(not set)" on a node whose dict has
-    not that key; a secret "(in secrets.yml)", a second value of it "(in secrets.yml, value 2)"."""
+    not that key; a secret "(in secrets.yml)", a second value of it "(in secrets.yml, value 2)". A dict whose
+    collection default is known: its sub-keys compared with the default's on the nodes that leave it to the
+    collection (only the ones that differ said; a sub-key of the default a node's dict leaves out, said)."""
     pairs, secrets, variable = [], {}, {}
     for key in keys:
         found, paths = {}, []
+        default = _plain_default(key)
         for n in read:
             mine = (n.get("vars") or {})
             if key not in mine and key in from_yours.get(n["name"], {}):  # left to a file of yours
@@ -403,7 +424,14 @@ def _settings_pairs(read, keys, from_yours):
                 for path in found[n["name"]]:
                     if path not in paths:
                         paths.append(path)
+        # (some nodes leave the dict to the collection: each sub-key against the default's, one a dict drops too)
+        compared = default is not None and len(found) < len(read)
+        if compared:
+            paths += [path for path in default if path not in paths]
         for path in paths:
+            if compared and path in default and all(path in mine and _alike(mine[path][1], default[path][1])
+                                                    for mine in found.values()):
+                continue  # (the default's value on every node, set or not: no difference)
             variable[path] = key
             for n in read:
                 if n["name"] not in found:

@@ -1554,6 +1554,25 @@ def test_a_dict_key_most_nodes_do_not_set_is_given_as_the_collections_default():
     assert "to give every node not set" not in full
 
 
+def test_a_dict_one_node_sets_shows_only_the_sub_keys_that_differ_from_the_default():
+    """e2e (hostile S15): vm.swappiness set again in h-n1's /etc/sysctl.conf, not carried: h-n1 alone gets
+    cassandra_linux_sysctl, the default's other keys as they are. Its 12 keys at the default's value were listed as
+    differing, the one dropped was not; a node's own limits the same (only nofile differs)."""
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
+    linux = role_file("cassandra_linux")
+    sysctl = dict((k, str(v)) for k, v in linux["cassandra_linux_sysctl"].items() if k != "vm.swappiness")
+    limits = dict(linux["cassandra_linux_limits"], nofile=65536)
+
+    def with_vars(i, **more):
+        return dict(node(i), vars=dict(node(i)["vars"], **more))
+    nodes = [with_vars(1, cassandra_linux_sysctl=sysctl), with_vars(2), with_vars(3, cassandra_linux_limits=limits),
+             with_vars(4)]
+    review = " ".join(section(report(nodes), "DIFFERENT ON SOME NODES"))
+    shown = sorted(set(re.findall(r"(cassandra_linux_\w+\.[\w.]+):", review)))
+    assert shown == ["cassandra_linux_limits.nofile", "cassandra_linux_sysctl.vm.swappiness"]
+    assert re.search(r"cassandra_linux_sysctl\.vm\.swappiness: +\(collection's default\) .*\(not set\) +node1", review)
+
+
 def test_the_next_step_expects_cassandra_env_as_stock_when_its_dormant_lines_go():
     # e2e (a prod-shape import): "expected: every node up to date (header lines aside)", then apply_config --check
     # rewrote cassandra-env.sh (the lines of the remote JMX branch the nodes do not run, the stock password file line)
