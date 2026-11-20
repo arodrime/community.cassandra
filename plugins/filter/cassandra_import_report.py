@@ -28,7 +28,7 @@ from collections import namedtuple
 from ansible.module_utils.parsing.convert_bool import boolean
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    HEAP_MOVED, IDENTITY, KEEP, KEPT_PART_WORDS, KEPT_PARTS, KEPT_PARTS_VAR, NODE_LEVEL, NOT_READ, PER_NODE, group_chains,
+    BRANCH_NOT_RUN_NOTE, HEAP_MOVED, IDENTITY, PASSWORD_FILE_NOTE, KEEP, KEPT_PART_WORDS, KEPT_PARTS, KEPT_PARTS_VAR, NODE_LEVEL, NOT_READ, PER_NODE, group_chains,
     hand_edits_kept, _secret, vars_sort_key, values_hidden)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import CONFIG_FILE, RESTART_DOES
 from ansible_collections.community.cassandra.plugins.filter.cassandra_os import NO_EFFECT_NOTE
@@ -1709,12 +1709,27 @@ def _versions_lines(report):
 _UNREAD_JVM_NOTE = re.compile(r"^(jvm\d+-server\.options): .*\(no effect: Java \d+ does not read this file;")
 
 
+# the import's notes of lines of cassandra-env.sh with no effect that the role's stock file has otherwise: the lines of
+# a JMX branch the node does not run, the stock password file line commented out (apply_config rewrites the file as
+# stock, no restart)
+_DORMANT_NOTES = (re.compile("^%s$" % re.escape(BRANCH_NOT_RUN_NOTE).replace(re.escape("%s"), ".+")),
+                  re.compile("^%s$" % re.escape(PASSWORD_FILE_NOTE)))
+
+
+def _dormant(report):
+    """Whether a node read has lines of cassandra-env.sh with no effect that the role's stock file has otherwise
+    (_DORMANT_NOTES)."""
+    return any(p.match(note) for n in report.read for note in n.get("normalized") or [] for p in _DORMANT_NOTES)
+
+
 def _jvm_rewrites(report, self_check):
     """The config files the next apply_config rewrites with the same JVM arguments: the JVM's files the import
-    proved give the same arguments (the nodes' rewritten), the options files their Java does not read -> sorted
-    [file]. apply_config makes the same proof before it writes them, and restarts no node for them
-    (cassandra_apply_config_no_effect)."""
+    proved give the same arguments (the nodes' rewritten; cassandra-env.sh with lines of no effect the role's stock
+    file has otherwise, _dormant), the options files their Java does not read -> sorted [file]. apply_config makes
+    the same proof before it writes them, and restarts no node for them (cassandra_apply_config_no_effect)."""
     files = set(f for n in report.read for f in n.get("rewritten") or [])
+    if _dormant(report):
+        files.add("cassandra-env.sh")
     for check in (self_check or {}).values():
         files.update(m.group(1) for m in (_UNREAD_JVM_NOTE.match(note) for note in check.get("notes") or []) if m)
     return sorted(files)
@@ -1837,17 +1852,20 @@ WORDS_USED = (
 REWRITES = "APPLY_CONFIG WILL REWRITE (no effect)"
 
 
-def _apply_config_expects(files, heap_moved, rewrites):
+def _apply_config_expects(files, heap_moved, rewrites, dormant=False):
     """What apply_config --check --diff shows on the nodes imported: the JVM's files it rewrites with the same
-    arguments, no restart (files, _jvm_rewrites'; the heap moved among them: heap_moved), the rewrites with no effect
-    (rewrites) -> text."""
+    arguments, no restart (files, _jvm_rewrites'; the heap moved among them: heap_moved; cassandra-env.sh written as
+    stock, its lines of no effect dropped or the stock ones back: dormant), the rewrites with no effect (rewrites)
+    -> text."""
     if not files:
         return "only the rewrites under %s" % REWRITES if rewrites else "every node up to date (header lines aside: a comment, no restart)"
-    text = "%s rewritten, no restart (the same JVM arguments%s)" % (
-        ", ".join(files), "; the heap moves to jvm-server.options" if heap_moved else "")
+    text = "%s rewritten, no restart (the same JVM arguments%s%s)" % (
+        ", ".join(files), "; the heap moves to jvm-server.options" if heap_moved else "",
+        "; cassandra-env.sh as stock: lines of a JMX branch the nodes do not run dropped, the stock JMX password file"
+        " line back, an option of the next restart the JVM never reads" if dormant else "")
     if rewrites:
         return text + ", and the rewrites under %s" % REWRITES
-    return text + ", nothing else"
+    return text + ", nothing else (header lines aside: a comment, no restart)"
 
 
 def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, changes, changed, removed, same, jvm_files,
@@ -1875,7 +1893,7 @@ def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, ch
         topology = out.command("topology", inventory=inventory or None, hosts=hosts or None, extra=["--check"],
                                cwd=report.cwd)
         items.append(("Check that the inventory changes nothing on the nodes (both commands only look):",
-                      [(apply_check, _apply_config_expects(jvm_files, bool(heap_moved), rewrites)),
+                      [(apply_check, _apply_config_expects(jvm_files, bool(heap_moved), rewrites, _dormant(report))),
                        (topology, "nothing to do")]))
     if not items:
         items.append(("Nothing: the inventory matches the nodes.", []))

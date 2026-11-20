@@ -981,7 +981,7 @@ def jvm_args_compared(cmdline, live, role, series, java, node_env=None, role_env
     if names:  # their names only (-Xlog:file=<path>: -Xlog, -Xmaxjitcodesize240M: -Xmaxjitcodesize)
         names = sorted(set(re.sub(r"(?<=^-X[a-z])([a-z]*?)\d.*$", r"\1", re.split(r"[:=]", n)[0]) for n in names))
         return False, "the JVM would get other values of %s" % ", ".join(out.mask(n) for n in names), []
-    later = ["%s added" % o for o in inert]
+    later = ["%s added (the JVM never reads that file: JMX authentication off)" % o for o in inert]
     if earlier is not None and not any(_jvm_name(a) == "HeapDumpPath" for a in args):
         # (the later series' file sets it always, in CASSANDRA_HEAPDUMP_DIR: the environment's, else its default)
         folder = (node_env or {}).get("CASSANDRA_HEAPDUMP_DIR") or next(
@@ -989,7 +989,7 @@ def jvm_args_compared(cmdline, live, role, series, java, node_env=None, role_env
         logdir = next((a.split("=", 1)[1] for a in args if a.startswith("-Dcassandra.logdir=")), "")
         if logdir:  # (bin/cassandra's log dir, as the JVM got it)
             folder = re.sub(r"\$(CASSANDRA_LOG_DIR\b|\{CASSANDRA_LOG_DIR\})", lambda m: logdir, folder)
-        later.insert(0, "-XX:HeapDumpPath=%s/cassandra-<start>-pid<pid>.hprof added" % folder)
+        later.insert(0, "-XX:HeapDumpPath=%s/cassandra-<start>-pid<pid>.hprof added (no effect until a heap dump)" % folder)
     return True, "", [out.mask(change) for change in later]
 
 

@@ -1552,3 +1552,20 @@ def test_a_dict_key_most_nodes_do_not_set_is_given_as_the_collections_default():
     full = " ".join(" ".join(report([perms(1, "0640"), perms(2, None), perms(3, None)], details=False)).split())
     assert "to give every node the collection's default: remove" in full
     assert "to give every node not set" not in full
+
+
+def test_the_next_step_expects_cassandra_env_as_stock_when_its_dormant_lines_go():
+    # e2e (a prod-shape import): "expected: every node up to date (header lines aside)", then apply_config --check
+    # rewrote cassandra-env.sh (the lines of the remote JMX branch the nodes do not run, the stock password file line)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
+        PASSWORD_FILE_NOTE, branch_not_run_note)
+    for notes in ([branch_not_run_note(3, "local")], [PASSWORD_FILE_NOTE], [branch_not_run_note(1, "local"), PASSWORD_FILE_NOTE]):
+        lines = report([node(1, normalized=notes), node(2)], details=False)
+        said = " ".join(" ".join(line.split()) for line in lines)
+        assert "every node up to date" not in said
+        assert ("expected: cassandra-env.sh rewritten, no restart (the same JVM arguments; cassandra-env.sh as stock:"
+                " lines of a JMX branch the nodes do not run dropped, the stock JMX password file line back, an option of"
+                " the next restart the JVM never reads), nothing else") in said, said
+        assert "in sync with Ansible: yes; the next apply_config: 1 file rewritten, no restart" in said
+    said = " ".join(" ".join(line.split()) for line in report([node(1), node(2)], details=False))
+    assert "expected: every node up to date (header lines aside: a comment, no restart)" in said

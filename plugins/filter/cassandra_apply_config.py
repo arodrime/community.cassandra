@@ -1066,25 +1066,31 @@ def cassandra_apply_config_down_ok(nodes, hostvars, host, then, check, batch=Fal
 # (cassandra_apply_config_no_effect): its JVM gets the same arguments from them, a JVM options file its Java does not
 # read, logback.xml read again by logback
 SAME_JVM_ARGUMENTS = "the same JVM arguments"
+# (with an option the next start adds, said under the node: no contradiction with it)
+SAME_JVM_ARGUMENTS_BUT = "the same JVM arguments, but for the next restart's option below"
 NOT_READ_BY_JAVA = "%s not read by Java %s"
 LOGBACK_SCANS = "logback.xml read again by logback (scan)"
-# an option the files written give the JVM at its next start, apart from the proof (jvm_args.jvm_args_compared): said
-# under the node, not among the reasons
-NEXT_RESTART = "next restart: %s (no effect now)"
+# the node's lines in the JMX branch of cassandra-env.sh its JVM does not run (dormant: no effect), which the role's
+# file, as stock, does not have
+DORMANT_BRANCH = "cassandra-env.sh as stock: %s of the %s JMX branch it does not run dropped, LOCAL_JMX=%s"
+# an option the files written give the JVM at its next start, apart from the proof (jvm_args.jvm_args_compared, its
+# own words on its effect): said under the node, not among the reasons
+NEXT_RESTART = "next restart: %s"
 
 
 def _later(reason):
     """Whether reason is a NEXT_RESTART line."""
-    before, after = NEXT_RESTART.split("%s")
-    return str(reason).startswith(before) and str(reason).endswith(after)
+    return str(reason).startswith(NEXT_RESTART % "")
 
 
 def _proven(reason):
     """Whether reason (a node's, why it is not restarted) is one of cassandra_apply_config_no_effect's, or the role's
     header line added (no setting changes), Medusa's changes, the repository, packages and firewall (not read by
     Cassandra): said in the recap too."""
-    return reason in (SAME_JVM_ARGUMENTS, LOGBACK_SCANS, HEADER_ADDED, MEDUSA_LIVE, EXTRAS_LIVE) or bool(
-        re.match("^%s$" % (re.escape(NOT_READ_BY_JAVA) % (r"\S+", r"\S+")), reason))
+    return reason in (SAME_JVM_ARGUMENTS, SAME_JVM_ARGUMENTS_BUT, LOGBACK_SCANS, HEADER_ADDED, MEDUSA_LIVE,
+                      EXTRAS_LIVE) or bool(
+        re.match("^%s$" % (re.escape(NOT_READ_BY_JAVA) % (r"\S+", r"\S+")), reason)) or bool(
+        re.match("^%s$" % (re.escape(DORMANT_BRANCH) % (r"\d+ lines?", r"\w+", r"\w+")), reason))
 
 
 def _scans(text):
@@ -1160,7 +1166,12 @@ def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", 
                                                         earlier=earlier["text"] if earlier else None)
         if not same:
             return []
-        reasons.insert(0, SAME_JVM_ARGUMENTS)
+        reasons.insert(0, SAME_JVM_ARGUMENTS_BUT if later else SAME_JVM_ARGUMENTS)
+        # (the node's lines in the JMX branch its JVM does not run: dropped, said as such)
+        dummy, dormant, runs = jvm_args.without_jmx_branch_not_run(node[jvm_args.ENV], role[jvm_args.ENV], environ, cmdline)
+        if dormant:
+            reasons.insert(0, DORMANT_BRANCH % (out.plural(dormant, "line"), "remote" if runs == "local" else "local",
+                                                "yes" if runs == "local" else "no"))
         reasons += [NEXT_RESTART % change for change in later]
     return reasons
 

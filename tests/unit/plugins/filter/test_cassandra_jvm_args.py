@@ -669,8 +669,10 @@ def test_lines_in_the_remote_jmx_branch_not_run_have_no_effect(tmp_path, series,
     assert "rmi.server.hostname=10" not in rendered["cassandra-env.sh"]
     assert settings(launch(rendered, java, tmp_path)) == settings(cmdline)
     group = ["cassandra-env.sh", "jvm-server.options", jvm.options_file(series, java)]
+    # (the plan says the dormant lines dropped, the file as stock)
     assert cassandra_apply_config_no_effect(["cassandra-env.sh"], files, rendered, cmdline, series, java) \
-        == ["the same JVM arguments"]
+        == ["cassandra-env.sh as stock: %s of the remote JMX branch it does not run dropped, LOCAL_JMX=yes"
+            % ("1 line" if len(lines) == 1 else "%d lines" % len(lines)), "the same JVM arguments"]
     assert all(f in files for f in group)
 
 
@@ -727,10 +729,13 @@ def test_a_local_jmx_file_with_remote_branch_lines_passes_with_no_restart(tmp_pa
     flags, others = settings(launch(rendered, java, tmp_path))
     assert flags.pop("-Dcom.sun.management.jmxremote.password.file") == "/etc/cassandra/jmxremote.password"
     assert (flags, others) == settings(cmdline)
-    # (the option the next start adds, said under the node)
+    # (the option the next start adds, said under the node; e2e: "the same JVM arguments" then "next restart: ...
+    # added (no effect now)" read as a contradiction, the dormant lines not said)
     assert cassandra_apply_config_no_effect(["cassandra-env.sh"], files, rendered, cmdline, series, java) \
-        == ["the same JVM arguments", "next restart: -Dcom.sun.management.jmxremote.password.file="
-            "/etc/cassandra/jmxremote.password added (no effect now)"]
+        == ["cassandra-env.sh as stock: 3 lines of the remote JMX branch it does not run dropped, LOCAL_JMX=yes",
+            "the same JVM arguments, but for the next restart's option below",
+            "next restart: -Dcom.sun.management.jmxremote.password.file=/etc/cassandra/jmxremote.password added (the JVM"
+            " never reads that file: JMX authentication off)"]
 
 
 @pytest.mark.parametrize("extra", ["-Dcom.sun.management.jmxremote.authenticate=true",
@@ -806,9 +811,10 @@ def test_the_jmx_users_of_a_local_jmx_jvm_reading_neither_file_are_not_imported(
     rendered, variables = role_files(inventory, layout, files)
     assert variables.get("cassandra_jmx_users", []) == []  # (access.yml: the files left as they are)
     assert '#JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file=' in rendered["cassandra-env.sh"]
-    assert cassandra_apply_config_no_effect(["cassandra-env.sh"], files, rendered, cmdline, series, java) \
-        == ["the same JVM arguments", "next restart: -Dcom.sun.management.jmxremote.password.file="
-            "/etc/cassandra/jmxremote.password added (no effect now)"]
+    assert cassandra_apply_config_no_effect(["cassandra-env.sh"], files, rendered, cmdline, series, java)[-2:] \
+        == ["the same JVM arguments, but for the next restart's option below",
+            "next restart: -Dcom.sun.management.jmxremote.password.file=/etc/cassandra/jmxremote.password added (the JVM"
+            " never reads that file: JMX authentication off)"]
     # cassandra-env.sh written since it started, LOCAL_JMX=no in the unit, a file named to the JVM: as before
     for newer, env, extra in ((["cassandra-env.sh"], {}, ""), ([], {"LOCAL_JMX": "no"}, ""),
                               ([], {}, "-Dcom.sun.management.jmxremote.access.file=/etc/cassandra/jmxremote.access")):
@@ -2410,8 +2416,8 @@ def test_apply_config_proves_a_4x_cassandra_env_on_50_as_the_import_does(tmp_pat
                and not cassandra_same_settings(files[f], rendered[f], f, STORAGE)]
     assert "cassandra-env.sh" in changed
     assert cassandra_apply_config_no_effect(changed, files, rendered, cmdline, "50x", "17", {}, [], FACTS) == [
-        "the same JVM arguments", "next restart: -XX:HeapDumpPath=%s/cassandra-<start>-pid<pid>.hprof added (no effect"
-        " now)" % next(a[len("-Dcassandra.logdir="):] for a in cmdline.split("\0") if a.startswith("-Dcassandra.logdir="))]
+        "the same JVM arguments, but for the next restart's option below",
+        "next restart: -XX:HeapDumpPath=%s/cassandra-<start>-pid<pid>.hprof added (no effect until a heap dump)" % next(a[len("-Dcassandra.logdir="):] for a in cmdline.split("\0") if a.startswith("-Dcassandra.logdir="))]
     # (the log dir by default: CASSANDRA_HEAPDUMP_DIR="$CASSANDRA_LOG_DIR", bin/cassandra's -Dcassandra.logdir)
     assert "cassandra_heap_dump_dir" not in variables
     assert cassandra_apply_config_no_effect(changed, files, rendered, cmdline, "50x", "17", {}, []) == []  # (no facts)
@@ -2499,7 +2505,8 @@ def test_a_line_only_in_the_local_jmx_branch_of_a_remote_jmx_node_has_no_effect(
     assert "zorglub" not in rendered["cassandra-env.sh"]
     assert settings(launch(rendered, "17", tmp_path)) == settings(cmdline)
     assert cassandra_apply_config_no_effect(["cassandra-env.sh"], files, rendered, cmdline, "50x", "17") \
-        == ["the same JVM arguments"]
+        == ["cassandra-env.sh as stock: 1 line of the local JMX branch it does not run dropped, LOCAL_JMX=no",
+            "the same JVM arguments"]
     # the unit says LOCAL_JMX=yes (the next start takes the local branch): not proven, a difference
     assert check(files, "50x", java="17", cmdline=cmdline, env={"LOCAL_JMX": "yes"})["differences"]
 
