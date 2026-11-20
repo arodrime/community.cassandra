@@ -233,10 +233,12 @@ def _ranges(names):
 
 # One rule for what is a secret: what the output hides (****) and what import_cluster files in secrets.yml.
 # A variable or setting whose value is a secret (sse_c_key, access_key: Medusa's; kspw, tspw: a keystore's and a
-# truststore's in a JVM option; ca_key, auth_token, a name ending in _pw or _pass; the HTTP headers, an
-# authorization or a token of their own name: the Prometheus exporter's openTelemetry headers)
+# truststore's in a JVM option; ca_key, auth_token, a name ending in _pw, _pass, _pwd, _token (not initial_token),
+# credential(s); a passphrase, an encryption_key; the HTTP headers, an authorization or a token of their own name: the
+# Prometheus exporter's openTelemetry headers)
 SECRET = re.compile(r"password|passwd|secret|sse_c_key|access_key|private_key|key_material|auth_token|ca_key"
                     r"|api_?token|api_?key|access_token|bearer_token|refresh_token|session_token|private_token"
+                    r"|passphrase|encryption_key|credentials?$|(?<!initial)_token$|_pwd$|^pwd$"
                     r"|_kspw$|_tspw$|_pw$|_pass$|^pw$|^pass$|^(?:authorization|headers|token)$", re.I)
 _HIDDEN = SECRET
 MASK = "****"
@@ -245,9 +247,13 @@ MASK = "****"
 # the name and the colon (JSON, Python), then its value
 # (the names secret on their own only, not inside a longer one: num_tokens, AuthorizationProxy)
 _OWN_NAME = r"(?<![\w.-])(?:authorization|headers|token)(?![\w.-])"
+# (a name ending in _token, .token, _pwd, .pwd, .pass or credential(s) as one ending in them only: initial_token,
+# credentials_validity are not secrets)
+_END_NAME = r"(?:(?<!initial)[._]token|[._]?pwd|[._]pass|credentials?)(?![\w.-])"
 _HIDDEN_NAME = (r"(?<![\w.-])[\w.-]*(?:password|passwd|secret|private_key|sse_c_key|access_key|key_material|auth_token"
                 r"|api_?token|api_?key|access_token|bearer_token|refresh_token|session_token|private_token"
-                r"|ca_key|_kspw|_tspw|_pw|_pass|" + _OWN_NAME + r")[\w.-]*(?<![._-]file)(?<![._-]path)[\"']?")
+                r"|passphrase|encryption_key|ca_key|_kspw|_tspw|_pw|_pass|" + _END_NAME + "|" + _OWN_NAME
+                + r")[\w.-]*(?<![._-]file)(?<![._-]path)[\"']?")
 # (its name and the = or : after it: import_cluster takes the value out of a line)
 SECRET_NAME = r"(?i)(" + _HIDDEN_NAME + r"\s*[:=]\s*)"
 _HIDDEN_KEY = (SECRET_NAME +
@@ -282,7 +288,8 @@ _HIDDEN_KEY_ONLY = re.compile(r"(?i)(" + _HIDDEN_NAME + r"\s*[:=]\s*)")
 # a line without any of these words holds no secret setting (looked for first: the patterns above are slow)
 _HIDDEN_WORD = re.compile(r"(?i)password|passwd|secret|private_key|sse_c_key|access_key|key_material|auth_token"
                           r"|api_?token|api_?key|access_token|bearer_token|refresh_token|session_token|private_token"
-                          r"|ca_key|_kspw|_tspw|_pw|_pass|" + _OWN_NAME + r"[\"']?\s*[:=]")
+                          r"|passphrase|encryption_key|ca_key|_kspw|_tspw|_pw|_pass|" + _END_NAME + "|" + _OWN_NAME
+                          + r"[\"']?\s*[:=]")
 SECRET_WORD = _HIDDEN_WORD
 
 

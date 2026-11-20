@@ -149,11 +149,21 @@ SECRETS = [  # (key, value): each one hidden on screen and filed in secrets.yml
     ("cassandra_medusa_s3_access_key_id", "AKIA"), ("tde", {"key_material": "m"}), ("opts", "-Dkeystore_pw=k"),
     ("opts", "nodetool -u u -pw secret1 status"), ("cmd", "cqlsh -u u -p secret2 host"),
     ("settings", {"auth": {"ca_key": "k"}}), ("settings", "{\"password\": \"x\"}"), ("tokens", ["-Dauth_token=x"]),
-    ("cassandra_cql_password", 1234)]
+    ("cassandra_cql_password", 1234),
+    # a unit Environment's usual names and JVM options (VAULT_TOKEN, *_PWD, a passphrase, credentials, an encryption
+    # key, -D...pwd= and -D...pass= inside *_OPTS or JAVA_TOOL_OPTIONS)
+    ("VAULT_TOKEN", "t"), ("GITHUB_TOKEN", "t"), ("DB_PWD", "p"), ("SSL_KEY_PASSPHRASE", "p"), ("DB_CREDENTIALS", "c"),
+    ("ENCRYPTION_KEY", "k"), ("JAVA_TOOL_OPTIONS", "-Dssl.pwd=zorglub -Xmx1g"), ("JVM_EXTRA_OPTS", "-Dfoo.pass=zorglub"),
+    ("JVM_EXTRA_OPTS", "-Dx.token=zorglub"), ("env", {"APP_CREDENTIAL": "c"})]
 NOT_SECRETS = [("cassandra_jmx_password_file", "/etc/x"), ("cassandra_jmx_password", ""),
                ("cassandra_jmx_password", None), ("concurrent_reads", 32), ("opts", "-Xmx8G -p 9042"),
                ("compass", "x"), ("bypass", "x"), ("passive_mode", "x"), ("settings", {"keystore": "conf/.keystore"}),
-               ("opts", "-Dcom.sun.management.jmxremote.password.file=/etc/cassandra/conf/jmx/my_jmx.password")]
+               ("opts", "-Dcom.sun.management.jmxremote.password.file=/etc/cassandra/conf/jmx/my_jmx.password"),
+               # Cassandra's own settings near those names
+               ("cassandra_initial_token", "-9223372036854775808"), ("initial_token", "1"), ("num_tokens", 16),
+               ("cassandra_credentials_validity", "2000ms"), ("credentials_update_interval", "1s"),
+               ("allocate_tokens_for_keyspace", "ks"), ("cassandra_token_rf", 3), ("JVM_OPTS", "-Dcom.x.passive=true"),
+               ("JVM_OPTS", "-Dcassandra.initial_token=1")]
 
 
 def test_one_rule_for_secrets():
@@ -827,7 +837,8 @@ def test_hidden_values_in_lists_dicts_and_a_dict_becoming_a_value():
 
 
 @pytest.mark.parametrize("text", ["nodetool -p 7199 status", "mkdir -p /var/lib/cassandra", "ssh -p 2222 host",
-                                  "credentials_validity_in_ms: 2000", "num_tokens: 16"])
+                                  "credentials_validity_in_ms: 2000", "num_tokens: 16", "initial_token: 3074457345618258602",
+                                  "allocate_tokens_for_local_replication_factor: 3", "-Dcassandra.initial_token=1"])
 def test_mask_leaves_ports_paths_and_settings(text):
     assert out.mask(text) == text
 
