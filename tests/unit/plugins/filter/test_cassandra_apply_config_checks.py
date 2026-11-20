@@ -194,7 +194,8 @@ def test_a_limit_the_host_caps_plans_no_restart():
 def test_the_unit_environment_is_the_one_the_jvm_runs_with():
     # (a unit edited, systemctl daemon-reload, no restart: systemctl show has the new environment, the JVM the old)
     running = {"user": "cassandra", "group": "cassandra", "limits": LIMITS, "environment": "JAVA_HOME=/opt/y",
-               "environ": "JAVA_HOME=/opt/x\0JVM_OPTS=-Xss256k -Dz=1\0PATH=/usr/bin\0"}
+               "environ": "JAVA_HOME=/opt/x\0JVM_OPTS=-Xss256k -Dz=1\0PATH=/usr/bin\0",
+               "unit_mtime": "1700000100", "start": "1700000000.25"}
     wanted = dict(WANTED, environment={"JAVA_HOME": "/opt/y"})
     assert cassandra_apply_config_unit(running, wanted) == [
         {"item": "unit Environment JAVA_HOME", "before": "/opt/x", "after": "/opt/y"}]
@@ -206,6 +207,21 @@ def test_the_unit_environment_is_the_one_the_jvm_runs_with():
     assert cassandra_apply_config_unit(same, dict(WANTED, environment={"JAVA_HOME": "/opt/x", "JVM_OPTS": "-Dz=1"})) == []
     # the JVM's environment not read: the unit's, as loaded
     assert cassandra_apply_config_unit(dict(running, environ=""), wanted) == []
+    # the unit not written since the start (or its time not read): the unit's, as loaded
+    assert cassandra_apply_config_unit(dict(running, unit_mtime="1699999000"), wanted) == []
+    assert cassandra_apply_config_unit(dict(running, unit_mtime=""), wanted) == []
+
+
+def test_an_imported_unit_environment_the_scripts_rewrite_is_a_no_op():
+    # (the unit exports names cassandra-env.sh, bin/cassandra or the init script give a value of their own: the JVM
+    # keeps the scripts' value, the import carries the unit's; no restart, run after run)
+    unit = {"JMX_PORT": "7299", "HEAP_NEWSIZE": "800M", "LD_PRELOAD": "/opt/x/libz.so",
+            "CASSANDRA_INCLUDE": "/opt/x/in.sh", "CASSANDRA_OWNR": "zorglub", "MAX_HEAP_SIZE": "8G"}
+    environ = ("JMX_PORT=7199\0HEAP_NEWSIZE=2048M\0LD_PRELOAD=/usr/lib64/libjemalloc.so.2\0"
+               "CASSANDRA_INCLUDE=/usr/share/cassandra/cassandra.in.sh\0CASSANDRA_OWNR=cassandra\0MAX_HEAP_SIZE=16G\0")
+    running = {"user": "cassandra", "group": "cassandra", "limits": LIMITS, "environ": environ, "start": "1700000000.25",
+               "unit_mtime": "1690000000", "environment": " ".join("%s=%s" % kv for kv in sorted(unit.items()))}
+    assert cassandra_apply_config_unit(running, dict(WANTED, environment=unit)) == []
 
 
 def test_the_nodes_and_the_ring_sentence_are_built_once():

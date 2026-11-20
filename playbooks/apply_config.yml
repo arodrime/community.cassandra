@@ -284,8 +284,11 @@
         echo "group=$(ps -o group= -p "$CASSANDRA_PID" | tr -d ' ')"
         echo "limits=$(base64 -w0 < "/proc/$CASSANDRA_PID/limits")"
         echo "environment=$(systemctl show cassandra -p Environment --value 2>/dev/null)"
-        # (the environment of the JVM itself: a unit reloaded since its start is not what it runs)
+        # (the environment of the JVM itself: a unit reloaded since its start is not what it runs; used only when
+        # the unit file or a drop-in is newer than the JVM)
         echo "environ=$(base64 -w0 < "/proc/$CASSANDRA_PID/environ")"
+        echo "unitmtime=$(stat -c %Y $(systemctl show cassandra -p FragmentPath -p DropInPaths --value 2>/dev/null) \
+          2>/dev/null | sort -n | tail -1)"
         # in a container, systemd gives no more than its own hard limits (a limit above them: the JVM gets the cap)
         systemd-detect-virt -cq 2>/dev/null && echo "ceiling=$(base64 -w0 < /proc/1/limits)"
         exit 0
@@ -626,7 +629,8 @@
         _unit_changes: >-
           {{ ({'user': _unit_read.user | default(''), 'group': _unit_read.group | default(''),
                'limits': _unit_read.limits | default('') | b64decode, 'environment': _unit_read.environment | default(''),
-               'ceiling': _unit_read.ceiling | default('') | b64decode, 'environ': _unit_read.environ | default('') | b64decode}
+               'ceiling': _unit_read.ceiling | default('') | b64decode, 'environ': _unit_read.environ | default('') | b64decode,
+               'unit_mtime': _unit_read.unitmtime | default(''), 'start': cassandra_jvm.start | default('')}
               if _unit_read.limits is defined else {})
              | community.cassandra.cassandra_apply_config_unit(
                  {'user': cassandra_service_user | default(cassandra_user | default('cassandra')),

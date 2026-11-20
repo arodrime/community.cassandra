@@ -167,6 +167,14 @@ def _proc_limits(text):
 REWRITTEN = ("JVM_OPTS", "CLASSPATH", "CASSANDRA_CONF", "CASSANDRA_HOME")
 
 
+def _unit_newer(running):
+    """True when the newest of the unit file and its drop-ins (unit_mtime, seconds) is later than the JVM's start."""
+    try:
+        return float(running.get("unit_mtime")) > float(running.get("start"))
+    except (TypeError, ValueError):
+        return False
+
+
 def _lower(value, cap):
     """The lower of a limit and the cap over it ('unlimited' above any number)."""
     if cap == "unlimited" or not isinstance(cap, int):
@@ -178,7 +186,8 @@ def cassandra_apply_config_unit(running, wanted):
     """What the running Cassandra got from its unit and what the role's unit gives at its next start -> [{item,
     before, after}] of what differs (empty: the unit changes nothing for it, whatever its file says).
     running: {user, group, limits: /proc/<pid>/limits, environment: systemctl show -p Environment --value, environ:
-    /proc/<pid>/environ (NUL-separated: the values the JVM runs with, but REWRITTEN's), ceiling:
+    /proc/<pid>/environ (NUL-separated: the values the JVM runs with, but REWRITTEN's; used only when unit_mtime, the
+    newest mtime of the unit file and its drop-ins, is later than start, the JVM's start), ceiling:
     /proc/1/limits in a container, the most its systemd may give (a limit above it compared at it)} (read on the
     node; none read: nothing compared); wanted: {user, group, limits: {nofile, nproc, memlock, as} (none: the
     unit sets none, the package's init script), environment: {name: value}}. The environment compared is the unit's
@@ -203,7 +212,10 @@ def cassandra_apply_config_unit(running, wanted):
                 changes.append({"item": "unit Limit%s" % key.upper(), "before": shown, "after": str(value) + cap})
     have = cassandra_unit_environment(running.get("environment") or "")
     want = dict((str(k), str(v)) for k, v in (wanted.get("environment") or {}).items())
-    if running.get("environ"):  # the JVM's own: a unit reloaded since its start (daemon-reload) is not what it runs
+    if running.get("environ") and _unit_newer(running):
+        # the JVM's own, only when its unit file or a drop-in was written after its start (a unit reloaded since is
+        # not what it runs); else the unit's: the scripts give some names a value of their own (cassandra-env.sh's
+        # JMX_PORT, bin/cassandra's LD_PRELOAD), which the JVM's environment keeps whatever the unit says
         jvm = dict(e.split("=", 1) for e in str(running["environ"]).split("\0") if "=" in e)
         for name in set(have) | set(want):
             if name not in REWRITTEN:

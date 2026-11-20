@@ -25,11 +25,15 @@ ACTION = load("roles", "cassandra_operation", "tasks", "action_apply_config.yml"
 
 
 def needs(changes=(), java=False, version=None, unit_nofile=100000, extras=None, running=True, unit_differs=False,
-          timesync=False, firewall=None, ceiling=None):
+          timesync=False, firewall=None, ceiling=None, env=None):
     """What the plan finds for a running node imported (no record of its start): its facts by name."""
     unit = {"stdout_lines": ["user=cassandra", "group=cassandra",
                              "limits=" + base64.b64encode(LIMITS.encode()).decode(), "environment="]
-            + (["ceiling=" + base64.b64encode(ceiling.encode()).decode()] if ceiling else [])} if running else {}
+            + (["ceiling=" + base64.b64encode(ceiling.encode()).decode()] if ceiling else [])
+            # env: (unit's {name: value}, the JVM's environ, the unit's mtime)
+            + (["environment=" + " ".join("%s=%s" % kv for kv in sorted(env[0].items())),
+                "environ=" + base64.b64encode(env[1].encode()).decode(), "unitmtime=" + env[2]] if env else [])} \
+        if running else {}
     variables = {"_cassandra_config_changes": list(changes), "_cassandra_config_new": {}, "cassandra_conf_dir": CONF,
                  "_cassandra_config_header": [], "cassandra_medusa_enabled": False,
                  "cassandra_pending_snapshot": {"failed": True}, "_cassandra_config_perm_changes": [],
@@ -44,7 +48,7 @@ def needs(changes=(), java=False, version=None, unit_nofile=100000, extras=None,
                  "cassandra_apply_config_version": version or {}, "cassandra_apply_config_unit_read": unit,
                  "cassandra_service_limit_nofile": unit_nofile, "cassandra_service_limit_nproc": 32768,
                  "cassandra_service_limit_memlock": "infinity", "cassandra_service_limit_as": "infinity",
-                 "cassandra_service_environment": {}, "cassandra_service_start": "unit",
+                 "cassandra_service_environment": env[0] if env else {}, "cassandra_service_start": "unit",
                  "cassandra_service_unit_differs": unit_differs,
                  "_cassandra_change_report_seen": {"cassandra_install": {"items": extras or []},
                                                    "cassandra_firewall": {"items": firewall or []}},
@@ -341,6 +345,20 @@ def test_a_limit_a_container_caps_restarts_nothing():
     assert needs(unit_nofile=1048576)["then"] == "restart"
     read = find(FIND["tasks"], "Read what the running Cassandra got from its unit")["ansible.builtin.shell"]
     assert 'systemd-detect-virt -cq 2>/dev/null && echo "ceiling=$(base64 -w0 < /proc/1/limits)"' in read
+
+
+def test_import_then_no_op_with_a_unit_environment_the_scripts_rewrite():
+    # (Environment=JMX_PORT=7299 and the like: cassandra-env.sh sets its own, the JVM keeps it; the unit not written
+    # since the JVM started: no restart, run after run)
+    unit = {"JMX_PORT": "7299", "HEAP_NEWSIZE": "800M", "LD_PRELOAD": "/opt/x/libz.so",
+            "CASSANDRA_INCLUDE": "/opt/x/in.sh", "CASSANDRA_OWNR": "zorglub", "MAX_HEAP_SIZE": "8G"}
+    environ = ("JMX_PORT=7199\0HEAP_NEWSIZE=2048M\0LD_PRELOAD=/usr/lib64/libjemalloc.so.2\0"
+               "CASSANDRA_INCLUDE=/usr/share/cassandra/cassandra.in.sh\0CASSANDRA_OWNR=cassandra\0MAX_HEAP_SIZE=16G\0")
+    assert needs(env=(unit, environ, "90"))["then"] == "none"  # (the JVM started at 100)
+    # the unit written after the start (daemon-reload, no restart): the JVM's, a restart
+    assert needs(env=(unit, environ, "150"))["then"] == "restart"
+    read = find(FIND["tasks"], "Read what the running Cassandra got from its unit")["ansible.builtin.shell"]
+    assert "systemctl show cassandra -p FragmentPath -p DropInPaths --value" in read
 
 
 def test_the_node_s_turn_runs_the_java_and_package_steps_only_when_planned():
