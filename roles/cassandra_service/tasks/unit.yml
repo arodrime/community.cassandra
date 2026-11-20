@@ -54,6 +54,20 @@
     or cassandra_service_dropin_found.stat.exists | default(false) and not _cassandra_service_dropin_wanted | bool
        and not ansible_check_mode
 
+# (its value written anyway: the inventory's, as given; the files are systemd's, readable by all)
+- name: Say a secret in the unit's environment
+  ansible.builtin.debug:
+    msg: "WARNING  {{ inventory_hostname }}: {{ _warning }}"
+  vars:
+    cassandra_output: true  # (ops callback: its msg as is)
+    _warning: >-
+      {{ cassandra_service_environment | community.cassandra.cassandra_unit_secret_warning(
+           '/etc/systemd/system/cassandra.service' if _cassandra_service_own_unit | bool
+           else _cassandra_service_environment_dropin) }}
+  when:
+    - _cassandra_service_own_unit | bool or _cassandra_service_dropin_wanted | bool
+    - _warning | length > 0
+
 # Same name as the package's init script: systemd prefers a native unit
 # over the SysV-generated one, so service/systemctl both use this.
 - name: Install the cassandra systemd unit

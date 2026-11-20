@@ -583,6 +583,7 @@
                 if _running | bool and _then != 'restart'
                    and _os | map(attribute='item') | select('match', '(read_ahead_kb|LVM read-ahead) ') | list | length > 0
                 else [])
+             + (['WARNING  ' ~ _unit_secret] if _unit_secret else [])
              + _cassandra_config_dir_notes | default([])
              + _cassandra_disk_summary.warnings | default([]) | map('regex_replace', '^', 'WARNING  data disks: ') | list
              + (['WARNING  swap left on: what it holds would not fit easily in the memory available']
@@ -640,6 +641,15 @@
         _release: "{{ (cassandra_apply_config_version | default({})).kind | default('') == 'release' }}"
         # the release it runs (a node stopped: the one it last ran, as the ring knows it) and the package installed
         # when that is another one (updated by a run that stopped before its start)
+        # a secret in the environment the unit (or the drop-in of the package's init script) is written with: its file
+        # world-readable, systemctl show prints it (cassandra_service says it too, when it writes it)
+        _unit_secret: >-
+          {{ cassandra_service_environment | default({}) | community.cassandra.cassandra_unit_secret_warning(
+               '/etc/systemd/system/cassandra.service' if cassandra_service_start | default('unit') == 'unit'
+               else _cassandra_service_environment_dropin
+                    | default('/etc/systemd/system/cassandra.service.d/zz-ansible-environment.conf'))
+             if cassandra_service_unit_manage | default(true) | bool
+                and cassandra_service_start | default('unit') in ['unit', 'package_script'] else '' }}
         _release_installed: "{{ (cassandra_apply_config_version | default({})).installed | default('') }}"
         _release_before: >-
           {{ cassandra_apply_config_version.running

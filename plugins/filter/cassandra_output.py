@@ -17,6 +17,7 @@ cassandra_refused, cassandra_not_reached: a refusal before any change (the hosts
 cassandra_cqlsh_words: cassandra_cqlsh_command split as the cassandra_cqlsh module splits it.
 cassandra_holds_secret: whether a value is or holds a secret (shown ****): a file's diff that would show it is not
 shown.
+cassandra_unit_secret_warning: the warning of a secret in the cassandra unit's environment (its file is world-readable).
 """
 
 from __future__ import absolute_import, division, print_function
@@ -278,6 +279,24 @@ def cassandra_holds_secret(value, name=""):
     return out.hidden(str(name or ""), value)
 
 
+def cassandra_unit_secret_warning(environment, path="/etc/systemd/system/cassandra.service"):
+    """The warning of a secret in the environment the cassandra unit (or the drop-in of the package's init script, at
+    path) is written with (cassandra_service_environment), one fact per line, then the way out -> text ("" when none
+    holds a secret): the unit files are mode 0644, every local user reads them, and systemctl show prints them.
+    e.g. ({"JVM_EXTRA_OPTS": "-Dx.trustStorePassword=y"}) -> "a secret in cassandra_service_environment: JVM_EXTRA_OPTS
+    \nwritten to /etc/systemd/system/cassandra.service, mode 0644: every local user can read it\n..."."""
+    names = sorted(str(k) for k, v in (environment or {}).items() if out.hidden(str(k), v)) \
+        if isinstance(environment, dict) else []
+    if not names:
+        return ""
+    return "\n".join([
+        "a secret in cassandra_service_environment: %s" % ", ".join(names),
+        "written to %s, mode 0644: every local user can read it" % path,
+        "systemctl show cassandra prints it too",
+        "way out: keep it out of cassandra_service_environment, e.g. in a file of mode 0600 that a drop-in of your own"
+        " reads (EnvironmentFile=), or in a file of mode 0600 the option itself reads"])
+
+
 class FilterModule(object):
     def filters(self):
         return {
@@ -299,4 +318,5 @@ class FilterModule(object):
             "cassandra_reimport_hosts": cassandra_reimport_hosts,
             "cassandra_seeds_todo": cassandra_seeds_todo,
             "cassandra_holds_secret": cassandra_holds_secret,
+            "cassandra_unit_secret_warning": cassandra_unit_secret_warning,
         }

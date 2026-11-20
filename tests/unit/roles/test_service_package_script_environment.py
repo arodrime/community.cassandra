@@ -133,3 +133,36 @@ def test_the_unit_and_drop_in_diff_never_show_a_secret(env, diff_mode, shown):
         assert task["diff"] == "{{ _cassandra_service_diff | bool }}", task["name"]
     assert render(load("vars", "main.yml")["_cassandra_service_diff"], cassandra_service_environment=env,
                   ansible_diff_mode=diff_mode) is shown
+
+
+def test_a_secret_in_the_unit_environment_is_warned_with_its_way_out():
+    # e2e: -Dzorglub.trustStorePassword=zorglub in cassandra_service_environment: in clear in the unit file (0644) and in
+    # systemctl show, no warning
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_unit_secret_warning
+    said = cassandra_unit_secret_warning({"JVM_EXTRA_OPTS": "-Dzorglub.trustStorePassword=zorglub", "JAVA_HOME": "/opt/x",
+                                          "DB_PASSWORD": "zorglub"})
+    assert said.split("\n") == [
+        "a secret in cassandra_service_environment: DB_PASSWORD, JVM_EXTRA_OPTS",
+        "written to /etc/systemd/system/cassandra.service, mode 0644: every local user can read it",
+        "systemctl show cassandra prints it too",
+        "way out: keep it out of cassandra_service_environment, e.g. in a file of mode 0600 that a drop-in of your own"
+        " reads (EnvironmentFile=), or in a file of mode 0600 the option itself reads"]
+    assert "zorglub" not in said.replace("zorglub.trust", "")
+    assert cassandra_unit_secret_warning({"JAVA_HOME": "/opt/x"}) == "" and cassandra_unit_secret_warning({}) == ""
+    task = next(t for t in load("tasks", "unit.yml") if t.get("name") == "Say a secret in the unit's environment")
+    names = [t.get("name") for t in load("tasks", "unit.yml")]
+    assert names.index("Say a secret in the unit's environment") < names.index("Install the cassandra systemd unit")
+    env = {"JVM_EXTRA_OPTS": "-Dzorglub.trustStorePassword=zorglub"}
+    for own, dropin, path in ((True, False, "/etc/systemd/system/cassandra.service"),
+                              (False, True, "/etc/systemd/system/cassandra.service.d/zz.conf")):
+        variables = dict(cassandra_service_environment=env, _cassandra_service_own_unit=own,
+                         _cassandra_service_dropin_wanted=dropin, inventory_hostname="n1",
+                         _cassandra_service_environment_dropin="/etc/systemd/system/cassandra.service.d/zz.conf")
+        variables["_warning"] = render(task["vars"]["_warning"], **variables)
+        assert path in variables["_warning"]
+        assert all(render("{{ %s }}" % w, **variables) is True for w in task["when"])
+        assert render(task["ansible.builtin.debug"]["msg"], **variables).startswith(
+            "WARNING  n1: a secret in cassandra_service_environment: JVM_EXTRA_OPTS")
+    # the role's unit not written (kept, or the package's script without environment): none
+    variables = dict(variables, _cassandra_service_own_unit=False, _cassandra_service_dropin_wanted=False)
+    assert render("{{ %s }}" % task["when"][0], **variables) is False

@@ -542,3 +542,11 @@ def test_the_release_row_says_the_package_installed_when_it_is_another():
             for installed in ("4.1.11", "4.1.12", "")]
     assert [(r[0]["before"], r[0]["after"]) for r in rows] == [
         ("4.1.11", "4.1.12 (package)"), ("4.1.11, 4.1.12 installed", "4.1.12 (installed)"), ("4.1.11", "4.1.12 (package)")]
+
+
+def test_a_secret_in_the_unit_environment_is_a_warning_of_the_plan():
+    env = {"JVM_EXTRA_OPTS": "-Dzorglub.trustStorePassword=zorglub"}
+    found = needs(env=(env, "JVM_EXTRA_OPTS=-Dzorglub.trustStorePassword=zorglub\n", "50"))
+    warned = [n for n in found["notes"] if n.startswith("WARNING  a secret in cassandra_service_environment")]
+    assert len(warned) == 1 and "/etc/systemd/system/cassandra.service, mode 0644" in warned[0]
+    assert not [n for n in needs()["notes"] if "a secret in" in n]
