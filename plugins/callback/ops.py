@@ -857,6 +857,9 @@ class CallbackModule(DefaultCallback):
         # ("non-zero return code" before ansible-core 2.19, "The command exited with a non-zero return code." since)
         msg = ["non-zero return code" if line.rstrip(".").endswith("non-zero return code") else line for line in msg]
         said = err[-1:] if err and (not msg or msg[0] == "non-zero return code") else msg
+        refused = argument_errors(res)
+        if refused:  # (a role's argument check: its rows, not its message cut at a colon)
+            said = ["%s refused %s" % (refused[0], "; ".join(refused[1]))]
         host = getattr(result, "host", None) or result._host
         first = said[0] if said else "failed"
         # the playbook says it in full itself (a summary, a refusal): a short line here

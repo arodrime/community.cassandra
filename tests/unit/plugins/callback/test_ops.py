@@ -293,6 +293,18 @@ def test_a_refused_role_argument_said_when_the_run_ends_before_the_next_task(tmp
     assert output.count("refused these variables") == 1
 
 
+def test_a_refused_role_argument_in_a_rescued_block_said_in_short(tmp_path):
+    # a block whose rescue handles it: one line, the variable refused and why (not the message cut at its colon)
+    head, tasks = ARGUMENTS.split("  tasks:\n", maxsplit=1)
+    tasks = tasks.replace("\n    ", "\n        ").replace("    - name", "        - name", 1)
+    playbook = head + "  tasks:\n    - block:\n" + tasks + \
+        "      rescue:\n        - name: Handled\n          ansible.builtin.debug:\n            msg: handled\n"
+    rc, output = run(tmp_path, playbook, INVENTORY="node1,")
+    assert rc == 0, output
+    assert ("node1: Check the role's arguments: the role refused cassandra_concurrent_reads: %sa text, not a whole"
+            " number (the playbook handles it)" % _GIVEN_3W) in output, output
+
+
 def test_any_errors_fatal_stops_and_shows_the_failure(tmp_path):
     playbook = FAILING.replace("  gather_facts: false\n", "  gather_facts: false\n  any_errors_fatal: true\n", 1)
     rc, output = run(tmp_path, playbook)
