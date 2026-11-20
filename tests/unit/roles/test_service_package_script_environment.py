@@ -99,3 +99,16 @@ def test_the_drop_in_quotes_each_value_as_systemd_reads_it():
     with open(os.path.join(ROLE, "templates", "cassandra-environment.conf.j2"), encoding="utf-8") as f:
         text = render(f.read(), cassandra_service_environment={"JVM_EXTRA_OPTS": '-Dx="a b" -Dp=50% -Dw=C:\\x'})
     assert 'Environment="JVM_EXTRA_OPTS=-Dx=\\"a b\\" -Dp=50%% -Dw=C:\\\\x"' in text.split("\n")
+
+
+def test_the_unit_writes_the_environment_as_its_drop_in_does():
+    # (a value with % or a quote: as is in the JVM's environment; % unescaped is a systemd specifier, the JVM got
+    # another value than the inventory, a restart planned at every run)
+    env = {"JAVA_HOME": "/opt/x/jdk", "JVM_EXTRA_OPTS": '-Dzorglub.fmt=%d -Dz="a b"'}
+    for name in ("cassandra.service.j2", "cassandra-environment.conf.j2"):
+        with open(os.path.join(ROLE, "templates", name), encoding="utf-8") as f:
+            lines = [line for line in f.read().splitlines() if line.startswith("Environment=")]
+        assert len(lines) == 1, name
+        said = [render(lines[0], name=k, value=v) for k, v in env.items()]
+        assert said == ['Environment="JAVA_HOME=/opt/x/jdk"',
+                        'Environment="JVM_EXTRA_OPTS=-Dzorglub.fmt=%%d -Dz=\\"a b\\""'], name

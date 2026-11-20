@@ -16,7 +16,7 @@ Type=simple
 User={{ cassandra_service_user }}
 Group={{ cassandra_service_group }}
 {% for name, value in cassandra_service_environment.items() %}
-Environment="{{ name }}={{ value }}"
+Environment={{ (name ~ '=' ~ value) | to_json | replace('%', '%%') }}
 {% endfor %}
 ExecStart=/usr/sbin/cassandra -f
 {% if cassandra_service_drain_on_stop %}
