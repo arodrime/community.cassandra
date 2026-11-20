@@ -8,6 +8,7 @@ __metaclass__ = type
 # back, a node down with the target package installed is pointed to apply_config, and apply_config's plan says
 # NONE is the point of no return.
 
+import collections
 import hashlib
 import json
 import os
@@ -452,7 +453,7 @@ def test_the_storage_mode_read_script(tmp_path):
         record = tmp_path / "record.json"
 
         def with_record(content, pid=jvm["pid"]):
-            record.write_text(json.dumps({"/etc/x//../cassandra/cassandra.yaml": hashlib.sha1(content).hexdigest(),
+            record.write_text(json.dumps({str(path): hashlib.sha1(content).hexdigest(),
                                           "/etc/systemd/system/cassandra.service": "0" * 40,
                                           "_jvm": dict(jvm, pid=pid)}, indent=4, sort_keys=True))
             return fake.replace('"$R"', '"%s"' % record)
@@ -532,8 +533,23 @@ def test_the_storage_mode_read_script_of_a_stopped_node(tmp_path):
     assert run() == ["running=no"]
     # the record of its last start: its cassandra.yaml then, against the file now
     started = time.time()
-    record.write_text(json.dumps({"/etc/cassandra/cassandra.yaml": hashlib.sha1(b"storage_compatibility_mode: UPGRADING\n")
+    record.write_text(json.dumps({str(path): hashlib.sha1(b"storage_compatibility_mode: UPGRADING\n")
                                   .hexdigest(), "_jvm": {"pid": "1", "start": started}}, indent=4))
+    assert run() == ["running=no", "last_same=yes"]
+    # (audit) read as JSON, not by its lines: another cassandra.yaml's checksum before it (keys in another order) is
+    # not taken; the role's rendering of the same settings (_same_settings) stands for the file it started with
+    upgrading = hashlib.sha1(b"storage_compatibility_mode: UPGRADING\n").hexdigest()
+    rendered = "storage_compatibility_mode: UPGRADING  # rendered\n"
+    record.write_text(json.dumps(collections.OrderedDict([
+        ("_same_settings", {"/opt/x/cassandra.yaml": "0" * 40, str(path): hashlib.sha1(rendered.encode()).hexdigest()}),
+        (str(path), "1" * 40), ("_jvm", {"pid": "1", "start": started})]), indent=4))
+    assert run() == ["running=no", "last_same=no"]
+    path.write_text(rendered)
+    assert run() == ["running=no", "last_same=yes"]
+    record.write_text(json.dumps(collections.OrderedDict([
+        ("_same_settings", {"/opt/x/cassandra.yaml": "0" * 40}), (str(path), upgrading),
+        ("_jvm", {"pid": "1", "start": started})]), indent=4))
+    path.write_text("storage_compatibility_mode: UPGRADING\n")
     assert run() == ["running=no", "last_same=yes"]
     path.write_text("storage_compatibility_mode: NONE\n")
     assert run() == ["running=no", "last_same=no"]

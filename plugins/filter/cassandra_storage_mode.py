@@ -556,7 +556,7 @@ def cassandra_storage_mode_unsure(host, target=None, target_sha1=None):
     read = dict(line.split("=", 1) for line in lines if "=" in line)
     if read.get("running") != "yes" or _running(host):
         return {}  # (a 4.x Cassandra runs CASSANDRA_4: no such mode, its sstables in the 4.x format)
-    if target_sha1 and read.get("started_sha1") == target_sha1:
+    if target_sha1 and target_sha1 in (read.get("started_sha1") or "").split(","):
         return {}
     changed = read.get("pending") == "yes"
     future = read.get("future") == "yes"

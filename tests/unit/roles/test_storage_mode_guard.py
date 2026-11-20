@@ -366,6 +366,12 @@ def test_unsure_says_what_could_not_be_read_and_the_way_out():
     assert run({"n1": (dict(started, _cassandra_config_new={"cassandra.yaml": "storage_compatibility_mode: CASSANDRA_4\n"}),
                        "CASSANDRA_4")}, _cassandra_storage_mode_written=True)[0] is False
     assert run({"n1": (dict(started, _cassandra_config_new={"cassandra.yaml": rendered}), "UPGRADING")})[0] is False
+    # (audit) the record's file and the role's rendering of the same settings (_same_settings): either is the one
+    # it started with
+    both = dict(n1, cassandra_storage_mode_read={"stdout_lines": n1["cassandra_storage_mode_read"]["stdout_lines"]
+                                                 + ["started_sha1=" + "0" * 40 + "," + hashlib.sha1(rendered.encode()).hexdigest()]})
+    assert run({"n1": (dict(both, _cassandra_config_new={"cassandra.yaml": rendered}), "UPGRADING")},
+               _cassandra_storage_mode_written=True)[0] is True
     # the mode given by hand: not refused here (the evidence-based checks decide)
     assert run({"n1": (n1, "UPGRADING")}, _cassandra_storage_mode_written=True,
                cassandra_storage_mode_running="n1:CASSANDRA_4")[0] is True
@@ -636,8 +642,8 @@ def test_a_stopped_node_is_checked_against_the_mode_it_last_ran():
     read = next(t for t in _load("roles/cassandra_operation/tasks/storage_mode_read.yml")
                 if t["name"] == "Read storage_compatibility_mode in its cassandra.yaml and in the running Cassandra")
     shell = read["ansible.builtin.shell"]
-    assert shell.index('rsum=$(sed') < shell.index('echo "running=no"') < shell.index('echo "last_logged=${m:-CASSANDRA_4}"')
-    assert 'echo "log_state=old"' in shell and 'echo "last_same=yes" || echo "last_same=no"' in shell
+    assert shell.index('rsum=${3:--}') < shell.index('echo "running=no"') < shell.index('echo "last_logged=${m:-CASSANDRA_4}"')
+    assert 'echo "log_state=old"' in shell and 'same && echo "last_same=yes" || echo "last_same=no"' in shell
     assert read["environment"]["L"] == "{{ cassandra_log_dir | default('/var/log/cassandra', true) }}"
     # S: cassandra_log_system_dir when it is a path, its XML escapes undone; the log dir's default: none
     for value, said in (("${cassandra.logdir}", ""), ("/data/R&amp;D/logs", "/data/R&D/logs")):

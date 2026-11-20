@@ -6,7 +6,8 @@
 # else by the file mtime and ctime against /proc/<pid>). cassandra_storage_mode_read.stdout_lines: yaml_read=yes|no, yaml=<value, "" without the line>,
 # logged=<the logged mode> when found, pending=yes when the file changed since its start and nothing was logged
 # (changed=record: its checksum against the record of that start, time: its mtime or ctime); started_sha1=<the
-# checksum of the cassandra.yaml it started with> when that record is this JVM's.
+# checksums of the cassandra.yaml it started with, comma separated: the file read, and the role's rendering of the
+# same settings when the record has it> when that record is this JVM's.
 # file=<its path>. start_read=no: its start or the file time not read, after-now: its start reads as after now;
 # future=yes: the file has a time after now; jvm_version=<the version of the jar on its classpath> when found.
 # Stopped (running=no): the mode it last ran, last_logged=<the mode> from the last "Node configuration" line of its
@@ -29,14 +30,36 @@
     else
       echo "yaml_read=no"
     fi
-    # the record of the config Cassandra last started with (config_snapshot.yml of cassandra_service): its pid, its
-    # start, the checksum of its cassandra.yaml
+    # the record of the config Cassandra last started with (config_snapshot.yml of cassandra_service), read as JSON
+    # (as config_pending.yml): its pid, its start, the checksums its cassandra.yaml then stood for (the file read,
+    # and the role's rendering of the same settings, _same_settings), comma separated; not read: none
     rpid= rstart= rsum=
     if [ -r "$R" ]; then
-      rpid=$(sed -n 's/^ *"pid": *"*\([0-9]*\)"*,*$/\1/p' "$R" | head -1)
-      rstart=$(sed -n 's/^ *"start": *\([0-9.]*\),*$/\1/p' "$R" | head -1)
-      rsum=$(sed -n 's/^ *"[^"]*\/cassandra[.]yaml": *"\([0-9a-f]*\)",*$/\1/p' "$R" | head -1)
+      # (paths as config_record.py writes them: ~ and $VAR expanded, normalised)
+      set -- $("${P:-python3}" -c '
+    import json, os, sys
+    def path_of(text):
+        return os.path.normpath(os.path.expanduser(os.path.expandvars(text)))
+    try:
+        with open(sys.argv[1]) as f:
+            data = json.load(f)
+        jvm, path = data.get("_jvm") or {}, path_of(sys.argv[2])
+        sums = [s for s in (data.get(path), (data.get("_same_settings") or {}).get(path)) if s]
+        print("%s %s %s" % (jvm.get("pid") or "-", jvm.get("start") or "-", ",".join(sums) or "-"))
+    except Exception:
+        print("- - -")
+    ' "$R" "$F" 2>/dev/null)
+      rpid=${1:--} rstart=${2:--} rsum=${3:--}
+      [ "$rpid" != - ] || rpid=
+      [ "$rstart" != - ] || rstart=
+      [ "$rsum" != - ] || rsum=
     fi
+    # the file's checksum now, against those
+    same() {
+      s=$(sha1sum < "$F" 2>/dev/null | cut -c1-40)
+      [ -n "$s" ] && case ",$rsum," in *",$s,"*) return 0 ;; esac
+      return 1
+    }
     # the CassandraDaemon of this PID namespace (a container's on this host is another node's), as config_snapshot.yml
     pid=
     me=$(readlink /proc/self/ns/pid 2>/dev/null)
@@ -63,7 +86,7 @@
         [ -z "$line" ] || echo "last_logged=${m:-CASSANDRA_4}"
       fi
       if [ -n "$rsum" ]; then
-        [ "$(sha1sum < "$F" 2>/dev/null | cut -c1-40)" = "$rsum" ] && echo "last_same=yes" || echo "last_same=no"
+        same && echo "last_same=yes" || echo "last_same=no"
       fi
       exit 0
     fi
@@ -115,7 +138,7 @@
     if [ "$rpid" = "$pid" ] && [ -n "$rsum" ] && [ -n "$rstart" ] \
         && awk -v a="$rstart" -v b="$start" 'BEGIN {d = a - b; exit !(d < 2 && d > -2)}'; then
       echo "started_sha1=$rsum"
-      [ "$(sha1sum < "$F" 2>/dev/null | cut -c1-40)" = "$rsum" ] || changed=record
+      same || changed=record
     elif [ "$mtime" -gt "$start" ] || [ "${ctime:-0}" -gt "$start" ]; then
       changed=time
     fi
@@ -124,6 +147,7 @@
   environment:
     F: "{{ _cassandra_service_conf_dir }}/cassandra.yaml"
     R: "{{ _cassandra_service_config_snapshot }}"
+    P: "{{ _cassandra_config_python | default(ansible_facts['python']['executable'] | default('/usr/bin/python3')) }}"
     L: "{{ cassandra_log_dir | default('/var/log/cassandra', true) }}"
     # system.log's own dir (cassandra_log_system_dir) when it is a path, not the log dir (${cassandra.logdir}): as
     # logback.xml has it, its XML escapes undone (the variable goes into the XML as it is: the import escapes only & and
