@@ -26,7 +26,7 @@ import yaml
 
 from ansible.module_utils.parsing.convert_bool import boolean
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import NOT_RUNNING, THEN
+from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import NOT_RUNNING, THEN, not_running
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     MISSING, _resolved, _roles_defaults, _user_data)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_convergence import (
@@ -282,7 +282,9 @@ def _cost_line(key, kind, cost, changing, commands):
     convergence does not know: apply_config writes it), else NO_CHECK -> text."""
     shown = _KINDS.get(kind, (0, "", False))[2] or (kind == "unknown" and bool(category(key)))
     # every node of the cluster: no --limit naming them all (5 names on each of 20 lines)
-    changing = [] if set(changing) >= set(commands.get("everyone") or [None]) else changing
+    everyone = commands.get("everyone") or []
+    if everyone and set(changing) >= set(everyone):
+        changing = []
     check = unbreakable(_check(changing, kind if _KINDS.get(kind, (0, "", False))[2] else "restart",
                                commands["inventory"], commands["hosts"], commands["cwd"])) if shown else NO_CHECK
     return "%s; check: %s" % (cost, check)
@@ -516,7 +518,7 @@ def cassandra_drift_sync(nodes, stops=None, command=""):
             then = THEN.get(str(node.get("then") or "none"), ("no restart",))[0]
             text = "%s; %s" % ("; ".join(parts) or "its config files", then)
         else:  # (a node not running: its files compared, said so)
-            text = "in sync" + (", " + NOT_RUNNING if str(node.get("then")) in ("write", "start") else "")
+            text = "in sync" + (", " + NOT_RUNNING if not_running(node) else "")
         if text not in rows:
             order.append(text)
         rows.setdefault(text, []).append(str(node.get("name")))

@@ -1,6 +1,7 @@
 bugfixes:
   - >-
-    apply_config, upgrade - a package update of Cassandra (apply_config's move to a newer release, the upgrade) writes cassandra_linux's limits file
-    (``/etc/security/limits.d/cassandra.conf``) again after it: the RPM ships that file as a plain one,
-    and its update put the package's own (``nofile 100000``) in place of the inventory's, which the next apply_config
-    --check then found.
+    apply_config, upgrade - a package update of Cassandra (apply_config's move to a newer release, the upgrade) writes
+    cassandra_linux's limits file (``/etc/security/limits.d/cassandra.conf``) again right after it: the RPM ships
+    that file as a plain one, and its update put the package's own (``nofile 100000``) in place of the inventory's.
+    A run stopped between the package update and that write (or resumed after it) leaves the package's file; the
+    next apply_config finds it and writes it live, no restart.

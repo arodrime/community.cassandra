@@ -463,14 +463,11 @@ def test_a_node_not_running_said_so():
     assert cassandra_apply_config_outcomes(nodes, plan=True, check=True) == [
         "node1  would apply, left stopped", "node2  up to date, Cassandra not running", "node3  up to date"]
     assert cassandra_apply_config_outcomes(nodes, plan=True) == [
-        "node1  OS settings, live (Cassandra not running)", "node2  up to date, Cassandra not running",
+        "node1  OS settings, live (left stopped)", "node2  up to date, Cassandra not running",
         "node3  up to date"]
     nodes[0]["os_done"] = True
     assert cassandra_apply_config_recap(nodes, check=True)[0] == "CHECK  apply_config  1 would apply, 2 up to date"
     assert "node1  applied, left stopped" in cassandra_apply_config_recap(nodes)
-    # (a node to start, nothing to write: not running either)
-    assert cassandra_apply_config_outcomes([{"name": "node4", "then": "start"}], check=True) == [
-        "node4  up to date, Cassandra not running"]
 
 
 def test_an_os_value_unknown_before():

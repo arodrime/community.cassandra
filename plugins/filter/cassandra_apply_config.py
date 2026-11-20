@@ -77,6 +77,12 @@ _WHY = {"start": "Cassandra not running: started once written (down over max_hin
         "os": "no restart"}
 # a node whose Cassandra is not running (cassandra_apply_config_then write or start), said with its outcome
 NOT_RUNNING = "Cassandra not running"
+
+
+def not_running(node):
+    """Whether a node's Cassandra is not running (its then: write, left stopped; start, started once written)."""
+    return str(node.get("then")) in ("write", "start")
+
 _WRITTEN_BACK = " written back as the running Cassandra started with "  # (apply_config's note)
 # apply_config's notes: a restart pending (said before the run: not after a restart or start of this run), the
 # read-ahead set live with no restart (the recap's TO DO says how to take it)
@@ -788,10 +794,12 @@ def _outcome(node, check, plan):
     done_key = "os_done" if os_only else "done"
     todo_done = bool(node.get("todo") or os_only) and bool(plan or node.get(done_key))
     # Cassandra not running there ("no restart" or "up to date" said nothing of it)
-    stopped = node.get("then") in ("write", "start")
+    stopped = not_running(node)
     if todo_done and os_only and stopped:  # (its OS settings applied, nothing started)
         word = "would apply" if check else "will apply" if plan else "applied"
-        return ("OS settings, live (%s)" % NOT_RUNNING if plan and not check else "%s, left stopped" % word), word
+        if plan and not check:  # (the plan's words, as "OS settings, live (no restart)" of a running node)
+            return "OS settings, live (left stopped)", word
+        return "%s, left stopped" % word, word
     if todo_done:
         then = "os" if os_only else node.get("then")
         word = "would apply" if check else "will apply" if plan else "applied"  # (plan: before a real run's question)
