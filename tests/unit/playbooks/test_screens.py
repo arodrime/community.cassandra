@@ -328,7 +328,7 @@ def test_apply_config_and_update_java_screens(monkeypatch):
     t, play = task("apply_config.yml", "Show the plan and confirm the run")
     hosts = ["node1", "node2", "node3", "node4", "node5"]
     cluster = {"_cassandra_preflight": {"cassandra_cluster_name": "Orders"}}
-    # (UX audit B1) --check: no plan, the recap at the end is the plan, said once
+    # --check: no plan, the recap at the end is the plan, said once
     assert "not ansible_check_mode" in t["when"]
     # a real run: the settings that differ, then what each node gets, before its question
     text = screen(dict(cluster, ansible_play_hosts=["node1", "node2"], hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS,
@@ -340,7 +340,7 @@ def test_apply_config_and_update_java_screens(monkeypatch):
                     "WILL DO\n  node1  write + restart\n  node2  up to date")
     question = Templar(loader=DataLoader(), variables=dict(trust(t["vars"]), **trust(play["vars"]), ansible_play_hosts=hosts,
                                                            hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS, **cluster))
-    # (UX audit A2) the question names the most disruptive effect, on which nodes: a Cassandra restart, a start
+    # the question names the most disruptive effect, on which nodes: a Cassandra restart, a start
     # (review 3) no cluster (the head names it), 61 columns at most (" Answer yes or no:" after it fits 79): too
     # long, the counts (the plan's rows name the nodes), the starts left out before the restarts
     assert question.template(trust_as_template(t["vars"]["cassandra_screen_question"])) == (
@@ -502,7 +502,7 @@ def test_apply_config_recap():
         return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(t["ansible.builtin.debug"]["msg"]))
 
     variables["cassandra_cluster_name"] = "my_cluster"
-    # (UX audit B1) the plan once: the verdict naming the restart, DIFFERENCES FOUND, WOULD DO
+    # the plan once: the verdict naming the restart, DIFFERENCES FOUND, WOULD DO
     assert recap(True) == [
         "CHECK  apply_config  my_cluster  1 would restart, 1 would apply, 1 up to date, 1 not done, 1 not in this run",
         "  nothing was changed (--check)",

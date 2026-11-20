@@ -70,7 +70,7 @@ def test_a_package_updated_by_other_means_since_the_start():
 
 
 def test_a_package_left_half_done_stops_a_release_before_any_change():
-    # (audit) an interrupted dpkg (half-configured) or rpm transaction (two cassandra headers): the update of the
+    # an interrupted dpkg (half-configured) or rpm transaction (two cassandra headers): the update of the
     # window would start from that state, cassandra_install's version check then failing after the confirmation
     two = cassandra_apply_config_version("41x", "4.1.12", "4.1.11", unfinished="installed 4.1.11, installed 4.1.12")
     deb = cassandra_apply_config_version("41x", "4.1.12", "4.1.11", unfinished="half-configured 4.1.12")

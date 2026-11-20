@@ -214,7 +214,7 @@ def test_service_seeds_before_changing_the_unit():
     assert "mode" not in unit[plan]["ansible.builtin.template"]  # a mode change alone records nothing
     assert "not ansible_check_mode" in unit[plan]["when"]
     assert unit[seed]["ansible.builtin.include_role"] == {"name": "community.cassandra.cassandra_config", "tasks_from": "config_seed.yml"}
-    # (and before its drop-in changes or goes: package_script, pre-push audit rc13)
+    # (and before its drop-in changes or goes: package_script)
     assert unit[seed]["when"].startswith("cassandra_service_unit_planned is changed or cassandra_service_dropin_planned"
                                          " is changed or cassandra_service_dropin_found.stat.exists")
 
@@ -380,7 +380,7 @@ def update(tmp_path, record, request, env=None):
 
 
 def test_files_recorded_as_the_running_cassandras_only_as_planned(tmp_path):
-    # (pre-push audit, rc13) one helper for every update of the record: that JVM's record, the files on disk as
+    # one helper for every update of the record: that JVM's record, the files on disk as
     # planned (a path under ~ or $VAR as the record keys it), written whole, root only
     conf = tmp_path / "conf"
     conf.mkdir()
@@ -404,7 +404,7 @@ def test_files_recorded_as_the_running_cassandras_only_as_planned(tmp_path):
 
 
 def test_every_update_of_the_record_goes_through_the_one_helper():
-    # (pre-push audit, rc13) the record rewritten in one place: config_record.py, for the start and the updates
+    # the record rewritten in one place: config_record.py, for the start and the updates
     for name in ("config_snapshot.yml", "config_record_update.yml"):
         argv = tasks(name)[0]["ansible.builtin.command"]["argv"]
         assert argv[2] == "{{ lookup('ansible.builtin.file', 'config_record.py') }}"
@@ -462,7 +462,7 @@ def test_an_update_of_a_file_keeps_its_rendering_only_when_given(tmp_path):
 
 
 def test_live_seeds_recorded_over_a_file_written_back_with_its_start_s_settings():
-    # (audit) the record has the file the start read (y1) and its rendering (r1), cassandra.yaml written back as r1:
+    # the record has the file the start read (y1) and its rendering (r1), cassandra.yaml written back as r1:
     # the seeds reloaded live are recorded too, else "restart pending" came back
     rec = task("seeds_apply.yml", "Record the live seeds in it")
     when = "{{ %s }}" % rec["when"][-1].strip()

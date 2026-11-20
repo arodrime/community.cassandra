@@ -44,7 +44,7 @@ def test_other_causes_in_full_and_masked():
 
 
 def test_a_urls_password_with_a_slash_or_quotes_put_together_masked():
-    # (rc9 r4 audit) a / in the password; the shell's quotes put together ('http://bob:MK@'KM@h1: MK@KM)
+    # a / in the password; the shell's quotes put together ('http://bob:MK@'KM@h1: MK@KM)
     for text in ("proxy http://bob:MK:/KM@h1:8080/x down", "-Dproxy.url=http://bob:MK/KM@h/x refused",
                  "<url>http://bob:MK/KM@h1/x</url>", "export HTTP_PROXY='http://bob:MK@'KM@h1:8080/x' failed",
                  'export HTTP_PROXY="http://bob:MK@"KM@h1:8080/x" failed'):

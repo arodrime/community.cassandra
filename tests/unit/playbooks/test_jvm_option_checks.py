@@ -206,7 +206,7 @@ IMPORTED = {"cassandra_heap_size": "31G", "cassandra_jvm11_extra_options": ["-Xm
 
 
 def test_the_heap_of_jvm11_imported_on_java_17_is_in_the_plan_of_the_move_to_java_11():
-    # (audit, owner) import_cluster's heap_in_jvm11_on_java17: the node runs 31G (cassandra-env.sh), its jvm11 file,
+    # import_cluster's heap_in_jvm11_on_java17: the node runs 31G (cassandra-env.sh), its jvm11 file,
     # not read on Java 17, holds 24G: the inventory's value, a line of update_java's plan, not refused
     assert heap_refused(IMPORTED) == []
     line = heap_line(IMPORTED)
@@ -253,7 +253,7 @@ def test_the_plan_line_says_the_heap_observed_against_the_inventory(node, line):
 
 
 @pytest.mark.parametrize("node, series, running, target, said", [
-    # (round-2 audits) as cassandra-env.sh greps: the letters Xmx, Xms, Xmn
+    # as cassandra-env.sh greps: the letters Xmx, Xms, Xmn
     ({"cassandra_jvm11_extra_options": ["-Xms8G", "-XX:MaxHeapSize=8g"]}, "50x", "17", "11", "not the other"),
     ({"cassandra_jvm_gc": "CMS", "cassandra_heap_size": "8G", "cassandra_heap_newsize": "800M",
       "cassandra_jvm11_extra_options": ["-Xmn800M"]}, "50x", "17", "11", "-Xmn without -Xmx"),
@@ -303,7 +303,7 @@ def test_nothing_checked_when_the_file_and_the_gc_stay():
 
 
 def test_an_upgrade_compares_with_the_java_the_node_runs():
-    # (round-2 audit) 4.0 on Java 8 to 5.0 on Java 11: jvm11 read for the first time, checked
+    # 4.0 on Java 8 to 5.0 on Java 11: jvm11 read for the first time, checked
     node = {"cassandra_jvm11_extra_options": ["-Xmx8G"]}
     assert len(heap_refused(node, running="8", target="11", upgrade_from="40x")) == 1
     # 4.1 on Java 11 to 5.0 on Java 11: the file the same, the GC CMS -> G1: checked
@@ -336,7 +336,7 @@ def test_the_heap_line_is_in_the_plan_of_upgrade_s_prepare_once():
 
 
 def test_the_way_out_names_the_variable_that_holds_the_option():
-    # (round-3) -Xmn in cassandra_jvm_extra_options (CMS on 4.1, G1 on 5.0): named, not the jvm11 variable
+    # -Xmn in cassandra_jvm_extra_options (CMS on 4.1, G1 on 5.0): named, not the jvm11 variable
     out = heap_refused({"cassandra_heap_size": "8G", "cassandra_heap_newsize": "800M",
                         "cassandra_jvm_extra_options": ["-Xms8G", "-Xmx8G", "-Xmn800M"]},
                        series="50x", running="11", target="11", upgrade_from="41x")
@@ -349,7 +349,7 @@ def test_the_way_out_names_the_variable_that_holds_the_option():
     out = heap_refused({"cassandra_jvm_gc": "CMS", "cassandra_heap_size": "8G", "cassandra_jvm11_extra_options": ["-Dx=1"]})
     assert "MAX_HEAP_SIZE without HEAP_NEWSIZE, the GC not G1 (cassandra_heap_size without cassandra_heap_newsize)" \
         in out[0], out
-    # (round-5) the other way round: the young generation without the heap
+    # the other way round: the young generation without the heap
     out = heap_refused({"cassandra_jvm_gc": "CMS", "cassandra_heap_newsize": "800M",
                         "cassandra_jvm11_extra_options": ["-Dx=1"]})
     assert "HEAP_NEWSIZE without MAX_HEAP_SIZE, the GC not G1 (cassandra_heap_newsize without cassandra_heap_size)" \
@@ -357,7 +357,7 @@ def test_the_way_out_names_the_variable_that_holds_the_option():
 
 
 def test_a_kept_jvm_server_options_is_read_as_the_node_has_it():
-    # (round-3) jvm-server.options kept as it is: the node's own text, not the role's template and variables
+    # jvm-server.options kept as it is: the node's own text, not the role's template and variables
     node = {"cassandra_config_keep_files": ["jvm-server.options"], "cassandra_jvm11_extra_options": ["-Xmx8G"]}
     pair = "# the heap\n-Xms8G\n-Xmx8G\n"
     assert heap_refused(node, kept={"jvm-server.options": pair}) == []  # (no false refusal: its -Xms there)
@@ -377,14 +377,14 @@ def test_a_kept_jvm_server_options_is_read_as_the_node_has_it():
 
 
 def test_a_same_series_upgrade_with_another_java_is_checked():
-    # (round-3) 5.0.2 on Java 11 to 5.0.4 on Java 17: jvm17 read for the first time
+    # 5.0.2 on Java 11 to 5.0.4 on Java 17: jvm17 read for the first time
     node = {"cassandra_jvm17_extra_options": ["-Xmx8G"]}
     assert len(heap_refused(node, series="50x", running="11", target="17", upgrade_from="50x")) == 1
     assert heap_refused(node, series="50x", running="17", target="17", upgrade_from="50x") == []
 
 
 def test_the_heap_line_when_the_new_file_has_none():
-    # (round-3) the old file gave the heap, the new one none: cassandra_heap_size, or cassandra-env.sh's sizing
+    # the old file gave the heap, the new one none: cassandra_heap_size, or cassandra-env.sh's sizing
     old = {"cassandra_heap_size": "31G", "cassandra_jvm17_extra_options": ["-Xms24G", "-Xmx24G"]}
     assert heap_line(old, running="17", target="11") == (
         "heap after the move: 31 GiB (cassandra_heap_size); inventory now: 24 GiB (cassandra_jvm17_extra_options:"
@@ -395,7 +395,7 @@ def test_the_heap_line_when_the_new_file_has_none():
 
 
 def test_a_patch_upgrade_keeping_the_file_the_node_reads_goes_on():
-    # (round-4) 4.1.5 -> 4.1.7 on Java 11, jvm11-server.options kept: the file it reads already, its Java read or not
+    # 4.1.5 -> 4.1.7 on Java 11, jvm11-server.options kept: the file it reads already, its Java read or not
     for spec in ({"stderr": "    java.specification.version = 11\n"}, {}):
         variables = dict(cassandra_version="41x", cassandra_java_version="11", cassandra_upgrade_from_series="41x",
                          cassandra_config_keep_files=["jvm11-server.options"], cassandra_upgrade_java_spec=spec)

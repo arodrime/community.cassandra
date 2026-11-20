@@ -81,7 +81,7 @@ def test_no_record_compares_with_the_jvm_start(unit_ctime, expected):
     ({YAML: "y1", UNIT: "u1"}, None, []),
 ])
 def test_the_drop_in_of_the_init_script_is_a_restart_pending(record, dropin, expected):
-    # (pre-push audit, rc13) cassandra_service_environment with package_script: a change of it waits for a restart,
+    # cassandra_service_environment with package_script: a change of it waits for a restart,
     # as one of the role's unit does
     assert pending(record, dropin=dropin) == (expected, [])
 

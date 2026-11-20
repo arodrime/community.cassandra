@@ -114,7 +114,7 @@ CLUSTER = "my_cluster  3 nodes  1 DC (dc1)"
 def test_status_with_a_node_down(tmp_path):
     rc, output = run(tmp_path, "status")
     assert rc == 0, output
-    # (UX audit B4) the verdict first, alone, between heavy rules, the cluster under it; the nodes by their name first
+    # the verdict first, alone, between heavy rules, the cluster under it; the nodes by their name first
     assert ruled(output) == [
         CLUSTER,
         "",

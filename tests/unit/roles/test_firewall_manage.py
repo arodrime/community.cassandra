@@ -121,7 +121,7 @@ def test_the_rich_rules_written_offline_are_one_per_line(tmp_path):
     # the live path takes the same rules
     live = find(load("roles", "cassandra_firewall", "tasks", "firewall.yml"), "Open them to their sources (RedHat)")
     assert live["loop"] == "{{ _cassandra_firewall_rich_rules }}" and live["ansible.posix.firewalld"]["rich_rule"] == "{{ item.rule }}"
-    # (audit) Debian's ufw too: a source given as a string failed there (subelements wants a list)
+    # Debian's ufw too: a source given as a string failed there (subelements wants a list)
     ufw = find(load("roles", "cassandra_firewall", "tasks", "firewall.yml"), "Open them to their sources (Debian)")
     assert ufw["loop"].startswith("{{ _cassandra_firewall_rich_rules }}")
     rule = render("{{ _cassandra_firewall_rich_rules }}", one)[0]

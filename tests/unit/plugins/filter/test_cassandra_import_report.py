@@ -106,7 +106,7 @@ def test_clean_import_nothing_to_act_on():
     # what to do next: no -i when the inventory is ansible.cfg's, no -e cassandra_hosts for a cluster alone
     after = section(lines, "WHAT TO DO NEXT")
     assert after[0] == "  1. Review the files written, then keep them: git diff && git commit."
-    # (UX audit B15) each command on a line of its own, what it should show under it, no arrow
+    # each command on a line of its own, what it should show under it, no arrow
     assert after[1:] == [
         "  2. Check that the inventory changes nothing on the nodes (both commands only look):",
         "       ansible-playbook community.cassandra.apply_config --check --diff",
@@ -698,7 +698,7 @@ def stop(nodes, checks, layout_extra=None, **kwargs):
 
 
 def test_self_check_stop_says_a_hand_edited_file_its_java_does_not_read():
-    # (audit) jvm11-server.options edited by hand on 5.0 nodes on Java 17: never read, said so with the way out
+    # jvm11-server.options edited by hand on 5.0 nodes on Java 17: never read, said so with the way out
     jvm11 = ["jvm11-server.options, line 40:", "  + -XX:+UseFoo"]
     checks = {"node1": {"differences": ["jvm11-server.options: UseFoo: node has '-XX:+UseFoo', import would write"
                                         " nothing"]}}
@@ -1248,7 +1248,7 @@ def report_over(nodes, yours):
 
 
 def test_your_files_values_count_for_the_series_and_the_restart_policy():
-    # (audit) a file of yours giving the same cassandra_version and cassandra_service_restart as the nodes: they
+    # a file of yours giving the same cassandra_version and cassandra_service_restart as the nodes: they
     # leave the nodes' variables, the report reads them from yours
     nodes = [_java11_node(4), node(2, unit={"restart": "always"})]
     nodes[1]["vars"].update(cassandra_version="41x", cassandra_service_restart="always")
@@ -1445,7 +1445,7 @@ def test_an_entry_of_the_run_worth_a_look():
 
 
 def test_the_run_time_with_its_zone_heads_every_report(monkeypatch):
-    # (UX audit A6) a report rewritten by a run that found the same says it is new: its time on the head line of
+    # a report rewritten by a run that found the same says it is new: its time on the head line of
     # report.txt, report.details.txt and the screen, with the date and the zone
     monkeypatch.setenv("TZ", "Europe/Paris")
     import time

@@ -306,7 +306,7 @@ def test_a_nodes_own_template_text_in_a_snippet_is_never_templated():
 
 
 def test_lines_with_endraw_say_why_they_are_in_secrets_yml():
-    # (rc9 r2 audit) not a secret: the report says endraw, not a secret the import could not take out
+    # not a secret: the report says endraw, not a secret the import could not take out
     files = with_env("export FOO=1", "# {% endraw %} here")
     out, n = imported(files)
     layout = cassandra_inventory_layout([n], "c")
@@ -493,7 +493,7 @@ def test_your_copy_of_the_nodes_file(tmp_path, name, tail, yours_tail):
 
 
 def test_a_proxys_password_goes_to_secrets_yml():
-    # (rc9 audit) export http_proxy=http://bob:pw@proxy:3128 at the end of cassandra-env.sh: the password in
+    # export http_proxy=http://bob:pw@proxy:3128 at the end of cassandra-env.sh: the password in
     # secrets.yml, the snippet refers to it
     files = with_env("export http_proxy=http://bob:hunter2xx@proxy:3128")
     out, n = imported(files)
@@ -509,7 +509,7 @@ def test_a_proxys_password_goes_to_secrets_yml():
 
 
 def test_a_proxys_password_with_an_at_goes_to_secrets_yml_whole():
-    # (rc9 r2 audit) the password up to the last @ before the host: never a part of it left in the snippet
+    # the password up to the last @ before the host: never a part of it left in the snippet
     files = with_env('export HTTPS_PROXY="http://bob:p@ssw0rdXY@proxy:3128"')
     out, n = imported(files)
     assert out["vars"][ENV_END] == ['export HTTPS_PROXY="http://bob:{{ cassandra_secret_env_bob_password }}@proxy:3128"']
@@ -526,13 +526,13 @@ def test_a_proxys_password_with_an_at_goes_to_secrets_yml_whole():
     ("export HTTPS_PROXY='http://bob:hu\"nter2xx@proxy:3128'", 'hu"nter2xx'),
     ("export HTTPS_PROXY=http://bob:hu{nter2xx@proxy:3128", "hu{nter2xx"),
     ("export HTTPS_PROXY=http://bob:hu}nter2xx@proxy:3128", "hu}nter2xx"),
-    # (rc9 r3 audit) a # or a ?: the line whole too
+    # a # or a ?: the line whole too
     ('export HTTPS_PROXY="http://bob:hu#nter2xx@proxy:3128"', "hu#nter2xx"),
     ('export HTTPS_PROXY="http://bob:hu?nter2xx@proxy:3128"', "hu?nter2xx"),
     ('export HTTPS_PROXY="http://bob:hu@ss#nter2xx@proxy:3128"', "hu@ss#nter2xx"),
     ('export HTTPS_PROXY="http://bob:hu{#nter2xx@proxy"', "hu{#nter2xx")])
 def test_a_proxys_password_with_a_quote_or_a_brace_sends_its_line_to_secrets_yml(line, password):
-    # (rc9 r2 audit) where such a password ends is not sure: the lines go to secrets.yml whole, nothing in clear
+    # where such a password ends is not sure: the lines go to secrets.yml whole, nothing in clear
     files = with_env(line)
     out, n = imported(files)
     layout = cassandra_inventory_layout([n], "c")
@@ -554,13 +554,13 @@ def with_appender(inner):
 
 
 @pytest.mark.parametrize("files", [
-    # (rc9 r4 audit) a / in the password: masked and imported up to the last @ before a blank
+    # a / in the password: masked and imported up to the last @ before a blank
     with_env("export HTTP_PROXY=http://bob:MK:/KM@h1:8080/x"),
     with_env('JVM_OPTS="$JVM_OPTS -Dproxy.url=http://bob:MK/KM@h1:8080/x"'),
     dict(stock(), **{"jvm-server.options": stock()["jvm-server.options"] + "-Dproxy.url=http://bob:MK/KM@h/x\n"}),
     logback("  <!-- http://bob:MK/KM@h1:8080/x -->\n</configuration>"),
     with_appender("<url>http://bob:MK/KM@h1/x</url>"),
-    # (rc9 r4 audit) the shell's quotes put together: the value is http://bob:MK@KM@h1:8080/x
+    # the shell's quotes put together: the value is http://bob:MK@KM@h1:8080/x
     with_env("export HTTP_PROXY='http://bob:MK@'KM@h1:8080/x'"),
     with_env('export HTTP_PROXY="http://bob:MK@"KM@h1:8080/x"'),
 ], ids=["env-slash", "env-jvm-opts-slash", "jvm-slash", "logback-comment-slash", "appender-slash", "env-quotes",
@@ -581,7 +581,7 @@ def test_no_part_of_a_urls_password_shown_or_in_clear(files):
 
 
 def test_a_reimport_drops_and_names_the_variables_no_longer_read():
-    # (rc9 audit) an inventory a release candidate imported: its own main.yml is written again without them; in a
+    # an inventory a release candidate imported: its own main.yml is written again without them; in a
     # file of yours, the report names them (the playbooks refuse them)
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout_over
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import cassandra_import_report

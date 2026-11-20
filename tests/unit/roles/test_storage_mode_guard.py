@@ -366,7 +366,7 @@ def test_unsure_says_what_could_not_be_read_and_the_way_out():
     assert run({"n1": (dict(started, _cassandra_config_new={"cassandra.yaml": "storage_compatibility_mode: CASSANDRA_4\n"}),
                        "CASSANDRA_4")}, _cassandra_storage_mode_written=True)[0] is False
     assert run({"n1": (dict(started, _cassandra_config_new={"cassandra.yaml": rendered}), "UPGRADING")})[0] is False
-    # (audit) the record's file and the role's rendering of the same settings (_same_settings): either is the one
+    # the record's file and the role's rendering of the same settings (_same_settings): either is the one
     # it started with
     both = dict(n1, cassandra_storage_mode_read={"stdout_lines": n1["cassandra_storage_mode_read"]["stdout_lines"]
                                                  + ["started_sha1=" + "0" * 40 + "," + hashlib.sha1(rendered.encode()).hexdigest()]})

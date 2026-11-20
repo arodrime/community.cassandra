@@ -536,7 +536,7 @@ def test_the_storage_mode_read_script_of_a_stopped_node(tmp_path):
     record.write_text(json.dumps({str(path): hashlib.sha1(b"storage_compatibility_mode: UPGRADING\n")
                                   .hexdigest(), "_jvm": {"pid": "1", "start": started}}, indent=4))
     assert run() == ["running=no", "last_same=yes"]
-    # (audit) read as JSON, not by its lines: another cassandra.yaml's checksum before it (keys in another order) is
+    # read as JSON, not by its lines: another cassandra.yaml's checksum before it (keys in another order) is
     # not taken; the role's rendering of the same settings (_same_settings) stands for the file it started with
     upgrading = hashlib.sha1(b"storage_compatibility_mode: UPGRADING\n").hexdigest()
     rendered = "storage_compatibility_mode: UPGRADING  # rendered\n"
@@ -674,7 +674,7 @@ def test_a_down_node_with_the_target_package_is_pointed_to_apply_config():
     variables = dict(check["vars"], hostvars=hostvars, ansible_play_hosts=list(hostvars), cassandra_package_version="5.0.9",
                      _phase="rolling", _cassandra_run_command_args=run)
     assert render(check["vars"]["_on_target"], **variables) == ["n2"]
-    # (audit) rpm -q of two headers (a transaction left half done): a line each, both said, not the target
+    # rpm -q of two headers (a transaction left half done): a line each, both said, not the target
     two = dict(variables, hostvars=dict(hostvars, n2=node("n2", 1, "installed 4.1.12\ninstalled 5.0.9\n")))
     assert "n2" not in render(check["vars"]["_installed"], **two)
     assert render(check["vars"]["_on_target"], **two) == []

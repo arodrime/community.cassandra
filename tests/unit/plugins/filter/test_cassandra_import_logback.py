@@ -144,7 +144,7 @@ def test_simple_loggers_as_levels(series):
 
 @pytest.mark.parametrize("series", SERIES)
 def test_a_level_from_a_property_stays_an_end_line(series):
-    # (rc9 r2 audit) level="${LVL:-INFO}": not a level cassandra_config takes in cassandra_log_levels
+    # level="${LVL:-INFO}": not a level cassandra_config takes in cassandra_log_levels
     line = '  <logger name="com.example.p" level="${LVL:-INFO}"/>'
     variables, snippets, check = imported(node_files(series, lambda t: t.replace(
         "</configuration>", line + "\n</configuration>")), series)
@@ -155,7 +155,7 @@ def test_a_level_from_a_property_stays_an_end_line(series):
 
 @pytest.mark.parametrize("series", SERIES)
 def test_an_appender_named_in_single_quotes_and_named_by_root(series):
-    # (rc9 r2 audit) name='Q': the ref of <root> to it kept
+    # name='Q': the ref of <root> to it kept
     def edit(text):
         mine = "  <appender name='Q' class='ch.qos.logback.core.ConsoleAppender'/>"
         return root_ref("Q")(text.replace("  <root level", mine + "\n  <root level", 1))
@@ -166,7 +166,7 @@ def test_an_appender_named_in_single_quotes_and_named_by_root(series):
 
 @pytest.mark.parametrize("series", SERIES)
 def test_an_appender_named_with_spaces_and_named_by_root(series):
-    # (rc9 r3 audit) name = "Q" (spaces around =), a filename= after it: its name is Q
+    # name = "Q" (spaces around =), a filename= after it: its name is Q
     def edit(text):
         mine = '  <appender name = "Q" class="ch.qos.logback.core.FileAppender" filename="f"/>'
         return root_ref("Q")(text.replace("  <root level", mine + "\n  <root level", 1))
@@ -250,7 +250,7 @@ def test_an_appender_no_ref_names():
 
 
 def cql_appender_named(text, how):
-    """The stock CQLLOG appender uncommented and named some way other than <root>'s ref (audit of rc12, B2)."""
+    """The stock CQLLOG appender uncommented and named some way other than <root>'s ref."""
     text = cql_appender_alone(text)
     if how == "logger":
         logger = '  <logger name="org.apache.cassandra.db"><appender-ref ref="CQLLOG" /></logger>\n'
@@ -273,7 +273,7 @@ def test_a_system_logs_appender_named_otherwise_stays_a_difference(how):
 
 @pytest.mark.parametrize("what", ["include", "variable"])
 def test_no_appender_left_out_when_the_file_does_not_say_all(what):
-    # (audit of rc12, C1) an <include>, a name or ref of a variable: the appender alone is not known unreferenced
+    # an <include>, a name or ref of a variable: the appender alone is not known unreferenced
     stock_50 = stock("50x")["logback.xml"]
     text = cql_appender_alone(stock_50)
     text = text.replace("  <root ", '  <include file="/etc/cassandra/logback-extra.xml" />\n  <root ') \
@@ -283,7 +283,7 @@ def test_no_appender_left_out_when_the_file_does_not_say_all(what):
 
 @pytest.mark.parametrize("series", SERIES)
 def test_one_encoders_own_pattern_is_not_everyones(series):
-    # (audit) the console's pattern alone changed: not cassandra_log_pattern (it would change the others)
+    # the console's pattern alone changed: not cassandra_log_pattern (it would change the others)
     def edit(text):
         at = text.index('<appender name="STDOUT"')
         return text[:at] + re.sub(r"<pattern>[^<]*</pattern>", "<pattern>%msg%n</pattern>", text[at:], count=1)
@@ -294,7 +294,7 @@ def test_one_encoders_own_pattern_is_not_everyones(series):
 
 @pytest.mark.parametrize("series", SERIES)
 def test_the_stock_metrics_appender_uncommented_is_carried(series):
-    # (audit) LogbackMetrics: no variable of its own, its appender in the snippet with root's ref to it
+    # LogbackMetrics: no variable of its own, its appender in the snippet with root's ref to it
     def edit(text):
         text = text.replace("  <!-- Uncomment bellow and corresponding appender-ref to activate logback metrics\n"
                             '  <appender name="LogbackMetrics" class="com.codahale.metrics.logback.InstrumentedAppender" />\n'
@@ -326,7 +326,7 @@ def test_an_appender_with_a_secret_its_secret_in_secrets_yml():
 
 
 def test_a_ref_to_an_appender_not_carried_is_not_written():
-    # (audit) the AUDIT appender live and named by <root>, without the audit logger: no audit file, so no ref to it
+    # the AUDIT appender live and named by <root>, without the audit logger: no audit file, so no ref to it
     def edit(text):
         text = audit_on(text).replace('  <logger name="org.apache.cassandra.audit" additivity="false" level="INFO">\n'
                                       '    <appender-ref ref="AUDIT"/>\n  </logger>', "")
@@ -345,7 +345,7 @@ def test_the_root_logger_by_another_name_is_not_a_level():
 
 @pytest.mark.parametrize("series", SERIES)
 def test_the_rotation_of_a_commented_audit_block_is_not_read(series):
-    # (audit) the AUDIT block commented out, its maxHistory edited there: no effect, no variable
+    # the AUDIT block commented out, its maxHistory edited there: no effect, no variable
     def edit(text):
         at = text.index('<appender name="AUDIT"')
         return text[:at] + text[at:].replace("<maxHistory>30</maxHistory>", "<maxHistory>60</maxHistory>", 1)
@@ -375,7 +375,7 @@ def test_the_audit_file_against_its_default_resolved_with_the_nodes_values(serie
 
 @pytest.mark.parametrize("series", SERIES)
 def test_a_urls_password_in_an_appender_goes_to_secrets_yml(series):
-    # (rc9 audit) <url>https://bob:pw@h/x</url> in an appender of its own: the password in secrets.yml, the snippet
+    # <url>https://bob:pw@h/x</url> in an appender of its own: the password in secrets.yml, the snippet
     # refers to it; never in clear in a file of the inventory written in clear
     def edit(text):
         block = ('  <appender name="H" class="ch.qos.logback.core.ConsoleAppender">\n'
@@ -392,7 +392,7 @@ def test_a_urls_password_in_an_appender_goes_to_secrets_yml(series):
 @pytest.mark.parametrize("password, taken", [("p@ss@XYZ1", True), ("it'sXYZ1", False), ("it{sXYZ1", False)])
 @pytest.mark.parametrize("series", SERIES)
 def test_a_urls_password_with_an_at_a_quote_or_a_brace_in_an_appender_never_in_clear(series, password, taken):
-    # (rc9 r2 audit) an @: the password up to the last @ in secrets.yml; a quote or a brace: the lines whole
+    # an @: the password up to the last @ in secrets.yml; a quote or a brace: the lines whole
     def edit(text):
         block = ('  <appender name="H" class="ch.qos.logback.core.ConsoleAppender">\n'
                  "    <url>https://bob:%s@h/x</url>\n  </appender>" % password)
@@ -417,7 +417,7 @@ def live_pattern(pattern):
 
 @pytest.mark.parametrize("series", SERIES)
 def test_a_pattern_with_two_dashes_and_the_audit_block_commented_out_is_not_carried(series):
-    # (rc9 r3 audit) the template writes the pattern in the commented-out audit appender too, where XML does not
+    # the template writes the pattern in the commented-out audit appender too, where XML does not
     # take a --: cassandra_config would refuse it; the lines stay hand edits, the report says why and what to do
     files = node_files(series, live_pattern("%-5level [%thread] -- %msg%n"))
     variables, snippets, check = imported(files, series)
@@ -504,7 +504,7 @@ def test_the_log_dir_the_jvm_gets():
     assert log_dir_of(env, environment={"CASSANDRA_LOG_DIR": "/srv/log"}) == "/srv/log"  # the unit's first
     assert log_dir_of(env + "\nCASSANDRA_LOG_DIR=/top\n", environment={"CASSANDRA_LOG_DIR": "/srv/log"}) == "/top"
     assert log_dir_of(env + '\nif [ -d /x ]; then\n  CASSANDRA_LOG_DIR=/x\nfi\n') == ""  # another block: not sure
-    # (re-audit, 2026-11-14) the guard with an else, the dir set empty or unset: not sure either
+    # the guard with an else, the dir set empty or unset: not sure either
     assert log_dir_of(env.replace("    CASSANDRA_LOG_DIR=/var/log/cassandra\n",
                                   "    CASSANDRA_LOG_DIR=/var/log/cassandra\nelse\n    CASSANDRA_LOG_DIR=/y\n")) == ""
     assert log_dir_of(env + "\nCASSANDRA_LOG_DIR=\n") == ""

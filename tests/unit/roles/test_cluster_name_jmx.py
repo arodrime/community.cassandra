@@ -57,7 +57,7 @@ def test_a_jmx_login_refused():
     assert lines[0] == "REFUSED  JMX login refused on n1  nothing was changed"
     assert lines[1] == "  nodetool: Invalid username or password"
     assert all(len(line) <= 79 and line == line.rstrip() for line in lines), lines
-    # (pre-push audit, rc13) nodetool's own "nodetool: " said once
+    # nodetool's own "nodetool: " said once
     found = dict(found, stderr="nodetool: Invalid username or password\n")
     assert block(found)[1] == "  nodetool: Invalid username or password"
 

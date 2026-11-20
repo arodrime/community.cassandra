@@ -94,7 +94,7 @@ def test_the_read_says_when_cqlsh_does_not_start(tmp_path):
 
 
 def test_every_other_failure_is_said(tmp_path):
-    # (round-3/4/5) no silent case, each saying what ran: none found, a full path missing or not executable, no
+    # no silent case, each saying what ran: none found, a full path missing or not executable, no
     # output, no answer, an unclosed quote, a blank value; a newline in the output never splits the line
     assert _read(tmp_path, None) == "cqlsh_error=cqlsh: not found in the PATH of root\n"
     assert _read(tmp_path, None, command="/opt/venv/bin/cqlsh") == "cqlsh_error=/opt/venv/bin/cqlsh: no such file\n"

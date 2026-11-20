@@ -87,7 +87,7 @@ def test_failures(result, reason):
 
 
 def test_a_refusal_with_nothing_done_is_refused_not_failed():
-    # (UX audit B7) a check before any change: REFUSED, nothing was changed, the reason once
+    # a check before any change: REFUSED, nothing was changed, the reason once
     assert recap([("node4", "replace refused: node4 holds data")], cluster="c") == [
         "REFUSED  replace_node  c  nothing was changed", "  node4  REFUSED", "    node4 holds data"]
     # a node done before it: something changed, FAILED
@@ -119,7 +119,7 @@ def stop(failure, stage="", **kwargs):
 
 
 @pytest.mark.parametrize("stage, row", [
-    # (UX audit A1) the row of the node it stopped at says what was done to it, never "not done" for a node touched;
+    # the row of the node it stopped at says what was done to it, never "not done" for a node touched;
     # "restarted" only once its restart was confirmed (the node NORMAL again)
     ("after", "  node2  restarted; cluster health check failed"),
     ("unconfirmed", "  node2  restart run, not waited for; cluster health check failed"),
@@ -137,7 +137,7 @@ def test_under_check_the_stopped_node_s_row_says_nothing_changed():
 
 
 def test_a_stop_on_purpose_says_the_cause_the_table_and_the_way_out_once():
-    # (UX audit A1) the verdict first, the cause on its own lines, the table, the way out in numbered steps, the
+    # the verdict first, the cause on its own lines, the table, the way out in numbered steps, the
     # commands cut between their arguments: 79 columns at most
     lines = stop(HEALTH, stage="after", resume=True, progress_file="/inv/.cassandra_progress/x", inventory=["/inv/hosts.yml"],
                  hosts="prod", cwd="/inv")

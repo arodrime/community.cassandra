@@ -45,7 +45,7 @@ def test_options_of_a_file_the_java_does_not_read_are_imported():
 
 
 def test_the_heap_imported_from_a_file_the_java_does_not_read_is_said_at_the_switch():
-    # (audit, owner) the move back to Java 11 would run that heap, the inventory's value: update_java says it in its
+    # the move back to Java 11 would run that heap, the inventory's value: update_java says it in its
     # plan (it starts: not refused)
     from ansible_collections.community.cassandra.plugins.filter.cassandra_jvm_options import (
         cassandra_jvm_switch_heap, cassandra_jvm_switch_refusals)
@@ -232,7 +232,7 @@ KEEP_ENV = {"cassandra_config_keep_files": ["cassandra-env.sh"]}
 
 
 @pytest.mark.parametrize("variables, series, java, now_series, now_java, env_series", [
-    # (round-4) the stock cassandra-env.sh kept as it is: no false refusal (its checks, its MAX_HEAP_SIZE lines)
+    # the stock cassandra-env.sh kept as it is: no false refusal (its checks, its MAX_HEAP_SIZE lines)
     ({}, "50x", "17", "50x", "11", "50x"),
     ({}, "41x", "11", "41x", "8", "41x"),
     ({}, "40x", "11", "40x", "8", "40x"),
@@ -246,7 +246,7 @@ def test_a_stock_kept_cassandra_env_sh_starts(variables, series, java, now_serie
 
 
 @pytest.mark.parametrize("variables, series, java, now_java, said", [
-    # (round-4) and the false passes, refused
+    # and the false passes, refused
     ({"cassandra_jvm11_extra_options": ["-Xms8G"]}, "41x", "11", "8", "not the other"),
     ({"cassandra_jvm11_extra_options": ["-Xmn1G"]}, "41x", "11", "8", "-Xmn without -Xmx"),
     ({"cassandra_jvm17_gc": "CMS", "cassandra_jvm17_extra_options": ["-Xms8G"]}, "50x", "17", "11", "not the other"),
@@ -275,7 +275,7 @@ def test_a_kept_file_not_read_says_slurp_s_message():
     assert out == ["Java 17 reads jvm17-server.options: cassandra-env.sh (kept as it is: cassandra_config_keep_files):"
                    " not read (Permission denied: /etc/cassandra/cassandra-env.sh): what cassandra-env.sh finds is not"
                    " checked. Make it readable by root, then run again."]
-    # (round-5) not on the node: the role writes its own there (cassandra_config_keep_files keeps a file a node has)
+    # not on the node: the role writes its own there (cassandra_config_keep_files keeps a file a node has)
     assert cassandra_jvm_switch_refusals(dict(KEEP_ENV, cassandra_jvm17_extra_options=["-Xms8G"]), "50x", "17", "50x",
                                          "11", [{"item": "cassandra-env.sh", "failed": True,
                                                  "msg": "file not found: /etc/cassandra/cassandra-env.sh"}])[0] \
@@ -293,7 +293,7 @@ def test_the_heap_line_names_the_kept_cassandra_env_sh():
 def test_an_empty_kept_file_is_read_and_an_unknown_running_java_said():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_jvm_options import (
         cassandra_jvm_switch_heap, cassandra_jvm_switch_refusals)
-    # (round-4) an empty kept jvm-server.options: read (its content ""), not "not read"
+    # an empty kept jvm-server.options: read (its content ""), not "not read"
     empty = [{"item": "jvm-server.options", "content": ""}]
     out = cassandra_jvm_switch_refusals({"cassandra_config_keep_files": ["jvm-server.options"],
                                          "cassandra_jvm17_extra_options": ["-Xms8G", "-Xmx8G"]}, "50x", "17", "50x", "11",
@@ -340,7 +340,7 @@ PRE = ([], ["-XX:+UseG1GC"], ["-XX:+UseConcMarkSweepGC"], ["-Xms8G", "-Xmx8G"], 
                                   {"cassandra_heap_size": "8G", "cassandra_heap_newsize": "800M",
                                    "cassandra_heap_in_jvm_options": True}])
 def test_the_model_of_a_kept_cassandra_env_sh_is_the_shell_s(tmp_path, series, java, heap):
-    # (round-5) the role's own cassandra-env.sh, rendered, run by sh with options files' words: starts or stops as
+    # the role's own cassandra-env.sh, rendered, run by sh with options files' words: starts or stops as
     # the model says, for each heap and each set of options
     text = node_files(series, **heap)["cassandra-env.sh"]
     for pre in PRE:
@@ -351,7 +351,7 @@ NONE = {"MAX_HEAP_SIZE": None, "HEAP_NEWSIZE": None}
 
 
 @pytest.mark.parametrize("lines, heap, words, unfollowed", [
-    # (round-5) the forms a kept cassandra-env.sh may have before its checks
+    # the forms a kept cassandra-env.sh may have before its checks
     ('export JVM_OPTS="$JVM_OPTS -Xmx8G"\nexport MAX_HEAP_SIZE="8G"; HEAP_NEWSIZE=800M\n',
      {"MAX_HEAP_SIZE": "8G", "HEAP_NEWSIZE": "800M"}, ["-Xmx8G"], []),
     ('if [ -n "$X" ]; then MAX_HEAP_SIZE=8G; fi\n', {"MAX_HEAP_SIZE": None, "HEAP_NEWSIZE": None}, [],
@@ -363,7 +363,7 @@ NONE = {"MAX_HEAP_SIZE": None, "HEAP_NEWSIZE": None}
      [], []),  # (a condition without the letters it greps, a comment: nothing to follow)
     ('size() {\n    MAX_HEAP_SIZE=2G\n}\nMAX_HEAP_SIZE=4G # the heap\n', {"MAX_HEAP_SIZE": "4G", "HEAP_NEWSIZE": None},
      [], []),  # (a function's, not called before the checks: its own computation)
-    # (round-6) what it cannot follow: said, never guessed
+    # what it cannot follow: said, never guessed
     ('case "$X" in\n  x) MAX_HEAP_SIZE=8G ;;\nesac\n', NONE, [], [("MAX_HEAP_SIZE", 2)]),  # (a case arm)
     ('{ MAX_HEAP_SIZE=8G; }\n', NONE, [], [("MAX_HEAP_SIZE", 1)]),  # (a brace group)
     ('f() {\n  :\n} # end f\nMAX_HEAP_SIZE=8G\n', {"MAX_HEAP_SIZE": "8G", "HEAP_NEWSIZE": None}, [], []),

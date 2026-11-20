@@ -366,7 +366,7 @@ def test_files_proven_to_change_nothing_are_written_with_no_restart(tmp_path):
 
 @pytest.mark.parametrize("case", [dict(heap="-Xmx16G"), dict(java=""), dict(more_changes=["cassandra.yaml"]),
                                   dict(unitenv='"JVM_EXTRA_OPTS=-Dx=1" LOCAL_JMX=no'),
-                                  # (pre-push audit, rc13) set outside the unit (an EnvironmentFile,
+                                  # set outside the unit (an EnvironmentFile,
                                   # /etc/default/cassandra): as the JVM has it
                                   dict(jvmenv="JVM_EXTRA_OPTS=-Dx=1\nPATH=/bin\n"), dict(jvmenv="MX4J_PORT=8081"),
                                   # the conf directory switched (rpm alternative): nothing proven of it
@@ -410,7 +410,7 @@ def test_the_environment_read_is_the_unit_s_not_the_jvm_s(tmp_path):
     # a unit environment with nothing for cassandra-env.sh to add: proven as before
     assert proven(tmp_path, unitenv="LOCAL_JMX=no")[0] == "none"
     assert proven(tmp_path, jvmenv="MX4J_PORT=")[0] == "none"  # (set empty: nothing added)
-    # (pre-push audit, rc13, round 3) the import reads the same, its "no restart" then as apply_config's proof
+    # the import reads the same, its "no restart" then as apply_config's proof
     with open(os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")) as f:
         text = f.read()
     assert JVM_ENV_GREP in text
@@ -420,7 +420,7 @@ def test_the_environment_read_is_the_unit_s_not_the_jvm_s(tmp_path):
 @pytest.mark.parametrize("mode", [dict(), dict(cassandra_service_unit_manage=False),
                                   dict(cassandra_service_start="package_script")])
 def test_the_proof_compares_with_the_environment_the_next_start_gets(tmp_path, mode):
-    # (pre-push audit, rc13, round 3) apply_config writes no unit: the next start gets the node's environment (its
+    # apply_config writes no unit: the next start gets the node's environment (its
     # unit's, what the JVM has from elsewhere), in every mode; the inventory's cassandra_service_environment is
     # cassandra_service's to write, told pending by its record
     assert proven(tmp_path, unitenv='"JVM_OPTS=-Dy=2"', given={"JVM_OPTS": "-Dy=3"}, **mode)[0] == "none"

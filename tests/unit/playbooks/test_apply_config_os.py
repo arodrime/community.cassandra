@@ -263,7 +263,7 @@ def test_swap_left_on_said_under_the_node_once(live, swapoff, said):
     (["n2"], [], [], ["n2"], [], "Cassandra starts one node at a time."),
     (["n3"], [], [], [], ["n3"], "No Cassandra restart; a Cassandra stopped stays stopped.")])
 def test_the_intro_says_the_order_in_one_line(todo, os_nodes, restarts, starts, write, said):
-    # (UX audit B19) one line, not a paragraph: the table below says what each node gets
+    # one line, not a paragraph: the table below says what each node gets
     screen = FIND["tasks"][TASKS.index("Show the plan and confirm the run")]
     intro = screen["vars"]["cassandra_screen"]["intro"]
     variables = {"_todo": todo, "_os_nodes": os_nodes, "_restarts": restarts, "_starts": starts,

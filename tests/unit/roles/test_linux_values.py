@@ -173,7 +173,7 @@ def test_cqlsh_source_and_install_method():
             assert not when(t, cassandra_repository_manage=True, cassandra_install_method="system")
 
 
-# --- rc10 audit round 1 ---
+# --- the roles' values ---
 
 def role_task(role, name, path):
     todo = load_tasks(os.path.join(ROLE, "..", role, "tasks", path))

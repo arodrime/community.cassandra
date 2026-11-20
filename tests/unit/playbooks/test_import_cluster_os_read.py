@@ -675,7 +675,7 @@ def test_ufw_source_port_rule_stops_both_paths():
         " compared (cassandra_firewall writes none)" in r["carried"]
 
 
-# --- round 8: source ports, ICMP, policies to this host, ports as firewalld writes them ---
+# --- source ports, ICMP, policies to this host, ports as firewalld writes them ---
 
 @pytest.mark.parametrize("answers, said, stop", [
     # a rich rule for a source port: every destination port reachable, said; dropping stops

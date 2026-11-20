@@ -78,12 +78,12 @@ def test_the_normal_wait_line():
 
 
 def test_not_reached_says_only_what_was_observed():
-    # (UX audit A4) Ansible did not reach the host: never "restart the server" nor "replace the node" (the server
+    # Ansible did not reach the host: never "restart the server" nor "replace the node" (the server
     # and Cassandra may well run); the command that shows all of the error, the option to go on
     from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_not_reached
     lines = cassandra_not_reached(["h-n3"], inventory=["/inv/hosts.yml"], default_inventory="/etc/ansible/hosts",
                                   cwd="/inv")
-    # (pre-push audit, rc13) a refusal's block: 79 columns, an option kept with its value
+    # a refusal's block: 79 columns, an option kept with its value
     assert lines == ["REFUSED  h-n3 not reached by Ansible  nothing was changed",
                      "  Ansible's error: the UNREACHABLE line above",
                      "  all of the error:     ansible -i hosts.yml h-n3 -m ping -vvv",
@@ -108,7 +108,7 @@ def test_preflight_stops_on_a_node_not_reached_with_that_text():
 
 
 def test_preflight_mixed_versions_as_rows_with_exact_ways_out():
-    # (UX audit B16) the versions as rows (no "5.0.9: [..]" inline), each way out a command or an exact option
+    # the versions as rows (no "5.0.9: [..]" inline), each way out a command or an exact option
     import os
     import yaml
     from ansible.parsing.dataloader import DataLoader

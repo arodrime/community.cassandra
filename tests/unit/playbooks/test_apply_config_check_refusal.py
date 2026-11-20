@@ -154,7 +154,7 @@ def test_a_node_left_stopped_by_an_interrupted_run_has_one_way_out_the_resume():
         "node0: left stopped by an interrupted apply_config (in its restart window): see systemctl status cassandra /"
         " journalctl -u cassandra there, fix what stopped its start, then resume (the same command plus"
         " -e cassandra_rolling_resume=true), which starts it first."]
-    # (audit) that resume, node7 still down (after a restart in the inventory's order): still the resume's way out,
+    # that resume, node7 still down (after a restart in the inventory's order): still the resume's way out,
     # on it alone first, never start_rack nor "the unit failed and nothing is to apply"
     for then, todo in (("write", False), ("start", True)):
         resumed = dict(hostvars, node7=dict(marked, cassandra_apply_config_then=then, cassandra_apply_config_todo=todo))

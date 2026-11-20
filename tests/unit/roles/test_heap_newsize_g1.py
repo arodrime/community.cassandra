@@ -95,7 +95,7 @@ def test_a_custom_gc_on_g1_takes_the_heap_alone():
     assert _assert(heap, cassandra_jvm17_extra_options=["-XX:+UseZGC"], **custom) is False
     assert _assert(heap, cassandra_jvm17_extra_options=["-XX:+UseG1GC", "-XX:-UseG1GC"], **custom) is False
     assert _assert(heap, cassandra_jvm_extra_options=["-XX:+UseG1GC"], **custom) is True  # (jvm-server.options')
-    # (re-audit, 2026-11-14) 4.x: the file its Java reads only (Java 11, the series' default: jvm11; jvm8's default
+    # 4.x: the file its Java reads only (Java 11, the series' default: jvm11; jvm8's default
     # CMS does not count); on Java 8, jvm8's
     for jvm11 in (dict(cassandra_jvm11_gc="custom", cassandra_jvm11_extra_options=["-XX:+UseG1GC"]),
                   dict(cassandra_jvm11_gc="G1")):

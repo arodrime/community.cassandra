@@ -305,7 +305,7 @@ def test_gc_lines_removed_are_carried(tmp_path, removed):
 @pytest.mark.parametrize("removed", [G1_TUNING, ("-XX:+UseG1GC", "-XX:+ParallelRefProcEnabled") + G1_TUNING],
                          ids=["G1 without its tuning", "the JVM's default GC"])
 def test_a_gc_reading_kept_beside_another_hand_edit(tmp_path, removed):
-    # (re-audit, 2026-11-14) a stock line of the file switched off too (otherwise than the role does: ##): the GC
+    # a stock line of the file switched off too (otherwise than the role does: ##): the GC
     # read all the same, that line the only difference (custom was dropped then: 8 differences)
     def edit(files):
         text = files["jvm17-server.options"].replace("-Djdk.attach.allowAttachSelf=true\n",
@@ -956,7 +956,7 @@ def test_the_way_out_of_an_options_file_hand_edit_keeps_it(tmp_path):
 
 @pytest.mark.parametrize("keep", [["cassandra-env.sh", "jvm-server.options"], ["cassandra-env.sh"]])
 def test_a_kept_jvm_file_keeps_the_exporter_s_agent(tmp_path, keep):
-    # (re-audit, 2026-11-14) the exporter's block the only move, a hand edit in jvm-server.options: the report's way
+    # the exporter's block the only move, a hand edit in jvm-server.options: the report's way
     # out keeps both files; the agent is then not imported (cassandra_config refuses to write it in a kept
     # jvm-server.options), cassandra-env.sh gives it as it does
     def edit(files):
@@ -1780,7 +1780,7 @@ def test_logback_without_scan_restarts(tmp_path):
 
 
 def test_logback_written_since_the_start_restarts(tmp_path):
-    # (pre-push audit, rc13) scan="true" added after the JVM started (or no record of what it read): logback scans
+    # scan="true" added after the JVM started (or no record of what it read): logback scans
     # only if it read scan="true" at its start
     files, rendered, changed, cmdline = written(tmp_path)
     assert no_effect(changed, files, rendered, cmdline, newer=["logback.xml"]) == []
@@ -1793,7 +1793,7 @@ def test_logback_written_since_the_start_restarts(tmp_path):
     '<configuration scan="true">\n<unclosed>',  # a file that does not parse
 ])
 def test_logback_scan_read_as_logback_reads_it(tmp_path, head):
-    # (pre-push audit, rc13) the root's scan attribute, parsed; anything else proves nothing
+    # the root's scan attribute, parsed; anything else proves nothing
     files, rendered, changed, cmdline = written(tmp_path)
     live = dict(files, **{"logback.xml": re.sub(r"<configuration[^>]*>", lambda m: head, files["logback.xml"], count=1)})
     assert "scan" in live["logback.xml"]
@@ -1802,7 +1802,7 @@ def test_logback_scan_read_as_logback_reads_it(tmp_path, head):
 
 @pytest.mark.parametrize("release, proven", [("5.0.2", True), ("4.1.7", False)])
 def test_a_jvm_of_another_series_than_the_inventorys_restarts(tmp_path, release, proven):
-    # (pre-push audit, rc13) the package upgraded under the running JVM (cassandra_version, the inventory's series,
+    # the package upgraded under the running JVM (cassandra_version, the inventory's series,
     # is the installed one): its arguments are not emulated with the new series' files
     files, rendered, changed, cmdline = written(tmp_path)
     java, rest = cmdline.split("\0", 1)
@@ -1812,7 +1812,7 @@ def test_a_jvm_of_another_series_than_the_inventorys_restarts(tmp_path, release,
 
 
 def test_the_import_and_apply_config_judge_the_environment_alike(tmp_path):
-    # (pre-push audit, rc13, rounds 1-3) one rule (env_differs) for the import's "no restart (the same JVM arguments)"
+    # one rule (env_differs) for the import's "no restart (the same JVM arguments)"
     # and apply_config's proof: what the environment gives cassandra-env.sh to add, the same on both sides, is carried
     # as it is (rc12's rule); another value on one side gives up; a value as text (8081, "8081"), None as unset
     files, rendered, changed, cmdline = written(tmp_path)
@@ -1829,7 +1829,7 @@ def test_the_import_and_apply_config_judge_the_environment_alike(tmp_path):
 
 
 def test_jvm_opts_of_the_environment_reach_the_proof_through_the_command_line(tmp_path):
-    # (pre-push audit, rc13, round 3) bin/cassandra puts the environment's JVM_OPTS before the options files' words:
+    # bin/cassandra puts the environment's JVM_OPTS before the options files' words:
     # the same environment on both sides, the running JVM's arguments with them, proven
     files, rendered, changed, cmdline = written(tmp_path)
     java, rest = cmdline.split("\0", 1)
@@ -1838,7 +1838,7 @@ def test_jvm_opts_of_the_environment_reach_the_proof_through_the_command_line(tm
 
 
 def test_an_environment_file_value_gives_up_on_both_sides_alike(tmp_path):
-    # (pre-push audit, rc13, round 3) JVM_EXTRA_OPTS set outside the unit's Environment (an EnvironmentFile,
+    # JVM_EXTRA_OPTS set outside the unit's Environment (an EnvironmentFile,
     # /etc/default/cassandra), as the JVM has it: with cassandra-env.sh's lines moved, the import no longer says
     # "no restart" and apply_config restarts (both read it from the JVM; whatever the unit's mode)
     files, rendered, changed, cmdline = written(tmp_path)
@@ -1861,7 +1861,7 @@ def test_anything_unproven_restarts(tmp_path, java, environ, newer, more):
 
 
 def test_the_self_check_reads_the_environment_as_apply_config(tmp_path):
-    # (pre-push audit, rc13, round 4) JVM_EXTRA_OPTS the JVM got from outside its unit (an EnvironmentFile,
+    # JVM_EXTRA_OPTS the JVM got from outside its unit (an EnvironmentFile,
     # /etc/default/cassandra): the self-check no longer passes the JVM's files rewritten as "the same arguments"
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import cassandra_import_self_check
     files = node_files("50x", OWNERS_CASE)
@@ -1878,7 +1878,7 @@ def test_the_self_check_reads_the_environment_as_apply_config(tmp_path):
 
 
 def test_the_self_check_compares_the_roles_environment_with_the_nodes(tmp_path):
-    # (pre-push audit, rc13, round 5) the heap the unit gives cassandra-env.sh: the roles' (16G) against the node's
+    # the heap the unit gives cassandra-env.sh: the roles' (16G) against the node's
     # (8G), no "same arguments"; the same environment on both sides, as before
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import _jvm_rewritten
     files = node_files("50x")
@@ -2072,7 +2072,7 @@ def test_jmx_lines_in_the_remote_branch_not_taken_have_no_effect(tmp_path):
 
 
 def test_jmx_lines_in_the_remote_branch_unseen_local_jmx_have_no_effect(tmp_path):
-    """(pre-push audit, rc13, round 9) LOCAL_JMX=yes from an EnvironmentFile or /etc/default/cassandra, in no
+    """LOCAL_JMX=yes from an EnvironmentFile or /etc/default/cassandra, in no
     environment the import reads: the running JVM's arguments (its local JMX port) say the local branch ran, not the
     file's default (no)."""
     files = node_files("41x", jmx_in_remote_branch)
@@ -2173,7 +2173,7 @@ def dump_path(cmdline):
 
 @pytest.mark.parametrize("which", ["heapdump", "all"])
 def test_apply_config_after_import_proves_a_plain_heap_dump_dir(tmp_path, which):
-    """(pre-push audit, rc13, round 9) a plain CASSANDRA_HEAPDUMP_DIR imported clean: the next apply_config proves the
+    """a plain CASSANDRA_HEAPDUMP_DIR imported clean: the next apply_config proves the
     role's files change nothing for the running JVM (no restart), as the import and its self-check do."""
     files = node_files("41x", HEAPDUMP if which == "heapdump"
                        else both(jmx_in_remote_branch, HEAPDUMP, heap_in_jvm11_dump_off))

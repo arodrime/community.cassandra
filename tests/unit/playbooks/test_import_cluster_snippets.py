@@ -70,7 +70,7 @@ def test_the_snippets_first_line_is_a_jinja_comment_a_reimport_owns():
 
 
 def test_your_own_snippets_stay_in_the_dict_the_import_writes(tmp_path):
-    # (audit) Ansible replaces a dict whole: yours (group_vars/all) kept in the one the import writes
+    # Ansible replaces a dict whole: yours (group_vars/all) kept in the one the import writes
     (tmp_path / "env.j2").write_text("export A=1\n")
     files = with_env("export A=1")
     files["logback.xml"] = files["logback.xml"].replace("</configuration>", '  <logger name="x" level="WARN" additivity="false"/>\n'

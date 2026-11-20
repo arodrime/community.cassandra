@@ -385,7 +385,7 @@ def test_check_diff_writes_nothing():
 
 @pytest.mark.parametrize("check", [False, True])
 def test_a_re_import_leaves_every_report_file_alone(check):
-    # (audit) the report in the inventory dir (import_report_dir): none of its files taken for another's, the
+    # the report in the inventory dir (import_report_dir): none of its files taken for another's, the
     # shareable copy and its key too (written by default); the key a .txt, which Ansible skips in an inventory dir
     report = render(WRITE_VARS["_report_args"]["report_file"], ansible_check_mode=check, _report_dir="/inv")
     stem = report[:-len(".txt")]
@@ -401,7 +401,7 @@ def test_a_re_import_leaves_every_report_file_alone(check):
 
 
 def test_the_key_of_an_earlier_shareable_copy_is_removed():
-    # (round-2) report.shareable.map of a release candidate (real names; Ansible read it as inventory): the import's
+    # report.shareable.map of a release candidate (real names; Ansible read it as inventory): the import's
     # own, never another's file, removed with a line saying so
     ours = render(TASKS["Sort out the files an earlier import wrote"]["vars"]["_report_files"], _report_dir="/inv",
                   _dir="/inv")

@@ -155,7 +155,7 @@ def test_preflight_lets_a_resumed_run_pass_a_member_seed_down():
 
 
 def test_a_failed_node_s_stage_is_recorded_for_its_row():
-    # (UX audit A1) the stop block says what was done to the node it stopped at: before, during or after its action
+    # the stop block says what was done to the node it stopped at: before, during or after its action
     names = [t["name"] for t in OPERATION["block"]]
     start = [t for t in OPERATION["block"] if t["name"] == "Note the start time"][0]
     assert start["ansible.builtin.set_fact"]["_cassandra_op_stage"] == "before"

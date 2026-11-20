@@ -91,7 +91,7 @@ def test_comments_are_not_variables():
     ("import_xyzzy_level", ""),
     ("import_forse", "import_force"),  # the import_ prefix is the collection's too
     ("status_resolve_ips", "status_resolve_ip"),  # status's option: a typo stops, never a lookup left on
-    # (audit) words of the playbooks that are no variable: not known
+    # words of the playbooks that are no variable: not known
     ("import_tasks", ""), ("import_playbook", ""), ("import_role", ""), ("import_distribution", ""),
     ("import_read_files", ""), ("import_given", ""),
 ])

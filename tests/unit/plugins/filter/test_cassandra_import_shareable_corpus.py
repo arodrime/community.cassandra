@@ -1,7 +1,7 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-# The shareable copy against a corpus (pre-push audits of rc13, rounds 3 and 4): the self-check differences of a site
+# The shareable copy against a corpus: the self-check differences of a site
 # (its names: acme, frob, kwy, quux, zorglub, paris, london...) through every place the report says them (the
 # self-check's advice, report.txt, report.details.txt, the screen); none of the site's names may be left, and the
 # stock names of a Cassandra install stay readable. Any change of the masking keeps it green.
@@ -255,7 +255,7 @@ SITE_DIFFERENCES = [
     'medusa.ini: [cassandra] cql_username: node has \'operator\', import would write \'cassandra\'',
 ]
 
-# (round 5) paths of the site after a variable, a default, under a stock directory, relative, Windows'
+# paths of the site after a variable, a default, under a stock directory, relative, Windows'
 SITE_DIFFERENCES += [
     "jvm17-server.options: -XX:HeapDumpPath: node has '-XX:HeapDumpPath=${DUMPS:-/srv/orders/billing}', import would"
     " write nothing",
@@ -274,7 +274,7 @@ SITE_DIFFERENCES += [
     "medusa.ini: [storage] bucket_name: node has 'operator', import would write nothing"]
 
 
-# (round 6) paths with a default, after '-' or '//', relative values, file names, separators in a component
+# paths with a default, after '-' or '//', relative values, file names, separators in a component
 SITE_DIFFERENCES += [
     'cassandra.yaml: cdc_raw_directory: node has data/orders/cdc, import would write nothing',
     "cassandra.yaml: hints_directory: node has 'data/orders/hints extra', import would write nothing",
@@ -458,7 +458,7 @@ STOCK_TEXT = shared(STOCK_DIFFERENCES, STOCK_LINES)
 @pytest.mark.parametrize("kind", ["cassandra_medusa_storage_prefix", "cassandra_medusa_storage_bucket_name",
                                   "cassandra_medusa_cql_username"])
 def test_a_value_named_as_the_cluster_leaves_the_cluster_masked(kind):
-    # (round 5) a Medusa prefix, bucket or user named as the cluster (metrics): the cluster's name masked everywhere
+    # a Medusa prefix, bucket or user named as the cluster (metrics): the cluster's name masked everywhere
     nodes = [{"name": "db%d" % i, "address": "10.0.0.%d" % i, "dc": "dc1", "rack": "r1", "read": True,
               "hand_edits": [], "normalized": [], "notes": [], "vars": {"cassandra_version": "50x", kind: "metrics"}}
              for i in (1, 2)]
@@ -472,7 +472,7 @@ def test_a_value_named_as_the_cluster_leaves_the_cluster_masked(kind):
     assert not [line for line in text if re.search(r"(?i)\bmetrics\b", line)]
 
 
-# (round 6) a stock OS's and JDK's paths as they are
+# a stock OS's and JDK's paths as they are
 STOCK_PATHS = [
     '/dev/mapper/vg_data-swap',
     '/usr/lib/jvm/java-11-openjdk-amd64/bin/java',
@@ -539,7 +539,7 @@ def test_the_stock_paths_stay_as_they_are():
 
 
 def test_the_way_out_commands_and_the_reports_words_stay_intact():
-    # (round 6) a word of a stock path masked there only: the To-pass option, "2 nodes" never touched
+    # a word of a stock path masked there only: the To-pass option, "2 nodes" never touched
     text = "\n".join(shared(SITE_DIFFERENCES, SITE_LINES))
     assert "-e import_keep_hand_edits=" in text
     option = re.search(r"-e import_keep_hand_edits=(\S+)", text).group(1)
@@ -548,7 +548,7 @@ def test_the_way_out_commands_and_the_reports_words_stay_intact():
     assert not re.search(r"\b\d+ word\d+", text)
 
 
-# (round 7) the report's own lines, a stock install's: as they are
+# the report's own lines, a stock install's: as they are
 REPORT_LINES = [
     "    jvm17-server.options: -Xlog: node has '-Xlog:gc=info,heap*=trace,age*=debug,safepoint=info,promotion*=trace"
     ":file=/var/log/cassandra/gc.log:time,uptime,pid,tid,level:filecount=10,filesize=10485760', import would write"
@@ -561,7 +561,6 @@ REPORT_LINES = [
     "    the system java (/usr/bin/java); /usr/lib/jvm/java-17-openjdk-amd64/bin/java",
     "    gc.log.0.current  multi-user.target.wants  system.log.1.zip  debug.log",
     "    logs/system.log data/data conf/cassandra.yaml bin/nodetool tools/bin/cassandra-stress lib/jamm-0.3.2.jar",
-    # (round 8)
     "    roles/cassandra_config/templates/cassandra.yaml.j2 roles/cassandra_linux/defaults/main.yml",
     "    /proc/sys/fs/file-max /sys/block/sda/queue/nr_requests pylib/cqlshlib doc/cql3",
     "    '/etc/cassandra/cassandra.yaml: line 4'",
@@ -577,7 +576,7 @@ def test_the_reports_own_lines_as_they_are():
 
 
 def test_the_sites_names_in_relative_paths_and_two_letter_words():
-    # (round 7) a node's, a cluster's, a data center's, a rack's name in a relative path: their pseudonyms; a two
+    # a node's, a cluster's, a data center's, a rack's name in a relative path: their pseudonyms; a two
     # letter word of the site under a stock directory masked
     nodes = [{"name": "pay-db%d.acme.io" % i, "address": "10.0.0.%d" % i, "dc": "eu-west", "rack": "rack_a1",
               "read": True, "hand_edits": [], "normalized": [], "notes": [], "vars": {"cassandra_version": "50x"}}
@@ -596,7 +595,7 @@ def test_the_sites_names_in_relative_paths_and_two_letter_words():
 
 @pytest.mark.parametrize("cluster", ["Acme Payments", "Zorglub Prod", "Frobnitz Ledger EU"])
 def test_the_report_and_inventory_paths_carry_the_clusters_pseudonym(cluster):
-    # (round 7) reports/<cluster>/report.txt, -i inventories/<cluster>.yml: the cluster's name whole, as c1
+    # reports/<cluster>/report.txt, -i inventories/<cluster>.yml: the cluster's name whole, as c1
     nodes = [{"name": "frob-db%d" % i, "address": "10.0.0.%d" % i, "dc": "paris", "rack": "rackA", "read": True,
               "hand_edits": ["cassandra-env.sh, line 3:", "  + x"], "normalized": [], "notes": [],
               "vars": {"cassandra_version": "50x"}} for i in (1, 2)]
@@ -611,7 +610,7 @@ def test_the_report_and_inventory_paths_carry_the_clusters_pseudonym(cluster):
     assert not [w for w in words + ["frob", "paris", "racka"] if re.search(r"(?i)(?<![a-z])%s" % w, text)], text
 
 
-# (round 8) a password on a command line, quoted or not: never in the copy, never in its key
+# a password on a command line, quoted or not: never in the copy, never in its key
 COMMANDS = ['    cron: "/usr/bin/nodetool -u cassandra -pw s3cret snapshot -t daily zorglub_ks"',
             "    cron: /usr/bin/nodetool -u cassandra -pw s3cret repair",
             "    cron: '/usr/bin/nodetool --password s3cret cleanup'",

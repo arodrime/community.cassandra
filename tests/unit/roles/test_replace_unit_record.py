@@ -1,7 +1,7 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-# (UX audit A5) replace_node takes the replace flag out of the unit with no restart: the running Cassandra read it
+# replace_node takes the replace flag out of the unit with no restart: the running Cassandra read it
 # at its first boot only, so the record of the config it started with gets the new unit and apply_config says no
 # restart pending for it; only when the record has that JVM and the unit as it was (else kept: pending as before).
 

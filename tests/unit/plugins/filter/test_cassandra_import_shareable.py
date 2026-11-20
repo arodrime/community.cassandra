@@ -121,7 +121,7 @@ def layout_of(nodes, cluster="Orders Prod", group="orders_prod"):
 
 
 def test_a_secret_the_report_let_through_masked_again():
-    # (audit 2026-11-04) a second layer: every line of the copy masked as the output masks
+    # a second layer: every line of the copy masked as the output masks
     lines = ["    -Djavax.net.ssl.keyStorePassword=Planted1 (cassandra_jvm_extra_options)   all (2 nodes)",
              "      ldap_password: Planted2", "  nodetool -u admin -pw Planted3 status",
              "    cassandra_jmx_password:  (in secrets.yml)   all (2 nodes)",
@@ -185,7 +185,7 @@ def test_buckets_and_user_names_masked():
 
 
 def test_a_cluster_or_node_named_by_a_common_word():
-    # (re-audit) a cluster named cassandra: no crash; its groups still renamed, the word left in the text
+    # a cluster named cassandra: no crash; its groups still renamed, the word left in the text
     for name in ("cassandra", "data", "Main"):
         nodes = [site_node(i, "paris") for i in (1, 2)]
         layout = cassandra_inventory_layout(nodes, name)
@@ -197,7 +197,7 @@ def test_a_cluster_or_node_named_by_a_common_word():
 
 
 def test_user_names_in_a_table_row():
-    # (re-audit) the FOR INFO table: the setting's name and its value in two columns
+    # the FOR INFO table: the setting's name and its value in two columns
     lines = ["    cassandra_jmx_username:          acmejmx   all (6 nodes)   (the user nodetool logs in as)",
              "    cassandra_medusa_cql_username:   acmecql   all (6 nodes)",
              "    cassandra_medusa_extra_settings.storage.prefix:  acmepfx   all (6 nodes)",
@@ -373,7 +373,7 @@ SITE = re.compile(r"(?i)zorglub|paris|baie7|acme|billing|orders|payroll|10\.\d|1
 
 
 @pytest.mark.parametrize("line", [
-    # (round-2 and round-3 audits) lines with site names in them that the masking replaces
+    # lines with site names in them that the masking replaces
     "    cassandra_log_levels.com.zorglub.auth.Kwyjibo:   DEBUG   all (1 node)",
     "  -Dcom.zorglub.audit.enabled=true (cassandra_jvm_extra_options)",
     "  -Dcom.zorglub-db1.audit=true -Dzorglub_prod.flag=1 -Dparis.x=1 -Dbaie7.rack=1 -Dfr.acmecorp.mode=x",
@@ -414,7 +414,7 @@ def test_a_site_jvm_option_name_masked_everywhere():
 
 
 def test_the_reports_own_words_are_not_taken_for_a_secret():
-    # (UX audit B14) the vault step's sentence stays whole in the copy; a password setting still masked
+    # the vault step's sentence stays whole in the copy; a password setting still masked
     layout = cassandra_inventory_layout([{"name": "node1", "address": "10.0.0.1", "dc": "dc1", "rack": "r1", "read": True,
                                           "hand_edits": [], "normalized": [], "notes": [], "vars": {}}], "My Cluster")
     lines = cassandra_import_report(layout, ["/p/inventories/my_cluster.yml", "/p/inventories"],
@@ -443,7 +443,7 @@ def test_known_kernel_settings_and_stock_jvm_properties_in_clear_anywhere():
 
 
 def test_a_self_check_setting_masks_what_the_site_chose():
-    # (pre-push audit, rc13) a site's logger package, appender and JMX user, a domain as a logger's name: masked in a
+    # a site's logger package, appender and JMX user, a domain as a logger's name: masked in a
     # difference and on a self-check setting's own line; the files' own words in clear
     lines = ['  logback.xml: /configuration/logger[@name="com.zorglub.billing"]/@level: node has DEBUG, import would'
              ' write nothing',
@@ -468,7 +468,7 @@ def test_a_self_check_setting_masks_what_the_site_chose():
 
 
 def test_every_self_check_setting_masks_the_sites_names():
-    # (pre-push audit, rc13, round 2) a self-check's settings outside the files keyed by their own vocabulary: an
+    # a self-check's settings outside the files keyed by their own vocabulary: an
     # environment variable, a JVM agent's path, the unit's environment, a kernel setting's file, a device, a limits
     # file, a firewall source; the advice and the evidence alike
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import \
@@ -501,7 +501,7 @@ def test_every_self_check_setting_masks_the_sites_names():
 
 
 def test_a_logback_tag_stays_in_clear_its_names_masked():
-    # (pre-push audit, rc13, round 2) any tag (immediateFlush, neverBlock, shutdownHook: logback's, not only the
+    # any tag (immediateFlush, neverBlock, shutdownHook: logback's, not only the
     # collection's) in clear; an element named by name= or ref= in an XPath of the report masked wherever it is
     xpath = '/configuration/appender[@name="ZORGLUBLOG"]/encoder/immediateFlush'
     lines = ["  logback.xml: %s: node has 'false', import would write nothing" % xpath,
@@ -516,7 +516,7 @@ def test_a_logback_tag_stays_in_clear_its_names_masked():
 
 
 def test_the_values_of_a_setting_that_names_the_site_masked_in_every_form():
-    # (pre-push audit, rc13, round 3) Medusa's bucket, a CQL user: under the setting's line (Node, Ansible), in the
+    # Medusa's bucket, a CQL user: under the setting's line (Node, Ansible), in the
     # evidence (node has 'v', import would write 'w'); a later line's name masked on the lines before it too
     lines = ["  medusa.ini    zorglub-db1", "    [cassandra] cql_username", "      Node     billing_ops",
              "      Ansible  absent", "  jmxremote.access    zorglub-db1", "    payroll_ops", "      Node     readwrite",
@@ -531,14 +531,14 @@ def test_the_values_of_a_setting_that_names_the_site_masked_in_every_form():
 @pytest.mark.parametrize("user, masked", [("london", True), ("admin", True), ("zorglub", True), ("cassandra", False),
                                           ("monitorRole", False), ("controlRole", False)])
 def test_a_jmx_user_masked_but_the_jdks(user, masked):
-    # (pre-push audit, rc13, round 3) a user named by a word of the collection is the site's all the same
+    # a user named by a word of the collection is the site's all the same
     text = cassandra_import_shareable(["  jmxremote.access: %s: node has readwrite, import would write nothing" % user],
                                       ZORGLUB)["text"][2:]
     assert (": %s: node has" % user not in text[0]) is masked, text
 
 
 def test_an_xml_name_with_a_space_or_a_slash_masked_whole():
-    # (pre-push audit, rc13, round 3) the names the XPaths give, whole, before the steps are read
+    # the names the XPaths give, whole, before the steps are read
     xpaths = ['/configuration/logger[@name="Zorglub Ledger"]/@level', '/configuration/logger[@name="Zorglub / Paris"]',
               '/configuration/appender[@name="ASYNCDEBUGLOG"]/appender-ref[@ref="zorglub sink"]']
     lines = ["  logback.xml: %s: node has 'x', import would write nothing" % x for x in xpaths]
@@ -550,7 +550,7 @@ def test_an_xml_name_with_a_space_or_a_slash_masked_whole():
 
 
 def test_the_names_cassandra_yaml_leaves_to_the_site_masked_in_its_keys():
-    # (pre-push audit, rc13, round 3) a memtable configuration's name, a seed provider's own parameter; stock ones kept
+    # a memtable configuration's name, a seed provider's own parameter; stock ones kept
     lines = ["  cassandra.yaml: memtable.configurations.zorglub_fast.class_name: node has 'x', import would write nothing",
              "  cassandra.yaml: memtable.configurations.trie.class_name: node has 'x', import would write nothing",
              "  cassandra.yaml: seed_provider[0].parameters[0].zorglub_dns: node has 'x', import would write nothing",
@@ -562,7 +562,7 @@ def test_the_names_cassandra_yaml_leaves_to_the_site_masked_in_its_keys():
 
 
 def test_stock_names_and_the_logs_paths_readable():
-    # (pre-push audit, rc13, round 3) a -D property of a stock library, logback's own; a path after ${var}; the role's
+    # a -D property of a stock library, logback's own; a path after ${var}; the role's
     # udev rules file; the heap's options only among the -X ones of an options file
     text = cassandra_import_shareable([
         "  -Dlogback.configurationFile=logback.xml -Dorg.apache.cassandra.x=1 -Djava.rmi.server.hostname=x"
@@ -579,7 +579,7 @@ def test_stock_names_and_the_logs_paths_readable():
 
 
 def test_a_device_after_the_read_ahead_or_the_scheduler_its_codes_masked():
-    # (pre-push audit, rc13, round 3) the short codes of the site in a device's name (zq7), as after "device"
+    # the short codes of the site in a device's name (zq7), as after "device"
     text = cassandra_import_shareable([
         "  cassandra_linux: read_ahead_kb vg_q7-lv_z9 (dm-3) (live): node has 128, the roles would set 8",
         "  cassandra_linux: IO scheduler zq7 (sdb) (live): node has mq-deadline, the roles would set none",
@@ -590,7 +590,7 @@ def test_a_device_after_the_read_ahead_or_the_scheduler_its_codes_masked():
 
 
 def test_a_site_value_that_is_a_word_of_the_report_masked_everywhere():
-    # (pre-push audit, rc13, rounds 4-5) a JMX user named ansible, readwrite: masked wherever it is, the report's
+    # a JMX user named ansible, readwrite: masked wherever it is, the report's
     # words too (over-masking rather than a name of the site left)
     lines = ["  jmxremote.access: ansible: node has readwrite, import would write nothing",
              "  jmxremote.access: readwrite: node has readwrite, import would write nothing",

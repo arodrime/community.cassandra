@@ -323,7 +323,7 @@ def test_the_newest_version_never_down():
         n["vars"]["cassandra_version"] = "50x" if n["name"] in ("cass001", "cass002") else "41x"
     text = _flat(cassandra_import_convergence(_small(nodes), {}, width=200))
     assert "3 nodes change, an upgrade (upgrade, its preflight phase first), never down" in text
-    # (audit) a release of another series among the values (an inventory mid-upgrade): an upgrade, not
+    # a release of another series among the values (an inventory mid-upgrade): an upgrade, not
     # apply_config's update in its restart (which stops on another series)
     for n in nodes:
         n["vars"]["cassandra_version"] = "41x"
@@ -331,7 +331,7 @@ def test_the_newest_version_never_down():
     text = _flat(cassandra_import_convergence(_small(nodes), {}, width=200))
     assert "apply_config updates the package" not in text
     assert "3 nodes change, an upgrade (upgrade, its preflight phase first), never down" in text
-    # (audit) nodes without the variable (the collection's default) are no other series: the same release update
+    # nodes without the variable (the collection's default) are no other series: the same release update
     for n in nodes:
         if n["name"] in ("cass001", "cass002"):
             n["vars"]["cassandra_package_version"] = "4.1.10"

@@ -577,7 +577,7 @@ def test_package_file_under_etc_not_carried():
     assert r["vars"]["cassandra_linux_sysctl_file"] == "/etc/sysctl.conf"
 
 
-# --- nodes the roles set up: running the roles again changes nothing (audit) ---
+# --- nodes the roles set up: running the roles again changes nothing ---
 
 def test_own_node_sysctl_carries_only_its_own_file():
     own = file_records("sysctl", "/etc/sysctl.d/60-cassandra.conf", text="vm.swappiness = 1\nvm.max_map_count = 1048575\n")
@@ -646,7 +646,7 @@ def test_own_unit_ignores_drop_ins_and_resets():
     assert part(found(reset), "cassandra_service") == {}  # back to systemd's default: nothing carried
 
 
-# --- sysctl.conf, masks (audit) ---
+# --- sysctl.conf, masks ---
 
 def test_sysctl_conf_at_its_link_place():
     conf = file_records("sysctl", "/etc/sysctl.conf", text="vm.swappiness = 5\n")
@@ -762,7 +762,7 @@ def test_own_node_fallback_carries_only_the_target_files_keys():
 
 
 def test_own_node_file_overridden_is_not_carried():
-    """(rc13) its own file's key a later file sets again: not carried (the role would set it live, and remove a
+    """its own file's key a later file sets again: not carried (the role would set it live, and remove a
     /etc/sysctl.conf line), the node's lines left as they are: the roles change nothing."""
     own = file_records("sysctl", "/etc/sysctl.d/60-cassandra.conf", text="vm.swappiness = 1\n")
     for later in ("/etc/sysctl.d/99-zz.conf", "/etc/sysctl.conf"):
@@ -916,7 +916,7 @@ def test_sysctl_live_and_file_changes():
 @pytest.mark.parametrize("key", ["net.ipv4.route.flush", "net.ipv6.route.flush", "vm.drop_caches", "vm.compact_memory",
                                  "vm.stat_refresh"])
 def test_a_write_only_sysctl_key_set_by_hand_is_an_action_at_each_run(key):
-    # (audit of rc12, A1) a trigger in cassandra_linux_sysctl: the sysctl module writes it at each run (sysctl_set, a
+    # a trigger in cassandra_linux_sysctl: the sysctl module writes it at each run (sysctl_set, a
     # reload): a change, never "no effect" (cassandra_linux refuses it, os.yml)
     wanted = dict(LINUX["cassandra_linux_sysctl"], **{key: 1})
     unread = "sysctl_live|%s|\n" % key
@@ -942,7 +942,7 @@ def test_the_role_refuses_a_write_only_kernel_key():
     assert cassandra_sysctl_write_only({"vm.swappiness": 1, "vm.drop_caches": 3, "vm.stat_refresh": 1}) == [
         "vm.drop_caches", "vm.stat_refresh"]
     assert cassandra_sysctl_write_only({}) == [] and cassandra_sysctl_write_only(None) == []
-    # (pre-push audit, rc13) written another way, as sysctl reads it: refused too
+    # written another way, as sysctl reads it: refused too
     assert cassandra_sysctl_write_only({"vm/drop_caches": 3, " net.ipv4.route.flush": 1}) == [
         " net.ipv4.route.flush", "vm/drop_caches"]
 
@@ -1102,7 +1102,7 @@ def test_the_role_sets_its_kernel_keys_live_one_by_one():
 
 
 def test_a_file_of_write_only_keys_alone_is_no_file_to_write_in():
-    # (audit of rc12, C3) the node's kernel keys file has only a trigger: nothing carried, no sysctl_file override
+    # the node's kernel keys file has only a trigger: nothing carried, no sysctl_file override
     text = re.sub(r"(?m)^sysctl\|/etc/sysctl.d/90_cassandra.conf\|.*\n", "", owner_like())
     text += "sysctl|/etc/sysctl.d/90_cassandra.conf|vm.drop_caches = 3\nsysctl_live|vm.drop_caches|\n"
     r = found(text, os_family="RedHat")
@@ -1329,7 +1329,7 @@ def site_file_with_a_vendor_override(suid_vendor="2", tail=""):
 
 @pytest.mark.parametrize("own", [False, True])
 def test_a_sysctl_key_a_later_file_sets_again_is_not_carried(own):
-    # (rc13, a real node) the role would set fs.suid_dumpable 0 live, the later package file's 2 being the one read
+    # (a real node) the role would set fs.suid_dumpable 0 live, the later package file's 2 being the one read
     text = site_file_with_a_vendor_override()
     r = found(text, own=own)
     assert sysctl_vars(r) == {"cassandra_linux_sysctl": {"vm.max_map_count": 1048575, "vm.swappiness": 1},

@@ -77,7 +77,7 @@ def _why(err="", msg="", rc=1, command=None):
 
 def test_not_found_only_when_cqlsh_itself_is_missing():
     no_path = "no cqlsh in the PATH of root on n1: cassandra_cqlsh_command gives the full path of one"
-    # (UX audit A3) exit code 127 alone is no cause (a cqlsh script whose interpreter is missing gives it too)
+    # exit code 127 alone is no cause (a cqlsh script whose interpreter is missing gives it too)
     see_default = "; to see its error, run as root on n1: cqlsh 10.0.0.1 9142 -u alice"
     assert _why(rc=127, err="/usr/bin/env: 'python3': No such file or directory") == (
         "cqlsh failed on n1: no python3 for its first line (#! /usr/bin/env python3)" + see_default)

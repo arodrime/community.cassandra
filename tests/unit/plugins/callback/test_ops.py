@@ -324,7 +324,7 @@ def test_unreachable_hosts(tmp_path):
     rc, output = run(tmp_path, playbook, INVENTORY=str(inventory), PATH="%s:%s" % (bin_dir, os.environ.get("PATH", "")))
     assert rc != 0
     lines = output.splitlines()
-    # (UX audit B6) ignored or not: one form, the error's first sentence, the command that shows all of it; no dump
+    # ignored or not: one form, the error's first sentence, the command that shows all of it; no dump
     found = [line for line in lines if line.startswith("UNREACHABLE  node3  ")]
     assert len(found) == 2 and "Connection refused" in found[0] and "Task failed" not in found[0], output  # (a task each)
     assert lines[lines.index(found[0]) + 1] == "             all of the error:  ansible node3 -m ping -vvv", output
@@ -713,7 +713,7 @@ def test_the_plan_title_and_the_stop_block_are_blocks_of_their_own():
     shown = printed(callback)
     assert [line[0] for line, dummy in shown if rule(line)] == ["=", "-", "-", "="]
     assert [x for x in shown if not rule(x[0])] == [(stop[0], C.COLOR_ERROR)] + [(line, None) for line in stop[2:5] + stop[6:]]
-    # (UX audit A1) the stop block as it is now: its verdict first, no blank line in it: a heavy rule above and under
+    # the stop block as it is now: its verdict first, no blank line in it: a heavy rule above and under
     stop = ["STOPPED  rolling_restart  prod  at node2", "  Why:  node4 (10.0.0.4, r1) is DN, seen from node1",
             "  node1         restarted  1m50s", "  node2         restarted; cluster health check failed",
             "  node3..node5  not touched", "", "WAY OUT", "  1. bring node4 back to UN (its host and/or Cassandra)",

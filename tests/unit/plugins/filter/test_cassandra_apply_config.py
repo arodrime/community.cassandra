@@ -521,7 +521,7 @@ def test_os_settings_by_the_stable_device_name_at_the_terminal_width():
 
 
 def test_rows_too_wide_have_their_nodes_under_the_node_value_every_row_the_same():
-    # (UX audit B2) a narrow terminal: every row's nodes on its next line, at the column of the node's values; the
+    # a narrow terminal: every row's nodes on its next line, at the column of the node's values; the
     # values never cut, in aligned Node and Inventory columns, the read-ahead with its unit
     swappiness = "sysctl vm.swappiness (/etc/sysctl.d/60-cassandra.conf)"
     nodes = [{"name": "h-n1", "items": [], "os": [{"item": "read_ahead_kb sdz", "before": "128", "after": "4"}]},
@@ -714,7 +714,7 @@ def test_an_item_too_long_has_its_values_on_the_next_line(tmp_path):
 
 
 def test_the_recap_says_the_proofs_by_their_own_words():
-    # (pre-push audit, rc13) the reasons of cassandra_apply_config_no_effect, by the constants it says them with;
+    # the reasons of cassandra_apply_config_no_effect, by the constants it says them with;
     # another reason of a node kept running is not one of them
     from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import (
         LOGBACK_SCANS, NOT_READ_BY_JAVA, SAME_JVM_ARGUMENTS)

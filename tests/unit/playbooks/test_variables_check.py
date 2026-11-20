@@ -221,7 +221,7 @@ def test_import_cluster_former_option_names_refused_with_their_name_now(enabled)
 
 @pytest.mark.parametrize("name", ["import_cluster_keep_unread_jvm_options"])
 def test_the_removed_unread_jvm_option_is_said_removed(name):
-    # (audit) gone, those options always imported now: the stop says so and to drop it (not "fix the name")
+    # gone, those options always imported now: the stop says so and to drop it (not "fix the name")
     assert cassandra_unknown_extra_vars([name], PLAYBOOK_VARIABLES) == {}
     renamed = render(CHECK["vars"]["_renamed"], _extra=[name], _cassandra_variables_check_renamed=False)
     assert renamed == {name: ""}
@@ -236,7 +236,7 @@ def test_the_removed_unread_jvm_option_is_said_removed(name):
 @pytest.mark.parametrize("name, file_name", [("cassandra_env_extra_lines", "cassandra-env.sh"),
                                              ("cassandra_logback_extra_lines", "logback.xml")])
 def test_a_variable_no_longer_read_refused_with_the_files_that_set_it(tmp_path, name, file_name):
-    # (rc9 audit) an inventory imported by a release candidate still sets the lines the import now writes in
+    # an inventory imported by a release candidate still sets the lines the import now writes in
     # snippets: refused (else the file is written without them and every node restarted), the files named
     from ansible_collections.community.cassandra.plugins.filter.cassandra_names import cassandra_renamed_names
     (tmp_path / "group_vars" / "prod").mkdir(parents=True)

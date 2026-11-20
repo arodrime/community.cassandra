@@ -203,7 +203,7 @@ def test_the_system_logs_table_is_5_0_only():
 
 
 def test_the_root_by_any_case_and_a_kept_logback():
-    # (audit) logback finds the root logger by its name in any case; a logback.xml kept as it is: nothing refused
+    # logback finds the root logger by its name in any case; a logback.xml kept as it is: nothing refused
     assert refused(cassandra_log_levels={"root": "DEBUG"}) == [
         "cassandra_log_levels: root is set by cassandra_log_level: set it there, and remove root from cassandra_log_levels"]
     ctx = role_ctx("5.0", cassandra_config_keep_files=["logback.xml"])
@@ -225,7 +225,7 @@ def test_a_ref_to_an_appender_after_root_and_a_logger_set_twice_are_refused():
 
 
 def test_the_role_refuses_the_variables_no_longer_read():
-    # (rc9 audit) the role run alone (a site playbook) refuses them too, before anything is written
+    # the role run alone (a site playbook) refuses them too, before anything is written
     tasks = load_tasks(os.path.join(ROLE, "tasks", "checks.yml"))
     names = [t.get("name") for t in tasks]
     refuse = tasks[names.index("Refuse the variables no longer read")]
@@ -244,13 +244,13 @@ MOVES = next(t for t in CONFIRM if t.get("name") == "Find whether the audit even
 @pytest.mark.parametrize("live_audit, in_inventory, audit_file, said", [
     (False, False, True, True),   # the default turns it on, the node has it off: said
     (True, False, True, False),   # the node has it on already
-    ("class", False, True, False),  # (rc9 r2 audit) on already, its class before its name, in single quotes
-    ("spaces", False, True, False),  # (rc9 r3 audit) on already, name = "AUDIT"
+    ("class", False, True, False),  # on already, its class before its name, in single quotes
+    ("spaces", False, True, False),  # on already, name = "AUDIT"
     (False, True, True, False),   # set in the inventory: wanted
     (False, False, False, False),  # off
 ])
 def test_said_when_the_default_moves_the_audit_events(live_audit, in_inventory, audit_file, said):
-    # (rc9 audit) an inventory imported by a release candidate, FileAuditLogger, the stock block commented out
+    # an inventory imported by a release candidate, FileAuditLogger, the stock block commented out
     import base64
     with open(os.path.join(STOCK % "5.0.9", "logback.xml.stock"), encoding="utf-8") as f:
         live = f.read()
@@ -271,7 +271,7 @@ def test_said_when_the_default_moves_the_audit_events(live_audit, in_inventory, 
 
 
 @pytest.mark.parametrize("variables, said", [
-    # (rc9 r2 audit) values written as they are that would leave logback.xml unreadable, on every node
+    # values written as they are that would leave logback.xml unreadable, on every node
     ({"cassandra_log_pattern": "%msg -- %n"}, "cassandra_log_pattern: %msg -- %n has a --, which XML does not take in a"
                                               " comment, where the template writes it while cassandra_log_audit_file is"
                                               " false. Way out, one of:"
@@ -286,7 +286,7 @@ def test_said_when_the_default_moves_the_audit_events(live_audit, in_inventory, 
                                              " write it &lt;"),
     ({"cassandra_log_pattern": "%msg & %n"}, "cassandra_log_pattern: %msg & %n has an & that starts no XML entity"
                                              " (&amp; &lt; &gt; &quot; &apos; &#number;): write it &amp;"),
-    # (rc9 r3 audit) an entity logback's parser does not know; ]]> in a text
+    # an entity logback's parser does not know; ]]> in a text
     ({"cassandra_log_pattern": "%msg&nbsp;%n"}, "cassandra_log_pattern: %msg&nbsp;%n has an & that starts no XML"
                                                 " entity"),
     ({"cassandra_log_pattern": "%msg ]]> %n"}, "cassandra_log_pattern: %msg ]]> %n has a ]]>, which XML does not take"
@@ -327,20 +327,20 @@ def test_each_refusal_on_lines_of_its_own():
 
 
 def test_a_double_dash_is_yours_with_your_own_template():
-    # (rc9 r3 audit) the comment it would break is the role's template's: not refused with your own
+    # the comment it would break is the role's template's: not refused with your own
     assert refused(cassandra_log_pattern="%msg -- %n",
                    cassandra_config_template_overrides={"logback.xml": "/t/logback.xml.j2"}) == []
 
 
 def test_an_appender_named_with_spaces_around_its_equal_sign_is_known():
-    # (rc9 r3 audit) name = "Q"; a filename= after it is not its name
+    # name = "Q"; a filename= after it is not its name
     assert refused('  <appender name = "Q" class="x" filename="f"/>', cassandra_logback_root_extra_refs=["Q"]) == []
     wrong = refused('  <appender name="Q" class="x" filename="f"/>', cassandra_logback_root_extra_refs=["f"])
     assert len(wrong) == 1 and wrong[0].startswith("cassandra_logback_root_extra_refs: f is not an appender"), wrong
 
 
 def test_an_appender_named_in_single_quotes_is_known():
-    # (rc9 r2 audit) name='Q' as name="Q"
+    # name='Q' as name="Q"
     assert refused("  <appender name='Q' class='x'/>", cassandra_logback_root_extra_refs=["Q"]) == []
 
 

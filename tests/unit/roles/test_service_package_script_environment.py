@@ -49,7 +49,7 @@ def _list(when):
     ("package_script", True, {"JAVA_HOME": "/usr/lib/jvm/jre-17"}, True, False),
     ("package_script", True, {}, False, True),  # none set: the roles' drop-in removed, none written
     # the role's unit carries it itself: the roles' drop-in removed (left from package_script, it would override the
-    # unit's environment; pre-push audit, rc13)
+    # unit's environment)
     ("unit", True, {"JAVA_HOME": "/x"}, False, True),
     ("package_script", False, {"JAVA_HOME": "/x"}, False, False),  # the node's own unit kept: nothing
 ])
@@ -69,7 +69,7 @@ def test_the_drop_in_only_for_the_init_script_with_an_environment(start, manage,
 
 
 def test_the_drop_in_comes_after_the_nodes_own():
-    # (pre-push audit, rc13) systemd reads the drop-ins by their names' order, the last value of a variable wins:
+    # systemd reads the drop-ins by their names' order, the last value of a variable wins:
     # after the one systemctl edit writes (override.conf) and the numbered ones, so the inventory's values hold
     name = os.path.basename(load("vars", "main.yml")["_cassandra_service_environment_dropin"])
     assert name == "zz-ansible-environment.conf"
@@ -77,7 +77,7 @@ def test_the_drop_in_comes_after_the_nodes_own():
 
 
 def test_a_change_of_the_drop_in_restarts_as_one_of_the_unit():
-    # (pre-push audit, rc13) cassandra_service_restart_on_change: the drop-in written or removed too
+    # cassandra_service_restart_on_change: the drop-in written or removed too
     unit = dict((t.get("name"), t) for t in load("tasks", "unit.yml"))
     changed = unit["Note whether the unit or its environment changed"]["ansible.builtin.set_fact"]
     for registered in ("cassandra_service_unit", "cassandra_service_dropin", "cassandra_service_dropin_removed"):
@@ -99,7 +99,7 @@ def test_the_drop_in_sets_the_environment_only():
 
 
 def test_the_drop_in_quotes_each_value_as_systemd_reads_it():
-    # (pre-push audit, rc13) % starts a systemd specifier, \ and " end or escape the quoted value
+    # % starts a systemd specifier, \ and " end or escape the quoted value
     with open(os.path.join(ROLE, "templates", "cassandra-environment.conf.j2"), encoding="utf-8") as f:
         text = render(f.read(), cassandra_service_environment={"JVM_EXTRA_OPTS": '-Dx="a b" -Dp=50% -Dw=C:\\x'})
     assert 'Environment="JVM_EXTRA_OPTS=-Dx=\\"a b\\" -Dp=50%% -Dw=C:\\\\x"' in text.split("\n")
