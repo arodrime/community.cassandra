@@ -187,3 +187,20 @@ def test_a_limit_the_host_caps_plans_no_restart():
     assert cassandra_apply_config_unit(dict(running, limits=raised), wanted) == []
     # no cap read: as before
     assert len(cassandra_apply_config_unit(dict(running, ceiling=""), wanted)) == 1
+
+
+def test_the_unit_environment_is_the_one_the_jvm_runs_with():
+    # (a unit edited, systemctl daemon-reload, no restart: systemctl show has the new environment, the JVM the old)
+    running = {"user": "cassandra", "group": "cassandra", "limits": LIMITS, "environment": "JAVA_HOME=/opt/y",
+               "environ": "JAVA_HOME=/opt/x\0JVM_OPTS=-Xss256k -Dz=1\0PATH=/usr/bin\0"}
+    wanted = dict(WANTED, environment={"JAVA_HOME": "/opt/y"})
+    assert cassandra_apply_config_unit(running, wanted) == [
+        {"item": "unit Environment JAVA_HOME", "before": "/opt/x", "after": "/opt/y"}]
+    # added to the unit since the start: the JVM has none
+    assert cassandra_apply_config_unit(dict(running, environ="PATH=/usr/bin\0"), wanted) == [
+        {"item": "unit Environment JAVA_HOME", "before": "absent", "after": "/opt/y"}]
+    # the same (an import), and what bin/cassandra rewrites (JVM_OPTS) taken from the unit, not the JVM
+    same = dict(running, environment="JAVA_HOME=/opt/x JVM_OPTS=-Dz=1")
+    assert cassandra_apply_config_unit(same, dict(WANTED, environment={"JAVA_HOME": "/opt/x", "JVM_OPTS": "-Dz=1"})) == []
+    # the JVM's environment not read: the unit's, as loaded
+    assert cassandra_apply_config_unit(dict(running, environ=""), wanted) == []

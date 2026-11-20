@@ -160,6 +160,10 @@ def _proc_limits(text):
     return out
 
 
+# what bin/cassandra (and cassandra.in.sh) set or extend before the JVM starts: compared as the unit has them
+REWRITTEN = ("JVM_OPTS", "CLASSPATH", "CASSANDRA_CONF", "CASSANDRA_HOME")
+
+
 def _lower(value, cap):
     """The lower of a limit and the cap over it ('unlimited' above any number)."""
     if cap == "unlimited" or not isinstance(cap, int):
@@ -170,7 +174,8 @@ def _lower(value, cap):
 def cassandra_apply_config_unit(running, wanted):
     """What the running Cassandra got from its unit and what the role's unit gives at its next start -> [{item,
     before, after}] of what differs (empty: the unit changes nothing for it, whatever its file says).
-    running: {user, group, limits: /proc/<pid>/limits, environment: systemctl show -p Environment --value, ceiling:
+    running: {user, group, limits: /proc/<pid>/limits, environment: systemctl show -p Environment --value, environ:
+    /proc/<pid>/environ (NUL-separated: the values the JVM runs with, but REWRITTEN's), ceiling:
     /proc/1/limits in a container, the most its systemd may give (a limit above it compared at it)} (read on the
     node; none read: nothing compared); wanted: {user, group, limits: {nofile, nproc, memlock, as} (none: the
     unit sets none, the package's init script), environment: {name: value}}. The environment compared is the unit's
@@ -195,6 +200,14 @@ def cassandra_apply_config_unit(running, wanted):
                 changes.append({"item": "unit Limit%s" % key.upper(), "before": shown, "after": str(value) + cap})
     have = cassandra_unit_environment(running.get("environment") or "")
     want = dict((str(k), str(v)) for k, v in (wanted.get("environment") or {}).items())
+    if running.get("environ"):  # the JVM's own: a unit reloaded since its start (daemon-reload) is not what it runs
+        jvm = dict(e.split("=", 1) for e in str(running["environ"]).split("\0") if "=" in e)
+        for name in set(have) | set(want):
+            if name not in REWRITTEN:
+                if name in jvm:
+                    have[name] = jvm[name]
+                else:
+                    have.pop(name, None)
     for name in sorted(set(have) | set(want)):
         if have.get(name) != want.get(name):
             changes.append(dict({"item": "unit Environment %s" % name}, **_env_shown(name, have.get(name), want.get(name))))
