@@ -1018,21 +1018,30 @@ categories, each shown in the plan and under ``--check``. Every variable of the 
   Cassandra starts with, then checked after the restart, ``Java (restart)``; an inventory written by hand without
   ``cassandra_java_version`` gets the series' default Java, a move shown in the plan like any other: set it to the
   Java the nodes run to keep it), a newer release of the node's series (``cassandra_package_version``: the repository
-  and packages the plan shows applied live first, its package kept at the release installed (a Java move installed
-  too; a repository changed by the run is then looked in for the release, before the drain and the stop), then the
+  and packages the plan shows applied live first, its package kept at the release installed (a repository changed
+  by the run is written first at the node's turn and looked in for the release, before anything else is changed
+  there: a release it lacks stops the run, saying what was changed on the node before; a Java move installed
+  next), then the
   package updated with Cassandra stopped (none when that release is installed already), its config
   written again, the release it runs checked after, ``Cassandra package (restart)``; a failure there says the
   package manager's own error lines, starts Cassandra again when its package is unchanged and none of its files
-  changed (``rpm -V`` / ``dpkg --verify`` before and after, and no regular file written in the directories of its
-  files since the update started), else leaves it stopped; either way the one way out is
-  to fix it, then resume with ``-e cassandra_rolling_resume=true``, which starts a node left stopped first; a
-  package left half installed, two ``rpm -q cassandra`` lines or a ``half-configured`` dpkg state, is refused before
-  any change),
+  changed (``rpm -V`` / ``dpkg --verify`` before and after, and no new file, one not in its package's list, written
+  in the directories of its files since the update started), else leaves it stopped; either way the one way out is
+  to fix it, then resume with ``-e cassandra_rolling_resume=true``, which starts a node left stopped first (when a
+  node to restart comes before it in the inventory's order, the refusal says at once to resume on it alone first,
+  with ``--limit``, then to resume again without it)),
   and what the ``cassandra`` unit gives the running Cassandra (its user and group, its limits, its environment:
   ``cassandra unit (restart)``; the environment the running JVM has when the unit file or a drop-in is newer than
   it, a unit reloaded since its start, else the unit's, as the scripts give some names a value of their own, such as
   ``JMX_PORT``; in a container, a limit above what its systemd may give is compared at that cap).
-  Whatever the reasons, a node restarts once, all of them done in that restart. A unit file that differs only in
+  Whatever the reasons, a node restarts once, all of them done in that restart. A Cassandra package left half
+  done (two ``rpm -q cassandra`` lines, a dpkg state ``half-installed``, ``unpacked`` or ``half-configured``; a
+  trigger pending counts as installed) refuses every restart or start of that node before any change (``--check``
+  too, a node left stopped by an interrupted run included): it would start Cassandra on two releases' files, or on
+  a release with no plan. The refusal gives the way out of that state, its commands on lines of their own (Debian:
+  with a ``policy-rc.d`` that keeps the package's scripts from starting Cassandra, as ``cassandra_install`` does,
+  at the version dpkg has). ``rolling_restart`` and ``update_java`` refuse it the same way before their question;
+  ``upgrade`` gives that way out, never ``start_rack``, for a node nodetool fails on. A unit file that differs only in
   systemd's handling of the service (``Restart``, ``TimeoutStopSec``, the drain on stop) changes nothing for the
   running Cassandra: written at its next restart, said under the node.
 - **C, a procedure of its own**: the run stops before changing anything and gives the command (``--check`` stops

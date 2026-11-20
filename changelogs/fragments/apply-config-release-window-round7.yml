@@ -1,0 +1,38 @@
+bugfixes:
+  - >-
+    apply_config, rolling_restart, update_java - a Cassandra package left half done (``rpm -q cassandra`` of two
+    packages, a dpkg state ``half-installed``, ``unpacked`` or ``half-configured``) refuses every restart or start of
+    that node before any change (``--check`` too), not only a release update: a config restart or a start no longer
+    runs Cassandra on two releases' files, or on a new release with no plan; a node left stopped by an interrupted
+    apply_config is refused for its resume the same way. The way out gives the commands of that state on lines of
+    their own; on Debian with a ``policy-rc.d`` that keeps the package's scripts from starting Cassandra, as
+    cassandra_install does, the version dpkg has pinned and a held package allowed. A dpkg package with a trigger
+    pending counts as installed.
+  - >-
+    upgrade - a node nodetool fails on with a Cassandra package left half done gets the way out of that state, then
+    the phase again; never start_rack, which would start Cassandra on those files.
+  - >-
+    apply_config - a newer release with its repository changed by the same run: that repository is written first at
+    the node's turn and the release looked for in it before anything else is changed there (its Java, its config, the
+    package of a node not running). A release it lacks stops the run with one way out (fix it, then resume) and says
+    what the run changed on the node before (its repository file, its OS settings, its JMX password file). upgrade's
+    node says it was stopped for its upgrade and the phase to run again.
+  - >-
+    apply_config - a node not running (stopped on purpose, or to start) with a newer release and a Packages change
+    no longer has its packages applied at the release it had once its package is updated (cassandra_install refused
+    the version it then had, after the package update and the config write).
+  - >-
+    apply_config - the release window's look for files written since the update started takes only files not in the
+    package's own list (read before the update): those are told by ``rpm -V`` / ``dpkg --verify``. A Debian unpack
+    rolled back by dpkg (its old files moved back, their change time new) no longer leaves the node stopped.
+  - >-
+    apply_config - a node left stopped by an interrupted run that a resume reaches only after another node's restart:
+    the first refusal says at once to resume on it alone (``--limit``), then to resume again; a stopped run's node
+    row says what was observed of its config (not written, its write started, written), never "config write
+    started, not finished" for a config fully written; pgrep failing is said as not known, never "left stopped".
+  - >-
+    cassandra_repository - Debian: the apt cache is updated after a change of the repository's credentials or signing
+    key alone too (a release check then read a cache without the repository's packages).
+  - >-
+    cassandra_install - Debian: the hold of the pinned packages is compared where the plan of another release skips
+    the install (a repository the run writes), instead of being applied unshown by the release window.

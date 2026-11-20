@@ -203,17 +203,23 @@
       vars:
         cassandra_output: true  # a verdict: its msg as is (ops callback)
         _nl: "\n"
-        # the installed package of a node nodetool failed on (dpkg: installed, not only unpacked or removed)
-        _installed: >-
+        # the package of a node nodetool failed on (filter cassandra_package_state): installed (dpkg: not only
+        # unpacked or removed), or left half done (two rpm packages, a dpkg run interrupted)
+        _package: >-
           {%- set out = {} -%}
           {%- for h in ansible_play_hosts | map('extract', hostvars) | selectattr('cassandra_upgrade_installed.rc', 'defined')
-                if h.cassandra_upgrade_installed.rc == 0
-                   and (h.cassandra_upgrade_installed.stdout | trim).split(' ') | first == 'installed' -%}
-          {#- (rpm -q: a line per package; two after a transaction left half done: both said, neither the target) -#}
-          {%-   set _ = out.update({h.inventory_hostname: (h.cassandra_upgrade_installed.stdout | trim).splitlines()
-                                                          | map('split', ' ') | map('last') | join(', ')}) -%}
+                if h.cassandra_upgrade_installed.rc == 0 -%}
+          {%-   set _ = out.update({h.inventory_hostname: (h.cassandra_upgrade_installed.stdout | default('')).splitlines()
+                                                          | community.cassandra.cassandra_package_state}) -%}
           {%- endfor -%}
           {{ out }}
+        _installed: >-
+          {{ dict(_package | dict2items | selectattr('value.installed') | map(attribute='key')
+                  | zip(_package | dict2items | selectattr('value.installed') | map(attribute='value.installed'))) }}
+        # a package left half done: its way out first, never start_rack (it would start Cassandra on those files)
+        _unfinished: >-
+          {{ _failed | map(attribute='node') | select('in', _package | dict2items | selectattr('value.unfinished')
+                                                              | map(attribute='key') | list) | list }}
         _on_target: >-
           {%- set out = [] -%}
           {%- for f in _failed if f.node in _installed and hostvars[f.node].cassandra_package_version | default('') | length > 0
@@ -222,7 +228,7 @@
           {%-   set _ = out.append(f.node) -%}
           {%- endfor -%}
           {{ out }}
-        _others: "{{ _failed | map(attribute='node') | reject('in', _on_target) | list }}"
+        _others: "{{ _failed | map(attribute='node') | reject('in', _on_target + _unfinished) | list }}"
         # the target installed: its config written first (else its start fails on the former config)
         _steps: >-
           {{ (['on ' ~ _on_target | join(', ') ~ ' (the target installed): write its config, '
@@ -230,7 +236,14 @@
                ~ ', then start Cassandra there with start_rack (which checks the start first): '
                ~ _start_rack.on_target | join('; ')] if _on_target else [])
              + (['on ' ~ _others | join(', ') ~ ': start Cassandra there with start_rack (which checks the start first): '
-                 ~ _start_rack.others | join('; ')] if _others else []) }}
+                 ~ _start_rack.others | join('; ')] if _others else [])
+             + _ways_unfinished }}
+        _ways_unfinished: >-
+          {%- set out = [] -%}
+          {%- for n in _unfinished -%}
+          {%-   set _ = out.extend((_package[n].unfinished | community.cassandra.cassandra_package_unfinished(n)).way_out) -%}
+          {%- endfor -%}
+          {{ out }}
         # start_rack on these nodes alone, a command per rack (without --limit, it starts every stopped node of the
         # rack, one stopped on purpose too)
         _start_rack: >-
@@ -264,8 +277,10 @@
           {%- set w = _failed | map(attribute='node') | map('length') | max | default(0) -%}
           {%- set out = [] -%}
           {%- for f in _failed -%}
-          {%-   set _ = out.append('  ' ~ f.node.ljust(w) ~ '  package ' ~ _installed.get(f.node, 'not installed')
-                                   ~ '  ' ~ f.said) -%}
+          {%-   set p = _package.get(f.node, {}) -%}
+          {%-   set _ = out.append('  ' ~ f.node.ljust(w) ~ '  package ' ~ (p.installed | default('')
+                                   or (p.unfinished | default('') | community.cassandra.cassandra_package_unfinished).why
+                                   | default('not installed')) ~ '  ' ~ f.said) -%}
           {%- endfor -%}
           {{ out }}
       run_once: true

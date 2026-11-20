@@ -675,10 +675,24 @@ def test_a_down_node_with_the_target_package_is_pointed_to_apply_config():
                      _phase="rolling", _cassandra_run_command_args=run)
     assert render(check["vars"]["_on_target"], **variables) == ["n2"]
     # (audit) rpm -q of two headers (a transaction left half done): a line each, both said, not the target
-    assert render(check["vars"]["_installed"], **dict(variables, hostvars=dict(hostvars, n2=node(
-        "n2", 1, "installed 4.1.12\ninstalled 5.0.9\n"))))["n2"] == "4.1.12, 5.0.9"
-    assert render(check["vars"]["_on_target"], **dict(variables, hostvars=dict(hostvars, n2=node(
-        "n2", 1, "installed 4.1.12\ninstalled 5.0.9\n")))) == []
+    two = dict(variables, hostvars=dict(hostvars, n2=node("n2", 1, "installed 4.1.12\ninstalled 5.0.9\n")))
+    assert "n2" not in render(check["vars"]["_installed"], **two)
+    assert render(check["vars"]["_on_target"], **two) == []
+    # (audit r5) neither start_rack (it would start Cassandra on both packages' files): the package's way out first
+    said = render(check["ansible.builtin.assert"]["fail_msg"], **two).split("\n")
+    assert said[1] == ("  n2  package rpm -q cassandra lists 2 packages (4.1.12, 5.0.9): a transaction left half done,"
+                       " the files of both on disk  " + REFUSED)
+    assert "on n2," not in " ".join(x for x in said if "start_rack" in x)
+    assert said[-5:-2] == ["  on n2, remove the older package by hand (yum: package-cleanup --cleandupes), then check"
+                           " the files of the one left:", "      dnf remove --duplicates cassandra", "      rpm -V cassandra"]
+    assert said[-2] == "  then run this phase again (a node already upgraded is skipped):"
+    for state in ("half-configured 5.0.9", "unpacked 5.0.9", "half-installed 5.0.9"):
+        dpkg = dict(variables, hostvars=dict(hostvars, n2=node("n2", 1, state)))
+        said = render(check["ansible.builtin.assert"]["fail_msg"], **dpkg)
+        assert "--limit n2" not in said and "policy-rc.d" in said, state
+    # dpkg: a trigger pending is an install (the target: apply_config, then start_rack)
+    pending = dict(variables, hostvars=dict(hostvars, n2=node("n2", 1, "triggers-pending 5.0.9")))
+    assert render(check["vars"]["_on_target"], **pending) == ["n2"]
     assert task("Upgrade checks", "Read the installed Cassandra package where nodetool failed")[
         "ansible.builtin.command"]["argv"].count("installed %{VERSION}\\n") == 1
     assert render(check["ansible.builtin.assert"]["fail_msg"], **variables).split("\n") == [

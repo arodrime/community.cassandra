@@ -138,9 +138,20 @@ def test_a_node_left_stopped_by_an_interrupted_run_has_one_way_out_the_resume():
     hostvars["node7"] = marked
     t = task("Note whether restarts are refused while a node is not running")
     variables = dict(trust(t["vars"]), hostvars=hostvars, ansible_play_hosts=sorted(hostvars))
+    # (owner r6-Q1) node1 restarted before node7 in a resume too: the resume on node7 alone first, said at once
     assert render(t["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"], variables) == [
         "node7: Cassandra not running, and node1, node2 would be restarted, which needs every other node up.",
-        "node7: left stopped by an interrupted apply_config (in its restart window): see systemctl status cassandra /"
+        "node7: left stopped by an interrupted apply_config (in its restart window), reached by a resume only"
+        " after node1 (inventory order), whose restart needs every other node up: see systemctl status cassandra"
+        " / journalctl -u cassandra there, fix what stopped its start, then resume on it alone first (the same"
+        " command plus -e cassandra_rolling_resume=true --limit node7), then resume again without --limit."]
+    # before the first node to restart: the resume starts it first
+    first = dict(hostvars, node0=marked)
+    first.pop("node7")
+    assert render(t["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"],
+                  dict(variables, hostvars=first, ansible_play_hosts=sorted(first))) == [
+        "node0: Cassandra not running, and node1, node2 would be restarted, which needs every other node up.",
+        "node0: left stopped by an interrupted apply_config (in its restart window): see systemctl status cassandra /"
         " journalctl -u cassandra there, fix what stopped its start, then resume (the same command plus"
         " -e cassandra_rolling_resume=true), which starts it first."]
     # (audit) that resume, node7 still down (after a restart in the inventory's order): still the resume's way out,
@@ -151,7 +162,7 @@ def test_a_node_left_stopped_by_an_interrupted_run_has_one_way_out_the_resume():
                          dict(variables, hostvars=resumed, cassandra_rolling_resume=True))
         assert refused == [
             "node7: Cassandra not running, and node1, node2 would be restarted, which needs every other node up.",
-            "node7: left stopped by an interrupted apply_config (in its restart window), reached by this resume only"
+            "node7: left stopped by an interrupted apply_config (in its restart window), reached by a resume only"
             " after node1 (inventory order), whose restart needs every other node up: see systemctl status cassandra"
             " / journalctl -u cassandra there, fix what stopped its start, then resume on it alone first (the same"
             " command plus --limit node7), then resume again without --limit."], then

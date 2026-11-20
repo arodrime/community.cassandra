@@ -78,16 +78,16 @@
           {{ cassandra_version | community.cassandra.cassandra_apply_config_version(
                cassandra_package_version | default(''), _running, _settings, cassandra_allow_unknown_patch | default(false),
                _installed, _unfinished) }}
+        # (refused for a restart or a start: below, once the plan knows them)
+        cassandra_apply_config_unfinished: "{{ _unfinished }}"
       vars:
         _described: "{{ cassandra_preflight_describe.stdout | default('') | community.cassandra.cassandra_described_versions }}"
         # (one line per package: rpm lists two after a transaction left half done; dpkg its state, then its version)
-        _package: "{{ cassandra_apply_config_package.stdout_lines | default([]) | map('trim') | select | list }}"
-        _installed: "{{ _package[0].split(' ') | last if _package | length == 1 and _package[0].startswith('installed ') else '' }}"
+        _package: >-
+          {{ cassandra_apply_config_package.stdout_lines | default([]) | community.cassandra.cassandra_package_state }}
+        _installed: "{{ _package.installed }}"
         # a package left half installed or configured (an interrupted dpkg or rpm transaction): what was read
-        _unfinished: >-
-          {{ ((_package | join(', ')) if _package | length > 1
-              else _package[0] if _package and _package[0].split(' ') | first in ['half-installed', 'unpacked', 'half-configured']
-              else '') }}
+        _unfinished: "{{ _package.unfinished }}"
         _running: "{{ _described[_cassandra_preflight.ring_address | default('')] | default(_installed) }}"
         _settings:
           cassandra_jvm_options: >-
@@ -860,11 +860,16 @@
           {%- if _timesync | bool or (_then == 'start' and _stopped | bool and _clock.mark_timesync is defined) -%}
           {%-   set _ = os.append('wait up to 2m for clock sync') -%}
           {%- endif -%}
-          {#- (a release: the repository and packages too, its package kept at the release installed) -#}
-          {%- set write = (['install Java ' ~ cassandra_java_version] if _java | bool else [])
+          {#- (a release: the repository and packages too, its package kept at the release installed; the repository
+              first, the release looked for in it before any other change) -#}
+          {%- set repo_first = _release | bool and 'Repository' in _extras | map(attribute='section') -%}
+          {%- set write = (['apply the repository, look for Cassandra ' ~ cassandra_apply_config_version.wanted ~ ' in it']
+                           if repo_first else [])
+                          + (['install Java ' ~ cassandra_java_version] if _java | bool else [])
                           + (['write the config'] if (_files + _perms + _dirs + _jmx + _exporter + _header) | length > 0 else [])
                           + (['set up Medusa'] if _medusa else [])
-                          + (['apply the repository, packages, firewall'] if _extras else []) -%}
+                          + (['apply the packages, firewall'] if repo_first and _extras | rejectattr('section', 'equalto', 'Repository') | list
+                             else [] if repo_first else ['apply the repository, packages, firewall'] if _extras else []) -%}
           {%- if _then == 'restart' and window -%}
           {{ write + [('drain and stop' if drain else 'stop') ~ ' Cassandra'] + os | unique | list + ['start Cassandra'] }}
           {%- elif _then == 'restart' -%}
@@ -890,6 +895,34 @@
         - cassandra_apply_config_jvm_outside.stdout | default('') | length > 0
         - not ansible_check_mode
         - not _cassandra_apply_config_compare_only | default(false) | bool  # drift's compare: nothing changed, no stop
+
+    # A Cassandra package left half done (two rpm packages, a dpkg run interrupted): a node this run restarts or starts
+    # (a node left stopped by an interrupted run too: its resume starts it) would start Cassandra on those files (two
+    # releases' jars, or the new release's with no plan). Refused before any change, --check too, with the way out of
+    # that state
+    - name: Refuse to restart or start a node whose Cassandra package is left half done
+      ansible.builtin.fail:
+        msg: >-
+          {{ ('apply_config  ' ~ _cluster) | community.cassandra.cassandra_refused(_refusal) | join(_nl) }}
+      run_once: true
+      when:
+        - _refusal | length > 0
+        - not _cassandra_apply_config_compare_only | default(false) | bool  # drift's compare: nothing changed, no stop
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
+        _refusal: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts if hostvars[h].cassandra_apply_config_unfinished | default('') -%}
+          {%-   set v = hostvars[h] -%}
+          {%-   if v.cassandra_apply_config_then | default('') in ['restart', 'start']
+                   or v.cassandra_apply_config_marked | default(false) | bool -%}
+          {%-     set _ = out.append({'name': h, 'unfinished': v.cassandra_apply_config_unfinished,
+                                      'what': 'restart' if v.cassandra_apply_config_then == 'restart' else 'start'}) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out | community.cassandra.cassandra_package_unfinished_refusal }}
 
     # 5.0: a node not running that this run starts (its unit failed, or an interrupted run stopped it): the mode it
     # last ran against the one it starts with (back, two steps on, into NONE unread), before the plan (the compare
@@ -935,17 +968,19 @@
           {{ [] if not _down else
              [_down | join(', ') ~ ': Cassandra not running, and ' ~ _restart | join(', ') ~ ' would be restarted, which needs'
               ~ ' every other node up.']
-             + ([_marked | join(', ') ~ ': left stopped by an interrupted apply_config (in its restart window): see'
+             + ([_early | join(', ') ~ ': left stopped by an interrupted apply_config (in its restart window): see'
                  ~ ' systemctl status cassandra / journalctl -u cassandra there, fix what stopped its start, then resume'
                  ~ ' (the same command plus -e cassandra_rolling_resume=true), which starts '
-                 ~ ('them' if _marked | length > 1 else 'it') ~ ' first.']
-                if _marked and not cassandra_rolling_resume | default(false) | bool else [])
-             + ([_marked | join(', ') ~ ': left stopped by an interrupted apply_config (in its restart window), reached'
-                 ~ ' by this resume only after ' ~ _restart[0] ~ ' (inventory order), whose restart needs every'
+                 ~ ('them' if _early | length > 1 else 'it') ~ ' first.']
+                if _early else [])
+             + ([_late | join(', ') ~ ': left stopped by an interrupted apply_config (in its restart window), reached'
+                 ~ ' by a resume only after ' ~ _restart[0] ~ ' (inventory order), whose restart needs every'
                  ~ ' other node up: see systemctl status cassandra / journalctl -u cassandra there, fix what stopped its'
-                 ~ ' start, then resume on ' ~ ('them' if _marked | length > 1 else 'it') ~ ' alone first (the same'
-                 ~ ' command plus --limit ' ~ _marked | join(',') ~ '), then resume again without --limit.']
-                if _marked and cassandra_rolling_resume | default(false) | bool else [])
+                 ~ ' start, then resume on ' ~ ('them' if _late | length > 1 else 'it') ~ ' alone first (the same'
+                 ~ ' command plus ' ~ ('' if cassandra_rolling_resume | default(false) | bool
+                                      else '-e cassandra_rolling_resume=true ')
+                 ~ '--limit ' ~ _late | join(',') ~ '), then resume again without --limit.']
+                if _late else [])
              + (['stopped on purpose: apply the config there first (--limit ' ~ _limit | join(',') ~ '), then start '
                  ~ _them ~ ' with start_rack, which checks the start first:']
                 + _start_rack.limit | map('regex_replace', '^', '    ') | list if _limit else [])
@@ -988,6 +1023,12 @@
           {%-   set _ = out.append(h) -%}
           {%- endfor -%}
           {{ out }}
+        # (a resume starts them in the inventory's order: those after the first node to restart are reached only after
+        # its restart, refused while they are down: a resume on them alone first)
+        _late: >-
+          {{ _marked | select('in', ansible_play_hosts[ansible_play_hosts.index(_restart[0]) + 1:]) | list
+             if _restart else [] }}
+        _early: "{{ _marked | reject('in', _late) | list }}"
         # the nodes down whose unit failed with nothing to write: this run does not start them
         _failed: >-
           {%- set out = [] -%}

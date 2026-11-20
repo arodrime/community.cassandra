@@ -45,9 +45,13 @@
     name: cassandra
     state: stopped
 
-# (Cassandra stopped)
+# (Cassandra stopped; a release its repository lacks: the stop says so, its way out the one of the next run, which
+# finds this node down)
 - name: Install the target version
   ansible.builtin.include_tasks: package_update.yml
+  vars:
+    _cassandra_install_changed_before: [Cassandra stopped for its upgrade]
+    _cassandra_install_again: run this phase again (it says how to start this node first)
 
 - name: Write the target series' config
   ansible.builtin.include_role:

@@ -57,6 +57,13 @@ _SKIPPED = re.compile(r"^(?P<action>\w+) (?:skipped, |(?P<unfinished>not finishe
 STARTED = {"add": "bootstrap", "decommission": "decommission", "replace": "replacement", "update_java": "Java update",
            "upgradesstables": "SSTables upgrade", "apply_config": "config write"}
 
+# an action that notes how far it went itself (_cassandra_op_stage): what each stage observed. apply_config
+# (action_apply_config.yml, apply_config_window.yml): its config not written yet, its write started, its config written
+OWN_STAGES = {"apply_config": {"during": "config not written", "writing": "config write started, not finished",
+                               "written": "config written"}}
+# the stages of a node touched by its action (a resume does it again)
+TOUCHED = ("during", "writing", "written", "after", "unconfirmed")
+
 
 def _failed_row(action, stage, reason, check=False):
     """What a failed node's row says was done to it (stage: node_operation's _cassandra_op_stage), its reason after;
@@ -66,6 +73,8 @@ def _failed_row(action, stage, reason, check=False):
     reason = reason or "a check after it failed"
     if check and stage:
         return "nothing changed (--check); %s" % reason
+    if action in OWN_STAGES and stage in OWN_STAGES[action]:
+        return "%s; %s" % (OWN_STAGES[action][stage], reason)
     if stage == "before":
         return "not touched; %s" % reason
     if stage == "during":
@@ -95,7 +104,7 @@ def outcome(node, result, stage="", check=False):
     if m:
         return ({"node": node, "status": "failed", "reason": m.group("reason").strip(),
                  "row": _failed_row(m.group("action"), stage, m.group("reason").strip(), check),
-                 "touched": not check and stage in ("during", "after", "unconfirmed"),
+                 "touched": not check and stage in TOUCHED,
                  "seconds": int(m.group("seconds")) if m.group("seconds") else None}, m.group("action"))
     m = _REFUSED.match(text)
     if m:

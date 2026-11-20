@@ -634,7 +634,7 @@ def test_a_refusal_for_a_node_down_names_the_opt_outs_for_a_disk_restart():
         "n1": {"cassandra_apply_config_todo": True, "cassandra_apply_config_then": "restart",
                "cassandra_apply_config_disks_window": [TUNED]},
         "n2": {"cassandra_apply_config_todo": False, "cassandra_apply_config_then": "write"}}}
-    for name in ("_restart", "_down", "_marked", "_failed", "_limit", "_them", "_start_rack"):
+    for name in ("_restart", "_down", "_marked", "_late", "_early", "_failed", "_limit", "_them", "_start_rack"):
         variables[name] = render(task["vars"][name], variables)
     refused = render(task["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"], variables)
     assert refused[-3:] == ["a restart for the tuned profile or the LVM read-ahead can be left for later:",

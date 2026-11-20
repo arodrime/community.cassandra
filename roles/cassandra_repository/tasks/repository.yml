@@ -340,10 +340,17 @@
     - ansible_facts['os_family'] == "Debian"
     - _cassandra_repository_python_debian.rc | default(0) == 0
 
+# (its credentials or its signing key changed alone too: the cache read before them may lack the repository's
+# packages, which a release check of the same run reads)
 - name: Update the apt cache (Debian & Ubuntu)
   ansible.builtin.apt:
     update_cache: true
   retries: 3
   when:
     - ansible_facts['os_family'] == "Debian"
-    - _cassandra_repository_apt is changed or _cassandra_repository_old is changed
+    - >-
+      _cassandra_repository_apt is changed or _cassandra_repository_old is changed
+      or _cassandra_repository_credentials | default({}) is changed
+      or _cassandra_repository_credentials_removed | default({}) is changed
+      or _cassandra_repository_key_shipped | default({}) is changed
+      or _cassandra_repository_key_downloaded | default({}) is changed

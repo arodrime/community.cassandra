@@ -1,0 +1,36 @@
+---
+# A Cassandra package left half done (two rpm packages, a dpkg run interrupted) on a node the run restarts (or starts:
+# the node a resumed run finds stopped): its start would run Cassandra on those files (two releases' jars, or a new
+# release with no plan). Refused before any change, --check too, with the way out of that state (the filter
+# cassandra_package_unfinished_refusal). rolling_restart, update_java (apply_config reads it with its version).
+# _cassandra_package_unfinished_hosts: the nodes the run restarts; _cassandra_package_unfinished_run: its playbook.
+- name: Read the installed Cassandra package
+  ansible.builtin.command:
+    argv: >-
+      {{ ['dpkg-query', '-W', '-f=${db:Status-Status} ${Version}', 'cassandra'] if ansible_facts['os_family'] == 'Debian'
+         else ['rpm', '-q', '--qf', 'installed %{VERSION}\n', 'cassandra'] }}
+  register: cassandra_package_read
+  changed_when: false
+  failed_when: false  # none: nothing to judge
+  check_mode: false  # reads only
+  when: inventory_hostname in _cassandra_package_unfinished_hosts
+
+- name: Refuse to restart a node whose Cassandra package is left half done
+  ansible.builtin.fail:
+    msg: >-
+      {{ (_cassandra_package_unfinished_run ~ '  ' ~ _cluster) | community.cassandra.cassandra_refused(_refusal)
+         | join(_nl) }}
+  run_once: true
+  when: _refusal | length > 0
+  vars:
+    cassandra_output: true  # a verdict: its msg as is (ops callback)
+    _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+    _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
+    _refusal: >-
+      {%- set out = [] -%}
+      {%- for h in ansible_play_hosts if h in _cassandra_package_unfinished_hosts -%}
+      {%-   set state = hostvars[h].cassandra_package_read.stdout_lines | default([])
+                        | community.cassandra.cassandra_package_state -%}
+      {%-   set _ = out.append({'name': h, 'unfinished': state.unfinished, 'what': 'restart'}) -%}
+      {%- endfor -%}
+      {{ out | community.cassandra.cassandra_package_unfinished_refusal }}

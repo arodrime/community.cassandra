@@ -44,14 +44,19 @@
       != cassandra_package_version
 
 # one fact per line: what the package manager said (a repository it could not read named as such), what this run
-# changed, the way out
+# changed, the way out. A caller whose run goes on from the node (_cassandra_install_again: "resume", apply_config's
+# node turn; "start Cassandra ..., then run ...", upgrade's node, stopped) gets its way out as the stop block takes
+# it (WAY OUT, then that end: one way out), with what it changed on the node before (_cassandra_install_changed_before)
 - name: Stop when the release is not in the repository
   ansible.builtin.fail:
     # (nothing changed, the caller's head given, its plan: the REFUSED block of a stop before any change)
     msg: >-
-      {{ (_cassandra_install_refused_head | community.cassandra.cassandra_refused([_said, _way_out]) | join(_nl))
+      {{ (_cassandra_install_refused_head | community.cassandra.cassandra_refused([_said, 'Way out: ' ~ _fix ~ ', then run again.'])
+          | join(_nl))
          if _cassandra_install_refused_head | default('') | trim and not _written | bool
-         else [_said, _changed, _way_out] | join(_nl) }}
+         else ([_said, _changed] + _before + ['WAY OUT  ' ~ _fix ~ ', then ' ~ _cassandra_install_again]) | join(_nl)
+         if _cassandra_install_again | default('') | trim
+         else [_said, _changed, 'Way out: ' ~ _fix ~ ', then run again.'] | join(_nl) }}
   vars:
     _written: "{{ not _cassandra_install_check and _cassandra_repository_items | default([]) | length > 0 }}"
     cassandra_output: true  # a verdict: its msg as is (ops callback)
@@ -64,16 +69,18 @@
       ' (it could not read a repository)' if _unread | bool else '' }}: {{ _lines | join('; ') or 'nothing listed' }}.
     _changed: >-
       Its Cassandra package was not changed{{ '; its repository file was written by this run' if _written | bool else '' }}.
-    # (this run changed the node before, its repository written: the run's own stop block then says the resume)
-    _again: "{{ '.' if _written | bool else ', then run again.' }}"
+    # (what the caller changed on it before: each on a line)
+    _before: >-
+      {{ ['Changed on it by this run before: ' ~ _cassandra_install_changed_before | join(', ') ~ '.']
+         if _cassandra_install_changed_before | default([]) else [] }}
     _excluded: "{{ cassandra_install_release.stdout | default('') is search('excluded on this node') }}"
-    _way_out: >-
-      {{ 'Way out: make that repository answer on the node' ~ _again if _unread | bool else
-         'Way out: lift the exclusion of cassandra on the node (excludepkgs in dnf.conf or the repository file, or'
-         ~ ' dnf versionlock delete cassandra)' ~ _again if _excluded | bool else
-         'Way out: set cassandra_package_version to a release it lists (' ~ ('apt-cache madison cassandra'
+    _fix: >-
+      {{ 'make that repository answer on the node' if _unread | bool else
+         'lift the exclusion of cassandra on the node (excludepkgs in dnf.conf or the repository file, or'
+         ~ ' dnf versionlock delete cassandra)' if _excluded | bool else
+         'set cassandra_package_version to a release it lists (' ~ ('apt-cache madison cassandra'
          if ansible_facts['os_family'] == 'Debian' else 'dnf --showduplicates list cassandra') ~ ' there), or add that'
-         ~ ' release to the repository' ~ _again }}
+         ~ ' release to the repository' }}
   when:
     - cassandra_install_release is not skipped
     - cassandra_install_release.rc | default(0) != 0

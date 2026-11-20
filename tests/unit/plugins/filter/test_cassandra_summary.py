@@ -345,3 +345,19 @@ def test_a_resumed_node_s_partial_time_is_never_compared():
     results = [{"node": "n1", "result": "restart done (resumed) in 90s"}, {"node": "n2", "result": "restart done in 36s"},
                {"node": "n3", "result": "restart done in 37s"}]
     assert not [line for line in cassandra_op_recap(results, cluster="c", operation="rolling_restart") if "slow" in line]
+
+
+def test_an_apply_config_row_says_only_what_was_observed_of_its_config():
+    # (owner r6-Q3) "config write started, not finished" was said when the config was fully written (a restart that
+    # failed after), or not written at all (a release check before it): the stage of the write as noted
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_summary import _failed_row, outcome
+    assert _failed_row("apply_config", "during", "release check failed") == "config not written; release check failed"
+    assert _failed_row("apply_config", "writing", "config write failed") == (
+        "config write started, not finished; config write failed")
+    assert _failed_row("apply_config", "written", "start failed") == "config written; start failed"
+    assert _failed_row("apply_config", "written", "x", check=True) == "nothing changed (--check); x"
+    assert _failed_row("update_java", "during", "x") == "Java update started, not finished; x"
+    # a resume does it again
+    for stage in ("during", "writing", "written"):
+        assert outcome("n1", "apply_config FAILED after 3s: x", stage)[0]["touched"] is True
+    assert outcome("n1", "apply_config FAILED after 3s: x", "before")[0]["touched"] is False

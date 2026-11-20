@@ -9,7 +9,8 @@ import pytest
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config_checks import (
     cassandra_apply_config_ring, cassandra_apply_config_stops, cassandra_apply_config_token, cassandra_apply_config_unit,
-    cassandra_apply_config_version, cassandra_described_versions)
+    cassandra_apply_config_version, cassandra_described_versions, cassandra_package_state, cassandra_package_unfinished,
+    cassandra_package_unfinished_refusal)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_patch_notes as notes
 
 COMMANDS = {"upgrade": "ansible-playbook community.cassandra.upgrade -e cassandra_upgrade_phase=preflight",
@@ -76,17 +77,65 @@ def test_a_package_left_half_done_stops_a_release_before_any_change():
     unpacking = cassandra_apply_config_version("41x", "4.1.12", "4.1.11", unfinished="half-installed 4.1.12")
     lines = cassandra_apply_config_stops([{"name": "n1", "version": two}, {"name": "n2", "version": deb},
                                           {"name": "n3", "version": unpacking}], commands=COMMANDS)
-    # (each node its own reason, not its group's: the same change on all; each its own way out)
+    # (each node its own reason, not its group's: the same change on all; each its own way out, its commands on
+    # lines of their own; Debian: the package's scripts kept from restarting Cassandra, the version dpkg has pinned,
+    # a held package allowed)
     assert lines == [
-        "n2: its Cassandra package is half-configured 4.1.12 (dpkg), not fully installed: finish it by hand first"
-        " (dpkg --configure -a) (now 4.1.11).",
-        "n3: its Cassandra package is half-installed 4.1.12 (dpkg), not fully installed: reinstall it by hand first"
-        " (apt-get install --reinstall cassandra) (now 4.1.11).",
-        "n1: rpm -q cassandra lists 2 packages: 4.1.11, 4.1.12, a transaction left half done: remove the one not"
-        " wanted by hand first (dnf remove --duplicates cassandra) (now 4.1.11).", "then run apply_config again."]
-    # no release to install: nothing refused for it
+        "n1: rpm -q cassandra lists 2 packages (4.1.11, 4.1.12): a transaction left half done, the files of both on"
+        " disk; its update would start from it (now 4.1.11).",
+        "n2: its Cassandra package is half-configured 4.1.12 (dpkg): its configuration was not finished; its update"
+        " would start from it (now 4.1.11).",
+        "n3: its Cassandra package is half-installed 4.1.12 (dpkg): its unpack was interrupted; its update would start"
+        " from it (now 4.1.11).",
+        "on n1, remove the older package by hand (yum: package-cleanup --cleandupes), then check the files of the one"
+        " left:", "    dnf remove --duplicates cassandra", "    rpm -V cassandra",
+        "on n2, finish it by hand, a policy-rc.d keeping its scripts from starting Cassandra (as cassandra_install"
+        " does; one there already: keep it, leave out the first two commands and the last):",
+        "    printf '#!/bin/sh\\nexit 101\\n' > /usr/sbin/policy-rc.d", "    chmod 755 /usr/sbin/policy-rc.d",
+        "    dpkg --configure -a", "    rm /usr/sbin/policy-rc.d",
+        "on n3, reinstall it by hand, a policy-rc.d keeping its scripts from starting Cassandra (as cassandra_install"
+        " does; one there already: keep it, leave out the first two commands and the last):",
+        "    printf '#!/bin/sh\\nexit 101\\n' > /usr/sbin/policy-rc.d", "    chmod 755 /usr/sbin/policy-rc.d",
+        "    apt-get install --reinstall --allow-change-held-packages cassandra=4.1.12", "    rm /usr/sbin/policy-rc.d",
+        "then run apply_config again."]
+    # no release to install: nothing refused for it here (the restart's own refusal: cassandra_package_unfinished_refusal)
     assert cassandra_apply_config_version("41x", "4.1.11", "4.1.11", unfinished="half-configured 4.1.11") == {}
-    assert cassandra_apply_config_version("41x", "4.1.12", "4.1.11", unfinished="")["refused"] == []
+    assert "unfinished" not in cassandra_apply_config_version("41x", "4.1.12", "4.1.11", unfinished="")
+
+
+@pytest.mark.parametrize("lines, state", [
+    (["installed 5.0.8"], {"installed": "5.0.8", "unfinished": ""}),
+    (["installed 5.0.8", "installed 5.0.9"], {"installed": "", "unfinished": "installed 5.0.8, installed 5.0.9"}),
+    (["half-configured 5.0.9"], {"installed": "", "unfinished": "half-configured 5.0.9"}),
+    (["unpacked 5.0.9"], {"installed": "", "unfinished": "unpacked 5.0.9"}),
+    (["half-installed 5.0.9"], {"installed": "", "unfinished": "half-installed 5.0.9"}),
+    # (audit r5) dpkg: a trigger pending is an install (its files in place, configured)
+    (["triggers-pending 5.0.8"], {"installed": "5.0.8", "unfinished": ""}),
+    (["triggers-awaited 5.0.8"], {"installed": "5.0.8", "unfinished": ""}),
+    (["config-files 5.0.8"], {"installed": "", "unfinished": ""}),  # removed, its config left
+    (["package cassandra is not installed"], {"installed": "", "unfinished": ""}),
+    ([], {"installed": "", "unfinished": ""}),
+])
+def test_the_package_state_read(lines, state):
+    assert cassandra_package_state(lines) == state
+
+
+def test_a_package_left_half_done_refuses_every_restart_and_start():
+    # (audit r5) not a release only: a config restart or a start runs Cassandra on two packages' jars, or on the new
+    # release's files with no plan (a silent upgrade)
+    nodes = [{"name": "n1", "unfinished": "installed 5.0.8, installed 5.0.9", "what": "restart"},
+             {"name": "n2", "unfinished": "", "what": "restart"},
+             {"name": "n3", "unfinished": "unpacked 5.0.9", "what": "start"}]
+    lines = cassandra_package_unfinished_refusal(nodes)
+    assert lines[:2] == [
+        "n1: rpm -q cassandra lists 2 packages (5.0.8, 5.0.9): a transaction left half done, the files of both on disk;"
+        " its restart would run Cassandra from that state.",
+        "n3: its Cassandra package is unpacked 5.0.9 (dpkg): its configuration was not finished; its start would run"
+        " Cassandra from that state."]
+    assert lines[2].startswith("on n1, ") and "    dpkg --configure -a" in lines
+    assert lines[-1] == "then run the same command again."
+    assert cassandra_package_unfinished_refusal([nodes[1]]) == []
+    assert cassandra_package_unfinished("") == {}
 
 
 @pytest.mark.parametrize("options, refused", [

@@ -13,6 +13,9 @@ cassandra_apply_config_unit: what the running Cassandra got from its unit and wh
     differences (a restart for them).
 cassandra_apply_config_stops: the nodes' stops -> the lines of the refusal (why, then the commands).
 cassandra_described_versions: nodetool describecluster's output -> {address: version}.
+cassandra_package_state: the read of a node's Cassandra package -> the version installed, or the package left half done.
+cassandra_package_unfinished, cassandra_package_unfinished_refusal: a package left half done -> why, its way out; the
+    refusal of the nodes a run restarts or starts with one (apply_config, rolling_restart, update_java, upgrade).
 """
 
 from __future__ import absolute_import, division, print_function
@@ -48,8 +51,8 @@ def cassandra_apply_config_version(series, package_version, running, settings=No
     the release kept until its restart window, which has nothing to install when it is the wanted one); a package
     newer than the wanted release (updated by other means since Cassandra started) is refused, before any change.
     unfinished: what was read of a package left half done ("" none): rpm -q's lines of two packages ("installed 5.0.8,
-    installed 5.0.9"), or dpkg's state and version ("half-configured 5.0.9"); a release is refused then, before any
-    change (its update would start from a package state nobody chose)."""
+    installed 5.0.9"), or dpkg's state and version ("half-configured 5.0.9"): a release has it (unfinished), refused
+    before any change (its update would start from a package state nobody chose)."""
     now = patch_notes.numbers(running, partial=True)
     if not now:
         return {}
@@ -79,25 +82,79 @@ def cassandra_apply_config_version(series, package_version, running, settings=No
                    unknown=not patch_notes.known(series, shown) and not boolean(allow_unknown, strict=False),
                    notes=patch_notes.notes(series, running, shown),
                    installed="%d.%d.%d" % on_disk if on_disk else out["running"])
-        if unfinished:
-            parts = str(unfinished).split(", ")
-            if len(parts) > 1:  # (rpm -q: "installed X" per package)
-                why = ("rpm -q cassandra lists %d packages: %s, a transaction left half done: remove the one not"
-                       " wanted by hand first (dnf remove --duplicates cassandra)"
-                       % (len(parts), ", ".join(x.split(" ")[-1] for x in parts)))
-            elif parts[0].startswith("half-installed"):  # (dpkg: an unpack interrupted)
-                why = ("its Cassandra package is %s (dpkg), not fully installed: reinstall it by hand first"
-                       " (apt-get install --reinstall cassandra)" % parts[0])
-            else:
-                why = ("its Cassandra package is %s (dpkg), not fully installed: finish it by hand first"
-                       " (dpkg --configure -a)" % parts[0])
-            out["refused"] = out["refused"] + [why]
+        if unfinished:  # (refused: said with its way out, cassandra_package_unfinished)
+            out["unfinished"] = str(unfinished)
         if on_disk and on_disk > want:
             out["refused"] = out["refused"] + [
                 "its package is Cassandra %s, newer than the inventory's %s: this run does not go back to an older"
                 " package. Set cassandra_package_version to %s (its restart then runs it),"
                 " or install %s by hand" % (out["installed"], shown, out["installed"], shown)]
     return out
+
+
+# dpkg's states of a package whose files are in place and configured (a trigger owed to another package aside): a
+# usable install; those of a dpkg run interrupted (unpacked, or configured in part): left half done
+_DPKG_USABLE = ("installed", "triggers-pending", "triggers-awaited")
+_DPKG_UNFINISHED = ("half-installed", "unpacked", "half-configured")
+# what cassandra_install writes around a dpkg run: the package's scripts do not start or restart Cassandra
+POLICY_RC_D = ["printf '#!/bin/sh\\nexit 101\\n' > /usr/sbin/policy-rc.d", "chmod 755 /usr/sbin/policy-rc.d"]
+
+
+def cassandra_package_state(lines):
+    """The read of a node's Cassandra package, a line per package (rpm -q --qf 'installed %{VERSION}\\n' cassandra:
+    "installed 5.0.8"; dpkg-query -f '${db:Status-Status} ${Version}' cassandra: "half-configured 5.0.9") ->
+    {installed: its version ('' none, or not fully installed), unfinished: what was read of a package left half done
+    (two rpm packages: "installed 5.0.8, installed 5.0.9"; "half-configured 5.0.9"), else ''}. A dpkg package with a
+    trigger pending (triggers-pending, triggers-awaited) is installed."""
+    lines = [str(x).strip() for x in lines or [] if str(x).strip()]
+    if len(lines) > 1:
+        return {"installed": "", "unfinished": ", ".join(lines)}
+    words = lines[0].split() if lines else []
+    if len(words) == 2 and words[0] in _DPKG_USABLE:
+        return {"installed": words[1], "unfinished": ""}
+    if len(words) == 2 and words[0] in _DPKG_UNFINISHED:
+        return {"installed": "", "unfinished": lines[0]}
+    return {"installed": "", "unfinished": ""}
+
+
+def cassandra_package_unfinished(unfinished, node=""):
+    """A package left half done (cassandra_package_state's unfinished; '' none) on node -> {why: what was read, way_out:
+    [what to do on node, then each command on a line of its own (4 spaces in)]}, {} for none. The Debian package's
+    scripts start or restart Cassandra: the commands keep them from it, as cassandra_install does (policy-rc.d); a
+    held package is reinstalled all the same, at the version dpkg has."""
+    parts = [p for p in str(unfinished or "").split(", ") if p]
+    if not parts:
+        return {}
+    on = "on %s, " % node if node else ""
+    if len(parts) > 1:  # (rpm -q: "installed X" per package)
+        return {"why": "rpm -q cassandra lists %d packages (%s): a transaction left half done, the files of both on disk"
+                       % (len(parts), ", ".join(x.split(" ")[-1] for x in parts)),
+                "way_out": [on + "remove the older package by hand (yum: package-cleanup --cleandupes), then check the"
+                            " files of the one left:", "    dnf remove --duplicates cassandra", "    rpm -V cassandra"]}
+    state, version = (parts[0].split(" ", 1) + [""])[:2]
+    guard = ", a policy-rc.d keeping its scripts from starting Cassandra (as cassandra_install does; one there already:" \
+            " keep it, leave out the first two commands and the last):"
+    if state == "half-installed":  # (dpkg: an unpack interrupted)
+        why, do, command = "its unpack was interrupted", "reinstall it by hand", \
+            "apt-get install --reinstall --allow-change-held-packages cassandra=%s" % version
+    else:
+        why, do, command = "its configuration was not finished", "finish it by hand", "dpkg --configure -a"
+    return {"why": "its Cassandra package is %s (dpkg): %s" % (parts[0], why),
+            "way_out": [on + do + guard] + ["    " + x for x in POLICY_RC_D + [command, "rm /usr/sbin/policy-rc.d"]]}
+
+
+def cassandra_package_unfinished_refusal(nodes):
+    """nodes: [{name, unfinished: cassandra_package_state's, what: what the run does to it (restart, start)}] -> the
+    lines of the refusal before any change (each node's fact, then each one's way out, then the run again: the same
+    command, a resume's too), [] when no package is left half done."""
+    lines, ways = [], []
+    for n in nodes or []:
+        found = cassandra_package_unfinished(n.get("unfinished"), n.get("name", ""))
+        if found:
+            lines.append("%s: %s; its %s would run Cassandra from that state."
+                         % (n.get("name", ""), found["why"], n.get("what") or "restart"))
+            ways += found["way_out"]
+    return lines + ways + ["then run the same command again."] if lines else []
 
 
 def cassandra_described_versions(text):
@@ -285,6 +342,7 @@ def cassandra_apply_config_stops(nodes, ring=None, commands=None):
         if v.get("kind"):
             by_change.setdefault((v["kind"], v.get("running"), v.get("wanted")), []).append(n)
     upgrade = unknown = False
+    package_ways = []
     for (kind, running, wanted), group in sorted(by_change.items(), key=lambda x: x[0]):
         names = ", ".join(str(n["name"]) for n in group)
         v = group[0]["version"]
@@ -305,6 +363,11 @@ def cassandra_apply_config_stops(nodes, ring=None, commands=None):
                 # (the nodes that have it: a node's own package state is not its group's)
                 who = ", ".join(str(n["name"]) for n in group if why in (n["version"].get("refused") or []))
                 lines.append("%s: %s (now %s)." % (who, why, running))
+            for n in group:  # (a node's own package state, its own way out)
+                found = cassandra_package_unfinished(n["version"].get("unfinished"), str(n["name"]))
+                if found:
+                    lines.append("%s: %s; its update would start from it (now %s)." % (n["name"], found["why"], running))
+                    package_ways += found["way_out"]
             if v.get("unknown"):
                 lines.append("%s: Cassandra %s is newer than the releases the collection's notes cover (up to %s): read"
                              " its NEWS.txt (what it refuses to start with, the defaults it changes)."
@@ -322,7 +385,7 @@ def cassandra_apply_config_stops(nodes, ring=None, commands=None):
             lines.append("%s: %s." % (n["name"], n["token"]))
     if not lines:
         return []
-    ways = []
+    ways = list(package_ways)
     if upgrade and commands.get("upgrade"):
         ways += ["the upgrade, its first phase (it changes nothing):", "    " + commands["upgrade"]]
     if unknown:
@@ -342,4 +405,7 @@ class FilterModule(object):
             "cassandra_apply_config_token": cassandra_apply_config_token,
             "cassandra_apply_config_unit": cassandra_apply_config_unit,
             "cassandra_apply_config_stops": cassandra_apply_config_stops,
+            "cassandra_package_state": cassandra_package_state,
+            "cassandra_package_unfinished": cassandra_package_unfinished,
+            "cassandra_package_unfinished_refusal": cassandra_package_unfinished_refusal,
         }

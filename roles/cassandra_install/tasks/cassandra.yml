@@ -228,16 +228,6 @@
         - cassandra_install_method in ['repository', 'system']
         - _cassandra_install_upgrade | default(false) and ansible_facts['os_family'] == 'Debian'
 
-    - name: Hold the pinned packages (Debian)
-      ansible.builtin.dpkg_selections:
-        name: "{{ item }}"
-        selection: hold
-      loop: "{{ _cassandra_packages }}"
-      when:
-        - ansible_facts['os_family'] == 'Debian'
-        - cassandra_package_version != ""
-        - cassandra_package_hold | bool
-        - not _cassandra_install_check or item in _cassandra_install_before  # not installed under --check
   always:
     - name: Remove the temporary policy-rc.d (Debian)
       ansible.builtin.file:
@@ -247,6 +237,19 @@
         - ansible_facts['os_family'] == 'Debian'
         - cassandra_policy_rc_d.rc != 1
       changed_when: false
+
+# (after the install: a package of another release a plan compares (the install skipped there) shows its hold too)
+- name: Hold the pinned packages (Debian)
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop: "{{ _cassandra_packages }}"
+  when:
+    - not cassandra_offline | bool
+    - ansible_facts['os_family'] == 'Debian'
+    - cassandra_package_version != ""
+    - cassandra_package_hold | bool
+    - not _cassandra_install_check or item in _cassandra_install_before  # not installed under --check
 
 # jemalloc is preloaded by the cassandra script when found; RedHat-likes
 # only have it in EPEL (or Amazon's base repos), so it is optional there.
