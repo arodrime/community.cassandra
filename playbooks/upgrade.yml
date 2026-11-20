@@ -179,7 +179,7 @@
       ansible.builtin.command:
         argv: >-
           {{ ['dpkg-query', '-W', '-f=${db:Status-Status} ${Version}', 'cassandra'] if ansible_facts['os_family'] == 'Debian'
-             else ['rpm', '-q', '--qf', 'installed %{VERSION}', 'cassandra'] }}
+             else ['rpm', '-q', '--qf', 'installed %{VERSION}\n', 'cassandra'] }}
       register: cassandra_upgrade_installed
       changed_when: false
       failed_when: false
@@ -209,7 +209,9 @@
           {%- for h in ansible_play_hosts | map('extract', hostvars) | selectattr('cassandra_upgrade_installed.rc', 'defined')
                 if h.cassandra_upgrade_installed.rc == 0
                    and (h.cassandra_upgrade_installed.stdout | trim).split(' ') | first == 'installed' -%}
-          {%-   set _ = out.update({h.inventory_hostname: (h.cassandra_upgrade_installed.stdout | trim).split(' ') | last}) -%}
+          {#- (rpm -q: a line per package; two after a transaction left half done: both said, neither the target) -#}
+          {%-   set _ = out.update({h.inventory_hostname: (h.cassandra_upgrade_installed.stdout | trim).splitlines()
+                                                          | map('split', ' ') | map('last') | join(', ')}) -%}
           {%- endfor -%}
           {{ out }}
         _on_target: >-

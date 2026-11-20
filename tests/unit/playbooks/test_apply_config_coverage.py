@@ -366,6 +366,8 @@ def test_a_release_with_its_repository_changed_is_looked_for_before_the_stop():
         variables, cassandra_install_release={"rc": 1, "stdout_lines": ["Error: No matching Packages to list"]}))).split("\n")
     assert said[:2] == ["n1: dnf did not list Cassandra 4.1.12: Error: No matching Packages to list.",
                         "Its Cassandra package was not changed; its repository file was written by this run."]
+    # (e2e: "then run again" there, the stop block's WAY OUT a resume) its way out without its own "run again"
+    assert said[2].endswith("or add that release to the repository.")
 
 
 def test_a_failed_release_window_starts_back_or_leaves_the_mark_and_the_way_out():
@@ -406,6 +408,7 @@ def test_a_failed_release_window_starts_back_or_leaves_the_mark_and_the_way_out(
         "Update the Cassandra package", "Note that the config is being written", "Write the config again",
         "Forget the mark of the update"]
     assert block[-1]["ansible.builtin.file"] == {"path": "/run/cassandra-apply-config.update", "state": "absent"}
+    assert block[-1]["when"] == "not ansible_check_mode"  # (none written under --check: no change shown on /run)
     assert block[1]["ansible.builtin.set_fact"]["_cassandra_window_config"] is False
     assert block[3]["ansible.builtin.set_fact"]["_cassandra_window_config"] is True
     failure = {"msg": "no repo at https://zorglub:s3cr3t@10.0.0.9/el9", "stderr": "", "rc": 1, "attempts": 3}
@@ -512,8 +515,9 @@ def test_the_release_window_under_check_writes_no_mark_and_claims_no_stop():
                      _cassandra_window_failure={},
                      cassandra_window_packages={"ansible_facts": {"packages": {"cassandra": [{"version": "4.1.11"}]}}})
     said = render(stop["ansible.builtin.fail"]["msg"], with_task_vars(stop, dict(variables, ansible_check_mode=True)))
-    assert said.split("\n")[1:] == ["Under --check: Cassandra was not stopped, no package changed.",
-                                    "WAY OUT  fix it, then resume"]
+    assert said.split("\n") == ["n1: the update to Cassandra 4.1.12 (--check) failed: Install the target version: x",
+                                "Under --check: Cassandra was not stopped, no package changed.",
+                                "WAY OUT  fix it, then resume"]
     assert "started again" in render(stop["ansible.builtin.fail"]["msg"],
                                      with_task_vars(stop, dict(variables, ansible_check_mode=False)))
     # the state a failed start left, one task file for the window and the start after the update

@@ -674,6 +674,13 @@ def test_a_down_node_with_the_target_package_is_pointed_to_apply_config():
     variables = dict(check["vars"], hostvars=hostvars, ansible_play_hosts=list(hostvars), cassandra_package_version="5.0.9",
                      _phase="rolling", _cassandra_run_command_args=run)
     assert render(check["vars"]["_on_target"], **variables) == ["n2"]
+    # (audit) rpm -q of two headers (a transaction left half done): a line each, both said, not the target
+    assert render(check["vars"]["_installed"], **dict(variables, hostvars=dict(hostvars, n2=node(
+        "n2", 1, "installed 4.1.12\ninstalled 5.0.9\n"))))["n2"] == "4.1.12, 5.0.9"
+    assert render(check["vars"]["_on_target"], **dict(variables, hostvars=dict(hostvars, n2=node(
+        "n2", 1, "installed 4.1.12\ninstalled 5.0.9\n")))) == []
+    assert task("Upgrade checks", "Read the installed Cassandra package where nodetool failed")[
+        "ansible.builtin.command"]["argv"].count("installed %{VERSION}\\n") == 1
     assert render(check["ansible.builtin.assert"]["fail_msg"], **variables).split("\n") == [
         "nodetool version failed on n2, n3, n4. Nothing was done.",
         "  n2  package 5.0.9  " + REFUSED,

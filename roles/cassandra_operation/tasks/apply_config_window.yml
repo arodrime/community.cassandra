@@ -81,6 +81,7 @@
       ansible.builtin.file:
         path: /run/cassandra-apply-config.update
         state: absent
+      when: not ansible_check_mode  # (none written under --check)
   rescue:
     # (noted now: the start below has a failure of its own, which would take the place of this one; secrets and a
     # URL's login masked)
@@ -191,7 +192,7 @@
         _failed: >-
           {{ inventory_hostname }}: {{ 'the config written again after the update to Cassandra ' ~ cassandra_package_version
           if _cassandra_window_config | default(false) | bool else 'the update to Cassandra ' ~ cassandra_package_version }}
-          with Cassandra stopped failed: {{ _cassandra_window_cause }}
+          {{ '(--check)' if ansible_check_mode else 'with Cassandra stopped' }} failed: {{ _cassandra_window_cause }}
         _errors: >-
           {{ _cassandra_window_failure | community.cassandra.cassandra_package_errors(
                cassandra_window_rpm_log.stdout | default(''))

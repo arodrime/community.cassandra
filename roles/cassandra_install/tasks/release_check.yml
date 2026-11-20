@@ -64,14 +64,16 @@
       ' (it could not read a repository)' if _unread | bool else '' }}: {{ _lines | join('; ') or 'nothing listed' }}.
     _changed: >-
       Its Cassandra package was not changed{{ '; its repository file was written by this run' if _written | bool else '' }}.
+    # (this run changed the node before, its repository written: the run's own stop block then says the resume)
+    _again: "{{ '.' if _written | bool else ', then run again.' }}"
     _excluded: "{{ cassandra_install_release.stdout | default('') is search('excluded on this node') }}"
     _way_out: >-
-      {{ 'Way out: make that repository answer on the node, then run again.' if _unread | bool else
+      {{ 'Way out: make that repository answer on the node' ~ _again if _unread | bool else
          'Way out: lift the exclusion of cassandra on the node (excludepkgs in dnf.conf or the repository file, or'
-         ~ ' dnf versionlock delete cassandra), then run again.' if _excluded | bool else
+         ~ ' dnf versionlock delete cassandra)' ~ _again if _excluded | bool else
          'Way out: set cassandra_package_version to a release it lists (' ~ ('apt-cache madison cassandra'
          if ansible_facts['os_family'] == 'Debian' else 'dnf --showduplicates list cassandra') ~ ' there), or add that'
-         ~ ' release to the repository, then run again.' }}
+         ~ ' release to the repository' ~ _again }}
   when:
     - cassandra_install_release is not skipped
     - cassandra_install_release.rc | default(0) != 0

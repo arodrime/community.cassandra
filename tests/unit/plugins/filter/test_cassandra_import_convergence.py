@@ -331,6 +331,14 @@ def test_the_newest_version_never_down():
     text = _flat(cassandra_import_convergence(_small(nodes), {}, width=200))
     assert "apply_config updates the package" not in text
     assert "3 nodes change, an upgrade (upgrade, its preflight phase first), never down" in text
+    # (audit) nodes without the variable (the collection's default) are no other series: the same release update
+    for n in nodes:
+        if n["name"] in ("cass001", "cass002"):
+            n["vars"]["cassandra_package_version"] = "4.1.10"
+        else:
+            n["vars"].pop("cassandra_package_version", None)
+    text = _flat(cassandra_import_convergence(_small(nodes), {}, width=200))
+    assert "then restart (apply_config updates the package in it), never down" in text
 
 
 def test_the_dc_of_rackdc_not_counted_and_the_unmanaged_os_said():

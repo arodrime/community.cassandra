@@ -9,10 +9,12 @@ bugfixes:
   - >-
     apply_config - a newer release with its repository changed by the same run: the release is looked for in that
     repository once it is written live, before the drain and the stop, so that a release it lacks stops the run with
-    Cassandra running and its package unchanged.
+    Cassandra running and its package unchanged; its way out leaves the resume to the run's stop block (no "run
+    again" next to it).
   - >-
     apply_config - under ``--check``, the release window writes and removes no mark in ``/run``, starts nothing, and
-    a failure there says that Cassandra was not stopped, never "left stopped" or "started again".
+    a failure there says the update failed under ``--check`` and that Cassandra was not stopped, never "with
+    Cassandra stopped", "left stopped" or "started again".
   - >-
     apply_config - a start that fails after the package update says the Cassandra package read on the node then
     ("not known" when it could not be read), not the release asked.
@@ -24,8 +26,8 @@ bugfixes:
     the same release change.
   - >-
     apply_config - a Cassandra package left half done (``rpm -q cassandra`` of two packages, a dpkg state such as
-    ``half-configured``) refuses a release update before any change, with the way out; ``rpm -q`` reads one line per
-    package.
+    ``half-configured``, ``half-installed``) refuses a release update before any change, with the way out for that
+    state; ``rpm -q`` reads one line per package (upgrade too: two packages are said, neither taken for the target).
   - >-
     storage_compatibility_mode reads (upgrade, apply_config) - the record of the config Cassandra started with is read
     as JSON, by the path of its cassandra.yaml, and its ``_same_settings`` rendering counts as the file it started
@@ -36,5 +38,5 @@ bugfixes:
   - >-
     cassandra_firewall - Debian (ufw): a port's sources given as one string, as on RedHat (it failed there).
   - >-
-    import_cluster, drift - a ``cassandra_package_version`` of another series among the nodes is said as an upgrade,
-    not as apply_config's package update.
+    import_cluster, drift - a ``cassandra_package_version`` of another series among the nodes' values (nodes
+    without it not counted) is said as an upgrade, not as apply_config's package update.

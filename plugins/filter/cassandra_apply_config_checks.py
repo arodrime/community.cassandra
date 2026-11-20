@@ -80,12 +80,18 @@ def cassandra_apply_config_version(series, package_version, running, settings=No
                    notes=patch_notes.notes(series, running, shown),
                    installed="%d.%d.%d" % on_disk if on_disk else out["running"])
         if unfinished:
-            several = str(unfinished).count("installed ") > 1
-            out["refused"] = out["refused"] + [
-                ("two Cassandra packages are installed (rpm -q cassandra: %s): finish or undo that transaction by hand"
-                 " first (dnf history)" if several else
-                 "its Cassandra package is not fully installed (dpkg: %s): finish it by hand first (dpkg --configure"
-                 " -a)") % unfinished]
+            parts = str(unfinished).split(", ")
+            if len(parts) > 1:  # (rpm -q: "installed X" per package)
+                why = ("rpm -q cassandra lists %d packages: %s, a transaction left half done: remove the one not"
+                       " wanted by hand first (dnf remove --duplicates cassandra)"
+                       % (len(parts), ", ".join(x.split(" ")[-1] for x in parts)))
+            elif parts[0].startswith("half-installed"):  # (dpkg: an unpack interrupted)
+                why = ("its Cassandra package is %s (dpkg), not fully installed: reinstall it by hand first"
+                       " (apt-get install --reinstall cassandra)" % parts[0])
+            else:
+                why = ("its Cassandra package is %s (dpkg), not fully installed: finish it by hand first"
+                       " (dpkg --configure -a)" % parts[0])
+            out["refused"] = out["refused"] + [why]
         if on_disk and on_disk > want:
             out["refused"] = out["refused"] + [
                 "its package is Cassandra %s, newer than the inventory's %s: this run does not go back to an older"

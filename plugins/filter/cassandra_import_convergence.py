@@ -236,7 +236,7 @@ def _setting_items(layout, data, read):
         value = _value_of(layout, first, key)
         changing = [n for n in read if n["name"] not in keeping]
         kind = _kind(key)
-        if kind == "release" and len(set(tuple(_version(v[0])[0][:2]) for v in values)) > 1:
+        if kind == "release" and len(set(tuple(_version(v[0])[0][:2]) for v in values if _version(v[0])[0])) > 1:
             kind = "version"  # (a release of another series among them: an upgrade, not apply_config's update)
         items.append({"name": path, "key": key, "values": values, "target": target, "kind": kind, "tie": tie,
                       "raw": _ABSENT if value is _ABSENT else _leaf(key, path, value),

@@ -73,14 +73,17 @@ def test_a_package_left_half_done_stops_a_release_before_any_change():
     # window would start from that state, cassandra_install's version check then failing after the confirmation
     two = cassandra_apply_config_version("41x", "4.1.12", "4.1.11", unfinished="installed 4.1.11, installed 4.1.12")
     deb = cassandra_apply_config_version("41x", "4.1.12", "4.1.11", unfinished="half-configured 4.1.12")
-    lines = cassandra_apply_config_stops([{"name": "n1", "version": two}, {"name": "n2", "version": deb}],
-                                         commands=COMMANDS)
-    # (each node its own reason, not its group's: the same change on both)
+    unpacking = cassandra_apply_config_version("41x", "4.1.12", "4.1.11", unfinished="half-installed 4.1.12")
+    lines = cassandra_apply_config_stops([{"name": "n1", "version": two}, {"name": "n2", "version": deb},
+                                          {"name": "n3", "version": unpacking}], commands=COMMANDS)
+    # (each node its own reason, not its group's: the same change on all; each its own way out)
     assert lines == [
-        "n2: its Cassandra package is not fully installed (dpkg: half-configured 4.1.12): finish it by hand first"
+        "n2: its Cassandra package is half-configured 4.1.12 (dpkg), not fully installed: finish it by hand first"
         " (dpkg --configure -a) (now 4.1.11).",
-        "n1: two Cassandra packages are installed (rpm -q cassandra: installed 4.1.11, installed 4.1.12): finish or"
-        " undo that transaction by hand first (dnf history) (now 4.1.11).", "then run apply_config again."]
+        "n3: its Cassandra package is half-installed 4.1.12 (dpkg), not fully installed: reinstall it by hand first"
+        " (apt-get install --reinstall cassandra) (now 4.1.11).",
+        "n1: rpm -q cassandra lists 2 packages: 4.1.11, 4.1.12, a transaction left half done: remove the one not"
+        " wanted by hand first (dnf remove --duplicates cassandra) (now 4.1.11).", "then run apply_config again."]
     # no release to install: nothing refused for it
     assert cassandra_apply_config_version("41x", "4.1.11", "4.1.11", unfinished="half-configured 4.1.11") == {}
     assert cassandra_apply_config_version("41x", "4.1.12", "4.1.11", unfinished="")["refused"] == []
