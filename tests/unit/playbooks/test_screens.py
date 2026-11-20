@@ -336,12 +336,12 @@ def test_apply_config_and_update_java_screens(monkeypatch):
     assert text == ("APPLY CONFIG  Orders  Cassandra restarts on 1 node, 1 up to date\n"
                     "  made by:  community.cassandra 3.0.0-rc1, commit 1a2b3c4d5e6f\n"  # (the version and commit)
                     "  Cassandra restarts one node at a time.\n\n"
-                    "DIFFERENCES FOUND\n  " + APPLY_DIFF[0] + "\n\n"  # (review 4) titled as --check's, WILL DO a plan's
+                    "DIFFERENCES FOUND\n  " + APPLY_DIFF[0] + "\n\n"  # titled as --check's, WILL DO a plan's
                     "WILL DO\n  node1  write + restart\n  node2  up to date")
     question = Templar(loader=DataLoader(), variables=dict(trust(t["vars"]), **trust(play["vars"]), ansible_play_hosts=hosts,
                                                            hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS, **cluster))
     # the question names the most disruptive effect, on which nodes: a Cassandra restart, a start
-    # (review 3) no cluster (the head names it), 61 columns at most (" Answer yes or no:" after it fits 79): too
+    # no cluster (the head names it), 61 columns at most (" Answer yes or no:" after it fits 79): too
     # long, the counts (the plan's rows name the nodes), the starts left out before the restarts
     assert question.template(trust_as_template(t["vars"]["cassandra_screen_question"])) == (
         "Apply changes on 4 nodes, restart Cassandra on 1?")

@@ -886,7 +886,7 @@ def test_self_check_stop_could_not_run_or_not_read():
                          ' nodes']
     assert "    see the error (it may show passwords), fix it, then import again  -e import_debug=true" in lines
     assert "  1 node not read, so not checked: node2 (unreachable)." in lines
-    # (review 4) no reason recorded: none guessed
+    # no reason recorded: none guessed
     unread = node(2, read=False)
     unread.pop("reason")
     assert "  1 node not read, so not checked: node2 (reason not recorded)." in stop([node(1), unread], {}, error=error)

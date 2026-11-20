@@ -1314,7 +1314,7 @@
                               if live else [])
                            + ([_up_to_date | length ~ ' up to date'] if _up_to_date else []) -%}
             {{ _cluster }}  {{ said | join(', ') }}
-          # (B19) the order, one line
+          # the order, one line
           intro:
             - >-
               {%- set serial = ('restarts and starts' if _restarts and _starts else 'restarts' if _restarts else 'starts') -%}

@@ -485,7 +485,7 @@ def test_one_dead_node_per_run(target, ok):
 
 
 def test_the_rack_s_nodes_say_how_far_they_went():
-    # (A1 review) a rack stopped by the health check before it: its nodes "not touched"; once drained (some node
+    # a rack stopped by the health check before it: its nodes "not touched"; once drained (some node
     # answered), "restart started, not finished": never "not done" for a node restarted but not back in time
     names = [t["name"] for t in RACK["block"]]
     stages = dict((t["name"], t["ansible.builtin.set_fact"]["_cassandra_op_stage"]) for t in RACK["block"]

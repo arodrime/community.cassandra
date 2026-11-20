@@ -644,7 +644,7 @@ def test_the_nodes_moving_storage_compatibility_mode_to_none(tmp_path):
 
 
 def test_a_service_has_its_own_label_and_check_separates_found_from_would_do():
-    # (B1 review) a service by what it is, no generic header word over it; --check: what was found (the node's
+    # a service by what it is, no generic header word over it; --check: what was found (the node's
     # value against the inventory's) apart from what a real run would do; nothing claimed done
     chronyd = {"item": "chronyd", "before": "inactive", "after": "active", "timesync": True, "service": True}
     nodes = [{"name": "h-n2", "items": [], "os": [chronyd]}]
@@ -662,7 +662,7 @@ def test_a_service_has_its_own_label_and_check_separates_found_from_would_do():
 
 
 def test_the_plan_and_the_check_say_the_steps_the_recap_what_was_done():
-    # (review 3) the steps a real run takes, its intentions: in the plan as they are, under --check "would ...";
+    # the steps a real run takes, its intentions: in the plan as they are, under --check "would ...";
     # after a real run, what was done ("applied, restarted"), the steps not said again
     node = {"name": "h-n1", "todo": True, "then": "restart", "why": "time sync",
             "steps": ["drain and stop Cassandra", "start chronyd", "wait up to 2m for clock sync", "start Cassandra"]}

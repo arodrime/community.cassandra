@@ -174,7 +174,7 @@
     # the nodes down, as the problems name them ("node4 (10.0.0.4, r1) is DN, seen from node1")
     _down: >-
       {{ cassandra_health_problems | select('search', ' is D[NLJM],') | map('regex_replace', ' \(.*$', '') | unique | list }}
-    # (UX audit B17) a node lost for good, apart from the resume (a block of its own in the stop block): the full
+    # a node lost for good, apart from the resume (a block of its own in the stop block): the full
     # commands with the conditions their playbooks state, replace_node first, remove_dead_node last
     _lost: >-
       {%- set out = [] -%}

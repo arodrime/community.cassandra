@@ -755,7 +755,7 @@ def test_a_failed_start_after_the_package_update_says_the_release_installed():
         "n1: the start after the update to 5.0.9 failed: Start or restart cassandra: Unable to start service"
         " cassandra: Job for cassandra.service failed",
         "Package installed: Cassandra 5.0.9.", "Cassandra left stopped.", "WAY OUT  fix it, then resume"]
-    # (audit: a wait for the node that timed out, its JVM up) as observed
+    # a wait for the node that timed out, its JVM up: as observed
     assert said("A Cassandra JVM runs (its start not confirmed).")[2] == "A Cassandra JVM runs (its start not confirmed)."
     # the package as read after the failed start, not the one asked: not read, not known
     assert said(installed="5.0.8")[1] == "Package installed: Cassandra 5.0.8."

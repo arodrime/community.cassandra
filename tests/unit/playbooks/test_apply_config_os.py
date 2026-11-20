@@ -258,7 +258,7 @@ def test_swap_left_on_said_under_the_node_once(live, swapoff, said):
     (["n1"], ["n1"], [], [], [], "Live changes, no restart."),
     (["n1", "n2"], ["n2"], ["n1"], [], [], "Order: live changes at once, then Cassandra restarts one node at a time."),
     (["n1", "n2"], [], ["n1"], [], [], "Order: live changes at once, then Cassandra restarts one node at a time."),
-    # (A2 review) a start is one node at a time too, never "live"; a Cassandra stopped and left so is no live change
+    # a start is one node at a time too, never "live"; a Cassandra stopped and left so is no live change
     (["n1", "n2"], [], ["n1"], ["n2"], [], "Cassandra restarts and starts one node at a time."),
     (["n2"], [], [], ["n2"], [], "Cassandra starts one node at a time."),
     (["n3"], [], [], [], ["n3"], "No Cassandra restart; a Cassandra stopped stays stopped.")])
@@ -659,7 +659,7 @@ def test_a_node_stopped_in_its_window_is_started_by_the_resumed_run():
 
 
 def test_the_plan_says_what_a_real_run_does_in_its_order():
-    # (review 3) the plan and --check name each action in the order a real run does them (action_restart.yml: drain;
+    # the plan and --check name each action in the order a real run does them (action_restart.yml: drain;
     # os_window.yml: stop, the disks, the time sync, the wait for the clock; then the start), never an outcome
     package = {"item": "package chrony", "before": "absent", "after": "present", "timesync": True}
     assert note([TIMESYNC], full=True)["cassandra_apply_config_steps"] == [

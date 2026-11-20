@@ -150,14 +150,14 @@ def test_a_stop_on_purpose_says_the_cause_the_table_and_the_way_out_once():
         "  node3  not touched",
         "  node4  not touched (not reached)",
         "  node5  not touched (left out by --limit)",
-        "",  # (review 3) the way out apart from the table
+        "",  # the way out apart from the table
         "WAY OUT",
         "  1. bring node4 back to UN (its host and/or Cassandra)",
-        "  2. resume (node2 restarts again):",  # (B1, review 4) not in the progress file: restarted again
+        "  2. resume (node2 restarts again):",  # not in the progress file: restarted again
         "     ansible-playbook -i hosts.yml community.cassandra.rolling_restart \\",
         "       -e cassandra_hosts=prod -e cassandra_rolling_resume=true",
         "     progress: .cassandra_progress/x",  # (under the command it is for)
-        "",  # (review 3) a node lost for good: a block of its own, no next step of the resume
+        "",  # a node lost for good: a block of its own, no next step of the resume
         "IF node4 IS LOST FOR GOOD",
         "  replace it: NEW_NODE (a blank host) in prod, node4 out of the inventory",
         "    ansible-playbook -i hosts.yml community.cassandra.replace_node \\",
@@ -320,7 +320,7 @@ def test_under_check_no_resume_nor_progress_file():
 
 
 def test_the_resume_says_which_nodes_it_restarts_again():
-    # (review 4) a node touched and not in the progress file is restarted again by the resume; one not touched,
+    # a node touched and not in the progress file is restarted again by the resume; one not touched,
     # or a resume of another action, says nothing; --check restarted nothing
     for stage, said in (("after", "  2. resume (node2 restarts again):"), ("during", "  2. resume (node2 restarts again):"),
                         ("unconfirmed", "  2. resume (node2 restarts again):"), ("before", "  2. resume:")):

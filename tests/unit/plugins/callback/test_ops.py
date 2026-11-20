@@ -734,7 +734,7 @@ def test_the_plan_title_and_the_stop_block_are_blocks_of_their_own():
     callback = quiet_callback(tty=False)
     callback._print(stop)
     shown = printed(callback)
-    # (review 3) the way out and the block of a node lost for good apart: a light rule above each
+    # the way out and the block of a node lost for good apart: a light rule above each
     assert [line[0] for line, dummy in shown if rule(line)] == ["=", "-", "-", "="]
     assert [x for x in shown if not rule(x[0])] == [(stop[0], C.COLOR_ERROR)] + [(line, None) for line in stop[1:] if line]
 

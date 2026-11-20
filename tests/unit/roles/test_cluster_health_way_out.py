@@ -40,7 +40,7 @@ def test_the_way_out_under_check():
 def test_a_node_lost_for_good_gets_full_commands():
     # each way out a command to paste, not a playbook's name
     lines = said(False, ["n4 (10.0.0.4, r1) is DN, seen from n1"])
-    # (review 3) a block of its own, apart from the resume, with the conditions its playbooks state (replace_node.yml:
+    # a block of its own, apart from the resume, with the conditions its playbooks state (replace_node.yml:
     # a blank host, the dead one out of the inventory, a dead seed out of cassandra_seeds first; remove_dead_node.yml:
     # the last resort, its data rebuilt from the other replicas, the dead host out of the inventory first)
     assert lines[2:] == [

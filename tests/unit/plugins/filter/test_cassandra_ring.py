@@ -316,19 +316,19 @@ def test_names_shown_matching_by_address():
 
 
 def test_the_time_the_ring_was_seen_with_its_zone():
-    # (B4 review) when nodetool status answered on the node named, the controller's clock with its time zone
+    # when nodetool status answered on the node named, the controller's clock with its time zone
     import time
     seen = time.time()
     lines = cassandra_ring_report(ring(node("10.0.0.1")), {"n1": ["10.0.0.1"]}, cluster="prod", seen_from="n1",
                                   seen_at=str(seen))
     from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import clock
     assert lines[1] == "  prod  seen from n1 at " + clock(seen, date=True)
-    # (review 3) the date always, today's too
+    # the date always, today's too
     assert re.match(r"^  prod  seen from n1 at \d{4}-\d\d-\d\d \d\d:\d\d [A-Z+-]", lines[1]), lines[1]
 
 
 def test_host_ids_cut_to_fit_say_where_they_are_whole():
-    # (B4 review) a table wider than the screen: the Host IDs cut, one line says where they are whole
+    # a table wider than the screen: the Host IDs cut, one line says where they are whole
     long_id = "4fbaaa06-f1fc-4bb1-98e5-3fbe3fdb8e51"
     status = ring(node("10.100.100.4", "D", load="94.41 MiB", rack="rack_b"))
     status["dc1"]["nodes"][0]["host_id"] = long_id

@@ -519,7 +519,7 @@
         - name: One Cassandra version in the cluster
           ansible.builtin.assert:
             that: _versions | length <= 1 or cassandra_allow_mixed_versions | default(false) | bool or _release_update | bool
-            # (UX audit B16) the versions as rows, the ways out as exact commands
+            # the versions as rows, the ways out as exact commands
             fail_msg: >-
               {{ (['REFUSED  the cluster runs ' ~ _versions | length ~ ' Cassandra versions (an upgrade is not finished)'
                    ~ '  nothing was changed', '  ' ~ 'Version'.ljust(([7] + _versions | map('split', ': ', 1) | map('first') | map('length') | list) | max) ~ '  Nodes']
