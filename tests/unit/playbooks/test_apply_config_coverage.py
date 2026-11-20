@@ -290,31 +290,40 @@ def test_a_failed_release_window_starts_back_or_leaves_the_mark_and_the_way_out(
     assert block[0]["ansible.builtin.copy"]["dest"] == "/run/cassandra-apply-config.restart"
     assert render(window[0]["vars"]["_why"], {"cassandra_apply_config_why": "Cassandra 4.1.11 -> 4.1.12",
                                               "cassandra_package_version": "4.1.12"}) == "Cassandra 4.1.11 -> 4.1.12"
-    names = [t["name"] for t in rescue]
-    assert names == ["Read the installed packages", "Look for a Cassandra JVM", "Start Cassandra again on the release it ran",
-                     "Forget the mark of the stop", "Stop the run"]
-    assert "ansible.builtin.fail" in rescue[-1]
+    assert [t["name"] for t in rescue] == ["Note what failed", "Read the installed packages", "Look for a Cassandra JVM",
+                                           "Start Cassandra again on the release it ran", "Stop the run"]
+    # a package read that fails is not taken for the old snapshot
+    assert rescue[1]["ignore_errors"] is True and "failed_when" not in rescue[1]
+    start = rescue[3]
+    assert start["when"] == "_back | bool"
+    assert [t["name"] for t in start["block"]] == ["Start Cassandra again on the release it ran", "Forget the mark of the stop"]
     variables = dict(window[0]["vars"], cassandra_apply_config_version=RELEASE, cassandra_package_version="4.1.12",
-                     cassandra_window_packages={"changed": False}, cassandra_window_jvm={"rc": 1},
-                     ansible_failed_task={"name": "Install the target version"}, ansible_failed_result={"msg": "no repo"},
-                     inventory_hostname="n1")
+                     cassandra_window_jvm={"rc": 1}, inventory_hostname="n1",
+                     _cassandra_window_cause=render(rescue[0]["ansible.builtin.set_fact"]["_cassandra_window_cause"], {
+                         "ansible_failed_task": {"name": "Install the target version"},
+                         "ansible_failed_result": {"msg": "no repo"}}))
+
+    def read(installed):
+        return {"ansible_facts": {"packages": {"cassandra": [{"version": installed}]}}} if installed else {"failed": True}
 
     def back(installed, **more):
-        facts = {"packages": {"cassandra": [{"version": installed}]}} if installed else {}
-        return render("{{ _back | bool }}", dict(variables, ansible_facts=facts, **more))
+        return render("{{ _back | bool }}", dict(variables, cassandra_window_packages=read(installed), **more))
 
     assert back("4.1.11") is True  # its package unchanged: started again on it
+    assert back("4.1.11-1") is True
     assert back("4.1.12") is False  # updated: left stopped, resumed once fixed
-    assert back("") is False  # not known
+    assert back("") is False  # not read: not known
     assert back("4.1.11", cassandra_window_jvm={"rc": 0}) is False  # another JVM runs
-    assert back("4.1.11", cassandra_window_packages={"failed": True}) is False
-    for task in names[2:4]:
-        assert find(rescue, task)["when"] == "_back | bool"
     stop = rescue[-1]["ansible.builtin.fail"]["msg"]
-    said = render(stop, dict(variables, ansible_facts={"packages": {"cassandra": [{"version": "4.1.12-1"}]}}))
+    said = render(stop, dict(variables, cassandra_window_packages=read("4.1.12-1")))
     assert "Cassandra not started (installed: 4.1.12)" in said and "-e cassandra_rolling_resume=true" in said
-    said = render(stop, dict(variables, ansible_facts={"packages": {"cassandra": [{"version": "4.1.11"}]}}))
+    assert "failed (Install the target version: no repo)" in said
+    said = render(stop, dict(variables, cassandra_window_packages=read("")))
+    assert "Cassandra not started (installed: not known)" in said
+    said = render(stop, dict(variables, cassandra_window_packages=read("4.1.11")))
     assert "Cassandra 4.1.11 still installed, started again on it" in said and "run apply_config again" in said
+    said = render(stop, dict(variables, cassandra_window_packages=read("4.1.11"), _cassandra_window_start_failed="timeout"))
+    assert "its start failed too (timeout)" in said and "-e cassandra_rolling_resume=true" in said
 
 
 def test_version_verify_says_the_way_out():
