@@ -162,7 +162,10 @@
 # lines of its standard error and output
 - name: Say that the mode Cassandra runs was not read over CQL
   ansible.builtin.debug:
-    msg: >-
+    msg: "{{ _warning }}"
+  vars:
+    cassandra_output: true  # its msg as is (ops callback)
+    _warning: >-
       {{ ['WARNING  ' ~ inventory_hostname ~ ': the storage_compatibility_mode Cassandra runs could not be read over'
           ~ ' CQL (cqlsh on ' ~ _cassandra_storage_mode_cql_host ~ ':' ~ cassandra_native_transport_port | default(9042)
           ~ (' with TLS' if _cassandra_storage_mode_cql_ssl | bool else '') ~ '); '
@@ -177,8 +180,6 @@
             if _cql.msg | default('') is match('.Errno 2. No such file or directory') else [])
          + _err | map('regex_replace', '^', '  stderr   ') | list
          + _out | map('regex_replace', '^', '  stdout   ') | list }}
-  vars:
-    cassandra_output: true  # its msg as is (ops callback)
     _cql: "{{ cassandra_storage_mode_cql }}"
     # (the last 5 lines of what it wrote, blank ones left out, each cut at 200 characters)
     _err: "{{ ((_cql.err | default('') | string).splitlines() | select | map('truncate', 200, true, '...') | list)[-5:] }}"
@@ -187,10 +188,14 @@
     - cassandra_storage_mode_cql is not skipped
     - cassandra_storage_mode_cql.failed | default(false) or cassandra_storage_mode_cql.transformed_output is not defined
     - not _cassandra_storage_mode_cql_said | default(false) | bool
+  register: cassandra_storage_mode_cql_said
 
+# (the run's recap and report say it too: apply_config's warnings)
 - name: Note that it was said
   ansible.builtin.set_fact:
     _cassandra_storage_mode_cql_said: true
+    cassandra_storage_mode_cql_warning: >-
+      {{ cassandra_storage_mode_cql_said.msg | default(cassandra_storage_mode_cql_warning | default([])) }}
   when:
     - cassandra_storage_mode_cql is not skipped
     - cassandra_storage_mode_cql.failed | default(false) or cassandra_storage_mode_cql.transformed_output is not defined

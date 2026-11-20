@@ -550,3 +550,17 @@ def test_a_secret_in_the_unit_environment_is_a_warning_of_the_plan():
     warned = [n for n in found["notes"] if n.startswith("WARNING  a secret in cassandra_service_environment")]
     assert len(warned) == 1 and "/etc/systemd/system/cassandra.service, mode 0644" in warned[0]
     assert not [n for n in needs()["notes"] if "a secret in" in n]
+
+
+def test_the_mode_not_read_over_cql_is_in_the_plan_s_warnings_too():
+    # e2e: cqlsh missing: its WARNING said while the compare ran, not in the --check recap nor in the report
+    said = ["WARNING  n1: the storage_compatibility_mode Cassandra runs could not be read over CQL (cqlsh on 10.0.0.1:9042);"
+            " the line it logged at its start tells it instead.", "  command  /opt/x/cqlsh 10.0.0.1 9042", "  rc       2"]
+    assert not [n for n in needs()["notes"] if "over CQL" in n]
+    variables = {"cassandra_storage_mode_cql_warning": said, "inventory_hostname": "n1"}
+    note = NOTE["ansible.builtin.set_fact"]["cassandra_apply_config_notes"]
+    expr = "{{ " + note[note.index("(['WARNING  ' ~ ([_cql_warning[0]"):note.index("if _cql_warning else [])") + 24] + " }}"
+    rendered = render(expr, with_task_vars({"vars": {k: NOTE["vars"][k] for k in ("_cql_warning", "_lines_nl")}}, variables))
+    assert rendered == ["WARNING  the storage_compatibility_mode Cassandra runs could not be read over CQL (cqlsh on"
+                        " 10.0.0.1:9042); the line it logged at its start tells it instead.\ncommand  /opt/x/cqlsh"
+                        " 10.0.0.1 9042\nrc       2"]

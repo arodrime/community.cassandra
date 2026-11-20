@@ -171,6 +171,13 @@ def test_the_cql_read_asks_the_node_itself_and_says_when_it_could_not():
         "127.0.0.1", "10.0.0.5", "10.0.0.6", "10.0.0.6"]
     # not read over CQL: said, once a run per node, with what tells the mode instead
     say = next(t for t in tasks if t["name"] == "Say that the mode Cassandra runs was not read over CQL")
+    # kept for the run's recap and report (apply_config's warnings), its later reads (said once) keeping it
+    assert say["register"] == "cassandra_storage_mode_cql_said"
+    kept = next(t for t in tasks if t["name"] == "Note that it was said")["ansible.builtin.set_fact"][
+        "cassandra_storage_mode_cql_warning"]
+    assert _render(kept, cassandra_storage_mode_cql_said={"msg": ["WARNING  x"]}) == ["WARNING  x"]
+    assert _render(kept, cassandra_storage_mode_cql_said={"skipped": True},
+                   cassandra_storage_mode_cql_warning=["WARNING  x"]) == ["WARNING  x"]
     failed = {"failed": True, "msg": "module execution failed", "rc": 1,
               "err": "Traceback (most recent call last):\n  File x\nModuleNotFoundError: No module named 'cqlshlib'\n"}
     base = dict(say["vars"], inventory_hostname="n1", _cassandra_storage_mode_cql_host="10.0.0.5",

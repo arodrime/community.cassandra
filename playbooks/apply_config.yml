@@ -584,6 +584,8 @@
                    and _os | map(attribute='item') | select('match', '(read_ahead_kb|LVM read-ahead) ') | list | length > 0
                 else [])
              + (['WARNING  ' ~ _unit_secret] if _unit_secret else [])
+             + (['WARNING  ' ~ ([_cql_warning[0] | regex_replace('^WARNING  ' ~ (inventory_hostname | regex_escape) ~ ': ', '')]
+                                + _cql_warning[1:] | map('trim') | list) | join(_lines_nl)] if _cql_warning else [])
              + _cassandra_config_dir_notes | default([])
              + _cassandra_disk_summary.warnings | default([]) | map('regex_replace', '^', 'WARNING  data disks: ') | list
              + (['WARNING  swap left on: what it holds would not fit easily in the memory available']
@@ -643,6 +645,10 @@
         # when that is another one (updated by a run that stopped before its start)
         # a secret in the environment the unit (or the drop-in of the package's init script) is written with: its file
         # world-readable, systemctl show prints it (cassandra_service says it too, when it writes it)
+        # the storage_compatibility_mode it runs not read over CQL (storage_mode_read.yml said it, its lines): in the
+        # plan's warnings, the recap and the report too
+        _cql_warning: "{{ cassandra_storage_mode_cql_warning | default([]) }}"
+        _lines_nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         _unit_secret: >-
           {{ cassandra_service_environment | default({}) | community.cassandra.cassandra_unit_secret_warning(
                '/etc/systemd/system/cassandra.service' if cassandra_service_start | default('unit') == 'unit'
