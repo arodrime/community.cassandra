@@ -399,10 +399,20 @@ def _plain_default(key):
     return dict((path, (names, v)) for path, names, v in leaves)
 
 
+def empty_on_own_row(key):
+    """A dict variable whose collection default is plain (cassandra_linux_limits): a node's {} (none of the default's
+    sub-keys, as import writes it for files not the role's) is said on the variable's own row only, never in its
+    sub-keys' rows nor among their places (a change of a sub-key does not reach that node)."""
+    return _plain_default(key) is not None
+
+
 def _alike(a, b):
-    """Two leaf values alike as a file of the roles writes them: 1048575 and "1048575"; case kept ("Unlimited" is not
-    "unlimited" to pam_limits)."""
+    """Two leaf values alike as a file of the roles writes them: 1048575 and "1048575"; case kept (the role writes
+    "Unlimited" and "unlimited" as two different lines)."""
     return json.dumps(a, sort_keys=True, default=str).strip('"') == json.dumps(b, sort_keys=True, default=str).strip('"')
+
+
+OWN_KEYS = "(its own keys, below)"  # a dict variable's own row: a node that sets it, by sub-key
 
 
 def _settings_pairs(read, keys, from_yours):
@@ -411,7 +421,8 @@ def _settings_pairs(read, keys, from_yours):
     not that key; a secret "(in secrets.yml)", a second value of it "(in secrets.yml, value 2)". A dict whose
     collection default is known: its sub-keys compared with the default's on the nodes that leave it to the
     collection (only the ones that differ said; a sub-key of the default a node's dict leaves out, said); a node's
-    empty dict ({}: none of the default's sub-keys) said once, on the variable's own row."""
+    empty dict ({}: none of the default's sub-keys) said once, on the variable's own row, never on its sub-keys'
+    rows (empty_on_own_row); a node with a dict of its own, on that row: OWN_KEYS."""
     pairs, secrets, variable = [], {}, {}
     for key in keys:
         found, paths, empty = {}, [], set()
@@ -437,8 +448,12 @@ def _settings_pairs(read, keys, from_yours):
                 continue  # (the default's value on every node, set or not: no difference)
             variable[path] = key
             for n in read:
+                if n["name"] in empty and path != key and default is not None:
+                    continue  # (said once, on the variable's own row: empty_on_own_row)
                 if n["name"] not in found:
                     text = "(collection's default)"
+                elif path == key and path not in found[n["name"]]:
+                    text = OWN_KEYS  # (a dict of its own, next to another node's {})
                 elif path not in found[n["name"]]:
                     text = "(not set)"
                 else:

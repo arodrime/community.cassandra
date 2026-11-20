@@ -1595,8 +1595,40 @@ def test_an_empty_dict_one_node_sets_is_one_row_not_the_defaults_sub_keys():
     from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
     limits = dict(role_file("cassandra_linux")["cassandra_linux_limits"], nofile=65536)
     nodes = [with_vars(1, cassandra_linux_limits={}), with_vars(2, cassandra_linux_limits=limits), with_vars(3)]
-    review = " ".join(section(report(nodes), "DIFFERENT ON SOME NODES"))
+    lines = section(report(nodes), "DIFFERENT ON SOME NODES")
+    review = " ".join(lines)
     assert sorted(set(re.findall(r"(cassandra_linux_limits\.[\w.]+):", review))) == ["cassandra_linux_limits.nofile"]
+
+    def rows(lines, name):
+        """A setting's rows: (value, nodes), up to its "set in" line."""
+        at = next(i for i, line in enumerate(lines) if line.strip().startswith(name + ":"))
+        found = []
+        for line in lines[at:]:
+            if line.strip().startswith("set in"):
+                return found
+            text = line.strip()[len(name) + 1:] if line.strip().startswith(name + ":") else line.strip()
+            value, members = re.split(r"\s{3,}", text.strip())[:2]
+            found.append((value, members.split(" (")[0]))
+        return found
+    # node2 sets the dict (by sub-key): not "(not set)"; node1's {} on that row only, its sub-keys' rows without it
+    assert rows(lines, "cassandra_linux_limits") == [("(collection's default)", "node3"),
+                                                     ("(its own keys, below)", "node2"), ("{}", "node1")]
+    assert rows(lines, "cassandra_linux_limits.nofile") == [("(collection's default)", "node3"), ("65536", "node2")]
+    # the advice: only node2 changes (node1 keeps its {})
+    said = " ".join(" ".join(line.split()) for line in lines)
+    assert "remove nofile from cassandra_linux_limits in host_vars/node2/ then 1 node changes" in said, said
+    assert "--limit node2 --check" in said and "node1,node2" not in said
+    # every node sets it (one {}): the same, no "(not set) node1" row per sub-key of the default
+    nodes = [with_vars(1, cassandra_linux_limits={}), with_vars(2, cassandra_linux_limits=limits),
+             with_vars(3, cassandra_linux_limits=dict(role_file("cassandra_linux")["cassandra_linux_limits"]))]
+    lines = section(report(nodes), "DIFFERENT ON SOME NODES")
+    assert rows(lines, "cassandra_linux_limits") == [("(its own keys, below)", "all - node1"), ("{}", "node1")]
+    assert sorted(set(re.findall(r"(cassandra_linux_limits\.[\w.]+):", " ".join(lines)))) == [
+        "cassandra_linux_limits.nofile"]
+    assert rows(lines, "cassandra_linux_limits.nofile") == [("1048576", "node3"), ("65536", "node2")]
+    said = " ".join(" ".join(line.split()) for line in lines)
+    assert "nofile: 1048576 in cassandra_linux_limits in host_vars/node2/ then 1 node changes" in said, said
+    assert "(not set)" not in said and "node1,node2" not in said
 
 
 def test_a_value_that_differs_by_case_only_differs():

@@ -23,8 +23,8 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_conf
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     JAVA_DEFAULT, KEEP, ROLE, SERIES, group_chains, hand_edits_kept, template_vars, undefined_name)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
-    ARROW_RIGHT, DASH, NOT_COUNTED, REPORT_WIDTH, aligned_rows, fill_text, report_sections, unbreakable, unread_by,
-    who_text)
+    ARROW_RIGHT, DASH, NOT_COUNTED, REPORT_WIDTH, aligned_rows, empty_on_own_row, fill_text, report_sections,
+    unbreakable, unread_by, who_text)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 
@@ -146,17 +146,21 @@ def _places(layout, key, path=None, target=_ABSENT, same=False):
     """Where the inventory keeps key below the cluster's group (for a sub-key path, the cluster's group too): [the
     group_vars and host_vars dirs, your files there (not a shared one: _shared); the layout's real(kind, owner, key):
     the files themselves, drift's]; path and target: only the ones whose value of path is not target (same: is
-    target)."""
+    target), an empty dict left out of a sub-key's places."""
     cluster = layout["cluster_group"]
 
+    def has(value):  # (a node's {} of such a dict: not changed by a sub-key's change, never a place of one)
+        return path is None or path == key or value != {} or not empty_on_own_row(key)
+
     def other(variables):
-        return key in (variables or {}) and (path is None or (_leaf(key, path, variables[key]) == target) == same)
+        return key in (variables or {}) and has(variables[key]) and (
+            path is None or (_leaf(key, path, variables[key]) == target) == same)
 
     # (a sub-key: the cluster's own dict too, when it is not the one most nodes have)
     groups = sorted(g for g, v in (layout.get("group_vars") or {}).items() if (g != cluster or path) and other(v))
     hosts = [h for h, v in (layout.get("host_vars") or {}).items() if other(v)]
     yours = set(v[key]["path"] for v in (layout.get("from_yours") or {}).values()
-                if key in v and not _shared(layout, v[key]["path"])
+                if key in v and not _shared(layout, v[key]["path"]) and has(v[key]["value"])
                 and (path is None or (_leaf(key, path, v[key]["value"]) == target) == same))
     if not same:  # (and the ones whose value the import wrote over for these nodes: theirs would win once removed)
         yours |= set(y["path"] for y in layout.get("yours") or [] if y["key"] == key and not _shared(layout, y["path"])
@@ -228,13 +232,15 @@ def _setting_items(layout, data, read):
         values = sorted(values, key=lambda v: (-len(v[1]), str(v[0])))
         if key in VERSIONS:  # (the newest first, whatever the count)
             values = sorted(values, key=lambda v: _version(v[0]), reverse=True)
-        if _common(values, names):
+        # (the nodes of its rows: a node's {} is left out of its sub-keys', which do not change it)
+        listed = [m for dummy, members in values for m in members]
+        if _common(values, [m for m in names if m in listed]):
             continue
         target, keeping = values[0]
         tie = len(values) > 1 and len(values[1][1]) == len(keeping) and key not in VERSIONS
         first = next(n for n in read if n["name"] == keeping[0])
         value = _value_of(layout, first, key)
-        changing = [n for n in read if n["name"] not in keeping]
+        changing = [n for n in read if n["name"] in listed and n["name"] not in keeping]
         kind = _kind(key)
         if kind == "release" and len(set(tuple(_version(v[0])[0][:2]) for v in values if _version(v[0])[0])) > 1:
             kind = "version"  # (a release of another series among them: an upgrade, not apply_config's update)
