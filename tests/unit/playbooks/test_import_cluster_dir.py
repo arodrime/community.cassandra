@@ -710,9 +710,9 @@ def test_a_backup_name_taken_after_it_was_chosen_stops_before_anything_is_writte
     stop = ["report.shareable.key.txt was not moved aside", "nothing is written over it: the run stops",
             "in:", "  %s" % tmp_path, "mv -n to %s:" % os.path.basename(found[1]["backup"])]
     # the copy moved before it is said first (a pair half moved: both named), the key by the stop alone
-    assert said == ["An earlier import's shareable copy (import_report_shareable is off),", "in %s:" % tmp_path,
-                    "  report.shareable.txt  the copy  moved aside", "    to " + os.path.basename(found[0]["backup"])] + stop + [
-                    "  that name is taken", "WAY OUT  run the import again (it takes the next free name)"]
+    moved = ["An earlier import's shareable copy (import_report_shareable is off),", "in %s:" % tmp_path,
+             "  report.shareable.txt  the copy  moved aside", "    to " + os.path.basename(found[0]["backup"])]
+    assert said == moved + stop + ["  that name is taken", "WAY OUT  run the import again (it takes the next free name)"]
     assert (tmp_path / "report.shareable.key.txt").read_text().startswith("# The key of report.shareable.txt")
     assert (tmp_path / os.path.basename(found[1]["backup"])).read_text() == "another run's\n"
     names = [t.get("name") for t in next(p for p in PLAYS if p.get("name") == "Write the inventory")["tasks"]]
