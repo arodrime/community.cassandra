@@ -21,3 +21,7 @@ _cassandra_firewall_own_unopened: >-
      | map('string') | reject('in', ['7000', '7001', '9042', '7199']) | map('regex_replace', '$', '/tcp')
      | reject('in', open_ports | map('string') | list)
      | reject('in', _cassandra_firewall_port_sources) | unique | list }}
+
+# what systemctl is-active says of a firewall not running (its rules written offline then); activating or reloading:
+# running, its rules changed live
+_cassandra_firewall_stopped: [inactive, failed, unknown, '']

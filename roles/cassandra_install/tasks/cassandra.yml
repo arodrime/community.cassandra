@@ -80,6 +80,8 @@
     - not cassandra_offline | bool
     - cassandra_install_method in ['repository', 'system']
     - "'cassandra' in _cassandra_install_before"
+    # (the plan, the repository changed by this run: not written yet, read by the window's own update)
+    - not (_cassandra_install_check and _cassandra_repository_items | default([]) | length > 0)
     - >-
       (_cassandra_install_before['cassandra'][0].version | regex_replace('^([0-9]+\.[0-9]+\.[0-9]+).*$', '\1'))
       != cassandra_package_version

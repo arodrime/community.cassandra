@@ -73,3 +73,17 @@ def test_the_node_s_moved_ports_are_said_not_opened():
         == ["9142/tcp"]
     tasks = load("roles", "cassandra_firewall", "tasks", "firewall.yml")
     assert "_cassandra_firewall_open_ports" not in str(tasks)
+
+
+def test_a_firewall_starting_or_reloading_gets_its_ports_live():
+    from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import find, load, render
+    tasks = load("roles", "cassandra_firewall", "tasks", "firewall.yml")
+    stopped = load("roles", "cassandra_firewall", "vars", "main.yml")["_cassandra_firewall_stopped"]
+    offline = find(tasks, "Ensure ports for cassandra open, before firewalld starts (RedHat)")
+    live = find(tasks, "Ensure ports for cassandra open (RedHat)")
+    for state, written_offline in (("inactive", True), ("unknown", True), ("activating", False), ("reloading", False),
+                                   ("active", False)):
+        variables = {"ansible_facts": {"os_family": "RedHat"}, "_cassandra_firewall_before": {"active": state},
+                     "_cassandra_firewall_check": False, "_cassandra_firewall_stopped": stopped}
+        assert all(render("{{ %s }}" % w, variables) for w in offline["when"]) is written_offline, state
+        assert all(render("{{ %s }}" % w, variables) for w in live["when"]) is not written_offline, state

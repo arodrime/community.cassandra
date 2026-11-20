@@ -12,7 +12,7 @@ from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_con
 TASKS = load("roles", "cassandra_install", "tasks", "cassandra.yml")
 LOOK = find(TASKS, "Look for the release in the repository")
 STOP = find(TASKS, "Stop when the release is not in the repository")
-BASE = {"_cassandra_install_upgrade": True, "cassandra_package_version": "4.1.12", "cassandra_offline": False,
+BASE = {"_cassandra_install_upgrade": True, "_cassandra_install_check": False, "cassandra_package_version": "4.1.12", "cassandra_offline": False,
         "cassandra_install_method": "repository", "_cassandra_install_before": {"cassandra": [{"version": "4.1.11"}]},
         "ansible_facts": {"os_family": "RedHat"}, "inventory_hostname": "n1"}
 
@@ -25,6 +25,9 @@ BASE = {"_cassandra_install_upgrade": True, "cassandra_package_version": "4.1.12
     ({"_cassandra_install_before": {}}, False),  # a new node
     ({"cassandra_offline": True}, False),
     ({"cassandra_install_method": "packages"}, False),
+    # the plan, this run changing the repository: not judged on the one there now (the window reads the new one)
+    ({"_cassandra_install_check": True, "_cassandra_repository_items": [{"item": "baseurl"}]}, False),
+    ({"_cassandra_install_check": True, "_cassandra_repository_items": []}, True),
 ])
 def test_the_release_is_looked_for_on_a_change_of_release(changes, looked):
     variables = dict(BASE, **changes)
