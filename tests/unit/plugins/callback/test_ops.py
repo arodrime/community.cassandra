@@ -233,7 +233,9 @@ def test_a_refused_role_argument_said_in_short_its_older_words_too():
     assert lines[0] == "cassandra_config refused these variables (it changed nothing):"
     assert lines[2] == "  cassandra_flag: not a boolean: The value 'maybe' is not a valid boolean."
     assert lines[3].startswith("    Valid booleans include: 0, 1, ")
-    assert lines[-2:] == ["node: h-n1", "fix them where they are set (inventory or -e), then run again."]
+    assert lines[-2:] == ["node: h-n1", "set them, or fix them where they are set (inventory or -e), then run again."]
+    # the nodes in their natural order, whatever order their results came in
+    assert argument_lines(role, rows, ["node10", "node2", "node1"])[-2] == "nodes: node1, node2, node10"
     assert max(len(x) for x in lines) <= 79
     assert "in the inventory" not in "\n".join(lines)  # (a value given with -e too)
     assert argument_errors({"msg": "anything else"}) is None
@@ -264,10 +266,31 @@ def test_a_refused_role_argument_said_in_short(tmp_path):
     assert lines[:2] == [
         "the role refused these variables (it changed nothing):",
         "  cassandra_concurrent_reads: %sa text, not a whole number" % _GIVEN_3W]
-    assert lines[2] in ("nodes: node1, node2", "nodes: node2, node1")
-    assert lines[3:] == ["fix them where they are set (inventory or -e), then run again."]
+    assert lines[2] == "nodes: node1, node2"
+    assert lines[3:] == ["set them, or fix them where they are set (inventory or -e), then run again."]
     rc, output = run(tmp_path, ARGUMENTS, "-v", INVENTORY="node1,")  # -v: the default callback's, the spec too
     assert "argument_spec_data" in output
+
+
+def test_a_refused_role_argument_said_when_the_run_ends_before_the_next_task(tmp_path):
+    # the refusal on the last task of a play, then the next play cannot start (its hosts fail to template): no next
+    # task, play or stats to say it at, said at the exit all the same
+    playbook = ARGUMENTS + """
+- hosts: "{{ not_defined_anywhere }}"
+  gather_facts: false
+  tasks:
+    - name: Never reached
+      ansible.builtin.debug:
+        msg: reached
+"""
+    rc, output = run(tmp_path, playbook)
+    assert rc != 0
+    lines = shown(output.strip())
+    assert "the role refused these variables (it changed nothing):" in lines, output
+    at = lines.index("the role refused these variables (it changed nothing):")
+    assert lines[at + 2:at + 4] == ["nodes: node1, node2",
+                                    "set them, or fix them where they are set (inventory or -e), then run again."]
+    assert output.count("refused these variables") == 1
 
 
 def test_any_errors_fatal_stops_and_shows_the_failure(tmp_path):

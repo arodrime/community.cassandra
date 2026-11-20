@@ -118,6 +118,7 @@ requirements:
   - set as stdout in configuration
 """
 
+import atexit
 import os
 import re
 import sys
@@ -166,7 +167,7 @@ _ARG_TYPE_NAMES = {
     "AnsibleUnicode": "a text", "str": "a text", "_AnsibleTaggedStr": "a text", "AnsibleSequence": "a list",
     "list": "a list", "AnsibleMapping": "a dict", "dict": "a dict", "int": "a whole number", "float": "a number",
     "bool": "a boolean"}
-ARGUMENTS_WAY_OUT = "fix them where they are set (inventory or -e), then run again."
+ARGUMENTS_WAY_OUT = "set them, or fix them where they are set (inventory or -e), then run again."
 
 
 def argument_errors(result):
@@ -196,10 +197,11 @@ def argument_errors(result):
 
 def argument_lines(role, rows, hosts):
     """The block of a refused role argument check: what was refused (rows, said once for the hosts that share
-    them), the hosts, the way out; 79 columns."""
+    them), the hosts (in natural order: node2 before node10), the way out; 79 columns."""
     out = ["%s refused these variables (it changed nothing):" % role]
     for row in rows:
         out += textwrap.wrap(row, 79, initial_indent="  ", subsequent_indent="    ", break_on_hyphens=False)
+    hosts = sorted(set(hosts), key=lambda h: [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", str(h))])
     out += textwrap.wrap(", ".join(hosts), 79, initial_indent="node%s: " % ("s" if len(hosts) > 1 else ""),
                          subsequent_indent="  ", break_on_hyphens=False)
     return out + [ARGUMENTS_WAY_OUT]
@@ -525,6 +527,7 @@ class CallbackModule(DefaultCallback):
         self._progress = PROGRESS_COLOR
         self._warning = C.COLOR_WARN
         self._refused = {}  # the refused role arguments of the task running: {(role, rows): [hosts]}, said after it
+        atexit.register(self._say_refused)  # (and at exit: a run that ends before any next task or its stats)
 
     def set_options(self, task_keys=None, var_options=None, direct=None):
         super(CallbackModule, self).set_options(task_keys=task_keys, var_options=var_options, direct=direct)
