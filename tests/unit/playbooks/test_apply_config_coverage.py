@@ -146,9 +146,10 @@ def test_the_plan_compares_them_in_check_mode_before_the_needs():
     assert java["ansible.builtin.include_role"]["tasks_from"] == "java_plan.yml"
     assert java["vars"]["_cassandra_java_plan_run"] == "apply_config" and java["vars"]["_cassandra_java_plan_running_only"]
     stop = find(FIND["tasks"], "Stop before any change")
-    # --check: its recap; drift's compare: drift says it
-    assert stop["when"] == ["_cassandra_apply_config_stops | length > 0", "not ansible_check_mode",
+    # --check stops there too, as the real run (not later, on the state it describes); drift's compare: drift says it
+    assert stop["when"] == ["_cassandra_apply_config_stops | length > 0",
                             "not _cassandra_apply_config_compare_only | default(false) | bool"]
+    assert "check_mode" not in stop
 
 
 def test_the_node_s_turn_installs_restarts_once_and_checks():

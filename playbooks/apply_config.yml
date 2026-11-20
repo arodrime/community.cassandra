@@ -164,6 +164,8 @@
           {%- endfor -%}
           {{ out }}
 
+    # (--check too: it stops where the real run stops, with the same refusal and way out, not later on the state the
+    # refusal describes)
     - name: Stop before any change
       ansible.builtin.fail:
         msg: >-
@@ -171,7 +173,6 @@
       run_once: true
       when:
         - _cassandra_apply_config_stops | length > 0
-        - not ansible_check_mode
         - not _cassandra_apply_config_compare_only | default(false) | bool  # drift's compare: nothing changed, no stop
       vars:
         cassandra_output: true  # a verdict: its msg as is (ops callback)
@@ -227,7 +228,8 @@
     # The package repository, the packages and tools (cassandra_install: cqlsh's Python, dsbulk, jemalloc), the firewall:
     # not read by the running Cassandra (jemalloc: at its next start), applied at the node's turn, no restart for them.
     # Compared as Medusa is (check mode applied to them: _cassandra_compare); never on a node whose version changes by
-    # another procedure (stopped before any change), nor a package update (done in its restart). The firewall only
+    # another procedure (stopped before any change); on a newer release of its series, as its restart window installs
+    # them with the package (the firewall live). The firewall only
     # with cassandra_manage_firewall, as create_cluster and add_node run it
     - name: Compare the repository, the packages and the firewall
       ansible.builtin.include_role:
