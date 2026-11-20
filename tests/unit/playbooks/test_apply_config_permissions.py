@@ -301,11 +301,12 @@ def test_apply_config_passes_a_member_seed_down(resume, down_ok, expected):
 def test_the_other_nodes_not_running_may_stay_down_unless_a_node_is_restarted():
     play = [p for p in load("playbooks", "apply_config.yml") if p.get("name") == "Apply the config, one node at a time"][0]
     names = [t["name"] for t in play["tasks"]]
-    assert names == ["Give each node its own facts", "Note the other nodes that may stay down", "Apply the config on this node"]
+    assert names == ["Give each node its own facts", "Note the other nodes that may stay down", "Load the cassandra_install defaults",
+                     "Apply the config on this node"]
     # computed once per node, read by the health checks
-    include = dict(play["tasks"][2]["vars"], cassandra_service_health_down_ok=play["tasks"][1]["ansible.builtin.set_fact"][
+    include = dict(play["tasks"][3]["vars"], cassandra_service_health_down_ok=play["tasks"][1]["ansible.builtin.set_fact"][
         "_cassandra_apply_config_down_ok"])
-    assert play["tasks"][2]["vars"]["cassandra_service_health_down_ok"] == "{{ _cassandra_apply_config_down_ok }}"
+    assert play["tasks"][3]["vars"]["cassandra_service_health_down_ok"] == "{{ _cassandra_apply_config_down_ok }}"
     # n5: stopped with nothing to do (not in this play); n6: outside --limit (no fact)
     then = {"n1": "none", "n2": "start", "n3": "write", "n4": "restart", "n5": "write"}
     hostvars = dict((h, {"_cassandra_preflight": {"ring_address": "10.100.100.%s" % h[1]}}) for h in list(then) + ["n6"])
@@ -335,8 +336,8 @@ def test_the_nodes_written_at_once_let_down_the_nodes_started_later():
     plays = load("playbooks", "apply_config.yml")
     batch = [p for p in plays if p.get("name") == "Apply the config where nothing is restarted, on these nodes at once"][0]
     assert [t["name"] for t in batch["tasks"]] == ["Give each node its own facts", "Note the other nodes that may stay down",
-                                                   "Apply the config on these nodes"]
-    include = dict(batch["tasks"][2]["vars"], cassandra_service_health_down_ok=batch["tasks"][1]["ansible.builtin.set_fact"][
+                                                   "Load the cassandra_install defaults", "Apply the config on these nodes"]
+    include = dict(batch["tasks"][3]["vars"], cassandra_service_health_down_ok=batch["tasks"][1]["ansible.builtin.set_fact"][
         "_cassandra_apply_config_down_ok"])
     assert include["cassandra_service_node_batch"] is True and batch["any_errors_fatal"] is True and "serial" not in batch
     then = {"n1": "none", "n2": "start", "n3": "write", "n4": "restart", "n5": "write"}

@@ -1390,6 +1390,14 @@
           {{ query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_apply_config_down_ok(
                hostvars, inventory_hostname, cassandra_apply_config_then, ansible_check_mode, batch=true) }}
 
+    # cassandra_java_version (the series' Java when the inventory has none) and the others the Java move reads
+    # (java_install.yml, shared with update_java): the defaults loaded in an earlier play are not kept
+    - name: Load the cassandra_install defaults
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_install
+        tasks_from: defaults.yml
+        public: true
+
     - name: Apply the config on these nodes
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation
@@ -1442,6 +1450,14 @@
         _cassandra_apply_config_down_ok: >-
           {{ query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_apply_config_down_ok(
                hostvars, inventory_hostname, cassandra_apply_config_then, ansible_check_mode) }}
+
+    # cassandra_java_version (the series' Java when the inventory has none) and the others the Java move reads
+    # (java_install.yml, shared with update_java): the defaults loaded in an earlier play are not kept
+    - name: Load the cassandra_install defaults
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_install
+        tasks_from: defaults.yml
+        public: true
 
     - name: Apply the config on this node
       ansible.builtin.include_role:

@@ -167,6 +167,19 @@ def test_the_node_s_turn_installs_restarts_once_and_checks():
     assert "not ansible_check_mode" in extras["when"]
 
 
+def test_the_node_turns_load_the_java_variables_of_java_install():
+    # (a node moving to another Java under --check and in a real run: java_install.yml read cassandra_java_version
+    # and _cassandra_java_home, loaded in the plan's play only: undefined at the node's turn)
+    plays = dict((p.get("name"), p) for p in load("playbooks", "apply_config.yml"))
+    for name, task in (("Apply the config where nothing is restarted, on these nodes at once", "Apply the config on these nodes"),
+                       ("Apply the config, one node at a time", "Apply the config on this node")):
+        names = [t.get("name") for t in plays[name]["tasks"]]
+        defaults = plays[name]["tasks"][names.index("Load the cassandra_install defaults")]
+        assert defaults["ansible.builtin.include_role"] == {
+            "name": "community.cassandra.cassandra_install", "tasks_from": "defaults.yml", "public": True}
+        assert names.index("Load the cassandra_install defaults") < names.index(task)
+
+
 def test_the_stops_are_said_in_the_check_recap():
     summary = [p for p in load("playbooks", "apply_config.yml") if p.get("name") == "Summary"][0]
     refused = summary["vars"]["_refused"]  # (the play's: the recap's and the report's)
