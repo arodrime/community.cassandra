@@ -195,7 +195,7 @@ def test_a_refused_role_argument_said_in_short_its_older_words_too(tmp_path):
            " to an int")  # (ansible-core 2.16)
     assert argument_errors({"argument_spec_data": {}, "argument_errors": [old, "missing required arguments: x"],
                             "validate_args_context": {"name": "cassandra_config"}}) == [
-        "cassandra_config refused these values before changing anything (fix them in the inventory):",
+        "cassandra_config refused these values before it changed anything (fix them in the inventory):",
         "  cassandra_concurrent_reads: a text, not a whole number", "  missing required arguments: x"]
     assert argument_errors({"msg": "anything else"}) == []
 
@@ -206,7 +206,7 @@ def test_a_refused_role_argument_said_in_short(tmp_path):
     rc, output = run(tmp_path, ARGUMENTS, INVENTORY="node1,")
     assert rc != 0
     assert shown(output.strip()) == [
-        "node1: the role refused these values before changing anything (fix them in the inventory):",
+        "node1: the role refused these values before it changed anything (fix them in the inventory):",
         "  cassandra_concurrent_reads: '3w' is a text, not a whole number"]
     rc, output = run(tmp_path, ARGUMENTS, "-v", INVENTORY="node1,")  # -v: the default callback's, the spec too
     assert "argument_spec_data" in output

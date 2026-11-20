@@ -176,7 +176,7 @@ def argument_errors(result):
                                                  _TYPE_NAMES.get(found.group(4), "a " + found.group(4))))
         else:
             said.append("  " + re.sub(r"<class '(?:[\w.]+\.)?(\w+)'>", r"\1", str(error)))
-    return ["%s refused these values before changing anything (fix them in the inventory):" % role] + said
+    return ["%s refused these values before it changed anything (fix them in the inventory):" % role] + said
 
 
 def _task(result):
