@@ -737,8 +737,9 @@ goes on despite any of them (``rolling_restart`` in rack mode too). It also refu
 when the ring (``nodetool status``) does not have the datacenter, or a node of the rack in that rack, as the inventory
 names them (``cassandra_dc``, ``cassandra_rack``). With RF 2 it warns that
 (LOCAL_)QUORUM fails while the rack is down. ``start_rack`` starts the rack again and checks the cluster from a node
-of the rack: it stops when a node of the rack is not UN; a node outside the rack not UN (down, joining, leaving) is a
-warning, not waited for (``health_check`` checks the cluster). Repair the rack's nodes if they were down longer than
+of the rack: it stops when a node of the rack is not UN; a node outside the rack not UN (down, joining, leaving,
+moving...) or not reached over ssh is a warning, not waited for, and the run succeeds (``health_check`` checks the
+cluster). Repair the rack's nodes if they were down longer than
 ``max_hint_window``. It first checks the cluster name on a node of
 another rack; when none answers (or the rack is the whole cluster) and ``cassandra_cluster_name`` is the role default
 ``Test Cluster``, it stops (``-e cassandra_accept_default_identity=true`` goes on).

@@ -169,6 +169,17 @@ def test_leaving_node_expected_by_the_caller():
     assert problems([view("n2", *ring)], leaving_ok=["10.0.0.2"]) == ["10.0.0.3 (r1) is UL, seen from n2"]
 
 
+def test_up_node_in_any_state_expected_by_the_caller():
+    # start_rack's nodes outside the rack: up in any state not judged (UM, UJ, UL, DSE's US)
+    for state in ("M", "J", "L", "S"):
+        ring = [node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.3", state=state)]
+        assert problems([view("n2", *ring)], up_ok=["10.0.0.3"]) == []
+        assert problems([view("n2", *ring)], up_ok=["10.0.0.2"]) == ["10.0.0.3 (r1) is U%s, seen from n2" % state]
+    # down is still a problem (down_ok says it)
+    ring = [node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.3", status="D", state="M")]
+    assert problems([view("n2", *ring)], up_ok=["10.0.0.3"]) == ["10.0.0.3 (r1) is DM, seen from n2"]
+
+
 def ring_result(*nodes):
     return {"cluster_status": {"dc1": {"nodes": list(nodes)}}}
 

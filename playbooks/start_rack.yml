@@ -6,7 +6,8 @@
 #
 # Each node started and waited for until it has joined, then the cluster
 # checked from a node of the rack: the run stops when a node of the rack is
-# not UN; a node of another rack not UN is a warning, not waited for (the
+# not UN or not reached over ssh; a node outside the rack not UN (any state) or
+# not reached over ssh is a warning, not waited for, the run a success (the
 # health_check playbook checks the cluster). Asks nothing; re-running is safe.
 #
 # Down longer than the hint window: repair the rack's nodes afterwards.
@@ -171,14 +172,22 @@
 # on 4.0): hints stop being kept after that.
 - name: Check the cluster
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
-  gather_facts: true
-  gather_subset: [network]
+  gather_facts: false  # after the ssh probe below: a host outside the rack not reached does not fail the run
   become: true
   vars:
     # the node the check runs on: the first of the rack (else of the play)
     _cassandra_start_rack_checker: >-
       {{ (ansible_play_hosts | select('in', groups['cassandra_target_rack_nodes'] | default([])) | list
           + ansible_play_hosts) | first }}
+    # the hosts of the cluster not reached over ssh by the probe (outside the rack: out of the play)
+    _cassandra_start_rack_unreached: >-
+      {%- set out = [] -%}
+      {%- for h in ansible_play_hosts_all -%}
+      {%-   if (hostvars[h]._cassandra_start_rack_ssh | default({})).unreachable | default(false) -%}
+      {%-     set _ = out.append(h) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
   tasks:
     # first: each node its own facts before any run_once task (ansible/ansible#87148)
     - name: Give each node its own facts
@@ -195,6 +204,38 @@
       vars:
         cassandra_output: true
 
+    # a host not reached is not an error here (the recap counts it ignored)
+    - name: Reach each node over ssh
+      ansible.builtin.ping:
+      register: _cassandra_start_rack_ssh
+      ignore_unreachable: true
+      when: not ansible_check_mode
+
+    - name: Stop when a node of the rack is not reached over ssh
+      ansible.builtin.fail:
+        msg:
+          - "{{ inventory_hostname }} (rack {{ cassandra_target_rack }}) is not reached over ssh"
+          - "ansible {{ inventory_hostname }} -m ping -vvv shows why"
+          - "WAY OUT  reach it, then run start_rack again"
+      any_errors_fatal: true  # the rack is not checked without it
+      when:
+        - not ansible_check_mode
+        - _cassandra_start_rack_ssh.unreachable | default(false)
+        - inventory_hostname in groups['cassandra_target_rack_nodes']
+      vars:
+        cassandra_output: true
+
+    # said in the warning below; nothing more is asked of it
+    - name: Leave out a node outside the rack not reached over ssh
+      ansible.builtin.meta: end_host
+      when:
+        - not ansible_check_mode
+        - _cassandra_start_rack_ssh.unreachable | default(false)
+
+    - name: Gather the network facts
+      ansible.builtin.setup:
+        gather_subset: [network]
+
     # from a node of the rack (just started: up), read once; a node outside
     # the rack not UN is not waited for: said once the rack is UN, the run goes on
     - name: Read the cluster once from a node of the rack
@@ -204,6 +245,7 @@
       vars:
         cassandra_service_health_report_only: true  # cassandra_health_findings only
         _cassandra_health_no_wait: true
+        _cassandra_health_not_peers: "{{ _cassandra_start_rack_unreached | join(':') }}"  # not reached
       when:
         - inventory_hostname == _cassandra_start_rack_checker
         - not ansible_check_mode  # the rack was not started
@@ -226,36 +268,44 @@
         tasks_from: cluster_health.yml
       vars:
         cassandra_service_health_down_ok: "{{ _others | selectattr('state', 'match', 'D') | map(attribute='address') | list }}"
-        cassandra_service_health_joining_ok: "{{ _others | selectattr('state', 'equalto', 'UJ') | map(attribute='address') | list }}"
-        cassandra_service_health_leaving_ok: "{{ _others | selectattr('state', 'equalto', 'UL') | map(attribute='address') | list }}"
+        cassandra_service_health_up_ok: "{{ _others | selectattr('state', 'match', 'U') | map(attribute='address') | list }}"
         # not read from: they may not answer
-        _cassandra_health_not_peers: "{{ _others | map(attribute='name') | select | join(':') }}"
+        _cassandra_health_not_peers: >-
+          {{ (_others | map(attribute='name') | select | list + _cassandra_start_rack_unreached) | unique | join(':') }}
         _others: "{{ _cassandra_start_rack_others }}"
       when:
         - inventory_hostname == _cassandra_start_rack_checker
         - not ansible_check_mode
         - cassandra_health_problems | length > 0
 
-    - name: Say the nodes outside the rack not UN
+    - name: Say the nodes outside the rack not UN or not reached
       ansible.builtin.debug:
         msg: >-
           {{ (['WARNING  every node of rack ' ~ cassandra_target_rack ~ ' (' ~ cassandra_target_dc ~ ') is UN',
-               'WARNING  not UN outside the rack, not waited for:'] + _rows
+               'WARNING  outside the rack, not waited for:'] + _rows
               + ['The health_check playbook checks the cluster.']) | join(_nl) }}
       when:
         - inventory_hostname == _cassandra_start_rack_checker
         - not ansible_check_mode
-        - _cassandra_start_rack_others | length > 0
+        - _cassandra_start_rack_others | length > 0 or _cassandra_start_rack_unreached | length > 0
       vars:
         cassandra_output: true
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
-        # a row each: the node (its address when no host has it), its state as nodetool status says it
+        # a row each: the node (its address when no host has it), its state as nodetool status says it, then
+        # "not reached over ssh" for a host the probe did not reach (alone when the ring read has no state for it)
         _rows: >-
-          {%- set labels = [] -%}
-          {%- for n in _cassandra_start_rack_others -%}{%- set _ = labels.append(n.name or n.address) -%}{%- endfor -%}
-          {%- set width = labels | map('length') | max -%}
-          {%- set out = [] -%}
+          {%- set rows = [] -%}
           {%- for n in _cassandra_start_rack_others -%}
-          {%-   set _ = out.append(('  %-' ~ width ~ 's  %s') | format(labels[loop.index0], n.state)) -%}
+          {%-   set _ = rows.append([n.name or n.address, n.state,
+                                     'not reached over ssh' if n.name in _cassandra_start_rack_unreached else '']) -%}
           {%- endfor -%}
-          {{ out }}
+          {%- set named = _cassandra_start_rack_others | map(attribute='name') | list -%}
+          {%- for h in _cassandra_start_rack_unreached | reject('in', named) -%}
+          {%-   set _ = rows.append([h, 'not reached over ssh', '']) -%}
+          {%- endfor -%}
+          {%- set width = rows | map('first') | map('length') | max -%}
+          {%- set out = [] -%}
+          {%- for r in rows -%}
+          {%-   set _ = out.append((('%-' ~ width ~ 's  %s  %s') | format(r[0], r[1], r[2])) | trim) -%}
+          {%- endfor -%}
+          {{ out | map('regex_replace', '^', '  ') | list }}

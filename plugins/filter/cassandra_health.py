@@ -54,13 +54,15 @@ def _unasked(result):
 
 
 def cassandra_health_findings(views, expected, node, gossip=None, binary=None, netstats=None, schema=None, ports=None,
-                              down_ok=None, joining_ok=None, leaving_ok=None, names=None, mixed_versions=False, target=""):
+                              down_ok=None, joining_ok=None, leaving_ok=None, names=None, mixed_versions=False, target="",
+                              up_ok=None):
     """views: [{'from': host, 'result': cassandra_status result}]; the others
     are this node's registered results (ports: a wait_for loop over
     {'name', 'host', 'port'} items). down_ok: addresses expected down (a dead
     node being replaced). joining_ok: addresses expected up and joining (a
     bootstrap still running). leaving_ok: addresses expected up and leaving (a
-    decommission still running). names: {address: inventory name}
+    decommission still running). up_ok: addresses expected up, whatever their
+    state (UJ, UL, UM...: start_rack's nodes outside the rack). names: {address: inventory name}
     (cassandra_host_addresses), a node of the ring named by it. The problems as
     [{kind, text (its sentence), ...}]: kind state (address, name (None
     when no host has it), rack, state, seen_from), count (ring, expected, seen_from), nodetool (on, error), port
@@ -85,6 +87,8 @@ def cassandra_health_findings(views, expected, node, gossip=None, binary=None, n
             if n["status"] + n["state"] == "UJ" and n["address"] in (joining_ok or []):
                 continue
             if n["status"] + n["state"] == "UL" and n["address"] in (leaving_ok or []):
+                continue
+            if n["status"] == "U" and n["address"] in (up_ok or []):
                 continue
             if n["status"] != "U" or n["state"] != "N":
                 # by its inventory name when it has one: "node4 (10.0.0.4, rack1) is DN"
