@@ -54,21 +54,25 @@
              | regex_replace('^([0-9]+\.[0-9]+\.[0-9]+).*$', '\1') }}
 
 # Another release of an installed node (the upgrade's, apply_config's in its restart; under --check, at its plan): in
-# the repository the node reads, else a stop with the package manager's own words, before any change (else dnf or
-# apt failed later, its reason dropped)
+# the repository the node reads, as the install below sees it, else a stop with the package manager's own words,
+# before the package is changed (else dnf or apt failed later, its reason dropped)
+# (dnf exits 1 when it lists nothing, or cannot read a repository; apt-cache madison reads the apt cache only: no
+# match is said by an echo of our own)
 - name: Look for the release in the repository
   ansible.builtin.shell: >-
     {% if ansible_facts['os_family'] == 'Debian' %}
     apt-cache madison cassandra 2>&1 | grep -E "[|] *{{ cassandra_package_version | regex_escape }}([-~+][^ ]*)? *[|]"
     || { apt-cache madison cassandra 2>&1 | head -5; echo "no cassandra {{ cassandra_package_version }} in apt-cache madison cassandra"; exit 1; }
     {% else %}
-    dnf -q --showduplicates list available --disableexcludes=all
+    dnf -q --showduplicates list available
+    {{ '--disableexcludes=all' if _cassandra_java_home != '' else '' }}
     {{ ("--disablerepo='*' --enablerepo=" ~ ('cassandra-' ~ cassandra_version) | quote) if _own_repo | bool else '' }}
     {{ ('cassandra-' ~ cassandra_package_version) | quote }} 2>&1
     {% endif %}
   vars:
     # the repository the role manages alone, as the download reads it (an unreachable OS repository on an
-    # air-gapped site is not read)
+    # air-gapped site is not read); the excludes and versionlock as the install honours them (the package module),
+    # not the download (cassandra_java_home: dnf download ignores them)
     _own_repo: "{{ cassandra_repository_manage | default(not cassandra_offline | default(false) | bool) | bool }}"
   register: cassandra_install_release
   changed_when: false
@@ -86,14 +90,28 @@
       (_cassandra_install_before['cassandra'][0].version | regex_replace('^([0-9]+\.[0-9]+\.[0-9]+).*$', '\1'))
       != cassandra_package_version
 
+# one fact per line: what the package manager said (a repository it could not read named as such), what this run
+# changed, the way out
 - name: Stop when the release is not in the repository
   ansible.builtin.fail:
-    msg: >-
-      {{ inventory_hostname }}: Cassandra {{ cassandra_package_version }} is not in the repository the node reads
-      ({{ (cassandra_install_release.stdout_lines | default([]) | select | list)[-3:] | join('; ') or 'nothing listed' }}).
-      Nothing was changed. Set cassandra_package_version to a release it has ({{ 'apt-cache madison cassandra'
-      if ansible_facts['os_family'] == 'Debian' else 'dnf --showduplicates list cassandra' }} lists them there), or add
-      that release to the repository, then run again.
+    msg: "{{ [_said, _changed, _way_out] | join(_nl) }}"
+  vars:
+    cassandra_output: true  # a verdict: its msg as is (ops callback)
+    _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+    _tool: "{{ 'apt-cache madison cassandra' if ansible_facts['os_family'] == 'Debian' else 'dnf' }}"
+    _lines: "{{ (cassandra_install_release.stdout_lines | default([]) | select | list)[-3:] }}"
+    _unread: "{{ {'msg': cassandra_install_release.stdout | default('')} | community.cassandra.cassandra_failure_repos | length > 0 }}"
+    _said: >-
+      {{ inventory_hostname }}: {{ _tool }} did not list Cassandra {{ cassandra_package_version }}{{
+      ' (it could not read a repository)' if _unread | bool else '' }}: {{ _lines | join('; ') or 'nothing listed' }}.
+    _changed: >-
+      Its Cassandra package was not changed{{ '; its repository file was written by this run'
+      if not _cassandra_install_check and _cassandra_repository_items | default([]) | length > 0 else '' }}.
+    _way_out: >-
+      {{ 'Way out: make that repository answer on the node, then run again.' if _unread | bool else
+         'Way out: set cassandra_package_version to a release it lists (' ~ ('apt-cache madison cassandra'
+         if ansible_facts['os_family'] == 'Debian' else 'dnf --showduplicates list cassandra') ~ ' there), or add that'
+         ~ ' release to the repository, then run again.' }}
   when:
     - cassandra_install_release is not skipped
     - cassandra_install_release.rc | default(0) != 0
