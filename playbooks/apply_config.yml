@@ -63,7 +63,7 @@
       ansible.builtin.command:
         argv: >-
           {{ ['dpkg-query', '-W', '-f=${db:Status-Status} ${Version}', 'cassandra'] if ansible_facts['os_family'] == 'Debian'
-             else ['rpm', '-q', '--qf', 'installed %{VERSION}', 'cassandra'] }}
+             else ['rpm', '-q', '--qf', 'installed %{VERSION}\n', 'cassandra'] }}
       register: cassandra_apply_config_package
       changed_when: false
       failed_when: false  # none: a host not set up yet
@@ -77,11 +77,17 @@
         cassandra_apply_config_version: >-
           {{ cassandra_version | community.cassandra.cassandra_apply_config_version(
                cassandra_package_version | default(''), _running, _settings, cassandra_allow_unknown_patch | default(false),
-               _installed) }}
+               _installed, _unfinished) }}
       vars:
         _described: "{{ cassandra_preflight_describe.stdout | default('') | community.cassandra.cassandra_described_versions }}"
-        _package: "{{ cassandra_apply_config_package.stdout | default('') | trim }}"
-        _installed: "{{ _package.split(' ') | last if _package.startswith('installed ') else '' }}"
+        # (one line per package: rpm lists two after a transaction left half done; dpkg its state, then its version)
+        _package: "{{ cassandra_apply_config_package.stdout_lines | default([]) | map('trim') | select | list }}"
+        _installed: "{{ _package[0].split(' ') | last if _package | length == 1 and _package[0].startswith('installed ') else '' }}"
+        # a package left half installed or configured (an interrupted dpkg or rpm transaction): what was read
+        _unfinished: >-
+          {{ ((_package | join(', ')) if _package | length > 1
+              else _package[0] if _package and _package[0].split(' ') | first in ['half-installed', 'unpacked', 'half-configured']
+              else '') }}
         _running: "{{ _described[_cassandra_preflight.ring_address | default('')] | default(_installed) }}"
         _settings:
           cassandra_jvm_options: >-
@@ -932,7 +938,14 @@
              + ([_marked | join(', ') ~ ': left stopped by an interrupted apply_config (in its restart window): see'
                  ~ ' systemctl status cassandra / journalctl -u cassandra there, fix what stopped its start, then resume'
                  ~ ' (the same command plus -e cassandra_rolling_resume=true), which starts '
-                 ~ ('them' if _marked | length > 1 else 'it') ~ ' first.'] if _marked else [])
+                 ~ ('them' if _marked | length > 1 else 'it') ~ ' first.']
+                if _marked and not cassandra_rolling_resume | default(false) | bool else [])
+             + ([_marked | join(', ') ~ ': left stopped by an interrupted apply_config (in its restart window), reached'
+                 ~ ' by this resume only after ' ~ _restart[0] ~ ' (inventory order), whose restart needs every'
+                 ~ ' other node up: see systemctl status cassandra / journalctl -u cassandra there, fix what stopped its'
+                 ~ ' start, then resume on ' ~ ('them' if _marked | length > 1 else 'it') ~ ' alone first (the same'
+                 ~ ' command plus --limit ' ~ _marked | join(',') ~ '), then resume again without --limit.']
+                if _marked and cassandra_rolling_resume | default(false) | bool else [])
              + (['stopped on purpose: apply the config there first (--limit ' ~ _limit | join(',') ~ '), then start '
                  ~ _them ~ ' with start_rack, which checks the start first:']
                 + _start_rack.limit | map('regex_replace', '^', '    ') | list if _limit else [])
@@ -967,12 +980,11 @@
           {%-   endfor -%}
           {%- endif -%}
           {{ out }}
-        # the nodes an interrupted run of apply_config left stopped (its mark): a resume starts them, unless this run
-        # is that resume (still down here: after a restart in the inventory's order, the other ways out then)
+        # the nodes an interrupted run of apply_config left stopped (its mark): a resume starts them; this run that
+        # resume, still down here (after a restart in the inventory's order): the resume on them alone first
         _marked: >-
           {%- set out = [] -%}
-          {%- for h in _down if hostvars[h].cassandra_apply_config_marked | default(false) | bool
-                              and not cassandra_rolling_resume | default(false) | bool -%}
+          {%- for h in _down if hostvars[h].cassandra_apply_config_marked | default(false) | bool -%}
           {%-   set _ = out.append(h) -%}
           {%- endfor -%}
           {{ out }}

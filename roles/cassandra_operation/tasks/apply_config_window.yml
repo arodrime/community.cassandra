@@ -9,6 +9,7 @@
 # removed, the run stopped; else (the package changed, files of it changed, or not known) left stopped, the mark
 # kept, the run stopped. Either way one way out: fix, then resume (which starts it, the package updated first if
 # it is still to do). The package manager's own error lines are said (its module says only that it failed).
+# Under --check nothing was stopped: no mark written or removed, no start, never "left stopped" or "started again".
 - name: Update the release with Cassandra stopped
   vars:
     # the release installed when Cassandra was stopped (the one it ran, or one updated by other means since its start)
@@ -25,7 +26,7 @@
          | reject('in', cassandra_window_before.stdout | default('') | community.cassandra.cassandra_package_verify)
          | list }}
     # (and the files of the package's directories written since the update started: a file new in the target release,
-    # or one that differed before; "unknown": not read)
+    # or one that differed before; "unknown": not read, or under --check: no mark written)
     _written: "{{ cassandra_window_written.stdout_lines | default(['unknown']) }}"
     _verified: >-
       {{ cassandra_window_before.stdout_lines is defined and cassandra_window_verify.rc | default(2) in [0, 1]
@@ -42,15 +43,15 @@
     # directories written since: the update's), the size of dnf's rpm log (its lines since: the update's)
     - name: Note the files of the package and the time before the update
       ansible.builtin.shell: |
-        touch /run/cassandra-apply-config.update
+        {{ '' if ansible_check_mode else 'touch /run/cassandra-apply-config.update' }}
         echo "rpmlog=$(stat -c %s /var/log/dnf.rpm.log 2>/dev/null || echo 0)"
         {{ 'dpkg --verify cassandra' if ansible_facts['os_family'] == 'Debian' else 'rpm -V cassandra' }}
         exit 0
       register: cassandra_window_before
       changed_when: false
-      check_mode: false  # a mark in /run, reads
+      check_mode: false  # a mark in /run (not under --check), reads
 
-    - name: Note that the config is being written
+    - name: Note that the package is being updated
       ansible.builtin.set_fact:
         _cassandra_window_config: false
 
@@ -75,6 +76,11 @@
         _cassandra_config_no_restart_warning: true
         _cassandra_config_quiet: true
         _cassandra_change_report_quiet: true
+
+    - name: Forget the mark of the update
+      ansible.builtin.file:
+        path: /run/cassandra-apply-config.update
+        state: absent
   rescue:
     # (noted now: the start below has a failure of its own, which would take the place of this one; secrets and a
     # URL's login masked)
@@ -101,18 +107,24 @@
       check_mode: false
 
     # (by their change time: a file new in the target release, unseen by the old package's check, on the classpath
-    # of the old one; /etc and /var aside: the config and the package's own .rpmnew files)
+    # of the old one; /etc and /var aside: the config and the package's own .rpmnew files). Regular files only, in
+    # the directories of the package's regular files (never / of dpkg -L's "/.", nor a directory whose entries
+    # changed: cassandra_install's policy-rc.d, written and removed in /usr/sbin on Debian, is no file of the update);
+    # the mark removed once read (not under --check)
     - name: Look for files of the package's directories written since the update started
       ansible.builtin.shell: |
         m=/run/cassandra-apply-config.update
         [ -e $m ] || { echo unknown; exit 0; }
         { {{ 'dpkg -L cassandra' if ansible_facts['os_family'] == 'Debian' else 'rpm -ql cassandra' }}; } 2>/dev/null \
-          | grep -v '^/etc/' | grep -v '^/var/' | while read -r f; do dirname "$f"; done | sort -u \
-          | while read -r d; do [ -d "$d" ] && find "$d" -maxdepth 1 -cnewer $m -print; done | sort -u | head -20
+          | grep -v '^/etc/' | grep -v '^/var/' | while read -r f; do [ -f "$f" ] && dirname "$f"; done | sort -u \
+          | while read -r d; do
+              [ "$d" = / ] || find "$d" -mindepth 1 -maxdepth 1 -type f -cnewer $m ! -name policy-rc.d -print
+            done | sort -u | head -20
+        {{ '' if ansible_check_mode else 'rm -f $m' }}
         exit 0
       register: cassandra_window_written
       changed_when: false
-      check_mode: false  # reads
+      check_mode: false  # reads (the mark removed: not under --check)
 
     # dnf's module says "Failed to install some of the specified packages", rpm's reason (an unpack error) is in its
     # log: its lines since the update started (apt's module returns dpkg's output: read from the failure itself)
@@ -135,9 +147,12 @@
       failed_when: false
       check_mode: false
 
-    # (its own failure said in the stop below, with the way out: the mark kept, a resume starts it)
+    # (its own failure said in the stop below, with the way out: the mark kept, a resume starts it; under --check
+    # nothing was stopped)
     - name: Start Cassandra again on the release it ran
-      when: _back | bool
+      when:
+        - _back | bool
+        - not ansible_check_mode
       block:
         - name: Start Cassandra again on the release it ran
           ansible.builtin.include_role:
@@ -157,14 +172,8 @@
           ansible.builtin.set_fact:
             _cassandra_window_start_failed: "{{ ansible_failed_result | default({}) | community.cassandra.cassandra_failure_cause }}"
 
-        # (a start that timed out waiting for the node may have left it running: said as observed)
-        - name: Look for a Cassandra JVM after the failed start
-          ansible.builtin.command:
-            argv: [pgrep, -f, org.apache.cassandra.service.CassandraDaemon]
-          register: cassandra_window_jvm_after
-          changed_when: false
-          failed_when: false
-          check_mode: false
+        - name: Note the state the failed start left
+          ansible.builtin.include_tasks: start_failed_state.yml
 
     # (the nodes' table: the step that failed, not this task's name)
     - name: Note the step that failed
@@ -188,18 +197,23 @@
                cassandra_window_rpm_log.stdout | default(''))
              | map('regex_replace', '^', '  ' ~ ('apt' if ansible_facts['os_family'] == 'Debian' else 'dnf') ~ ': ') | list }}
         _what: "{{ 'dpkg --verify' if ansible_facts['os_family'] == 'Debian' else 'rpm -V' }}"
+        _same: "{{ 'Cassandra ' ~ _running ~ ' installed, its files as its package has them (' ~ _what ~ ')' }}"
+        # started again on the release it ran
+        _state_back: ["{{ _same }}: started again on it."]
+        # its start failed: the state that left
+        _state_start_failed: ["{{ _same }}.", "Its start failed too: {{ _cassandra_window_start_failed | default('') }}.",
+                              "{{ cassandra_start_failed_state | default('') }}"]
+        # not started again: what was observed
+        _state_left: >-
+          {{ ['Package installed: Cassandra ' ~ (_installed or 'not known') ~ '.']
+             + (['Files of that package changed by the failed update (' ~ _what ~ '): ' ~ _touched[:5] | join(', ')
+                 ~ (' and ' ~ (_touched | length - 5) ~ ' more' if _touched | length > 5 else '') ~ '.'] if _touched else [])
+             + (['Files written in its directories since the update started: ' ~ _written[:5] | join(', ')
+                 ~ (' and more' if _written | length > 5 else '') ~ '.'] if _written and 'unknown' not in _written else [])
+             + (['A Cassandra JVM the unit did not start runs.'] if cassandra_window_jvm.rc | default(1) == 0 else [])
+             + ['Cassandra left stopped.'] }}
+        # (under --check: nothing stopped, nothing installed)
         _state: >-
-          {{ ['Cassandra ' ~ _running ~ ' installed, its files as its package has them (' ~ _what ~ '): started again on it.']
-             if _back | bool and _cassandra_window_start_failed is not defined else
-             ['Cassandra ' ~ _running ~ ' installed, its files as its package has them (' ~ _what ~ ').',
-              'Its start failed too: ' ~ _cassandra_window_start_failed ~ '.',
-              'A Cassandra JVM runs (its start not confirmed).' if cassandra_window_jvm_after.rc | default(1) == 0
-              else 'Cassandra left stopped.']
-             if _back | bool else
-             (['Package installed: Cassandra ' ~ (_installed or 'not known') ~ '.']
-              + (['Files of that package changed by the failed update (' ~ _what ~ '): ' ~ _touched[:5] | join(', ')
-                  ~ (' and ' ~ (_touched | length - 5) ~ ' more' if _touched | length > 5 else '') ~ '.'] if _touched else [])
-              + (['Files written in its directories since the update started: ' ~ _written[:5] | join(', ')
-                  ~ (' and more' if _written | length > 5 else '') ~ '.'] if _written and 'unknown' not in _written else [])
-              + (['A Cassandra JVM the unit did not start runs.'] if cassandra_window_jvm.rc | default(1) == 0 else [])
-              + ['Cassandra left stopped.']) }}
+          {{ ['Under --check: Cassandra was not stopped, no package changed.'] if ansible_check_mode
+             else _state_left if not _back | bool
+             else _state_start_failed if _cassandra_window_start_failed is defined else _state_back }}

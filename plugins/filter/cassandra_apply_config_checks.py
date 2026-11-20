@@ -33,7 +33,8 @@ from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_appl
 VERSION_CATEGORY = {"series": PROCEDURE, "release": RESTART, "older": PROCEDURE}
 
 
-def cassandra_apply_config_version(series, package_version, running, settings=None, allow_unknown=False, installed=""):
+def cassandra_apply_config_version(series, package_version, running, settings=None, allow_unknown=False, installed="",
+                                   unfinished=""):
     """The inventory's series (cassandra_version, '50x'), its version (cassandra_package_version, '' for any of the
     series) and the version the node runs ('' unknown: nothing said) -> {} when it is the same, else {kind: series
     (another series), release (a newer release of the series), older (below the one it runs), category
@@ -45,7 +46,10 @@ def cassandra_apply_config_version(series, package_version, running, settings=No
     unknown: False, notes: []}.
     installed: the version of the node's package ('' not read): a release also has installed (that one, else running:
     the release kept until its restart window, which has nothing to install when it is the wanted one); a package
-    newer than the wanted release (updated by other means since Cassandra started) is refused, before any change."""
+    newer than the wanted release (updated by other means since Cassandra started) is refused, before any change.
+    unfinished: what was read of a package left half done ("" none): rpm -q's lines of two packages ("installed 5.0.8,
+    installed 5.0.9"), or dpkg's state and version ("half-configured 5.0.9"); a release is refused then, before any
+    change (its update would start from a package state nobody chose)."""
     now = patch_notes.numbers(running, partial=True)
     if not now:
         return {}
@@ -75,6 +79,13 @@ def cassandra_apply_config_version(series, package_version, running, settings=No
                    unknown=not patch_notes.known(series, shown) and not boolean(allow_unknown, strict=False),
                    notes=patch_notes.notes(series, running, shown),
                    installed="%d.%d.%d" % on_disk if on_disk else out["running"])
+        if unfinished:
+            several = str(unfinished).count("installed ") > 1
+            out["refused"] = out["refused"] + [
+                ("two Cassandra packages are installed (rpm -q cassandra: %s): finish or undo that transaction by hand"
+                 " first (dnf history)" if several else
+                 "its Cassandra package is not fully installed (dpkg: %s): finish it by hand first (dpkg --configure"
+                 " -a)") % unfinished]
         if on_disk and on_disk > want:
             out["refused"] = out["refused"] + [
                 "its package is Cassandra %s, newer than the inventory's %s: this run does not go back to an older"
@@ -285,7 +296,9 @@ def cassandra_apply_config_stops(nodes, ring=None, commands=None):
             upgrade = True
         else:
             for why in sorted(set(w for n in group for w in n["version"].get("refused") or [])):
-                lines.append("%s: %s (now %s)." % (names, why, running))
+                # (the nodes that have it: a node's own package state is not its group's)
+                who = ", ".join(str(n["name"]) for n in group if why in (n["version"].get("refused") or []))
+                lines.append("%s: %s (now %s)." % (who, why, running))
             if v.get("unknown"):
                 lines.append("%s: Cassandra %s is newer than the releases the collection's notes cover (up to %s): read"
                              " its NEWS.txt (what it refuses to start with, the defaults it changes)."

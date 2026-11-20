@@ -1,0 +1,40 @@
+bugfixes:
+  - >-
+    apply_config - the release window's look for files written since the update started takes regular files only, in
+    the directories of the package's regular files: on Debian, the ``policy-rc.d`` cassandra_install writes and
+    removes in ``/usr/sbin``, and the directories ``dpkg -L`` lists (``/.``, ``/usr``: ``/`` scanned, where ``/run``
+    and ``/tmp`` change), no longer leave every failed update's node stopped as if files of the new release were
+    written; another package's directory next to Cassandra's (RedHat) neither. Its mark in ``/run`` is removed once read
+    and after a window that went through.
+  - >-
+    apply_config - a newer release with its repository changed by the same run: the release is looked for in that
+    repository once it is written live, before the drain and the stop, so that a release it lacks stops the run with
+    Cassandra running and its package unchanged.
+  - >-
+    apply_config - under ``--check``, the release window writes and removes no mark in ``/run``, starts nothing, and
+    a failure there says that Cassandra was not stopped, never "left stopped" or "started again".
+  - >-
+    apply_config - a start that fails after the package update says the Cassandra package read on the node then
+    ("not known" when it could not be read), not the release asked.
+  - >-
+    apply_config - a resume whose node left stopped by the interrupted run is still down for a restart before it keeps
+    the resume's way out (on that node alone first, with ``--limit``), not start_rack's.
+  - >-
+    apply_config - a node's own refusal (a package newer than asked) is said for that node, not for every node with
+    the same release change.
+  - >-
+    apply_config - a Cassandra package left half done (``rpm -q cassandra`` of two packages, a dpkg state such as
+    ``half-configured``) refuses a release update before any change, with the way out; ``rpm -q`` reads one line per
+    package.
+  - >-
+    storage_compatibility_mode reads (upgrade, apply_config) - the record of the config Cassandra started with is read
+    as JSON, by the path of its cassandra.yaml, and its ``_same_settings`` rendering counts as the file it started
+    with (a file written back as the role renders the same settings is not taken for a change).
+  - >-
+    cassandra_linux - no kernel settings (``cassandra_linux_sysctl: {}``, as import_cluster sets for nodes with none):
+    the directory of their file is not created either (every ``--check`` and drift showed it to create).
+  - >-
+    cassandra_firewall - Debian (ufw): a port's sources given as one string, as on RedHat (it failed there).
+  - >-
+    import_cluster, drift - a ``cassandra_package_version`` of another series among the nodes is said as an upgrade,
+    not as apply_config's package update.

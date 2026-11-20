@@ -12,7 +12,7 @@ import pytest
 from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import (
     find, load, render, with_task_vars)
 
-TASKS = load("roles", "cassandra_install", "tasks", "cassandra.yml")
+TASKS = load("roles", "cassandra_install", "tasks", "release_check.yml")
 LOOK = find(TASKS, "Look for the release in the repository")
 STOP = find(TASKS, "Stop when the release is not in the repository")
 BASE = {"_cassandra_install_upgrade": True, "_cassandra_install_check": False, "cassandra_package_version": "4.1.12", "cassandra_offline": False,
@@ -52,8 +52,11 @@ def test_a_missing_release_stops_with_the_package_manager_s_words():
         "Way out: set cassandra_package_version to a release it lists (dnf --showduplicates list cassandra there), or"
         " add that release to the repository, then run again."]
     assert "cassandra_install_release.rc | default(0) != 0" in STOP["when"]
-    names = [t.get("name") for t in TASKS]
-    assert names.index("Stop when the release is not in the repository") < names.index("Install Cassandra Packages")
+    # (cassandra.yml runs them before the install)
+    names = [t.get("name") for t in load("roles", "cassandra_install", "tasks", "cassandra.yml")]
+    assert names.index("Check the release is in the repository") < names.index("Install Cassandra Packages")
+    assert find(load("roles", "cassandra_install", "tasks", "cassandra.yml"), "Check the release is in the repository")[
+        "ansible.builtin.import_tasks"] == "release_check.yml"
     # the repository file written by this run (package_update: cassandra_repository first): said
     said = _said(cassandra_install_release={"rc": 1, "stdout_lines": []}, _cassandra_repository_items=[{"item": "baseurl"}])
     assert said[:2] == ["n1: dnf did not list Cassandra 4.1.12: nothing listed.",

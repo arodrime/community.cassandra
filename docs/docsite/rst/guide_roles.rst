@@ -1019,11 +1019,15 @@ categories, each shown in the plan and under ``--check``. Every variable of the 
   ``cassandra_java_version`` gets the series' default Java, a move shown in the plan like any other: set it to the
   Java the nodes run to keep it), a newer release of the node's series (``cassandra_package_version``: the repository
   and packages the plan shows applied live first, its package kept at the release installed (a Java move installed
-  too), then the package updated with Cassandra stopped (none when that release is installed already), its config
+  too; a repository changed by the run is then looked in for the release, before the drain and the stop), then the
+  package updated with Cassandra stopped (none when that release is installed already), its config
   written again, the release it runs checked after, ``Cassandra package (restart)``; a failure there says the
   package manager's own error lines, starts Cassandra again when its package is unchanged and none of its files
-  changed (``rpm -V`` / ``dpkg --verify`` before and after), else leaves it stopped; either way the one way out is
-  to fix it, then resume with ``-e cassandra_rolling_resume=true``, which starts a node left stopped first),
+  changed (``rpm -V`` / ``dpkg --verify`` before and after, and no regular file written in the directories of its
+  files since the update started), else leaves it stopped; either way the one way out is
+  to fix it, then resume with ``-e cassandra_rolling_resume=true``, which starts a node left stopped first; a
+  package left half installed, two ``rpm -q cassandra`` lines or a ``half-configured`` dpkg state, is refused before
+  any change),
   and what the ``cassandra`` unit gives the running Cassandra (its user and group, its limits, its environment:
   ``cassandra unit (restart)``; the environment the running JVM has when the unit file or a drop-in is newer than
   it, a unit reloaded since its start, else the unit's, as the scripts give some names a value of their own, such as

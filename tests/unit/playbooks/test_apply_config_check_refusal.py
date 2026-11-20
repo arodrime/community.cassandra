@@ -143,10 +143,18 @@ def test_a_node_left_stopped_by_an_interrupted_run_has_one_way_out_the_resume():
         "node7: left stopped by an interrupted apply_config (in its restart window): see systemctl status cassandra /"
         " journalctl -u cassandra there, fix what stopped its start, then resume (the same command plus"
         " -e cassandra_rolling_resume=true), which starts it first."]
-    # that resume, node7 still down (after the restarts in the inventory's order): the other way out
-    refused = render(t["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"],
-                     dict(variables, cassandra_rolling_resume=True))
-    assert refused[1].startswith("node7: the cassandra unit failed") and refused[-1] == AGAIN
+    # (audit) that resume, node7 still down (after a restart in the inventory's order): still the resume's way out,
+    # on it alone first, never start_rack nor "the unit failed and nothing is to apply"
+    for then, todo in (("write", False), ("start", True)):
+        resumed = dict(hostvars, node7=dict(marked, cassandra_apply_config_then=then, cassandra_apply_config_todo=todo))
+        refused = render(t["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"],
+                         dict(variables, hostvars=resumed, cassandra_rolling_resume=True))
+        assert refused == [
+            "node7: Cassandra not running, and node1, node2 would be restarted, which needs every other node up.",
+            "node7: left stopped by an interrupted apply_config (in its restart window), reached by this resume only"
+            " after node1 (inventory order), whose restart needs every other node up: see systemctl status cassandra"
+            " / journalctl -u cassandra there, fix what stopped its start, then resume on it alone first (the same"
+            " command plus --limit node7), then resume again without --limit."], then
     note = task("Note what this node needs")["ansible.builtin.set_fact"]
     assert note["cassandra_apply_config_marked"] == "{{ not _running | bool and _clock.mark is defined }}"
 

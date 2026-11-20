@@ -1,0 +1,19 @@
+---
+# After a start of apply_config's release window that failed (a wait for the node that timed out may have left it
+# running): the state it left, as observed, for the stop that says it (cassandra_start_failed_state). Under --check
+# nothing was stopped: never "left stopped"
+# (pgrep: no shell, whose own command line would match)
+- name: Look for a Cassandra JVM after the failed start
+  ansible.builtin.command:
+    argv: [pgrep, -f, org.apache.cassandra.service.CassandraDaemon]
+  register: cassandra_start_failed_jvm
+  changed_when: false
+  failed_when: false
+  check_mode: false  # a read
+
+- name: Note the state the failed start left
+  ansible.builtin.set_fact:
+    cassandra_start_failed_state: >-
+      {{ 'Under --check: Cassandra was not stopped.' if ansible_check_mode
+         else 'A Cassandra JVM runs (its start not confirmed).' if cassandra_start_failed_jvm.rc | default(1) == 0
+         else 'Cassandra left stopped.' }}

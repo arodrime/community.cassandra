@@ -83,24 +83,26 @@
           {{ ansible_failed_result | default({}) | community.cassandra.cassandra_failure_cause(ansible_failed_task.name | default('')) }}
 
     # (a start that timed out waiting for the node to join may have left it running: said as observed)
-    - name: Look for a Cassandra JVM after the failed start
-      ansible.builtin.command:
-        argv: [pgrep, -f, org.apache.cassandra.service.CassandraDaemon]
-      register: cassandra_restart_jvm
-      changed_when: false
-      failed_when: false
-      check_mode: false
+    - name: Note the state the failed start left
+      ansible.builtin.include_tasks: start_failed_state.yml
+
+    # (the release installed, as read now: not read, not known)
+    - name: Read the installed packages after the failed start
+      ansible.builtin.package_facts:
+      register: cassandra_restart_packages
+      ignore_errors: true  # (not read: said as not known)
+      check_mode: false  # a read
 
     - name: Stop the run on the failed start
       ansible.builtin.fail:
-        msg: "{{ [_failed, _installed, _state, 'WAY OUT  fix it, then resume'] | join(_nl) }}"
+        msg: "{{ [_failed, _installed, cassandra_start_failed_state, 'WAY OUT  fix it, then resume'] | join(_nl) }}"
       vars:
         cassandra_output: true  # a verdict: its msg as is (ops callback)
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         _failed: >-
           {{ inventory_hostname }}: the start after the update to {{ cassandra_package_version }} failed:
           {{ _cassandra_restart_cause }}
-        _state: >-
-          {{ 'A Cassandra JVM runs (its start not confirmed).' if cassandra_restart_jvm.rc | default(1) == 0
-             else 'Cassandra left stopped.' }}
-        _installed: "Package installed: Cassandra {{ cassandra_package_version }}."
+        _version: >-
+          {{ (((cassandra_restart_packages.ansible_facts | default({})).packages | default({})).get('cassandra', [{}])
+              | first).version | default('') | regex_replace('^([0-9]+\.[0-9]+\.[0-9]+).*$', '\1') }}
+        _installed: "Package installed: Cassandra {{ _version or 'not known' }}."
