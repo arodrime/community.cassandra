@@ -59,7 +59,7 @@ def test_operation_summary_is_a_recap():
     changed["_warnings"] = render(task["vars"]["_warnings"], **changed)
     said = render(task["ansible.builtin.debug"]["msg"], **changed)
     assert said[:len(lines)] == render(task["ansible.builtin.debug"]["msg"], **variables)
-    assert said[len(lines) + 1].startswith("WARNING  n1: the Cassandra package update changed /etc/x.conf, not")
+    assert said[len(lines) + 1] == "WARNING  n1: the Cassandra package update replaced /etc/x.conf"
     variables.update(cassandra_service_summary_operation="remove_datacenter")
     assert render(task["ansible.builtin.debug"]["msg"], **variables)[0].startswith("DONE  remove_datacenter  my_cluster")
     variables.update(ansible_check_mode=True)

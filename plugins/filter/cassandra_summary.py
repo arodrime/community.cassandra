@@ -14,7 +14,8 @@ cassandra_stop_block: the end of a run that stopped at a node: "STOPPED
 cassandra_differs: {node: value} of a setting that must be the same on every
     node -> why the run stops, and where to fix it.
 cassandra_limits_changed: the nodes whose limits file a package update changed,
-    left as is (cassandra_linux_manage: false) -> the recap's warning.
+    left as is (cassandra_linux_manage: false) -> the recap's warnings.
+cassandra_warnings: [{label, text}] -> their WARNING lines, 79 columns.
 """
 
 from __future__ import absolute_import, division, print_function
@@ -135,20 +136,46 @@ def _outcomes(results, operation, action, check=False):
     return outcomes, operation or (PLAYBOOKS.get(actions[0], actions[0]) if actions else "")
 
 
+def _limits_text(node, changed):
+    """One node's warning of its limits file changed by the package update (changed: package_update.yml's
+    cassandra_package_limits_changed, {path, saved, created, error}; a path alone as well) -> its lines."""
+    if not isinstance(changed, dict):
+        changed = {"path": changed}
+    path = str(changed.get("path") or "")
+    if changed.get("created"):
+        return ["%s: the Cassandra package update created %s (there was none)" % (node, path),
+                "left as the package wrote it (cassandra_linux_manage: false)",
+                "check it holds the limits you want for the cassandra user, or set cassandra_linux_manage: true"
+                " (cassandra_linux writes it)"]
+    lines = ["%s: the Cassandra package update replaced %s" % (node, path),
+             "left as the package wrote it (cassandra_linux_manage: false)"]
+    if changed.get("saved"):
+        return lines + ["its former content: %s" % changed["saved"],
+                        "copy it back to %s if it held the limits of the cassandra user, or set"
+                        " cassandra_linux_manage: true (cassandra_linux writes it)" % path]
+    return lines + ["its former content was not saved (%s)" % (changed.get("error") or "not read"),
+                    "check it holds the limits you want for the cassandra user, or set cassandra_linux_manage: true"
+                    " (cassandra_linux writes it)"]
+
+
 def cassandra_limits_changed(hosts, hostvars):
     """The nodes (in their order) and their hostvars -> the warnings of the nodes whose limits file the Cassandra
-    package update changed (package_update.yml's cassandra_package_limits_changed: its path) while
-    cassandra_linux_manage is false, which leaves it as the package wrote it: [{label: the nodes, text}], [] for
-    none (one per file path)."""
-    paths = {}
+    package update replaced or created (package_update.yml's cassandra_package_limits_changed) while
+    cassandra_linux_manage is false, which leaves it as the package wrote it: [{label: "", text: its lines}], one
+    per node, [] for none."""
+    said = []
     for h in hosts or []:
-        path = str((hostvars.get(h) or {}).get("cassandra_package_limits_changed") or "")
-        if path:
-            paths.setdefault(path, []).append(str(h))
-    return [{"label": out.nodes(nodes, keep_order=True),
-             "text": "the Cassandra package update changed %s, not written back (cassandra_linux_manage: false)."
-                     " Put your own settings back in it, or set cassandra_linux_manage: true (cassandra_linux"
-                     " writes it)." % path} for path, nodes in paths.items()]
+        changed = (hostvars.get(h) or {}).get("cassandra_package_limits_changed")
+        if changed:
+            said.append({"label": "", "text": "\n".join(_limits_text(str(h), changed))})
+    return said
+
+
+def cassandra_warnings(warnings, width=None):
+    """[{label, text}] -> their WARNING lines, each once, width columns at most (default 79, a stop block's; text:
+    lines in it, the next ones indented under it)."""
+    texts = ["%s: %s" % (w["label"], w["text"]) if w.get("label") else w["text"] for w in warnings or [] if w.get("text")]
+    return out.fit(out.warning_lines(texts), width or STOP_WIDTH) if texts else []
 
 
 def cassandra_op_recap(results, check=False, cluster="", operation="", action="", seconds=None, warnings=None):
@@ -162,10 +189,9 @@ def cassandra_op_recap(results, check=False, cluster="", operation="", action=""
     node4, 110s on node5 -> ["DONE  rolling_restart  my_cluster  2 restarted", "  node4, node5  restarted  1m40s..1m50s
     each"]. warnings: [{label, text}] said last, WARNING lines of 79 columns."""
     outcomes, operation = _outcomes(results, operation, action)
-    texts = ["%s: %s" % (w["label"], w["text"]) if w.get("label") else w["text"] for w in warnings or [] if w.get("text")]
     # seconds: text before ansible-core 2.19 (a task's vars), "" for none
     return out.recap(operation, str(cluster or ""), outcomes, check=check, seconds=out.number(seconds),
-                     extra=out.fit(out.warning_lines(texts), STOP_WIDTH) if texts else None)
+                     extra=cassandra_warnings(warnings) or None)
 
 
 # Ansible's own words for a command that failed: the task's stderr says more
@@ -368,4 +394,5 @@ class FilterModule(object):
             "cassandra_reset_recap": cassandra_reset_recap,
             "cassandra_differs": cassandra_differs,
             "cassandra_limits_changed": cassandra_limits_changed,
+            "cassandra_warnings": cassandra_warnings,
         }
