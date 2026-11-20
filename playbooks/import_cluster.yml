@@ -2586,8 +2586,8 @@
 
     # import_report_shareable off: the shareable copy and key an earlier import wrote (on by default in earlier
     # release candidates) describe that import, not this one. Each known by its first line (the import's own),
-    # read before report.txt is written: removed when the report next to it is this cluster's, else (another
-    # cluster's, or none) kept as <file>.<date>~; a link kept as it is; under --check only said
+    # read before report.txt is written (whose cluster it was: said); kept as <file>.<date>@<time>~, never removed
+    # (the key of a copy already shared must not be lost); a link kept as it is; under --check only said
     - name: Find the shareable copy and key of an earlier import
       ansible.builtin.set_fact:
         _import_old_shareable: >-
@@ -2595,16 +2595,7 @@
              | community.cassandra.cassandra_import_old_shareable(_layout.cluster_group, now(fmt='%Y-%m-%d@%H:%M:%S')) }}
       when: not import_report_shareable | default(false) | bool
 
-    - name: Remove the shareable copy and key of an earlier import of this cluster
-      ansible.builtin.file:
-        path: "{{ item.path }}"
-        state: absent
-      loop: "{{ _import_old_shareable | default([]) | selectattr('action', 'equalto', 'remove') | list }}"
-      loop_control:
-        label: "{{ item.name }}"
-      when: not ansible_check_mode
-
-    - name: Keep aside the shareable copy and key of another import
+    - name: Keep aside the shareable copy and key of an earlier import
       ansible.builtin.command:
         argv: [mv, -n, --, "{{ item.path }}", "{{ item.backup }}"]
         creates: "{{ item.backup }}"

@@ -844,38 +844,39 @@ def _first_line(path):
 def cassandra_import_old_shareable(report_dir, cluster, stamp):
     """The report dir, the cluster's group, a time stamp ("2026-11-20@10:11:12") -> what to do with the shareable
     copy and key an earlier import wrote there, read before this import writes its report: [{name, path, what
-    (copy, key), action, backup}] in the order of SHAREABLE_FILES. A file whose first line is not the import's own
-    is not listed (not the import's). action: remove (the report next to it is this cluster's), back_up (it is
-    another cluster's, or there is none: backup, its path with .<stamp>~), link (a link: kept, nothing removed
-    through it)."""
+    (copy, key), action, ours, report, backup}] in the order of SHAREABLE_FILES. A file whose first line is not the
+    import's own is not listed (not the import's). action: back_up (backup: its path with .<stamp>~; never
+    removed: the key of a copy already shared must not be lost), link (a link: kept, nothing moved through it).
+    ours: the report next to it is this cluster's."""
     said = []
     for name, report, what, head in SHAREABLE_FILES:
         path = os.path.join(str(report_dir), name)
         if not os.path.isfile(path) or not _first_line(path).startswith(head):
             continue
         ours = written_for(_first_line(os.path.join(str(report_dir), report))) == str(cluster)
-        action = "link" if os.path.islink(path) else "remove" if ours else "back_up"
-        said.append({"name": name, "path": path, "what": what, "action": action, "report": report,
+        action = "link" if os.path.islink(path) else "back_up"
+        said.append({"name": name, "path": path, "what": what, "action": action, "report": report, "ours": ours,
                      "backup": "%s.%s~" % (path, stamp) if action == "back_up" else ""})
     return said
 
 
 def cassandra_import_old_shareable_lines(found, report_dir, cluster, check=False):
     """cassandra_import_old_shareable's result, the report dir, the cluster's group, --check -> the lines that say
-    it, a row per file (under --check: what would be done).
-    e.g. ([{name: "report.shareable.txt", what: "copy", action: "remove", ...}], "/inv", "c1") -> ["An earlier
-    import's shareable copy (import_report_shareable is off),", "in /inv:", "  report.shareable.txt  the copy
-    removed"]."""
+    it, a row per file, the name it is kept under below it, and why when the report next to it is not this
+    cluster's (under --check: what would be done).
+    e.g. ([{name: "report.shareable.txt", what: "copy", action: "back_up", ours: True, backup: "/inv/report.
+    shareable.txt.2026-11-20@10:11:12~", ...}], "/inv", "c1") -> ["An earlier import's shareable copy
+    (import_report_shareable is off),", "in /inv:", "  report.shareable.txt  the copy  backed up", "    as
+    report.shareable.txt.2026-11-20@10:11:12~"]."""
     would = "would be " if check else ""
     rows, below = [], {}
     for f in found or []:
         if f["action"] == "link":
             outcome = "kept: a link"
-        elif f["action"] == "remove":
-            outcome = would + "removed"
         else:
             outcome = would + "backed up"
-            below[len(rows)] = ["    as %s" % os.path.basename(f["backup"]), "    (no %s of %s)" % (f["report"], cluster)]
+            below[len(rows)] = ["    as %s" % os.path.basename(f["backup"])] + (
+                [] if f.get("ours") else ["    (no %s of %s)" % (f["report"], cluster)])
         rows.append([f["name"], "the " + f["what"], outcome])
     lines = []
     for i, line in enumerate(out.table(rows, indent="  ")):
