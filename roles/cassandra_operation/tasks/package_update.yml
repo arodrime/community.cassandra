@@ -129,9 +129,10 @@
       ansible.builtin.set_fact:
         cassandra_package_limits_changed: >-
           {{ {'path': '/etc/security/limits.d/cassandra.conf', 'created': _created | bool, 'saved': _saved,
-              'removed': _removed | bool, 'link': _link, 'dangling': _was_link | bool and not _before.exists | default(false),
+              'removed': _removed | bool, 'link': _link, 'dangling': _dangling | bool,
               'error': '' if _saved or _created | bool else _kept.msg | default(_unread.msg | default('not read'))} }}
       vars:
+        _dangling: "{{ _was_link | bool and not _before.exists | default(false) }}"  # (a link to no file)
         _kept: "{{ cassandra_package_limits_kept | default({}) }}"
         _saved: "{{ '' if _kept.failed | default(false) else _kept.dest | default('') }}"
         _unread: "{{ cassandra_package_limits_content | default({}) }}"  # (its msg when it could not be read)
