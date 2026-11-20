@@ -128,8 +128,17 @@
         name: community.cassandra.cassandra_config
         tasks_from: jvm_started.yml
 
-    # a Cassandra package left half done (an interrupted rpm or dpkg run) on a node not running: refused before any
-    # node is started (its start would run Cassandra on those files); a running node is not started here
+    # the start below is decided by the unit: a JVM outside it, or a unit being stopped, is still started
+    - name: Read the cassandra unit state
+      ansible.builtin.systemd_service:
+        name: cassandra
+      register: _cassandra_start_rack_unit
+      changed_when: false
+      check_mode: false  # a read
+
+    # a Cassandra package left half done (an interrupted rpm or dpkg run): refused before any node is started (its
+    # start would run Cassandra on those files); a node is not checked only when its unit is active and its main
+    # process is the Cassandra JVM found (the start below leaves it as it is)
     - name: Refuse to start a node whose Cassandra package is left half done
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation
@@ -137,8 +146,13 @@
       vars:
         _cassandra_package_unfinished_hosts: >-
           {%- set out = [] -%}
-          {%- for h in ansible_play_hosts if (hostvars[h].cassandra_jvm | default({})).pid is not defined -%}
-          {%-   set _ = out.append(h) -%}
+          {%- for h in ansible_play_hosts -%}
+          {%-   set pid = (hostvars[h].cassandra_jvm | default({})).pid | default('') | string -%}
+          {%-   set unit = (hostvars[h]._cassandra_start_rack_unit | default({})).status | default({}) -%}
+          {%-   if not (pid and unit.ActiveState | default('') == 'active'
+                        and unit.MainPID | default('0') | string == pid) -%}
+          {%-     set _ = out.append(h) -%}
+          {%-   endif -%}
           {%- endfor -%}
           {{ out }}
         _cassandra_package_unfinished_run: start_rack
