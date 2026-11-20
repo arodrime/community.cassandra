@@ -33,12 +33,6 @@ from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_appl
 VERSION_CATEGORY = {"series": PROCEDURE, "release": RESTART, "older": PROCEDURE}
 
 
-def _numbers(version):
-    """'4.1.5', '4.1.5-1', '5.0~beta1' -> (4, 1, 5) (the numbers before anything else)."""
-    m = re.match(r"^(\d+)\.(\d+)(?:\.(\d+))?", str(version or "").strip())
-    return tuple(int(x or 0) for x in m.groups()) if m else ()
-
-
 def cassandra_apply_config_version(series, package_version, running, settings=None, allow_unknown=False):
     """The inventory's series (cassandra_version, '50x'), its version (cassandra_package_version, '' for any of the
     series) and the version the node runs ('' unknown: nothing said) -> {} when it is the same, else {kind: series
@@ -49,10 +43,10 @@ def cassandra_apply_config_version(series, package_version, running, settings=No
     e.g. ("50x", "", "4.1.5") -> {kind: "series", category: "C", running: "4.1.5", wanted: "5.0"};
     ("41x", "4.1.12", "4.1.11") -> {kind: "release", category: "B", running: "4.1.11", wanted: "4.1.12", refused: [],
     unknown: False, notes: []}."""
-    now = _numbers(running)
+    now = patch_notes.numbers(running, partial=True)
     if not now:
         return {}
-    want = _numbers(package_version)
+    want = patch_notes.numbers(package_version, partial=True)
     m = re.match(r"^(\d)(\d)x$", str(series or ""))
     wanted_series = (int(m.group(1)), int(m.group(2))) if m else None
     shown = str(package_version).strip() if want else ("%d.%d" % wanted_series if wanted_series else str(series))

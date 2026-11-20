@@ -72,10 +72,11 @@ NOTES = [
 ]
 
 
-def numbers(version):
-    """'4.1.5', '4.1.5-1' -> (4, 1, 5); () when it is not a version."""
-    m = re.match(r"^(\d+)\.(\d+)\.(\d+)", str(version or "").strip())
-    return tuple(int(x) for x in m.groups()) if m else ()
+def numbers(version, partial=False):
+    """'4.1.5', '4.1.5-1' -> (4, 1, 5); () when it is not a version. partial: a version without its patch number
+    too, as a running build may name itself ('5.0~beta1', '5.0-rc1' -> (5, 0, 0))."""
+    m = re.match(r"^(\d+)\.(\d+)(?:\.(\d+))?" if partial else r"^(\d+)\.(\d+)\.(\d+)", str(version or "").strip())
+    return tuple(int(x or 0) for x in m.groups()) if m else ()
 
 
 def known(series, target):

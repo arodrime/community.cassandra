@@ -224,3 +224,11 @@ def test_the_nodes_and_the_ring_sentence_are_built_once():
         "has 10.0.0.9, which no host of the inventory has: left as it is (topology --check shows the ring against the"
         " inventory)")
     assert "left as they are" in cassandra_apply_config_ring_unknown({"unknown": ["10.0.0.8", "10.0.0.9"]})
+
+
+def test_one_version_parser():
+    assert notes.numbers("4.1.5-1") == (4, 1, 5) and notes.numbers("5.0~beta1") == ()
+    assert notes.numbers("5.0~beta1", partial=True) == (5, 0, 0) and notes.numbers("5.0.2", partial=True) == (5, 0, 2)
+    assert notes.numbers("x", partial=True) == ()
+    # a beta the node runs, the series' release asked: a newer release
+    assert cassandra_apply_config_version("50x", "5.0.1", "5.0~beta1")["kind"] == "release"
