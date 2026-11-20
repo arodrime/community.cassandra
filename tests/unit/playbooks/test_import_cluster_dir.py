@@ -434,22 +434,26 @@ def plant_shareable(where, cluster, report="report.txt", names=("report.shareabl
 SHAREABLE_TASKS = ["Make the shareable copy of the report",
                    "Find the shareable copy and key of an earlier import",
                    "Move aside the shareable copy and key of an earlier import",
-                   "Stop when a shareable copy or key was not moved aside",
-                   "Say what was done with the shareable copy and key of an earlier import"]
+                   "Say what was done with the shareable copy and key of an earlier import",
+                   "Stop when a shareable copy or key was not moved aside"]
 
 
-def mv_n(argv):
-    """mv -n -- source target: never over a file (a link renamed itself) -> its result as registered"""
+def mv_n(argv, error=""):
+    """mv -n -- source target: never over a file (a link renamed itself) -> its result as registered; error: mv's
+    when it fails (nothing moved)"""
     assert argv[:3] == ["mv", "-n", "--"]
+    if error:
+        return {"rc": 1, "stderr": error}
     if not os.path.lexists(argv[4]):
         os.rename(argv[3], argv[4])
     return {"rc": 0, "stderr": ""}
 
 
-def old_shareable(where, check=False, shareable=None, text="IMPORT y", meanwhile=None):
+def old_shareable(where, check=False, shareable=None, text="IMPORT y", meanwhile=None, mv_errors=None):
     """the tasks on an earlier import's files in where (cluster c1; shareable: import_report_shareable, the copy
-    made of text; meanwhile: run between the find and the move): (what was found, the lines said, or the stop's)"""
-    make, find, move, stop, say = (TASKS[n] for n in SHAREABLE_TASKS)
+    made of text; meanwhile: run between the find and the move; mv_errors: {name: mv's error}): (what was found,
+    the lines said, then the stop's when it stops; None for none)"""
+    make, find, move, say, stop = (TASKS[n] for n in SHAREABLE_TASKS)
     variables = share_vars(where, check, text)
     if shareable is not None:
         variables["import_report_shareable"] = shareable
@@ -464,15 +468,20 @@ def old_shareable(where, check=False, shareable=None, text="IMPORT y", meanwhile
     if meanwhile:
         meanwhile(found)
     variables["_import_moved_aside"] = {"results": [
-        dict(mv_n([render(a, item=item) for a in move["ansible.builtin.command"]["argv"]]), item=item)
+        dict(mv_n([render(a, item=item) for a in move["ansible.builtin.command"]["argv"]],
+                  (mv_errors or {}).get(item["name"], "")), item=item)
         for item in render(move["loop"], **variables)]}
+    said = None
+    local = dict(variables)
+    for k, v in say["vars"].items():
+        local[k] = render(v, **local) if isinstance(v, str) else v
+    if render("{{ %s }}" % say["when"], **local):
+        assert say["vars"]["cassandra_output"] is True
+        said = render(say["ansible.builtin.debug"]["msg"], **local)
     for item in render(stop["loop"], **variables):
         if render("{{ %s }}" % stop["when"], item=item):
-            return found, [render(line, item=item) for line in stop["ansible.builtin.fail"]["msg"]]
-    if not render("{{ %s }}" % say["when"], **variables):
-        return found, None
-    assert say["vars"]["cassandra_output"] is True
-    return found, render(say["ansible.builtin.debug"]["msg"], **variables)
+            return found, (said or []) + [render(line, item=item) for line in stop["ansible.builtin.fail"]["msg"]]
+    return found, said
 
 
 def test_the_shareable_copy_of_an_earlier_import_of_this_cluster_is_moved_aside_when_off(tmp_path):
@@ -666,6 +675,16 @@ def test_on_a_link_written_over_is_moved_aside_never_the_file_it_points_to(tmp_p
     assert os.stat(str(elsewhere / "report.shareable.key.txt")).st_mode & 0o777 == 0o640
     touch = TASKS["Make the key of the shareable copy readable by its owner only"]["ansible.builtin.file"]
     assert touch["follow"] is False
+    # links to the very texts this import writes: moved aside all the same (the files written: the import's own)
+    for name in os.listdir(str(here)):
+        if name.endswith("~"):
+            os.remove(str(here / name))
+    plant_shareable(elsewhere, None)
+    for name in ("report.shareable.txt", "report.shareable.key.txt"):
+        os.symlink(str(elsewhere / name), str(here / name))
+    found, said = old_shareable(here, shareable=True, text="IMPORT x")
+    assert [(f["name"], f["action"], f["paired"]) for f in found] == [("report.shareable.txt", "move", False),
+                                                                      ("report.shareable.key.txt", "move", False)]
 
 
 def test_on_a_copy_differing_only_by_the_run_s_time_and_build_is_left_alone(tmp_path):
@@ -677,7 +696,8 @@ def test_on_a_copy_differing_only_by_the_run_s_time_and_build_is_left_alone(tmp_
     for when in ("10:12 CET", "2026-11-20 10:12 +01:00"):
         assert old_shareable(tmp_path, shareable=True, text=run % (when, "5e6f7a8b")) == ([], None)
     found, said = old_shareable(tmp_path, shareable=True, text=run.replace("1 node", "2 nodes") % ("10:12 CET", "x"))
-    assert [f["name"] for f in found] == ["report.shareable.txt"]
+    assert [(f["name"], f["paired"]) for f in found] == [("report.shareable.txt", False),
+                                                         ("report.shareable.key.txt", True)]  # (its pair)
 
 
 def test_a_backup_name_taken_after_it_was_chosen_stops_before_anything_is_written(tmp_path):
@@ -687,13 +707,44 @@ def test_a_backup_name_taken_after_it_was_chosen_stops_before_anything_is_writte
     def taken(found):
         (tmp_path / os.path.basename(found[1]["backup"])).write_text("another run's\n")
     found, said = old_shareable(tmp_path, meanwhile=taken)
-    assert said == ["report.shareable.key.txt was not moved aside", "nothing is written over it: the run stops",
-                    "in:", "  %s" % tmp_path, "mv -n to %s:" % os.path.basename(found[1]["backup"]),
+    stop = ["report.shareable.key.txt was not moved aside", "nothing is written over it: the run stops",
+            "in:", "  %s" % tmp_path, "mv -n to %s:" % os.path.basename(found[1]["backup"])]
+    # the copy moved before it is said first (a pair half moved: both named), the key by the stop alone
+    assert said == ["An earlier import's shareable copy (import_report_shareable is off),", "in %s:" % tmp_path,
+                    "  report.shareable.txt  the copy  moved aside", "    to " + os.path.basename(found[0]["backup"])] + stop + [
                     "  that name is taken", "WAY OUT  run the import again (it takes the next free name)"]
     assert (tmp_path / "report.shareable.key.txt").read_text().startswith("# The key of report.shareable.txt")
     assert (tmp_path / os.path.basename(found[1]["backup"])).read_text() == "another run's\n"
     names = [t.get("name") for t in next(p for p in PLAYS if p.get("name") == "Write the inventory")["tasks"]]
-    assert names.index(SHAREABLE_TASKS[3]) < names.index("Write report.txt and report.details.txt")
+    assert names.index(SHAREABLE_TASKS[-1]) < names.index("Write report.txt and report.details.txt")
+    # mv failing for another reason: its error, and to fix it first
+    for name in os.listdir(str(tmp_path)):
+        if name.endswith("~"):
+            os.remove(str(tmp_path / name))
+    plant_shareable(tmp_path, "c1")
+    found, said = old_shareable(tmp_path, mv_errors={"report.shareable.txt": "mv: cannot move: Permission denied"})
+    assert said[-3:] == ["mv -n to %s:" % os.path.basename(found[0]["backup"]), "  mv: cannot move: Permission denied",
+                         "WAY OUT  fix what mv says, then run the import again"]
+    assert said[:3] == ["An earlier import's shareable copy (import_report_shareable is off),", "in %s:" % tmp_path,
+                        "  report.shareable.key.txt  the key  moved aside"]
+
+
+def test_a_copy_and_its_key_are_moved_aside_together(tmp_path):
+    # a node replaced (db-03 -> db-07): the copy's text the same, the key differs: both moved, the same stamp; a
+    # copy left in place would go with the new key
+    plant_shareable(tmp_path, "c1")
+    with open(str(tmp_path / "report.shareable.key.txt"), "a") as f:
+        f.write("n3 = db-03\n")
+    found, said = old_shareable(tmp_path, shareable=True, text="IMPORT x")
+    assert [(f["name"], f["action"], f["paired"]) for f in found] == [("report.shareable.txt", "move", True),
+                                                                      ("report.shareable.key.txt", "move", False)]
+    stamps = [f["backup"].rsplit(".txt.", 1)[1] for f in found]
+    assert stamps[0] == stamps[1]
+    assert rows(said)[:3] == ["  report.shareable.txt      the copy  moved aside",
+                              "    to " + os.path.basename(found[0]["backup"]),
+                              "    (the same text, moved with its key)"]
+    assert sorted(os.listdir(str(tmp_path))) == sorted(
+        ["report.txt", os.path.basename(found[0]["backup"]), os.path.basename(found[1]["backup"])])
 
 
 def test_the_former_force_name_does_not_force():

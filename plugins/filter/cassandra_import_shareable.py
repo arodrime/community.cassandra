@@ -835,6 +835,11 @@ SHAREABLE_FILES = (("report.shareable.txt", "report.txt", "copy", COPY_HEAD),
                    ("report.check.shareable.txt", "report.check.txt", "copy", COPY_HEAD))
 
 
+# a copy and the key that decodes it: when one is moved aside, the other one too (a key that changed, a node
+# replaced, while the copy's text stayed the same: the copy left in place would go with the new key)
+PAIR = ("report.shareable.txt", "report.shareable.key.txt")
+
+
 def _first_line(path):
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
@@ -876,12 +881,13 @@ def cassandra_import_old_shareable(report_dir, cluster, stamp, shareable=False, 
     {name: the text this import writes there}, --check -> what to do, before this import writes its report, with
     the shareable copy and key an earlier import wrote there (known by their first line), never removed nor
     overwritten (the key of a copy already shared must not be lost): [{name, path, what (copy, key), action,
-    is_link, backup, report, report_for, linked}] in the order of SHAREABLE_FILES.
+    is_link, backup, report, report_for, linked, paired}] in the order of SHAREABLE_FILES.
 
       the file found                                        action
       shareable: one this import does not write (but the    not listed
         .map key), or a file (not a link) it writes the
         same again (but the run's time and build)
+      the same again, the other one of its PAIR moved       move (paired)
       a link nothing is written over (off, the .map key)    link: kept (linked: the file it points to is moved)
       a link this import writes over                        move: the link itself, never the file it points to
       under --check, one --check does not write             would_move
@@ -895,7 +901,7 @@ def cassandra_import_old_shareable(report_dir, cluster, stamp, shareable=False, 
       an import's of an earlier release (no group named)    ""
       not an import's                                       None
       none                                                  False"""
-    said = []
+    found = []
     for name, report, what, head in SHAREABLE_FILES:
         path = os.path.join(str(report_dir), name)
         if not os.path.isfile(path) or not _first_line(path).startswith(head):
@@ -904,13 +910,27 @@ def cassandra_import_old_shareable(report_dir, cluster, stamp, shareable=False, 
         link = os.path.islink(path)
         if shareable and not name.endswith(".map") and not writes:
             continue
-        if writes and not link and _unstamped(_read(path)) == _unstamped(new[name]):
-            continue
-        action = "link" if link and not writes else "would_move" if check and not writes else "move"
+        if link and not writes:
+            action = "link"
+        elif writes and not link and _unstamped(_read(path)) == _unstamped(new[name]):
+            action = "same"  # (left in place, unless the other one of its pair is moved)
+        elif check and not writes:
+            action = "would_move"
+        else:
+            action = "move"
         report_path = os.path.join(str(report_dir), report)
-        said.append({"name": name, "path": path, "what": what, "action": action, "is_link": link, "report": report,
-                     "report_for": written_for(_first_line(report_path)) if os.path.isfile(report_path) else False,
-                     "backup": _free_name(path, stamp) if action != "link" else ""})
+        found.append({"name": name, "path": path, "what": what, "action": action, "is_link": link, "report": report,
+                      "report_for": written_for(_first_line(report_path)) if os.path.isfile(report_path) else False,
+                      "paired": False})
+    pair_moved = any(f["name"] in PAIR and f["action"] == "move" for f in found)
+    said = []
+    for f in found:
+        if f["action"] == "same":
+            if not (pair_moved and f["name"] in PAIR):
+                continue
+            f.update(action="move", paired=True)
+        f["backup"] = _free_name(f["path"], stamp) if f["action"] != "link" else ""
+        said.append(f)
     moved = set(os.path.realpath(f["path"]) for f in said if f["action"] in ("move", "would_move"))
     for f in said:
         f["linked"] = f["action"] == "link" and os.path.realpath(f["path"]) in moved
@@ -936,6 +956,9 @@ def cassandra_import_old_shareable_lines(found, report_dir, cluster, shareable=F
                 "no %s next to it" % f["report"] if f["report_for"] is False
                 else "the %s next to it is %s's" % (f["report"], f["report_for"]) if f["report_for"]
                 else "the %s next to it is not this cluster's" % f["report"]))
+        if f.get("paired"):
+            below.setdefault(len(rows), []).append("    (the same text, moved with its %s)" % (
+                "key" if f["what"] == "copy" else "copy"))
         if f.get("is_link") and f["action"] != "link":
             below.setdefault(len(rows), []).append("    (a link: moved, the file it points to unchanged)")
         rows.append([f["name"], "the " + f["what"], outcome])

@@ -2121,11 +2121,13 @@ node's may remain: read the copy before sharing it. Its key (``n1 = db-paris-01`
 first line), and ``report.shareable.map`` (an earlier release candidate's key), are never removed nor overwritten
 (the key of a copy already shared must not be lost): with it off (they described that import), or when this import
 writes another text in their place (the run's time and build left out), they are moved aside as
-``<file>.<date>@<time>~`` and said, with whose report is next to them when it is not this cluster's. A link this
-import writes over is moved aside itself (the file it points to is unchanged); one it does not write over is kept.
-Under ``--check`` it only says what it would do, except for the copy ``--check`` writes itself
+``<file>.<date>@<time>~`` and said, with whose report is next to them when it is not this cluster's. The copy and
+its key go together: when one is moved aside, the other one too (a node replaced changes the key, not always the
+copy). A link this import writes over is moved aside itself (the file it points to is unchanged); one it does not
+write over is kept. Under ``--check`` it only says what it would do, except for the copy ``--check`` writes itself
 (``report.check.shareable.txt``). When the name chosen is taken meanwhile (another import in the same directory),
-nothing is written over the file: the run stops, and the next run takes the next free name.
+nothing is written over the file: the run stops, after saying what was moved, and the next run takes the next
+free name; when ``mv`` fails otherwise, the stop shows its error, to fix first.
 
 The report's convergence (under ``FOR INFO``) is the way from an imported cluster, with values kept per DC, rack or node, to one
 group with every setting in ``group_vars/<cluster group>/``; it is worked out from what the import found and changes

@@ -2631,6 +2631,18 @@
         label: "{{ item.name }}"
       check_mode: false  # (under --check: only the copy --check writes, found so)
 
+    - name: Say what was done with the shareable copy and key of an earlier import
+      ansible.builtin.debug:
+        msg: >-
+          {{ _said | community.cassandra.cassandra_import_old_shareable_lines(
+               _report_args.report_file | dirname, _layout.cluster_group, import_report_shareable | default(false) | bool) }}
+      when: _said | length > 0
+      vars:
+        cassandra_output: true
+        # (said before the stop below: a file mv -n left in place is said by the stop alone)
+        _left: "{{ _import_moved_aside.results | default([]) | selectattr('item.path', 'exists') | map(attribute='item.name') | list }}"
+        _said: "{{ _import_old_shareable | rejectattr('name', 'in', _left) | list }}"
+
     - name: Stop when a shareable copy or key was not moved aside
       ansible.builtin.fail:
         msg:
@@ -2639,21 +2651,13 @@
           - "in:"
           - "  {{ item.item.path | dirname }}"
           - "mv -n to {{ item.item.backup | basename }}:"
-          - "  {{ item.stderr | default('', true) or ('that name is taken' if item.item.backup is exists else 'no error') }}"
-          - "WAY OUT  run the import again (it takes the next free name)"
+          - "  {{ item.stderr or 'that name is taken' }}"
+          - "WAY OUT  {{ 'fix what mv says, then run the import again' if item.stderr
+                         else 'run the import again (it takes the next free name)' }}"
       loop: "{{ _import_moved_aside.results | default([]) }}"
       loop_control:
         label: "{{ item.item.name }}"
       when: item.item.path is exists
-      vars:
-        cassandra_output: true
-
-    - name: Say what was done with the shareable copy and key of an earlier import
-      ansible.builtin.debug:
-        msg: >-
-          {{ _import_old_shareable | community.cassandra.cassandra_import_old_shareable_lines(
-               _report_args.report_file | dirname, _layout.cluster_group, import_report_shareable | default(false) | bool) }}
-      when: _import_old_shareable | length > 0
       vars:
         cassandra_output: true
 

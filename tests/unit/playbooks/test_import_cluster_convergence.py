@@ -130,8 +130,9 @@ def test_the_shareable_copy(tmp_path, check):
     (key if not check else copy).write_text((key if not check else copy).read_text() + "n91 = cass091\n")
     rc, out = run(tmp_path, "-e", "import_report_shareable=true", *(["--check"] if check else []))
     assert rc == 0, out
-    moved = [p for p in stem.parent.iterdir() if p.name.endswith("~")]
-    assert len(moved) == 1 and moved[0].read_text().endswith("n91 = cass091\n"), out
+    moved = sorted(p for p in stem.parent.iterdir() if p.name.endswith("~"))
+    assert len(moved) == (1 if check else 2), out  # (a real run: the copy moved with its key, a pair)
+    assert [p for p in moved if p.read_text().endswith("n91 = cass091\n")], out
     assert "An earlier import's shareable copy (this import writes new ones)," in out
     assert "n91" not in (key if not check else copy).read_text()
 
