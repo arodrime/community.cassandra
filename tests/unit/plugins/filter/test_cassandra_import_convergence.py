@@ -169,7 +169,7 @@ def test_the_restart_kinds():
     assert _kind("cassandra_linux_limits") == "os"
     assert _kind("cassandra_jmx_password") == "login" and _kind("cassandra_cql_password") == "login"
     assert _kind("cassandra_server_keystore_password") == "keystore"
-    assert _kind("cassandra_linux_timesync") == "restart"  # (synced in the restart window)
+    assert _kind("cassandra_linux_timesync") == "timesync"  # (synced in the restart window: a restart, its reason said)
     assert _kind("cassandra_rpm_conf_alternative") == "restart"
     assert _kind("cassandra_internode_encryption") == "switch" and _kind("cassandra_authenticator") == "switch"
     assert _kind("cassandra_version") == "version"  # (another series: the upgrade)
@@ -379,7 +379,7 @@ def test_a_tie_said():
         n["vars"]["cassandra_concurrent_reads"] = 32
     text = "\n".join(cassandra_import_convergence(_small(nodes), {}, width=200))
     # (the import's tie: the collection's default, 32, in the cluster's group_vars)
-    assert "\u2192 32 for all (a tie: or another of the values): already in group_vars/small/main.yml: remove" \
+    assert "\u2192 32 for all (a tie: any of these values will do): already in group_vars/small/main.yml: remove" \
            " cassandra_concurrent_reads from" in text
 
 

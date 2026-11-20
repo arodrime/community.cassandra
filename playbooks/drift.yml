@@ -145,13 +145,17 @@
                                       | select | list,
                                 'medusa': v.cassandra_apply_config_medusa | default([]),
                                 'extras': v.cassandra_apply_config_extras | default([]),
-                                'restart': v.cassandra_apply_config_restart_items | default([])}) -%}
+                                'restart': v.cassandra_apply_config_restart_items | default([]),
+                                'unit': (['cassandra.service'] if v.cassandra_service_unit_compare | default({}) is changed
+                                         else [])
+                                        + ([v._cassandra_service_environment_dropin | default('') | basename]
+                                           if v.cassandra_service_dropin_compare | default({}) is changed else [])}) -%}
       {%- endfor -%}
       {{ out }}
     _stops: >-
       {{ _nodes | map('extract', hostvars) | selectattr('_cassandra_apply_config_stops', 'defined')
          | map(attribute='_cassandra_apply_config_stops') | first | default([]) }}
-    _command: "{{ 'apply_config' | community.cassandra.cassandra_command(options=['--check', '--diff'], **_args) }}"
+    _command: "{{ 'apply_config' | community.cassandra.cassandra_command(extra=['--check', '--diff'], **_args) }}"
     _dash: "\u2014"
     _verdict: >-
       {%- set c = _cassandra_drift_report.counts -%}

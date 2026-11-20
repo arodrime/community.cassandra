@@ -1,0 +1,7 @@
+minor_changes:
+  - >-
+    drift - IN SYNC names the unit file (or the drop-in of the package's init script) that differs from the role's;
+    its command reads as the others (``apply_config --check --diff``); every cost line ends with its check command, or
+    says none shows it, in the same words in FROM STOCK and BETWEEN NODES (a setting the convergence does not know by
+    its coverage category in both); a restart for ``cassandra_linux_timesync`` gives its reason; a tie reads ``any of
+    these values will do``.

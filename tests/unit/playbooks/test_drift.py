@@ -259,3 +259,17 @@ def test_a_stop_ends_the_compare_and_is_said_not_in_sync():
     verdict = render(play["vars"]["_verdict"], dict(variables, _compared=True,
                                                     _cassandra_drift_report={"counts": {"stock": 0, "between": 0, "kept": 0}}))
     assert verdict == "at stock, nodes alike, not in sync, 2 nodes not compared"
+
+
+def test_in_sync_names_a_unit_that_differs_and_its_command_reads_as_the_others():
+    play = next(p for p in load("drift.yml") if p.get("name") == "Drift")
+    # e2e: "ansible-playbook --check --diff community.cassandra.apply_config", the others' options after the playbook
+    assert play["vars"]["_command"] == \
+        "{{ 'apply_config' | community.cassandra.cassandra_command(extra=['--check', '--diff'], **_args) }}"
+    hostvars = {"db1": {"cassandra_apply_config_todo": True, "cassandra_service_unit_compare": {"changed": True},
+                        "cassandra_service_dropin_compare": {"skipped": True, "changed": False}},
+                "db2": {"cassandra_apply_config_todo": False, "cassandra_service_unit_compare": {"skipped": True},
+                        "cassandra_service_dropin_compare": {"changed": True},
+                        "_cassandra_service_environment_dropin": "/etc/systemd/system/cassandra.service.d/zz.conf"}}
+    sync = render(play["vars"]["_sync"], dict(trust(play["vars"]), hostvars=hostvars, _nodes=["db1", "db2"]))
+    assert [n["unit"] for n in sync] == [["cassandra.service"], ["zz.conf"]]

@@ -63,8 +63,32 @@ def test_a_release_and_a_java_cost_what_apply_config_does():
     assert lines[3].startswith("      3 nodes change, then restart (apply_config moves the Java in it, as update_java);"
                                " check: ansible-playbook -i inventories/prod.yml community.cassandra.apply_config")
     lines = row(result["stock"], "cassandra_version")
-    assert lines[3] == "      3 nodes change, an upgrade (upgrade, its preflight phase first), never down"
+    assert lines[3] == ("      3 nodes change, an upgrade (upgrade, its preflight phase first), never down; check: none,"
+                        " apply_config does not show it")
     assert "update_java)," not in text(result)
+
+
+def test_every_cost_line_ends_with_its_check_the_same_words_in_both_sections():
+    # e2e: FROM STOCK said "apply_config: applied in the node's one restart" for a unit limit, BETWEEN NODES
+    # "restart unknown (apply_config does not write it); check: none" for the same variable; some lines had no check
+    values = {"db1": {"cassandra_service_limit_nofile": 500000, "cassandra_linux_timesync": "chrony"},
+              "db2": {"cassandra_service_limit_nofile": 524288, "cassandra_linux_timesync": "chrony"},
+              "db3": {"cassandra_service_limit_nofile": 524288, "cassandra_linux_timesync": "chrony"}}
+    result = sections(values, {"group_vars/prod/main.yml": "cassandra_service_limit_nofile: 524288\n"
+                                                           "cassandra_linux_timesync: chrony\n",
+                               "host_vars/db1.yml": "cassandra_service_limit_nofile: 500000\n"})
+    stock, between = row(result["stock"], "cassandra_service_limit_nofile"), row(result["between"],
+                                                                                  "cassandra_service_limit_nofile")
+    assert stock[-1].startswith("      3 nodes change, apply_config: ") and "; check: ansible-playbook" in stock[-1]
+    assert between[-1].startswith("      1 node changes, apply_config: ") and "; check: ansible-playbook" in between[-1]
+    assert stock[-1].split(", apply_config: ")[1].split(";")[0] == between[-1].split(", apply_config: ")[1].split(";")[0]
+    assert "restart unknown" not in text(result)
+    # (a restart for the time sync: its reason)
+    timesync = row(result["stock"], "cassandra_linux_timesync")
+    assert "then restart (apply_config starts time sync in the node's restart window, Cassandra stopped" in timesync[-1]
+    for lines in (result["stock"], result["between"]):
+        costs = [line for line in lines if " change, " in line or " changes, " in line]
+        assert costs and all("; check: " in line for line in costs), costs
 
 
 def test_a_value_equal_to_its_default_is_at_stock_whatever_its_type():
@@ -313,6 +337,16 @@ def test_the_nodes_that_differ_and_the_command():
                      "  db5  in sync",
                      "  the settings themselves, before and after (changing nothing):",
                      "    ansible-playbook community.cassandra.apply_config --check --diff"]
+
+
+def test_a_unit_file_that_differs_is_named():
+    # e2e: Environment=ZORGLUB=1 added to the unit by hand: "cassandra.yaml, jvm-server.options; then restart", the
+    # unit not named
+    nodes = [{"name": "db1", "todo": True, "then": "restart", "files": ["cassandra.yaml"], "unit": ["cassandra.service"],
+              "restart": [{"section": "cassandra unit"}]},
+             {"name": "db2", "todo": False, "then": "none", "unit": ["zz-ansible-environment.conf"]}]
+    assert cassandra_drift_sync(nodes, [], "x")[1:3] == ["  db1  cassandra.yaml, cassandra.service; then restart",
+                                                         "  db2  zz-ansible-environment.conf; no restart"]
 
 
 def test_a_procedure_of_its_own_said_with_its_command():

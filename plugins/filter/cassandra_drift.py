@@ -272,6 +272,20 @@ def _cost(key, changing, unmanaged):
     return kind, _then_text({"changing": changing, "unread": "", "kind": kind, "key": key, "unmanaged": unmanaged})
 
 
+# a cost line with no command that shows the change before it is made
+NO_CHECK = "none, apply_config does not show it"
+
+
+def _cost_line(key, kind, cost, changing, commands):
+    """What going back costs (cost, of kind: _cost's), then the command that shows it first: apply_config --check
+    --diff (change_seeds --check for the seeds) where it shows it, its coverage category too (a setting the import's
+    convergence does not know: apply_config writes it), else NO_CHECK -> text."""
+    shown = _KINDS.get(kind, (0, "", False))[2] or (kind == "unknown" and bool(category(key)))
+    check = unbreakable(_check(changing, kind if _KINDS.get(kind, (0, "", False))[2] else "restart",
+                               commands["inventory"], commands["hosts"], commands["cwd"])) if shown else NO_CHECK
+    return "%s; check: %s" % (cost, check)
+
+
 def _stock_lines(rows, other, per_node, kept, cluster, shared, who, width, commands):
     """FROM STOCK's lines."""
     nodes_off = sorted(set(n for row in rows.values() for n in row["values"]))
@@ -303,13 +317,12 @@ def _stock_lines(rows, other, per_node, kept, cluster, shared, who, width, comma
         changing = sorted(row["values"])
         unmanaged = [n for n in changing if commands["unmanaged"].get(n)]
         kind, cost = _cost(key, changing, unmanaged)
-        check = unbreakable(_check(changing, kind, commands["inventory"], commands["hosts"], commands["cwd"])) \
-            if _KINDS.get(kind, (0, "", False))[2] else ""
+        cost = _cost_line(key, kind, cost, changing, commands)
         if key == "cassandra_package_version" and set(row["stock"].values()) <= {""}:  # (any release of the series)
-            cost, check = "no node changes: the default keeps the release each node runs (a node added later gets" \
-                          " the repository's newest of the series)", ""
+            cost = "no node changes: the default keeps the release each node runs (a node added later gets the" \
+                   " repository's newest of the series)"  # (nothing to check)
         lines += fill_text("%s %s" % (ARROW_RIGHT, _edit(path, row, cluster, shared)), width, "      ", "  ")
-        lines += fill_text("%s%s" % (cost, "; check: " + check if check else ""), width, "      ", "  ")
+        lines += fill_text(cost, width, "      ", "  ")
     if per_node:
         lines += fill_text("Not counted, per node by nature or kept by each node for life: %s" % ", ".join(per_node),
                            width, "  ", "  ")
@@ -370,9 +383,10 @@ def _between_lines(drift, nodes, user, cluster, everyone, who, width, commands):
         if action.endswith(":"):  # (no file sets it apart for these nodes)
             action += " no vars file sets it apart for these nodes: a value made of each node's own variables"
         lines += fill_text(action, width, "      ", "  ")
-        check = unbreakable(_check(item["changing"], item["kind"], commands["inventory"], commands["hosts"],
-                                   commands["cwd"])) if _KINDS[item["kind"]][2] else "none, apply_config does not show it"
-        lines += fill_text("%s; check: %s" % (_then_text(item), check), width, "      ", "  ")
+        # (the same words as FROM STOCK's: a setting the convergence does not know by its coverage category)
+        cost = _then_text(item) if item.get("unread") else _cost(
+            item["key"], item["changing"], [n for n in item["changing"] if commands["unmanaged"].get(n)])[1]
+        lines += fill_text(_cost_line(item["key"], item["kind"], cost, item["changing"], commands), width, "      ", "  ")
     return lines, len(items)
 
 
@@ -463,7 +477,7 @@ def cassandra_drift_sync(nodes, stops=None, command=""):
     """nodes: [{name, compared (false: the compare left it no facts, unreachable or failed there: "not compared",
     never in sync), todo, then, files: [the config files that differ], os: [the OS settings], medusa: [Medusa's],
     extras: [{section}] (the repository, packages, firewall), restart: [{section}] (its Java, Cassandra's package,
-    its unit)}] as apply_config's compare left them; stops: apply_config's stops before any change (a procedure of
+    its unit), unit: [the unit files that differ from the role's, by name]}] as apply_config's compare left them; stops: apply_config's stops before any change (a procedure of
     its own: its lines); command: apply_config --check --diff's -> IN SYNC's lines.
     e.g. ([{name: db1, todo: True, then: restart, files: [cassandra.yaml]}, {name: db2}]) -> ["IN SYNC — ...",
     "  db1  cassandra.yaml; then restart", "  db2  in sync", ...]."""
@@ -479,13 +493,15 @@ def cassandra_drift_sync(nodes, stops=None, command=""):
                 order.append(text)
             rows.setdefault(text, []).append(str(node.get("name")))
             continue
-        parts = [", ".join(node.get("files") or [])] if node.get("files") else []
+        # (the unit file, or the drop-in of the package's init script, that differs from the role's: by its name)
+        files = list(node.get("files") or []) + [u for u in node.get("unit") or [] if u]
+        parts = [", ".join(files)] if files else []
         if node.get("os"):
             parts.append("OS settings: %s" % ", ".join(str(i) for i in node["os"]))
         if node.get("medusa"):
             parts.append("Medusa")
         parts += sorted(set(str(i.get("section", "")) for i in (node.get("extras") or []) + (node.get("restart") or [])
-                            if i.get("section")))
+                            if i.get("section") and not (i["section"] == "cassandra unit" and node.get("unit"))))
         todo = boolean(node.get("todo", False), strict=False) or bool(parts)
         if todo:
             off += 1

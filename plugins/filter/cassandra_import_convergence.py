@@ -62,6 +62,10 @@ LIMIT_MOST = 10  # a check --limit to the nodes that change, up to this many (mo
 _KINDS = {"none": (0, THEN["none"][0], True),
           "os": (0, "%s (cassandra_linux, applied live)" % THEN["os"][0], True),
           "restart": (1, THEN["restart"][0], True),
+          # (apply_config syncs the clock with Cassandra stopped: a step of it under a running Cassandra could reorder
+          # its writes)
+          "timesync": (1, "then restart (apply_config starts time sync in the node's restart window, Cassandra"
+                          " stopped, as a clock step must not happen under it)", True),
           "seeds": (1, "no restart (change_seeds applies it live)", True),
           # apply_config's rule: jmxremote.password is read at each JMX login, jmxremote.access at start
           "jmx": (1, "then restart for a user or a right (jmxremote.access, read at start); passwords only: no restart"
@@ -101,7 +105,7 @@ def _kind(key):
     if key in SWITCHES:
         return "switch"
     if key == "cassandra_linux_timesync":  # (synced in the node's restart window: apply_config restarts it)
-        return "restart"
+        return "timesync"
     if key == "cassandra_rpm_conf_alternative":  # (apply_config moves the config to it, then restarts)
         return "restart"
     if key.startswith("cassandra_linux_") or key in ("cassandra_data_readahead_kb", "cassandra_data_disk_tuning",
@@ -473,7 +477,7 @@ def _action(item, layout):
                     sub, value, out.plural(alone, "node"),
                     " on yours: %s, which every cluster of the inventory reads" % ", ".join(shared) if shared
                     else " on the collection's default")
-    tie = " (a tie: or another of the values)" if item["tie"] else ""
+    tie = " (a tie: any of these values will do)" if item["tie"] else ""
     return "%s %s for all%s: %s" % (ARROW_RIGHT, _shown(target), tie, what)
 
 
