@@ -996,7 +996,9 @@ version and commit, when the run started and ended, a real run's plan (``DIFFERE
 notes), its recap (what each node got, every warning in full), and when each node's turn started and how it ended;
 a run that stopped at a node has its stop as said on the screen instead of the recap. ``--check`` writes its recap
 (the differences, what a real run would do, the warnings). Secrets are masked in it, as on the screen, and the
-file is written mode ``0600`` (its owner only). The last 20 reports are kept
+file is written mode ``0600`` (its owner only). The reports are the record of the runs: commit them with the
+inventory as an audit trail, or leave ``reports/`` out of it (``.gitignore``); they hold no secret in clear but name
+the hosts. The last 20 reports are kept
 (``cassandra_run_report_keep``), the oldest removed after a run. A report that cannot be written is said in a
 warning; the run goes on.
 
@@ -1013,10 +1015,15 @@ categories, each shown in the plan and under ``--check``. Every variable of the 
   loaded``, with no restart for it.
 - **B, a restart**: the config files (none when a proof says the running Cassandra already runs with them), the Java
   (``cassandra_java_version``, ``cassandra_java_home``: as ``update_java`` does, the Java installed and made the one
-  Cassandra starts with, then checked after the restart, ``Java (restart)``), a newer release of the node's series
-  (``cassandra_package_version``: the package updated with Cassandra stopped, its config written again, the release it
-  runs checked after, ``Cassandra package (restart)``), and what the ``cassandra`` unit gives the running Cassandra
-  (its user and group, its limits, its environment, compared with the running JVM's: ``cassandra unit (restart)``).
+  Cassandra starts with, then checked after the restart, ``Java (restart)``; an inventory written by hand without
+  ``cassandra_java_version`` gets the series' default Java, a move shown in the plan like any other: set it to the
+  Java the nodes run to keep it), a newer release of the node's series (``cassandra_package_version``: the package
+  updated with Cassandra stopped, with the repository and packages the plan shows and the Java it moves to, its
+  config written again, the release it runs checked after, ``Cassandra package (restart)``; a failure there starts
+  Cassandra again when its package is unchanged, else leaves it stopped for ``-e cassandra_rolling_resume=true``),
+  and what the ``cassandra`` unit gives the running Cassandra (its user and group, its limits, its environment, read
+  from the running JVM: ``cassandra unit (restart)``; in a container, a limit above what its systemd may give is
+  compared at that cap).
   Whatever the reasons, a node restarts once, all of them done in that restart. A unit file that differs only in
   systemd's handling of the service (``Restart``, ``TimeoutStopSec``, the drain on stop) changes nothing for the
   running Cassandra: written at its next restart, said under the node.
