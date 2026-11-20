@@ -1017,13 +1017,15 @@ categories, each shown in the plan and under ``--check``. Every variable of the 
   (``cassandra_java_version``, ``cassandra_java_home``: as ``update_java`` does, the Java installed and made the one
   Cassandra starts with, then checked after the restart, ``Java (restart)``; an inventory written by hand without
   ``cassandra_java_version`` gets the series' default Java, a move shown in the plan like any other: set it to the
-  Java the nodes run to keep it), a newer release of the node's series (``cassandra_package_version``: the package
-  updated with Cassandra stopped, with the repository and packages the plan shows (a Java move installed before), its
-  config written again, the release it runs checked after, ``Cassandra package (restart)``; a failure there starts
+  Java the nodes run to keep it), a newer release of the node's series (``cassandra_package_version``: the repository
+  and packages the plan shows applied live first, its package kept at the release installed (a Java move installed
+  too), then the package updated with Cassandra stopped (none when that release is installed already), its config
+  written again, the release it runs checked after, ``Cassandra package (restart)``; a failure there starts
   Cassandra again when its package is unchanged, else leaves it stopped for ``-e cassandra_rolling_resume=true``),
-  and what the ``cassandra`` unit gives the running Cassandra (its user and group, its limits, its environment, read
-  from the running JVM: ``cassandra unit (restart)``; in a container, a limit above what its systemd may give is
-  compared at that cap).
+  and what the ``cassandra`` unit gives the running Cassandra (its user and group, its limits, its environment:
+  ``cassandra unit (restart)``; the environment the running JVM has when the unit file or a drop-in is newer than
+  it, a unit reloaded since its start, else the unit's, as the scripts give some names a value of their own, such as
+  ``JMX_PORT``; in a container, a limit above what its systemd may give is compared at that cap).
   Whatever the reasons, a node restarts once, all of them done in that restart. A unit file that differs only in
   systemd's handling of the service (``Restart``, ``TimeoutStopSec``, the drain on stop) changes nothing for the
   running Cassandra: written at its next restart, said under the node.
@@ -1036,8 +1038,10 @@ categories, each shown in the plan and under ``--check``. Every variable of the 
   of the series also stops when it would not start with the node's settings, or when it is newer than the releases
   the collection's notes cover (``plugins/plugin_utils/cassandra_patch_notes.py``: what each release refuses to start
   with, the defaults it changes, said in the plan when a node crosses it): read its ``NEWS.txt``, then ``-e
-  cassandra_allow_unknown_patch=true``. A release the node's repository does not have stops the plan with the
-  package manager's words.
+  cassandra_allow_unknown_patch=true``. A release the node's repository does not have, as the install reads it
+  (dnf's excludes and versionlock), stops the plan with the package manager's words (a repository it cannot read said
+  as such). A package newer than the inventory's release (updated by other means) stops it too: set
+  ``cassandra_package_version`` to it.
 - **D, refused**: what a joined node keeps for life, ``cassandra_cluster_name``, ``cassandra_num_tokens``,
   ``cassandra_partitioner``, the snitch, its dc and rack (refused by ``cassandra_config``, see `Inventory`_), and a
   ``cassandra_initial_token`` that is neither the one its ``cassandra.yaml`` has nor the token it owns in the ring
