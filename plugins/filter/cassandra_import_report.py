@@ -400,9 +400,9 @@ def _plain_default(key):
 
 
 def _alike(a, b):
-    """Two leaf values alike as a file of the roles writes them: 1048575 and "1048575"."""
-    return json.dumps(a, sort_keys=True, default=str).strip('"').lower() == \
-        json.dumps(b, sort_keys=True, default=str).strip('"').lower()
+    """Two leaf values alike as a file of the roles writes them: 1048575 and "1048575"; case kept ("Unlimited" is not
+    "unlimited" to pam_limits)."""
+    return json.dumps(a, sort_keys=True, default=str).strip('"') == json.dumps(b, sort_keys=True, default=str).strip('"')
 
 
 def _settings_pairs(read, keys, from_yours):
@@ -410,27 +410,30 @@ def _settings_pairs(read, keys, from_yours):
     setting per sub-key (cassandra_extra_settings.sstable.selected_format), "(not set)" on a node whose dict has
     not that key; a secret "(in secrets.yml)", a second value of it "(in secrets.yml, value 2)". A dict whose
     collection default is known: its sub-keys compared with the default's on the nodes that leave it to the
-    collection (only the ones that differ said; a sub-key of the default a node's dict leaves out, said)."""
+    collection (only the ones that differ said; a sub-key of the default a node's dict leaves out, said); a node's
+    empty dict ({}: none of the default's sub-keys) said once, on the variable's own row."""
     pairs, secrets, variable = [], {}, {}
     for key in keys:
-        found, paths = {}, []
+        found, paths, empty = {}, [], set()
         default = _plain_default(key)
         for n in read:
             mine = (n.get("vars") or {})
             if key not in mine and key in from_yours.get(n["name"], {}):  # left to a file of yours
                 mine = {key: from_yours[n["name"]][key]["value"]}
             if key in mine:
+                if mine[key] == {}:
+                    empty.add(n["name"])
                 found[n["name"]] = dict((path, (names, value)) for path, names, value in _leaves(key, mine[key]))
                 for path in found[n["name"]]:
                     if path not in paths:
                         paths.append(path)
         # (some nodes leave the dict to the collection: each sub-key against the default's, one a dict drops too)
-        compared = default is not None and len(found) < len(read)
+        compared = default is not None and len(found) < len(read) and len(empty) < len(found)
         if compared:
             paths += [path for path in default if path not in paths]
         for path in paths:
             if compared and path in default and all(path in mine and _alike(mine[path][1], default[path][1])
-                                                    for mine in found.values()):
+                                                    for name, mine in found.items() if name not in empty):
                 continue  # (the default's value on every node, set or not: no difference)
             variable[path] = key
             for n in read:

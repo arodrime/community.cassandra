@@ -1581,6 +1581,36 @@ def test_a_dict_one_node_sets_shows_only_the_sub_keys_that_differ_from_the_defau
     assert re.search(r"cassandra_linux_sysctl\.vm\.swappiness: +\(collection's default\) .*\(not set\) +node1", review)
 
 
+def test_an_empty_dict_one_node_sets_is_one_row_not_the_defaults_sub_keys():
+    """import writes cassandra_linux_limits: {} and cassandra_linux_sysctl: {} on a node whose files are not the
+    role's: one row for that node, not a "(not set)" row per sub-key of the collection's default."""
+    def with_vars(i, **more):
+        return dict(node(i), vars=dict(node(i)["vars"], **more))
+    for key in ("cassandra_linux_limits", "cassandra_linux_sysctl"):
+        nodes = [with_vars(1, **{key: {}}), with_vars(2), with_vars(3)]
+        review = " ".join(section(report(nodes), "DIFFERENT ON SOME NODES"))
+        assert re.search(r"%s: " % key, review), review
+        assert not re.findall(r"%s\.[\w.]+:" % key, review), review
+    # a node's own dict next to it: its sub-keys compared with the default's, the empty one on its own row only
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
+    limits = dict(role_file("cassandra_linux")["cassandra_linux_limits"], nofile=65536)
+    nodes = [with_vars(1, cassandra_linux_limits={}), with_vars(2, cassandra_linux_limits=limits), with_vars(3)]
+    review = " ".join(section(report(nodes), "DIFFERENT ON SOME NODES"))
+    assert sorted(set(re.findall(r"(cassandra_linux_limits\.[\w.]+):", review))) == ["cassandra_linux_limits.nofile"]
+
+
+def test_a_value_that_differs_by_case_only_differs():
+    """pam_limits reads "unlimited" only: "Unlimited" is not the default's value."""
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
+    limits = dict(role_file("cassandra_linux")["cassandra_linux_limits"], memlock="Unlimited")
+
+    def with_vars(i, **more):
+        return dict(node(i), vars=dict(node(i)["vars"], **more))
+    review = " ".join(section(report([with_vars(1, cassandra_linux_limits=limits), with_vars(2)]),
+                              "DIFFERENT ON SOME NODES"))
+    assert sorted(set(re.findall(r"(cassandra_linux_limits\.[\w.]+):", review))) == ["cassandra_linux_limits.memlock"]
+
+
 def test_the_next_step_expects_cassandra_env_as_stock_when_its_dormant_lines_go():
     # e2e (a prod-shape import): "expected: every node up to date (header lines aside)", then apply_config --check
     # rewrote cassandra-env.sh (the lines of the remote JMX branch the nodes do not run, the stock password file line)
