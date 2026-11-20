@@ -1030,9 +1030,9 @@ categories, each shown in the plan and under ``--check``. Every variable of the 
   systemd's handling of the service (``Restart``, ``TimeoutStopSec``, the drain on stop) changes nothing for the
   running Cassandra: written at its next restart, said under the node.
 - **C, a procedure of its own**: the run stops before changing anything and gives the command (``--check`` stops
-  at the same point, with the same words). Another series
-  (``cassandra_version``): ``upgrade -e cassandra_upgrade_phase=preflight``. An older release than the one a node runs:
-  set ``cassandra_package_version`` back to it. A host of the cluster's group not in the ring, or one marked
+  at the same point, with the same words). A newer series
+  (``cassandra_version``): ``upgrade -e cassandra_upgrade_phase=preflight``. An older release or series than the one a
+  node runs: set ``cassandra_package_version`` (and ``cassandra_version``) back to it. A host of the cluster's group not in the ring, or one marked
   ``cassandra_node_state: absent`` still in it: ``topology --check``, then ``topology``. A node of the ring that no host
   of the inventory has is said in the plan's warnings (``topology --check`` shows it), not a stop. A newer release
   of the series also stops when it would not start with the node's settings, or when it is newer than the releases

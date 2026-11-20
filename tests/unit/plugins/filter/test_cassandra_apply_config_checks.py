@@ -26,6 +26,8 @@ COMMANDS = {"upgrade": "ansible-playbook community.cassandra.upgrade -e cassandr
     ("50x", "", "4.1.5", "series", "C"),
     ("50x", "5.0.6", "4.1.5", "series", "C"),
     ("41x", "", "5.0.2", "older", "C"),
+    ("41x", "4.1.12", "5.0.9", "older", "C"),
+    ("41x", "5.0.9", "5.0.9", "older", "C"),  # an older series asked with the release it runs: never an upgrade
     ("41x", "4.1.5", "", "", ""),  # not known (a host not set up): nothing said here
 ])
 def test_the_version_change_and_its_category(series, package, running, kind, category):
@@ -95,6 +97,14 @@ def test_an_upgrade_and_an_older_release_stop_with_their_way_out():
     assert lines[0].startswith("n3: runs Cassandra 4.1.5, the inventory asks for 4.1.4: Cassandra does not go back")
     assert lines[1].startswith("n1, n2: runs Cassandra 4.1.5, the inventory asks for 5.0.6: another series is an upgrade")
     assert "    " + COMMANDS["upgrade"] in lines
+    # an older series: the way back names it, never the upgrade (e2e: 41x on a 5.0.9 node, then its release only)
+    for package, asked in (("4.1.12", "4.1.12"), ("5.0.9", "5.0.9 (cassandra_version 41x)")):
+        lines = cassandra_apply_config_stops([{"name": "n1", "version": cassandra_apply_config_version(
+            "41x", package, "5.0.9")}], commands=COMMANDS)
+        assert lines[0] == ("n1: runs Cassandra 5.0.9, the inventory asks for %s: Cassandra does not go back to an"
+                            " older release by itself (what the newer one wrote may not be read). Set cassandra_version"
+                            " to 50x and cassandra_package_version to 5.0.9, the series and release it runs." % asked)
+        assert "    " + COMMANDS["upgrade"] not in lines
     # a release of the series, nothing against it: no stop (the node's restart takes it)
     assert cassandra_apply_config_stops([{"name": "n1", "version": cassandra_apply_config_version(
         "41x", "4.1.12", "4.1.11")}], commands=COMMANDS) == []

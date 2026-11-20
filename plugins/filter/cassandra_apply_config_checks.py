@@ -53,8 +53,12 @@ def cassandra_apply_config_version(series, package_version, running, settings=No
     m = re.match(r"^(\d)(\d)x$", str(series or ""))
     wanted_series = (int(m.group(1)), int(m.group(2))) if m else None
     shown = str(package_version).strip() if want else ("%d.%d" % wanted_series if wanted_series else str(series))
+    if want and wanted_series and want[:2] != wanted_series:  # (a release of another series than cassandra_version's)
+        shown = "%s (cassandra_version %s)" % (shown, series)
+    # an older series, whatever the release asked: Cassandra does not go back to it either
+    older_series = bool(wanted_series and wanted_series < now[:2])
     kind = ""
-    if want and want < now or (not want and wanted_series and wanted_series < now[:2]):
+    if want and want < now or older_series:
         kind = "older"
     elif wanted_series and wanted_series != now[:2]:
         kind = "series"
@@ -63,6 +67,8 @@ def cassandra_apply_config_version(series, package_version, running, settings=No
     if not kind:
         return {}
     out = {"kind": kind, "category": VERSION_CATEGORY[kind], "running": str(running).strip(), "wanted": shown}
+    if older_series:  # (the way back names the series it runs too)
+        out["series"] = "%d%dx" % now[:2]
     if kind == "release":
         on_disk = patch_notes.numbers(installed)
         out.update(refused=patch_notes.refusals(series, shown, settings or {}),
@@ -266,9 +272,13 @@ def cassandra_apply_config_stops(nodes, ring=None, commands=None):
         names = ", ".join(str(n["name"]) for n in group)
         v = group[0]["version"]
         if kind == "older":
+            back = "cassandra_package_version to %s, the release it runs" % running
+            if v.get("series"):
+                back = "cassandra_version to %s and cassandra_package_version to %s, the series and release it runs" \
+                    % (v["series"], running)
             lines.append("%s: runs Cassandra %s, the inventory asks for %s: Cassandra does not go back to an older"
-                         " release by itself (what the newer one wrote may not be read). Set cassandra_package_version"
-                         " to %s, the release it runs." % (names, running, wanted, running))
+                         " release by itself (what the newer one wrote may not be read). Set %s."
+                         % (names, running, wanted, back))
         elif kind == "series":
             lines.append("%s: runs Cassandra %s, the inventory asks for %s: another series is an upgrade, a procedure"
                          " of its own (one node at a time, its own checks)." % (names, running, wanted))
