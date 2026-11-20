@@ -13,6 +13,8 @@ cassandra_stop_block: the end of a run that stopped at a node: "STOPPED
     command to copy, each said once, 79 columns at most.
 cassandra_differs: {node: value} of a setting that must be the same on every
     node -> why the run stops, and where to fix it.
+cassandra_limits_changed: the nodes whose limits file a package update changed,
+    left as is (cassandra_linux_manage: false) -> the recap's warning.
 """
 
 from __future__ import absolute_import, division, print_function
@@ -133,7 +135,23 @@ def _outcomes(results, operation, action, check=False):
     return outcomes, operation or (PLAYBOOKS.get(actions[0], actions[0]) if actions else "")
 
 
-def cassandra_op_recap(results, check=False, cluster="", operation="", action="", seconds=None):
+def cassandra_limits_changed(hosts, hostvars):
+    """The nodes (in their order) and their hostvars -> the warnings of the nodes whose limits file the Cassandra
+    package update changed (package_update.yml's cassandra_package_limits_changed: its path) while
+    cassandra_linux_manage is false, which leaves it as the package wrote it: [{label: the nodes, text}], [] for
+    none (one per file path)."""
+    paths = {}
+    for h in hosts or []:
+        path = str((hostvars.get(h) or {}).get("cassandra_package_limits_changed") or "")
+        if path:
+            paths.setdefault(path, []).append(str(h))
+    return [{"label": out.nodes(nodes, keep_order=True),
+             "text": "the Cassandra package update changed %s, not written back (cassandra_linux_manage: false)."
+                     " Put your own settings back in it, or set cassandra_linux_manage: true (cassandra_linux"
+                     " writes it)." % path} for path, nodes in paths.items()]
+
+
+def cassandra_op_recap(results, check=False, cluster="", operation="", action="", seconds=None, warnings=None):
     """results: [{node, result}] in the order of the run, result each node's
     cassandra_op_result. The recap of plugin_utils cassandra_output: the verdict (DONE,
     FAILED, CHECK), then the nodes grouped by outcome, their times.
@@ -142,10 +160,12 @@ def cassandra_op_recap(results, check=False, cluster="", operation="", action=""
     recorded; seconds: the run's, on the verdict line.
     -> lines: "rolling_restart done in 100s" on
     node4, 110s on node5 -> ["DONE  rolling_restart  my_cluster  2 restarted", "  node4, node5  restarted  1m40s..1m50s
-    each"]."""
+    each"]. warnings: [{label, text}] said last, WARNING lines of 79 columns."""
     outcomes, operation = _outcomes(results, operation, action)
+    texts = ["%s: %s" % (w["label"], w["text"]) if w.get("label") else w["text"] for w in warnings or [] if w.get("text")]
     # seconds: text before ansible-core 2.19 (a task's vars), "" for none
-    return out.recap(operation, str(cluster or ""), outcomes, check=check, seconds=out.number(seconds))
+    return out.recap(operation, str(cluster or ""), outcomes, check=check, seconds=out.number(seconds),
+                     extra=out.fit(out.warning_lines(texts), STOP_WIDTH) if texts else None)
 
 
 # Ansible's own words for a command that failed: the task's stderr says more
@@ -347,4 +367,5 @@ class FilterModule(object):
             "cassandra_stop_block": cassandra_stop_block,
             "cassandra_reset_recap": cassandra_reset_recap,
             "cassandra_differs": cassandra_differs,
+            "cassandra_limits_changed": cassandra_limits_changed,
         }

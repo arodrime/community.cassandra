@@ -47,10 +47,18 @@ def test_operation_summary_is_a_recap():
                                                   {"node": "n2", "result": "not reached", "stage": ""},
                                                   {"node": "n3", "result": "not in this run (--limit)", "stage": ""}]
     variables["_cluster"] = render(task["vars"]["_cluster"], **variables)
+    variables["_warnings"] = render(task["vars"]["_warnings"], **variables)
+    assert variables["_warnings"] == []
     # a verdict, the nodes grouped (a list: a line each under any callback)
     lines = [" ".join(line.split()) for line in render(task["ansible.builtin.debug"]["msg"], **variables)]
     assert lines == ["DONE add_node my_cluster 1 added, 2 not touched", "n1 added in 5s", "n2 not touched (not reached)",
                      "n3 not touched (left out by --limit)"]
+    # a package update that changed a limits file left to the node (cassandra_linux_manage: false): said last
+    changed = dict(variables, hostvars=dict(hostvars, n1=dict(hostvars["n1"], cassandra_package_limits_changed="/etc/x.conf")))
+    changed["_warnings"] = render(task["vars"]["_warnings"], **changed)
+    said = render(task["ansible.builtin.debug"]["msg"], **changed)
+    assert said[:len(lines)] == render(task["ansible.builtin.debug"]["msg"], **variables)
+    assert said[len(lines) + 1].startswith("WARNING  n1: the Cassandra package update changed /etc/x.conf, not")
     variables.update(cassandra_service_summary_operation="remove_datacenter")
     assert render(task["ansible.builtin.debug"]["msg"], **variables)[0].startswith("DONE  remove_datacenter  my_cluster")
     variables.update(ansible_check_mode=True)

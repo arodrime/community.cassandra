@@ -281,7 +281,8 @@ def test_a_java_move_with_a_release_installs_java_first_its_release_kept():
     update = find(window, "Update the Cassandra package")
     assert update["ansible.builtin.include_tasks"] == "package_update.yml"
     assert update["vars"]["cassandra_install_java"] is False
-    assert load("roles", "cassandra_operation", "tasks", "package_update.yml")[1]["vars"]["_cassandra_install_upgrade"] is True
+    install = find(load("roles", "cassandra_operation", "tasks", "package_update.yml"), "Install the target version")
+    assert install["vars"]["_cassandra_install_upgrade"] is True
 
 
 def test_a_release_node_compares_its_extras_and_applies_the_firewall_live():
@@ -361,6 +362,55 @@ def test_a_package_update_writes_the_limits_file_again():
     # (the one task cassandra_linux's os.yml runs for them too)
     os_tasks = load("roles", "cassandra_linux", "tasks", "os.yml")
     assert {"name": "Limits of the cassandra user", "ansible.builtin.import_tasks": "limits.yml"} in os_tasks
+
+
+def test_a_package_update_on_a_node_with_its_own_os_settings_says_a_changed_limits_file():
+    # cassandra_linux_manage: false (the node's OS settings its own): the RPM's update replaces its limits file with
+    # the package's own; left as it is (never written back), said in the recap as a WARNING with the way out
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_summary import (
+        cassandra_limits_changed, cassandra_op_recap)
+    update = load("roles", "cassandra_operation", "tasks", "package_update.yml")
+    names = [t.get("name") for t in update]
+    assert (names.index("Read the limits file before the update") < names.index("Install the target version")
+            < names.index("Read the limits file after the update") < names.index("Note the package changed the limits file"))
+    note = find(update, "Note the package changed the limits file")
+    for name in ("Read the limits file before the update", "Read the limits file after the update"):
+        read = find(update, name)
+        assert read["check_mode"] is False and read["ansible.builtin.stat"]["get_checksum"] is True
+        assert render("{{ %s }}" % read["when"], {"cassandra_linux_manage": False}) is True
+        assert render("{{ %s }}" % read["when"], {}) is False  # (managed: written again instead)
+
+    def changed(before, after, manage=False):
+        variables = {"cassandra_linux_manage": manage, "cassandra_package_limits_before": {"stat": before},
+                     "cassandra_package_limits_after": {"stat": after}}
+        return all(render("{{ %s }}" % w, variables) for w in note["when"])
+    assert changed({"exists": True, "checksum": "aaa"}, {"exists": True, "checksum": "bbb"})
+    assert not changed({"exists": True, "checksum": "aaa"}, {"exists": True, "checksum": "aaa"})
+    assert not changed({"exists": False}, {"exists": False})
+    assert changed({"exists": False}, {"exists": True, "checksum": "bbb"})
+    assert render(note["ansible.builtin.set_fact"]["cassandra_package_limits_changed"], {}) == \
+        "/etc/security/limits.d/cassandra.conf"
+    # the recap: the node's fact, the way out; nothing restored
+    hostvars = {"h-n1": {"cassandra_package_limits_changed": "/etc/security/limits.d/cassandra.conf"}, "h-n2": {}}
+    warnings = cassandra_limits_changed(["h-n1", "h-n2"], hostvars)
+    assert [w["label"] for w in warnings] == ["h-n1"]
+    lines = cassandra_op_recap([{"node": "h-n1", "result": "upgrade done in 90s"},
+                                {"node": "h-n2", "result": "upgrade done in 95s"}], cluster="zorglub",
+                               operation="upgrade", warnings=warnings)
+    said = " ".join(" ".join(lines).split())
+    assert ("WARNING h-n1: the Cassandra package update changed /etc/security/limits.d/cassandra.conf, not written"
+            " back (cassandra_linux_manage: false). Put your own settings back in it, or set cassandra_linux_manage:"
+            " true (cassandra_linux writes it).") in said
+    assert max(len(x) for x in lines) <= 79
+    assert cassandra_limits_changed(["h-n2"], hostvars) == []
+    assert "WARNING" not in " ".join(cassandra_op_recap([{"node": "h-n2", "result": "upgrade done in 95s"}],
+                                                        operation="upgrade", warnings=[]))
+    # every recap of a package update: apply_config's (with its other warnings), the node operations' (upgrade)
+    summary = load("roles", "cassandra_operation", "tasks", "summary.yml")[0]
+    assert "warnings=_warnings" in summary["ansible.builtin.debug"]["msg"]
+    assert "cassandra_limits_changed(hostvars)" in summary["vars"]["_warnings"]
+    recap_play = [p for p in load("playbooks", "apply_config.yml") if "_more" in (p.get("vars") or {})][0]
+    assert "cassandra_limits_changed(hostvars)" in recap_play["vars"]["_more"]
 
 
 def test_a_release_with_its_repository_changed_is_looked_for_before_the_stop():

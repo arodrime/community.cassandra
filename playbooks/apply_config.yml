@@ -1630,13 +1630,15 @@
       {{ 'rolling_restart' | community.cassandra.cassandra_command(
            inventory=ansible_inventory_sources | default([]), default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
            hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD')) }}
-    # --check: the plan's own warning, said here (no plan shown)
+    # --check: the plan's own warning, said here (no plan shown); a real run: a limits file left to the node that
+    # the package update changed
     _more: >-
       {{ ([{'label': _no_return | community.cassandra.cassandra_node_list,
             'text': 'storage_compatibility_mode moves to NONE: the point of no return. Once a node runs with it,'
                     ~ ' it cannot go back to UPGRADING or CASSANDRA_4, nor to its former Cassandra version.'}]
           if ansible_check_mode and _no_return else [])
-         + ([{'label': 'the ring', 'text': _ring_unknown}] if ansible_check_mode else []) }}
+         + ([{'label': 'the ring', 'text': _ring_unknown}] if ansible_check_mode else [])
+         + query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_limits_changed(hostvars) }}
     # the ring's nodes the inventory does not have (the plan's warning, said here under --check)
     _ring: "{{ hostvars[ansible_play_hosts_all | first]._cassandra_apply_config_ring | default({}) }}"
     _ring_unknown: "{{ _ring | community.cassandra.cassandra_apply_config_ring_unknown }}"
