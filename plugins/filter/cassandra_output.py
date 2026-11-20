@@ -13,7 +13,7 @@ cassandra_prepare_lines, cassandra_left_system_warning: what the prepare of new 
 cassandra_command, cassandra_todo, cassandra_removed_todo, cassandra_seeds_todo, cassandra_seeds_reload_todo,
 cassandra_reimport_hosts: what is left to do, and the commands for it.
 cassandra_refused, cassandra_not_reached: a refusal before any change (the hosts Ansible did not reach), as a block of
-79 columns.
+79 columns; cassandra_ping_command: the command that shows Ansible's error reaching hosts.
 cassandra_cqlsh_words: cassandra_cqlsh_command split as the cassandra_cqlsh module splits it.
 cassandra_holds_secret: whether a value is or holds a secret (shown ****): a file's diff that would show it is not
 shown.
@@ -141,17 +141,25 @@ def _same_sources(a, b):
     return norm(a) == norm(b)
 
 
+def cassandra_ping_command(names, inventory=None, default_inventory=None, cwd=None, hosts=None):
+    """Hosts (names), the run's inventory -> the command that shows all of Ansible's error reaching them: "ansible -i
+    inv.yml node3 -m ping -vvv" (no -i when the run's inventory is ansible.cfg's, default_inventory). hosts: the
+    run's cluster group, as cassandra_command takes it (the same arguments): not needed here."""
+    names = [names] if isinstance(names, str) else [str(h) for h in names or []]
+    if default_inventory and _same_sources(inventory, default_inventory):
+        inventory = None
+    sources = [inventory] if isinstance(inventory, str) else list(inventory or [])
+    return " ".join(["ansible"] + ["-i %s" % shlex.quote(out.path_from(i, cwd)) for i in sources if i]
+                    + [shlex.quote(",".join(names)), "-m ping -vvv"])
+
+
 def cassandra_not_reached(hosts, inventory=None, default_inventory=None, cwd=None):
     """The hosts Ansible did not reach at the start of a run (preflight) -> the lines of its refusal: only what was
     observed (Ansible did not reach them: its error is the UNREACHABLE line above, the ops callback's), the command
     that shows all of the error, the option to go on without them. No guessed cause (the server down...): the
     server and Cassandra may well run (a remote tmp dir, a key, sudo)."""
     hosts = [str(h) for h in hosts or []]
-    if default_inventory and _same_sources(inventory, default_inventory):
-        inventory = None
-    sources = [inventory] if isinstance(inventory, str) else list(inventory or [])
-    ping = " ".join(["ansible"] + ["-i %s" % shlex.quote(out.path_from(i, cwd)) for i in sources if i]
-                    + [shlex.quote(",".join(hosts)), "-m ping -vvv"])
+    ping = cassandra_ping_command(hosts, inventory, default_inventory, cwd)
     head = "%s not reached by Ansible" % (hosts[0] if len(hosts) == 1 else out.plural(len(hosts), "node"))
     labels = ["all of the error:", "to go on without %s:" % ("it" if len(hosts) == 1 else "them")]
     column = max(len(label) for label in labels) + 2
@@ -306,6 +314,7 @@ class FilterModule(object):
             "cassandra_normal_wait_line": cassandra_normal_wait_line,
             "cassandra_command": cassandra_command,
             "cassandra_not_reached": cassandra_not_reached,
+            "cassandra_ping_command": cassandra_ping_command,
             "cassandra_refused": cassandra_refused,
             "cassandra_cqlsh_words": cassandra_cqlsh_words,
             "cassandra_seeds_reload_todo": cassandra_seeds_reload_todo,

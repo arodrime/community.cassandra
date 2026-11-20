@@ -169,15 +169,12 @@ def test_leaving_node_expected_by_the_caller():
     assert problems([view("n2", *ring)], leaving_ok=["10.0.0.2"]) == ["10.0.0.3 (r1) is UL, seen from n2"]
 
 
-def test_up_node_in_any_state_expected_by_the_caller():
-    # start_rack's nodes outside the rack: up in any state not judged (UM, UJ, UL, DSE's US)
-    for state in ("M", "J", "L", "S"):
-        ring = [node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.3", state=state)]
-        assert problems([view("n2", *ring)], up_ok=["10.0.0.3"]) == []
-        assert problems([view("n2", *ring)], up_ok=["10.0.0.2"]) == ["10.0.0.3 (r1) is U%s, seen from n2" % state]
-    # down is still a problem (down_ok says it)
-    ring = [node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.3", status="D", state="M")]
-    assert problems([view("n2", *ring)], up_ok=["10.0.0.3"]) == ["10.0.0.3 (r1) is DM, seen from n2"]
+def test_node_in_any_state_not_judged_when_the_caller_says():
+    # start_rack's nodes outside the rack: any state not judged (UM, UJ, UL, DSE's US, and down too)
+    for status, state in (("U", "M"), ("U", "J"), ("U", "L"), ("U", "S"), ("D", "N"), ("D", "M")):
+        ring = [node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.3", status=status, state=state)]
+        assert problems([view("n2", *ring)], any_ok=["10.0.0.3"]) == []
+        assert problems([view("n2", *ring)], any_ok=["10.0.0.2"]) == ["10.0.0.3 (r1) is %s%s, seen from n2" % (status, state)]
 
 
 def ring_result(*nodes):
@@ -430,7 +427,7 @@ def test_findings_carry_the_sentences():
     ring = [node("10.0.0.1"), node("10.0.0.2", status="D")]
     found = findings("n1", [view("n1", *ring)])
     assert [f["text"] for f in found] == problems([view("n1", *ring)])
-    assert found[0] == {"kind": "state", "address": "10.0.0.2", "name": None, "rack": "r1", "state": "DN",
+    assert found[0] == {"kind": "state", "address": "10.0.0.2", "name": None, "dc": "dc1", "rack": "r1", "state": "DN",
                         "seen_from": "n1",
                         "text": "10.0.0.2 (r1) is DN, seen from n1"}
     assert found[1]["kind"] == "count" and found[1]["ring"] == 2

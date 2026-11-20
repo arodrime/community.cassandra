@@ -55,22 +55,22 @@ def _unasked(result):
 
 def cassandra_health_findings(views, expected, node, gossip=None, binary=None, netstats=None, schema=None, ports=None,
                               down_ok=None, joining_ok=None, leaving_ok=None, names=None, mixed_versions=False, target="",
-                              up_ok=None):
+                              any_ok=None):
     """views: [{'from': host, 'result': cassandra_status result}]; the others
     are this node's registered results (ports: a wait_for loop over
     {'name', 'host', 'port'} items). down_ok: addresses expected down (a dead
     node being replaced). joining_ok: addresses expected up and joining (a
     bootstrap still running). leaving_ok: addresses expected up and leaving (a
-    decommission still running). up_ok: addresses expected up, whatever their
-    state (UJ, UL, UM...: start_rack's nodes outside the rack). names: {address: inventory name}
+    decommission still running). any_ok: addresses not judged, whatever
+    their state (UN, DN, UJ, UL, UM...). names: {address: inventory name}
     (cassandra_host_addresses), a node of the ring named by it. The problems as
     [{kind, text (its sentence), ...}]: kind state (address, name (None
-    when no host has it), rack, state, seen_from), count (ring, expected, seen_from), nodetool (on, error), port
+    when no host has it), dc, rack, state, seen_from), count (ring, expected, seen_from), nodetool (on, error), port
     (name, port, on, host), gossip, cql, streams (on), netstats (on, error),
     schema (msg); and warning (what, msg): not a problem, said as such (a
     schema disagreement while an upgrade mixes versions: mixed_versions, the
     target version the nodes agree again on).
-    e.g. (the same) -> [{kind: "state", address: "10.0.0.4", rack: "r1", state: "DN", seen_from: "node1", text:
+    e.g. (the same) -> [{kind: "state", address: "10.0.0.4", dc: "dc1", rack: "r1", state: "DN", seen_from: "node1", text:
     "node4 (10.0.0.4, r1) is DN, seen from node1"}]."""
     names = _by_ip(names)
     found = []
@@ -80,21 +80,21 @@ def cassandra_health_findings(views, expected, node, gossip=None, binary=None, n
             found.append({"kind": "nodetool", "on": view["from"], "error": _error(result),
                           "text": "nodetool status failed on %s: %s" % (view["from"], _error(result))})
             continue
-        nodes = _nodes(result["cluster_status"])
-        for n in nodes:
+        nodes = [(dc, n) for dc, value in result["cluster_status"].items() for n in value.get("nodes", [])]
+        for dc, n in nodes:
+            if n["address"] in (any_ok or []):
+                continue
             if n["status"] == "D" and n["address"] in (down_ok or []):
                 continue
             if n["status"] + n["state"] == "UJ" and n["address"] in (joining_ok or []):
                 continue
             if n["status"] + n["state"] == "UL" and n["address"] in (leaving_ok or []):
                 continue
-            if n["status"] == "U" and n["address"] in (up_ok or []):
-                continue
             if n["status"] != "U" or n["state"] != "N":
                 # by its inventory name when it has one: "node4 (10.0.0.4, rack1) is DN"
                 name = names.get(_ip(n["address"]))
                 where = ("%s, %s" % (n["address"], n["rack"])) if name else n["rack"]
-                found.append({"kind": "state", "address": n["address"], "name": name, "rack": n["rack"],
+                found.append({"kind": "state", "address": n["address"], "name": name, "dc": dc, "rack": n["rack"],
                               "state": n["status"] + n["state"], "seen_from": view["from"],
                               "text": "%s (%s) is %s%s, seen from %s" % (
                                   name or n["address"], where, n["status"], n["state"], view["from"])})

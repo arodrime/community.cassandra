@@ -18,8 +18,8 @@
 # will not come back; a report); nor a timeout under 20s.
 # cassandra_service_health_joining_ok: addresses expected joining (UJ: a bootstrap to wait for).
 # cassandra_service_health_leaving_ok: addresses expected leaving (UL: a decommission to wait for).
-# cassandra_service_health_up_ok: addresses expected up, whatever their state
-# (UJ, UL, UM...: not judged; start_rack's nodes outside the rack).
+# cassandra_service_health_any_ok: addresses not judged, whatever their state
+# (UN, DN, UJ, UL, UM...; not waited for).
 # cassandra_service_health_report_only: true only sets cassandra_health_problems
 # and cassandra_health_findings (no failure; it waits as above unless told not to).
 # cassandra_service_health_batch: true for the hosts of a play checked at once:
