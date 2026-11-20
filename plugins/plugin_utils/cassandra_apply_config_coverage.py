@@ -151,9 +151,12 @@ COVERAGE = [
     ([r"^cassandra_(rolling|stream|clock|move|token|upgrade_sstables|add_node|replace_node|create_cluster"
       r"|new_node|dead_node|decommission|run_report)_\w+$",
       "cassandra_operation_confirm", "cassandra_operation_drain", "cassandra_service_allow_new_seed",
-      "cassandra_service_enabled", "cassandra_service_state", "cassandra_service_health_force",
+      "cassandra_service_health_force",
       "cassandra_service_health_timeout", "cassandra_service_restart_on_change", "cassandra_service_wait_for_normal",
       "cassandra_service_wait_timeout"], NOT_A_SETTING, "options of the operations (how a run goes), not node settings"),
+    (["cassandra_service_enabled", "cassandra_service_state"], NOT_A_SETTING,
+     "run options of the roles (create_cluster, add_node: the unit enabled at boot, Cassandra started): apply_config"
+     " leaves a node running or stopped, enabled or not, as it is (start_rack, stop_rack change it)"),
 ]
 
 

@@ -73,3 +73,10 @@ def test_the_categories_of_the_owner_s_classes(name, expected):
 
 def test_a_name_no_row_has_is_told():
     assert coverage.category("cassandra_zorglub_new_setting") is None
+
+
+def test_the_service_state_and_boot_are_run_options_said_so():
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_apply_config_coverage import category
+    for name in ("cassandra_service_enabled", "cassandra_service_state"):
+        kind, said = category(name)
+        assert "start_rack, stop_rack change it" in said, name
