@@ -286,10 +286,11 @@
         echo "limits=$(base64 -w0 < "/proc/$CASSANDRA_PID/limits")"
         echo "environment=$(systemctl show cassandra -p Environment --value 2>/dev/null)"
         # (the environment of the JVM itself: a unit reloaded since its start is not what it runs; used only when
-        # the unit file or a drop-in is newer than the JVM)
+        # the unit file or a drop-in is newer than the JVM. A generator's output, rewritten at every daemon-reload,
+        # left out: for the package's init script, its script, SourcePath)
         echo "environ=$(base64 -w0 < "/proc/$CASSANDRA_PID/environ")"
-        echo "unitmtime=$(stat -c %Y $(systemctl show cassandra -p FragmentPath -p DropInPaths --value 2>/dev/null) \
-          2>/dev/null | sort -n | tail -1)"
+        echo "unitmtime=$(stat -c %Y $(systemctl show cassandra -p FragmentPath -p SourcePath -p DropInPaths --value \
+          2>/dev/null | tr ' ' '\n' | grep -v '^/run/systemd/\(generator\|transient\)') 2>/dev/null | sort -n | tail -1)"
         # in a container, systemd gives no more than its own hard limits (a limit above them: the JVM gets the cap)
         systemd-detect-virt -cq 2>/dev/null && echo "ceiling=$(base64 -w0 < /proc/1/limits)"
         exit 0

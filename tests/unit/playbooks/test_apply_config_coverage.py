@@ -403,8 +403,36 @@ def test_import_then_no_op_with_a_unit_environment_the_scripts_rewrite():
     assert needs(env=(unit, environ, "90"))["then"] == "none"  # (the JVM started at 100)
     # the unit written after the start (daemon-reload, no restart): the JVM's, a restart
     assert needs(env=(unit, environ, "150"))["then"] == "restart"
+    assert "unitmtime=" in find(FIND["tasks"], "Read what the running Cassandra got from its unit")["ansible.builtin.shell"]
+
+
+def _unit_mtime(tmp_path, shown, mtimes):
+    """The unit read's unitmtime line run against a systemctl that shows these lines and a stat that gives these
+    mtimes ({path: seconds})."""
+    import subprocess
     read = find(FIND["tasks"], "Read what the running Cassandra got from its unit")["ansible.builtin.shell"]
-    assert "systemctl show cassandra -p FragmentPath -p DropInPaths --value" in read
+    start = read.index('echo "unitmtime=')
+    line = read[start:read.index(')"', start) + 2]
+    for name, body in (("systemctl", "printf '%s\\n' " + " ".join("'%s'" % x for x in shown)),
+                       ("stat", 'shift 2; for p in "$@"; do case "$p" in '
+                                + " ".join("%s) echo %d;;" % (p, t) for p, t in mtimes.items()) + " esac; done")):
+        (tmp_path / name).write_text("#!/bin/sh\n%s\n" % body)
+        (tmp_path / name).chmod(0o755)
+    out = subprocess.run(["bash", "-c", line], capture_output=True, text=True, env={"PATH": "%s:/usr/bin:/bin" % tmp_path})
+    return out.stdout.strip()
+
+
+def test_a_generated_unit_rewritten_at_each_reload_is_not_taken_for_a_change(tmp_path):
+    # (the package's init script: systemd-sysv-generator rewrites /run/systemd/generator.late/cassandra.service at
+    # every daemon-reload; its script and the drop-ins in /etc are what change)
+    shown = ["/run/systemd/generator.late/cassandra.service", "/etc/init.d/cassandra",
+             "/etc/systemd/system/cassandra.service.d/cassandra-environment.conf /run/systemd/generator/x.conf"]
+    mtimes = {"/run/systemd/generator.late/cassandra.service": 9000, "/run/systemd/generator/x.conf": 9000,
+              "/etc/init.d/cassandra": 1000, "/etc/systemd/system/cassandra.service.d/cassandra-environment.conf": 1100}
+    assert _unit_mtime(tmp_path, shown, mtimes) == "unitmtime=1100"
+    # the role's own unit: its file and drop-ins
+    assert _unit_mtime(tmp_path, ["/etc/systemd/system/cassandra.service", "", ""],
+                       {"/etc/systemd/system/cassandra.service": 1200}) == "unitmtime=1200"
 
 
 def test_the_node_s_turn_runs_the_java_and_package_steps_only_when_planned():
