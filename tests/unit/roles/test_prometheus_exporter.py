@@ -953,8 +953,6 @@ def test_a_port_open_to_no_one_is_said():
     def said(**variables):
         variables = dict(defaults, **variables)
         variables["_cassandra_firewall_port_sources"] = port_sources(**variables)
-        variables["_cassandra_firewall_open_ports"] = render(
-            load("roles", "cassandra_firewall", "vars", "main.yml")["_cassandra_firewall_open_ports"], variables)
         variables.update((k, render(v, variables)) for k, v in task["vars"].items() if k.startswith("_"))
         return when(task, variables)
     assert said(cassandra_prometheus_exporter_enabled=True) is True

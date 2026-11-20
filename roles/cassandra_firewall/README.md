@@ -20,10 +20,10 @@ Role Variables
 * `cassandra_offline`: `true` on air-gapped hosts: firewalld or ufw is
   checked instead of installed. Default `false`.
 * `open_ports`: ports open to everyone (SSH, JMX, storage, TLS storage, CQL).
-  The node's own Cassandra ports when moved from the stock ones
+  A node's own Cassandra port moved from the stock one
   (`cassandra_storage_port`, `cassandra_ssl_storage_port`,
-  `cassandra_native_transport_port`, a remote JMX's `cassandra_jmx_port`) are
-  opened too, unless listed in `cassandra_firewall_port_sources`.
+  `cassandra_native_transport_port`, a remote JMX's `cassandra_jmx_port`) that
+  is in neither list is said in a warning, not opened.
 
 The ports are opened (and those of `cassandra_firewall_port_sources` opened to
 their sources, then closed to the others) before the firewall service is

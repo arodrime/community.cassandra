@@ -74,7 +74,7 @@
     for p in $CLOSE; do ! firewall-offline-cmd -q --query-port="$p" || { firewall-offline-cmd -q --remove-port="$p" || exit 1; c=1; }; done
     echo "changed=$c"
   environment:
-    OPEN: "{{ _cassandra_firewall_open_ports | reject('in', _cassandra_firewall_port_sources) | join(' ') }}"
+    OPEN: "{{ open_ports | reject('in', _cassandra_firewall_port_sources) | join(' ') }}"
     CLOSE: "{{ _cassandra_firewall_port_sources | list | join(' ') }}"
     RULES: >-
       {%- set out = [] -%}
@@ -98,7 +98,7 @@
     immediate: yes
     state: enabled
   with_items:
-    - "{{ _cassandra_firewall_open_ports | reject('in', _cassandra_firewall_port_sources) | list }}"
+    - "{{ open_ports | reject('in', _cassandra_firewall_port_sources) | list }}"
   when:
     - ansible_facts['os_family'] == "RedHat"
     - _cassandra_firewall_before.active == 'active'
@@ -109,7 +109,7 @@
     proto: "{{ item | split('/') | last }}"
     rule: "allow"
   with_items:
-    - "{{ _cassandra_firewall_open_ports | reject('in', _cassandra_firewall_port_sources) | list }}"
+    - "{{ open_ports | reject('in', _cassandra_firewall_port_sources) | list }}"
   when:
     - ansible_facts['os_family'] == "Debian"
     - not (_cassandra_firewall_check and cassandra_firewall_install is changed)
@@ -174,6 +174,20 @@
     enabled: yes
   when: not (_cassandra_firewall_check and cassandra_firewall_install is changed)
 
+# a Cassandra port moved from the stock one and not in open_ports: the nodes may not reach it (not opened here: a
+# node may reach it through a zone of its own, as an import found it)
+- name: Say the Cassandra ports the role does not open
+  ansible.builtin.debug:
+    msg: >-
+      WARNING  {{ inventory_hostname }}: Cassandra listens on {{ _cassandra_firewall_own_unopened | join(', ') }}, not in
+      open_ports nor among the ports open to some sources: the firewall role does not open {{ 'it' if
+      _cassandra_firewall_own_unopened | length == 1 else 'them' }}. Add {{ 'it' if _cassandra_firewall_own_unopened
+      | length == 1 else 'them' }} to open_ports, unless the node reaches {{ 'it' if _cassandra_firewall_own_unopened
+      | length == 1 else 'them' }} by other means.
+  vars:
+    cassandra_output: true
+  when: _cassandra_firewall_own_unopened | length > 0
+
 # open to no one by default: Prometheus scrapes it from other hosts
 - name: Say the exporter's port is not opened
   ansible.builtin.debug:
@@ -186,7 +200,7 @@
   when:
     - cassandra_prometheus_exporter_enabled | default(false) | bool
     - _port not in _cassandra_firewall_port_sources
-    - _port not in _cassandra_firewall_open_ports
+    - _port not in open_ports
 
 - name: Build the change list
   ansible.builtin.set_fact:
@@ -204,7 +218,7 @@
 - name: Add the ports to open
   ansible.builtin.set_fact:
     _cassandra_firewall_items: "{{ _cassandra_firewall_items + [{'item': 'port ' ~ item, 'before': 'closed', 'after': 'open'}] }}"
-  loop: "{{ _cassandra_firewall_open_ports | reject('in', _cassandra_firewall_port_sources) | reject('in', _cassandra_firewall_before.ports.split()) | list }}"
+  loop: "{{ open_ports | reject('in', _cassandra_firewall_port_sources) | reject('in', _cassandra_firewall_before.ports.split()) | list }}"
 
 - name: Report
   ansible.builtin.include_role:

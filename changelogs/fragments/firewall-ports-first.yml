@@ -2,6 +2,6 @@ bugfixes:
   - >-
     cassandra_firewall - the ports are opened before the firewall service is started (firewalld not running yet: its
     permanent config written with ``firewall-offline-cmd``), and a port of ``cassandra_firewall_port_sources`` is
-    opened to its sources before it is closed to the others: no moment with the Cassandra ports blocked. The node's
-    own Cassandra ports, when moved from the stock ones, are opened too. ``apply_config`` applies a firewall change
+    opened to its sources before it is closed to the others: no moment with the Cassandra ports blocked. A node's
+    own Cassandra port moved from the stock one and in neither list is said in a warning. ``apply_config`` applies a firewall change
     one node at a time, the cluster checked around each.

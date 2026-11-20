@@ -58,16 +58,18 @@ def test_the_ports_are_open_before_the_firewall_starts_and_never_closed_first():
         assert names.index("Open them to their sources (%s)" % family) < names.index("Close them to everyone (%s)" % family)
 
 
-def test_the_node_s_own_ports_are_opened_when_not_the_stock_ones():
+def test_the_node_s_moved_ports_are_said_not_opened():
+    # (opened to everyone, an imported node reaching them through a zone of its own got them on its public side:
+    # a change after the import)
     from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import load, render
     variables = dict(load("roles", "cassandra_firewall", "defaults", "main.yml"))
     variables.update(load("roles", "cassandra_firewall", "vars", "main.yml"))
-    ports = "{{ _cassandra_firewall_open_ports }}"
-    stock = ["22/tcp", "7199/tcp", "7000/tcp", "7001/tcp", "9042/tcp"]
-    assert render(ports, variables) == stock  # (an import's open_ports kept as is: no-op)
+    unopened = "{{ _cassandra_firewall_own_unopened }}"
+    assert render(unopened, variables) == []
     moved = dict(variables, cassandra_storage_port=7100, cassandra_native_transport_port=9142, cassandra_jmx_port=7299,
                  cassandra_local_jmx=False)
-    assert render(ports, moved) == stock + ["7100/tcp", "9142/tcp", "7299/tcp"]
-    # a port the operator opens to some sources only, or left out of open_ports on purpose: not opened to everyone
-    assert render(ports, dict(moved, cassandra_firewall_port_sources={"7299/tcp": ["10.0.0.1"]})) == stock + ["7100/tcp", "9142/tcp"]
-    assert render(ports, dict(variables, open_ports=["22/tcp"])) == ["22/tcp"]
+    assert render(unopened, moved) == ["7100/tcp", "9142/tcp", "7299/tcp"]
+    assert render(unopened, dict(moved, open_ports=["7100/tcp"], cassandra_firewall_port_sources={"7299/tcp": ["10.0.0.1"]})) \
+        == ["9142/tcp"]
+    tasks = load("roles", "cassandra_firewall", "tasks", "firewall.yml")
+    assert "_cassandra_firewall_open_ports" not in str(tasks)
