@@ -92,5 +92,5 @@ def test_jmx_files_at_their_own_paths():
     first = "Read the config files, when they were written, the JVM's arguments, the repository files and the unit"
     assert names.index(first) < names.index("Find the JMX password and access files the JVM reads") \
         < names.index(read["name"])
-    assert next(t for t in READ["tasks"] if t["name"] == first)["no_log"] is True
+    assert find_task(READ, first)["no_log"] is True
     assert read["no_log"] is True

@@ -20,13 +20,7 @@ TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cass
 
 
 def alternative_tasks():
-    todo = load_tasks(TASKS)
-    while todo:
-        t = todo.pop(0)
-        if t.get("name") == "Set up the RPM conf dir alternative":
-            return t["block"]
-        todo += t.get("block", [])
-    raise KeyError("Set up the RPM conf dir alternative")
+    return find_task(load_tasks(TASKS), "Set up the RPM conf dir alternative")["block"]
 
 
 def run(tmp_path, how):

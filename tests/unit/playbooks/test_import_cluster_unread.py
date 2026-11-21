@@ -89,8 +89,7 @@ def test_a_jvm_not_the_units_is_noted_and_not_read_for_the_proofs():
     assert "the running JVM's arguments and environment not used to prove the roles' files give it the same: " + why \
         in notes
     assert not [n for n in node({"import_cluster_unit": {"jvm_untrusted": ""}})["notes"] if "not used to prove" in n]
-    read = next(t for t in READ_TASKS if t.get("name") == "Read the running Cassandra (conf dir, Cassandra and Java"
-                " versions)")["ansible.builtin.shell"]
+    read = find_task(READ_TASKS, "Read the running Cassandra (conf dir, Cassandra and Java versions)")["ansible.builtin.shell"]
     assert "/files/jvm_proof.sh" in read and 'echo "jvm_untrusted=$(jvm_untrusted "$pid"' in read
     files = next(t for t in READ_TASKS if t.get("name", "").startswith("Read the config files, when they were"))
     assert "import_cluster_unit.jvm_untrusted | default('') == ''" in files["vars"]["_wanted"]
@@ -104,5 +103,5 @@ def test_a_jvm_not_the_units_is_noted_and_not_read_for_the_proofs():
 def test_a_node_not_reached_has_no_facts_and_no_templating_error(task, field):
     # ignore_unreachable: the node's later tasks run without its facts and end unreachable, the reason the report
     # gives, never a templating error ('dict object' has no attribute 'os_family')
-    template = next(t for t in READ["tasks"] if t["name"] == task)[field[0]][field[1]]
+    template = find_task(READ, task)[field[0]][field[1]]
     assert render(template, ansible_facts={}, import_cluster_repo_files=[]) in ("", [], "[]")

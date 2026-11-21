@@ -146,7 +146,7 @@ def test_apply_config_compare_only_stops_writes_and_asks_nothing():
             guarded.append(task["name"])
     for name in ("Refuse a start into another storage_compatibility_mode than one step from the one it last ran",
                  "Check the Prometheus exporter's port is free", "Keep the plan for the report of the run"):
-        assert GUARD in whens(next(t for t in find["tasks"] if t.get("name") == name)), name
+        assert GUARD in whens(find_task(find, name)), name
     assert len(guarded) >= 9, guarded
     # the question: only for nodes to do, none in drift's compare (no group of nodes to do)
     screen = find_task(find, "Show the plan and confirm the run")
