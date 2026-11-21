@@ -311,8 +311,8 @@ clock not in sync, or not read, is a problem of the report, with ``sync_clocks``
              the writes it stamped as coordinator carry future timestamps
                (lightweight transactions, drivers without client-side timestamps)
              an update or a delete of the same data from a correct clock in the
-               next 200.0 ms loses against them, silently (the latest timestamp
-               wins)
+               next 200.0 ms loses against them, silently
+             the latest timestamp wins
              TTLs it set expire late, its compactions purge tombstones early
              check what was written through it lately
 
@@ -935,9 +935,11 @@ clock stepped (``chronyc makestep``; systemd-timesyncd steps by itself past 400 
 the cluster checked again. An interrupted run is run again, the same command: the clocks read again say what is
 left, and a node it left drained or stopped gets its window first, Cassandra started again.
 A node where Cassandra runs whose clock is ahead gets a warning about the writes it stamped meanwhile:
-ahead by more than ``cassandra_clock_max_offset_ms`` as its daemon says (its error bound alone is no clock ahead),
-or by more than a second as the dates collected over SSH say (no daemon, a daemon not synchronised, or one
-synchronised to a source that is itself ahead). What it
+ahead by more than ``cassandra_clock_max_offset_ms`` as its daemon says when it is synchronised (its error bound
+alone is no clock ahead), or, with no daemon or one not synchronised, by more than a second as the dates collected
+over SSH say against the other synchronised nodes (one of them: the gap to it; several: their median; none: a
+container against the other nodes, any other node no warning), the warning naming them. A node synchronised to a wrong source is not detected by the dates: its daemon
+says it is in sync, and the dates over SSH include the SSH delay. What it
 cannot fix (a source unreachable, a container's clock, a time sync left alone) is said, and the run ends failed. ntpd is only read: a step it needs is left to it (``ntpd -g`` at its start) or to a
 move to chrony; an installed but stopped ntpd is not replaced.
 ``sync_clocks`` is not monitoring: it schedules nothing and alerts no one.
