@@ -746,9 +746,13 @@ of the cluster is only a warning, unless a node could be one of the rack. The ta
 - a node of the rack is every node the inventory or the ring puts in it, under ``--limit`` too, a node at an address
   a node of the rack gives in its variables (read from every host: one host's ``ansible_host``, ``127.0.0.1`` on
   every host with ccm, never takes another node's ring address), and a node of the ring no host is known by while
-  a node of the rack is not in the ring at an address it gives (the stop says why, and to give its host the address
-  the ring shows: ``broadcast_address`` in ``cassandra_extra_settings``, else ``cassandra_listen_address`` or
-  ``ansible_host``);
+  the nodes of the rack not in the ring at an address they give outnumber the ring's nodes of the rack no host is
+  known by (the stop says why, and to give its host the address the ring shows: ``broadcast_address`` in
+  ``cassandra_extra_settings``, else ``cassandra_listen_address`` or ``ansible_host``);
+- a node of the run not in the ring at an address its variables give is not said UN: the success says what the
+  ring shows (``Rack r2 (dc1), UN in the ring:``, the rack's nodes UN by name, else by address), then that node.
+  When such nodes outnumber the ring's nodes of the rack no host is known by (the ring puts one in another rack,
+  or nowhere), the run stops, with the ring's nodes no host is known by and the address to give;
 - a node of the rack not reached over ssh stops the run at once; one not UN, or whose ``nodetool status`` fails,
   stops it (a node down: after waiting for it to come back; way out: run ``start_rack`` again);
 - a node of the rack left out by ``--limit`` (this run does not start it) and not UN is not waited for. The run
@@ -759,14 +763,16 @@ of the cluster is only a warning, unless a node could be one of the rack. The ta
   run read from and a node of the run seen UN: the ring is then read from them too. The other nodes left out stay
   as they are;
 - the warning names a node left out by its inventory name when its variables give its address, or its name
-  resolves to it on the controller; else by its address. A ring node no host is known by is taken for a node
+  resolves to it on the controller while every node of the run is in the ring at an address it gives; else by its
+  address. A ring node no host is known by is taken for a node
   left out only when the address of that node is not in the ring and every node of the run is there;
 - when the ring is read only from nodes of the run, before and after any wait (``--limit`` leaves out every other
   node, none is reached, or its ``nodetool status`` fails), the run says so: ``the ring as seen from node2 only``.
   A node always sees itself UN;
 - a node outside the rack not UN for the node outside the rack read from (down, joining, leaving, moving...), not
   reached over ssh, or whose ``nodetool status`` fails, is a warning row, not waited for; one only nodes of the
-  rack see not UN (just started, they may still see it down) is waited for first;
+  rack see not UN (no node outside the rack read, or its read failed; just started, they may still see it down) is
+  waited for first;
 - with every node of the rack in the ring and UN, a ring of another size than the inventory is a warning line, and
   a schema disagreement a warning row per node on another version, when the rack is on one version held by more
   than half of the nodes ``describecluster`` lists, a node outside the rack among them (the rack alone on its
