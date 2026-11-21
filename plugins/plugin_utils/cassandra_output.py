@@ -1050,30 +1050,49 @@ def progress_line(index, total_steps, node, operation, mode="", done=0, total=0,
     elapsed = duration(now - start, short=True)
     pct = "%d%%" % int(100 * min(done, total) / total) if total else ""
     done_total = amount(done, total) if total else ""
-    idle_text = ("%s/%s" % (duration(idle, short=True), duration(limit, short=True))) if idle >= IDLE_SHOWN and limit else ""
-    quiet = ("no progress " + idle_text) if idle_text else ""
-    # data left, quiet for a while but not that long yet: said as progress (a big file on its way)
-    warn = limit if warn is None else min(int(warn), int(limit or 0))
-    pause = ("no progress for " + duration(idle, short=True)) if idle_text and idle < warn else ""
+    idle_text, quiet, pause = _idle_words(idle, limit, warn)
     if status == "done":
         return [_done_line(index, total_steps, node, operation, mode, done, total, now - start)]
-    if status != "going" or (idle_text and not pause and total and done < total):  # before any stream: waiting
-        word = _STATUS_WORDS.get(status, "STALLED" if status == "going" else status.upper())
-        count_text = ("%s %s" % (word, idle_text)) if idle_text and word == "STALLED" else word
-        line = "  ".join(x for x in [head, count_text, pct, done_total, elapsed] if x)
+    stalled = idle_text and not pause and total and done < total
+    if status != "going" or stalled:
+        line = "  ".join(x for x in [head, _status_word(status, idle_text), pct, done_total, elapsed] if x)
         others = peers_in_cause(peers, width) or peer_lines(peers, width)
-    elif not total:
+    elif not total:  # before any stream: waiting
         line = "  ".join(x for x in [head, "waiting for streams", quiet, elapsed] if x)
         others = peer_lines(peers, width)
     else:
-        # a file sent whole shows on the receiving disk before netstats counts it
-        on_disk = ("receiving (disk +%s in %s)" % (size(disk), duration(frozen, short=True))
-                   if disk > 0 and frozen >= IDLE_SHOWN and not idle_text and total > done else "")
         line = "  ".join(x for x in [head, _bar(done, total), pct, done_total, rate(speed) if speed else "",
-                                     _eta(done, total, speed, now), on_disk, quiet if total <= done else pause,
-                                     elapsed] if x)
+                                     _eta(done, total, speed, now), _on_disk(disk, frozen, idle_text, done, total),
+                                     quiet if total <= done else pause, elapsed] if x)
         others = peer_lines(peers, width)
     return [line] + ([""] + others if others else [])
+
+
+def _idle_words(idle, limit, warn):
+    """What a progress line says of the time without progress, once it is IDLE_SHOWN seconds long and there is a stall
+    limit (else "" each): (the count "6m/30m", "no progress 6m/30m", "no progress for 6m" while under warn, the
+    warning threshold, None: limit). The last one: data left, quiet for a while but not that long yet, said as
+    progress (a big file on its way)."""
+    count = ("%s/%s" % (duration(idle, short=True), duration(limit, short=True))) if idle >= IDLE_SHOWN and limit else ""
+    quiet = ("no progress " + count) if count else ""
+    warn = limit if warn is None else min(int(warn), int(limit or 0))
+    pause = ("no progress for " + duration(idle, short=True)) if count and idle < warn else ""
+    return count, quiet, pause
+
+
+def _status_word(status, idle_text):
+    """The word of a progress line that is not going on (_STATUS_WORDS: "FAILED"); a stall with its count:
+    "STALLED 6m/30m"."""
+    word = _STATUS_WORDS.get(status, "STALLED" if status == "going" else status.upper())
+    return ("%s %s" % (word, idle_text)) if idle_text and word == "STALLED" else word
+
+
+def _on_disk(disk, frozen, idle_text, done, total):
+    """A file sent whole shows on the receiving disk before netstats counts it: "receiving (disk +3.2 GiB in 5m)"
+    once netstats has shown no progress for IDLE_SHOWN seconds (frozen) with data left, else ""."""
+    if disk > 0 and frozen >= IDLE_SHOWN and not idle_text and total > done:
+        return "receiving (disk +%s in %s)" % (size(disk), duration(frozen, short=True))
+    return ""
 
 
 def _done_line(index, total_steps, node, operation, mode, done, total, seconds):
@@ -1184,12 +1203,18 @@ def peers_in_cause(peers, width=None):
     return fit(lines, width or PEER_WIDTH)
 
 
+def _peers_behind(peers):
+    """(the peers not done, the ones behind among them: stalled, or below half the average percent of the ones not
+    done, once that average is PEER_BEHIND%)."""
+    going = [p for p in peers if p.get("stalled") or _percent(p) < 100]
+    average = sum(_percent(p) for p in going) / float(len(going)) if going else 100
+    return going, [p for p in going if p.get("stalled") or (average >= PEER_BEHIND and _percent(p) < average / 2.0)]
+
+
 def _peers_summed(peers, width):
     """Above PEERS_SUMMED peers (sorted by name): (the line that sums them up, the ones behind detailed under it by
     name, the ones behind left out)."""
-    going = [p for p in peers if p.get("stalled") or _percent(p) < 100]
-    average = sum(_percent(p) for p in going) / float(len(going)) if going else 100
-    behind = [p for p in going if p.get("stalled") or (average >= PEER_BEHIND and _percent(p) < average / 2.0)]
+    going, behind = _peers_behind(peers)
     late = set(id(p) for p in behind)
     fine = [p for p in going if id(p) not in late]
     both = len(set(str(p.get("name")) for p in peers)) < len(peers)
@@ -1288,24 +1313,8 @@ def recap(operation, cluster, outcomes, check=False, seconds=None, extra=None, f
     rows = []
     for word, members in groups.items():
         rows += _recap_done_rows(word, members, check, full, slow_factor)
-    # a failure's reason on its own line under its row: the columns are not sized on it
-    under, spans = {}, {}
-    for o in failed:
-        if not causes:  # what was done to it (row: the columns are not sized on it), else "not done" and its reason
-            if o.get("row"):
-                spans[len(rows)] = o["row"]
-                rows.append([o["node"]])
-            else:
-                rows.append([o["node"], "not done", o.get("reason") or ""])
-            continue
-        if o.get("reason"):
-            under[len(rows)] = "    %s" % (o["reason"][len("refused: "):] if refused else o["reason"])
-        rows.append([o["node"], "REFUSED" if refused else "FAILED", ""])
-    reasons = {}
-    for o in skipped:
-        reasons.setdefault(o.get("reason") or "", []).append(o["node"])
-    for reason, names in reasons.items():
-        rows.append([nodes(names, keep_order=True, full=full), "not touched" + (" (%s)" % reason if reason else ""), ""])
+    under, spans = _recap_failed_rows(failed, rows, refused, causes)
+    rows += _recap_skipped_rows(skipped, full)
     first = max(len(str(r[0])) for r in rows) if rows else 0
     for i, line in enumerate(table(rows, "  ")):
         line = "  %s  %s" % (str(rows[i][0]).ljust(first), spans[i]) if i in spans else line
@@ -1337,14 +1346,48 @@ def _recap_verdict(operation, cluster, groups, failed, skipped, check, seconds, 
     return head
 
 
-def _recap_done_rows(word, members, check, full, slow_factor):
-    """The rows of the nodes done with one same outcome (word): the usual ones together with their times, then
-    each one slower than slow_factor times the group's median on its own."""
-    # (a node's partial time, the part a resumed run did: no measure of the others, never slow itself)
+def _recap_failed_rows(failed, rows, refused, causes):
+    """The failed nodes' rows, added to rows -> (under, spans): {row index: its failure's reason, on a line of its own
+    under the row (the columns are not sized on it)}, {row index: what was done to the node, the whole row after its
+    name (causes False: the cause is said elsewhere; else "not done" and its reason on the row)}."""
+    under, spans = {}, {}
+    for o in failed:
+        if not causes:
+            if o.get("row"):
+                spans[len(rows)] = o["row"]
+                rows.append([o["node"]])
+            else:
+                rows.append([o["node"], "not done", o.get("reason") or ""])
+            continue
+        if o.get("reason"):
+            under[len(rows)] = "    %s" % (o["reason"][len("refused: "):] if refused else o["reason"])
+        rows.append([o["node"], "REFUSED" if refused else "FAILED", ""])
+    return under, spans
+
+
+def _recap_skipped_rows(skipped, full):
+    """The rows of the nodes not touched, one per reason: "node4, node5  not touched (unreachable)"."""
+    reasons = {}
+    for o in skipped:
+        reasons.setdefault(o.get("reason") or "", []).append(o["node"])
+    return [[nodes(names, keep_order=True, full=full), "not touched" + (" (%s)" % reason if reason else ""), ""]
+            for reason, names in reasons.items()]
+
+
+def _slow_ones(members, slow_factor):
+    """(the median time of the members, the ones slower than slow_factor times it). A node's partial time (the part a
+    resumed run did) is no measure of the others, and never slow itself."""
     times = [o["seconds"] for o in members if o.get("seconds") is not None and not o.get("partial")]
     middle = _median(times) if times else None
     slow = [o for o in members if middle and len(times) > 1 and o.get("seconds") is not None and not o.get("partial")
             and o["seconds"] > slow_factor * middle]
+    return middle, slow
+
+
+def _recap_done_rows(word, members, check, full, slow_factor):
+    """The rows of the nodes done with one same outcome (word): the usual ones together with their times, then
+    each one slower than slow_factor times the group's median on its own."""
+    middle, slow = _slow_ones(members, slow_factor)
     usual = [o for o in members if o not in slow]
     rows = []
     if usual:
