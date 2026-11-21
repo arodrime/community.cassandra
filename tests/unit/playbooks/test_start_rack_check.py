@@ -814,6 +814,7 @@ def test_a_refusal_of_the_role_before_the_start_is_said_as_the_role_says_it():
     # an account missing, a new node listed in cassandra_seeds, the drain timeout check: each became "n2 (rack r2)
     # did not start:" its first line, "see why on it: systemctl status cassandra, journalctl -u cassandra" (nothing
     # there: Cassandra was never started) and "fix it": the role's own way out was lost. Now its message as it is
+    # (within 79 columns)
     seed = role_task("main.yml", "Refuse to join an existing cluster as a seed")
     assert "cassandra_service_allow_new_seed: true" in seed["ansible.builtin.fail"]["msg"]
     refusals = [
@@ -826,7 +827,9 @@ def test_a_refusal_of_the_role_before_the_start_is_said_as_the_role_says_it():
          "cassandra_service_drain_timeout (120) + 10 must be below cassandra_service_timeout_stop (100), or systemd"
          " kills the JVM mid-drain.")]
     for task, msg in refusals:
-        assert start_failed({"msg": msg}, task) == msg
+        lines = start_failed({"msg": msg}, task)
+        assert " ".join(x.strip() for x in lines) == " ".join(x.strip() for x in (msg if isinstance(msg, list) else [msg]))
+        assert max(len(x) for x in lines) <= 79 and "did not start" not in " ".join(lines)
 
 
 def test_the_verdict_s_keys_are_the_ones_its_docstring_gives():

@@ -433,13 +433,13 @@ def cassandra_rack_start_failed(result, task, node, rack):
     indented (a list: its first line, then the next ones further in: the journal), then where to look (a command
     per line) and the way out; not NORMAL at the end of the wait: what was seen ("not NORMAL after 600s ...: mode
     JOINING"), not "did not start" (it runs). Any other failure of the role (a refusal before the start: an
-    account missing, a new seed, its own way out): its message as it is.
+    account missing, a new seed, its own way out): its message as it is, within 79 columns.
     e.g. ({msg: ["cassandra on n2 is failed (failed, exit-code): ...", "<journal line>"]}, "Cassandra is not
     running", "n2", "r2") -> ["n2 (rack r2) did not start:", "  cassandra on n2 is failed ...", "    <journal line>",
     ..., "WAY OUT  fix it, then run start_rack again"]."""
     msg = (result or {}).get("msg") or "failed"
-    if task not in (_START_FAILED, _STOPPED, _NOT_NORMAL):
-        return msg
+    if task not in (_START_FAILED, _STOPPED, _NOT_NORMAL):  # its words, within 79 columns
+        return out.fit([str(line) for line in msg] if isinstance(msg, (list, tuple)) else str(msg).split("\n"), WIDTH)
     if isinstance(msg, (list, tuple)):
         said = ["  " + str(msg[0])] + ["    " + str(line) for line in msg[1:]]
     else:
