@@ -298,13 +298,23 @@ with a progress line at each check (``[2/5] node2  restart  waiting  node4 is DN
 (``cassandra_service_health_force: true`` goes on anyway, at your own risk). ``health_check`` runs the same checks on
 its own, changing nothing, and fails when there is a problem, so it can be scheduled. It also reads every node's
 clock, as ``sync_clocks --check`` does (the Clocks section below),
-in a ``CLOCKS`` block above its verdict: one line per node (its time sync daemon, its source, offset and error bound,
-a verdict), then the warnings of the cluster; a clock not in sync, or not read, is a problem of the report, with
-``sync_clocks`` as the way out::
+in a ``CLOCKS`` block above its verdict: a row per node (a verdict, its time sync daemon, its source, offset and
+error bound), under it each fact of why it is not in sync on a line of its own, then the warnings of the cluster; a
+clock not in sync, or not read, is a problem of the report, with ``sync_clocks`` as the way out::
 
-    CLOCKS  in sync: synchronised to a source, offset plus the daemon's error bound within 50 ms (cassandra_clock_max_offset_ms)
+    CLOCKS  in sync: synchronised to a source, offset plus the daemon's error
+            bound within 50 ms (cassandra_clock_max_offset_ms)
       node1  ok   chronyd, synchronised to 192.0.2.1, -0.0 ms (±0.7 ms)
-      node2  OFF  chronyd, synchronised to 192.0.2.1, +200.0 ms (±0.7 ms): ahead of its source by 200.0 ms, more than 50.0 ms
+      node2  OFF  chronyd, synchronised to 192.0.2.1, +200.0 ms (±0.7 ms)
+                  ahead of its source by 200.0 ms, more than 50.0 ms
+    WARNING  node2's clock is AHEAD by about 200.0 ms
+             the writes it stamped as coordinator carry future timestamps
+               (lightweight transactions, drivers without client-side timestamps)
+             an update or a delete of the same data from a correct clock in the
+               next 200.0 ms loses against them, silently (the latest timestamp
+               wins)
+             TTLs it set expire late, its compactions purge tombstones early
+             check what was written through it lately
 
     NOT HEALTHY  my_cluster  2 nodes checked, 1 problem
       clocks:  node2 OFF (CLOCKS above says why)
@@ -923,7 +933,11 @@ must stay under the site's chrony ``makestep`` threshold) gets a restart window,
 ``rolling_restart`` does: the cluster checked, the node drained and stopped, time sync started and synchronised, the
 clock stepped (``chronyc makestep``; systemd-timesyncd steps by itself past 400 ms when it syncs), Cassandra started,
 the cluster checked again. An interrupted run is run again, the same command: the clocks read again say what is
-left, and a node it left drained or stopped gets its window first, Cassandra started again. A node whose clock is ahead gets a warning about the writes it stamped meanwhile. What it
+left, and a node it left drained or stopped gets its window first, Cassandra started again.
+A node where Cassandra runs whose clock is ahead gets a warning about the writes it stamped meanwhile:
+ahead by more than ``cassandra_clock_max_offset_ms`` as its daemon says (its error bound alone is no clock ahead),
+or by more than a second as the dates collected over SSH say (no daemon, a daemon not synchronised, or one
+synchronised to a source that is itself ahead). What it
 cannot fix (a source unreachable, a container's clock, a time sync left alone) is said, and the run ends failed. ntpd is only read: a step it needs is left to it (``ntpd -g`` at its start) or to a
 move to chrony; an installed but stopped ntpd is not replaced.
 ``sync_clocks`` is not monitoring: it schedules nothing and alerts no one.
