@@ -47,24 +47,7 @@
       tags: [always]  # under --tags too
 
     - name: Check each node has its own facts
-      ansible.builtin.assert:
-        that: _shared | length == 0
-        fail_msg: >-
-          ansible-core {{ ansible_version.full }} gave {{ _shared | join(', ') }} the facts of another node
-          (ansible/ansible#87148): a run_once task ran on them earlier in this run, before they had facts of their own
-          (in a play before this playbook?). Run this playbook on its own, or gather facts first in that play.
-          Nothing was changed.
-        quiet: true
-      run_once: true
-      tags: [always]
-      vars:
-        cassandra_output: true  # its message as is (the ops callback)
-        _shared: >-
-          {%- set out = [] -%}
-          {%- for h in groups['all'] -%}  {#- the ones out of the play too: they may share them with these -#}
-          {%-   if hostvars[h].ansible_facts._cassandra_own_facts | default(h) != h -%}{%- set _ = out.append(h) -%}{%- endif -%}
-          {%- endfor -%}
-          {{ out }}
+      ansible.builtin.import_tasks: tasks/own_facts_check.yml
 
     # also run by the first play, which --limit skips
     # the run's first line, before any check or refusal: the cluster, its nodes and datacenters

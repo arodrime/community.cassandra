@@ -1,0 +1,23 @@
+---
+# The first node play of a playbook run on its own: stop when a node (or a host out of the play) holds the facts
+# of another (ansible/ansible#87148). The play's "Give each node its own facts" task runs just before: it gives
+# a node its own facts, but it cannot undo what a play before this playbook did.
+- name: Check each node has its own facts
+  ansible.builtin.assert:
+    that: _shared | length == 0
+    fail_msg: >-
+      ansible-core {{ ansible_version.full }} gave {{ _shared | join(', ') }} the facts of another node
+      (ansible/ansible#87148): a run_once task ran on them earlier in this run, before they had facts of their own
+      (in a play before this playbook?). Run this playbook on its own, or gather facts first in that play.
+      Nothing was changed.
+    quiet: true
+  run_once: true
+  tags: [always]
+  vars:
+    cassandra_output: true  # its message as is (the ops callback)
+    _shared: >-
+      {%- set out = [] -%}
+      {%- for h in groups['all'] -%}  {#- the ones out of the play too: they may share them with these -#}
+      {%-   if hostvars[h].ansible_facts._cassandra_own_facts | default(h) != h -%}{%- set _ = out.append(h) -%}{%- endif -%}
+      {%- endfor -%}
+      {{ out }}
