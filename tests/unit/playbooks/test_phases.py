@@ -184,6 +184,18 @@ def test_check_what(kwargs, text):
     assert out.check_what(**kwargs) == text
 
 
+def imported(where, tasks):
+    """tasks, each import_tasks replaced by the tasks of its file (a static import: they run in its place)."""
+    out = []
+    for task in tasks:
+        if "ansible.builtin.import_tasks" in task:
+            with open(os.path.join(where, task["ansible.builtin.import_tasks"]), encoding="utf-8") as f:
+                out += yaml.safe_load(f)
+        else:
+            out.append(task)
+    return out
+
+
 @pytest.mark.parametrize("playbook, play, before", [
     ("preflight.yml", "Cassandra preflight checks", ["Say which cluster the run is on", "Say what the run does"]),
     ("health_check.yml", "Cluster health", ["Say which cluster the run is on"]),
@@ -196,6 +208,7 @@ def test_the_first_lines_come_before_the_nodes_are_reached(playbook, play, befor
     with open(path, encoding="utf-8") as f:
         tasks = next(p for p in yaml.safe_load(f) if p.get("name") == play)
     assert tasks.get("gather_facts") is False
+    tasks = dict(tasks, tasks=imported(os.path.dirname(path), tasks["tasks"]))
     names = [t.get("name") for t in tasks["tasks"]]
     gather = next(i for i, t in enumerate(tasks["tasks"]) if "ansible.builtin.setup" in t)
     assert all(names.index(name) < gather for name in before), names
