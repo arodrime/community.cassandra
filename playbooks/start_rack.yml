@@ -329,8 +329,8 @@
         - not ansible_check_mode  # the rack was not started
 
     # what it found, judged: the nodes outside the rack not UN for the node outside the rack read from, or not
-    # reached over ssh (not waited for, below), the rest (waited for), why a node is judged of the rack, the nodes read from (kept: the
-    # read below reads from others) (cassandra_rack_verdict)
+    # reached over ssh (not waited for, below), the rest (waited for), why a node is judged of the rack, the nodes
+    # read from (kept: the read below reads from others) (cassandra_rack_verdict)
     - name: Judge the first read
       ansible.builtin.set_fact:
         _cassandra_start_rack_first_verdict: >-
@@ -342,11 +342,11 @@
     # said before the wait too: why a node the ring puts outside the rack is waited for
     - name: Say the nodes judged as the rack's for want of a host known by their address
       ansible.builtin.debug:
-        msg: "{{ _cassandra_start_rack_first_verdict.unknown_lines }}"
+        msg: "{{ _cassandra_start_rack_first_verdict.maybe_rack_lines }}"
       when:
         - inventory_hostname == _cassandra_start_rack_checker
         - not ansible_check_mode
-        - _cassandra_start_rack_first_verdict.unknown_lines | length > 0
+        - _cassandra_start_rack_first_verdict.maybe_rack_lines | length > 0
       vars:
         cassandra_output: true
 
@@ -388,7 +388,7 @@
         tasks_from: cluster_health.yml
       vars:
         _cassandra_health_stop_on: "{{ _cassandra_start_rack_last_verdict.problems }}"
-        _cassandra_health_why: "{{ _cassandra_start_rack_last_verdict.unknown_lines }}"
+        _cassandra_health_why: "{{ _cassandra_start_rack_last_verdict.maybe_rack_lines }}"
         _cassandra_health_again: "run start_rack\u00a0again:"  # (a no-break space: "again" never alone on a line)
         _cassandra_health_again_command: "{{ _cassandra_start_rack_again }}"
       when:
