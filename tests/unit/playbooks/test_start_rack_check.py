@@ -970,6 +970,27 @@ def test_under_limit_a_node_of_the_run_not_un_in_the_ring_stops_the_run(monkeypa
     assert check(names=names, play=["n1", "n2", "n4"]) == ([], UP + UNOWNED)
 
 
+def test_a_name_resolved_on_the_controller_is_not_taken_while_a_node_of_the_run_is_not_placed(monkeypatch):
+    # n2 (in the run) known by no address in the ring, DN there; n3 left out, known by h-n3.example only, which the
+    # controller resolves (wrongly: a stale /etc/hosts) to 10.0.0.2. n2's entry was taken for n3: the run said the
+    # nodes of this run UN, exit 0, and told to start n3, which runs. Now a name resolved on the controller is
+    # taken only while every node of the run is in the ring at an address it gives: n2's entry DN stops the run
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_ring
+    monkeypatch.setattr(cassandra_ring, "_resolved", lambda name: ["10.0.0.2"] if name == "h-n3.example" else [])
+    hostvars = with_addresses(ADDRESSES)
+    hostvars["n2"] = dict(hostvars["n2"], ansible_host="192.168.1.2")
+    hostvars["n3"] = dict(hostvars["n3"], ansible_host="h-n3.example")
+    names = dict((a, n) for a, n in ADDRESSES.items() if n not in ("n2", "n3"))
+    assert check(names=names, hostvars=hostvars, play=["n1", "n2", "n4"], n2="DN") == (
+        ["10.0.0.2 (r2) is DN, seen from n1 and n2"], None)
+    # every node of the run placed: n3 named as the controller resolves it (here rightly, 10.0.0.3)
+    monkeypatch.setattr(cassandra_ring, "_resolved", lambda name: ["10.0.0.3"] if name == "h-n3.example" else [])
+    hostvars["n2"] = with_addresses(ADDRESSES)["n2"]
+    names = dict((a, n) for a, n in ADDRESSES.items() if n != "n3")
+    problems, said = check(names=names, hostvars=hostvars, play=["n1", "n2", "n4"], n3="DN")
+    assert problems == [] and said[2:4] == LEFT_OUT + ["  n3  DN"]
+
+
 def test_a_node_of_the_run_on_a_cluster_network_is_a_success_with_and_without_limit(monkeypatch):
     # n2 listens on a host name (h-n2.example) of a cluster network, 10.0.0.2 there; ssh and default_ipv4 on
     # another one (192.168.1.2): no variable of n2 gives its ring address. Every node UN. Under --limit (n3 left

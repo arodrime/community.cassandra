@@ -267,9 +267,10 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
         reached in the play; a node sees itself UN): [] otherwise.
       left_out: the nodes of the rack not UN that are left out by --limit, [{address, name, states}; a node by its
         address only: unplaced, the nodes left out not in the ring at an address of their own]: named as
-        one of them (its address theirs: _left_out_names), or no host known by its address, put in the rack by
-        the ring, while one of them is not in the ring at an address of its own and every node of the run is; the
-        first verdict's with their states in this read. Not waited for, not in problems: a warning (cassandra_rack_outside_lines).
+        one of them (its address theirs: _left_out_names; a name resolved on the controller only while every
+        node of the run is in the ring at an address it gives), or no host known by its address, put in the rack
+        by the ring, while one of them is not in the ring at an address of its own and every node of the run is;
+        the first verdict's with their states in this read. Not waited for, not in problems: a warning (cassandra_rack_outside_lines).
       not_readers: the hosts not to read from again: the nodes outside the rack not UN, seen down, or whose
         nodetool failed.
     e.g. ([<n4 DN from n2>, <n4 DN from n1>], ["n2", "n3"], "dc1", "r2", "n2", "n1") -> {outside: [{address:
@@ -278,10 +279,13 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
     left_out: [], not_readers: ["n4"]}."""
     findings = findings or []
     left_out = list(left_out or [])
-    known = _left_out_names(left_out, addresses, reads)
     judged, all_in_ring, found = _judge(findings, members, dc, rack, addresses, reads)
     rack_addresses = set(found)
     run = [h for h in members or [] if h not in left_out]
+    run_placed = set(run) <= set(found.values())
+    # a left-out node's name resolved on the controller only while every node of the run is in the ring at an
+    # address it gives (else the address may be that node's: a ring node of the rack no host has, as without it)
+    known = _left_out_names(left_out, addresses, reads) if run_placed else {}
     in_ring = _ring_states(reads)
     left = _left_out_again((first_verdict or {}).get("left_out"), in_ring)
     left_at = dict((n["address"], n) for n in left)
@@ -289,7 +293,6 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
     # address of its own, every node of the run is (else it may be that one), and the ring puts it in the rack
     # (else as before: a ghost entry stays the rack's)
     unplaced = set(left_out) - set(h for a, h in known.items() if a in in_ring)
-    run_placed = set(run) <= set(found.values())
     for f in findings:
         if f.get("kind") != "state" or judged[f["address"]] not in ("rack", "unknown"):
             continue
