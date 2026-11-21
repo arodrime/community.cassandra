@@ -1468,3 +1468,16 @@ def test_the_host_id_reads_are_bound_in_time():
     for name in ("Read the Host ID of each node of the run", REREAD):
         task = TASKS[name]
         assert task["timeout"] == 70 and task["ignore_errors"] is True and task["failed_when"] is False
+
+
+def test_two_nodes_of_the_run_giving_one_host_id_stop_the_run():
+    # nodetool info on n2 and n3 reaching one JVM (a wrapper, a JMX port): the Host ID was n3's (the last one),
+    # n2 silently not placed, the success said without it. Now a stop on both
+    hostvars = with_addresses(ADDRESSES)
+    for h in ("n2", "n3"):
+        hostvars[h]["_cassandra_start_rack_info"] = {"rc": 0, "stdout": "ID  : hid-n2"}
+    problems, said = check(hostvars=hostvars)
+    assert (problems, said) == (["n2 and n3 (rack r2): nodetool info on each gives one Host ID:", "  hid-n2",
+                                 "the check places each node of the run in the ring by its Host ID"], None)
+    assert noted(ring(), hostvars=hostvars)["_cassandra_start_rack_first_verdict"]["host_id_unread"] == ["n2", "n3"]
+    assert stop_said(problems)[3] == "WAY OUT  fix it (the lines above say what), then run start_rack again:"

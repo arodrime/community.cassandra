@@ -129,21 +129,27 @@ def _first_line(*texts):
 
 def _host_ids(infos, run, rack):
     """{node of the run: its nodetool info result (rc, stdout, stderr, msg)}, the nodes of the run, the rack ->
-    ({Host ID: node} of those whose output gives one, {node: the lines of the stop on it} of the others)."""
-    ids, unread = {}, {}
+    ({Host ID: node} of those whose output gives one of its own, {node: the lines of the stop on it} of the others:
+    no Host ID read, or one another node of the run gives too)."""
+    by_id, unread = {}, {}
     for h in run:
         info = (infos or {}).get(h) or {}
         found = re.findall(r"(?m)^ID\s*:\s*(\S+)", str(info.get("stdout") or ""))
         error = _first_line(info.get("stderr"), info.get("msg"))
         if found:
-            ids[found[0]] = h
+            by_id.setdefault(found[0], []).append(h)
         elif info.get("rc") == 0 or (info.get("stdout") and not error):
             unread[h] = ["%s (rack %s): nodetool info on it gives no ID line" % (h, rack)]
         elif error:
             unread[h] = ["%s (rack %s): nodetool info failed on it:" % (h, rack), "  " + error]
         else:
             unread[h] = ["%s (rack %s): its Host ID is not read (nodetool info on it)" % (h, rack)]
-    return ids, unread
+    for host_id, hosts in by_id.items():
+        if len(hosts) > 1:  # (one JVM answering for both: a nodetool wrapper, a JMX port)
+            unread.update((h, []) for h in hosts)
+            unread[hosts[0]] = ["%s (rack %s): nodetool info on each gives one Host ID:" % (
+                " and ".join(hosts), rack), "  " + host_id]
+    return dict((i, hosts[0]) for i, hosts in by_id.items() if len(hosts) == 1), unread
 
 
 def _placement(reads, run, addresses, ids):
