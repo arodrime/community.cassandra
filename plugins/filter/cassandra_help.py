@@ -28,7 +28,6 @@ import shlex
 from ansible.errors import AnsibleFilterError
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_java import cassandra_java_major
-from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import WIDTH
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_build
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import (
     BULLET, NBSP, command as _full_command, command_flow, extra_var as _e, flow as _flow, is_command, laid_out,
@@ -36,6 +35,9 @@ from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_outp
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 
 _TOP = os.path.join(os.path.dirname(__file__), "..", "..")
+
+# the help's width without a terminal (the ops callback lays it out at the terminal's width, 100 at most)
+WIDTH = 100
 
 THEMES = (("read-only", "Read-only (change nothing)"), ("nodes", "Nodes"), ("cluster", "Cluster"),
           ("takeover", "Takeover"))

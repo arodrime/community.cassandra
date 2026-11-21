@@ -34,13 +34,15 @@ STOP RACK  dc1 / rack2 of Orders
   node5  10.0.0.5
   They stay down until start_rack.
 
-WARNING  replication: orders has 2 replicas in dc1: with one down, (LOCAL_)QUORUM fails
+WARNING  replication: orders has 2 replicas in dc1: with one down,
+         (LOCAL_)QUORUM fails
 WARNING  replicas: forced although:
          - orders loses 2 replicas
          - events loses 2 replicas
 WARNING  data loss: everything is deleted.
-WARNING  not inside tmux or screen: if this SSH session drops, the run stops (the operation itself
-         goes on, unwatched; run it inside tmux or screen)"""
+WARNING  not inside tmux or screen: if this SSH session drops, the run stops
+         (the operation itself goes on, unwatched; run it inside tmux or
+         screen)"""
 
 
 def test_layout():
@@ -65,7 +67,7 @@ def test_wrapping_keeps_words_and_paths_whole():
     path = "/var/lib/cassandra/" + "x" * 120
     text = cassandra_screen({"operation": "op", "intro": ["word " * 30 + path]})
     lines = text.split("\n")
-    assert all(len(line) <= 100 for line in lines if path not in line)
+    assert all(len(line) <= 79 for line in lines if path not in line)  # (an 80-column terminal)
     assert lines[-1].strip() == path
     assert lines[1].startswith("  word word")
 
@@ -196,7 +198,7 @@ def test_reset_warnings_one_per_node_with_something_to_do():
         {"label": "reset", "real_run": True, "text": "node9: kept from starting at boot first (nothing to delete)"},
     ]
     text = cassandra_screen({"operation": "add_node", "warnings": warnings})
-    assert "WARNING  data loss: node7: Cassandra stopped, kept from starting at boot, then 2 entries DELETED" in text
+    assert "WARNING  data loss: node7: Cassandra stopped, kept from starting at boot, then\n         2 entries DELETED" in text
     assert "         /d/data (data; from the inventory): 1 entries: system" in text  # under the warning's text
     assert "(A real run would also warn about: data loss, reset.)" in cassandra_screen(
         {"operation": "add_node", "warnings": warnings}, check=True)
@@ -209,3 +211,16 @@ def test_a_step_of_another_playbook_asks_nothing():
     # --check says so in its place: nothing changes
     assert cassandra_screen({"operation": "add_node"}, check=True, asked_by="topology").endswith(
         "--check: nothing will be changed")
+
+
+def test_a_warning_s_command_stays_whole_on_a_line_of_its_own():
+    # the seeds warning's "then apply it live: ansible-playbook ...": cut between its arguments (" \\"), never
+    # between words at 79 columns
+    note = ("WARNING  Seeds  dc1  n1 (r1), n3 (r1)  2 seeds on r1, none on r2: put them on different racks\n"
+            "then apply it live: ansible-playbook -i inventories/prod.yml community.cassandra.change_seeds")
+    lines = cassandra_screen({"operation": "op"}, notes=[note]).split("\n")
+    assert lines[-3:] == ["         - then apply it live:",
+                          "             ansible-playbook -i inventories/prod.yml \\",
+                          "               community.cassandra.change_seeds"]
+    short = cassandra_screen({"operation": "op"}, notes=["WARNING  x\nthen: ansible-playbook community.cassandra.y"])
+    assert short.rsplit("\n", maxsplit=1)[-1] == "         - then: ansible-playbook community.cassandra.y"

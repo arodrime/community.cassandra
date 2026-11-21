@@ -41,6 +41,7 @@ cassandra_add_node_blocks: the row of each new node on add_node's screen.
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import re
 import textwrap
 
 from collections.abc import Mapping
@@ -49,7 +50,9 @@ from ansible.module_utils.parsing.convert_bool import boolean
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_build
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
-WIDTH = 100
+WIDTH = 79
+# an item "<what>: ansible-playbook ...": the command cut between its arguments, never between words
+_LABELLED_COMMAND = re.compile(r"^(.*?: )(ansible-playbook .*)$")
 
 
 def _wrap(text, indent="", subsequent=None):
@@ -87,8 +90,12 @@ def _warning(warning):
     under = " " * len(out.WARNING)
     lines = _wrap(out.WARNING + ("%s: %s" % (label, first) if label else str(first)), "", under)
     for item in rest:
+        command = _LABELLED_COMMAND.match(str(item))
         if isinstance(item, Mapping):
             lines.extend(_items([item], under))
+        elif command and len(under + "- " + str(item)) > WIDTH:  # the command whole, on a line of its own
+            lines.extend(_wrap(command.group(1).rstrip(), under + "- ", under + "  "))
+            lines.extend(out.fit([under + "    " + command.group(2)], WIDTH))
         elif str(item).strip():
             lines.extend(_wrap(item, under + "- ", under + "  "))
     return lines

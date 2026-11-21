@@ -314,8 +314,9 @@ def test_ops_callback_blocks_one_blank_line_apart(tmp_path):
         "----",
         "",
         "WARNING  replication: orders keeps 2 replicas",  # the warnings together, one under the other
-        "WARNING  not inside tmux or screen: if this SSH session drops, the run stops (the operation itself",
-        "         goes on, unwatched; run it inside tmux or screen)",
+        "WARNING  not inside tmux or screen: if this SSH session drops, the run stops",
+        "         (the operation itself goes on, unwatched; run it inside tmux or",
+        "         screen)",
         "",
         "----",  # above the question
         "",

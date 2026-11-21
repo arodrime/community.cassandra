@@ -332,7 +332,12 @@ def test_the_heap_line_is_in_the_plan_of_upgrade_s_prepare_once():
                     hostvars={"n1": {}, "n2": {"_cassandra_java_heap_lines": lines,
                                                "_cassandra_preflight": {"address": "10.0.0.2"}}})
     text = cassandra_screen({"operation": "upgrade", "summary": "c, phase prepare", "blocks": blocks})
-    assert text.split("\n")[2:5] == ["  n2  10.0.0.2", "    " + lines[0], "    " + lines[1]]  # (a line each)
+    said = text.split("\n")[2:]
+    assert said[0] == "  n2  10.0.0.2" and max(len(line) for line in said) <= 79
+    # a line each (its next lines further in)
+    starts = [line[4:] for line in said if line.startswith("    ") and line[4] != " "]
+    assert [x for x, line in zip(starts, lines) if line.startswith(x)] == starts and len(starts) == 2
+    assert " ".join(" ".join(said).split()) == " ".join(("n2 10.0.0.2 " + " ".join(lines)).split())
 
 
 def test_the_way_out_names_the_variable_that_holds_the_option():

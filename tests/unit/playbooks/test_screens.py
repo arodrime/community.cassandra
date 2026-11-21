@@ -124,17 +124,20 @@ def decommission(racks, leaving=("node7", "node8"), states=None, check=False, co
 # warnings last
 DECOMMISSION = """\
 DECOMMISSION NODE  node7, node8 from dc1 of Orders
-  2 nodes to remove, one after the other: first node7, then node8. Each one streams its data to the
-    nodes that stay (hours on a big node), then Cassandra is stopped and disabled on it.
+  2 nodes to remove, one after the other: first node7, then node8. Each one
+    streams its data to the nodes that stay (hours on a big node), then
+    Cassandra is stopped and disabled on it.
 
   node7  10.0.0.7  dc1 / rack1  load 47.1 GiB, owns 33.4% -> node1, node4 (the other nodes of rack1)
   node8  10.0.0.8  dc1 / rack2  load 48.1 GiB, owns 33.4% -> node2, node5 (the other nodes of rack2)
   Afterwards dc1 keeps 6 nodes: node1, node2, node3, node4, node5, node6.
-  Then empty node7, node8 (reset_node) before reusing the hosts, and re-import the cluster to drop
-    them from the inventory: the commands are printed at the end.
+  Then empty node7, node8 (reset_node) before reusing the hosts, and re-import
+    the cluster to drop them from the inventory: the commands are printed at
+    the end.
 
-WARNING  this run is not inside tmux or screen: if the SSH session to this machine drops, the run
-         stops (the operation itself goes on, unwatched). Run it inside tmux or screen."""
+WARNING  this run is not inside tmux or screen: if the SSH session to this
+         machine drops, the run stops (the operation itself goes on,
+         unwatched). Run it inside tmux or screen."""
 
 
 def test_decommission_screen():
@@ -171,8 +174,9 @@ def test_decommission_forced_replication_warning_shows_under_check_too():
     for check in (False, True):
         text = decommission(["rack1"], leaving=("node7", "node8", "node6", "node5", "node4", "node3"), force=True,
                             problems_rf=3, check=check)
-        assert "\n\nWARNING  replication: cassandra_decommission_force is true: the removal goes on although too few\n" \
-               "         nodes are left for some keyspaces; those replicas are lost and QUORUM can fail:\n" \
+        assert "\n\nWARNING  replication: cassandra_decommission_force is true: the removal goes on\n" \
+               "         although too few nodes are left for some keyspaces; those replicas are\n" \
+               "         lost and QUORUM can fail:\n" \
                "         - orders needs 3 replicas in dc1, which would keep 2 node(s)\n" in text
     text = decommission(["rack1"], leaving=("node7", "node8", "node6", "node5", "node4", "node3"), force=False, problems_rf=3)
     assert "WARNING  replication" not in text
@@ -209,21 +213,24 @@ def test_replace_node_screen():
         "REPLACE NODE  replace the dead node 10.0.0.4 with node9\n\n"
         "  node9  10.0.0.9  dc1 / rack2\n"
         "    replaces 10.0.0.4 (DN in dc1 / rack2, load 50 GiB, as node1 sees it)\n"
-        "    takes over its tokens and streams their data from the other replicas (hours on a big node)\n"
+        "    takes over its tokens and streams their data from the other replicas (hours\n"
+        "      on a big node)\n"
         "    end state: node9 up and normal (UN) in its place\n\n"
-        "WARNING  this run is not inside tmux or screen: if the SSH session to this machine drops, the run\n"
-        "         stops (the operation itself goes on, unwatched). Run it inside tmux or screen.")
+        "WARNING  this run is not inside tmux or screen: if the SSH session to this\n"
+        "         machine drops, the run stops (the operation itself goes on,\n"
+        "         unwatched). Run it inside tmux or screen.")
     # the reset's plan (reset_node_plan.yml) on this screen: the one question covers it
     plan = {"delete": ["/var/lib/cassandra/data/system"], "stop": True, "disable": False,
             "dirs": ["/var/lib/cassandra/data (data; from the inventory): 1 entries: system"]}
     reset_vars = dict(variables, cassandra_replace_node_reset=True, _cassandra_node_reset_plan=plan)
     reset = screen(reset_vars, t["vars"], play.get("vars"))
     assert reset.endswith(
-        "WARNING  data loss: node9: Cassandra stopped, then 1 entries DELETED for good (no snapshot, no\n"
-        "         backup), in:\n"
+        "WARNING  data loss: node9: Cassandra stopped, then 1 entries DELETED for good\n"
+        "         (no snapshot, no backup), in:\n"
         "         /var/lib/cassandra/data (data; from the inventory): 1 entries: system\n"
-        "WARNING  this run is not inside tmux or screen: if the SSH session to this machine drops, the run\n"
-        "         stops (the operation itself goes on, unwatched). Run it inside tmux or screen."), reset
+        "WARNING  this run is not inside tmux or screen: if the SSH session to this\n"
+        "         machine drops, the run stops (the operation itself goes on,\n"
+        "         unwatched). Run it inside tmux or screen."), reset
     reset = screen(reset_vars, t["vars"], play.get("vars"), check=True)
     assert reset.endswith("\n\n(A real run would also warn about: data loss, this run is not inside tmux or screen.)"
                           "\n\n--check: nothing will be changed")
@@ -248,7 +255,7 @@ def test_resets_asked_on_the_operation_screen_only():
 
 
 @pytest.mark.parametrize("method, line, warning", [
-    ("removenode", "    removenode from node1: its ranges are streamed from the other replicas (hours on a big node)", None),
+    ("removenode", "    removenode from node1: its ranges are streamed from the other replicas", None),
     ("assassinate", "    assassinate: out of gossip, no streaming",
      "WARNING  data loss: assassinate: data only this node held is LOST."),
 ])
@@ -269,8 +276,8 @@ def test_remove_dead_node_screen(method, line, warning):
     forced = screen(dict(variables, cassandra_decommission_force=True,
                          cassandra_dead_keyspaces={"out": '{"keyspace_name": "orders", "replication": {"class": "NetworkTopologyStrategy", "dc1": "3"}}'}),
                     t["vars"], play["vars"])
-    assert "WARNING  replication: cassandra_decommission_force is true: the removal goes on although too few\n" \
-           "         nodes are left for some keyspaces" in forced
+    assert "WARNING  replication: cassandra_decommission_force is true: the removal goes on\n" \
+           "         although too few nodes are left for some keyspaces" in forced
     assert "WARNING  replication" not in text
     checked = screen(variables, t["vars"], play["vars"], check=True)
     # the data loss of an assassinate: a warning under --check too (the cluster's state, not the act itself)
@@ -291,15 +298,19 @@ def test_stop_rack_screen():
                  "_cassandra_rack_check": {"problems": [], "warnings": ["orders has 2 replicas in dc1: with one down, (LOCAL_)QUORUM fails"]},
                  "_cassandra_rack_down_here": [], "_cassandra_rack_down_elsewhere": ["10.0.1.5"]}
     forced = screen(dict(variables, cassandra_rack_force=True, _cassandra_rack_down_here=["10.0.0.9"]), t["vars"], play["vars"])
-    assert "\n\nWARNING  replicas: cassandra_rack_force is true: the rack goes down although it takes more than one\n" \
-           "         replica of some data down:\n         - already down in dc1: 10.0.0.9\nWARNING  replication" in forced
+    assert "\n\nWARNING  replicas: cassandra_rack_force is true: the rack goes down although it\n" \
+           "         takes more than one replica of some data down:\n         - already down in dc1: 10.0.0.9\n" \
+           "WARNING  replication" in forced
     text = screen(variables, t["vars"], play["vars"])
     assert text == (
         "STOP RACK  stop dc1 / rack2\n"
-        "  Stops Cassandra on every node of the rack at once; they stay down until start_rack.\n\n"
+        "  Stops Cassandra on every node of the rack at once; they stay down until\n"
+        "    start_rack.\n\n"
         "  node2  10.0.0.2  dc1 / rack2\n\n"
-        "WARNING  replication: orders has 2 replicas in dc1: with one down, (LOCAL_)QUORUM fails\n"
+        "WARNING  replication: orders has 2 replicas in dc1: with one down,\n"
+        "         (LOCAL_)QUORUM fails\n"
         "WARNING  down nodes: down in another datacenter: 10.0.1.5")
+    assert max(len(line) for line in text.split("\n")) <= 79  # (an 80-column terminal)
 
 
 APPLY_HOSTVARS = {
@@ -366,7 +377,8 @@ def test_apply_config_and_update_java_screens(monkeypatch):
     text = screen(dict(cluster, groups={"cassandra_update_java_True": ["node2"]}, cassandra_java_version=17,
                        hostvars={"node2": {"cassandra_java_plan_running": "Java 11"}}), t["vars"], play.get("vars"))
     assert text == ("UPDATE JAVA  node2 of Orders to Java 17\n"
-                    "  Moves these nodes to the new Java, one at a time (install, config, drain, restart).\n\n"
+                    "  Moves these nodes to the new Java, one at a time (install, config, drain,\n"
+                    "    restart).\n\n"
                     "  node2\n    runs Java 11")
 
 
@@ -385,7 +397,8 @@ def test_change_seeds_and_upgrade_screens():
     text = screen({"ansible_play_hosts": ["node1", "node2"], "hostvars": hostvars, "_new": "10.0.0.1,10.0.0.3",
                    "_cassandra_change_seeds": auto}, t["vars"], {"_changed": play["vars"]["_changed"]})
     assert "\n  Change seeds: dc2 gets node3 (dc2/r1), not in cassandra_seeds.\n" in text
-    assert "WARNING  seeds: dc2 would be left with no seed (node4 leaves the seed list): node3 (dc2/r1) made its" in text
+    assert "WARNING  seeds: dc2 would be left with no seed (node4 leaves the seed list):\n" \
+           "         node3 (dc2/r1) made its seed" in text
     t, play = task("upgrade.yml", "Show the plan and confirm")
     text = screen({"cassandra_upgrade_from": "4.0.20", "cassandra_package_version": "4.1.5",
                    "_cassandra_preflight": {"cassandra_cluster_name": "Orders"}, "ansible_play_hosts": ["n1"],
@@ -429,8 +442,8 @@ def test_move_node_and_create_cluster_screens():
     assert text.split("\n", 1)[0] == "MOVE NODE  move node2"
     assert text.split("\n\n")[1:] == ["  dc1 ring\n  cleanup afterwards: by hand (cassandra_move_cleanup=none)",
                                       "WARNING  tokens: dc1: loads not all known\nWARNING  this run is not inside"
-                                      " tmux or screen: if the SSH session to this machine drops, the run\n         stops (the operation"
-                                      " itself goes on, unwatched). Run it inside tmux or screen."]
+                                      " tmux or screen: if the SSH session to this\n         machine drops, the run stops"
+                                      " (the operation itself goes on,\n         unwatched). Run it inside tmux or screen."]
     t, play = task("create_cluster.yml", "Show the ring and confirm the tokens")
     text = screen({"_plan": {"tokens": {"node1": "0"}, "lines": ["dc1 ring *"], "warnings": []}, "_running": [],
                    "ansible_play_hosts": ["node1"], "_cassandra_preflight": preflight(1)}, t["vars"])
@@ -445,7 +458,8 @@ def test_create_cluster_reset_screen():
                  "_cassandra_create_reset_check": {"info": ["node1 holds data"], "problems": []}}
     # no question here (the name is typed next): no word about cassandra_operation_confirm
     assert "cassandra_operation_confirm" not in screen(variables, t["vars"], confirm=False)
-    for check, end in ((False, "WARNING  data loss: every node is stopped and emptied: ALL THE DATA of cluster 'Orders' is LOST."),
+    lost = "WARNING  data loss: every node is stopped and emptied: ALL THE DATA of cluster\n         'Orders' is LOST."
+    for check, end in ((False, lost),
                        (True, "(A real run would also warn about: data loss.)\n\n--check: nothing will be changed")):
         text = screen(variables, t["vars"], check=check)
         assert text.startswith("CREATE CLUSTER  wipe the cluster and create it again")
@@ -463,8 +477,9 @@ def test_reset_screen():
         "RESET NODE  empty node7\n\n"
         "  node7\n    stop Cassandra\n    keep it from starting at boot\n    2 entries to delete, in:\n"
         "    /var/lib/cassandra/data (2 entries)\n\n"
-        "WARNING  data loss: the reset DELETES everything these directories hold, for good (no snapshot, no\n"
-        "         backup). Only for a node that never joined the cluster, or one being replaced.")
+        "WARNING  data loss: the reset DELETES everything these directories hold, for\n"
+        "         good (no snapshot, no backup). Only for a node that never joined the\n"
+        "         cluster, or one being replaced.")
 
 
 def test_every_confirmation_goes_through_the_screen():

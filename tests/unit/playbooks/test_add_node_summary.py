@@ -123,7 +123,8 @@ def test_cleanup_choice_in_the_cleanup_playbook_words(cleanup, said):
 def test_the_cleanup_note_is_one_sentence():
     # lower case like the other notes, on one line (no break of the YAML in the middle of it)
     text = summary(cassandra_add_node_cleanup="none", cassandra_add_node_plan=CLEANUP_PLAN)
-    assert "  cleanup afterwards, 2 nodes (dc1 whole datacenter): by hand (cassandra_add_node_cleanup=none)" in text.split("\n")
+    assert text.split("\n")[-2:] == ["  cleanup afterwards, 2 nodes (dc1 whole datacenter): by hand",
+                                     "    (cassandra_add_node_cleanup=none)"]  # (within 79 columns)
     # no node hands data over: no note (not "0 nodes ()")
     assert "cleanup afterwards" not in summary(cassandra_add_node_cleanup="none")
 
@@ -164,7 +165,7 @@ def test_single_token_plan_shown(auto, said):
     text = summary(_single=True, _auto=auto, cassandra_add_node_tokens=TOKENS)
     assert "  dc1 now: 3 node(s)\n  dc1 bisect (no move): 4 node(s)\n" in text  # under the node table
     assert "\n\nWARNING  tokens: dc1: bisect leaves it uneven" in text
-    assert said in text
+    assert said in flat(text)
     assert "One token per node" not in summary(_single=False, _auto=auto, cassandra_add_node_tokens=TOKENS)
 
 

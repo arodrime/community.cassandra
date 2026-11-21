@@ -87,8 +87,8 @@ def screen_text(playbook, check=False, confirm=True, resume=False, mode="node", 
 def test_rolling_restart_screen_and_question():
     text, question = screen_text("rolling_restart.yml")
     assert text.startswith("ROLLING RESTART  node1..node3 of Orders, one node at a time\n"
-                           "  Drains and restarts each node in turn, the cluster checked healthy before and after each;")
-    assert "WARNING  " + SESSION in text
+                           "  Drains and restarts each node in turn, the cluster checked healthy before and\n")
+    assert " ".join(("WARNING  " + SESSION).split()) in " ".join(text.split()) and max(len(x) for x in text.split("\n")) <= 79
     assert question == "Restart node1..node3 of Orders, one node at a time?"
     assert "skipped (cassandra_rolling_resume)" in " ".join(screen_text("rolling_restart.yml", resume=True)[0].split())
     rack, question = screen_text("rolling_restart.yml", mode="rack")
