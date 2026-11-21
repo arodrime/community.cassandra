@@ -124,10 +124,6 @@ def test_the_first_plays_check_the_nodes_own_their_facts():
         plays = load("playbooks", name)
         if name not in checked and any("hosts" in p and str(p["hosts"]).strip() != "localhost" for p in plays):
             assert plays[0].get("ansible.builtin.import_playbook") == "community.cassandra.preflight", name
-    for playbook, name in FIRST_PLAYS:
-        check = next(p for p in load("playbooks", playbook) if p.get("name") == name)["tasks"][1]
-        assert check["name"] == "Check each node has its own facts", playbook
-        assert check["run_once"] is True and check["tags"] == ["always"] and check["vars"]["cassandra_output"] is True
 
 
 def test_nothing_clears_the_facts():
@@ -140,7 +136,7 @@ def test_nothing_clears_the_facts():
             assert "clear_facts" not in f.read(), path
 
 
-def run(tmp_path, playbook, hosts, *args):
+def run(tmp_path, playbook, hosts, *args, env=None):
     """ansible-playbook on local hosts, each with its own interpreter; the callback's record."""
     plugins = tmp_path / "callback_plugins"
     plugins.mkdir(exist_ok=True)
@@ -155,7 +151,7 @@ def run(tmp_path, playbook, hosts, *args):
     (tmp_path / "hosts.ini").write_text("\n".join(lines) + "\n")
     out = tmp_path / "own_facts.json"
     env = dict(ANSIBLE_BECOME="False", ANSIBLE_CALLBACK_PLUGINS=str(plugins), ANSIBLE_CALLBACKS_ENABLED="own_facts",
-               OWN_FACTS_OUT=str(out))
+               OWN_FACTS_OUT=str(out), **(env or {}))
     args = ["-i", str(tmp_path / "hosts.ini"), "-e", "cassandra_operation_confirm=false"] + list(args) + [playbook]
     log = run_playbook(args, env, cwd=tmp_path, timeout=600)[1]
     assert out.exists(), log
@@ -220,3 +216,30 @@ def test_nodes_sharing_their_facts_already_stop_the_run(tmp_path):
         assert said and "Gather the network facts" not in record["tasks"], log
     else:
         assert not said and "Gather the network facts" in record["tasks"], log
+
+
+@pytest.mark.playbook
+@pytest.mark.parametrize("playbook, play", FIRST_PLAYS)
+@pytest.mark.parametrize("args", [[], ["--tags", "no_such_tag"]], ids=["all", "tags"])
+@pytest.mark.parametrize("callback", ["default", "community.cassandra.ops"])
+def test_the_first_plays_check_the_nodes_own_their_facts_run(tmp_path, playbook, play, args, callback):
+    # a host out of the play holding the facts of a node (as a run_once task in a play before can leave it):
+    # the first node play says it, once (run_once), as is, under --tags too, and stops there
+    site = [{"hosts": "other", "gather_facts": False,
+             "tasks": [{"ansible.builtin.set_fact": {"_cassandra_own_facts": "n1", "cacheable": True},
+                        "tags": ["always"]}]},
+            {"ansible.builtin.import_playbook": "community.cassandra." + playbook[:-len(".yml")]}]
+    (tmp_path / "site.yml").write_text(yaml.safe_dump(site))
+    with open(str(tmp_path / "other.ini"), "w") as f:
+        f.write("[other]\nx1 ansible_connection=local ansible_python_interpreter=%s\n" % sys.executable)
+    record, log = run(tmp_path, str(tmp_path / "site.yml"), ["n1", "n2", "n3"], "-i", str(tmp_path / "other.ini"),
+                      "-e", "cassandra_hosts=cassandra", *args, env={"ANSIBLE_STDOUT_CALLBACK": callback})
+    text = " ".join(log.split())
+    said = ("gave x1 the facts of another node (ansible/ansible#87148): a run_once task ran on them earlier in this"
+            " run, before they had facts of their own (in a play before this playbook?). Run this playbook on its"
+            " own, or gather facts first in that play. Nothing was changed.")
+    # once on the ops callback's screen (the default callback of ansible-core 2.21 prints a failure twice)
+    assert said in text and (callback == "default" or text.count(said) == 1), log
+    assert record["tasks"][-1] == "Check each node has its own facts", record["tasks"]
+    assert record["tasks"].count("Check each node has its own facts") == 1, record["tasks"]
+    assert record["tasks"].index("Give each node its own facts") == len(record["tasks"]) - 2, record["tasks"]
