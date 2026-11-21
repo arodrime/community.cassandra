@@ -138,3 +138,26 @@ def test_the_secrets_import_cluster_moved_are_known():
     names = ["cassandra_secret_keystore_password", "cassandra_secret_javax_net_ssl_truststorepassword_2"]
     assert cassandra_unknown_names(names, []) == {}
     assert cassandra_close_names(names, ["cassandra_secrets"]) == {}
+
+
+def _names_read(top):
+    """The cassandra_* names the .yml and .j2 files under top read outside comments, whatever their subdirectory."""
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_names
+    names = set()
+    for where, _dirs, files in os.walk(top):
+        for name in files:
+            if name.endswith((".yml", ".j2")):
+                with open(os.path.join(where, name), encoding="utf-8") as f:
+                    text = cassandra_names._COMMENT.sub("", f.read())
+                names.update(n for n in cassandra_names._NAME.findall(text) if n.startswith("cassandra_"))
+    return names
+
+
+def test_every_name_the_playbooks_read_is_known():
+    # a variable read only in a playbook's task file or template (playbooks/tasks, playbooks/templates) is no
+    # unknown variable or typo, for the unknown-variable check nor for help
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_help
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_names import cassandra_unknown_names
+    read = _names_read(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "playbooks"))
+    assert cassandra_unknown_names(sorted(read), []) == {}
+    assert read - cassandra_help._known_names() == set()

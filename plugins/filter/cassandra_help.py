@@ -266,10 +266,11 @@ def _role_defaults():
 
 
 def _known_names():
-    """Every cassandra_* name the collection reads (roles, playbooks)."""
+    """Every cassandra_* name the collection reads (roles, playbooks, their task files and templates)."""
     names = set()
     for pattern in ("roles/*/defaults/*.yml", "roles/*/meta/*.yml", "roles/*/tasks/*.yml", "roles/*/templates/**",
-                    "roles/*/vars/*.yml", "roles/*/handlers/*.yml", "playbooks/*.yml"):
+                    "roles/*/vars/*.yml", "roles/*/handlers/*.yml", "playbooks/*.yml", "playbooks/tasks/*.yml",
+                    "playbooks/templates/*.j2"):
         for path in glob.glob(os.path.join(_TOP, pattern), recursive=True):
             if os.path.isfile(path):
                 with open(path, encoding="utf-8", errors="replace") as f:

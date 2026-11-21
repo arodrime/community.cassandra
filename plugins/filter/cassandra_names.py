@@ -96,12 +96,14 @@ def cassandra_close_names(names, known, cutoff=0.9):
 
 @functools.lru_cache(maxsize=None)
 def _used_names():
-    """Every cassandra_*, import_cluster_* and help_* name the roles and playbooks use outside comments (their
-    own facts and results too)."""
+    """Every cassandra_*, import_cluster_* and help_* name the roles and playbooks (their task files and
+    templates too) use outside comments (their own facts and results too)."""
     names = set()
     paths = (glob.glob(os.path.join(_ROLES, "*", "*", "*.yml"))
              + glob.glob(os.path.join(_ROLES, "*", "templates", "**", "*.j2"), recursive=True)
-             + glob.glob(os.path.join(_PLAYBOOKS, "*.yml")))
+             + glob.glob(os.path.join(_PLAYBOOKS, "*.yml"))
+             + glob.glob(os.path.join(_PLAYBOOKS, "tasks", "*.yml"))
+             + glob.glob(os.path.join(_PLAYBOOKS, "templates", "*.j2")))
     for path in paths:
         with open(path, encoding="utf-8") as f:
             names.update(_NAME.findall(_COMMENT.sub("", f.read())))
