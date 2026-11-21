@@ -35,6 +35,8 @@ cassandra_ring_names: getent hosts on a given node -> the name to reach each
     node found in the ring by.
 cassandra_leading_comments: a file's text -> its lines before the first line
     of data (what tells an earlier import's file).
+cassandra_inventory_file_heads: the inventory dir's files as read -> what of
+    each one tells whose it is (no value of a variables file).
 cassandra_import_group, cassandra_import_group_error: -e import_group -> the
     cluster's group, or why it is not an Ansible group name.
 cassandra_import_known_group: the group an earlier import wrote for the given
@@ -62,7 +64,7 @@ __metaclass__ = type
 
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import cassandra_import_error
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import (
-    cassandra_import_kept_ansible_host, cassandra_import_kept_last, cassandra_inventory_files,
+    cassandra_import_kept_ansible_host, cassandra_import_kept_last, cassandra_inventory_file_heads, cassandra_inventory_files,
     cassandra_inventory_generated, cassandra_inventory_leftovers, cassandra_inventory_own_values,
     cassandra_inventory_same_secret, keep_parts_option, leading_comments)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_jvm import cassandra_jmx_files
@@ -100,4 +102,5 @@ class FilterModule(object):
             "cassandra_import_error": cassandra_import_error,
             "cassandra_ring_names": cassandra_ring_names,
             "cassandra_leading_comments": leading_comments,
+            "cassandra_inventory_file_heads": cassandra_inventory_file_heads,
         }

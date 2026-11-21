@@ -1171,86 +1171,12 @@
       {{ {'user': v.cassandra_cql_username | default('') | string, 'password': v.cassandra_cql_password | default('') | string} }}
     # cqlsh does not start on some nodes (seen at the read): a TO DO step, the two ways out
     _cqlsh_todo: >-
-      {%- set broken, kept, quoting = [], [], [] -%}
-      {%- for h in _nodes | default([]) | map(attribute='name') | map('string') | sort
-                 if hostvars[h] is defined and hostvars[h].import_cluster_cqlsh_error | default('') -%}
-      {%-   if hostvars[h].import_cluster_cqlsh_error is match('cassandra_cqlsh_command ') -%}
-      {%-     set _ = quoting.append(h) -%}
-      {%-   else -%}
-      {%-     set _ = broken.append(h) -%}
-      {%-     if 'cqlsh' in import_keep_hand_edits | default(false) | community.cassandra.cassandra_import_keep_parts -%}
-      {%-       set _ = kept.append(h) -%}
-      {%-     endif -%}
-      {%-   endif -%}
-      {%- endfor -%}
-      {%- set nodes, rows = {'broken': broken, 'kept': kept, 'quoting': quoting}, [] -%}
-      {%- for e in (broken + quoting) | map('extract', hostvars, 'import_cluster_cqlsh_error') | unique -%}
-      {%-   set on = [] -%}
-      {%-   for h in broken + quoting if hostvars[h].import_cluster_cqlsh_error == e -%}{%- set _ = on.append(h) -%}{%- endfor -%}
-      {%-   set _ = nodes.update({'e' ~ loop.index: on}) -%}
-      {%-   set _ = rows.append('{nodes:e' ~ loop.index ~ '}: ' ~ e) -%}
-      {%- endfor -%}
-      {%- set steps = [] -%}
-      {%- if broken -%}
-      {%-   set _ = steps.append({'title': 'Make cqlsh start on {nodes:broken}', 'nodes': nodes,
-                                  'commands': {'create': {'playbook': 'create_cluster', 'extra': ['--check', '--diff']}},
-                                  'why': rows | reject('search', ': cassandra_cqlsh_command ') | list
-                                         + ['the playbooks that read the schema run cqlsh (cassandra_cqlsh_command, as root)'],
-                                  'run': ['a cqlsh installed elsewhere on the nodes (e.g. a virtualenv): set'
-                                          ~ ' cassandra_cqlsh_command: <its full path> in group_vars (the playbooks run it'
-                                          ~ ' as root: a file only root can write)',
-                                          'no other cqlsh: ' ~ ('import again without cqlsh in import_keep_hand_edits'
-                                          ~ ' (this import keeps it as it is on {nodes:kept}: cassandra_cqlsh_python_manage'
-                                          ~ ' false), then ' if kept else '') ~ 'run {command:create}, then the same without'
-                                          ~ ' --check --diff: on a running cluster it installs what is missing (a Python cqlsh'
-                                          ~ ' runs with, the cqlshlib of the package linked into it) and writes what differs'
-                                          ~ ' from the inventory, and starts or restarts no node that runs'],
-                                  'then': 'as root on those nodes, cassandra_cqlsh_command with --version starts; the next'
-                                          ~ ' import has no such step'}) -%}
-      {%- endif -%}
-      {%- if quoting -%}
-      {%-   set _ = steps.append({'title': 'Fix cassandra_cqlsh_command for {nodes:quoting}', 'nodes': nodes,
-                                  'why': rows | select('search', ': cassandra_cqlsh_command ') | list,
-                                  'run': 'fix its quoting or give it a value: it is split as a shell splits words (shlex),'
-                                         ~ ' the first word the program',
-                                  'then': 'the next import has no such step'}) -%}
-      {%- endif -%}
-      {{ steps }}
+      {{ _nodes | default([]) | community.cassandra.cassandra_import_cqlsh_todo(hostvars, import_keep_hand_edits | default(false)) }}
     # what is left to do about it (TO DO)
     _cql_todo: >-
-      {%- set c = cassandra_cql_login | default({}) -%}
-      {%- set set_it = 'set cassandra_cql_username and cassandra_cql_password (the password vaulted) in group_vars/'
-                       ~ _layout.cluster_group ~ '/ (this import wrote it)' -%}
-      {%- set state = c.state | default('') -%}
-      {%- if _cql_on | bool and _cql_own.user and not c.asked | default(false)
-             and (c.user | default('') != _cql_own.user or c.password | default('') != _cql_own.password) -%}
-      {{ ['CQL login: the one given (cassandra_cql_username ' ~ c.user | default('') ~ ', ' ~ state ~ ') is not the one'
-          ~ ' the import keeps in group_vars/' ~ _layout.cluster_group ~ '/ (kept): remove it there to use yours only'] }}
-      {%- elif not _cql_on | bool or state == 'ok' -%}{{ [] }}
-      {%- elif state == 'refused' and not c.asked | default(false) -%}
-      {{ ['CQL login refused by ' ~ _cql_from ~ ' (cassandra_cql_username ' ~ c.user ~ '): fix cassandra_cql_username'
-          ~ ' and cassandra_cql_password where '
-          ~ ('the import keeps them (group_vars/' ~ _layout.cluster_group ~ '/), or remove them there and import again on'
-             ~ ' a terminal' if c.user == _cql_own.user and c.password == _cql_own.password else 'you set them')] }}
-      {%- elif state == 'refused' -%}
-      {{ ['CQL login: 3 logins refused by ' ~ _cql_from ~ ', none written: import again, or ' ~ set_it] }}
-      {%- elif state == 'unchecked' -%}
-      {{ ['CQL login ' ~ c.user ~ ' not checked (' ~ c.why ~ ')' ~ (', written as typed' if c.asked else '')
-          ~ ': check it with cqlsh'] }}
-      {%- elif ansible_check_mode -%}
-      {{ ['CQL login: asked at the real import (authentication is on), then written to the inventory (password in'
-          ~ ' secrets.yml)'] }}
-      {%- elif state == 'not_asked' and cassandra_operation_confirm | default(true) | bool -%}
-      {{ ['CQL login: asked at the import that passes the self-check (authentication is on), then written to the'
-          ~ ' inventory (password in secrets.yml)'] }}
-      {%- else -%}
-      {{ ['CQL authentication is on and no CQL login is set (the operations that read the replication need one): '
-          ~ ('none typed: import again to type one' if state == 'none'
-             else 'not asked (cassandra_operation_confirm false): import again without it, on a terminal'
-                  if state == 'not_asked'
-             else 'import again on a terminal, it asks for it')
-          ~ ', or ' ~ set_it] }}
-      {%- endif -%}
+      {{ cassandra_cql_login | default({}) | community.cassandra.cassandra_import_cql_todo(
+           _cql_on | bool, _cql_own, _layout.cluster_group, _cql_from, ansible_check_mode,
+           cassandra_operation_confirm | default(true)) }}
     _cql_from: "{{ (_nodes | default([]) | selectattr('read') | first | default({})).name | default('') }}"
     # the self-check passed, or import_strict false takes its failure: the run writes the inventory and ends without
     # a stop of its own (the CQL login is asked then only)
@@ -1761,15 +1687,7 @@
             # and the cluster's main.yml for its cluster name: all of it), and a secret's value never leaves
             # this task
             _read: >-
-              {%- set out = {} -%}
-              {%- for r in import_cluster_existing_vars.results -%}
-              {%-   set t = r.content | b64decode -%}
-              {%-   set _ = out.update({r.item: t if t.startswith('$ANSIBLE_VAULT') or not r.item is match('(group|host)_vars/')
-                                                  or r.item == 'group_vars/' ~ _layout.cluster_group ~ '/main.yml'
-                                             else t.splitlines() | first if t.startswith(('# Written by ', '{# Written by '))
-                                             else t | community.cassandra.cassandra_leading_comments}) -%}
-              {%- endfor -%}
-              {{ out }}
+              {{ import_cluster_existing_vars.results | community.cassandra.cassandra_inventory_file_heads(_layout.cluster_group) }}
             _written: "{{ [_hosts_file] + _files | map(attribute='path') | list }}"
 
         - name: Stop rather than write over another cluster's files

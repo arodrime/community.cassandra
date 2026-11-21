@@ -17,6 +17,8 @@ cassandra_inventory_generated: a file's content -> the same with the import's
     first line (naming the cluster).
 cassandra_leading_comments: a file's text -> its lines before the first line
     of data (what tells an earlier import's file).
+cassandra_inventory_file_heads: the inventory dir's files as read -> what of
+    each one tells whose it is (no value of a variables file).
 cassandra_inventory_leftovers: the inventory dir's files -> the ones of an
     earlier import to remove, keep or replace, and the conflicts with others.
 cassandra_inventory_same_secret: a vaulted file, a content -> whether writing
@@ -30,6 +32,7 @@ cassandra_import_kept_ansible_host: the import's nodes -> the same, without the
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import base64
 import functools
 import json
 import os
@@ -632,6 +635,28 @@ def leading_comments(text):
             break
         out.append(line)
     return "\n".join(out)
+
+
+@values_hidden
+def cassandra_inventory_file_heads(results, cluster_group):
+    """The inventory dir's files as read ([{item: path from the dir, content: base64}]), the cluster's group ->
+    {path: what tells whose the file is}: all of a vaulted file (it is decrypted to its first line later), of a file
+    outside group_vars and host_vars (an inventory file: its hosts) and of the cluster's group_vars/<group>/main.yml
+    (its cluster name); else the import's first line when it has one, else its leading comments (leading_comments).
+    No other value of a variables file leaves the task that reads them."""
+    heads = {}
+    for result in results:
+        path = result["item"]
+        # (as Ansible's b64decode filter decodes it)
+        text = to_text(base64.b64decode(to_bytes(result["content"], errors="surrogate_or_strict")), encoding="utf-8")
+        if text.startswith("$ANSIBLE_VAULT") or not re.match("(group|host)_vars/", path) \
+                or path == "group_vars/%s/main.yml" % cluster_group:
+            heads[path] = text
+        elif text.startswith(("# Written by ", "{# Written by ")):
+            heads[path] = text.splitlines()[0]
+        else:
+            heads[path] = leading_comments(text)
+    return heads
 
 
 def old_import(text):

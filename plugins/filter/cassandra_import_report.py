@@ -26,11 +26,12 @@ import textwrap
 from collections import namedtuple
 
 from ansible.module_utils.parsing.convert_bool import boolean
+from ansible.plugins.filter.core import to_bool
 
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
     BRANCH_NOT_RUN_NOTE, IDENTITY, KEEP, PASSWORD_FILE_NOTE, value_shown, values_hidden)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import (
-    KEPT_PART_WORDS, KEPT_PARTS, KEPT_PARTS_VAR)
+    KEPT_PART_WORDS, KEPT_PARTS, KEPT_PARTS_VAR, keep_parts_option)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_config import HEAP_MOVED
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_layout import (
     group_chains, hand_edits_kept, NODE_LEVEL, NOT_READ, PER_NODE, _roles_defaults, _templated, vars_sort_key)
@@ -1141,6 +1142,110 @@ def _playbook_step(report, text, inventory, hosts):
             rows = [r.replace("{command:%s}" % name, command) for r in rows]
         return rows if isinstance(value, list) else rows[0]
     return _Step(*[field(text, k) for k in _Step._fields])
+
+
+# --- TO DO steps of the playbook's own (todo, the "more" above): cqlsh, the CQL login ----------------------------
+
+CQLSH_SPLIT = "cassandra_cqlsh_command "  # (the start of the read's error when it does not split: its quoting)
+
+
+def _unique_ignoring_case(texts):
+    """texts, each once, the first of those equal but for case kept (as the playbook's | unique did)."""
+    seen, out = set(), []
+    for text in texts:
+        if text.lower() not in seen:
+            seen.add(text.lower())
+            out.append(text)
+    return out
+
+
+def cassandra_import_cqlsh_todo(nodes, hostvars, keep_hand_edits=False):
+    """The import's nodes, hostvars, import_keep_hand_edits -> the TO DO steps of the nodes whose cqlsh does not
+    start (import_cluster_cqlsh_error, seen at the read): one to make it start (two ways out), one to fix a
+    cassandra_cqlsh_command that does not split; [] when it starts everywhere. Node lists as {nodes:<key>}: broken,
+    kept (cqlsh kept as it is by import_keep_hand_edits), quoting, and e1, e2... the nodes of each error."""
+    errors = {}
+    broken, kept, quoting = [], [], []
+    for name in sorted((str(node["name"]) for node in nodes), key=str.lower):
+        error = hostvars[name].get("import_cluster_cqlsh_error", "") if name in hostvars else ""
+        if not error:
+            continue
+        errors[name] = error
+        if re.match(CQLSH_SPLIT, error):
+            quoting.append(name)
+        else:
+            broken.append(name)
+            if "cqlsh" in keep_parts_option(keep_hand_edits):
+                kept.append(name)
+    nodes_of = {"broken": broken, "kept": kept, "quoting": quoting}
+    rows = []
+    for i, error in enumerate(_unique_ignoring_case([errors[name] for name in broken + quoting]), 1):
+        nodes_of["e%d" % i] = [name for name in broken + quoting if errors[name] == error]
+        rows.append("{nodes:e%d}: %s" % (i, error))
+    steps = []
+    if broken:
+        keep_again = ("import again without cqlsh in import_keep_hand_edits (this import keeps it as it is on"
+                      " {nodes:kept}: cassandra_cqlsh_python_manage false), then " if kept else "")
+        steps.append({
+            "title": "Make cqlsh start on {nodes:broken}", "nodes": nodes_of,
+            "commands": {"create": {"playbook": "create_cluster", "extra": ["--check", "--diff"]}},
+            "why": [row for row in rows if not re.search(": " + CQLSH_SPLIT, row)]
+            + ["the playbooks that read the schema run cqlsh (cassandra_cqlsh_command, as root)"],
+            "run": ["a cqlsh installed elsewhere on the nodes (e.g. a virtualenv): set cassandra_cqlsh_command: <its full"
+                    " path> in group_vars (the playbooks run it as root: a file only root can write)",
+                    "no other cqlsh: " + keep_again + "run {command:create}, then the same without --check --diff: on a"
+                    " running cluster it installs what is missing (a Python cqlsh runs with, the cqlshlib of the package"
+                    " linked into it) and writes what differs from the inventory, and starts or restarts no node that"
+                    " runs"],
+            "then": "as root on those nodes, cassandra_cqlsh_command with --version starts; the next import has no such"
+                    " step"})
+    if quoting:
+        steps.append({
+            "title": "Fix cassandra_cqlsh_command for {nodes:quoting}", "nodes": nodes_of,
+            "why": [row for row in rows if re.search(": " + CQLSH_SPLIT, row)],
+            "run": "fix its quoting or give it a value: it is split as a shell splits words (shlex), the first word the"
+                   " program",
+            "then": "the next import has no such step"})
+    return steps
+
+
+def cassandra_import_cql_todo(login, cql_on, own, cluster_group, read_from, check_mode, confirm=True):
+    """What is left to do about the CQL login (TO DO texts, [] for none). login: cassandra_cql_login (state: ok,
+    refused, unchecked, not_asked, none; asked: typed at this run; user, password, why); cql_on: CQL authentication on
+    a node read; own: {user, password} an earlier import of this cluster wrote; cluster_group; read_from: the node it
+    was checked on; check_mode; confirm: cassandra_operation_confirm."""
+    state = login.get("state", "")
+    asked = login.get("asked", False)
+    set_it = ("set cassandra_cql_username and cassandra_cql_password (the password vaulted) in group_vars/%s/ (this"
+              " import wrote it)" % cluster_group)
+    if cql_on and own["user"] and not asked \
+            and (login.get("user", "") != own["user"] or login.get("password", "") != own["password"]):
+        return ["CQL login: the one given (cassandra_cql_username %s, %s) is not the one the import keeps in group_vars/%s/"
+                " (kept): remove it there to use yours only" % (login.get("user", ""), state, cluster_group)]
+    if not cql_on or state == "ok":
+        return []
+    if state == "refused" and not asked:
+        where = ("the import keeps them (group_vars/%s/), or remove them there and import again on a terminal"
+                 % cluster_group if login["user"] == own["user"] and login["password"] == own["password"]
+                 else "you set them")
+        return ["CQL login refused by %s (cassandra_cql_username %s): fix cassandra_cql_username and"
+                " cassandra_cql_password where %s" % (read_from, login["user"], where)]
+    if state == "refused":
+        return ["CQL login: 3 logins refused by %s, none written: import again, or %s" % (read_from, set_it)]
+    if state == "unchecked":
+        return ["CQL login %s not checked (%s)%s: check it with cqlsh"
+                % (login["user"], login["why"], ", written as typed" if login["asked"] else "")]
+    if check_mode:
+        return ["CQL login: asked at the real import (authentication is on), then written to the inventory (password"
+                " in secrets.yml)"]
+    if state == "not_asked" and to_bool(confirm):
+        return ["CQL login: asked at the import that passes the self-check (authentication is on), then written to"
+                " the inventory (password in secrets.yml)"]
+    how = ("none typed: import again to type one" if state == "none"
+           else "not asked (cassandra_operation_confirm false): import again without it, on a terminal"
+           if state == "not_asked" else "import again on a terminal, it asks for it")
+    return ["CQL authentication is on and no CQL login is set (the operations that read the replication need one): "
+            "%s, or %s" % (how, set_it)]
 
 
 def _step_lines(number, step, width):
@@ -2254,4 +2359,6 @@ def _evidence_lines(report, self_check):
 class FilterModule(object):
     def filters(self):
         return {"cassandra_import_report": cassandra_import_report,
-                "cassandra_import_self_check_advice": cassandra_import_self_check_advice}
+                "cassandra_import_self_check_advice": cassandra_import_self_check_advice,
+                "cassandra_import_cqlsh_todo": cassandra_import_cqlsh_todo,
+                "cassandra_import_cql_todo": cassandra_import_cql_todo}
