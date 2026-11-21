@@ -3,10 +3,12 @@ bugfixes:
     start_rack - the check after the start runs from a node of the rack and succeeds once every node of the rack is
     UN. Each node of the run is placed in the ring by its Host ID (``nodetool info`` on it, 70 seconds at most),
     whatever its address; one whose Host ID is not read (``nodetool info`` failing, no ``ID`` line, or two nodes of
-    the run giving one), read again after the wait, stops the run with what was seen, as does one whose Host ID no
-    ring read has. The other hosts are placed by the addresses their variables and facts give (read from every
-    host: one host's ``ansible_host`` never takes another node's ring address), then by what their names resolve to
-    on the controller, only for a ring node the ring puts in their own datacenter and rack. A node of the rack is
+    the run giving one), read again on it alone after the wait, stops the run with what was seen and the way out
+    "fix it", as does one whose Host ID no ring read has. The other hosts are placed by the addresses their
+    variables and facts give (read from every host: one host's ``ansible_host`` never takes another node's ring
+    address; an address several hosts give, only the one the inventory puts in that ring node's datacenter and
+    rack), then by what their names resolve to on the controller, only for a ring node the ring puts in their own
+    datacenter and rack. A node of the rack is
     every node the inventory or the ring puts in it, under ``--limit`` too. A node of the rack in another rack of
     the ring is a warning line. One not UN or not reached over ssh still stops the run, with the way out
     ``run start_rack again``.

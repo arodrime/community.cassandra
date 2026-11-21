@@ -746,11 +746,14 @@ of the cluster is only a warning, unless the ring puts a node in the rack. The t
 - each node of the run is placed in the ring by its Host ID (``nodetool info`` on it, 70 seconds at most),
   whatever its address. Any other host (left out by ``--limit``, outside the rack) by the addresses its variables
   and facts give, then by what its names resolve to on the controller, taken only for a ring node the ring puts in
-  that host's own datacenter and rack (a host out of the play or not reached has no facts). Two hosts outside the
-  run giving one address: the ring node there is named after one of them;
+  that host's own datacenter and rack (a host out of the play or not reached has no facts). An address several
+  hosts give (a copy-pasted ``cassandra_listen_address``, a stale ``ansible_host``) names the ring node there after
+  the one of them the inventory puts in that node's datacenter and rack, else after none (its address);
 - a node of the run whose Host ID is not read (``nodetool info`` failing on it, no ``ID`` line in its output, or
-  two nodes of the run giving one) stops the run with what was seen; it is read again after the wait for the
-  rack's nodes down (its JVM down, the ring sees it down too). One whose Host ID no ring read has stops it too;
+  two nodes of the run giving one) stops the run with what was seen; it alone is read again, after the wait for
+  the rack's nodes down (its JVM down, the ring sees it down too). The ring node at its own address is named
+  after it, and the way out is to fix it (no remedy for a node lost for good: nothing says it is). One whose
+  Host ID no ring read has stops it too;
 - a node of the rack is every node the inventory or the ring puts in it, under ``--limit`` too;
 - a node of the rack the ring puts in another rack is a warning line under the success, with both racks;
 - a node of the rack not reached over ssh stops the run at once; one not UN, or whose ``nodetool status`` fails,
@@ -762,7 +765,8 @@ of the cluster is only a warning, unless the ring puts a node in the rack. The t
   run read from and a node of the run seen UN: the ring is then read from them too. The other nodes left out stay
   as they are;
 - the warning names a node left out by its inventory name when it is placed; else by its address. A ring node no
-  host is known by is taken for a node left out only while that node is not placed and every node of the run is;
+  host is known by is taken for a node left out only while that node is not placed and every node of the run is
+  (a node of the run not placed: it is the rack's, waited for while down, as it may be that node);
 - when the ring is read only from nodes of the run, before and after any wait (``--limit`` leaves out every other
   node, none is reached, or its ``nodetool status`` fails), the run says so: ``the ring as seen from node2 only``.
   A node always sees itself UN;
