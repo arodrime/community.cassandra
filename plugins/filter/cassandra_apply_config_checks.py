@@ -131,8 +131,10 @@ def cassandra_package_unfinished(unfinished, node=""):
     if len(parts) > 1:  # (rpm -q: "installed X" per package)
         return {"why": "rpm -q cassandra lists %d packages (%s): a transaction left half done"
                        % (len(parts), ", ".join(x.split(" ")[-1] for x in parts)),
-                "way_out": [on + "remove the older package by hand (yum: package-cleanup --cleandupes), then check the"
-                            " files of the one left:", "    dnf remove --duplicates cassandra", "    rpm -V cassandra"]}
+                "way_out": [on + "remove the older package by hand, then check the files of the one left:",
+                            "    dnf remove --duplicates cassandra", "    rpm -V cassandra",
+                            # (a line of its own: never cut between the command's words)
+                            "(yum: package-cleanup --cleandupes in place of the dnf command)"]}
     state, version = (parts[0].split(" ", 1) + [""])[:2]
     guard = ", with a policy-rc.d keeping its scripts from starting Cassandra (as cassandra_install does; one there already:" \
             " keep it, leave out the first two commands and the last):"

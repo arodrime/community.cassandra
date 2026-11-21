@@ -11,6 +11,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_conf
     cassandra_apply_config_ring, cassandra_apply_config_stops, cassandra_apply_config_token, cassandra_apply_config_unit,
     cassandra_apply_config_version, cassandra_described_versions, cassandra_package_state, cassandra_package_unfinished,
     cassandra_package_unfinished_refusal)
+from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_refused
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_patch_notes as notes
 
 COMMANDS = {"upgrade": "ansible-playbook community.cassandra.upgrade -e cassandra_upgrade_phase=preflight",
@@ -86,8 +87,9 @@ def test_a_package_left_half_done_stops_a_release_before_any_change():
         " would start from it (now 4.1.11).",
         "n3: its Cassandra package is half-installed 4.1.12 (dpkg): its unpack was interrupted; its update would start"
         " from it (now 4.1.11).",
-        "on n1, remove the older package by hand (yum: package-cleanup --cleandupes), then check the files of the one"
-        " left:", "    dnf remove --duplicates cassandra", "    rpm -V cassandra",
+        "on n1, remove the older package by hand, then check the files of the one left:",
+        "    dnf remove --duplicates cassandra", "    rpm -V cassandra",
+        "(yum: package-cleanup --cleandupes in place of the dnf command)",
         "on n2, finish it by hand, with a policy-rc.d keeping its scripts from starting Cassandra (as cassandra_install"
         " does; one there already: keep it, leave out the first two commands and the last):",
         "    printf '#!/bin/sh\\nexit 101\\n' > /usr/sbin/policy-rc.d", "    chmod 755 /usr/sbin/policy-rc.d",
@@ -135,6 +137,16 @@ def test_a_package_left_half_done_refuses_every_restart_and_start():
     assert lines[-1] == "then run the same command again."
     assert cassandra_package_unfinished_refusal([nodes[1]]) == []
     assert cassandra_package_unfinished("") == {}
+
+
+def test_the_yum_command_of_a_half_done_package_is_never_cut():
+    # the refusal (package_unfinished.yml: cassandra_refused, 79 columns): "package-cleanup --cleandupes" on one
+    # line, whatever the node's name
+    for name in ("h-n5", "node-with-a-much-longer-name.example.com"):
+        lines = cassandra_refused("sync_clocks  c1", cassandra_package_unfinished_refusal(
+            [{"name": name, "unfinished": "installed 5.0.8, installed 5.0.9", "what": "start"}]))
+        assert any("package-cleanup --cleandupes" in line for line in lines), lines
+        assert all(len(line) <= 79 for line in lines), lines
 
 
 @pytest.mark.parametrize("options, refused", [

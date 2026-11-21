@@ -683,8 +683,9 @@ def test_a_down_node_with_the_target_package_is_pointed_to_apply_config():
     assert said[1] == ("  n2  package rpm -q cassandra lists 2 packages (4.1.12, 5.0.9): a transaction left half done"
                        "  " + REFUSED)
     assert "on n2," not in " ".join(x for x in said if "start_rack" in x)
-    assert said[-5:-2] == ["  on n2, remove the older package by hand (yum: package-cleanup --cleandupes), then check"
-                           " the files of the one left:", "      dnf remove --duplicates cassandra", "      rpm -V cassandra"]
+    assert said[-6:-2] == ["  on n2, remove the older package by hand, then check the files of the one left:",
+                           "      dnf remove --duplicates cassandra", "      rpm -V cassandra",
+                           "  (yum: package-cleanup --cleandupes in place of the dnf command)"]
     assert said[-2] == "  then run this phase again (a node already upgraded is skipped):"
     for state in ("half-configured 5.0.9", "unpacked 5.0.9", "half-installed 5.0.9"):
         dpkg = dict(variables, hostvars=dict(hostvars, n2=node("n2", 1, state)))
