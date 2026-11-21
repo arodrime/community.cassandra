@@ -1266,46 +1266,66 @@ def cassandra_firewall_changes(text, fw, family="", cassandra_ports=()):
     sources = dict((str(p), [str(a) for a in a_list or []]) for p, a_list in (fw.get("port_sources") or {}).items())
     read = _firewall_read(recs, firewall_touched(cassandra_ports, fw.get("exporter_port") or "", open_ports, sources))
     svc = "firewalld" if family == "RedHat" else "ufw" if family == "Debian" else read["name"] or "firewalld"
-    items = [_item("firewall rule (not carried)", "%s: %s" % rule, "not written by the roles")
-             for rule in read["other"]]
-    items += [_item("firewall rules (not read)", "%s: %s could not be listed" % (where, what),
-                    "not known: the roles may change them; "
-                    + UNREAD_WAY_OUT % ("ufw" if where == "ufw" else "firewall-cmd"))
-              for where, what in read["unread"]]
-    # firewalld: its unit, running and at boot. ufw: its rules active (ufw status) and ufw.conf's ENABLED at boot,
-    # and its unit (the one the role starts and enables)
-    state = dict((n, (active, boot))
-                 for n, active, boot in (_fields(rest, 3) for kind, rest in recs if kind == "fw_state"))
-    unit_active, unit_boot = state.get(svc, ("", ""))
-    rules_active, rules_boot = state.get("ufw-rules", ("", "")) if svc == "ufw" else (unit_active, unit_boot)
-    running = rules_active == "active" or read["name"] == svc
-    at_boot = unit_boot in ENABLED and (svc != "ufw" or rules_boot == "yes")
+    items = _firewall_kept_items(read)
+    unit_active, unit_boot, running, at_boot = _firewall_service_state(recs, svc, read)
     if not boolean(fw.get("enabled", True), strict=False):
-        if svc == "ufw" and running:
-            items.append(_item("firewall ufw", read["state"] or "active", "disabled (ufw disable)"))
-        elif svc == "ufw" and at_boot:
-            items.append(_item("firewall ufw", "inactive, active from the next boot (ufw.conf ENABLED=yes)",
-                               "left as it is: cassandra_firewall disables ufw only where it is active"))
-        elif svc == "firewalld" and (running or at_boot):
-            items.append(_item("firewall firewalld", "%s, at boot %s" % (unit_active or "active", unit_boot or "?"),
-                               "stopped, disabled"))
-        return items
+        return items + _firewall_disabled_items(svc, read, unit_active, unit_boot, running, at_boot)
     if read["name"] != svc:
         items.append(_item("firewall %s" % svc, ("%s active" % read["name"]) if read["name"] else "none",
                            "installed and started"))
         return items
     if unit_boot not in ENABLED:
         items.append(_item("firewall %s at boot" % svc, unit_boot or "?", "enabled"))
-    items += [_item("port %s" % p, "closed", "open") for p in open_ports if p not in sources and p not in read["open"]]
-    # its tasks for cassandra_firewall_port_sources: close each port to everyone, open it to each source
+    return items + _firewall_port_items(read, open_ports, sources)
+
+
+def _firewall_kept_items(read):
+    """The rules cassandra_firewall does not write (new nodes would not get them), the lists not read."""
+    items = [_item("firewall rule (not carried)", "%s: %s" % rule, "not written by the roles")
+             for rule in read["other"]]
+    items += [_item("firewall rules (not read)", "%s: %s could not be listed" % (where, what),
+                    "not known: the roles may change them; "
+                    + UNREAD_WAY_OUT % ("ufw" if where == "ufw" else "firewall-cmd"))
+              for where, what in read["unread"]]
+    return items
+
+
+def _firewall_service_state(recs, svc, read):
+    """firewalld: its unit, running and at boot. ufw: its rules active (ufw status) and ufw.conf's ENABLED at boot,
+    and its unit (the one the role starts and enables) -> (the unit's state, at boot, running, started at boot)."""
+    state = dict((n, (active, boot))
+                 for n, active, boot in (_fields(rest, 3) for kind, rest in recs if kind == "fw_state"))
+    unit_active, unit_boot = state.get(svc, ("", ""))
+    rules_active, rules_boot = state.get("ufw-rules", ("", "")) if svc == "ufw" else (unit_active, unit_boot)
+    running = rules_active == "active" or read["name"] == svc
+    at_boot = unit_boot in ENABLED and (svc != "ufw" or rules_boot == "yes")
+    return unit_active, unit_boot, running, at_boot
+
+
+def _firewall_disabled_items(svc, read, unit_active, unit_boot, running, at_boot):
+    """cassandra_firewall_enabled false: ufw disabled where it is active, firewalld stopped and disabled."""
+    if svc == "ufw" and running:
+        return [_item("firewall ufw", read["state"] or "active", "disabled (ufw disable)")]
+    if svc == "ufw" and at_boot:
+        return [_item("firewall ufw", "inactive, active from the next boot (ufw.conf ENABLED=yes)",
+                      "left as it is: cassandra_firewall disables ufw only where it is active")]
+    if svc == "firewalld" and (running or at_boot):
+        return [_item("firewall firewalld", "%s, at boot %s" % (unit_active or "active", unit_boot or "?"),
+                      "stopped, disabled")]
+    return []
+
+
+def _firewall_port_items(read, open_ports, sources):
+    """The ports opened to everyone, and its tasks for cassandra_firewall_port_sources (sources): each port closed to
+    everyone, opened to each source. It removes no source rule: one it does not write stays, new nodes would not get
+    it; on a port it leaves open to everyone, it changes nothing."""
+    items = [_item("port %s" % p, "closed", "open") for p in open_ports if p not in sources and p not in read["open"]]
     for p, wanted in sources.items():
         if p in read["open"]:
             items.append(_item("port %s" % p, "open to everyone",
                                "closed to everyone (open to %s only)" % ", ".join(wanted)))
         have = read["sources"].get(p, []) + [a for q, a in read["redundant"] if q == p]
         items += [_item("port %s from %s" % (p, a), "closed", "open") for a in wanted if a not in have]
-    # (it removes no source rule: one it does not write stays, new nodes would not get it; on a port it leaves open to
-    # everyone, it changes nothing)
     items += [_item("firewall rule (not carried)", "port %s open to %s" % (p, a), "not written by the roles")
               for p, a_list in read["sources"].items() for a in a_list if a not in sources.get(p, [])]
     return items
