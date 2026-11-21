@@ -9,8 +9,9 @@ Which rack a node of the ring is of (_judge), the first rule that matches:
   its inventory name is a rack node's                           of the rack
   its address is one a rack node gives in its variables         of the rack
   the ring puts it in the rack's dc and rack                    of the rack
-  no host has its address, and a rack node is not in the        of the rack
-    ring at an address it gives                                   (why said)
+  no host has its address, and the rack's nodes not in the      of the rack
+    ring at an address they give outnumber the ring's nodes       (why said)
+    of the rack no host has the address of
   any other                                                     outside
 
 What the check does with what it finds (cassandra_rack_verdict); "the rack is in the ring": every rack node is,
@@ -110,6 +111,11 @@ def _judge(findings, members, dc, rack, addresses, reads):
                   for value in (read.get("cluster_status") or {}).values() for n in value.get("nodes", []))
     found = dict((a, member_at[a]) for a in in_ring if a in member_at)
     all_in_ring = set(members or []) <= set(found.values())
+    # a node no host has the address of may be a node of the rack only while the rack's nodes not in the ring at an
+    # address they give outnumber the ring's nodes of the rack no host has the address of (else each has one)
+    owned = set(_ip(a) for a in addresses or {})
+    ours = [n for n in _unowned(reads, owned) if (n[1], n[2]) == (str(dc), str(rack))]
+    may_be_ours = len(set(members or []) - set(found.values())) > len(ours)
     judged = {}
     for f in findings or []:
         if f.get("kind") != "state":
@@ -118,7 +124,7 @@ def _judge(findings, members, dc, rack, addresses, reads):
         if (name in (members or []) or _ip(address) in member_at
                 or (str(f.get("dc")) == str(dc) and str(f.get("rack")) == str(rack))):
             judged[address] = "rack"
-        elif not name and not all_in_ring:
+        elif not name and may_be_ours:
             judged.setdefault(address, "unknown")
         else:
             judged.setdefault(address, "outside")

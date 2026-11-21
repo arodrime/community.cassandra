@@ -404,12 +404,35 @@ def test_a_node_outside_the_rack_no_host_is_known_by_is_a_warning_when_every_rac
     assert problems == []
     assert said[3:6] == ["WARNING  the rest of the cluster:", "  10.0.0.4  DN",
                          "  n4        not reached over ssh"]
-    # a node of the rack not in the ring at an address it gives (n3: none known): 10.0.0.4 may be n3, judged
-    # as one of the rack, why said
+    # a node of the rack not in the ring at an address it gives (n3: none known), and no node of the rack in the
+    # ring no host has the address of (the ring puts 10.0.0.3 in r9): 10.0.0.4 may be n3, judged as one of the
+    # rack, why said
     names = dict((a, n) for a, n in ADDRESSES.items() if n not in ("n3", "n4"))
-    problems, said = check(names=names, unreached=["n4"], n4="DN")
+    problems, said = check(names=names, unreached=["n4"], racks={"n3": "r9"}, n4="DN")
     assert problems == ["10.0.0.4 (r3) is DN, seen from n2 and n3", WHY[0] % (4, "r3")] + WHY[1:]
     assert said is None
+    # 10.0.0.3 in r2, no host has its address: n3 may be there, as many such nodes of the rack as nodes of the
+    # rack not placed. It was a stop on 10.0.0.4 (r3), a node outside the rack; now a warning row
+    problems, said = check(names=names, unreached=["n4"], n4="DN")
+    assert problems == [] and said[-5:-2] == ["WARNING  the rest of the cluster:", "  10.0.0.4  DN",
+                                              "  n4        not reached over ssh"]
+
+
+def test_an_ipv6_ring_with_an_ipv4_inventory_judges_a_node_outside_the_rack_down_a_warning():
+    # cassandra_host_addresses has no IPv6 address: no ring node at an address a host gives. n4 (r3) DN stopped
+    # the run, "judged as a node of rack r2", while the ring's two nodes of r2 no host has the address of account
+    # for n2 and n3. Now a warning row, as with n4 UN
+    read = ring(n4="DN")
+    for n in read["cluster_status"]["dc1"]["nodes"]:
+        n["address"] = n["address"].replace("10.0.0.", "2001:db8::")
+    variables = noted(read, names={})
+    verdict = variables["_cassandra_start_rack_first_verdict"]
+    assert verdict["unknown_lines"] == [] and verdict["problems"] == []
+    assert [n["address"] for n in verdict["outside"]] == ["2001:db8::4"]
+    # n2 DN there: a stop, as before
+    read["cluster_status"]["dc1"]["nodes"][1]["status"] = "D"
+    assert noted(read, names={})["_cassandra_start_rack_first_verdict"]["problems"] == [
+        "2001:db8::2 (r2) is DN, seen from n1 and n2"]
 
 
 def test_a_node_at_an_address_a_node_of_the_rack_gives_is_one_of_the_rack():
@@ -781,7 +804,9 @@ def test_why_lines_are_from_the_last_read():
     problems, said = check(names=names, then=ring(n3="DN"), unreached=["n4"], n4="DN", n3="DN")
     assert problems == ["10.0.0.3 (r2) is DN, seen from n2 and n3"]
     # the other way round: UN at first, DN after the wait: said
-    problems, said = check(names=names, then=ring(n4="DN"), unreached=["n4"], n3="DN")
+    # (the ring puts 10.0.0.3 in r9: no node of r2 n3 may be, 10.0.0.4 may be n3)
+    problems, said = check(names=names, then=ring({"n3": "r9"}, n4="DN"), unreached=["n4"], racks={"n3": "r9"},
+                           n3="DN")
     assert problems == ["10.0.0.4 (r3) is DN, seen from n2 and n3", WHY[0] % (4, "r3")] + WHY[1:]
 
 
