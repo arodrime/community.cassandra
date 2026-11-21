@@ -177,6 +177,9 @@
         _todo: >-
           {{ (groups['cassandra_sync_clock_live_True'] | default([])) + (groups['cassandra_sync_clock_window_True'] | default([])) }}
         _stale: "{{ groups['cassandra_sync_clock_stale_mark_True'] | default([]) }}"
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        # a row per node, shown 2 columns in: within 77 columns, 79 in all
+        _rows: "{{ _cassandra_clock_verdicts | community.cassandra.cassandra_clock_lines(width=77) }}"
         cassandra_screen_question: >-
           {{ ('Set the clocks of ' ~ _todo | join(', ') ~ '?') if _todo | length > 0
              else ('Remove the window mark of ' ~ _stale | join(', ') ~ '?') if _stale | length > 0 else '' }}
@@ -191,7 +194,7 @@
               Each node's clock as its time sync daemon reports it. In sync: synchronised to a source, the offset plus
               the daemon's error bound within {{ cassandra_clock_max_offset_ms }} ms (cassandra_clock_max_offset_ms).
           after: >-
-            {{ [{'pre': _cassandra_clock_verdicts | community.cassandra.cassandra_clock_lines}]
+            {{ [{'pre': _rows}]
                + _cassandra_clock_verdicts.notes
                + ((['Live, on those nodes at once: ' ~ groups['cassandra_sync_clock_live_True'] | join(', ') ~ '.'])
                   if groups['cassandra_sync_clock_live_True'] | default([]) | length > 0 else [])
@@ -206,7 +209,8 @@
                   if _stale | length > 0 else []) }}
           warnings:
             - label: clocks
-              each: "{{ _cassandra_clock_verdicts.warnings }}"
+              # (a warning of several facts: one per line)
+              each: "{{ _cassandra_clock_verdicts.warnings | map('split', _nl) | list }}"
 
 - name: Set the clocks live
   hosts: >-

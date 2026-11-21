@@ -146,7 +146,8 @@ def test_no_synchronised_source_refuses(tmp_path):
                                                   "sources": UNREACHED}})
     rc, out = run(tmp_path, CHECK)
     assert rc != 0, out
-    assert "node2  NOT SYNCHRONISED  chronyd, NOT synchronised: chronyd reaches none of its 1 sources" in out
+    assert "node2  NOT SYNCHRONISED  chronyd, NOT synchronised\n" in out
+    assert "\n                           chronyd reaches none of its 1 sources\n" in out
 
 
 def test_no_time_sync_refuses_a_real_run_and_is_left_to_it_under_check(tmp_path):
@@ -155,7 +156,8 @@ def test_no_time_sync_refuses_a_real_run_and_is_left_to_it_under_check(tmp_path)
     assert rc != 0 and "node2  NO TIME SYNC  chronyd installed, not running" in out, out
     rc, out = run(tmp_path, CHECK, "--check")
     assert rc == 0, out
-    assert "time sync would be started on node2 (cassandra_linux), its clock checked by the real run" in out
+    assert "time sync would be started on node2 (cassandra_linux), its clock" in out
+    assert "checked by the real run" in out  # (on its next line: within 79 columns)
     assert "NEXT PLAY ON node2" in out
 
 
@@ -222,7 +224,8 @@ def test_a_bound_that_stays_large_is_refused_once_the_wait_runs_out(tmp_path):
     rc, out = run(tmp_path, CHECK, extra={"cassandra_clock_sync_timeout": 5})
     assert rc != 0, out
     assert "REFUSED  clocks  nothing was started" in out and "node2  OFF" in out
-    assert "chronyd still converging (just started: error bound 62.04 s)" in out, out
+    assert "chronyd's error bound is 62.04 s, over 50.0 ms\n" in out, out
+    assert "just started" not in out  # no start seen in what was read: not said (R16)
     assert "raise cassandra_clock_sync_timeout" in out and "closer or better source" not in out
     assert (fake / "node2" / "calls").read_text().strip() == "3"
 

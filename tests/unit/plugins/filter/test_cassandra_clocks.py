@@ -340,6 +340,32 @@ def test_verdicts_ahead_warning_explains_future_timestamps():
     assert any(w.startswith("node2's clock is AHEAD by about 3.00 s") for w in far["warnings"])
 
 
+def test_no_ahead_warning_for_a_wide_error_bound_alone():
+    # S28 (R15): chronyd's error bound wide (just converging), the offset itself tiny: OFF, but no clock ahead,
+    # no data-loss warning ("AHEAD by about 0.0 ms" before); the offset alone past the threshold keeps it
+    wide = probe_text(tracking_text=tracking(0.00001, "fast", dispersion="51.980000000"))
+    near = probe_text(tracking_text=tracking(0.0008, "fast", dispersion="0.055000000", skew="1000000.000"))
+    v = cassandra_clock_verdicts([node("h-n1", probe_text()), node("h-n2", wide), node("h-n3", near)])
+    assert [n["verdict"] for n in v["nodes"]] == ["ok", "off", "off"]
+    assert not any("AHEAD" in w for w in v["warnings"])
+    # within the threshold alone, over it with the bound (0.04 + 0.02): no warning either
+    edge = probe_text(tracking_text=tracking(0.04, "fast", dispersion="0.020000000"))
+    assert not any("AHEAD" in w for w in cassandra_clock_verdicts([node("h-n2", edge)])["warnings"])
+    # a real offset past the threshold, under a wide bound too: kept
+    for text in (tracking(0.2, "fast"), tracking(0.2, "fast", dispersion="51.980000000")):
+        ahead = cassandra_clock_verdicts([node("h-n1", probe_text()), node("h-n2", probe_text(tracking_text=text))])
+        assert [w.split("\n")[0] for w in ahead["warnings"]] == ["h-n2's clock is AHEAD by about 200.0 ms"]
+
+
+def test_ahead_warning_one_fact_per_line_within_79_columns():
+    v = cassandra_clock_verdicts([node("h-n2", probe_text(tracking_text=tracking(0.2, "fast")))])
+    lines = cassandra_clock_health(v)["lines"]
+    start = lines.index("WARNING  h-n2's clock is AHEAD by about 200.0 ms")
+    assert lines[start + 1] == "         the writes it stamped as coordinator carry future timestamps"
+    assert lines[-1] == "         check what was written through it lately"
+    assert all(len(line) <= 79 for line in lines)
+
+
 def test_verdicts_a_step_on_a_running_node_is_a_restart_window():
     v = by_node(cassandra_clock_verdicts([node("node1", probe_text(tracking_text=tracking(2.0)), running=True),
                                           node("node2", probe_text(tracking_text=tracking(2.0)), running=False)]))
@@ -450,8 +476,33 @@ def test_verdicts_a_daemon_still_converging_is_said_so():
     young = probe_text(tracking_text=tracking(0.0001, "fast", dispersion="62.040000000", skew="1000000.000"))
     v = cassandra_clock_verdicts([node("node1", young)])
     assert v["nodes"][0]["verdict"] == "off" and v["nodes"][0]["action"] == "manual"
-    assert "still converging" in v["nodes"][0]["why"] and "cassandra_clock_sync_timeout" in v["nodes"][0]["why"]
+    # what the daemon said, no guessed cause (R16: no start seen in what was read)
+    assert v["nodes"][0]["why"] == (
+        "chronyd's error bound is 62.04 s, over 50.0 ms; chronyd's frequency skew is 1000000 ppm (settled: a few"
+        " ppm); run again later, or raise cassandra_clock_sync_timeout")
     assert "closer or better" not in v["nodes"][0]["why"]
+    # a wide bound with a settled skew: the bound alone said
+    wide = probe_text(tracking_text=tracking(0.0001, "fast", dispersion="62.040000000"))
+    why = cassandra_clock_verdicts([node("node1", wide)])["nodes"][0]["why"]
+    assert why.startswith("chronyd's error bound is 62.04 s, over 50.0 ms; run again") and "skew" not in why
+    assert not any("just started" in n["why"] or "converging" in n["why"]
+                   for n in cassandra_clock_verdicts([node("n1", young), node("n2", wide)])["nodes"])
+
+
+def test_off_rows_one_fact_per_line_within_79_columns():
+    # S28 (R16): 199 columns before; now the row, then each fact under its text, the action (sync_clocks) last
+    young = probe_text(tracking_text=tracking(0.0013, "slow", dispersion="0.054300000", skew="1000000.000"))
+    v = cassandra_clock_verdicts([node("h-n1", young), node("h-n2", probe_text())])
+    assert cassandra_clock_lines(v) == [
+        "  h-n1  OFF  chronyd, synchronised to 192.0.2.1, -1.3 ms (\u00b154.7 ms)",
+        "             chronyd's error bound is 54.7 ms, over 50.0 ms",
+        "             chronyd's frequency skew is 1000000 ppm (settled: a few ppm)",
+        "             run again later, or raise cassandra_clock_sync_timeout",
+        "             \u2192 to fix by hand",
+        "  h-n2  ok   chronyd, synchronised to 192.0.2.1, -0.0 ms (\u00b10.7 ms)"]
+    assert all(len(line) <= 77 for line in cassandra_clock_lines(v, width=77))  # (sync_clocks' screen: 2 in)
+    refusal = cassandra_clock_refusal(v, operation="create_cluster", cluster="zorglub")
+    assert all(len(line) <= 79 for line in refusal + cassandra_clock_health(v)["lines"]), refusal
 
 
 @pytest.mark.parametrize("skew, bound, settled", [
@@ -478,9 +529,10 @@ def test_lines():
     v = cassandra_clock_verdicts([node("node1", probe_text()), node("node22", probe_text(tracking_text=tracking(2.0, "fast")))])
     lines = cassandra_clock_lines(v)
     assert lines[0].startswith("  node1   ok   chronyd, synchronised to 192.0.2.1, -0.0 ms (\u00b10.7 ms)")
-    assert lines[1].startswith("  node22  OFF  chronyd, synchronised to 192.0.2.1, +2.00 s")
-    assert lines[1].endswith("\u2192 clock stepped in a restart window (drain, stop, step, start)")
-    assert cassandra_clock_lines(v, actions=False)[1].endswith("ahead of its source by 2.00 s, more than 50.0 ms")
+    assert lines[1] == "  node22  OFF  chronyd, synchronised to 192.0.2.1, +2.00 s (\u00b10.7 ms)"
+    assert lines[2] == "               ahead of its source by 2.00 s, more than 50.0 ms"
+    assert lines[3] == "               \u2192 clock stepped in a restart window (drain, stop, step, start)"
+    assert cassandra_clock_lines(v, actions=False)[2:] == ["               ahead of its source by 2.00 s, more than 50.0 ms"]
 
 
 def test_refusal():
@@ -490,14 +542,16 @@ def test_refusal():
     lines = cassandra_clock_refusal(v, operation="create_cluster", cluster="Orders",
                                     command="ansible-playbook -i inv.yml community.cassandra.sync_clocks")
     assert lines[0] == "REFUSED  clocks  Orders  nothing was started"
-    assert lines[1].startswith("  node2  NOT SYNCHRONISED  chronyd, NOT synchronised: chronyd reaches none of its 2")
-    assert lines[2].startswith("  node3  OFF")
+    assert lines[1] == "  node2  NOT SYNCHRONISED  chronyd, NOT synchronised"
+    assert lines[2].startswith("                           chronyd reaches none of its 2")
+    assert lines[3].startswith("  node3  OFF")
     assert not any(line.startswith("  node1 ") for line in lines)
     text = "\n".join(lines)
-    assert "within 50.0 ms of each other (cassandra_clock_max_offset_ms)" in text
+    assert "Cassandra needs its clocks within 50.0 ms (cassandra_clock_max_offset_ms)" in lines
     assert "WARNING  node3's clock is AHEAD" in text
     assert "     ansible-playbook -i inv.yml community.cassandra.sync_clocks" in lines
     assert "then run create_cluster again" in text and "-e cassandra_clock_check=false" in text
+    assert all(len(line) <= 79 for line in lines)
     assert cassandra_clock_refusal(cassandra_clock_verdicts([node("node1", probe_text())])) == []
 
 
@@ -506,7 +560,8 @@ def test_refusal_under_check():
     blank = probe_text(active="", tracking_text=None)
     v = cassandra_clock_verdicts([node("node1", blank, running=False), node("node2", blank, running=False)])
     assert cassandra_clock_refusal(v, check=True) == [
-        "NOTE  clocks: time sync would be started on node1, node2 (cassandra_linux), its clock checked by the real run"]
+        "NOTE  clocks: time sync would be started on node1, node2 (cassandra_linux), its",
+        "  clock checked by the real run"]
     assert cassandra_clock_refusal(v)[0] == "REFUSED  clocks  nothing was started"
     off = cassandra_clock_verdicts([node("node1", probe_text(tracking_text=tracking(1.0)))])
     assert cassandra_clock_refusal(off, check=True)[0] == "NOTE  clocks  a real run would refuse to start the nodes"
@@ -537,11 +592,11 @@ def test_health_block_a_clock_off_or_not_read_is_a_finding():
                                     command="ansible-playbook -i inv.yml community.cassandra.sync_clocks")
     lines = health["lines"][1:]  # (after the heading's first line)
     assert lines[1] == "  node1  ok            chronyd, synchronised to 192.0.2.1, -0.0 ms (\u00b10.7 ms)"
-    assert lines[2] == ("  node2  OFF           chronyd, synchronised to 192.0.2.1, +200.0 ms (\u00b10.7 ms): ahead of its"
-                        " source by 200.0 ms, more than 50.0 ms")
-    assert lines[3].startswith("  node3  NO TIME SYNC  chronyd installed, not running")
-    assert lines[4] == "  node4  NOT READ      its clock could not be read: MODULE FAILURE"
-    assert lines[5].startswith("WARNING  node2's clock is AHEAD by about 200.0 ms")  # Cassandra runs there
+    assert lines[2] == "  node2  OFF           chronyd, synchronised to 192.0.2.1, +200.0 ms (\u00b10.7 ms)"
+    assert lines[3] == "                       ahead of its source by 200.0 ms, more than 50.0 ms"
+    assert lines[4].startswith("  node3  NO TIME SYNC  chronyd installed, not running")
+    assert lines[6] == "  node4  NOT READ      its clock could not be read: MODULE FAILURE"
+    assert lines[7] == "WARNING  node2's clock is AHEAD by about 200.0 ms"  # Cassandra runs there
     assert "\u2192" not in "\n".join(lines)  # no action: health_check does nothing
     assert health["finding"] == {
         "kind": "clocks", "text": "node2 OFF, node3 NO TIME SYNC, node4 NOT READ (CLOCKS above says why)",
