@@ -188,7 +188,7 @@ def test_the_command_args_are_the_run_s():
         plays = yaml.safe_load(f)
     args = [p["vars"]["_cassandra_rack_command_args"] for p in plays if "_cassandra_rack_command_args" in p.get("vars", {})]
     assert len(args) == 2 and args[0] == args[1]
-    assert args[0]["hosts"] == "{{ lookup('community.cassandra.cassandra_hosts') }}"
+    assert args[0]["hosts"] == "{{ cassandra_hosts | default('') }}"  # (as start_rack's)
 
 
 def test_the_replica_refusal_is_a_refused_block_of_79_columns():

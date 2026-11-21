@@ -50,7 +50,7 @@
     _cassandra_rack_command_args:
       inventory: "{{ ansible_inventory_sources }}"
       default_inventory: "{{ lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') }}"
-      hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+      hosts: "{{ cassandra_hosts | default('') }}"
       cwd: "{{ lookup('ansible.builtin.env', 'PWD') }}"
     # the rack's nodes as the ring has them
     _ring_rack: >-
@@ -234,7 +234,7 @@
     _cassandra_rack_command_args:
       inventory: "{{ ansible_inventory_sources }}"
       default_inventory: "{{ lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') }}"
-      hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+      hosts: "{{ cassandra_hosts | default('') }}"
       cwd: "{{ lookup('ansible.builtin.env', 'PWD') }}"
   tasks:
     # first: each node its own facts before any run_once task (ansible/ansible#87148)
