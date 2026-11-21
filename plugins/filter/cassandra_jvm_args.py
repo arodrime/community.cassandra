@@ -43,7 +43,6 @@ import re
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
     JVM_ENV_GREPS, JVM_LISTS, JVM_UNLOCK, jvm_options_settings, shell_words)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
-from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import mask
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_prometheus as prometheus
 

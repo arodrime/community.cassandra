@@ -11,7 +11,6 @@ refuse for their rack (preflight's "Racks per datacenter")."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
-from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_operation_texts import seed_layout
 
 
