@@ -1041,22 +1041,50 @@ def _todo_steps(report, allow_unread, self_check_ok, self_check_error, check_ite
     that failed, your files that still win, the secrets written in clear, the files of an earlier import of an
     unknown cluster, the playbook's own (more: the CQL login) -> [_Step]. Paths from the current dir; inventory,
     hosts: the import command again (as the next playbooks are run)."""
-    layout = report.layout
-    steps = []
     again = unbreakable(out.command("import_cluster", inventory=inventory or None, hosts=hosts or None,
                                     extra=["-e import_force=true"], cwd=report.cwd))
-    if report.unread and not allow_unread:
-        names = [n["name"] for n in report.unread]
-        them = "it" if len(names) == 1 else "them"
+    steps = _unread_step(report, again) if report.unread and not allow_unread else []
+    steps += _not_settings_steps(report)
+    if not self_check_ok and (self_check_error or check_items):
+        steps.append(_self_check_step(report, self_check_error, check_items, strict))
+    if report.layout.get("theirs_win"):
         steps.append(_Step(
-            "Let the import read %s, then import again" % _who(report, names),
-            "the import could not read %s (%s): the inventory has no settings of %s, and a playbook run on %s would"
-            " give %s the cluster's settings, not %s own. Start Cassandra there, or fix how Ansible reaches %s" % (
-                them, "; ".join("%s: %s" % (n["name"], n.get("reason") or "reason not recorded") for n in report.unread),
-                them, them, them, "its" if len(names) == 1 else "their", them),
-            again,
-            "the head of the new report says every node was read (to import without %s instead, add %s)" % (
-                them, unbreakable("-e import_allow_unread=true"))))
+            "Fix your own files that still win over the import",
+            "Ansible would apply their value, not the node's: %s" % ", ".join(sorted(
+                {"%s: %s (%s)" % (w["node"], w["key"], w["path"]) for w in report.layout["theirs_win"]})),
+            "rename or fix them, then import again: %s" % again, "the next import no longer lists them"))
+    if secrets_clear:
+        steps.append(_secrets_step(report, secrets_clear, inventory_dir))
+    if leftovers.get("unsure"):
+        paths = " ".join(out.path_from(os.path.join(inventory_dir, f), report.cwd) for f in leftovers["unsure"])
+        git = out.in_git_work_tree(inventory_dir) if in_git is None else in_git
+        steps.append(_Step(
+            "Is %s an old node of this cluster?" % ", ".join(leftovers["unsure"]),
+            "an earlier import wrote it, for a cluster this import cannot tell. If it is an old node of this cluster,"
+            " remove it; if not, leave it",
+            unbreakable("%s %s" % ("git rm" if git else "rm", paths)),
+            "the next import no longer lists it"))
+    return steps + [_playbook_step(report, text, inventory, hosts) for text in more]
+
+
+def _unread_step(report, again):
+    """The TO DO step of the nodes the import could not read -> [_Step]."""
+    names = [n["name"] for n in report.unread]
+    them = "it" if len(names) == 1 else "them"
+    return [_Step(
+        "Let the import read %s, then import again" % _who(report, names),
+        "the import could not read %s (%s): the inventory has no settings of %s, and a playbook run on %s would"
+        " give %s the cluster's settings, not %s own. Start Cassandra there, or fix how Ansible reaches %s" % (
+            them, "; ".join("%s: %s" % (n["name"], n.get("reason") or "reason not recorded") for n in report.unread),
+            them, them, them, "its" if len(names) == 1 else "their", them),
+        again,
+        "the head of the new report says every node was read (to import without %s instead, add %s)" % (
+            them, unbreakable("-e import_allow_unread=true")))]
+
+
+def _not_settings_steps(report):
+    """A TO DO step per group of settings their Cassandra rejects (the same keys and release) -> [_Step]."""
+    steps = []
     for (keys, release), members in _not_settings(report.read):
         one = len(keys) == 1
         steps.append(_Step(
@@ -1067,43 +1095,40 @@ def _todo_steps(report, allow_unread, self_check_ok, self_check_error, check_ite
             "on each of these nodes, delete the %s %s from cassandra.yaml (in the config directory DETAILS names)" % (
                 "line" if one else "lines", ", ".join(keys)),
             "the next import no longer lists %s" % ("it" if one else "them")))
-    if not self_check_ok and (self_check_error or check_items):
-        where = "SELF-CHECK, right below" if not report.screen else \
-            "the SELF-CHECK FAILED block at the end of the run" if strict else "%s, SELF-CHECK" % report.report_name
-        steps.append(_Step(
-            "Make the self-check pass",
-            self_check_error or "the inventory does not reproduce %s yet; what differs and why: %s" % (
-                out.plural(len(_differing(check_items)), "node"), where),
-            "choose one of the ways out it gives (To pass)" if check_items else "what %s says" % where,
-            "the head of the next report says self-check passed"))
-    if layout.get("theirs_win"):
-        steps.append(_Step(
-            "Fix your own files that still win over the import",
-            "Ansible would apply their value, not the node's: %s" % ", ".join(sorted(
-                {"%s: %s (%s)" % (w["node"], w["key"], w["path"]) for w in layout["theirs_win"]})),
-            "rename or fix them, then import again: %s" % again, "the next import no longer lists them"))
-    if secrets_clear:
-        paths = " ".join(out.path_from(os.path.join(inventory_dir, f), report.cwd) for f in secrets_clear)
-        steps.append(_Step(
-            "Encrypt the passwords file%s" % ("" if len(secrets_clear) == 1 else "s"),
-            "%s in clear text there. ansible-vault asks for a new password (keep it safe): every playbook run on"
-            " this inventory needs it from then on (--ask-vault-pass)" % (
-                "the run without --check writes the passwords read on the nodes" if report.check
-                else "the passwords read on the nodes are written"),
-            unbreakable("ansible-vault encrypt %s" % paths),
-            "%s shows $ANSIBLE_VAULT;1.1;AES256" % unbreakable("head -1 %s" % paths.split(" ", maxsplit=1)[0])))
-    if leftovers.get("unsure"):
-        paths = " ".join(out.path_from(os.path.join(inventory_dir, f), report.cwd) for f in leftovers["unsure"])
-        git = out.in_git_work_tree(inventory_dir) if in_git is None else in_git
-        steps.append(_Step(
-            "Is %s an old node of this cluster?" % ", ".join(leftovers["unsure"]),
-            "an earlier import wrote it, for a cluster this import cannot tell. If it is an old node of this cluster,"
-            " remove it; if not, leave it",
-            unbreakable("%s %s" % ("git rm" if git else "rm", paths)),
-            "the next import no longer lists it"))
-    # (the playbook's own: a text, or a step {title, why, run, then} (why, run: a text or rows); in its texts
-    # {nodes:<name>} is the step's nodes[name] in their short form, {command:<name>} its commands[name]
-    # ({playbook, extra}) as the next playbooks are run, never cut)
+    return steps
+
+
+def _self_check_step(report, self_check_error, check_items, strict):
+    """The TO DO step of the self-check that failed -> _Step."""
+    where = "SELF-CHECK, right below" if not report.screen else \
+        "the SELF-CHECK FAILED block at the end of the run" if strict else "%s, SELF-CHECK" % report.report_name
+    return _Step(
+        "Make the self-check pass",
+        self_check_error or "the inventory does not reproduce %s yet; what differs and why: %s" % (
+            out.plural(len(_differing(check_items)), "node"), where),
+        "choose one of the ways out it gives (To pass)" if check_items else "what %s says" % where,
+        "the head of the next report says self-check passed")
+
+
+def _secrets_step(report, secrets_clear, inventory_dir):
+    """The TO DO step of the passwords files written in clear text -> _Step."""
+    paths = " ".join(out.path_from(os.path.join(inventory_dir, f), report.cwd) for f in secrets_clear)
+    return _Step(
+        "Encrypt the passwords file%s" % ("" if len(secrets_clear) == 1 else "s"),
+        "%s in clear text there. ansible-vault asks for a new password (keep it safe): every playbook run on"
+        " this inventory needs it from then on (--ask-vault-pass)" % (
+            "the run without --check writes the passwords read on the nodes" if report.check
+            else "the passwords read on the nodes are written"),
+        unbreakable("ansible-vault encrypt %s" % paths),
+        "%s shows $ANSIBLE_VAULT;1.1;AES256" % unbreakable("head -1 %s" % paths.split(" ", maxsplit=1)[0]))
+
+
+def _playbook_step(report, text, inventory, hosts):
+    """A step of the playbook's own (more): a text, or a step {title, why, run, then} (why, run: a text or rows); in
+    its texts {nodes:<name>} is the step's nodes[name] in their short form, {command:<name>} its commands[name]
+    ({playbook, extra}) as the next playbooks are run, never cut -> _Step."""
+    if not isinstance(text, dict):
+        return _Step(str(text), "", "", "")
 
     def field(step, key):
         value = step.get(key) or ""
@@ -1115,9 +1140,7 @@ def _todo_steps(report, allow_unread, self_check_ok, self_check_error, check_ite
                                               extra=spec.get("extra") or [], cwd=report.cwd))
             rows = [r.replace("{command:%s}" % name, command) for r in rows]
         return rows if isinstance(value, list) else rows[0]
-    steps += [_Step(*[field(text, k) for k in _Step._fields]) if isinstance(text, dict)
-              else _Step(str(text), "", "", "") for text in more]
-    return steps
+    return _Step(*[field(text, k) for k in _Step._fields])
 
 
 def _step_lines(number, step, width):
@@ -1174,20 +1197,7 @@ def _hand_entries(report, edits, check_items, below):
     """Hand edits: one entry per file, its nodes, then what differs (the self-check's settings and values, else the
     edit's setting and value, or its count); below: the self-check's lines are in this output already (then
     named, not shown again); then the ways to keep, carry or drop them, once -> (how many entries, [line])."""
-    files, replace = [], []
-    for name, values in edits:
-        f, dummy, setting = name.partition(" ")
-        for text, members in values:
-            if REPLACE.search(text):  # (never to keep: under Settings to review)
-                replace.append(("%s %s: %s" % (_say(report, f), setting, _short(text)) if setting else
-                                "%s: %s" % (_say(report, f), _short(text)), members))
-                continue
-            entry = next((e for e in files if e[0] == f), None)
-            if entry is None:
-                entry = (f, [], [])
-                files.append(entry)
-            entry[1].extend(m for m in members if m not in entry[1])
-            entry[2].append(("%s: %s" % (setting, _short(text)) if setting else _short(text), members))
+    files, replace = _hand_by_file(report, edits)
     lines = []
     for what, members in replace:
         lines += _entry(report, what, members, "a replace flag: remove it, see Settings to review")
@@ -1208,31 +1218,57 @@ def _hand_entries(report, edits, check_items, below):
                                    report.width, "      ", "  ")
         lines.append("")
     if files:
-        names = [g for f, members, dummy in files for g in _with_moved(report.read, f, members)]
-        snippets = [f for f, dummy, dummy2 in files if f in SNIPPET_FILES]
-        everyone = set(m for dummy, members, dummy2 in files for m in members)
-        lines += _ways_out([("to keep them as %s %s them" % ("this node" if len(everyone) == 1 else "the nodes",
-                                                             "has" if len(everyone) == 1 else "have"),
-                             _keep_option(report.layout, *names))], report.width)[1:]
-        names_of = [f for f, dummy, dummy2 in files]
-        ways = []
-        if snippets:
-            ways.append("a template piece for the end of %s%s (cassandra_config_template_snippets), or your own"
-                        " template of the file (cassandra_config_template_overrides)" % (
-                            " or ".join(snippets), " or for appenders before <root>" if "logback.xml" in snippets else ""))
-        if any(re.match(r"^jvm\d*-server\.options$", f) for f in names_of):
-            ways.append("cassandra_jvm*_extra_options for a JVM option")
-        if "cassandra.yaml" in names_of:
-            ways.append("cassandra_extra_settings for a cassandra.yaml setting")
-        ways = ways or ["a variable of yours, or your own template of the file (cassandra_config_template_overrides)"]
-        lines += fill_text("to carry them in the inventory instead: %s; then import again" % "; ".join(ways),
-                           report.width, "    ", "  ")
-        lines += fill_text("to drop them: undo them on %s, then import again" % (
-            "this node" if len(everyone) == 1 else "the nodes"), report.width, "    ", "  ")
-        lines += fill_text("their lines, node by node: %s, DETAILS" % unbreakable(
-            re.sub(r"\.txt$", "", report.report_name) + ".details.txt"), report.width, "    ", "  ")
-        lines.append("")
+        lines += _hand_ways_out(report, files)
     return len(files) + len(replace), lines
+
+
+def _hand_by_file(report, edits):
+    """The hand edits by file: [(file, its nodes, [(setting: value, its nodes)])], and the replace flags apart
+    (never to keep: under Settings to review) [(what, its nodes)]."""
+    files, replace = [], []
+    for name, values in edits:
+        f, dummy, setting = name.partition(" ")
+        for text, members in values:
+            if REPLACE.search(text):  # (never to keep: under Settings to review)
+                replace.append(("%s %s: %s" % (_say(report, f), setting, _short(text)) if setting else
+                                "%s: %s" % (_say(report, f), _short(text)), members))
+                continue
+            entry = next((e for e in files if e[0] == f), None)
+            if entry is None:
+                entry = (f, [], [])
+                files.append(entry)
+            entry[1].extend(m for m in members if m not in entry[1])
+            entry[2].append(("%s: %s" % (setting, _short(text)) if setting else _short(text), members))
+    return files, replace
+
+
+def _hand_ways_out(report, files):
+    """Under the hand edits, once: how to keep them, carry them in the inventory or drop them -> [line]."""
+    names = [g for f, members, dummy in files for g in _with_moved(report.read, f, members)]
+    snippets = [f for f, dummy, dummy2 in files if f in SNIPPET_FILES]
+    everyone = set(m for dummy, members, dummy2 in files for m in members)
+    lines = _ways_out([("to keep them as %s %s them" % ("this node" if len(everyone) == 1 else "the nodes",
+                                                        "has" if len(everyone) == 1 else "have"),
+                        _keep_option(report.layout, *names))], report.width)[1:]
+    names_of = [f for f, dummy, dummy2 in files]
+    ways = []
+    if snippets:
+        ways.append("a template piece for the end of %s%s (cassandra_config_template_snippets), or your own"
+                    " template of the file (cassandra_config_template_overrides)" % (
+                        " or ".join(snippets), " or for appenders before <root>" if "logback.xml" in snippets else ""))
+    if any(re.match(r"^jvm\d*-server\.options$", f) for f in names_of):
+        ways.append("cassandra_jvm*_extra_options for a JVM option")
+    if "cassandra.yaml" in names_of:
+        ways.append("cassandra_extra_settings for a cassandra.yaml setting")
+    ways = ways or ["a variable of yours, or your own template of the file (cassandra_config_template_overrides)"]
+    lines += fill_text("to carry them in the inventory instead: %s; then import again" % "; ".join(ways),
+                       report.width, "    ", "  ")
+    lines += fill_text("to drop them: undo them on %s, then import again" % (
+        "this node" if len(everyone) == 1 else "the nodes"), report.width, "    ", "  ")
+    lines += fill_text("their lines, node by node: %s, DETAILS" % unbreakable(
+        re.sub(r"\.txt$", "", report.report_name) + ".details.txt"), report.width, "    ", "  ")
+    lines.append("")
+    return lines
 
 
 def _hand_extra(report):
