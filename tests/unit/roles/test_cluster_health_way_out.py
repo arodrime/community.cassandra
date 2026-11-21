@@ -66,6 +66,17 @@ def test_a_node_lost_for_good_gets_full_commands():
         "WAY OUT  bring n4, n5 back to UN (their host and/or Cassandra), then resume")
 
 
+def test_a_node_known_by_its_address_only_gets_that_address_not_its_rack():
+    # start_rack --limit: a node out of the play is named by its ring address, its rack in the parentheses
+    # ("172.18.0.3 (r1) is DN"); the commands took the rack for the address (cassandra_replace_address=r1)
+    lines = said(False, ["10.0.0.3 (r1) is DN, seen from n1"])
+    assert "  ansible-playbook -i hosts.yml community.cassandra.replace_node -e cassandra_hosts=prod" \
+        " -e cassandra_target_nodes=NEW_NODE -e cassandra_replace_address=10.0.0.3" in lines
+    assert "  ansible-playbook -i hosts.yml community.cassandra.remove_dead_node -e cassandra_hosts=prod" \
+        " -e cassandra_target_nodes=10.0.0.3" in lines
+    assert not [line for line in lines if "=r1" in line]
+
+
 def test_each_problem_and_the_wait_on_a_line_of_their_own():
     # the stop block says the cause one fact per line under its Why: (80 columns)
     with open(PATH, encoding="utf-8") as f:

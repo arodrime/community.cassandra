@@ -1,0 +1,2 @@
+bugfixes:
+  - "cluster checks - a node down that no inventory host is known by (start_rack under ``--limit``: ``10.0.0.3 (r1) is DN``) gets its address in the replace_node and remove_dead_node commands of its way out, no longer its rack (``cassandra_replace_address=r1``)."

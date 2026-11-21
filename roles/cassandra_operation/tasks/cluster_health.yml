@@ -199,7 +199,8 @@
       {%- set out = [] -%}
       {%- for p in _problems | select('search', ' is D[NLJM],') | unique -%}
       {%-   set name = p | regex_replace(' \(.*$', '') -%}
-      {%-   set address = (p | regex_findall('^\S+ \(([^,)]+)') + [name]) | first -%}
+      {#-   "n4 (10.0.0.4, r1)": its address; "10.0.0.4 (r1)", a node no host is known by: its name is the address -#}
+      {%-   set address = (p | regex_findall('^\S+ \(([^,)]+),') + [name]) | first -%}
       {%-   set _ = out.extend(['IF ' ~ name ~ ' IS LOST FOR GOOD',
                                 'replace it: NEW_NODE (a blank host) in ' ~ _group ~ ', ' ~ name ~ ' out of the inventory',
                                 '(a seed: out of cassandra_seeds first, with change_seeds)',
