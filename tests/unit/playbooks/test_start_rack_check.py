@@ -162,9 +162,9 @@ def check(unreached=(), peer=None, then=None, then_peer=None, names=None, groups
 
 UP = ["Rack r2 (dc1): the nodes of this run are UN (n2)."]
 LEFT_OUT = ["WARNING  rack r2 (dc1), not UN, left out by --limit (not in this run):"]
-START = ["start it: run start_rack without --limit",
+START = ["start n3: run start_rack on it alone",
          "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
-         "    -e cassandra_target_dc=dc1 -e cassandra_target_rack=r2"]
+         "    -e cassandra_target_dc=dc1 -e cassandra_target_rack=r2 --limit n3"]
 
 
 def test_a_node_of_the_rack_left_out_by_limit_is_a_warning_not_waited_for():
@@ -223,7 +223,7 @@ def test_under_force_the_nodes_left_out_are_said_too():
     verdict = {"outside": [], "failed": [], "warnings": [], "problems": ["n2 (10.0.0.2, r2) is DN, seen from n1"],
                "left_out": [{"address": "10.0.0.3", "name": "n3", "states": ["DN"]}]}
     assert cassandra_rack_outside_lines(verdict, [], "dc1", "r2", "x", run=["n2"], left_out=["n3"],
-                                        start_command="y") == LEFT_OUT + ["  n3  DN", START[0], "  y"]
+                                        start_command="y") == LEFT_OUT + ["  n3  DN", START[0], "  y --limit n3"]
 
 
 def test_a_node_left_out_by_limit_known_by_no_address_is_named_as_the_controller_resolves_it(monkeypatch):
@@ -237,7 +237,8 @@ def test_a_node_left_out_by_limit_known_by_no_address_is_named_as_the_controller
     # not resolved: its address, the nodes left out named under it; no "no inventory host has this address" lines
     monkeypatch.setattr(cassandra_ring, "_resolved", lambda name: [])
     problems, said = check(names=names, play=["n1", "n2", "n4"], n3="DN")
-    assert said == UP + LEFT_OUT + ["  10.0.0.3  DN", "  (no host known by that address; left out by --limit: n3)"] + START
+    assert said == UP + LEFT_OUT + ["  10.0.0.3  DN", "  (no host known by that address; left out by --limit: n3)",
+                                    "start it: run start_rack on the nodes left out named above"] + START[1:]
     variables = noted(ring(n3="DN"), names=names, play=["n1", "n2", "n4"])
     assert variables["_cassandra_start_rack_first_verdict"]["unknown_lines"] == []
     # a node no host is known by that the ring puts in another rack: not taken for the node left out
@@ -840,3 +841,23 @@ def test_the_verdict_s_keys_are_the_ones_its_docstring_gives():
                                "unknown_lines", "warnings"]
     example = cassandra_rack_verdict.__doc__.split("e.g.")[1]
     assert all(key + ":" in example for key in verdict) and verdict["rack_seen_un"] == ["n2", "n3"]
+
+
+def test_each_node_left_out_down_gets_the_command_that_starts_it_alone():
+    # "start them: run start_rack without --limit" started every node left out, one left out on purpose too (a
+    # host waiting for replace_node); now a command per node down, --limit that node
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_start_rack import cassandra_rack_outside_lines
+    verdict = {"outside": [], "failed": [], "warnings": [], "problems": [], "left_out": [
+        {"address": "10.0.0.3", "name": "n3", "states": ["DN"]}, {"address": "10.0.0.5", "name": "n5", "states": ["UL"]},
+        {"address": "10.0.0.6", "name": "n6", "states": ["DN"]}]}
+    command = "ansible-playbook -i hosts.yml community.cassandra.start_rack -e cassandra_target_rack=r2"
+    lines = cassandra_rack_outside_lines(verdict, [], "dc1", "r2", "x", run=["n2"], left_out=["n3", "n5", "n6", "n7"],
+                                         start_command=command)
+    assert lines[5:] == ["start n3: run start_rack on it alone",
+                         "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
+                         "    -e cassandra_target_rack=r2 --limit n3",
+                         "start n6: run start_rack on it alone",
+                         "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
+                         "    -e cassandra_target_rack=r2 --limit n6",
+                         "n5 is leaving (UL): wait for it to finish"]
+    assert "without --limit" not in " ".join(lines) and max(len(x) for x in lines) <= 79

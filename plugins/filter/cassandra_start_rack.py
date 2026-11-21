@@ -55,6 +55,8 @@ of the rack left out by --limit not UN, the rest of the cluster), once the rack 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import shlex
+
 from ansible_collections.community.cassandra.plugins.filter.cassandra_health import cassandra_health_sentences
 from ansible_collections.community.cassandra.plugins.filter.cassandra_ring import hosts_by_address
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_status import compressed_address as _ip
@@ -349,8 +351,10 @@ _DOING = {"J": "joining", "L": "leaving", "M": "moving"}
 
 def _left_out_lines(verdict, left_out, dc, rack, command):
     """The warning on the nodes of the rack left out by --limit not UN (verdict's left_out): a row per node (by its
-    name, else its address: then the nodes left out named under), then what to do per state: down, start it
-    without --limit (the command); joining, leaving or moving, wait for it to finish; [] for none."""
+    name, else its address: then the nodes left out named under), then what to do per state: down, start it alone
+    (the start_rack command, command, with --limit that node: the others left out stay as they are; a node known
+    by its address only: --limit the nodes left out not named above); joining, leaving or moving, wait for it to
+    finish; [] for none."""
     nodes = verdict.get("left_out") or []
     if not nodes:
         return []
@@ -359,9 +363,15 @@ def _left_out_lines(verdict, left_out, dc, rack, command):
     if any(not n.get("name") for n in nodes):
         lines.append("  (no host known by that address; left out by --limit: %s)" % out.nodes(left_out))
     down = [n for n in nodes if any(s[:1] == "D" for s in n["states"])]
-    if down:
-        which = ("it" if len(nodes) == 1 else "them") if len(down) == len(nodes) else "the ones down"
-        lines += ["start %s: run start_rack without --limit" % which, "  " + str(command)]
+    for n in down:
+        if n.get("name"):
+            lines += ["start %s: run start_rack on it alone" % n["name"], "  %s --limit %s" % (command, shlex.quote(n["name"]))]
+    unnamed = [h for h in left_out or [] if h not in [n.get("name") for n in nodes]]
+    by_address = [n for n in down if not n.get("name")]
+    if unnamed and by_address:
+        lines += ["start %s: run start_rack on the nodes left out named above" % (
+                      "it" if len(by_address) == 1 else "them"),
+                  "  %s --limit %s" % (command, shlex.quote(",".join(unnamed)))]
     for n in nodes:
         busy = [s for s in n["states"] if s[:1] == "U" and s[1:] in _DOING]
         if n not in down and busy:
@@ -373,7 +383,7 @@ def _left_out_lines(verdict, left_out, dc, rack, command):
 def cassandra_rack_outside_lines(verdict, unreached, dc, rack, command, run=None, left_out=None, start_command=""):
     """cassandra_rack_verdict's result after the wait, the hosts not reached over ssh, the rack's dc and rack, the
     command that checks the cluster, the rack's nodes in this run and those left out by --limit, the start_rack
-    command without --limit -> the lines said once the rack's nodes are UN: that fact, the nodes seen UN
+    command (without --limit) -> the lines said once the rack's nodes are UN: that fact, the nodes seen UN
     (verdict's rack_seen_un; under --limit, the nodes of this run; nothing started when --limit leaves out the
     whole rack; not said when the stop was forced: verdict's problems), then the warning on the nodes of the rack
     left out by --limit not UN (_left_out_lines), then, when the rest of the cluster has any, a WARNING with a row

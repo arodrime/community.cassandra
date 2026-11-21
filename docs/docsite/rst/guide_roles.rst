@@ -754,8 +754,9 @@ of the cluster is only a warning, unless a node could be one of the rack. The ta
 - a node of the rack left out by ``--limit`` (this run does not start it) and not UN is not waited for: the run
   succeeds once its own nodes are UN (``the nodes of this run are UN``), then a warning names it (its inventory
   name when its variables give its address or its name resolves to it on the controller, else its address, the
-  nodes left out named under it) in its state of the last read: down, the ``start_rack`` command without
-  ``--limit``; joining, leaving or moving, wait for it to finish. A node of the ring no host is known by is taken
+  nodes left out named under it) in its state of the last read: down, the ``start_rack`` command that starts it
+  alone (``--limit`` that node: the others left out stay as they are); joining, leaving or moving, wait for it to
+  finish. A node of the ring no host is known by is taken
   for one left out only while one of them is not in the ring at an address of its own;
 - a node outside the rack not UN for the node outside the rack read from (down, joining, leaving, moving...), not
   reached over ssh, or whose ``nodetool status`` fails, is a warning row, not waited for; one only the node of the
