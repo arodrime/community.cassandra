@@ -40,12 +40,23 @@ def test_operation_summary_is_a_recap():
     hostvars = {"n1": {"cassandra_op_result": "add done in 5s"}, "n2": {}, "n3": {}}
     variables = dict(cassandra_service_summary_hosts=["n1", "n2", "n3"], hostvars=hostvars, groups={"prod": ["n1", "n2", "n3"]}, cassandra_hosts="prod",
                      ansible_play_hosts_all=["n1", "n2"], ansible_check_mode=False, cassandra_cluster_name="my_cluster",
-                     _seconds=None)
+                     _seconds=None, ansible_limit="n1,n2")
     defaults = load("roles", "cassandra_operation", "vars", "main.yml")  # the results list: a role var (lazy)
     variables["_cassandra_op_results"] = render(defaults["_cassandra_op_results"], **variables)
     assert variables["_cassandra_op_results"] == [{"node": "n1", "result": "add done in 5s", "stage": ""},
                                                   {"node": "n2", "result": "not reached", "stage": ""},
                                                   {"node": "n3", "result": "not in this run (--limit)", "stage": ""}]
+    # no --limit (replace_node, S16: its other nodes not in its play): never said left out by --limit; nor a node
+    # the --limit has, out of the play
+    for limit in ({}, {"ansible_limit": "n1,n3"}):
+        unlimited = dict((k, v) for k, v in variables.items() if k not in ("ansible_limit", "_cassandra_op_results"))
+        unlimited.update(limit)
+        results = render(defaults["_cassandra_op_results"], **unlimited)
+        assert results[2] == {"node": "n3", "result": "not in this run", "stage": ""}
+        unlimited["_cassandra_op_results"] = results
+        said = [" ".join(line.split()) for line in render(task["ansible.builtin.debug"]["msg"], **dict(
+            unlimited, _cluster="my_cluster", _warnings=[]))]
+        assert said[-1] == "n3 not touched (not in this run)" and "--limit" not in " ".join(said)
     variables["_cluster"] = render(task["vars"]["_cluster"], **variables)
     variables["_warnings"] = render(task["vars"]["_warnings"], **variables)
     assert variables["_warnings"] == []
