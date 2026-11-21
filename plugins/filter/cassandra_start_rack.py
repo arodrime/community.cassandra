@@ -369,8 +369,8 @@ def _left_out_lines(verdict, left_out, dc, rack, command):
     unnamed = [h for h in left_out or [] if h not in [n.get("name") for n in nodes]]
     by_address = [n for n in down if not n.get("name")]
     if unnamed and by_address:
-        lines += ["start %s: run start_rack on the nodes left out named above" % (
-                      "it" if len(by_address) == 1 else "them"),
+        which = "it" if len(by_address) == 1 else "them"
+        lines += ["start %s: run start_rack on the nodes left out named above" % which,
                   "  %s --limit %s" % (command, shlex.quote(",".join(unnamed)))]
     for n in nodes:
         busy = [s for s in n["states"] if s[:1] == "U" and s[1:] in _DOING]

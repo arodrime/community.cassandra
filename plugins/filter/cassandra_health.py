@@ -17,7 +17,6 @@ __metaclass__ = type
 import re
 import textwrap
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_command
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import JMX_CAUSES
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_status import (
@@ -598,6 +597,8 @@ def cassandra_health_lost_lines(problems, group, command_args):
     e.g. (["n4 (10.0.0.4, r1) is DN, seen from n1"], "prod", {}) -> ["IF n4 IS LOST FOR GOOD", "replace it:
     NEW_NODE (a blank host) in prod, n4 out of the inventory", ..., "  ansible-playbook
     community.cassandra.remove_dead_node -e cassandra_target_nodes=10.0.0.4"]."""
+    # (here, not at the top: the module_utils unit tests import this module without the controller's Display)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_command
     lines, seen = [], []
     for p in problems or []:
         if not _DOWN.search(str(p)) or p in seen:
