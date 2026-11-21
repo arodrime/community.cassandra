@@ -1,2 +1,2 @@
 bugfixes:
-  - "operation recap and stop block - a node the playbook does not run on (replace_node's other nodes) is ``not touched (not in this run)``, no longer ``left out by --limit`` when no ``--limit`` was given; ``left out by --limit`` is kept for a node the ``--limit`` leaves out."
+  - "operation recap and stop block - a node the playbook does not run on (replace_node's other nodes) is ``not touched (not in this run)``, no longer ``left out by --limit`` when no ``--limit`` was given; ``left out by --limit`` is kept for a node the ``--limit`` leaves out, a ``--limit @file`` (a retry file) read."

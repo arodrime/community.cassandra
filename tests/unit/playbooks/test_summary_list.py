@@ -35,6 +35,13 @@ def render(template, **variables):
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
+def op_results(**variables):
+    """the role var _cassandra_op_results (lazy), _cassandra_op_limit with it"""
+    defaults = load("roles", "cassandra_operation", "vars", "main.yml")
+    variables["_cassandra_op_limit"] = render(defaults["_cassandra_op_limit"], **variables)
+    return render(defaults["_cassandra_op_results"], **variables)
+
+
 def test_operation_summary_is_a_recap():
     task = load("roles", "cassandra_operation", "tasks", "summary.yml")[0]
     hostvars = {"n1": {"cassandra_op_result": "add done in 5s"}, "n2": {}, "n3": {}}
@@ -42,16 +49,17 @@ def test_operation_summary_is_a_recap():
                      ansible_play_hosts_all=["n1", "n2"], ansible_check_mode=False, cassandra_cluster_name="my_cluster",
                      _seconds=None, ansible_limit="n1,n2")
     defaults = load("roles", "cassandra_operation", "vars", "main.yml")  # the results list: a role var (lazy)
-    variables["_cassandra_op_results"] = render(defaults["_cassandra_op_results"], **variables)
+    variables["_cassandra_op_results"] = op_results(**variables)
     assert variables["_cassandra_op_results"] == [{"node": "n1", "result": "add done in 5s", "stage": ""},
                                                   {"node": "n2", "result": "not reached", "stage": ""},
                                                   {"node": "n3", "result": "not in this run (--limit)", "stage": ""}]
     # no --limit (replace_node, S16: its other nodes not in its play): never said left out by --limit; nor a node
     # the --limit has, out of the play
     for limit in ({}, {"ansible_limit": "n1,n3"}):
-        unlimited = dict((k, v) for k, v in variables.items() if k not in ("ansible_limit", "_cassandra_op_results"))
+        unlimited = dict((k, v) for k, v in variables.items()
+                         if k not in ("ansible_limit", "_cassandra_op_results", "_cassandra_op_limit"))
         unlimited.update(limit)
-        results = render(defaults["_cassandra_op_results"], **unlimited)
+        results = op_results(**unlimited)
         assert results[2] == {"node": "n3", "result": "not in this run", "stage": ""}
         unlimited["_cassandra_op_results"] = results
         said = [" ".join(line.split()) for line in render(task["ansible.builtin.debug"]["msg"], **dict(
@@ -90,3 +98,21 @@ def test_health_check_report_inputs_are_a_list_and_a_dict():
     checked = render(task["vars"]["_checked"], ansible_play_hosts=["n1", "n2"], hostvars=hostvars)
     assert checked == ["n1"]  # n2: its check did not run (not reached)
     assert render(task["vars"]["_findings"], _checked=checked, hostvars=hostvars) == {"n1": found}
+
+
+def test_a_limit_from_a_file_is_read_for_the_recap(tmp_path, monkeypatch):
+    # --limit @retry.txt (a retry file): the inventory_hostnames lookup matched nothing (a [WARNING] in the run),
+    # so every node out of the play was said "left out by --limit", the ones the file lists too. Now the file's
+    # hosts read as Ansible reads them (from the run's directory); a file not read: "not in this run"
+    (tmp_path / "retry.txt").write_text("n1\n\nn2\n")
+    monkeypatch.chdir(tmp_path)
+    variables = dict(cassandra_service_summary_hosts=["n1", "n2", "n3", "n4"], hostvars={"n1": {}, "n2": {}, "n3": {}, "n4": {}},
+                     groups={"prod": ["n1", "n2", "n3", "n4"]}, cassandra_hosts="prod", ansible_play_hosts_all=["n1"])
+    assert [r["result"] for r in op_results(ansible_limit="@retry.txt", **variables)] == [
+        "not reached", "not in this run", "not in this run (--limit)", "not in this run (--limit)"]
+    assert [r["result"] for r in op_results(ansible_limit="n3,@retry.txt", **variables)][2:] == [
+        "not in this run", "not in this run (--limit)"]
+    assert [r["result"] for r in op_results(ansible_limit="@missing.txt", **variables)][1:] == ["not in this run"] * 3
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_summary import cassandra_limit_patterns
+    assert cassandra_limit_patterns("n3,@retry.txt") == "n3,n1,n2" and cassandra_limit_patterns("") == ""
+    assert cassandra_limit_patterns("all:!n3") == "all,!n3"  # (the same patterns)

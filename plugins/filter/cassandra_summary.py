@@ -16,14 +16,20 @@ cassandra_differs: {node: value} of a setting that must be the same on every
 cassandra_limits_changed: the nodes whose limits file a package update changed,
     left as is (cassandra_linux_manage: false) -> the recap's warnings.
 cassandra_warnings: [{label, text}] -> their WARNING lines, 79 columns.
+cassandra_op_results: the nodes of the cluster -> [{node, result, stage}] (each node's cassandra_op_result, else
+    why it has none).
+cassandra_limit_patterns: a --limit (ansible_limit) -> its host patterns, its @files read.
 """
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import os
 import re
 import shlex
 import textwrap
+
+from ansible.inventory.manager import split_host_pattern
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_command
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
@@ -238,6 +244,45 @@ def cassandra_op_recap(results, check=False, cluster="", operation="", action=""
                      extra=cassandra_warnings(warnings) or None)
 
 
+def cassandra_op_results(hosts, hostvars, play_hosts, play_hosts_all, limited=None):
+    """The nodes of the cluster (or the run's: cassandra_service_summary_hosts), their hostvars, the play's hosts
+    (ansible_play_hosts, ansible_play_hosts_all), the hosts a --limit keeps (None: no --limit, or one not read)
+    -> [{node, result, stage}] in their order: its cassandra_op_result; none, still in the play: "not run yet"
+    (the run stopped before it); out of the play (unreachable, failed earlier): "not reached"; not in it at all:
+    "not in this run (--limit)" when the --limit leaves it out, else "not in this run" (a node the playbook does
+    not run on: replace_node's other nodes).
+    e.g. (["n1", "n3"], {"n1": {"cassandra_op_result": "add done in 5s"}, "n3": {}}, [], ["n1"], ["n1"]) ->
+    [{node: "n1", result: "add done in 5s", stage: ""}, {node: "n3", result: "not in this run (--limit)", stage: ""}]."""
+    results = []
+    for h in hosts or []:
+        variables = (hostvars or {}).get(h) or {}
+        result = variables.get("cassandra_op_result")
+        if result is None:
+            result = ("not run yet" if h in (play_hosts or []) else "not reached" if h in (play_hosts_all or [])
+                      else "not in this run (--limit)" if limited is not None and h not in limited
+                      else "not in this run")
+        results.append({"node": h, "result": result, "stage": variables.get("_cassandra_op_stage", "")})
+    return results
+
+
+def cassandra_limit_patterns(limit):
+    """A --limit as Ansible takes it (ansible_limit) -> its host patterns, comma separated, each @file's lines in
+    its place (as Ansible reads it: from the run's directory); "" without a --limit, or when a file is not read
+    (the inventory_hostnames lookup would match nothing, with a warning in the run).
+    e.g. "n1,@retry.txt" (retry.txt: "n2\nn3\n") -> "n1,n2,n3"."""
+    patterns = []
+    for pattern in split_host_pattern(str(limit or "")):
+        if not pattern.startswith("@"):
+            patterns.append(pattern)
+            continue
+        try:
+            with open(os.path.expanduser(pattern[1:]), encoding="utf-8") as f:
+                patterns += [line.strip() for line in f.read().split("\n") if line.strip()]
+        except (IOError, OSError, UnicodeDecodeError):
+            return ""
+    return ",".join(patterns)
+
+
 # Ansible's own words for a command that failed: the task's stderr says more
 _GENERIC = re.compile(r"^(non-zero return code|MODULE FAILURE)")
 
@@ -434,6 +479,8 @@ class FilterModule(object):
     def filters(self):
         return {
             "cassandra_op_recap": cassandra_op_recap,
+            "cassandra_op_results": cassandra_op_results,
+            "cassandra_limit_patterns": cassandra_limit_patterns,
             "cassandra_stop_block": cassandra_stop_block,
             "cassandra_reset_recap": cassandra_reset_recap,
             "cassandra_differs": cassandra_differs,

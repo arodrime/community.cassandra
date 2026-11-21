@@ -167,13 +167,14 @@ def test_a_failed_node_s_stage_is_recorded_for_its_row():
     assert render(after, cassandra_service_node_action="restart", _cassandra_op_to_normal="") == "unconfirmed"
     assert render(after, cassandra_service_node_action="reboot") == "unconfirmed"
     assert render(after, cassandra_service_node_action="decommission", _cassandra_op_to_normal="") == "after"
-    results = load("roles", "cassandra_operation", "vars", "main.yml")["_cassandra_op_results"]
+    defaults = load("roles", "cassandra_operation", "vars", "main.yml")
+    results = defaults["_cassandra_op_results"]
     hostvars = {"n1": {"cassandra_op_result": "restart done in 3s", "_cassandra_op_stage": "after"},
                 "n2": {"cassandra_op_result": "restart FAILED after 9s: cluster health check failed", "_cassandra_op_stage": "after"},
                 "n3": {}}
     # (groups, cassandra_hosts: ansible-core 2.16 renders the default's lookup too)
     rendered = render(results, hostvars=hostvars, cassandra_service_summary_hosts=HOSTS, ansible_play_hosts_all=HOSTS,
-                      groups={"prod": HOSTS}, cassandra_hosts="prod")
+                      groups={"prod": HOSTS}, cassandra_hosts="prod", _cassandra_op_limit="")
     assert rendered[1] == {"node": "n2", "result": "restart FAILED after 9s: cluster health check failed", "stage": "after"}
     assert rendered[2] == {"node": "n3", "result": "not reached", "stage": ""}
 
@@ -184,5 +185,5 @@ def test_a_node_the_run_did_not_get_to_is_not_said_not_reached():
     results = load("roles", "cassandra_operation", "vars", "main.yml")["_cassandra_op_results"]
     rendered = render(results, hostvars={"n1": {"cassandra_op_result": "restart done in 3s"}, "n2": {}, "n3": {}},
                       cassandra_service_summary_hosts=HOSTS, ansible_play_hosts_all=HOSTS, ansible_play_hosts=["n1", "n2"],
-                      groups={"prod": HOSTS}, cassandra_hosts="prod")
+                      groups={"prod": HOSTS}, cassandra_hosts="prod", _cassandra_op_limit="")
     assert [r["result"] for r in rendered] == ["restart done in 3s", "not run yet", "not reached"]

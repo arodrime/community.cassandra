@@ -16,22 +16,15 @@ _cassandra_service_would:
   update_java: update Java
   upgradesstables: upgrade the SSTables
 
-# The results of the nodes of the run (summary.yml, the stop block of node_operation.yml): a node without result
-# still in the play was not run yet (the run stopped before it); out of the play (unreachable, failed earlier):
-# not reached; not in it at all: left out by --limit when a --limit leaves it out, else not in this run (a node
-# the playbook does not run on: replace_node's other nodes)
+# The results of the nodes of the run (summary.yml, the stop block of node_operation.yml): cassandra_op_results
 _cassandra_op_results: >-
-  {%- set out = [] -%}
-  {%- set limited = query('ansible.builtin.inventory_hostnames', ansible_limit) if ansible_limit is defined else none -%}
-  {%- for h in cassandra_service_summary_hosts | default(query('community.cassandra.cassandra_nodes')) -%}
-  {%-   set _ = out.append({'node': h, 'result': hostvars[h].cassandra_op_result
-                              | default('not run yet' if h in ansible_play_hosts | default([])
-                                        else 'not reached' if h in ansible_play_hosts_all
-                                        else 'not in this run (--limit)' if limited is not none and h not in limited
-                                        else 'not in this run'),
-                              'stage': hostvars[h]._cassandra_op_stage | default('')}) -%}
-  {%- endfor -%}
-  {{ out }}
+  {{ cassandra_service_summary_hosts | default(query('community.cassandra.cassandra_nodes'))
+     | community.cassandra.cassandra_op_results(hostvars, ansible_play_hosts | default([]), ansible_play_hosts_all,
+         query('ansible.builtin.inventory_hostnames', _cassandra_op_limit) if _cassandra_op_limit else none) }}
+
+# the --limit as host patterns, its @files read (a retry file); '' without one, or when a file is not read: then
+# the recap says "not in this run", never a false "left out by --limit"
+_cassandra_op_limit: "{{ ansible_limit | default('') | community.cassandra.cassandra_limit_patterns }}"
 
 # the command of the run, for the way out of a stop (resume) and the TO DO lines
 _cassandra_run_command_args:
