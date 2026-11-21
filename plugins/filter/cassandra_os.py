@@ -1612,33 +1612,44 @@ def _disk_changes_of(recs, linux, live, boot):
                       "tuned (the import does not work out which devices)")]
     devices = _disk_plan(recs, boolean(linux.get("tune_os_volumes", True), strict=False))["devices"]
     kb = None if ra == "kernel" else int(ra)
-    lv_target = "auto" if lvm == "auto" else str(kb * 2 or "none") if kb is not None else None
-    state = dict((d["kname"], {"ra": d["ra"] or None, "rot": d["rota"], "sched": d["sched"] or "none",
-                               "choices": "2" if d["kind"] == "disk" else "1"}) for d in devices)
-    items = []
-    if live:
-        for c in cassandra_disk_changes(devices, state, ra, lvm=True, scheduler=scheduler, lvm_readahead=lvm):
-            items.append(_item(c["item"] + (" (lvchange, Cassandra stopped)" if c["what"] == "lvm" else " (live)"),
-                               c["before"], c["after"]))
+    items = _disk_live_items(devices, ra, scheduler, lvm) if live else []
     rule = NO_EFFECT if not items else CHANGE
     items += [_item(old, "present", "removed", rule) for old in _old_rules(recs)]
-    rules = set(rest.split("|", 1)[0] for kind, rest in recs if kind == "udev")
-    wanted = bool(devices) and _rule_lines_wanted(devices, kb, scheduler, lv_target)
-    if wanted and OWN_UDEV_RULES[0] not in rules:
-        items.append(_item(OWN_UDEV_RULES[0], "absent", "written", rule))
-    elif not wanted and OWN_UDEV_RULES[0] in rules and devices:
-        items.append(_item(OWN_UDEV_RULES[0], "present", "removed", rule))
-    elif wanted:
-        set_by_it = set(int(v) for kind, rest in recs if kind == "udev" and rest.startswith(OWN_UDEV_RULES[0] + "|")
-                        for v in READAHEAD.findall(rest))
-        if kb is not None and set_by_it - set([kb]):
-            items.append(_item(OWN_UDEV_RULES[0], "read_ahead_kb %s" % ", ".join(str(v) for v in sorted(set_by_it)),
-                               "read_ahead_kb %d" % kb, rule))
+    items += _udev_rule_items(recs, devices, kb, scheduler, lvm, rule)
     if live and kb is not None and boolean(linux.get("tuned_manage", True), strict=False) \
             and _tuned_switch(recs, devices, kb):
         active = next((_fields(rest, 2)[0] for kind, rest in recs if kind == "tuned"), "")
         items.append(_item("tuned profiles", active, "%s cassandra-disks (applied again, Cassandra stopped)" % active))
     return items
+
+
+def _disk_live_items(devices, ra, scheduler, lvm):
+    """The read-ahead, scheduler and LVM read-ahead set live on the data devices (cassandra_disk_changes)."""
+    state = dict((d["kname"], {"ra": d["ra"] or None, "rot": d["rota"], "sched": d["sched"] or "none",
+                               "choices": "2" if d["kind"] == "disk" else "1"}) for d in devices)
+    return [_item(c["item"] + (" (lvchange, Cassandra stopped)" if c["what"] == "lvm" else " (live)"),
+                  c["before"], c["after"])
+            for c in cassandra_disk_changes(devices, state, ra, lvm=True, scheduler=scheduler, lvm_readahead=lvm)]
+
+
+def _udev_rule_items(recs, devices, kb, scheduler, lvm, rule):
+    """The role's udev rule written when it has lines (_rule_lines_wanted), removed when it has none, its read-ahead
+    made kb (rule: the effect, no effect when the devices keep what they have now)."""
+    lv_target = "auto" if lvm == "auto" else str(kb * 2 or "none") if kb is not None else None
+    rules = set(rest.split("|", 1)[0] for kind, rest in recs if kind == "udev")
+    wanted = bool(devices) and _rule_lines_wanted(devices, kb, scheduler, lv_target)
+    if wanted and OWN_UDEV_RULES[0] not in rules:
+        return [_item(OWN_UDEV_RULES[0], "absent", "written", rule)]
+    if not wanted and OWN_UDEV_RULES[0] in rules and devices:
+        return [_item(OWN_UDEV_RULES[0], "present", "removed", rule)]
+    if not wanted:
+        return []
+    set_by_it = set(int(v) for kind, rest in recs if kind == "udev" and rest.startswith(OWN_UDEV_RULES[0] + "|")
+                    for v in READAHEAD.findall(rest))
+    if kb is not None and set_by_it - set([kb]):
+        return [_item(OWN_UDEV_RULES[0], "read_ahead_kb %s" % ", ".join(str(v) for v in sorted(set_by_it)),
+                      "read_ahead_kb %d" % kb, rule)]
+    return []
 
 
 def cassandra_linux_changes(text, linux, facts=None, own=False):
