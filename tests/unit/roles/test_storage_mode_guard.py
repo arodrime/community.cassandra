@@ -183,41 +183,58 @@ def test_the_cql_read_asks_the_node_itself_and_says_when_it_could_not():
     base = dict(say["vars"], inventory_hostname="n1", _cassandra_storage_mode_cql_host="10.0.0.5",
                 _cassandra_storage_mode_cql_ssl=False, cassandra_storage_mode_cql=failed)
 
-    def said(result, logged=True):
+    def said(result, logged=True, password=None):
         variables = dict(base, cassandra_storage_mode_cql=result, cassandra_storage_mode_read={
             "stdout_lines": ["yaml=NONE", "running=yes"] + (["logged=NONE"] if logged else [])})
+        if password:
+            variables["cassandra_cql_password"] = password
         variables["_cql"] = result
-        for name in ("_err", "_out"):
+        for name in ("_password", "_error", "_err", "_out", "_said", "_last"):
             variables[name] = _render(say["vars"][name], **variables)
         return _render(say["ansible.builtin.debug"]["msg"], **variables)
 
-    # one fact per line: the command (the module masks the password), its rc, its stderr's last lines
+    # one fact per line within 79 columns: where cqlsh was pointed, its rc, the last line of its stderr, what tells
+    # the mode instead; no command line (232 columns in S27 f, the password masked in it)
     failed = dict(failed, cmd="cqlsh 10.0.0.5 9042 --username=zorglub --password=******** --execute=SELECT 1",
                   out="")
     assert said(failed) == [
-        "WARNING  n1: the storage_compatibility_mode Cassandra runs could not be read over CQL (cqlsh on"
-        " 10.0.0.5:9042); the line it logged at its start tells it instead.",
-        "  command  cqlsh 10.0.0.5 9042 --username=zorglub --password=******** --execute=SELECT 1",
+        "WARNING  n1: the storage_compatibility_mode Cassandra runs: not read over CQL",
+        "  cqlsh    on 10.0.0.5:9042",
         "  rc       1",
-        "  stderr   Traceback (most recent call last):",
-        "  stderr     File x",
-        "  stderr   ModuleNotFoundError: No module named 'cqlshlib'"]
-    assert said(failed, logged=False)[0].endswith(
-        "nothing logged since its start either: its cassandra.yaml tells it unless the file changed since that start.")
-    # a statement error with --execute (rc 2): the last 5 lines of each, stdout too
+        "  stderr   ModuleNotFoundError: No module named 'cqlshlib'",
+        "  instead  the line it logged at its start"]
+    assert said(failed, logged=False)[-2:] == [
+        "  logged   nothing since its start",
+        "  instead  its cassandra.yaml, unless the file changed since that start"]
+    # S27 f: the node up, its CQL port not open yet: cqlsh's notes on the password left out, its error cut to a line
+    refused = dict(failed, err="Warning: Using a password on the command line interface can be insecure.\n"
+                   "Recommendation: use the credentials file to securely provide the password.\n"
+                   "Connection error: ('Unable to connect to any servers', {'10.0.0.5:9042': ConnectionRefusedError("
+                   "111, \"Tried connecting to [('10.0.0.5', 9042)]. Last error: Connection refused\")})\n")
+    lines = said(refused)
+    assert lines[3] == "  stderr   Connection error: ('Unable to connect to any servers', {'10.0.0.5..."
+    assert len(lines) == 5 and all(len(line) <= 79 for line in lines)
+    # the password never shown, in the error nor in a line cqlsh wrote
+    leaky = dict(failed, msg="login as zorglub with s3cr3t refused", err="bad password s3cr3t\n")
+    assert "s3cr3t" not in "\n".join(said(leaky, password="s3cr3t"))
+    assert "  stderr   bad password ********" in said(leaky, password="s3cr3t")
+    # a statement error with --execute (rc 2): the last line of stderr, else of stdout
     statement = dict(failed, rc=2, err="".join("e%d\n" % n for n in range(1, 8)), out="cqlsh was built against 5.0.6\n")
-    assert said(statement)[2:] == ["  rc       2"] + ["  stderr   e%d" % n for n in range(3, 8)] + [
-        "  stdout   cqlsh was built against 5.0.6"]
+    assert said(statement)[2:4] == ["  rc       2", "  stderr   e7"]
+    assert said(dict(statement, err=""))[3] == "  stdout   cqlsh was built against 5.0.6"
     # cqlsh that could not start (run_command's own error: rc 2, no output, its msg): said with what it means
     missing = {"failed": True, "rc": 2, "msg": "[Errno 2] No such file or directory: b'/usr/local/bin/cqlsh'",
                "cmd": "/usr/local/bin/cqlsh 10.0.0.5 9042 --execute=SELECT 1", "stdout": "", "stderr": ""}
-    assert said(missing)[1:] == [
-        "  command  /usr/local/bin/cqlsh 10.0.0.5 9042 --execute=SELECT 1",
+    assert said(missing)[1:-1] == [
+        "  cqlsh    on 10.0.0.5:9042",
         "  rc       2",
         "  error    [Errno 2] No such file or directory: b'/usr/local/bin/cqlsh'",
-        "  meaning  it could not start: that program, or the interpreter its first line (#!) names, is missing"]
+        "  meaning  that program, or the #! interpreter it names, is missing"]
     # no answer at all: its rc said as none
-    assert said({"failed": True})[1:] == ["  rc       none"]
+    assert said({"failed": True})[1:-1] == ["  cqlsh    on 10.0.0.5:9042", "  rc       none"]
+    # a long host name: within 79 columns too
+    base["inventory_hostname"] = "cassandra-prod-eu-west-node-001.example.internal"
+    assert all(len(line) <= 79 for line in said(missing))
     assert "not _cassandra_storage_mode_cql_said | default(false) | bool" in say["when"]
 
 
