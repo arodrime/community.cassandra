@@ -250,14 +250,15 @@ def _shell_code(line):
     return line
 
 
-def cassandra_jmx_files(env_sh, options=None, cmdline="", conf_dir="", cassandra_yaml=""):
+def cassandra_jmx_files(env_sh, options=None, cmdline="", conf_dir="", yaml_text=""):
     """Where the running JVM reads its remote JMX password and access files: its own arguments (cmdline:
     /proc/<pid>/cmdline), else cassandra-env.sh (its last line that sets them, comments aside, $CASSANDRA_CONF
     and the variables it sets expanded), else the JVM options files (options: {file name: text}). A path
     cassandra-env.sh gives through what only the shell knows (a variable it does not set, ${X:-d}, $(..)) is
     looked for in the next ones.
     -> {password, access: the paths ('' when not found), from: where, unknown: what cassandra-env.sh gives that
-    no source resolves ('' when nothing), jaas: what says JMX authenticates by JAAS ('' when nothing does)}.
+    no source resolves ('' when nothing), jaas: what says JMX authenticates by JAAS ('' when nothing does): a
+    JVM argument, or jmx_server_options in cassandra.yaml (yaml_text: its text)}.
     e.g. a cassandra-env.sh with -Dcom.sun.management.jmxremote.password.file=/etc/cassandra/jmxremote.password
     -> {"password": "/etc/cassandra/jmxremote.password", "access": "", "from": "cassandra-env.sh", "unknown": "",
     "jaas": ""}."""
@@ -303,8 +304,8 @@ def cassandra_jmx_files(env_sh, options=None, cmdline="", conf_dir="", cassandra
             jaas = next((m.group(1) for line in source_lines for m in [_JAAS.search(line)] if m), "")
             out["jaas"] = ("-D%s in %s" % (jaas, name)) if jaas else ""
     out["unknown"] = ", ".join(unknown[k] for k in ("password", "access") if k in unknown)
-    if not out["jaas"] and re.search(r"(?m)^jmx_server_options:\s*$", str(cassandra_yaml or "")) and re.search(
-            r"(?m)^\s+login_config_(name|file):\s*\S", str(cassandra_yaml or "")):
+    if not out["jaas"] and re.search(r"(?m)^jmx_server_options:\s*$", str(yaml_text or "")) and re.search(
+            r"(?m)^\s+login_config_(name|file):\s*\S", str(yaml_text or "")):
         out["jaas"] = "jmx_server_options in cassandra.yaml"
     return out
 

@@ -48,8 +48,8 @@ RC1_NAMES_NOW_IN_PYTHON = frozenset((
     "cassandra_storage_mode_stopped_unsure", "cassandra_storage_mode_unsure", "cassandra_storage_mode_written"))
 # - names the playbooks write since rc1 that are no variable: the filters added since (cassandra_seed_hosts given on
 #   the command line is refused as a typo of cassandra_seeds, as in rc1; a new filter the playbooks call goes here
-#   too), a filter's keyword (cassandra_jmx_files' cassandra_yaml=), a file the roles read
-#   (plugin_utils/cassandra_config_record.py) and a module a template's comment names (cassandra_os.py)
+#   too), a file the roles read (plugin_utils/cassandra_config_record.py) and a module a template's comment names
+#   (cassandra_os.py)
 NOT_VARIABLES = frozenset((
     "cassandra_cleanup_batches", "cassandra_clock_plan", "cassandra_config_audit_parameter_refusals",
     "cassandra_config_exporter_refusals", "cassandra_config_jmx_tls_refusals", "cassandra_config_logback_refusals",
@@ -61,7 +61,7 @@ NOT_VARIABLES = frozenset((
     "cassandra_staying_node", "cassandra_storage_mode_given_rows", "cassandra_storage_mode_guard",
     "cassandra_too_few_nodes", "cassandra_topology_done", "cassandra_topology_nothing_to_do",
     "cassandra_topology_refusals", "cassandra_upgrade_copy_refusal",
-    "cassandra_yaml", "cassandra_config_record", "cassandra_os"))
+    "cassandra_config_record", "cassandra_os"))
 # former names of the variables: every node an operation targets is cassandra_target_nodes; the others, renamed
 # since the 2.1.0 release candidates (an inventory written for one is refused, not silently ignored)
 RENAMED = dict([(name, "cassandra_target_nodes") for name in (

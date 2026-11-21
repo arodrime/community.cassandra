@@ -705,7 +705,7 @@
         import_cluster_jmx_files: >-
           {{ _live['cassandra-env.sh'] | default('') | community.cassandra.cassandra_jmx_files(
                options=_options, cmdline=import_cluster_jvm_cmdline.content | default('') | b64decode,
-               conf_dir=import_cluster_conf_dir, cassandra_yaml=_live['cassandra.yaml'] | default('')) }}
+               conf_dir=import_cluster_conf_dir, yaml_text=_live['cassandra.yaml'] | default('')) }}
       no_log: "{{ not import_debug | default(false) | bool }}"  # the files read, on an error
       when: import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
       vars:

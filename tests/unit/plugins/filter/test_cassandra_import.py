@@ -497,7 +497,7 @@ def test_jmx_by_jaas_said():
     env = 'JVM_OPTS="$JVM_OPTS -Dcassandra.jmx.remote.login.config=CassandraLogin"\n'
     assert cassandra_jmx_files(env)["jaas"] == "-Dcassandra.jmx.remote.login.config in cassandra-env.sh"
     yaml_text = "jmx_server_options:\n  enabled: true\n  login_config_name: CassandraLogin\n"
-    assert cassandra_jmx_files("", cassandra_yaml=yaml_text)["jaas"] == "jmx_server_options in cassandra.yaml"
+    assert cassandra_jmx_files("", yaml_text=yaml_text)["jaas"] == "jmx_server_options in cassandra.yaml"
     files = node_files("50x", cassandra_local_jmx=False)
     files["cassandra-env.sh"] += "\n" + env
     out = cassandra_config_import(files, "50x", FACTS)

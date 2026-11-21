@@ -210,7 +210,7 @@ def _jmx_import(env, live_files, jmx_files, running=None):
     -> (jmx_files completed, {variable: value}, notes, notes of what has no effect)."""
     if jmx_files is None:  # not read by the caller: cassandra-env.sh's
         jmx_files = cassandra_jmx_files(live_files.get("cassandra-env.sh", ""),
-                                        cassandra_yaml=live_files.get("cassandra.yaml", ""))
+                                        yaml_text=live_files.get("cassandra.yaml", ""))
     jmx_files = dict({"password": "", "access": "", "from": "", "unknown": "", "jaas": ""}, **jmx_files)
     changed = {}
     for kind in ("password", "access"):
