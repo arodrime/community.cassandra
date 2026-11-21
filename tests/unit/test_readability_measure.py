@@ -76,3 +76,49 @@ def test_a_listed_one_stays_at_its_size(monkeypatch, size, says):
         test_readability.test_a_listed_one_is_listed_at_its_size()
     monkeypatch.setattr(test_readability, "measured", lambda: {"x": 500})
     test_readability.test_a_listed_one_is_listed_at_its_size()
+
+
+def test_a_long_bare_expression_of_debugs_var_is_measured(tmp_path, monkeypatch):
+    found = measured(tmp_path, monkeypatch, """
+        - name: T
+          ansible.builtin.debug:
+            var: {0}
+        """.format(LONG))
+    assert list(found.values()) == [len(LONG)], found
+
+
+def test_a_long_string_of_jinja_statements_only_is_measured(tmp_path, monkeypatch):
+    text = "{%% if %s %%}yes{%% endif %%}" % LONG
+    found = measured(tmp_path, monkeypatch, """
+        - name: T
+          ansible.builtin.debug:
+            msg: "{0}"
+        """.format(text))
+    assert list(found.values()) == [len(text)], found
+
+
+def test_the_blanks_of_a_jinja_string_count_as_one(tmp_path, monkeypatch):
+    # the layout is free: a call indented under its first line measures as one written on a line
+    words = LONG.split(" ")
+    found = measured(tmp_path, monkeypatch, """
+        - name: T
+          ansible.builtin.debug:
+            msg: >-
+              {{{{ {0}
+                   {1} }}}}
+        """.format(" ".join(words[:40]), "   ".join(words[40:])))
+    assert list(found.values()) == [len("{{ %s }}" % LONG)], found
+
+
+@pytest.mark.parametrize("task", [
+    "- name: T\n  ansible.builtin.shell: >\n{script}",
+    "- name: T\n  ansible.builtin.shell: >-\n{script}",
+    "- name: T\n  ansible.builtin.shell:\n    cmd: >-\n{folded}",
+    "- name: T\n  ansible.builtin.shell: echo 0\n{plain}",
+])
+def test_a_long_folded_script_is_measured_by_its_lines(tmp_path, monkeypatch, task):
+    # YAML joins the lines of a folded script (or of a plain string written on several lines): measured as written
+    found = measured(tmp_path, monkeypatch, task.format(script=textwrap.indent(SCRIPT, " " * 4),
+                                                        folded=textwrap.indent(SCRIPT, " " * 6),
+                                                        plain=textwrap.indent(SCRIPT.split("\n", 1)[1], " " * 4)))
+    assert list(found.values()) == [30] and list(found)[0].endswith(" (shell)"), found
