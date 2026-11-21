@@ -1,14 +1,21 @@
 # Copyright: Contributors to the community.cassandra collection
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
-"""Filter behind import_cluster's look at the OS tuning of a node.
+"""Filters behind import_cluster's look at the OS tuning of a node, and what cassandra_linux would change there.
 
 cassandra_os_import: what import_cluster's read-only script printed on a node
     (kernel settings, limits, THP, disks, swap, tuned, time sync, firewall),
     and what the roles would set -> the report lines, and the variables that
     give the nodes added later the same tuning.
+cassandra_sysctl_write_only: the write-only kernel keys of cassandra_linux_sysctl
+    (cassandra_linux's os.yml).
 
 The script prints one record per line, "kind|field|...": the files as they
 are (comments and blank lines left out), and the live values.
+
+Its second half ("what cassandra_linux would change on a node") is the model the import's self-check
+(cassandra_import_check) compares the node with: cassandra_linux_changes and cassandra_firewall_changes (what
+cassandra_linux and cassandra_firewall would change there), firewall_touched and thp_unit. Those are no filters
+(not registered), despite the cassandra_ prefix of the first two: Python only, imported by cassandra_import_check.
 """
 
 from __future__ import absolute_import, division, print_function
