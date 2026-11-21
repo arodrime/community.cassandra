@@ -761,8 +761,9 @@ of the cluster is only a warning, unless a node could be one of the rack. The ta
 - the warning names a node left out by its inventory name when its variables give its address, or its name
   resolves to it on the controller; else by its address. A ring node no host is known by is taken for a node
   left out only when the address of that node is not in the ring and every node of the run is there;
-- when the ring is read only from nodes of the run (``--limit`` leaves out every other node, or none is reached),
-  the run says so: ``UN as seen from node2 only``. A node always sees itself UN;
+- when the ring is read only from nodes of the run, before and after any wait (``--limit`` leaves out every other
+  node, none is reached, or its ``nodetool status`` fails), the run says so: ``the ring as seen from node2 only``.
+  A node always sees itself UN;
 - a node outside the rack not UN for the node outside the rack read from (down, joining, leaving, moving...), not
   reached over ssh, or whose ``nodetool status`` fails, is a warning row, not waited for; one only the node of the
   rack, just started, sees not UN is waited for first;

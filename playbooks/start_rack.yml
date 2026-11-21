@@ -328,7 +328,8 @@
         - not ansible_check_mode  # the rack was not started
 
     # what it found, judged: the nodes outside the rack not UN for the node outside the rack read from (not
-    # waited for, below), the rest (waited for), why a node is judged of the rack (cassandra_rack_verdict)
+    # waited for, below), the rest (waited for), why a node is judged of the rack, the nodes read from (kept: the
+    # read below reads from others) (cassandra_rack_verdict)
     - name: Judge the first read
       ansible.builtin.set_fact:
         _cassandra_start_rack_first_verdict: >-
