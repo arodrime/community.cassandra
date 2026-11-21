@@ -3,7 +3,8 @@
 """The import (import_cluster): what every import module shares.
 
 The constants: ROLE (cassandra_config's dir), SERIES, ADDRESSES and the facts they are written as (IPV4, HOSTNAME),
-MISSING, and the KEEP switches (IMPORTED, IMPORTED_FOR, SET_UP_BY_THE_ROLES).
+the KEEP switches and the variables written with them (IMPORTED, IMPORTED_FOR, SET_UP_BY_THE_ROLES), MISSING (a
+value not there) and MISSING_NAME (an undefined error that names a variable).
 
 The import's error rules: an unexpected error never shows its message, which may quote a value read from a node
 (values_hidden, error_without_message: its type and where it happened only, in a cassandra_import*.py module);
@@ -37,12 +38,7 @@ SERIES = {"40x": "4.0", "41x": "4.1", "50x": "5.0"}
 ADDRESSES = ["cassandra_listen_address", "cassandra_rpc_address",
              "cassandra_broadcast_address", "cassandra_broadcast_rpc_address", "cassandra_jmx_rmi_hostname"]
 # What the roles leave as it is on a node set up another way (host_vars only:
-# a node added later gets it from the roles)
-# Written next to the switches below when one of those a blank host would miss
-# is set (all but the repositories): add_node refuses a blank host rebuilt
-# under that node's name
-IMPORTED = "cassandra_imported_host"
-IMPORTED_FOR = ("cassandra_cqlsh_python_manage", "cassandra_linux_manage", "cassandra_service_unit_manage")
+# a node added later gets it from the roles): {switch: what it keeps}
 KEEP = {
     "cassandra_repository_manage": "the package repositories",
     "cassandra_cqlsh_python_manage": "cqlsh's Python (python3.11, cqlshlib link, wrapper)",
@@ -53,11 +49,18 @@ KEEP = {
     "cassandra_data_disk_tuning": ("the tuning of its data devices (read-ahead, scheduler, udev rule, tuned profiles),"
                                    " which cassandra_linux would change"),
 }
+# Written next to the KEEP switches when one of IMPORTED_FOR (what a blank host would miss) is set, or parts kept by
+# hand (cassandra_import_layout): add_node refuses a blank host rebuilt under that node's name
+IMPORTED = "cassandra_imported_host"
+IMPORTED_FOR = ("cassandra_cqlsh_python_manage", "cassandra_linux_manage", "cassandra_service_unit_manage")
 # KEEP switches of nodes the roles set up (not another way)
 SET_UP_BY_THE_ROLES = ("cassandra_data_disk_tuning",)
 IPV4 = "{{ ansible_facts['default_ipv4']['address'] }}"
 HOSTNAME = "{{ ansible_facts['hostname'] }}"
+
+# a value not there (not None, which a node may have): the layout's nodes without a key, cassandra_drift
 MISSING = object()
+
 # The undefined errors naming a field or a variable, nothing else of the data.
 # Jinja words a missing dict key (d[key]) the same way: nothing here or in the
 # playbook may index a dict with a key read from the nodes.
