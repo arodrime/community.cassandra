@@ -333,7 +333,7 @@ def test_a_node_of_the_rack_not_un_stops_the_run():
 WHY = ["10.0.0.%s (dc1, %s): no inventory host has this address,", "  so it is judged as a node of rack r2",
        "if it is outside rack r2: give its inventory host that address",
        "  (broadcast_address in cassandra_extra_settings, else",
-       "  cassandra_listen_address or ansible_host), then run start_rack again"]
+       "  cassandra_listen_address or ansible_host)"]  # (the WAY OUT under it: "then run start_rack again")
 
 
 def test_a_node_no_host_is_known_by_is_one_of_the_rack():
@@ -831,6 +831,9 @@ def test_a_node_that_stops_while_it_joins_is_said_with_its_journal():
     assert lines[1:4] == ["  cassandra on cassandra-prod-node-017 is failed (failed, exit-code): it",
                           "    stopped instead of joining. journalctl -u cassandra:",
                           "      Nov 21 10:00:01 h-n2 cassandra[811]: ERROR [main] 2026-11-21 10:00:01,042"]
+    # its docstring's example says so too
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_start_rack import cassandra_rack_start_failed
+    assert '"      <journal line>"' in " ".join(cassandra_rack_start_failed.__doc__.split("\n    "))
     assert max(len(x) for x in lines) <= 79
 
 
@@ -1090,3 +1093,17 @@ def test_a_second_node_of_the_rack_read_from_is_waited_for_before_any_warning():
     # n1 DN still after the wait: its row
     problems, said = check(play=["n2", "n3"], peer_host="n3", peer=ring(n1="DN"), then=ring(n1="DN"))
     assert problems == [] and said[4:6] == ["WARNING  the rest of the cluster:", "  n1  DN"]
+
+
+def test_a_node_left_out_known_by_its_address_with_no_node_to_start_is_not_a_start():
+    # every node left out in the ring at an address of its own: "start 10.0.0.7: no host known by that address /
+    # check it with nodetool status": a start heading over a check
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_start_rack import cassandra_rack_outside_lines
+    verdict = {"outside": [], "failed": [], "warnings": [], "problems": [], "rack_seen_un": ["n2"], "left_out": [
+        {"address": "10.0.0.7", "name": None, "states": ["DN"], "unplaced": []}]}
+    lines = cassandra_rack_outside_lines(verdict, [], "dc1", "r2", "x", run=["n2"], left_out=["n3"], start_command="y")
+    assert lines[4:] == ["10.0.0.7: no host known by that address", "  check it with nodetool status"]
+    verdict["left_out"].append({"address": "10.0.0.8", "name": None, "states": ["DN"], "unplaced": []})
+    lines = cassandra_rack_outside_lines(verdict, [], "dc1", "r2", "x", run=["n2"], left_out=["n3"], start_command="y")
+    assert lines[5:] == ["the nodes at these addresses, no host known by them:", "  10.0.0.7", "  10.0.0.8",
+                         "  check them with nodetool status"]

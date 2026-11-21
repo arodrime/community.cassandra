@@ -364,7 +364,7 @@ def _unknown_lines(findings, judged, rack):
     by its address is, then the way out; [] for none.
     e.g. ([<10.0.0.4 r3 DN, no name>], {"10.0.0.4": "unknown"}, "r2") -> ["10.0.0.4 (dc1, r3): no inventory host
     has this address,", "  so it is judged as a node of rack r2", "if it is outside rack r2: give its inventory
-    host that address", "  (broadcast_address in ...", "  cassandra_listen_address or ..."]."""
+    host that address", "  (broadcast_address in ...", "  cassandra_listen_address or ansible_host)"]."""
     lines, said = [], set()
     for f in findings:
         if f.get("kind") != "state" or f["address"] in said or judged[f["address"]] != "unknown":
@@ -377,7 +377,7 @@ def _unknown_lines(findings, judged, rack):
     which = "it is" if len(said) == 1 else "one is"
     return out.fit(lines + ["if %s outside rack %s: give its inventory host that address" % (which, rack),
                             "  (broadcast_address in cassandra_extra_settings, else",
-                            "  cassandra_listen_address or ansible_host), then run start_rack again"], WIDTH)
+                            "  cassandra_listen_address or ansible_host)"], WIDTH)
 
 
 _DOING = {"J": "joining", "L": "leaving", "M": "moving"}
@@ -425,10 +425,11 @@ def _by_address_lines(by_address, command, viewer):
     """The nodes left out down known by their address only -> the start of the nodes left out they may be: those
     not in the ring at an address of their own."""
     unplaced = by_address[0].get("unplaced") or []
+    start = "start " if unplaced else ""
     if len(by_address) == 1:
-        lines = ["start %s: no host known by that address" % by_address[0]["address"]]
+        lines = ["%s%s: no host known by that address" % (start, by_address[0]["address"])]
     else:
-        lines = ["start the nodes at these addresses, no host known by them:"] + [
+        lines = ["%sthe nodes at these addresses, no host known by them:" % start] + [
             "  " + n["address"] for n in by_address]
     if not unplaced:  # (every node left out is in the ring now)
         return lines + ["  check %s with nodetool status" % ("it" if len(by_address) == 1 else "them")]
@@ -521,7 +522,7 @@ def cassandra_rack_start_failed(result, task, node, rack, command=""):
     has a WAY OUT of its own, "fix what the message above says" and the command.
     e.g. ({msg: ["cassandra on n2 is failed (failed, exit-code): ...", "<journal line>"]}, "Cassandra is not
     running", "n2", "r2", "ansible-playbook x") -> ["n2 (rack r2) did not start:", "  cassandra on n2 is failed
-    ...", "    <journal line>", ..., "WAY OUT  fix it, then run start_rack again:", "  ansible-playbook x"]."""
+    ...", "      <journal line>", ..., "WAY OUT  fix it, then run start_rack again:", "  ansible-playbook x"]."""
     msg = (result or {}).get("msg") or "failed"
     again = ["  " + str(command)] if command else []
     if task not in (_START_FAILED, _STOPPED, _NOT_NORMAL):  # its words
