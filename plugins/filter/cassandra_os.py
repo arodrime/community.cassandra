@@ -1380,8 +1380,23 @@ def _sysctl_changes(recs, linux, live):
     target = linux.get("sysctl_file") or "/etc/sysctl.d/60-cassandra.conf"
     files, now, link, dummy, dummy2 = _sysctl_read(recs)
     masked = {os.path.basename(rest) for kind, rest in recs if kind == "masked" and "/sysctl.d/" in rest}
+    after, edits = _sysctl_edits(files, wanted, target)
+    at_boot = {}
+    for path in _sysctl_order(list(after), link, masked):
+        for k, v in after[path]:
+            at_boot[k] = v
+    items = _sysctl_live_items(wanted, now) if live else []
+    for key, path, before, value in edits:
+        items.append(_item("sysctl %s (%s)" % (key, path), "not set" if before is None else before,
+                           "removed" if value is None else value, _sysctl_edit_effect(key, value, now, at_boot)))
+    return items
+
+
+def _sysctl_edits(files, wanted, target):
+    """The role's keys written in target, the same keys removed from /etc/sysctl.conf -> (the files after, [(key,
+    file, its value there now, its value after: None removed)])."""
     after = dict((p, list(lines)) for p, lines in files.items())
-    edits = []  # (key, file, its value there now, its value after: None removed)
+    edits = []
     for key, value in wanted:
         lines = after.setdefault(target, [])
         has = [v for k, v in lines if k == key]
@@ -1391,26 +1406,27 @@ def _sysctl_changes(recs, linux, live):
         if target != SYSCTL_CONF and any(k == key for k, dummy in after.get(SYSCTL_CONF, [])):
             edits.append((key, SYSCTL_CONF, [v for k, v in after[SYSCTL_CONF] if k == key][-1], None))
             after[SYSCTL_CONF] = [(k, v) for k, v in after[SYSCTL_CONF] if k != key]
-    at_boot = {}
-    for path in _sysctl_order(list(after), link, masked):
-        for k, v in after[path]:
-            at_boot[k] = v
+    return after, edits
+
+
+def _sysctl_live_items(wanted, now):
+    """The module sets each of its keys live, one by one (never its whole file again: its other keys stay); a
+    write-only key: written at each run (cassandra_linux refuses it)."""
     items = []
-    if live:
-        # the module sets each of its keys live, one by one (never its whole file again: its other keys stay)
-        for key, value in wanted:
-            if key in WRITE_ONLY_SYSCTL and key in dict(wanted):  # (cassandra_linux refuses it: set at each run)
-                items.append(_item("sysctl %s (live)" % key, "not read (write-only)", "written at each run: an action"))
-            elif key not in WRITE_ONLY_SYSCTL and _norm(now.get(key, "")) != value:
-                items.append(_item("sysctl %s (live)" % key, now.get(key) or "not read", value))
-    for key, path, before, value in edits:
-        # a write-only key the role would write: an action at each load of the file, a change; one removed: none
-        effect = CHANGE if key in WRITE_ONLY_SYSCTL and value is not None \
-            else NO_EFFECT if key in WRITE_ONLY_SYSCTL or key in now and _norm(at_boot.get(key, "")) == _norm(
-                now[key]) else CHANGE
-        items.append(_item("sysctl %s (%s)" % (key, path), "not set" if before is None else before,
-                           "removed" if value is None else value, effect))
+    for key, value in wanted:
+        if key in WRITE_ONLY_SYSCTL:
+            items.append(_item("sysctl %s (live)" % key, "not read (write-only)", "written at each run: an action"))
+        elif _norm(now.get(key, "")) != value:
+            items.append(_item("sysctl %s (live)" % key, now.get(key) or "not read", value))
     return items
+
+
+def _sysctl_edit_effect(key, value, now, at_boot):
+    """A file line's effect: no effect when the value read at boot stays the one the node has now; a write-only key
+    the role would write is an action at each load of the file, a change; one removed: no effect."""
+    if key in WRITE_ONLY_SYSCTL:
+        return CHANGE if value is not None else NO_EFFECT
+    return NO_EFFECT if key in now and _norm(at_boot.get(key, "")) == _norm(now[key]) else CHANGE
 
 
 def _swap_changes(recs, linux, live):
