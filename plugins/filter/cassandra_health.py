@@ -17,6 +17,7 @@ __metaclass__ = type
 import re
 import textwrap
 
+from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_command
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import JMX_CAUSES
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_status import (
@@ -585,9 +586,43 @@ def cassandra_removal_force_target(rings, address, removal):
                                 " method)." % (address, "/".join(seen) or "not readable in the ring")}
 
 
+_DOWN = re.compile(r" is D[NLJM],")
+
+
+def cassandra_health_lost_lines(problems, group, command_args):
+    """The problems of a cluster check, the cluster's group (where replace_node wants the new host), the run's
+    command arguments (inventory, default_inventory, hosts, cwd) -> for each node down they name, what to do if it
+    is lost for good: the full commands with the conditions their playbooks state, replace_node first,
+    remove_dead_node last. A node by its name and address ("n4 (10.0.0.4, r1) is DN, ..."): that address; one no
+    host is known by ("10.0.0.4 (r1) is DN, ..."): its name is the address.
+    e.g. (["n4 (10.0.0.4, r1) is DN, seen from n1"], "prod", {}) -> ["IF n4 IS LOST FOR GOOD", "replace it:
+    NEW_NODE (a blank host) in prod, n4 out of the inventory", ..., "  ansible-playbook
+    community.cassandra.remove_dead_node -e cassandra_target_nodes=10.0.0.4"]."""
+    lines, seen = [], []
+    for p in problems or []:
+        if not _DOWN.search(str(p)) or p in seen:
+            continue
+        seen.append(p)
+        name = re.sub(r" \(.*$", "", str(p))
+        found = re.findall(r"^\S+ \(([^,)]+),", str(p))
+        address = found[0] if found else name
+        lines += ["IF %s IS LOST FOR GOOD" % name,
+                  "replace it: NEW_NODE (a blank host) in %s, %s out of the inventory" % (group, name),
+                  "(a seed: out of cassandra_seeds first, with change_seeds)",
+                  "  " + cassandra_command("replace_node", extra=["-e cassandra_target_nodes=NEW_NODE",
+                                                                  "-e cassandra_replace_address=" + address],
+                                           **(command_args or {})),
+                  "last resort, no replacement: %s out of the inventory first; the other replicas rebuild its data"
+                  " (removenode)" % name,
+                  "  " + cassandra_command("remove_dead_node", extra=["-e cassandra_target_nodes=" + address],
+                                           **(command_args or {}))]
+    return lines
+
+
 class FilterModule(object):
     def filters(self):
         return {"cassandra_health_sentences": cassandra_health_sentences,
+                "cassandra_health_lost_lines": cassandra_health_lost_lines,
                 "cassandra_health_findings": cassandra_health_findings,
                 "cassandra_health_waiting": cassandra_health_waiting,
                 "cassandra_health_wait_line": cassandra_health_wait_line,

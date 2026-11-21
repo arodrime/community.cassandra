@@ -3,7 +3,7 @@ __metaclass__ = type
 
 # The size guardrail of the Jinja strings: under 300 characters, the logic in a filter (readable, tested in Python).
 # The templates the rc1 fixes grew past it (the start_rack rescue 319, stop_rack's refusal 519 and start command 379,
-# the recap's results 797), held under it.
+# the recap's results 797, the cluster check's lost-node lines 1313, apply_config's recap warnings 568), held under it.
 
 import os
 
@@ -30,5 +30,9 @@ def test_the_rack_and_recap_templates_are_under_the_guardrail():
         "stop_rack refusal": task("stop_rack.yml", "Refuse when a keyspace would lose more than one replica")[
             "ansible.builtin.assert"]["fail_msg"],
         "stop_rack start command": task("stop_rack.yml", "Say how to start it again")["vars"]["_start"],
-        "recap results": load("roles", "cassandra_operation", "vars", "main.yml")["_cassandra_op_results"]}
+        "recap results": load("roles", "cassandra_operation", "vars", "main.yml")["_cassandra_op_results"],
+        "lost-node lines": next(t for t in load("roles", "cassandra_operation", "tasks", "cluster_health.yml")
+                                if t.get("name") == "Stop on an unhealthy cluster")["vars"]["_lost"],
+        "apply_config recap warnings": next(p for p in load("playbooks", "apply_config.yml")
+                                            if "_more" in (p.get("vars") or {}))["vars"]["_more"]}
     assert dict((k, len(v)) for k, v in templates.items() if len(v) > LIMIT) == {}

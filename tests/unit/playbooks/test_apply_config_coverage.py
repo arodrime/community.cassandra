@@ -520,10 +520,11 @@ def test_a_package_update_on_a_node_with_its_own_os_settings_says_a_changed_limi
     assert shown in render(now["ansible.builtin.debug"]["msg"], dict(inventory_hostname="h-n1", hostvars=deep))
     summary = load("roles", "cassandra_operation", "tasks", "summary.yml")[0]
     recap_play = [p for p in load("playbooks", "apply_config.yml") if "_more" in (p.get("vars") or {})][0]
+    variables = dict(cassandra_service_summary_hosts=["h-n1"], hostvars=deep, groups={"prod": ["h-n1"]},
+                     cassandra_hosts="prod", ansible_check_mode=False, _no_return=[])
+    variables["_limits_changed"] = render(recap_play["vars"]["_limits_changed"], variables)
     for template in (summary["vars"]["_warnings"], recap_play["vars"]["_more"]):
-        warnings = render(template, dict(cassandra_service_summary_hosts=["h-n1"], hostvars=deep, groups={"prod": ["h-n1"]},
-                                         cassandra_hosts="prod", ansible_check_mode=False, _no_return=[]))
-        assert shown in cassandra_warnings(warnings)
+        assert shown in cassandra_warnings(render(template, variables))
     warnings = cassandra_limits_changed(["h-n1", "h-n2", "h-n3", "h-n4"], hostvars)
     said_all = cassandra_warnings(warnings)
     assert max(len(x) for x in said_all) <= 79
