@@ -1,9 +1,4 @@
-{#- Copyright: Contributors to the community.cassandra collection
-    GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
-    Where Cassandra Medusa lives on a node, for import_cluster (task "Look for Medusa"): medusa.ini, the medusa
-    script, its virtualenv or Python, its version; key=value lines. A Jinja template
-    (lookup('ansible.builtin.template')) run by the shell module, with no variable of its own.
-    Careful: {# {{ {% open Jinja here, in the shell lines too: write a shell ${#var} as {{ '${#' }}var}. -#}
+# shellcheck shell=sh disable=SC1007,SC2046
 ini=/etc/medusa/medusa.ini
 [ -f "$ini" ] && echo "ini=yes" && stat --printf 'ini_owner=%U\nini_group=%G\nini_mode=%a\n' "$ini"
 trusted() { case $(stat -c %U "$1" 2>/dev/null) in root|cassandra) ;; *) return 1 ;; esac; }

@@ -959,9 +959,10 @@
     # Medusa is looked for at import_medusa_path (default none: its
     # virtualenv or its medusa script, a full path on the nodes), else in the PATH,
     # else in the usual places, else in the PATH of a login shell of cassandra, then
-    # of root, and last in any virtualenv under /opt.
+    # of root, and last in any virtualenv under /opt. files/import_medusa.sh prints where it lives: medusa.ini, the
+    # medusa script, its virtualenv or Python, its version, as key=value lines (rstrip=false: run as written)
     - name: Look for Medusa
-      ansible.builtin.shell: "{{ lookup('ansible.builtin.template', playbook_dir ~ '/templates/import_medusa.sh.j2') }}"
+      ansible.builtin.shell: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/files/import_medusa.sh', rstrip=false) }}"
       environment:
         IMPORT_MEDUSA_PATH: "{{ import_medusa_path | default('') }}"
       register: import_cluster_medusa_found

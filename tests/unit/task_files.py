@@ -79,18 +79,20 @@ def find_play(plays, name):
     return found[0]
 
 
-# a shell task whose script is a template of the playbook: shell: "{{ lookup('ansible.builtin.template', ...) }}"
-_SCRIPT_LOOKUP = re.compile(r"^\{\{ lookup\('ansible\.builtin\.template', playbook_dir ~ '/([^']+)'\) \}\}$")
+# a shell task whose script is a template or a file of the playbook: shell: "{{ lookup('ansible.builtin.template', ...)
+# }}", or "{{ lookup('ansible.builtin.file', ..., rstrip=false) }}"
+_SCRIPT_LOOKUP = re.compile(r"^\{\{ lookup\('ansible\.builtin\.(template|file)', playbook_dir ~ '/([^']+)'(?:, rstrip=false)?\) \}\}$")
 _LEADING_COMMENT = re.compile(r"\A\{#.*?#\}\n?", re.S)
 PLAYBOOKS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "playbooks"))
 
 
 def shell_script(task):
-    """The script a shell task of a playbook runs, as written: its inline text, or the playbook's template it looks
-    up without the Jinja comment that starts it; its Jinja ({{ }}) left as it is."""
+    """The script a shell task of a playbook runs, as written: its inline text, the playbook's file it looks up, or
+    the playbook's template it looks up without the Jinja comment that starts it; its Jinja ({{ }}) left as it is."""
     text = task["ansible.builtin.shell"]
     looked_up = _SCRIPT_LOOKUP.match(text)
     if not looked_up:
         return text
-    with open(os.path.join(PLAYBOOKS, looked_up.group(1)), encoding="utf-8") as f:
-        return _LEADING_COMMENT.sub("", f.read(), count=1)
+    with open(os.path.join(PLAYBOOKS, looked_up.group(2)), encoding="utf-8") as f:
+        script = f.read()
+    return _LEADING_COMMENT.sub("", script, count=1) if looked_up.group(1) == "template" else script

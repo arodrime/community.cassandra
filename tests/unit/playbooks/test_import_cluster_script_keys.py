@@ -1,9 +1,9 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-# import_cluster's read scripts (playbooks/templates/*.sh.j2) print key=value lines that the playbook reads back as a
-# dict (_kv.<key>, _found.<key>): every key the playbook reads is one the script prints, so a key renamed or dropped
-# on one side only fails here, not as an empty value on a node.
+# import_cluster's read scripts (playbooks/templates/import_running.sh.j2, playbooks/files/import_medusa.sh) print
+# key=value lines that the playbook reads back as a dict (_kv.<key>, _found.<key>): every key the playbook reads is
+# one the script prints, so a key renamed or dropped on one side only fails here, not as an empty value on a node.
 
 import os
 import re
@@ -51,9 +51,9 @@ def read(playbook, name):
     return set(re.findall(r"\b%s(?:\.|\[')(\w+)" % name, playbook))
 
 
-@pytest.mark.parametrize("template, name", [("import_running.sh.j2", "_kv"), ("import_medusa.sh.j2", "_found")])
-def test_every_key_the_playbook_reads_is_printed(template, name):
-    keys = printed(_read("playbooks", "templates", template))
+@pytest.mark.parametrize("script, name", [("templates/import_running.sh.j2", "_kv"), ("files/import_medusa.sh", "_found")])
+def test_every_key_the_playbook_reads_is_printed(script, name):
+    keys = printed(_read("playbooks", *script.split("/")))
     wanted = read(_read("playbooks", "import_cluster.yml"), name)
     assert wanted, name
     assert sorted(k for k in wanted if not any(re.fullmatch(p, k) for p in keys)) == []
