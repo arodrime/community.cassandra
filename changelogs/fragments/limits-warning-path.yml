@@ -1,0 +1,2 @@
+bugfixes:
+  - "limits file WARNING (a package update with ``cassandra_linux_manage: false``) - the copy of the former content is said by its path from the directory the run was started in when it is under it (``reports/<cluster>/...-limits.conf``), no longer by its absolute path, a word too long for 79 columns."

@@ -137,11 +137,12 @@ def _outcomes(results, operation, action, check=False):
     return outcomes, operation or (PLAYBOOKS.get(actions[0], actions[0]) if actions else "")
 
 
-def _limits_text(node, changed):
+def _limits_text(node, changed, cwd=None):
     """One node's warning of its limits file changed by the package update (changed: package_update.yml's
     cassandra_package_limits_changed, {path, saved, created, removed, link, dangling, error}; a path alone as well)
     -> its lines. link: the target of the link the file was (its saved content read through it), the link to put
-    back; dangling: that link pointed to no file (no former content)."""
+    back; dangling: that link pointed to no file (no former content). cwd: the copy's path said from it when under
+    it (a path is never cut: within 79 columns then)."""
     if not isinstance(changed, dict):
         changed = {"path": changed}
     path = str(changed.get("path") or "")
@@ -161,7 +162,8 @@ def _limits_text(node, changed):
     if link:
         lines.append("it was a link to %s%s" % (link, ", which pointed to no file" if dangling else ""))
     if changed.get("saved"):
-        lines.append("its former content%s: %s" % (" (read through the link)" if link else "", changed["saved"]))
+        saved = out.path_from(str(changed["saved"]), cwd)
+        lines.append("its former content%s: %s" % (" (read through the link)" if link else "", saved))
     elif not dangling:
         lines.append("its former content was not saved (%s)" % (changed.get("error") or "not read"))
     if link:
@@ -172,7 +174,7 @@ def _limits_text(node, changed):
     return lines + ["check it holds the limits you want for the cassandra user, or %s" % manage]
 
 
-def cassandra_limits_changed(hosts, hostvars):
+def cassandra_limits_changed(hosts, hostvars, cwd=None):
     """The nodes (in their order) and their hostvars -> the warnings of the nodes whose limits file the Cassandra
     package update replaced or created (package_update.yml's cassandra_package_limits_changed) while
     cassandra_linux_manage is false, which leaves it as the package wrote it: [{label: "", text: its lines}], one
@@ -181,7 +183,7 @@ def cassandra_limits_changed(hosts, hostvars):
     for h in hosts or []:
         changed = (hostvars.get(h) or {}).get("cassandra_package_limits_changed")
         if changed:
-            said.append({"label": "", "text": "\n".join(_limits_text(str(h), changed))})
+            said.append({"label": "", "text": "\n".join(_limits_text(str(h), changed, cwd))})
     return said
 
 

@@ -1635,7 +1635,8 @@
                     ~ ' it cannot go back to UPGRADING or CASSANDRA_4, nor to its former Cassandra version.'}]
           if ansible_check_mode and _no_return else [])
          + ([{'label': 'the ring', 'text': _ring_unknown}] if ansible_check_mode else [])
-         + query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_limits_changed(hostvars) }}
+         + query('community.cassandra.cassandra_nodes')
+           | community.cassandra.cassandra_limits_changed(hostvars, lookup('ansible.builtin.env', 'PWD')) }}
     # the ring's nodes the inventory does not have (the plan's warning, said here under --check)
     _ring: "{{ hostvars[ansible_play_hosts_all | first]._cassandra_apply_config_ring | default({}) }}"
     _ring_unknown: "{{ _ring | community.cassandra.cassandra_apply_config_ring_unknown }}"

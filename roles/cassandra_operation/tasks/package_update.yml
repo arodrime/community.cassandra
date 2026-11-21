@@ -141,7 +141,7 @@
     - name: Say it now
       ansible.builtin.debug:
         msg: >-
-          {{ [inventory_hostname] | community.cassandra.cassandra_limits_changed(hostvars)
+          {{ [inventory_hostname] | community.cassandra.cassandra_limits_changed(hostvars, lookup('ansible.builtin.env', 'PWD'))
              | community.cassandra.cassandra_warnings }}
       vars:
         cassandra_output: true  # an operator message (ops callback)
