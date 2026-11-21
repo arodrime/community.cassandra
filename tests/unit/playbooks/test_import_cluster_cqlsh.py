@@ -12,6 +12,7 @@ import subprocess
 import yaml
 
 from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
+from ansible_collections.community.cassandra.tests.unit.task_files import shell_script
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 with open(PLAYBOOK, encoding="utf-8") as _f:
@@ -27,7 +28,7 @@ def _tasks(play):
 def _read_script():
     for play in PLAYS:
         for t in _tasks(play):
-            script = t.get("ansible.builtin.shell")
+            script = shell_script(t) if "ansible.builtin.shell" in t else None
             if isinstance(script, str) and "own_cqlsh=yes" in script:
                 return script
     raise AssertionError("the read script")

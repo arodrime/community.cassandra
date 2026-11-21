@@ -12,7 +12,7 @@ import yaml
 
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 from ansible_collections.community.cassandra.tests.unit.helpers import render
-from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task, shell_script
 
 load_collection_filters()
 
@@ -61,7 +61,7 @@ def test_the_given_nodes_are_read_before_the_ring():
 def test_every_node_found_in_the_ring_is_read_too():
     names = [t["name"] for t in READ["tasks"]]
     assert names.index(NODE_READ["name"]) < names.index(NODE_STOP["name"]) < names.index("Work out the series and the conf dir")
-    shell = NODE_READ["ansible.builtin.shell"]
+    shell = shell_script(NODE_READ)
     assert SNIPPET in shell and shell.index(SNIPPET) < shell.index("exit 3")
     assert NODE_READ["check_mode"] is False
 

@@ -12,6 +12,8 @@ import subprocess
 import pytest
 import yaml
 
+from ansible_collections.community.cassandra.tests.unit.task_files import shell_script
+
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 PLAYBOOK = os.path.join(ROOT, "playbooks", "import_cluster.yml")
 FILTER = os.path.join(ROOT, "plugins", "filter", "cassandra_os.py")
@@ -25,7 +27,7 @@ def tasks():
 
 
 def script():
-    return next(t for t in tasks() if t.get("name") == "Read the OS tuning")["ansible.builtin.shell"]
+    return shell_script(next(t for t in tasks() if t.get("name") == "Read the OS tuning"))
 
 
 def test_every_record_kind_read_is_printed():

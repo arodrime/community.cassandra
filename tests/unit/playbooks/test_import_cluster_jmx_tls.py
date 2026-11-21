@@ -67,6 +67,27 @@ def test_the_stop_names_the_nodes_without_nodetools_settings(reads, missing):
 def test_nodetool_gets_ssl_where_the_jvm_serves_it():
     assert render("{{ %s }}" % USE_TLS["when"], import_cluster_jmx_tls={"stdout_lines": ["ssl=true"]}) is True
     assert render("{{ %s }}" % USE_TLS["when"], import_cluster_jmx_tls={"stdout_lines": ["ssl=false"]}) is False
-    # a node of the ring the given nodes did not tell: from its own JVM's options
-    assert "[ \"$tls\" = true ] && tls=' --ssl' || tls=" in NODE_READ["ansible.builtin.shell"]
-    assert "{{ _cassandra_service_nodetool }} version$tls |" in NODE_READ["ansible.builtin.shell"]
+
+
+@pytest.mark.parametrize("options, called", [
+    (["-Dcom.sun.management.jmxremote.ssl=true"], "version --ssl"),
+    (["-Dcom.sun.management.jmxremote.ssl=true", "-Dcom.sun.management.jmxremote.ssl=false"], "version"),
+    ([], "version"),
+])
+def test_a_ring_node_read_gives_nodetool_ssl_from_its_own_jvm(tmp_path, options, called):
+    """A node of the ring the given nodes did not tell: the read's nodetool (the JVM's classpath names no Cassandra
+    jar) gets --ssl from that JVM's last option. The script as the node gets it, /proc/<pid>/cmdline faked."""
+    (tmp_path / "cmdline").write_bytes(("\0".join(["java"] + options + ["org.apache.cassandra.service.CassandraDaemon"])
+                                        + "\0").encode())
+    nodetool = tmp_path / "nodetool"
+    nodetool.write_text('#!/bin/sh\necho "$*" > "%s"\necho "ReleaseVersion: 4.1.5"\n' % (tmp_path / "called"))
+    nodetool.chmod(0o755)
+    script = render(NODE_READ["ansible.builtin.shell"], playbook_dir=os.path.join(TOP, "playbooks"),
+                    _cassandra_service_nodetool=str(nodetool))
+    lines = script.split("\n")
+    first = next(i for i, line in enumerate(lines) if line.startswith("tls=$("))
+    last = next(i for i, line in enumerate(lines) if line.startswith('echo "version=$ver"'))
+    snippet = "\n".join(lines[first:last + 1]).replace("/proc/$pid/cmdline", str(tmp_path / "cmdline"))
+    run = subprocess.run(["sh", "-c", snippet], stdout=subprocess.PIPE, check=True, universal_newlines=True)
+    assert run.stdout == "version=4.1.5\n"
+    assert (tmp_path / "called").read_text() == called + "\n"

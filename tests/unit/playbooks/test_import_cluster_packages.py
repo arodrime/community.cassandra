@@ -12,7 +12,7 @@ import yaml
 
 
 from ansible_collections.community.cassandra.tests.unit.import_nodes import node
-from ansible_collections.community.cassandra.tests.unit.task_files import find_task, load_tasks
+from ansible_collections.community.cassandra.tests.unit.task_files import find_task, load_tasks, shell_script
 from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
@@ -129,7 +129,7 @@ def test_role_switches_gate_the_tasks():
 
 def test_dsbulk_read_only_as_the_role_installs_it():
     # its marker and both links: a dsbulk unpacked by hand under /usr/share is not the role's (it would relink it)
-    script = task("Read the running Cassandra (conf dir, Cassandra and Java versions)")["ansible.builtin.shell"]
+    script = shell_script(task("Read the running Cassandra (conf dir, Cassandra and Java versions)"))
     line = next(i for i, x in enumerate(script.split("\n")) if "dsbulk=$dsb" in x)
     test = " ".join(script.split("\n")[line - 1:line + 1])
     assert "= /usr/share/dsbulk/bin/dsbulk" in test and ".cassandra_install" in test

@@ -13,7 +13,7 @@ import yaml
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 from ansible_collections.community.cassandra.tests.unit.import_nodes import node
 from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, task_runs, trust_as_template
-from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task, shell_script
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 with open(PLAYBOOK, encoding="utf-8") as f:
@@ -89,7 +89,7 @@ def test_a_jvm_not_the_units_is_noted_and_not_read_for_the_proofs():
     assert "the running JVM's arguments and environment not used to prove the roles' files give it the same: " + why \
         in notes
     assert not [n for n in node({"import_cluster_unit": {"jvm_untrusted": ""}})["notes"] if "not used to prove" in n]
-    read = find_task(READ_TASKS, "Read the running Cassandra (conf dir, Cassandra and Java versions)")["ansible.builtin.shell"]
+    read = shell_script(find_task(READ_TASKS, "Read the running Cassandra (conf dir, Cassandra and Java versions)"))
     assert "/files/jvm_proof.sh" in read and 'echo "jvm_untrusted=$(jvm_untrusted "$pid"' in read
     files = next(t for t in READ_TASKS if t.get("name", "").startswith("Read the config files, when they were"))
     assert "import_cluster_unit.jvm_untrusted | default('') == ''" in files["vars"]["_wanted"]

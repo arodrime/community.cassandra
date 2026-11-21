@@ -2,11 +2,13 @@
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 """Read a task file as Ansible parses it: its static import_tasks replaced by the tasks they import, so a
 test finds a task by name whichever file of the role it was moved to; and find a task or a play by name, wherever
-it is (any play, inside a block, its rescue or always), so a test reads what a task does, not where it is."""
+it is (any play, inside a block, its rescue or always), so a test reads what a task does, not where it is; and the
+script a shell task runs, inline or in a template of the playbook."""
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 import os
+import re
 
 import yaml
 
@@ -75,3 +77,20 @@ def find_play(plays, name):
     if len(found) != 1:
         raise AssertionError("%d plays named %r" % (len(found), name))
     return found[0]
+
+
+# a shell task whose script is a template of the playbook: shell: "{{ lookup('ansible.builtin.template', ...) }}"
+_SCRIPT_LOOKUP = re.compile(r"^\{\{ lookup\('ansible\.builtin\.template', playbook_dir ~ '/([^']+)'\) \}\}$")
+_LEADING_COMMENT = re.compile(r"\A\{#.*?#\}\n?", re.S)
+PLAYBOOKS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "playbooks"))
+
+
+def shell_script(task):
+    """The script a shell task of a playbook runs, as written: its inline text, or the playbook's template it looks
+    up without the Jinja comment that starts it; its Jinja ({{ }}) left as it is."""
+    text = task["ansible.builtin.shell"]
+    looked_up = _SCRIPT_LOOKUP.match(text)
+    if not looked_up:
+        return text
+    with open(os.path.join(PLAYBOOKS, looked_up.group(1)), encoding="utf-8") as f:
+        return _LEADING_COMMENT.sub("", f.read(), count=1)

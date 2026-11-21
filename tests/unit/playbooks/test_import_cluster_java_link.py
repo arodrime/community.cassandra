@@ -24,7 +24,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import_con
     cassandra_import_convergence)
 from ansible_collections.community.cassandra.tests.unit.import_nodes import node
 from ansible_collections.community.cassandra.tests.unit.helpers import task_runs, templar_for, trust_as_template
-from ansible_collections.community.cassandra.tests.unit.task_files import find_task
+from ansible_collections.community.cassandra.tests.unit.task_files import find_task, shell_script
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 OFF = {"cassandra_java_set_default": False}
@@ -196,7 +196,7 @@ def test_unread_nodes_keep_it_too():
 
 
 def _java_lines():
-    script = task("Read the running Cassandra (conf dir, Cassandra and Java versions)")["ansible.builtin.shell"]
+    script = shell_script(task("Read the running Cassandra (conf dir, Cassandra and Java versions)"))
     lines = script.split("\n")
     start = next(i for i, x in enumerate(lines) if x.strip().startswith("bin=$(readlink /proc/$pid/exe"))
     end = next(i for i, x in enumerate(lines) if x.strip() == 'echo "sysjava=$sys"')
@@ -472,7 +472,7 @@ def test_java_home_gone_refuses_the_node():
 
 def test_read_task_splits_as_ansible_does():
     # (a quote in a comment of the script, e.g. "java's", fails the task before it runs)
-    split_args(task("Read the running Cassandra (conf dir, Cassandra and Java versions)")["ansible.builtin.shell"])
+    split_args(shell_script(task("Read the running Cassandra (conf dir, Cassandra and Java versions)")))
 
 
 def test_lines_java_gone_and_another_one(tmp_path):

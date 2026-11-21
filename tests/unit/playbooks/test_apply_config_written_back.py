@@ -16,9 +16,11 @@ import json
 import os
 
 import pytest
+import yaml
 
 from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import (
     FIND, find, render, with_task_vars)
+from ansible_collections.community.cassandra.tests.unit.task_files import find_task, shell_script
 
 AS_STARTED = find(FIND["tasks"], "Note the files written back as the running Cassandra started with them")
 NOTE = find(FIND["tasks"], "Note what this node needs")
@@ -413,7 +415,8 @@ def test_the_environment_read_is_the_unit_s_not_the_jvm_s(tmp_path):
     # the import reads the same, its "no restart" then as apply_config's proof
     with open(os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")) as f:
         text = f.read()
-    assert JVM_ENV_GREP in text
+    import_read = find_task(yaml.safe_load(text), "Read the running Cassandra (conf dir, Cassandra and Java versions)")
+    assert JVM_ENV_GREP in shell_script(import_read)
     assert "environment: \"{{ dict(import_cluster_unit.env | default({}), **(import_cluster_unit.jvm_env" in text
 
 

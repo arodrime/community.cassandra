@@ -21,7 +21,7 @@ with warnings.catch_warnings():  # already done under ansible-test
 
 from ansible_collections.community.cassandra.tests.unit.import_nodes import node
 from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, templar_for, trust_as_template
-from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task, shell_script
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 
@@ -218,11 +218,30 @@ def test_packages_read_as_package_facts_gives_them():
     pairs = render(WORK_OUT_VARS["_pairs"], _kv=kv)
     assert render(WORK_OUT_VARS["_installed"], _pairs=pairs) == {"cassandra": "5.0.7", "libjemalloc2": "5.3.0-2"}
     script = task("Read the running Cassandra (conf dir, Cassandra and Java versions)")
-    assert "rpm -q --qf '%{VERSION}\\n'" in script["ansible.builtin.shell"]
-    assert "${db:Status-Status} ${Version}" in script["ansible.builtin.shell"]
     for name in ("cassandra", "cassandra-tools", "jemalloc", "libjemalloc2"):
         assert name in script["environment"]["IMPORT_CLUSTER_PACKAGES"]
     assert "debian_packages" in script["environment"]["IMPORT_CLUSTER_PACKAGES"]
+
+
+@pytest.mark.parametrize("family, tool, asked", [
+    ("RedHat", "rpm", ["-q", "--qf", "%{VERSION}\\n", "cassandra"]),  # (rpm's VERSION, a line each)
+    ("Debian", "dpkg-query", ["-W", "-f", "${db:Status-Status} ${Version}\\n", "cassandra"]),
+])
+def test_packages_asked_as_package_facts_asks_them(tmp_path, family, tool, asked):
+    """The read's lines that ask each package's version, as the node gets them: rpm or dpkg-query asked as
+    package_facts asks them (their arguments logged by stand-ins)."""
+    tool_path = tmp_path / tool
+    tool_path.write_text('#!/bin/sh\nprintf "%%s\\0" "$@" > "%s"\necho "installed 4.1.5"\n' % (tmp_path / "asked"))
+    tool_path.chmod(0o755)
+    script = render(task("Read the running Cassandra (conf dir, Cassandra and Java versions)")["ansible.builtin.shell"],
+                    playbook_dir=os.path.dirname(PLAYBOOK), _cassandra_service_nodetool="nodetool")
+    lines = script.split("\n")
+    first = next(i for i, line in enumerate(lines) if line.startswith("for p in $IMPORT_CLUSTER_PACKAGES"))
+    last = next(i for i, line in enumerate(lines) if i > first and line == "done")
+    env = dict(os.environ, PATH="%s:%s" % (tmp_path, os.environ["PATH"]), IMPORT_CLUSTER_PACKAGES="cassandra",
+               IMPORT_CLUSTER_OS_FAMILY=family)
+    subprocess.run(["sh", "-c", "\n".join(lines[first:last + 1])], env=env, check=True, stdout=subprocess.PIPE)
+    assert (tmp_path / "asked").read_text().split("\0")[:-1] == asked
 
 
 @pytest.mark.parametrize("from_file, read, pkg", [
@@ -301,7 +320,7 @@ def test_package_script_with_drop_ins_of_its_own(dropins, other, imported):
 
 
 def test_unit_read_says_the_drop_in_lines_besides_environment():
-    script = task("Read the running Cassandra (conf dir, Cassandra and Java versions)")["ansible.builtin.shell"]
+    script = shell_script(task("Read the running Cassandra (conf dir, Cassandra and Java versions)"))
     assert "unit_dropin_other=" in script and "*/cassandra.service.d/*" in script
     unit = WORK_OUT["import_cluster_unit"]
     assert render(str(unit["dropin_other"]), _kv={"unit_dropin_other": "LimitNOFILE=1;"}) == "LimitNOFILE=1;"
@@ -317,14 +336,14 @@ def test_unit_facts_read_the_script_and_its_package():
 
 
 def test_read_script_verifies_the_init_script():
-    script = task("Read the running Cassandra (conf dir, Cassandra and Java versions)")["ansible.builtin.shell"]
+    script = shell_script(task("Read the running Cassandra (conf dir, Cassandra and Java versions)"))
     assert 'rpm -V' in script and 'dpkg --verify' in script and 'echo "pkg_script=modified"' in script
 
 
 def script_state(tmp_path, tool, verify):
     """pkg_script as the task's own lines say it for an init script of package zorglub, rpm -V or dpkg --verify (tool)
     printing verify; its path: the one systemd gives."""
-    lines = task("Read the running Cassandra (conf dir, Cassandra and Java versions)")["ansible.builtin.shell"].split("\n")
+    lines = shell_script(task("Read the running Cassandra (conf dir, Cassandra and Java versions)")).split("\n")
     start = next(i for i, line in enumerate(lines) if line.lstrip().startswith("# an init script:"))
     end = next(i for i in range(start, len(lines)) if lines[i] == "fi")
     init = tmp_path / "init.d" / "cassandra"

@@ -15,14 +15,14 @@ import pytest
 import yaml
 
 from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
-from ansible_collections.community.cassandra.tests.unit.task_files import find_task
+from ansible_collections.community.cassandra.tests.unit.task_files import find_task, shell_script
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 
 
 with open(PLAYBOOK, encoding="utf-8") as f:
     PLAYS = yaml.safe_load(f)
-SCRIPT = find_task(PLAYS, "Look for Medusa")["ansible.builtin.shell"]
+SCRIPT = shell_script(find_task(PLAYS, "Look for Medusa"))
 
 
 TRUSTED = """trusted() { case $(stat -c %U "$1" 2>/dev/null) in root|cassandra) ;; *) return 1 ;; esac; }"""
