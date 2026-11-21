@@ -149,7 +149,9 @@ def _label(path, owners):
 
 
 def _sysctl(recs, wanted, own):
-    """-> lines, carried vars, carried lines."""
+    """The sysctl records, the role's settings (wanted), whether the role set the node up (own) -> (the report's
+    lines, the cassandra_linux_sysctl* variables to write, the notes: what is carried, and what is NOT
+    carried and why)."""
     role = dict((k, v) for k, v in (wanted.get("sysctl") or {}).items())
     role_file = wanted.get("sysctl_file") or "/etc/sysctl.d/60-cassandra.conf"
     files, live, link, order, effective = _sysctl_read(recs)
@@ -187,6 +189,29 @@ def _sysctl(recs, wanted, own):
     return lines, out, notes + more
 
 
+def _sysctl_read(recs):
+    """The sysctl records -> (files: {path: [(key, value)]} in the order read, live: {key: value}, link: the link
+    to /etc/sysctl.conf in /etc/sysctl.d (None), order: the files in the order read, effective: {key: (value,
+    the file it comes from)})."""
+    files = {}
+    for kind, rest in recs:
+        if kind == "sysctl":
+            path, line = _fields(rest, 2)
+            kv = _sysctl_line(line)
+            if kv:
+                files.setdefault(path, []).append(kv)
+    live = dict((_sysctl_key(k), v) for k, v in (_fields(rest, 2) for kind, rest in recs if kind == "sysctl_live"))
+    link = next((rest for kind, rest in recs if kind == "sysctl_link"), None)
+    masked = {os.path.basename(rest) for kind, rest in recs if kind == "masked" and "/sysctl.d/" in rest}
+    order = _sysctl_order(list(files), link, masked)
+    files = dict((p, files[p]) for p in order)
+    effective = {}  # key -> (value, path)
+    for path in order:
+        for key, value in files[path]:
+            effective[key] = (value, path)
+    return files, live, link, order, effective
+
+
 def _sysctl_relevant(files, order, role, owners, own_values):
     """The keys the report looks at: the role's, then the other keys of the role's own file on a node it set up
     (own_values: that file's, None when not such a node), else of the admin's files named for Cassandra (such a file
@@ -197,6 +222,52 @@ def _sysctl_relevant(files, order, role, owners, own_values):
     return list(role) + sorted({k for p in cassandra_files for k, dummy in files[p]} - set(role))
 
 
+def _sysctl_lines(files, order, effective, live, link, role, relevant, owners):
+    """The report's lines: each relevant setting of each file (against the role's, the file it loses to), a live
+    value the files do not give, /etc/sysctl.conf not read at boot."""
+    lines = []
+    for path in order:
+        for key, value in files[path]:
+            if key not in relevant:
+                continue
+            won = effective[key][1]
+            lines.append("sysctl %s: %s = %s%s%s" % (
+                _label(path, owners), key, value, _vs(value, role.get(key), "cassandra_linux"),
+                "" if won == path else ", overridden by %s" % won))
+    for key in relevant:
+        value = live.get(key, "")
+        if value == "":
+            continue
+        ref = effective[key][0] if key in effective else role.get(key)
+        if ref is not None and _norm(value) != _norm(ref):
+            lines.append("sysctl live: %s = %s (%s)" % (
+                key, value, ("files say %s" % effective[key][0]) if key in effective
+                else "no file sets it; cassandra_linux: %s" % _norm(role[key])))
+    if SYSCTL_CONF in order and not link and any(k in relevant for k, dummy in files[SYSCTL_CONF]):
+        lines.append("sysctl %s: no link to it in /etc/sysctl.d, systemd-sysctl does not read it at boot" % SYSCTL_CONF)
+    return lines
+
+
+def _sysctl_carried(role, relevant, effective, owners, own, own_values, role_file):
+    """-> (the values the node gets from the admin's files, {key: the file each one comes from})."""
+    if own and own_values:  # exactly its own file (a key it lacks would be added)
+        carried = dict((k, _typed(v)) for k, v in own_values.items())
+        return carried, dict.fromkeys(carried, role_file)
+    if own:
+        # nothing in the role's file (another cassandra_linux_sysctl_file, an older role): the role's
+        # keys an admin file sets, in that file; the others not written (the role's defaults would be)
+        carried, won_by = {}, {}
+        keys = role
+    else:
+        carried, won_by = dict(role), {}
+        keys = relevant
+    for key in keys:
+        if key in effective and _admin(effective[key][1], owners):
+            carried[key] = _typed(effective[key][0])
+            won_by[key] = effective[key][1]
+    return carried, won_by
+
+
 def _sysctl_none_set(role):
     """No file of these nodes sets the role's keys: the role's keys would be added, a change -> none written, as on
     these nodes (out, notes)."""
@@ -204,6 +275,18 @@ def _sysctl_none_set(role):
         return {}, []
     return {"cassandra_linux_sysctl": {}}, [
         "cassandra_linux_sysctl: {}, no file of these nodes sets the role's kernel settings: cassandra_linux sets none"]
+
+
+def _sysctl_target(won_by, order, link, own, own_values, role_file):
+    """The file the role is to write its keys in: its own on a node it set up, else the file that sets most of
+    them (the last read on a tie; not /etc/sysctl.conf when systemd-sysctl does not read it)."""
+    if own and (own_values or not won_by):
+        return role_file
+    counts = {}
+    for path in won_by.values():
+        counts[path] = counts.get(path, 0) + 1
+    candidates = [p for p in counts if link or p != SYSCTL_CONF] or [role_file]
+    return max(candidates, key=lambda p: (counts.get(p, 0), order.index(p) if p in order else -1))
 
 
 def _sysctl_in_target(files, target, won_by):
@@ -264,87 +347,6 @@ def _sysctl_values_note(carried, changed, missing, dropped):
         (" (%s)" % "; ".join(["without %s, %s" % (", ".join(keys), why) for keys, why in (
             (absent, "as in their file"), (left, "NOT carried")) if keys])) if missing
         else " (the role's other keys at their default)")
-
-
-def _sysctl_target(won_by, order, link, own, own_values, role_file):
-    """The file the role is to write its keys in: its own on a node it set up, else the file that sets most of
-    them (the last read on a tie; not /etc/sysctl.conf when systemd-sysctl does not read it)."""
-    if own and (own_values or not won_by):
-        return role_file
-    counts = {}
-    for path in won_by.values():
-        counts[path] = counts.get(path, 0) + 1
-    candidates = [p for p in counts if link or p != SYSCTL_CONF] or [role_file]
-    return max(candidates, key=lambda p: (counts.get(p, 0), order.index(p) if p in order else -1))
-
-
-def _sysctl_read(recs):
-    """The sysctl records -> (files: {path: [(key, value)]} in the order read, live: {key: value}, link: the link
-    to /etc/sysctl.conf in /etc/sysctl.d (None), order: the files in the order read, effective: {key: (value,
-    the file it comes from)})."""
-    files = {}
-    for kind, rest in recs:
-        if kind == "sysctl":
-            path, line = _fields(rest, 2)
-            kv = _sysctl_line(line)
-            if kv:
-                files.setdefault(path, []).append(kv)
-    live = dict((_sysctl_key(k), v) for k, v in (_fields(rest, 2) for kind, rest in recs if kind == "sysctl_live"))
-    link = next((rest for kind, rest in recs if kind == "sysctl_link"), None)
-    masked = {os.path.basename(rest) for kind, rest in recs if kind == "masked" and "/sysctl.d/" in rest}
-    order = _sysctl_order(list(files), link, masked)
-    files = dict((p, files[p]) for p in order)
-    effective = {}  # key -> (value, path)
-    for path in order:
-        for key, value in files[path]:
-            effective[key] = (value, path)
-    return files, live, link, order, effective
-
-
-def _sysctl_lines(files, order, effective, live, link, role, relevant, owners):
-    """The report's lines: each relevant setting of each file (against the role's, the file it loses to), a live
-    value the files do not give, /etc/sysctl.conf not read at boot."""
-    lines = []
-    for path in order:
-        for key, value in files[path]:
-            if key not in relevant:
-                continue
-            won = effective[key][1]
-            lines.append("sysctl %s: %s = %s%s%s" % (
-                _label(path, owners), key, value, _vs(value, role.get(key), "cassandra_linux"),
-                "" if won == path else ", overridden by %s" % won))
-    for key in relevant:
-        value = live.get(key, "")
-        if value == "":
-            continue
-        ref = effective[key][0] if key in effective else role.get(key)
-        if ref is not None and _norm(value) != _norm(ref):
-            lines.append("sysctl live: %s = %s (%s)" % (
-                key, value, ("files say %s" % effective[key][0]) if key in effective
-                else "no file sets it; cassandra_linux: %s" % _norm(role[key])))
-    if SYSCTL_CONF in order and not link and any(k in relevant for k, dummy in files[SYSCTL_CONF]):
-        lines.append("sysctl %s: no link to it in /etc/sysctl.d, systemd-sysctl does not read it at boot" % SYSCTL_CONF)
-    return lines
-
-
-def _sysctl_carried(role, relevant, effective, owners, own, own_values, role_file):
-    """-> (the values the node gets from the admin's files, {key: the file each one comes from})."""
-    if own and own_values:  # exactly its own file (a key it lacks would be added)
-        carried = dict((k, _typed(v)) for k, v in own_values.items())
-        return carried, dict.fromkeys(carried, role_file)
-    if own:
-        # nothing in the role's file (another cassandra_linux_sysctl_file, an older role): the role's
-        # keys an admin file sets, in that file; the others not written (the role's defaults would be)
-        carried, won_by = {}, {}
-        keys = role
-    else:
-        carried, won_by = dict(role), {}
-        keys = relevant
-    for key in keys:
-        if key in effective and _admin(effective[key][1], owners):
-            carried[key] = _typed(effective[key][0])
-            won_by[key] = effective[key][1]
-    return carried, won_by
 
 
 # --- limits ---
@@ -651,7 +653,7 @@ def _disks(recs, wanted):
     linux = {"readahead_kb": out.get("cassandra_data_readahead_kb", role_ra),
              "scheduler": out.get("cassandra_data_scheduler", wanted.get("scheduler", "none")),
              "lvm_readahead": out.get("cassandra_data_lvm_readahead", wanted.get("lvm_readahead", ""))}
-    changes = [c["what"] for c in _disk_changes_of(recs, linux, True, True) if c["effect"] == CHANGE] \
+    changes = [c["what"] for c in _data_device_changes(recs, linux, True, True) if c["effect"] == CHANGE] \
         if role_ra is not None else []
     if changes:
         out["cassandra_data_disk_tuning"] = False
@@ -1599,7 +1601,7 @@ def _rule_lines_wanted(devices, kb, scheduler, lv_target):
     return False
 
 
-def _disk_changes_of(recs, linux, live, boot):
+def _data_device_changes(recs, linux, live, boot):
     """The data devices (disks_apply.yml): read-ahead, scheduler and LVM read-ahead (live), the udev rule (no
     effect when the devices keep what they have now), tuned's profiles."""
     ra = str(linux.get("readahead_kb", 4))
@@ -1668,7 +1670,7 @@ def cassandra_linux_changes(text, linux, facts=None, own=False):
     return (_sysctl_changes(recs, linux, live) + _swap_changes(recs, linux, live)
             + _limits_changes(recs, linux, own, family) + _thp_changes(recs, linux, live, boot)
             + _timesync_changes(recs, linux, family)
-            + _disk_changes_of(recs, linux, live, boot))
+            + _data_device_changes(recs, linux, live, boot))
 
 
 def cassandra_os_import(text, wanted):
