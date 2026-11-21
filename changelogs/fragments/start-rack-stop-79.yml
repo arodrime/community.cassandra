@@ -1,2 +1,2 @@
 bugfixes:
-  - "start_rack playbook - its stop on a node of the rack not UN is within 79 columns: the ``IF ... IS LOST FOR GOOD`` lines wrapped, the ``replace_node`` and ``remove_dead_node`` commands cut between their arguments (`` \\`` at the end of each line but the last, they paste as one), no longer lines of up to 116 columns."
+  - "start_rack playbook - its stop on a node of the rack not UN fits 79 columns, the ``IF ... IS LOST FOR GOOD`` lines included: the ``replace_node`` and ``remove_dead_node`` commands are cut between their arguments and paste as one."
