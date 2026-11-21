@@ -751,6 +751,10 @@ of the cluster is only a warning, unless a node could be one of the rack. The ta
   ``ansible_host``);
 - a node of the rack not reached over ssh stops the run at once; one not UN, or whose ``nodetool status`` fails,
   stops it (a node down: after waiting for it to come back; way out: run ``start_rack`` again);
+- a node of the rack left out by ``--limit`` (this run does not start it) and not UN is not waited for: once the
+  others are UN, the run stops, naming it (its inventory name when its variables give its address or its name
+  resolves to it on the controller, else its address, the nodes left out named under it), the way out the
+  ``start_rack`` command without ``--limit``;
 - a node outside the rack not UN for the node outside the rack read from (down, joining, leaving, moving...), not
   reached over ssh, or whose ``nodetool status`` fails, is a warning row, not waited for; one only the node of the
   rack, just started, sees not UN is waited for first;

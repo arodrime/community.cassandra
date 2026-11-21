@@ -1,0 +1,2 @@
+bugfixes:
+  - "start_rack playbook - under ``--limit``, a node of the rack left out of the run and not UN is no longer waited for (``cassandra_service_health_timeout``, 10 minutes by default) although the run never starts it: once the other nodes of the rack are UN, the run stops naming it by its inventory name (its address when neither its variables nor the controller's resolver give it), with the ``start_rack`` command without ``--limit`` as the way out, no longer ``run start_rack again``."

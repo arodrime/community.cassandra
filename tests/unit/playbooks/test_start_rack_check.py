@@ -46,6 +46,7 @@ CHECK = "Check the rack's nodes and the rest of the cluster"
 SAY = "Say the rack's nodes are UN, and the nodes outside the rack not UN or not reached"
 AFTER = "Judge the last read"
 STOP = "Stop on the rack's nodes not UN"
+LEFT = "Stop on the rack's nodes left out by --limit not UN"
 PROBE = ["Reach each node over ssh", "Stop when a node of the rack is not reached over ssh",
          "Leave out a node outside the rack not reached over ssh", "Gather the network facts"]
 
@@ -99,8 +100,9 @@ def with_addresses(names):
     return hostvars
 
 
-def noted(read, peer=None, names=None, unreached=(), groups=None, hostvars=None, schema=None):
-    """the variables after the first read (peer: n1's result, when it differs) and its judgment"""
+def noted(read, peer=None, names=None, unreached=(), groups=None, hostvars=None, schema=None, play=None):
+    """the variables after the first read (peer: n1's result, when it differs) and its judgment; play: the hosts of
+    the play (--limit), every node by default"""
     names = ADDRESSES if names is None else names
     variables = dict(groups=GROUPS if groups is None else groups, cassandra_health_findings=findings(read, peer, names),
                      cassandra_target_rack="r2", cassandra_target_dc="dc1", inventory_hostname="n2",
@@ -109,7 +111,9 @@ def noted(read, peer=None, names=None, unreached=(), groups=None, hostvars=None,
                      _cassandra_start_rack_members=members(groups), _cassandra_start_rack_not_probed=[],
                      _cassandra_start_rack_command_args=COMMAND_ARGS,
                      hostvars=with_addresses(names) if hostvars is None else hostvars,
-                     cassandra_health_self=read, cassandra_health_peer=peer or read, cassandra_health_schema=schema or {})
+                     cassandra_health_self=read, cassandra_health_peer=peer or read, cassandra_health_schema=schema or {},
+                     ansible_play_hosts_all=sorted(RACKS) if play is None else play)
+    variables["_cassandra_start_rack_left_out"] = render(PLAY["vars"]["_cassandra_start_rack_left_out"], **variables)
     set_facts(NOTE, variables)
     return variables
 
@@ -129,13 +133,13 @@ def check_var(name, variables):
 
 
 def check(unreached=(), peer=None, then=None, then_peer=None, names=None, groups=None, racks=None, hostvars=None,
-          schema=None, **states):
+          schema=None, play=None, **states):
     """the first read (peer: n1's result, when it differs), judged, the check again with the nodes outside the rack
     noted not judged (when the first read found a problem; then: the ring read then, else the same; then_peer:
     n1's then, else the same), the last read judged -> (the problems that stop the run, then the lines that say
     why (the stop's), the lines said or None)"""
     read = ring(racks, **states)
-    variables = noted(read, peer, names, unreached, groups, hostvars, schema)
+    variables = noted(read, peer, names, unreached, groups, hostvars, schema, play)
     if cassandra_health_sentences(variables["cassandra_health_findings"]):
         # the check again (its findings once the wait ends)
         any_ok = check_var("cassandra_service_health_any_ok", variables)
@@ -150,11 +154,63 @@ def check(unreached=(), peer=None, then=None, then_peer=None, names=None, groups
         return render(stop["vars"]["_cassandra_health_stop_on"], **variables) + render(
             stop["vars"]["_cassandra_health_why"], **variables), None
     assert verdict["problems"] == []
+    left = TASKS[LEFT]
+    if all(render("{{ %s }}" % w, ansible_check_mode=False, **variables) for w in left["when"]):
+        variables["_start_command"] = render(left["vars"]["_start_command"], **variables)
+        return render(left["ansible.builtin.fail"]["msg"], **variables), None
     say = TASKS[SAY]
     variables.update((k, render(v, **variables)) for k, v in say["vars"].items() if k.startswith("_"))
     if not all(render("{{ %s }}" % w, ansible_check_mode=False, **variables) for w in say["when"]):
         return [], None
     return [], render(say["ansible.builtin.debug"]["msg"], **variables)
+
+
+LEFT_OUT = ["rack r2 (dc1): not UN, left out by --limit (this run did not start them):"]
+WAY_OUT = ["WAY OUT  start them: run start_rack without --limit",
+           "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
+           "    -e cassandra_target_dc=dc1 -e cassandra_target_rack=r2"]
+
+
+def test_a_node_of_the_rack_left_out_by_limit_is_not_waited_for_and_named():
+    # S26 d: start_rack --limit n2 while n3 (same rack) is down: n3 was waited for 10 minutes (this run never
+    # starts it), named by its address, and the way out said "run start_rack again" (the same --limit). Now: not
+    # waited for, the stop once n2 is UN, n3 by its name, the way out without --limit
+    variables = noted(ring(n3="DN"), play=["n1", "n2", "n4"])
+    first = variables["_cassandra_start_rack_first_verdict"]
+    assert [n["name"] for n in first["left_out"]] == ["n3"] and first["problems"] == []
+    assert "10.0.0.3" in check_var("cassandra_service_health_any_ok", variables)
+    problems, said = check(play=["n1", "n2", "n4"], n3="DN")
+    assert problems == LEFT_OUT + ["  n3  DN"] + WAY_OUT and said is None
+    assert all(len(line) <= 79 for line in problems)
+    assert NAMES.index(STOP) < NAMES.index(LEFT) < NAMES.index(SAY)
+    assert TASKS[LEFT]["vars"]["cassandra_output"] is True and "not ansible_check_mode" in TASKS[LEFT]["when"]
+    # n3 UN: nothing to stop on, the rack said UN with it
+    assert check(play=["n1", "n2", "n4"]) == ([], ["Rack r2 (dc1): every node is UN (n2, n3)."])
+    # a node of the rack in the run not UN: its stop, as without --limit (n3 left out of it, not waited for)
+    problems, said = check(play=["n1", "n2", "n4"], n2="UJ", n3="DN")
+    assert problems and all(p.startswith("n2 ") for p in problems) and said is None
+    # no --limit: n3 is waited for and stops the run as before
+    assert check(n3="DN")[0] == ["n3 (10.0.0.3, r2) is DN, seen from n1 and n2"]
+
+
+def test_a_node_left_out_by_limit_known_by_no_address_is_named_as_the_controller_resolves_it(monkeypatch):
+    # out of the play, n3 has no facts and the inventory no address for it (ansible_host not set): its name
+    # resolved on the controller (cassandra_ring's hosts_by_address)
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_ring
+    names = dict((a, n) for a, n in ADDRESSES.items() if n != "n3")
+    monkeypatch.setattr(cassandra_ring, "_resolved", lambda name: ["10.0.0.3"] if name == "n3" else [])
+    problems, said = check(names=names, play=["n1", "n2", "n4"], n3="DN")
+    assert problems == LEFT_OUT + ["  n3  DN"] + WAY_OUT
+    # not resolved: its address, the nodes left out named under it; no "no inventory host has this address" lines
+    monkeypatch.setattr(cassandra_ring, "_resolved", lambda name: [])
+    problems, said = check(names=names, play=["n1", "n2", "n4"], n3="DN")
+    assert problems == LEFT_OUT + ["  10.0.0.3  DN", "  (no host known by that address; left out by --limit: n3)"] + WAY_OUT
+    variables = noted(ring(n3="DN"), names=names, play=["n1", "n2", "n4"])
+    assert variables["_cassandra_start_rack_first_verdict"]["unknown_lines"] == []
+    # a node no host is known by that the ring puts in another rack: not taken for the node left out
+    names = dict((a, n) for a, n in ADDRESSES.items() if n not in ("n3", "n4"))
+    variables = noted(ring(n3="DN", n4="DN"), names=names, play=["n1", "n2"])
+    assert [n["address"] for n in variables["_cassandra_start_rack_first_verdict"]["left_out"]] == ["10.0.0.3"]
 
 
 def test_a_node_down_outside_the_rack_is_a_warning_not_a_failure():
