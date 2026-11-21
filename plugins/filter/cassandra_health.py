@@ -15,6 +15,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import re
+import textwrap
 
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import JMX_CAUSES
@@ -366,7 +367,7 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
     absent = list(absent or [])
     if absent and counted:
         lines.append("  not counted, marked cassandra_node_state: absent: %s" % out.nodes(absent))
-    block = ["", "SETTINGS TO REVIEW"] + ["  " + line for line in settings] if settings else []
+    block = ["", "SETTINGS TO REVIEW"] + _review_lines(settings) if settings else []
     if not rows:
         size = out.number(members, len(hosts))  # (text before ansible-core 2.19, '' for none)
         return {"healthy": True, "problems": 0, "lines": [
@@ -375,6 +376,18 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
     todo = _report_todo(rows, names, unreachable, absent, counted, topology_command)
     head = "NOT HEALTHY  %s  %s checked, %s" % (cluster, out.plural(len(checked), "node"), out.plural(len(rows), "problem"))
     return {"healthy": False, "problems": len(rows), "lines": [head] + lines + out.todo(todo) + block}
+
+
+def _review_lines(settings):
+    """The SETTINGS TO REVIEW rows (cassandra_suspicious_settings': a finding, what to do under it, 2 columns in)
+    within 79 columns: each indented 2 more, its next lines 4 further in than its first (never at the column of
+    the line under it)."""
+    lines = []
+    for line in settings:
+        indent = "  " + " " * (len(line) - len(line.lstrip()))
+        lines += textwrap.wrap(line.strip(), 79, initial_indent=indent, subsequent_indent=indent + "    ",
+                               break_long_words=False, break_on_hyphens=False) or [indent.rstrip()]
+    return lines
 
 
 def _ring_node(cluster_status, address):

@@ -1,0 +1,2 @@
+bugfixes:
+  - "health_check playbook - the rows of SETTINGS TO REVIEW (a heap too small, ...) are wrapped at 79 columns, each row's next lines further in than the line under it, no longer one line of up to 120 columns."

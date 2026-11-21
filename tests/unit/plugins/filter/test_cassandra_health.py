@@ -630,5 +630,14 @@ def test_report_settings_to_review_after_the_nodes_state():
     report = cassandra_health_report({"n1": []}, "c", ["n1"], settings=settings)
     assert report["healthy"] and report["lines"] == [
         "HEALTHY  c  1 node  1 UN, schema agreed, no streams, ports open", "", "SETTINGS TO REVIEW",
-        "  " + settings[0], "  " + settings[1]]
+        "  heap 256M (cassandra_heap_size) on n1: too small, Cassandra needs 2G to 31G",
+        "      (under 32G)",
+        "    set cassandra_heap_size; kept on purpose: list heap_size in",
+        "        cassandra_settings_kept_on_purpose"]
+    # S28 (two nodes, the RAM known): each row within 79 columns, its next lines further in than the line under it
+    settings = ["heap 256M (cassandra_heap_size) on h-n1, h-n2: too small, Cassandra needs 2G to 31G (at most half"
+                " the RAM, under 32G)", settings[1]]
+    lines = cassandra_health_report({"n1": []}, "c", ["n1"], settings=settings)["lines"][3:]
+    assert max(len(line) for line in lines) <= 79
+    assert lines[1:3] == ["      to 31G (at most half the RAM, under 32G)", "    set cassandra_heap_size; kept on purpose: list heap_size in"]
     assert cassandra_health_report({"n1": []}, "c", ["n1"], settings=[])["lines"][1:] == []
