@@ -1,2 +1,2 @@
 bugfixes:
-  - "stop_rack playbook - its last lines give the exact ``start_rack`` command (the run's inventory and cluster, no longer ``-i <inventory>``) on a line of its own, within 79 columns, no longer one line of up to 190."
+  - "stop_rack playbook - its last lines name the nodes stopped, one per line, and give the exact ``start_rack`` command (the run's inventory and cluster, no longer ``-i <inventory>``; under a ``--limit`` that leaves out nodes of the rack, a ``--limit`` of the nodes stopped) on a line of its own, within 79 columns, no longer one line of up to 190."

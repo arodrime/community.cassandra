@@ -284,18 +284,26 @@
       vars:
         cassandra_service_state: stopped
 
-    # the exact command (the run's inventory and cluster), on a line of its own, within 79 columns
+    # the nodes stopped, a row each, then the exact command (the run's inventory and cluster; under a --limit that
+    # leaves out nodes of the rack, a --limit of the nodes stopped), on a line of its own, within 79 columns
     - name: Say how to start it again
       ansible.builtin.debug:
         msg: >-
-          {{ [cassandra_target_dc ~ '/' ~ cassandra_target_rack ~ ' is down: '
-              ~ ansible_play_hosts_all | community.cassandra.cassandra_node_list,
-              'start it again with:', '  ' ~ _start] | community.cassandra.cassandra_fit }}
+          {{ ([_head] + ansible_play_hosts_all | map('regex_replace', '^', '  ') | list
+              + ['start ' ~ ('them' if _partial else 'it') ~ ' again with:', '  ' ~ _start]) | community.cassandra.cassandra_fit }}
       run_once: true
       vars:
         cassandra_output: true
         cassandra_output_gap: true  # a block of its own
+        _head: >-
+          {{ cassandra_target_dc ~ '/' ~ cassandra_target_rack
+             ~ (', the nodes this run stopped (--limit):' if _partial | bool else ' is down, its nodes stopped:') }}
+        # nodes of the rack out of the run (--limit): left running
+        _partial: >-
+          {{ query('community.cassandra.cassandra_nodes')
+             | community.cassandra.cassandra_rack_members(hostvars, cassandra_target_dc, cassandra_target_rack)
+             | reject('in', ansible_play_hosts_all) | list | length > 0 }}
         _start: >-
           {{ 'start_rack' | community.cassandra.cassandra_command(
                extra={'cassandra_target_dc': cassandra_target_dc, 'cassandra_target_rack': cassandra_target_rack},
-               **_cassandra_rack_command_args) }}
+               limit=(ansible_play_hosts_all if _partial | bool else []), **_cassandra_rack_command_args) }}

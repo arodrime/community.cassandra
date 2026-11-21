@@ -227,11 +227,30 @@ def test_how_to_start_it_again_is_the_exact_command_within_79_columns():
     # it (the run's inventory, its cluster), on a line of its own, cut between its arguments
     with open(os.path.join(TOP, "playbooks", "stop_rack.yml"), encoding="utf-8") as f:
         say = next(t for p in yaml.safe_load(f) for t in p.get("tasks", []) if t.get("name") == "Say how to start it again")
+    rack = {"cassandra_dc": "dc1", "cassandra_rack": "r2"}
     variables = dict(cassandra_target_dc="dc1", cassandra_target_rack="r2", ansible_play_hosts_all=["h-n4", "h-n5"],
-                     ansible_inventory_sources=["/inv/hosts.yml"], _cassandra_rack_command_args=COMMAND_ARGS)
-    lines = render(say["ansible.builtin.debug"]["msg"], _start=render(say["vars"]["_start"], **variables), **variables)
-    assert lines == ["dc1/r2 is down: h-n4, h-n5", "start it again with:",
-                     "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
-                     "    -e cassandra_hosts=prod -e cassandra_target_dc=dc1 \\",
-                     "    -e cassandra_target_rack=r2"]
+                     ansible_inventory_sources=["/inv/hosts.yml"], _cassandra_rack_command_args=COMMAND_ARGS,
+                     _nodes=["h-n1", "h-n4", "h-n5"], hostvars={"h-n1": {"cassandra_rack": "r1"}, "h-n4": rack, "h-n5": rack})
+
+    def said(**more):
+        given = dict(variables, **more)
+        given["_partial"] = render(say["vars"]["_partial"].replace("query('community.cassandra.cassandra_nodes')", "_nodes"),
+                                   **given)
+        given["_start"] = render(say["vars"]["_start"], **given)
+        given["_head"] = render(say["vars"]["_head"], **given)
+        return render(say["ansible.builtin.debug"]["msg"], **given)
+    # the nodes a row each (they were "dc1/r2 is down: h-n4, h-n5")
+    assert said() == ["dc1/r2 is down, its nodes stopped:", "  h-n4", "  h-n5", "start it again with:",
+                      "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
+                      "    -e cassandra_hosts=prod -e cassandra_target_dc=dc1 \\",
+                      "    -e cassandra_target_rack=r2"]
     assert say["vars"]["cassandra_output"] is True
+    # --limit h-n4, h-n6 of the rack left running: "dc1/r2 is down" and a command starting the whole rack, h-n6
+    # too; now the nodes stopped and a --limit of them
+    variables["_nodes"].append("h-n6")
+    variables["hostvars"]["h-n6"] = rack
+    assert said(ansible_play_hosts_all=["h-n4"]) == [
+        "dc1/r2, the nodes this run stopped (--limit):", "  h-n4", "start them again with:",
+        "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
+        "    -e cassandra_hosts=prod --limit h-n4 -e cassandra_target_dc=dc1 \\",
+        "    -e cassandra_target_rack=r2"]
