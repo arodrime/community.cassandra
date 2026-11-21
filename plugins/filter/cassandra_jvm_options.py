@@ -205,109 +205,148 @@ def _env_heap(text):
     (readonly, eval, unset, +=, ${NAME:=...}, a case arm...), a line continued with a backslash or an open quote that
     names them, a here-document that names them, a file it sources (. or source), a call of a function that sets them,
     the function keyword (dash, the sh of Debian, stops on it), a block left open at the end of the file."""
-    heap = {"MAX_HEAP_SIZE": None, "HEAP_NEWSIZE": None}
-    words, later, unfollowed = [], [], []
-    greps = tested = False
-    stack, functions, setters, heredoc = [], [], set(), None
+    scan = _EnvHeapScan()
     lines = text.split("\n")
+    greps = tested = False
+    heredoc = None
     i = 0
     while i < len(lines):
         number, line = i + 1, lines[i]
-        i += 1
         # (the line of a check is the check's: from it on, what follows is not before the checks)
         greps = greps or bool(re.search(r"grep -q\w* +[\"']?Xmn", line))
         tested = tested or '"x$MAX_HEAP_SIZE"' in line
-        region = {"JVM_OPTS": not greps, "MAX_HEAP_SIZE": not tested, "HEAP_NEWSIZE": not tested}
-
-        def named(code):
-            return [m.group(1) or m.group(2) for m in ENV_NAMED.finditer(code)
-                    if region[m.group(1) or m.group(2)]]
+        scan.region = {"JVM_OPTS": not greps, "MAX_HEAP_SIZE": not tested, "HEAP_NEWSIZE": not tested}
         if heredoc is not None:  # (its body: text, not commands)
             if line.strip() == heredoc:
                 heredoc = None
-            elif named(line):
-                unfollowed.append(("a here-document", number))
-            continue
-        commands, quote = _env_scan(line)
-        joined = False
-        while (quote or re.search(r"(?<!\\)(\\\\)*\\$", line)) and i < len(lines):  # (one logical line)
-            line = (line[:-1] if not quote else line + "\n") + lines[i]
+            elif scan.named(line):
+                scan.unfollowed.append(("a here-document", number))
             i += 1
-            joined = True
-            commands, quote = _env_scan(line)
+            continue
+        line, commands, joined, i = _logical_line(lines, i)
         code = " ; ".join(c for c, dummy in commands)
-        if (joined or "\r" in line) and named(code):
-            unfollowed.append((named(code)[0], number))
+        if (joined or "\r" in line) and scan.named(code):
+            scan.unfollowed.append((scan.named(code)[0], number))
             continue
         doc = re.search(r"<<-?\s*[\"']?(\w+)", code)
         if doc:
             heredoc = doc.group(1)
         for command, conditional in commands:
-            parts = command.split()
-            first = parts[0] if parts else ""
-            header = re.match(r"^(?:function\s+)?([\w-]+)\s*\(\)\s*(\{)?\s*(.*)$", command) or \
-                re.match(r"^function\s+([\w-]+)\s*(\{)?\s*(.*)$", command)
-            if header and first == "function" and any(region.values()):  # (bash and ksh only: dash stops on it)
-                unfollowed.append(("the function keyword (not every sh has it)", number))
-            if header:
-                functions.append(header.group(1))
-                stack.append("func" if header.group(2) else "func-pending")
-                command = header.group(3)
-                parts = command.split()
-                first = parts[0] if parts else ""
-                if not command:
-                    continue
-            if first == "{":
-                if stack and stack[-1] == "func-pending":
-                    stack[-1] = "func"
-                else:
-                    stack.append("brace")
-                continue
-            if first == "}" or command.startswith("}"):
-                if stack:
-                    if stack.pop().startswith("func") and functions:
-                        functions.pop()
-                continue
-            if first in ENV_OPENS:
-                stack.append("ctl")
-            elif first in ENV_CLOSES and stack and stack[-1] == "ctl":
-                stack.pop()
-            if "func" in stack:  # (its body runs when it is called: who sets them)
-                if ENV_NAMED.search(command):
-                    setters.add(functions[-1] if functions else "")
-                continue
-            in_region = any(region.values())
-            if in_region and (first in (".", "source", "eval") or first in setters):
-                unfollowed.append(({".": "a file it sources", "source": "a file it sources", "eval": "eval"}.get(
-                    first, "%s (a function that sets them)" % first), number))
-                continue
-            m = ENV_ASSIGN.match(command)
-            if m:
-                name, value = m.group(1), m.group(2).strip()
-                inside = bool(stack) or conditional
-                if name == "JVM_OPTS":
-                    options = [w for w in re.split(r"[\s\"']+", value) if w.startswith("-")]
-                    if not region[name]:
-                        later += [w for w in options if "$" not in w]
-                    elif _env_unknown(name, value):
-                        unfollowed.append((name, number))
-                    elif inside and any(p in w for w in options for p in SWITCH_GREPS):
-                        unfollowed.append((name, number))
-                    elif not inside:
-                        words += options
-                elif region[name]:
-                    if inside or _env_unknown(name, value):
-                        unfollowed.append((name, number))
-                    else:
-                        heap[name] = value.strip("\"'") or None
-                continue
-            if first not in ENV_READERS and named(command):
-                unfollowed.append((named(command)[0], number))
-            elif first == "export" and re.search(r"\$\{\w+:?=", command) and named(command):
-                unfollowed.append((named(command)[0], number))
-    if stack:
-        unfollowed.append(("a block left open (if, case, a loop, a function)", len(lines)))
-    return {"heap": heap, "words": words, "later": later, "unfollowed": unfollowed}
+            scan.command(command, conditional, number)
+    if scan.stack:
+        scan.unfollowed.append(("a block left open (if, case, a loop, a function)", len(lines)))
+    return {"heap": scan.heap, "words": scan.words, "later": scan.later, "unfollowed": scan.unfollowed}
+
+
+def _logical_line(lines, at):
+    """lines[at] joined with the lines it continues on (a backslash at its end, a quote left open) -> (the logical
+    line, its commands (_env_scan), whether it was joined, the index of the line after it)."""
+    line = lines[at]
+    at += 1
+    commands, quote = _env_scan(line)
+    joined = False
+    while (quote or re.search(r"(?<!\\)(\\\\)*\\$", line)) and at < len(lines):
+        line = (line[:-1] if not quote else line + "\n") + lines[at]
+        at += 1
+        joined = True
+        commands, quote = _env_scan(line)
+    return line, commands, joined, at
+
+
+class _EnvHeapScan(object):
+    """What _env_heap has read so far: heap, words, later, unfollowed (as it returns them), and where it is: the
+    blocks open (stack: "func", "func-pending" before its brace, "brace", "ctl" an if, case or loop), the functions
+    being defined, the ones that set them (setters); region: {name: whether the checks of that name are still ahead},
+    set for each line."""
+
+    def __init__(self):
+        self.heap = {"MAX_HEAP_SIZE": None, "HEAP_NEWSIZE": None}
+        self.words, self.later, self.unfollowed = [], [], []
+        self.stack, self.functions, self.setters = [], [], set()
+        self.region = {}
+
+    def named(self, code):
+        """The names code mentions whose checks are still ahead."""
+        return [m.group(1) or m.group(2) for m in ENV_NAMED.finditer(code) if self.region[m.group(1) or m.group(2)]]
+
+    def command(self, command, conditional, number):
+        """One command of line number (conditional: after && or ||)."""
+        command = self._function_header(command, number)
+        if command is None:
+            return
+        parts = command.split()
+        first = parts[0] if parts else ""
+        if self._brace(first, command):
+            return
+        if first in ENV_OPENS:
+            self.stack.append("ctl")
+        elif first in ENV_CLOSES and self.stack and self.stack[-1] == "ctl":
+            self.stack.pop()
+        if "func" in self.stack:  # (its body runs when it is called: who sets them)
+            if ENV_NAMED.search(command):
+                self.setters.add(self.functions[-1] if self.functions else "")
+            return
+        self._run(command, first, conditional, number)
+
+    def _function_header(self, command, number):
+        """A function's header opens its body: -> what follows it on the line (None when nothing); command as it is
+        when not one. The function keyword is bash and ksh only (dash stops on it)."""
+        header = re.match(r"^(?:function\s+)?([\w-]+)\s*\(\)\s*(\{)?\s*(.*)$", command) or \
+            re.match(r"^function\s+([\w-]+)\s*(\{)?\s*(.*)$", command)
+        if not header:
+            return command
+        if command.split()[:1] == ["function"] and any(self.region.values()):
+            self.unfollowed.append(("the function keyword (not every sh has it)", number))
+        self.functions.append(header.group(1))
+        self.stack.append("func" if header.group(2) else "func-pending")
+        return header.group(3) or None
+
+    def _brace(self, first, command):
+        """A brace opening a function's body or a group, or closing a block -> True (nothing else to read in it)."""
+        if first == "{":
+            if self.stack and self.stack[-1] == "func-pending":
+                self.stack[-1] = "func"
+            else:
+                self.stack.append("brace")
+            return True
+        if first == "}" or command.startswith("}"):
+            if self.stack:
+                if self.stack.pop().startswith("func") and self.functions:
+                    self.functions.pop()
+            return True
+        return False
+
+    def _run(self, command, first, conditional, number):
+        """A command run where it is read (not in a function's body)."""
+        if any(self.region.values()) and (first in (".", "source", "eval") or first in self.setters):
+            self.unfollowed.append(({".": "a file it sources", "source": "a file it sources", "eval": "eval"}.get(
+                first, "%s (a function that sets them)" % first), number))
+            return
+        m = ENV_ASSIGN.match(command)
+        if m:
+            self._assignment(m.group(1), m.group(2).strip(), bool(self.stack) or conditional, number)
+        elif first not in ENV_READERS and self.named(command):
+            self.unfollowed.append((self.named(command)[0], number))
+        elif first == "export" and re.search(r"\$\{\w+:?=", command) and self.named(command):
+            self.unfollowed.append((self.named(command)[0], number))
+
+    def _assignment(self, name, value, inside, number):
+        """name=value (inside: in a block, or after && or ||)."""
+        if name == "JVM_OPTS":
+            options = [w for w in re.split(r"[\s\"']+", value) if w.startswith("-")]
+            if not self.region[name]:
+                self.later += [w for w in options if "$" not in w]
+            elif _env_unknown(name, value):
+                self.unfollowed.append((name, number))
+            elif inside and any(p in w for w in options for p in SWITCH_GREPS):
+                self.unfollowed.append((name, number))
+            elif not inside:
+                self.words += options
+        elif self.region[name]:
+            if inside or _env_unknown(name, value):
+                self.unfollowed.append((name, number))
+            else:
+                self.heap[name] = value.strip("\"'") or None
 
 
 def _reads(variables, series, java, kept=None):
