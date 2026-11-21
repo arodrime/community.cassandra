@@ -1675,11 +1675,6 @@ def _variable(path):
     return path.split(".")[0]
 
 
-def _convergence_place(report):
-    """Where the convergence is: FOR INFO below, or on the screen, the report's file (only it has FOR INFO)."""
-    return "%s (FOR INFO)" % report.report_name if report.screen else "FOR INFO"
-
-
 def _differs_entries(report, differs):
     """Each setting that differs: a table of its values (every one, with its nodes), then where they are set; on the
     screen, a value per node (more than 5 nodes with one of their own) is one row, each in the report."""

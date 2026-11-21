@@ -29,7 +29,6 @@ from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_outp
     clock as _clock, count as _count, rate as _rate, size as _size)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_keyspace_names import is_system_keyspace
 
-_GIB = out.GIB
 # the rate is measured over the checks of this many seconds (at least the last 3): long enough for an ETA
 # that does not jump with a file sent whole (a stream counts its bytes in bursts)
 _WINDOW = 300
