@@ -343,7 +343,8 @@ def test_host_ids_cut_to_fit_say_where_they_are_whole():
 DEAD_RING = {"dc1": {"nodes": [{"address": "10.0.0.1", "host_id": "aaaa-1"}, {"address": "10.0.0.4", "host_id": "dddd-4"}]}}
 DEAD_HOSTVARS = {"node4": {"ansible_host": "node4.example.com", "cassandra_listen_address": "10.0.0.4"},
                  "node5": {"ansible_host": "node5.example.com"},
-                 "node7": {"cassandra_extra_settings": {"broadcast_address": "10.0.0.7"}, "ansible_host": "10.1.1.7"}}
+                 "node7": {"cassandra_extra_settings": {"broadcast_address": "10.0.0.7"}, "ansible_host": "10.1.1.7"},
+                 "node8": {"ansible_host": 167772161}}
 
 
 @pytest.mark.parametrize("target, address", [
@@ -352,6 +353,7 @@ DEAD_HOSTVARS = {"node4": {"ansible_host": "node4.example.com", "cassandra_liste
     ("node4", "10.0.0.4"),  # an inventory host: the first of its names that is an address
     ("node7", "10.0.0.7"),  # its broadcast_address first
     ("node5", ""),  # none is
+    ("node8", "167772161"),  # an integer (YAML int): as text, as the template rendered it before
     ("other", "other"),  # as given
 ])
 def test_dead_address(target, address):

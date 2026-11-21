@@ -323,8 +323,8 @@ def _laid_out(verdict, head, tables, notes):
 def cassandra_dead_address(target, ring, hostvars, inventory_hosts):
     """remove_dead_node's target (cassandra_target_nodes), the ring (cluster_status), hostvars, the inventory's
     hosts -> the dead node's ring address: the address of a host ID of the ring, an address as is, an inventory
-    host's address (broadcast_address, cassandra_listen_address, ansible_host: the first that is an address; ''
-    when none is), else the target as given."""
+    host's address (broadcast_address, cassandra_listen_address, ansible_host: the first that is an address, as
+    text; '' when none is), else the target as given."""
     by_id = [n.get("address") for info in ring.values() for n in info["nodes"]
              if "host_id" in n and n["host_id"] == target]
     if by_id:
@@ -335,7 +335,7 @@ def cassandra_dead_address(target, ring, hostvars, inventory_hosts):
         v = hostvars[target]
         names = [(v.get("cassandra_extra_settings") or {}).get("broadcast_address", ""),
                  v.get("cassandra_listen_address", ""), v.get("ansible_host", ""), target]
-        return next((n for n in names if _DEAD_IP.match(str(n))), "")
+        return next((str(n) for n in names if _DEAD_IP.match(str(n))), "")  # an int (YAML) as text
     return target
 
 
