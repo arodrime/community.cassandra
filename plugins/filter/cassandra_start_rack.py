@@ -19,10 +19,8 @@ at an address it gives:
   found                                                         outcome
   a rack node not reached over ssh                              STOP at once
   a rack node down                                              wait, then STOP
-  a rack node left out by --limit (not started by the run),     STOP once the
-    not UN                                                        others are
-                                                                  UN, not
-                                                                  waited for
+  a rack node left out by --limit (not started by the run),     WARNING, not
+    not UN (its state from the last read)                         waited for
   a rack node in another state, or nodetool failing on it       STOP
   an outside node not UN for the node outside the rack read     WARNING, not
     from (its read failed, or none read: for the rack node)       waited for
@@ -51,8 +49,8 @@ even (no stop); a host outside the rack reached over ssh whose ping or fact gath
 
 cassandra_rack_members: the nodes the inventory puts in a rack (every node of the cluster, under --limit too).
 cassandra_rack_verdict: the table above applied to a read of the cluster.
-cassandra_rack_left_out_lines: the stop on the rack's nodes left out by --limit not UN.
-cassandra_rack_outside_lines: the rack's nodes UN, then the warning (the rest of the cluster), once the rack is UN.
+cassandra_rack_outside_lines: the rack's nodes UN (those of the run under --limit), then the warnings (the nodes
+of the rack left out by --limit not UN, the rest of the cluster), once the rack is UN.
 """
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -181,6 +179,35 @@ def _note_row(finding):
     return [what, text[len(what) + 1:] if text.startswith(what + " ") else text]
 
 
+def _ring_states(reads):
+    """The cassandra_status results read -> {ring address: [its states, as nodetool status says them]}."""
+    states = {}
+    for read in reads or []:
+        if isinstance(read, dict):
+            for value in (read.get("cluster_status") or {}).values():
+                for n in value.get("nodes", []):
+                    said = states.setdefault(_ip(n["address"]), [])
+                    state = str(n.get("status", "")) + str(n.get("state", ""))
+                    if state not in said:
+                        said.append(state)
+    return states
+
+
+def _left_out_again(first_left_out, reads):
+    """The first verdict's nodes left out by --limit not UN, the reads after the wait (cassandra_service_health_any_ok
+    kept them out of its findings) -> those nodes with their states in these reads: one UN in every read now left
+    out, one not in them (no ring read) as it was."""
+    states = _ring_states(reads)
+    again = []
+    for n in first_left_out or []:
+        now = states.get(_ip(n["address"]))
+        if now is None:
+            again.append(dict(n, states=list(n["states"])))
+        elif [s for s in now if s != "UN"]:
+            again.append(dict(n, states=[s for s in now if s != "UN"]))
+    return again
+
+
 def _left_out_names(left_out, addresses, reads):
     """The rack's nodes left out by --limit, every host's addresses, the reads -> {ring address: name} of those
     nodes: the addresses their variables give, else what their names (inventory name, ansible_host) resolve to on
@@ -221,7 +248,8 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
       rack_up: the nodes of the rack UN in the rings read (_rack_up), by name, else by address.
       left_out: the nodes of the rack not UN that are left out by --limit, [{address, name, states}]: named as
         one of them (its address theirs: _left_out_names), or no host known by its address, put in the rack by
-        the ring, while one of them is left out; the first verdict's too. Not waited for, not in problems (their stop: cassandra_rack_left_out_lines).
+        the ring, while one of them is not in the ring at an address of its own; the first verdict's with their
+        states in this read. Not waited for, not in problems: a warning (cassandra_rack_outside_lines).
       not_readers: the hosts not to read from again: the nodes outside the rack not UN, seen down, or whose
         nodetool failed.
     e.g. ([<n4 DN from n2>, <n4 DN from n1>], ["n2", "n3"], "dc1", "r2", "n2", "n1") -> {outside: [{address:
@@ -231,14 +259,17 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
     left_out = list(left_out or [])
     known = _left_out_names(left_out, addresses, reads)
     judged, all_in_ring, rack_addresses = _judge(findings, members, dc, rack, addresses, reads)
-    left = [dict(n, states=list(n["states"])) for n in (first_verdict or {}).get("left_out", [])]
+    left = _left_out_again((first_verdict or {}).get("left_out"), reads)
     left_at = dict((n["address"], n) for n in left)
+    # a node no host is known by is taken for one left out only while one of them is not in the ring at an
+    # address of its own, and when the ring puts it in the rack (else as before: a ghost entry stays the rack's)
+    in_ring = _ring_states(reads)
+    unplaced = set(left_out) - set(h for a, h in known.items() if a in in_ring)
     for f in findings:
         if f.get("kind") != "state" or judged[f["address"]] not in ("rack", "unknown"):
             continue
         name = f.get("name") or known.get(_ip(f["address"]))
-        # (no name: only one the ring puts in the rack; one it puts elsewhere stays judged as before)
-        if name in left_out or (not name and left_out and judged[f["address"]] == "rack"):
+        if name in left_out or (not name and unplaced and judged[f["address"]] == "rack"):
             judged[f["address"]] = "left_out"
             if f["address"] not in left_at:
                 left_at[f["address"]] = {"address": f["address"], "name": name, "states": []}
@@ -313,12 +344,41 @@ def _unknown_lines(findings, judged, rack):
                             "  cassandra_listen_address or ansible_host), then run start_rack again"], WIDTH)
 
 
-def cassandra_rack_outside_lines(verdict, unreached, dc, rack, command):
+_DOING = {"J": "joining", "L": "leaving", "M": "moving"}
+
+
+def _left_out_lines(verdict, left_out, dc, rack, command):
+    """The warning on the nodes of the rack left out by --limit not UN (verdict's left_out): a row per node (by its
+    name, else its address: then the nodes left out named under), then what to do per state: down, start it
+    without --limit (the command); joining, leaving or moving, wait for it to finish; [] for none."""
+    nodes = verdict.get("left_out") or []
+    if not nodes:
+        return []
+    lines = [out.WARNING + "rack %s (%s), not UN, left out by --limit (not in this run):" % (rack, dc)]
+    lines += out.table([[n.get("name") or n["address"], "/".join(n["states"])] for n in nodes], indent="  ")
+    if any(not n.get("name") for n in nodes):
+        lines.append("  (no host known by that address; left out by --limit: %s)" % out.nodes(left_out))
+    down = [n for n in nodes if any(s[:1] == "D" for s in n["states"])]
+    if down:
+        which = ("it" if len(nodes) == 1 else "them") if len(down) == len(nodes) else "the ones down"
+        lines += ["start %s: run start_rack without --limit" % which, "  " + str(command)]
+    for n in nodes:
+        busy = [s for s in n["states"] if s[:1] == "U" and s[1:] in _DOING]
+        if n not in down and busy:
+            lines.append("%s is %s (%s): wait for it to finish" % (
+                n.get("name") or n["address"], _DOING[busy[0][1:]], busy[0]))
+    return lines
+
+
+def cassandra_rack_outside_lines(verdict, unreached, dc, rack, command, run=None, left_out=None, start_command=""):
     """cassandra_rack_verdict's result after the wait, the hosts not reached over ssh, the rack's dc and rack, the
-    command that checks the cluster -> the lines said once the rack's nodes are UN: that fact, the nodes seen UN
-    (verdict's rack_up; not when the stop was forced: verdict's problems), then, when the rest of the cluster has
-    any, a WARNING with a row per node of the rest of the cluster (its states as nodetool status says them, "not
-    reached over ssh", "nodetool status failed", verdict's warnings), one for the ring's size, the command.
+    command that checks the cluster, the rack's nodes in this run and those left out by --limit, the start_rack
+    command without --limit -> the lines said once the rack's nodes are UN: that fact, the nodes seen UN
+    (verdict's rack_up; under --limit, the nodes of this run; nothing started when --limit leaves out the whole
+    rack; not said when the stop was forced: verdict's problems), then the warning on the nodes of the rack left out by --limit not UN (_left_out_lines),
+    then, when the rest of the cluster has any, a WARNING with a row per node of the rest of the cluster (its
+    states as nodetool status says them, "not reached over ssh", "nodetool status failed", verdict's warnings),
+    one for the ring's size, the command.
     e.g. ({outside: [{address: "10.0.0.4", name: "n4", states: ["DN"]}], failed: [], warnings: [], ring_size:
     [[3, 4]], problems: [], rack_up: ["n2", "n3"]}, [], "dc1", "r2", "ansible-playbook x") -> ["Rack r2 (dc1): every
     node is UN (n2, n3).", "WARNING  the rest of the cluster:", "  n4  DN", "WARNING  the ring has 3 nodes, the
@@ -340,8 +400,15 @@ def cassandra_rack_outside_lines(verdict, unreached, dc, rack, command):
         add(str(name), fact)
     rows = [[name, "  ".join(facts[name])] for name in order]  # (the facts in one cell: no column padded)
     up = verdict.get("rack_up") or []
-    lines = (["Rack %s (%s): every node is UN%s." % (rack, dc, " (%s)" % out.nodes(up) if up else "")]
-             if not verdict.get("problems") else [])
+    if verdict.get("problems"):
+        lines = []
+    elif not left_out:
+        lines = ["Rack %s (%s): every node is UN%s." % (rack, dc, " (%s)" % out.nodes(up) if up else "")]
+    elif run:
+        lines = ["Rack %s (%s): the nodes of this run are UN (%s)." % (rack, dc, out.nodes(run))]
+    else:
+        lines = ["Rack %s (%s): nothing started, --limit leaves out all of its nodes." % (rack, dc)]
+    lines += _left_out_lines(verdict, left_out, dc, rack, start_command)
     if rows:
         lines += [out.WARNING + "the rest of the cluster:"] + out.table(rows, indent="  ")
     lines += [out.WARNING + "the ring has %s nodes, the inventory %s" % (ring, inventory)
@@ -351,28 +418,8 @@ def cassandra_rack_outside_lines(verdict, unreached, dc, rack, command):
     return out.fit(lines, WIDTH)
 
 
-def cassandra_rack_left_out_lines(verdict, left_out, dc, rack, command):
-    """cassandra_rack_verdict's result after the wait (its left_out), the rack's nodes left out by --limit, the
-    rack's dc and rack, the start_rack command without --limit -> the stop's lines: the fact, a row per node (by its
-    name, else its address: then the nodes left out named under), the way out with the command; [] for none.
-    e.g. ({left_out: [{address: "10.0.0.3", name: "n3", states: ["DN"]}]}, ["n3"], "dc1", "r2", "ansible-playbook
-    x") -> ["rack r2 (dc1): not UN, left out by --limit (this run did not start them):", "  n3  DN", "WAY OUT  start
-    them: run start_rack without --limit", "  ansible-playbook x"]."""
-    nodes = verdict.get("left_out") or []
-    if not nodes:
-        return []
-    rows = [[n.get("name") or n["address"], "/".join(n["states"])] for n in nodes]
-    lines = ["rack %s (%s): not UN, left out by --limit (this run did not start them):" % (rack, dc)]
-    lines += out.table(rows, indent="  ")
-    if any(not n.get("name") for n in nodes):
-        lines.append("  (no host known by that address; left out by --limit: %s)" % out.nodes(left_out))
-    lines += ["WAY OUT  start them: run start_rack without --limit", "  " + str(command)]
-    return out.fit(lines, WIDTH)
-
-
 class FilterModule(object):
     def filters(self):
         return {"cassandra_rack_members": cassandra_rack_members,
                 "cassandra_rack_verdict": cassandra_rack_verdict,
-                "cassandra_rack_outside_lines": cassandra_rack_outside_lines,
-                "cassandra_rack_left_out_lines": cassandra_rack_left_out_lines}
+                "cassandra_rack_outside_lines": cassandra_rack_outside_lines}

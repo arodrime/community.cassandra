@@ -211,7 +211,7 @@
     # the hosts of the cluster out of the play (--limit): not probed, not read from
     _cassandra_start_rack_not_probed: "{{ query('community.cassandra.cassandra_nodes') | reject('in', ansible_play_hosts_all) | list }}"
     # the rack's nodes left out by --limit (out of the play): this run does not start them; not UN, they are not
-    # waited for, the run stops on them once the others are UN, its way out start_rack without --limit
+    # waited for, said in a warning once the others are UN (the run's success: its own nodes UN)
     _cassandra_start_rack_left_out: "{{ _cassandra_start_rack_members | reject('in', ansible_play_hosts_all) | list }}"
     # what a read is judged with (cassandra_rack_verdict): the rack, the two nodes read from, what they read
     _cassandra_start_rack_filter_args:
@@ -377,36 +377,26 @@
         - not ansible_check_mode
         - _cassandra_start_rack_last_verdict.problems | length > 0
 
-    # the rack's nodes left out by --limit not UN (the others UN): their stop, by name, the way out without --limit
-    - name: Stop on the rack's nodes left out by --limit not UN
-      ansible.builtin.fail:
+    # the rack's nodes UN (its success, said always: under --limit, the nodes of this run), then the warnings: the
+    # rack's nodes left out by --limit not UN (the way out per state), the rest of the cluster's problems
+    - name: Say the rack's nodes are UN, and the nodes outside the run not UN or not reached
+      ansible.builtin.debug:
         msg: >-
-          {{ _cassandra_start_rack_last_verdict | community.cassandra.cassandra_rack_left_out_lines(
-               _cassandra_start_rack_left_out, cassandra_target_dc, cassandra_target_rack, _start_command) }}
+          {{ _cassandra_start_rack_last_verdict | community.cassandra.cassandra_rack_outside_lines(
+               _cassandra_start_rack_unreached, cassandra_target_dc, cassandra_target_rack, _check_command,
+               run=_run, left_out=_cassandra_start_rack_left_out, start_command=_start_command) }}
       when:
         - inventory_hostname == _cassandra_start_rack_checker
         - not ansible_check_mode
-        - _cassandra_start_rack_last_verdict.left_out | length > 0
+        - _verdict.problems | length == 0
+          or (_verdict.outside + _verdict.failed + _verdict.warnings + _verdict.ring_size + _verdict.left_out
+              + _cassandra_start_rack_unreached) | length > 0
       vars:
-        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        cassandra_output: true
+        _verdict: "{{ _cassandra_start_rack_last_verdict }}"
+        _run: "{{ _cassandra_start_rack_members | reject('in', _cassandra_start_rack_left_out) | list }}"
+        _check_command: "{{ 'health_check' | community.cassandra.cassandra_command(**_cassandra_start_rack_command_args) }}"
         _start_command: >-
           {{ 'start_rack' | community.cassandra.cassandra_command(
                extra={'cassandra_target_dc': cassandra_target_dc, 'cassandra_target_rack': cassandra_target_rack},
                **_cassandra_start_rack_command_args) }}
-
-    # the rack's nodes UN (its success, said always), then the rest of the cluster's problems (a warning)
-    - name: Say the rack's nodes are UN, and the nodes outside the rack not UN or not reached
-      ansible.builtin.debug:
-        msg: >-
-          {{ _cassandra_start_rack_last_verdict | community.cassandra.cassandra_rack_outside_lines(
-               _cassandra_start_rack_unreached, cassandra_target_dc, cassandra_target_rack, _check_command) }}
-      when:
-        - inventory_hostname == _cassandra_start_rack_checker
-        - not ansible_check_mode
-        - _cassandra_start_rack_last_verdict.problems | length == 0
-          or (_cassandra_start_rack_last_verdict.outside + _cassandra_start_rack_last_verdict.failed
-              + _cassandra_start_rack_last_verdict.warnings + _cassandra_start_rack_last_verdict.ring_size
-              + _cassandra_start_rack_unreached) | length > 0
-      vars:
-        cassandra_output: true
-        _check_command: "{{ 'health_check' | community.cassandra.cassandra_command(**_cassandra_start_rack_command_args) }}"
