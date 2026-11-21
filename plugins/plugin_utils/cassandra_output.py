@@ -713,6 +713,9 @@ def wrap_list(text, room):
 
 
 _COMMAND_LINE = re.compile(r"^(\s*)(ansible-playbook|ansible) ")
+# a command after a label ("then apply it live: ansible-playbook ..."): its indent, the label, the command (a
+# plan's or a note's item, said on a line of its own when too long)
+LABELLED_COMMAND = re.compile(r"^(\s*)(.*?: )(ansible-playbook .*)$")
 
 
 _JOINED = u"\x1e"  # (a space fit never breaks at: put back as a space)

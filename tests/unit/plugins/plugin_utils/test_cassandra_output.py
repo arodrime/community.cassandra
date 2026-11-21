@@ -1323,3 +1323,11 @@ def test_fit_never_breaks_a_no_break_space():
     assert out.fit([line], 79) == ["WAY OUT  bring h-n2 back to UN (its host and/or Cassandra), then run",
                                    "  start_rack again"]
     assert out.fit(["run start_rack" + out.NBSP + "again"], 79) == ["run start_rack again"]
+
+
+def test_a_labelled_command_is_read_the_same_for_plans_and_notes():
+    # one rule for cassandra_screen (plans) and cassandra_summary (the checks' notes); they had a regex each
+    found = out.LABELLED_COMMAND.match("  then apply it live: ansible-playbook community.cassandra.change_seeds")
+    assert found.groups() == ("  ", "then apply it live: ", "ansible-playbook community.cassandra.change_seeds")
+    assert out.LABELLED_COMMAND.match("then: ansible-playbook a; or: ansible-playbook b").group(2) == "then: "
+    assert out.LABELLED_COMMAND.match("ansible-playbook a") is None

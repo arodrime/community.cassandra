@@ -200,9 +200,6 @@ def cassandra_warnings(warnings, width=None):
     return out.fit(out.warning_lines(texts), width or STOP_WIDTH) if texts else []
 
 
-_LABELLED_COMMAND = re.compile(r"^(\s*)(.*: )(ansible-playbook .*)$")
-
-
 def cassandra_notes_lines(notes, width=None):
     """The checks' notes said on their own (note.yml's _cassandra_notes: no plan to hold them), width columns at most
     (default 79): a WARNING note's next lines under its text, as in a plan; a command after a label ("then apply it
@@ -217,7 +214,7 @@ def cassandra_notes_lines(notes, width=None):
                                   break_on_hyphens=False) or [said[0]]
             rest = []
             for line in said[1:]:
-                labelled = _LABELLED_COMMAND.match(line)
+                labelled = out.LABELLED_COMMAND.match(line)
                 if labelled and len(line) > width:
                     rest += [labelled.group(1) + labelled.group(2).rstrip(), labelled.group(1) + "  " + labelled.group(3)]
                 else:
