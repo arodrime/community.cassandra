@@ -261,7 +261,8 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
       rack_seen_un: the nodes of the rack UN in the rings read (_rack_seen_un), by name, else by address.
       seen_from_run_only: the nodes read from (checker, peer) when they are all nodes of this run and the cluster
         has others (none of them reached in the play; a node sees itself UN): [] otherwise.
-      left_out: the nodes of the rack not UN that are left out by --limit, [{address, name, states}]: named as
+      left_out: the nodes of the rack not UN that are left out by --limit, [{address, name, states}; a node by its
+        address only: unplaced, the nodes left out not in the ring at an address of their own]: named as
         one of them (its address theirs: _left_out_names), or no host known by its address, put in the rack by
         the ring, while one of them is not in the ring at an address of its own and every node of the run is; the
         first verdict's with their states in this read. Not waited for, not in problems: a warning (cassandra_rack_outside_lines).
@@ -295,6 +296,9 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
                 left.append(left_at[f["address"]])
             if f["state"] not in left_at[f["address"]]["states"]:
                 left_at[f["address"]]["states"].append(f["state"])
+    for n in left:  # (a node by its address only: the nodes left out it may be)
+        if not n.get("name"):
+            n["unplaced"] = [h for h in left_out if h in unplaced]
     ring_read = any(isinstance(r, dict) and r.get("cluster_status") for r in reads or [])
     failed_on = _unique(f.get("on") for f in findings if f.get("kind") == "nodetool")
     counted_view = peer if peer and peer not in failed_on else checker
@@ -380,40 +384,57 @@ def _unseen_lines(unseen):
 _DOING = {"J": "joining", "L": "leaving", "M": "moving"}
 
 
-def _left_out_lines(verdict, left_out, dc, rack, command, viewer=()):
+def _left_out_lines(verdict, dc, rack, command, viewer=()):
     """The warning on the nodes of the rack left out by --limit not UN (verdict's left_out): a row per node (by its
-    name, else its address: then the nodes left out named under), then what to do per state: down, start it (the
-    start_rack command, command, with --limit that node and viewer, a node of the run seen UN: the ring is read
-    from it too, a second view; its start leaves it as it is; the others left out stay as they are; a node known
-    by its address only: --limit the nodes left out not named above); joining, leaving or moving, wait for it to
-    finish; [] for none."""
+    name, else its address), then what to do per state, in the rows' order: down, start it (the start_rack
+    command, command, with --limit that node and viewer, a node of the run seen UN: the ring is read from it too,
+    a second view; its start leaves it as it is; the others left out stay as they are); the nodes known by their
+    address only, together: the nodes left out they may be (not in the ring at an address of their own), --limit
+    those; joining, leaving or moving, wait for it to finish; [] for none."""
     nodes = verdict.get("left_out") or []
     if not nodes:
         return []
     lines = [out.WARNING + "rack %s (%s), not UN, left out by --limit (not in this run):" % (rack, dc)]
     lines += out.table([[n.get("name") or n["address"], "/".join(n["states"])] for n in nodes], indent="  ")
-    if any(not n.get("name") for n in nodes):
-        lines.append("  (no host known by that address; left out by --limit: %s)" % out.nodes(left_out))
     down = [n for n in nodes if any(s[:1] == "D" for s in n["states"])]
+    by_address = [n for n in down if not n.get("name")]
     viewer = list(viewer or [])
     for n in down:
         if n.get("name"):
-            lines += ["start %s: run start_rack on it%s" % (
-                          n["name"], ", %s (UN, unchanged) to check it from" % viewer[0] if viewer else " alone"),
+            lines += ["start %s: run start_rack on it%s" % (n["name"], _seen_too(viewer) if viewer else out.NBSP + "alone"),
                       "  %s --limit %s" % (command, shlex.quote(",".join(viewer + [n["name"]])))]
-    unnamed = [h for h in left_out or [] if h not in [n.get("name") for n in nodes]]
-    by_address = [n for n in down if not n.get("name")]
-    if unnamed and by_address:
-        which = "it" if len(by_address) == 1 else "them"
-        lines += ["start %s: run start_rack on the nodes left out named above%s" % (
-                      which, ", with %s (UN, unchanged)" % viewer[0] if viewer else ""),
-                  "  %s --limit %s" % (command, shlex.quote(",".join(viewer + unnamed)))]
+        elif n is by_address[0]:
+            lines += _by_address_lines(by_address, command, viewer)
     for n in nodes:
         busy = [s for s in n["states"] if s[:1] == "U" and s[1:] in _DOING]
         if n not in down and busy:
             lines.append("%s is %s (%s): wait for it to finish" % (
                 n.get("name") or n["address"], _DOING[busy[0][1:]], busy[0]))
     return lines
+
+
+def _seen_too(viewer):
+    """A node of the run seen UN, added to a --limit -> what it is there for (its start changes nothing)."""
+    return ", seen from %s too%s" % (viewer[0], out.NBSP.join(["", "(UN,", "unchanged)"]))
+
+
+def _by_address_lines(by_address, command, viewer):
+    """The nodes left out down known by their address only -> the start of the nodes left out they may be: those
+    not in the ring at an address of their own."""
+    unplaced = by_address[0].get("unplaced") or []
+    if len(by_address) == 1:
+        lines = ["start %s: no host known by that address" % by_address[0]["address"]]
+    else:
+        lines = ["start the nodes at these addresses, no host known by them:"] + [
+            "  " + n["address"] for n in by_address]
+    if not unplaced:  # (every node left out is in the ring now)
+        return lines + ["  check %s with nodetool status" % ("it" if len(by_address) == 1 else "them")]
+    lines += ["  %s left out by --limit, not in the ring at an address of %s:" % (
+        "the node" if len(unplaced) == 1 else "the nodes", "its own" if len(unplaced) == 1 else "their own")]
+    lines += ["    " + h for h in unplaced]
+    if viewer:
+        lines.append("  run start_rack on %s%s:" % ("it" if len(unplaced) == 1 else "them", _seen_too(viewer)))
+    return lines + ["  %s --limit %s" % (command, shlex.quote(",".join(viewer + unplaced)))]
 
 
 def cassandra_rack_outside_lines(verdict, unreached, dc, rack, command, run=None, left_out=None, start_command=""):
@@ -460,7 +481,7 @@ def cassandra_rack_outside_lines(verdict, unreached, dc, rack, command, run=None
         lines.append(out.WARNING + ("UN as seen from %s only (no node outside this run read)" % views[0]
                                     if len(views) == 1 else
                                     "UN as seen from the nodes of this run only (no other node read)"))
-    lines += _left_out_lines(verdict, left_out, dc, rack, start_command, [h for h in up if h in (run or [])][:1])
+    lines += _left_out_lines(verdict, dc, rack, start_command, [h for h in up if h in (run or [])][:1])
     if rows:
         lines += [out.WARNING + "the rest of the cluster:"] + out.table(rows, indent="  ")
     lines += [out.WARNING + "the ring has %s nodes, the inventory %s" % (ring, inventory)

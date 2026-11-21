@@ -162,7 +162,7 @@ def check(unreached=(), peer=None, then=None, then_peer=None, names=None, groups
 
 UP = ["Rack r2 (dc1): the nodes of this run are UN (n2)."]
 LEFT_OUT = ["WARNING  rack r2 (dc1), not UN, left out by --limit (not in this run):"]
-START = ["start n3: run start_rack on it, n2 (UN, unchanged) to check it from",
+START = ["start n3: run start_rack on it, seen from n2 too (UN, unchanged)",
          "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
          "    -e cassandra_target_dc=dc1 -e cassandra_target_rack=r2 --limit n2,n3"]
 ALONE = ["start n3: run start_rack on it alone",
@@ -240,9 +240,10 @@ def test_a_node_left_out_by_limit_known_by_no_address_is_named_as_the_controller
     # not resolved: its address, the nodes left out named under it; no "no inventory host has this address" lines
     monkeypatch.setattr(cassandra_ring, "_resolved", lambda name: [])
     problems, said = check(names=names, play=["n1", "n2", "n4"], n3="DN")
-    assert said == UP + LEFT_OUT + ["  10.0.0.3  DN", "  (no host known by that address; left out by --limit: n3)",
-                                    "start it: run start_rack on the nodes left out named above, with n2 (UN,",
-                                    "  unchanged)"] + START[1:]
+    assert said == UP + LEFT_OUT + ["  10.0.0.3  DN", "start 10.0.0.3: no host known by that address",
+                                    "  the node left out by --limit, not in the ring at an address of its own:",
+                                    "    n3",
+                                    "  run start_rack on it, seen from n2 too (UN, unchanged):"] + START[1:]
     variables = noted(ring(n3="DN"), names=names, play=["n1", "n2", "n4"])
     assert variables["_cassandra_start_rack_first_verdict"]["unknown_lines"] == []
     # a node no host is known by that the ring puts in another rack: not taken for the node left out
@@ -947,3 +948,47 @@ def test_under_limit_the_nodes_of_the_run_seen_only_from_themselves_are_said_so(
                   _cassandra_service_unit_changed=True).strip() == "started"
     assert render(start, cassandra_service_state="started", cassandra_service_restart_on_change=True,
                   _cassandra_service_unit_changed=False).strip() == "started"
+
+
+def test_a_node_left_out_known_by_its_address_only_is_said_with_the_nodes_it_may_be(monkeypatch):
+    # four nodes left out, one DN known by its address only: "(no host known by that address; left out by
+    # --limit: <the four>)" under the rows, then, after the other nodes' commands, "start it: run start_rack on
+    # the nodes left out named above" with a --limit of one: "it" read as the last node named, the list as the
+    # nodes to start. Now its own block in the rows' order: the nodes left out not in the ring at an address of
+    # their own (only those), the command with exactly them
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_ring
+    monkeypatch.setattr(cassandra_ring, "_resolved", lambda name: [])
+    addresses = dict((a, n) for a, n in ADDRESSES.items() if n != "n3")
+    addresses["10.0.0.5"] = "n5"
+    read = ring(n3="DN")
+    read["cluster_status"]["dc1"]["nodes"].append({"address": "10.0.0.5", "rack": "r2", "status": "U", "state": "N"})
+    found = cassandra_health_findings([{"from": "n2", "result": read}, {"from": "n1", "result": read}], 5, "n2",
+                                      names=addresses, **OK)
+    verdict = cassandra_rack_verdict(found, ["n2", "n3", "n5"], "dc1", "r2", "n2", "n1", addresses=addresses,
+                                     reads=[read, read], left_out=["n3", "n5"])
+    # n5, left out and UN at its own address, is not one 10.0.0.3 may be
+    assert verdict["left_out"] == [{"address": "10.0.0.3", "name": None, "states": ["DN"], "unplaced": ["n3"]}]
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_start_rack import cassandra_rack_outside_lines
+    lines = cassandra_rack_outside_lines(verdict, [], "dc1", "r2", "x", run=["n2"], left_out=["n3", "n5"],
+                                         start_command="y")
+    assert lines[1:] == LEFT_OUT + ["  10.0.0.3  DN", "start 10.0.0.3: no host known by that address",
+                                    "  the node left out by --limit, not in the ring at an address of its own:",
+                                    "    n3",
+                                    "  run start_rack on it, seen from n2 too (UN, unchanged):",
+                                    "  y --limit n2,n3"]
+    # several, in the rows' order: a node by its name, then the ones by their address together
+    verdict = {"outside": [], "failed": [], "warnings": [], "problems": [], "rack_seen_un": ["n2"], "left_out": [
+        {"address": "10.0.0.6", "name": "n6", "states": ["DN"]},
+        {"address": "10.0.0.3", "name": None, "states": ["DN"], "unplaced": ["n3", "n7"]},
+        {"address": "10.0.0.9", "name": None, "states": ["DN"], "unplaced": ["n3", "n7"]}]}
+    lines = cassandra_rack_outside_lines(verdict, [], "dc1", "r2", "x", run=["n2"], left_out=["n3", "n5", "n6", "n7"],
+                                         start_command="y")
+    assert lines[5:] == ["start n6: run start_rack on it, seen from n2 too (UN, unchanged)", "  y --limit n2,n6",
+                         "start the nodes at these addresses, no host known by them:",
+                         "  10.0.0.3",
+                         "  10.0.0.9",
+                         "  the nodes left out by --limit, not in the ring at an address of their own:",
+                         "    n3",
+                         "    n7",
+                         "  run start_rack on them, seen from n2 too (UN, unchanged):",
+                         "  y --limit n2,n3,n7"]
