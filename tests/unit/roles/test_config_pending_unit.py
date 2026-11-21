@@ -15,11 +15,12 @@ import pytest
 import yaml
 
 from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
+from ansible_collections.community.cassandra.tests.unit.task_files import find_task
 
 
 TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_operation", "tasks", "config_pending.yml")
 with open(TASKS) as f:
-    NOTE = next(t for t in yaml.safe_load(f) if t["name"] == "Note whether a restart is pending")
+    NOTE = find_task(yaml.safe_load(f), "Note whether a restart is pending")
 
 UNIT = "/etc/systemd/system/cassandra.service"
 DROPIN = "/etc/systemd/system/cassandra.service.d/zz-ansible-environment.conf"

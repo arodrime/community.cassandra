@@ -14,7 +14,7 @@ import pytest
 import yaml
 
 from ansible_collections.community.cassandra.tests.unit.helpers import LOCAL, run_playbook
-from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
+from ansible_collections.community.cassandra.tests.unit.task_files import find_task, load_tasks
 
 TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_config", "tasks", "main.yml")
 
@@ -32,7 +32,7 @@ def alternative_tasks():
 def run(tmp_path, how):
     """Runs the block's tasks with the conf dir in use under tmp_path: (rc, output)."""
     tasks = alternative_tasks()
-    select = [t for t in tasks if t["name"] == "Select the alternative conf dir"][0]
+    select = find_task(tasks, "Select the alternative conf dir")
     del select["community.general.alternatives"]
     select["ansible.builtin.fail"] = {"msg": "SELECTED {{ cassandra_rpm_conf_alternative }}"}
     (tmp_path / "alternative.yml").write_text(yaml.safe_dump(tasks))

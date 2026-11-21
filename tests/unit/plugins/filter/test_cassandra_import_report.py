@@ -10,6 +10,7 @@ import re
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
     KEPT_PARTS_VAR, _compress, _self_check_items, cassandra_import_report, cassandra_import_self_check_advice, node_list)
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play
 
 ARROW = u"←"
 WRITTEN = ["/p/inventories/my_cluster.yml", "/p/inventories"]
@@ -1489,7 +1490,7 @@ def test_import_cluster_notes_the_run_time_once():
     import yaml
     with open(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "playbooks", "import_cluster.yml")) as f:
         plays = yaml.safe_load(f)
-    write = next(p for p in plays if p["name"] == "Write the inventory")
+    write = find_play(plays, "Write the inventory")
     assert write["tasks"][0]["ansible.builtin.set_fact"] == {"_import_run_time": "{{ now().timestamp() }}"}
     assert "_import_run_time" in write["vars"]["_report_args"]["run_time"]
 

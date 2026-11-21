@@ -13,12 +13,13 @@ import yaml
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 from ansible_collections.community.cassandra.tests.unit.import_nodes import node
 from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, trust_as_template
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 with open(PLAYBOOK, encoding="utf-8") as f:
     PLAYS = yaml.safe_load(f)
-WRITE = next(p for p in PLAYS if p["name"] == "Write the inventory")
-STOP = next(t for t in WRITE["tasks"] if t["name"] == "Stop on a failed self-check")
+WRITE = find_play(PLAYS, "Write the inventory")
+STOP = find_task(WRITE, "Stop on a failed self-check")
 
 
 def render(template, **variables):
@@ -73,7 +74,7 @@ def test_air_gapped_node_noted():
     assert not [n for n in node({"import_cluster_repos_answer": True})["notes"] if "cassandra_offline: true" in n]
 
 
-READ = next(p for p in PLAYS if p["name"] == "Read every node")
+READ = find_play(PLAYS, "Read every node")
 READ_TASKS = READ["tasks"]
 
 

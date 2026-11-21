@@ -22,7 +22,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import_rep
     cassandra_import_self_check_advice)
 
 from ansible_collections.community.cassandra.tests.unit.import_nodes import node
-from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task, load_tasks
 from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, trust_as_template
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
@@ -154,8 +154,8 @@ def check_heap():
 
 def test_role_leaves_them():
     main = load_tasks(os.path.join(ROOT, "roles", "cassandra_config", "tasks", "main.yml"))
-    block = next(t for t in main if t.get("name") == "Configure")["block"]
-    note = next(t for t in block if t.get("name") == "List the files to change and whether to ask first")
+    block = find_task(main, "Configure")["block"]
+    note = find_task(block, "List the files to change and whether to ask first")
     results = [{"item": "logback.xml", "stat": {"exists": True}}, {"item": "cassandra-env.sh", "stat": {"exists": False}}]
     for initialized, kept in [(True, ["logback.xml"]),  # a node without the file gets the role's
                               (False, [])]:  # a new node (e.g. rebuilt under that name): its files are the package's
@@ -362,7 +362,7 @@ def test_reimport_says_the_parts_kept_last_time_it_now_imports():
     with open(os.path.join(ROOT, "playbooks", "import_cluster.yml"), encoding="utf-8") as f:
         text = f.read()
     assert "import_take_over" not in text
-    play = next(p for p in yaml.safe_load(text) if p["name"] == "Write the inventory")
+    play = find_play(yaml.safe_load(text), "Write the inventory")
     names = [t.get("name") for t in play["tasks"]]
     said = names.index("Say the parts the last import kept by hand that this one imports")
     assert names.index("Keep the files already there") < said < names.index("Lay out again over your own variables")

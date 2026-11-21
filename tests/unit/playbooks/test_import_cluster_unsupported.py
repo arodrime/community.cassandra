@@ -12,18 +12,19 @@ import yaml
 
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 from ansible_collections.community.cassandra.tests.unit.helpers import render
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task
 
 load_collection_filters()
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 with open(os.path.join(TOP, "playbooks", "import_cluster.yml"), encoding="utf-8") as f:
     PLAYS = yaml.safe_load(f)
-FIND = next(p for p in PLAYS if p["name"] == "Find the cluster from the given nodes")
-READ = next(p for p in PLAYS if p["name"] == "Read every node")
-GIVEN_READ = next(t for t in FIND["tasks"] if t["name"] == "Read what runs on the given nodes")
-GIVEN_STOP = next(t for t in FIND["tasks"] if t["name"] == "Refuse a DataStax Enterprise or ScyllaDB cluster")
-NODE_READ = next(t for t in READ["tasks"] if t["name"] == "Read the running Cassandra (conf dir, Cassandra and Java versions)")
-NODE_STOP = next(t for t in READ["tasks"] if t["name"] == "Refuse a DataStax Enterprise or ScyllaDB node")
+FIND = find_play(PLAYS, "Find the cluster from the given nodes")
+READ = find_play(PLAYS, "Read every node")
+GIVEN_READ = find_task(FIND, "Read what runs on the given nodes")
+GIVEN_STOP = find_task(FIND, "Refuse a DataStax Enterprise or ScyllaDB cluster")
+NODE_READ = find_task(READ, "Read the running Cassandra (conf dir, Cassandra and Java versions)")
+NODE_STOP = find_task(READ, "Refuse a DataStax Enterprise or ScyllaDB node")
 SNIPPET = "lookup('ansible.builtin.file', playbook_dir ~ '/files/import_distribution.sh')"
 
 DSE = "distribution=dse\ndistribution_version=6.8.42"

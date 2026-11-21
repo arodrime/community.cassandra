@@ -15,21 +15,9 @@ import pytest
 import yaml
 
 from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
+from ansible_collections.community.cassandra.tests.unit.task_files import find_task
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
-
-
-def find_task(node, name):
-    if isinstance(node, dict):
-        if node.get("name") == name:
-            return node
-        node = list(node.values())
-    if isinstance(node, list):
-        for item in node:
-            found = find_task(item, name)
-            if found is not None:
-                return found
-    return None
 
 
 with open(PLAYBOOK, encoding="utf-8") as f:

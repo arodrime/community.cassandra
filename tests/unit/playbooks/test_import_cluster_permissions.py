@@ -14,6 +14,7 @@ import yaml
 from ansible.plugins.loader import init_plugin_loader
 
 from ansible_collections.community.cassandra.tests.unit.helpers import render_with as render
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -24,9 +25,9 @@ PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks"
 with open(PLAYBOOK, encoding="utf-8") as f:
     PLAYS = yaml.safe_load(f)
 
-READ = next(p for p in PLAYS if p["name"] == "Read every node")
-STAT = next(t for t in READ["tasks"] if t["name"] == "Read the owner and mode of the config files and directories")
-TURN = next(t for t in READ["tasks"] if t["name"] == "Turn them into variables")
+READ = find_play(PLAYS, "Read every node")
+STAT = find_task(READ, "Read the owner and mode of the config files and directories")
+TURN = find_task(READ, "Turn them into variables")
 FILES = READ["vars"]["_files"]
 
 
@@ -81,7 +82,7 @@ def test_jmx_files_at_their_own_paths():
                      import_cluster_config={"vars": {}}, import_cluster_log_dir="", import_cluster_jmx_files=jmx)
     paths = render(STAT["vars"]["_paths"], variables)
     assert paths[len(FILES):len(FILES) + 2] == [jmx["password"], jmx["access"]]
-    read = next(t for t in READ["tasks"] if t["name"] == "Read the JMX users, the repository files' mode and their signing keys")
+    read = find_task(READ, "Read the JMX users, the repository files' mode and their signing keys")
     assert [[i, render(p, dict(import_cluster_jmx_files=jmx))] for i, p in read["vars"]["_jmx"]] == [
         ["jmxremote.password", jmx["password"]], ["jmxremote.access", jmx["access"]]]
     assert [[i, render(p, dict(import_cluster_jmx_files={"password": ""}))] for i, p in read["vars"]["_jmx"]] == [

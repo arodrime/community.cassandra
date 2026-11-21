@@ -15,7 +15,7 @@ import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _load_role, _render
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
-from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
+from ansible_collections.community.cassandra.tests.unit.task_files import find_task, load_tasks
 from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 load_collection_filters()  # (the role's messages use the collection's filters)
@@ -87,13 +87,7 @@ def test_root_refs_and_levels(series):
 
 
 def task(name):
-    todo = load_tasks(os.path.join(ROLE, "tasks", "main.yml"))
-    while todo:
-        t = todo.pop(0)
-        if t.get("name") == name:
-            return t
-        todo += t.get("block", []) + t.get("rescue", []) + t.get("always", [])
-    raise KeyError(name)
+    return find_task(load_tasks(os.path.join(ROLE, "tasks", "main.yml")), name)
 
 
 REFUSE = task("Refuse logback appender-refs, levels and values the role cannot write")
@@ -230,7 +224,7 @@ def test_the_role_refuses_the_variables_no_longer_read():
 
 
 CONFIRM = load_tasks(os.path.join(ROLE, "tasks", "confirm.yml"))
-MOVES = next(t for t in CONFIRM if t.get("name") == "Find whether the audit events would move to audit.log")
+MOVES = find_task(CONFIRM, "Find whether the audit events would move to audit.log")
 
 
 @pytest.mark.parametrize("live_audit, in_inventory, audit_file, said", [

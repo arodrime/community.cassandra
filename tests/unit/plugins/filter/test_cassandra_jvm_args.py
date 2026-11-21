@@ -28,7 +28,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     IPV4, JMX_FILES_UNREAD_NOTE, cassandra_config_import, cassandra_inventory_layout, cassandra_jmx_files)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import cassandra_same_settings
 
-from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
+from ansible_collections.community.cassandra.tests.unit.task_files import find_task, load_tasks
 
 from .test_cassandra_import_check import FACTS, check, edit, import_node, seeded, stock
 from .test_cassandra_import_logback import audit_on, file_auditing
@@ -692,7 +692,7 @@ def test_the_jmx_files_of_a_local_jmx_node_are_left_as_they_are(tmp_path):
     assert not variables.get("cassandra_jmx_users") and "jmxremote.password" not in rendered
     assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
     tasks = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_config", "tasks")
-    block = [t for t in load_tasks(os.path.join(tasks, "access.yml")) if t.get("name") == "Write the JMX users"][0]
+    block = find_task(load_tasks(os.path.join(tasks, "access.yml")), "Write the JMX users")
     assert block["when"] == "cassandra_jmx_users | length > 0"
     assert [t for t in block["block"] if t.get("name") == "List the JMX files to write"]  # (_cassandra_config_jmx_changes)
 

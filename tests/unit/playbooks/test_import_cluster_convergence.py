@@ -18,10 +18,11 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
 from ansible_collections.community.cassandra.tests.unit.helpers import run_playbook
 from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_import_convergence import (
     SECRETS, fake_node)
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 with open(os.path.join(TOP, "playbooks", "import_cluster.yml"), encoding="utf-8") as f:
-    WRITE = next(p for p in yaml.safe_load(f) if p["name"] == "Write the inventory")
+    WRITE = find_play(yaml.safe_load(f), "Write the inventory")
 TASKS = [t for t in WRITE["tasks"] if t["name"] in (
     "Make the shareable copy of the report", "Find the shareable copy and key of an earlier import",
     "Move aside the shareable copy and key of an earlier import", "Stop when a shareable copy or key was not moved aside",
@@ -138,7 +139,7 @@ def test_the_tasks_pass_the_section_on():
     assert "convergence=_convergence)" in WRITE["vars"]["_report"]
     assert "self_check_ok=_self_check_ok | bool" in WRITE["vars"]["_convergence"]
     assert "_convergence_screen" not in WRITE["vars"]
-    shareable = next(t for t in WRITE["tasks"] if t["name"] == "Write the shareable copy of the report")
+    shareable = find_task(WRITE, "Write the shareable copy of the report")
     assert [i["mode"] for i in shareable["loop"]] == ["0644", "0600"]
     assert "import_report_shareable | default(false) | bool" in shareable["when"]
     # the key made 0600 before anything is written in it (no window where it is readable by others)

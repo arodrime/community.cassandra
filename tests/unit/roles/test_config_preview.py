@@ -23,7 +23,7 @@ with warnings.catch_warnings():  # already done under ansible-test
 
 from ansible_collections.community.cassandra.tests.unit.plugins.plugin_utils.test_cassandra_output import BLOCK_SECRETS_AFTER_AUDIT  # noqa: E402
 from ansible_collections.community.cassandra.tests.unit.roles.config_reader import SCRIPT, compare, config_read, identity_changes, preview  # noqa: E402
-from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks  # noqa: E402
+from ansible_collections.community.cassandra.tests.unit.task_files import find_task, load_tasks  # noqa: E402
 from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given
 
 TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_config", "tasks")
@@ -31,13 +31,7 @@ HEADER = "# Managed by Ansible (community.cassandra.cassandra_config): change th
 
 
 def task(name):
-    todo = load_tasks(os.path.join(TASKS, "main.yml"))
-    while todo:
-        t = todo.pop(0)
-        if t.get("name") == name:
-            return t
-        todo += t.get("block", []) + t.get("rescue", []) + t.get("always", [])
-    raise KeyError(name)
+    return find_task(load_tasks(os.path.join(TASKS, "main.yml")), name)
 
 
 def render(template, **variables):

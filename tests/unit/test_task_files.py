@@ -3,7 +3,7 @@ __metaclass__ = type
 
 import pytest
 
-from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task, load_tasks
 
 
 def write(path, text):
@@ -29,3 +29,34 @@ def test_an_import_keyword_it_does_not_apply_is_refused(tmp_path):
     main = write(tmp_path / "main.yml", "- import_tasks: inner.yml\n  tags: [x]\n")
     with pytest.raises(ValueError):
         load_tasks(main)
+
+
+OUTER = {"name": "outer", "block": [{"name": "b", "debug": {}}], "rescue": [{"name": "c", "debug": {"msg": 1}}]}
+PLAYS = [{"name": "one", "hosts": "all", "tasks": [{"name": "a", "debug": {}}, OUTER]},
+         {"name": "two", "hosts": "localhost", "pre_tasks": [{"name": "d", "debug": {}}],
+          "tasks": [{"name": "c", "debug": {"msg": 2}}, {"name": "a", "debug": {}}]}]
+
+
+def test_a_task_found_in_any_play_and_block():
+    assert find_task(PLAYS, "b") == {"name": "b", "debug": {}}
+    assert find_task(PLAYS, "d")["name"] == "d"
+    assert find_task(PLAYS, "a") == {"name": "a", "debug": {}}  # (the same task twice: one)
+    assert find_task(PLAYS[0]["tasks"], "outer")["block"][0]["name"] == "b"
+    assert find_task(PLAYS, "c")["debug"]["msg"] == 2  # (the outer one)
+    assert find_task(find_play(PLAYS, "one"), "c")["debug"]["msg"] == 1
+    # the same name inside a block and outside: the outer one
+    tasks = [{"name": "outer", "block": [{"name": "x", "debug": {"msg": "inner"}}]}, {"name": "x", "debug": {}}]
+    assert find_task(tasks, "x") == {"name": "x", "debug": {}}
+
+
+@pytest.mark.parametrize("source, name", [
+    ([{"name": "x", "debug": {"msg": 1}}, {"name": "x", "debug": {"msg": 2}}], "x"), (PLAYS, "none"), (PLAYS, "one")])
+def test_no_task_or_two_different_ones_fail(source, name):
+    with pytest.raises(AssertionError):
+        find_task(source, name)
+
+
+def test_a_play_by_its_name():
+    assert find_play(PLAYS, "two")["hosts"] == "localhost"
+    with pytest.raises(AssertionError):
+        find_play(PLAYS, "three")

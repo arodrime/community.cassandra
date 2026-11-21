@@ -23,6 +23,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import_con
     cassandra_import_convergence)
 from ansible_collections.community.cassandra.tests.unit.import_nodes import node
 from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
+from ansible_collections.community.cassandra.tests.unit.task_files import find_task
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 OFF = {"cassandra_java_set_default": False}
@@ -36,13 +37,7 @@ with open(os.path.join(ROOT, "playbooks", "import_cluster.yml"), encoding="utf-8
 
 
 def task(name, tasks=None):
-    todo = list(tasks) if tasks is not None else [t for play in PLAYS for t in play.get("tasks", [])]
-    while todo:
-        t = todo.pop(0)
-        if t.get("name") == name:
-            return t
-        todo += t.get("block", []) + t.get("rescue", []) + t.get("always", [])
-    raise KeyError(name)
+    return find_task(PLAYS if tasks is None else tasks, name)
 
 
 def java_off(hv):

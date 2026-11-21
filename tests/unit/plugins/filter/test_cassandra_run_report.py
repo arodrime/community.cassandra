@@ -16,6 +16,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_run_report
     cassandra_reports_dir, cassandra_run_report, cassandra_run_report_name, cassandra_run_report_old,
     cassandra_run_report_times)
 from ansible_collections.community.cassandra.tests.unit.helpers import render, run_playbook, trust_as_template
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
 BUILD = "community.cassandra 3.0.0-rc1, commit 1a2b3c4d5e6f"
@@ -195,19 +196,8 @@ def test_a_report_not_written_is_said_and_the_run_goes_on(tmp_path):
     assert "set cassandra_run_report_dir to a dir you can write." in " ".join(output.split())
 
 
-def find(tasks, name):
-    for t in tasks:
-        if t.get("name") == name:
-            return t
-        for key in ("block", "rescue", "always"):
-            found = find(t.get(key) or [], name)
-            if found:
-                return found
-    return None
-
-
 def test_apply_config_writes_its_report_after_its_recap():
-    summary = next(p for p in load("playbooks", "apply_config.yml") if p.get("name") == "Summary")
+    summary = find_play(load("playbooks", "apply_config.yml"), "Summary")
     names = [t["name"] for t in summary["tasks"]]
     assert names[-2:] == ["Print the changes", "Write the report of the run"]
     t = summary["tasks"][-1]
@@ -243,7 +233,7 @@ def trust_as_template_dict(values):
 
 
 def test_apply_config_keeps_its_plan_for_the_report():
-    play = next(p for p in load("playbooks", "apply_config.yml") if p.get("name") == "Find what each node needs")
+    play = find_play(load("playbooks", "apply_config.yml"), "Find what each node needs")
     names = [t["name"] for t in play["tasks"]]
     assert names.index("Keep the plan for the report of the run") == names.index("Show the plan and confirm the run") - 1
     t = play["tasks"][names.index("Keep the plan for the report of the run")]

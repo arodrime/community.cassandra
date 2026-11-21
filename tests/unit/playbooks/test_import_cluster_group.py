@@ -15,24 +15,15 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     cassandra_inventory_files, cassandra_inventory_layout, cassandra_inventory_layout_over)
 from ansible_collections.community.cassandra.tests.unit.playbooks.test_import_cluster_unsupported import (
     PLAYS, render)
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task
 
-FIND = next(p for p in PLAYS if p["name"] == "Find the cluster from the given nodes")
-WRITE = next(p for p in PLAYS if p["name"] == "Write the inventory")
-CHECK = next(t for t in FIND["tasks"] if t["name"] == "Check the group asked for")
-
-
-def task(play, name):
-    todo = list(play["tasks"])
-    while todo:
-        t = todo.pop(0)
-        if t.get("name") == name:
-            return t
-        todo += t.get("block", []) + t.get("rescue", [])
-    raise KeyError(name)
+FIND = find_play(PLAYS, "Find the cluster from the given nodes")
+WRITE = find_play(PLAYS, "Write the inventory")
+CHECK = find_task(FIND, "Check the group asked for")
 
 
-LAYOUT = task(WRITE, "Lay out groups and variables")
-OTHER = task(WRITE, "Stop rather than overwrite another cluster's inventory")
+LAYOUT = find_task(WRITE, "Lay out groups and variables")
+OTHER = find_task(WRITE, "Stop rather than overwrite another cluster's inventory")
 
 
 def node(name, address, dc="dc1", rack="r1"):

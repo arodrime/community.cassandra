@@ -12,7 +12,7 @@ import yaml
 
 
 from ansible_collections.community.cassandra.tests.unit.import_nodes import node
-from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
+from ansible_collections.community.cassandra.tests.unit.task_files import find_task, load_tasks
 from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
@@ -22,13 +22,7 @@ with open(os.path.join(ROOT, "playbooks", "import_cluster.yml"), encoding="utf-8
 
 
 def task(name):
-    todo = [t for play in PLAYS for t in play.get("tasks", [])]
-    while todo:
-        t = todo.pop(0)
-        if t.get("name") == name:
-            return t
-        todo += t.get("block", []) + t.get("rescue", [])
-    raise KeyError(name)
+    return find_task(PLAYS, name)
 
 
 INSTALLED = ("cassandra_install_tools", "cassandra_install_jemalloc", "cassandra_package_hold", "cassandra_dsbulk_version",

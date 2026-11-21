@@ -19,6 +19,7 @@ from ansible.plugins.loader import init_plugin_loader
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_drift import cassandra_drift_sync
 from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given as render, run_playbook, trusted
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -133,7 +134,7 @@ def test_the_nodes_are_compared_by_apply_config_read_only():
 
 def test_apply_config_compare_only_stops_writes_and_asks_nothing():
     plays = load("apply_config.yml")
-    find = next(p for p in plays if p.get("name") == "Find what each node needs")
+    find = find_play(plays, "Find what each node needs")
     guarded = []
     for task in find["tasks"]:
         module = [k for k in task if k.startswith("ansible.builtin.")]
@@ -148,7 +149,7 @@ def test_apply_config_compare_only_stops_writes_and_asks_nothing():
         assert GUARD in whens(next(t for t in find["tasks"] if t.get("name") == name)), name
     assert len(guarded) >= 9, guarded
     # the question: only for nodes to do, none in drift's compare (no group of nodes to do)
-    screen = next(t for t in find["tasks"] if t.get("name") == "Show the plan and confirm the run")
+    screen = find_task(find, "Show the plan and confirm the run")
     assert "_todo | length > 0" in whens(screen)
     # the plays that apply: on the groups of nodes to do (none), the summary on no host
     for play in plays[plays.index(find) + 1:]:
@@ -176,7 +177,7 @@ HOSTVARS = {
 
 
 def test_the_compare_summed_up_in_sync():
-    play = next(p for p in load("drift.yml") if p.get("name") == "Drift")
+    play = find_play(load("drift.yml"), "Drift")
     variables = dict(trusted(play["vars"]), hostvars=HOSTVARS, _nodes=["db1", "db2", "db3"])
     sync = render(play["vars"]["_sync"], variables)
     assert [(n["name"], n["todo"], n["files"], n["os"]) for n in sync] == [
@@ -199,7 +200,7 @@ def test_the_compare_summed_up_in_sync():
 
 def test_a_node_the_compare_did_not_reach_is_not_in_sync():
     # (unreachable with cassandra_allow_down_nodes, or its compare failed: no facts of the compare)
-    play = next(p for p in load("drift.yml") if p.get("name") == "Drift")
+    play = find_play(load("drift.yml"), "Drift")
     hostvars = dict(HOSTVARS, db1={}, db2={"cassandra_apply_config_todo": False, "_cassandra_apply_config_stops": []})
     variables = dict(trusted(play["vars"]), hostvars=hostvars, _nodes=["db1", "db2", "db3"])
     sync = render(play["vars"]["_sync"], variables)
@@ -214,7 +215,7 @@ def test_a_node_the_compare_did_not_reach_is_not_in_sync():
 def test_a_stop_ends_the_compare_and_is_said_not_in_sync():
     # e2e: an inventory asking another series (the upgrade planned) failed drift at cassandra_config's series check;
     # the compare now ends where a real run stops, its nodes said not compared, the stop with its command
-    find = next(p for p in load("apply_config.yml") if p.get("name") == "Find what each node needs")
+    find = find_play(load("apply_config.yml"), "Find what each node needs")
     names = [t.get("name") for t in find["tasks"]]
     end = find["tasks"][names.index("End the compare where a real run stops")]
     assert end["ansible.builtin.meta"] == "end_play"
@@ -222,7 +223,7 @@ def test_a_stop_ends_the_compare_and_is_said_not_in_sync():
                           "_cassandra_apply_config_compare_only | default(false) | bool"]
     assert names.index("Stop before any change") < names.index("End the compare where a real run stops") \
         < names.index("Compare the config")
-    play = next(p for p in load("drift.yml") if p.get("name") == "Drift")
+    play = find_play(load("drift.yml"), "Drift")
     stops = ["db1, db2: runs Cassandra 4.1.12, the inventory asks for 5.0.9: another series is an upgrade."]
     stopped = dict((n, {"_cassandra_apply_config_stops": stops}) for n in ("db1", "db2"))
     variables = dict(trusted(play["vars"]), hostvars=stopped, _nodes=["db1", "db2"])
@@ -236,7 +237,7 @@ def test_a_stop_ends_the_compare_and_is_said_not_in_sync():
 
 
 def test_in_sync_names_a_unit_that_differs_and_its_command_reads_as_the_others():
-    play = next(p for p in load("drift.yml") if p.get("name") == "Drift")
+    play = find_play(load("drift.yml"), "Drift")
     # e2e: "ansible-playbook --check --diff community.cassandra.apply_config", the others' options after the playbook
     assert play["vars"]["_command"] == \
         "{{ 'apply_config' | community.cassandra.cassandra_command(extra=['--check', '--diff'], **_args) }}"

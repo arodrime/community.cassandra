@@ -16,7 +16,7 @@ import yaml
 from ansible_collections.community.cassandra.plugins.filter.cassandra_names import cassandra_unknown_extra_vars
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_yaml_properties as known
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
-from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task, load_tasks
 from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 load_collection_filters()
@@ -36,13 +36,7 @@ DEFAULTS = load("roles", "cassandra_config", "defaults", "main.yml")
 
 
 def task(name, tasks=None):
-    todo = list(TASKS if tasks is None else tasks)
-    while todo:
-        t = todo.pop(0)
-        if t.get("name") == name:
-            return t
-        todo += t.get("block", []) + t.get("rescue", []) + t.get("always", [])
-    raise KeyError(name)
+    return find_task(TASKS if tasks is None else tasks, name)
 
 
 def templar(**variables):
@@ -396,8 +390,8 @@ def test_more_dirs_are_read_created_and_checked():
 
 # --- preflight ------------------------------------------------------------------
 
-PREFLIGHT = next(p for p in load("playbooks", "preflight.yml") if p.get("name") == "Cassandra preflight checks")
-HEALTH = next(p for p in load("playbooks", "health_check.yml") if p.get("name") == "Cluster health")
+PREFLIGHT = find_play(load("playbooks", "preflight.yml"), "Cassandra preflight checks")
+HEALTH = find_play(load("playbooks", "health_check.yml"), "Cluster health")
 
 
 @pytest.mark.parametrize("hostvars, warned", [
@@ -443,7 +437,7 @@ def test_extra_vars_check_still_catches_a_typo():
 # --- reset_node ------------------------------------------------------------------
 
 RESET_PLAN = load_tasks(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "node_standing_read.yml"))  # (reset_node_plan.yml reads it)
-RESET_DIRS = next(t for t in RESET_PLAN if t.get("name") == "Work out its Cassandra directories")["vars"]["_inventory"]
+RESET_DIRS = find_task(RESET_PLAN, "Work out its Cassandra directories")["vars"]["_inventory"]
 
 
 @pytest.mark.parametrize("changes, cdc_raw", [
@@ -462,7 +456,7 @@ def test_reset_node_empties_the_cdc_raw_dir(changes, cdc_raw):
 
 def test_the_data_dirs_the_node_uses_rendered_whole():
     # the list of the inventory's dirs is the filter's input as a whole (a filter binds tighter than +)
-    task = next(t for t in RESET_PLAN if t.get("name") == "Work out its Cassandra directories")
+    task = find_task(RESET_PLAN, "Work out its Cassandra directories")
     variables = dict(series_vars("50x"), cassandra_data_file_directories=["/srv/a", "/srv/b"], _live="",
                      _extra={"local_system_data_file_directory": "/srv/sys"}, cassandra_conf_dir="/etc/cassandra")
     dirs = render(task["ansible.builtin.set_fact"]["_cassandra_node_standing_data_dirs"], **variables)

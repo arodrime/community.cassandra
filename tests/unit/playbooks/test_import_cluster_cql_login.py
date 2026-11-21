@@ -30,6 +30,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     cassandra_inventory_files, cassandra_inventory_layout, cassandra_inventory_layout_over)
 from ansible_collections.community.cassandra.tests.unit.helpers import (
     path_with, playbook_command, render_as_given, run_playbook)
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 GOOD, BAD = "S3cr3tGood", "Wr0ngPw"
@@ -207,7 +208,7 @@ def test_typed_login_with_any_character(tmp_path):
 
 with open(PLAYBOOK, encoding="utf-8") as f:
     PLAYS = yaml.safe_load(f)
-WRITE = next(play for play in PLAYS if play["name"] == "Write the inventory")
+WRITE = find_play(PLAYS, "Write the inventory")
 
 
 def render(template, **variables):
@@ -263,7 +264,7 @@ def test_what_is_left_to_do():
 def test_cql_address_of_the_node():
     from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
     load_collection_filters()  # cassandra_cql_host, under a plain pytest run too
-    step = next(t for t in WRITE["tasks"] if t.get("name") == "Check the CQL login, or ask for one")
+    step = find_task(WRITE, "Check the CQL login, or ask for one")
     assert step["ansible.builtin.include_role"]["tasks_from"] == "cql_login.yml"
     v = step["vars"]
     hostvars = {"n1": {"ansible_facts": {"hostname": "node1", "fqdn": "node1.example.com"}}}
@@ -287,7 +288,7 @@ def test_cql_address_of_the_node():
 
 def test_logs_in_on_the_node_the_operator_gave():
     # -i h-n1, and the question said "It is checked on h-n2" (the first node read, in ring order)
-    step = next(t for t in WRITE["tasks"] if t.get("name") == "Check the CQL login, or ask for one")
+    step = find_task(WRITE, "Check the CQL login, or ask for one")
     cql_node = step["vars"]["_cql_node"]
     nodes = fact([node("n2"), node("n3"), node("n1"), node("n4", read=False)])
     assert render(cql_node, _nodes=nodes, _given=["n1"])["host"] == "n1"
@@ -335,7 +336,7 @@ def test_which_login_is_written():
         ansible_check_mode=False, _cql_own=own, cassandra_cql_login=carol)[0]
     # an earlier login read back without its password (a file that did not load): not written back as ''
     assert written(carol, {"user": "alice", "password": ""}) is None
-    step = next(t for t in WRITE["tasks"] if t.get("name") == "Check the CQL login, or ask for one")
+    step = find_task(WRITE, "Check the CQL login, or ask for one")
     given = step["vars"]["_cassandra_cql_login_given"]
     assert render(given, _cql_set={"user": "", "password": ""}, _cql_own=own) == own  # -i node, re-import
     mine = {"user": "carol", "password": "y"}
@@ -421,11 +422,11 @@ def test_the_login_runs_on_the_node_the_import_names(tmp_path, node, expected):
 
 # --- asked once, when it is written ---
 
-FILES = next(t for t in WRITE["tasks"] if t.get("name") == "Write the files")
+FILES = find_task(WRITE, "Write the files")
 
 
 def task(name):
-    return next(t for t in WRITE["tasks"] + FILES["block"] + FILES["always"] if t.get("name") == name)
+    return find_task(WRITE, name)
 
 
 def test_asked_after_the_self_check_before_the_files_are_sorted_out():

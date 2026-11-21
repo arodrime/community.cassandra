@@ -26,6 +26,7 @@ with warnings.catch_warnings():  # already done under ansible-test
 from ansible_collections.community.cassandra.tests.unit.helpers import LOCAL, playbook_command  # noqa: E402
 from ansible_collections.community.cassandra.tests.unit.roles.test_config_preview import (  # noqa: E402
     initialized_facts, render, task, task_vars)
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task
 
 pty = pytest.importorskip("pty")
 
@@ -207,7 +208,7 @@ def test_the_question_comes_after_the_diffs_it_is_about():
 
 def test_replace_node_says_its_replacement_was_checked():
     plays = load("playbooks", "replace_node.yml")
-    replace = [t for p in plays for t in p.get("tasks", []) if t.get("name") == "Replace"][0]
+    replace = find_task(plays, "Replace")
     assert replace["vars"]["_cassandra_add_checked_new"] is True
     names = [t.get("name") for p in plays for t in p.get("tasks", []) for t in [t] + t.get("block", [])]
     assert names.index("The new host is blank") < names.index("Replace")
@@ -225,7 +226,7 @@ def test_a_new_node_with_changes_is_not_asked(initialized):
 def test_create_cluster_marks_the_nodes_it_emptied_new():
     plays = load("playbooks", "create_cluster.yml")
     tasks = [t for p in plays for t in p.get("tasks", []) for t in [t] + t.get("block", [])]
-    forget = [t for t in tasks if t.get("name") == "Forget the cluster that was there"][0]
+    forget = find_task(tasks, "Forget the cluster that was there")
     assert forget["ansible.builtin.set_fact"]["_cassandra_create_cluster_emptied"] is True
     assert forget["when"] == "not ansible_check_mode"
     # for its cassandra_config only (not a fact a later include in the same run would read)
@@ -347,7 +348,7 @@ def test_no_question_at_all_with_cassandra_operation_confirm_false():
 
 def test_add_node_prepares_only_the_nodes_not_in_the_ring_yet():
     plays = load("playbooks", "add_node.yml")
-    play = [p for p in plays if p.get("name") == "Prepare the new nodes, all at once"][0]
+    play = find_play(plays, "Prepare the new nodes, all at once")
     block = [t for t in play["tasks"] if "block" in t][0]
-    prepare = [t for t in block["block"] if t.get("name") == "Prepare this node"][0]
+    prepare = find_task(block["block"], "Prepare this node")
     assert prepare["when"] == "cassandra_new_node_state == 'new'"

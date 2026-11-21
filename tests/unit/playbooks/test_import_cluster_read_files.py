@@ -15,6 +15,7 @@ import pytest
 import yaml
 
 from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task
 
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
@@ -87,9 +88,9 @@ def test_find_as_the_module(tmp_path):
 
 
 with open(os.path.join(ROOT, "playbooks", "import_cluster.yml"), encoding="utf-8") as f:
-    READ = next(p for p in yaml.safe_load(f) if p["name"] == "Read every node")
+    READ = find_play(yaml.safe_load(f), "Read every node")
 FIRST = next(t for t in READ["tasks"] if t["name"].startswith("Read the config files, when they were written"))
-USERS = next(t for t in READ["tasks"] if t["name"] == "Read the JMX users, the repository files' mode and their signing keys")
+USERS = find_task(READ, "Read the JMX users, the repository files' mode and their signing keys")
 
 
 def trusted(value):
@@ -171,7 +172,7 @@ def test_unicode_paths_and_one_file_failing_alone(tmp_path):
      "ssh: connect to host n1 port 22: timed out"),
 ])
 def test_a_read_that_failed_is_the_node_s_error(first, users, reason):
-    note = next(t for t in READ["tasks"] if t["name"] == "Note a node whose files could not be read")
+    note = find_task(READ, "Note a node whose files could not be read")
     variables = dict(note["vars"], import_cluster_files=first, import_cluster_users_read=users)
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
     templar = templar_for(variables)

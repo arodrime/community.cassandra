@@ -21,6 +21,7 @@ with warnings.catch_warnings():  # already done under ansible-test
 
 from ansible_collections.community.cassandra.tests.unit.import_nodes import node
 from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, templar_for, trust_as_template
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 
@@ -29,13 +30,7 @@ with open(PLAYBOOK, encoding="utf-8") as f:
 
 
 def task(name):
-    todo = [t for play in PLAYS for t in play.get("tasks", [])]
-    while todo:
-        t = todo.pop(0)
-        if t.get("name") == name:
-            return t
-        todo += t.get("block", []) + t.get("rescue", [])
-    raise KeyError(name)
+    return find_task(PLAYS, name)
 
 
 def render(template, **variables):
@@ -58,7 +53,7 @@ def test_unit_environment_of_an_unread_node():
     assert unit_env({"LOCAL_JMX": "no"}, read=False) == {}
 
 
-WRITE = next(play for play in PLAYS if play["name"] == "Write the inventory")["vars"]
+WRITE = find_play(PLAYS, "Write the inventory")["vars"]
 
 
 @pytest.mark.parametrize("given_vars, jmx", [

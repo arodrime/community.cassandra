@@ -10,20 +10,14 @@ import re
 import pytest
 import yaml
 
-from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
+from ansible_collections.community.cassandra.tests.unit.task_files import find_task, load_tasks
 from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_config", "tasks")
 
 
 def task(name):
-    todo = load_tasks(os.path.join(TASKS, "main.yml"))
-    while todo:
-        t = todo.pop(0)
-        if t.get("name") == name:
-            return t
-        todo += t.get("block", []) + t.get("rescue", []) + t.get("always", [])
-    raise KeyError(name)
+    return find_task(load_tasks(os.path.join(TASKS, "main.yml")), name)
 
 
 def render(template, escape_backslashes=True, **variables):

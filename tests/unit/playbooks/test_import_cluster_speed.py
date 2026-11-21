@@ -12,13 +12,14 @@ import pytest
 import yaml
 
 from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task
 
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 with open(PLAYBOOK, encoding="utf-8") as f:
     PLAYS = yaml.safe_load(f)
-READ = next(p for p in PLAYS if p["name"] == "Read every node")
-RUNNING = next(t for t in READ["tasks"] if t["name"] == "Read the running Cassandra (conf dir, Cassandra and Java versions)")
+READ = find_play(PLAYS, "Read every node")
+RUNNING = find_task(READ, "Read the running Cassandra (conf dir, Cassandra and Java versions)")
 SCRIPT = RUNNING["ansible.builtin.shell"]
 
 

@@ -18,7 +18,7 @@ import time
 import pytest
 import yaml
 
-from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
+from ansible_collections.community.cassandra.tests.unit.task_files import find_task, load_tasks
 from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given as render, trust_as_template
 
 ROLE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_operation")
@@ -47,7 +47,7 @@ RECORD_ONLY_PIDS = RECORD.replace("\n__metaclass__ = type\n", "\n__metaclass__ =
 
 
 def task(tasks_file, name):
-    return next(t for t in tasks(tasks_file) if t.get("name") == name)
+    return find_task(tasks(tasks_file), name)
 
 
 NOTE = task("config_pending.yml", "Note whether a restart is pending")
@@ -211,7 +211,7 @@ def test_service_seeds_before_changing_the_unit():
 def test_config_seeds_before_writing():
     # cassandra_config records what the JVM started with before its first change of a node started another way
     main = load_tasks(os.path.join(ROLE, "..", "cassandra_config", "tasks", "main.yml"))
-    block = next(t for t in main if t.get("name") == "Configure")["block"]
+    block = find_task(main, "Configure")["block"]
     names = [t["name"] for t in block]
     seed = names.index("Record the config the running Cassandra started with")
     assert seed < names.index("Template Cassandra config files")

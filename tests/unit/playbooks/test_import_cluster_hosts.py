@@ -19,13 +19,14 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nod
     KEYS, cassandra_import_host_vars, cassandra_import_nodes)
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 
 with open(PLAYBOOK, encoding="utf-8") as f:
     PLAYS = yaml.safe_load(f)
 
-FIND = next(play for play in PLAYS if play["name"] == "Find the cluster from the given nodes")
+FIND = find_play(PLAYS, "Find the cluster from the given nodes")
 
 # node1 given by name, 10.0.0.2 given by IP, 10.0.0.3 found in the ring (add_host names it by its address)
 HOSTVARS = {
@@ -77,7 +78,7 @@ def test_ansible_host_can_be_left_out():
 
 
 def test_host_names_option_checked():
-    check = next(t for t in FIND["tasks"] if t["name"] == "Check the options")
+    check = find_task(FIND, "Check the options")
     assert check["name"] == "Check the options"
     that = trust_as_template("{{ " + check["ansible.builtin.assert"]["that"] + " }}")
     assert templar_for({}).template(that) is True
@@ -92,7 +93,7 @@ def test_hostname_given_to_the_layout():
 
 def test_host_names_message_renders_unset():
     # 2.19+ templates fail_msg even when the assert passes
-    msg = trust_as_template(next(t for t in FIND["tasks"] if t["name"] == "Check the options")["ansible.builtin.assert"]["fail_msg"])
+    msg = trust_as_template(find_task(FIND, "Check the options")["ansible.builtin.assert"]["fail_msg"])
     assert "hostname, fqdn or ip" in templar_for({}).template(msg)
 
 
@@ -150,8 +151,8 @@ def test_variables_read_are_the_ones_taken():
 
 def test_task_gives_the_filter_what_it_reads():
     load_collection_filters()
-    write = next(play for play in PLAYS if play["name"] == "Write the inventory")
-    match = next(t for t in next(t for t in write["tasks"] if t.get("name") == "Build the inventory")["block"]
+    write = find_play(PLAYS, "Write the inventory")
+    match = next(t for t in find_task(write, "Build the inventory")["block"]
                  if t["name"] == "Match the ring with the hosts")
     ring = [{"address": a, "dc": "dc1", "rack": "r1"} for a in ("10.0.0.1", "10.0.0.2", "10.0.0.3")]
     variables = dict(match["vars"], hostvars=HOSTVARS, _given=GIVEN, _ring=ring, _jmx={},

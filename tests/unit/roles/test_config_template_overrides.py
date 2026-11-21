@@ -14,7 +14,7 @@ import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import same_settings
 from ansible_collections.community.cassandra.tests.unit.roles.config_reader import preview
-from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
+from ansible_collections.community.cassandra.tests.unit.task_files import find_task, load_tasks
 from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 ROLE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_config")
@@ -25,13 +25,7 @@ with open(os.path.join(ROLE, "defaults", "main.yml"), encoding="utf-8") as f:
 
 
 def task(name):
-    todo = load_tasks(os.path.join(ROLE, "tasks", "main.yml"))
-    while todo:
-        t = todo.pop(0)
-        if t.get("name") == name:
-            return t
-        todo += t.get("block", []) + t.get("rescue", []) + t.get("always", [])
-    raise KeyError(name)
+    return find_task(load_tasks(os.path.join(ROLE, "tasks", "main.yml")), name)
 
 
 def render(template, escape_backslashes=True, **variables):

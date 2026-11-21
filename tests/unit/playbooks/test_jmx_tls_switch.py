@@ -12,17 +12,17 @@ import subprocess
 import pytest
 
 from ansible_collections.community.cassandra.tests.unit.playbooks.test_preflight_racks import PLAY, render
-from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
+from ansible_collections.community.cassandra.tests.unit.task_files import find_task, load_tasks
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 TASKS = load_tasks(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "jmx_tls_check.yml"))
-READ = next(t for t in TASKS if t["name"] == "Read whether the running Cassandra serves JMX over TLS")
-STOP = next(t for t in TASKS if t["name"] == "Stop on a JMX TLS the running nodes do not have")
+READ = find_task(TASKS, "Read whether the running Cassandra serves JMX over TLS")
+STOP = find_task(TASKS, "Stop on a JMX TLS the running nodes do not have")
 
 
 def test_the_check_runs_before_the_first_nodetool_call():
     names = [t["name"] for t in PLAY["tasks"]]
-    check = next(t for t in PLAY["tasks"] if t.get("name") == "Check the JMX TLS of the running nodes")
+    check = find_task(PLAY, "Check the JMX TLS of the running nodes")
     assert check["ansible.builtin.include_role"]["tasks_from"] == "jmx_tls_check.yml"
     assert names.index("Read this node's settings") < names.index(check["name"]) \
         < names.index("Read the cluster from a running node")

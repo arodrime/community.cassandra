@@ -15,6 +15,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_conf
     EXTRA_SECTIONS, EXTRAS_LIVE, cassandra_apply_config_diff)
 from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import (
     FIND, NOTE, find, load, render, with_task_vars)
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play
 
 CONF = "/etc/cassandra"
 LIMITS = """Limit                     Soft Limit           Hard Limit           Units
@@ -240,7 +241,7 @@ def test_a_release_update_it_started_is_not_refused_as_an_unfinished_upgrade():
 
 
 def test_the_stops_are_said_in_the_check_recap():
-    summary = [p for p in load("playbooks", "apply_config.yml") if p.get("name") == "Summary"][0]
+    summary = find_play(load("playbooks", "apply_config.yml"), "Summary")
     refused = summary["vars"]["_refused"]  # (the play's: the recap's and the report's)
     assert "_cassandra_apply_config_stops" in refused and "_cassandra_apply_config_refused" in refused
 

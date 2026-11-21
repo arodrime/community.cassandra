@@ -11,12 +11,11 @@ import subprocess
 import pytest
 import yaml
 
-from ansible.template import Templar
-
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_import_error
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import cassandra_import_nodes
 from ansible_collections.community.cassandra.tests.unit.import_nodes import node
 from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 
@@ -25,7 +24,7 @@ with open(PLAYBOOK, encoding="utf-8") as f:
 
 
 def task(name):
-    return next(t for play in PLAYS for t in play.get("tasks", []) if t.get("name") == name)
+    return find_task(PLAYS, name)
 
 
 def test_nodetool_runs_with_become():
@@ -55,7 +54,7 @@ def test_failure_shows_each_node_error():
 def test_given_nodes_found_when_a_discovered_node_comes_first():
     # add_host puts the nodes found in the ring in groups['all'], maybe first;
     # only the given ones have import_cluster_given
-    read = next(play for play in PLAYS if play["name"] == "Read every node")
+    read = find_play(PLAYS, "Read every node")
     hostvars = {"10.0.0.2": {}, "node1": {"import_cluster_given": ["node1"]}}
     templar = templar_for({"groups": {"all": ["10.0.0.2", "node1"], "import_cluster_found": ["10.0.0.2"]},
                            "hostvars": hostvars})
@@ -63,13 +62,13 @@ def test_given_nodes_found_when_a_discovered_node_comes_first():
     # the play writing the inventory reads them on the controller, kept there once (not the variables of every host)
     keep = task("Keep the given nodes and the ring on the controller")
     assert keep["delegate_to"] == "localhost" and keep["delegate_facts"] is True and keep["run_once"] is True
-    write = next(play for play in PLAYS if play["name"] == "Write the inventory")
+    write = find_play(PLAYS, "Write the inventory")
     assert write["vars"]["_given"] == "{{ import_cluster_given }}" and write["vars"]["_ring"] == "{{ import_cluster_ring_nodes }}"
 
 
 def test_inventory_written_without_become():
     # the nodes' plays become: sudo on the controller would fail (password) or write root's files
-    write = next(play for play in PLAYS if play["name"] == "Write the inventory")
+    write = find_play(PLAYS, "Write the inventory")
     assert write.get("become") is False
 
 
@@ -143,13 +142,13 @@ def test_limit_refused_and_the_nodes_read():
     # --limit would leave out the nodes found and localhost (the inventory written nowhere, rc 0)
     stop = task("Stop on --limit")
     assert stop["ansible.builtin.assert"]["that"] == "ansible_limit is not defined" and stop["run_once"] is True
-    find = next(play for play in PLAYS if play["name"] == "Find the cluster from the given nodes")
+    find = find_play(PLAYS, "Find the cluster from the given nodes")
     # (after the facts and their check)
     assert [t["name"] for t in find["tasks"]][2:5] == ["Check the options", "Check the group asked for", "Stop on --limit"]
     # -e cassandra_hosts: that group's hosts given (else CASSANDRA_CLUSTER's, else all: test_import_cluster_named);
     # read: the given ones and the ones found, not the inventory's others
     assert "query('community.cassandra.cassandra_nodes', group=cassandra_hosts) if cassandra_hosts" in find["hosts"]
-    read = next(play for play in PLAYS if play["name"] == "Read every node")
+    read = find_play(PLAYS, "Read every node")
     hostvars = {"a1": {"import_cluster_given": ["a1"]}, "b1": {}, "10.0.0.2": {}}
     groups = {"all": ["a1", "b1", "10.0.0.2"], "import_cluster_found": ["10.0.0.2"]}
     templar = templar_for({"groups": groups, "hostvars": hostvars})

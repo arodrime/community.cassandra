@@ -11,12 +11,13 @@ import subprocess
 import pytest
 
 from ansible_collections.community.cassandra.tests.unit.playbooks.test_import_cluster_unsupported import FIND, READ, render
+from ansible_collections.community.cassandra.tests.unit.task_files import find_task
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
-FIND_TLS = next(t for t in FIND["tasks"] if t["name"] == "Find whether JMX runs over TLS on the given nodes")
-USE_TLS = next(t for t in FIND["tasks"] if t["name"] == "Use JMX over TLS where the JVM serves it")
-STOP = next(t for t in FIND["tasks"] if t["name"] == "Stop on JMX over TLS without nodetool's settings")
-NODE_READ = next(t for t in READ["tasks"] if t["name"] == "Read the running Cassandra (conf dir, Cassandra and Java versions)")
+FIND_TLS = find_task(FIND, "Find whether JMX runs over TLS on the given nodes")
+USE_TLS = find_task(FIND, "Use JMX over TLS where the JVM serves it")
+STOP = find_task(FIND, "Stop on JMX over TLS without nodetool's settings")
+NODE_READ = find_task(READ, "Read the running Cassandra (conf dir, Cassandra and Java versions)")
 
 
 def test_tls_is_found_before_nodetool_runs():

@@ -15,11 +15,12 @@ import pytest
 import yaml
 
 from ansible_collections.community.cassandra.tests.unit.helpers import run_playbook
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 with open(os.path.join(TOP, "playbooks", "import_cluster.yml"), encoding="utf-8") as f:
-    WRITE = next(p for p in yaml.safe_load(f) if p["name"] == "Write the inventory")
-STOP = next(t for t in WRITE["tasks"] if t["name"] == "Stop on a failed self-check")
+    WRITE = find_play(yaml.safe_load(f), "Write the inventory")
+STOP = find_task(WRITE, "Stop on a failed self-check")
 
 SECRET = "hunter2"
 DATA = {

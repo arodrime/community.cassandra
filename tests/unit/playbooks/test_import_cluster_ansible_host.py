@@ -11,6 +11,7 @@ import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     cassandra_import_kept_ansible_host, cassandra_inventory_generated, cassandra_inventory_layout)
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 NAMES = {"10.0.0.1": "node1", "10.0.0.2": "node2", "10.0.0.3": "node3"}
@@ -95,7 +96,7 @@ def test_a_reimport_writes_the_hosts_file_there_again():
 
 def test_the_playbook_applies_it_unless_the_option_is_given():
     with open(PLAYBOOK, encoding="utf-8") as f:
-        play = next(p for p in yaml.safe_load(f) if p["name"] == "Write the inventory")
+        play = find_play(yaml.safe_load(f), "Write the inventory")
     names = [t["name"] for t in play["tasks"]]
     step = play["tasks"][names.index("Leave ansible_host out where the inventory there has none")]
     assert step["when"] == "import_set_ansible_host is not defined"

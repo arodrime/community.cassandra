@@ -17,13 +17,14 @@ from ansible.template import Templar
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import GENERATED
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, trust_as_template
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 
 with open(PLAYBOOK, encoding="utf-8") as f:
     PLAYS = yaml.safe_load(f)
 
-PICK = [t for play in PLAYS for t in play.get("tasks", []) if t.get("name") == "Pick the output dirs"][0]
+PICK = find_task(PLAYS, "Pick the output dirs")
 
 
 def render(template, **variables):
@@ -96,7 +97,7 @@ def test_home(tmp_path, monkeypatch):
 
 TASKS = dict((t.get("name"), t) for play in PLAYS for t in play.get("tasks", []) + [
     sub for task in play.get("tasks", []) for sub in task.get("block", [])])
-WRITE_VARS = next(p for p in PLAYS if p.get("name") == "Write the inventory")["vars"]
+WRITE_VARS = find_play(PLAYS, "Write the inventory")["vars"]
 
 
 def secret(tmp_path, monkeypatch, **variables):
@@ -350,7 +351,7 @@ def test_check_diff_writes_nothing():
     """--check --diff reviews a re-import: the tasks that write or remove run in check mode (their diff shown, the
     secrets hidden); only the report is written, as report.check.txt (on the controller, report.txt left), and its
     shareable copy when asked."""
-    write = next(p for p in PLAYS if p.get("name") == "Write the inventory")["tasks"]
+    write = find_play(PLAYS, "Write the inventory")["tasks"]
     report_tasks = ("Write report.txt and report.details.txt", "Create the report dir", "Write the shareable copy of the report")
     for task in write:
         if any(k in task for k in ("ansible.builtin.copy", "ansible.builtin.file")) and task["name"] not in report_tasks:
@@ -484,7 +485,7 @@ def test_the_shareable_copy_of_an_earlier_import_of_this_cluster_is_moved_aside_
     # candidates): with import_report_shareable off they describe that import, not this one: moved aside as
     # <file>.<date>@<time>~, never removed (the key of a copy already shared must not be lost), said in rows;
     # decided before report.txt is written again
-    names = [t.get("name") for t in next(p for p in PLAYS if p.get("name") == "Write the inventory")["tasks"]]
+    names = [t.get("name") for t in find_play(PLAYS, "Write the inventory")["tasks"]]
     assert [names.index(n) for n in SHAREABLE_TASKS] == sorted(names.index(n) for n in SHAREABLE_TASKS)
     assert names.index(SHAREABLE_TASKS[-1]) < names.index("Write report.txt and report.details.txt")
     plant_shareable(tmp_path, "c1")
@@ -710,7 +711,7 @@ def test_a_backup_name_taken_after_it_was_chosen_stops_before_anything_is_writte
     assert said == moved + stop + ["  that name is taken", "WAY OUT  run the import again (it takes the next free name)"]
     assert (tmp_path / "report.shareable.key.txt").read_text().startswith("# The key of report.shareable.txt")
     assert (tmp_path / os.path.basename(found[1]["backup"])).read_text() == "another run's\n"
-    names = [t.get("name") for t in next(p for p in PLAYS if p.get("name") == "Write the inventory")["tasks"]]
+    names = [t.get("name") for t in find_play(PLAYS, "Write the inventory")["tasks"]]
     assert names.index(SHAREABLE_TASKS[-1]) < names.index("Write report.txt and report.details.txt")
     # mv failing for another reason: its error, and to fix it first
     for name in os.listdir(str(tmp_path)):
@@ -752,7 +753,7 @@ def test_the_former_force_name_does_not_force():
 
 def test_short_screen_at_the_end():
     """The run ends with the summary (the report goes to report.txt), then the self-check failure if any."""
-    write = next(p for p in PLAYS if p.get("name") == "Write the inventory")["tasks"]
+    write = find_play(PLAYS, "Write the inventory")["tasks"]
     debug = [t["name"] for t in write if "ansible.builtin.debug" in t]
     assert [n for n in debug if not n.startswith("Say ")] == ["Show the summary"]  # (and the phase lines)
     assert [t["name"] for t in write][-2:] == ["Show the summary", "Stop on a failed self-check"]
@@ -767,7 +768,7 @@ def test_report_lines_joined_by_a_real_newline():
 
 def test_the_files_that_change():
     # what the screen says: the files written that change (would, under --check), removed, there before
-    write = next(play for play in PLAYS if play["name"] == "Write the inventory")
+    write = find_play(PLAYS, "Write the inventory")
     changes = write["vars"]["_changes"]
     variables = {
         "_dir": "/p/inventories", "_hosts_file": "prod.yml",
@@ -785,7 +786,7 @@ def test_the_files_that_change():
     assert render(changes["changed"], **variables) == ["prod.yml", "group_vars/prod/main.yml"]
     assert render(changes["removed"], **variables) == []
     # both the report and the screen get them
-    show = next(t for t in write["tasks"] if t.get("name") == "Show the summary")
+    show = find_task(write, "Show the summary")
     assert "changes=_changes" in show["ansible.builtin.debug"]["msg"] and "changes=_changes" in write["vars"]["_report"]
 
 
