@@ -867,7 +867,7 @@ def start_failed(failed, task):
     assert stop["vars"]["cassandra_output"] is True
     variables = dict(inventory_hostname="n2", cassandra_target_dc="dc1", cassandra_target_rack="r2", ansible_limit="n2",
                      ansible_failed_result=failed, ansible_failed_task={"name": task}, _cassandra_run_command_args=COMMAND_ARGS)
-    variables["_again"] = render(stop["vars"]["_again"], **variables)
+    variables["_cassandra_start_rack_again"] = render(start_play["vars"]["_cassandra_start_rack_again"], **variables)
     return render(stop["ansible.builtin.fail"]["msg"], **variables)
 
 
@@ -1409,3 +1409,37 @@ def test_a_node_of_the_rack_in_another_rack_of_the_ring_is_said():
     # never said (stop_rack's replica count for r2 is then wrong). Now a WARNING line under the success
     problems, said = check(racks={"n2": "r9"})
     assert problems == [] and said == EVERY + ["WARNING  n2 is in rack r9 (dc1) of the ring, r2 in the inventory"]
+
+
+def test_two_hosts_giving_the_same_address_stop_the_run_before_the_start():
+    # n3's cassandra_listen_address is n2's ansible_host (a copy-paste): the ring has one node at 10.0.0.2. The check
+    # took it for n3, and stopped on "n2 is not in the ring at an address its variables give" (it is), "if n2 is
+    # at one of these addresses" with no address under it. Now refused before anything starts
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_start_rack import (
+        cassandra_rack_shared_addresses)
+    hostvars = with_addresses(ADDRESSES)
+    hostvars["n3"]["cassandra_listen_address"] = "10.0.0.2"
+    assert cassandra_rack_shared_addresses(sorted(RACKS), hostvars, "ansible-playbook x") == [
+        "10.0.0.2 is given by 2 hosts:", "  n2  ansible_host", "  n3  cassandra_listen_address",
+        "nothing was started: the check after it tells the nodes of the ring apart by",
+        "  address",
+        "WAY OUT  give each host its own address, then run start_rack again:", "  ansible-playbook x"]
+    # one ansible_host for every host (ccm-like, 127.0.0.1), each listening on its own address; or a jump host,
+    # no listen address: not two hosts at one ring address
+    ccm = dict((n, {"ansible_host": "127.0.0.1", "cassandra_listen_address": "127.0.0.%s" % n[1]}) for n in RACKS)
+    assert cassandra_rack_shared_addresses(sorted(RACKS), ccm) == []
+    jump = dict((n, {"ansible_host": "192.0.2.1"}) for n in RACKS)
+    assert cassandra_rack_shared_addresses(sorted(RACKS), jump) == []
+    # broadcast_address first: two hosts on one private address, each broadcasting its own
+    nat = dict((n, {"cassandra_listen_address": "10.0.0.1", "cassandra_extra_settings": {
+        "broadcast_address": "192.0.2.%s" % n[1]}}) for n in RACKS)
+    assert cassandra_rack_shared_addresses(sorted(RACKS), nat) == []
+    # the play's task: before any node is started, the run's command under it
+    with open(os.path.join(TOP, "playbooks", "start_rack.yml"), encoding="utf-8") as f:
+        start = next(p for p in yaml.safe_load(f) if p.get("name") == "Start the rack")
+    names = [t["name"] for t in start["tasks"]]
+    task = start["tasks"][names.index("Stop when two hosts give the same address")]
+    assert names.index(task["name"]) < names.index("Start Cassandra and wait until the node has joined")
+    assert task["run_once"] is True and task["vars"]["cassandra_output"] is True
+    shared = task["vars"]["_shared"].replace(NODES, "_nodes")
+    assert render(shared, _nodes=sorted(RACKS), hostvars=hostvars, _cassandra_start_rack_again="y")[-1] == "  y"

@@ -114,6 +114,13 @@
   gather_subset: [network]
   become: true
   any_errors_fatal: true
+  vars:
+    # the run's own command again (its inventory, cluster, --limit), for the way out of a stop; the same as
+    # _cassandra_start_rack_again of the play "Check the cluster" (a play's vars are its own)
+    _cassandra_start_rack_again: >-
+      {{ 'start_rack' | community.cassandra.cassandra_command(
+           extra={'cassandra_target_dc': cassandra_target_dc, 'cassandra_target_rack': cassandra_target_rack},
+           limit=ansible_limit | default(''), **_cassandra_run_command_args) }}
   tasks:
     # first: each node its own facts before any run_once task (ansible/ansible#87148)
     - name: Give each node its own facts
@@ -133,6 +140,18 @@
         name: community.cassandra.cassandra_operation
         tasks_from: defaults.yml
         public: true
+
+    # the check after the start tells the nodes of the ring apart by address (cassandra_rack_shared_addresses)
+    - name: Stop when two hosts give the same address
+      ansible.builtin.fail:
+        msg: "{{ _shared }}"
+      run_once: true
+      when: _shared | length > 0
+      vars:
+        cassandra_output: true
+        _shared: >-
+          {{ query('community.cassandra.cassandra_nodes')
+             | community.cassandra.cassandra_rack_shared_addresses(hostvars, _cassandra_start_rack_again) }}
 
     - name: Find the running Cassandra
       ansible.builtin.include_role:
@@ -186,15 +205,10 @@
           ansible.builtin.fail:
             msg: >-
               {{ ansible_failed_result | community.cassandra.cassandra_rack_start_failed(
-                   ansible_failed_task.name | default(''), inventory_hostname, cassandra_target_rack, _again) }}
+                   ansible_failed_task.name | default(''), inventory_hostname, cassandra_target_rack,
+                   _cassandra_start_rack_again) }}
           vars:
             cassandra_output: true  # a verdict: its msg as is (ops callback)
-            # the run's own command again (its inventory, cluster, --limit); the same as _cassandra_start_rack_again
-            # of the play "Check the cluster" (a play's vars are its own)
-            _again: >-
-              {{ 'start_rack' | community.cassandra.cassandra_command(
-                   extra={'cassandra_target_dc': cassandra_target_dc, 'cassandra_target_rack': cassandra_target_rack},
-                   limit=ansible_limit | default(''), **_cassandra_run_command_args) }}
 
 # Run a repair of the rack's nodes afterwards if they were down longer than
 # cassandra_max_hint_window (3 hours by default; cassandra_max_hint_window_in_ms
@@ -241,8 +255,8 @@
         {%-   set _ = out.update({h: (hostvars[h]._cassandra_start_rack_info | default({})).stdout | default('')}) -%}
         {%- endfor -%}
         {{ out }}
-    # the run's own command again (its inventory, cluster, --limit), for the way out of a stop; the same as the
-    # rescue's _again in the play "Start the rack"
+    # the run's own command again (its inventory, cluster, --limit), for the way out of a stop; the same as
+    # _cassandra_start_rack_again of the play "Start the rack"
     _cassandra_start_rack_again: >-
       {{ 'start_rack' | community.cassandra.cassandra_command(
            extra={'cassandra_target_dc': cassandra_target_dc, 'cassandra_target_rack': cassandra_target_rack},

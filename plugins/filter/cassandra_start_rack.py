@@ -69,9 +69,11 @@ by describecluster, must be on its version). A rack alone on its version, or a c
 Not covered (two faults, or rare): a node of the run whose nodetool info fails is placed by its addresses; not
 placed, it may be counted for a ring node of the rack no host is known by while it is in another rack, or out of the
 ring while a node no host has keeps the ring's size even (no stop). A host outside the rack reached over ssh whose
-ping or fact gathering fails fails the run.
+ping or fact gathering fails fails the run. Two hosts giving one address: refused before the start
+(cassandra_rack_shared_addresses).
 
 cassandra_rack_members: the nodes the inventory puts in a rack (every node of the cluster, under --limit too).
+cassandra_rack_shared_addresses: the stop before the start when two hosts give the same ring address.
 cassandra_rack_verdict: the tables above applied to a read of the cluster.
 cassandra_rack_outside_lines: the rack's nodes UN (those of the run under --limit; a node of the run not placed: the
 rack's nodes UN in the ring, then that node), its ring nodes UN no host is known by, then the warnings (a node of the
@@ -90,6 +92,7 @@ import shlex
 from ansible_collections.community.cassandra.plugins.filter.cassandra_health import cassandra_health_sentences
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_refused
 from ansible_collections.community.cassandra.plugins.filter.cassandra_ring import hosts_by_address
+from ansible_collections.community.cassandra.plugins.filter.cassandra_stream import _host_var
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_status import compressed_address as _ip
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
@@ -118,6 +121,35 @@ def cassandra_rack_members(hosts, hostvars, dc, rack):
                 and str(variables.get("cassandra_rack", DEFAULT_RACK)) == str(rack)):
             members.append(h)
     return members
+
+
+def cassandra_rack_shared_addresses(hosts, hostvars, command=""):
+    """The cluster's nodes, their hostvars, the run's start_rack command -> the stop's lines when two hosts give the
+    same ring address, [] for none. A host's ring address: broadcast_address (cassandra_extra_settings), else
+    cassandra_listen_address, else its ansible_host; two hosts sharing an ansible_host only (ccm-like hosts on
+    127.0.0.1, a jump host) are not two hosts at one ring address.
+    e.g. (["n2", "n3"], {n2: {ansible_host: "10.0.0.2"}, n3: {cassandra_listen_address: "10.0.0.2"}}, "x") ->
+    ["10.0.0.2 is given by two hosts:", "  n2  ansible_host", "  n3  cassandra_listen_address", ...]."""
+    given = {}  # address -> [[host, the variable that gives it]], and whether a ring address variable does
+    for h in hosts or []:
+        for variable, path in (("broadcast_address", ("cassandra_extra_settings", "broadcast_address")),
+                               ("cassandra_listen_address", ("cassandra_listen_address",)),
+                               ("ansible_host", ("ansible_host",))):
+            address = _host_var(hostvars, h, *path)
+            if address and address != "localhost":
+                given.setdefault(_ip(address), []).append([h, variable])
+                break
+    shared = [(a, rows) for a, rows in given.items()
+              if len(rows) > 1 and any(variable != "ansible_host" for h, variable in rows)]
+    lines = []
+    for address, rows in shared:
+        lines += ["%s is given by %s hosts:" % (address, len(rows))] + out.table(rows, indent="  ")
+    if not lines:
+        return []
+    return out.fit(lines + ["nothing was started: the check after it tells the nodes of the ring apart by",
+                            "  address",
+                            "WAY OUT  give each host its own address, then run start_rack again:",
+                            "  " + str(command)], WIDTH)
 
 
 def _ring_nodes(reads):
@@ -681,6 +713,7 @@ def cassandra_rack_stop_refused(problems, warnings, nodes, dc, rack, cluster, co
 class FilterModule(object):
     def filters(self):
         return {"cassandra_rack_members": cassandra_rack_members,
+                "cassandra_rack_shared_addresses": cassandra_rack_shared_addresses,
                 "cassandra_rack_verdict": cassandra_rack_verdict,
                 "cassandra_rack_outside_lines": cassandra_rack_outside_lines,
                 "cassandra_rack_start_failed": cassandra_rack_start_failed,
