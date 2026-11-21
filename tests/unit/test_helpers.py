@@ -62,6 +62,14 @@ def test_golden_reads_the_file_and_writes_it_only_when_asked(tmp_path, monkeypat
     assert path.read_text() == "new\nlines\n"
 
 
+def test_golden_without_its_last_newline(tmp_path, monkeypatch):
+    # a golden file edited by hand without its last newline: read as it is, not cut by one character
+    monkeypatch.delenv("CASSANDRA_GOLDEN_WRITE", raising=False)
+    path = tmp_path / "out.txt"
+    path.write_text("kept")
+    assert golden(str(path), "kept") == "kept"
+
+
 def test_golden_written_only_when_asked_with_1(tmp_path, monkeypatch):
     # a CASSANDRA_GOLDEN_WRITE left set to anything else (0, no) in a shell does not turn the goldens into no-ops
     path = tmp_path / "out.txt"

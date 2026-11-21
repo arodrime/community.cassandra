@@ -139,7 +139,8 @@ def golden(path, text):
     if os.environ.get("CASSANDRA_GOLDEN_WRITE") == "1":
         _rewrite(path, text + "\n")
     with open(path, encoding="utf-8") as f:
-        return f.read()[:-1]
+        kept = f.read()
+    return kept[:-1] if kept.endswith("\n") else kept
 
 
 def _rewrite(path, content):
