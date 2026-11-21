@@ -1,24 +1,27 @@
 bugfixes:
   - >-
     start_rack - the check after the start runs from a node of the rack and succeeds once every node of the rack is
-    UN. A node of the rack is every node the inventory or the ring puts in it, under ``--limit`` too, a node at an
-    address a node of the rack gives (read from every host: one host's ``ansible_host`` never takes another node's
-    ring address), and a node of the ring no host is known by unless the ring puts it in another rack and the ring's
-    nodes of the rack no host is known by are as many as the nodes of the rack not in the ring at an address they
-    give (the stop says why, and to give that host the address the ring shows: ``broadcast_address`` first). A node
-    of the run not in the ring at an address it gives is not said UN: the success says what the ring shows, then
-    that node; when such nodes outnumber the ring's nodes of the rack no host is known by, the run stops. One not UN or not reached over ssh still stops the run, with the way out
-    ``run start_rack again``.
+    UN. Each node of the run is placed in the ring by its Host ID (``nodetool info`` on it), whatever its address;
+    the other hosts by the addresses their variables and facts give (read from every host: one host's
+    ``ansible_host`` never takes another node's ring address), then by what their names resolve to on the
+    controller. A node of the rack is every node the inventory or the ring puts in it, under ``--limit`` too, and a
+    ring node no host is known by while a node of the run is not placed and the nodes of the rack not placed
+    outnumber the ring's nodes of the rack no host is known by (the stop says why, and to give that host the
+    address the ring shows: ``broadcast_address`` first). A node of the run not placed is not said UN: the success
+    says what the ring shows, then that node; while the nodes of the rack not placed outnumber the ring's nodes of
+    the rack no host is known by, the run stops. A node of the rack in another rack of the ring is a warning line.
+    Two hosts giving the same ring address stop the run before the start. One not UN or not reached over ssh still
+    stops the run, with the way out ``run start_rack again``.
   - >-
     start_rack - the rest of the cluster is a warning, no longer waited for and no longer failing the run (an
     unreachable host outside the rack is counted ignored, the exit code stays 0, under ``--check`` too). The warning
     lists each node outside the rack not UN (down, joining, leaving, moving or any other state, as ``nodetool status``
     shows it), not reached over ssh, or whose ``nodetool status`` fails, then the ``health_check`` command. A node
     only nodes of the rack (just started) see not UN is waited for first, also when no node outside the rack is
-    read; one not reached over ssh is not. With every node of the rack in the ring
-    and UN, a ring of another size than the inventory is a warning line, and a schema disagreement a warning row per
-    node on another version when the rack is on one version held by more than half of the nodes ``describecluster``
-    lists, a node outside the rack among them; with ``cassandra_allow_mixed_versions``, a schema disagreement is a
+    read; one not reached over ssh is not (one row: its state and the probe's fact). With every node of the rack
+    placed and UN, a ring of another size than the inventory is a warning line, and a schema disagreement a warning
+    row per node on another version when the rack is on one version held by more than half of the nodes
+    ``describecluster`` lists, a node outside the rack among them; with ``cassandra_allow_mixed_versions``, a schema disagreement is a
     warning row of its own. The ssh probe runs without become, whatever the inventory's ``ansible_become``.
   - >-
     start_rack - what still stops the run: streams on the node of the rack the check runs from, ``nodetool status``

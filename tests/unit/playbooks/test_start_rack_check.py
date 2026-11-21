@@ -3,12 +3,13 @@ __metaclass__ = type
 
 # start_rack's check: the rack is checked from one of its nodes and must be UN;
 # a node outside the rack not UN (down, joining, leaving, moving...) or not
-# reached over ssh is said in a warning, not waited for, and does not stop the
-# run. A node that may be of the rack (the inventory, the ring, or no host known
-# by its address, unless every node of the rack is in the ring) is judged as one.
-# The expressions are read from the playbook, rendered by Ansible, with the
-# findings cassandra_health_findings gives; the ssh probe is run by
-# ansible-playbook on local hosts and one not reached.
+# reached over ssh is said in a warning and does not stop the run (waited for
+# first when only nodes of the rack saw it so). A node that may be of the rack
+# (the inventory, the ring, or no host known by its address while a node of the
+# run is not placed and the count allows it) is judged as one: the tables of the
+# cassandra_start_rack filter. The expressions are read from the playbook,
+# rendered by Ansible, with the findings cassandra_health_findings gives; the
+# ssh probe is run by ansible-playbook on local hosts and one not reached.
 
 import os
 import subprocess
