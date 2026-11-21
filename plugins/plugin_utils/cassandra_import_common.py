@@ -85,7 +85,8 @@ def undefined_name(exc):
 
 
 def error_without_message(name, where):
-    """The error being handled, without its message (it may quote a value)."""
+    """The error being handled, without its message (it may quote a value). Call it in an except block: it reads
+    that error (sys.exc_info); raise what it returns out of the block (no chained message either)."""
     frames = [f for f in traceback.extract_tb(sys.exc_info()[2])
               if re.match(r"cassandra_import\w*[.]py$", os.path.basename(f[0]))]  # (every import module, this one too)
     at = " in %s(), line %d" % (frames[-1][2], frames[-1][1]) if frames else ""
