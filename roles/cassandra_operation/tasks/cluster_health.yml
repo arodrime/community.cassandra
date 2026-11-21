@@ -25,6 +25,8 @@
 # caller's judgment of a report_only check (start_rack: the rack's own problems);
 # _cassandra_health_again: what the way out ends with (default: resume);
 # _cassandra_health_again_command: the command it runs, said under it.
+# _cassandra_health_fix_only: true: the way out is "fix it", never "bring <node>
+# back" nor what to do with a node lost for good.
 # cassandra_service_health_report_only: true only sets cassandra_health_problems
 # and cassandra_health_findings (no failure; it waits as above unless told not to).
 # cassandra_service_health_batch: true for the hosts of a play checked at once:
@@ -199,7 +201,8 @@
     _again: "{{ _cassandra_health_again | default('check again' if ansible_check_mode else 'resume') }}"
     # the nodes down, as the problems name them ("node4 (10.0.0.4, r1) is DN, seen from node1")
     _down: >-
-      {{ _problems | select('search', ' is D[NLJM],') | map('regex_replace', ' \(.*$', '') | unique | list }}
+      {{ [] if _cassandra_health_fix_only | default(false) | bool
+         else _problems | select('search', ' is D[NLJM],') | map('regex_replace', ' \(.*$', '') | unique | list }}
     # a node lost for good, apart from the resume (a block of its own in the stop block): the full
     # commands with the conditions their playbooks state, replace_node first, remove_dead_node last
     _lost: >-

@@ -37,6 +37,15 @@ def test_the_way_out_under_check():
     assert said(False, ["the schema differs"])[1] == "WAY OUT  fix it (the lines above say what), then resume"
 
 
+def test_a_fix_only_way_out_never_says_bring_back_nor_lost():
+    # start_rack, a node of the run whose Host ID is not read (its JMX not answering): the rows of the nodes down
+    # stay as facts, the way out "fix it", no block for a node lost for good
+    down = ["n4 (10.0.0.4, r1) is DN, seen from n1", "n2 (rack r2): nodetool info failed on it:"]
+    assert said(False, down, _cassandra_health_fix_only=True) == down + [
+        "WAY OUT  fix it (the lines above say what), then resume"]
+    assert said(False, down, _cassandra_health_fix_only=False)[2].startswith("WAY OUT  bring n4 back")
+
+
 def test_a_node_lost_for_good_gets_full_commands():
     # each way out a command to paste, not a playbook's name
     lines = said(False, ["n4 (10.0.0.4, r1) is DN, seen from n1"])

@@ -426,6 +426,8 @@
         _cassandra_health_stop_on: "{{ _cassandra_start_rack_last_verdict.problems }}"
         _cassandra_health_again: "run start_rack\u00a0again:"  # (a no-break space: "again" never alone on a line)
         _cassandra_health_again_command: "{{ _cassandra_start_rack_again }}"
+        # a node of the run whose Host ID is not read: its JMX does not answer, nothing says a node is lost
+        _cassandra_health_fix_only: "{{ _cassandra_start_rack_last_verdict.host_id_unread | length > 0 }}"
       when:
         - inventory_hostname == _cassandra_start_rack_checker
         - not ansible_check_mode

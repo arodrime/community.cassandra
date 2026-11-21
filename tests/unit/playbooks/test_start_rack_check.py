@@ -1359,14 +1359,17 @@ def test_two_hosts_giving_the_same_address_do_not_stop_the_run():
     assert not hasattr(cassandra_start_rack, "cassandra_rack_shared_addresses")
 
 
-def stop_said(problems, play=None):
-    """the stop as cluster_health.yml says it (its WAY OUT, the run's command under it)"""
+def stop_said(problems, play=None, unread=()):
+    """the stop as cluster_health.yml says it (its WAY OUT, the run's command under it); unread: the nodes of the
+    run whose Host ID is not read (the verdict's host_id_unread)"""
     from ansible_collections.community.cassandra.tests.unit.roles.test_cluster_health_way_out import said
     stop = TASKS[STOP]["vars"]
     again = render(PLAY["vars"]["_cassandra_start_rack_again"], ansible_limit=",".join(play or []),
                    cassandra_target_dc="dc1", cassandra_target_rack="r2", _cassandra_run_command_args=COMMAND_ARGS)
+    fix_only = render(stop["_cassandra_health_fix_only"], _cassandra_start_rack_last_verdict={
+        "host_id_unread": list(unread)})
     return said(False, [], _cassandra_health_stop_on=problems, _cassandra_health_again=stop["_cassandra_health_again"],
-                _cassandra_health_again_command=again)
+                _cassandra_health_again_command=again, _cassandra_health_fix_only=fix_only)
 
 
 NOT_READ = ["n2 (rack r2): nodetool info failed on it:",
@@ -1401,10 +1404,37 @@ def test_a_node_of_the_run_whose_host_id_is_not_read_stops_the_run():
         hostvars = with_addresses(ADDRESSES)
         hostvars["n2"]["_cassandra_start_rack_info"] = result
         assert check(hostvars=hostvars) == (lines + NOT_READ[-1:], None)
-    # DN at its own address: that ring node's row too, by its address (n2 is not placed by an address)
+    # DN at its own address: that ring node's row too, named after n2 (n2 still not placed: its stop)
+
+
+def test_a_node_of_the_run_whose_host_id_is_not_read_is_named_at_its_own_address_and_told_to_be_fixed():
+    # B3c: n2's JVM dead, DN at its own address: the stop said "10.0.0.2 (r2) is DN", then "bring 10.0.0.2 back to
+    # UN" and "IF 10.0.0.2 IS LOST FOR GOOD ... 10.0.0.2 out of the inventory" (the inventory has n2, not
+    # 10.0.0.2), with remove_dead_node of it. Now the row named after n2 (names only: n2 is still not placed, its
+    # stop), and the way out "fix it": nothing says n2 is lost, its JMX does not answer
     problems, said = check(hostvars=without_ids(with_addresses(ADDRESSES), ["n2"]), n2="DN")
-    assert problems == ["10.0.0.2 (r2) is DN, seen from n2 and n3"] + NOT_READ
-    assert stop_said(problems)[5].startswith("WAY OUT  bring 10.0.0.2 back to UN")
+    assert problems == ["n2 (10.0.0.2, r2) is DN, seen from n2 and n3"] + NOT_READ
+    lines = stop_said(problems, unread=["n2"])
+    assert lines[-3:] == ["WAY OUT  fix it (the lines above say what), then run start_rack again:",
+                          "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
+                          "    -e cassandra_target_dc=dc1 -e cassandra_target_rack=r2"]
+    assert all(len(line) <= 79 for line in lines)
+    # P2b: --limit 'all:!n3', n3 left out on purpose, DN, at an address no host gives (a cluster network); n2's
+    # nodetool info timing out twice. The stop is n2's, its way out sent the operator to bring n3's address back
+    # and to remove it for good: now "fix it" (the lines above say what)
+    names = dict((a, n) for a, n in ADDRESSES.items() if n != "n3")
+    timed_out = {"failed": True, "msg": "Task failed: Timed out after 70 second(s)."}
+    hostvars = with_addresses(names)
+    hostvars["n2"]["_cassandra_start_rack_info"] = timed_out
+    play = ["n1", "n2", "n4"]
+    problems, said = check(names=names, hostvars=hostvars, play=play, again={"n2": timed_out}, n3="DN")
+    assert problems == ["10.0.0.3 (r2) is DN, seen from n1 and n2", "n2 (rack r2): nodetool info failed on it:",
+                        "  Task failed: Timed out after 70 second(s)."] + NOT_READ[-1:]
+    lines = stop_said(problems, play, unread=["n2"])
+    assert lines[4] == "WAY OUT  fix it (the lines above say what), then run start_rack again:"
+    assert not [line for line in lines if "LOST" in line or "remove_dead_node" in line]
+    # every Host ID read: the way out of a node down as before
+    assert stop_said(["n3 (10.0.0.3, r2) is DN, seen from n1 and n2"])[1].startswith("WAY OUT  bring n3 back to UN")
 
 
 def check_ring(read, names=None, hostvars=None, play=None):

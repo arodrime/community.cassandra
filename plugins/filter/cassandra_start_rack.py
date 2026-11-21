@@ -9,8 +9,9 @@ Which inventory host a node of the ring is (_placement), computed once per read:
 - any other host (left out by --limit, outside the rack): the ring node at an address its variables or facts give
   (cassandra_host_addresses); else what its names resolve to on the controller, for a ring address no host has
   yet that the ring puts in the host's own dc and rack (a stale name never names a node of another rack).
-A ring node no host is placed at is "no inventory host is known by its address"; a node of the rack no ring node
-is placed at is "not placed".
+A ring node no host is placed at: "no host known by its address"; a node of the rack no ring node is placed at:
+"not placed". A node of the run whose Host ID is not read is placed nowhere, the ring node at an address of its own
+only named after it (in the stop on it).
 
 Which rack a node of the ring is of (_judge), the first rule that matches:
 
@@ -177,6 +178,18 @@ def _placement(reads, run, addresses, ids, racks):
         host_at.update((a, h) for a, h in hosts_by_address(names, rest).items()
                        if a in rest and (a,) + tuple((racks or {}).get(h) or ()) in where)
     return host_at
+
+
+def _unread_named(host_at, reads, addresses, unread):
+    """The placement, the reads, every host's addresses, the nodes of the run whose Host ID is not read -> the
+    placement with the ring nodes at an address of one of those nodes named after it: names only (that node stays
+    not placed)."""
+    ring = set(n[0] for n in _ring_nodes(reads))
+    names = dict(host_at)
+    for address, host in (addresses or {}).items():
+        if host in unread and _ip(address) in ring and _ip(address) not in names:
+            names[_ip(address)] = host
+    return names
 
 
 def _named(finding, host_at):
@@ -380,7 +393,8 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
     run = [h for h in members if h not in left_out]
     ids, unread = _host_ids(infos, run, rack)
     host_at = _placement(reads, run, addresses, ids, racks)
-    findings = [_named(f, host_at) for f in findings or []]
+    names = _unread_named(host_at, reads, addresses, unread)
+    findings = [_named(f, names) for f in findings or []]
     unplaced = [h for h in members if h not in host_at.values()]
     left_unplaced = [h for h in left_out if h in unplaced]
     rack_unowned = set(n[0] for n in _ring_nodes(reads)
