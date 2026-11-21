@@ -390,7 +390,8 @@
         - cassandra_health_problems | length > 0
 
     # a node of the run whose Host ID the first verdict has not (nodetool info failing: its JVM down, waited for
-    # above while the ring sees it down): read again on each node of the run, the last verdict judged with it
+    # above while the ring sees it down): read again on that node only (a good first read kept), the last verdict
+    # judged with it
     - name: Read the Host ID again of the nodes of the run
       ansible.builtin.command: "{{ _cassandra_service_nodetool }} info"
       register: _cassandra_start_rack_info_again
@@ -402,7 +403,7 @@
       when:
         - inventory_hostname in _cassandra_start_rack_members
         - not ansible_check_mode
-        - _first.host_id_unread | default([]) | length > 0
+        - inventory_hostname in _first.host_id_unread | default([])
       vars:
         _first: "{{ hostvars[_cassandra_start_rack_checker]._cassandra_start_rack_first_verdict | default({}) }}"
 

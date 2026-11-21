@@ -222,9 +222,10 @@ def check(unreached=(), peer=None, then=None, then_peer=None, names=None, groups
         variables["hostvars"][checker] = dict(variables["hostvars"][checker], _cassandra_start_rack_first_verdict=(
             variables["_cassandra_start_rack_first_verdict"]))
         first = render(reread["vars"]["_first"], **variables)
-        assert render("{{ %s }}" % reread["when"][-1], _first=first)
-        for h, result in again.items():
-            variables["hostvars"][h] = dict(variables["hostvars"][h], _cassandra_start_rack_info_again=result)
+        for h, result in again.items():  # (on the hosts its when lets it run on: the others keep their first read)
+            if all(render("{{ %s }}" % w, inventory_hostname=h, ansible_check_mode=False, _first=first, **dict(
+                    (k, v) for k, v in variables.items() if k != "inventory_hostname")) for w in reread["when"]):
+                variables["hostvars"][h] = dict(variables["hostvars"][h], _cassandra_start_rack_info_again=result)
     assert all(render("{{ %s }}" % w, ansible_check_mode=False, **variables) for w in TASKS[AFTER]["when"])
     set_facts(AFTER, variables)
     verdict = variables["_cassandra_start_rack_last_verdict"]
@@ -1448,6 +1449,10 @@ def test_a_node_of_the_run_whose_host_id_is_not_read_is_waited_for_then_read_aga
                  n2="DN") == ([], EVERY)
     # still not read: the stop
     assert check(hostvars=hostvars, then=ring(), again={"n2": NO_INFO}, n2="DN") == (NOT_READ, None)
+    # n3 read well at first: not read again (its read again timing out, a GC pause just after a start, stopped
+    # the run on n3 although its Host ID was read and placed)
+    timed_out = {"failed": True, "msg": "Task failed: Timed out after 70 second(s)."}
+    assert check(hostvars=hostvars, then=ring(), again={"n2": ok, "n3": timed_out}, n2="DN") == ([], EVERY)
     # --limit 'all:!n3', n2 and n3 known by no address: n2's entry DN is the rack's (waited for), not taken for n3
     names = dict((a, n) for a, n in ADDRESSES.items() if n not in ("n2", "n3"))
     hostvars = without_ids(with_addresses(names), ["n2"])
@@ -1462,8 +1467,10 @@ def test_a_node_of_the_run_whose_host_id_is_not_read_is_waited_for_then_read_aga
     assert task["ansible.builtin.command"] == first_read["ansible.builtin.command"]
     assert task["register"] == "_cassandra_start_rack_info_again" and task["failed_when"] is False
     assert task["no_log"] == "{{ cassandra_jmx_password | length > 0 }}"
-    assert task["when"][:2] == ["inventory_hostname in _cassandra_start_rack_members", "not ansible_check_mode"]
-    assert not render("{{ %s }}" % task["when"][-1], _first=noted(ring())["_cassandra_start_rack_first_verdict"])
+    assert task["when"] == ["inventory_hostname in _cassandra_start_rack_members", "not ansible_check_mode",
+                            "inventory_hostname in _first.host_id_unread | default([])"]
+    assert not render("{{ %s }}" % task["when"][-1], inventory_hostname="n2",
+                      _first=noted(ring())["_cassandra_start_rack_first_verdict"])
     hostvars = {"n2": {"_cassandra_start_rack_info": NO_INFO, "_cassandra_start_rack_info_again": ok},
                 "n3": {"_cassandra_start_rack_info": ok, "_cassandra_start_rack_info_again": {"skipped": True}}}
     infos = render(PLAY["vars"]["_cassandra_start_rack_filter_args"]["infos"], hostvars=hostvars,
