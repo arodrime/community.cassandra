@@ -315,6 +315,15 @@ def test_each_refusal_on_lines_of_its_own():
     assert msg == "a: one\nb: two\n  way out\nNothing is changed."
 
 
+def test_the_cql_table_level_is_read_on_5_0_only():
+    # logback.xml writes cassandra_log_cql_table_level on 5.0 only: on another series, a value that could not be
+    # read there (a template of a variable not set) is not read, so not refused
+    ctx = role_ctx("4.0", _cassandra_config_snippet_appenders="", _cassandra_config_snippet_logback="",
+                   cassandra_log_cql_table_level=trust_as_template("{{ not_defined_anywhere }}"))
+    ctx.update(task_vars(REFUSE))
+    assert render(REFUSE["vars"]["_wrong"], **ctx) == []
+
+
 def test_a_double_dash_is_yours_with_your_own_template():
     # the comment it would break is the role's template's: not refused with your own
     assert refused(cassandra_log_pattern="%msg -- %n",

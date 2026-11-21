@@ -104,7 +104,7 @@
       {{ (_cassandra_config_snippet_logback ~ '\n' ~ _cassandra_config_snippet_appenders)
          | regex_findall('<logger\s[^>]*?\bname\s*=\s*["\x27]([^"\x27]+)["\x27]') }}
     # (the values logback.xml writes as they are: the filter's WRITTEN, by their variable; a unit test keeps the two
-    # lists the same)
+    # lists the same. cassandra_log_cql_table_level is read on 5.0 only, where logback.xml writes it)
     _wrong: >-
       {{ cassandra_logback_root_extra_refs | community.cassandra.cassandra_config_logback_refusals(
       known=_known, after_root=_after_root, levels=cassandra_log_levels, own_loggers=_cassandra_config_own_loggers,
@@ -123,7 +123,7 @@
       cassandra_log_audit_total_size_cap=cassandra_log_audit_total_size_cap,
       cassandra_log_audit_dir=cassandra_log_audit_dir, cassandra_log_system_dir=cassandra_log_system_dir,
       cassandra_log_debug_dir=cassandra_log_debug_dir,
-      cassandra_log_cql_table_level=cassandra_log_cql_table_level) }}
+      cassandra_log_cql_table_level=cassandra_log_cql_table_level if cassandra_version == '50x' else '') }}
   when: "'logback.xml' not in cassandra_config_keep_files"  # (a file kept as it is: none of them written)
 
 # FileAuditLogger without the audit file: its events go to system.log (logback's root)
