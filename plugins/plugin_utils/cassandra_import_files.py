@@ -11,8 +11,8 @@ Filters (plugins/filter/cassandra_import.py names the filters):
 cassandra_import_kept_last: the inventory dir's files -> the parts the last
     import kept as each node had them.
 cassandra_import_keep_parts: import_keep_hand_edits -> the parts it names.
-cassandra_inventory_files: that layout -> the files to write, passwords apart,
-    variables grouped by subject.
+cassandra_inventory_files: cassandra_inventory_layout's layout -> the files to
+    write, passwords apart, variables grouped by subject.
 cassandra_inventory_generated: a file's content -> the same with the import's
     first line (naming the cluster).
 cassandra_leading_comments: a file's text -> its lines before the first line

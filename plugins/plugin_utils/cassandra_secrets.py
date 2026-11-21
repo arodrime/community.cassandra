@@ -9,6 +9,7 @@ test_secret_rules_compared.py pins where the three differ):
   port that runs on the node (the config diff; apply_config's preview too);
 - plugins/filter/cassandra_medusa.py (SECRET_KEY): medusa.ini's keys.
 
+Its names:
 - the rule: which names are a secret's (SECRET_WORDS and the lists after it);
 - a value: hidden (is it, or does it hold, a secret?), file_mode;
 - a text: mask (every secret's value in it as ****, the lines it goes on to

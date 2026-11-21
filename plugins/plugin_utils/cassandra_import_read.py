@@ -2,8 +2,8 @@
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 """The import (import_cluster): a node's config file read against the role's template of it.
 
-load_role, render_template, import_file, _read_changed_lines: the variables that give the node's lines, the hand edits
-left over, and the settings compared as Cassandra reads them (YAML, shell, properties, XML). Also the constants of
+load_role, render_template, import_file: the variables that give the node's lines, the hand edits left over, and
+the settings compared as Cassandra reads them (YAML, shell, properties, XML). Also the constants of
 the files read that the other import modules use (the settings a node keeps for life, the snippets' end keys, the
 heap options...). What every import module shares, and the import's error rules, are in cassandra_import_common.
 
