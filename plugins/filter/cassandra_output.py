@@ -32,6 +32,8 @@ from ansible.module_utils.parsing.convert_bool import boolean
 from ansible.utils.display import Display
 
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_operation_texts import (
+    left_system_warning, prepare_lines, removed_todo, seeds_reload_todo, seeds_todo)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import hidden
 
 SCREEN_WIDTH = 160  # the screen's width when no width is known (Ansible's display gives one: 79 in a log)
@@ -218,21 +220,21 @@ def cassandra_removed_todo(removed, reimport_from="", inventory=None, hosts=None
     reimport_hosts: see cassandra_reimport_hosts."""
     if default_inventory and _same_sources(inventory, default_inventory):
         inventory = None
-    return out.removed_todo(removed, reimport_from, inventory=inventory, hosts=hosts or None,
-                            inventory_dir=inventory_dir or None, cwd=cwd, in_git=in_git, unreachable=unreachable,
-                            imported=imported, reimport_hosts=reimport_hosts, first=first)
+    return removed_todo(removed, reimport_from, inventory=inventory, hosts=hosts or None,
+                        inventory_dir=inventory_dir or None, cwd=cwd, in_git=in_git, unreachable=unreachable,
+                        imported=imported, reimport_hosts=reimport_hosts, first=first)
 
 
 def cassandra_seeds_todo(change, group=""):
     """cassandra_seed_change's result -> the TO DO item ({text, command}) when it picked seeds the inventory does
     not have, None otherwise."""
-    return out.seeds_todo(change, group=group)
+    return seeds_todo(change, group=group)
 
 
 def cassandra_seeds_reload_todo(failed, command_line):
     """The nodes whose nodetool reloadseeds failed, its command line -> the TO DO item, None when none:
     ["n1"], "nodetool reloadseeds" -> {"text": "reload the seed list on n1: ...", "command": "nodetool reloadseeds"}."""
-    return out.seeds_reload_todo(failed, command_line)
+    return seeds_reload_todo(failed, command_line)
 
 
 def cassandra_reimport_hosts(group, hosts="", env_cluster="", files=True, others=0):
@@ -258,16 +260,16 @@ def cassandra_phase(name, names=None, node="", what="", count=None):
 
 
 def cassandra_prepare_lines(hosts, check=False):
-    """hosts: [{name, ran, repository, packages, cassandra, ...}] (plugin_utils cassandra_output prepare_lines) -> a
+    """hosts: [{name, ran, repository, packages, cassandra, ...}] (plugin_utils cassandra_operation_texts prepare_lines) -> a
     line per step and group of nodes: "node4, node5  repository  ok (already set)"."""
-    return out.prepare_lines(hosts, check=boolean(check, strict=False))
+    return prepare_lines(hosts, check=boolean(check, strict=False))
 
 
 def cassandra_left_system_warning(hosts):
     """hosts: [{name, left: [directories holding a system keyspace], dirs: [its data directories]}] -> the WARNING
     lines about an old system keyspace left outside the data directories of new nodes (plugin_utils
-    cassandra_output left_system_warning)."""
-    return out.left_system_warning(hosts)
+    cassandra_operation_texts left_system_warning)."""
+    return left_system_warning(hosts)
 
 
 def cassandra_check_what(present, kind="", targets=None, replacing="", run=None, absent=None):

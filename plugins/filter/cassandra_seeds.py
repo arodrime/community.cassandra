@@ -12,18 +12,19 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_operation_texts import seed_layout
 
 
 def cassandra_seed_layout(nodes, unread=None):
     """nodes: [{'name', 'address', 'dc', 'rack', 'seed'}] in inventory order.
-    The seed rule of preflight and help (plugin_utils cassandra_output
-    seed_layout): {'lines': one per datacenter, 'problems': the warnings,
+    The seed rule of preflight and help (plugin_utils
+    cassandra_operation_texts seed_layout): {'lines': one per datacenter, 'problems': the warnings,
     'notes', 'suggested': [addresses] (empty when there is no warning)}.
     unread: the cluster's nodes not in nodes (--limit, not answering): the
     seeds are then not judged (nothing returned), as the ones left out may be
     the seeds.
     Example: lines ["Seeds  dc1  node1 (rack1), node4 (rack2)  ok"]."""
-    return out.seed_layout([] if unread else nodes)
+    return seed_layout([] if unread else nodes)
 
 
 def _true(value):

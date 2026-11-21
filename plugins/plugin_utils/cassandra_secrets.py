@@ -18,7 +18,7 @@ import re
 
 MASK = "****"
 
-# --- the rule: which names are a secret's ----------------------------------------------------
+# --- the rule: which names are a secret's --------------------------------------------------
 
 # A word that makes a name a secret's wherever it is in it: db_password, sse_c_key and access_key (Medusa's),
 # my_api_token, a passphrase, an encryption_key
@@ -43,7 +43,7 @@ LINE_ENDINGS = ("(?<!initial)[._]token", "[._]pwd", "[._]pass", "[._]credentials
 _KEY_NAME = re.compile("|".join(SECRET_WORDS + tuple(w + "$" for w in SHORT_WORDS + KEY_ENDINGS))
                        + "|^(?:" + "|".join(KEY_OWN_NAMES + OWN_NAMES) + ")$", re.I)
 
-# --- a secret inside a line of text ---------------------------------------------------------
+# --- a secret inside a line of text --------------------------------------------------------
 
 # A secret inside a line of text (a config file line, a JVM option): its name (as above, inside a longer one;
 # not a path: a name ending in file or path, e.g. -Dcom.sun.management.jmxremote.password.file; not a YAML file's
@@ -267,7 +267,7 @@ def mask_hunks(lines):
     return shown
 
 
-# --- a value -----------------------------------------------------------------------------------
+# --- a value -------------------------------------------------------------------------------
 
 # a dict key that is a file's name with a file mode as its value (cassandra_config_file_permissions'
 # jmxremote.password: "0400"): not a secret's name; ssl.password: "x" still is

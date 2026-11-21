@@ -31,7 +31,8 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_java impor
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_build
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import (
     BULLET, NBSP, command as _full_command, command_flow, extra_var as _e, flow as _flow, is_command, laid_out,
-    path_from as _path, seed_layout)
+    path_from as _path)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_operation_texts import seed_layout
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 
 _TOP = os.path.join(os.path.dirname(__file__), "..", "..")

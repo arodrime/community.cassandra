@@ -41,6 +41,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_screen imp
     cassandra_decommission_screen, cassandra_reset_warnings)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_stream import cassandra_add_node_plan
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_operation_texts import pick_seeds, seed_target, seeds_todo
 
 NO_REPLICATION_READ = ("the keyspaces' replication could not be read (%s): a removal is not checked blind. With CQL"
                        " authentication on, set cassandra_cql_username and cassandra_cql_password.")
@@ -151,7 +152,7 @@ def _pick_dc_seeds(members, old_keys):
     for h in members:
         if h.get("up"):
             racks.setdefault(h.get("rack"), []).append(dict(h, seed=h["name"] in old_keys))
-    picked = out.pick_seeds(racks, out.seed_target(len(members), len(set(h.get("rack") for h in members))))
+    picked = pick_seeds(racks, seed_target(len(members), len(set(h.get("rack") for h in members))))
     order = [h["name"] for h in members]
     picked.sort(key=lambda h: order.index(h["name"]))  # in the inventory's order: a rerun writes the same line
     return picked
@@ -827,7 +828,7 @@ def cassandra_topology_nothing_to_do(plan, cluster, nodes, group="", notes=None)
     lines.extend("WARNING  %s is in the ring but in no host of the inventory: never touched" % u for u in plan["unknown"])
     lines.extend(n if str(n).startswith("WARNING") else "NOTE  %s" % n for n in notes or [])
     if auto:
-        lines.extend([""] + out.todo([out.seeds_todo(seeds, group=group)]))
+        lines.extend([""] + out.todo([seeds_todo(seeds, group=group)]))
     return lines
 
 

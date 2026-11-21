@@ -8,6 +8,7 @@ import time
 import pytest
 
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_operation_texts as texts
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_secrets as secrets
 
 GIB = 1024 ** 3
@@ -296,23 +297,23 @@ def prepared(name, **kw):
 def test_prepare_lines_one_line_per_group_of_nodes():
     # the steps in short words; a step off or not managed (firewall, medusa) is not said; the data disks only when
     # set, a warning or a line to act on
-    assert out.prepare_lines([prepared("node4"), prepared("node5", packages=[], os=0)]) == [
+    assert texts.prepare_lines([prepared("node4"), prepared("node5", packages=[], os=0)]) == [
         "node4  prepared  repository, cassandra 5.0.9, java 17.0.12, os tuning (2 changes), config (3 files), seeds 10.0.0.1, 10.0.0.2",
         "node5  prepared  repository, cassandra 5.0.9, java 17.0.12, os tuning, config (3 files), seeds 10.0.0.1, 10.0.0.2"]
-    assert out.prepare_lines([prepared("node4"), prepared("node5")]) == [
+    assert texts.prepare_lines([prepared("node4"), prepared("node5")]) == [
         "node4, node5  prepared  repository, cassandra 5.0.9, java 17.0.12, os tuning (2 changes), config (3 files),"
         " seeds 10.0.0.1, 10.0.0.2"]
 
 
 def test_prepare_lines_check_mode_says_would():
-    lines = out.prepare_lines([prepared("node4", repository="set", java=dict(JAVA, version=""),
-                                        packages=[{"item": "package cassandra", "before": "absent", "after": "5.0.9"},
-                                                  {"item": "package openjdk-17-jre-headless", "before": "absent",
-                                                   "after": "17.0.13+11-1~deb12u1"}],
-                                        disks=dict(prepared("node4")["disks"], changed=True),
-                                        firewall=[{"item": "port 7000", "before": "closed", "after": "open"}],
-                                        medusa=[{"item": "Medusa", "before": "absent", "after": "0.24.1"}])],
-                              check=True)
+    lines = texts.prepare_lines([prepared("node4", repository="set", java=dict(JAVA, version=""),
+                                          packages=[{"item": "package cassandra", "before": "absent", "after": "5.0.9"},
+                                                    {"item": "package openjdk-17-jre-headless", "before": "absent",
+                                                     "after": "17.0.13+11-1~deb12u1"}],
+                                          disks=dict(prepared("node4")["disks"], changed=True),
+                                          firewall=[{"item": "port 7000", "before": "closed", "after": "open"}],
+                                          medusa=[{"item": "Medusa", "before": "absent", "after": "0.24.1"}])],
+                                check=True)
     assert lines == [
         "node4  would prepare  repository, cassandra 5.0.9, java 17.0.13, os tuning (2 changes), disks read-ahead 4 KB,"
         " config (3 files), firewall (1 change), medusa 0.24.1, seeds 10.0.0.1, 10.0.0.2"]
@@ -325,7 +326,7 @@ def test_prepare_lines_steps_off_or_not_managed():
                             {"item": "/etc/profile.d/cassandra-medusa.sh", "before": "absent", "after": "PATH"}],
                     seeds="", packages=[{"item": "package cassandra", "before": "absent", "after": "5.0.9"},
                                         {"item": "package libjemalloc2", "before": "absent", "after": "5.3.0-1"}])
-    assert out.prepare_lines([node]) == [
+    assert texts.prepare_lines([node]) == [
         "node7  prepared  cassandra 5.0.9, libjemalloc2, config, medusa 0.24.1 (+1 change)"]  # no seeds: create_cluster's
 
 
@@ -336,39 +337,39 @@ def test_prepare_lines_other_outcomes():
                     cassandra="", packages=[{"item": "package cassandra", "before": "absent",
                                              "after": "not in configured repos yet"},
                                             {"item": "package libjemalloc2", "before": "absent", "after": "5.3.0-1"}])
-    assert out.prepare_lines([node], check=True) == [
+    assert texts.prepare_lines([node], check=True) == [
         "node8  would prepare  cassandra (not in configured repos yet), libjemalloc2, java 17.0.12 (/opt/java/jdk-17.0.12),"
         " os tuning (2 changes), disks (1 warning below), config (8 files templated), seeds 10.0.0.1, 10.0.0.2"]
     perms = [{"item": "/etc/cassandra/cassandra.yaml owner", "before": "root", "after": "cassandra"}]
-    assert "config (2 files, 1 other change)" in out.prepare_lines([prepared("node8", config=CONFIG[:2] + perms)])[0]
-    assert "config (1 other change)" in out.prepare_lines([prepared("node8", config=perms)])[0]
+    assert "config (2 files, 1 other change)" in texts.prepare_lines([prepared("node8", config=CONFIG[:2] + perms)])[0]
+    assert "config (1 other change)" in texts.prepare_lines([prepared("node8", config=perms)])[0]
 
 
 def test_prepare_lines_a_pinned_java_installed_now():
     node = prepared("node4", packages=[{"item": "package cassandra", "before": "absent", "after": "5.0.9"},
                                        {"item": "package openjdk-17-jre-headless=17.0.12*", "before": "absent",
                                         "after": "not in configured repos yet"}])  # what the role looks up as is
-    lines = out.prepare_lines([node])
+    lines = texts.prepare_lines([node])
     assert "cassandra 5.0.9, java 17.0.12," in lines[0] and "openjdk" not in lines[0]  # not "also openjdk-..."
 
 
 def test_prepare_lines_disks_not_tuned_yet_point_below():
     node = prepared("node4", disks=dict(prepared("node4")["disks"], info=["sdc: not tuned yet (LVM deferred)"]))
-    assert ", disks (see below), " in out.prepare_lines([node])[0]
+    assert ", disks (see below), " in texts.prepare_lines([node])[0]
     node = prepared("node4", disks=dict(prepared("node4")["disks"], changed="on"))  # a flag as Ansible may give it
-    assert ", disks read-ahead 4 KB, " in out.prepare_lines([node])[0]
+    assert ", disks read-ahead 4 KB, " in texts.prepare_lines([node])[0]
 
 
 def test_prepare_lines_many_nodes_ranges_and_nothing():
-    lines = out.prepare_lines([prepared("node%d" % i) for i in range(1, 8)])
+    lines = texts.prepare_lines([prepared("node%d" % i) for i in range(1, 8)])
     assert lines[0].startswith("node1..node7  prepared  repository, ")  # no "7 nodes: " first
-    assert out.prepare_lines([]) == [] and out.prepare_lines(None) == []
-    assert out.prepare_lines([{"name": "node1"}]) == []  # a node that ran no step
+    assert texts.prepare_lines([]) == [] and texts.prepare_lines(None) == []
+    assert texts.prepare_lines([{"name": "node1"}]) == []  # a node that ran no step
 
 
 def test_left_system_warning_once_with_its_nodes():
     hosts = [{"name": n, "left": ["/var/lib/cassandra/data"], "dirs": ["/data/cassandra"]} for n in ("node4", "node5")]
-    lines = out.left_system_warning(hosts + [{"name": "node6", "left": [], "dirs": ["/data/cassandra"]}])
+    lines = texts.left_system_warning(hosts + [{"name": "node6", "left": [], "dirs": ["/data/cassandra"]}])
     assert max(len(line) for line in lines[1:]) <= 110  # wrapped, under the WARNING line (its colour)
     assert all(line.startswith("  ") for line in lines[1:])
     text = " ".join(line.strip() for line in lines[1:])
@@ -380,10 +381,10 @@ def test_left_system_warning_once_with_its_nodes():
     assert "reset_node does not" in text and "keeping" not in text
     assert "already initialized" not in " ".join(lines)
     # a data directory of the config under it: kept
-    inside = out.left_system_warning([{"name": "node4", "left": ["/var/lib/cassandra/data"],
+    inside = texts.left_system_warning([{"name": "node4", "left": ["/var/lib/cassandra/data"],
                                        "dirs": ["/var/lib/cassandra/data/d1"]}])
     assert "keeping /var/lib/cassandra/data/d1." in " ".join(line.strip() for line in inside)  # what the hostile suite checks an add never says
-    assert out.left_system_warning([{"name": "node6", "left": []}]) == []
+    assert texts.left_system_warning([{"name": "node6", "left": []}]) == []
 
 
 # --- progress (Q2) ---
@@ -859,8 +860,8 @@ def test_removed_todo_reset_then_reimport_then_commit(tmp_path):
     inventories = tmp_path / "inventories"
     inventories.mkdir()
     (tmp_path / ".git").mkdir()
-    lines = out.removed_todo(["node3"], "10.0.0.1", inventory=None, hosts=None, inventory_dir=str(inventories),
-                             cwd=str(tmp_path))
+    lines = texts.removed_todo(["node3"], "10.0.0.1", inventory=None, hosts=None, inventory_dir=str(inventories),
+                               cwd=str(tmp_path))
     assert lines == [
         "TO DO",
         "  1. empty node3 before reusing the host (its data is left in place):",
@@ -876,8 +877,8 @@ def test_removed_todo_reset_then_reimport_then_commit(tmp_path):
 def test_removed_todo_outside_git_another_dir_and_a_node_not_answering(tmp_path):
     prod = tmp_path / "inv" / "prod"
     prod.mkdir(parents=True)
-    lines = out.removed_todo(["node3", "node4", "node9"], "node1", inventory=[str(prod)], hosts="orders",
-                             inventory_dir=str(prod), cwd=str(tmp_path), unreachable=["node9"])
+    lines = texts.removed_todo(["node3", "node4", "node9"], "node1", inventory=[str(prod)], hosts="orders",
+                               inventory_dir=str(prod), cwd=str(tmp_path), unreachable=["node9"])
     assert lines == [
         "TO DO",
         "  1. empty node3, node4 before reusing the hosts (their data is left in place):",
@@ -890,9 +891,9 @@ def test_removed_todo_outside_git_another_dir_and_a_node_not_answering(tmp_path)
         P, "  3. then write them:",
         "     ansible-playbook -i inv/prod community.cassandra.import_cluster -e cassandra_hosts=orders"
         " -e import_force=true -e import_dir=inv/prod"]
-    assert out.removed_todo([], "node1") == []
+    assert texts.removed_todo([], "node1") == []
     # an inventory import_cluster did not write: removed by hand, no re-import
-    assert out.removed_todo(["node3"], "node1", imported=False) == [
+    assert texts.removed_todo(["node3"], "node1", imported=False) == [
         "TO DO", "  1. empty node3 before reusing the host (its data is left in place):",
         "     ansible-playbook community.cassandra.reset_node -e cassandra_target_nodes=node3",
         P, "  2. remove node3 from the inventory (or leave it marked cassandra_node_state: absent)"]
@@ -900,26 +901,26 @@ def test_removed_todo_outside_git_another_dir_and_a_node_not_answering(tmp_path)
 
 def test_removed_todo_reimport_reads_the_inventory():
     # no -i <node>, nor JMX login: the inventory gives the connection and the logins (vaulted too)
-    lines = out.removed_todo(["node3"], "node1", inventory=["inv"], hosts="", in_git=False, reimport_hosts="orders")
+    lines = texts.removed_todo(["node3"], "node1", inventory=["inv"], hosts="", in_git=False, reimport_hosts="orders")
     assert lines[5] == "     ansible-playbook -i inv community.cassandra.import_cluster -e cassandra_hosts=orders" \
         " -e import_force=true --check --diff"
-    text = "\n".join(out.removed_todo(["node3"], "node1", inventory=["inv"], in_git=False))
+    text = "\n".join(texts.removed_todo(["node3"], "node1", inventory=["inv"], in_git=False))
     assert "jmx" not in text and "-i node1," not in text
     # the run's -e cassandra_hosts, when no other is said
-    assert "import_cluster -e cassandra_hosts=orders" in "\n".join(out.removed_todo(["node3"], "node1", hosts="orders"))
+    assert "import_cluster -e cassandra_hosts=orders" in "\n".join(texts.removed_todo(["node3"], "node1", hosts="orders"))
 
 
 def test_seeds_todo_first_in_the_removed_todo():
     change = {"auto": [{"dc": "dc2"}], "new": "10.0.0.1, 10.0.0.7"}
-    item = out.seeds_todo(change, "prod")
+    item = texts.seeds_todo(change, "prod")
     assert item["command"] == 'cassandra_seeds: ["10.0.0.1", "10.0.0.7"]'
-    assert out.seeds_todo({"auto": [], "new": "x"}) is None
-    lines = out.removed_todo(["node3"], "node1", in_git=False, first=[item], imported=False)
+    assert texts.seeds_todo({"auto": [], "new": "x"}) is None
+    lines = texts.removed_todo(["node3"], "node1", in_git=False, first=[item], imported=False)
     assert lines[1].startswith("  1. put the seeds the nodes now run with in the inventory (group_vars/prod/")
     assert lines[3] == P and lines[4].startswith("  2. empty node3")
     # nothing removed: the seeds alone
-    assert out.removed_todo([], "node1", first=[item])[0] == "TO DO"
-    assert out.removed_todo([], "node1", first=[None]) == []
+    assert texts.removed_todo([], "node1", first=[item])[0] == "TO DO"
+    assert texts.removed_todo([], "node1", first=[None]) == []
 
 
 # --- node groups, wrapping (a large cluster) ---
@@ -1237,8 +1238,8 @@ def test_mask_a_line_of_many_secrets_is_quick():
 
 
 def test_seeds_reload_todo():
-    assert out.seeds_reload_todo([], "cmd") is None
-    item = out.seeds_reload_todo(["n1", "n3"], "cmd")
+    assert texts.seeds_reload_todo([], "cmd") is None
+    item = texts.seeds_reload_todo(["n1", "n3"], "cmd")
     assert item["command"] == "cmd"
     assert item["text"].startswith("reload the seed list on n1, n3: nodetool reloadseeds failed")
     assert "fix the file before any restart" in item["text"]
