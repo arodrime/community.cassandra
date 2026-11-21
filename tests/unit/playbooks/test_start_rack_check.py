@@ -874,3 +874,26 @@ def test_each_node_left_out_down_gets_the_command_that_starts_it_alone():
                          "    -e cassandra_target_rack=r2 --limit n6",
                          "n5 is leaving (UL): wait for it to finish"]
     assert "without --limit" not in " ".join(lines) and max(len(x) for x in lines) <= 79
+
+
+def test_under_limit_a_node_of_the_run_not_seen_un_in_the_ring_stops_the_run(monkeypatch):
+    # n2 (in the run) and n3 (left out) known by no address in the ring; n2 DN there: its ring entry has no name,
+    # so it was taken for n3 left out, a WARNING with the command starting n3, and the run said "the nodes of this
+    # run are UN (n2)", exit 0. Now an unnamed entry is taken for a node left out only while every node of the run
+    # is in the ring at an address it gives: n2's entry DN stops the run, as without --limit
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_ring
+    monkeypatch.setattr(cassandra_ring, "_resolved", lambda name: [])
+    names = dict((a, n) for a, n in ADDRESSES.items() if n not in ("n2", "n3"))
+    problems, said = check(names=names, play=["n1", "n2", "n4"], n2="DN")
+    assert said is None
+    assert problems[:2] == ["10.0.0.2 (r2) is DN, seen from n1 and n2",
+                            "n2 (r2) is not in the ring at an address it gives: not seen UN"]
+    assert problems[2:] == ["give n2 the address the ring has it at (broadcast_address in",
+                            "  cassandra_extra_settings, else cassandra_listen_address or ansible_host)"]
+    # all UN, n2 still not at an address it gives: not seen UN, a stop (the success line says only what the
+    # ring shows)
+    problems, said = check(names=names, play=["n1", "n2", "n4"])
+    assert said is None and "n2 (r2) is not in the ring at an address it gives: not seen UN" in problems
+    # n2 at its address: the success line names it, as seen UN
+    names = dict((a, n) for a, n in ADDRESSES.items() if n != "n3")
+    assert check(names=names, play=["n1", "n2", "n4"]) == ([], UP)

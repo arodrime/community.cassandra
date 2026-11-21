@@ -21,6 +21,8 @@ at an address it gives:
   a rack node down                                              wait, then STOP
   a rack node left out by --limit (not started by the run),     WARNING, not
     not UN (its state from the last read)                         waited for
+  under --limit, a node of the run not in the ring at an        STOP
+    address it gives (not seen UN)
   a rack node in another state, or nodetool failing on it       STOP
   an outside node not UN for the node outside the rack read     WARNING, not
     from (its read failed, or none read: for the rack node)       waited for
@@ -85,8 +87,8 @@ def cassandra_rack_members(hosts, hostvars, dc, rack):
 
 def _judge(findings, members, dc, rack, addresses, reads):
     """The state findings -> ({address: "rack", "unknown" (of the rack only for want of a host known by its
-    address) or "outside"}, whether every node of the rack is in the ring at an address it gives, the ring
-    addresses of the rack's nodes found there). addresses: cassandra_host_addresses of every host (one host's
+    address) or "outside"}, whether every node of the rack is in the ring at an address it gives, {ring address:
+    rack node} of the rack's nodes found there). addresses: cassandra_host_addresses of every host (one host's
     ansible_host never takes the address another one is in the ring by: 127.0.0.1 for ccm-like nodes), the rack's
     nodes' kept here; reads: the cassandra_status results read. The rules: the module docstring's first table."""
     member_at = {}
@@ -109,7 +111,7 @@ def _judge(findings, members, dc, rack, addresses, reads):
             judged.setdefault(address, "unknown")
         else:
             judged.setdefault(address, "outside")
-    return judged, all_in_ring, set(found)
+    return judged, all_in_ring, found
 
 
 def _rack_seen_un(reads, members, dc, rack, addresses, names):
@@ -245,13 +247,14 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
         versions are mixed: cassandra_allow_mixed_versions).
       ring_size: [[the ring's size, the inventory's]] when they differ and that is a warning.
       unknown_lines: why each node judged of the rack only for want of a host known by its address is, then the
-        way out; [] for none.
+        way out; under --limit, what to do for a node of the run not in the ring at an address it gives; [] for
+        none.
       problems: what stops the run, as sentences (cassandra_health_sentences).
       rack_seen_un: the nodes of the rack UN in the rings read (_rack_seen_un), by name, else by address.
       left_out: the nodes of the rack not UN that are left out by --limit, [{address, name, states}]: named as
         one of them (its address theirs: _left_out_names), or no host known by its address, put in the rack by
-        the ring, while one of them is not in the ring at an address of its own; the first verdict's with their
-        states in this read. Not waited for, not in problems: a warning (cassandra_rack_outside_lines).
+        the ring, while one of them is not in the ring at an address of its own and every node of the run is; the
+        first verdict's with their states in this read. Not waited for, not in problems: a warning (cassandra_rack_outside_lines).
       not_readers: the hosts not to read from again: the nodes outside the rack not UN, seen down, or whose
         nodetool failed.
     e.g. ([<n4 DN from n2>, <n4 DN from n1>], ["n2", "n3"], "dc1", "r2", "n2", "n1") -> {outside: [{address:
@@ -260,18 +263,22 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
     findings = findings or []
     left_out = list(left_out or [])
     known = _left_out_names(left_out, addresses, reads)
-    judged, all_in_ring, rack_addresses = _judge(findings, members, dc, rack, addresses, reads)
+    judged, all_in_ring, found = _judge(findings, members, dc, rack, addresses, reads)
+    rack_addresses = set(found)
+    run = [h for h in members or [] if h not in left_out]
     left = _left_out_again((first_verdict or {}).get("left_out"), reads)
     left_at = dict((n["address"], n) for n in left)
     # a node no host is known by is taken for one left out only while one of them is not in the ring at an
-    # address of its own, and when the ring puts it in the rack (else as before: a ghost entry stays the rack's)
+    # address of its own, every node of the run is (else it may be that one), and the ring puts it in the rack
+    # (else as before: a ghost entry stays the rack's)
     in_ring = _ring_states(reads)
     unplaced = set(left_out) - set(h for a, h in known.items() if a in in_ring)
+    run_placed = set(run) <= set(found.values())
     for f in findings:
         if f.get("kind") != "state" or judged[f["address"]] not in ("rack", "unknown"):
             continue
         name = f.get("name") or known.get(_ip(f["address"]))
-        if name in left_out or (not name and unplaced and judged[f["address"]] == "rack"):
+        if name in left_out or (not name and unplaced and run_placed and judged[f["address"]] == "rack"):
             judged[f["address"]] = "left_out"
             if f["address"] not in left_at:
                 left_at[f["address"]] = {"address": f["address"], "name": name, "states": []}
@@ -314,12 +321,16 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
     seen_down = [f.get("name") for f in findings if f.get("kind") == "state" and str(f.get("state"))[:1] == "D"]
     names = _names(findings, addresses)
     on_other_schema = [[names.get(a, a), "on another schema version than the rack"] for a in other_schema or []]
+    # under --limit, the run's success is its nodes UN as the ring shows them: one not in the ring at an address
+    # it gives is not seen UN (the others not UN are in the findings)
+    unseen = [h for h in run if h not in found.values()] if left_out and ring_read else []
     return {"outside": outside,
             "failed": _unique(failed),
             "warnings": _unique(on_other_schema + [_note_row(f) for f in notes]),
             "ring_size": _unique(ring_size),
-            "unknown_lines": _unknown_lines(findings, judged, rack),
-            "problems": cassandra_health_sentences(stops),
+            "unknown_lines": _unknown_lines(findings, judged, rack) + _unseen_lines(unseen),
+            "problems": cassandra_health_sentences(stops) + [
+                "%s (%s) is not in the ring at an address it gives: not seen UN" % (h, rack) for h in unseen],
             "rack_seen_un": _rack_seen_un(reads, members, dc, rack, addresses, dict(names, **known)),
             "left_out": left,
             "not_readers": [h for h in _unique([n.get("name") for n in outside] + seen_down + failed_on) if h]}
@@ -344,6 +355,15 @@ def _unknown_lines(findings, judged, rack):
     return out.fit(lines + ["if %s outside rack %s: give its inventory host that address" % (which, rack),
                             "  (broadcast_address in cassandra_extra_settings, else",
                             "  cassandra_listen_address or ansible_host), then run start_rack again"], WIDTH)
+
+
+def _unseen_lines(unseen):
+    """The nodes of the run not in the ring at an address they give -> what to do; [] for none."""
+    if not unseen:
+        return []
+    return out.fit(["give %s the address the ring has %s at (broadcast_address in" % (
+        out.nodes(unseen), "it" if len(unseen) == 1 else "them"),
+        "  cassandra_extra_settings, else cassandra_listen_address or ansible_host)"], WIDTH)
 
 
 _DOING = {"J": "joining", "L": "leaving", "M": "moving"}
@@ -416,7 +436,7 @@ def cassandra_rack_outside_lines(verdict, unreached, dc, rack, command, run=None
     elif not left_out:
         lines = ["Rack %s (%s): every node is UN%s." % (rack, dc, " (%s)" % out.nodes(up) if up else "")]
     elif run:
-        lines = ["Rack %s (%s): the nodes of this run are UN (%s)." % (rack, dc, out.nodes(run))]
+        lines = ["Rack %s (%s): the nodes of this run are UN (%s)." % (rack, dc, out.nodes([h for h in up if h in run]))]
     else:
         lines = ["Rack %s (%s): nothing started, --limit leaves out all of its nodes." % (rack, dc)]
     lines += _left_out_lines(verdict, left_out, dc, rack, start_command)
