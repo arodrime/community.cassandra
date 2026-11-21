@@ -17,6 +17,7 @@ from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_impo
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_jvm import _jmx_users
 from ansible_collections.community.cassandra.plugins.filter import cassandra_import, cassandra_settings
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_import_read as import_read
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_secrets
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_import_config as import_config
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_import_layout as import_layout
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import _compare, _jmx_entries
@@ -1144,7 +1145,7 @@ def test_password_not_read_as_text_is_a_hand_edit(line):
     live = re.sub(r"^(\s*)key_password:.*$", lambda m: m.group(1) + line, stock_yaml("50x"), count=1, flags=re.M)
     out = cassandra_config_import({"cassandra.yaml": live}, "50x", FACTS)
     assert "cassandra_tde_key_password" not in out["vars"]
-    assert ["+"] + import_read._mask(line).split() in [h.split() for h in out["hand_edits"]]
+    assert ["+"] + cassandra_secrets.mask(line).split() in [h.split() for h in out["hand_edits"]]
     assert not [h for h in out["hand_edits"] if re.search(r"\bb\b", h)]  # no line of a password unmasked
 
 
@@ -1180,7 +1181,7 @@ def test_password_however_quoted(series, line, password):
 @pytest.mark.parametrize("line", ["keystore_password: 'it''s a secret'", 'keystore_password: "a \\" b"',
                                   "keystore_password: plain # c"])
 def test_mask_hides_the_whole_quoted_value(line):
-    masked = import_read._mask(line)
+    masked = cassandra_secrets.mask(line)
     assert masked.startswith("keystore_password: ****") and not re.search(r"secret|\bb\b|plain", masked)
 
 

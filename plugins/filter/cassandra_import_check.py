@@ -55,7 +55,7 @@ except ImportError:  # before, any string not marked unsafe
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
     branch_not_run_note, earlier_env, earlier_env_not_shown, ELSEWHERE, ELSEWHERE_NOTE, env_cmdline,
     error_without_message, NOT_RUNNING_OR_CHANGED, PASSWORD_FILE_NOTE, REMOTE_BRANCH_NOTE, REPEATED_NOTE,
-    undefined_name, values_hidden)
+    undefined_name, value_shown, values_hidden)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import Unsafe
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_jvm import (
     log_dir_of, logback_as_log_dir)
@@ -68,7 +68,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_settings i
     compared, jvm_options_settings, properties_settings, same_settings, same_yaml_value, shell_lines,
     without_later_stock, xml_differences, xml_settings, yaml_settings, yaml_rejected)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as _out
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import MASK, hidden, mask, mask_lines
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import MASK, mask, mask_lines
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_differences import HEAP_FILE
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_prometheus as prometheus
@@ -172,9 +172,8 @@ def _groups_of(group, name, chain):
 def _shown(key, value):
     if value is None:
         return "nothing"
-    if hidden(str(key), value):  # the one rule (cassandra_secrets): what secrets.yml holds, hidden on screen
-        return "****"
-    return mask(json.dumps(value, default=str) if not isinstance(value, str) else repr(value))
+    # the one rule (cassandra_secrets): what secrets.yml holds, hidden on screen
+    return value_shown(str(key), value, lambda v: mask(json.dumps(v, default=str) if not isinstance(v, str) else repr(v)))
 
 
 def _unit(text):

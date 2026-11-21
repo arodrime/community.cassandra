@@ -46,8 +46,8 @@ from ansible_collections.community.cassandra.plugins.plugin_utils import cassand
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_secrets
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file, roles_with_defaults
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
-    ADDRESSES, ALWAYS, HOSTNAME, IMPORTED, IMPORTED_FOR, IPV4, KEEP, _mask, MISSING, RACKDC, ROLE, _secret,
-    SET_UP_BY_THE_ROLES, values_hidden)
+    ADDRESSES, ALWAYS, HOSTNAME, IMPORTED, IMPORTED_FOR, IPV4, KEEP, MISSING, RACKDC, ROLE, SET_UP_BY_THE_ROLES,
+    value_shown, values_hidden)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import (
     _block, BLOCKS, CARRIED, cassandra_inventory_files, _decrypt, KEEP_ORDER, KEPT_PARTS_VAR, _list_secret, old_import,
     _OWNABLE, SECRET_FILES, SECRET_LISTS, SECRET_MOVED_REF, SECRET_VAR, SNIPPET_LISTS, SNIPPETS, _TagsLoader,
@@ -285,10 +285,8 @@ def _place(key, nodes, cluster, group_vars, host_vars, given=None, said=None):
 def _show(key, value):
     if value is MISSING:
         return "(role default)"
-    if _secret(key, value):
-        return "****"
     # json, not yaml.safe_dump: Ansible hands filters dict/str subclasses
-    return json.dumps(value, sort_keys=key not in KEEP_ORDER, default=str)
+    return value_shown(key, value, lambda v: json.dumps(v, sort_keys=key not in KEEP_ORDER, default=str))
 
 
 def _medusa_fqdn_domain(read):
@@ -334,7 +332,7 @@ def _name_template(key, values):
     nodes with the same name, a { or } around it."""
     texts = [v for dummy, v in values]
     if key in NOT_FROM_NAMES or NOT_FROM_NAMES_PATTERN.search(key) or len(values) < 2 or not all(isinstance(v, str) for v in texts) \
-            or len(set(texts)) < 2 or any(_secret(key, v) or TEMPLATE_MARK.search(v) or _literal(v) for v in texts):
+            or len(set(texts)) < 2 or any(cassandra_secrets.hidden(key, v) or TEMPLATE_MARK.search(v) or _literal(v) for v in texts):
         return None
     for var, name_of in NAME_VARS:
         names = [str(name_of(n)) for n, dummy in values]
@@ -579,7 +577,7 @@ def _node_report(n, grouped=()):
     if n["normalized"]:
         report.append("  Same setting, written another way by the role (no effect; on a node that is not blank, a"
                       " file whose settings are all the same is left as it is):")
-        report += ["    " + _mask(line) for line in n["normalized"]]
+        report += ["    " + cassandra_secrets.mask(line) for line in n["normalized"]]
     return report + [""]
 
 

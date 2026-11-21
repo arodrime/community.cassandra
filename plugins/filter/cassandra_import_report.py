@@ -28,7 +28,7 @@ from collections import namedtuple
 from ansible.module_utils.parsing.convert_bool import boolean
 
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
-    BRANCH_NOT_RUN_NOTE, IDENTITY, KEEP, PASSWORD_FILE_NOTE, _secret, values_hidden)
+    BRANCH_NOT_RUN_NOTE, IDENTITY, KEEP, PASSWORD_FILE_NOTE, value_shown, values_hidden)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import (
     KEPT_PART_WORDS, KEPT_PARTS, KEPT_PARTS_VAR)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_config import HEAP_MOVED
@@ -43,7 +43,7 @@ from ansible_collections.community.cassandra.plugins.plugin_utils import cassand
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_differences as differences
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import MASK, file_mode, mask
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import MASK, file_mode, hidden, mask
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 
 # shown in the head, or the ring's (dc and rack): not among the settings
@@ -245,7 +245,7 @@ def _edits(node):
         setting = _SETTING.match(plus[0]) if len(plus) == 1 else None
         if setting and setting.group(1):
             value = setting.group(2) or "present"
-            found.append((file_name, setting.group(1), MASK if _secret(setting.group(1), value) else value))
+            found.append((file_name, setting.group(1), value_shown(setting.group(1), value)))
         elif plus:
             found.append((file_name, "", " / ".join(plus)))
         elif minus:
@@ -388,7 +388,7 @@ def _leaves(key, value, keys=()):
 def _is_secret(key, keys, value):
     """A setting's value is a secret: by the variable's own name, or a sub-key's name (never a file's name with a mode
     as its value: cassandra_config_file_permissions' jmxremote.password: 0400)."""
-    return _secret(key, value) or any(_secret(k, value) for k in keys if not file_mode(k, value))
+    return hidden(key, value) or any(hidden(k, value) for k in keys if not file_mode(k, value))
 
 
 def plain_default(key):
@@ -636,7 +636,7 @@ def _self_check_items(read, self_check, theirs_win=None):
                 winner = _winner(name, f.where, theirs_win) if f.where and f.sentence is None else None
                 kind = _kind(f, by_name.get(name) or {}, hand_files.get(name, ()), winner)
                 shown = [None if v is None else _its_address(v, address) for v in (f.node, f.ansible)]
-                if f.where and any(_secret(f.where, v) for v in shown if v not in (None, differences.ABSENT)):
+                if f.where and any(hidden(f.where, v) for v in shown if v not in (None, differences.ABSENT)):
                     shown = [v if v in (None, differences.ABSENT, differences.PRESENT) else MASK for v in shown]
                 key = (kind, f.file, f.where) + tuple(None if v is None else mask(v) for v in shown) + (
                     None if f.sentence is None else mask(_its_address(f.sentence, address)),)
@@ -696,7 +696,7 @@ def _suffix(layout, item):
     for w in item["wins"].values():
         mine = next((y for y in layout.get("yours") or [] if y["node"] == w["node"] and y["key"] == w["key"]), None)
         text = "%s, in %s" % (w["key"], w["path"]) if mine is None or "yours" not in mine else "%s = %s" % (
-            w["key"], MASK if _secret(w["key"], mine["yours"]) else _plain(mine["yours"]))
+            w["key"], value_shown(w["key"], mine["yours"], _plain))
         if text not in shown:
             shown.append(text)
     return "(%s)" % "; ".join(shown) if shown else ""
@@ -823,7 +823,7 @@ def _yours_values(layout, items):
         for w in item["wins"].values():
             found = next((y["value"] for y in layout.get("yours") or []
                           if y["node"] == w["node"] and y["key"] == w["key"]), None)
-            shown = None if found is None else MASK if _secret(w["key"], found) else _plain(found)
+            shown = None if found is None else value_shown(w["key"], found, _plain)
             entry = yours.setdefault((w["path"], w["key"]), [])
             if shown not in entry:
                 entry.append(shown)
@@ -1524,9 +1524,9 @@ def _os_findings(report):
 def _yours_rows(report):
     """The values of yours a node does not have -> [((key, "value (file)"), [(the node's value, [nodes])])]."""
     def yours_text(y):
-        return "%s (%s)" % ("(a secret)" if _secret(y["key"], y["yours"]) else _short(_plain(y["yours"])),
+        return "%s (%s)" % ("(a secret)" if hidden(y["key"], y["yours"]) else _short(_plain(y["yours"])),
                             y["path"])
-    return _by_value([(y["node"], (y["key"], yours_text(y)), "(in secrets.yml)" if _secret(y["key"], y["value"])
+    return _by_value([(y["node"], (y["key"], yours_text(y)), "(in secrets.yml)" if hidden(y["key"], y["value"])
                        else _short(_plain(y["value"]))) for y in report.yours])
 
 

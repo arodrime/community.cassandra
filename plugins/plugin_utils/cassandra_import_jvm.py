@@ -25,7 +25,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_settings i
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_secrets
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
-    APPENDERS, EXPR, HEAP_OPTIONS, LOGBACK_END, _mask, REMOVED_TOGGLE, _render, ROLE)
+    APPENDERS, EXPR, HEAP_OPTIONS, LOGBACK_END, REMOVED_TOGGLE, _render, ROLE)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import keep_files_option
 
 
@@ -152,11 +152,11 @@ def _jmx_leftovers(env, users, live_files):
         mine, node = [dict((w[0], w[1:]) for w in _jmx_lines(text)) for text in (role, live_files.get(name, ""))]
         for key in [k for k in list(node) + [k for k in mine if k not in node]
                     if sorted(mine.get(k, ["?"])) != sorted(node.get(k, ["?"]))]:
-            hand.append("%s: %s" % (name, _mask(key)))
+            hand.append("%s: %s" % (name, cassandra_secrets.mask(key)))
             for sign, entry in (("-", mine), ("+", node)):
                 if key in entry:
                     words = [cassandra_secrets.MASK] if name.endswith(".password") else entry[key]
-                    hand.append("  %s %s" % (sign, _mask(" ".join([key] + words))))
+                    hand.append("  %s %s" % (sign, cassandra_secrets.mask(" ".join([key] + words))))
     return hand
 
 
@@ -506,7 +506,7 @@ def _logback_carried(env, series, ctx, found, text):
                      " audit appender it leaves commented out (cassandra_log_audit_file: false), where XML does not"
                      " take it: not carried in cassandra_log_pattern. Write the pattern without -- on the nodes and"
                      " import again, or keep logback.xml as it is (-e import_keep_hand_edits=logback.xml)"
-                     % _mask(found.pop("cassandra_log_pattern")))
+                     % cassandra_secrets.mask(found.pop("cassandra_log_pattern")))
     return found, notes
 
 

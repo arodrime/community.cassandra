@@ -82,8 +82,6 @@ BY_PATH = {"cassandra_sstable_format": ("sstable", "selected_format"),
 AUDIT_PARAMETERS = ("cassandra_audit_logger_parameters", ("audit_logging_options", "logger", 0, "parameters"))
 INTEGERS = ("cassandra_num_tokens", "cassandra_allocate_tokens_for_local_replication_factor",
             "cassandra_audit_max_queue_weight", "cassandra_audit_max_log_size")
-# Same masking as cassandra_config's diff preview (plugin_utils cassandra_secrets)
-_mask, _secret = cassandra_secrets.mask, cassandra_secrets.hidden
 
 
 # The node's own address or name: written as the fact that gives it
@@ -474,7 +472,7 @@ def _import_properties(tpl, rendered, live, ctx):
     keys = set(m.group(1) for t, r in zip(tpl, rendered) if "{{" in t
                for m in [re.match(r"^(?:#\s*)?([\w.-]+)\s*=", r.strip())] if m)
     extra = dict((k, v) for k, v in node_kv.items() if k not in keys and re.match(r"^[A-Za-z0-9_.-]+$", k)
-                 and not re.search(r"(^[ \t\f]|\\$)", v) and not _secret(k, v))
+                 and not re.search(r"(^[ \t\f]|\\$)", v) and not cassandra_secrets.hidden(k, v))
     if extra and "cassandra_rackdc_extra_settings" in ctx:
         found["cassandra_rackdc_extra_settings"] = extra
     return found
@@ -920,7 +918,7 @@ def _former_sub_keys_renamed(rendered, live):
                     and not any(written.match(live[i]) for i in indexes):
                 line = live[at[0]]
                 live[at[0]] = line.replace(old + ":", new + ":", 1)
-                notes.append("cassandra.yaml: %s: %s  (node: %s)" % (key, live[at[0]].strip(), _mask(line.strip())))
+                notes.append("cassandra.yaml: %s: %s  (node: %s)" % (key, live[at[0]].strip(), cassandra_secrets.mask(line.strip())))
     return live, notes
 
 
@@ -1218,7 +1216,7 @@ def _without_declared(series, rendered, live):
         if key in skipped:
             drop.update(indexes)
             if not same:
-                notes.append("cassandra.yaml: %s, not compared (%s)" % (_mask(line.strip()), NOT_COMPARED[key]))
+                notes.append("cassandra.yaml: %s, not compared (%s)" % (cassandra_secrets.mask(line.strip()), NOT_COMPARED[key]))
         elif same or default:
             drop.update(indexes)
             role.pop(key, None)
@@ -1328,9 +1326,9 @@ def _properties_leftovers(name, rendered, live_text):
     for key in sorted(set(role_kv) | set(node_kv)):
         if role_kv.get(key) != node_kv.get(key):
             hand.append("%s: %s" % (name, key))
-            hand += ["  - %s=%s" % (key, cassandra_secrets.MASK if _secret(key, role_kv[key]) else _mask(role_kv[key]))] \
+            hand += ["  - %s=%s" % (key, value_shown(key, role_kv[key], cassandra_secrets.mask))] \
                 if key in role_kv else []
-            hand += ["  + %s=%s" % (key, cassandra_secrets.MASK if _secret(key, node_kv[key]) else _mask(node_kv[key]))] \
+            hand += ["  + %s=%s" % (key, value_shown(key, node_kv[key], cassandra_secrets.mask))] \
                 if key in node_kv else []
     if role_kv == node_kv and rendered != live_text.split("\n"):
         normalized.append("%s: same settings, comments and layout rewritten" % name)
@@ -1648,6 +1646,14 @@ def _comment_lines(blocks):
                 where.append("line %d" % line if node == 1 else "lines %d-%d" % (line, line + node - 1))
         out.append("%s: %s" % (name, ", ".join(where)))
     return out
+
+
+def value_shown(key, value, show=None):
+    """A value as the import shows it (same masking as cassandra_config's diff preview, plugin_utils
+    cassandra_secrets): **** for a secret's (cassandra_secrets.hidden), else show(value) (None: the value)."""
+    if cassandra_secrets.hidden(key, value):
+        return cassandra_secrets.MASK
+    return show(value) if show else value
 
 
 def undefined_name(exc):

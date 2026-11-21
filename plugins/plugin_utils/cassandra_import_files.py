@@ -44,7 +44,7 @@ from ansible.module_utils.parsing.convert_bool import boolean
 from ansible_collections.community.cassandra.plugins.filter.cassandra_repository_import import SERIES_TOKEN
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_secrets
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
-    APPENDERS, ENV_END, HOSTNAME, IMPORTED, IPV4, KEEP, LOGBACK_END, ROLE, _secret, SERIES, SET_UP_BY_THE_ROLES,
+    APPENDERS, ENV_END, HOSTNAME, IMPORTED, IPV4, KEEP, LOGBACK_END, ROLE, SERIES, SET_UP_BY_THE_ROLES,
     values_hidden)
 
 
@@ -190,7 +190,7 @@ def _list_secret(key, value, trusted=()):
     left out."""
     if key in dict(SECRET_LISTS) and isinstance(value, list):
         return any(_secret_words(SECRET_MOVED_REF.sub("", SECRET_MOVED.sub("", v)) if v in trusted else v) for v in value if isinstance(v, str))
-    return _secret(key, value)
+    return cassandra_secrets.hidden(key, value)
 
 
 def _move_secrets(variables):
