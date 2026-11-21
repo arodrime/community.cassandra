@@ -13,7 +13,6 @@ variable it is close to (or "")."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
-import ast
 import difflib
 import functools
 import glob
@@ -25,11 +24,11 @@ import yaml
 from ansible.module_utils.parsing.convert_bool import boolean
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file, roles_with_defaults
 
-_ROLES = os.path.join(os.path.dirname(__file__), "..", "..", "roles")
-_PLAYBOOKS = os.path.join(os.path.dirname(__file__), "..", "..", "playbooks")
-_FILTERS = os.path.dirname(__file__)
-# a name prefix a filter builds variable names from ("cassandra_jmx_ssl_%s", "cassandra_linux_" + key)
-_PREFIX = re.compile(r"^(cassandra_\w*_)(?:%s|$)")
+_TOP = os.path.join(os.path.dirname(__file__), "..", "..")
+_ROLES = os.path.join(_TOP, "roles")
+# the files whose names used_names reads (relative to the collection)
+_READ = ("roles/*/*/*.yml", "roles/*/templates/**", "playbooks/*.yml", "playbooks/tasks/*.yml",
+         "playbooks/templates/*.j2")
 # the names the roles and playbooks use: import_cluster's own facts (import_cluster_*), not every import_ word
 # (import_tasks, import_playbook, a file's name): its options are the playbook variables
 _NAME = re.compile(r"\b(?:cassandra|import_cluster|help)_\w+")
@@ -39,6 +38,30 @@ _OURS = re.compile(r"(?:cas+andra|import|help|status|drift)_", re.IGNORECASE)
 # a comment: its names are examples (a typo shown, a module), not variables read (text after " #" in a
 # string goes too: a name only there is then unknown, never a typo let through)
 _COMMENT = re.compile(r"(?m)(?:^|\s)#.*$")
+# The names used_names gives stay those 3.0.0-rc1 knew. rc1 read every name its playbooks wrote, the names of the
+# filters they call included (a -e with a filter's name went through). Some of that Jinja has moved into Python since:
+# - names rc1 read that the playbooks no longer write: known still (rc1 let them through)
+RC1_NAMES_NOW_IN_PYTHON = frozenset((
+    "cassandra_clock_lines", "cassandra_import_keep_parts", "cassandra_jmx_ssl_", "cassandra_leading_comments",
+    "cassandra_prometheus_config_error", "cassandra_storage_mode_back_stop", "cassandra_storage_mode_given_wrong",
+    "cassandra_storage_mode_into_none_stop", "cassandra_storage_mode_jump_stop", "cassandra_storage_mode_kept_stop",
+    "cassandra_storage_mode_stopped_unsure", "cassandra_storage_mode_unsure", "cassandra_storage_mode_written"))
+# - names the playbooks write since rc1 that are no variable: the filters added since (cassandra_seed_hosts given on
+#   the command line is refused as a typo of cassandra_seeds, as in rc1; a new filter the playbooks call goes here
+#   too), a file the roles read (plugin_utils/cassandra_config_record.py) and a module a template's comment names
+#   (cassandra_os.py)
+NOT_VARIABLES = frozenset((
+    "cassandra_cleanup_batches", "cassandra_clock_plan", "cassandra_config_audit_parameter_refusals",
+    "cassandra_config_exporter_refusals", "cassandra_config_jmx_tls_refusals", "cassandra_config_logback_refusals",
+    "cassandra_config_override_refusals", "cassandra_config_rackdc_refusals", "cassandra_config_snippet_refusals",
+    "cassandra_cql_login_outcome", "cassandra_dead_address", "cassandra_dead_node_refusal", "cassandra_import_cql_todo",
+    "cassandra_import_cqlsh_todo", "cassandra_inventory_file_heads", "cassandra_node_reset_dir_lines",
+    "cassandra_node_reset_lines", "cassandra_rack_infos", "cassandra_seed_hold_lines", "cassandra_seed_hosts",
+    "cassandra_service_account_refusal", "cassandra_service_changes", "cassandra_service_other_seeds",
+    "cassandra_staying_node", "cassandra_storage_mode_given_rows", "cassandra_storage_mode_guard",
+    "cassandra_too_few_nodes", "cassandra_topology_done", "cassandra_topology_nothing_to_do",
+    "cassandra_topology_refusals", "cassandra_upgrade_copy_refusal",
+    "cassandra_config_record", "cassandra_os"))
 # former names of the variables: every node an operation targets is cassandra_target_nodes; the others, renamed
 # since the 2.1.0 release candidates (an inventory written for one is refused, not silently ignored)
 RENAMED = dict([(name, "cassandra_target_nodes") for name in (
@@ -99,36 +122,19 @@ def cassandra_close_names(names, known, cutoff=0.9):
 
 
 @functools.lru_cache(maxsize=None)
-def _used_names():
+def used_names(with_comments=False):
     """Every cassandra_*, import_cluster_* and help_* name the roles and playbooks (their task files and
-    templates too) use outside comments (their own facts and results too)."""
+    templates too) use, their own facts and results too, as 3.0.0-rc1 knew them (RC1_NAMES_NOW_IN_PYTHON,
+    NOT_VARIABLES). with_comments: the names their comments write too (help's typo check reads them, the
+    unknown-variable check does not)."""
     names = set()
-    paths = (glob.glob(os.path.join(_ROLES, "*", "*", "*.yml"))
-             + glob.glob(os.path.join(_ROLES, "*", "templates", "**", "*.j2"), recursive=True)
-             + glob.glob(os.path.join(_PLAYBOOKS, "*.yml"))
-             + glob.glob(os.path.join(_PLAYBOOKS, "tasks", "*.yml"))
-             + glob.glob(os.path.join(_PLAYBOOKS, "templates", "*.j2")))
-    for path in paths:
-        with open(path, encoding="utf-8") as f:
-            names.update(_NAME.findall(_COMMENT.sub("", f.read())))
-    return frozenset(names | filter_names())
-
-
-@functools.lru_cache(maxsize=None)
-def filter_names():
-    """The names of the collection's filters (what each FilterModule.filters() gives) and the name prefixes the
-    filters build variable names from: names the playbooks' Jinja called before a filter took the Jinja over."""
-    names = set()
-    for path in glob.glob(os.path.join(_FILTERS, "*.py")):
-        with open(path, encoding="utf-8") as f:
-            tree = ast.parse(f.read())
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef) and node.name == "FilterModule":
-                names.update(key.value for item in ast.walk(node) if isinstance(item, ast.Dict)
-                             for key in item.keys if isinstance(key, ast.Constant) and isinstance(key.value, str))
-            elif isinstance(node, ast.Constant) and isinstance(node.value, str) and _PREFIX.match(node.value):
-                names.add(_PREFIX.match(node.value).group(1))
-    return frozenset(names)
+    for pattern in _READ:
+        for path in glob.glob(os.path.join(_TOP, pattern), recursive=True):
+            if os.path.isfile(path):
+                with open(path, encoding="utf-8", errors="replace") as f:
+                    text = f.read()
+                names.update(_NAME.findall(text if with_comments else _COMMENT.sub("", text)))
+    return frozenset((names | RC1_NAMES_NOW_IN_PYTHON) - NOT_VARIABLES)
 
 
 def cassandra_unknown_names(names, known, cutoff=0.8):
@@ -137,7 +143,7 @@ def cassandra_unknown_names(names, known, cutoff=0.8):
     for the names no role (argument specs, defaults) or playbook knows nor
     uses (e.g. cassandra_config_usr, a typo, or a name from another version)."""
     documented = sorted(_role_variables() | set(known or []))
-    used = _used_names()
+    used = used_names()
     out = {}
     for name in names or []:
         if name in documented or name in used or name.startswith(SECRET_VARS):

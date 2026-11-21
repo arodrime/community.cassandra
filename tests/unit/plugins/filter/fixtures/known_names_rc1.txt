@@ -1,5 +1,5 @@
-# The names 3.0.0-rc1 (4b5bed65) knew: the unknown-variable check (cassandra_names: names) and help's typo check
-# (cassandra_help: help), or both. None of them may be unknown now (test_cassandra_names.py).
+# The names 3.0.0-rc1 (085641dd) knew: the unknown-variable check (cassandra_names: names) and help's typo check
+# (cassandra_help: help), or both. The two know exactly these now, no fewer and no more (test_cassandra_names.py).
 # <name><TAB>both|names|help
 cassandra_accept_default_identity	both
 cassandra_add_node_blocks	both
@@ -148,6 +148,7 @@ cassandra_clock_sync_timeout	both
 cassandra_clock_verdicts	both
 cassandra_clock_wait_line	both
 cassandra_clock_waits	both
+cassandra_clock_warnings	both
 cassandra_close_names	both
 cassandra_cluster_jmx_password_file	both
 cassandra_cluster_name	both
@@ -384,6 +385,7 @@ cassandra_firewall_offline	both
 cassandra_firewall_port_sources	both
 cassandra_firewall_snapshot	both
 cassandra_firewall_stopped	both
+cassandra_fit	both
 cassandra_flush	both
 cassandra_former_name_text	both
 cassandra_fs_ownership	help
@@ -399,6 +401,7 @@ cassandra_health_exporter_other	both
 cassandra_health_findings	both
 cassandra_health_gossip	both
 cassandra_health_gossip_job	both
+cassandra_health_lost_lines	both
 cassandra_health_netstats	both
 cassandra_health_netstats_job	both
 cassandra_health_peer	both
@@ -429,7 +432,9 @@ cassandra_hints_flush_period	both
 cassandra_hints_flush_period_in_ms	both
 cassandra_holds_secret	both
 cassandra_host	help
+cassandra_host_address_givers	both
 cassandra_host_addresses	both
+cassandra_host_racks	both
 cassandra_hosts	both
 cassandra_import_convergence	both
 cassandra_import_error	both
@@ -642,6 +647,7 @@ cassandra_leaving_ring	both
 cassandra_leaving_state	both
 cassandra_left_system_warning	both
 cassandra_legacy_ssl_storage_port_enabled	both
+cassandra_limit_patterns	both
 cassandra_limits_changed	both
 cassandra_linux	both
 cassandra_linux_apply_live	both
@@ -889,11 +895,13 @@ cassandra_nodes	both
 cassandra_nodetool_failure	both
 cassandra_normal_wait_line	both
 cassandra_not_reached	both
+cassandra_notes_lines	both
 cassandra_num_tokens	both
 cassandra_offline	both
 cassandra_op_done	both
 cassandra_op_recap	both
 cassandra_op_result	both
+cassandra_op_results	both
 cassandra_operation	both
 cassandra_operation_confirm	both
 cassandra_operation_drain	both
@@ -987,6 +995,8 @@ cassandra_rack_members	both
 cassandra_rack_outside_lines	both
 cassandra_rack_refusals	both
 cassandra_rack_ring	both
+cassandra_rack_start_failed	both
+cassandra_rack_stop_refused	both
 cassandra_rack_verdict	both
 cassandra_rackdc_dc	both
 cassandra_rackdc_extra_settings	both

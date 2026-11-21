@@ -20,7 +20,6 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import difflib
-import glob
 import os
 import re
 import shlex
@@ -28,7 +27,7 @@ import shlex
 from ansible.errors import AnsibleFilterError
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_java import cassandra_java_major
-from ansible_collections.community.cassandra.plugins.filter.cassandra_names import filter_names
+from ansible_collections.community.cassandra.plugins.filter.cassandra_names import used_names
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_build
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import (
     BULLET, NBSP, command as _full_command, command_flow, extra_var as _e, flow as _flow, is_command, laid_out,
@@ -36,7 +35,6 @@ from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_outp
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_operation_texts import seed_layout
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 
-_TOP = os.path.join(os.path.dirname(__file__), "..", "..")
 
 # the help's width without a terminal (the ops callback lays it out at the terminal's width, 100 at most)
 WIDTH = 100
@@ -267,17 +265,9 @@ def _role_defaults():
 
 
 def _known_names():
-    """Every cassandra_* name the collection reads (roles, playbooks, their task files and templates), and its
-    filters' names (cassandra_names.filter_names)."""
-    names = set()
-    for pattern in ("roles/*/defaults/*.yml", "roles/*/meta/*.yml", "roles/*/tasks/*.yml", "roles/*/templates/**",
-                    "roles/*/vars/*.yml", "roles/*/handlers/*.yml", "playbooks/*.yml", "playbooks/tasks/*.yml",
-                    "playbooks/templates/*.j2"):
-        for path in glob.glob(os.path.join(_TOP, pattern), recursive=True):
-            if os.path.isfile(path):
-                with open(path, encoding="utf-8", errors="replace") as f:
-                    names.update(re.findall(r"\bcassandra_\w+", f.read()))
-    return names | filter_names()
+    """Every cassandra_* name the collection reads (roles, playbooks, their task files and templates), and those
+    their comments write (a name shown in a comment is no typo here, as in 3.0.0-rc1)."""
+    return set(name for name in used_names(with_comments=True) if name.startswith("cassandra_"))
 
 
 def _seeds(value):

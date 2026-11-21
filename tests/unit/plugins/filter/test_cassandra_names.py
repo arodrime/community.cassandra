@@ -127,7 +127,7 @@ def test_no_file_read_without_a_name_of_ours(monkeypatch):
     def read():
         raise AssertionError("read")
     monkeypatch.setattr(cassandra_names, "_role_variables", read)
-    monkeypatch.setattr(cassandra_names, "_used_names", read)
+    monkeypatch.setattr(cassandra_names, "used_names", read)
     assert cassandra_names.cassandra_unknown_extra_vars(["cassandra_hosts", "ansible_user", "cassandra_new_nodes"],
                                                         PLAYBOOK_VARIABLES) == {}
 
@@ -155,10 +155,11 @@ def _names_read(top):
 
 def test_every_name_the_playbooks_read_is_known():
     # a variable read only in a playbook's task file or template (playbooks/tasks, playbooks/templates) is no
-    # unknown variable or typo, for the unknown-variable check nor for help
+    # unknown variable or typo, for the unknown-variable check nor for help (a filter they call added since rc1
+    # is no variable: NOT_VARIABLES)
     from ansible_collections.community.cassandra.plugins.filter import cassandra_help
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_names import cassandra_unknown_names
-    read = _names_read(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "playbooks"))
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_names import NOT_VARIABLES, cassandra_unknown_names
+    read = _names_read(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "playbooks")) - NOT_VARIABLES
     assert cassandra_unknown_names(sorted(read), []) == {}
     assert read - cassandra_help._known_names() == set()
 
@@ -172,3 +173,52 @@ def test_every_name_rc1_knew_is_known():
     assert len(rows) > 1000
     assert cassandra_unknown_names([name for name, where in rows if where != "help"], []) == {}
     assert sorted(set(name for name, where in rows if where != "names") - cassandra_help._known_names()) == []
+
+
+def _rc1_names(where):
+    """The names 3.0.0-rc1 knew (known_names_rc1.txt): where "names" (the unknown-variable check) or "help"."""
+    with open(os.path.join(os.path.dirname(__file__), "fixtures", "known_names_rc1.txt"), encoding="utf-8") as f:
+        rows = [line.rstrip("\n").split("\t") for line in f if not line.startswith("#")]
+    return set(name for name, tag in rows if tag in (where, "both"))
+
+
+def _filter_names():
+    """The name of every filter the collection registers."""
+    import glob
+    import importlib
+    names = set()
+    for path in glob.glob(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "plugins", "filter", "*.py")):
+        module = os.path.basename(path)[:-3]
+        if module != "__init__":
+            plugin = importlib.import_module("ansible_collections.community.cassandra.plugins.filter." + module)
+            names.update(plugin.FilterModule().filters())
+    return names
+
+
+def test_the_unknown_variable_check_knows_exactly_rc1s_names():
+    # both ways: no name rc1 knew is unknown, no name rc1 reported unknown is let through
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_names
+    known = cassandra_names._role_variables() | cassandra_names.used_names()
+    assert sorted(name for name in known if cassandra_names._NAME.match(name)) == sorted(_rc1_names("names"))
+
+
+def test_help_knows_exactly_rc1s_names():
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_help
+    assert sorted(cassandra_help._known_names()) == sorted(_rc1_names("help"))
+
+
+def test_a_filter_added_since_rc1_is_no_variable():
+    # rc1 took the name of each filter its playbooks called for a variable; a filter added since is not one
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_help
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_names import cassandra_unknown_extra_vars
+    filters = _filter_names()
+    assert len(filters) > 250
+    added = sorted(filters - _rc1_names("names"))
+    assert added and sorted(cassandra_unknown_extra_vars(added, [])) == added
+    assert sorted(filters - _rc1_names("help")) == sorted(filters - cassandra_help._known_names())
+    assert cassandra_unknown_extra_vars(sorted(filters & _rc1_names("names")), []) == {}
+
+
+def test_a_filters_name_given_for_a_variable_is_refused_with_the_variable_close_to_it():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_names import cassandra_unknown_extra_vars
+    assert cassandra_unknown_extra_vars(["cassandra_seed_hosts"], []) == {"cassandra_seed_hosts": "cassandra_seeds"}
