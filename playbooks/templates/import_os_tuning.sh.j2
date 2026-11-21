@@ -3,7 +3,8 @@
     The OS tuning import_cluster reads on each node (task "Read the OS tuning"): sysctl, limits, THP, tuned,
     the disks of the data and commitlog dirs, swap, time sync, firewall; kind|...| lines for the cassandra_os
     filters. A Jinja template (lookup('ansible.builtin.template')), run by the shell module: {{ }} are the
-    task's variables. -#}
+    task's variables.
+    Careful: {# {{ {% open Jinja here, in the shell lines too: write a shell ${#var} as {{ '${#' }}var}. -#}
 set -- {{ _dirs | map('quote') | join(' ') }}  # the data and commitlog dirs
 ports='{{ _ports | join('|') }}'
 seen=
