@@ -224,3 +224,24 @@ def test_a_warning_s_command_stays_whole_on_a_line_of_its_own():
                           "               community.cassandra.change_seeds"]
     short = cassandra_screen({"operation": "op"}, notes=["WARNING  x\nthen: ansible-playbook community.cassandra.y"])
     assert short.rsplit("\n", maxsplit=1)[-1] == "         - then: ansible-playbook community.cassandra.y"
+
+
+def test_the_guide_s_plan_is_the_screen_s():
+    # docs/docsite/rst/guide_output.rst showed the ADD NODE plan at 100 columns after plans went to 79
+    import os
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "docs", "docsite", "rst", "guide_output.rst")
+    with open(path, encoding="utf-8") as f:
+        doc = f.read().split("\n")
+    first = doc.index("    ADD NODE  node4, node5 into dc1 of prod")
+    shown = [line[4:] for line in doc[first:doc.index("    Add node4, node5 into dc1 of prod? Answer yes or no:")]]
+    spec = {"operation": "add_node", "summary": "node4, node5 into dc1 of prod",
+            "intro": ["one node at a time; each streams its share of the data, progress every 30s, stop after 30m"
+                      " without progress"],
+            "blocks": [{"title": "node4  10.0.0.4  dc1 / rack1", "row": "about 404.5 KiB to stream"},
+                       {"title": "node5  10.0.0.5  dc1 / rack1", "row": "about 404.5 KiB to stream"}],
+            "after": ["afterwards: Cassandra 5.0.9, Java 17 (package), Medusa off"],
+            "warnings": [{"text": "node4: -XX:-UseBiasedLocking is not known to Java 17: the JVM would not start"}]}
+    session = ("not inside tmux or screen: if this SSH session drops, the run stops (the operation itself goes on,"
+               " unwatched; run it inside tmux or screen)")
+    assert cassandra_screen(spec, session=session).split("\n") == shown[:-1]
+    assert max(len(line) for line in shown) <= 79

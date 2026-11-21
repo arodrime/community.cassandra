@@ -38,18 +38,22 @@ Conventions
   ``<0.1/100.0 GiB``; done is never shown above the total.
 - **Plans** (``cassandra_screen``, the ``plan`` of topology): the title, one or two lines saying how, the node table
   (two-space columns) and its notes, then the ``WARNING`` lines together, just above the question, which says the
-  same thing as the title and ends the prompt line with ``:``::
+  same thing as the title and ends the prompt line with ``:``. ``cassandra_screen`` wraps them at 79 columns (a row
+  of the node table stays whole)::
 
     ADD NODE  node4, node5 into dc1 of prod
-      one node at a time; each streams its share of the data, progress every 30s, stop after 30m without progress
+      one node at a time; each streams its share of the data, progress every 30s,
+        stop after 30m without progress
 
       node4  10.0.0.4  dc1 / rack1  about 404.5 KiB to stream
       node5  10.0.0.5  dc1 / rack1  about 404.5 KiB to stream
       afterwards: Cassandra 5.0.9, Java 17 (package), Medusa off
 
-    WARNING  node4: -XX:-UseBiasedLocking is not known to Java 17: the JVM would not start
-    WARNING  not inside tmux or screen: if this SSH session drops, the run stops (the operation itself goes on,
-             unwatched; run it inside tmux or screen)
+    WARNING  node4: -XX:-UseBiasedLocking is not known to Java 17: the JVM would
+             not start
+    WARNING  not inside tmux or screen: if this SSH session drops, the run stops
+             (the operation itself goes on, unwatched; run it inside tmux or
+             screen)
 
     Add node4, node5 into dc1 of prod? Answer yes or no:
 
