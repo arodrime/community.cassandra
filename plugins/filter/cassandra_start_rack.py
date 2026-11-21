@@ -418,8 +418,43 @@ def cassandra_rack_outside_lines(verdict, unreached, dc, rack, command, run=None
     return out.fit(lines, WIDTH)
 
 
+# the tasks of the cassandra_service role whose failure is the node's start failing: systemd's start fails; the
+# node stopped while it was waited for (its journal: wait_normal_check.yml); still not NORMAL at the end of the
+# wait (wait_normal.yml: it runs)
+_START_FAILED = "Start or restart cassandra"
+_STOPPED = "Cassandra is not running"
+_NOT_NORMAL = "Give up after cassandra_service_wait_timeout"
+
+
+def cassandra_rack_start_failed(result, task, node, rack):
+    """The failed result of the cassandra_service role on a node of the rack (ansible_failed_result), the name of
+    its task that failed, the node, its rack -> the stop's lines, within 79 columns: the role's message in full,
+    indented (a list: its first line, then the next ones further in: the journal), then where to look and the
+    way out; not NORMAL at the end of the wait: what was seen ("not NORMAL after 600s ...: mode JOINING"), not
+    "did not start" (it runs).
+    e.g. ({msg: ["cassandra on n2 is failed (failed, exit-code): ...", "<journal line>"]}, "Cassandra is not
+    running", "n2", "r2") -> ["n2 (rack r2) did not start:", "  cassandra on n2 is failed ...", "    <journal line>",
+    ..., "WAY OUT  fix it, then run start_rack again"]."""
+    msg = (result or {}).get("msg") or "failed"
+    if isinstance(msg, (list, tuple)):
+        said = ["  " + str(msg[0])] + ["    " + str(line) for line in msg[1:]]
+    else:
+        said = ["  " + line for line in str(msg).split("\n")]
+    said = [line.rstrip() for line in said if line.strip()]
+    if task == _NOT_NORMAL:
+        head = said[0].strip()
+        head = head[len(node) + 1:] if head.startswith(str(node) + " ") else head
+        return out.fit(["%s (rack %s) %s" % (node, rack, head)] + said[1:] + [
+            "see why on it: nodetool netstats, journalctl -u cassandra",
+            "WAY OUT  once it is NORMAL (or fixed), run start_rack again"], WIDTH)
+    return out.fit(["%s (rack %s) did not start:" % (node, rack)] + said + [
+        "see why on it: systemctl status cassandra, journalctl -u cassandra",
+        "WAY OUT  fix it, then run start_rack again"], WIDTH)
+
+
 class FilterModule(object):
     def filters(self):
         return {"cassandra_rack_members": cassandra_rack_members,
                 "cassandra_rack_verdict": cassandra_rack_verdict,
-                "cassandra_rack_outside_lines": cassandra_rack_outside_lines}
+                "cassandra_rack_outside_lines": cassandra_rack_outside_lines,
+                "cassandra_rack_start_failed": cassandra_rack_start_failed}

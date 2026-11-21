@@ -1,2 +1,2 @@
 bugfixes:
-  - "start_rack playbook - a node of the rack that does not start (its unit fails) is said in a few lines with a way out (``systemctl status cassandra``, then run start_rack again), no longer the failure of the role's task."
+  - "start_rack playbook - a node of the rack that does not start is said in a few lines with a way out, no longer the failure of the role's task: the role's message in full (the end of the journal when Cassandra stops), and ``not NORMAL after ...`` when the node runs but has not joined in time."

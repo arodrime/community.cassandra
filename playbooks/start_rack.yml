@@ -162,8 +162,9 @@
         _cassandra_package_unfinished_run: start_rack
         _cassandra_package_unfinished_what: start
 
-    # a node that does not start (its unit fails, it never joins): its stop said with a way out, not the failure of
-    # the role's task (the other nodes stop too: any_errors_fatal)
+    # a node that does not start (its unit fails, it stops while it joins, it is not NORMAL in time): its stop
+    # said with what the role saw (its journal) and a way out, not the failure of the role's task (the other
+    # nodes stop too: any_errors_fatal)
     - name: Start Cassandra and wait until the node has joined
       vars:
         cassandra_output_rescued: true  # the rescue says what failed (ops callback)
@@ -177,16 +178,10 @@
         - name: Stop on a node of the rack that did not start
           ansible.builtin.fail:
             msg: >-
-              {{ ([inventory_hostname ~ ' (rack ' ~ cassandra_target_rack ~ ') did not start:']
-                  + (_why | wordwrap(75, false, _nl)).split(_nl) | map('regex_replace', '^', '  ') | list
-                  + ['see why on it: systemctl status cassandra, journalctl -u cassandra',
-                     'WAY OUT  fix it, then run start_rack again']) | join(_nl) }}
+              {{ ansible_failed_result | community.cassandra.cassandra_rack_start_failed(
+                   ansible_failed_task.name | default(''), inventory_hostname, cassandra_target_rack) }}
           vars:
             cassandra_output: true  # a verdict: its msg as is (ops callback)
-            _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
-            _msg: "{{ ansible_failed_result.msg | default('failed') }}"
-            # its first line (a role's verdict: its first line too)
-            _why: "{{ ((_msg if _msg is string else _msg | first | default('failed')) | string).split(_nl) | first | trim }}"
 
 # Run a repair of the rack's nodes afterwards if they were down longer than
 # cassandra_max_hint_window (3 hours by default; cassandra_max_hint_window_in_ms

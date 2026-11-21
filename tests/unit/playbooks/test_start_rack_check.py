@@ -736,9 +736,8 @@ def check_read(read, schema=None, ok=None, count=4):
     return [], render(say["ansible.builtin.debug"]["msg"], **variables)
 
 
-def test_a_node_of_the_rack_that_does_not_start_is_said_with_a_way_out():
-    # its unit failing (ExecStartPre=/bin/false): the run printed the role's task failure, "fatal: [n2]: FAILED!" and
-    # systemd's message, no way out
+def start_failed(failed, task):
+    """the rescue of start_rack's start: its lines for the role's failed result, the name of its task that failed"""
     with open(os.path.join(TOP, "playbooks", "start_rack.yml"), encoding="utf-8") as f:
         start_play = next(p for p in yaml.safe_load(f) if p.get("name") == "Start the rack")
     start = next(t for t in start_play["tasks"] if t["name"] == "Start Cassandra and wait until the node has joined")
@@ -746,16 +745,63 @@ def test_a_node_of_the_rack_that_does_not_start_is_said_with_a_way_out():
     assert start["block"][0]["ansible.builtin.include_role"]["name"] == "community.cassandra.cassandra_service"
     stop = start["rescue"][0]
     assert stop["vars"]["cassandra_output"] is True
+    return render(stop["ansible.builtin.fail"]["msg"], inventory_hostname="n2", cassandra_target_rack="r2",
+                  ansible_failed_result=failed, ansible_failed_task={"name": task})
+
+
+def role_task(path, name):
+    """a task of the cassandra_service role, by its name (the rescue tells the failures apart by it)"""
+    tasks = load_tasks("roles", "cassandra_service", "tasks", path)
+    found = [t for t in tasks if t.get("name") == name]
+    for block in (t.get("block", []) for t in tasks):
+        found += [t for t in block if t.get("name") == name]
+        for inner in (t.get("block", []) for t in block):
+            found += [t for t in inner if t.get("name") == name]
+    assert found, name
+    return found[0]
+
+
+def test_a_node_of_the_rack_that_does_not_start_is_said_with_a_way_out():
+    # its unit failing (ExecStartPre=/bin/false): the run printed the role's task failure, "fatal: [n2]: FAILED!" and
+    # systemd's message, no way out
+    role_task("main.yml", "Start or restart cassandra")
     failed = {"msg": "Unable to start service cassandra: Job for cassandra.service failed because the control process"
                      " exited with error code.\nSee \"systemctl status cassandra.service\" for details."}
-    variables = dict(stop["vars"], inventory_hostname="n2", cassandra_target_rack="r2", ansible_failed_result=failed)
-    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    lines = Templar(loader=DataLoader(), variables=variables).template(
-        trust_as_template(stop["ansible.builtin.fail"]["msg"])).split("\n")
+    lines = start_failed(failed, "Start or restart cassandra")
     assert lines[0] == "n2 (rack r2) did not start:"
     assert " ".join(x.strip() for x in lines[1:-2]) == (
         "Unable to start service cassandra: Job for cassandra.service failed because the control process exited"
-        " with error code.")
+        " with error code. See \"systemctl status cassandra.service\" for details.")
     assert lines[-2:] == ["see why on it: systemctl status cassandra, journalctl -u cassandra",
                           "WAY OUT  fix it, then run start_rack again"]
     assert max(len(x) for x in lines) <= 79
+
+
+def test_a_node_that_stops_while_it_joins_is_said_with_its_journal():
+    # wait_normal_check.yml's stop: a list, its first line then the journal's last 40 lines. The rescue kept the
+    # first line only, ending on "journalctl -u cassandra:" with nothing under it: the cause (here a rack change)
+    # was gone from the screen
+    task = role_task("wait_normal_check.yml", "Cassandra is not running")
+    assert "stdout_lines" in task["ansible.builtin.fail"]["msg"]
+    journal = ["Nov 21 10:00:01 h-n2 cassandra[811]: ERROR [main] 2026-11-21 10:00:01,042 CassandraDaemon.java:911"
+               " - Cannot start node if snitch's rack (r9) differs from previous rack (r2).",
+               "Nov 21 10:00:01 h-n2 systemd[1]: cassandra.service: Main process exited, code=exited, status=3/NOTIMPL"]
+    failed = {"msg": ["cassandra on cassandra-prod-node-017 is failed (failed, exit-code): it stopped instead of"
+                      " joining. journalctl -u cassandra:"] + journal}
+    lines = start_failed(failed, "Cassandra is not running")
+    assert lines[0] == "n2 (rack r2) did not start:"
+    text = " ".join(x.strip() for x in lines)
+    assert all(" ".join(line.split()) in text for line in journal)
+    assert "cassandra-prod-node-017" in text and "exit-code" in text  # (never cut at a hyphen)
+    assert all(x.startswith("    ") for x in lines[3:-2]) and lines[-1] == "WAY OUT  fix it, then run start_rack again"
+    assert max(len(x) for x in lines) <= 79
+
+
+def test_a_node_not_normal_in_time_is_said_as_seen_not_did_not_start():
+    # wait_normal.yml's timeout: the node runs (mode JOINING); "did not start" was false
+    role_task("wait_normal.yml", "Give up after cassandra_service_wait_timeout")
+    failed = {"msg": "n2 is not NORMAL after 600s (cassandra_service_wait_timeout): mode JOINING"}
+    lines = start_failed(failed, "Give up after cassandra_service_wait_timeout")
+    assert lines[:2] == ["n2 (rack r2) is not NORMAL after 600s (cassandra_service_wait_timeout): mode",
+                         "  JOINING"]
+    assert "did not start" not in " ".join(lines) and lines[-1].startswith("WAY OUT  ")
