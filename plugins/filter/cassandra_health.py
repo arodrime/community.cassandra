@@ -22,6 +22,9 @@ from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_o
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_status import (
     address_part, compressed_address as _ip, same_address)
 
+# the width of a progress line: rewritten in place, it must hold on one line of an 80-column terminal
+WAIT_WIDTH = 79
+
 
 def _by_ip(names):
     """{address: name} by one spelling of each address, the first given winning (cassandra_host_addresses
@@ -197,7 +200,15 @@ def cassandra_health_wait_line(waiting, names=None, waited=0, timeout=0, index=0
         if f.get("kind") == "nodetool":
             cause = _PASSING.search(str(f.get("error", "")))
             parts.append("nodetool status on %s does not answer%s" % (f["on"], " (JMX: %s)" % cause.group(1) if cause else ""))
-    return out.wait_line(head, "; ".join(parts), waited, timeout)
+    line = out.wait_line(head, "; ".join(parts), waited, timeout)
+    # rewritten in place: one line of an 80-column terminal, the nodes down said shorter (the stop lists them all)
+    for shorter in (", ".join(downs), "%s and %d more not UN" % (downs[0], len(downs) - 1) if downs[1:] else "",
+                    "%d nodes not UN" % len(downs) if downs[1:] else ""):
+        if len(line) <= WAIT_WIDTH or not downs:
+            break
+        if shorter:
+            line = out.wait_line(head, "; ".join([shorter] + parts[1:]), waited, timeout)
+    return line
 
 
 def cassandra_health_sentences(findings):

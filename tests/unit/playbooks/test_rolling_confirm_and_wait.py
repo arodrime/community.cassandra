@@ -174,7 +174,7 @@ def test_a_nodetool_failure_is_waited_for_only_while_another_node_sees_that_node
         waiting = cassandra_health_waiting(found, NAMES)
         assert [f["kind"] for f in waiting] == ["nodetool", "state"]
         assert cassandra_health_wait_line(waiting, NAMES, waited=10, timeout=600, node="node2", operation="restart") == (
-            "node2  restart  waiting  node2 is DN, waiting for it to come back; nodetool status on node2 does not answer"
+            "node2  restart  waiting  node2 is DN; nodetool status on node2 does not answer"
             " (JMX: %s)  10s/10m" % cause)
         # node1 sees node2 up (a wrong JMX port for node2): never goes away, no wait
         up = cassandra_health_findings([failed_on("node2", error), view("node1", node("10.0.0.1"), node("10.0.0.2"))], 2, "node2")
@@ -216,10 +216,21 @@ def test_the_progress_line():
     # a node by its inventory name when known, else its address; several: "are", "them"
     assert cassandra_health_wait_line(waiting, names, waited=90, timeout=600, index=2, steps=5, node="node2",
                                       operation="restart") == (
-        "[2/5] node2  restart  waiting  node4 is DN, 10.0.0.5 is DN, waiting for them to come back  1m30s/10m")
+        "[2/5] node2  restart  waiting  node4 is DN, 10.0.0.5 is DN  1m30s/10m")
+    # rewritten in place: one line of an 80-column terminal (S26: 103 columns), the nodes down said shorter
+    for count, said in ((3, "node4 is DN and 2 more not UN"), (9, "node4 is DN and 8 more not UN"),
+                        (2, "2 nodes not UN")):
+        many = [node("10.0.0.1")] + [node("10.0.0.%d" % (i + 10), "D") for i in range(count)]
+        many = cassandra_health_waiting(cassandra_health_findings([view("node2", *many)], count + 1, "node2"))
+        known = {"10.0.0.10": "node4" if count > 2 else "a-node-with-a-very-long-inventory-name.example.com"}
+        line = cassandra_health_wait_line(many, known, waited=90, timeout=600,
+                                          index=2, steps=5, node="node2", operation="restart")
+        assert line == "[2/5] node2  restart  waiting  %s  1m30s/10m" % said and len(line) <= 79
     assert cassandra_health_wait_line(waiting[:1], names, waited=592, timeout=600, index=2, steps=5, node="node2",
                                       operation="restart") == (
-        "[2/5] node2  restart  waiting  node4 is DN, waiting for it to come back  9m52s/10m")
+        "[2/5] node2  restart  waiting  node4 is DN  9m52s/10m")
+    assert cassandra_health_wait_line(waiting[:1], names, waited=592, timeout=600, node="node2", operation="restart") == (
+        "node2  restart  waiting  node4 is DN, waiting for it to come back  9m52s/10m")  # (it fits: as it was)
     ports = [{"kind": "port", "name": "CQL", "port": 9042, "on": "node2", "host": "10.0.0.2"}]
     assert cassandra_health_wait_line(ports, waited=0, timeout=600, node="node2", operation="cluster check") == (
         "node2  cluster check  waiting  the CQL port 9042 on node2 does not answer yet  0s/10m")

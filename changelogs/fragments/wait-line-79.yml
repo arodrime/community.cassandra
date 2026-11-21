@@ -1,0 +1,2 @@
+bugfixes:
+  - "cluster checks - the progress line of a wait for nodes down (``waiting  172.18.0.3 is DN, 172.18.0.4 is DN, waiting for them to come back``) says them shorter when it would pass 79 columns (``node4 is DN, node5 is DN``, then ``node4 is DN and 2 more not UN``, then ``3 nodes not UN``): it is rewritten in place, one line of an 80-column terminal; the stop still names every node."
