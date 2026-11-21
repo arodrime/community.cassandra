@@ -53,7 +53,7 @@
     _files: "{{ _cassandra_config_files[_cassandra_config_series] }}"
     _wrong: >-
       {{ cassandra_config_template_overrides
-         | community.cassandra.cassandra_config_override_refusals(_files, cassandra_config_keep_files) }}
+         | community.cassandra.cassandra_config_override_refusals(files=_files, keep_files=cassandra_config_keep_files) }}
 
 # Variables of the 2.1.0 release candidates no longer read (an inventory imported then): the files would be
 # written without their lines (the role run alone too, site.yml: the playbooks refuse them in preflight already)
@@ -80,7 +80,7 @@
   vars:
     _wrong: >-
       {{ cassandra_config_template_snippets | community.cassandra.cassandra_config_snippet_refusals(
-           cassandra_config_keep_files, cassandra_config_template_overrides) }}
+           keep_files=cassandra_config_keep_files, overrides=cassandra_config_template_overrides) }}
 
 # logback.xml: an appender-ref to an appender the file does not define stops logback's configuration at the start
 # (logback 1.2 also wants it defined before); a level for a logger a variable of its own sets would be set twice;
@@ -103,26 +103,16 @@
     _snippet_loggers: >-
       {{ (_cassandra_config_snippet_logback ~ '\n' ~ _cassandra_config_snippet_appenders)
          | regex_findall('<logger\s[^>]*?\bname\s*=\s*["\x27]([^"\x27]+)["\x27]') }}
-    # (the values logback.xml writes as they are: in the filter's WRITTEN, by their variable)
+    # the values logback.xml writes as they are: the filter's WRITTEN names them, it picks them among these
+    _log_names: "{{ query('ansible.builtin.varnames', '^cassandra_log_') }}"
+    _log_values: "{{ dict(_log_names | zip(query('ansible.builtin.vars', *_log_names))) }}"
     _wrong: >-
       {{ cassandra_logback_root_extra_refs | community.cassandra.cassandra_config_logback_refusals(
-           _known, _after_root, cassandra_log_levels, _cassandra_config_own_loggers, _snippet_loggers,
+           known=_known, after_root=_after_root, levels=cassandra_log_levels,
+           own_loggers=_cassandra_config_own_loggers, snippet_loggers=_snippet_loggers,
            series=cassandra_version, cql_table=cassandra_log_cql_table | bool,
            audit_file=cassandra_log_audit_file | bool, overrides=cassandra_config_template_overrides,
-           cassandra_log_level=cassandra_log_level, cassandra_log_level_cassandra=cassandra_log_level_cassandra,
-           cassandra_log_system_level=cassandra_log_system_level, cassandra_log_pattern=cassandra_log_pattern,
-           cassandra_log_system_max_file_size=cassandra_log_system_max_file_size,
-           cassandra_log_system_max_history=cassandra_log_system_max_history,
-           cassandra_log_system_total_size_cap=cassandra_log_system_total_size_cap,
-           cassandra_log_debug_max_file_size=cassandra_log_debug_max_file_size,
-           cassandra_log_debug_max_history=cassandra_log_debug_max_history,
-           cassandra_log_debug_total_size_cap=cassandra_log_debug_total_size_cap,
-           cassandra_log_audit_max_file_size=cassandra_log_audit_max_file_size,
-           cassandra_log_audit_max_history=cassandra_log_audit_max_history,
-           cassandra_log_audit_total_size_cap=cassandra_log_audit_total_size_cap,
-           cassandra_log_audit_dir=cassandra_log_audit_dir, cassandra_log_system_dir=cassandra_log_system_dir,
-           cassandra_log_debug_dir=cassandra_log_debug_dir,
-           cassandra_log_cql_table_level=cassandra_log_cql_table_level) }}
+           **_log_values) }}
   when: "'logback.xml' not in cassandra_config_keep_files"  # (a file kept as it is: none of them written)
 
 # FileAuditLogger without the audit file: its events go to system.log (logback's root)
@@ -151,7 +141,7 @@
     # value not shown: it may be a secret)
     _wrong: >-
       {{ cassandra_audit_logger_parameters | community.cassandra.cassandra_config_audit_parameter_refusals(
-           _cassandra_config_plain_key, _cassandra_config_unwritable_text) }}
+           plain_key=_cassandra_config_plain_key, unwritable=_cassandra_config_unwritable_text) }}
   when: cassandra_audit_logger_parameters | length > 0
 
 - name: Refuse extra settings the template already has
@@ -278,12 +268,15 @@
     fail_msg: "{{ _wrong | join('; ') }}. Nothing is changed."
     quiet: true
   vars:
+    # the words of the JVM_OPTS lines (cassandra_jmx_ssl_<word>)
+    _words: >-
+      {{ dict(keystore=cassandra_jmx_ssl_keystore, keystore_password=cassandra_jmx_ssl_keystore_password,
+      truststore=cassandra_jmx_ssl_truststore, truststore_password=cassandra_jmx_ssl_truststore_password,
+      protocols=cassandra_jmx_ssl_protocols, cipher_suites=cassandra_jmx_ssl_cipher_suites) }}
     _wrong: >-
       {{ cassandra_jmx_ssl_enabled | bool | community.cassandra.cassandra_config_jmx_tls_refusals(
-           cassandra_jmx_ssl_enabled | bool and cassandra_local_jmx | bool, cassandra_jmx_ssl_need_client_auth | bool,
-           keystore=cassandra_jmx_ssl_keystore, keystore_password=cassandra_jmx_ssl_keystore_password,
-           truststore=cassandra_jmx_ssl_truststore, truststore_password=cassandra_jmx_ssl_truststore_password,
-           protocols=cassandra_jmx_ssl_protocols, cipher_suites=cassandra_jmx_ssl_cipher_suites) }}
+           on_local_jmx=cassandra_jmx_ssl_enabled | bool and cassandra_local_jmx | bool,
+           need_client_auth=cassandra_jmx_ssl_need_client_auth | bool, **_words) }}
 
 # cassandra-rackdc.properties' other settings, written key=value as Java's Properties reads them back
 - name: Refuse rackdc extra settings the file cannot hold
@@ -412,12 +405,15 @@
           + (lookup('ansible.builtin.vars', _read_file | community.cassandra.cassandra_jvm_options_variable, default=[])
              if _read_file else [])
           + [_cassandra_config_snippet_env]) | map('string') | join(' ') }}
+    # the node's other ports (the agent's port must be none of them)
+    _ports: >-
+      {{ dict(storage_port=cassandra_storage_port, ssl_storage_port=cassandra_ssl_storage_port,
+              native_transport_port=cassandra_native_transport_port, jmx_port=cassandra_jmx_port,
+              native_transport_port_ssl=cassandra_extra_settings.native_transport_port_ssl | default('')) }}
     _wrong: >-
       {{ cassandra_prometheus_exporter_version | community.cassandra.cassandra_config_exporter_refusals(
-           cassandra_prometheus_exporter_port, cassandra_prometheus_exporter_address, _options,
-           cassandra_config_keep_files, cassandra_prometheus_exporter_dir,
-           cassandra_prometheus_exporter_config_file, _cassandra_config_exporter_path, _config, _tls | int,
-           _auth | int, storage_port=cassandra_storage_port, ssl_storage_port=cassandra_ssl_storage_port,
-           native_transport_port=cassandra_native_transport_port, jmx_port=cassandra_jmx_port,
-           native_transport_port_ssl=cassandra_extra_settings.native_transport_port_ssl | default('')) }}
+           port=cassandra_prometheus_exporter_port, address=cassandra_prometheus_exporter_address, options=_options,
+           keep_files=cassandra_config_keep_files, exporter_dir=cassandra_prometheus_exporter_dir,
+           config_file=cassandra_prometheus_exporter_config_file, path_pattern=_cassandra_config_exporter_path,
+           config=_config, tls=_tls | int, auth=_auth | int, **_ports) }}
   when: cassandra_prometheus_exporter_enabled | bool
