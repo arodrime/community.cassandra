@@ -39,6 +39,7 @@ __metaclass__ = type
 
 import difflib
 import re
+from collections import namedtuple
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
     JVM_ENV_GREPS, JVM_LISTS, JVM_UNLOCK, jvm_options_settings, shell_words)
@@ -328,6 +329,10 @@ def _remote_branch_taken(node, at_else, end, environment, cmdline):
     return bool(remote) and not local and own and (environment or {}).get("LOCAL_JMX") != "yes"
 
 
+# The LOCAL_JMX test's block in a file: the index of its if, of its else (None: not looked for), of its end
+Block = namedtuple("Block", "start at_else end")
+
+
 def remote_branch_moved(live, role, environment=None, cmdline=""):
     """The node's lines adding plain options to JVM_OPTS in the remote JMX branch (the else of its LOCAL_JMX test),
     which bash takes (_remote_branch_taken: the running JVM's arguments, cmdline, say so), that the role's file has
@@ -336,44 +341,45 @@ def remote_branch_moved(live, role, environment=None, cmdline=""):
     JVM_OPTS (a grep deciding on it) -> ([their line numbers in live], [in role]); ([], []) when not proven (the
     local branch taken, or not known)."""
     try:
-        node, ours = env_lines(live), env_lines(role)
+        node, role_lines = env_lines(live), env_lines(role)
     except NotSame:
         return [], []
     node = [line for i, line in enumerate(node) if not _set_again(line, node[i + 1:], in_block=True)]
     tests = [[i for i, line in enumerate(lines) if line["text"] == LOCAL_JMX_TEST and not line["depth"]]
-             for lines in (node, ours)]
+             for lines in (node, role_lines)]
     if any(len(found) != 1 for found in tests):
         return [], []
     start, end = tests[0][0], _block_end(node, tests[0][0])
     at_else = next((i for i in range(start + 1, end) if node[i]["depth"] == 1 and node[i]["text"] == "else"), None)
     if at_else is None or not _remote_branch_taken(node, at_else, end, environment, cmdline):
         return [], []
-    r_start, r_end = tests[1][0], _block_end(ours, tests[1][0])
+    node_block = Block(start, at_else, end)
+    role_block = Block(tests[1][0], None, _block_end(role_lines, tests[1][0]))
     branch = set(line["text"] for line in node[at_else + 1:end] if line["depth"] == 1 and APPEND.match(line["text"]))
     moved_live, moved_role = [], []
     for i in range(at_else + 1, end):
-        j = _moved_to(node, ours, i, (start, at_else, end), (r_start, r_end), branch)
+        j = _moved_to(node, role_lines, i, node_block, role_block, branch)
         if j is not None:
             moved_live.append(node[i]["n"])
-            moved_role.append(ours[j]["n"])
+            moved_role.append(role_lines[j]["n"])
     return moved_live, moved_role
 
 
-def _moved_to(node, ours, i, block, role_block, branch):
-    """The index in ours of the remote branch's line node[i] when the JVM gets the same from it there (see
-    remote_branch_moved), else None. block: (start, at_else, end) of the node's LOCAL_JMX test, role_block: (start,
-    end) of the role's; branch: the texts of the lines adding to JVM_OPTS in the node's remote branch."""
+def _moved_to(node, role_lines, i, node_block, role_block, branch):
+    """The index in role_lines of the remote branch's line node[i] when the JVM gets the same from it there (see
+    remote_branch_moved), else None. node_block, role_block: the LOCAL_JMX test's Block in each file; branch: the
+    texts of the lines adding to JVM_OPTS in the node's remote branch."""
     line = node[i]
     options = _plain_options(line) if line["depth"] == 1 else None
     if options is None:
         return None
-    theirs = [j for j, other in enumerate(ours) if other["text"] == line["text"]]
-    if len(theirs) != 1 or ours[theirs[0]]["depth"] or [other["text"] for other in node].count(line["text"]) != 1:
+    in_role = [j for j, other in enumerate(role_lines) if other["text"] == line["text"]]
+    if len(in_role) != 1 or role_lines[in_role[0]]["depth"] or [other["text"] for other in node].count(line["text"]) != 1:
         return None
-    j = theirs[0]
-    if _set_elsewhere(set(_jvm_name(o) for o in options), (node, i), (ours, j)):
+    j = in_role[0]
+    if _set_elsewhere(set(_jvm_name(o) for o in options), (node, i), (role_lines, j)):
         return None  # (set elsewhere too: its place counts)
-    between = _lines_between(node, ours, i, j, block, role_block, branch)
+    between = _lines_between(node, role_lines, i, j, node_block, role_block, branch)
     if between is None:
         return None
     between = [other for other in between if other["text"] not in branch or other["depth"]]
@@ -386,43 +392,44 @@ def _set_elsewhere(names, *places):
                for w in re.split(r"[\s\"'=]+", other["text"]) if w.startswith("-"))
 
 
-def _lines_between(node, ours, i, j, block, role_block, branch):
-    """The lines bash runs between the two places of a moved line (node[i] in the remote branch, ours[j] above or
-    below the role's test): the role's lines from its line to its test's block, the node's own branch lines from this
-    one to the block's end on that side, and the node's lines from its block to the same anchor (the anchor: the
+def _lines_between(node, role_lines, i, j, node_block, role_block, branch):
+    """The lines bash runs between the two places of a moved line (node[i] in the remote branch, role_lines[j] above
+    or below the role's test): the role's lines from its line to its test's block, the node's own branch lines from
+    this one to the block's end on that side, and the node's lines from its block to the same anchor (the anchor: the
     role's nearest line on the far side of its own, not one of the branch's, found in the node as the same occurrence
-    of its text counted from the block). None when not found (the anchor's occurrence missing in the node, ours[j]
-    inside the role's test)."""
-    start, at_else, end = block
-    r_start, r_end = role_block
-    if j < r_start:
-        return _lines_above(node, ours, i, j, (start, at_else), r_start, branch)
-    if j >= r_end:
-        return _lines_below(node, ours, i, j, end, r_end, branch)
+    of its text counted from the block). None when not found (the anchor's occurrence missing in the node,
+    role_lines[j] inside the role's test)."""
+    if j < role_block.start:
+        return _lines_above(node, role_lines, i, j, node_block, role_block, branch)
+    if j >= role_block.end:
+        return _lines_below(node, role_lines, i, j, node_block, role_block, branch)
     return None
 
 
-def _lines_above(node, ours, i, j, block, r_start, branch):
-    """_lines_between, the role's line above its test (block: the node's (start, at_else))."""
-    start, at_else = block
-    a = next((n for n in range(j - 1, -1, -1) if ours[n]["text"] not in branch), None)
-    count = 0 if a is None else sum(1 for n in range(a, r_start) if ours[n]["text"] == ours[a]["text"])
-    back = [] if a is None else [n for n in range(start) if node[n]["text"] == ours[a]["text"]]
-    if count > len(back):
+def _lines_above(node, role_lines, i, j, node_block, role_block, branch):
+    """_lines_between, the role's line above its test."""
+    anchor = next((n for n in range(j - 1, -1, -1) if role_lines[n]["text"] not in branch), None)
+    occurrence = 0 if anchor is None else sum(1 for n in range(anchor, role_block.start)
+                                              if role_lines[n]["text"] == role_lines[anchor]["text"])
+    in_node = [] if anchor is None else [n for n in range(node_block.start)
+                                         if node[n]["text"] == role_lines[anchor]["text"]]
+    if occurrence > len(in_node):
         return None
-    return ours[(a if a is not None else -1) + 1:r_start + 1] + \
-        node[back[-count] + 1 if count else 0:start + 1] + node[at_else:i]
+    return role_lines[(anchor if anchor is not None else -1) + 1:role_block.start + 1] + \
+        node[in_node[-occurrence] + 1 if occurrence else 0:node_block.start + 1] + node[node_block.at_else:i]
 
 
-def _lines_below(node, ours, i, j, end, r_end, branch):
-    """_lines_between, the role's line below its test (end: the node's block end)."""
-    a = next((n for n in range(j + 1, len(ours)) if ours[n]["text"] not in branch), None)
-    count = 0 if a is None else sum(1 for n in range(r_end, a + 1) if ours[n]["text"] == ours[a]["text"])
-    ahead = [] if a is None else [n for n in range(end, len(node)) if node[n]["text"] == ours[a]["text"]]
-    if count > len(ahead):
+def _lines_below(node, role_lines, i, j, node_block, role_block, branch):
+    """_lines_between, the role's line below its test."""
+    anchor = next((n for n in range(j + 1, len(role_lines)) if role_lines[n]["text"] not in branch), None)
+    occurrence = 0 if anchor is None else sum(1 for n in range(role_block.end, anchor + 1)
+                                              if role_lines[n]["text"] == role_lines[anchor]["text"])
+    in_node = [] if anchor is None else [n for n in range(node_block.end, len(node))
+                                         if node[n]["text"] == role_lines[anchor]["text"]]
+    if occurrence > len(in_node):
         return None
-    return ours[r_end:a if a is not None else len(ours)] + \
-        node[end:ahead[count - 1] if count else len(node)] + node[i + 1:end]
+    return role_lines[role_block.end:anchor if anchor is not None else len(role_lines)] + \
+        node[node_block.end:in_node[occurrence - 1] if occurrence else len(node)] + node[i + 1:node_block.end]
 
 
 def _local_jmx_branches(lines):
