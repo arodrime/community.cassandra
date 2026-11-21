@@ -5,7 +5,9 @@ Operator output
 
 What the playbooks print, and how a playbook prints it. The text comes from
 ``plugins/plugin_utils/cassandra_output.py`` (filters in ``plugins/filter/cassandra_output.py``): every block is
-written once there, a playbook only fills it.
+written once there, a playbook only fills it. The texts of one operation each (the prepare of new nodes, the TO DO
+after a removal, the seed rule) are in ``plugins/plugin_utils/cassandra_operation_texts.py``, the secret rule and the
+masking (``****``) in ``plugins/plugin_utils/cassandra_secrets.py``.
 
 Conventions
 -----------
