@@ -94,11 +94,15 @@ REFUSE = task("Refuse logback appender-refs, levels and values the role cannot w
 WARN = task("Warn about audit events going to system.log")
 
 
+def task_vars(t):
+    """The task's own vars but _wrong, as Ansible gives them (templates, resolved when used)."""
+    return dict((name, trust_as_template(text)) for name, text in t["vars"].items() if name != "_wrong")
+
+
 def refused(appenders="", **variables):
     ctx = role_ctx("5.0", _cassandra_config_snippet_appenders=appenders, _cassandra_config_snippet_logback="",
                    **variables)
-    for name in ("_known", "_after_root", "_snippet_loggers"):
-        ctx[name] = trust_as_template(REFUSE["vars"][name])
+    ctx.update(task_vars(REFUSE))
     return render(REFUSE["vars"]["_wrong"], **ctx)
 
 
@@ -182,8 +186,7 @@ def test_the_system_logs_table_is_5_0_only():
     assert [a.find("filter/level").text for a in root.findall("appender") if a.get("name") == "CQLLOG"] == ["ERROR"]
     ctx = role_ctx("4.1", cassandra_log_cql_table=True, _cassandra_config_snippet_appenders="",
                    _cassandra_config_snippet_logback="")
-    for name in ("_known", "_after_root", "_snippet_loggers"):
-        ctx[name] = trust_as_template(REFUSE["vars"][name])
+    ctx.update(task_vars(REFUSE))
     assert render(REFUSE["vars"]["_wrong"], **ctx) == [
         "cassandra_log_cql_table: the system_views.system_logs table is 5.0 only: set it to false for Cassandra 41x"]
 
@@ -200,8 +203,7 @@ def test_a_ref_to_an_appender_after_root_and_a_logger_set_twice_are_refused():
     end = '  <appender name="LATE" class="x"/>\n  <logger name="com.x" level="INFO"/>'
     ctx = role_ctx("5.0", _cassandra_config_snippet_appenders="", _cassandra_config_snippet_logback=end,
                    cassandra_logback_root_extra_refs=["LATE"], cassandra_log_levels={"com.x": "WARN"})
-    for name in ("_known", "_after_root", "_snippet_loggers"):
-        ctx[name] = trust_as_template(REFUSE["vars"][name])
+    ctx.update(task_vars(REFUSE))
     assert render(REFUSE["vars"]["_wrong"], **ctx) == [
         "cassandra_logback_root_extra_refs: LATE is defined in your snippet logback.xml, after <root>, where logback"
         " (1.2) does not find it: move it to your snippet logback.xml:appenders (cassandra_config_template_snippets),"
