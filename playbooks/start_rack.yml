@@ -331,6 +331,8 @@
       register: _cassandra_start_rack_info
       changed_when: false
       failed_when: false
+      ignore_errors: true  # the timeout below
+      timeout: 70  # a JMX that never answers (cluster_health.yml's reads: 70s)
       no_log: "{{ cassandra_jmx_password | length > 0 }}"
       when:
         - inventory_hostname in _cassandra_start_rack_members
@@ -392,6 +394,8 @@
       register: _cassandra_start_rack_info_again
       changed_when: false
       failed_when: false
+      ignore_errors: true  # the timeout below
+      timeout: 70
       no_log: "{{ cassandra_jmx_password | length > 0 }}"
       when:
         - inventory_hostname in _cassandra_start_rack_members

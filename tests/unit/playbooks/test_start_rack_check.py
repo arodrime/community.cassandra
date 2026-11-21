@@ -1459,3 +1459,12 @@ def test_a_node_of_the_run_whose_host_id_is_not_read_is_waited_for_then_read_aga
     infos = render(PLAY["vars"]["_cassandra_start_rack_filter_args"]["infos"], hostvars=hostvars,
                    _cassandra_start_rack_members=["n2", "n3"])
     assert infos["n2"]["stdout"] == infos["n3"]["stdout"] == ok["stdout"]
+
+
+def test_the_host_id_reads_are_bound_in_time():
+    # a JMX that takes the connection and never answers (a node stuck in GC) hung the run before the check, with
+    # no line. Now 70s at most, as cluster_health.yml's reads; a timeout is a failed read (the stop says it: the
+    # task's message, test_a_node_of_the_run_whose_host_id_is_not_read_stops_the_run)
+    for name in ("Read the Host ID of each node of the run", REREAD):
+        task = TASKS[name]
+        assert task["timeout"] == 70 and task["ignore_errors"] is True and task["failed_when"] is False
