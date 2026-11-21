@@ -189,3 +189,12 @@ def test_problems_equal_but_for_case_are_said_once_in_the_way_out_and_the_lost_l
     assert lines[4] == "WAY OUT  bring n4, 2001:db8::7 back to UN (their host and/or Cassandra), then resume"
     assert [line for line in lines if line.startswith("IF ")] == ["IF n4 IS LOST FOR GOOD", "IF 2001:db8::7 IS LOST FOR GOOD"]
     assert out.unique_ignoring_case(["b", "A", "a", "B", "c"]) == ["b", "A", "c"]
+
+
+def test_a_node_two_views_see_in_two_states_is_said_once_in_the_lost_lines():
+    # n2 sees n4 DN, n1 sees it DL: two problems, one node; the WAY OUT named it once, its IF block came twice
+    from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
+    load_collection_filters()
+    lines = said(False, ["n4 (10.0.0.4, r1) is DN, seen from n2", "N4 (10.0.0.4, r1) is DL, seen from n1"])
+    assert lines[2] == "WAY OUT  bring n4 back to UN (its host and/or Cassandra), then resume"
+    assert [line for line in lines if line.startswith("IF ")] == ["IF n4 IS LOST FOR GOOD"]

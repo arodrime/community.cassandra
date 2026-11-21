@@ -600,10 +600,12 @@ def cassandra_health_lost_lines(problems, group, command_args):
     # (here, not at the top: the module_utils unit tests import this module without the controller's Display)
     from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_command
     lines = []
-    # each once, ignoring case, as the way out's _down (cluster_health.yml: | unique) names them
-    for p in out.unique_ignoring_case([str(p) for p in problems or [] if _DOWN.search(str(p))]):
-        name = re.sub(r" \(.*$", "", str(p))
-        found = re.findall(r"^\S+ \(([^,)]+),", str(p))
+    down = [str(p) for p in problems or [] if _DOWN.search(str(p))]
+    # each node once (one view DN, the other DL: two problems), ignoring case, as the way out's _down
+    # (cluster_health.yml: | unique) names them
+    for name in out.unique_ignoring_case([re.sub(r" \(.*$", "", p) for p in down]):
+        p = next(p for p in down if re.sub(r" \(.*$", "", p) == name)
+        found = re.findall(r"^\S+ \(([^,)]+),", p)
         address = found[0] if found else name
         lines += ["IF %s IS LOST FOR GOOD" % name,
                   "replace it: NEW_NODE (a blank host) in %s, %s out of the inventory" % (group, name),
