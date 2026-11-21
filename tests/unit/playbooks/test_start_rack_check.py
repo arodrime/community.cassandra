@@ -827,3 +827,13 @@ def test_a_refusal_of_the_role_before_the_start_is_said_as_the_role_says_it():
          " kills the JVM mid-drain.")]
     for task, msg in refusals:
         assert start_failed({"msg": msg}, task) == msg
+
+
+def test_the_verdict_s_keys_are_the_ones_its_docstring_gives():
+    # its "rack_up" key (the nodes seen UN) shared its name with a boolean of the same function; its example lacked
+    # two keys
+    verdict = noted(ring())["_cassandra_start_rack_first_verdict"]
+    assert sorted(verdict) == ["failed", "left_out", "not_readers", "outside", "problems", "rack_seen_un", "ring_size",
+                               "unknown_lines", "warnings"]
+    example = cassandra_rack_verdict.__doc__.split("e.g.")[1]
+    assert all(key + ":" in example for key in verdict) and verdict["rack_seen_un"] == ["n2", "n3"]
