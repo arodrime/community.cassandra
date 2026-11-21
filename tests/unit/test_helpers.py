@@ -9,7 +9,7 @@ import pytest
 
 from ansible_collections.community.cassandra.tests.unit import helpers
 from ansible_collections.community.cassandra.tests.unit.helpers import (
-    fake_nodetool, path_with, render, render_as_given, render_with, ring_node, run_playbook, trusted, view)
+    fake_nodetool, golden, golden_lines, path_with, render, render_as_given, render_with, ring_node, run_playbook, trusted, view)
 
 
 def test_render_trusts_the_string_variables():
@@ -48,3 +48,14 @@ def test_the_output_is_dumped_when_asked(tmp_path, monkeypatch):
     assert len(dumped) == 2 and dumped[0].endswith("test_the_output_is_dumped_when_asked.txt"), dumped
     with open(str(tmp_path / "dump" / dumped[0])) as f:
         assert f.read() == out
+
+
+def test_golden_reads_the_file_and_writes_it_only_when_asked(tmp_path, monkeypatch):
+    monkeypatch.delenv("CASSANDRA_GOLDEN_WRITE", raising=False)
+    path = tmp_path / "out.txt"
+    path.write_text("kept\ntext\n")
+    assert golden(str(path), "new") == "kept\ntext"
+    assert golden_lines(str(path), ["new"]) == ["kept", "text"]
+    monkeypatch.setenv("CASSANDRA_GOLDEN_WRITE", "1")  # (pytest --regen)
+    assert golden_lines(str(path), ["new", "lines"]) == ["new", "lines"]
+    assert path.read_text() == "new\nlines\n"

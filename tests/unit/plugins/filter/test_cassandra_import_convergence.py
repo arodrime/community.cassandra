@@ -16,6 +16,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_convergence import (
     _carry, _kind, cassandra_import_convergence)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import cassandra_import_report
+from ansible_collections.community.cassandra.tests.unit.helpers import golden_lines
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 REPORT = "/p/reports/big/report.txt"
@@ -82,22 +83,13 @@ def layout():
     return cassandra_inventory_layout([fake_node(i) for i in range(90)], "Big")
 
 
-def golden(name, lines):
-    path = os.path.join(FIXTURES, name)
-    if os.environ.get("CASSANDRA_GOLDEN_WRITE"):  # to write them again, after a wanted change
-        with open(path, "w") as f:
-            f.write("\n".join(lines) + "\n")
-    with open(path) as f:
-        return f.read().split("\n")[:-1]
-
-
 def section(**kwargs):
     return cassandra_import_convergence(layout(), {}, cwd="/p", **kwargs)
 
 
 def test_the_report_of_90_nodes():
     report = section(width=160)
-    assert report == golden("convergence_90_report.txt", report)
+    assert report == golden_lines(os.path.join(FIXTURES, "convergence_90_report.txt"), report)
 
 
 def test_no_secret_shown():

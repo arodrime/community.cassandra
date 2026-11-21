@@ -1,0 +1,33 @@
+==== Nodes =========================================================================================
+
+  ● add_node  Adds new hosts to the running cluster: all prepared at once, then each started and
+              bootstrapped in turn. Put them in their rack's group first; one in cassandra_seeds
+              joins as a regular node, then becomes a seed.
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.add_node \
+          -e cassandra_target_nodes=NEW_NODE
+        -e cassandra_target_nodes=NEW_NODE    the hosts to add (in the inventory) (required)
+        -e cassandra_add_node_reset=false     false: refuses any node with data (default: auto)
+        -e cassandra_add_node_cleanup=sequential
+                                              then cleanup: sequential/rack/dc/all (default: none)
+        -e cassandra_token_auto=bisect        num_tokens 1: bisect/balanced/true (default: false)
+        -e cassandra_clock_check=false        starts without checking the clocks (default: true)
+        -e cassandra_hosts=<group>            the cluster to run on (default: orders)
+        -e cassandra_operation_confirm=false  asks nothing (no terminal) (default: true)
+        --check                               shows the plan, changing nothing
+      Example (then the cleanup, one node at a time):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.add_node \
+          -e cassandra_target_nodes=NEW_NODE -e cassandra_add_node_cleanup=sequential
+
+      Replace NEW_NODE with your own value.
+
+      With authentication on: cassandra_cql_username and cassandra_cql_password (in a vaulted file
+      of the cluster's group_vars).
+
+      More: "Adding a node" in the collection's docs/docsite/rst/guide_roles.rst.
+
+---- What it does (playbooks/add_node.yml) ---------------------------------------------------------
+
+  Add nodes to a running cluster.
+
+  Put the new hosts in their rack's group first. One screen, one question; all new nodes prepared at
+  once, then started and bootstrapped one at a time. Re-running is safe.

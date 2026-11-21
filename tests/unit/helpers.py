@@ -17,6 +17,11 @@ Running a playbook:
                                          <dir>/<test id>.txt, to compare the screens of two branches (diff -r;
                                          under plain pytest: ansible-test units does not pass the variable on).
   playbook_command(args, env, unset)     its argv and environment, for a test that starts it itself (on a pty...)
+
+Golden files:
+  golden(path, text)                     the text kept in the file path; with pytest --regen (or
+                                         CASSANDRA_GOLDEN_WRITE=1), text written into it first
+  golden_lines(path, lines)              the same, a list of lines
 """
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
@@ -106,6 +111,22 @@ def ring_node(address, status="U", state="N", rack="r1", **more):
 def view(host, *nodes):
     """What host sees: dc1 holding nodes."""
     return {"from": host, "result": {"cluster_status": {"dc1": {"nodes": list(nodes)}}}}
+
+
+def golden(path, text):
+    """The text kept in the golden file path (its content without the last newline). After a wanted change of
+    the output, run the test with pytest --regen (or CASSANDRA_GOLDEN_WRITE=1 set): text is written into the file
+    first, and git diff shows what changed."""
+    if os.environ.get("CASSANDRA_GOLDEN_WRITE"):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text + "\n")
+    with open(path, encoding="utf-8") as f:
+        return f.read()[:-1]
+
+
+def golden_lines(path, lines):
+    """golden for a list of lines (one line of the file each)."""
+    return golden(path, "\n".join(lines)).split("\n")
 
 
 _dumped = {}

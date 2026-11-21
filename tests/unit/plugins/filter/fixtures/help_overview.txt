@@ -1,0 +1,328 @@
+Cassandra help for the inventory inventories/orders/hosts.yml (read from the inventory only: no node
+  contacted)
+
+Run the commands from the directory help was run from (the one with ansible.cfg, if any). Each
+operation shows its plan first; --check runs it without changing anything. One operation in detail:
+-e help_topic=<operation>. Placeholders such as NEW_NODE or NODE: your own values.
+
+Options of every operation that changes something:
+        -e cassandra_hosts=<group>            the cluster to run on (default: orders)
+        -e cassandra_operation_confirm=false  asks nothing (no terminal) (default: true)
+        --check                               shows the plan, changing nothing
+
+==== The cluster as the inventory describes it =====================================================
+
+Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
+  Cassandra: series 41x, package 4.1.10, installed from repository (role default)
+  Java: 11, package
+  Snitch: GossipingPropertyFileSnitch, num_tokens: 16, authenticator: PasswordAuthenticator
+  Seeds  dc1  node1 (rack1), node3 (rack2), node5 (rack3)  ok
+
+  dc1: 5 nodes (1 marked absent), 3 racks
+    rack1: node1 192.0.2.11 (seed), node2 192.0.2.12
+    rack2: node3 192.0.2.13 (seed), node4 192.0.2.14 (absent)
+    rack3: node5 192.0.2.15 (seed)
+
+==== Read-only (change nothing) ====================================================================
+
+  ● help               This overview, from the inventory alone (no node contacted).
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.help
+        -e help_topic=<operation>             one operation in detail (default: the overview)
+        -e help_write=true                    also writes RUNBOOK.md (default: false)
+        -e help_runbook_dir=<dir>             where RUNBOOK.md goes (default: the inventory's dir)
+        -e help_inventory=<path>              reads that inventory instead (default: the -i one)
+      Example (one operation in detail):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.help \
+          -e help_topic=rolling_restart
+
+  ● status             The ring as nodetool status shows it from one node, per datacenter; a down
+                       node is shown, not an error.
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.status
+        -e cassandra_target_nodes=<nodes>     nodes to read from (default: the first that answers)
+        -e status_resolve_ip=false            addresses only, not their names (default: true)
+        -e cassandra_status_raw=true          also prints nodetool's own output (default: false)
+      Example (from one node):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.status \
+          -e cassandra_target_nodes=node1
+
+  ● health_check       Checks the cluster from every node (ring, gossip, native transport, streams,
+                       schema, ports, clocks); fails on a problem, so it can be scheduled.
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.health_check
+        -e cassandra_clock_check=false        leaves the clocks out (default: true)
+
+  ● preflight          Checks the nodes against the inventory before a change: settings that must
+                       match, racks for the token allocator, versions, seeds.
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.preflight
+
+  ● drift              How far the cluster is from stock: each setting the inventory gives a node
+                       another value than the collection's default (where it is set, the edit back,
+                       whether apply_config restarts for it), the settings not the same on every
+                       node, and whether the nodes still match the inventory (apply_config's
+                       compare, nothing changed).
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.drift
+        -e drift_nodes=false                  inventory only, no node contacted (default: true)
+      Example (the inventory alone):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.drift \
+          -e drift_nodes=false
+
+==== Nodes =========================================================================================
+
+  ● add_node           Adds new hosts to the running cluster: all prepared at once, then each
+                       started and bootstrapped in turn. Put them in their rack's group first; one
+                       in cassandra_seeds joins as a regular node, then becomes a seed.
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.add_node \
+          -e cassandra_target_nodes=NEW_NODE
+        -e cassandra_target_nodes=NEW_NODE    the hosts to add (in the inventory) (required)
+        -e cassandra_add_node_reset=false     false: refuses any node with data (default: auto)
+        -e cassandra_add_node_cleanup=sequential
+                                              then cleanup: sequential/rack/dc/all (default: none)
+        -e cassandra_token_auto=bisect        num_tokens 1: bisect/balanced/true (default: false)
+        -e cassandra_clock_check=false        starts without checking the clocks (default: true)
+      Example (then the cleanup, one node at a time):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.add_node \
+          -e cassandra_target_nodes=NEW_NODE -e cassandra_add_node_cleanup=sequential
+
+  ● topology           Makes the ring match the inventory: adds the hosts of the cluster's group not
+                       in the ring, applies cassandra_seeds, removes the hosts marked
+                       cassandra_node_state: absent; one node at a time, --check shows the plan and
+                       its warnings.
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.topology
+        -e cassandra_add_node_reset=false     false: refuses any host with data (default: auto)
+        -e cassandra_token_auto=bisect        num_tokens 1: bisect/balanced (default: false)
+        -e cassandra_decommission_force=true  allows fewer nodes than replicas (default: false)
+      Example (the plan only):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.topology --check
+
+  ● decommission_node  Removes nodes from the running cluster, one at a time, their data streamed to
+                       the others; a node no longer in cassandra_seeds is first dropped from the
+                       other nodes' seed lists; refuses a datacenter left with nodes but no seed, or
+                       fewer nodes than replicas.
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.decommission_node \
+          -e cassandra_target_nodes=node4
+        -e cassandra_target_nodes=<nodes>     the nodes to remove (required)
+        -e cassandra_decommission_force=true  allows fewer nodes than replicas (default: false)
+        -e cassandra_rolling_resume=true      resumes an interrupted run (default: false)
+      Example (changing nothing):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.decommission_node \
+          -e cassandra_target_nodes=node4 --check
+
+  ● replace_node       Replaces a dead node by a blank host, which takes over its tokens and data.
+                       In the inventory, the new host put in first, the dead one taken out.
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.replace_node \
+          -e cassandra_target_nodes=NEW_NODE -e cassandra_replace_address=DEAD_NODE_ADDRESS
+        -e cassandra_target_nodes=NEW_NODE    the new host (required)
+        -e cassandra_replace_address=DEAD_NODE_ADDRESS
+                                              the address of the dead node (required)
+        -e cassandra_replace_node_reset=true  first empties the new host (default: false)
+      Example (a node replacing itself):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.replace_node \
+          -e cassandra_target_nodes=NEW_NODE -e cassandra_replace_address=DEAD_NODE_ADDRESS \
+          -e cassandra_replace_node_reset=true
+
+  ● remove_dead_node   Last resort for a dead node that will not be replaced: removenode (or
+                       assassinate). Take it out of the inventory (or mark it absent) first.
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.remove_dead_node \
+          -e cassandra_target_nodes=DEAD_NODE_ADDRESS
+        -e cassandra_target_nodes=DEAD_NODE_ADDRESS
+                                              the dead node: address, host ID or name (required)
+        -e cassandra_dead_node_method=removenode_force
+                                              removenode_force/assassinate (default: removenode)
+        -e cassandra_dead_node_new_removal=true
+                                              restarts a removal stuck elsewhere (default: false)
+        -e cassandra_dead_node_assassinate_confirm=DEAD_NODE_ADDRESS
+                                              assassinate without a terminal: its address
+        -e cassandra_decommission_force=true  allows fewer nodes than replicas (default: false)
+      Example (changing nothing):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.remove_dead_node \
+          -e cassandra_target_nodes=DEAD_NODE_ADDRESS --check
+
+  ● reset_node         Empties nodes that are not members of the ring (started once by mistake, a
+                       failed bootstrap) for a fresh start.
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.reset_node \
+          -e cassandra_target_nodes=NODE
+        -e cassandra_target_nodes=NODE        the nodes to empty (required)
+      Example (changing nothing):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.reset_node \
+          -e cassandra_target_nodes=NODE --check
+
+  ● move_node          One token per node: moves nodes to new tokens, one at a time (by default the
+                       fewest moves that even out each datacenter). Not for this cluster (num_tokens
+                       16).
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.move_node
+        -e '{"cassandra_move_tokens": {"NODE": "TOKEN"}}'
+                                              only those nodes move, to those tokens (default: {})
+        -e cassandra_move_cleanup=sequential  then cleanup: sequential/rack/dc/all (default: none)
+        -e cassandra_move_force_disk=true     goes on with little free disk left (default: false)
+      Example (the plan only):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.move_node --check
+
+==== Cluster =======================================================================================
+
+  ● create_cluster     Builds the cluster from blank hosts: prepared in parallel, then started one
+                       at a time, seeds first. Starts nothing on a running cluster.
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.create_cluster
+        -e cassandra_accept_default_identity=true
+                                              accepts default identity settings (default: false)
+        -e cassandra_create_cluster_reset=true
+                                              wipes a running cluster: DATA LOST (default: false)
+        -e '{"cassandra_create_cluster_reset_confirm": "<cluster name>"}'
+                                              the reset without a terminal: the cluster's name
+        -e cassandra_clock_check=false        starts without checking the clocks (default: true)
+      Example (the plan only):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.create_cluster --check
+
+  ● rolling_restart    Drains and restarts the nodes one at a time, the cluster checked before and
+                       after each one.
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.rolling_restart
+        -e cassandra_rolling_mode=rack        the nodes of a rack together (default: node)
+        -e cassandra_rack_force=true          rack mode: allows 2+ replicas down (default: false)
+        -e cassandra_rolling_resume=true      resumes an interrupted run (default: false)
+      Example (a rack at a time):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.rolling_restart \
+          -e cassandra_rolling_mode=rack
+
+  ● rolling_reboot     Same as rolling_restart, rebooting the hosts (OS patching).
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.rolling_reboot
+        -e cassandra_reboot_timeout=3600      seconds for a host to come back (default: 1800)
+        -e cassandra_rolling_resume=true      resumes an interrupted run (default: false)
+      Example (an interrupted run resumed):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.rolling_reboot \
+          -e cassandra_rolling_resume=true
+
+  ● stop_rack          Stops every node of one rack at once (maintenance), when the replication
+                       allows losing that rack.
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.stop_rack \
+          -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3
+        -e cassandra_target_dc=<dc>           the rack's datacenter (required)
+        -e cassandra_target_rack=<rack>       the rack to stop (required)
+        -e cassandra_rack_force=true          allows 2+ replicas down (default: false)
+      Example (changing nothing):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.stop_rack \
+          -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3 --check
+
+  ● start_rack         Starts the nodes of a rack stop_rack stopped, then checks they are UN; a node
+                       outside the rack not UN or not reached is a warning, not waited for.
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.start_rack \
+          -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3
+        -e cassandra_target_dc=<dc>           the rack's datacenter (required)
+        -e cassandra_target_rack=<rack>       the rack to start (required)
+        -e cassandra_accept_default_identity=true
+                                              accepts the name 'Test Cluster' (default: false)
+      Example (changing nothing):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.start_rack \
+          -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3 --check
+
+  ● apply_config       Applies the inventory's config: shows the settings that differ (the
+                       inventory's value, then each other value with its nodes), asks once, then
+                       writes the nodes that need it, one at a time, restarting only those that need
+                       it. The OS settings (cassandra_linux), Medusa (cassandra_medusa_enabled), the
+                       repository, packages and firewall too, and the role's header line where a
+                       file lacks it: no restart for them. A node's Java, a newer release of its
+                       series and what its unit gives Cassandra are done in its one restart; another
+                       series (upgrade), a node to add or remove (topology) stop the run before any
+                       change, with the command.
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.apply_config
+        -e cassandra_rolling_resume=true      resumes an interrupted run (default: false)
+        -e cassandra_allow_unknown_patch=true
+                                              a release past the patch notes (default: false)
+      Example (the settings that differ, changing nothing):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.apply_config --check
+
+  ● change_seeds       Applies a new cassandra_seeds list to every node, live (no restart);
+                       topology, add_node and decommission_node apply it too when nodes come and go.
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.change_seeds
+      Example (changing nothing):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.change_seeds --check
+
+  ● update_java        Moves the cluster to the Java in cassandra_java_version, one node at a time.
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.update_java
+        -e cassandra_rolling_resume=true      resumes an interrupted run (default: false)
+      Example (an interrupted run resumed):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.update_java \
+          -e cassandra_rolling_resume=true
+
+  ● sync_clocks        Shows each node's clock as its time sync daemon reports it (synchronised,
+                       source, offset) with a verdict, then brings time sync up where it is missing;
+                       a running node whose clock needs a step gets a restart window, one node at a
+                       time.
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.sync_clocks
+        -e cassandra_clock_max_offset_ms=50   in sync within this many ms (default: 50)
+        -e cassandra_clock_step_ms=400        steps the clock above this many ms (default: 400)
+        -e cassandra_clock_sync_timeout=180   seconds to wait for a sync (default: 180)
+      Example (the clocks, changing nothing):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.sync_clocks --check
+
+  ● upgrade            Upgrades the cluster to the version in the inventory, one phase per run:
+                       preflight, prepare, canary, rolling, sstables, cleanup.
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.upgrade \
+          -e cassandra_upgrade_phase=preflight
+        -e cassandra_upgrade_phase=preflight  the phase to run, in the order above (required)
+        -e cassandra_target_nodes=<node>      canary: the node to upgrade (default: a non-seed)
+        -e cassandra_rolling_resume=true      resumes the sstables phase (default: false)
+      Example (the next phase):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.upgrade \
+          -e cassandra_upgrade_phase=prepare
+
+  ● cleanup            Runs nodetool cleanup (the data a node no longer owns, after nodes were
+                       added), the cluster checked before each batch.
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.cleanup
+        -e cassandra_cleanup_mode=rack        sequential/rack/dc/all (default: sequential)
+        -e cassandra_cleanup_jobs=4           cleanup jobs per node, 0: all (default: 2)
+        -e cassandra_rolling_resume=true      resumes an interrupted run (default: false)
+      Example (a rack at a time):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.cleanup \
+          -e cassandra_cleanup_mode=rack
+
+  ● add_datacenter     Adds a datacenter: its nodes join without streaming, the keyspaces get
+                       replicas there, then each node rebuilds from another datacenter.
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.add_datacenter \
+          -e cassandra_target_nodes=NEW_DC_GROUP -e cassandra_rebuild_source_dc=dc1 \
+          -e '{cassandra_datacenter_replication: {KEYSPACE: 3}}'
+        -e cassandra_target_nodes=NEW_DC_GROUP
+                                              the new datacenter's nodes (required)
+        -e cassandra_rebuild_source_dc=<dc>   the datacenter they stream from (required)
+        -e '{cassandra_datacenter_replication: {KEYSPACE: 3}}'
+                                              each keyspace's replicas there (required)
+      Example (changing nothing):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.add_datacenter \
+          -e cassandra_target_nodes=NEW_DC_GROUP -e cassandra_rebuild_source_dc=dc1 \
+          -e '{cassandra_datacenter_replication: {KEYSPACE: 3}}' --check
+
+  ● remove_datacenter  Removes a datacenter: the keyspaces stop keeping replicas there, then its
+                       nodes leave one at a time. Move its clients first.
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.remove_datacenter \
+          -e cassandra_target_dc=DC_TO_REMOVE
+        -e cassandra_target_dc=DC_TO_REMOVE   the datacenter to remove (required)
+      Example (changing nothing):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.remove_datacenter \
+          -e cassandra_target_dc=DC_TO_REMOVE --check
+
+==== Takeover ======================================================================================
+
+  ● import_cluster     Reads a running cluster into an inventory, changing nothing on the nodes. A
+                       new cluster: give one of its nodes (-i <node>,), the others are found in the
+                       ring. A re-import reads the cluster from the inventory (its logins too),
+                       keeps the files it did not write, --check --diff shows its changes first. A
+                       DataStax Enterprise or ScyllaDB node is refused: Apache Cassandra only. Its
+                       report: report.txt (what to do, what is worth a look), report.details.txt
+                       (the rest).
+      $ ansible-playbook -i 192.0.2.11, community.cassandra.import_cluster -e import_dir=NEW_DIR
+        -e import_dir=<dir>                   the inventory dir (default: inventories)
+        -e import_report_dir=<dir>            report.txt dir (default: next to the inventory dir)
+        -e import_force=true                  re-import over this cluster's files (default: false)
+        -e import_group=<name>                the cluster's group (default: its cluster name)
+        -e import_adopt=true                  adopts an earlier import's files (default: false)
+        -e import_allow_unread=true           accepts unread ring nodes (default: false)
+        -e import_keep_hand_edits=true        keeps hand edits, parts (=<names>) (default: false)
+        -e import_carry_exporter_config=true  carries the exporter's config file (default: false)
+        -e import_report_shareable=true       an anonymised report copy to share (default: false)
+        -e import_strict=false                writes it even if self-check fails (default: true)
+
+==== Advice ========================================================================================
+
+- Marked cassandra_node_state: absent: node4. topology --check shows the plan to remove them, then
+  topology without --check does it:
+    $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.topology --check
+
+- dc1: racks of different sizes (1, 1, 2 nodes): the data is not shared evenly; add or remove nodes
+  rack by rack.

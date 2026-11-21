@@ -10,14 +10,12 @@ import re
 
 import pytest
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
-
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     IPV4, MISSING, _roles_defaults, cassandra_inventory_files, cassandra_inventory_layout)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import (
     _trusted, cassandra_inventory_host_vars)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import cassandra_import_report
+from ansible_collections.community.cassandra.tests.unit.helpers import golden_lines, templar_for
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 WRITTEN = ["/p/inventories/big.yml", "/p/inventories"]
@@ -88,18 +86,9 @@ def big_report(**kwargs):
                                    **kwargs)
 
 
-def golden(name, lines):
-    path = os.path.join(FIXTURES, name)
-    if os.environ.get("CASSANDRA_GOLDEN_WRITE"):  # to write them again, after a wanted change
-        with open(path, "w") as f:
-            f.write("\n".join(lines) + "\n")
-    with open(path) as f:
-        return f.read().split("\n")[:-1]
-
-
 def test_screen_of_88_nodes():
     screen = big_report(screen=True, width=120)
-    assert screen == golden("import_88_screen.txt", screen)
+    assert screen == golden_lines(os.path.join(FIXTURES, "import_88_screen.txt"), screen)
     assert max(len(line) for line in screen) <= 120
     text = "\n".join(screen)
     assert "s3cret" not in text and "k-a" not in text
@@ -113,7 +102,7 @@ def test_screen_of_88_nodes_fits_the_terminal(width):
 
 def test_report_of_88_nodes():
     summary = big_report(width=160)
-    assert summary == golden("import_88_report.txt", summary)  # (report.txt; report.details.txt below)
+    assert summary == golden_lines(os.path.join(FIXTURES, "import_88_report.txt"), summary)  # (report.txt; report.details.txt below)
     report = summary + [""] + big_report(width=160, details=True)
     details = next(i for i, line in enumerate(report) if line.startswith("==== DETAILS ="))
     text = "\n".join(report)
@@ -144,7 +133,7 @@ def effective(nodes):
                  "ansible_facts": {"default_ipv4": {"address": n["address"]}}}
 
         def rendered(variables):
-            templar = Templar(loader=DataLoader(), variables=dict(magic, **_trusted(variables)))
+            templar = templar_for(dict(magic, **_trusted(variables)))
             return dict((k, templar.template(_trusted(v))) for k, v in variables.items())
         written = rendered(cassandra_inventory_host_vars(files, layout["hosts"], n["name"]))
         # (the variables the inventory gives on top: the ring's dc and rack, what is left as it is on the node, the

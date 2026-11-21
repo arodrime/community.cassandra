@@ -20,8 +20,15 @@ if AnsibleCollectionConfig is not None and AnsibleCollectionConfig.collection_fi
         init_plugin_loader([os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", ".."))])
 
 
+def pytest_addoption(parser):
+    parser.addoption("--regen", action="store_true",
+                     help="write the golden files again from the outputs (helpers.golden), then review git diff")
+
+
 def pytest_configure(config):
     config.addinivalue_line("markers", "playbook: runs ansible-playbook (slow); -m 'not playbook' leaves them out")
+    if config.getoption("--regen"):
+        os.environ["CASSANDRA_GOLDEN_WRITE"] = "1"
 
 
 @pytest.fixture(autouse=True)
