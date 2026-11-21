@@ -177,3 +177,22 @@ def test_the_rack_nodes_are_told_apart_by_their_ring_address(down, expected):
     assert render(task["ansible.builtin.set_fact"]["_cassandra_rack_down_here"], **variables) == expected
     # the racks counted are the ring's
     assert render(task["vars"]["_racks"], **variables) == ["r1", "r2", "r3"]
+
+
+def test_the_replica_refusal_is_a_refused_block_of_79_columns():
+    """A rack whose stop would take more than one replica of some data down: a REFUSED block the ops callback
+    prints as is (cassandra_output), each line within 79 columns, the way out in it; it was the assert's dump
+    (TASK ..., fatal: ..., assertion:, msg: as YAML, lines over 79 columns)."""
+    task = TASKS["Refuse when a keyspace would lose more than one replica"]
+    assert task["vars"]["cassandra_output"] is True
+    problems = ["system_distributed uses SimpleStrategy with RF 3, which ignores racks: a rack down can hold several"
+                " of its replicas"]
+    variables = dict(task["vars"], cassandra_target_dc="dc1", cassandra_target_rack="r2", _rack_nodes=["n2"],
+                     _problems=problems, _warnings=["app has 2 replicas in dc1: with one down, (LOCAL_)QUORUM fails"],
+                     hostvars={"localhost": {"_cassandra_cluster_shown": "prod"}})
+    lines = render(task["ansible.builtin.assert"]["fail_msg"], **variables).split("\n")
+    assert lines[0] == "REFUSED  stop_rack  prod  nothing was changed"
+    assert max(len(line) for line in lines) <= 79
+    text = " ".join(line.strip() for line in lines)
+    assert "Stopping dc1/r2 (n2) would take down more than one replica" in text
+    assert "set cassandra_rack_force: true" in text and "WARNING  app has 2 replicas" in text

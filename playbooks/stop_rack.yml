@@ -165,13 +165,18 @@
       ansible.builtin.assert:
         that: _problems | length == 0 or cassandra_rack_force | default(false) | bool
         fail_msg: >-
-          {{ ['Stopping ' ~ cassandra_target_dc ~ '/' ~ cassandra_target_rack ~ ' (' ~ _rack_nodes | join(', ')
-              ~ ') would take down more than one replica of some data:'] + _problems
-             + ['Fix that first, or set cassandra_rack_force: true: reads and writes needing those replicas then fail,'
-                ~ ' and data only on them is unavailable until the rack is back.']
-             + _warnings | map('regex_replace', '^', 'WARNING  ') | list }}
+          {{ ('stop_rack  ' ~ _cluster) | community.cassandra.cassandra_refused(
+               ['Stopping ' ~ cassandra_target_dc ~ '/' ~ cassandra_target_rack ~ ' (' ~ _rack_nodes | join(', ')
+                ~ ') would take down more than one replica of some data:'] + _problems
+               + ['Fix that first, or set cassandra_rack_force: true: reads and writes needing those replicas then'
+                  ~ ' fail, and data only on them is unavailable until the rack is back.']
+               + _warnings | map('regex_replace', '^', 'WARNING  ') | list) | join(_nl) }}
         quiet: true
       run_once: true
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback), not the assert's dump
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
 
     - name: Show the plan and confirm
       ansible.builtin.include_role:
