@@ -967,9 +967,7 @@ def _firewall_read(recs, touched=()):
     touched port is "other" (the self-check stops), quoted as it is."""
     states = [_fields(rest, 3) for kind, rest in recs if kind == "fw"]
     rules = [(where, _norm(line)) for where, line in (_fields(rest, 2) for kind, rest in recs if kind == "fw_rule")]
-    name = next((n for n, state, extra in states if n in ("firewalld", "ufw")), "")
-    zone = next((extra[len("default zone "):] for n, state, extra in states if n == "firewalld"
-                 and extra.startswith("default zone ")), "")
+    name, zone = _firewall_running(states)
     home = "zone %s" % zone if name == "firewalld" else "ufw"
     ipv6 = not any(n == "ufw" and extra == "IPV6=no" for n, state, extra in states)
     # (a list firewall-cmd or ufw could not give: not known, never "no rule"; the sets there are not compared)
@@ -978,53 +976,100 @@ def _firewall_read(recs, touched=()):
     # the ports of the services firewalld rich rules name ("[permanent ]<name>"), of ufw's app profiles ("ufw app
     # <name>")
     services = dict(_fields(r, 2) for kind, r in recs if kind == "fw_svc")
+    found, other_forms = _role_form_sets(rules, name, home)
+    in_both_sets, open_, redundant = _in_both_sets(found, name, ipv6)
+    ports = list(touched) + open_
+    other = [] if home_unread else _in_one_set_only(found, in_both_sets + redundant, home, ports)
+    forms = _other_forms_sorted(other_forms, name, home, ports, open_, services)
+    other += forms["other"]
+    # (iptables' own INPUT policy other than ACCEPT: a rule of its own)
+    other += [(n, state) for n, state, extra in states if n not in ("firewalld", "ufw")]
+    other += _policies_letting_in(recs)
+    return {"name": name, "zone": zone, "state": next((s for n, s, extra in states if n == name), ""),
+            "states": states, "rules": rules, "open": open_, "sources": _source_rules(in_both_sets, redundant, ports),
+            "redundant": redundant, "other": other, "unread": unread, "no_effect": forms["no_effect"],
+            "every_port": forms["every_port"]}
+
+
+def _firewall_running(states):
+    """The "fw" records -> (the firewall running: firewalld, ufw or "", firewalld's default zone or "")."""
+    name = next((n for n, state, extra in states if n in ("firewalld", "ufw")), "")
+    zone = next((extra[len("default zone "):] for n, state, extra in states if n == "firewalld"
+                 and extra.startswith("default zone ")), "")
+    return name, zone
+
+
+def _role_form_sets(rules, name, home):
+    """The rules read -> (found: {port, or (port, source): the sets it is in} for the lines of home in a form the
+    role writes; [(where, rule)] the other lines)."""
     role_form = {"firewalld": _firewalld_role_form, "ufw": _ufw_role_form}.get(name)
-    found, other_forms = {}, []  # found: port, or (port, source) -> the sets it is in
+    found, other_forms = {}, []
     for where, line in rules:
         form = role_form(line) if role_form and where == home else None
         if form is None:
             other_forms.append((where, line))
         for key, in_set in form or []:
             found.setdefault(key, set()).add(in_set)
+    return found, other_forms
+
+
+def _in_both_sets(found, name, ipv6):
+    """found (_role_form_sets') -> (its keys in both sets: firewalld now and after a reload, ufw IPv4 and IPv6 (IPv4
+    alone with IPV6=no); the ports among them open to everyone; the source rules on one of those, in one set or both:
+    redundant, they change nothing)."""
     both = ("now", "later") if name == "firewalld" else ("v4", "v6") if ipv6 else ("v4",)
     in_both_sets = [k for k, sets in found.items() if all(s in sets for s in both)]
     open_ = [k for k in in_both_sets if isinstance(k, str)]
-    ports = list(touched) + open_
-    # (a source rule on a port open to everyone changes nothing, in one set or both)
     redundant = [k for k in found if isinstance(k, tuple) and k[0] in open_]
-    other, no_effect, every_port = [], [], []
+    return in_both_sets, open_, redundant
+
+
+def _in_one_set_only(found, carried, home, ports):
+    """The role's form found in one set only (found's keys not in carried), on one of ports -> [(home, what)]."""
+    other = []
     for k, sets in found.items():
         port = k if isinstance(k, str) else k[0]
-        if k in in_both_sets or k in redundant or home_unread or not _names_port(port, ports):
+        if k in carried or not _names_port(port, ports):
             continue
         what = ("port %s open to everyone" % k) if isinstance(k, str) else ("port %s open to %s" % k)
         when = {"now": "now", "later": "from the next reload", "v4": "for IPv4", "v6": "for IPv6"}[sorted(sets)[0]]
         other.append((home, "%s %s only" % (what, when)))
+    return other
+
+
+def _other_forms_sorted(other_forms, name, home, ports, open_, services):
+    """The lines of no form the role writes -> {"other", "no_effect", "every_port": [(where, rule)]} as
+    _other_form_kind sorts them (a line on no touched port in none), a rule read alike now and after a reload once."""
     kinds = {}
     for where, line in other_forms:
         try:
             kinds[(where, line)] = _other_form_kind(where, line, name, home, ports, open_, services)
         except Exception:  # pylint: disable=broad-except  # a safety net: a line the checks above miss is "other"
             kinds[(where, line)] = "other"
+    out = {"other": [], "no_effect": [], "every_port": []}
     for (where, line), kind in kinds.items():
         if line.startswith("permanent ") and kinds.get((where, line[len("permanent "):])) == kind:
             continue  # (the same rule now and after a reload, read alike: said once)
-        {"other": other, "no_effect": no_effect, "every_port": every_port}.get(kind, []).append((where, line))
-    # (iptables' own INPUT policy other than ACCEPT: a rule of its own)
-    other += [(n, state) for n, state, extra in states if n not in ("firewalld", "ufw")]
-    # firewalld's policies to this host: not modelled, each one that may let traffic in is "other", as read
-    other += [("policy %s" % name.split()[-1], "%spolicy to this host: %s" % (
+        out.get(kind, []).append((where, line))
+    return out
+
+
+def _policies_letting_in(recs):
+    """firewalld's policies to this host: not modelled, each one that may let traffic in -> (where, what) as read."""
+    return [("policy %s" % name.split()[-1], "%spolicy to this host: %s" % (
         "permanent " if name.startswith("permanent ") else "",
         "; ".join("%s %s" % (k, ", ".join(v) if isinstance(v, list) else v) for k, v in policy.items()
                   if not k.startswith("_") and v)))
-              for name, policy in _policies(recs).items() if _policy_lets_in(name, policy)]
+            for name, policy in _policies(recs).items() if _policy_lets_in(name, policy)]
+
+
+def _source_rules(in_both_sets, redundant, ports):
+    """{port/proto: [source]} the ports of ports open to some sources in both sets (a redundant rule left out)."""
     sources = {}
     for k in in_both_sets:
         if isinstance(k, tuple) and k not in redundant and _names_port(k[0], ports):
             sources.setdefault(k[0], []).append(k[1])
-    return {"name": name, "zone": zone, "state": next((s for n, s, extra in states if n == name), ""),
-            "states": states, "rules": rules, "open": open_, "sources": sources, "redundant": redundant,
-            "other": other, "unread": unread, "no_effect": no_effect, "every_port": every_port}
+    return sources
 
 
 def _ufw_other_form_kind(line, ports, open_, services):
