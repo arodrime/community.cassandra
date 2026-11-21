@@ -103,16 +103,27 @@
     _snippet_loggers: >-
       {{ (_cassandra_config_snippet_logback ~ '\n' ~ _cassandra_config_snippet_appenders)
          | regex_findall('<logger\s[^>]*?\bname\s*=\s*["\x27]([^"\x27]+)["\x27]') }}
-    # the values logback.xml writes as they are: the filter's WRITTEN names them, it picks them among these
-    _log_names: "{{ query('ansible.builtin.varnames', '^cassandra_log_') }}"
-    _log_values: "{{ dict(_log_names | zip(query('ansible.builtin.vars', *_log_names))) }}"
+    # (the values logback.xml writes as they are: the filter's WRITTEN, by their variable; a unit test keeps the two
+    # lists the same)
     _wrong: >-
       {{ cassandra_logback_root_extra_refs | community.cassandra.cassandra_config_logback_refusals(
-           known=_known, after_root=_after_root, levels=cassandra_log_levels,
-           own_loggers=_cassandra_config_own_loggers, snippet_loggers=_snippet_loggers,
-           series=cassandra_version, cql_table=cassandra_log_cql_table | bool,
-           audit_file=cassandra_log_audit_file | bool, overrides=cassandra_config_template_overrides,
-           **_log_values) }}
+      known=_known, after_root=_after_root, levels=cassandra_log_levels, own_loggers=_cassandra_config_own_loggers,
+      snippet_loggers=_snippet_loggers, series=cassandra_version, cql_table=cassandra_log_cql_table | bool,
+      audit_file=cassandra_log_audit_file | bool, overrides=cassandra_config_template_overrides,
+      cassandra_log_level=cassandra_log_level, cassandra_log_level_cassandra=cassandra_log_level_cassandra,
+      cassandra_log_system_level=cassandra_log_system_level, cassandra_log_pattern=cassandra_log_pattern,
+      cassandra_log_system_max_file_size=cassandra_log_system_max_file_size,
+      cassandra_log_system_max_history=cassandra_log_system_max_history,
+      cassandra_log_system_total_size_cap=cassandra_log_system_total_size_cap,
+      cassandra_log_debug_max_file_size=cassandra_log_debug_max_file_size,
+      cassandra_log_debug_max_history=cassandra_log_debug_max_history,
+      cassandra_log_debug_total_size_cap=cassandra_log_debug_total_size_cap,
+      cassandra_log_audit_max_file_size=cassandra_log_audit_max_file_size,
+      cassandra_log_audit_max_history=cassandra_log_audit_max_history,
+      cassandra_log_audit_total_size_cap=cassandra_log_audit_total_size_cap,
+      cassandra_log_audit_dir=cassandra_log_audit_dir, cassandra_log_system_dir=cassandra_log_system_dir,
+      cassandra_log_debug_dir=cassandra_log_debug_dir,
+      cassandra_log_cql_table_level=cassandra_log_cql_table_level) }}
   when: "'logback.xml' not in cassandra_config_keep_files"  # (a file kept as it is: none of them written)
 
 # FileAuditLogger without the audit file: its events go to system.log (logback's root)

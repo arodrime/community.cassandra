@@ -7,6 +7,7 @@ __metaclass__ = type
 # system.log.
 
 import os
+import re
 import xml.etree.ElementTree as ET
 
 import pytest
@@ -394,3 +395,11 @@ def test_the_lowest_level_of_system_log(series):
     root = ET.fromstring(logback(series, cassandra_log_system_level="WARN"))
     systemlog = [a for a in root.findall("appender") if a.get("name") == "SYSTEMLOG"][0]
     assert systemlog.find("filter").findtext("level") == "WARN"
+
+
+def test_the_task_passes_every_value_the_filter_writes():
+    # the values logback.xml writes as they are: the filter's WRITTEN (and the 5.0 CQL table's level) are exactly the
+    # variables the task gives it by name (one missing: a KeyError at run time; one more: never read)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_config_refusals import WRITTEN
+    given = re.findall(r"\b(cassandra_log_\w+)=\1\b", REFUSE["vars"]["_wrong"])
+    assert given == [name for name, dummy, dummy2 in WRITTEN] + ["cassandra_log_cql_table_level"]

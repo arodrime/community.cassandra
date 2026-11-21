@@ -217,7 +217,7 @@
 636	roles/cassandra_config/tasks/checks.yml :: Refuse extra settings the template already has :: vars._named (jinja)
 987	roles/cassandra_config/tasks/checks.yml :: Refuse extra settings the template already has :: vars._taken (jinja)
 322	roles/cassandra_config/tasks/checks.yml :: Refuse logback appender-refs, levels and values the role cannot write :: vars._known (jinja)
-439	roles/cassandra_config/tasks/checks.yml :: Refuse logback appender-refs, levels and values the role cannot write :: vars._wrong (jinja)
+1432	roles/cassandra_config/tasks/checks.yml :: Refuse logback appender-refs, levels and values the role cannot write :: vars._wrong (jinja)
 315	roles/cassandra_config/tasks/checks.yml :: Refuse rackdc lines other than the node's dc and rack under a snitch that reads them :: ansible.builtin.assert.fail_msg (jinja)
 748	roles/cassandra_config/tasks/checks.yml :: Refuse removed JVM options the role does not write :: vars._unknown (jinja)
 314	roles/cassandra_config/tasks/checks.yml :: Warn about a young generation size G1 ignores :: ansible.builtin.debug.msg (jinja)
