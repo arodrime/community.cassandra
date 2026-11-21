@@ -210,7 +210,8 @@ def _key(layout, paths=()):
     key.taken |= set(p for p in places if GENERIC.match(p))  # (a real dc1 keeps its name: the site's ones after it)
     cluster = layout.get("cluster_group") or ""
     given = key.add(cluster, "c", force=True)
-    for form in _forms(layout.get("cluster_name") or "") | _forms(cluster):
+    # (sorted: a set's order changes with the hash seed; the same import writes the same key)
+    for form in sorted(_forms(layout.get("cluster_name") or "") | _forms(cluster)):
         if len(form) > 2:
             key.add(form, "c", given)
     for n in nodes:
@@ -222,7 +223,7 @@ def _key(layout, paths=()):
         for place, kind in ((n.get("dc"), "dc"), (n.get("rack"), "r")):
             if place and not GENERIC.match(str(place)):
                 given = key.add(place, kind)
-                for form in _forms(place):  # (eu-west-1 as eu_west_1 too)
+                for form in sorted(_forms(place)):  # (eu-west-1 as eu_west_1 too; sorted: the same key each run)
                     key.add(form, kind, given)
     # the inventory's groups: <cluster>_<dc>_<rack>, their names as written (lower case, _ for the rest)
     written = sorted(((re.sub(r"[^a-z0-9]+", "_", real.lower()), key.name(real)) for real in places

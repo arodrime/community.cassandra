@@ -5,7 +5,10 @@ __metaclass__ = type
 # or path of the site left in it, secrets masked; the sections, hand edits, versions and the import's notes kept;
 # the key (n1 = the real name) apart.
 
+import os
 import re
+import subprocess
+import sys
 
 import pytest
 
@@ -85,6 +88,20 @@ def test_the_key_apart():
     assert "n1 = db-lyon-01.%s" % DOMAIN in key and "c1 = orders_prod" in key and "c1 = orders prod" in key.lower()
     assert "dc1 = lyon" in key and "c1_dc1_r1 = orders_prod_lyon_rack_north" in key
     assert not [line for line in shared["text"] if " = db-" in line]
+
+
+def test_the_key_the_same_whatever_the_hash_seed():
+    """The same import writes the same key: the forms of a name (Hostile Cluster, hostile-cluster...) were added in
+    the order of a set, which Python's hash seed changes from one run to the next, so an import with nothing changed
+    moved the copy and its key aside each time."""
+    code = ("from ansible_collections.community.cassandra.tests.unit.plugins.filter import"
+            " test_cassandra_import_shareable as t; print(repr(t.site_report()[2]['map']))")
+    seen = set()
+    for seed in ("1", "2", "3", "4"):
+        env = dict(os.environ, PYTHONHASHSEED=seed, PYTHONPATH=os.pathsep.join(sys.path))
+        seen.add(subprocess.run([sys.executable, "-c", code], env=env, check=True, capture_output=True,
+                                text=True).stdout)
+    assert len(seen) == 1
 
 
 def test_columns_stay_aligned():
