@@ -76,13 +76,16 @@ def cassandra_config_import(live_files, cassandra_version, facts, conf_target=""
     jmx_files: cassandra_jmx_files' (the remote JMX files the JVM reads, under the names jmxremote.password and
     .access in live_files); release: the node's Cassandra version (4.1.5; '': the keys no release of the series
     accepts are the ones rejected); java: the running Java's major ('': not known), for the options files it reads;
-    cmdline: the running JVM's arguments (/proc/<pid>/cmdline), for its heap; running: the running JVM, {cmdline:
+    cmdline: the running JVM's arguments (/proc/<pid>/cmdline), for its heap (java and cmdline: given by the tests;
+    the playbook gives them in running); running: the running JVM, {cmdline:
     its /proc/<pid>/cmdline, java: its major version, environment: what the unit gives it, newer: the config files
     written since it started, keep: import_keep_hand_edits, the JVM's files it keeps not moved} (java and cmdline
     from it when not given).
     Returns {
     - vars: the variables;
-    - hand_edits, normalized; comments: comment lines only, which set nothing;
+    - hand_edits: what the role would still change in the node's files (lines no variable gives, with notes);
+    - normalized: what the role writes another way with the same effect (layout, the heap's file, comments);
+    - comments: comment lines only, which set nothing;
     - not_settings: {keys: the cassandra.yaml keys its Cassandra rejects, not imported, release};
     - release: the version they were judged by;
     - trusted: its lines (of the variables) that refer to a secret's variable, written as templates;
