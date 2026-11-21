@@ -180,7 +180,9 @@ def cassandra_health_wait_line(waiting, names=None, waited=0, timeout=0, index=0
     """The progress line of the wait for waiting (cassandra_health_waiting's): "[2/5] node2  restart  waiting
     node4 is DN, waiting for it to come back  1m30s/10m"; names: {address: inventory name} (a node without one is
     its address); waited, timeout: seconds; done: the line once nothing is waited for any more ("[2/5] node2
-    restart  all back after 1m40s").
+    restart  all back after 1m40s"). Past 79 columns (WAIT_WIDTH: the line is rewritten in place), the nodes down
+    said shorter, the first form that fits, else the last: "node4 is DN, node5 is DN", "node4 is DN and 1 more not
+    UN", "2 nodes not UN" (the other parts of the line as they are).
     e.g. ([<10.0.0.4 DN>], names={"10.0.0.4": "node4"}, waited=90, timeout=600, index=2, steps=5, node="node2",
     operation="restart") -> "[2/5] node2  restart  waiting  node4 is DN, waiting for it to come back  1m30s/10m"."""
     head = out.step_head(index, steps, node, operation)
@@ -201,13 +203,17 @@ def cassandra_health_wait_line(waiting, names=None, waited=0, timeout=0, index=0
             cause = _PASSING.search(str(f.get("error", "")))
             parts.append("nodetool status on %s does not answer%s" % (f["on"], " (JMX: %s)" % cause.group(1) if cause else ""))
     line = out.wait_line(head, "; ".join(parts), waited, timeout)
-    # rewritten in place: one line of an 80-column terminal, the nodes down said shorter (the stop lists them all)
-    for shorter in (", ".join(downs), "%s and %d more not UN" % (downs[0], len(downs) - 1) if downs[1:] else "",
-                    "%d nodes not UN" % len(downs) if downs[1:] else ""):
-        if len(line) <= WAIT_WIDTH or not downs:
-            break
-        if shorter:
-            line = out.wait_line(head, "; ".join([shorter] + parts[1:]), waited, timeout)
+    # rewritten in place: one line of an 80-column terminal; past it, the nodes down said shorter (the stop lists
+    # them all), the first form that fits: without "waiting for ... to come back", then the first node and how
+    # many more, then their count
+    if len(line) > WAIT_WIDTH and downs:
+        shorter = [", ".join(downs)]
+        if len(downs) > 1:
+            shorter += ["%s and %d more not UN" % (downs[0], len(downs) - 1), "%d nodes not UN" % len(downs)]
+        for said in shorter:
+            line = out.wait_line(head, "; ".join([said] + parts[1:]), waited, timeout)
+            if len(line) <= WAIT_WIDTH:
+                break
     return line
 
 
