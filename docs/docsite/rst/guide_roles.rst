@@ -751,13 +751,17 @@ of the cluster is only a warning, unless a node could be one of the rack. The ta
   ``ansible_host``);
 - a node of the rack not reached over ssh stops the run at once; one not UN, or whose ``nodetool status`` fails,
   stops it (a node down: after waiting for it to come back; way out: run ``start_rack`` again);
-- a node of the rack left out by ``--limit`` (this run does not start it) and not UN is not waited for: the run
-  succeeds once its own nodes are UN (``the nodes of this run are UN``), then a warning names it (its inventory
-  name when its variables give its address or its name resolves to it on the controller, else its address, the
-  nodes left out named under it) in its state of the last read: down, the ``start_rack`` command that starts it
-  alone (``--limit`` that node: the others left out stay as they are); joining, leaving or moving, wait for it to
-  finish. A node of the ring no host is known by is taken
-  for one left out only while one of them is not in the ring at an address of its own;
+- a node of the rack left out by ``--limit`` (this run does not start it) and not UN is not waited for. The run
+  succeeds once each node of the run is UN in the ring at an address it gives (a node of the run not found there
+  stops the run). A warning then names the node left out, in its state of the last read, and what to do: down,
+  the ``start_rack`` command that starts it; joining, leaving or moving, wait for it to finish. Its ``--limit`` is
+  that node and a node of the run seen UN: the ring is then read from that node too, a second view of the node
+  started (a running node is left as it is: no restart). The other nodes left out stay as they are;
+- the warning names a node left out by its inventory name when its variables give its address, or its name
+  resolves to it on the controller; else by its address. A ring node no host is known by is taken for a node
+  left out only when the address of that node is not in the ring and every node of the run is there;
+- when the ring is read only from nodes of the run (``--limit`` leaves out every other node, or none is reached),
+  the run says so: ``UN as seen from node2 only``. A node always sees itself UN;
 - a node outside the rack not UN for the node outside the rack read from (down, joining, leaving, moving...), not
   reached over ssh, or whose ``nodetool status`` fails, is a warning row, not waited for; one only the node of the
   rack, just started, sees not UN is waited for first;

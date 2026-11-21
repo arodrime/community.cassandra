@@ -162,7 +162,10 @@ def check(unreached=(), peer=None, then=None, then_peer=None, names=None, groups
 
 UP = ["Rack r2 (dc1): the nodes of this run are UN (n2)."]
 LEFT_OUT = ["WARNING  rack r2 (dc1), not UN, left out by --limit (not in this run):"]
-START = ["start n3: run start_rack on it alone",
+START = ["start n3: run start_rack on it, n2 (UN, unchanged) to check it from",
+         "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
+         "    -e cassandra_target_dc=dc1 -e cassandra_target_rack=r2 --limit n2,n3"]
+ALONE = ["start n3: run start_rack on it alone",
          "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
          "    -e cassandra_target_dc=dc1 -e cassandra_target_rack=r2 --limit n3"]
 
@@ -213,7 +216,7 @@ def test_the_whole_rack_left_out_by_limit_is_not_said_started():
     assert problems == [] and said == ["Rack r2 (dc1): nothing started, --limit leaves out all of its nodes."]
     problems, said = check(play=["n1", "n4"], groups={"cassandra_target_rack_nodes": []}, n3="DN")
     assert said[0] == "Rack r2 (dc1): nothing started, --limit leaves out all of its nodes."
-    assert said[1:] == LEFT_OUT + ["  n3  DN"] + START
+    assert said[1:] == LEFT_OUT + ["  n3  DN"] + ALONE  # (no node of the run to check it from)
 
 
 def test_under_force_the_nodes_left_out_are_said_too():
@@ -223,7 +226,7 @@ def test_under_force_the_nodes_left_out_are_said_too():
     verdict = {"outside": [], "failed": [], "warnings": [], "problems": ["n2 (10.0.0.2, r2) is DN, seen from n1"],
                "left_out": [{"address": "10.0.0.3", "name": "n3", "states": ["DN"]}]}
     assert cassandra_rack_outside_lines(verdict, [], "dc1", "r2", "x", run=["n2"], left_out=["n3"],
-                                        start_command="y") == LEFT_OUT + ["  n3  DN", START[0], "  y --limit n3"]
+                                        start_command="y") == LEFT_OUT + ["  n3  DN", ALONE[0], "  y --limit n3"]
 
 
 def test_a_node_left_out_by_limit_known_by_no_address_is_named_as_the_controller_resolves_it(monkeypatch):
@@ -238,7 +241,8 @@ def test_a_node_left_out_by_limit_known_by_no_address_is_named_as_the_controller
     monkeypatch.setattr(cassandra_ring, "_resolved", lambda name: [])
     problems, said = check(names=names, play=["n1", "n2", "n4"], n3="DN")
     assert said == UP + LEFT_OUT + ["  10.0.0.3  DN", "  (no host known by that address; left out by --limit: n3)",
-                                    "start it: run start_rack on the nodes left out named above"] + START[1:]
+                                    "start it: run start_rack on the nodes left out named above, with n2 (UN,",
+                                    "  unchanged)"] + START[1:]
     variables = noted(ring(n3="DN"), names=names, play=["n1", "n2", "n4"])
     assert variables["_cassandra_start_rack_first_verdict"]["unknown_lines"] == []
     # a node no host is known by that the ring puts in another rack: not taken for the node left out
@@ -472,10 +476,14 @@ def test_a_healthy_cluster_reads_once_and_says_the_rack_is_up():
 
 
 def test_the_nodes_read_from():
-    # the first read's second view: a node outside the rack (up for long), not one not reached, nor one out of
-    # the play (--limit: not probed)
+    # the first read's second view: a node outside the rack (up for long), else another node of the rack in the
+    # run (--limit n2,n3, n2 UN and n3 started: n2 sees n3; it was n3 itself, which sees itself UN); not one not
+    # reached, nor one out of the play (--limit: not probed)
     assert render(TASKS[READ]["vars"]["_cassandra_health_not_peers"], _cassandra_start_rack_members=["n2", "n3"],
-                  _cassandra_start_rack_unreached=["n5"], _cassandra_start_rack_not_probed=["n6"]) == "n2,n3,n5,n6"
+                  _cassandra_start_rack_unreached=["n5"], _cassandra_start_rack_not_probed=["n6"]) == "n5,n6"
+    prefer = TASKS[READ]["vars"]["_cassandra_health_prefer_peers"].replace(
+        "query('community.cassandra.cassandra_nodes')", "_nodes")
+    assert render(prefer, _nodes=["n1", "n2", "n3", "n4"], _cassandra_start_rack_members=["n2", "n3"]) == ["n1", "n4"]
     not_probed = PLAY["vars"]["_cassandra_start_rack_not_probed"].replace(
         "query('community.cassandra.cassandra_nodes')", "_nodes")
     assert render(not_probed, _nodes=["n1", "n2", "n3"], ansible_play_hosts_all=["n2", "n3"]) == ["n1"]
@@ -493,8 +501,8 @@ def test_host_names_that_are_ipv6_addresses_are_left_out_as_peers():
     # the patterns joined with "," (":" would split an IPv6 address)
     from ansible.inventory.manager import InventoryManager
     inventory = InventoryManager(loader=DataLoader(), sources="2001:db8::5,2001:db8::6,2001:db8::7,")
-    pattern = render(TASKS[READ]["vars"]["_cassandra_health_not_peers"], _cassandra_start_rack_members=["2001:db8::5"],
-                     _cassandra_start_rack_unreached=["2001:db8::6"], _cassandra_start_rack_not_probed=[])
+    pattern = render(TASKS[READ]["vars"]["_cassandra_health_not_peers"], _cassandra_start_rack_unreached=["2001:db8::5"],
+                     _cassandra_start_rack_not_probed=["2001:db8::6"])
     assert sorted(h.name for h in inventory.get_hosts(pattern)) == ["2001:db8::5", "2001:db8::6"]
 
 
@@ -851,7 +859,7 @@ def test_the_verdict_s_keys_are_the_ones_its_docstring_gives():
     # two keys
     verdict = noted(ring())["_cassandra_start_rack_first_verdict"]
     assert sorted(verdict) == ["failed", "left_out", "not_readers", "outside", "problems", "rack_seen_un", "ring_size",
-                               "unknown_lines", "warnings"]
+                               "seen_from_run_only", "unknown_lines", "warnings"]
     example = cassandra_rack_verdict.__doc__.split("e.g.")[1]
     assert all(key + ":" in example for key in verdict) and verdict["rack_seen_un"] == ["n2", "n3"]
 
@@ -897,3 +905,38 @@ def test_under_limit_a_node_of_the_run_not_seen_un_in_the_ring_stops_the_run(mon
     # n2 at its address: the success line names it, as seen UN
     names = dict((a, n) for a, n in ADDRESSES.items() if n != "n3")
     assert check(names=names, play=["n1", "n2", "n4"]) == ([], UP)
+
+
+def test_under_limit_the_nodes_of_the_run_seen_only_from_themselves_are_said_so():
+    # start_rack --limit n2 (n3 left out, the rest of the cluster out of the play): the ring is read from n2
+    # alone, and a node sees itself UN; "the nodes of this run are UN" was said as if checked from elsewhere
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_start_rack import cassandra_rack_outside_lines
+    read = ring(n3="DN")
+    found = cassandra_health_findings([{"from": "n2", "result": read}], 4, "n2", names=ADDRESSES, **OK)
+    verdict = cassandra_rack_verdict(found, ["n2", "n3"], "dc1", "r2", "n2", "n2", addresses=ADDRESSES,
+                                     reads=[read, read], left_out=["n3"])
+    assert verdict["problems"] == [] and verdict["seen_from_run_only"] == ["n2"]
+    command = "ansible-playbook -i hosts.yml community.cassandra.start_rack -e cassandra_target_dc=dc1" \
+              " -e cassandra_target_rack=r2"
+    lines = cassandra_rack_outside_lines(verdict, [], "dc1", "r2", "x", run=["n2"], left_out=["n3"],
+                                         start_command=command)
+    # the way out for n3 adds n2, seen UN, to the --limit: the ring is then read from n2 too, a second view of n3
+    assert lines == UP + ["WARNING  UN as seen from n2 only (no node outside this run read)"] + LEFT_OUT + [
+        "  n3  DN"] + START
+    # that run: n2 and n3, the rest out of the play; read from both (n2 sees n3)
+    found = cassandra_health_findings([{"from": "n3", "result": ring()}, {"from": "n2", "result": ring()}], 4, "n3",
+                                      names=ADDRESSES, **OK)
+    verdict = cassandra_rack_verdict(found, ["n2", "n3"], "dc1", "r2", "n3", "n2", addresses=ADDRESSES,
+                                     reads=[ring(), ring()], left_out=[])
+    assert cassandra_rack_outside_lines(verdict, [], "dc1", "r2", "x") == [
+        "Rack r2 (dc1): every node is UN (n2, n3).",
+        "WARNING  UN as seen from the nodes of this run only (no other node read)"]
+    # a node outside the rack read from (here n1): not said
+    assert check(play=["n1", "n2", "n4"], n3="DN")[1] == UP + LEFT_OUT + ["  n3  DN"] + START
+    # n2's start in that run leaves it as it is: the role starts (never restarts) a running node, unless
+    # cassandra_service_restart_on_change and its unit changed, written already by the run that started it
+    start = role_task("main.yml", "Start or restart cassandra")["ansible.builtin.systemd_service"]["state"]
+    assert render(start, cassandra_service_state="started", cassandra_service_restart_on_change=False,
+                  _cassandra_service_unit_changed=True).strip() == "started"
+    assert render(start, cassandra_service_state="started", cassandra_service_restart_on_change=True,
+                  _cassandra_service_unit_changed=False).strip() == "started"

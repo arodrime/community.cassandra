@@ -301,7 +301,8 @@
         ansible_become: false  # an inventory ansible_become beats the become keyword
 
     # from a node of the rack (just started: up), read once; its second view from a node outside the rack when
-    # there is one (up for long: its view of the others settled), reached over ssh by the probe
+    # there is one (up for long: its view of the others settled), reached over ssh by the probe, else from another
+    # node of the rack in the run (under --limit, the node seen UN the way out adds to see the one it starts)
     - name: Read the cluster once from a node of the rack
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation
@@ -309,9 +310,9 @@
       vars:
         cassandra_service_health_report_only: true  # cassandra_health_findings only
         _cassandra_health_no_wait: true
-        _cassandra_health_not_peers: >-
-          {{ (_cassandra_start_rack_members + _cassandra_start_rack_unreached + _cassandra_start_rack_not_probed)
-             | join(',') }}
+        _cassandra_health_prefer_peers: >-
+          {{ query('community.cassandra.cassandra_nodes') | reject('in', _cassandra_start_rack_members) | list }}
+        _cassandra_health_not_peers: "{{ (_cassandra_start_rack_unreached + _cassandra_start_rack_not_probed) | join(',') }}"
       when:
         - inventory_hostname == _cassandra_start_rack_checker
         - not ansible_check_mode  # the rack was not started

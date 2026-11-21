@@ -1,2 +1,2 @@
 bugfixes:
-  - "start_rack playbook - under ``--limit``, a node of the rack left out and not UN is no longer waited for: the run succeeds once its own nodes are UN, and a warning names the node, its state and what to do (the ``start_rack`` command that starts it alone, or wait)."
+  - "start_rack playbook - under ``--limit``, a node of the rack left out and not UN is no longer waited for: the run succeeds once its own nodes are UN in the ring, and a warning names the node, its state and what to do (the ``start_rack`` command that starts it, with a node of the run seen UN to check it from, or wait)."
