@@ -43,7 +43,7 @@ MEMBERS = "Find the rack's nodes in the inventory"
 READ = "Read the cluster once from a node of the rack"
 NOTE = "Judge the first read"
 CHECK = "Check the rack's nodes and the rest of the cluster"
-SAY = "Say the nodes outside the rack not UN or not reached"
+SAY = "Say the rack's nodes are UN, and the nodes outside the rack not UN or not reached"
 AFTER = "Judge the last read"
 STOP = "Stop on the rack's nodes not UN"
 PROBE = ["Reach each node over ssh", "Stop when a node of the rack is not reached over ssh",
@@ -161,7 +161,7 @@ def test_a_node_down_outside_the_rack_is_a_warning_not_a_failure():
     problems, said = check(n4="DN")
     assert problems == []
     assert said == [
-        "Rack r2 (dc1): every node is UN.",
+        "Rack r2 (dc1): every node is UN (n2, n3).",
         "WARNING  the rest of the cluster:",
         "  n4  DN",
         "Check the cluster:",
@@ -191,7 +191,7 @@ def test_a_node_outside_the_rack_seen_up_by_one_view_is_waited_for():
     # waited for (judged in the check again); seen UN then: nothing said
     assert noted(ring(n4="DN"), peer=ring())["_cassandra_start_rack_first_verdict"]["outside"] == []
     problems, said = check(peer=ring(), then=ring(), n4="DN")
-    assert (problems, said) == ([], None)
+    assert (problems, said) == ([], ["Rack r2 (dc1): every node is UN (n2, n3)."])
 
 
 def test_a_node_outside_the_rack_not_reached_over_ssh():
@@ -359,8 +359,13 @@ def test_under_limit_a_node_of_the_rack_left_out_is_still_one_of_the_rack():
     assert TASKS[MEMBERS]["run_once"] is True and NAMES.index(MEMBERS) < NAMES.index(PROBE[0])
 
 
-def test_a_healthy_cluster_reads_once_and_says_nothing():
-    assert check() == ([], None)
+def test_a_healthy_cluster_reads_once_and_says_the_rack_is_up():
+    # its success said (it was not: only each node's start line), the nodes of the rack as the ring has them UN;
+    # nothing outside the rack: no warning, no command
+    assert check() == ([], ["Rack r2 (dc1): every node is UN (n2, n3)."])
+    # a node of the rack by its address when no host is known by it
+    names = dict((a, n) for a, n in ADDRESSES.items() if n != "n3")
+    assert check(names=names) == ([], ["Rack r2 (dc1): every node is UN (10.0.0.3, n2)."])
 
 
 def test_the_nodes_read_from():

@@ -763,6 +763,8 @@ of the cluster is only a warning, unless a node could be one of the rack. The ta
   elsewhere streaming to it), ``nodetool status`` failing on every node read from, a ring size or schema
   disagreement otherwise.
 
+Once the rack is UN, the run says so in one line, the rack's nodes the ring has UN named
+(``Rack r2 (dc1): every node is UN (node4..node6).``); a warning follows it when the rest of the cluster has one.
 The warning ends with the ``health_check`` command, and the run succeeds. Repair the rack's
 nodes if they were down longer than ``max_hint_window``. It first checks the cluster
 name on a node of another rack; when none answers (or the rack is the whole cluster) and ``cassandra_cluster_name``

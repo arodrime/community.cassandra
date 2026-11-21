@@ -1,0 +1,2 @@
+bugfixes:
+  - "start_rack playbook - once the rack's nodes are UN, the run says so in one line naming them (``Rack r2 (dc1): every node is UN (node4..node6).``), also when nothing else is said; before, that line came only with a warning about the rest of the cluster."
