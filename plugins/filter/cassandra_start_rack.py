@@ -265,14 +265,15 @@ def _judge(findings, members, left_out, left_unplaced, rack_unowned, run_placed,
 def _rack_seen_un(reads, host_at, members, dc, rack):
     """The reads, the placement, the rack's nodes, its dc and rack -> the hosts placed at the nodes of the ring of
     the rack (placed at a node of the rack, or put in the rack's dc and rack by the ring), UN in every read that has
-    them, in the ring's order."""
+    them: the rack's nodes in their (inventory) order, then the others in the ring's order."""
     states, order = {}, []
     for address, ring_dc, ring_rack, state, dummy in _ring_nodes(reads):
         if host_at.get(address) in members or (ring_dc, ring_rack) == (str(dc), str(rack)):
             if address not in states:
                 order.append(address)
             states.setdefault(address, set()).add(state)
-    return [host_at[a] for a in order if states[a] == {"UN"} and host_at.get(a)]
+    up = [host_at[a] for a in order if states[a] == {"UN"} and host_at.get(a)]
+    return [h for h in members if h in up] + [h for h in up if h not in members]
 
 
 def _other_rack(reads, host_at, members, dc, rack):

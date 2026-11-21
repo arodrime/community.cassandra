@@ -1624,3 +1624,21 @@ def test_the_nodes_left_out_known_by_their_address_only_are_listed_once_under_a_
     assert [line.strip() for line in lines].count("n3") == 1 and " ".join(lines).count("10.0.0.3") == 1
     assert all(line.startswith(("  ", "Rack ", "WARNING  ", "WAY OUT  ")) and len(line) <= 79 for line in lines)
 
+
+def test_the_rack_s_nodes_seen_un_are_said_in_their_inventory_order():
+    # S26 k: "every node is UN:" then h-n2, h-n1, h-n3, the ring's order (nodetool status sorts by token); now
+    # the inventory's
+    read = ring()
+    read["cluster_status"]["dc1"]["nodes"].reverse()
+    found = cassandra_health_findings([{"from": "n2", "result": read}, {"from": "n1", "result": read}], 4, "n2",
+                                      names=ADDRESSES, **OK)
+    verdict = cassandra_rack_verdict(found, ["n2", "n3"], "dc1", "r2", "n2", "n1", addresses=ADDRESSES,
+                                     reads=[read, read], infos=INFOS)
+    assert verdict["rack_seen_un"] == ["n2", "n3"]
+    # a node the ring puts in the rack, not the inventory: after the rack's nodes
+    read["cluster_status"]["dc1"]["nodes"][0]["rack"] = "r2"  # (n4, first after the reverse)
+    found = cassandra_health_findings([{"from": "n2", "result": read}, {"from": "n1", "result": read}], 4, "n2",
+                                      names=ADDRESSES, **OK)
+    verdict = cassandra_rack_verdict(found, ["n2", "n3"], "dc1", "r2", "n2", "n1", addresses=ADDRESSES,
+                                     reads=[read, read], infos=INFOS)
+    assert verdict["rack_seen_un"] == ["n2", "n3", "n4"]
