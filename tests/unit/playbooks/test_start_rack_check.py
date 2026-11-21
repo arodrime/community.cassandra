@@ -81,8 +81,8 @@ def ring(racks=None, **states):
     """the ring as cassandra_status reads it, every node UN unless states says (n4="DN"); racks: the ring's rack of
     a node when it is not the inventory's"""
     racks = dict(RACKS, **(racks or {}))
-    nodes = [{"address": a, "rack": racks[n], "status": states.get(n, "UN")[0], "state": states.get(n, "UN")[1]}
-             for a, n in sorted(ADDRESSES.items())]
+    nodes = [{"address": a, "rack": racks[n], "status": states.get(n, "UN")[0], "state": states.get(n, "UN")[1],
+              "host_id": "hid-" + n} for a, n in sorted(ADDRESSES.items())]
     return {"cluster_status": {"dc1": {"nodes": nodes}}}
 
 
@@ -119,6 +119,15 @@ def members(groups=None, hostvars=None):
     template = template.replace("query('community.cassandra.cassandra_nodes')", "_nodes")
     return render(template, _nodes=sorted(RACKS), hostvars=HOSTVARS if hostvars is None else hostvars,
                   groups=GROUPS if groups is None else groups, cassandra_target_dc="dc1", cassandra_target_rack="r2")
+
+
+def with_ids(hostvars, hosts):
+    """the hostvars with the nodetool info output of hosts (the nodes of the run: the play's task), each giving its
+    Host ID as ring() has it"""
+    hostvars = dict((n, dict(v)) for n, v in hostvars.items())
+    for h in hosts:
+        hostvars[h]["_cassandra_start_rack_info"] = {"stdout": "ID                     : hid-%s\nGossip active  : true" % h}
+    return hostvars
 
 
 def with_addresses(names):
@@ -1303,6 +1312,10 @@ def test_a_node_left_out_not_placed_counts_with_the_node_of_the_run_not_placed(m
         "in the other racks of dc1, no inventory host known by the address:", "  10.0.0.29  r9  UN",
         "if n2 is at one of these addresses: give it that address"] + [
         "  (broadcast_address in cassandra_extra_settings, else", "  cassandra_listen_address or ansible_host)"]
+    # n2's Host ID read: placed at 10.0.0.29, the success, its rack said
+    variables = noted(read, names=names, hostvars=with_ids(hostvars, ["n2"]), play=["n1", "n2", "n4"])
+    set_facts(AFTER, variables)
+    assert variables["_cassandra_start_rack_last_verdict"]["problems"] == []
 
 
 def test_a_node_outside_the_rack_not_reached_known_by_a_dns_name_is_counted_at_once(monkeypatch):
@@ -1340,3 +1353,51 @@ def test_the_ring_nodes_no_host_is_known_by_are_said_so_those_of_the_rack_s_dc_a
         "n2 (rack r2) is not in the ring at an address its variables give",
         "in rack r2 of the ring, no inventory host known by the address: none",
         "find n2 in the ring: nodetool status, its Host ID in nodetool info on it"]
+
+
+def test_each_node_of_the_run_is_placed_in_the_ring_by_its_host_id():
+    # n2 listens on a cluster network (no variable gives its ring address), the ring puts it in r9 (its rackdc
+    # file), DN; 10.0.0.9, in r2 and UN, is in no inventory, n4 out of the ring (the size even). 10.0.0.9 was
+    # counted for n2 and 10.0.0.2 DN a warning of the rest of the cluster: exit 0 with a node of the run DN. Now
+    # n2 placed by its Host ID (nodetool info on it): its DN stops the run
+    hostvars = with_addresses(ADDRESSES)
+    hostvars["n2"] = dict(hostvars["n2"], ansible_host="192.168.1.2", cassandra_listen_address="h-n2.example")
+    names = dict((a, n) for a, n in ADDRESSES.items() if n != "n2")
+    read = mk([("10.0.0.1", "r1", "UN", "n1"), ("10.0.0.2", "r9", "DN", "n2"), ("10.0.0.3", "r2", "UN", "n3"),
+               ("10.0.0.9", "r2", "UN", "x9")])
+    variables = noted(read, names=names, hostvars=with_ids(hostvars, ["n2", "n3"]))
+    assert variables["_cassandra_start_rack_first_verdict"]["problems"] == [
+        "n2 (10.0.0.2, r9) is DN, seen from n1 and n2"]
+    # its Host ID in no ring read: a stop of its own
+    read = mk([("10.0.0.1", "r1", "UN", "n1"), ("10.0.0.3", "r2", "UN", "n3"), ("10.0.0.9", "r2", "UN", "x9"),
+               ("10.0.0.4", "r3", "UN", "n4")])
+    variables = noted(read, hostvars=with_ids(with_addresses(ADDRESSES), ["n2", "n3"]))
+    assert variables["_cassandra_start_rack_first_verdict"]["problems"][-1] == (
+        "n2 (rack r2) is not in the ring read: no node there has its Host ID (nodetool info on it)")
+    # read on each node of the rack in the play, after the probe and its facts, before the first read; not under
+    # --check; failing, the node placed by its addresses
+    task = TASKS["Read the Host ID of each node of the run"]
+    assert task["ansible.builtin.command"] == "{{ _cassandra_service_nodetool }} info"
+    assert task["failed_when"] is False and task["changed_when"] is False
+    assert task["when"] == ["inventory_hostname in _cassandra_start_rack_members", "not ansible_check_mode"]
+    assert task["no_log"] == "{{ cassandra_jmx_password | length > 0 }}"
+    assert NAMES.index(PROBE[-1]) < NAMES.index(task["name"]) < NAMES.index(READ)
+    infos = render(PLAY["vars"]["_cassandra_start_rack_filter_args"]["infos"], _cassandra_start_rack_members=[
+        "n2", "n3"], hostvars={"n2": {"_cassandra_start_rack_info": {"stdout": "ID : x"}},
+                               "n3": {"_cassandra_start_rack_info": {"skipped": True}}})
+    assert infos == {"n2": "ID : x", "n3": ""}
+
+
+def test_with_the_run_placed_by_host_id_a_node_left_out_down_at_no_known_address_is_a_warning():
+    # an IPv6 ring, an IPv4 inventory: no ring node at an address a host gives. --limit 'all:!n3', n3 DN: its entry
+    # was the rack's (n2 might be there), a stop on a node this run does not start. Now n2 placed by its Host ID:
+    # the entry, no host known by it, may be n3 only, a warning
+    read = ring(n3="DN")
+    for n in read["cluster_status"]["dc1"]["nodes"]:
+        n["address"] = n["address"].replace("10.0.0.", "2001:db8::")
+    assert noted(read, names={}, play=["n1", "n2", "n4"])["_cassandra_start_rack_first_verdict"]["problems"] == [
+        "2001:db8::3 (r2) is DN, seen from n1 and n2"]
+    variables = noted(read, names={}, hostvars=with_ids(with_addresses(ADDRESSES), ["n2"]), play=["n1", "n2", "n4"])
+    verdict = variables["_cassandra_start_rack_first_verdict"]
+    assert verdict["problems"] == [] and verdict["left_out"] == [
+        {"address": "2001:db8::3", "name": None, "states": ["DN"], "unplaced": ["n3"]}]

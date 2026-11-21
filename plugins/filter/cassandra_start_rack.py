@@ -4,7 +4,9 @@
 is only a warning, unless a node could be one of the rack.
 
 Which inventory host a node of the ring is (_placement), computed once per read:
-- every host: the ring node at an address its variables or facts give (cassandra_host_addresses);
+- a node of the run: the ring node with its Host ID, as nodetool info on it gives it (what it says of itself;
+  one whose Host ID is read is placed by it alone, not by an address);
+- any other host: the ring node at an address its variables or facts give (cassandra_host_addresses);
 - while every node of the run is placed, a host still not placed (out of the play or not reached: no facts): what
   its names resolve to on the controller, for a ring address no host has yet.
 A ring node no host is placed at is "no inventory host is known by its address"; a node of the rack no ring node
@@ -34,6 +36,7 @@ What the check does with what it finds (cassandra_rack_verdict); "the rack is pl
     run), not UN (its state from the last read)                   waited for
   a node of the rack in another state, or nodetool failing on   STOP
     it
+  a node of the run whose Host ID no ring read has              STOP
   a node of the run not placed, the nodes of the rack not       STOP (nothing
     placed outnumbering the ring's nodes of the rack no host      else to stop
     is known by (one is in no ring node of the rack it may be)    on)
@@ -62,9 +65,9 @@ The schema's majority, not the version of the node outside the rack read from: t
 The rack just came back: its own nodes never make the majority alone (a node outside the rack, listed, so reached
 by describecluster, must be on its version). A rack alone on its version, or a cluster split even: a stop.
 
-Not covered (two faults, or rare): a node of the run not placed may be counted for a ring node of the rack no host
-is known by while it is in another rack, or be out of the ring while a node no host has keeps the ring's size even
-(no stop). A host outside the rack reached over ssh whose
+Not covered (two faults, or rare): a node of the run whose nodetool info fails is placed by its addresses; not
+placed, it may be counted for a ring node of the rack no host is known by while it is in another rack, or out of the
+ring while a node no host has keeps the ring's size even (no stop). A host outside the rack reached over ssh whose
 ping or fact gathering fails fails the run.
 
 cassandra_rack_members: the nodes the inventory puts in a rack (every node of the cluster, under --limit too).
@@ -79,6 +82,7 @@ start and stop.
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import re
 import shlex
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_health import cassandra_health_sentences
@@ -124,13 +128,23 @@ def _ring_nodes(reads):
                        str(n.get("status", "")) + str(n.get("state", "")), n.get("host_id"))
 
 
-def _placement(reads, run, addresses):
-    """The reads, the nodes of the run, every host's addresses (cassandra_host_addresses) -> {ring address:
-    inventory host}: the module docstring's placement."""
+def _host_ids(infos, run):
+    """{host: its nodetool info output}, the nodes of the run -> {Host ID: host} of those whose output gives one."""
+    ids = {}
+    for h in run:
+        found = re.findall(r"(?m)^ID\s*:\s*(\S+)", str((infos or {}).get(h) or ""))
+        if found:
+            ids[found[0]] = h
+    return ids
+
+
+def _placement(reads, run, addresses, ids):
+    """The reads, the nodes of the run, every host's addresses (cassandra_host_addresses), {Host ID: node of the
+    run} -> {ring address: inventory host}: the module docstring's placement."""
     ring = _unique(n[0] for n in _ring_nodes(reads))
-    at = {}
+    at = dict((n[0], ids[n[4]]) for n in _ring_nodes(reads) if n[4] in ids)
     for address, host in (addresses or {}).items():
-        if _ip(address) in ring and _ip(address) not in at:
+        if _ip(address) in ring and _ip(address) not in at and host not in ids.values():
             at[_ip(address)] = host
     rest = [a for a in ring if a not in at]
     if rest and set(run) <= set(at.values()):
@@ -312,13 +326,13 @@ def _outside_nodes(findings, judged, first_verdict, members, counted_view, unrea
 
 
 def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses=None, reads=None, schema=None,
-                           first_verdict=None, left_out=None, unreached=None):
+                           first_verdict=None, left_out=None, unreached=None, infos=None):
     """cassandra_health_findings' result of a read, the rack's nodes (cassandra_rack_members), its dc and rack, the
     node of the rack read from (checker), the other node read from (peer), the addresses of every host
     (cassandra_host_addresses), the cassandra_status results read, the cassandra_schema result, first_verdict: this
     filter's result before the wait (None: this read is the one before the wait), left_out: the rack's nodes left
-    out by --limit (out of the play: this run does not start them), unreached: the hosts not reached over ssh ->
-    the module docstring's tables applied:
+    out by --limit (out of the play: this run does not start them), unreached: the hosts not reached over ssh,
+    infos: {node of the run: its nodetool info output} -> the module docstring's tables applied:
       outside: the nodes outside the rack not UN, [{address, name, states}] (_outside_nodes).
       failed: the nodes outside the rack whose nodetool status failed (the first verdict's too), when a ring was
         read.
@@ -328,7 +342,8 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
       ring_size: [[the ring's size, the inventory's]] when they differ and that is a warning.
       maybe_rack_lines: why each node judged of the rack only for want of a host known by its address is, then
         what to do (after the wait: "then the command below", the stop's WAY OUT); [] for none.
-      problems: what stops the run, as sentences (cassandra_health_sentences); else, a node of the run not placed while the nodes of the rack not placed outnumber the
+      problems: what stops the run, as sentences (cassandra_health_sentences), a node of the run whose Host ID no
+        ring read has; else, a node of the run not placed while the nodes of the rack not placed outnumber the
         ring's nodes of the rack no host is known by: its lines (_unplaced_lines).
       rack_seen_un: the nodes of the rack UN in the rings read (_rack_seen_un) a host is placed at, by name.
       rack_unowned: the nodes of the rack UN in the rings read no host is known by, [[address, "UN"]].
@@ -347,7 +362,8 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
     ["n2", "n1"], seen_from_run_only: [], left_out: [], not_readers: ["n4"]}."""
     members, left_out = list(members or []), list(left_out or [])
     run = [h for h in members if h not in left_out]
-    at = _placement(reads, run, addresses)
+    ids = _host_ids(infos, run)
+    at = _placement(reads, run, addresses, ids)
     findings = [_named(f, at) for f in findings or []]
     unplaced = [h for h in members if h not in at.values()]
     unowned = _unowned(reads, at)
@@ -372,8 +388,10 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
             notes.append(f)
         else:
             stops.append(f)
+    absent = ["%s (rack %s) is not in the ring read: no node there has its Host ID (nodetool info on it)" % (
+        h, rack) for h in ids.values() if h in unplaced]
     run_unplaced = [h for h in run if h in unplaced]
-    problems = cassandra_health_sentences(stops)
+    problems = cassandra_health_sentences(stops) + absent
     failed = (first_verdict or {}).get("failed", []) + [h for h in failed_on if ring_read and h not in members]
     counted_view = peer if peer and peer not in failed_on else checker
     outside = _outside_nodes(findings, judged, first_verdict, members, counted_view, unreached)
