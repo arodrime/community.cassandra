@@ -22,7 +22,8 @@ Running a playbook:
 
 Golden files:
   golden(path, text)                     the text kept in the file path; with pytest --regen (or
-                                         CASSANDRA_GOLDEN_WRITE=1), text written into it first
+                                         CASSANDRA_GOLDEN_WRITE=1), text written into it first (when it
+                                         differs: the end of the run says how many files were)
   golden_lines(path, lines)              the same, a list of lines
 """
 from __future__ import (absolute_import, division, print_function)
@@ -133,13 +134,27 @@ def view(host, *nodes):
 
 def golden(path, text):
     """The text kept in the golden file path (its content without the last newline). After a wanted change of
-    the output, run the test with pytest --regen (or CASSANDRA_GOLDEN_WRITE=1 set): text is written into the file
-    first, and git diff shows what changed."""
-    if os.environ.get("CASSANDRA_GOLDEN_WRITE"):
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(text + "\n")
+    the output, run the test with pytest --regen (or CASSANDRA_GOLDEN_WRITE=1 set, exactly 1): text is written into
+    the file first when it differs, the end of the run says how many files were, and git diff shows what changed."""
+    if os.environ.get("CASSANDRA_GOLDEN_WRITE") == "1":
+        _rewrite(path, text + "\n")
     with open(path, encoding="utf-8") as f:
         return f.read()[:-1]
+
+
+def _rewrite(path, content):
+    """path written with content when it differs, its name added to the file CASSANDRA_GOLDEN_LOG names (conftest
+    counts them at the end of the run, xdist workers included)."""
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            if f.read() == content:
+                return
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+    log = os.environ.get("CASSANDRA_GOLDEN_LOG")
+    if log:
+        with open(log, "a", encoding="utf-8") as f:
+            f.write(path + "\n")
 
 
 def golden_lines(path, lines):

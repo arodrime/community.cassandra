@@ -62,6 +62,43 @@ def test_golden_reads_the_file_and_writes_it_only_when_asked(tmp_path, monkeypat
     assert path.read_text() == "new\nlines\n"
 
 
+def test_golden_written_only_when_asked_with_1(tmp_path, monkeypatch):
+    # a CASSANDRA_GOLDEN_WRITE left set to anything else (0, no) in a shell does not turn the goldens into no-ops
+    path = tmp_path / "out.txt"
+    path.write_text("kept\n")
+    for value in ("0", "no", "true", " 1"):
+        monkeypatch.setenv("CASSANDRA_GOLDEN_WRITE", value)
+        assert golden(str(path), "new") == "kept"
+    assert path.read_text() == "kept\n"
+
+
+def test_golden_rewrites_counted_at_the_end_of_the_run(tmp_path, monkeypatch):
+    # a regen never passes silently: the end of the run says how many golden files it rewrote (one the same: not)
+    from ansible_collections.community.cassandra.tests.unit import conftest
+    log = tmp_path / "golden.log"
+    log.write_text("")
+    monkeypatch.setenv("CASSANDRA_GOLDEN_WRITE", "1")
+    monkeypatch.setenv("CASSANDRA_GOLDEN_LOG", str(log))
+    same, other = tmp_path / "same.txt", tmp_path / "other.txt"
+    same.write_text("a\n")
+    other.write_text("a\n")
+    golden(str(same), "a")
+    golden(str(other), "b")
+    golden(str(other), "b")
+
+    class Reporter(object):
+        lines = []
+
+        def write_line(self, line):
+            self.lines.append(line)
+
+    class Config(object):
+        pass
+    reporter = Reporter()
+    conftest.pytest_terminal_summary(reporter, 0, Config())
+    assert reporter.lines == ["1 golden file rewritten (CASSANDRA_GOLDEN_WRITE=1): review git diff"]
+
+
 def test_task_runs_when_each_condition_holds():
     task = {"name": "t", "when": ["a | bool", "b | default('') == ''"]}
     assert task_runs(task, a="yes") and task_runs(task, a=True, b="")

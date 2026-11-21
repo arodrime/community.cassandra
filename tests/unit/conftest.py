@@ -2,6 +2,7 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 import os
+import tempfile
 import warnings
 
 import pytest
@@ -29,6 +30,22 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "playbook: runs ansible-playbook (slow); -m 'not playbook' leaves them out")
     if config.getoption("--regen"):
         os.environ["CASSANDRA_GOLDEN_WRITE"] = "1"
+    # the golden files rewritten, one name a line (helpers.golden), from the xdist workers too: they inherit it
+    if os.environ.get("CASSANDRA_GOLDEN_WRITE") == "1" and not os.environ.get("CASSANDRA_GOLDEN_LOG"):
+        handle, os.environ["CASSANDRA_GOLDEN_LOG"] = tempfile.mkstemp(prefix="cassandra-golden-")
+        os.close(handle)
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    """A regen never passes silently: the number of golden files it rewrote, at the end of the run."""
+    log = os.environ.get("CASSANDRA_GOLDEN_LOG")
+    if os.environ.get("CASSANDRA_GOLDEN_WRITE") != "1" or not log or hasattr(config, "workerinput"):
+        return
+    with open(log, encoding="utf-8") as f:
+        count = len(set(f.read().split()))
+    os.remove(log)
+    terminalreporter.write_line("%d golden file%s rewritten (CASSANDRA_GOLDEN_WRITE=1): review git diff"
+                                % (count, "" if count == 1 else "s"))
 
 
 @pytest.fixture(autouse=True)
