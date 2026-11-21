@@ -1,6 +1,6 @@
 # The Jinja strings longer than 300 characters and the inline shells longer than 20 lines there already (tests/unit/test_readability.py):
 # <size: characters, or lines for a shell><TAB><file> :: <plays, blocks, tasks> :: <keys> (<kind>)
-# This list may only shrink: a string made shorter than its limit, or moved to a filter or a script, leaves it.
+# This list may only shrink: a string made shorter is listed at its new size, one shorter than its limit, or moved to a filter or a script, leaves it.
 385	playbooks/add_datacenter.yml :: Check the new datacenter / Check the request :: ansible.builtin.assert.fail_msg (jinja)
 336	playbooks/add_datacenter.yml :: Check the new datacenter / Show the plan and confirm :: vars._blocks (jinja)
 307	playbooks/add_datacenter.yml :: Check the new datacenter / Work out the tokens of the new nodes (one token per node) / Work out where the new nodes go :: vars._new_tokens (jinja)
@@ -432,7 +432,7 @@
 807	roles/cassandra_operation/tasks/storage_mode_guard.yml :: The run keeps the storage_compatibility_mode of each cassandra.yaml :: ansible.builtin.assert.fail_msg (jinja)
 1074	roles/cassandra_operation/tasks/storage_mode_guard.yml :: The starts move no node back while the mode it last ran is not known :: ansible.builtin.assert.fail_msg (jinja)
 121	roles/cassandra_operation/tasks/storage_mode_read.yml :: Read storage_compatibility_mode in its cassandra.yaml and in the running Cassandra :: ansible.builtin.shell (shell)
-1141	roles/cassandra_operation/tasks/storage_mode_read.yml :: Say that the mode Cassandra runs was not read over CQL :: vars._warning (jinja)
+1003	roles/cassandra_operation/tasks/storage_mode_read.yml :: Say that the mode Cassandra runs was not read over CQL :: vars._warning (jinja)
 404	roles/cassandra_operation/tasks/stream_check.yml :: Check the progress / Read how the other nodes see it :: loop (jinja)
 321	roles/cassandra_operation/tasks/stream_check.yml :: Check the progress / Read the space used where this node writes :: vars._dirs (jinja)
 544	roles/cassandra_operation/tasks/stream_check.yml :: Check the progress / Where it stands :: ansible.builtin.set_fact._cassandra_stream_now (jinja)

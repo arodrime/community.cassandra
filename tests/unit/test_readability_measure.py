@@ -65,3 +65,14 @@ def test_the_same_name_twice_keeps_its_number_whatever_the_size_of_the_first(tmp
                             "playbooks/t.yml :: T :: ansible.builtin.debug.msg (jinja)"]
     second = measured(tmp_path, monkeypatch, tasks % ("x", LONG + " or false"))
     assert second == {"playbooks/t.yml :: T :: ansible.builtin.debug.msg #2 (jinja)": len("{{ %s or false }}" % LONG)}
+
+
+@pytest.mark.parametrize("size, says", [(400, "shorter now: lower its size"), (600, "x: 600, listed 500")])
+def test_a_listed_one_stays_at_its_size(monkeypatch, size, says):
+    # grown or shrunk: the list says the size measured, so that a string made shorter cannot grow back
+    monkeypatch.setattr(test_readability, "measured", lambda: {"x": size})
+    monkeypatch.setattr(test_readability, "allowed", lambda: {"x": 500})
+    with pytest.raises(AssertionError, match=says):
+        test_readability.test_a_listed_one_is_listed_at_its_size()
+    monkeypatch.setattr(test_readability, "measured", lambda: {"x": 500})
+    test_readability.test_a_listed_one_is_listed_at_its_size()

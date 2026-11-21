@@ -5,7 +5,8 @@ __metaclass__ = type
 # plugins/filter instead; a bare expression of when, that, until... too), no inline shell longer than 20 lines (a
 # script in files/ instead; any shell, command or raw task, named or not). The ones there already
 # are listed in readability_allowed.txt with their size: the list may only shrink. A listed string may not
-# grow; once it is short enough (or gone), its line is removed from the list.
+# grow; when it shrinks, its size in the list is lowered to the new one (it cannot grow back); once it is short
+# enough (or gone), its line is removed from the list.
 #
 # A string is named by its file and its place in it: the names of the plays, blocks and tasks above it, then its
 # keys ("playbooks/topology.yml :: Plan the topology change / Show the plan :: vars._lines").
@@ -109,11 +110,15 @@ def test_no_new_long_jinja_string_or_inline_shell():
         JINJA_MAX, SHELL_MAX, "\n".join(new))
 
 
-def test_a_listed_one_does_not_grow():
+def test_a_listed_one_is_listed_at_its_size():
+    # grown: not allowed; shrunk: listed at its new size, so that it cannot grow back
     now, listed = measured(), allowed()
     grown = sorted("%s: %d, listed %d" % (name, now[name], listed[name]) for name in listed
                    if name in now and now[name] > listed[name])
     assert not grown, "\n".join(grown)
+    shrunk = sorted("%d\t%s (listed %d)" % (now[name], name, listed[name]) for name in listed
+                    if name in now and now[name] < listed[name])
+    assert not shrunk, "shorter now: lower its size in %s to the one measured:\n%s" % (ALLOWED, "\n".join(shrunk))
 
 
 def test_the_list_only_shrinks():
