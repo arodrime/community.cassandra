@@ -314,3 +314,21 @@ def test_no_time_sync_offline_is_refused_by_sync_clocks(tmp_path):
     assert rc == 0, out
     assert "FIX node1 did= error=Refuse a time sync that is not installed (offline):" in out
     assert "is not installed on node1 and cassandra_offline downloads nothing: install it from your image or mirror" in out
+
+
+def test_the_warnings_of_clocks_in_sync_one_fact_per_line():
+    # S28 audit (C3): a node synchronised to a source ahead (the dates over SSH): its AHEAD warning of several
+    # facts, each on its own line under "WARNING  clocks: ", as the task's own template prints it
+    from ansible_collections.community.cassandra.tests.unit.playbooks.test_sync_clocks import render
+    from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_clocks import node, probe_text
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_clocks import cassandra_clock_verdicts
+    with open(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "clocks_check.yml"), encoding="utf-8") as f:
+        tasks = yaml.safe_load(f)[0]["block"]
+    say = next(t for t in tasks if t["name"] == "Say what is to know about the clocks")
+    verdicts = cassandra_clock_verdicts([node("h-n1", probe_text()), node("h-n2", probe_text(), skew=5.0),
+                                         node("h-n3", probe_text())])
+    assert verdicts["ok"]
+    lines = render(say["ansible.builtin.debug"]["msg"], _cassandra_clock_verdicts=verdicts, _nl=say["vars"]["_nl"]).split("\n")
+    assert lines[0] == "WARNING  clocks: h-n2's clock is AHEAD by about 5.00 s (dates over SSH)"
+    assert lines[-1] == "         check what was written through it lately"
+    assert all(line.startswith(("WARNING  ", "         ")) and len(line) <= 79 for line in lines), lines

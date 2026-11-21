@@ -30,9 +30,12 @@ cassandra_clock_verdicts: the nodes' probes, their date samples and context
     second pending, timesyncd). A node no daemon reports on (a container: the
     host's clock) is compared with the others by the dates collected over SSH,
     a coarse measure (tens of milliseconds): only beyond COARSE_MS.
-cassandra_clock_lines: the verdicts -> the table, one line per node.
+cassandra_clock_lines: the verdicts -> the table: a row per node, then a line per
+    fact of why it is not in sync.
 cassandra_clock_refusal: the verdicts -> the REFUSED block of a start
     (create_cluster, add_node), with the way out.
+cassandra_clock_warnings: the verdicts -> their warnings as WARNING lines (a
+    start's check, its clocks in sync).
 cassandra_clock_health: the verdicts -> health_check's CLOCKS block (the
     table, the warnings) and its finding for the report when a node is not
     in sync.
@@ -438,6 +441,9 @@ def _reference(nodes):
     return ref, bool(known)
 
 
+LATER = "run again later"
+
+
 def _off(p, running, max_s, step_s):
     """A probe whose offset plus error bound is over max_s, whether Cassandra runs there -> the verdict's fields:
     why (converging, a far source, or how far) and what sync_clocks does (slew, step, window, manual)."""
@@ -448,8 +454,9 @@ def _off(p, running, max_s, step_s):
         v["why"] = "%s's error bound is %s, over %s" % (service, ms(p["bound"], False), ms(max_s, False))
         if p.get("daemon") == "chrony" and (p.get("skew") or 0.0) > CONVERGING_SKEW_PPM:
             v["why"] += "; %s's frequency skew is %.0f ppm (settled: a few ppm)" % (service, p["skew"])
-        v["why"] += "; run again later, or raise cassandra_clock_sync_timeout"
-        v["action"] = "manual"
+        # (only a start waits on cassandra_clock_sync_timeout: its refusal says so, cassandra_clock_refusal)
+        v["why"] += "; " + LATER
+        v["action"], v["converging"] = "manual", True
     elif (p.get("bound") or 0.0) > max_s:
         v["why"] = ("its daemon's error bound alone is %s (root delay and dispersion): a closer or better"
                     " source is needed" % ms(p["bound"], False))
@@ -603,28 +610,37 @@ def _node_verdict(n, ref, referenced, dated, max_s, step_s, coarse_s):
     return v
 
 
-def _ahead_by(v, max_s, coarse_s):
-    """A verdict -> how far its clock is ahead, None when it is not past what can be told: its daemon's offset
-    over max_s (an error bound over it alone is no clock ahead), else the dates over SSH (or chronyd -Q) over
-    coarse_s."""
-    if not v["ahead"] or v["verdict"] == "ok" or not v["running"]:
+def _ahead_by(v, max_s, coarse_s, referenced):
+    """A verdict, whether the daemons' offsets gave the reference -> (how far its clock is ahead, by what measure:
+    "" its daemon's), None when it is not past what can be told (or Cassandra does not run there: it stamped
+    nothing). A node with a daemon: its offset over max_s (synchronised; an error bound over it alone is no clock
+    ahead), else the dates over SSH over coarse_s (not synchronised, or synchronised to a source that is itself
+    ahead). Without one: the dates over SSH over coarse_s."""
+    if not v["running"]:
         return None
-    if v["offset"] is not None and v["how"] == "daemon" and v["active"]:
-        return v["offset"] if v["offset"] > max_s else None
-    amount = v["coarse"] or v["estimate"]
-    return abs(amount) if amount and abs(amount) > coarse_s else None
+    if v["how"] == "daemon" and v["verdict"] != "no_sync":
+        if v["synchronised"] and v["verdict"] != "ok" and (v["offset"] or 0.0) > max_s:
+            return v["offset"], ""
+        coarse = v["coarse"] if referenced else None
+        return (coarse, "dates over SSH") if coarse is not None and coarse > coarse_s else None
+    if not v["ahead"] or v["verdict"] == "ok":
+        return None
+    amount = v["coarse"] or v["estimate"]  # (ahead: by the dates)
+    return (abs(amount), "dates over SSH") if amount and abs(amount) > coarse_s else None
 
 
-def _ahead_warnings(out, max_s, coarse_s):
-    """The verdicts -> the warnings of the nodes where Cassandra runs (it may have stamped writes) ahead by more
-    than max_s as their daemon says, or by more than the dates over SSH can tell: one fact per line."""
+def _ahead_warnings(out, max_s, coarse_s, referenced):
+    """The verdicts, whether the daemons' offsets gave the reference -> the warnings of the nodes where Cassandra
+    runs (it may have stamped writes) ahead by more than max_s as their daemon says, or by more than the dates over
+    SSH can tell: one fact per line."""
     warnings = []
     for v in out:
-        amount = _ahead_by(v, max_s, coarse_s)
-        if amount is None:
+        ahead = _ahead_by(v, max_s, coarse_s, referenced)
+        if ahead is None:
             continue
+        amount, how = ahead
         warnings.append("\n".join([
-            "%s's clock is AHEAD by about %s" % (v["node"], ms(amount, False)),
+            "%s's clock is AHEAD by about %s%s" % (v["node"], ms(amount, False), " (%s)" % how if how else ""),
             "the writes it stamped as coordinator carry future timestamps (lightweight transactions, drivers"
             " without client-side timestamps)",
             "an update or a delete of the same data from a correct clock in the next %s loses against them,"
@@ -652,10 +668,10 @@ def _source_groups(nodes, out, addresses):
     return groups
 
 
-def _cluster_warnings(nodes, out, addresses, max_s, coarse_s):
-    """The nodes, their verdicts, {address: node} -> the warnings of the cluster: a clock ahead, unrelated sources,
-    a leap second pending."""
-    warnings = _ahead_warnings(out, max_s, coarse_s)
+def _cluster_warnings(nodes, out, addresses, max_s, coarse_s, referenced):
+    """The nodes, their verdicts, {address: node}, the limits, whether the daemons' offsets gave the reference ->
+    the warnings of the cluster: a clock ahead, unrelated sources, a leap second pending."""
+    warnings = _ahead_warnings(out, max_s, coarse_s, referenced)
     groups = _source_groups(nodes, out, addresses)
     if len(groups) > 1:
         said = "; ".join("%s: %s" % (", ".join(g["nodes"]), ", ".join(sorted(x for x in g["names"] if not x.startswith("node:"))) or "?")
@@ -714,7 +730,7 @@ def cassandra_clock_verdicts(nodes, max_ms=50, step_ms=400, coarse_ms=COARSE_MS)
         if p.get("others"):
             warnings.append("%s runs several time sync daemons (%s and %s): they fight over the clock, keep one"
                             % (n["node"], p["service"], ", ".join(p["others"])))
-    warnings += _cluster_warnings(nodes, out, addresses, max_s, coarse_s)
+    warnings += _cluster_warnings(nodes, out, addresses, max_s, coarse_s, referenced)
     return {"nodes": out, "ok": all(v["verdict"] == "ok" for v in out), "warnings": warnings,
             "notes": _cluster_notes(out, coarse_s), "max_ms": float(max_ms)}
 
@@ -772,7 +788,8 @@ def _wrap(text, first, rest, width=WIDTH):
 def cassandra_clock_lines(verdicts, actions=True, width=WIDTH):
     """The verdicts -> the rows within width columns: name, verdict, what its time sync says; under it, from
     the same column, each fact of why the node is not in sync on a line of its own, then (actions) what
-    sync_clocks does about it.
+    sync_clocks does about it; a line that goes on, 2 columns more. A name too long to leave 40 columns: the
+    name and the verdict alone, the text and the facts on the next lines, 6 columns in.
     Input: cassandra_clock_verdicts' result; output: [str]. e.g. -> ["  node1  ok   chronyd, synchronised to
     192.0.2.1, +0.0 ms (\u00b10.7 ms)", "  node2  OFF  chronyd, synchronised to 192.0.2.1, +200.0 ms
     (\u00b10.7 ms)", "             ahead of its source by 200.0 ms, more than 50.0 ms", "             \u2192 being
@@ -787,25 +804,39 @@ def cassandra_clock_lines(verdicts, actions=True, width=WIDTH):
         return []
     widths = [max(len(r[i]) for r in rows) for i in range(2)]
     column = 2 + widths[0] + 2 + widths[1] + 2
-    under = " " * (column if width - column >= 40 else 6)  # (a long name: under it, 6 columns in)
+    narrow = width - column < 40
+    under = " " * (6 if narrow else column)
     lines = []
     for node, verdict, text, facts in rows:
-        lines += _wrap(text, "  %s  %s  " % (node.ljust(widths[0]), verdict.ljust(widths[1])), under, width)
+        if narrow:
+            lines.append("  %s  %s" % (node, verdict))
+            facts = [text] + facts
+        else:
+            lines += _wrap(text, "  %s  %s  " % (node.ljust(widths[0]), verdict.ljust(widths[1])), under + "  ", width)
         for fact in facts:
             lines += _wrap(fact, under, under + "  ", width)
     return [line.rstrip() for line in lines]
 
 
-def _warning_lines(texts):
-    """The warnings of the cluster, within WIDTH: "WARNING  " then the first fact, each next fact on a line of
-    its own under it."""
+def _warning_lines(texts, label=""):
+    """The warnings of the cluster, within WIDTH: "WARNING  " (and the label) then the first fact, each next fact
+    on a line of its own under it; a fact that goes on, 2 columns more."""
     under = " " * len(cassandra_output.WARNING)
     lines = []
     for text in texts or []:
         facts = [f for f in str(text).split("\n") if f.strip()]
         for i, fact in enumerate(facts):
-            lines += _wrap(fact, cassandra_output.WARNING if i == 0 else under, under + ("  " if i else ""))
+            lines += _wrap(fact, cassandra_output.WARNING + label if i == 0 else under, under + "  ")
     return lines
+
+
+def cassandra_clock_warnings(verdicts, label=""):
+    """The verdicts -> the warnings of the cluster within 79 columns, one fact per line: "WARNING  " and the
+    label before the first fact of each.
+    Input: cassandra_clock_verdicts' result; output: [str]. e.g. (label="clocks: ") -> ["WARNING  clocks: h-n2's
+    clock is AHEAD by about 1.20 s", "         the writes it stamped as coordinator carry future timestamps",
+    ...]."""
+    return _warning_lines((verdicts or {}).get("warnings", []), label)
 
 
 def _unread_rows(unread):
@@ -818,7 +849,7 @@ def _unread_rows(unread):
 
 def cassandra_clock_health(verdicts, unread=None, command=""):
     """The verdicts of health_check's nodes (and {node: why} of the clocks not read) -> {lines, finding}: its
-    CLOCKS block (what in sync means, one line per node as sync_clocks shows it, the warnings of the cluster)
+    CLOCKS block (what in sync means, the rows as sync_clocks shows them, the warnings of the cluster)
     and, when a node is not in sync or not read, the finding of its report ({kind: clocks, text, command}: the
     nodes and their verdicts, sync_clocks as the way out; None when every clock is in sync).
     e.g. (verdicts with node1 ok and node2 off, command="ansible-playbook community.cassandra.sync_clocks") ->
@@ -853,7 +884,9 @@ def cassandra_clock_refusal(verdicts, operation="", cluster="", command="", chec
     bad = [v for v in verdicts.get("nodes", []) if v["verdict"] != "ok"] + _unread_rows(unread)
     later = [v["node"] for v in bad if (check or later_ok) and v["verdict"] == "no_sync" and v["action"] != "manual"
              and (later_ok or not v["running"])]  # (before a wipe: every node stopped, then set up)
-    bad = [v for v in bad if v["node"] not in later]
+    # a start waits for a time sync converging, up to cassandra_clock_sync_timeout: the longer wait said too
+    bad = [dict(v, why=v["why"] + ", or raise cassandra_clock_sync_timeout") if v.get("converging") else v
+           for v in bad if v["node"] not in later]
     if not bad:
         return cassandra_output.fit(
             ["NOTE  clocks: time sync would be started on %s (cassandra_linux), its clock checked %s"
@@ -863,7 +896,7 @@ def cassandra_clock_refusal(verdicts, operation="", cluster="", command="", chec
             "nothing was started" if not check else "a real run would refuse to start the nodes"]
     lines = ["  ".join(x for x in head if x)]
     lines += cassandra_clock_lines({"nodes": bad}, actions=False)
-    lines += ["", "Cassandra needs its clocks within %s (cassandra_clock_max_offset_ms)" % limit,
+    lines += ["", "Cassandra needs each clock within %s of its source (cassandra_clock_max_offset_ms)" % limit,
               "each write carries a timestamp, the latest wins"]
     lines += _warning_lines(verdicts.get("warnings", []))
     if later:
@@ -913,4 +946,5 @@ class FilterModule(object):
                 "cassandra_clock_in_sync": cassandra_clock_in_sync,
                 "cassandra_clock_verdicts": cassandra_clock_verdicts, "cassandra_clock_lines": cassandra_clock_lines,
                 "cassandra_clock_refusal": cassandra_clock_refusal, "cassandra_clock_health": cassandra_clock_health,
+                "cassandra_clock_warnings": cassandra_clock_warnings,
                 "cassandra_clock_nodes": cassandra_clock_nodes}

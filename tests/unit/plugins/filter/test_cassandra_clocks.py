@@ -12,7 +12,7 @@ from ansible.errors import AnsibleFilterError
 from ansible_collections.community.cassandra.plugins.filter.cassandra_clocks import (
     cassandra_clock_health, cassandra_clock_in_sync, cassandra_clock_lines, cassandra_clock_probe,
     cassandra_clock_refusal, cassandra_clock_settled, cassandra_clock_verdicts, cassandra_clock_wait_line,
-    parse_chrony_sources, parse_chrony_tracking, parse_ntpq, parse_timesync)
+    cassandra_clock_warnings, parse_chrony_sources, parse_chrony_tracking, parse_ntpq, parse_timesync)
 
 TRACKING_SYNCED = """\
 Reference ID    : C0000201 (192.0.2.1)
@@ -479,7 +479,7 @@ def test_verdicts_a_daemon_still_converging_is_said_so():
     # what the daemon said, no guessed cause (R16: no start seen in what was read)
     assert v["nodes"][0]["why"] == (
         "chronyd's error bound is 62.04 s, over 50.0 ms; chronyd's frequency skew is 1000000 ppm (settled: a few"
-        " ppm); run again later, or raise cassandra_clock_sync_timeout")
+        " ppm); run again later")
     assert "closer or better" not in v["nodes"][0]["why"]
     # a wide bound with a settled skew: the bound alone said
     wide = probe_text(tracking_text=tracking(0.0001, "fast", dispersion="62.040000000"))
@@ -497,12 +497,26 @@ def test_off_rows_one_fact_per_line_within_79_columns():
         "  h-n1  OFF  chronyd, synchronised to 192.0.2.1, -1.3 ms (\u00b154.7 ms)",
         "             chronyd's error bound is 54.7 ms, over 50.0 ms",
         "             chronyd's frequency skew is 1000000 ppm (settled: a few ppm)",
-        "             run again later, or raise cassandra_clock_sync_timeout",
+        "             run again later",
         "             \u2192 to fix by hand",
         "  h-n2  ok   chronyd, synchronised to 192.0.2.1, -0.0 ms (\u00b10.7 ms)"]
     assert all(len(line) <= 77 for line in cassandra_clock_lines(v, width=77))  # (sync_clocks' screen: 2 in)
     refusal = cassandra_clock_refusal(v, operation="create_cluster", cluster="zorglub")
     assert all(len(line) <= 79 for line in refusal + cassandra_clock_health(v)["lines"]), refusal
+
+
+def test_the_longer_wait_is_said_only_where_a_wait_is():
+    # S28 audit (A1): only a start (clocks_check.yml) waits up to cassandra_clock_sync_timeout; health_check only
+    # reads, sync_clocks leaves a converging daemon to the operator ("manual"): "run again later" there
+    young = probe_text(tracking_text=tracking(0.0013, "slow", dispersion="0.054300000", skew="1000000.000"))
+    v = cassandra_clock_verdicts([node("h-n1", young), node("h-n2", probe_text())])
+    assert "             run again later, or raise cassandra_clock_sync_timeout" in cassandra_clock_refusal(v)
+    assert "             run again later, or raise cassandra_clock_sync_timeout" in cassandra_clock_refusal(v, check=True)
+    for lines in (cassandra_clock_health(v)["lines"], cassandra_clock_lines(v), cassandra_clock_lines(v, width=77)):
+        assert "             run again later" in lines and "cassandra_clock_sync_timeout" not in "\n".join(lines)
+    # a far source (a settled skew): no wait helps, neither way out
+    far = cassandra_clock_verdicts([node("h-n1", probe_text(tracking_text=tracking(0.001, delay="0.150000000")))])
+    assert "run again later" not in "\n".join(cassandra_clock_refusal(far) + cassandra_clock_health(far)["lines"])
 
 
 @pytest.mark.parametrize("skew, bound, settled", [
@@ -547,7 +561,8 @@ def test_refusal():
     assert lines[3].startswith("  node3  OFF")
     assert not any(line.startswith("  node1 ") for line in lines)
     text = "\n".join(lines)
-    assert "Cassandra needs its clocks within 50.0 ms (cassandra_clock_max_offset_ms)" in lines
+    assert "Cassandra needs each clock within 50.0 ms of its source" in lines
+    assert "  (cassandra_clock_max_offset_ms)" in lines
     assert "WARNING  node3's clock is AHEAD" in text
     assert "     ansible-playbook -i inv.yml community.cassandra.sync_clocks" in lines
     assert "then run create_cluster again" in text and "-e cassandra_clock_check=false" in text
@@ -774,3 +789,99 @@ def test_verdict_within_the_threshold_alone_says_the_error_bound():
     assert v["node1"]["why"] == "25.0 ms behind its source, within 50.0 ms but not with its error bound of 40.0 ms"
     assert v["node2"]["why"] == "25.0 ms ahead of its source, within 50.0 ms but not with its error bound of 40.0 ms"
     assert v["node1"]["action"] == "slew"
+
+
+def aheads(verdicts):
+    return [w.split("\n")[0] for w in verdicts["warnings"] if "AHEAD" in w]
+
+
+def test_an_unsynchronised_clock_ahead_by_the_dates_is_warned_about():
+    # S28 audit (B1): chronyd reaches none of its sources, the dates over SSH put the node 10 s ahead of the
+    # synchronised ones, Cassandra runs there: it stamps writes in the future, said; its verdict unchanged
+    lost = probe_text(tracking_text=TRACKING_UNSYNCED, sources=SOURCES_NONE_REACHED)
+    v = cassandra_clock_verdicts([node("h-n1", probe_text()), node("h-n2", lost, skew=10.0)])
+    assert by_node(v)["h-n2"]["verdict"] == "unsynchronised" and by_node(v)["h-n2"]["action"] == "manual"
+    assert aheads(v) == ["h-n2's clock is AHEAD by about 10.00 s (dates over SSH)"]
+    # behind, within what the dates can tell, Cassandra not running, or no synchronised node to compare with
+    for nodes in ([node("h-n1", probe_text()), node("h-n2", lost, skew=-10.0)],
+                  [node("h-n1", probe_text()), node("h-n2", lost, skew=0.5)],
+                  [node("h-n1", probe_text()), node("h-n2", lost, skew=10.0, running=False)],
+                  [node("h-n1", lost), node("h-n2", lost, skew=10.0)]):
+        assert aheads(cassandra_clock_verdicts(nodes)) == []
+
+
+def test_a_clock_synchronised_to_a_source_ahead_is_warned_about_by_the_dates():
+    # S28 audit (B2): h-n3 follows a source 5 s ahead: its daemon says ~0 off (in sync with that source), the
+    # dates over SSH say 5 s ahead of the others; a warning, its verdict still ok (each within its source)
+    v = cassandra_clock_verdicts([node("h-n1", probe_text()), node("h-n2", probe_text()),
+                                  node("h-n3", probe_text(), skew=5.0)])
+    assert v["ok"] and [n["verdict"] for n in v["nodes"]] == ["ok", "ok", "ok"]
+    assert aheads(v) == ["h-n3's clock is AHEAD by about 5.00 s (dates over SSH)"]
+    # the dates agreeing (within a second), behind, or Cassandra not running: nothing
+    for skew, running in ((0.5, True), (-5.0, True), (5.0, False)):
+        quiet = cassandra_clock_verdicts([node("h-n1", probe_text()), node("h-n2", probe_text()),
+                                          node("h-n3", probe_text(), skew=skew, running=running)])
+        assert quiet["ok"] and aheads(quiet) == []
+    # past the threshold by its daemon: its offset, not the dates
+    off = cassandra_clock_verdicts([node("h-n1", probe_text()), node("h-n2", probe_text(tracking_text=tracking(0.2, "fast")),
+                                                                     skew=0.2)])
+    assert aheads(off) == ["h-n2's clock is AHEAD by about 200.0 ms"]
+
+
+def test_a_behind_clock_or_a_new_node_gets_no_ahead_warning():
+    # S28 audit: behind past the threshold (its daemon, or the dates), Cassandra not running: no AHEAD
+    blank = probe_text(active="", tracking_text=None)
+    for nodes in ([node("h-n1", probe_text(tracking_text=tracking(0.2, "slow")), skew=-0.2)],
+                  [node("h-n1", probe_text()), node("h-n2", blank, skew=-3.0)],
+                  [node("h-n1", probe_text()), node("h-n2", probe_text(tracking_text=tracking(0.2, "fast")), running=False)],
+                  [node("h-n1", probe_text()), node("h-n2", blank, skew=3.0, running=False)]):
+        assert aheads(cassandra_clock_verdicts(nodes)) == []
+    # the coarse path still warns (no daemon, past what the dates can tell)
+    far = cassandra_clock_verdicts([node("h-n1", probe_text()), node("h-n2", blank, skew=3.0)])
+    assert aheads(far) == ["h-n2's clock is AHEAD by about 3.00 s (dates over SSH)"]
+
+
+LONG = "h-n2." + "zorglub-datacenter-one.example.net".rjust(55, "x")  # 60 characters (an FQDN)
+
+
+def test_a_long_node_name_puts_the_text_on_the_next_lines():
+    # S28 audit (adversarial B1): a name leaving under 40 columns: the name and the verdict alone, the text and
+    # the facts 6 columns in, every line within 79 (77 on sync_clocks' screen)
+    nodes = [node("h-n1", probe_text()), node(LONG, probe_text(tracking_text=tracking(0.3, "fast")), skew=0.3),
+             node("h-n3", probe_text(active="", installed=("systemd-timesyncd",), tracking_text=None))]
+    v = cassandra_clock_verdicts(nodes)
+    lines = cassandra_clock_lines(v)
+    assert lines[:3] == ["  h-n1  ok", "      chronyd, synchronised to 192.0.2.1, -0.0 ms (\u00b10.7 ms)",
+                         "  %s  OFF" % LONG]
+    assert lines[6:8] == ["  h-n3  NO TIME SYNC",
+                          "      systemd-timesyncd installed, not running (about 0.0 ms off, dates over"]
+    assert all(len(line) <= 77 for line in cassandra_clock_lines(v, width=77))
+    every = lines + cassandra_clock_health(v)["lines"] + cassandra_clock_refusal(v, cluster="zorglub")
+    assert all(len(line) <= 79 for line in every), [line for line in every if len(line) > 79]
+
+
+def test_a_line_that_goes_on_is_told_from_the_next_fact():
+    # S28 audit (adversarial C2): a row's text, a fact or a warning's fact that goes on: 2 columns more than the
+    # next fact
+    v = cassandra_clock_verdicts([node("h-n1", probe_text()), node(LONG, probe_text(tracking_text=tracking(0.3, "fast")),
+                                                                   skew=0.3)])
+    lines = cassandra_clock_health(v)["lines"]
+    warning = lines[lines.index("WARNING  %s's clock" % LONG):]
+    assert warning[1] == "           is AHEAD by about 300.0 ms"
+    assert warning[2] == "         the writes it stamped as coordinator carry future timestamps"
+    assert warning[3] == "           (lightweight transactions, drivers without client-side timestamps)"
+    timesyncd = probe_text(active="", installed=("systemd-timesyncd",), tracking_text=None)
+    rows = cassandra_clock_lines(cassandra_clock_verdicts([node("h-n1", probe_text()), node("h-n3", timesyncd, skew=0.15)]))
+    assert rows[1:4] == ["  h-n3  NO TIME SYNC  systemd-timesyncd installed, not running (about 150.0 ms",
+                         "                        off, dates over SSH, coarse)",
+                         "                      \u2192 clock stepped in a restart window (drain, stop, step,"]
+
+
+def test_the_warnings_of_a_start_one_fact_per_line():
+    # S28 audit (adversarial C3): clocks_check.yml's WARNING lines (the clocks in sync, a node ahead by the dates)
+    v = cassandra_clock_verdicts([node("h-n1", probe_text()), node("h-n2", probe_text()), node("h-n3", probe_text(), skew=5.0)])
+    lines = cassandra_clock_warnings(v, label="clocks: ")
+    assert lines[0] == "WARNING  clocks: h-n3's clock is AHEAD by about 5.00 s (dates over SSH)"
+    assert lines[-1] == "         check what was written through it lately"
+    assert all(line.startswith(("WARNING  ", "         ")) and len(line) <= 79 for line in lines)
+    assert cassandra_clock_warnings({}) == [] and cassandra_clock_warnings(None) == []
