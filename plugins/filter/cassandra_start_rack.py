@@ -27,10 +27,11 @@ at an address it gives:
     has the address of (one is in no node of the rack it may      on)
     be)
   an outside node not UN for the node outside the rack read     WARNING, not
-    from (its read failed, or none read: for the rack node)       waited for
-  an outside node not UN for the rack node alone, or for a      wait, then
-    second node of the rack read from (just started: it may       WARNING
-    still see a peer down)
+    from                                                          waited for
+  an outside node not UN for a node of the rack read from: a    wait, then
+    second one, or the checker (no node outside the rack          WARNING
+    read, or its read failed); just started, it may still see
+    a peer down
   an outside node not reached over ssh                          WARNING
   nodetool failing on an outside node, a ring read from         WARNING
     another node
@@ -253,8 +254,7 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
     before the wait (None: this read is the one before the wait), left_out: the rack's nodes left out by --limit
     (out of the play: this run does not start them) -> the module docstring's second table applied:
       outside: the nodes outside the rack not UN, [{address, name, states}], in the order seen. Before the wait,
-        those the counted view saw so: the peer's, else (its read failed) the checker's; after it, those of any
-        view, the ones of the first verdict first.
+        those the peer saw so when it is outside the rack and its read did not fail; after it, those of any view, the ones of the first verdict first.
       failed: the nodes outside the rack whose nodetool status failed (the first verdict's too), when a ring was
         read.
       warnings: the other rows of the warning, [[name, fact]]: the nodes on another schema version (a node by its
@@ -347,10 +347,11 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
             notes.append(f)
         else:
             stops.append(f)
-    if first_verdict is None:  # before the wait: the nodes the counted view saw not UN; the others are waited for
-        # (all of them when that view is a second node of the rack: just started, it may still see a peer down)
-        rack_peer = counted_view != checker and counted_view in (members or [])
-        outside = [n for n in outside if counted_view in seen_by[n["address"]] and not rack_peer]
+    if first_verdict is None:  # before the wait: the nodes the counted view saw not UN when it is outside the rack;
+        # the others are waited for (a node of the rack read from, the checker too: just started, it may still see
+        # a peer down)
+        settled = counted_view not in (members or [])
+        outside = [n for n in outside if settled and counted_view in seen_by[n["address"]]]
     failed = (first_verdict or {}).get("failed", []) + [h for h in failed_on if ring_read and h not in (members or [])]
     seen_down = [f.get("name") for f in findings if f.get("kind") == "state" and str(f.get("state"))[:1] == "D"]
     names = _names(findings, addresses)

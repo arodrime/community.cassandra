@@ -498,8 +498,8 @@ def test_a_reader_whose_nodetool_failed_does_not_count():
                          "WARNING  the rest of the cluster:", "  n4  DN", "  n1  nodetool status failed"]
     variables = noted(ring(n4="DN"), peer=failed)
     assert check_var("_cassandra_health_not_peers", variables) == "n4,n1"
-    # n4 seen DN by n2 alone counts, n1's read failed: noted (not waited for)
-    assert [n["name"] for n in variables["_cassandra_start_rack_first_verdict"]["outside"]] == ["n4"]
+    # n4 seen DN by n2 alone, n1's read failed: n2 just started, waited for (the same rule as without a peer)
+    assert variables["_cassandra_start_rack_first_verdict"]["outside"] == []
 
 
 def test_a_node_the_ring_puts_in_the_rack_is_one_of_the_rack():
@@ -1205,6 +1205,16 @@ def test_a_second_node_of_the_rack_read_from_is_waited_for_before_any_warning():
     # n1 DN still after the wait: its row
     problems, said = check(play=["n2", "n3"], peer=ring(n1="DN"), then=ring(n1="DN"))
     assert problems == [] and said[4:6] == ["WARNING  the rest of the cluster:", "  n1  DN"]
+    # --limit n2 (the command said when no node outside the rack was read): n2, the checker, read alone, sees n1
+    # DN for a moment. It was counted at once: "the rest of the cluster: n1 DN", the read after it seeing n1 UN.
+    # Now waited for, as for a second node of the rack
+    variables = noted(ring(n1="DN"), play=["n2"])
+    assert variables["_cassandra_health_peer_host"] == "n2"
+    assert variables["_cassandra_start_rack_first_verdict"]["outside"] == []
+    problems, said = check(play=["n2"], then=ring(), n1="DN")
+    assert problems == [] and said == UP + ["WARNING  the ring as seen from n2 only (no node outside this run read)"]
+    problems, said = check(play=["n2"], n1="DN")
+    assert problems == [] and said[3:5] == ["WARNING  the rest of the cluster:", "  n1  DN"]
 
 
 def test_a_node_left_out_known_by_its_address_with_no_node_to_start_is_not_a_start():
