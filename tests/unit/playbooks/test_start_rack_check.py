@@ -1481,3 +1481,27 @@ def test_two_nodes_of_the_run_giving_one_host_id_stop_the_run():
                                  "the check places each node of the run in the ring by its Host ID"], None)
     assert noted(ring(), hostvars=hostvars)["_cassandra_start_rack_first_verdict"]["host_id_unread"] == ["n2", "n3"]
     assert stop_said(problems)[3] == "WAY OUT  fix it (the lines above say what), then run start_rack again:"
+
+
+def test_a_name_resolved_on_the_controller_is_taken_only_in_its_host_s_own_rack(monkeypatch):
+    # --limit 'all:!n3': n3 (left out) on a cluster network (ansible_host 192.168.1.3, 10.0.0.3 in the ring), DN;
+    # n4 (r3) powered off, its DNS name still resolving to 10.0.0.3 (an old address). 10.0.0.3 was named n4: a stop
+    # on "n4 (10.0.0.3, r2) is DN", n4 out of the inventory its last resort. The ring puts 10.0.0.3 in r2, n4 is
+    # in r3: not taken; 10.0.0.3 may be n3, left out: a warning
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_ring
+    monkeypatch.setattr(cassandra_ring, "_resolved", lambda name: {"h-n4.example": ["10.0.0.3"]}.get(name, []))
+    names = dict((a, n) for a, n in ADDRESSES.items() if n not in ("n3", "n4"))
+    hostvars = with_addresses(names)
+    hostvars["n3"]["ansible_host"], hostvars["n4"]["ansible_host"] = "192.168.1.3", "h-n4.example"
+    problems, said = check(names=names, hostvars=hostvars, play=["n1", "n2", "n4"], unreached=["n4"], n3="DN",
+                           n4="DN")
+    assert problems == [] and said[2:4] == LEFT_OUT + ["  10.0.0.3  DN"]
+    assert said[-4:-2] == ["  10.0.0.4  DN", "  n4        not reached over ssh"]
+    # its own rack: taken (n4 at 10.0.0.4, r3)
+    monkeypatch.setattr(cassandra_ring, "_resolved", lambda name: {"h-n4.example": ["10.0.0.4"]}.get(name, []))
+    problems, said = check(names=names, hostvars=hostvars, play=["n1", "n2", "n4"], unreached=["n4"], n4="DN")
+    assert problems == [] and said[-3] == "  n4  DN  not reached over ssh"
+    # each host's dc and rack, the cassandra_config defaults when not set
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_start_rack import cassandra_host_racks
+    assert cassandra_host_racks(["n1", "n2"], {"n1": {}, "n2": {"cassandra_dc": "dc2", "cassandra_rack": "r2"}}) == {
+        "n1": ["dc1", "rack1"], "n2": ["dc2", "r2"]}

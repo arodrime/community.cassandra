@@ -6,8 +6,9 @@ is only a warning, unless the ring puts a node in the rack.
 Which inventory host a node of the ring is (_placement), computed once per read:
 - a node of the run: the ring node with its Host ID, as nodetool info on it gives it (what it says of itself),
   never by an address;
-- any other host: the ring node at an address its variables or facts give (cassandra_host_addresses); else what
-  its names resolve to on the controller, for a ring address no host has yet.
+- any other host (left out by --limit, outside the rack): the ring node at an address its variables or facts give
+  (cassandra_host_addresses); else what its names resolve to on the controller, for a ring address no host has
+  yet that the ring puts in the host's own dc and rack (a stale name never names a node of another rack).
 A ring node no host is placed at is "no inventory host is known by its address"; a node of the rack no ring node
 is placed at is "not placed".
 
@@ -66,6 +67,7 @@ Not covered: two hosts outside the run giving one address, the ring node there i
 of the run never is: placed by its Host ID). A host outside the rack reached over ssh whose ping or fact gathering
 fails fails the run.
 
+cassandra_host_racks: each host's dc and rack in the inventory.
 cassandra_rack_members: the nodes the inventory puts in a rack (every node of the cluster, under --limit too).
 cassandra_rack_verdict: the tables above applied to a read of the cluster.
 cassandra_rack_outside_lines: the rack's nodes UN (those of the run under --limit), then the warnings (a node of the
@@ -95,17 +97,23 @@ DEFAULT_RACK = "rack1"
 WIDTH = 79
 
 
+def cassandra_host_racks(hosts, hostvars):
+    """The cluster's nodes, their hostvars -> {node: [its cassandra_dc, its cassandra_rack]} (the cassandra_config
+    defaults when not set).
+    e.g. (["n1", "n2"], {"n1": {}, "n2": {"cassandra_rack": "r2"}}) -> {"n1": ["dc1", "rack1"], "n2": ["dc1", "r2"]}."""
+    racks = {}
+    for h in hosts or []:
+        variables = hostvars.get(h) or {}
+        racks[h] = [str(variables.get("cassandra_dc", DEFAULT_DC)), str(variables.get("cassandra_rack", DEFAULT_RACK))]
+    return racks
+
+
 def cassandra_rack_members(hosts, hostvars, dc, rack):
     """The cluster's nodes, their hostvars, a dc and a rack -> the nodes whose cassandra_dc and cassandra_rack (the
     cassandra_config defaults when not set) are that dc and rack, in their order.
     e.g. (["n1", "n2"], {"n1": {"cassandra_rack": "r1"}, "n2": {"cassandra_rack": "r2"}}, "dc1", "r2") -> ["n2"]."""
-    members = []
-    for h in hosts or []:
-        variables = hostvars.get(h) or {}
-        if (str(variables.get("cassandra_dc", DEFAULT_DC)) == str(dc)
-                and str(variables.get("cassandra_rack", DEFAULT_RACK)) == str(rack)):
-            members.append(h)
-    return members
+    racks = cassandra_host_racks(hosts, hostvars)
+    return [h for h in hosts or [] if racks[h] == [str(dc), str(rack)]]
 
 
 def _ring_nodes(reads):
@@ -152,9 +160,10 @@ def _host_ids(infos, run, rack):
     return dict((i, hosts[0]) for i, hosts in by_id.items() if len(hosts) == 1), unread
 
 
-def _placement(reads, run, addresses, ids):
+def _placement(reads, run, addresses, ids, racks):
     """The reads, the nodes of the run, every host's addresses (cassandra_host_addresses), {Host ID: node of the
-    run} -> {ring address: inventory host}: the module docstring's placement."""
+    run}, every host's [dc, rack] (cassandra_host_racks) -> {ring address: inventory host}: the module docstring's
+    placement."""
     ring = _unique(n[0] for n in _ring_nodes(reads))
     host_at = dict((n[0], ids[n[4]]) for n in _ring_nodes(reads) if n[4] in ids)
     for address, host in (addresses or {}).items():
@@ -164,7 +173,9 @@ def _placement(reads, run, addresses, ids):
     hosts = _unique(h for h in (addresses or {}).values() if h not in run and h not in host_at.values())
     if rest and hosts:
         names = dict((h, [a for a, x in addresses.items() if x == h]) for h in hosts)
-        host_at.update((a, h) for a, h in hosts_by_address(names, rest).items() if a in rest)
+        where = set(n[:3] for n in _ring_nodes(reads))  # (address, dc, rack)
+        host_at.update((a, h) for a, h in hosts_by_address(names, rest).items()
+                       if a in rest and (a,) + tuple((racks or {}).get(h) or ()) in where)
     return host_at
 
 
@@ -333,14 +344,14 @@ def _outside_nodes(findings, judged, first_verdict, members, counted_view, unrea
 
 
 def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses=None, reads=None, schema=None,
-                           first_verdict=None, left_out=None, unreached=None, infos=None):
+                           first_verdict=None, left_out=None, unreached=None, infos=None, racks=None):
     """cassandra_health_findings' result of a read, the rack's nodes (cassandra_rack_members), its dc and rack, the
     node of the rack read from (checker), the other node read from (peer), the addresses of every host
     (cassandra_host_addresses), the cassandra_status results read, the cassandra_schema result, first_verdict: this
     filter's result before the wait (None: this read is the one before the wait), left_out: the rack's nodes left
     out by --limit (out of the play: this run does not start them), unreached: the hosts not reached over ssh,
-    infos: {node of the run: its nodetool info result (rc, stdout, stderr, msg)} -> the module docstring's tables
-    applied:
+    infos: {node of the run: its nodetool info result (rc, stdout, stderr, msg)}, racks: every host's [dc, rack]
+    (cassandra_host_racks) -> the module docstring's tables applied:
       outside: the nodes outside the rack not UN, [{address, name, states}] (_outside_nodes).
       failed: the nodes outside the rack whose nodetool status failed (the first verdict's too), when a ring was
         read.
@@ -368,7 +379,7 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
     members, left_out = list(members or []), list(left_out or [])
     run = [h for h in members if h not in left_out]
     ids, unread = _host_ids(infos, run, rack)
-    host_at = _placement(reads, run, addresses, ids)
+    host_at = _placement(reads, run, addresses, ids, racks)
     findings = [_named(f, host_at) for f in findings or []]
     unplaced = [h for h in members if h not in host_at.values()]
     left_unplaced = [h for h in left_out if h in unplaced]
@@ -606,7 +617,8 @@ def cassandra_rack_stop_refused(problems, warnings, nodes, dc, rack, cluster, co
 
 class FilterModule(object):
     def filters(self):
-        return {"cassandra_rack_members": cassandra_rack_members,
+        return {"cassandra_host_racks": cassandra_host_racks,
+                "cassandra_rack_members": cassandra_rack_members,
                 "cassandra_rack_verdict": cassandra_rack_verdict,
                 "cassandra_rack_outside_lines": cassandra_rack_outside_lines,
                 "cassandra_rack_start_failed": cassandra_rack_start_failed,
