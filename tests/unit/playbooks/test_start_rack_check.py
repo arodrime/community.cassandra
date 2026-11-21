@@ -627,3 +627,28 @@ def check_read(read, schema=None, ok=None, count=4):
     if not all(render("{{ %s }}" % w, ansible_check_mode=False, **variables) for w in say["when"]):
         return [], None
     return [], render(say["ansible.builtin.debug"]["msg"], **variables)
+
+
+def test_a_node_of_the_rack_that_does_not_start_is_said_with_a_way_out():
+    # its unit failing (ExecStartPre=/bin/false): the run printed the role's task failure, "fatal: [n2]: FAILED!" and
+    # systemd's message, no way out
+    with open(os.path.join(TOP, "playbooks", "start_rack.yml"), encoding="utf-8") as f:
+        start_play = next(p for p in yaml.safe_load(f) if p.get("name") == "Start the rack")
+    start = next(t for t in start_play["tasks"] if t["name"] == "Start Cassandra and wait until the node has joined")
+    assert start["vars"]["cassandra_output_rescued"] is True and start_play["any_errors_fatal"] is True
+    assert start["block"][0]["ansible.builtin.include_role"]["name"] == "community.cassandra.cassandra_service"
+    stop = start["rescue"][0]
+    assert stop["vars"]["cassandra_output"] is True
+    failed = {"msg": "Unable to start service cassandra: Job for cassandra.service failed because the control process"
+                     " exited with error code.\nSee \"systemctl status cassandra.service\" for details."}
+    variables = dict(stop["vars"], inventory_hostname="n2", cassandra_target_rack="r2", ansible_failed_result=failed)
+    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
+    lines = Templar(loader=DataLoader(), variables=variables).template(
+        trust_as_template(stop["ansible.builtin.fail"]["msg"])).split("\n")
+    assert lines[0] == "n2 (rack r2) did not start:"
+    assert " ".join(x.strip() for x in lines[1:-2]) == (
+        "Unable to start service cassandra: Job for cassandra.service failed because the control process exited"
+        " with error code.")
+    assert lines[-2:] == ["see why on it: systemctl status cassandra, journalctl -u cassandra",
+                          "WAY OUT  fix it, then run start_rack again"]
+    assert max(len(x) for x in lines) <= 79
