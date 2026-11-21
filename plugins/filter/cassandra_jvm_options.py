@@ -193,49 +193,28 @@ def _env_unknown(name, value):
 
 
 def _env_heap(text):
-    """A cassandra-env.sh as it runs before its heap checks, followed only where it can be: {heap: the MAX_HEAP_SIZE
-    and HEAP_NEWSIZE it sets before it tests them ("x$MAX_HEAP_SIZE"), words: the options its JVM_OPTS assignments add
-    before its first grep of Xmn, later: the ones it adds after (the JVM takes the last -Xmx...; not ones made of its
-    variables), unfollowed: [(what, line number)] of what it cannot follow there}.
-    Followed: plain assignments of them at the top level (export too, several commands on a line with ; then do...),
-    their reads ($NAME in tests, echo, the greps), the assignments in a function body that is not called before the
-    checks, a condition's JVM_OPTS assignment without the letters it greps (Xmx, Xms, Xmn, the GCs). Not followed
-    (unfollowed): an assignment of them inside a condition (if, case, a loop, a brace group, after && or ||), one
-    whose value holds a variable or a command (JVM_OPTS: other than its own), a mention of them in any other form
-    (readonly, eval, unset, +=, ${NAME:=...}, a case arm...), a line continued with a backslash or an open quote that
-    names them, a here-document that names them, a file it sources (. or source), a call of a function that sets them,
-    the function keyword (dash, the sh of Debian, stops on it), a block left open at the end of the file."""
-    scan = _EnvHeapScan()
-    lines = text.split("\n")
-    greps = tested = False
-    heredoc = None
-    i = 0
-    while i < len(lines):
-        number, line = i + 1, lines[i]
-        # (the line of a check is the check's: from it on, what follows is not before the checks)
-        greps = greps or bool(re.search(r"grep -q\w* +[\"']?Xmn", line))
-        tested = tested or '"x$MAX_HEAP_SIZE"' in line
-        scan.region = {"JVM_OPTS": not greps, "MAX_HEAP_SIZE": not tested, "HEAP_NEWSIZE": not tested}
-        if heredoc is not None:  # (its body: text, not commands)
-            if line.strip() == heredoc:
-                heredoc = None
-            elif scan.named(line):
-                scan.unfollowed.append(("a here-document", number))
-            i += 1
-            continue
-        line, commands, joined, i = _logical_line(lines, i)
-        code = " ; ".join(c for c, dummy in commands)
-        if (joined or "\r" in line) and scan.named(code):
-            scan.unfollowed.append((scan.named(code)[0], number))
-            continue
-        doc = re.search(r"<<-?\s*[\"']?(\w+)", code)
-        if doc:
-            heredoc = doc.group(1)
-        for command, conditional in commands:
-            scan.command(command, conditional, number)
-    if scan.stack:
-        scan.unfollowed.append(("a block left open (if, case, a loop, a function)", len(lines)))
-    return {"heap": scan.heap, "words": scan.words, "later": scan.later, "unfollowed": scan.unfollowed}
+    """A cassandra-env.sh as it runs before its heap checks, followed only where it can be -> {
+    heap: the MAX_HEAP_SIZE and HEAP_NEWSIZE it sets before it tests them ("x$MAX_HEAP_SIZE"),
+    words: the options its JVM_OPTS assignments add before its first grep of Xmn,
+    later: the ones it adds after (the JVM takes the last -Xmx...; not ones made of its variables),
+    unfollowed: [(what, line number)] of what it cannot follow there}.
+
+    Followed:
+    - plain assignments of them at the top level (export too, several commands on a line with ; then do...);
+    - their reads ($NAME in tests, echo, the greps);
+    - the assignments in a function body that is not called before the checks;
+    - a condition's JVM_OPTS assignment without the letters it greps (Xmx, Xms, Xmn, the GCs).
+
+    Not followed (unfollowed):
+    - an assignment of them inside a condition (if, case, a loop, a brace group, after && or ||);
+    - one whose value holds a variable or a command (JVM_OPTS: other than its own);
+    - a mention of them in any other form (readonly, eval, unset, +=, ${NAME:=...}, a case arm...);
+    - a line continued with a backslash or an open quote that names them;
+    - a here-document that names them;
+    - a file it sources (. or source), a call of a function that sets them;
+    - the function keyword (dash, the sh of Debian, stops on it);
+    - a block left open at the end of the file."""
+    return _EnvHeapScan().read(text)
 
 
 def _logical_line(lines, at):
@@ -255,9 +234,11 @@ def _logical_line(lines, at):
 
 class _EnvHeapScan(object):
     """What _env_heap has read so far: heap, words, later, unfollowed (as it returns them), and where it is: the
-    blocks open (stack: "func", "func-pending" before its brace, "brace", "ctl" an if, case or loop), the functions
-    being defined, the ones that set them (setters); region: {name: whether the checks of that name are still ahead},
-    set for each line."""
+    blocks open (stack: FUNCTION, FUNCTION_PENDING before its brace, BRACE, CONTROL an if, case or loop), the
+    functions being defined, the ones that set them (setters); region: {name: whether the checks of that name are
+    still ahead}, set for each line."""
+
+    FUNCTION, FUNCTION_PENDING, BRACE, CONTROL = "func", "func-pending", "brace", "ctl"
 
     def __init__(self):
         self.heap = {"MAX_HEAP_SIZE": None, "HEAP_NEWSIZE": None}
@@ -265,7 +246,40 @@ class _EnvHeapScan(object):
         self.stack, self.functions, self.setters = [], [], set()
         self.region = {}
 
-    def named(self, code):
+    def read(self, text):
+        """_env_heap: text read line by line -> its result."""
+        lines = text.split("\n")
+        greps = tested = False
+        heredoc = None
+        i = 0
+        while i < len(lines):
+            number, line = i + 1, lines[i]
+            # (the line of a check is the check's: from it on, what follows is not before the checks)
+            greps = greps or bool(re.search(r"grep -q\w* +[\"']?Xmn", line))
+            tested = tested or '"x$MAX_HEAP_SIZE"' in line
+            self.region = {"JVM_OPTS": not greps, "MAX_HEAP_SIZE": not tested, "HEAP_NEWSIZE": not tested}
+            if heredoc is not None:  # (its body: text, not commands)
+                if line.strip() == heredoc:
+                    heredoc = None
+                elif self.names_still_checked(line):
+                    self.unfollowed.append(("a here-document", number))
+                i += 1
+                continue
+            line, commands, joined, i = _logical_line(lines, i)
+            code = " ; ".join(c for c, dummy in commands)
+            if (joined or "\r" in line) and self.names_still_checked(code):
+                self.unfollowed.append((self.names_still_checked(code)[0], number))
+                continue
+            doc = re.search(r"<<-?\s*[\"']?(\w+)", code)
+            if doc:
+                heredoc = doc.group(1)
+            for command, conditional in commands:
+                self.command(command, conditional, number)
+        if self.stack:
+            self.unfollowed.append(("a block left open (if, case, a loop, a function)", len(lines)))
+        return {"heap": self.heap, "words": self.words, "later": self.later, "unfollowed": self.unfollowed}
+
+    def names_still_checked(self, code):
         """The names code mentions whose checks are still ahead."""
         return [m.group(1) or m.group(2) for m in ENV_NAMED.finditer(code) if self.region[m.group(1) or m.group(2)]]
 
@@ -279,14 +293,14 @@ class _EnvHeapScan(object):
         if self._brace(first, command):
             return
         if first in ENV_OPENS:
-            self.stack.append("ctl")
-        elif first in ENV_CLOSES and self.stack and self.stack[-1] == "ctl":
+            self.stack.append(self.CONTROL)
+        elif first in ENV_CLOSES and self.stack and self.stack[-1] == self.CONTROL:
             self.stack.pop()
-        if "func" in self.stack:  # (its body runs when it is called: who sets them)
+        if self.FUNCTION in self.stack:  # (its body runs when it is called: who sets them)
             if ENV_NAMED.search(command):
                 self.setters.add(self.functions[-1] if self.functions else "")
             return
-        self._run(command, first, conditional, number)
+        self._top_level_command(command, first, conditional, number)
 
     def _function_header(self, command, number):
         """A function's header opens its body: -> what follows it on the line (None when nothing); command as it is
@@ -298,25 +312,25 @@ class _EnvHeapScan(object):
         if command.split()[:1] == ["function"] and any(self.region.values()):
             self.unfollowed.append(("the function keyword (not every sh has it)", number))
         self.functions.append(header.group(1))
-        self.stack.append("func" if header.group(2) else "func-pending")
+        self.stack.append(self.FUNCTION if header.group(2) else self.FUNCTION_PENDING)
         return header.group(3) or None
 
     def _brace(self, first, command):
         """A brace opening a function's body or a group, or closing a block -> True (nothing else to read in it)."""
         if first == "{":
-            if self.stack and self.stack[-1] == "func-pending":
-                self.stack[-1] = "func"
+            if self.stack and self.stack[-1] == self.FUNCTION_PENDING:
+                self.stack[-1] = self.FUNCTION
             else:
-                self.stack.append("brace")
+                self.stack.append(self.BRACE)
             return True
         if first == "}" or command.startswith("}"):
             if self.stack:
-                if self.stack.pop().startswith("func") and self.functions:
+                if self.stack.pop() in (self.FUNCTION, self.FUNCTION_PENDING) and self.functions:
                     self.functions.pop()
             return True
         return False
 
-    def _run(self, command, first, conditional, number):
+    def _top_level_command(self, command, first, conditional, number):
         """A command run where it is read (not in a function's body)."""
         if any(self.region.values()) and (first in (".", "source", "eval") or first in self.setters):
             self.unfollowed.append(({".": "a file it sources", "source": "a file it sources", "eval": "eval"}.get(
@@ -325,10 +339,10 @@ class _EnvHeapScan(object):
         m = ENV_ASSIGN.match(command)
         if m:
             self._assignment(m.group(1), m.group(2).strip(), bool(self.stack) or conditional, number)
-        elif first not in ENV_READERS and self.named(command):
-            self.unfollowed.append((self.named(command)[0], number))
-        elif first == "export" and re.search(r"\$\{\w+:?=", command) and self.named(command):
-            self.unfollowed.append((self.named(command)[0], number))
+        elif first not in ENV_READERS and self.names_still_checked(command):
+            self.unfollowed.append((self.names_still_checked(command)[0], number))
+        elif first == "export" and re.search(r"\$\{\w+:?=", command) and self.names_still_checked(command):
+            self.unfollowed.append((self.names_still_checked(command)[0], number))
 
     def _assignment(self, name, value, inside, number):
         """name=value (inside: in a block, or after && or ||)."""
