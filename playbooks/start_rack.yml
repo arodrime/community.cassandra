@@ -232,6 +232,9 @@
       peer: "{{ _cassandra_health_peer_host }}"  # (its host name)
       # every host's (one host's ansible_host never takes another one's ring address), the rack's kept by the filter
       addresses: "{{ query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_host_addresses(hostvars) }}"
+      # every host giving each address: an address several give placed only by their inventory dc and rack
+      givers: >-
+        {{ query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_host_address_givers(hostvars) }}
       # every host's dc and rack in the inventory: a name resolved on the controller taken only there
       racks: "{{ query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_host_racks(hostvars) }}"
       reads: "{{ [cassandra_health_self | default({}), cassandra_health_peer | default({})] }}"  # (the rings read)

@@ -5,7 +5,8 @@
 cassandra_stream_progress: successive cassandra_netstats results -> the progress state, for the wait of
     roles/cassandra_operation/tasks/stream_wait.yml; cassandra_stream_report: the lines that print it;
     cassandra_stream_status, cassandra_stream_waiting: how the wait goes on.
-cassandra_host_addresses: the inventory names of the addresses netstats shows.
+cassandra_host_addresses: the inventory names of the addresses netstats shows; cassandra_host_address_givers: every
+    host giving each address.
 cassandra_stream_progress_by_host, cassandra_cleanup_report, cassandra_cleanup_view: the cleanups of a batch
     (cleanup_check.yml), a block per node.
 cassandra_add_node_plan: what adding nodes streams, and the cleanup after.
@@ -419,17 +420,38 @@ def cassandra_host_addresses(hosts, hostvars):
     e.g. (["node1", "node2"], {node1: {cassandra_listen_address: "10.0.0.1"}, node2: {ansible_host: "10.0.0.2"}})
     -> {"10.0.0.1": "node1", "10.0.0.2": "node2", "node1": "node1", "node2": "node2"}."""
     names = {}
-    for paths in ((("cassandra_extra_settings", "broadcast_address"), ("_cassandra_preflight", "ring_address"),
-                   ("_cassandra_preflight", "address"), ("cassandra_listen_address",)),
-                  (("ansible_host",), ("ansible_facts", "default_ipv4", "address"))):
+    for address, host, dummy in _given_addresses(hosts, hostvars):
+        names.setdefault(address, host)
+    return names
+
+
+def _given_addresses(hosts, hostvars):
+    """hosts, their hostvars -> (address, host, 0) for what each one broadcasts or listens on, then (address, host,
+    1) for its ansible_host, its default IPv4 fact and its name (cassandra_host_addresses' order)."""
+    for level, paths in enumerate(((("cassandra_extra_settings", "broadcast_address"),
+                                    ("_cassandra_preflight", "ring_address"), ("_cassandra_preflight", "address"),
+                                    ("cassandra_listen_address",)),
+                                   (("ansible_host",), ("ansible_facts", "default_ipv4", "address")))):
         for host in hosts:
             for path in paths:
                 address = _host_var(hostvars, host, *path)
                 if address and address != "localhost":
-                    names.setdefault(address, host)
+                    yield address, host, level
     for host in hosts:
-        names.setdefault(host, host)
-    return names
+        yield host, host, 1
+
+
+def cassandra_host_address_givers(hosts, hostvars):
+    """{address: [[the hosts that broadcast or listen on it], [the others whose ansible_host, default IPv4 fact or
+    name it is]]} of hosts: every host giving an address, where cassandra_host_addresses keeps one.
+    e.g. (["n3", "n4"], {n3: {ansible_host: "10.0.0.3"}, n4: {cassandra_listen_address: "10.0.0.3"}}) ->
+    {"10.0.0.3": [["n4"], ["n3"]], "n3": [[], ["n3"]], "n4": [[], ["n4"]]}."""
+    givers = {}
+    for address, host, level in _given_addresses(hosts, hostvars):
+        levels = givers.setdefault(address, [[], []])
+        if host not in levels[0] + levels[1]:
+            levels[level].append(host)
+    return givers
 
 
 def _load_bytes(load):
@@ -828,6 +850,7 @@ class FilterModule(object):
         return {"cassandra_stream_progress": cassandra_stream_progress,
                 "cassandra_stream_report": cassandra_stream_report,
                 "cassandra_host_addresses": cassandra_host_addresses,
+                "cassandra_host_address_givers": cassandra_host_address_givers,
                 "cassandra_stream_progress_by_host": cassandra_stream_progress_by_host,
                 "cassandra_cleanup_report": cassandra_cleanup_report,
                 "cassandra_add_node_plan": cassandra_add_node_plan,

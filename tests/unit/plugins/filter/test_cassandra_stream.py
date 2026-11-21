@@ -658,6 +658,18 @@ def test_host_addresses_what_a_host_listens_on_before_another_ones_ansible_host(
     assert names["10.0.0.1"] == "n1" and names["10.0.0.3"] == "n3"
 
 
+def test_host_address_givers_every_host_giving_an_address():
+    # cassandra_host_addresses keeps one host per address; start_rack places an address several give by their rack
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_stream import cassandra_host_address_givers
+    hostvars = {"n3": {"ansible_host": "10.0.0.3"},
+                "n4": {"ansible_host": "10.0.0.4", "cassandra_listen_address": "10.0.0.3"},
+                "n5": {"ansible_host": "10.0.0.3", "cassandra_listen_address": "10.0.0.3"}}
+    assert cassandra_host_address_givers(["n3", "n4", "n5"], hostvars) == {
+        "10.0.0.3": [["n4", "n5"], ["n3"]], "10.0.0.4": [[], ["n4"]], "n3": [[], ["n3"]], "n4": [[], ["n4"]],
+        "n5": [[], ["n5"]]}
+    assert cassandra_host_addresses(["n3", "n4", "n5"], hostvars)["10.0.0.3"] == "n4"
+
+
 def test_checks_every_10s_for_5_minutes_then_every_30s():
     views = [read("n4", session("10.0.0.1", 10, 100))]
     s, now, waits = None, 0, []

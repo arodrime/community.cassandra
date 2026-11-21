@@ -7,8 +7,10 @@ Which inventory host a node of the ring is (_placement), computed once per read:
 - a node of the run: the ring node with its Host ID, as nodetool info on it gives it (what it says of itself),
   never by an address;
 - any other host (left out by --limit, outside the rack): the ring node at an address its variables or facts give
-  (cassandra_host_addresses); else what its names resolve to on the controller, for a ring address no host has
-  yet that the ring puts in the host's own dc and rack (a stale name never names a node of another rack).
+  (cassandra_host_addresses); an address several hosts give (a copy-pasted listen address, a stale ansible_host):
+  the one of them the inventory puts in the ring's dc and rack for that node, what a host broadcasts or listens on
+  first, else none; then what its names resolve to on the controller, for a ring address no host has yet that the
+  ring puts in the host's own dc and rack (a stale name never names a node of another rack).
 A ring node no host is placed at: "no host known by its address"; a node of the rack no ring node is placed at:
 "not placed". A node of the run whose Host ID is not read is placed nowhere, the ring node at an address of its own
 only named after it (in the stop on it).
@@ -64,9 +66,7 @@ The schema's majority, not the version of the node outside the rack read from: t
 The rack just came back: its own nodes never make the majority alone (a node outside the rack, listed, so reached
 by describecluster, must be on its version). A rack alone on its version, or a cluster split even: a stop.
 
-Not covered: two hosts outside the run giving one address, the ring node there is named after one of them (a node
-of the run never is: placed by its Host ID). A host outside the rack reached over ssh whose ping or fact gathering
-fails fails the run.
+Not covered: a host outside the rack reached over ssh whose ping or fact gathering fails fails the run.
 
 cassandra_host_racks: each host's dc and rack in the inventory.
 cassandra_rack_members: the nodes the inventory puts in a rack (every node of the cluster, under --limit too).
@@ -161,34 +161,62 @@ def _host_ids(infos, run, rack):
     return dict((i, hosts[0]) for i, hosts in by_id.items() if len(hosts) == 1), unread
 
 
-def _placement(reads, run, addresses, ids, racks):
+def _givers(addresses, givers):
+    """Every host's addresses (cassandra_host_addresses), the hosts giving each (cassandra_host_address_givers, else
+    the one addresses has) -> {address as the ring has it: [[the hosts that broadcast or listen on it], [the
+    others]]}."""
+    by_ip = {}
+    for address, levels in (givers or dict((a, [[], [h]]) for a, h in (addresses or {}).items())).items():
+        merged = by_ip.setdefault(_ip(address), [[], []])
+        for level, hosts in zip(merged, levels):
+            level.extend(h for h in hosts if h not in level)
+    return by_ip
+
+
+def _giver(address, levels, where, racks):
+    """A ring address, the hosts giving it (_givers), the ring's (address, dc, rack), every host's [dc, rack] -> the
+    host at that address by its addresses: the one giving it; of several, the one the inventory puts in the ring's
+    dc and rack there (what a host broadcasts or listens on first); else None."""
+    hosts = _unique(levels[0] + levels[1])
+    if len(hosts) == 1:
+        return hosts[0]
+    for level in levels:
+        here = [h for h in level if (address,) + tuple((racks or {}).get(h) or ()) in where]
+        if here:
+            return here[0] if len(here) == 1 else None
+    return None
+
+
+def _placement(reads, run, addresses, ids, racks, givers):
     """The reads, the nodes of the run, every host's addresses (cassandra_host_addresses), {Host ID: node of the
-    run}, every host's [dc, rack] (cassandra_host_racks) -> {ring address: inventory host}: the module docstring's
-    placement."""
+    run}, every host's [dc, rack] (cassandra_host_racks), the hosts giving each address (_givers) -> {ring address:
+    inventory host}: the module docstring's placement."""
     ring = _unique(n[0] for n in _ring_nodes(reads))
+    where = set(n[:3] for n in _ring_nodes(reads))  # (address, dc, rack)
     host_at = dict((n[0], ids[n[4]]) for n in _ring_nodes(reads) if n[4] in ids)
-    for address, host in (addresses or {}).items():
-        if _ip(address) in ring and _ip(address) not in host_at and host not in run:
-            host_at[_ip(address)] = host
+    for address in ring:
+        host = _giver(address, givers.get(address) or [[], []], where, racks)
+        if host and address not in host_at and host not in run:
+            host_at[address] = host
     rest = [a for a in ring if a not in host_at]
     hosts = _unique(h for h in (addresses or {}).values() if h not in run and h not in host_at.values())
     if rest and hosts:
         names = dict((h, [a for a, x in addresses.items() if x == h]) for h in hosts)
-        where = set(n[:3] for n in _ring_nodes(reads))  # (address, dc, rack)
         host_at.update((a, h) for a, h in hosts_by_address(names, rest).items()
                        if a in rest and (a,) + tuple((racks or {}).get(h) or ()) in where)
     return host_at
 
 
-def _unread_named(host_at, reads, addresses, unread):
-    """The placement, the reads, every host's addresses, the nodes of the run whose Host ID is not read -> the
-    placement with the ring nodes at an address of one of those nodes named after it: names only (that node stays
-    not placed)."""
-    ring = set(n[0] for n in _ring_nodes(reads))
+def _unread_named(host_at, reads, givers, racks, unread):
+    """The placement, the reads, the hosts giving each address (_givers), every host's [dc, rack], the nodes of the
+    run whose Host ID is not read -> the placement with the ring nodes at an address of one of those nodes (_giver)
+    named after it: names only (that node stays not placed)."""
+    where = set(n[:3] for n in _ring_nodes(reads))
     names = dict(host_at)
-    for address, host in (addresses or {}).items():
-        if host in unread and _ip(address) in ring and _ip(address) not in names:
-            names[_ip(address)] = host
+    for address in _unique(n[0] for n in _ring_nodes(reads)):
+        host = _giver(address, givers.get(address) or [[], []], where, racks)
+        if host in unread and address not in names:
+            names[address] = host
     return names
 
 
@@ -357,14 +385,15 @@ def _outside_nodes(findings, judged, first_verdict, members, counted_view, unrea
 
 
 def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses=None, reads=None, schema=None,
-                           first_verdict=None, left_out=None, unreached=None, infos=None, racks=None):
+                           first_verdict=None, left_out=None, unreached=None, infos=None, racks=None, givers=None):
     """cassandra_health_findings' result of a read, the rack's nodes (cassandra_rack_members), its dc and rack, the
     node of the rack read from (checker), the other node read from (peer), the addresses of every host
     (cassandra_host_addresses), the cassandra_status results read, the cassandra_schema result, first_verdict: this
     filter's result before the wait (None: this read is the one before the wait), left_out: the rack's nodes left
     out by --limit (out of the play: this run does not start them), unreached: the hosts not reached over ssh,
     infos: {node of the run: its nodetool info result (rc, stdout, stderr, msg)}, racks: every host's [dc, rack]
-    (cassandra_host_racks) -> the module docstring's tables applied:
+    (cassandra_host_racks), givers: the hosts giving each address (cassandra_host_address_givers; None: the one
+    addresses has) -> the module docstring's tables applied:
       outside: the nodes outside the rack not UN, [{address, name, states}] (_outside_nodes).
       failed: the nodes outside the rack whose nodetool status failed (the first verdict's too), when a ring was
         read.
@@ -392,8 +421,9 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
     members, left_out = list(members or []), list(left_out or [])
     run = [h for h in members if h not in left_out]
     ids, unread = _host_ids(infos, run, rack)
-    host_at = _placement(reads, run, addresses, ids, racks)
-    names = _unread_named(host_at, reads, addresses, unread)
+    givers = _givers(addresses, givers)
+    host_at = _placement(reads, run, addresses, ids, racks, givers)
+    names = _unread_named(host_at, reads, givers, racks, unread)
     findings = [_named(f, names) for f in findings or []]
     unplaced = [h for h in members if h not in host_at.values()]
     left_unplaced = [h for h in left_out if h in unplaced]

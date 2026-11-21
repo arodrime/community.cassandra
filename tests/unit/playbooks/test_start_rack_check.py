@@ -1359,6 +1359,34 @@ def test_two_hosts_giving_the_same_address_do_not_stop_the_run():
     assert not hasattr(cassandra_start_rack, "cassandra_rack_shared_addresses")
 
 
+def test_an_address_several_hosts_give_is_placed_by_their_inventory_rack():
+    # P8: n4 (r3, UN at 10.0.0.4) has n3's address as its cassandra_listen_address (copy-pasted, not applied);
+    # --limit 'all:!n3', n3 stopped on purpose. 10.0.0.3 DN was named n4 (what a host listens on first): a stop on
+    # "n4 (10.0.0.3, r2) is DN", n4 out of the inventory its last resort, although the run's nodes were UN. Now an
+    # address several hosts give goes to the one the inventory puts in the ring's rack there: n3, left out, a warning
+    play = ["n1", "n2", "n4"]
+    for who in ("n4", "n1"):
+        hostvars = with_addresses(ADDRESSES)
+        hostvars[who] = dict(hostvars[who], cassandra_listen_address="10.0.0.3")
+        problems, said = check(hostvars=hostvars, play=play, n3="DN")
+        assert problems == [] and said == UP + LEFT_OUT + ["  n3  DN"] + START
+        # no --limit, all UN: as before
+        assert check(hostvars=hostvars) == ([], EVERY)
+    # n4's DN at its own address: still n4's (it alone gives 10.0.0.4)
+    hostvars = with_addresses(ADDRESSES)
+    hostvars["n4"] = dict(hostvars["n4"], cassandra_listen_address="10.0.0.3")
+    assert "  n4  DN" in check(hostvars=hostvars, n4="DN")[1]
+    # two hosts of the ring's rack there giving one address (n1 and n4, both in r3): neither, the node by its address
+    racks = dict(HOSTVARS, n1={"cassandra_dc": "dc1", "cassandra_rack": "r3"})
+    hostvars = with_addresses(ADDRESSES)
+    hostvars.update((h, dict(hostvars[h], cassandra_listen_address="10.0.0.9", **racks[h])) for h in ("n1", "n4"))
+    read = ring()
+    read["cluster_status"]["dc1"]["nodes"].append({"address": "10.0.0.9", "rack": "r3", "status": "D", "state": "N",
+                                                   "host_id": "hid-x9"})
+    problems, said = check_ring(read, hostvars=hostvars)
+    assert problems == [] and said["outside"] == [{"address": "10.0.0.9", "name": None, "states": ["DN"]}]
+
+
 def stop_said(problems, play=None, unread=()):
     """the stop as cluster_health.yml says it (its WAY OUT, the run's command under it); unread: the nodes of the
     run whose Host ID is not read (the verdict's host_id_unread)"""
