@@ -976,8 +976,8 @@ def test_the_verdict_s_keys_are_the_ones_its_docstring_gives():
     # its "rack_up" key (the nodes seen UN) shared its name with a boolean of the same function; its example lacked
     # two keys
     verdict = noted(ring())["_cassandra_start_rack_first_verdict"]
-    assert sorted(verdict) == ["failed", "left_out", "maybe_rack_lines", "not_readers", "outside", "problems",
-                               "rack_seen_un", "rack_unowned", "read_from", "ring_size", "run_unplaced",
+    assert sorted(verdict) == ["failed", "left_out", "maybe_rack_lines", "not_readers", "other_rack", "outside",
+                               "problems", "rack_seen_un", "rack_unowned", "read_from", "ring_size", "run_unplaced",
                                "seen_from_run_only", "warnings"]
     example = cassandra_rack_verdict.__doc__.split("e.g.")[1]
     assert all(key + ":" in example for key in verdict) and verdict["rack_seen_un"] == ["n2", "n3"]
@@ -1316,6 +1316,7 @@ def test_a_node_left_out_not_placed_counts_with_the_node_of_the_run_not_placed(m
     variables = noted(read, names=names, hostvars=with_ids(hostvars, ["n2"]), play=["n1", "n2", "n4"])
     set_facts(AFTER, variables)
     assert variables["_cassandra_start_rack_last_verdict"]["problems"] == []
+    assert variables["_cassandra_start_rack_last_verdict"]["other_rack"] == [["n2", "dc1", "r9"]]
 
 
 def test_a_node_outside_the_rack_not_reached_known_by_a_dns_name_is_counted_at_once(monkeypatch):
@@ -1401,3 +1402,10 @@ def test_with_the_run_placed_by_host_id_a_node_left_out_down_at_no_known_address
     verdict = variables["_cassandra_start_rack_first_verdict"]
     assert verdict["problems"] == [] and verdict["left_out"] == [
         {"address": "2001:db8::3", "name": None, "states": ["DN"], "unplaced": ["n3"]}]
+
+
+def test_a_node_of_the_rack_in_another_rack_of_the_ring_is_said():
+    # the inventory puts n2 in r2, the ring in r9 (its rackdc file): "every node is UN: n2 n3", the disagreement
+    # never said (stop_rack's replica count for r2 is then wrong). Now a WARNING line under the success
+    problems, said = check(racks={"n2": "r9"})
+    assert problems == [] and said == EVERY + ["WARNING  n2 is in rack r9 (dc1) of the ring, r2 in the inventory"]
