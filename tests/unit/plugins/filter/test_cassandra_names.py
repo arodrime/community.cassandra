@@ -195,16 +195,20 @@ def _filter_names():
     return names
 
 
+HOW_TO_ADD = ("a new variable or fact: add its row to fixtures/known_names_rc1.txt; a word the playbooks write that is"
+              " no variable (a new filter): add it to cassandra_names.NOT_VARIABLES (the fixture's header says how)")
+
+
 def test_the_unknown_variable_check_knows_exactly_rc1s_names():
     # both ways: no name rc1 knew is unknown, no name rc1 reported unknown is let through
     from ansible_collections.community.cassandra.plugins.filter import cassandra_names
     known = cassandra_names._role_variables() | cassandra_names.used_names()
-    assert sorted(name for name in known if cassandra_names._NAME.match(name)) == sorted(_rc1_names("names"))
+    assert sorted(name for name in known if cassandra_names._NAME.match(name)) == sorted(_rc1_names("names")), HOW_TO_ADD
 
 
 def test_help_knows_exactly_rc1s_names():
     from ansible_collections.community.cassandra.plugins.filter import cassandra_help
-    assert sorted(cassandra_help._known_names()) == sorted(_rc1_names("help"))
+    assert sorted(cassandra_help._known_names()) == sorted(_rc1_names("help")), HOW_TO_ADD
 
 
 def test_each_check_reads_its_own_files(tmp_path, monkeypatch):

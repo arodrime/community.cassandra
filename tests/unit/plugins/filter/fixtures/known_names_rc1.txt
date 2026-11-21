@@ -1,5 +1,8 @@
-# The names 3.0.0-rc1 (085641dd) knew: the unknown-variable check (cassandra_names: names) and help's typo check
-# (cassandra_help: help), or both. The two know exactly these now, no fewer and no more (test_cassandra_names.py).
+# The names the first 3.0.0 release candidate (3.0.0-rc1, 085641dd) knew: the unknown-variable check (cassandra_names:
+# names) and help's typo check (cassandra_help: help), or both. The two know exactly these now, no fewer and no more
+# (test_cassandra_names.py). A new role variable (defaults, argument specs) or a new fact the playbooks set: add its
+# row, tagged both (or the one check the failing test names). A word the playbooks write that is no variable (a new
+# filter they call, a keyword): add it to NOT_VARIABLES in plugins/filter/cassandra_names.py instead.
 # <name><TAB>both|names|help
 cassandra_accept_default_identity	both
 cassandra_add_node_blocks	both
