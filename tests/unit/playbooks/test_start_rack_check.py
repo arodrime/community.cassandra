@@ -819,6 +819,10 @@ def test_a_node_that_stops_while_it_joins_is_said_with_its_journal():
     assert all(" ".join(line.split()) in text for line in journal)
     assert "cassandra-prod-node-017" in text and "exit-code" in text  # (never cut at a hyphen)
     assert all(x.startswith("    ") for x in lines[3:-6]) and lines[-3] == "WAY OUT  fix it, then run start_rack again:"
+    # the role's first line wrapped at 4, the journal under it at 6: its wrapped line was read as a journal line
+    assert lines[1:4] == ["  cassandra on cassandra-prod-node-017 is failed (failed, exit-code): it",
+                          "    stopped instead of joining. journalctl -u cassandra:",
+                          "      Nov 21 10:00:01 h-n2 cassandra[811]: ERROR [main] 2026-11-21 10:00:01,042"]
     assert max(len(x) for x in lines) <= 79
 
 

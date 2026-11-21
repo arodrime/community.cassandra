@@ -207,8 +207,8 @@ def _ring_states(reads):
 
 def _left_out_again(first_left_out, reads):
     """The first verdict's nodes left out by --limit not UN, the reads after the wait (cassandra_service_health_any_ok
-    kept them out of its findings) -> those nodes with their states in these reads: one UN in every read now left
-    out, one not in them (no ring read) as it was."""
+    kept them out of its findings) -> those nodes with their states in these reads: one UN in every read now
+    dropped, one not in them (no ring read) as it was."""
     states = _ring_states(reads)
     again = []
     for n in first_left_out or []:
@@ -506,7 +506,8 @@ _NOT_NORMAL = "Give up after cassandra_service_wait_timeout"
 def cassandra_rack_start_failed(result, task, node, rack, command=""):
     """The failed result of the cassandra_service role on a node of the rack (ansible_failed_result), the name of
     its task that failed, the node, its rack, the run's start_rack command -> the stop's lines, within 79 columns:
-    the role's message in full, indented (a list: its first line, then the next ones further in: the journal),
+    the role's message in full, indented (a list: its first line, then the next ones further in than its own
+    wrapped lines: the journal),
     then where to look (a command per line) and the way out with the command; not NORMAL at the end of the wait:
     what was seen ("not NORMAL after 600s ...: mode JOINING"), not "did not start" (it runs). Any other failure of
     the role (a refusal before the start: an account missing, a new seed): its message as it is, then, unless it
@@ -522,7 +523,7 @@ def cassandra_rack_start_failed(result, task, node, rack, command=""):
             said += ["WAY OUT  fix what the message above says, then run start_rack again:"] + again
         return out.fit(said, WIDTH)
     if isinstance(msg, (list, tuple)):
-        said = ["  " + str(msg[0])] + ["    " + str(line) for line in msg[1:]]
+        said = ["  " + str(msg[0])] + ["      " + str(line) for line in msg[1:]]
     else:
         said = ["  " + line for line in str(msg).split("\n")]
     said = [line.rstrip() for line in said if line.strip()]
