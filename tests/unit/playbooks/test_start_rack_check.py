@@ -1217,6 +1217,20 @@ def test_a_second_node_of_the_rack_read_from_is_waited_for_before_any_warning():
     assert problems == [] and said[3:5] == ["WARNING  the rest of the cluster:", "  n1  DN"]
 
 
+def test_a_node_outside_the_rack_not_reached_over_ssh_is_not_waited_for():
+    # a plain run, n1 and n4 (the other racks) powered off: not reached over ssh, so not read from; the first read's
+    # peer is n3, of the rack: n1 and n4 DN were waited for (cassandra_service_health_timeout, 10 minutes), then
+    # said. Now counted at once, as the guide says
+    variables = noted(ring(n1="DN", n4="DN"), unreached=["n1", "n4"])
+    assert variables["_cassandra_health_peer_host"] == "n3"
+    first = variables["_cassandra_start_rack_first_verdict"]
+    assert [n["name"] for n in first["outside"]] == ["n1", "n4"]
+    assert check_var("cassandra_service_health_any_ok", variables) == ["10.0.0.1", "10.0.0.4"]
+    problems, said = check(unreached=["n1", "n4"], n1="DN", n4="DN")
+    assert problems == [] and said[4:7] == ["WARNING  the rest of the cluster:", "  n1  DN  not reached over ssh",
+                                            "  n4  DN  not reached over ssh"]
+
+
 def test_a_node_left_out_known_by_its_address_with_no_node_to_start_is_not_a_start():
     # every node left out in the ring at an address of its own: "start 10.0.0.7: no host known by that address /
     # check it with nodetool status": a start heading over a check

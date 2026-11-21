@@ -32,7 +32,8 @@ at an address it gives:
     second one, or the checker (no node outside the rack          WARNING
     read, or its read failed); just started, it may still see
     a peer down
-  an outside node not reached over ssh                          WARNING
+  an outside node not reached over ssh                          WARNING, not
+                                                                  waited for
   nodetool failing on an outside node, a ring read from         WARNING
     another node
   a ring of another size than the inventory, the rack in        WARNING
@@ -247,14 +248,15 @@ def _left_out_names(left_out, addresses, reads):
 
 
 def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses=None, reads=None, schema=None,
-                           first_verdict=None, left_out=None):
+                           first_verdict=None, left_out=None, unreached=None):
     """cassandra_health_findings' result of a read, the rack's nodes (cassandra_rack_members), its dc and rack, the
     node of the rack read from (checker), the other node read from (peer), the addresses of every host and the
     cassandra_status results read (see _judge), the cassandra_schema result, first_verdict: this filter's result
     before the wait (None: this read is the one before the wait), left_out: the rack's nodes left out by --limit
-    (out of the play: this run does not start them) -> the module docstring's second table applied:
+    (out of the play: this run does not start them), unreached: the hosts not reached over ssh -> the module docstring's second table applied:
       outside: the nodes outside the rack not UN, [{address, name, states}], in the order seen. Before the wait,
-        those the peer saw so when it is outside the rack and its read did not fail; after it, those of any view, the ones of the first verdict first.
+        the ones not reached over ssh (unreached), and those the peer saw so when it is outside the rack and its
+        read did not fail; after it, those of any view, the ones of the first verdict first.
       failed: the nodes outside the rack whose nodetool status failed (the first verdict's too), when a ring was
         read.
       warnings: the other rows of the warning, [[name, fact]]: the nodes on another schema version (a node by its
@@ -347,11 +349,12 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
             notes.append(f)
         else:
             stops.append(f)
-    if first_verdict is None:  # before the wait: the nodes the counted view saw not UN when it is outside the rack;
-        # the others are waited for (a node of the rack read from, the checker too: just started, it may still see
-        # a peer down)
+    if first_verdict is None:  # before the wait: the nodes not reached over ssh, and the nodes the counted view saw
+        # not UN when it is outside the rack; the others are waited for (a node of the rack read from, the checker
+        # too: just started, it may still see a peer down)
         settled = counted_view not in (members or [])
-        outside = [n for n in outside if settled and counted_view in seen_by[n["address"]]]
+        outside = [n for n in outside if n.get("name") in (unreached or [])
+                   or (settled and counted_view in seen_by[n["address"]])]
     failed = (first_verdict or {}).get("failed", []) + [h for h in failed_on if ring_read and h not in (members or [])]
     seen_down = [f.get("name") for f in findings if f.get("kind") == "state" and str(f.get("state"))[:1] == "D"]
     names = _names(findings, addresses)

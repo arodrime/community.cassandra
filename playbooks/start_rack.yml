@@ -233,6 +233,7 @@
       reads: "{{ [cassandra_health_self | default({}), cassandra_health_peer | default({})] }}"  # (the rings read)
       schema: "{{ cassandra_health_schema | default({}) }}"
       left_out: "{{ _cassandra_start_rack_left_out }}"
+      unreached: "{{ _cassandra_start_rack_unreached }}"
     # the run's own command again (its inventory, cluster, --limit), for the way out of a stop; the same as the
     # rescue's _again in the play "Start the rack"
     _cassandra_start_rack_again: >-
@@ -327,8 +328,8 @@
         - inventory_hostname == _cassandra_start_rack_checker
         - not ansible_check_mode  # the rack was not started
 
-    # what it found, judged: the nodes outside the rack not UN for the node outside the rack read from (not
-    # waited for, below), the rest (waited for), why a node is judged of the rack, the nodes read from (kept: the
+    # what it found, judged: the nodes outside the rack not UN for the node outside the rack read from, or not
+    # reached over ssh (not waited for, below), the rest (waited for), why a node is judged of the rack, the nodes read from (kept: the
     # read below reads from others) (cassandra_rack_verdict)
     - name: Judge the first read
       ansible.builtin.set_fact:
