@@ -282,6 +282,22 @@ def test_a_step_that_does_not_help_says_why(tmp_path):
     assert "node1 chronyc makestep" in (fake / "log").read_text()
 
 
+def test_a_daemon_still_converging_after_the_wait_says_the_longer_wait(tmp_path):
+    # S28 audit 11 (adversarial B2): sync_clocks' clock_fix.yml waits on cassandra_clock_sync_timeout; a daemon
+    # still converging after it (2 s off, past a slew: stepped, read again): run again later, or raise the timeout
+    young = converging(62.04).replace("0.000100000 seconds fast", "2.000000000 seconds fast")
+    setup(tmp_path, {"node1": {"active": "chronyd", "tracking": young, "sources": SOURCES}})
+    rc, out = run(tmp_path, FIX)
+    assert rc == 0, out
+    assert "error=clock still not in sync after waiting up to 0s: " in out, out
+    assert "run again later, or raise cassandra_clock_sync_timeout" in out, out
+    # a clock off but settled (no wait helps): no such hint
+    (tmp_path / "settled").mkdir()
+    setup(tmp_path / "settled", {"node1": synced(2.0, "fast")})
+    rc, out = run(tmp_path / "settled", FIX)
+    assert rc == 0 and "error=clock still not in sync" in out and "raise cassandra_clock_sync_timeout" not in out, out
+
+
 def test_a_clock_in_sync_is_not_stepped(tmp_path):
     fake = setup(tmp_path, {"node1": synced()})
     rc, out = run(tmp_path, FIX)
@@ -317,18 +333,20 @@ def test_no_time_sync_offline_is_refused_by_sync_clocks(tmp_path):
 
 
 def test_the_warnings_of_clocks_in_sync_one_fact_per_line():
-    # S28 audit (C3): a node synchronised to a source ahead (the dates over SSH): its AHEAD warning of several
-    # facts, each on its own line under "WARNING  clocks: ", as the task's own template prints it
+    # S28 audit (C3): a node ahead by the dates over SSH (its daemon not synchronised): its AHEAD warning of
+    # several facts, each on its own line under "WARNING  clocks: ", as the task's own template prints it
     from ansible_collections.community.cassandra.tests.unit.playbooks.test_sync_clocks import render
-    from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_clocks import node, probe_text
+    from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_clocks import (
+        node, probe_text, TRACKING_UNSYNCED, SOURCES_NONE_REACHED)
     from ansible_collections.community.cassandra.plugins.filter.cassandra_clocks import cassandra_clock_verdicts
     with open(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "clocks_check.yml"), encoding="utf-8") as f:
         tasks = yaml.safe_load(f)[0]["block"]
     say = next(t for t in tasks if t["name"] == "Say what is to know about the clocks")
-    verdicts = cassandra_clock_verdicts([node("h-n1", probe_text()), node("h-n2", probe_text(), skew=5.0),
+    lost = probe_text(tracking_text=TRACKING_UNSYNCED, sources=SOURCES_NONE_REACHED)
+    verdicts = cassandra_clock_verdicts([node("h-n1", probe_text()), node("h-n2", lost, skew=5.0),
                                          node("h-n3", probe_text())])
-    assert verdicts["ok"]
     lines = render(say["ansible.builtin.debug"]["msg"], _cassandra_clock_verdicts=verdicts, _nl=say["vars"]["_nl"]).split("\n")
-    assert lines[0] == "WARNING  clocks: h-n2's clock is AHEAD by about 5.00 s (dates over SSH)"
+    assert lines[:2] == ["WARNING  clocks: h-n2's clock is AHEAD by about 5.00 s",
+                         "         by the dates over SSH, against h-n1, h-n3"]
     assert lines[-1] == "         check what was written through it lately"
     assert all(line.startswith(("WARNING  ", "         ")) and len(line) <= 79 for line in lines), lines
