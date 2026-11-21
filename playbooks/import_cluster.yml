@@ -704,9 +704,9 @@
       ansible.builtin.set_fact:
         import_cluster_jmx_files: >-
           {{ _live['cassandra-env.sh'] | default('') | community.cassandra.cassandra_jmx_files(
-               _live | dict2items | selectattr('key', 'match', 'jvm[0-9]*-server[.]options$') | items2dict,
-               import_cluster_jvm_cmdline.content | default('') | b64decode, import_cluster_conf_dir,
-               _live['cassandra.yaml'] | default('')) }}
+               options=_live | dict2items | selectattr('key', 'match', 'jvm[0-9]*-server[.]options$') | items2dict,
+               cmdline=import_cluster_jvm_cmdline.content | default('') | b64decode, conf_dir=import_cluster_conf_dir,
+               cassandra_yaml=_live['cassandra.yaml'] | default('')) }}
       no_log: "{{ not import_debug | default(false) | bool }}"  # the files read, on an error
       when: import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
       vars:
@@ -784,10 +784,11 @@
       ansible.builtin.set_fact:
         import_cluster_repo: >-
           {{ _files | community.cassandra.cassandra_repository_import(
-               _stats, import_cluster_series, ansible_facts['os_family'],
-               lookup('ansible.builtin.file', playbook_dir ~ '/../roles/cassandra_repository/files/KEYS', rstrip=false) | hash('sha1'),
-               import_cluster_packages, import_cluster_package_from_file | bool,
-               (lookup('ansible.builtin.file', playbook_dir ~ '/../roles/cassandra_repository/defaults/main.yml') | from_yaml).debian_packages) }}
+               stats=_stats, series=import_cluster_series, os_family=ansible_facts['os_family'],
+               shipped=lookup('ansible.builtin.file', playbook_dir ~ '/../roles/cassandra_repository/files/KEYS', rstrip=false) | hash('sha1'),
+               packages=import_cluster_packages, from_file=import_cluster_package_from_file | bool,
+               debian_packages=(lookup('ansible.builtin.file', playbook_dir ~ '/../roles/cassandra_repository/defaults/main.yml')
+                                | from_yaml).debian_packages) }}
       vars:
         _read: "{{ import_cluster_repo_slurp.results | default([]) | selectattr('content', 'defined') | list }}"
         _files: "{{ dict(_read | map(attribute='item') | zip(_read | map(attribute='content') | map('b64decode'))) }}"
@@ -842,11 +843,11 @@
           no_log: "{{ not import_debug | default(false) | bool }}"
           ansible.builtin.set_fact:
             import_cluster_config: >-
-              {{ _live | community.cassandra.cassandra_config_import(import_cluster_series, ansible_facts,
-                                                                     import_cluster_conf_target | default(''),
-                                                                     import_cluster_storage_dir | default(''),
-                                                                     import_cluster_jmx_files | default({}),
-                                                                     _release, '', '', _jvm) }}
+              {{ _live | community.cassandra.cassandra_config_import(
+                   cassandra_version=import_cluster_series, facts=ansible_facts,
+                   conf_target=import_cluster_conf_target | default(''),
+                   storage_dir=import_cluster_storage_dir | default(''),
+                   jmx_files=import_cluster_jmx_files | default({}), release=_release, jvm=_jvm) }}
           vars:
             # the cassandra.yaml keys are judged by the release the next start runs: the package installed
             # since Cassandra started (a restart pending), else the running one
@@ -933,8 +934,9 @@
     - name: Turn them into variables
       ansible.builtin.set_fact:
         import_cluster_perms: >-
-          {{ _file_stats | community.cassandra.cassandra_permissions_import(import_cluster_account, import_cluster_series,
-                                                                            _dir_stats, 'cassandra_jmx_users' in import_cluster_config.vars) }}
+          {{ _file_stats | community.cassandra.cassandra_permissions_import(
+               account=import_cluster_account, series=import_cluster_series, dirs=_dir_stats,
+               jmx='cassandra_jmx_users' in import_cluster_config.vars) }}
       vars:
         # the files by their name, then the dirs by their path (as read above; a stat that failed, e.g. a data dir
         # on NFS root can't read: none, left out)
@@ -1166,8 +1168,8 @@
                        | map(attribute='item')
                        | zip(import_cluster_existing_vars.results | default([]) | selectattr('content', 'defined')
                              | map(attribute='content') | map('b64decode')))
-                  | community.cassandra.cassandra_inventory_own_values(_layout.cluster_group,
-                      ['cassandra_cql_username', 'cassandra_cql_password'], _vault_secret | default('')) -%}
+                  | community.cassandra.cassandra_inventory_own_values(cluster_group=_layout.cluster_group,
+                      keys=['cassandra_cql_username', 'cassandra_cql_password'], password=_vault_secret | default('')) -%}
       {{ {'user': v.cassandra_cql_username | default('') | string, 'password': v.cassandra_cql_password | default('') | string} }}
     # cqlsh does not start on some nodes (seen at the read): a TO DO step, the two ways out
     _cqlsh_todo: >-
@@ -1175,8 +1177,8 @@
     # what is left to do about it (TO DO)
     _cql_todo: >-
       {{ cassandra_cql_login | default({}) | community.cassandra.cassandra_import_cql_todo(
-           _cql_on | bool, _cql_own, _layout.cluster_group, _cql_from, ansible_check_mode,
-           cassandra_operation_confirm | default(true)) }}
+           cql_on=_cql_on | bool, own=_cql_own, cluster_group=_layout.cluster_group, read_from=_cql_from,
+           check_mode=ansible_check_mode, confirm=cassandra_operation_confirm | default(true)) }}
     _cql_from: "{{ (_nodes | default([]) | selectattr('read') | first | default({})).name | default('') }}"
     # the self-check passed, or import_strict false takes its failure: the run writes the inventory and ends without
     # a stop of its own (the CQL login is asked then only)
@@ -1188,8 +1190,8 @@
                     | map(attribute='content') | map('b64decode')))
          | community.cassandra.cassandra_inventory_user_files(_layout, _vault_secret | default('')) }}
     _layout_over: >-
-      {{ _nodes | community.cassandra.cassandra_inventory_layout_over(_layout.cluster_name, _theirs, _dir,
-                                                                     _layout.cluster_group) }}
+      {{ _nodes | community.cassandra.cassandra_inventory_layout_over(
+           cluster_name=_layout.cluster_name, user_files=_theirs, inventory_dir=_dir, group=_layout.cluster_group) }}
     # what the playbooks are run with on this inventory: no -i when it is ansible.cfg's, no -e cassandra_hosts
     # when it holds this cluster alone (no other inventory file at its top)
     _next_inventory: "{{ '' if lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') | map('realpath') | list == [_dir] else _dir }}"
@@ -1241,8 +1243,9 @@
       look: "{{ _look }}"
       run_time: "{{ _import_run_time | default('') }}"  # (the head of each report: rewritten at each run)
     _report: >-
-      {{ _layout | community.cassandra.cassandra_import_report(_report_args.written, _report_args.report_file,
-           _self_check | default({}), _self_check_ok | bool, secrets_clear=_report_args.secrets_clear,
+      {{ _layout | community.cassandra.cassandra_import_report(written=_report_args.written,
+           report_file=_report_args.report_file, self_check=_self_check | default({}), self_check_ok=_self_check_ok | bool,
+           secrets_clear=_report_args.secrets_clear,
            leftovers=_leftovers | default({}), check=_report_args.check | bool,
            inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
            allow_unread=_report_args.allow_unread | bool,
@@ -1251,8 +1254,9 @@
            convergence=_convergence) | join(_newline) }}
     # report.details.txt: what report.txt leaves out (the settings, versions, convergence, OS, each node's lines)
     _report_details: >-
-      {{ _layout | community.cassandra.cassandra_import_report(_report_args.written, _report_args.report_file,
-           _self_check | default({}), _self_check_ok | bool, secrets_clear=_report_args.secrets_clear,
+      {{ _layout | community.cassandra.cassandra_import_report(written=_report_args.written,
+           report_file=_report_args.report_file, self_check=_self_check | default({}), self_check_ok=_self_check_ok | bool,
+           secrets_clear=_report_args.secrets_clear,
            leftovers=_leftovers | default({}), check=_report_args.check | bool,
            inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
            allow_unread=_report_args.allow_unread | bool,
@@ -1320,9 +1324,11 @@
           ansible.builtin.set_fact:
             _nodes: >-
               {{ _ring | community.cassandra.cassandra_import_nodes(
-                   hostvars | community.cassandra.cassandra_import_host_vars(_given + _found + _ring | map(attribute='address') | list),
-                   _given, _found, _jmx, _java_default, import_host_names | default('hostname'),
-                   import_set_ansible_host | default(true), import_keep_hand_edits | default(false)) }}
+                   data=hostvars | community.cassandra.cassandra_import_host_vars(_given + _found + _ring | map(attribute='address') | list),
+                   given=_given, found=_found, jmx=_jmx, java_default=_java_default,
+                   host_names=import_host_names | default('hostname'),
+                   set_ansible_host=import_set_ansible_host | default(true),
+                   keep_hand_edits=import_keep_hand_edits | default(false)) }}
           vars:
             _found: "{{ groups['import_cluster_found'] | default([]) }}"
 
@@ -1538,9 +1544,9 @@
       no_log: "{{ not import_debug | default(false) | bool }}"
       ansible.builtin.set_fact:
         _nodes: >-
-          {{ _nodes | community.cassandra.cassandra_import_kept_ansible_host(import_cluster_existing_text, _hosts_file,
-                                                                           _layout.cluster_group, _layout.names,
-                                                                           _vault_secret | default('')) }}
+          {{ _nodes | community.cassandra.cassandra_import_kept_ansible_host(
+               read=import_cluster_existing_text, hosts_file=_hosts_file, cluster_group=_layout.cluster_group,
+               names=_layout.names, password=_vault_secret | default('')) }}
       when: import_set_ansible_host is not defined
 
     # the user's own variables files there (group_vars/all...) apply to these hosts too: a value of theirs that
@@ -1574,8 +1580,8 @@
           ansible.builtin.set_fact:
             _self_check: >-
               {{ (_user_files | default([]) + _files) | community.cassandra.cassandra_import_self_check_nodes(
-                   _layout.hosts, _nodes, _layout.names,
-                   hostvars | community.cassandra.cassandra_import_host_vars(_nodes | selectattr('read') | map(attribute='host') | list),
+                   hosts=_layout.hosts, nodes=_nodes, names=_layout.names,
+                   data=hostvars | community.cassandra.cassandra_import_host_vars(_nodes | selectattr('read') | map(attribute='host') | list),
                    inventory_dir=_dir) }}
       rescue:
         - name: Keep why for the report
@@ -1670,10 +1676,10 @@
         - name: Sort out the files an earlier import wrote
           ansible.builtin.set_fact:
             _leftovers: >-
-              {{ _found | community.cassandra.cassandra_inventory_leftovers(_read, _written, _layout.cluster_group,
-                                                                             _vault_secret | default(''),
-                                                                             _layout.hosts, _layout.cluster_name,
-                                                                             import_adopt | default(false) | bool) }}
+              {{ _found | community.cassandra.cassandra_inventory_leftovers(
+                   read=_read, written=_written, cluster=_layout.cluster_group, password=_vault_secret | default(''),
+                   inventory=_layout.hosts, cluster_name=_layout.cluster_name,
+                   adopt=import_adopt | default(false) | bool) }}
           vars:
             # (not the report, when import_report_dir puts it there: written again below)
             _found: "{{ import_cluster_existing.files | default([]) | map(attribute='path') | map('relpath', _dir)
@@ -1856,8 +1862,8 @@
     - name: Make the shareable copy of the report
       ansible.builtin.set_fact:
         _import_shareable: >-
-          {{ (_report ~ _newline ~ _newline ~ _report_details) | community.cassandra.cassandra_import_shareable(_layout, _report_args.written,
-               _report_args.report_file, _report_args.cwd) }}
+          {{ (_report ~ _newline ~ _newline ~ _report_details) | community.cassandra.cassandra_import_shareable(
+               layout=_layout, written=_report_args.written, report_file=_report_args.report_file, cwd=_report_args.cwd) }}
       when: import_report_shareable | default(false) | bool
 
     # the shareable copy and key an earlier import wrote (each known by its first line, the import's own), read
@@ -1872,7 +1878,8 @@
       ansible.builtin.set_fact:
         _import_old_shareable: >-
           {{ _report_args.report_file | dirname | community.cassandra.cassandra_import_old_shareable(
-               _layout.cluster_group, now(fmt='%Y-%m-%d@%H:%M:%S'), _on, _new, ansible_check_mode) }}
+               cluster=_layout.cluster_group, stamp=now(fmt='%Y-%m-%d@%H:%M:%S'), shareable=_on, new=_new,
+               check=ansible_check_mode) }}
       vars:
         _stem: "{{ (_report_args.report_file | basename | regex_replace('[.]txt$', '')) ~ '.shareable.' }}"
         _on: "{{ import_report_shareable | default(false) | bool }}"
@@ -1899,7 +1906,8 @@
       ansible.builtin.debug:
         msg: >-
           {{ _said | community.cassandra.cassandra_import_old_shareable_lines(
-               _report_args.report_file | dirname, _layout.cluster_group, import_report_shareable | default(false) | bool) }}
+               report_dir=_report_args.report_file | dirname, cluster=_layout.cluster_group,
+               shareable=import_report_shareable | default(false) | bool) }}
       when: _said | length > 0
       vars:
         cassandra_output: true
@@ -1983,8 +1991,9 @@
     - name: Show the summary
       ansible.builtin.debug:
         msg: >-
-          {{ _layout | community.cassandra.cassandra_import_report(_report_args.written, _report_args.report_file,
-               _self_check | default({}), _self_check_ok | bool, secrets_clear=_report_args.secrets_clear,
+          {{ _layout | community.cassandra.cassandra_import_report(written=_report_args.written,
+               report_file=_report_args.report_file, self_check=_self_check | default({}), self_check_ok=_self_check_ok | bool,
+               secrets_clear=_report_args.secrets_clear,
                leftovers=_leftovers | default({}), check=_report_args.check | bool,
                inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
                allow_unread=_report_args.allow_unread | bool,
