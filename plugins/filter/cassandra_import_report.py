@@ -964,12 +964,18 @@ def report_sections(layout, self_check):
             "groups": named_groups(nodes), "everyone": [n["name"] for n in nodes]}
 
 
-# what every section of the report reads: the layout, its nodes (read, unread, their names), the groups node lists
-# are said by, the group chains of the hosts, the options (full: every node named; screen; check; cwd: paths shown
-# relative to it), the values of yours that differ and whether they all are in group_vars/all (standard), the
-# names already said in plain words (said, filled as the report goes)
+# what every section of the report reads (built once by cassandra_import_report, with keywords):
+# - layout: cassandra_inventory_layout's;
+# - read, unread: its nodes read and not read; names: the names of those read; everyone: the name of every node;
+# - groups: the groups a list of nodes is said by (named_groups); chains: {host: its groups, outermost first};
+# - full: every node named in a list of nodes (the report; the screen shortens them); width: of the lines;
+# - screen: the end of the run, not report.txt; check: --check; cwd: the paths are shown relative to it;
+# - yours: the values of yours that differ;
+# - said: the words already said in plain words (a set filled as the report goes, _say);
+# - report_name: report.txt's path as shown; inventory, hosts: the -i and -e cassandra_hosts of the next commands;
+# - when: the time the run started, as the head line shows it ('': not given); build: the "made by:" label ('').
 _Report = namedtuple("_Report", "layout read unread names everyone groups chains full width screen check cwd"
-                                " yours standard said report_name inventory hosts when build")
+                                " yours said report_name inventory hosts when build")
 
 
 def _who(report, members, full=None):
@@ -1017,12 +1023,6 @@ def _placed(report, key, members):
                      if f.startswith("group_vars/") and "/" not in f[len("group_vars/"):] else f for f in found)
 
 
-def _standard(yours):
-    """yours: the values of yours that differ -> whether they all are in group_vars/all (a standard of yours)."""
-    alls = ("group_vars/all", "group_vars/all.yml", "group_vars/all.yaml", "group_vars/all.json")
-    return bool(yours) and all("/".join(y["path"].split("/")[:2]) in alls for y in yours)
-
-
 def _inventory_changes(changes):
     """What changes in the inventory dir: changes (None: not known) -> (changed, removed, same: nothing changes),
     changed and removed None when not known."""
@@ -1039,12 +1039,12 @@ _Step = namedtuple("_Step", "title why run then")
 
 
 def _todo_steps(report, allow_unread, self_check_ok, self_check_error, check_items, secrets_clear, leftovers,
-                inventory_dir, more, in_git, inventory, hosts, strict=False):
+                inventory_dir, more, in_git, strict=False):
     """The TO DO steps, the most urgent first: the nodes not read, the settings their Cassandra rejects, the self-check
     that failed, your files that still win, the secrets written in clear, the files of an earlier import of an
-    unknown cluster, the playbook's own (more: the CQL login) -> [_Step]. Paths from the current dir; inventory,
-    hosts: the import command again (as the next playbooks are run)."""
-    again = unbreakable(out.command("import_cluster", inventory=inventory or None, hosts=hosts or None,
+    unknown cluster, the playbook's own (more: the CQL login) -> [_Step]. Paths from the current dir; the import
+    command again with the report's inventory and hosts (as the next playbooks are run)."""
+    again = unbreakable(out.command("import_cluster", inventory=report.inventory or None, hosts=report.hosts or None,
                                     extra=["-e import_force=true"], cwd=report.cwd))
     steps = _unread_step(report, again) if report.unread and not allow_unread else []
     steps += _not_settings_steps(report)
@@ -1067,7 +1067,7 @@ def _todo_steps(report, allow_unread, self_check_ok, self_check_error, check_ite
             " remove it; if not, leave it",
             unbreakable("%s %s" % ("git rm" if git else "rm", paths)),
             "the next import no longer lists it"))
-    return steps + [_playbook_step(report, text, inventory, hosts) for text in more]
+    return steps + [_playbook_step(report, text) for text in more]
 
 
 def _unread_step(report, again):
@@ -1126,7 +1126,7 @@ def _secrets_step(report, secrets_clear, inventory_dir):
         "%s shows $ANSIBLE_VAULT;1.1;AES256" % unbreakable("head -1 %s" % paths.split(" ", maxsplit=1)[0]))
 
 
-def _playbook_step(report, text, inventory, hosts):
+def _playbook_step(report, text):
     """A step of the playbook's own (more): a text, or a step {title, why, run, then} (why, run: a text or rows); in
     its texts {nodes:<name>} is the step's nodes[name] in their short form, {command:<name>} its commands[name]
     ({playbook, extra}) as the next playbooks are run, never cut -> _Step."""
@@ -1139,7 +1139,7 @@ def _playbook_step(report, text, inventory, hosts):
         for name, members in (step.get("nodes") or {}).items():
             rows = [r.replace("{nodes:%s}" % name, _who(report, list(members))) for r in rows]
         for name, spec in (step.get("commands") or {}).items():
-            command = unbreakable(out.command(spec.get("playbook"), inventory=inventory or None, hosts=hosts or None,
+            command = unbreakable(out.command(spec.get("playbook"), inventory=report.inventory or None, hosts=report.hosts or None,
                                               extra=spec.get("extra") or [], cwd=report.cwd))
             rows = [r.replace("{command:%s}" % name, command) for r in rows]
         return rows if isinstance(value, list) else rows[0]
@@ -2052,7 +2052,7 @@ def _apply_config_expects(files, heap_moved, rewrites, dormant=()):
 
 
 def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, changes, changed, removed, same, jvm_files,
-                inventory, hosts, rewrites=False):
+                rewrites=False):
     """WHAT TO DO NEXT: the next steps, numbered, each command on a line of its own under its step, what it should
     show under it -> [line]. "none of it stops you" only when the self-check passed."""
     items = []  # (text, [(command, expected)])
@@ -2071,9 +2071,9 @@ def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, ch
                       else "Review the files written in %s." % out.path_from(inventory_dir, report.cwd), []))
     if self_check_ok:
         heap_moved = [line for n in report.read for line in n.get("normalized") or [] if line.endswith(HEAP_MOVED)]
-        apply_check = out.command("apply_config", inventory=inventory or None, hosts=hosts or None,
+        apply_check = out.command("apply_config", inventory=report.inventory or None, hosts=report.hosts or None,
                                   extra=["--check", "--diff"], cwd=report.cwd)
-        topology = out.command("topology", inventory=inventory or None, hosts=hosts or None, extra=["--check"],
+        topology = out.command("topology", inventory=report.inventory or None, hosts=report.hosts or None, extra=["--check"],
                                cwd=report.cwd)
         items.append(("Check that the inventory changes nothing on the nodes (both commands only look):",
                       [(apply_check, _apply_config_expects(jvm_files, bool(heap_moved), rewrites, _dormant(report))),
@@ -2208,11 +2208,13 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     width = int(width) if width else (terminal_width() if screen else REPORT_WIDTH)
     data = report_sections(layout, self_check)
     yours = layout.get("yours") or []
-    report = _Report(layout, read, [n for n in nodes if n not in read], [n["name"] for n in read], data["everyone"],
-                     data["groups"], group_chains(layout.get("hosts") or {}), not screen, width, screen, check, cwd,
-                     yours, _standard(yours), set(), out.path_from(report_file, cwd), inventory, hosts,
-                     out.clock(float(run_time), now=0) if run_time not in (None, "") else "",
-                     cassandra_build.label() if boolean(build, strict=False) else "")
+    report = _Report(layout=layout, read=read, unread=[n for n in nodes if n not in read],
+                     names=[n["name"] for n in read], everyone=data["everyone"], groups=data["groups"],
+                     chains=group_chains(layout.get("hosts") or {}), full=not screen, width=width, screen=screen,
+                     check=check, cwd=cwd, yours=yours, said=set(), report_name=out.path_from(report_file, cwd),
+                     inventory=inventory, hosts=hosts,
+                     when=out.clock(float(run_time), now=0) if run_time not in (None, "") else "",
+                     build=cassandra_build.label() if boolean(build, strict=False) else "")
     changed, removed, same = _inventory_changes(changes)
     moves = sorted({f for n in read for f in n.get("rewritten") or []})
 
@@ -2220,8 +2222,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
         return _finished(_details_report(report, data, layout, self_check, leftovers, convergence, cluster), width,
                          False)
     steps = _todo_steps(report, allow_unread, self_check_ok, self_check_error, data["check_items"], secrets_clear,
-                        leftovers, inventory_dir, list(todo or []), in_git, inventory, hosts,
-                        boolean(strict, strict=False))
+                        leftovers, inventory_dir, list(todo or []), in_git, boolean(strict, strict=False))
     differs = _differs(report, data["settings"])
     reviews = _review_blocks(report, data, differs, allow_unread, look,
                              below=not self_check_ok and (not screen or boolean(strict, strict=False)))
@@ -2261,8 +2262,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     if UNREAD in blocks:
         lines += ["", "NODES NOT READ"] + blocks[UNREAD]
     lines += [""] + _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, changes, changed,
-                                removed, same, _jvm_rewrites(report, self_check), inventory, hosts,
-                                rewrites=bool(rewrites))
+                                removed, same, _jvm_rewrites(report, self_check), rewrites=bool(rewrites))
     details_file = re.sub(r"\.txt$", "", report_file) + ".details.txt"
     if screen:
         lines += ["", "details: %s" % out.path_from(details_file, cwd),
