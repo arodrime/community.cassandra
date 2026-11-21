@@ -394,7 +394,9 @@
 
     # a node of the run whose Host ID the first verdict has not (nodetool info failing: its JVM down, waited for
     # above while the ring sees it down): read again on that node only (a good first read kept), the last verdict
-    # judged with it
+    # judged with it. With no wait (the ring saw it UN), the ring read judged is the one before: no ring read after
+    # this one would tell more (a node whose JVM restarts is still UN for the others until they convict it), and
+    # systemd restarts Cassandra 30s after it died, if at all (cassandra.service's RestartSec), past this read
     - name: Read the Host ID again of the nodes of the run
       ansible.builtin.command: "{{ _cassandra_service_nodetool }} info"
       register: _cassandra_start_rack_info_again

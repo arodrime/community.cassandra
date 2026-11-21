@@ -4,10 +4,9 @@ __metaclass__ = type
 # start_rack's check: the rack is checked from one of its nodes and must be UN;
 # a node outside the rack not UN (down, joining, leaving, moving...) or not
 # reached over ssh is said in a warning and does not stop the run (waited for
-# first when only nodes of the rack saw it so). A node that may be of the rack
-# (the inventory, the ring, or no host known by its address while a node of the
-# run is not placed and the count allows it) is judged as one: the tables of the
-# cassandra_start_rack filter. The expressions are read from the playbook,
+# first when only nodes of the rack saw it so). A node the inventory or the ring
+# puts in the rack is judged as one (unless it may be a node left out by
+# --limit): the tables of the cassandra_start_rack filter. The expressions are read from the playbook,
 # rendered by Ansible, with the findings cassandra_health_findings gives; the
 # ssh probe is run by ansible-playbook on local hosts and one not reached.
 
@@ -420,8 +419,6 @@ def test_a_node_of_the_run_no_host_is_known_by_the_address_of_is_placed_by_its_h
     assert check(names=names, n3="DN") == (["n3 (10.0.0.3, r2) is DN, seen from n1 and n2"], None)
     assert check(names=names, racks={"n3": "r9"}, n3="DN") == (["n3 (10.0.0.3, r9) is DN, seen from n1 and n2"], None)
     assert check(names=names) == ([], EVERY)
-    assert "Say the nodes judged as the rack's for want of a host known by their address" not in NAMES
-    assert "_cassandra_health_why" not in TASKS[STOP]["vars"]
 
 
 def test_a_node_outside_the_rack_no_host_is_known_by_is_a_warning_when_every_rack_node_is_in_the_ring():
@@ -1349,14 +1346,9 @@ def test_two_hosts_giving_the_same_address_do_not_stop_the_run():
     # address: the run was refused before any start ("give each host its own address"), for hosts outside the rack
     # too, with no way out when the address is right (a NAT, two regions on one private range). Each node of the
     # run is placed by its Host ID: the check tells them apart, no refusal
-    from ansible_collections.community.cassandra.plugins.filter import cassandra_start_rack
     hostvars = with_ids(with_addresses(ADDRESSES), ["n2", "n3"])
     hostvars["n3"]["cassandra_listen_address"] = "10.0.0.2"
     assert check(hostvars=hostvars) == ([], EVERY)
-    with open(os.path.join(TOP, "playbooks", "start_rack.yml"), encoding="utf-8") as f:
-        start = next(p for p in yaml.safe_load(f) if p.get("name") == "Start the rack")
-    assert "Stop when two hosts give the same address" not in [t["name"] for t in start["tasks"]]
-    assert not hasattr(cassandra_start_rack, "cassandra_rack_shared_addresses")
 
 
 def test_an_address_several_hosts_give_is_placed_by_their_inventory_rack():
@@ -1534,6 +1526,18 @@ def test_a_node_of_the_run_whose_host_id_is_not_read_is_waited_for_then_read_aga
     infos = render(PLAY["vars"]["_cassandra_start_rack_filter_args"]["infos"], hostvars=hostvars,
                    _cassandra_start_rack_members=["n2", "n3"])
     assert infos["n2"]["stdout"] == infos["n3"]["stdout"] == ok["stdout"]
+
+
+def test_a_host_id_is_compared_ignoring_case():
+    # nodetool prints a UUID lower-case on both sides; a wrapper upper-casing its output made n2 "not in the ring
+    # read" (a stop on a node UN). Now compared lower-case
+    hostvars = with_addresses(ADDRESSES)
+    hostvars["n2"]["_cassandra_start_rack_info"] = {"rc": 0, "stdout": "ID  : HID-N2"}
+    assert check(hostvars=hostvars) == ([], EVERY)
+    read = ring(n2="DN")
+    read["cluster_status"]["dc1"]["nodes"][1]["host_id"] = "HID-N2"
+    hostvars["n2"]["_cassandra_start_rack_info"] = {"rc": 0, "stdout": "ID  : hid-n2"}
+    assert check_ring(read, hostvars=hostvars)[0] == ["n2 (10.0.0.2, r2) is DN, seen from n2 and n3"]
 
 
 def test_the_host_id_reads_are_bound_in_time():

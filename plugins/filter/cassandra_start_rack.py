@@ -27,6 +27,10 @@ Which rack a node of the ring is of (_judge), the first rule that matches:
     rack by the ring
   any other                                                     outside
 
+While a node of the run is not placed (its Host ID not read), a ring node of the rack no host is known by is of the
+rack, so waited for while down, even when it may be a node left out: it may be that node of the run too (the run
+stops on it anyway, after the wait).
+
 What the check does with what it finds (cassandra_rack_verdict); "the rack is placed": every node of the rack is:
 
   found                                                         outcome
@@ -138,27 +142,30 @@ def _first_line(*texts):
 
 def _host_ids(infos, run, rack):
     """{node of the run: its nodetool info result (rc, stdout, stderr, msg)}, the nodes of the run, the rack ->
-    ({Host ID: node} of those whose output gives one of its own, {node: the lines of the stop on it} of the others:
-    no Host ID read, or one another node of the run gives too)."""
-    by_id, unread = {}, {}
+    ({Host ID, lower-case: node} of those whose output gives one of its own, the others in run order (no Host ID
+    read, or one another node of the run gives too), the lines of the stop on them)."""
+    by_id, unread, lines = {}, [], []
     for h in run:
         info = (infos or {}).get(h) or {}
         found = re.findall(r"(?m)^ID\s*:\s*(\S+)", str(info.get("stdout") or ""))
         error = _first_line(info.get("stderr"), info.get("msg"))
         if found:
-            by_id.setdefault(found[0], []).append(h)
-        elif info.get("rc") == 0 or (info.get("stdout") and not error):
-            unread[h] = ["%s (rack %s): nodetool info on it gives no ID line" % (h, rack)]
+            by_id.setdefault(found[0].lower(), []).append(h)
+            continue
+        unread.append(h)
+        if info.get("rc") == 0 or (info.get("stdout") and not error):
+            lines.append("%s (rack %s): nodetool info on it gives no ID line" % (h, rack))
         elif error:
-            unread[h] = ["%s (rack %s): nodetool info failed on it:" % (h, rack), "  " + error]
+            lines += ["%s (rack %s): nodetool info failed on it:" % (h, rack), "  " + error]
         else:
-            unread[h] = ["%s (rack %s): its Host ID is not read (nodetool info on it)" % (h, rack)]
+            lines.append("%s (rack %s): its Host ID is not read (nodetool info on it)" % (h, rack))
     for host_id, hosts in by_id.items():
         if len(hosts) > 1:  # (one JVM answering for both: a nodetool wrapper, a JMX port)
-            unread.update((h, []) for h in hosts)
-            unread[hosts[0]] = ["%s (rack %s): nodetool info on each gives one Host ID:" % (
-                " and ".join(hosts), rack), "  " + host_id]
-    return dict((i, hosts[0]) for i, hosts in by_id.items() if len(hosts) == 1), unread
+            unread += hosts
+            lines += ["%s (rack %s): nodetool info on each gives one Host ID:" % (" and ".join(hosts), rack),
+                      "  " + host_id]
+    return (dict((i, hosts[0]) for i, hosts in by_id.items() if len(hosts) == 1),
+            [h for h in run if h in unread], lines)
 
 
 def _givers(addresses, givers):
@@ -193,7 +200,7 @@ def _placement(reads, run, addresses, ids, racks, givers):
     inventory host}: the module docstring's placement."""
     ring = _unique(n[0] for n in _ring_nodes(reads))
     where = set(n[:3] for n in _ring_nodes(reads))  # (address, dc, rack)
-    host_at = dict((n[0], ids[n[4]]) for n in _ring_nodes(reads) if n[4] in ids)
+    host_at = dict((n[0], ids[str(n[4]).lower()]) for n in _ring_nodes(reads) if str(n[4]).lower() in ids)
     for address in ring:
         host = _giver(address, givers.get(address) or [[], []], where, racks)
         if host and address not in host_at and host not in run:
@@ -420,7 +427,7 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
     read_from: ["n2", "n1"], seen_from_run_only: [], left_out: [], not_readers: ["n4"]}."""
     members, left_out = list(members or []), list(left_out or [])
     run = [h for h in members if h not in left_out]
-    ids, unread = _host_ids(infos, run, rack)
+    ids, unread, unread_lines = _host_ids(infos, run, rack)
     givers = _givers(addresses, givers)
     host_at = _placement(reads, run, addresses, ids, racks, givers)
     names = _unread_named(host_at, reads, givers, racks, unread)
@@ -451,7 +458,7 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
             notes.append(f)
         else:
             stops.append(f)
-    problems = cassandra_health_sentences(stops) + [line for h in run if h in unread for line in unread[h]]
+    problems = cassandra_health_sentences(stops) + unread_lines
     if unread:
         problems.append("the check places each node of the run in the ring by its Host ID")
     problems += ["%s (rack %s) is not in the ring read: no node there has its Host ID (nodetool info on it)" % (
@@ -469,7 +476,7 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
             "other_rack": _other_rack(reads, host_at, members, dc, rack),
             "ring_size": _unique(ring_size),
             "problems": problems,
-            "host_id_unread": [h for h in run if h in unread],
+            "host_id_unread": unread,
             "rack_seen_un": _rack_seen_un(reads, host_at, members, dc, rack),
             "read_from": read_from,
             "seen_from_run_only": _seen_from_run_only(read_from, run, addresses),
