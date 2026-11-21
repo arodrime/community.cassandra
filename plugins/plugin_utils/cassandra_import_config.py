@@ -31,11 +31,12 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_settings i
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
-    ADDRESSES, ALWAYS, APPENDERS, as_text, AUDIT_PARAMETERS, branch_not_run_note, BY_PATH, role_default, earlier_env,
-    earlier_env_not_shown, END_KEYS, env_cmdline, error_without_message, extra_settings, G1_TUNING, HEAP_OPTIONS,
-    HOSTNAME, IDENTITY, IDENTITY_OPTIONAL, import_file, INTEGERS, IPV4, leftovers, load_role, merge,
-    NOT_RUNNING_OR_CHANGED, parameter_patterns, properties, RACKDC, render_template, ROLE, same_value, SERIES,
-    set_parameters, snitch_reads_rackdc, STORAGE_DIRS, top_blocks, undefined_name, without_file_hunks)
+    ALWAYS, APPENDERS, as_text, AUDIT_PARAMETERS, branch_not_run_note, BY_PATH, role_default, earlier_env,
+    earlier_env_not_shown, END_KEYS, env_cmdline, extra_settings, G1_TUNING, HEAP_OPTIONS, IDENTITY, IDENTITY_OPTIONAL,
+    import_file, INTEGERS, leftovers, load_role, merge, NOT_RUNNING_OR_CHANGED, parameter_patterns, properties, RACKDC,
+    render_template, same_value, set_parameters, snitch_reads_rackdc, STORAGE_DIRS, top_blocks, without_file_hunks)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_common import (
+    ADDRESSES, error_without_message, HOSTNAME, IPV4, ROLE, SERIES, undefined_name)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import (
     keep_files_option, move_secrets)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_jvm import (

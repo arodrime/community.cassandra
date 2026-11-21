@@ -26,7 +26,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import_rep
     cassandra_import_report)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     cassandra_config_import, cassandra_inventory_layout, cassandra_jmx_files)
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import IPV4
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_common import IPV4
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_config import JMX_FILES_UNREAD_NOTE
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import cassandra_same_settings
 

@@ -14,7 +14,7 @@ __metaclass__ = type
 
 import re
 
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import SERIES
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_common import SERIES
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import nodes
 
 NAMES = {"dse": "DataStax Enterprise", "scylla": "ScyllaDB"}

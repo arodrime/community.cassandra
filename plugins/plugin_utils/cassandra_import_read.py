@@ -3,13 +3,11 @@
 """The import (import_cluster): a node's config file read against the role's template of it.
 
 load_role, render_template, import_file, _read_changed_lines: the variables that give the node's lines, the hand edits
-left over, and the settings compared as Cassandra reads them (YAML, shell, properties, XML). Also the constants
-the other import modules share, and the import's error rules (values_hidden, error_without_message): an
-unexpected error never shows its message, which may quote a value read from a node.
+left over, and the settings compared as Cassandra reads them (YAML, shell, properties, XML). Also the constants of
+the files read that the other import modules use (the settings a node keeps for life, the snippets' end keys, the
+heap options...). What every import module shares, and the import's error rules, are in cassandra_import_common.
 
-Filter (plugins/filter/cassandra_import.py names the filters):
-cassandra_import_error: a failed task's result -> why it failed, without the
-    values (the import's no_log tasks hold passwords).
+No filter of its own.
 """
 
 from __future__ import absolute_import, division, print_function
@@ -22,9 +20,7 @@ import json
 import os
 import re
 import shlex
-import sys
 import textwrap
-import traceback
 import xml.etree.ElementTree as ET
 from collections import namedtuple
 
@@ -32,7 +28,6 @@ import jinja2
 import jinja2.sandbox
 import yaml
 
-from ansible.errors import AnsibleFilterError, AnsibleUndefinedVariable
 from ansible.module_utils.parsing.convert_bool import boolean
 from ansible.plugins.filter.core import regex_replace
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
@@ -41,17 +36,16 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_settings i
     former_value, jvm_options_settings, quantity, stock_when_absent, without_later_stock, shell_words, xml_settings,
     yaml_settings)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_common import ROLE, SERIES, value_shown
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_secrets
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 
 
-ROLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "cassandra_config")
 EXPR = re.compile(r"(\{\{.*?\}\})")
 V = r"\(?(\w+)(?: \| default\(\w+\))?\)?"  # var, or (per-file var | default(common var))
 # A password, single-quoted unless YAML reads it back as written (_cassandra_config_quote)
 QUOTED = r"""\((\w+)(?: or '[^']*')?\) \| regex_replace\("'", "''"\) \| regex_replace\(_cassandra_config_quote, "'\\\\1'"\)"""
-SERIES = {"40x": "4.0", "41x": "4.1", "50x": "5.0"}
 # Written even when equal to the role default: a node keeps them for life, so a
 # role default changing in a later release must not change them
 ALWAYS = ["cassandra_cluster_name", "cassandra_seeds", "cassandra_endpoint_snitch", "cassandra_num_tokens",
@@ -84,44 +78,15 @@ INTEGERS = ("cassandra_num_tokens", "cassandra_allocate_tokens_for_local_replica
             "cassandra_audit_max_queue_weight", "cassandra_audit_max_log_size")
 
 
-# The node's own address or name: written as the fact that gives it
-ADDRESSES = ["cassandra_listen_address", "cassandra_rpc_address",
-             "cassandra_broadcast_address", "cassandra_broadcast_rpc_address", "cassandra_jmx_rmi_hostname"]
 # cassandra-rackdc.properties' dc= and rack= lines, apart from the node's dc and rack
 # (cassandra_dc/_rack, the ring's) under a snitch that doesn't read them
 RACKDC = ("cassandra_rackdc_dc", "cassandra_rackdc_rack")
-# What the roles leave as it is on a node set up another way (host_vars only:
-# a node added later gets it from the roles)
-# Written next to the switches below when one of those a blank host would miss
-# is set (all but the repositories): add_node refuses a blank host rebuilt
-# under that node's name
-IMPORTED = "cassandra_imported_host"
-IMPORTED_FOR = ("cassandra_cqlsh_python_manage", "cassandra_linux_manage", "cassandra_service_unit_manage")
-KEEP = {
-    "cassandra_repository_manage": "the package repositories",
-    "cassandra_cqlsh_python_manage": "cqlsh's Python (python3.11, cqlshlib link, wrapper)",
-    "cassandra_linux_manage": "the OS settings (kernel, limits, THP, swap, time sync, disks)",
-    "cassandra_service_unit_manage": "the systemd unit (or init script) Cassandra is started by",
-    "cassandra_java_set_default": "the system java (/usr/bin/java), which is not the running one",
-    "cassandra_firewall_manage": "the firewall (its package, service and ports), or none",
-    "cassandra_data_disk_tuning": ("the tuning of its data devices (read-ahead, scheduler, udev rule, tuned profiles),"
-                                   " which cassandra_linux would change"),
-}
-# KEEP switches of nodes the roles set up (not another way)
-SET_UP_BY_THE_ROLES = ("cassandra_data_disk_tuning",)
-IPV4 = "{{ ansible_facts['default_ipv4']['address'] }}"
-HOSTNAME = "{{ ansible_facts['hostname'] }}"
-MISSING = object()
 TOP_KEY = re.compile(r"^(?:\{\{[^}]*\}\})?([a-z0-9_]+):")  # active top-level key, maybe behind a toggle
 EXTRA_HEADER = "# Settings no variable covers (cassandra_extra_settings)"
 # Before it: the variables of keys the stock file has no line for (tools/gen_templates.py)
 DECLARED_HEADER = "# Settings the stock file has no line for (their variables)"
 # the heap options, which cassandra-env.sh adds from MAX_HEAP_SIZE / HEAP_NEWSIZE unless the options files set them
 HEAP_OPTIONS = ("-Xms", "-Xmx", "-Xmn")
-# The undefined errors naming a field or a variable, nothing else of the data.
-# Jinja words a missing dict key (d[key]) the same way: nothing here or in the
-# playbook may index a dict with a key read from the nodes.
-MISSING_NAME = re.compile(r"(?:object'?|object of type '\w+') has no attribute '(\w+)'\s*$|^'(\w+)' is undefined\s*$")
 
 
 def load_role(series, facts):
@@ -1648,32 +1613,6 @@ def _comment_lines(blocks):
     return out
 
 
-def value_shown(key, value, show=None):
-    """A value as the import shows it (same masking as cassandra_config's diff preview, plugin_utils
-    cassandra_secrets): **** for a secret's (cassandra_secrets.hidden), else show(value) (None: the value)."""
-    if cassandra_secrets.hidden(key, value):
-        return cassandra_secrets.MASK
-    return show(value) if show else value
-
-
-def undefined_name(exc):
-    """A missing variable or field of the nodes' data (Ansible's lazy
-    templating), whose message names it and shows no value."""
-    source = getattr(exc, "source", None)  # 2.19+: the marker behind the error
-    return (isinstance(exc, (AnsibleUndefinedVariable, jinja2.exceptions.UndefinedError))
-            and (source is None or type(source).__name__ == "UndefinedMarker")
-            and bool(MISSING_NAME.search(str(exc))))
-
-
-def error_without_message(name, where):
-    """The error being handled, without its message (it may quote a value)."""
-    frames = [f for f in traceback.extract_tb(sys.exc_info()[2])
-              if re.match(r"cassandra_import(_check|_nodes|_read|_files|_jvm|_exporter|_config|_layout)?[.]py$", os.path.basename(f[0]))]
-    at = " in %s(), line %d" % (frames[-1][2], frames[-1][1]) if frames else ""
-    return AnsibleFilterError("%s: %s%s%s (message hidden: it may show a value read from the nodes)"
-                              % (name, (where + ", ") if where else "", sys.exc_info()[0].__name__, at))
-
-
 def as_text(node):
     """A YAML node with each scalar its text, as SnakeYAML reads a String
     setting (cluster_name 0123 is not 83, seeds 010 not 8); plain null/~/empty: None."""
@@ -1684,64 +1623,3 @@ def as_text(node):
     if node is None or node.style is None and node.value in ("", "~", "null", "Null", "NULL"):
         return None
     return node.value
-
-
-def values_hidden(func):
-    """func, raising its unexpected errors without their message."""
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        try:
-            return func(*args, **kwargs)
-        except AnsibleFilterError:
-            raise
-        except Exception as exc:  # pylint: disable=broad-except
-            if undefined_name(exc):
-                raise
-            error = error_without_message(func.__name__, "")
-        raise error
-    return wrapper
-
-
-# Parts of an error message that show no value: this filter's own messages,
-# and the name of a missing field or variable
-SAFE_REASONS = [
-    (re.compile(r"(cassandra_(?:config_import|inventory_layout|inventory_files|import_nodes|import_self_check(?:_nodes)?): [^\n]*?"
-                r"\(message hidden: "
-                r"it may show a value read from the nodes\))"), r"\1"),
-    (re.compile(r"(cassandra_import_nodes: [0-9A-Fa-f.:]+: \w+)"), r"\1"),
-    (re.compile(r"(cassandra_config_import: unsupported series \w+)"), r"\1"),
-    # the user's own -e value
-    (re.compile(r"(import_keep_hand_edits: [^\n]*?: neither a config file of cassandra_config \([^)]*\) nor a part"
-                r" \([^)]*\); or true \(every hand-edited file\), false)"), r"\1"),
-    (re.compile(r"(cassandra_config_import: cannot read [\w, ]+ from cassandra\.yaml \([^)]*\))"), r"\1"),
-    (re.compile(r"(cassandra_config_import: cassandra\.yaml is not valid YAML(?: \(line \d+\))?)"), r"\1"),
-    (re.compile(r"(?:object'?|object of type '\w+') has no attribute '(\w+)'(?:\.|$)"), r"missing field '\1'"),
-    (re.compile(r"(?:^|: )'(\w+)' is undefined(?:\.|$)"), r"undefined variable '\1'"),
-]
-
-
-def _safe_reason(msg):
-    for regex, template in SAFE_REASONS:
-        match = regex.search(msg)
-        if match:
-            return match.expand(template)
-    return ""
-
-
-def cassandra_import_error(result, label="address"):
-    """A failed task's result (ansible_failed_result) -> why it failed, for the
-    import's no_log tasks: the failed loop items (their `label` key) and what
-    of the error shows no value, else ''.
-    e.g. {"failed": True, "results": [{"failed": True, "item": {"address": "10.0.0.1"}, "msg": "..."}]}
-    -> "10.0.0.1: failed" (its message shows a value: left out)."""
-    out = []
-    for res in (result or {}).get("results") or [result or {}]:
-        if not isinstance(res, dict) or not boolean(res.get("failed", False), strict=False):
-            continue
-        item = res.get("item")
-        where = item.get(label) if isinstance(item, dict) and label else None
-        why = _safe_reason(str(res.get("msg", "")))
-        text = ("%s: %s" % (where, why or "failed") if where else why)
-        if text and text not in out:
-            out.append(text)
-    return "; ".join(out)

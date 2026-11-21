@@ -59,8 +59,9 @@ except ImportError:  # before, any string not marked unsafe
         return value
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
     branch_not_run_note, earlier_env, earlier_env_not_shown, ELSEWHERE, ELSEWHERE_NOTE, env_cmdline,
-    error_without_message, NOT_RUNNING_OR_CHANGED, PASSWORD_FILE_NOTE, REMOTE_BRANCH_NOTE, REPEATED_NOTE,
-    undefined_name, value_shown, values_hidden)
+    NOT_RUNNING_OR_CHANGED, PASSWORD_FILE_NOTE, REMOTE_BRANCH_NOTE, REPEATED_NOTE)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_common import (
+    error_without_message, undefined_name, value_shown, values_hidden)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import Unsafe
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_jvm import (
     log_dir_of, logback_as_log_dir)

@@ -25,7 +25,8 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_settings i
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_secrets
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
-    APPENDERS, EXPR, HEAP_OPTIONS, LOGBACK_END, REMOVED_TOGGLE, render_template, ROLE)
+    APPENDERS, EXPR, HEAP_OPTIONS, LOGBACK_END, REMOVED_TOGGLE, render_template)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_common import ROLE
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import keep_files_option
 
 

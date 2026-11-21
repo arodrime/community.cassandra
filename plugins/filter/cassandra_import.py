@@ -48,6 +48,7 @@ cassandra_import_kept_last: the inventory dir's files -> the parts the last
 cassandra_import_keep_parts: import_keep_hand_edits -> the parts it names.
 
 The code is in plugins/plugin_utils, by subject (each module imports from the ones before it only):
+cassandra_import_common: the constants every import module shares, and the error rules below;
 cassandra_import_read: a node's config file read against the role's template;
 cassandra_import_files: the files the import writes, and an earlier import's;
 cassandra_import_jvm: the JVM options files, JMX and logback.xml;
@@ -62,7 +63,7 @@ read from the config (a password): its type and where it happened only.
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import cassandra_import_error
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_common import cassandra_import_error
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import (
     cassandra_import_kept_ansible_host, cassandra_import_kept_last, cassandra_inventory_file_heads, cassandra_inventory_files,
     cassandra_inventory_generated, cassandra_inventory_leftovers, cassandra_inventory_own_values,

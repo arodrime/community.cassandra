@@ -47,8 +47,9 @@ from ansible.module_utils.parsing.convert_bool import boolean
 from ansible_collections.community.cassandra.plugins.filter.cassandra_repository_import import SERIES_TOKEN
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_secrets
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
-    APPENDERS, ENV_END, HOSTNAME, IMPORTED, IPV4, KEEP, LOGBACK_END, ROLE, SERIES, SET_UP_BY_THE_ROLES,
-    values_hidden)
+    APPENDERS, ENV_END, LOGBACK_END)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_common import (
+    HOSTNAME, IMPORTED, IPV4, KEEP, ROLE, SERIES, SET_UP_BY_THE_ROLES, values_hidden)
 
 
 # the config files cassandra_config writes, the JMX users' too (import_keep_hand_edits names some)

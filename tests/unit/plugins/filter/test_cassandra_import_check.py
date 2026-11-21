@@ -15,7 +15,8 @@ from ansible.errors import AnsibleFilterError
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     cassandra_config_import, cassandra_import_error, cassandra_inventory_files, cassandra_inventory_layout)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
-    IPV4, load_role, render_template, _without_same_logger)
+    load_role, render_template, _without_same_logger)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_common import IPV4
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import mask as _mask
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_layout import _same, _show
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_import_read as import_read

@@ -45,9 +45,10 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_repository
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_secrets
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file, roles_with_defaults
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
-    ADDRESSES, ALWAYS, HOSTNAME, IMPORTED, IMPORTED_FOR, IPV4, KEEP, MISSING, RACKDC, ROLE, SET_UP_BY_THE_ROLES,
-    value_shown, values_hidden)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import ALWAYS, RACKDC
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_common import (
+    ADDRESSES, HOSTNAME, IMPORTED, IMPORTED_FOR, IPV4, KEEP, MISSING, ROLE, SET_UP_BY_THE_ROLES, value_shown,
+    values_hidden)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import (
     block_title, BLOCKS, CARRIED, cassandra_inventory_files, decrypt, KEEP_ORDER, KEPT_PARTS_VAR, list_secret, old_import,
     OWNABLE, SECRET_FILES, SECRET_LISTS, SECRET_MOVED_REF, SECRET_VAR, SNIPPET_LISTS, SNIPPETS, TagsLoader,

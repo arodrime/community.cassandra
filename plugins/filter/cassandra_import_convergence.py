@@ -20,7 +20,7 @@ import re
 from ansible.module_utils.parsing.convert_bool import boolean
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import FILES, THEN
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_common import (
     KEEP, ROLE, SERIES, undefined_name)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import template_vars
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_layout import (

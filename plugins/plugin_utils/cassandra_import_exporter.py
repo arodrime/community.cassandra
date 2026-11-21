@@ -16,7 +16,8 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_settings i
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_secrets
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_prometheus as prometheus
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
-    role_default, render_template, ROLE, same_value)
+    role_default, render_template, same_value)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_common import ROLE
 
 
 def exporter_import(live_files, cmdline, ctx, read=None, conf_dirs=(), java_files=None):

@@ -22,7 +22,7 @@ import re
 from ansible.errors import AnsibleFilterError
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import keep_parts_option
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import values_hidden
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_common import values_hidden
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import (
     CARRIED, CONFIG_FILE, keep_files_option, KEPT_PART_VARS, KEPT_PARTS, KEPT_PARTS_VAR)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_java import cassandra_java_supported

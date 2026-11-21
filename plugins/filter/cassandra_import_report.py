@@ -29,7 +29,9 @@ from ansible.module_utils.parsing.convert_bool import boolean
 from ansible.plugins.filter.core import to_bool
 
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
-    BRANCH_NOT_RUN_NOTE, IDENTITY, KEEP, PASSWORD_FILE_NOTE, value_shown, values_hidden)
+    BRANCH_NOT_RUN_NOTE, IDENTITY, PASSWORD_FILE_NOTE)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_common import (
+    KEEP, value_shown, values_hidden)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import (
     KEPT_PART_WORDS, KEPT_PARTS, KEPT_PARTS_VAR, keep_parts_option)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_config import HEAP_MOVED

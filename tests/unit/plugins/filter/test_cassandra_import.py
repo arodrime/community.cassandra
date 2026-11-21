@@ -13,7 +13,8 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     cassandra_config_ignored_vars, cassandra_config_import, cassandra_import_error, cassandra_inventory_files,
     cassandra_inventory_layout, cassandra_jmx_files, cassandra_ring_nodes, cassandra_unit_environment)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
-    IPV4, load_role, _read_line, render_template, _same_setting)
+    load_role, _read_line, render_template, _same_setting)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_common import IPV4
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_jvm import jmx_users
 from ansible_collections.community.cassandra.plugins.filter import cassandra_import, cassandra_settings
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_import_read as import_read
@@ -2016,7 +2017,7 @@ def test_layout_over_a_template_compared_node_by_node():
     """(2026-11-02) A re-import: the address template the first import wrote is compared with each node, never
     left for the operator to check by hand; a template of the node's name rendered for each node; one of other
     variables still not compared."""
-    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import IPV4
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_common import IPV4
     nodes = _owner_nodes()[:3]
     for n in nodes:
         n["vars"].update(cassandra_listen_address=IPV4, cassandra_medusa_nodetool_host="%s.db.example" % n["name"])

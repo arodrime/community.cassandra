@@ -14,8 +14,8 @@ from ansible_collections.community.cassandra.plugins.plugin_utils import cassand
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     cassandra_inventory_files, cassandra_inventory_layout, cassandra_inventory_layout_over,
     cassandra_inventory_leftovers)
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
-    IPV4, LOGBACK_END, MISSING, RACKDC)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import LOGBACK_END, RACKDC
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_common import IPV4, MISSING
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import GENERATED
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_layout import (
     _cluster_group, _dc_group, _place_highest, _rack_group, roles_defaults)
