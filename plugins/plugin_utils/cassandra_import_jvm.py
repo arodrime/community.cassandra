@@ -378,6 +378,24 @@ def _logback(text):
         return {}
     found = {}
     roots = conf.findall("root")
+    _logback_levels(conf, roots, found)
+    _logback_rotation(conf, found)
+    _logback_audit(conf, found)
+    _logback_dirs(conf, found)
+    # logback's JMX MBean, under <configuration>
+    found["cassandra_log_jmx_configurator"] = conf.find("jmxConfigurator") is not None
+    _logback_appenders(conf, roots, found)
+    return found
+
+
+def _appender(conf, name):
+    """logback.xml's appender of that name (the first), None when none."""
+    return next((a for a in conf.findall("appender") if a.get("name") == name), None)
+
+
+def _logback_levels(conf, roots, found):
+    """found with the root logger's level and appenders, the org.apache.cassandra logger's level and the lowest
+    level system.log takes."""
     if len(roots) == 1:
         if roots[0].get("level"):
             found["cassandra_log_level"] = roots[0].get("level")
@@ -393,33 +411,42 @@ def _logback(text):
         if len(systemlog) == 1 else []
     level = (filters[0].findtext("level") or "").strip() if len(filters) == 1 and len(list(filters[0])) == 1 else ""
     found["cassandra_log_system_level"] = level if level.upper() in LOG_LEVELS else None
-    # the rotation of each file, by its appender (live: a commented-out AUDIT's values are not its own)
+
+
+def _logback_rotation(conf, found):
+    """found with the rotation of each file, by its appender (live: a commented-out AUDIT's values are not its own;
+    None: not read, whatever a line said)."""
     for name, kind in (("SYSTEMLOG", "system"), ("DEBUGLOG", "debug"), ("AUDIT", "audit")):
         policy = next((a.find("rollingPolicy") for a in conf.findall("appender") if a.get("name") == name), None)
         for tag, var in (("maxFileSize", "max_file_size"), ("maxHistory", "max_history"), ("totalSizeCap", "total_size_cap")):
             key = "cassandra_log_%s_%s" % (kind, var)
             text = (policy.findtext(tag) or "").strip() if policy is not None else ""
-            # (None: not read, whatever a line said)
             found[key] = (int(text) if text.isdigit() and var == "max_history" else text) if text else None
-    # the audit file: the stock AUDIT appender and the audit logger naming it, both live
+
+
+def _logback_audit(conf, found):
+    """found with the audit file: the stock AUDIT appender and the audit logger naming it, both live; the dir of its
+    file, the same for audit.log and its rolled files (the stock names), zipped or not."""
     audit = [lg for lg in conf.findall("logger") if lg.get("name") == "org.apache.cassandra.audit"]
     found["cassandra_log_audit_file"] = bool(
         [a for a in conf.findall("appender") if a.get("name") == "AUDIT"]
         and audit and "AUDIT" in [r.get("ref") for r in audit[0].findall("appender-ref")])
-    # the dir of its file: the same for audit.log and its rolled files (the stock names), zipped or not
-    appender = next((a for a in conf.findall("appender") if a.get("name") == "AUDIT"), None)
+    appender = _appender(conf, "AUDIT")
     if appender is not None:
         path = (appender.findtext("file") or "").strip()
         pattern = (appender.findtext("rollingPolicy/fileNamePattern") or "").strip()
         if path.endswith("/audit.log") and pattern in (path + ROLLED, path + ROLLED + ".zip"):
             found["cassandra_log_audit_dir"] = _xml_text(path[:-len("/audit.log")])
             found["cassandra_log_audit_compress"] = pattern.endswith(".zip")
-    # system.log's and debug.log's dir, the same for the file and its rolled files (else a hand edit); their rolled
-    # files (their stock names), zipped or not: one variable for both, read when they agree (else the line that
-    # differs: a hand edit)
+
+
+def _logback_dirs(conf, found):
+    """found with system.log's and debug.log's dir, the same for the file and its rolled files (else a hand edit);
+    their rolled files (their stock names), zipped or not: one variable for both, read when they agree (else the line
+    that differs: a hand edit)."""
     zipped = set()
     for name, kind in (("SYSTEMLOG", "system"), ("DEBUGLOG", "debug")):
-        appender = next((a for a in conf.findall("appender") if a.get("name") == name), None)
+        appender = _appender(conf, name)
         if appender is None:
             continue
         path = (appender.findtext("file") or "").strip()
@@ -431,8 +458,11 @@ def _logback(text):
             found["cassandra_log_%s_dir" % kind] = None
     if len(zipped) == 1:
         found["cassandra_log_compress"] = zipped.pop()
-    # logback's JMX MBean, under <configuration>
-    found["cassandra_log_jmx_configurator"] = conf.find("jmxConfigurator") is not None
+
+
+def _logback_appenders(conf, roots, found):
+    """found with 5.0's system_views.system_logs table, the appenders <root> names besides the stock ones, and the
+    simple loggers' levels."""
     refs = [r.get("ref") for r in roots[0].findall("appender-ref")] if len(roots) == 1 else []
     # 5.0's system_views.system_logs table: the stock CQLLOG appender live, <root> naming it
     cql = "CQLLOG" in refs and [a for a in conf.findall("appender") if a.get("name") == "CQLLOG"]
@@ -454,7 +484,6 @@ def _logback(text):
     levels = dict((lg.get("name"), lg.get("level")) for lg in simple if names.count(lg.get("name")) == 1)
     if levels:
         found["cassandra_log_levels"] = levels
-    return found
 
 
 # the end of a rolled log file's stock name (fileNamePattern), before its .zip
