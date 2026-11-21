@@ -28,12 +28,12 @@ NO_HEADER = [
 
 
 def header(path):
-    """the comment lines a file starts with, its shebang and blank lines left out"""
+    """the comment lines a file starts with, its shebang, coding line and blank lines left out"""
     lines = []
     with open(os.path.join(TOP, path), encoding="utf-8") as f:
         for line in f:
             line = line.rstrip("\n")
-            if line.startswith("#!") or (not line.strip() and not lines):
+            if line.startswith("#!") or line.startswith("# -*- coding") or (not line.strip() and not lines):
                 continue
             if not line.startswith("#"):
                 break
@@ -66,3 +66,10 @@ def test_each_python_file_of_plugins_has_its_copyright_and_license_lines():
 def test_the_files_without_a_header_are_still_so():
     # the list above exact: a file of it given a license line (or gone) leaves it
     assert [p for p in NO_HEADER if p not in python_files() or any(line.startswith(GPL) for line in header(p))] == []
+
+
+def test_a_coding_line_before_the_collection_lines_is_left_out(tmp_path):
+    # path absolute: os.path.join(TOP, path) keeps it as it is
+    f = tmp_path / "f.py"
+    f.write_text("\n".join(["# -*- coding: utf-8 -*-"] + COLLECTION + ["", "import os", ""]), encoding="utf-8")
+    assert header(str(f)) == COLLECTION
