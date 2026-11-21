@@ -349,12 +349,18 @@ def _sysctl_carried(role, relevant, effective, owners, own, own_values, role_fil
 
 # --- limits ---
 
-def _limits(recs, wanted, own):
-    role = wanted.get("limits") or {}
+def _groups(recs):
+    """The groups of the cassandra user (the "groups" records)."""
     groups = set()
     for kind, rest in recs:
         if kind == "groups":
             groups.update(rest.split())
+    return groups
+
+
+def _limits(recs, wanted, own):
+    role = wanted.get("limits") or {}
+    groups = _groups(recs)
     entries = [_fields(rest, 2) for kind, rest in recs if kind == "limits"]
     owners = _owners(recs)
     # pam_limits: limits.conf, then limits.d/*.conf by name; a user entry wins
@@ -1412,49 +1418,73 @@ def _limits_changes(recs, linux, own, family):
     """cassandra_linux's limits file (its mark: own), the block earlier versions wrote in limits.conf, RedHat's
     90-nproc.conf line: no effect when the limits the cassandra user gets stay the same."""
     role = linux.get("limits") or {}
-    target = linux.get("limits_file") or LIMITS_OWN
-    groups = set()
-    for kind, rest in recs:
-        if kind == "groups":
-            groups.update(rest.split())
+    groups = _groups(recs)
     entries = [_fields(rest, 2) for kind, rest in recs if kind == "limits"]
-    after, files = list(entries), []
+    after, files = _limits_file_written(entries, role, linux.get("limits_file") or LIMITS_OWN, own)
+    if role and any(kind == "limits_block_found" for kind, dummy in recs):
+        after, removed = _limits_block_removed(recs, after)
+        files.append(removed)
+    if family == "RedHat" and boolean(linux.get("nproc_all", True), strict=False):
+        after, nproc = _nproc_line_set(after)
+        files += nproc
+    before, then = _user_limits(entries, groups), _user_limits(after, groups)
+    changed = _limits_differing(before, then)
+    if not changed:
+        return [dict(f, effect=NO_EFFECT) for f in files]
+    return [_item("limits of the cassandra user: %s (its logins)" % item, _limit_value(before, item),
+                  _limit_value(then, item)) for item in changed]
+
+
+def _limits_file_written(entries, role, target, own):
+    """The role's limits file (target) written with its lines, unless it has its mark (own: the default file of a
+    node it set up, with them) or role is {} (no file written) -> (the limits entries after, [its item])."""
     wanted = ["cassandra - %s %s" % (k, v) for k, v in role.items()]
     there = [line for path, line in entries if path == target]
-    # (its mark: the default file of a node it set up; {}: no file written)
-    if role and not (own and target == LIMITS_OWN and there == wanted):
-        after = [e for e in after if e[0] != target] + [[target, line] for line in wanted]
-        files.append(_item(target, "; ".join(there) or "absent", "; ".join(wanted)))
+    if not role or (own and target == LIMITS_OWN and there == wanted):
+        return list(entries), []
+    after = [e for e in entries if e[0] != target] + [[target, line] for line in wanted]
+    return after, [_item(target, "; ".join(there) or "absent", "; ".join(wanted))]
+
+
+def _limits_block_removed(recs, after):
+    """The block earlier versions wrote in limits.conf removed -> (the entries after, its item)."""
     block = [rest for kind, rest in recs if kind == "limits_block"]
-    if role and any(kind == "limits_block_found" for kind, dummy in recs):
-        for line in block:
-            gone = next((e for e in after if e[0] == LIMITS_CONF and e[1] == line), None)
-            if gone:
-                after.remove(gone)
-        files.append(_item("the block earlier versions wrote in %s" % LIMITS_CONF, "; ".join(block) or "empty",
-                           "removed"))
-    if family == "RedHat" and boolean(linux.get("nproc_all", True), strict=False):
-        matches = [e for e in after if e[0] == NPROC_FILE and NPROC_MATCH.match(e[1])]
-        if not matches:
-            after.append([NPROC_FILE, NPROC_LINE])
-            files.append(_item(NPROC_FILE, "no line %s" % NPROC_LINE, "%s added" % NPROC_LINE))
-        elif matches[-1][1] != NPROC_LINE:  # (lineinfile replaces the last line its regexp finds)
-            files.append(_item(NPROC_FILE, matches[-1][1], NPROC_LINE))
-            after[after.index(matches[-1])] = [NPROC_FILE, NPROC_LINE]
+    after = list(after)
+    for line in block:
+        gone = next((e for e in after if e[0] == LIMITS_CONF and e[1] == line), None)
+        if gone:
+            after.remove(gone)
+    return after, _item("the block earlier versions wrote in %s" % LIMITS_CONF, "; ".join(block) or "empty", "removed")
 
-    def effective(es):
-        return _limits_effective(sorted(es, key=lambda e: (e[0] != LIMITS_CONF, os.path.basename(e[0]))), groups)
 
-    before, then = effective(entries), effective(after)
+def _nproc_line_set(after):
+    """RedHat's 90-nproc.conf line made the role's, as lineinfile does (the last line its regexp finds replaced, else
+    the line added) -> (the entries after, [its item])."""
+    matches = [e for e in after if e[0] == NPROC_FILE and NPROC_MATCH.match(e[1])]
+    if not matches:
+        return after + [[NPROC_FILE, NPROC_LINE]], [_item(NPROC_FILE, "no line %s" % NPROC_LINE,
+                                                          "%s added" % NPROC_LINE)]
+    if matches[-1][1] == NPROC_LINE:
+        return after, []
+    after = list(after)
+    after[after.index(matches[-1])] = [NPROC_FILE, NPROC_LINE]
+    return after, [_item(NPROC_FILE, matches[-1][1], NPROC_LINE)]
+
+
+def _user_limits(entries, groups):
+    """The limits the cassandra user gets from entries, read in pam_limits' order (limits.conf, then limits.d by
+    name)."""
+    return _limits_effective(sorted(entries, key=lambda e: (e[0] != LIMITS_CONF, os.path.basename(e[0]))), groups)
+
+
+def _limits_differing(before, then):
+    """The items whose soft or hard value differs between before and then (_user_limits'), sorted."""
     changed = []
     for item, dummy in sorted(set(before) | set(then)):
         if item not in changed and any((before.get((item, k)) or (None, None))[1] != (then.get((item, k)) or (None, None))[1]
                                        for k in ("soft", "hard")):
             changed.append(item)
-    if not changed:
-        return [dict(f, effect=NO_EFFECT) for f in files]
-    return [_item("limits of the cassandra user: %s (its logins)" % item, _limit_value(before, item),
-                  _limit_value(then, item)) for item in changed]
+    return changed
 
 
 def _thp_changes(recs, linux, live, boot):
