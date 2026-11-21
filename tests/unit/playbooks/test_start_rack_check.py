@@ -373,7 +373,7 @@ def test_a_node_of_the_rack_not_un_stops_the_run():
 WHY = ["10.0.0.%s (dc1, %s): no inventory host has this address,", "  so it is judged as a node of rack r2",
        "if it is outside rack r2: give its inventory host that address",
        "  (broadcast_address in cassandra_extra_settings, else",
-       "  cassandra_listen_address or ansible_host)"]  # (the WAY OUT under it: "then run start_rack again")
+       "  cassandra_listen_address or ansible_host), then the command below"]  # (the WAY OUT's)
 
 
 def test_a_node_no_host_is_known_by_is_one_of_the_rack():

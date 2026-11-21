@@ -427,7 +427,8 @@ def _unknown_lines(findings, judged, rack):
     by its address is, then the way out; [] for none.
     e.g. ([<10.0.0.4 r3 DN, no name>], {"10.0.0.4": "unknown"}, "r2") -> ["10.0.0.4 (dc1, r3): no inventory host
     has this address,", "  so it is judged as a node of rack r2", "if it is outside rack r2: give its inventory
-    host that address", "  (broadcast_address in ...", "  cassandra_listen_address or ansible_host)"]."""
+    host that address", "  (broadcast_address in ...", "  cassandra_listen_address or ansible_host), then the command
+    below"] (the WAY OUT's, under them)."""
     lines, said = [], set()
     for f in findings:
         if f.get("kind") != "state" or f["address"] in said or judged[f["address"]] != "unknown":
@@ -440,7 +441,7 @@ def _unknown_lines(findings, judged, rack):
     which = "it is" if len(said) == 1 else "one is"
     return out.fit(lines + ["if %s outside rack %s: give its inventory host that address" % (which, rack),
                             "  (broadcast_address in cassandra_extra_settings, else",
-                            "  cassandra_listen_address or ansible_host)"], WIDTH)
+                            "  cassandra_listen_address or ansible_host), then the command below"], WIDTH)
 
 
 _DOING = {"J": "joining", "L": "leaving", "M": "moving"}
