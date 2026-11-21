@@ -176,3 +176,16 @@ def test_start_rack_s_stop_fits_79_columns():
     assert lines[at + 3].endswith(" \\") and "-e cassandra_replace_address=172.18.0.3" in " ".join(lines[at + 3:at + 6])
     # the others' stop: through the stop block of node_operation.yml, which fits it (as it was)
     assert len(said(False, problems)[-1]) > 79
+
+
+def test_problems_equal_but_for_case_are_said_once_in_the_way_out_and_the_lost_lines():
+    # the lost lines moved from Jinja (| unique: ignoring case) to Python (kept the case): "N4 ..." and "n4 ..."
+    # gave two IF blocks while the WAY OUT line, still | unique, named one node
+    from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
+    from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+    load_collection_filters()
+    lines = said(False, ["n4 (10.0.0.4, r1) is DN, seen from n1", "N4 (10.0.0.4, r1) is DN, seen from n1",
+                         "2001:db8::7 (r1) is DN, seen from n1", "2001:DB8::7 (r1) is DN, seen from n1"])
+    assert lines[4] == "WAY OUT  bring n4, 2001:db8::7 back to UN (their host and/or Cassandra), then resume"
+    assert [line for line in lines if line.startswith("IF ")] == ["IF n4 IS LOST FOR GOOD", "IF 2001:db8::7 IS LOST FOR GOOD"]
+    assert out.unique_ignoring_case(["b", "A", "a", "B", "c"]) == ["b", "A", "c"]

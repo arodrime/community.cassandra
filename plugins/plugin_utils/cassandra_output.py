@@ -9,7 +9,8 @@ docs/docsite/rst/guide_output.rst.
 - sizes, rates, durations, clocks: size, amount, sizes, parse_size, rate, duration, clock,
   count, plural;
 - node lists: nodes (node1..node5, node7), full_list; by groups on a large
-  cluster: node_groups, who, group_lines;
+  cluster: node_groups, who, group_lines; texts each once, ignoring case:
+  unique_ignoring_case;
 - secrets: secret, mask, shown;
 - a setting and its value per node: setting_lines, settings_lines (several,
   aligned, wrapped in a width: wrap_value, wrap_list), setting_rows, by_nodes;
@@ -186,6 +187,16 @@ def _follows(before, name):
     if int(y) != int(x) + 1 or (padded and len(x) != len(y)):
         return None
     return changed[0]
+
+
+def unique_ignoring_case(texts):
+    """texts, each once, the first of those equal but for case kept (as Ansible's | unique does by default)."""
+    seen, kept = set(), []
+    for text in texts:
+        if text.lower() not in seen:
+            seen.add(text.lower())
+            kept.append(text)
+    return kept
 
 
 def full_list(names, keep_order=False):

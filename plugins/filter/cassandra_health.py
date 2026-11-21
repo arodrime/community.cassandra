@@ -599,11 +599,9 @@ def cassandra_health_lost_lines(problems, group, command_args):
     community.cassandra.remove_dead_node -e cassandra_target_nodes=10.0.0.4"]."""
     # (here, not at the top: the module_utils unit tests import this module without the controller's Display)
     from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_command
-    lines, seen = [], []
-    for p in problems or []:
-        if not _DOWN.search(str(p)) or p in seen:
-            continue
-        seen.append(p)
+    lines = []
+    # each once, ignoring case, as the way out's _down (cluster_health.yml: | unique) names them
+    for p in out.unique_ignoring_case([str(p) for p in problems or [] if _DOWN.search(str(p))]):
         name = re.sub(r" \(.*$", "", str(p))
         found = re.findall(r"^\S+ \(([^,)]+),", str(p))
         address = found[0] if found else name
