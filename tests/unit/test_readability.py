@@ -3,7 +3,8 @@ __metaclass__ = type
 
 # Readability guardrails of the playbooks and roles: no Jinja string longer than 300 characters (a filter of
 # plugins/filter instead; a bare expression of when, that, until... too), no inline shell longer than 20 lines (a
-# script in files/ instead; any shell, command or raw task, named or not). The ones there already
+# script instead: in files/, or in templates/ as a .j2 when it needs the play's variables; any shell, command or raw
+# task, named or not). The ones there already
 # are listed in readability_allowed.txt with their size: the list may only shrink. A listed string may not
 # grow; when it shrinks, its size in the list is lowered to the new one (it cannot grow back); once it is short
 # enough (or gone), its line is removed from the list.
