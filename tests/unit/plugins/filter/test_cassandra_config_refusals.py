@@ -4,8 +4,10 @@ __metaclass__ = type
 # cassandra_config_refusals called directly: what each check of cassandra_config's checks.yml refuses (the tasks and
 # their messages: tests/unit/roles/test_config_*.py).
 
+import pytest
+
 from ansible_collections.community.cassandra.plugins.filter.cassandra_config_refusals import (
-    cassandra_config_audit_parameter_refusals, cassandra_config_exporter_refusals, cassandra_config_jmx_tls_refusals,
+    WRITTEN, cassandra_config_audit_parameter_refusals, cassandra_config_exporter_refusals, cassandra_config_jmx_tls_refusals,
     cassandra_config_logback_refusals, cassandra_config_override_refusals, cassandra_config_rackdc_refusals,
     cassandra_config_snippet_refusals)
 
@@ -47,7 +49,7 @@ def logback(refs=(), levels=None, series="50x", cql_table=False, audit_file=True
         "cassandra_log_audit_max_file_size", "cassandra_log_audit_max_history", "cassandra_log_audit_total_size_cap",
         "cassandra_log_audit_dir", "cassandra_log_system_dir", "cassandra_log_debug_dir", "cassandra_log_cql_table_level"])
     written.update(values)
-    return cassandra_config_logback_refusals(list(refs), ["SYSTEMLOG", "STDOUT"], ["LATE"], levels or {},
+    return cassandra_config_logback_refusals(refs if isinstance(refs, (str, dict)) else list(refs), ["SYSTEMLOG", "STDOUT"], ["LATE"], levels or {},
                                              {"ROOT": "cassandra_log_level"}, ["com.x"], series, cql_table, audit_file,
                                              overrides or {}, **written)
 
@@ -88,6 +90,39 @@ def test_logback_values_written_as_they_are():
     assert logback(cassandra_log_debug_dir="&amp;&nbsp;") == [
         "cassandra_log_debug_dir: &amp;&nbsp; has an & that starts no XML entity (&amp; &lt; &gt; &quot; &apos;"
         " &#number;): write it &amp;"]
+
+
+def test_logback_refs_not_a_list():
+    # a string or a mapping: refused as a whole, never read as appender names
+    for refs in ("MINE", {"MINE": "x"}, {'a"b': "x"}):
+        assert logback(refs) == ["cassandra_logback_root_extra_refs: a list of appender names is expected"]
+
+
+# where logback.xml's template writes each value: in an attribute, in a part the audit switch off comments out
+WHERE_WRITTEN = [("cassandra_log_level", True, ""), ("cassandra_log_level_cassandra", True, ""),
+                 ("cassandra_log_system_level", False, ""), ("cassandra_log_pattern", False, "audit"),
+                 ("cassandra_log_system_max_file_size", False, ""), ("cassandra_log_system_max_history", False, ""),
+                 ("cassandra_log_system_total_size_cap", False, ""), ("cassandra_log_debug_max_file_size", False, ""),
+                 ("cassandra_log_debug_max_history", False, ""), ("cassandra_log_debug_total_size_cap", False, ""),
+                 ("cassandra_log_audit_max_file_size", False, "audit"), ("cassandra_log_audit_max_history", False, "audit"),
+                 ("cassandra_log_audit_total_size_cap", False, "audit"), ("cassandra_log_audit_dir", False, "audit"),
+                 ("cassandra_log_system_dir", False, ""), ("cassandra_log_debug_dir", False, "")]
+
+
+def test_every_value_written_as_it_is_is_checked():
+    assert sorted(name for name, dummy, dummy2 in WRITTEN) == sorted(name for name, dummy, dummy2 in WHERE_WRITTEN)
+
+
+@pytest.mark.parametrize("name, attribute, commented", WHERE_WRITTEN)
+def test_each_value_written_as_it_is(name, attribute, commented):
+    # a " is refused in an attribute only, a ]]> in a text only; a -- where the audit switch off leaves the value in
+    # a comment
+    quote = ['%s: a"b has a ", which ends the XML attribute there: write it &quot;' % name]
+    end = ["%s: a]]>b has a ]]>, which XML does not take in a text: write it ]]&gt;" % name]
+    assert logback(**{name: 'a"b'}) == (quote if attribute else [])
+    assert logback(**{name: "a]]>b"}) == ([] if attribute else end)
+    assert bool(logback(audit_file=False, **{name: "a--b"})) == (commented == "audit")
+    assert logback(audit_file=True, **{name: "a--b"}) == []
 
 
 def test_audit_parameters():

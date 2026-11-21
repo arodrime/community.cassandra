@@ -182,6 +182,7 @@ def test_good_settings_pass():
     ({"cassandra_prometheus_exporter_port": 9042}, "is also cassandra_native_transport_port"),
     ({"cassandra_prometheus_exporter_port": 7199}, "is also cassandra_jmx_port"),
     ({"cassandra_prometheus_exporter_port": 7000}, "is also cassandra_storage_port"),
+    ({"cassandra_prometheus_exporter_port": 7001}, "is also cassandra_ssl_storage_port"),
     ({"cassandra_extra_settings": {"native_transport_port_ssl": 9404}},
      "9404 is also native_transport_port_ssl (cassandra_extra_settings)"),
     ({"cassandra_config_keep_files": ["jvm-server.options"]}, "jvm-server.options is in cassandra_config_keep_files"),
