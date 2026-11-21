@@ -60,7 +60,10 @@
 # operator's call), said in apply_config's recap
 - name: Look for a system keyspace, and into Cassandra's directories
   ansible.builtin.command:
-    argv: ["{{ _cassandra_config_python }}", -c, "{{ lookup('ansible.builtin.file', 'config_read.py') }}"]
+    argv:
+      - "{{ _cassandra_config_python }}"
+      - -c
+      - "{{ lookup('ansible.builtin.file', role_path ~ '/../../plugins/plugin_utils/cassandra_config_read.py') }}"
     stdin: "{{ {'step': 'dirs', 'system': _system, 'tries': _tries | map(attribute='path') | list, 'foreign': _foreign,
                 'user': _cassandra_config_perm_settings.user | string} | to_json }}"
   environment:

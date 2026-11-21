@@ -19,7 +19,10 @@
 # left as the node has it (cassandra_config_keep_files) changes none of them.
 - name: Diff them against the live files
   ansible.builtin.command:
-    argv: ["{{ _cassandra_config_python }}", -c, "{{ lookup('ansible.builtin.file', 'config_read.py') }}"]
+    argv:
+      - "{{ _cassandra_config_python }}"
+      - -c
+      - "{{ lookup('ansible.builtin.file', role_path ~ '/../../plugins/plugin_utils/cassandra_config_read.py') }}"
     stdin: >-
       {{ {'step': 'compare', 'conf_dir': cassandra_conf_dir,
           'names': _cassandra_config_files[_cassandra_config_series], 'files': _cassandra_config_new,

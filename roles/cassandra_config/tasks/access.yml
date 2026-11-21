@@ -140,7 +140,10 @@
     # that lacks it: a comment, no restart for it; not to one kept by hand (cassandra_config_keep_files)
     - name: Find the JMX files left as they are without the role's header
       ansible.builtin.command:
-        argv: ["{{ _cassandra_config_python }}", -c, "{{ lookup('ansible.builtin.file', 'config_header.py') }}"]
+        argv:
+          - "{{ _cassandra_config_python }}"
+          - -c
+          - "{{ lookup('ansible.builtin.file', role_path ~ '/../../plugins/plugin_utils/cassandra_config_header.py') }}"
         stdin: "{{ {'find': _files} | to_json }}"
       register: cassandra_config_jmx_header
       changed_when: false

@@ -18,26 +18,13 @@ parts read at start (jmx_prometheus.at_start).
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
-import importlib.util
-import os
-
 import yaml
 
 from ansible.errors import AnsibleFilterError
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_config_read as config_read
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_prometheus import (
     RELEASE, at_start_digest, config_change, without_agent)
-
-CONFIG_READ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "cassandra_config", "files",
-                           "config_read.py")
-
-
-def _config_read():
-    """cassandra_config's files/config_read.py (its masked diff, as the role's other config files get it)."""
-    spec = importlib.util.spec_from_file_location("cassandra_config_read", CONFIG_READ)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def cassandra_prometheus_config_change(live, new, path=""):
@@ -48,7 +35,8 @@ def cassandra_prometheus_config_change(live, new, path=""):
         out = config_change(live, str(new or ""))
     except (ValueError, yaml.YAMLError):  # the role's is not a YAML mapping: cassandra_config's checks refuse it before
         raise AnsibleFilterError("cassandra_prometheus_config_change: the new config is not a YAML mapping")
-    dummy, text = _config_read().diff_lines(path, str(live or "").splitlines(True), str(new or "").splitlines(True))
+    # (masked as the role's other config files' diffs: by its node-side reader)
+    dummy, text = config_read.diff_lines(path, str(live or "").splitlines(True), str(new or "").splitlines(True))
     return dict(out, diff=text.rstrip("\r\n"))
 
 

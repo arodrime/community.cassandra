@@ -1,6 +1,6 @@
 ---
 # What the role looks at on the node, read in one go (a task per file or
-# directory would cost a round trip each): files/config_read.py, whose
+# directory would cost a round trip each): plugins/plugin_utils/cassandra_config_read.py, whose
 # results are shaped as the stat, slurp and command tasks would register
 # them. The package creates the stock directories only: others (a data
 # disk, a log dir, the one of the role's unit) must exist, owned by the service user, before the node
@@ -11,7 +11,10 @@
 # only: a data dir can hold TBs, a link to a disk followed).
 - name: Read the node's config files and directories
   ansible.builtin.command:
-    argv: ["{{ _cassandra_config_python }}", -c, "{{ lookup('ansible.builtin.file', 'config_read.py') }}"]
+    argv:
+      - "{{ _cassandra_config_python }}"
+      - -c
+      - "{{ lookup('ansible.builtin.file', role_path ~ '/../../plugins/plugin_utils/cassandra_config_read.py') }}"
     stdin: "{{ _request | to_json }}"
   environment:
     LC_ALL: C  # errors in English

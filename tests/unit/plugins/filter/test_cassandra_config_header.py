@@ -15,7 +15,8 @@ import sys
 import pytest
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
-    HEADER_MARK, _config_header, cassandra_config_header, cassandra_same_settings)
+    HEADER_MARK, cassandra_config_header, cassandra_same_settings)
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_config_header as config_header
 from ansible_collections.community.cassandra.tests.unit.helpers import node_program
 from ansible_collections.community.cassandra.tests.unit.task_files import find_task, load_tasks
 
@@ -39,7 +40,7 @@ H = b"# header"
     (b"a: \xff\n", b"# header\na: \xff\n"),  # bytes that are not UTF-8: as they are
 ])
 def test_the_header_goes_first_the_rest_byte_for_byte(data, added):
-    assert _config_header().with_header(data, H) == added
+    assert config_header.with_header(data, H) == added
 
 
 @pytest.mark.parametrize("name, live, new, header", [
@@ -58,7 +59,7 @@ def test_a_file_with_the_same_settings_gets_the_header_and_keeps_them(name, live
     assert cassandra_same_settings(live, new, name)
     assert cassandra_config_header(live, new, name) == header
     # the file with it: the same settings still (no restart), and no header to add again
-    added = _config_header().with_header(live.encode(), header.encode()).decode()
+    added = config_header.with_header(live.encode(), header.encode()).decode()
     assert cassandra_same_settings(added, new, name)
     assert cassandra_config_header(added, new, name) == ""
 

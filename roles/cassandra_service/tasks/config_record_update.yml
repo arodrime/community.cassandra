@@ -1,14 +1,15 @@
 ---
 # Some files recorded as the ones the running Cassandra runs with, in the record of the config it started with
-# (config_snapshot.yml), when _cassandra_service_record_request says it may be (files/config_record.py, update: that
-# JVM's record, the files on disk as planned): so that no restart is said pending for them later. Registers
+# (config_snapshot.yml), when _cassandra_service_record_request says it may be
+# (plugins/plugin_utils/cassandra_config_record.py, update: that JVM's record, the files on disk as planned): so that
+# no restart is said pending for them later. Registers
 # cassandra_service_record_updated (its stdout: recorded, or why not).
 - name: Record files as the running Cassandra's (no restart needed for them)
   ansible.builtin.command:
     argv:
       - "{{ _cassandra_config_python | default(ansible_facts['python']['executable'] | default('/usr/bin/python3')) }}"
       - -c
-      - "{{ lookup('ansible.builtin.file', 'config_record.py') }}"
+      - "{{ lookup('ansible.builtin.file', role_path ~ '/../../plugins/plugin_utils/cassandra_config_record.py') }}"
       - update
       - "{{ _cassandra_service_config_snapshot }}"
       - "{{ _cassandra_service_record_request | to_json }}"

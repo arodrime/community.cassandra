@@ -1,13 +1,12 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-# cassandra_config reads a node in a few runs of files/config_read.py, its
+# cassandra_config reads a node in a few runs of cassandra_config_read.py, its
 # results shaped as the stat, slurp, service_facts and package_facts tasks it
 # replaces registered them.
 
 import base64
 import grp
-import importlib.util
 import os
 import pwd
 
@@ -15,11 +14,8 @@ import pytest
 
 from ansible.modules.stat import format_output
 
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_config_read as reader
 from ansible_collections.community.cassandra.tests.unit.roles.config_reader import ROLE, config_read
-
-spec = importlib.util.spec_from_file_location("config_read", os.path.join(ROLE, "files", "config_read.py"))
-reader = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(reader)
 
 
 def stat_module(path, follow):

@@ -1,9 +1,9 @@
 ---
 # The role's header line added to files left as they are (_cassandra_config_header_files: [{file, path, header, mark,
 # sha1}], from confirm.yml or access.yml): the header alone, in place, the rest of the file byte for byte
-# (files/config_header.py), only to a file still as it was compared. A comment: no restart for it. When the
-# running Cassandra started with that file (the record of its start has it as it was), it is recorded with its
-# header, so that no restart is said pending for it later.
+# (plugins/plugin_utils/cassandra_config_header.py), only to a file still as it was compared. A comment: no restart
+# for it. When the running Cassandra started with that file (the record of its start has it as it was), it is
+# recorded with its header, so that no restart is said pending for it later.
 - name: Record the config the running Cassandra started with
   ansible.builtin.include_tasks: config_seed.yml
   when: not ansible_check_mode
@@ -11,7 +11,10 @@
 # (no diff: a line added, said by the caller; skipped under --check, as a command is: its stdout empty, read as {})
 - name: Add the role's header line to the files left as they are
   ansible.builtin.command:
-    argv: ["{{ _cassandra_config_python }}", -c, "{{ lookup('ansible.builtin.file', 'config_header.py') }}"]
+    argv:
+      - "{{ _cassandra_config_python }}"
+      - -c
+      - "{{ lookup('ansible.builtin.file', role_path ~ '/../../plugins/plugin_utils/cassandra_config_header.py') }}"
     stdin: "{{ _cassandra_config_header_files | to_json }}"
   register: cassandra_config_header_added
   changed_when: >-

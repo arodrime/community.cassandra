@@ -30,8 +30,6 @@ __metaclass__ = type
 import base64
 import functools
 import hashlib
-import importlib.util
-import os
 import re
 import shlex
 import textwrap
@@ -40,6 +38,7 @@ from collections import OrderedDict
 
 from ansible.module_utils.parsing.convert_bool import boolean
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_config_read as config_read
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import earlier_env
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import terminal_width
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import stat_fields
@@ -246,19 +245,6 @@ def _settings(name, lines):
     return _line_settings(lines, name)
 
 
-# the role's node-side reader: its diffs are masked by it, the live lines here the same way to match them
-CONFIG_READ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "cassandra_config", "files",
-                           "config_read.py")
-
-
-@functools.lru_cache(maxsize=None)
-def _config_read():
-    spec = importlib.util.spec_from_file_location("cassandra_config_read", CONFIG_READ)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def _secrets_written(lines, written):
     """The new file's (masked) lines, the indexes of the ones the diff writes -> the indexes of the lines whose
     secret it writes: a line with a masked value, or the key line above a line of a secret's value (****
@@ -276,7 +262,7 @@ def _secrets_written(lines, written):
 
 def _masked(lines):
     """A file's lines masked as the role's diff masks them (a secret's value on several lines too)."""
-    return _config_read().masked(lines)
+    return config_read.masked(lines)
 
 
 def _live_texts(node):

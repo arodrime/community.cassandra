@@ -23,13 +23,12 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import functools
-import importlib.util
-import os
 import re
 import xml.etree.ElementTree as ET
 
 import yaml
 
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_config_header as config_header
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_yaml_properties as known
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
@@ -680,18 +679,9 @@ def cassandra_yaml_rejected(keys, version):
     return yaml_rejected(list(keys or []), version)
 
 
-# cassandra_config's header line, and the node-side writer that adds it (files/config_header.py: where it goes)
+# cassandra_config's header line (the node-side writer that adds it: plugin_utils/cassandra_config_header.py, where
+# it goes)
 HEADER_MARK = "Managed by Ansible (community.cassandra.cassandra_config)"
-CONFIG_HEADER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "cassandra_config", "files",
-                             "config_header.py")
-
-
-@functools.lru_cache(maxsize=None)
-def _config_header():
-    spec = importlib.util.spec_from_file_location("cassandra_config_header", CONFIG_HEADER)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def header_line(new):
@@ -704,7 +694,7 @@ def header_line(new):
 
 
 def cassandra_config_header(live, new, name, storage_dir=""):
-    """Filter: see the module. The header line goes where the node puts it (config_header.py); the file with it
+    """Filter: see the module. The header line goes where the node puts it (cassandra_config_header.py); the file with it
     must have the same settings as the role's (its proof that the header changes nothing: no restart).
     "num_tokens: 16\n", "# Managed by Ansible (community.cassandra.cassandra_config): ...\nnum_tokens: 16\n",
     "cassandra.yaml" -> "# Managed by Ansible (community.cassandra.cassandra_config): ..."."""
@@ -712,7 +702,7 @@ def cassandra_config_header(live, new, name, storage_dir=""):
     line = header_line(new)
     if not live or not line or HEADER_MARK in live:
         return ""
-    added = _config_header().with_header(live.encode("utf-8", "surrogateescape"), line.encode("utf-8"))
+    added = config_header.with_header(live.encode("utf-8", "surrogateescape"), line.encode("utf-8"))
     if not same_settings(str(name), added.decode("utf-8", "surrogateescape"), new, str(storage_dir or "")):
         return ""
     return line
