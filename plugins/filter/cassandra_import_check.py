@@ -18,6 +18,11 @@ cassandra_import_self_check_nodes (filter): the same for each node read, the
 
 Their unexpected errors do not quote the error message, which may show a
 value read from the nodes (a password).
+
+The roles' templates and their values are rendered by Ansible itself, outside a play: a Templar and a DataLoader of
+their own (_render, _role_values, _cqlsh_pointers), the template lookup through lookup_loader. These are
+ansible-core's own classes, not a filter's API: kept on purpose, since only Ansible renders a template exactly as a
+playbook run does (its filters, tests and lookups, its trust of the text in 2.19+).
 """
 
 from __future__ import absolute_import, division, print_function
@@ -745,6 +750,27 @@ def _cqlsh_check(cqlsh, st, family, error):
                    % (st.get("py3") or "?", "-".join(bounds or []), cqlsh["series"]))
     # (offline without python3.11 the role leaves them as they are rather than point cqlsh at nothing)
     left = python == PYTHON311 and cqlsh["offline"] and not boolean(st.get("py311", False), strict=False)
+    out += _cqlsh_pointer_changes(st, python, left)
+    # each Python the role reads (cqlsh_links.yml): path|site-packages|cqlshlib|test
+    pythons = {}
+    for entry in st.get("pythons") or []:
+        path, purelib, link, test = (str(entry).split("|", 3) + ["", "", ""])[:4]
+        pythons.setdefault(path, {"purelib": purelib, "link": link, "test": test})
+    used = python or "python3"
+    if family == "RedHat":
+        _cqlshlib_links(pythons, python, out, notes)
+    test = (pythons.get(used) or {}).get("test", "")
+    if test and test != "ok":
+        out.append("cassandra_install: cqlsh as the roles would set it up (the package's, with %s) does not start: %s"
+                   % (used, test))
+    out += _cqlsh_ran(cqlsh, st, error)
+    return out, notes
+
+
+def _cqlsh_pointer_changes(st, python, left):
+    """The wrapper and the profile.d file that point the package's cqlsh at a Python: what the roles would change
+    there (python: the one they set, '' none; left: left as they are)."""
+    out = []
     for path, key, what in (("/usr/local/bin/cqlsh", "wrapper", "their wrapper (the package's cqlsh with %s)"),
                             ("/etc/profile.d/cqlsh.sh", "profile", "CQLSH_PYTHON=%s")):
         have = st.get(key, "absent")
@@ -760,37 +786,36 @@ def _cqlsh_check(cqlsh, st, family, error):
                        " would set it as they write it" % (path, what % python))
         elif not python and have == "role":
             out.append("cassandra_install: %s: node has the roles' (an earlier run), the roles would set removed" % path)
-    # each Python the role reads (cqlsh_links.yml): path|site-packages|cqlshlib|test
-    pythons = {}
-    for entry in st.get("pythons") or []:
-        path, purelib, link, test = (str(entry).split("|", 3) + ["", "", ""])[:4]
-        pythons.setdefault(path, {"purelib": purelib, "link": link, "test": test})
-    used = python or "python3"
-    if family == "RedHat":
-        for path in [p for i, p in enumerate(["python3", python]) if p and p not in ["python3", python][:i]]:
-            have = pythons.get(path)
-            # (not there, or the package's own site-packages: nothing linked)
-            if not have or not have["purelib"] or have["purelib"] == os.path.dirname(PACKAGE_CQLSHLIB):
-                continue
-            if have["link"] in ("", "absent"):
-                notes.append("cassandra_install: cqlshlib of %s: none -> a link to the package's%s" % (path, NO_EFFECT_NOTE))
-            elif have["link"] != PACKAGE_CQLSHLIB:
-                out.append("cassandra_install: cqlshlib of %s: node has %s, the roles would set a link to %s" % (
-                    path, "its own" if have["link"] == "other" else "a link to " + have["link"], PACKAGE_CQLSHLIB))
-    test = (pythons.get(used) or {}).get("test", "")
-    if test and test != "ok":
-        out.append("cassandra_install: cqlsh as the roles would set it up (the package's, with %s) does not start: %s"
-                   % (used, test))
+    return out
+
+
+def _cqlshlib_links(pythons, python, out, notes):
+    """RedHat: the link to the package's cqlshlib in the site-packages of python3 and of the Python the roles set;
+    out and notes changed in place."""
+    for path in [p for i, p in enumerate(["python3", python]) if p and p not in ["python3", python][:i]]:
+        have = pythons.get(path)
+        # (not there, or the package's own site-packages: nothing linked)
+        if not have or not have["purelib"] or have["purelib"] == os.path.dirname(PACKAGE_CQLSHLIB):
+            continue
+        if have["link"] in ("", "absent"):
+            notes.append("cassandra_install: cqlshlib of %s: none -> a link to the package's%s" % (path, NO_EFFECT_NOTE))
+        elif have["link"] != PACKAGE_CQLSHLIB:
+            out.append("cassandra_install: cqlshlib of %s: node has %s, the roles would set a link to %s" % (
+                path, "its own" if have["link"] == "other" else "a link to " + have["link"], PACKAGE_CQLSHLIB))
+
+
+def _cqlsh_ran(cqlsh, st, error):
+    """The cqlsh the playbooks ran on the node, when not the package's (and cassandra_cqlsh_command not set)."""
     ran = st.get("ran", "")
     package = ("/usr/bin/cqlsh", "/usr/local/bin/cqlsh") if st.get("wrapper") in ("role", "absent") else ("/usr/bin/cqlsh",)
     # the same file through a link (/bin/cqlsh on EL, /bin a link to usr/bin): the package's
     real = st.get("real") or {}
     same = [p for p in package if real.get("ran") and real.get("ran") == real.get(p)]
     if ran and ran not in package and not same and cqlsh["command"] == "cqlsh" and not error:
-        out.append("cassandra_install: cqlsh: node has %s (not the package's) for the playbooks, the roles would set"
-                   " the package's: set cassandra_cqlsh_command: %s in group_vars and import again (it writes"
-                   " cassandra_cqlsh_source: external), or -e import_keep_hand_edits=cqlsh" % (ran, ran))
-    return out, notes
+        return ["cassandra_install: cqlsh: node has %s (not the package's) for the playbooks, the roles would set"
+                " the package's: set cassandra_cqlsh_command: %s in group_vars and import again (it writes"
+                " cassandra_cqlsh_source: external), or -e import_keep_hand_edits=cqlsh" % (ran, ran)]
+    return []
 
 
 def _parts_check(variables, facts, parts):
@@ -850,9 +875,43 @@ def _rejected(live, rendered, release):
 def _compare_files(rendered, live, node_environment=None, role_environment=None, storage_dir="", java="", release="",
                    series="", running=None):
     """running: {cmdline, newer, series} (cassandra_import_self_check's jvm); series: cassandra_version, else running's."""
-    differences, notes, heap, by_file = [], [], [], {}
     series = series or (running or {}).get("series", "")
-    # a stock line of a later release the node's file predates: not a difference (the import says it under WORTH A LOOK)
+    rendered, live = _both_as_read(rendered, live, node_environment, role_environment, series, running)
+    # (not from a JVM started before its cassandra-env.sh was written: its arguments are not that file's)
+    environment = dict(node_environment or {}, **((running or {}).get("environment") or {}))
+    cmdline = env_cmdline(running)
+    notes, heap = [], []
+    if "cassandra-env.sh" in rendered and "cassandra-env.sh" in live:
+        # (the node's lines in the JMX branch its JVM does not take: no effect, as the import reads them)
+        text, count, runs = jvm_args.without_jmx_branch_not_run(live["cassandra-env.sh"], rendered["cassandra-env.sh"],
+                                                                environment, cmdline)
+        if count:
+            live = dict(live, **{"cassandra-env.sh": text})
+            notes.append(branch_not_run_note(count, runs))
+    jvm_live, jvm_rendered = live, rendered  # (the JVM's proof: the files whole)
+    if "cassandra-env.sh" in rendered and "cassandra-env.sh" in live:
+        rendered, live, env_notes, heap = _env_as_read(rendered, live, node_environment, role_environment, running,
+                                                       environment, cmdline)
+        notes += env_notes
+    differences, by_file = _file_differences(rendered, live, storage_dir, java, release, series, heap, notes)
+    moved = _options_moved(rendered, live, series, java, by_file)
+    if moved:
+        differences = [d for d in differences if not any(d in by_file[f] for f in moved)
+                       or not any(d.startswith("%s: %s: node has " % (f, k)) for f, keys in moved.items() for k in keys)]
+        for f in moved:
+            by_file[f] = [d for d in by_file[f] if d in differences]
+        notes.append("%s: %s set in the other of the two files Java %s reads (bin/cassandra passes them as one list):"
+                     " the same for the JVM" % (", ".join(sorted(moved)), ", ".join(sorted(set(
+                         k for keys in moved.values() for k in keys))), java))
+    differences, heap = _jvm_differences(jvm_rendered, jvm_live, by_file, differences, heap, notes, node_environment,
+                                         role_environment, series, java, running)
+    return {"differences": differences + heap, "notes": notes}
+
+
+def _both_as_read(rendered, live, node_environment, role_environment, series, running):
+    """Both sides' files as the import reads them: a later release's stock line the node's file predates left out
+    (the import says it under WORTH A LOOK), the log dir written as itself in logback.xml, the exporter's block as the
+    line it runs, a plain CASSANDRA_HEAPDUMP_DIR as the role's -> (rendered, live)."""
     rendered = dict((name, without_later_stock(name, text, live.get(name))[0] if name in live else text)
                     for name, text in rendered.items())
     # the log dir written as itself in logback.xml: ${cassandra.logdir}, each side's (the node's: as its JVM got it)
@@ -870,48 +929,49 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
         live = dict(live, **{"cassandra-env.sh": jvm_args.heap_dump_dir_as_role(
             live["cassandra-env.sh"], dict(node_environment or {}, **((running or {}).get("environment") or {})),
             (running or {}).get("cmdline"), (running or {}).get("heapdump_before"))[0]})
-    # (not from a JVM started before its cassandra-env.sh was written: its arguments are not that file's)
-    environment = dict(node_environment or {}, **((running or {}).get("environment") or {}))
-    cmdline = env_cmdline(running)
-    if "cassandra-env.sh" in rendered and "cassandra-env.sh" in live:
-        # (the node's lines in the JMX branch its JVM does not take: no effect, as the import reads them)
-        text, count, runs = jvm_args.without_jmx_branch_not_run(live["cassandra-env.sh"], rendered["cassandra-env.sh"],
-                                                                environment, cmdline)
-        if count:
-            live = dict(live, **{"cassandra-env.sh": text})
-            notes.append(branch_not_run_note(count, runs))
-    jvm_live, jvm_rendered = live, rendered  # (the JVM's proof: the files whole)
-    if "cassandra-env.sh" in rendered and "cassandra-env.sh" in live:
-        # (the stock password file line commented out, the JVM never reading it: as the import reads it)
-        inert = jvm_args.password_file_line_inert(live["cassandra-env.sh"], rendered["cassandra-env.sh"], cmdline,
-                                                  environment)
-        if inert:
-            rendered = dict(rendered, **{"cassandra-env.sh": jvm_args.without_lines(rendered["cassandra-env.sh"], inert)})
-            notes.append(PASSWORD_FILE_NOTE)
-    if "cassandra-env.sh" in rendered and "cassandra-env.sh" in live:
-        # (the node's lines in the remote JMX branch it takes, the roles' outside it: as the import reads them)
-        mine, theirs = jvm_args.remote_branch_moved(live["cassandra-env.sh"], rendered["cassandra-env.sh"], environment,
-                                                    cmdline)
-        if mine:
-            notes.append(REMOTE_BRANCH_NOTE % _out.plural(len(mine), "line"))
-        # (a line of an option a node may switch on anywhere, outside any block on both sides: the same for bash)
-        named, named_role = jvm_args.named_lines_moved(live["cassandra-env.sh"], rendered["cassandra-env.sh"],
-                                                       ELSEWHERE, _jvm_environments(node_environment, None,
-                                                                                    running or {})[0])
-        if named:
-            notes.append(ELSEWHERE_NOTE % _out.plural(len(named), "line"))
-        mine, theirs = mine + named, theirs + named_role
-        # (and a line its block writes again the same below it: the last one counts)
-        again = jvm_args.repeated_lines(live["cassandra-env.sh"], rendered["cassandra-env.sh"])
-        again_rendered = jvm_args.repeated_lines(rendered["cassandra-env.sh"], live["cassandra-env.sh"])
-        if again:
-            notes.append(REPEATED_NOTE % _out.plural(len(again), "line"))
-        live = dict(live, **{"cassandra-env.sh": jvm_args.without_lines(live["cassandra-env.sh"], mine + again)})
-        rendered = dict(rendered, **{"cassandra-env.sh": jvm_args.without_lines(
-            rendered["cassandra-env.sh"], theirs + again_rendered)})
-        node_heap = _heap(live["cassandra-env.sh"], node_environment)
-        role_heap = _heap(rendered["cassandra-env.sh"], role_environment)
-        heap = _dict_diff(HEAP_FILE, node_heap, role_heap)
+    return rendered, live
+
+
+def _env_as_read(rendered, live, node_environment, role_environment, running, environment, cmdline):
+    """Both sides' cassandra-env.sh as the import reads them: the stock password file line the JVM never reads, the
+    lines a node may have at another place (the remote JMX branch it takes, an option outside any block), a line
+    its block writes again below it -> (rendered, live, notes, the heap's differences)."""
+    notes = []
+    # (the stock password file line commented out, the JVM never reading it: as the import reads it)
+    inert = jvm_args.password_file_line_inert(live["cassandra-env.sh"], rendered["cassandra-env.sh"], cmdline,
+                                              environment)
+    if inert:
+        rendered = dict(rendered, **{"cassandra-env.sh": jvm_args.without_lines(rendered["cassandra-env.sh"], inert)})
+        notes.append(PASSWORD_FILE_NOTE)
+    # (the node's lines in the remote JMX branch it takes, the roles' outside it: as the import reads them)
+    mine, theirs = jvm_args.remote_branch_moved(live["cassandra-env.sh"], rendered["cassandra-env.sh"], environment,
+                                                cmdline)
+    if mine:
+        notes.append(REMOTE_BRANCH_NOTE % _out.plural(len(mine), "line"))
+    # (a line of an option a node may switch on anywhere, outside any block on both sides: the same for bash)
+    named, named_role = jvm_args.named_lines_moved(live["cassandra-env.sh"], rendered["cassandra-env.sh"],
+                                                   ELSEWHERE, _jvm_environments(node_environment, None,
+                                                                                running or {})[0])
+    if named:
+        notes.append(ELSEWHERE_NOTE % _out.plural(len(named), "line"))
+    mine, theirs = mine + named, theirs + named_role
+    # (and a line its block writes again the same below it: the last one counts)
+    again = jvm_args.repeated_lines(live["cassandra-env.sh"], rendered["cassandra-env.sh"])
+    again_rendered = jvm_args.repeated_lines(rendered["cassandra-env.sh"], live["cassandra-env.sh"])
+    if again:
+        notes.append(REPEATED_NOTE % _out.plural(len(again), "line"))
+    live = dict(live, **{"cassandra-env.sh": jvm_args.without_lines(live["cassandra-env.sh"], mine + again)})
+    rendered = dict(rendered, **{"cassandra-env.sh": jvm_args.without_lines(
+        rendered["cassandra-env.sh"], theirs + again_rendered)})
+    node_heap = _heap(live["cassandra-env.sh"], node_environment)
+    role_heap = _heap(rendered["cassandra-env.sh"], role_environment)
+    return rendered, live, notes, _dict_diff(HEAP_FILE, node_heap, role_heap)
+
+
+def _file_differences(rendered, live, storage_dir, java, release, series, heap, notes):
+    """Each file the roles write against the node's, as its program reads it (an options file the running Java does
+    not read: notes only) -> (differences, {file: its differences}); notes changed in place."""
+    differences, by_file = [], {}
     read = jvm.options_file(series, java) or "jvm%s-server.options" % java
     for name in sorted(rendered):
         other_java = re.match(r"^jvm(\d+)-server\.options$", name)
@@ -942,15 +1002,14 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
             continue
         by_file[name] = found
         differences += found
-    moved = _options_moved(rendered, live, series, java, by_file)
-    if moved:
-        differences = [d for d in differences if not any(d in by_file[f] for f in moved)
-                       or not any(d.startswith("%s: %s: node has " % (f, k)) for f, keys in moved.items() for k in keys)]
-        for f in moved:
-            by_file[f] = [d for d in by_file[f] if d in differences]
-        notes.append("%s: %s set in the other of the two files Java %s reads (bin/cassandra passes them as one list):"
-                     " the same for the JVM" % (", ".join(sorted(moved)), ", ".join(sorted(set(
-                         k for keys in moved.values() for k in keys))), java))
+    return differences, by_file
+
+
+def _jvm_differences(jvm_rendered, jvm_live, by_file, differences, heap, notes, node_environment, role_environment,
+                     series, java, running):
+    """The differences of the JVM's files (cassandra-env.sh, the options files) that give the JVM the same arguments
+    as the roles' left out, with a note: an earlier series' stock cassandra-env.sh said in one line, the files the
+    roles rewrite in their own layout -> (differences, heap's: [] when rewritten); notes changed in place."""
     earlier = earlier_env(series, jvm_live[jvm_args.ENV], jvm_rendered[jvm_args.ENV], (running or {}).get("facts") or {}) \
         if jvm_args.ENV in jvm_live and jvm_args.ENV in jvm_rendered and by_file.get(jvm_args.ENV) else None
     rewritten, apart = _jvm_rewritten(jvm_rendered, jvm_live, by_file, heap, node_environment, role_environment, java,
@@ -975,7 +1034,7 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
                          ", ".join(rewritten), "it" if len(rewritten) == 1 else "them",
                          ", but for %s, above" % ", ".join(sorted(apart)) if apart else ""))
         heap = []
-    return {"differences": differences + heap, "notes": notes}
+    return differences, heap
 
 
 def _options_moved(rendered, live, series, java, by_file):
