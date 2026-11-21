@@ -10,6 +10,7 @@ Rendering:
   trusted(value)                         every string inside value trusted (nested dicts and lists too)
   templar_for(variables)                 a Templar over variables
   task_runs(task, **variables)           whether the task's when conditions all hold over variables
+  node_program(role, task)               the Python program a command task of role runs on the node (python -c)
 
 Running a playbook:
   run_playbook(args, env, ...)           ansible-playbook <args> -> (rc, its output). A test that runs one is
@@ -53,6 +54,14 @@ LOCAL = ["-c", "local", "-e", "ansible_python_interpreter=" + sys.executable]
 
 def templar_for(variables):
     return Templar(loader=DataLoader(), variables=variables)
+
+
+def node_program(role, task):
+    """The Python program a command task of role runs on the node (python -c <program>: the third word of its argv),
+    looked up as Ansible looks it up for that role's task."""
+    role_dir = os.path.join(TOP, "roles", role)
+    found = templar_for({"role_path": role_dir, "ansible_search_path": [role_dir]})
+    return found.template(trust_as_template(task["ansible.builtin.command"]["argv"][2]))
 
 
 def trusted(value):

@@ -1,8 +1,8 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-# Runs cassandra_config's node-side reader (files/config_read.py) as the role
-# does: python -c, a JSON request on stdin, a JSON answer on stdout.
+# Runs cassandra_config's node-side reader as the role does: the program its tasks send
+# (python -c), a JSON request on stdin, a JSON answer on stdout.
 
 import json
 import os
@@ -11,9 +11,12 @@ import sys
 
 import yaml
 
+from ansible_collections.community.cassandra.tests.unit.helpers import node_program
+from ansible_collections.community.cassandra.tests.unit.task_files import find_task, load_tasks
+
 ROLE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_config")
-with open(os.path.join(ROLE, "files", "config_read.py"), encoding="utf-8") as f:
-    SCRIPT = f.read()
+SCRIPT = node_program("cassandra_config", find_task(load_tasks(os.path.join(ROLE, "tasks", "read.yml")),
+                                                    "Read the node's config files and directories"))
 with open(os.path.join(ROLE, "vars", "main.yml"), encoding="utf-8") as f:
     SNITCHES = yaml.safe_load(f)["_cassandra_config_snitches_without_rackdc"]
 

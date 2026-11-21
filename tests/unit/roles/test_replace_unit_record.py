@@ -14,6 +14,8 @@ import sys
 import pytest
 import yaml
 
+from ansible_collections.community.cassandra.tests.unit.helpers import node_program
+
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
 
@@ -44,8 +46,7 @@ def run(tmp_path, record):
         path.write_text(json.dumps(dict((str(unit) if k == "unit" else k, v) for k, v in record.items())))
     assert request == {"before": {UNIT_PATH: "{{ _cassandra_service_unit_before }}"}, "files": {UNIT_PATH: None}}
     request = {"before": {str(unit): sha1(FLAGGED)}, "files": {str(unit): None}}  # (the unit here, its sha1 before)
-    with open(os.path.join(ROOT, "roles", "cassandra_service", "files", "config_record.py")) as f:
-        script = f.read()
+    script = node_program("cassandra_service", load("roles", "cassandra_service", "tasks", "config_record_update.yml")[0])
     out = subprocess.run([sys.executable, "-c", script, "update", str(path), json.dumps(request)],
                          capture_output=True, text=True, check=True).stdout.strip()
     return out, (json.loads(path.read_text()) if path.exists() else None), str(unit)

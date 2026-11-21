@@ -3,7 +3,7 @@ __metaclass__ = type
 
 # cassandra_config adds its header line ("Managed by Ansible ...: change the role variables, not this file") to a
 # file it leaves as it is (the same settings as the role's, written another way, e.g. imported): the header alone,
-# the rest of the file byte for byte (files/config_header.py, on the node), never when the file with it would not
+# the rest of the file byte for byte (config_header.py, on the node), never when the file with it would not
 # have the same settings (cassandra_config_header: the proof that no restart is needed for it).
 
 import hashlib
@@ -16,11 +16,15 @@ import pytest
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
     HEADER_MARK, _config_header, cassandra_config_header, cassandra_same_settings)
+from ansible_collections.community.cassandra.tests.unit.helpers import node_program
+from ansible_collections.community.cassandra.tests.unit.task_files import find_task, load_tasks
 
 YAML_HEADER = "# Managed by Ansible (community.cassandra.cassandra_config): change the role variables, not this file."
 XML_HEADER = "<!-- Managed by Ansible (community.cassandra.cassandra_config): change the role variables, not this file. -->"
-SCRIPT = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_config", "files",
-                      "config_header.py")
+# the program the role sends to the node (python -c)
+SCRIPT = node_program("cassandra_config", find_task(load_tasks(os.path.join(
+    os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_config", "tasks", "header.yml")),
+    "Add the role's header line to the files left as they are"))
 H = b"# header"
 
 
@@ -78,7 +82,7 @@ def test_no_header_when_the_file_with_it_would_not_have_the_same_settings():
 
 
 def run(request):
-    out = subprocess.run([sys.executable, SCRIPT], input=json.dumps(request).encode(), stdout=subprocess.PIPE,
+    out = subprocess.run([sys.executable, "-c", SCRIPT], input=json.dumps(request).encode(), stdout=subprocess.PIPE,
                          check=True).stdout
     return json.loads(out)
 

@@ -19,7 +19,8 @@ import pytest
 import yaml
 
 from ansible_collections.community.cassandra.tests.unit.task_files import find_task, load_tasks
-from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given as render, task_runs, trust_as_template
+from ansible_collections.community.cassandra.tests.unit.helpers import (
+    node_program, render_as_given as render, task_runs, trust_as_template)
 
 ROLE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_operation")
 
@@ -38,8 +39,8 @@ def tasks(name):
     return out
 
 
-with open(os.path.join(ROLE, "..", "cassandra_service", "files", "config_record.py")) as f:
-    RECORD = f.read()
+# the program cassandra_service sends to the node (python -c) to write the record
+RECORD = node_program("cassandra_service", tasks("config_snapshot.yml")[0])
 # config_record.py made to see in /proc only the processes ONLY_PIDS names (its environment)
 RECORD_ONLY_PIDS = RECORD.replace("\n__metaclass__ = type\n", "\n__metaclass__ = type\nimport os\n_listdir = os.listdir\n"
                                   "os.listdir = lambda p='.': [x for x in _listdir(p) if p != '/proc' or not x.isdigit()"
@@ -398,10 +399,10 @@ def test_files_recorded_as_the_running_cassandras_only_as_planned(tmp_path):
 
 
 def test_every_update_of_the_record_goes_through_the_one_helper():
-    # the record rewritten in one place: config_record.py, for the start and the updates
+    # the record rewritten in one place: one program (config_record.py), for the start and the updates
     for name in ("config_snapshot.yml", "config_record_update.yml"):
         argv = tasks(name)[0]["ansible.builtin.command"]["argv"]
-        assert argv[2] == "{{ lookup('ansible.builtin.file', 'config_record.py') }}"
+        assert argv[1] == "-c" and node_program("cassandra_service", tasks(name)[0]) == RECORD
     assert tasks("unit_no_restart.yml")[0]["ansible.builtin.include_tasks"] == "config_record_update.yml"
     proven = task("action_apply_config.yml", "Record them when they are on disk as planned and that Cassandra still runs")
     assert proven["ansible.builtin.include_role"]["tasks_from"] == "config_record_update.yml"
