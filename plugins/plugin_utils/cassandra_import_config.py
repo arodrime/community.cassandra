@@ -69,28 +69,29 @@ class _Reading(object):
 
 
 def cassandra_config_import(live_files, cassandra_version, facts, conf_target="", storage_dir="", jmx_files=None,
-                            release="", java="", cmdline="", jvm=None):
-    """cassandra_config variables that render a node's files, and what the
-    role would still change: {'vars', 'hand_edits', 'normalized', 'comments'
-    (comment lines only, which set nothing), 'not_settings' ({'keys': the
-    cassandra.yaml keys its Cassandra rejects, not imported, 'release'}),
-    'release' (the version they were judged by), 'moved' (hand edits of
-    cassandra-env.sh moved to variables), 'rewritten' (the files the role
-    then writes in its own layout, the JVM getting the same arguments),
-    'cleanup' (options the running JVM does not use), 'not_moved' (why
-    cassandra-env.sh's JVM_OPTS lines or heap were not moved, '' if moved or none)}.
-    conf_target: the resolved dir the node reads its config from; storage_dir:
-    the JVM's -Dcassandra.storagedir; jmx_files: cassandra_jmx_files' (the
-    remote JMX files the JVM reads, under the names jmxremote.password and
-    .access in live_files); release: the node's Cassandra version (4.1.5;
-    '': the keys no release of the series accepts are the ones rejected); java: the
-    running Java's major ('': not known), for the options files it reads; cmdline: the
-    running JVM's arguments (/proc/<pid>/cmdline), for its heap. Also 'jvm_notes',
-    'jvm_warnings' (options worth a look: why, the way out); jvm: the running JVM,
-    {cmdline: its /proc/<pid>/cmdline, java: its major version, environment:
-    what the unit gives it, newer: the config files written since it started,
-    keep: import_keep_hand_edits, the JVM's files it keeps not moved}
-    (java and cmdline from it when not given).
+                            release="", java="", cmdline="", running=None):
+    """cassandra_config variables that render a node's files, and what the role would still change.
+    live_files: {file name: text} of the node's config files; facts: the node's.
+    conf_target: the resolved dir the node reads its config from; storage_dir: the JVM's -Dcassandra.storagedir;
+    jmx_files: cassandra_jmx_files' (the remote JMX files the JVM reads, under the names jmxremote.password and
+    .access in live_files); release: the node's Cassandra version (4.1.5; '': the keys no release of the series
+    accepts are the ones rejected); java: the running Java's major ('': not known), for the options files it reads;
+    cmdline: the running JVM's arguments (/proc/<pid>/cmdline), for its heap; running: the running JVM, {cmdline:
+    its /proc/<pid>/cmdline, java: its major version, environment: what the unit gives it, newer: the config files
+    written since it started, keep: import_keep_hand_edits, the JVM's files it keeps not moved} (java and cmdline
+    from it when not given).
+    Returns {
+    - vars: the variables;
+    - hand_edits, normalized; comments: comment lines only, which set nothing;
+    - not_settings: {keys: the cassandra.yaml keys its Cassandra rejects, not imported, release};
+    - release: the version they were judged by;
+    - trusted: its lines (of the variables) that refer to a secret's variable, written as templates;
+    - carried: the notes of the lines carried into the inventory (a file's lines at its end, your appenders, the
+      secrets moved to variables of their own);
+    - jvm_notes; jvm_warnings: options worth a look (why, the way out);
+    - moved: hand edits of cassandra-env.sh moved to variables; rewritten: the files the role then writes in its
+      own layout, the JVM getting the same arguments; cleanup: options the running JVM does not use; not_moved:
+      why cassandra-env.sh's JVM_OPTS lines or heap were not moved ('' if moved or none)}.
     e.g. cassandra_config_import({"cassandra.yaml": text, ...}, "41x", ansible_facts)
     -> {"vars": {"cassandra_cluster_name": "Prod", ...}, "hand_edits": [], "normalized": [], ...}."""
     if cassandra_version not in SERIES:
@@ -101,7 +102,7 @@ def cassandra_config_import(live_files, cassandra_version, facts, conf_target=""
                       for k, v in live_files.items())
     try:
         return _config_import(live_files, cassandra_version, facts, reading, conf_target, storage_dir, jmx_files,
-                              release, java, cmdline, jvm)
+                              release, java, cmdline, running)
     except AnsibleFilterError:
         raise
     except Exception as exc:  # pylint: disable=broad-except

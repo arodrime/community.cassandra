@@ -222,7 +222,7 @@ def test_the_owners_block_whose_guards_failed(tmp_path):
     variables = imported_vars[1]["nodes"][0]["vars"]
     assert dict((k, variables.get(k)) for k in VARS) == VARS
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_config_import
-    out = cassandra_config_import(files, "50x", {"os_family": "Debian"}, jvm={"cmdline": cmdline, "java": "17"})
+    out = cassandra_config_import(files, "50x", {"os_family": "Debian"}, running={"cmdline": cmdline, "java": "17"})
     assert [n for n in out["jvm_notes"] if "the running JVM does not have the Prometheus exporter's agent" in n]
     assert [m for m in out["moved"] if "its guards are not kept" in m and "checks its port before each restart" in m]
     # the role would load the agent the JVM does not have now: the self-check says it
@@ -232,7 +232,7 @@ def test_the_owners_block_whose_guards_failed(tmp_path):
 def exporter_import(files, cmdline, **read):
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_config_import
     return cassandra_config_import(files, "50x", {"os_family": "Debian"},
-                                   jvm={"cmdline": cmdline, "java": "17", "exporter": read})
+                                   running={"cmdline": cmdline, "java": "17", "exporter": read})
 
 
 def test_the_jar_is_imported_with_its_sha256(tmp_path):
@@ -301,7 +301,7 @@ def test_a_reimport_of_the_roles_own_config():
 
     def imported_with(config):
         return cassandra_config_import(files, "50x", {"os_family": "Debian"},
-                                       jvm={"cmdline": "", "java": "17", "exporter": {"sha256": "ab" * 32, "config": config}})
+                                       running={"cmdline": "", "java": "17", "exporter": {"sha256": "ab" * 32, "config": config}})
     import os
     with open(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_config", "files",
                            "jmx_prometheus.yml")) as f:
@@ -371,10 +371,10 @@ def test_the_agent_read_is_the_one_the_running_java_gets(live):
     node["jvm17-server.options"] += OPTION + "\n"
     read = {"sha256": "ab" * 32, "config": "rules: []\n", "jar": "/opt/old/jmx_prometheus_javaagent-0.20.0.jar",
             "config_file": "/opt/old/old.yml", "carry": True}
-    out = cassandra_config_import(node, "50x", {"os_family": "Debian"}, jvm={"cmdline": "", "java": "17", "exporter": read})
+    out = cassandra_config_import(node, "50x", {"os_family": "Debian"}, running={"cmdline": "", "java": "17", "exporter": read})
     assert "cassandra_prometheus_exporter_checksum" not in out["vars"] and "cassandra_prometheus_exporter_config" not in out["vars"]
     assert [n for n in out["jvm_notes"] if "jar could not be read" in n]
-    out = cassandra_config_import(node, "50x", {"os_family": "Debian"}, jvm={"cmdline": "", "java": "17", "exporter": dict(
+    out = cassandra_config_import(node, "50x", {"os_family": "Debian"}, running={"cmdline": "", "java": "17", "exporter": dict(
         read, jar=JAR, config_file=CONF)})
     assert out["vars"]["cassandra_prometheus_exporter_checksum"] == "sha256:" + "ab" * 32
 

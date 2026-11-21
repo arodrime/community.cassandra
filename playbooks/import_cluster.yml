@@ -847,7 +847,7 @@
                    cassandra_version=import_cluster_series, facts=ansible_facts,
                    conf_target=import_cluster_conf_target | default(''),
                    storage_dir=import_cluster_storage_dir | default(''),
-                   jmx_files=import_cluster_jmx_files | default({}), release=_release, jvm=_jvm) }}
+                   jmx_files=import_cluster_jmx_files | default({}), release=_release, running=_jvm) }}
           vars:
             # the cassandra.yaml keys are judged by the release the next start runs: the package installed
             # since Cassandra started (a restart pending), else the running one
