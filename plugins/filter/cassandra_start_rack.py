@@ -21,8 +21,6 @@ at an address it gives:
   a rack node down                                              wait, then STOP
   a rack node left out by --limit (not started by the run),     WARNING, not
     not UN (its state from the last read)                         waited for
-  under --limit, a node of the run not in the ring at an        STOP
-    address it gives (not seen UN)
   a rack node in another state, or nodetool failing on it       STOP
   an outside node not UN for the node outside the rack read     WARNING, not
     from (its read failed, or none read: for the rack node)       waited for
@@ -51,8 +49,9 @@ even (no stop); a host outside the rack reached over ssh whose ping or fact gath
 
 cassandra_rack_members: the nodes the inventory puts in a rack (every node of the cluster, under --limit too).
 cassandra_rack_verdict: the table above applied to a read of the cluster.
-cassandra_rack_outside_lines: the rack's nodes UN (those of the run under --limit), then the warnings (the nodes
-of the rack left out by --limit not UN, the rest of the cluster), once the rack is UN.
+cassandra_rack_outside_lines: the rack's nodes UN (those of the run under --limit), its ring nodes UN no host has
+the address of, then the warnings (the nodes of the rack left out by --limit not UN, the rest of the cluster), once
+the rack is UN.
 cassandra_rack_start_failed: a node of the rack that did not start (start_rack's rescue).
 cassandra_rack_stop_refused: stop_rack's refusal (more than one replica down), with the other screens of a rack's
 start and stop.
@@ -121,7 +120,7 @@ def _judge(findings, members, dc, rack, addresses, reads):
 def _rack_seen_un(reads, members, dc, rack, addresses, names):
     """The cassandra_status results read, the rack's nodes, its dc and rack, every host's addresses, {ring address:
     name} -> the nodes of the ring of the rack (at an address a rack node gives, or put in the rack's dc and rack by
-    the ring), UN in every read that has them, in the ring's order: by name, else by address."""
+    the ring), UN in every read that has them, in the ring's order: [address, its name or None]."""
     member_at = set(_ip(a) for a, name in (addresses or {}).items() if name in (members or []))
     states, order = {}, []
     for read in reads or []:
@@ -134,7 +133,7 @@ def _rack_seen_un(reads, members, dc, rack, addresses, names):
                     if address not in states:
                         order.append(address)
                     states.setdefault(address, set()).add(str(n.get("status", "")) + str(n.get("state", "")))
-    return [names.get(a, a) for a in order if states[a] == {"UN"}]
+    return [[a, names.get(a)] for a in order if states[a] == {"UN"}]
 
 
 def _seen_from_run_only(checker, peer, run, addresses):
@@ -258,10 +257,10 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
         versions are mixed: cassandra_allow_mixed_versions).
       ring_size: [[the ring's size, the inventory's]] when they differ and that is a warning.
       unknown_lines: why each node judged of the rack only for want of a host known by its address is, then the
-        way out; under --limit, what to do for a node of the run not in the ring at an address it gives; [] for
-        none.
+        way out; [] for none.
       problems: what stops the run, as sentences (cassandra_health_sentences).
-      rack_seen_un: the nodes of the rack UN in the rings read (_rack_seen_un), by name, else by address.
+      rack_seen_un: the nodes of the rack UN in the rings read (_rack_seen_un) a host has the address of, by name.
+      rack_unowned: the nodes of the rack UN in the rings read no host has the address of, [[address, "UN"]].
       seen_from_run_only: the nodes read from (checker, peer) when they are all nodes of this run and the cluster
         has others (none of them reached in the play; a node sees itself UN): [] otherwise.
       left_out: the nodes of the rack not UN that are left out by --limit, [{address, name, states}; a node by its
@@ -273,7 +272,8 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
         nodetool failed.
     e.g. ([<n4 DN from n2>, <n4 DN from n1>], ["n2", "n3"], "dc1", "r2", "n2", "n1") -> {outside: [{address:
     "10.0.0.4", name: "n4", states: ["DN"]}], failed: [], warnings: [], ring_size: [], unknown_lines: [],
-    problems: [], rack_seen_un: ["n2", "n3"], seen_from_run_only: [], left_out: [], not_readers: ["n4"]}."""
+    problems: [], rack_seen_un: ["n2", "n3"], rack_unowned: [], seen_from_run_only: [], left_out: [],
+    not_readers: ["n4"]}."""
     findings = findings or []
     left_out = list(left_out or [])
     known = _left_out_names(left_out, addresses, reads)
@@ -338,17 +338,15 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
     seen_down = [f.get("name") for f in findings if f.get("kind") == "state" and str(f.get("state"))[:1] == "D"]
     names = _names(findings, addresses)
     on_other_schema = [[names.get(a, a), "on another schema version than the rack"] for a in other_schema or []]
-    # under --limit, the run's success is its nodes UN as the ring shows them: one not in the ring at an address
-    # it gives is not seen UN (the others not UN are in the findings)
-    unseen = [h for h in run if h not in found.values()] if left_out and ring_read else []
+    seen_un = _rack_seen_un(reads, members, dc, rack, addresses, dict(names, **known))
     return {"outside": outside,
             "failed": _unique(failed),
             "warnings": _unique(on_other_schema + [_note_row(f) for f in notes]),
             "ring_size": _unique(ring_size),
-            "unknown_lines": _unknown_lines(findings, judged, rack) + _unseen_lines(unseen),
-            "problems": cassandra_health_sentences(stops) + [
-                "%s (%s) is not in the ring at an address it gives: not seen UN" % (h, rack) for h in unseen],
-            "rack_seen_un": _rack_seen_un(reads, members, dc, rack, addresses, dict(names, **known)),
+            "unknown_lines": _unknown_lines(findings, judged, rack),
+            "problems": cassandra_health_sentences(stops),
+            "rack_seen_un": [name for a, name in seen_un if name],
+            "rack_unowned": [[a, "UN"] for a, name in seen_un if not name],
             "seen_from_run_only": _seen_from_run_only(checker, peer, run, addresses),
             "left_out": left,
             "not_readers": [h for h in _unique([n.get("name") for n in outside] + seen_down + failed_on) if h]}
@@ -373,15 +371,6 @@ def _unknown_lines(findings, judged, rack):
     return out.fit(lines + ["if %s outside rack %s: give its inventory host that address" % (which, rack),
                             "  (broadcast_address in cassandra_extra_settings, else",
                             "  cassandra_listen_address or ansible_host), then run start_rack again"], WIDTH)
-
-
-def _unseen_lines(unseen):
-    """The nodes of the run not in the ring at an address they give -> what to do; [] for none."""
-    if not unseen:
-        return []
-    return out.fit(["give %s the address the ring has %s at (broadcast_address in" % (
-        out.nodes(unseen), "it" if len(unseen) == 1 else "them"),
-        "  cassandra_extra_settings, else cassandra_listen_address or ansible_host)"], WIDTH)
 
 
 _DOING = {"J": "joining", "L": "leaving", "M": "moving"}
@@ -449,7 +438,9 @@ def cassandra_rack_outside_lines(verdict, unreached, dc, rack, command, run=None
     command that checks the cluster, the rack's nodes in this run and those left out by --limit, the start_rack
     command (without --limit) -> the lines said once the rack's nodes are UN: that fact, the nodes seen UN
     (verdict's rack_seen_un; under --limit, the nodes of this run; nothing started when --limit leaves out the
-    whole rack; not said when the stop was forced: verdict's problems), then the warning on the nodes of the rack
+    whole rack; not said when the stop was forced: verdict's problems), the rack's ring nodes UN no host has the
+    address of (verdict's rack_unowned, rows), "UN as seen from" the nodes of the run only (verdict's
+    seen_from_run_only), then the warning on the nodes of the rack
     left out by --limit not UN (_left_out_lines), then, when the rest of the cluster has any, a WARNING with a row
     per node of the rest of the cluster (its states as nodetool status says them, "not reached over ssh",
     "nodetool status failed", verdict's warnings), one for the ring's size, the command.
@@ -474,21 +465,27 @@ def cassandra_rack_outside_lines(verdict, unreached, dc, rack, command, run=None
     for name, fact in verdict.get("warnings", []):
         add(str(name), fact)
     rows = [[name, "  ".join(facts[name])] for name in order]  # (the facts in one cell: no column padded)
-    up = verdict.get("rack_seen_un") or []
+    up = [h for h in verdict.get("rack_seen_un") or [] if h in (run or []) or not left_out]
+    unowned = verdict.get("rack_unowned") or []
     if verdict.get("problems"):
         lines = []
     elif not left_out:
         lines = ["Rack %s (%s), every node is UN%s" % (rack, dc, ":" if up else ".")] + ["  " + h for h in up]
     elif run:
-        lines = ["Rack %s (%s), the nodes of this run are UN:" % (rack, dc)] + ["  " + h for h in up if h in run]
+        lines = ["Rack %s (%s), the nodes of this run are UN%s" % (rack, dc, ":" if up else ".")] + [
+            "  " + h for h in up]
     else:
         lines = ["Rack %s (%s): nothing started, --limit leaves out all of its nodes." % (rack, dc)]
+    if lines and unowned:
+        one = len(unowned) == 1
+        lines += ["%s of rack %s in the ring, at %s no inventory host has:" % (
+            "a node" if one else "nodes", rack, "an address" if one else "addresses")] + out.table(unowned, indent="  ")
     views = verdict.get("seen_from_run_only") or []
     if lines and views:
         lines.append(out.WARNING + ("UN as seen from %s only (no node outside this run read)" % views[0]
                                     if len(views) == 1 else
                                     "UN as seen from the nodes of this run only (no other node read)"))
-    lines += _left_out_lines(verdict, dc, rack, start_command, [h for h in up if h in (run or [])][:1])
+    lines += _left_out_lines(verdict, dc, rack, start_command, up[:1])
     if rows:
         lines += [out.WARNING + "the rest of the cluster:"] + out.table(rows, indent="  ")
     lines += [out.WARNING + "the ring has %s nodes, the inventory %s" % (ring, inventory)

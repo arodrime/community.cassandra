@@ -164,6 +164,7 @@ def check(unreached=(), peer=None, then=None, then_peer=None, names=None, groups
 EVERY = ["Rack r2 (dc1), every node is UN:", "  n2", "  n3"]
 UP = ["Rack r2 (dc1), the nodes of this run are UN:", "  n2"]
 LEFT_OUT = ["WARNING  rack r2 (dc1), not UN, left out by --limit (not in this run):"]
+UNOWNED = ["a node of rack r2 in the ring, at an address no inventory host has:", "  10.0.0.3  UN"]
 START = ["start n3: run start_rack on it, seen from n2 too (UN, unchanged)",
          "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
          "    -e cassandra_target_dc=dc1 -e cassandra_target_rack=r2 --limit n2,n3"]
@@ -473,9 +474,10 @@ def test_a_healthy_cluster_reads_once_and_says_the_rack_is_up():
     # its success said (it was not: only each node's start line), the nodes of the rack as the ring has them UN;
     # nothing outside the rack: no warning, no command
     assert check() == ([], EVERY)
-    # a node of the rack by its address when no host is known by it
+    # a node of the rack by its address when no host is known by it: a row of its own, with its state (it was a
+    # row among the names, as if a host)
     names = dict((a, n) for a, n in ADDRESSES.items() if n != "n3")
-    assert check(names=names) == ([], ["Rack r2 (dc1), every node is UN:", "  n2", "  10.0.0.3"])
+    assert check(names=names) == ([], ["Rack r2 (dc1), every node is UN:", "  n2"] + UNOWNED)
 
 
 def test_the_nodes_read_from():
@@ -872,8 +874,8 @@ def test_the_verdict_s_keys_are_the_ones_its_docstring_gives():
     # its "rack_up" key (the nodes seen UN) shared its name with a boolean of the same function; its example lacked
     # two keys
     verdict = noted(ring())["_cassandra_start_rack_first_verdict"]
-    assert sorted(verdict) == ["failed", "left_out", "not_readers", "outside", "problems", "rack_seen_un", "ring_size",
-                               "seen_from_run_only", "unknown_lines", "warnings"]
+    assert sorted(verdict) == ["failed", "left_out", "not_readers", "outside", "problems", "rack_seen_un", "rack_unowned",
+                               "ring_size", "seen_from_run_only", "unknown_lines", "warnings"]
     example = cassandra_rack_verdict.__doc__.split("e.g.")[1]
     assert all(key + ":" in example for key in verdict) and verdict["rack_seen_un"] == ["n2", "n3"]
 
@@ -898,7 +900,7 @@ def test_each_node_left_out_down_gets_the_command_that_starts_it_alone():
     assert "without --limit" not in " ".join(lines) and max(len(x) for x in lines) <= 79
 
 
-def test_under_limit_a_node_of_the_run_not_seen_un_in_the_ring_stops_the_run(monkeypatch):
+def test_under_limit_a_node_of_the_run_not_un_in_the_ring_stops_the_run(monkeypatch):
     # n2 (in the run) and n3 (left out) known by no address in the ring; n2 DN there: its ring entry has no name,
     # so it was taken for n3 left out, a WARNING with the command starting n3, and the run said "the nodes of this
     # run are UN (n2)", exit 0. Now an unnamed entry is taken for a node left out only while every node of the run
@@ -906,19 +908,40 @@ def test_under_limit_a_node_of_the_run_not_seen_un_in_the_ring_stops_the_run(mon
     from ansible_collections.community.cassandra.plugins.filter import cassandra_ring
     monkeypatch.setattr(cassandra_ring, "_resolved", lambda name: [])
     names = dict((a, n) for a, n in ADDRESSES.items() if n not in ("n2", "n3"))
-    problems, said = check(names=names, play=["n1", "n2", "n4"], n2="DN")
-    assert said is None
-    assert problems[:2] == ["10.0.0.2 (r2) is DN, seen from n1 and n2",
-                            "n2 (r2) is not in the ring at an address it gives: not seen UN"]
-    assert problems[2:] == ["give n2 the address the ring has it at (broadcast_address in",
-                            "  cassandra_extra_settings, else cassandra_listen_address or ansible_host)"]
-    # all UN, n2 still not at an address it gives: not seen UN, a stop (the success line says only what the
-    # ring shows)
-    problems, said = check(names=names, play=["n1", "n2", "n4"])
-    assert said is None and "n2 (r2) is not in the ring at an address it gives: not seen UN" in problems
-    # n2 at its address: the success line names it, as seen UN
+    assert check(names=names, play=["n1", "n2", "n4"], n2="DN") == (["10.0.0.2 (r2) is DN, seen from n1 and n2"], None)
+    # n2 alone known by no address, DN: its entry is the rack's, a stop
+    names = dict((a, n) for a, n in ADDRESSES.items() if n != "n2")
+    assert check(names=names, play=["n1", "n2", "n4"], n2="DN") == (["10.0.0.2 (r2) is DN, seen from n1 and n2"], None)
+    # n2 at its address: the success line names it, as seen UN; n3's entry UN, no host has its address: its row
     names = dict((a, n) for a, n in ADDRESSES.items() if n != "n3")
-    assert check(names=names, play=["n1", "n2", "n4"]) == ([], UP)
+    assert check(names=names, play=["n1", "n2", "n4"]) == ([], UP + UNOWNED)
+
+
+def test_a_node_of_the_run_on_a_cluster_network_is_a_success_with_and_without_limit(monkeypatch):
+    # n2 listens on a host name (h-n2.example) of a cluster network, 10.0.0.2 there; ssh and default_ipv4 on
+    # another one (192.168.1.2): no variable of n2 gives its ring address. Every node UN. Under --limit (n3 left
+    # out) the run stopped: "n2 (r2) is not in the ring at an address it gives: not seen UN", give it the address
+    # the ring has it at (never said which); without --limit the same cluster succeeded. Now a success both ways,
+    # the ring's node of the rack no host has the address of a row of its own, with its state
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_ring
+    hostvars = with_addresses(ADDRESSES)
+    hostvars["n2"] = dict(hostvars["n2"], ansible_host="192.168.1.2", cassandra_listen_address="h-n2.example")
+    names = dict((a, n) for a, n in ADDRESSES.items() if n != "n2")
+    unowned = [UNOWNED[0], "  10.0.0.2  UN"]
+    for resolved in ([], ["10.0.0.2"]):  # (h-n2.example resolved on the controller or not: the same)
+        monkeypatch.setattr(cassandra_ring, "_resolved", lambda name: resolved if "n2" in name else [])
+        assert check(names=names, hostvars=hostvars) == ([], ["Rack r2 (dc1), every node is UN:", "  n3"] + unowned)
+        # --limit 'all:!n3', n3 UN: the success, no row named (n2 not at an address it gives)
+        assert check(names=names, hostvars=hostvars, play=["n1", "n2", "n4"]) == (
+            [], ["Rack r2 (dc1), the nodes of this run are UN."] + unowned)
+        # n3 left out DN: the success, n3 a WARNING
+        problems, said = check(names=names, hostvars=hostvars, play=["n1", "n2", "n4"], n3="DN")
+        assert problems == [] and said[:3] == ["Rack r2 (dc1), the nodes of this run are UN."] + unowned
+        assert said[3:5] == LEFT_OUT + ["  n3  DN"]
+    # 10.0.0.2 DN: a stop (every ring node of the rack must be UN), with and without --limit
+    for play in (None, ["n1", "n2", "n4"]):
+        assert check(names=names, hostvars=hostvars, play=play, n2="DN") == (
+            ["10.0.0.2 (r2) is DN, seen from n1 and n2"], None)
 
 
 def test_under_limit_the_nodes_of_the_run_seen_only_from_themselves_are_said_so():
