@@ -65,6 +65,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_settings i
     compared, jvm_options_settings, properties_settings, same_settings, same_yaml_value, shell_lines,
     without_later_stock, xml_differences, xml_settings, yaml_settings, yaml_rejected)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as _out
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import MASK, hidden, mask, mask_lines
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_differences import HEAP_FILE
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_prometheus as prometheus
@@ -168,9 +169,9 @@ def _groups_of(group, name, chain):
 def _shown(key, value):
     if value is None:
         return "nothing"
-    if _out.secret(str(key), value):  # the one rule (cassandra_output): what secrets.yml holds, hidden on screen
+    if hidden(str(key), value):  # the one rule (cassandra_secrets): what secrets.yml holds, hidden on screen
         return "****"
-    return _out.mask(json.dumps(value, default=str) if not isinstance(value, str) else repr(value))
+    return mask(json.dumps(value, default=str) if not isinstance(value, str) else repr(value))
 
 
 def _unit(text):
@@ -274,7 +275,7 @@ def _compare(name, node, role, storage_dir="", left_out=()):
         b = shell_lines("\n".join(line for line in role.split("\n") if not heap.match(line)))
     out = []
     # masked as in the whole file: a line of a secret's value (a quote left open) without its key in the block
-    shown_a, shown_b = _out.mask_lines(a), _out.mask_lines(b)
+    shown_a, shown_b = mask_lines(a), mask_lines(b)
     for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
         if op == "equal":
             continue
@@ -296,7 +297,7 @@ def _stray_text(name, path, text):
     where = " of appender %s" % appender.group(1) if appender else ""
     return ("%s: stray text %s inside <%s>%s, an element that takes no text (such as the end of a comment left when"
             " uncommenting a block): remove it on the nodes, then import again (or keep %s as it is: -e"
-            " import_keep_hand_edits=%s)" % (name, _out.mask(repr(str(text))), element, where, name, name))
+            " import_keep_hand_edits=%s)" % (name, mask(repr(str(text))), element, where, name, name))
 
 
 def _xml_shown(path, value):
@@ -308,8 +309,8 @@ def _xml_shown(path, value):
     if isinstance(value, str):
         return _shown(re.split(r"[/@]", path)[-1], value)
     text = (value.text or "").strip() if not len(value) else ""
-    return _out.mask("<%s%s>%s" % (value.tag, "".join(' %s="%s"' % kv for kv in sorted(value.attrib.items())),
-                                   "%s</%s>" % (text, value.tag) if text else ""))
+    return mask("<%s%s>%s" % (value.tag, "".join(' %s="%s"' % kv for kv in sorted(value.attrib.items())),
+                              "%s</%s>" % (text, value.tag) if text else ""))
 
 
 def _env_setting(line):
@@ -570,7 +571,7 @@ def _env_value(key, value):
     """A value of the environment as said (none: "nothing"; a secret's masked)."""
     if value is None:
         return "nothing"
-    return "'%s'" % (_out.MASK if re.search(r"(?i)pass|secret|token|key", key) else value)
+    return "'%s'" % (MASK if re.search(r"(?i)pass|secret|token|key", key) else value)
 
 
 def _self_check(files_data, hosts, name, facts, live, node_environment, storage_dir, java, conf_dir, permissions,

@@ -36,6 +36,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import_rep
     unbreakable, who_text)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import _same_sources, terminal_width
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import MASK
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_apply_config_coverage import (
     CATEGORIES, IMPOSSIBLE, NOT_A_SETTING, category)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
@@ -221,7 +222,7 @@ def _grouped(row, key, which):
     for name in sorted(row[which]):
         value = row[which][name]
         text = _shown(key, value)
-        if text == out.MASK:
+        if text == MASK:
             marker = repr(_plain(value))
             if marker not in secrets:
                 secrets.append(marker)
@@ -347,7 +348,7 @@ def _secret_text(text):
     inventory's secrets need not be in a secrets.yml)."""
     space = r"[\s%s]" % out.NBSP  # (kept on one line: unbreakable's)
     return re.sub(r"\(in%ssecrets\.yml(?:,%s(value%s\d+))?\)" % (space, space, space),
-                  lambda m: out.MASK + (out.NBSP + "(%s)" % m.group(1) if m.group(1) else ""), text)
+                  lambda m: MASK + (out.NBSP + "(%s)" % m.group(1) if m.group(1) else ""), text)
 
 
 def _between_lines(drift, nodes, user, cluster, everyone, who, width, commands):

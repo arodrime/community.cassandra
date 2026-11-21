@@ -40,6 +40,7 @@ from ansible_collections.community.cassandra.plugins.plugin_utils import cassand
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_differences as differences
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import MASK, file_mode, mask
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 
 # shown in the head, or the ring's (dc and rack): not among the settings
@@ -241,7 +242,7 @@ def _edits(node):
         setting = _SETTING.match(plus[0]) if len(plus) == 1 else None
         if setting and setting.group(1):
             value = setting.group(2) or "present"
-            found.append((file_name, setting.group(1), out.MASK if _secret(setting.group(1), value) else value))
+            found.append((file_name, setting.group(1), MASK if _secret(setting.group(1), value) else value))
         elif plus:
             found.append((file_name, "", " / ".join(plus)))
         elif minus:
@@ -384,7 +385,7 @@ def _leaves(key, value, keys=()):
 def _is_secret(key, keys, value):
     """A setting's value is a secret: by the variable's own name, or a sub-key's name (never a file's name with a mode
     as its value: cassandra_config_file_permissions' jmxremote.password: 0400)."""
-    return _secret(key, value) or any(_secret(k, value) for k in keys if not out.file_mode(k, value))
+    return _secret(key, value) or any(_secret(k, value) for k in keys if not file_mode(k, value))
 
 
 def plain_default(key):
@@ -633,9 +634,9 @@ def _self_check_items(read, self_check, theirs_win=None):
                 kind = _kind(f, by_name.get(name) or {}, hand_files.get(name, ()), winner)
                 shown = [None if v is None else _its_address(v, address) for v in (f.node, f.ansible)]
                 if f.where and any(_secret(f.where, v) for v in shown if v not in (None, differences.ABSENT)):
-                    shown = [v if v in (None, differences.ABSENT, differences.PRESENT) else out.MASK for v in shown]
-                key = (kind, f.file, f.where) + tuple(None if v is None else out.mask(v) for v in shown) + (
-                    None if f.sentence is None else out.mask(_its_address(f.sentence, address)),)
+                    shown = [v if v in (None, differences.ABSENT, differences.PRESENT) else MASK for v in shown]
+                key = (kind, f.file, f.where) + tuple(None if v is None else mask(v) for v in shown) + (
+                    None if f.sentence is None else mask(_its_address(f.sentence, address)),)
                 if key not in found:
                     found[key] = dict(zip(("kind", "file", "where", "node", "ansible", "sentence"), key),
                                       nodes=[], lines=[], wins={})
@@ -643,8 +644,8 @@ def _self_check_items(read, self_check, theirs_win=None):
                 item = found[key]
                 if name not in item["nodes"]:
                     item["nodes"].append(name)
-                if (name, out.mask(d)) not in item["lines"]:
-                    item["lines"].append((name, out.mask(d)))
+                if (name, mask(d)) not in item["lines"]:
+                    item["lines"].append((name, mask(d)))
                 if winner:
                     item["wins"][name] = winner
     return sorted(items, key=lambda i: _ORDER.index(i["kind"]))
@@ -692,7 +693,7 @@ def _suffix(layout, item):
     for w in item["wins"].values():
         mine = next((y for y in layout.get("yours") or [] if y["node"] == w["node"] and y["key"] == w["key"]), None)
         text = "%s, in %s" % (w["key"], w["path"]) if mine is None or "yours" not in mine else "%s = %s" % (
-            w["key"], out.MASK if _secret(w["key"], mine["yours"]) else _plain(mine["yours"]))
+            w["key"], MASK if _secret(w["key"], mine["yours"]) else _plain(mine["yours"]))
         if text not in shown:
             shown.append(text)
     return "(%s)" % "; ".join(shown) if shown else ""
@@ -819,7 +820,7 @@ def _yours_values(layout, items):
         for w in item["wins"].values():
             found = next((y["value"] for y in layout.get("yours") or []
                           if y["node"] == w["node"] and y["key"] == w["key"]), None)
-            shown = None if found is None else out.MASK if _secret(w["key"], found) else _plain(found)
+            shown = None if found is None else MASK if _secret(w["key"], found) else _plain(found)
             entry = yours.setdefault((w["path"], w["key"]), [])
             if shown not in entry:
                 entry.append(shown)
@@ -2191,9 +2192,9 @@ def _evidence_lines(report, self_check):
     found = []
     for name, check in sorted((self_check or {}).items()):
         for d in check.get("differences") or []:
-            entry = next((e for e in found if e[0] == out.mask(d)), None)
+            entry = next((e for e in found if e[0] == mask(d)), None)
             if entry is None:
-                found.append((out.mask(d), [name]))
+                found.append((mask(d), [name]))
             elif name not in entry[1]:
                 entry[1].append(name)
     by_nodes = []

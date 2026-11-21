@@ -711,7 +711,7 @@ def test_password_in_a_value_is_a_secret():
 
 def test_every_value_hidden_on_screen_goes_to_secrets_yml():
     # the import files a value in secrets.yml by the rule the output hides it by: none in clear in main.yml
-    from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import hidden
     from ansible_collections.community.cassandra.tests.unit.plugins.plugin_utils.test_cassandra_output import SECRETS
     variables = dict(("v%d_%s" % (i, key), value) for i, (key, value) in enumerate(SECRETS))
     variables["cassandra_cluster_name"] = "Prod"
@@ -719,7 +719,7 @@ def test_every_value_hidden_on_screen_goes_to_secrets_yml():
     by_path = {f["path"]: yaml.safe_load(f["content"]) for f in files}
     assert sorted(by_path["group_vars/c/secrets.yml"]) == sorted(k for k in variables if k != "cassandra_cluster_name")
     assert list(by_path["group_vars/c/main.yml"]) == ["cassandra_cluster_name"]
-    assert all(out.hidden(k, v) for k, v in by_path["group_vars/c/secrets.yml"].items())
+    assert all(hidden(k, v) for k, v in by_path["group_vars/c/secrets.yml"].items())
 
 
 def test_medusa_keys_are_secrets_and_empty_values_are_not():

@@ -44,6 +44,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_settings i
     JVM_ENV_GREPS, JVM_LISTS, JVM_UNLOCK, jvm_options_settings, shell_words)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import mask
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_prometheus as prometheus
 
 MAIN_CLASS = "org.apache.cassandra.service.CassandraDaemon"
@@ -980,7 +981,7 @@ def jvm_args_compared(cmdline, live, role, series, java, node_env=None, role_env
     names = [n for n in differences(args[1:], after[1:]) if n not in apart]
     if names:  # their names only (-Xlog:file=<path>: -Xlog, -Xmaxjitcodesize240M: -Xmaxjitcodesize)
         names = sorted(set(re.sub(r"(?<=^-X[a-z])([a-z]*?)\d.*$", r"\1", re.split(r"[:=]", n)[0]) for n in names))
-        return False, "the JVM would get other values of %s" % ", ".join(out.mask(n) for n in names), []
+        return False, "the JVM would get other values of %s" % ", ".join(mask(n) for n in names), []
     later = ["%s added (the JVM never reads that file: JMX authentication off)" % o for o in inert]
     if earlier is not None and not any(_jvm_name(a) == "HeapDumpPath" for a in args):
         # (the later series' file sets it always, in CASSANDRA_HEAPDUMP_DIR: the environment's, else its default)
@@ -990,7 +991,7 @@ def jvm_args_compared(cmdline, live, role, series, java, node_env=None, role_env
         if logdir:  # (bin/cassandra's log dir, as the JVM got it)
             folder = re.sub(r"\$(CASSANDRA_LOG_DIR\b|\{CASSANDRA_LOG_DIR\})", lambda m: logdir, folder)
         later.insert(0, "-XX:HeapDumpPath=%s/cassandra-<start>-pid<pid>.hprof added (no effect until a heap dump)" % folder)
-    return True, "", [out.mask(change) for change in later]
+    return True, "", [mask(change) for change in later]
 
 
 def _later(args, i, end):
@@ -1089,7 +1090,7 @@ def _kept_options(info, args):
     of the ones left out (set again or overridden later, a heap assignment after its last use)."""
     end, keep = info["end"], []
     dropped = ["%s line %d: %s: set after the last use of %s (no effect), left out" % (
-        ENV, line["n"], out.mask(line["text"]), SET.match(line["text"]).group(1)) for line in info["dead"]]
+        ENV, line["n"], mask(line["text"]), SET.match(line["text"]).group(1)) for line in info["dead"]]
     for line in info["added"]:
         for k, option in enumerate(line["options"]):
             later = _later(args, line["at"] + k, end)
@@ -1097,8 +1098,8 @@ def _kept_options(info, args):
                 keep.append(option)
             else:
                 dropped.append("%s line %d: %s: %s by %s later, left out" % (
-                    ENV, line["n"], out.mask(option), "set again" if args[later] == option else "overridden",
-                    out.mask(args[later])))
+                    ENV, line["n"], mask(option), "set again" if args[later] == option else "overridden",
+                    mask(args[later])))
     return keep, dropped
 
 
@@ -1155,8 +1156,8 @@ def _without_dead(args, info, variables, found, live, series, java, apart=()):
             if at and all(k is not None for k in later):
                 lines.remove(entry)
                 gone.append("%s line %d: %s: %s by %s later, left out" % (
-                    name, words[at[0] - start][2], out.mask(entry), "set again" if args[later[-1]] == entry
-                    else "overridden", out.mask(args[later[-1]])))
+                    name, words[at[0] - start][2], mask(entry), "set again" if args[later[-1]] == entry
+                    else "overridden", mask(args[later[-1]])))
         if lines != list(found.get(var, variables.get(var)) or []):
             tidy[var] = lines
     return tidy, gone
@@ -1176,23 +1177,23 @@ def _moved(info, found, options, extras_var):
         var = [v for v in HEAP_VARS[name].values() if v in found]
         went = "left out, no effect"
         if var and found[var[0]] == value:
-            went = "%s: %s" % (var[0], out.mask(found[var[0]]))
+            went = "%s: %s" % (var[0], mask(found[var[0]]))
         elif var or info["live_heap"].get(name) != value:
             went = "left out, set again later"
-        lines.append("%s line %d: %s -> %s" % (ENV, line["n"], out.mask(line["text"]), went))
+        lines.append("%s line %d: %s -> %s" % (ENV, line["n"], mask(line["text"]), went))
     for line in info["added"]:
         went = []
         for option in line["options"]:
             var = HEAP_OPTIONS.get(_jvm_name(option))
             where = extras_var if option in options else (
-                "%s: %s" % (var, out.mask(found[var])) if var in found else "left out")
+                "%s: %s" % (var, mask(found[var])) if var in found else "left out")
             if where not in went:
                 went.append(where)
-        lines.append("%s line %d: %s -> %s" % (ENV, line["n"], " ".join(out.mask(o) for o in line["options"]) or "(no option)",
+        lines.append("%s line %d: %s -> %s" % (ENV, line["n"], " ".join(mask(o) for o in line["options"]) or "(no option)",
                                                "; ".join(went) or "left out"))
     if found.get("cassandra_heap_newsize") and not any("cassandra_heap_newsize" in line for line in lines):
         lines.append("the young generation the JVM runs with (MAX_HEAP_SIZE needs it without G1) -> "
-                     "cassandra_heap_newsize: %s" % out.mask(found["cassandra_heap_newsize"]))
+                     "cassandra_heap_newsize: %s" % mask(found["cassandra_heap_newsize"]))
     return lines
 
 
@@ -1217,7 +1218,7 @@ def cassandra_jvm_args_cleanup(live, default, role, series, java, cmdline="", mo
     for name in sorted(live):
         m = re.match(r"^jvm(\d+)-server\.options$", name)
         if m and name != dep and not ("\r" in live[name]):
-            lines += ["%s line %d: %s: not read, Java %d reads %s" % (name, n, out.mask(word), major, dep)
+            lines += ["%s line %d: %s: not read, Java %d reads %s" % (name, n, mask(word), major, dep)
                       for word, n in _own_lines(live[name], default.get(name))]
     mine = []  # (option, where) the node's own options the running Java reads
     for name in (COMMON, dep):
@@ -1231,7 +1232,7 @@ def cassandra_jvm_args_cleanup(live, default, role, series, java, cmdline="", mo
             added = []
     if not moved:
         mine += [(o, "%s line %d" % (ENV, line["n"])) for line in added for o in line["options"]]
-    lines += ["%s: %s: %s" % (where, out.mask(o), OBSOLETE[_jvm_name(o)][1]) for o, where in mine
+    lines += ["%s: %s: %s" % (where, mask(o), OBSOLETE[_jvm_name(o)][1]) for o, where in mine
               if _jvm_name(o) in OBSOLETE and major >= OBSOLETE[_jvm_name(o)][0]]
     # Java 15 to 17: biased locking off by default, -XX:-UseBiasedLocking sets it as it is
     lines += ["%s: %s: Java %d's default anyway; %s" % (where, o, major, jvm.BIASED_DEPRECATED)
@@ -1256,8 +1257,8 @@ def cassandra_jvm_args_cleanup(live, default, role, series, java, cmdline="", mo
         later = _later(args, i, end)
         if source[i] in ours and later is not None:
             lines.append("%s: %s: %s by %s (%s)" % (
-                source[i], out.mask(args[i]), "set again" if args[later] == args[i] else "overridden",
-                out.mask(args[later]), source.get(later, "added by cassandra-env.sh or bin/cassandra")))
+                source[i], mask(args[i]), "set again" if args[later] == args[i] else "overridden",
+                mask(args[later]), source.get(later, "added by cassandra-env.sh or bin/cassandra")))
     return lines
 
 

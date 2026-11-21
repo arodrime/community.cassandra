@@ -26,6 +26,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import_rep
     ARROW_RIGHT, COLLECTION_DEFAULT, DASH, NOT_COUNTED, REPORT_WIDTH, aligned_rows, alike, empty_on_own_row,
     fill_text, plain_default, report_sections, unbreakable, unread_by, who_text)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import mask
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 
 # the files cassandra_config writes from its series' templates: a change in one is a restart (apply_config's rule);
@@ -278,8 +279,8 @@ def _blocks(lines):
         elif blocks and line.strip().startswith("+ "):
             blocks[-1][2].append(line.lstrip()[2:])
     # (masked a block at a time: a secret's YAML block value is on the lines under its key)
-    return [(where, out.mask("\n".join(removed)).split("\n") if removed else [],
-             out.mask("\n".join(added)).split("\n") if added else []) for where, removed, added in blocks]
+    return [(where, mask("\n".join(removed)).split("\n") if removed else [],
+             mask("\n".join(added)).split("\n") if added else []) for where, removed, added in blocks]
 
 
 _EXPR = re.compile(r"\{\{.*?\}\}")

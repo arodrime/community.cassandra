@@ -32,6 +32,7 @@ from ansible.module_utils.parsing.convert_bool import boolean
 from ansible.utils.display import Display
 
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import hidden
 
 SCREEN_WIDTH = 160  # the screen's width when no width is known (Ansible's display gives one: 79 in a log)
 
@@ -284,8 +285,8 @@ def cassandra_todo(items, title="TO DO"):
 
 def cassandra_holds_secret(value, name=""):
     """True when value (of the variable name) is or holds a secret, as the output masks it (plugin_utils
-    cassandra_output hidden): {"JVM_EXTRA_OPTS": "-Dx.trustStorePassword=y"} | cassandra_holds_secret -> True."""
-    return out.hidden(str(name or ""), value)
+    cassandra_secrets hidden): {"JVM_EXTRA_OPTS": "-Dx.trustStorePassword=y"} | cassandra_holds_secret -> True."""
+    return hidden(str(name or ""), value)
 
 
 # the files the cassandra_service role writes cassandra_service_environment to: its own unit, or the drop-in of the
@@ -311,7 +312,7 @@ def cassandra_unit_secret_warning(environment, start="unit", manage=True, invent
     e.g. ({"JVM_EXTRA_OPTS": "-Dx.trustStorePassword=y"}) -> "a secret in cassandra_service_environment:
     JVM_EXTRA_OPTS\nwritten to /etc/systemd/system/cassandra.service, mode 0644: every local user can read it\n..."."""
     path = unit_environment_file(start, manage)
-    names = sorted(str(k) for k, v in environment.items() if out.hidden(str(k), v)) \
+    names = sorted(str(k) for k, v in environment.items() if hidden(str(k), v)) \
         if isinstance(environment, dict) else []
     if not names or not path:
         return ""

@@ -15,6 +15,7 @@ __metaclass__ = type
 import re
 
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import mask
 
 # the longest cause shown: an error's first line in full, its why and its way out (only a raw dump is cut;
 # the whole error with -v)
@@ -43,7 +44,7 @@ def _text(result):
         text = "\n".join(str(p) for p in parts if p)
     else:
         text = str(result or "")
-    return _URL_LOGIN.sub(r"\1****@", out.mask(text))
+    return _URL_LOGIN.sub(r"\1****@", mask(text))
 
 
 def cassandra_failure_repos(result):
@@ -88,7 +89,7 @@ def cassandra_nodetool_failure(result, host, what):
         return []
     lines = []
     for run in failed:
-        said = [line.strip() for line in out.mask(str(run.get("stderr") or run.get("stdout") or "")).splitlines()
+        said = [line.strip() for line in mask(str(run.get("stderr") or run.get("stdout") or "")).splitlines()
                 if line.strip()]
         lines.append("%s: nodetool %s failed (rc %s): %s" % (host, what, run.get("rc"), _URL_LOGIN.sub(
             r"\1****@", said[0]) if said else "no output"))
@@ -170,7 +171,7 @@ def cassandra_package_errors(result, log=""):
             lines += [line.strip() for line in str(part or "").splitlines() if _PACKAGE_ERROR.search(line)]
     said = []
     for line in lines:
-        line = _URL_LOGIN.sub(r"\1****@", out.mask(line))
+        line = _URL_LOGIN.sub(r"\1****@", mask(line))
         if line and line not in said:
             said.append(line)
     return said[:_PACKAGE_ERRORS]

@@ -8,6 +8,7 @@ import time
 import pytest
 
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_secrets as secrets
 
 GIB = 1024 ** 3
 P = out.PARAGRAPH  # a blank line between two paragraphs of a block
@@ -134,12 +135,12 @@ def test_nodes_order_and_full():
 # --- secrets ---
 
 def test_mask_secret_shown():
-    assert out.mask("keystore_password: changeit") == "keystore_password: ****"
-    assert out.mask("-Djavax.net.ssl.keyStorePassword=abc -Xmx8G") == "-Djavax.net.ssl.keyStorePassword=****"
-    assert out.mask("concurrent_reads: 32") == "concurrent_reads: 32"
-    assert out.secret("cassandra_jmx_password", "x") and not out.secret("cassandra_jmx_password_file", "/etc/x")
-    assert out.secret("opts", "-Dtruststore_password=y") and not out.secret("cassandra_jmx_password", "")
-    assert out.secret("server_encryption_options", {"keystore_password": "x"})
+    assert secrets.mask("keystore_password: changeit") == "keystore_password: ****"
+    assert secrets.mask("-Djavax.net.ssl.keyStorePassword=abc -Xmx8G") == "-Djavax.net.ssl.keyStorePassword=****"
+    assert secrets.mask("concurrent_reads: 32") == "concurrent_reads: 32"
+    assert secrets.hidden("cassandra_jmx_password", "x") and not secrets.hidden("cassandra_jmx_password_file", "/etc/x")
+    assert secrets.hidden("opts", "-Dtruststore_password=y") and not secrets.hidden("cassandra_jmx_password", "")
+    assert secrets.hidden("server_encryption_options", {"keystore_password": "x"})
     assert out.shown("keystore_password", "x") == "****"
 
 
@@ -169,11 +170,11 @@ NOT_SECRETS = [("cassandra_jmx_password_file", "/etc/x"), ("cassandra_jmx_passwo
 def test_one_rule_for_secrets():
     # what the output hides is what import_cluster files in secrets.yml: nothing hidden on screen in clear there
     for key, value in SECRETS:
-        assert out.hidden(key, value) and out.secret(key, value), (key, value)
+        assert secrets.hidden(key, value), (key, value)
         assert out.shown(key, value) == "****"
     for key, value in NOT_SECRETS:
-        assert not out.hidden(key, value) and not out.secret(key, value), (key, value)
-    assert out.secret is out.hidden
+        assert not secrets.hidden(key, value), (key, value)
+    assert out.hidden is secrets.hidden  # out.shown's rule
     assert [out.shown("k", v) for v in ("text", 32, True, None, ["a"], {"b": 1})] == \
         ["text", "32", "true", "null", '["a"]', '{"b": 1}']
 
@@ -821,7 +822,7 @@ def test_inventory_steps_with_and_without_git(tmp_path):
     ('{"a": {"password": "x"}, "b": 1}', '{"a": {"password": ****}, "b": 1}'),
 ])
 def test_mask_more_forms(text, masked):
-    assert out.mask(text) == masked
+    assert secrets.mask(text) == masked
 
 
 def test_changed_lines_mask_a_value_with_a_comma():
@@ -841,12 +842,12 @@ def test_hidden_values_in_lists_dicts_and_a_dict_becoming_a_value():
                                   "allocate_tokens_for_local_replication_factor: 3", "-Dcassandra.initial_token=1",
                                   "~/.cassandra/credentials: written", "PWD=/opt/x"])
 def test_mask_leaves_ports_paths_and_settings(text):
-    assert out.mask(text) == text
+    assert secrets.mask(text) == text
 
 
 def test_mask_cqlsh_password_and_block_values():
-    assert out.mask("cqlsh -u admin -p s3cr3t node1") == "cqlsh -u admin -p **** node1"
-    assert out.mask("x_password: >-\n  line1\n\n  line2\nnext: 1") == "x_password: ****\n  ****\n\n  ****\nnext: 1"
+    assert secrets.mask("cqlsh -u admin -p s3cr3t node1") == "cqlsh -u admin -p **** node1"
+    assert secrets.mask("x_password: >-\n  line1\n\n  line2\nnext: 1") == "x_password: ****\n  ****\n\n  ****\nnext: 1"
     assert out.changed_lines("-  keystore_password: |\n-    s3cr3t\n+  other: 1\n") == \
         ["  -  keystore_password: ****", "  -    ****", "  +  other: 1"]
     assert out.diff_lines({}, {"a": 1}) == ["  + a: 1"] and out.diff_lines(None, {}) == []
@@ -1140,7 +1141,7 @@ BLOCK_SECRETS_AFTER_AUDIT = [
     "opts: {keystore_password: [a,\n  LEAK1], x: 1}\nnext: 1",
 ] + BLOCK_SECRETS_AFTER_AUDIT)
 def test_mask_every_line_of_a_secret_value(text):
-    masked = out.mask(text)
+    masked = secrets.mask(text)
     assert "LEAK" not in masked, masked
     assert masked.rsplit("\n", maxsplit=1)[-1] == text.rsplit("\n", maxsplit=1)[-1]  # the next setting shown
     assert len(masked.split("\n")) == len(text.split("\n"))
@@ -1163,22 +1164,22 @@ def test_mask_every_line_of_a_secret_value(text):
     "opts: {keystore_password: a, x: 1,\n  next: 1}",
 ])
 def test_mask_stops_where_the_secret_value_does(text):
-    masked = out.mask(text).split("\n")
+    masked = secrets.mask(text).split("\n")
     assert masked[0] != text.split("\n")[0] or "x" not in masked[0]
     assert masked[1] == text.split("\n")[1]
 
 
 def test_mask_lines_masks_a_value_line_without_its_key():
     lines = ["a: 1", "keystore_password: |", "  LEAK1", "  LEAK2", "b: 2"]
-    assert out.mask_lines(lines) == ["a: 1", "keystore_password: ****", "  ****", "  ****", "b: 2"]
-    assert out.mask_lines([]) == []
+    assert secrets.mask_lines(lines) == ["a: 1", "keystore_password: ****", "  ****", "  ****", "b: 2"]
+    assert secrets.mask_lines([]) == []
 
 
 def test_mask_hunks_masks_each_side_of_each_hunk_as_a_block():
     lines = ["cassandra.yaml, line 3:", "  - keystore_password: x", "  + keystore_password: |", "  +   LEAK1",
              "cassandra.yaml, line 9:", "  +   LEAK2", "cassandra-env.sh, line 2:", "  + export X_PASSWORD=\"LEAK3",
              "  + LEAK4\"", "  - JVM_OPTS=1"]
-    shown = out.mask_hunks(lines)
+    shown = secrets.mask_hunks(lines)
     assert "LEAK1" not in "\n".join(shown) and "LEAK3" not in "\n".join(shown) and "LEAK4" not in "\n".join(shown)
     assert shown[:4] == ["cassandra.yaml, line 3:", "  - keystore_password: ****", "  + keystore_password: ****",
                          "  +   ****"]
@@ -1192,7 +1193,7 @@ def test_mask_hunks_masks_each_side_of_each_hunk_as_a_block():
     "keystore_password: \"LEAK1\\\nLEAK2\"\nnext: 1",
 ])
 def test_mask_a_line_after_a_backslash(text):
-    masked = out.mask(text)
+    masked = secrets.mask(text)
     assert "LEAK" not in masked and masked.endswith("\nnext" + text.split("\nnext")[1])
 
 
@@ -1214,24 +1215,24 @@ def test_changed_lines_mask_each_side_with_its_context():
 def test_mask_a_long_word_is_quick():
     start = time.time()
     for text in ("a" * 4000, "password" * 500, "x_" * 2000 + "=1"):
-        out.mask(text)
+        secrets.mask(text)
     assert time.time() - start < 5
 
 
 def test_mask_an_element_s_text_only():
-    assert out.mask("<password>LEAK1</password> x") == "<password>****</password> x"
-    assert out.mask("<password></password>") == "<password></password>"
-    assert out.mask("<password> LEAK1 </password>\r") == "<password>****</password>\r"
+    assert secrets.mask("<password>LEAK1</password> x") == "<password>****</password> x"
+    assert secrets.mask("<password></password>") == "<password></password>"
+    assert secrets.mask("<password> LEAK1 </password>\r") == "<password>****</password>\r"
     for text in ("<password><![CDATA[LEAK1 a</b]]></password>", "<password><!-- c -->LEAK1</password>",
                  "<password>a<b/>LEAK1</password>", "<password>a<b>x</b>LEAK1</password>",
                  "<password><!-- </x> -->LEAK1</password>"):  # its text up to its own closing tag
-        assert out.mask(text) == "<password>****</password>", text
+        assert secrets.mask(text) == "<password>****</password>", text
 
 
 def test_mask_a_line_of_many_secrets_is_quick():
     start = time.time()
-    assert out.mask("<password>" + "<![CDATA[" * 30000).startswith("<password>****")  # (unclosed: to the end)
-    assert "LEAK" not in out.mask("{" + ", ".join('"password%d": "LEAK"' % i for i in range(2000)) + "}")
+    assert secrets.mask("<password>" + "<![CDATA[" * 30000).startswith("<password>****")  # (unclosed: to the end)
+    assert "LEAK" not in secrets.mask("{" + ", ".join('"password%d": "LEAK"' % i for i in range(2000)) + "}")
     assert time.time() - start < 5
 
 
@@ -1256,8 +1257,8 @@ def test_a_node_range_longer_than_its_room_cut_after_its_dots():
                                  "s3_secret_key", "client_secret"])
 def test_token_and_key_names_are_secrets(key):
     # a token or an API key under a name the earlier words missed: hidden, on screen and in a line of text
-    assert out.hidden(key, "s3cr3t") and out.shown(key, "s3cr3t") == "****"
-    assert out.mask("%s: s3cr3t" % key) == "%s: ****" % key
+    assert secrets.hidden(key, "s3cr3t") and out.shown(key, "s3cr3t") == "****"
+    assert secrets.mask("%s: s3cr3t" % key) == "%s: ****" % key
 
 
 @pytest.mark.parametrize("key, value", [("cassandra_initial_token", "-9223372036854775808"), ("num_tokens", 16),
@@ -1268,8 +1269,8 @@ def test_token_and_key_names_are_secrets(key):
                                         ("cassandra_repository_key_fingerprints", ["A1B2"]), ("keyspace", "ks")])
 def test_token_ring_and_key_settings_are_not_secrets(key, value):
     # the ring's tokens and the key cache, repository keys and keyspaces: shown as they are
-    assert not out.hidden(key, value) and out.shown(key, value) != "****"
-    assert out.mask("%s: %s" % (key, value)) == "%s: %s" % (key, value)
+    assert not secrets.hidden(key, value) and out.shown(key, value) != "****"
+    assert secrets.mask("%s: %s" % (key, value)) == "%s: %s" % (key, value)
 
 
 @pytest.mark.parametrize("line, shown", [
@@ -1306,7 +1307,7 @@ def test_token_ring_and_key_settings_are_not_secrets(key, value):
 ])
 def test_a_urls_password_is_masked(line, shown):
     # the userinfo password of a URL (an HTTP proxy, an appender's URL), in a diff or a report
-    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import mask
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import mask
     assert mask(line) == shown
 
 
@@ -1314,7 +1315,7 @@ def test_a_urls_password_is_masked(line, shown):
                                   "# rotate the credentials yearly", "<!-- see credentials -->", "x.token_aware=true"])
 def test_a_secret_word_alone_is_no_secret(line):
     # (import_cluster files a hand edit holding a secret word in secrets.yml: these name none)
-    assert not out.SECRET_WORD.search(line) and out.mask(line) == line
+    assert not secrets.SECRET_WORD.search(line) and secrets.mask(line) == line
 
 
 def test_fit_never_breaks_a_no_break_space():

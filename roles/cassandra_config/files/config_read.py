@@ -247,7 +247,7 @@ def universal(value):
 
 
 # values of secret keys never reach the output: all of the line after the key, and the lines the value goes on
-# to (a port of the collection's cassandra_output.mask: a YAML block key: |, a plain value on more indented lines, the
+# to (a port of the collection's cassandra_secrets.mask: a YAML block key: |, a plain value on more indented lines, the
 # value under key:, a quote or a flow [ { left open, a line ending with a backslash)
 # (authorization, headers, token: those names only, not inside a longer one: the Prometheus exporter's
 # openTelemetry headers, not num_tokens)
@@ -360,7 +360,7 @@ def still_on(state, line):
     return False
 
 
-# the password of a URL's userinfo (scheme://user:password@host), cassandra_output.USERINFO's (its comment
+# the password of a URL's userinfo (scheme://user:password@host), cassandra_secrets.USERINFO's (its comment
 # says what it masks)
 USERINFO = re.compile(r"(?P<head>(?P<q>['\"])?[A-Za-z][\w+.-]*://(?P<user>[^\s/:@'\"<>{}]+):)(?P<password>"
                       r"(?(q)(?=(?:(?!(?P=q))\S)*(?P=q)[^\s;&|<>()])\S+|(?!))"

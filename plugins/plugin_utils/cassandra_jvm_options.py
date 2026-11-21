@@ -21,7 +21,7 @@ __metaclass__ = type
 
 import re
 
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import mask
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import mask
 
 UNITS = {"": 1, "k": 1024, "m": 1024 ** 2, "g": 1024 ** 3, "t": 1024 ** 4}
 # the -XX spellings of the -X options, and the unit of their value (ThreadStackSize: KiB, a suffix too)

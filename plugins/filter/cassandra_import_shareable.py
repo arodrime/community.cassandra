@@ -27,6 +27,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import LATER_STOCK
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import ROLES
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import mask
 
 IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?!\.?\d)")  # (also in a file name: 10.1.2.3.jks, ip_10.1.2.3)
 # a host named by its address with dashes (node-10-1-2-3); in an FQDN, the FQDN is masked whole
@@ -821,7 +822,7 @@ def _masked(line):
     secret (in secrets.yml) and an empty value ('') left as they are when nothing else in the line would be
     masked."""
     rest = SECRETS_MARK.sub("", MODE_ROW.sub("", line))
-    return line if rest != line and out.mask(rest) == rest else out.mask(line)
+    return line if rest != line and mask(rest) == rest else mask(line)
 
 
 # the first words of the copy and of its key: an earlier import's files known by them
@@ -997,7 +998,7 @@ def cassandra_import_shareable(lines, layout, written=None, report_file="", cwd=
 
     def rendered():
         rows = _value_rows(lines, named, key)
-        return [out.mask(_indent(line) * " " + setting(line.strip(), key, _file_above(lines, i)))
+        return [mask(_indent(line) * " " + setting(line.strip(), key, _file_above(lines, i)))
                 if i in named and not _site_option(line.strip()) else _masked(_aligned(rows.get(i, line), key))
                 for i, line in enumerate(lines)]
     rendered()  # (a first pass: the names a later line gives, a JMX user, masked on the lines before it too)

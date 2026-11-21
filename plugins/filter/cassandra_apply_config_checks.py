@@ -26,6 +26,7 @@ import re
 from ansible.module_utils.parsing.convert_bool import boolean
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_unit_environment
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as output
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import MASK
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_patch_notes as patch_notes
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_apply_config_coverage import (
     PROCEDURE, RESTART)
@@ -328,8 +329,8 @@ def _env_shown(name, before, after):
     masked (its name, or one inside its value: JVM_EXTRA_OPTS=-D...Password=), two secrets that differ said so."""
     shown = dict((side, "absent" if value is None else output.shown(name, value))
                  for side, value in (("before", before), ("after", after)))
-    if shown["before"] == shown["after"] == output.MASK:
-        shown["after"] = output.MASK + " (another)"
+    if shown["before"] == shown["after"] == MASK:
+        shown["after"] = MASK + " (another)"
     return shown
 
 

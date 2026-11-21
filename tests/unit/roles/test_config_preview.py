@@ -589,7 +589,7 @@ def test_a_urls_password_masked_in_the_diff(tmp_path):
 
 def test_the_nodes_url_password_pattern_is_the_collections():
     # config_read.py runs alone on the node: its copy of the URL password pattern cannot drift
-    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import USERINFO
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import USERINFO
     node = {"__name__": "config_read"}
     exec(compile(SCRIPT, "config_read.py", "exec"), node)  # pylint: disable=exec-used
     assert node["USERINFO"].pattern == USERINFO.pattern and node["USERINFO"].flags == USERINFO.flags

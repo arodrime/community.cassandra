@@ -75,6 +75,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_settings i
     same_settings, shell_words, xml_settings, yaml_rejected, yaml_settings)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_secrets
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_prometheus as prometheus
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file, roles_with_defaults
 
@@ -114,8 +115,8 @@ BY_PATH = {"cassandra_sstable_format": ("sstable", "selected_format"),
 AUDIT_PARAMETERS = ("cassandra_audit_logger_parameters", ("audit_logging_options", "logger", 0, "parameters"))
 INTEGERS = ("cassandra_num_tokens", "cassandra_allocate_tokens_for_local_replication_factor",
             "cassandra_audit_max_queue_weight", "cassandra_audit_max_log_size")
-# Same masking as cassandra_config's diff preview (plugin_utils cassandra_output)
-SECRET, SECRET_VALUE, _mask, _secret = out.SECRET, out.SECRET_VALUE, out.mask, out.secret
+# Same masking as cassandra_config's diff preview (plugin_utils cassandra_secrets)
+_mask, _secret = cassandra_secrets.mask, cassandra_secrets.hidden
 
 
 # The node's own address or name: written as the fact that gives it
@@ -1369,14 +1370,14 @@ class _Shown(str):
 
     @classmethod
     def lines(cls, lines):
-        return [cls(line, shown) for line, shown in zip(lines, out.mask_lines(lines))]
+        return [cls(line, shown) for line, shown in zip(lines, cassandra_secrets.mask_lines(lines))]
 
     @staticmethod
     def masked(lines):
-        """The lines as shown: masked as in the whole file (out.mask_lines), each _Shown one as it was."""
+        """The lines as shown: masked as in the whole file (cassandra_secrets.mask_lines), each _Shown one as it was."""
         if all(isinstance(line, _Shown) for line in lines):
             return [line.shown for line in lines]
-        return [line.shown if isinstance(line, _Shown) else shown for line, shown in zip(lines, out.mask_lines(lines))]
+        return [line.shown if isinstance(line, _Shown) else shown for line, shown in zip(lines, cassandra_secrets.mask_lines(lines))]
 
 
 def _properties_leftovers(name, rendered, live_text):
@@ -1387,9 +1388,9 @@ def _properties_leftovers(name, rendered, live_text):
     for key in sorted(set(role_kv) | set(node_kv)):
         if role_kv.get(key) != node_kv.get(key):
             hand.append("%s: %s" % (name, key))
-            hand += ["  - %s=%s" % (key, out.MASK if _secret(key, role_kv[key]) else _mask(role_kv[key]))] \
+            hand += ["  - %s=%s" % (key, cassandra_secrets.MASK if _secret(key, role_kv[key]) else _mask(role_kv[key]))] \
                 if key in role_kv else []
-            hand += ["  + %s=%s" % (key, out.MASK if _secret(key, node_kv[key]) else _mask(node_kv[key]))] \
+            hand += ["  + %s=%s" % (key, cassandra_secrets.MASK if _secret(key, node_kv[key]) else _mask(node_kv[key]))] \
                 if key in node_kv else []
     if role_kv == node_kv and rendered != live_text.split("\n"):
         normalized.append("%s: same settings, comments and layout rewritten" % name)
@@ -1827,7 +1828,7 @@ def _jmx_leftovers(env, users, live_files):
             hand.append("%s: %s" % (name, _mask(key)))
             for sign, entry in (("-", mine), ("+", node)):
                 if key in entry:
-                    words = [out.MASK] if name.endswith(".password") else entry[key]
+                    words = [cassandra_secrets.MASK] if name.endswith(".password") else entry[key]
                     hand.append("  %s %s" % (sign, _mask(" ".join([key] + words))))
     return hand
 
@@ -2408,12 +2409,12 @@ SECRET_VAR = "cassandra_secret_"
 SECRET_FILES = {"cassandra-env.sh": "env", "logback.xml": "logback", "logback.xml:appenders": "logback_appenders",
                 "jvm-server.options": "jvm",
                 "jvm8-server.options": "jvm8", "jvm11-server.options": "jvm11", "jvm17-server.options": "jvm17"}
-SECRET_NAME = re.compile(out.SECRET_NAME)
+SECRET_NAME = re.compile(cassandra_secrets.SECRET_NAME)
 # a secret's name and the variable it went to (removed to tell whether a line holds another secret)
 SECRET_MOVED_REF = re.compile(r"\{\{ (%s\w+) \}\}" % SECRET_VAR)
 # the note of the lines carried (cassandra_import_nodes)
 CARRIED = "hand edits carried into the inventory: "
-SECRET_MOVED = re.compile(out.SECRET_NAME + r"[\"']?\{\{ %s\w+ \}\}[\"']?" % SECRET_VAR)
+SECRET_MOVED = re.compile(cassandra_secrets.SECRET_NAME + r"[\"']?\{\{ %s\w+ \}\}[\"']?" % SECRET_VAR)
 
 
 def _quoted_at(line, at):
@@ -2488,14 +2489,14 @@ def _take_secrets(values, kind, taken, file_name, own=()):
             if m.start() < pos:
                 continue
             span = None if re.search(r"\s$", m.group(1)) else _secret_span(line, m.end(), kind)
-            shown = out.SECRET_VALUE.match(line, m.start())
+            shown = cassandra_secrets.SECRET_VALUE.match(line, m.start())
             # (shown: the value as the output masks it; only quotes, blanks or a ; may be left after the one taken)
             if span is None or (shown and not re.fullmatch(r"[\s\"';]*", line[span[1]:shown.end(2)])):
                 spans = None
                 break
             spans.append((re.sub(r"[\"'\s:=]+$", "", m.group(1)), span))
             pos = span[1]
-        urls = list(out.USERINFO.finditer(line))
+        urls = list(cassandra_secrets.USERINFO.finditer(line))
         if spans is not None and [m for m in urls if URL_PASSWORD_UNSAFE.search(m.group("password"))]:
             spans = None  # a quote, a brace...: where the password ends is not sure, the line stays whole
         if spans is not None:  # a URL's password (scheme://user:password@host), named by its user
@@ -2527,12 +2528,12 @@ def _secret_words(text):
     password file), -pw or --password, whatever the masking of the output reads in it (a logback
     <property name="dbPassword" value="..."/>)."""
     text = re.sub(r"(?i)[\w.-]*(?:password|passwd|secret)[\w.-]*[._-](?:file|path)\b", "", text)
-    return bool(out.SECRET_WORD.search(text) or re.search(r"(?:^|[\s\"'=])(?:-pw|--password)\b", text)
-                or out.mask(text) != text)
+    return bool(cassandra_secrets.SECRET_WORD.search(text) or re.search(r"(?:^|[\s\"'=])(?:-pw|--password)\b", text)
+                or cassandra_secrets.mask(text) != text)
 
 
 def _list_secret(key, value, trusted=()):
-    """True when a variable goes to secrets.yml: as the output masks it (cassandra_output.secret), the lines of
+    """True when a variable goes to secrets.yml: as the output masks it (cassandra_secrets.hidden), the lines of
     the lists of SECRET_LISTS a secret word too; the secrets the import moved out of its own lines (trusted)
     left out."""
     if key in dict(SECRET_LISTS) and isinstance(value, list):
@@ -2556,7 +2557,7 @@ def _move_secrets(variables):
             variables.update((var, value) for var, (dummy, value) in moved.items())
             trusted += made
             said += ["%s: %s=%s moved to secrets.yml as %s, which %s refers to" % (
-                name, setting, out.MASK, var, "its snippet" if key in dict(SNIPPET_LISTS) else key)
+                name, setting, cassandra_secrets.MASK, var, "its snippet" if key in dict(SNIPPET_LISTS) else key)
                 for var, (setting, dummy) in sorted(moved.items())]
     return variables, trusted, said
 
@@ -2714,7 +2715,7 @@ def _exporter_import(live_files, cmdline, ctx, read=None, conf_dirs=(), java_fil
             if not prometheus.RELEASE.match(got["version"]) else ""
         if why:
             notes.append("%s line %d: the Prometheus exporter's agent (%s): NOT imported (%s), left as a hand edit" % (
-                name, got["line"], out.mask(got["option"]), why))
+                name, got["line"], cassandra_secrets.mask(got["option"]), why))
             continue
         files[name], found = text, dict(got, file=name)
     args = str(cmdline or "").split("\0")
@@ -2722,7 +2723,7 @@ def _exporter_import(live_files, cmdline, ctx, read=None, conf_dirs=(), java_fil
         running = prometheus.agent(" ".join(args))
         if running and not notes:
             notes.append("the running JVM has the Prometheus exporter's agent (%s) from none of the config files (the"
-                         " unit's environment?): NOT imported" % out.mask(running["option"]))
+                         " unit's environment?): NOT imported" % cassandra_secrets.mask(running["option"]))
         return live_files, cmdline, {"vars": {}, "moved": [], "notes": notes, "found": None}
     if found["option"] in args:
         args.remove(found["option"])
@@ -2777,13 +2778,13 @@ def _exporter_import(live_files, cmdline, ctx, read=None, conf_dirs=(), java_fil
     where = "%s line %d" % (found["file"], found["line"]) if found["lines"] == 1 else "%s lines %d-%d" % (
         found["file"], found["line"], found["line"] + found["lines"] - 1)
     moved.append("%s: %s%s -> cassandra_prometheus_exporter_* (the role writes it in jvm-server.options%s%s)" % (
-        where, out.mask(found["option"]), " (an if ... fi block)" if found["kind"] == "block" else "", carried,
+        where, cassandra_secrets.mask(found["option"]), " (an if ... fi block)" if found["kind"] == "block" else "", carried,
         "; drop it from your own copies of %s: its guards are not kept, the role puts the jar and the config in place"
         " and checks its port before each restart" % found["file"] if found["guarded"] else ""))
     if found["option"] not in str(cmdline or "").split("\0") and cmdline:
         notes.append("%s: the running JVM does not have the Prometheus exporter's agent its config gives (%s; %s):"
                      " with the role it loads at the next restart" % (
-                         where, out.mask(found["option"]), "its guards failed at its start?" if found["guarded"]
+                         where, cassandra_secrets.mask(found["option"]), "its guards failed at its start?" if found["guarded"]
                          else "a file its Java does not read, or written since it started?"))
     return files, "\0".join(args), {"vars": variables, "moved": moved, "notes": notes, "found": found}
 
@@ -3628,10 +3629,10 @@ def _node_report(n, grouped=()):
     if kept:
         report.append("  HAND EDITS no variable covers, in files LEFT AS THEY ARE on this node"
                       " (cassandra_config_keep_files; nodes added later get the role's):")
-        report += ["    " + line for line in out.mask_hunks(kept)]
+        report += ["    " + line for line in cassandra_secrets.mask_hunks(kept)]
     if edits:
         report.append("  Hand edits no variable carries (apply_config would put the file back as the collection writes it):")
-        report += ["    " + line for line in out.mask_hunks(edits)]
+        report += ["    " + line for line in cassandra_secrets.mask_hunks(edits)]
     if not n["hand_edits"]:
         report.append("  No hand edit left: cassandra_config would not change the config.")
     if n.get("comments"):

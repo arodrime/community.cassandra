@@ -136,10 +136,10 @@ def test_the_diff_masks_the_open_telemetry_headers():
     flow = cassandra_prometheus_config_change("rules: []\n", "openTelemetry: {headers: {Authorization: Bearer f1}}\n")["diff"]
     assert "f1" not in flow
     # a name inside a longer one is no secret (cassandra.yaml's num_tokens, the JMX AuthorizationProxy)
-    from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import hidden, mask
     for text in ("num_tokens: 16", "initial_token: 5", "-Dcassandra.jmx.authorizer=org.x.AuthorizationProxy"):
-        assert out.mask(text) == text and not out.secret("cassandra_extra_settings", text)
-    assert out.mask("token: t1") == "token: ****"
+        assert mask(text) == text and not hidden("cassandra_extra_settings", text)
+    assert mask("token: t1") == "token: ****"
 
 
 def test_the_config_with_open_telemetry_is_written_with_no_log():

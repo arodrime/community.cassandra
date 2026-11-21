@@ -45,6 +45,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_output imp
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import stat_fields
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import DEFAULT_WHEN_ABSENT, BOOLS
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import MASK, mask
 
 # the order of the files in the view (the role's own); any other after them
 FILES = ("cassandra.yaml", "cassandra-env.sh", "jvm-server.options", "jvm8-server.options", "jvm11-server.options",
@@ -164,8 +165,8 @@ def _yaml_settings(lines):
         line = raw.rstrip("\r")
         if not line.strip() or line.lstrip().startswith("#"):
             continue
-        if line.strip() == out.MASK and last and found[last][0] == "":
-            found[last][0] = out.MASK  # the value under a secret's key (a mapping, a list), masked
+        if line.strip() == MASK and last and found[last][0] == "":
+            found[last][0] = MASK  # the value under a secret's key (a mapping, a list), masked
             continue
         if value_of and len(line) - len(line.lstrip(" ")) > value_of[0]:
             value = found[value_of[1]][0]
@@ -264,11 +265,11 @@ def _secrets_written(lines, written):
     alone, the lines of a YAML block, a quote going on)."""
     found = set()
     for i in written:
-        if lines[i].strip() == out.MASK:
-            while i > 0 and lines[i].strip() in (out.MASK, ""):
+        if lines[i].strip() == MASK:
+            while i > 0 and lines[i].strip() in (MASK, ""):
                 i -= 1
             found.add(i)
-        elif out.MASK in re.sub(r"(^|\s)#.*$", "", lines[i]):  # (not one in a comment)
+        elif MASK in re.sub(r"(^|\s)#.*$", "", lines[i]):  # (not one in a comment)
             found.add(i)
     return found
 
@@ -329,7 +330,7 @@ def _one_line(text):
 
 
 # a masked value the inventory changes (the same **** on both sides): the inventory's side says it differs
-OTHER_SECRET = out.MASK + " (another)"
+OTHER_SECRET = MASK + " (another)"
 
 
 def _change(live, target):
@@ -338,7 +339,7 @@ def _change(live, target):
     "absent"); a line of one form there or not: ("absent", "present"); a masked value the diff writes: ("****",
     "**** (another)")."""
     if live == target or (live == PRESENT and target == PRESENT):  # a masked value: a secret in it changed
-        return (out.MASK if live == PRESENT else live), OTHER_SECRET
+        return (MASK if live == PRESENT else live), OTHER_SECRET
     return live, target
 
 
@@ -457,7 +458,7 @@ def _setting_entry(key, per_node, changed, all_nodes, yaml):
         records[node_name] = (before.get(key), after.get(key), key in changed.get(node_name, ()))
     forms = set(v[2] for r in records.values() for v in r[:2] if v is not None)
     if not yaml and len(forms) == 1:  # one form of the line: there or not
-        label, shown_of = out.mask(list(forms)[0]), _presence
+        label, shown_of = mask(list(forms)[0]), _presence
     else:
         label, shown_of = key, functools.partial(_shown_value, key)
     return label.replace("\r", "\\r"), _rows(records, shown_of, all_nodes)

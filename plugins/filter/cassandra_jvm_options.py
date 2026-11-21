@@ -29,7 +29,8 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_java impor
 from ansible_collections.community.cassandra.plugins.filter.cassandra_jvm_args import (
     STOPS_HEAP_PAIR, STOPS_XMN_XMX, STOPS_XMX_PAIR, stock_options)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import NBSP, mask
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import NBSP
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import mask
 
 TEMPLATES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "cassandra_config", "templates")
 SERIES = {"40x": "4.0", "41x": "4.1", "50x": "5.0"}

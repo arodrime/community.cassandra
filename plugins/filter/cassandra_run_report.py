@@ -21,6 +21,7 @@ import re
 
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_build
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import mask
 
 KEEP = 20  # the reports kept per operation and cluster
 
@@ -82,7 +83,7 @@ def cassandra_run_report(sections, operation, cluster="", check=False, status=""
     head.append("  run:      %s" % (run or ("--check, nothing was changed" if check else "a real run")))
     body = []
     for section in sections or []:
-        lines = [out.mask(line) if section.get("mask") else str(line) for line in section.get("lines") or []]
+        lines = [mask(line) if section.get("mask") else str(line) for line in section.get("lines") or []]
         if not lines:
             continue
         body += [""] + ([str(section["title"])] if section.get("title") else []) + lines
