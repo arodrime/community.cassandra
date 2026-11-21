@@ -1,7 +1,7 @@
 ---
-# The first node play of a playbook run on its own: stop when a node (or a host out of the play) holds the facts
-# of another (ansible/ansible#87148). The play's "Give each node its own facts" task runs just before: it gives
-# a node its own facts, but it cannot undo what a play before this playbook did.
+# Imported by the first node play of each playbook run on its own: stop when a node (or a host out of the play)
+# holds the facts of another (ansible/ansible#87148). The play's "Give each node its own facts" task runs just
+# before: it gives a node its own facts, but it cannot undo what a play before this playbook did.
 - name: Check each node has its own facts
   ansible.builtin.assert:
     that: _shared | length == 0
