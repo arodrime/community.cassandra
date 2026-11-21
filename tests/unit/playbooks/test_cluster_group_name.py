@@ -97,11 +97,19 @@ def test_every_display_site_names_the_group_of_the_first_line():
         assert alone == "Real Name", (where, name, alone)
 
 
+# the import's filters whose cluster is the inventory group the import writes (no name shown)
+GROUP_ARGUMENT = ("cassandra_inventory_leftovers", "cassandra_import_old_shareable", "cassandra_import_old_shareable_lines")
+
+
 def test_the_cluster_arguments_of_the_display_filters_are_those_variables():
     for path in FILES:
         with open(path, encoding="utf-8") as f:
             text = f.read()
-        for argument in re.findall(r"(?<![\w.])cluster=([^,)\s]+)", text):
+        for match in re.finditer(r"(?<![\w.])cluster=([^,)\s]+)", text):
+            called = re.findall(r"community\.cassandra\.(\w+)\(", text[:match.start()])
+            if called and called[-1] in GROUP_ARGUMENT:
+                continue
+            argument = match.group(1)
             assert argument in ("_cluster", "_tp_cluster", "lookup('community.cassandra.cassandra_hosts'"), (path, argument)
 
 

@@ -6,6 +6,7 @@ __metaclass__ = type
 # hosts file it writes then is the one there (a re-import over a full import changes nothing).
 
 import os
+import re
 
 import yaml
 
@@ -100,7 +101,9 @@ def test_the_playbook_applies_it_unless_the_option_is_given():
     names = [t["name"] for t in play["tasks"]]
     step = play["tasks"][names.index("Leave ansible_host out where the inventory there has none")]
     assert step["when"] == "import_set_ansible_host is not defined"
-    assert "cassandra_import_kept_ansible_host(import_cluster_existing_text, _hosts_file" in step["ansible.builtin.set_fact"]["_nodes"]
+    # the files there read, the hosts file there (each by position or by name)
+    assert re.search(r"cassandra_import_kept_ansible_host\(\s*(read=)?import_cluster_existing_text,\s*(hosts_file=)?_hosts_file\b",
+                     step["ansible.builtin.set_fact"]["_nodes"])
     # once the files there are read, before the layout the hosts file is written from
     assert names.index("Keep the files already there") < names.index(step["name"]) < names.index(
         "Lay out again over your own variables") < names.index("Write the files")
