@@ -39,6 +39,7 @@ def op_results(**variables):
     """the role var _cassandra_op_results (lazy), _cassandra_op_limit with it"""
     defaults = load("roles", "cassandra_operation", "vars", "main.yml")
     variables["_cassandra_op_limit"] = render(defaults["_cassandra_op_limit"], **variables)
+    variables["_cassandra_op_limited"] = render(defaults["_cassandra_op_limited"], **variables)
     return render(defaults["_cassandra_op_results"], **variables)
 
 
@@ -57,7 +58,7 @@ def test_operation_summary_is_a_recap():
     # the --limit has, out of the play
     for limit in ({}, {"ansible_limit": "n1,n3"}):
         unlimited = dict((k, v) for k, v in variables.items()
-                         if k not in ("ansible_limit", "_cassandra_op_results", "_cassandra_op_limit"))
+                         if k not in ("ansible_limit", "_cassandra_op_results", "_cassandra_op_limit", "_cassandra_op_limited"))
         unlimited.update(limit)
         results = op_results(**unlimited)
         assert results[2] == {"node": "n3", "result": "not in this run", "stage": ""}

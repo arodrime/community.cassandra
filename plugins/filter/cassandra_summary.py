@@ -246,7 +246,7 @@ def cassandra_op_recap(results, check=False, cluster="", operation="", action=""
 
 def cassandra_op_results(hosts, hostvars, play_hosts, play_hosts_all, limited=None):
     """The nodes of the cluster (or the run's: cassandra_service_summary_hosts), their hostvars, the play's hosts
-    (ansible_play_hosts, ansible_play_hosts_all), the hosts a --limit keeps (None: no --limit, or one not read)
+    (ansible_play_hosts, ansible_play_hosts_all), the hosts a --limit keeps (none: no --limit, or one not read)
     -> [{node, result, stage}] in their order: its cassandra_op_result; none, still in the play: "not run yet"
     (the run stopped before it); out of the play (unreachable, failed earlier): "not reached"; not in it at all:
     "not in this run (--limit)" when the --limit leaves it out, else "not in this run" (a node the playbook does
@@ -259,7 +259,7 @@ def cassandra_op_results(hosts, hostvars, play_hosts, play_hosts_all, limited=No
         result = variables.get("cassandra_op_result")
         if result is None:
             result = ("not run yet" if h in (play_hosts or []) else "not reached" if h in (play_hosts_all or [])
-                      else "not in this run (--limit)" if limited is not None and h not in limited
+                      else "not in this run (--limit)" if limited and h not in limited
                       else "not in this run")
         results.append({"node": h, "result": result, "stage": variables.get("_cassandra_op_stage", "")})
     return results

@@ -20,10 +20,12 @@ _cassandra_service_would:
 _cassandra_op_results: >-
   {{ cassandra_service_summary_hosts | default(query('community.cassandra.cassandra_nodes'))
      | community.cassandra.cassandra_op_results(hostvars, ansible_play_hosts | default([]), ansible_play_hosts_all,
-         query('ansible.builtin.inventory_hostnames', _cassandra_op_limit) if _cassandra_op_limit else none) }}
+                                                _cassandra_op_limited) }}
 
-# the --limit as host patterns, its @files read (a retry file); '' without one, or when a file is not read: then
-# the recap says "not in this run", never a false "left out by --limit"
+# the hosts the --limit keeps, its @files read (a retry file); [] without one, or when a file is not read: then the
+# recap says "not in this run", never a false "left out by --limit"
+_cassandra_op_limited: >-
+  {{ query('ansible.builtin.inventory_hostnames', _cassandra_op_limit) if _cassandra_op_limit else [] }}
 _cassandra_op_limit: "{{ ansible_limit | default('') | community.cassandra.cassandra_limit_patterns }}"
 
 # the command of the run, for the way out of a stop (resume) and the TO DO lines
