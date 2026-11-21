@@ -179,23 +179,47 @@ def test_the_rack_nodes_are_told_apart_by_their_ring_address(down, expected):
     assert render(task["vars"]["_racks"], **variables) == ["r1", "r2", "r3"]
 
 
+COMMAND_ARGS = {"inventory": ["/inv/hosts.yml"], "default_inventory": "/etc/ansible/hosts", "hosts": "prod", "cwd": "/inv"}
+
+
+def test_the_command_args_are_the_run_s():
+    # the run's inventory and cluster, the same in the two plays that say a command
+    with open(os.path.join(TOP, "playbooks", "stop_rack.yml"), encoding="utf-8") as f:
+        plays = yaml.safe_load(f)
+    args = [p["vars"]["_cassandra_rack_command_args"] for p in plays if "_cassandra_rack_command_args" in p.get("vars", {})]
+    assert len(args) == 2 and args[0] == args[1]
+    assert args[0]["hosts"] == "{{ lookup('community.cassandra.cassandra_hosts') }}"
+
+
 def test_the_replica_refusal_is_a_refused_block_of_79_columns():
     """A rack whose stop would take more than one replica of some data down: a REFUSED block the ops callback
     prints as is (cassandra_output), each line within 79 columns, the way out in it; it was the assert's dump
-    (TASK ..., fatal: ..., assertion:, msg: as YAML, lines over 79 columns)."""
+    (TASK ..., fatal: ..., assertion:, msg: as YAML, lines over 79 columns). Its way out was prose ("Fix that
+    first, or set cassandra_rack_force: true: ..."), its nodes inline: now a WAY OUT with the command to paste,
+    the nodes as rows."""
     task = TASKS["Refuse when a keyspace would lose more than one replica"]
     assert task["vars"]["cassandra_output"] is True
     problems = ["system_distributed uses SimpleStrategy with RF 3, which ignores racks: a rack down can hold several"
                 " of its replicas"]
-    variables = dict(task["vars"], cassandra_target_dc="dc1", cassandra_target_rack="r2", _rack_nodes=["n2"],
+    variables = dict(task["vars"], cassandra_target_dc="dc1", cassandra_target_rack="r2", _rack_nodes=["n2", "n3"],
                      _problems=problems, _warnings=["app has 2 replicas in dc1: with one down, (LOCAL_)QUORUM fails"],
-                     hostvars={"localhost": {"_cassandra_cluster_shown": "prod"}})
+                     hostvars={"localhost": {"_cassandra_cluster_shown": "prod"}}, _cassandra_rack_command_args=COMMAND_ARGS)
     lines = render(task["ansible.builtin.assert"]["fail_msg"], **variables).split("\n")
-    assert lines[0] == "REFUSED  stop_rack  prod  nothing was changed"
-    assert max(len(line) for line in lines) <= 79
-    text = " ".join(line.strip() for line in lines)
-    assert "Stopping dc1/r2 (n2) would take down more than one replica" in text
-    assert "set cassandra_rack_force: true" in text and "WARNING  app has 2 replicas" in text
+    assert lines == [
+        "REFUSED  stop_rack  prod  nothing was changed",
+        "  Stopping dc1/r2 would take down more than one replica of some data:",
+        "    system_distributed uses SimpleStrategy with RF 3, which ignores racks: a",
+        "      rack down can hold several of its replicas",
+        "  its nodes:",
+        "    n2",
+        "    n3",
+        "  WARNING  app has 2 replicas in dc1: with one down, (LOCAL_)QUORUM fails",
+        "  Forced, reads and writes needing those replicas fail, and data only on them",
+        "    is unavailable until the rack is back.",
+        "  WAY OUT  fix that first, or force the stop:",
+        "    ansible-playbook -i hosts.yml community.cassandra.stop_rack \\",
+        "      -e cassandra_hosts=prod -e cassandra_target_dc=dc1 \\",
+        "      -e cassandra_target_rack=r2 -e cassandra_rack_force=true"]
 
 
 def test_how_to_start_it_again_is_the_exact_command_within_79_columns():
@@ -204,11 +228,8 @@ def test_how_to_start_it_again_is_the_exact_command_within_79_columns():
     with open(os.path.join(TOP, "playbooks", "stop_rack.yml"), encoding="utf-8") as f:
         say = next(t for p in yaml.safe_load(f) for t in p.get("tasks", []) if t.get("name") == "Say how to start it again")
     variables = dict(cassandra_target_dc="dc1", cassandra_target_rack="r2", ansible_play_hosts_all=["h-n4", "h-n5"],
-                     ansible_inventory_sources=["/inv/hosts.yml"])
-    start = say["vars"]["_start"].replace("lookup('community.cassandra.cassandra_hosts')", "'prod'").replace(
-        "lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST')", "'/etc/ansible/hosts'").replace(
-        "lookup('ansible.builtin.env', 'PWD')", "'/inv'")
-    lines = render(say["ansible.builtin.debug"]["msg"], _start=render(start, **variables), **variables)
+                     ansible_inventory_sources=["/inv/hosts.yml"], _cassandra_rack_command_args=COMMAND_ARGS)
+    lines = render(say["ansible.builtin.debug"]["msg"], _start=render(say["vars"]["_start"], **variables), **variables)
     assert lines == ["dc1/r2 is down: h-n4, h-n5", "start it again with:",
                      "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
                      "    -e cassandra_hosts=prod -e cassandra_target_dc=dc1 \\",

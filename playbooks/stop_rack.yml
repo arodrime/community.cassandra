@@ -46,6 +46,12 @@
       {%-   set _ = out.update({h: ([a] + more | map('community.cassandra.cassandra_ip') | list) | unique | list}) -%}
       {%- endfor -%}
       {{ out }}
+    # the run's inventory and cluster, for the commands said
+    _cassandra_rack_command_args:
+      inventory: "{{ ansible_inventory_sources }}"
+      default_inventory: "{{ lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') }}"
+      hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+      cwd: "{{ lookup('ansible.builtin.env', 'PWD') }}"
     # the rack's nodes as the ring has them
     _ring_rack: >-
       {{ (cassandra_rack_ring.cluster_status[cassandra_target_dc] | default({})).nodes | default([])
@@ -165,18 +171,19 @@
       ansible.builtin.assert:
         that: _problems | length == 0 or cassandra_rack_force | default(false) | bool
         fail_msg: >-
-          {{ ('stop_rack  ' ~ _cluster) | community.cassandra.cassandra_refused(
-               ['Stopping ' ~ cassandra_target_dc ~ '/' ~ cassandra_target_rack ~ ' (' ~ _rack_nodes | join(', ')
-                ~ ') would take down more than one replica of some data:'] + _problems
-               + ['Fix that first, or set cassandra_rack_force: true: reads and writes needing those replicas then'
-                  ~ ' fail, and data only on them is unavailable until the rack is back.']
-               + _warnings | map('regex_replace', '^', 'WARNING  ') | list) | join(_nl) }}
+          {{ _problems | community.cassandra.cassandra_rack_stop_refused(
+               _warnings, _rack_nodes, cassandra_target_dc, cassandra_target_rack, _cluster, _forced) | join(_nl) }}
         quiet: true
       run_once: true
       vars:
         cassandra_output: true  # a verdict: its msg as is (ops callback), not the assert's dump
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
+        # the way out: the same stop, forced
+        _forced: >-
+          {{ 'stop_rack' | community.cassandra.cassandra_command(
+               extra={'cassandra_target_dc': cassandra_target_dc, 'cassandra_target_rack': cassandra_target_rack,
+                      'cassandra_rack_force': 'true'}, **_cassandra_rack_command_args) }}
 
     - name: Show the plan and confirm
       ansible.builtin.include_role:
@@ -222,6 +229,13 @@
   gather_facts: false
   become: true
   any_errors_fatal: true
+  vars:
+    # the run's inventory and cluster, for the command said
+    _cassandra_rack_command_args:
+      inventory: "{{ ansible_inventory_sources }}"
+      default_inventory: "{{ lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') }}"
+      hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+      cwd: "{{ lookup('ansible.builtin.env', 'PWD') }}"
   tasks:
     # first: each node its own facts before any run_once task (ansible/ansible#87148)
     - name: Give each node its own facts
@@ -284,5 +298,4 @@
         _start: >-
           {{ 'start_rack' | community.cassandra.cassandra_command(
                extra={'cassandra_target_dc': cassandra_target_dc, 'cassandra_target_rack': cassandra_target_rack},
-               inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
-               hosts=lookup('community.cassandra.cassandra_hosts'), cwd=lookup('ansible.builtin.env', 'PWD')) }}
+               **_cassandra_rack_command_args) }}
