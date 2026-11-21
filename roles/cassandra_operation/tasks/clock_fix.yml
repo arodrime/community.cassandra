@@ -73,10 +73,11 @@
         _cassandra_clock_makestep is changed or _cassandra_clock_timesyncd_step is changed
         or not _cassandra_clock | community.cassandra.cassandra_clock_in_sync(cassandra_clock_max_offset_ms)
 
+    # a daemon still converging after the wait: the longer wait said too (as a start's refusal does)
     - name: Note a clock still not in sync
       ansible.builtin.set_fact:
         _cassandra_clock_fix_error: >-
-          clock still not in sync after waiting up to {{ cassandra_clock_sync_timeout }}s: {{ _v.text }}{{ (': ' ~ _v.why) if _v.why and _v.why not in _v.text else '' }}
+          clock still not in sync after waiting up to {{ cassandra_clock_sync_timeout }}s: {{ _v.text }}{{ (': ' ~ _v.why) if _v.why and _v.why not in _v.text else '' }}{{ ', or raise cassandra_clock_sync_timeout' if _v.converging | default(false) else '' }}
       vars:
         _v: >-
           {{ (([{'node': inventory_hostname, 'probe': _cassandra_clock}]
