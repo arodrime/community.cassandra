@@ -267,7 +267,7 @@ def _role_defaults():
 def _known_names():
     """Every cassandra_* name the collection reads (roles, playbooks, their task files and templates), and those
     their comments write (a name shown in a comment is no typo here, as in 3.0.0-rc1)."""
-    return set(name for name in used_names(with_comments=True) if name.startswith("cassandra_"))
+    return set(name for name in used_names(for_help=True) if name.startswith("cassandra_"))
 
 
 def _seeds(value):

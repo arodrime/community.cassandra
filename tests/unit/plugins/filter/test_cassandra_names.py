@@ -207,6 +207,23 @@ def test_help_knows_exactly_rc1s_names():
     assert sorted(cassandra_help._known_names()) == sorted(_rc1_names("help"))
 
 
+def test_each_check_reads_its_own_files(tmp_path, monkeypatch):
+    # as rc1: the unknown-variable check reads the roles' files/ and only the .j2 templates, help's the other way
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_names
+    for path, name in (("roles/r/files/f.yml", "cassandra_in_files"), ("roles/r/templates/t.sh", "cassandra_in_sh"),
+                       ("roles/r/templates/sub/t.j2", "cassandra_in_j2"), ("roles/r/tasks/main.yml", "cassandra_in_tasks"),
+                       ("playbooks/tasks/t.yml", "cassandra_in_playbook_tasks"),
+                       ("playbooks/templates/t.sh.j2", "cassandra_in_playbook_templates")):
+        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / path).write_text("x: '{{ %s }}'  # cassandra_in_a_comment\n" % name)
+    monkeypatch.setattr(cassandra_names, "_TOP", str(tmp_path))
+    read = cassandra_names.used_names.__wrapped__
+    both = {"cassandra_in_j2", "cassandra_in_tasks", "cassandra_in_playbook_tasks", "cassandra_in_playbook_templates"}
+    assert read() - cassandra_names.RC1_NAMES_NOW_IN_PYTHON == both | {"cassandra_in_files"}
+    help_only = {"cassandra_in_sh", "cassandra_in_a_comment"}
+    assert read(for_help=True) - cassandra_names.RC1_NAMES_NOW_IN_PYTHON == both | help_only
+
+
 def test_a_filter_added_since_rc1_is_no_variable():
     # rc1 took the name of each filter its playbooks called for a variable; a filter added since is not one
     from ansible_collections.community.cassandra.plugins.filter import cassandra_help

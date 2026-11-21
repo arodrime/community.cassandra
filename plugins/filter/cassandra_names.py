@@ -26,9 +26,13 @@ from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_role
 
 _TOP = os.path.join(os.path.dirname(__file__), "..", "..")
 _ROLES = os.path.join(_TOP, "roles")
-# the files whose names used_names reads (relative to the collection)
-_READ = ("roles/*/*/*.yml", "roles/*/templates/**", "playbooks/*.yml", "playbooks/tasks/*.yml",
-         "playbooks/templates/*.j2")
+# the files used_names reads names from (relative to the collection), each check its own (help's: not the roles'
+# files/ nor molecule/, but every template, not only the .j2 ones); the playbooks' task files and templates hold
+# text that was in playbooks/*.yml, read by both
+_PLAYBOOK_FILES = ("playbooks/*.yml", "playbooks/tasks/*.yml", "playbooks/templates/*.j2")
+_READ = {"unknown": ("roles/*/*/*.yml", "roles/*/templates/**/*.j2") + _PLAYBOOK_FILES,
+         "help": ("roles/*/defaults/*.yml", "roles/*/meta/*.yml", "roles/*/tasks/*.yml", "roles/*/vars/*.yml",
+                  "roles/*/handlers/*.yml", "roles/*/templates/**") + _PLAYBOOK_FILES}
 # the names the roles and playbooks use: import_cluster's own facts (import_cluster_*), not every import_ word
 # (import_tasks, import_playbook, a file's name): its options are the playbook variables
 _NAME = re.compile(r"\b(?:cassandra|import_cluster|help)_\w+")
@@ -122,18 +126,18 @@ def cassandra_close_names(names, known, cutoff=0.9):
 
 
 @functools.lru_cache(maxsize=None)
-def used_names(with_comments=False):
+def used_names(for_help=False):
     """Every cassandra_*, import_cluster_* and help_* name the roles and playbooks (their task files and
     templates too) use, their own facts and results too, as 3.0.0-rc1 knew them (RC1_NAMES_NOW_IN_PYTHON,
-    NOT_VARIABLES). with_comments: the names their comments write too (help's typo check reads them, the
-    unknown-variable check does not)."""
+    NOT_VARIABLES). for_help: those help's typo check reads (its files, and the names their comments write too);
+    else the unknown-variable check's (comments left out)."""
     names = set()
-    for pattern in _READ:
+    for pattern in _READ["help" if for_help else "unknown"]:
         for path in glob.glob(os.path.join(_TOP, pattern), recursive=True):
             if os.path.isfile(path):
                 with open(path, encoding="utf-8", errors="replace") as f:
                     text = f.read()
-                names.update(_NAME.findall(text if with_comments else _COMMENT.sub("", text)))
+                names.update(_NAME.findall(text if for_help else _COMMENT.sub("", text)))
     return frozenset((names | RC1_NAMES_NOW_IN_PYTHON) - NOT_VARIABLES)
 
 
