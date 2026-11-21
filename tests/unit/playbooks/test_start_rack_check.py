@@ -746,8 +746,14 @@ def start_failed(failed, task):
     assert start["block"][0]["ansible.builtin.include_role"]["name"] == "community.cassandra.cassandra_service"
     stop = start["rescue"][0]
     assert stop["vars"]["cassandra_output"] is True
-    return render(stop["ansible.builtin.fail"]["msg"], inventory_hostname="n2", cassandra_target_rack="r2",
-                  ansible_failed_result=failed, ansible_failed_task={"name": task})
+    variables = dict(inventory_hostname="n2", cassandra_target_dc="dc1", cassandra_target_rack="r2", ansible_limit="n2",
+                     ansible_failed_result=failed, ansible_failed_task={"name": task}, _args=COMMAND_ARGS)
+    variables["_again"] = render(stop["vars"]["_again"], **variables)
+    return render(stop["ansible.builtin.fail"]["msg"], **variables)
+
+
+AGAIN = ["  ansible-playbook -i hosts.yml community.cassandra.start_rack --limit n2 \\",
+         "    -e cassandra_target_dc=dc1 -e cassandra_target_rack=r2"]
 
 
 def role_task(path, name):
@@ -770,12 +776,12 @@ def test_a_node_of_the_rack_that_does_not_start_is_said_with_a_way_out():
                      " exited with error code.\nSee \"systemctl status cassandra.service\" for details."}
     lines = start_failed(failed, "Start or restart cassandra")
     assert lines[0] == "n2 (rack r2) did not start:"
-    assert " ".join(x.strip() for x in lines[1:-4]) == (
+    assert " ".join(x.strip() for x in lines[1:-6]) == (
         "Unable to start service cassandra: Job for cassandra.service failed because the control process exited"
         " with error code. See \"systemctl status cassandra.service\" for details.")
     # a command per line
-    assert lines[-4:] == ["see why on it:", "  systemctl status cassandra", "  journalctl -u cassandra",
-                          "WAY OUT  fix it, then run start_rack again"]
+    assert lines[-6:] == ["see why on it:", "  systemctl status cassandra", "  journalctl -u cassandra",
+                          "WAY OUT  fix it, then run start_rack again:"] + AGAIN
     assert max(len(x) for x in lines) <= 79
 
 
@@ -795,7 +801,7 @@ def test_a_node_that_stops_while_it_joins_is_said_with_its_journal():
     text = " ".join(x.strip() for x in lines)
     assert all(" ".join(line.split()) in text for line in journal)
     assert "cassandra-prod-node-017" in text and "exit-code" in text  # (never cut at a hyphen)
-    assert all(x.startswith("    ") for x in lines[3:-4]) and lines[-1] == "WAY OUT  fix it, then run start_rack again"
+    assert all(x.startswith("    ") for x in lines[3:-6]) and lines[-3] == "WAY OUT  fix it, then run start_rack again:"
     assert max(len(x) for x in lines) <= 79
 
 
@@ -808,7 +814,7 @@ def test_a_node_not_normal_in_time_is_said_as_seen_not_did_not_start():
                          "  JOINING"]
     assert "did not start" not in " ".join(lines)
     assert lines[2:] == ["see on it:", "  nodetool netstats", "  journalctl -u cassandra",
-                         "WAY OUT  once it is NORMAL (or fixed), run start_rack again"]
+                         "WAY OUT  once it is NORMAL (or fixed), run start_rack again:"] + AGAIN
 
 
 def test_a_refusal_of_the_role_before_the_start_is_said_as_the_role_says_it():
@@ -829,8 +835,15 @@ def test_a_refusal_of_the_role_before_the_start_is_said_as_the_role_says_it():
          " kills the JVM mid-drain.")]
     for task, msg in refusals:
         lines = start_failed({"msg": msg}, task)
-        assert " ".join(x.strip() for x in lines) == " ".join(x.strip() for x in (msg if isinstance(msg, list) else [msg]))
+        # every stop says a way out: its own when it has one, else fix what it says and run the same command again
+        assert lines[-3:] == ["WAY OUT  fix what the message above says, then run start_rack again:"] + AGAIN
+        assert " ".join(x.strip() for x in lines[:-3]) == " ".join(
+            x.strip() for x in (msg if isinstance(msg, list) else [msg]))
         assert max(len(x) for x in lines) <= 79 and "did not start" not in " ".join(lines)
+    # one with a WAY OUT of its own (a REFUSED block of the role): no second one
+    own = ["REFUSED  start  n2  nothing was changed", "  the storage mode moves back", "  WAY OUT  set it back:",
+           "    ansible-playbook x"]
+    assert start_failed({"msg": own}, "Refuse a start into another storage_compatibility_mode") == own
 
 
 def test_the_verdict_s_keys_are_the_ones_its_docstring_gives():

@@ -179,9 +179,19 @@
           ansible.builtin.fail:
             msg: >-
               {{ ansible_failed_result | community.cassandra.cassandra_rack_start_failed(
-                   ansible_failed_task.name | default(''), inventory_hostname, cassandra_target_rack) }}
+                   ansible_failed_task.name | default(''), inventory_hostname, cassandra_target_rack, _again) }}
           vars:
             cassandra_output: true  # a verdict: its msg as is (ops callback)
+            # the run's own command again (its inventory, cluster, --limit)
+            _again: >-
+              {{ 'start_rack' | community.cassandra.cassandra_command(
+                   extra={'cassandra_target_dc': cassandra_target_dc, 'cassandra_target_rack': cassandra_target_rack},
+                   limit=ansible_limit | default(''), **_args) }}
+            _args:
+              inventory: "{{ ansible_inventory_sources }}"
+              default_inventory: "{{ lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') }}"
+              hosts: "{{ cassandra_hosts | default('') }}"
+              cwd: "{{ lookup('ansible.builtin.env', 'PWD') }}"
 
 # Run a repair of the rack's nodes afterwards if they were down longer than
 # cassandra_max_hint_window (3 hours by default; cassandra_max_hint_window_in_ms
