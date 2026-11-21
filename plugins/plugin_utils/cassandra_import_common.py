@@ -106,7 +106,7 @@ def values_hidden(func):
             if undefined_name(exc):
                 raise
             error = error_without_message(func.__name__, "")
-        raise error
+        raise error  # out of the except block: the original error (its message) is not chained to it
     return wrapper
 
 
