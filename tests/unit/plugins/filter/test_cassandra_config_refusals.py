@@ -98,7 +98,9 @@ def test_jmx_tls():
     words = dict(keystore="/k", keystore_password="p", truststore="", truststore_password="", protocols="",
                  cipher_suites="")
     assert cassandra_config_jmx_tls_refusals(True, False, False, **words) == []
-    assert cassandra_config_jmx_tls_refusals(True, True, True, **dict(words, keystore="", protocols="a b")) == [
+    wrong = dict(words)
+    wrong.update(keystore="", protocols="a b")
+    assert cassandra_config_jmx_tls_refusals(True, True, True, **wrong) == [
         "cassandra_jmx_ssl_enabled needs remote JMX (cassandra_local_jmx: false): the TLS lines are in the remote branch"
         " of cassandra-env.sh",
         "cassandra_jmx_ssl_enabled needs cassandra_jmx_ssl_keystore and cassandra_jmx_ssl_keystore_password (the"

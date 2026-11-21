@@ -15,7 +15,7 @@ import pytest
 from ansible.modules.stat import format_output
 
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_config_read as reader
-from ansible_collections.community.cassandra.tests.unit.roles.config_reader import ROLE, config_read
+from ansible_collections.community.cassandra.tests.unit.roles.config_reader import config_read
 
 
 def stat_module(path, follow):
