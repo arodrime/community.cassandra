@@ -98,7 +98,8 @@ def test_every_display_site_names_the_group_of_the_first_line():
 
 
 # the import's filters whose cluster is the inventory group the import writes (no name shown)
-GROUP_ARGUMENT = ("cassandra_inventory_leftovers", "cassandra_import_old_shareable", "cassandra_import_old_shareable_lines")
+GROUP_ARGUMENT = ("cassandra_inventory_leftovers", "cassandra_import_old_shareable",
+                  "cassandra_import_old_shareable_lines")
 
 
 def test_the_cluster_arguments_of_the_display_filters_are_those_variables():
@@ -107,9 +108,10 @@ def test_the_cluster_arguments_of_the_display_filters_are_those_variables():
             text = f.read()
         for match in re.finditer(r"(?<![\w.])cluster=([^,)\s]+)", text):
             called = re.findall(r"community\.cassandra\.(\w+)\(", text[:match.start()])
-            if called and called[-1] in GROUP_ARGUMENT:
-                continue
             argument = match.group(1)
+            if called and called[-1] in GROUP_ARGUMENT:
+                assert argument == "_layout.cluster_group", (path, argument)
+                continue
             assert argument in ("_cluster", "_tp_cluster", "lookup('community.cassandra.cassandra_hosts'"), (path, argument)
 
 
