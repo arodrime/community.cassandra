@@ -277,7 +277,7 @@
       ansible.builtin.debug:
         msg: >-
           {{ ([_head] + ansible_play_hosts_all | map('regex_replace', '^', '  ') | list
-              + ['start ' ~ ('them' if _partial else 'it') ~ ' again with:', '  ' ~ _start]) | community.cassandra.cassandra_fit }}
+              + ['start ' ~ ('them' if _partial | bool else 'it') ~ ' again with:', '  ' ~ _start]) | community.cassandra.cassandra_fit }}
       run_once: true
       vars:
         cassandra_output: true
