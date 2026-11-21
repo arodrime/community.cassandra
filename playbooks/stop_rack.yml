@@ -270,14 +270,19 @@
       vars:
         cassandra_service_state: stopped
 
+    # the exact command (the run's inventory and cluster), on a line of its own, within 79 columns
     - name: Say how to start it again
       ansible.builtin.debug:
         msg: >-
-          {{ cassandra_target_dc | default('(not set)') }}/{{ cassandra_target_rack | default('(not set)') }} is down ({{ ansible_play_hosts_all | join(', ') }}).
-          Start it with: ansible-playbook -i <inventory> community.cassandra.start_rack -e cassandra_hosts={{
-          lookup('community.cassandra.cassandra_hosts') }} -e cassandra_target_dc={{ cassandra_target_dc | default('(not set)') }}
-          -e cassandra_target_rack={{ cassandra_target_rack | default('(not set)') }}
+          {{ [cassandra_target_dc ~ '/' ~ cassandra_target_rack ~ ' is down: '
+              ~ ansible_play_hosts_all | community.cassandra.cassandra_node_list,
+              'start it again with:', '  ' ~ _start] | community.cassandra.cassandra_fit }}
       run_once: true
       vars:
         cassandra_output: true
         cassandra_output_gap: true  # a block of its own
+        _start: >-
+          {{ 'start_rack' | community.cassandra.cassandra_command(
+               extra={'cassandra_target_dc': cassandra_target_dc, 'cassandra_target_rack': cassandra_target_rack},
+               inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+               hosts=lookup('community.cassandra.cassandra_hosts'), cwd=lookup('ansible.builtin.env', 'PWD')) }}

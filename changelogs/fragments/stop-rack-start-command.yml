@@ -1,0 +1,2 @@
+bugfixes:
+  - "stop_rack playbook - its last lines give the exact ``start_rack`` command (the run's inventory and cluster, no longer ``-i <inventory>``) on a line of its own, within 79 columns, no longer one line of up to 190."

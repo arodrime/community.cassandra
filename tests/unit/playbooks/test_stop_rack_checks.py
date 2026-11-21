@@ -196,3 +196,21 @@ def test_the_replica_refusal_is_a_refused_block_of_79_columns():
     text = " ".join(line.strip() for line in lines)
     assert "Stopping dc1/r2 (n2) would take down more than one replica" in text
     assert "set cassandra_rack_force: true" in text and "WARNING  app has 2 replicas" in text
+
+
+def test_how_to_start_it_again_is_the_exact_command_within_79_columns():
+    # S26: one line of 190 columns, "-i <inventory>" for the run's inventory; now the command as start_rack takes
+    # it (the run's inventory, its cluster), on a line of its own, cut between its arguments
+    with open(os.path.join(TOP, "playbooks", "stop_rack.yml"), encoding="utf-8") as f:
+        say = next(t for p in yaml.safe_load(f) for t in p.get("tasks", []) if t.get("name") == "Say how to start it again")
+    variables = dict(cassandra_target_dc="dc1", cassandra_target_rack="r2", ansible_play_hosts_all=["h-n4", "h-n5"],
+                     ansible_inventory_sources=["/inv/hosts.yml"])
+    start = say["vars"]["_start"].replace("lookup('community.cassandra.cassandra_hosts')", "'prod'").replace(
+        "lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST')", "'/etc/ansible/hosts'").replace(
+        "lookup('ansible.builtin.env', 'PWD')", "'/inv'")
+    lines = render(say["ansible.builtin.debug"]["msg"], _start=render(start, **variables), **variables)
+    assert lines == ["dc1/r2 is down: h-n4, h-n5", "start it again with:",
+                     "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
+                     "    -e cassandra_hosts=prod -e cassandra_target_dc=dc1 \\",
+                     "    -e cassandra_target_rack=r2"]
+    assert say["vars"]["cassandra_output"] is True
