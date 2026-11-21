@@ -76,7 +76,7 @@ from ansible.template import Templar
 from ansible.utils.unsafe_proxy import wrap_var
 from ansible.vars.manager import VariableManager
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import written_for
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import written_for
 from ansible_collections.community.cassandra.plugins.lookup.cassandra_hosts import (
     ENV, UNKNOWN, cluster_group, cluster_line, clusters_found, in_inventory, not_given, other_groups, picked)
 

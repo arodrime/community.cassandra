@@ -273,7 +273,7 @@ def test_its_config_carried_into_the_inventory(tmp_path):
 
 
 def test_carried_open_telemetry_headers_go_to_secrets_yml(tmp_path):
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _split_secrets
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import _split_secrets
     files = before_extra(seeded(stock("50x")), PASSING_BLOCK)
     config = "rules: []\nopenTelemetry:\n  endpoint: http://otel:4317\n  headers:\n    Authorization: Bearer t0ken\n"
     out = exporter_import(files, "", sha256="ab" * 32, config=config, carry=True)

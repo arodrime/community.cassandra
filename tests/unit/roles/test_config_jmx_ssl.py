@@ -8,7 +8,7 @@ import os
 
 import pytest
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _load_role, _render
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import _load_role, _render
 from ansible_collections.community.cassandra.tests.unit.roles.test_config_declared import run
 
 FACTS = {"os_family": "Debian", "default_ipv4": {"address": "10.0.0.1"}, "hostname": "n1"}

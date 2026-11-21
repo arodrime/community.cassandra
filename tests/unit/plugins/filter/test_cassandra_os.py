@@ -631,7 +631,7 @@ def test_own_node_limits_only_its_own_file():
 
 
 def test_limits_order_kept_in_the_vars_file():
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _vars_yaml
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import _vars_yaml
     text = _vars_yaml({"cassandra_linux_limits": {"nofile": 1, "as": "unlimited"}, "cassandra_jmx_users": {"b": 1, "a": 2}})
     assert text.index("nofile") < text.index("as:")
     assert text.index("a: 2") < text.index("b: 1")  # the others still sorted

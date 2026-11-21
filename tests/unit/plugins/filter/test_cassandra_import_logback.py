@@ -11,7 +11,8 @@ import re
 import pytest
 import yaml
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_config_import, log_dir_of
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_config_import
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_jvm import log_dir_of
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import same_settings
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import (
     _compare_files, cassandra_import_self_check)
@@ -532,12 +533,12 @@ def test_the_log_dir_written_as_itself_only_when_the_jvm_gets_it():
 
 
 def test_the_audit_dir_is_listed_with_the_logging():
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _block
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import _block
     assert _block("cassandra_log_audit_dir") == _block("cassandra_log_audit_file") == "Logging (logback.xml)"
 
 
 def test_the_heap_switch_and_g1_values_are_listed_with_the_jvm():
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _block
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import _block
     assert _block("cassandra_heap_in_jvm_options") == _block("cassandra_jvm_g1_rset_updating_pause_time_percent") \
         == "JVM & heap (cassandra-env.sh, jvm*-server.options)"
 
@@ -628,7 +629,7 @@ def test_four_nodes_of_twenty_four_in_host_vars():
 
 
 def test_the_compression_and_jmx_are_listed_with_the_logging():
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _block
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import _block
     assert _block("cassandra_log_compress") == _block("cassandra_log_audit_compress") \
         == _block("cassandra_log_jmx_configurator") == "Logging (logback.xml)"
 

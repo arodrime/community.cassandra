@@ -320,7 +320,8 @@ def test_users_left_out_are_hand_edits_of_the_files():
 # --- rc10: parts kept by hand (import_keep_hand_edits=<parts>) ---
 
 def test_parts_named_with_the_files():
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import keep_files_option, keep_parts_option
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import keep_parts_option
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import keep_files_option
     assert keep_files_option("logback.xml,os,unit") == ["logback.xml"]
     assert keep_parts_option("logback.xml,unit,os") == ["os", "unit"]  # (in the order of the parts)
     assert keep_parts_option("true") == [] and keep_files_option("true") is True  # true: the hand-edited files only
@@ -348,7 +349,7 @@ def test_kept_parts_written_and_their_carried_values_dropped():
 
 
 def test_part_tables_agree():
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import (
         KEPT_PART_VARS, KEPT_PART_WORDS, KEPT_PARTS, OS_PARTS)
     assert set(KEPT_PARTS) == set(KEPT_PART_VARS) == set(KEPT_PART_WORDS)
     assert set(OS_PARTS) <= set(KEPT_PARTS)

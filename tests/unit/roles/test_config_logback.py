@@ -13,7 +13,7 @@ import pytest
 import yaml
 
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _load_role, _render
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import _load_role, _render
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 from ansible_collections.community.cassandra.tests.unit.task_files import find_task, load_tasks
 from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template

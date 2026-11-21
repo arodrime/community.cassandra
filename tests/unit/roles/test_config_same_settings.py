@@ -275,7 +275,7 @@ def test_jmx_rights_the_jvm_refuses_are_refused(users, bad):
     "readwrite create a\\.b", "readwrite create a.,b", "readwrite create a-b",
 ])
 def test_jmx_rights_the_import_carries_are_the_ones_the_role_takes(access):
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import JMX_RIGHTS
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_jvm import JMX_RIGHTS
     check = task("Check the JMX users' rights", "access.yml")
     refused = render(check["vars"]["_bad"], cassandra_jmx_users=[{"name": "x", "access": access}]) == ["x"]
     assert refused == (JMX_RIGHTS.match(access) is None)

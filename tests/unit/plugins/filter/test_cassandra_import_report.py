@@ -1650,8 +1650,8 @@ def test_a_value_that_differs_by_case_only_differs():
 def test_the_next_step_expects_cassandra_env_as_stock_when_its_dormant_lines_go():
     # e2e (a prod-shape import): "expected: every node up to date (header lines aside)", then apply_config --check
     # rewrote cassandra-env.sh (the lines of the remote JMX branch the nodes do not run, the stock password file line)
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        PASSWORD_FILE_NOTE, branch_not_run_note)
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
+        branch_not_run_note, PASSWORD_FILE_NOTE)
     branch = "lines of a JMX branch the nodes do not run dropped"
     password = "the stock JMX password file line back, an option of the next restart the JVM never reads"
     for notes, words in (([branch_not_run_note(3, "local")], branch), ([PASSWORD_FILE_NOTE], password),

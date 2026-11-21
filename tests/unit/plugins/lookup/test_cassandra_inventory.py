@@ -11,7 +11,8 @@ import pytest
 from ansible.errors import AnsibleError
 from ansible.parsing.vault import VaultLib, VaultSecret
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import GENERATED, GENERATED_UNNAMED
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import (
+    GENERATED, GENERATED_UNNAMED)
 from ansible_collections.community.cassandra.plugins.lookup.cassandra_inventory import read
 from ansible_collections.community.cassandra.tests.unit.helpers import trust_as_template
 

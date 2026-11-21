@@ -14,7 +14,8 @@ import pytest
 import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    ENV_END, LOGBACK_END, cassandra_config_import, cassandra_inventory_files, cassandra_inventory_layout)
+    cassandra_config_import, cassandra_inventory_files, cassandra_inventory_layout)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import ENV_END, LOGBACK_END
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import cassandra_import_self_check
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
     cassandra_import_report, cassandra_import_self_check_advice)

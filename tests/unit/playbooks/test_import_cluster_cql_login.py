@@ -344,8 +344,8 @@ def test_which_login_is_written():
 
 
 def test_the_import_reads_back_its_own_login():
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        GENERATED, cassandra_inventory_own_values)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_own_values
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import GENERATED
     keys = ["cassandra_cql_username", "cassandra_cql_password"]
     read = {"group_vars/prod/main.yml": GENERATED % "prod" + "\ncassandra_cql_username: alice\n",
             "group_vars/prod/secrets.yml": GENERATED % "prod" + "\ncassandra_cql_password: %s\n" % GOOD,

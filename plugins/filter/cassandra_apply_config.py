@@ -40,7 +40,7 @@ from collections import OrderedDict
 
 from ansible.module_utils.parsing.convert_bool import boolean
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import earlier_env
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import earlier_env
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import terminal_width
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import stat_fields
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import DEFAULT_WHEN_ABSENT, BOOLS

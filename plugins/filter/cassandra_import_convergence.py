@@ -20,8 +20,11 @@ import re
 from ansible.module_utils.parsing.convert_bool import boolean
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import FILES, THEN
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    JAVA_DEFAULT, KEEP, ROLE, SERIES, group_chains, hand_edits_kept, template_vars, undefined_name)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
+    KEEP, ROLE, SERIES, undefined_name)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import template_vars
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_layout import (
+    group_chains, hand_edits_kept, JAVA_DEFAULT)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
     ARROW_RIGHT, COLLECTION_DEFAULT, DASH, NOT_COUNTED, REPORT_WIDTH, aligned_rows, alike, empty_on_own_row,
     fill_text, plain_default, report_sections, unbreakable, unread_by, who_text)

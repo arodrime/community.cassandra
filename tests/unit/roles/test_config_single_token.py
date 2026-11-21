@@ -11,8 +11,8 @@ import re
 import pytest
 import yaml
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    _load_role, _render, cassandra_config_import)
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_config_import
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import _load_role, _render
 
 FACTS = {"os_family": "Debian", "default_ipv4": {"address": "10.0.0.1"}}
 SERIES = ["40x", "41x", "50x"]

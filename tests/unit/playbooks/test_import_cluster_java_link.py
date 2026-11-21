@@ -18,7 +18,8 @@ import yaml
 from ansible.parsing.splitter import split_args
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    GENERATED, cassandra_inventory_files, cassandra_inventory_layout, cassandra_inventory_leftovers)
+    cassandra_inventory_files, cassandra_inventory_layout, cassandra_inventory_leftovers)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import GENERATED
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_convergence import (
     cassandra_import_convergence)
 from ansible_collections.community.cassandra.tests.unit.import_nodes import node

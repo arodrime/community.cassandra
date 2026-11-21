@@ -27,8 +27,9 @@ import yaml
 from ansible.module_utils.parsing.convert_bool import boolean
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import NOT_RUNNING, THEN, not_running
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    MISSING, _resolved, _roles_defaults, _user_data)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import MISSING
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_layout import (
+    _resolved, _roles_defaults, _user_data)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_convergence import (
     _KINDS, _action, _check, _kind, _setting_items, _then_text, _values_text)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (

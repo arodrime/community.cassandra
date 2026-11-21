@@ -10,8 +10,9 @@ import re
 import pytest
 import yaml
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    _load_role, _read_line, _render, cassandra_config_import)
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_config_import
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
+    _load_role, _read_line, _render)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import canonical_quantity, same_settings
 from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_import_check import (
     check, edit, seeded, stock)

@@ -14,7 +14,7 @@ from ansible import constants as C
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import GENERATED
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import GENERATED
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, trust_as_template
 from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task

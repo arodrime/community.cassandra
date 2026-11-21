@@ -10,11 +10,15 @@ import random
 
 import pytest
 
-from ansible_collections.community.cassandra.plugins.filter import cassandra_import
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_import_layout as import_layout
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    IPV4, LOGBACK_END, MISSING, RACKDC, _cluster_group, _dc_group, _place_highest, _rack_group, _roles_defaults,
     cassandra_inventory_files, cassandra_inventory_layout, cassandra_inventory_layout_over,
-    cassandra_inventory_leftovers, GENERATED)
+    cassandra_inventory_leftovers)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
+    IPV4, LOGBACK_END, MISSING, RACKDC)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import GENERATED
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_layout import (
+    _cluster_group, _dc_group, _place_highest, _rack_group, _roles_defaults)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import (
     cassandra_inventory_host_vars)
 
@@ -84,7 +88,7 @@ def old_layout(nodes, monkeypatch):
                   functools.partial(_rack_group, cluster)]
         return _place_highest(key, read, levels, group_vars, host_vars)
     with monkeypatch.context() as m:
-        m.setattr(cassandra_import, "_place", highest)
+        m.setattr(import_layout, "_place", highest)
         return cassandra_inventory_layout([dict(n, vars=dict(n["vars"])) for n in nodes], "c")
 
 

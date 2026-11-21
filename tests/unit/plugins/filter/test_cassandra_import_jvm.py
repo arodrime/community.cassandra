@@ -11,7 +11,8 @@ import sys
 import pytest
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    _load_role, _render, cassandra_config_import, cassandra_inventory_layout)
+    cassandra_config_import, cassandra_inventory_layout)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import _load_role, _render
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import _compare_files
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import cassandra_import_report
 from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_jvm_options import STACK_1G

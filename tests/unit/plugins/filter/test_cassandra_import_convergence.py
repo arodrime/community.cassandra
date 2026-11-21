@@ -12,7 +12,8 @@ import pytest
 
 from ansible_collections.community.cassandra.plugins.filter import cassandra_import_convergence as convergence
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    IPV4, cassandra_inventory_files, cassandra_inventory_layout)
+    cassandra_inventory_files, cassandra_inventory_layout)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import IPV4
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_convergence import (
     _carry, _kind, cassandra_import_convergence)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import cassandra_import_report

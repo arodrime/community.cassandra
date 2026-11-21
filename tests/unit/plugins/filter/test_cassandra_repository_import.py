@@ -44,7 +44,7 @@ def test_series_in_the_url(url, written):
     out = yum(YUM.replace("https://mirror.example/rpm/50x/", url))
     assert out["vars"]["cassandra_install_url"] == written
     # written by the import as a template (not !unsafe), rendered with the series it was read with: the node's URL
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _vars_yaml
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import _vars_yaml
     text = _vars_yaml({"cassandra_install_url": written})
     assert "!unsafe" not in text
     value = yaml.safe_load(text)["cassandra_install_url"]
@@ -178,11 +178,11 @@ def test_apt_series_in_the_url():
     out = apt({SRC: DEB.replace("https://mirror.example/deb\n", "https://mirror.example/deb/50x/\n")})
     assert out["manage"] is True and out["vars"]["cassandra_install_url"] == "https://mirror.example/deb/{cassandra_version}/"
     # the import's self-check does not compare it with the node (the template is the user's way to write it)
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import NOT_READ
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_layout import NOT_READ
     assert "cassandra_install_url" in NOT_READ
 
 
 def test_a_url_with_a_template_read_from_a_node_stays_unsafe():
     # a "{{" read from a node is never templated: only the import's own series token becomes one
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _vars_yaml
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import _vars_yaml
     assert "!unsafe" in _vars_yaml({"cassandra_install_url": "http://m/{{ lookup('pipe', 'id') }}/"})

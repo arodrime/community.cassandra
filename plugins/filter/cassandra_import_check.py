@@ -52,10 +52,13 @@ except ImportError:  # before, any string not marked unsafe
 
     def trust_as_template(value):
         return value
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    ELSEWHERE, ELSEWHERE_NOTE, NOT_RUNNING_OR_CHANGED, PASSWORD_FILE_NOTE, REMOTE_BRANCH_NOTE, REPEATED_NOTE, Unsafe,
-    branch_not_run_note, earlier_env, earlier_env_not_shown, env_cmdline, error_without_message, log_dir_of,
-    logback_as_log_dir, undefined_name, values_hidden)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
+    branch_not_run_note, earlier_env, earlier_env_not_shown, ELSEWHERE, ELSEWHERE_NOTE, env_cmdline,
+    error_without_message, NOT_RUNNING_OR_CHANGED, PASSWORD_FILE_NOTE, REMOTE_BRANCH_NOTE, REPEATED_NOTE,
+    undefined_name, values_hidden)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import Unsafe
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_jvm import (
+    log_dir_of, logback_as_log_dir)
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
 from ansible_collections.community.cassandra.plugins.filter.cassandra_os import (
     NO_EFFECT, NO_EFFECT_NOTE, cassandra_firewall_changes, cassandra_linux_changes)

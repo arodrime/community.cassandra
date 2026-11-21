@@ -6,7 +6,7 @@ __metaclass__ = type
 
 import pytest
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _load_role, _render
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import _load_role, _render
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import properties_settings
 from ansible_collections.community.cassandra.tests.unit.roles.test_config_declared import run
 

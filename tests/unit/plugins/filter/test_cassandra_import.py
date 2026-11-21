@@ -10,22 +10,15 @@ import yaml
 from ansible.errors import AnsibleFilterError, AnsibleUndefinedVariable
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    IPV4,
-    _load_role,
-    _read_line,
-    _render,
-    cassandra_config_import,
-    cassandra_inventory_layout,
-    cassandra_ring_nodes,
-    cassandra_config_ignored_vars,
-    cassandra_inventory_files,
-    cassandra_unit_environment,
-    cassandra_import_error,
-    _jmx_users,
-    cassandra_jmx_files,
-    _same_setting,
-)
+    cassandra_config_ignored_vars, cassandra_config_import, cassandra_import_error, cassandra_inventory_files,
+    cassandra_inventory_layout, cassandra_jmx_files, cassandra_ring_nodes, cassandra_unit_environment)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
+    IPV4, _load_role, _read_line, _render, _same_setting)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_jvm import _jmx_users
 from ansible_collections.community.cassandra.plugins.filter import cassandra_import, cassandra_settings
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_import_read as import_read
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_import_config as import_config
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_import_layout as import_layout
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import _compare, _jmx_entries
 from ansible_collections.community.cassandra.plugins.modules.cassandra_status import cluster_up_down
 from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
@@ -394,7 +387,7 @@ def test_config_vars_the_import_writes_are_not_ignored(series):
 def test_config_vars_some_series_uses():
     """Every cassandra_config variable is used by one series at least: one no series uses is read somewhere the
     scan misses (the role's vars/ were missed)."""
-    names = list(cassandra_import.role_file("cassandra_config"))
+    names = list(import_read.role_file("cassandra_config"))
     ignored = [set(cassandra_config_ignored_vars(names, s)) for s in ("40x", "41x", "50x")]
     assert ignored[0] & ignored[1] & ignored[2] == set()
 
@@ -637,7 +630,8 @@ def test_unexpected_error_hides_its_message(monkeypatch):
     # its message may quote a config line: only the file, the type and where
     def boom(*args):
         raise ValueError("keystore_password: hunter2")
-    monkeypatch.setattr(cassandra_import, "_import_file", boom)
+    monkeypatch.setattr(import_read, "_import_file", boom)
+    monkeypatch.setattr(import_config, "_import_file", boom)
     with pytest.raises(AnsibleFilterError) as err:
         cassandra_config_import({"cassandra.yaml": "keystore_password: hunter2"}, "41x", FACTS)
     msg = str(err.value)
@@ -1122,16 +1116,16 @@ PASSWORDS = ["cassandra", "abc #def", "a: b", "x #", "@x", "%x", "*x", "&x", "!x
 
 def secret_vars(series):
     """The variables of the cassandra.yaml passwords the role quotes."""
-    with open(os.path.join(cassandra_import.ROLE, "templates", cassandra_import.SERIES[series], "cassandra.yaml.j2")) as f:
+    with open(os.path.join(import_read.ROLE, "templates", import_read.SERIES[series], "cassandra.yaml.j2")) as f:
         return sorted(set(re.findall(r"\((\w+)(?: or '[^']*')?\) \| regex_replace", f.read())))
 
 
 @pytest.mark.parametrize("series", ["40x", "41x", "50x"])
 def test_every_password_line_is_quoted(series):
-    with open(os.path.join(cassandra_import.ROLE, "templates", cassandra_import.SERIES[series], "cassandra.yaml.j2")) as f:
+    with open(os.path.join(import_read.ROLE, "templates", import_read.SERIES[series], "cassandra.yaml.j2")) as f:
         lines = [line for line in f.read().split("\n") if re.search(r"password: .*\{\{", line)]
     assert len(lines) == {"40x": 5, "41x": 6, "50x": 7}[series]
-    assert [line for line in lines if not re.search(r"\w*password: \{\{ %s \}\}$" % cassandra_import.QUOTED, line)] == []
+    assert [line for line in lines if not re.search(r"\w*password: \{\{ %s \}\}$" % import_read.QUOTED, line)] == []
 
 
 @pytest.mark.parametrize("role, node, same", [
@@ -1150,7 +1144,7 @@ def test_password_not_read_as_text_is_a_hand_edit(line):
     live = re.sub(r"^(\s*)key_password:.*$", lambda m: m.group(1) + line, stock_yaml("50x"), count=1, flags=re.M)
     out = cassandra_config_import({"cassandra.yaml": live}, "50x", FACTS)
     assert "cassandra_tde_key_password" not in out["vars"]
-    assert ["+"] + cassandra_import._mask(line).split() in [h.split() for h in out["hand_edits"]]
+    assert ["+"] + import_read._mask(line).split() in [h.split() for h in out["hand_edits"]]
     assert not [h for h in out["hand_edits"] if re.search(r"\bb\b", h)]  # no line of a password unmasked
 
 
@@ -1186,7 +1180,7 @@ def test_password_however_quoted(series, line, password):
 @pytest.mark.parametrize("line", ["keystore_password: 'it''s a secret'", 'keystore_password: "a \\" b"',
                                   "keystore_password: plain # c"])
 def test_mask_hides_the_whole_quoted_value(line):
-    masked = cassandra_import._mask(line)
+    masked = import_read._mask(line)
     assert masked.startswith("keystore_password: ****") and not re.search(r"secret|\bb\b|plain", masked)
 
 
@@ -1226,7 +1220,8 @@ def _read(found):
 
 def test_reimport_keeps_what_it_did_not_write():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        GENERATED, cassandra_inventory_generated, cassandra_inventory_leftovers)
+        cassandra_inventory_generated, cassandra_inventory_leftovers)
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import GENERATED
     ours = GENERATED % "prod"
     assert cassandra_inventory_generated("a: 1\n", "prod") == ours + "\na: 1\n"
     secret, mine = _vaulted(ours + "\np: 1\n"), _vaulted("p: 1\n")
@@ -1259,8 +1254,8 @@ def test_reimport_keeps_what_it_did_not_write():
 
 
 def test_reimport_names_what_it_replaces():
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        GENERATED, cassandra_inventory_leftovers)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_leftovers
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import GENERATED
     out = cassandra_inventory_leftovers(["prod.yml", "group_vars/prod/main.yml"],
                                         {"prod.yml": "all:", "group_vars/prod/main.yml": GENERATED % "prod"},
                                         ["prod.yml", "group_vars/prod/main.yml"], "prod")
@@ -1268,16 +1263,17 @@ def test_reimport_names_what_it_replaces():
 
 
 def test_reimport_header_only_at_the_top():
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        GENERATED, cassandra_inventory_leftovers)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_leftovers
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import GENERATED
     out = cassandra_inventory_leftovers(["host_vars/x/main.yml"], {"host_vars/x/main.yml": "a: 1\n" + GENERATED % "prod"},
                                         [], "prod")
     assert out == {"stale": [], "kept": ["host_vars/x/main.yml"], "replaced": [], "unsure": [], "conflicts": [], "adoptable": [], "backup": []}
 
 
 def test_header_names_the_cluster():
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        GENERATED_UNNAMED, cassandra_inventory_generated, written_for)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_generated
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import (
+        GENERATED_UNNAMED, written_for)
     assert written_for(cassandra_inventory_generated("a: 1\n", "cluster_a")) == "cluster_a"
     assert written_for(GENERATED_UNNAMED + "\na: 1\n") == ""
     assert written_for("# Written by hand\n") is None
@@ -1324,8 +1320,8 @@ WRITTEN_A = ["cluster_a.yml", "group_vars/cluster_a/main.yml", "group_vars/clust
 
 
 def test_reimport_removes_only_its_own_files():
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        GENERATED, cassandra_inventory_leftovers)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_leftovers
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import GENERATED
     found = _two_clusters(GENERATED % "cluster_a", GENERATED % "cluster_b")
     # the user's own files: in this cluster's dirs or no cluster's, listed as kept; in another cluster's, not
     found.update({"group_vars/cluster_b/local.yml": "a: 1", "group_vars/cluster_b_dc1.yml": "a: 1",
@@ -1338,8 +1334,8 @@ def test_reimport_removes_only_its_own_files():
 def test_files_of_an_earlier_release():
     """No cluster in their first line: a file is this cluster's when its hosts file alone names its group or
     host; another cluster's hosts file naming it, or none, leaves it as it is."""
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        GENERATED_UNNAMED, cassandra_inventory_leftovers)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_leftovers
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import GENERATED_UNNAMED
     found = _two_clusters(GENERATED_UNNAMED, GENERATED_UNNAMED)
     found["host_vars/nobody/main.yml"] = GENERATED_UNNAMED  # no hosts file names it
     out = cassandra_inventory_leftovers(list(found), found, WRITTEN_A, "cluster_a", inventory=NEW_A)
@@ -1362,8 +1358,9 @@ def test_hosts_file_moved_from_a_dir_of_its_own(first):
     """An earlier import's hosts.yml moved by hand to <cluster group>.yml, without the import's first line, next to
     its group_vars and host_vars without it either (or with the unnamed one): this cluster's, replaced with a
     backup."""
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        GENERATED, GENERATED_UNNAMED, cassandra_inventory_leftovers)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_leftovers
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import (
+        GENERATED, GENERATED_UNNAMED)
     found = _two_clusters(GENERATED_UNNAMED, GENERATED % "cluster_b")
     found.update({"cluster_a.yml": first + "\n" + HOSTS_A, "group_vars/cluster_a/main.yml": OLD_MAIN_A,
                   "group_vars/cluster_a_dc1/main.yml": "---\ncassandra_dc: dc1\n", "host_vars/node1/main.yml": "---\n"})
@@ -1404,7 +1401,9 @@ def test_files_of_an_import_before_the_first_line():
     hosts file names them: replaced with a backup, the ones of hosts named another way removed; the user's own
     files (no block title) kept."""
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        GENERATED, cassandra_inventory_leftovers, leading_comments, old_import)
+        cassandra_inventory_leftovers, leading_comments)
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import (
+        GENERATED, old_import)
     assert old_import(OLD_VARS) and old_import("# Cluster & topology\na: 1") and old_import(leading_comments(OLD_VARS))
     assert not old_import("# NOT VALID: the import self-check failed, see report.txt\nall:")  # a hosts file
     assert not old_import("---\n# my settings\na: 1") and not old_import("a: 1\n# Cluster & topology\n")
@@ -1431,8 +1430,8 @@ def test_files_of_an_import_before_the_first_line():
 
 def test_adopt_files_of_an_earlier_import_not_known_as_this_clusters():
     """No hosts file says whose they are (its hosts file holds more than the cluster): stopped, adopt takes them."""
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        GENERATED_UNNAMED, cassandra_inventory_leftovers)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_leftovers
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import GENERATED_UNNAMED
     found = {"cluster_a.yml": HOSTS_A + "  vars: {x: 1}\n", "group_vars/cluster_a/main.yml": GENERATED_UNNAMED,
              "host_vars/node1/main.yml": GENERATED_UNNAMED, "host_vars/gone/main.yml": GENERATED_UNNAMED,
              "group_vars/cluster_b/main.yml": GENERATED_UNNAMED, "group_vars/cluster_a_dc1/secrets.yml": GENERATED_UNNAMED}
@@ -1453,7 +1452,7 @@ def test_adopt_files_of_an_earlier_import_not_known_as_this_clusters():
     assert out["conflicts"] and out["adoptable"] == []
     found["cluster_a.yml"] = HOSTS_A + "  vars: {x: 1}\n"
     # never another cluster's (its name in the first line)
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import GENERATED
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import GENERATED
     found["host_vars/node1/main.yml"] = GENERATED % "cluster_b"
     out = cassandra_inventory_leftovers(list(found), found, WRITTEN_A, "cluster_a", inventory=NEW_A, adopt=True)
     assert out["conflicts"] == ["host_vars/node1/main.yml: written for cluster_b"] and out["adoptable"] == []
@@ -1475,8 +1474,8 @@ def test_user_files_not_an_earlier_imports():
 
 
 def test_user_file_with_a_title_like_comment_never_removed():
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        GENERATED, cassandra_inventory_leftovers)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_leftovers
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import GENERATED
     found = {"cluster_a.yml": GENERATED % "cluster_a" + "\n" + HOSTS_A,
              "group_vars/cluster_a/secrets.yml": "# JMX password of the monitoring user\ncassandra_jmx_password: s",
              "host_vars/node1/main.yml": "# JVM settings for this node\ncassandra_heap_size: 16G"}
@@ -1513,8 +1512,8 @@ def test_hosts_file_with_a_looping_anchor():
 
 
 def test_first_import_next_to_another_cluster():
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        GENERATED, cassandra_inventory_leftovers)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_leftovers
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import GENERATED
     found = dict((p, t) for p, t in _two_clusters(GENERATED % "cluster_a", GENERATED % "cluster_b").items()
                  if "cluster_a" not in p and "node1" not in p and "gone" not in p)
     out = cassandra_inventory_leftovers(list(found), found, WRITTEN_A, "cluster_a", inventory=NEW_A)
@@ -1523,8 +1522,9 @@ def test_first_import_next_to_another_cluster():
 
 def test_stops_on_another_clusters_names():
     """A host of another cluster: its host_vars are never written over, nor is the host in two clusters."""
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        GENERATED, GENERATED_UNNAMED, cassandra_inventory_leftovers)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_leftovers
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import (
+        GENERATED, GENERATED_UNNAMED)
     inventory = {"all": {"children": {"cluster_a": {"hosts": {"node1": {}, "node2": {}}}}}}
     written = WRITTEN_A + ["host_vars/node2/main.yml"]
     found = _two_clusters(GENERATED % "cluster_a", GENERATED % "cluster_b")
@@ -1544,8 +1544,8 @@ def test_stops_on_another_clusters_names():
 
 def test_two_clusters_one_group():
     """Cluster names that make the same group: the second one never takes the first one's files, even forced."""
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        GENERATED, cassandra_inventory_leftovers)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_leftovers
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import GENERATED
     found = _two_clusters(GENERATED % "cluster_a", GENERATED % "cluster_b")
     found["group_vars/cluster_a/main.yml"] += "\ncassandra_cluster_name: Cluster A\n"
     clash = ["group_vars/cluster_a/main.yml: cluster 'Cluster A', not 'cluster-a' (two clusters, one group cluster_a)"]
@@ -1565,8 +1565,8 @@ def test_two_clusters_one_group():
     ('cassandra_cluster_name: "{{ my_name }}"', "", "Prod", False),             # a template of the user's: not told
 ])
 def test_two_clusters_one_group_names(line, written, name, clash):
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        GENERATED, cassandra_inventory_leftovers)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_leftovers
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import GENERATED
     found = {"x_a.yml": GENERATED % "x_a", "group_vars/x_a/main.yml": GENERATED % "x_a" + "\n" + line + "\n"}
     out = cassandra_inventory_leftovers(list(found), found, ["x_a.yml"], "x_a", cluster_name=name)
     assert bool(out["conflicts"]) is clash and (clash or out["stale"] == ["group_vars/x_a/main.yml"])
@@ -1574,8 +1574,8 @@ def test_two_clusters_one_group_names(line, written, name, clash):
 
 def test_two_clusters_one_group_written_by_an_earlier_release():
     """No cluster in the first line: its cluster name is checked too."""
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        GENERATED_UNNAMED, cassandra_inventory_leftovers)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_leftovers
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import GENERATED_UNNAMED
     found = {"prod.yml": GENERATED_UNNAMED + "\nall: {children: {prod: {hosts: {a1: }}}}\n",
              "host_vars/a1/main.yml": GENERATED_UNNAMED,
              "group_vars/prod/main.yml": GENERATED_UNNAMED + "\ncassandra_cluster_name: Prod\n"}
@@ -1619,8 +1619,8 @@ def test_groups_of_the_users_own_inventory_files():
 
 def test_tags_in_another_clusters_hosts_file():
     """An inline !vault value in another cluster's hosts file: its names still count."""
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        GENERATED, cassandra_inventory_leftovers)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_leftovers
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import GENERATED
     hosts = ("all:\n  children:\n    cluster_b:\n      hosts:\n        node1:\n          p: !vault |\n"
              "            $ANSIBLE_VAULT;1.1;AES256\n            3031\n        node7: !unsafe x\n")
     found = {"cluster_b.yml": GENERATED % "cluster_b" + "\n" + hosts}
@@ -1630,8 +1630,8 @@ def test_tags_in_another_clusters_hosts_file():
 
 @pytest.mark.parametrize("hosts", ["5", "[{x: 1}]", "nx1"])
 def test_hosts_not_a_mapping(hosts):
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        GENERATED, cassandra_inventory_leftovers)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_leftovers
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import GENERATED
     found = {"cluster_b.yml": GENERATED % "cluster_b" + "\nall:\n  children:\n    cluster_b:\n      hosts: %s\n" % hosts}
     inventory = {"all": {"children": {"cluster_a": {"hosts": {"x": {}, "n": {}}}}}}
     out = cassandra_inventory_leftovers(list(found), found, ["cluster_a.yml"], "cluster_a", inventory=inventory)
@@ -1640,8 +1640,9 @@ def test_hosts_not_a_mapping(hosts):
 
 def test_hosts_file_of_an_import_into_a_dir_of_its_own():
     """The hosts.yml an earlier import wrote in a dir of its own: refused (Ansible would read its hosts too)."""
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        GENERATED, GENERATED_UNNAMED, cassandra_inventory_leftovers)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_leftovers
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import (
+        GENERATED, GENERATED_UNNAMED)
     for header in (GENERATED_UNNAMED, GENERATED % "cluster_a"):
         # at the top, or in a subdir (Ansible reads the subdirs of an inventory dir too)
         for path in ("hosts.yml", "cluster_a/hosts.yml", "old/cluster_b.yml"):
@@ -1691,8 +1692,8 @@ def test_users_files_that_do_not_define_the_group(path, text):
 
 def test_hosts_file_not_parsed():
     """A hosts file that does not parse names nothing: the files of an earlier release it would name are kept."""
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        GENERATED_UNNAMED, cassandra_inventory_leftovers)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_leftovers
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import GENERATED_UNNAMED
     found = {"cluster_a.yml": GENERATED_UNNAMED + "\nall: [\n", "host_vars/gone/main.yml": GENERATED_UNNAMED}
     out = cassandra_inventory_leftovers(list(found), found, ["cluster_a.yml"], "cluster_a", inventory=NEW_A)
     assert out["stale"] == [] and out["unsure"] == ["host_vars/gone/main.yml"]
@@ -1749,7 +1750,9 @@ def test_layout_over_the_users_group_vars_all():
     """group_vars/all of the inventory dir sets a standard some nodes do not follow: after the import, every host
     gets its live value from the effective inventory (theirs + the import's), so the roles change nothing."""
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        group_chains, _effective, cassandra_inventory_files, cassandra_inventory_layout_over)
+        cassandra_inventory_files, cassandra_inventory_layout_over)
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_layout import (
+        _effective, group_chains)
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import (
         cassandra_inventory_host_vars)
     layout = cassandra_inventory_layout_over(_owner_nodes(), "Orders", STANDARD)
@@ -1797,7 +1800,8 @@ def test_layout_over_a_host_file_of_theirs():
 
 def test_users_own_files_that_apply():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        GENERATED, cassandra_inventory_layout, cassandra_inventory_user_files)
+        cassandra_inventory_layout, cassandra_inventory_user_files)
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import GENERATED
     layout = cassandra_inventory_layout(_owner_nodes(), "Orders")
     read = {"group_vars/all/standard.yml": "a: 1", "group_vars/all.yml": "b: 1",
             "group_vars/orders/local.yml": "c: 1", "group_vars/orders/main.yml": GENERATED % "orders",
@@ -1967,21 +1971,21 @@ def _named(name, **extra):
 ])
 def test_value_following_the_node_name(values, template):
     nodes = [(_named(name), value) for name, value in values.items()]
-    assert cassandra_import._name_template("cassandra_medusa_nodetool_host", nodes) == template
+    assert import_layout._name_template("cassandra_medusa_nodetool_host", nodes) == template
 
 
 def test_value_following_the_name_not_for_a_secret_or_a_token():
     nodes = [(_named("db11"), "db11-pw"), (_named("db12"), "db12-pw")]
-    assert cassandra_import._name_template("cassandra_jmx_password", nodes) is None
+    assert import_layout._name_template("cassandra_jmx_password", nodes) is None
     # its identity, where its data and backups are
     for key in ("cassandra_initial_token", "cassandra_listen_address", "cassandra_medusa_fqdn", "cassandra_hints_dir",
                 "cassandra_data_file_directories", "cassandra_medusa_prefix", "cassandra_conf_dir",
                 "cassandra_server_keystore", "cassandra_client_truststore", "cassandra_java_home",
                 "cassandra_medusa_bucket_name", "cassandra_medusa_profile_d"):
-        assert cassandra_import._name_template(key, [(_named("n1"), "n1.x"), (_named("n2"), "n2.x")]) is None
+        assert import_layout._name_template(key, [(_named("n1"), "n1.x"), (_named("n2"), "n2.x")]) is None
     # inventory_hostname_short alike on two nodes: not that one
     same_short = [(_named("db1.a.net"), "db1"), (_named("db1.b.net"), "db1")]
-    assert cassandra_import._name_template("cassandra_x", same_short) is None
+    assert import_layout._name_template("cassandra_x", same_short) is None
 
 
 def test_layout_writes_the_template_once_not_unsafe():
@@ -2011,7 +2015,7 @@ def test_layout_over_a_template_compared_node_by_node():
     """(2026-11-02) A re-import: the address template the first import wrote is compared with each node, never
     left for the operator to check by hand; a template of the node's name rendered for each node; one of other
     variables still not compared."""
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import IPV4
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import IPV4
     nodes = _owner_nodes()[:3]
     for n in nodes:
         n["vars"].update(cassandra_listen_address=IPV4, cassandra_medusa_nodetool_host="%s.db.example" % n["name"])
@@ -2046,5 +2050,5 @@ def test_a_line_the_template_comments_out_is_still_its_own_in_a_pairing():
                if line.startswith("{{ '' if cassandra_heap_size ") or line.startswith("{{ '' if cassandra_max_direct_")]
     rendered = ['#MAX_HEAP_SIZE="20G"', 'MAX_DIRECT_MEMORY_SIZE="1G"']
     live = ['MAX_HEAP_SIZE="8G"', '#MAX_DIRECT_MEMORY_SIZE="1G"']
-    found = cassandra_import._read_changed_lines("cassandra-env.sh", tpl, rendered, live, ctx, None)[0]
+    found = import_read._read_changed_lines("cassandra-env.sh", tpl, rendered, live, ctx, None)[0]
     assert found.get("cassandra_heap_size") == "8G", found

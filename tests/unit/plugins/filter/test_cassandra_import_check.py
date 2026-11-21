@@ -13,19 +13,13 @@ import pytest
 from ansible.errors import AnsibleFilterError
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    IPV4,
-    _load_role,
-    _mask,
-    _render,
-    _same,
-    _show,
-    _without_same_logger,
-    cassandra_config_import,
-    cassandra_import_error,
-    cassandra_inventory_files,
-    cassandra_inventory_layout,
-)
-from ansible_collections.community.cassandra.plugins.filter import cassandra_import
+    cassandra_config_import, cassandra_import_error, cassandra_inventory_files, cassandra_inventory_layout)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
+    IPV4, _load_role, _mask, _render, _without_same_logger)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_layout import _same, _show
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_import_read as import_read
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_import_files as import_files
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_import_config as import_config
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import (
     _compare_files,
     cassandra_import_self_check,
@@ -523,7 +517,7 @@ PASSWORDS = ["abc #def", "a: b", "*x", "&x", "!x", "{x}", "[x]", "-x", "'q'", '"
 
 
 def secret_vars(series):
-    with open(os.path.join(cassandra_import.ROLE, "templates", cassandra_import.SERIES[series], "cassandra.yaml.j2")) as f:
+    with open(os.path.join(import_read.ROLE, "templates", import_read.SERIES[series], "cassandra.yaml.j2")) as f:
         return sorted(set(re.findall(r"\((\w+)(?: or '[^']*')?\) \| regex_replace", f.read())))
 
 
@@ -907,7 +901,7 @@ def test_logback_comments_are_not_hash_lines():
 
 def test_list_items_swapped_are_a_hand_edit():
     """The same lines in another order are not the same setting (a list's order counts)."""
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _same_settings
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import _same_settings
     assert _same_settings("cassandra.yaml", ["    - /a", "    - /b"], ["    - /b", "    - /a"]) is None
     assert _same_settings("cassandra.yaml", ["    - /a", "# x", "    - /b"], ["# y", "    - /a", "    - /b"]) == [
         ("    - /a", "    - /a"), ("    - /b", "    - /b")]
@@ -998,7 +992,7 @@ def test_nested_sections_imported_whole(series, case, pattern, replace, extra, m
     """A section the template leaves commented (or does not have) set on the node: its whole YAML block in
     cassandra_extra_settings, its types kept, no hand edit; the roles write it back the same (no-op)."""
     # (zz_*, request_policies: keys made up for the layout, not ones Cassandra rejects here)
-    monkeypatch.setattr(cassandra_import, "yaml_rejected", lambda keys, release: [])
+    monkeypatch.setattr(import_config, "yaml_rejected", lambda keys, release: [])
     files = seeded(stock(series))
     files["cassandra.yaml"], found = re.subn(pattern, replace, files["cassandra.yaml"], count=1)
     if not found:
@@ -1305,7 +1299,7 @@ def test_layout_read_back_from_a_variable_writes_the_same_files():
     lone = cassandra_inventory_files(_tagged(dict(layout, host_vars={"n1": {"cassandra_x": "a\ud800b"}})))
     assert 'cassandra_x: "a\\uD800b"' in lone[-1]["content"]  # (a lone surrogate, from an escape in a node's yaml)
     # a str (marked unsafe before ansible-core 2.19: never templated on its way to the files)
-    assert all(type(f["content"]) is type(cassandra_import._as_is("")) for f in inventory)  # pylint: disable=unidiomatic-typecheck
+    assert all(type(f["content"]) is type(import_files._as_is("")) for f in inventory)  # pylint: disable=unidiomatic-typecheck
     assert "cassandra_medusa_nodetool_host: '{{ inventory_hostname }}.example.net'" in "".join(
         f["content"] for f in inventory)
     # the self-check reads them back the same (the extra settings and options are not in the nodes' files)

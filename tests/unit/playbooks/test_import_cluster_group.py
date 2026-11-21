@@ -11,8 +11,9 @@ import yaml
 from ansible.errors import AnsibleFilterError
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    GENERATED, cassandra_import_group, cassandra_import_known_group, cassandra_import_other_cluster,
-    cassandra_inventory_files, cassandra_inventory_layout, cassandra_inventory_layout_over)
+    cassandra_import_group, cassandra_import_known_group, cassandra_import_other_cluster, cassandra_inventory_files,
+    cassandra_inventory_layout, cassandra_inventory_layout_over)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import GENERATED
 from ansible_collections.community.cassandra.tests.unit.playbooks.test_import_cluster_unsupported import (
     PLAYS, render)
 from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task

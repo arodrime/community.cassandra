@@ -11,7 +11,9 @@ import re
 import pytest
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    IPV4, MISSING, _roles_defaults, cassandra_inventory_files, cassandra_inventory_layout)
+    cassandra_inventory_files, cassandra_inventory_layout)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import IPV4, MISSING
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_layout import _roles_defaults
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import (
     _trusted, cassandra_inventory_host_vars)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import cassandra_import_report

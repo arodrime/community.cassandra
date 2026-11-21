@@ -25,7 +25,9 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import_che
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
     cassandra_import_report)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    IPV4, JMX_FILES_UNREAD_NOTE, cassandra_config_import, cassandra_inventory_layout, cassandra_jmx_files)
+    cassandra_config_import, cassandra_inventory_layout, cassandra_jmx_files)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import IPV4
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_config import JMX_FILES_UNREAD_NOTE
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import cassandra_same_settings
 
 from ansible_collections.community.cassandra.tests.unit.task_files import find_task, load_tasks
@@ -383,7 +385,7 @@ def test_a_heap_of_cassandra_env_however_written_keeps_the_heap_as_it_is(tmp_pat
     ("41x", "11", add_to("jvm11-server.options", "-Xms8G\n-Xmx8G\n-Xmn2G"), ["jvm11-server.options: -Xms/-Xmx/-Xmn "])],
     ids=["split pair", "with -Xmn"])
 def test_the_heap_moved_names_what_each_file_had(tmp_path, series, java, edit, said):
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import HEAP_MOVED
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_config import HEAP_MOVED
     files = node_files(series, edit)
     node = imported(files, series, java, launch(files, java, tmp_path))[2]
     assert [n for n in node["normalized"] if n.endswith(HEAP_MOVED)] == [s + HEAP_MOVED for s in said]
@@ -1707,7 +1709,7 @@ def test_a_log_dir_its_rolled_files_do_not_share_stays_a_hand_edit(tmp_path):
 
 @pytest.mark.parametrize("series", ["4.0", "4.1", "5.0"])
 def test_the_log_dirs_by_default_render_the_stock_lines(series):
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _load_role, _render
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import _load_role, _render
     key = {"4.0": "40x", "4.1": "41x", "5.0": "50x"}[series]
     env, ctx, dummy = _load_role(key, FACTS)
     text = "\n".join(_render(env, key, "logback.xml", ctx)[1])

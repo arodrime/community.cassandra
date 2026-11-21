@@ -25,7 +25,8 @@ import os
 import re
 
 from ansible.module_utils.parsing.convert_bool import boolean
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import KEPT_PARTS, KEPT_PARTS_VAR
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import (
+    KEPT_PARTS, KEPT_PARTS_VAR)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_url import cassandra_url_masked
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import (
     parse_size, size as _size, sizes as _sizes)

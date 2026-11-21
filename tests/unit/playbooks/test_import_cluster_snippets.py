@@ -8,8 +8,9 @@ __metaclass__ = type
 import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    cassandra_inventory_files, cassandra_inventory_generated, cassandra_inventory_layout, cassandra_inventory_layout_over,
-    cassandra_inventory_leftovers, written_for)
+    cassandra_inventory_files, cassandra_inventory_generated, cassandra_inventory_layout,
+    cassandra_inventory_layout_over, cassandra_inventory_leftovers)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import written_for
 from ansible_collections.community.cassandra.tests.unit.playbooks.test_import_cluster_end_lines import (
     imported, self_check, with_env)
 

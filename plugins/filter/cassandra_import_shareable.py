@@ -23,7 +23,8 @@ import re
 
 import yaml
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import group_chains, written_for
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import written_for
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_layout import group_chains
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import LATER_STOCK
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import ROLES
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
