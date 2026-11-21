@@ -366,7 +366,7 @@
       vars:
         _cassandra_health_stop_on: "{{ _cassandra_start_rack_last_verdict.problems }}"
         _cassandra_health_why: "{{ _cassandra_start_rack_last_verdict.unknown_lines }}"
-        _cassandra_health_again: run start_rack again
+        _cassandra_health_again: "run start_rack\u00a0again"  # (a no-break space: "again" never alone on a line)
       when:
         - inventory_hostname == _cassandra_start_rack_checker
         - not ansible_check_mode

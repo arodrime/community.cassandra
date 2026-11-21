@@ -429,13 +429,16 @@ _NOT_NORMAL = "Give up after cassandra_service_wait_timeout"
 def cassandra_rack_start_failed(result, task, node, rack):
     """The failed result of the cassandra_service role on a node of the rack (ansible_failed_result), the name of
     its task that failed, the node, its rack -> the stop's lines, within 79 columns: the role's message in full,
-    indented (a list: its first line, then the next ones further in: the journal), then where to look and the
-    way out; not NORMAL at the end of the wait: what was seen ("not NORMAL after 600s ...: mode JOINING"), not
-    "did not start" (it runs).
+    indented (a list: its first line, then the next ones further in: the journal), then where to look (a command
+    per line) and the way out; not NORMAL at the end of the wait: what was seen ("not NORMAL after 600s ...: mode
+    JOINING"), not "did not start" (it runs). Any other failure of the role (a refusal before the start: an
+    account missing, a new seed, its own way out): its message as it is.
     e.g. ({msg: ["cassandra on n2 is failed (failed, exit-code): ...", "<journal line>"]}, "Cassandra is not
     running", "n2", "r2") -> ["n2 (rack r2) did not start:", "  cassandra on n2 is failed ...", "    <journal line>",
     ..., "WAY OUT  fix it, then run start_rack again"]."""
     msg = (result or {}).get("msg") or "failed"
+    if task not in (_START_FAILED, _STOPPED, _NOT_NORMAL):
+        return msg
     if isinstance(msg, (list, tuple)):
         said = ["  " + str(msg[0])] + ["    " + str(line) for line in msg[1:]]
     else:
@@ -445,10 +448,10 @@ def cassandra_rack_start_failed(result, task, node, rack):
         head = said[0].strip()
         head = head[len(node) + 1:] if head.startswith(str(node) + " ") else head
         return out.fit(["%s (rack %s) %s" % (node, rack, head)] + said[1:] + [
-            "see why on it: nodetool netstats, journalctl -u cassandra",
+            "see on it:", "  nodetool netstats", "  journalctl -u cassandra",
             "WAY OUT  once it is NORMAL (or fixed), run start_rack again"], WIDTH)
     return out.fit(["%s (rack %s) did not start:" % (node, rack)] + said + [
-        "see why on it: systemctl status cassandra, journalctl -u cassandra",
+        "see why on it:", "  systemctl status cassandra", "  journalctl -u cassandra",
         "WAY OUT  fix it, then run start_rack again"], WIDTH)
 
 

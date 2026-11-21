@@ -109,10 +109,20 @@ def test_a_check_that_only_stops_reads_nothing_and_stops_on_the_problems_given()
     assert [t["name"] for t in tasks if runs(t, _cassandra_health_stop_on=[])] == []
     # not given: every task as before (the first two read, the stop on what they found)
     assert all(runs(t) for t in tasks[:2])
-    lines = said(False, ["the ring read before"], _cassandra_health_again="run start_rack again", **given)
+    from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
+    load_collection_filters()
+    lines = said(False, ["the ring read before"], _cassandra_health_again=start_rack_again(), **given)
+    # (start_rack's stop: within 79 columns; "again" was alone on the last line)
     assert lines[:3] == ["n3 (10.0.0.3, r2) is DN, seen from n2",
-                         "WAY OUT  bring n3 back to UN (its host and/or Cassandra), then run start_rack",
-                         "  again"]  # (start_rack's stop: within 79 columns)
+                         "WAY OUT  bring n3 back to UN (its host and/or Cassandra), then run",
+                         "  start_rack again"]
+
+
+def start_rack_again():
+    """what start_rack's way out ends with (_cassandra_health_again)"""
+    with open(os.path.join(os.path.dirname(PATH), "..", "..", "..", "playbooks", "start_rack.yml"), encoding="utf-8") as f:
+        return next(t for p in yaml.safe_load(f) for t in p.get("tasks", [])
+                    if t.get("name") == "Stop on the rack's nodes not UN")["vars"]["_cassandra_health_again"]
 
 
 def test_forced_after_a_check_that_only_stops_it_does_not_say_a_node_is_taken_down():
@@ -134,7 +144,7 @@ def test_start_rack_s_stop_fits_79_columns():
     from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
     load_collection_filters()
     problems = ["172.18.0.3 (r1) is DN, seen from h-n1"]
-    lines = said(False, problems, _cassandra_health_stop_on=problems, _cassandra_health_again="run start_rack again")
+    lines = said(False, problems, _cassandra_health_stop_on=problems, _cassandra_health_again=start_rack_again())
     assert max(len(line) for line in lines) <= 79
     joined = " ".join(line.rstrip("\\").strip() for line in lines)
     assert " ".join(joined.split()).count("ansible-playbook -i hosts.yml community.cassandra.replace_node") == 1

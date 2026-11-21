@@ -1,0 +1,2 @@
+bugfixes:
+  - "start_rack playbook - a refusal of the cassandra_service role before any start (a new node listed in ``cassandra_seeds``, an account missing...) is said as the role says it, with its own way out, no longer as a node that did not start; the commands to look at a failed start are one per line."

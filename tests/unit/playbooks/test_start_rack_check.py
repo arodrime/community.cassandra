@@ -528,7 +528,7 @@ def test_checked_from_a_node_of_the_rack_and_not_under_check():
     assert TASKS[CHECK]["vars"]["cassandra_service_health_report_only"] is True
     assert NAMES.index(CHECK) < NAMES.index(AFTER) < NAMES.index(STOP) < NAMES.index(SAY)
     assert TASKS[STOP]["vars"]["_cassandra_health_stop_on"] == "{{ _cassandra_start_rack_last_verdict.problems }}"
-    assert TASKS[STOP]["vars"]["_cassandra_health_again"] == "run start_rack again"
+    assert TASKS[STOP]["vars"]["_cassandra_health_again"].replace(u"\xa0", " ") == "run start_rack again"
     assert TASKS[STOP]["ansible.builtin.include_role"]["tasks_from"] == "cluster_health.yml"
     assert "cassandra_service_health_report_only" not in TASKS[STOP]["vars"]
     # the facts gathered after the probe, before any read; the probe under --check too, without root
@@ -769,10 +769,11 @@ def test_a_node_of_the_rack_that_does_not_start_is_said_with_a_way_out():
                      " exited with error code.\nSee \"systemctl status cassandra.service\" for details."}
     lines = start_failed(failed, "Start or restart cassandra")
     assert lines[0] == "n2 (rack r2) did not start:"
-    assert " ".join(x.strip() for x in lines[1:-2]) == (
+    assert " ".join(x.strip() for x in lines[1:-4]) == (
         "Unable to start service cassandra: Job for cassandra.service failed because the control process exited"
         " with error code. See \"systemctl status cassandra.service\" for details.")
-    assert lines[-2:] == ["see why on it: systemctl status cassandra, journalctl -u cassandra",
+    # a command per line
+    assert lines[-4:] == ["see why on it:", "  systemctl status cassandra", "  journalctl -u cassandra",
                           "WAY OUT  fix it, then run start_rack again"]
     assert max(len(x) for x in lines) <= 79
 
@@ -793,7 +794,7 @@ def test_a_node_that_stops_while_it_joins_is_said_with_its_journal():
     text = " ".join(x.strip() for x in lines)
     assert all(" ".join(line.split()) in text for line in journal)
     assert "cassandra-prod-node-017" in text and "exit-code" in text  # (never cut at a hyphen)
-    assert all(x.startswith("    ") for x in lines[3:-2]) and lines[-1] == "WAY OUT  fix it, then run start_rack again"
+    assert all(x.startswith("    ") for x in lines[3:-4]) and lines[-1] == "WAY OUT  fix it, then run start_rack again"
     assert max(len(x) for x in lines) <= 79
 
 
@@ -804,4 +805,25 @@ def test_a_node_not_normal_in_time_is_said_as_seen_not_did_not_start():
     lines = start_failed(failed, "Give up after cassandra_service_wait_timeout")
     assert lines[:2] == ["n2 (rack r2) is not NORMAL after 600s (cassandra_service_wait_timeout): mode",
                          "  JOINING"]
-    assert "did not start" not in " ".join(lines) and lines[-1].startswith("WAY OUT  ")
+    assert "did not start" not in " ".join(lines)
+    assert lines[2:] == ["see on it:", "  nodetool netstats", "  journalctl -u cassandra",
+                         "WAY OUT  once it is NORMAL (or fixed), run start_rack again"]
+
+
+def test_a_refusal_of_the_role_before_the_start_is_said_as_the_role_says_it():
+    # an account missing, a new node listed in cassandra_seeds, the drain timeout check: each became "n2 (rack r2)
+    # did not start:" its first line, "see why on it: systemctl status cassandra, journalctl -u cassandra" (nothing
+    # there: Cassandra was never started) and "fix it": the role's own way out was lost. Now its message as it is
+    seed = role_task("main.yml", "Refuse to join an existing cluster as a seed")
+    assert "cassandra_service_allow_new_seed: true" in seed["ansible.builtin.fail"]["msg"]
+    refusals = [
+        ("Refuse to join an existing cluster as a seed",
+         "n2 is a new node listed in cassandra_seeds, but the cluster already exists (n1 answering). Seeds don't"
+         " bootstrap, so it would join without its data: remove it from cassandra_seeds, start it, and make it a"
+         " seed later if needed (cassandra_service_allow_new_seed: true overrides this check)."),
+        ("Refuse an account that could not read the config", ["the user cassandra does not exist on n2", "  x"]),
+        ("Leave time for the drain within the stop timeout",
+         "cassandra_service_drain_timeout (120) + 10 must be below cassandra_service_timeout_stop (100), or systemd"
+         " kills the JVM mid-drain.")]
+    for task, msg in refusals:
+        assert start_failed({"msg": msg}, task) == msg

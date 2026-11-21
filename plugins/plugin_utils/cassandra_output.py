@@ -722,16 +722,17 @@ def fit(lines, width):
     """Lines no longer than width (a terminal's): a longer one goes on over
     lines indented under its text ("  1. " of a numbered item, else its own
     indent and 2 more), cut between words only (a path or a name longer than
-    width stays whole); a command (a line of its own starting with
-    ansible-playbook or ansible) cut between its arguments only, each line but
-    the last ending with " \\" (it pastes as one command); an option and
-    its value (-e name=value) kept together. None or 0: as they are."""
+    width stays whole; NBSP: a space never broken, printed as a space); a
+    command (a line of its own starting with ansible-playbook or ansible) cut
+    between its arguments only, each line but the last ending with " \\" (it
+    pastes as one command); an option and its value (-e name=value) kept
+    together. None or 0: as they are."""
     if not width:
         return list(lines)
     out = []
     for line in lines:
         if len(line) <= width:
-            out.append(line)
+            out.append(line.replace(NBSP, " "))
             continue
         command = _COMMAND_LINE.match(line)
         if command:
@@ -740,7 +741,7 @@ def fit(lines, width):
         lead = re.match(r"^(\s*)(\d+\.\s+)?", line)
         hang = " " * (len(lead.group(0)) if lead.group(2) else len(lead.group(1)) + 2)
         text = re.sub(r"(?<!\S)-e (?=\S)", "-e" + _JOINED, line.lstrip())
-        out += [part.replace(_JOINED, " ") for part in textwrap.wrap(
+        out += [part.replace(_JOINED, " ").replace(NBSP, " ") for part in textwrap.wrap(
             text, width, initial_indent=lead.group(1), subsequent_indent=hang, break_long_words=False,
             break_on_hyphens=False)] or [line]
     return out

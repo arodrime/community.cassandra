@@ -1315,3 +1315,11 @@ def test_a_urls_password_is_masked(line, shown):
 def test_a_secret_word_alone_is_no_secret(line):
     # (import_cluster files a hand edit holding a secret word in secrets.yml: these name none)
     assert not out.SECRET_WORD.search(line) and out.mask(line) == line
+
+
+def test_fit_never_breaks_a_no_break_space():
+    # start_rack's way out ended on "  again" alone; a no-break space keeps its words together, printed as a space
+    line = "WAY OUT  bring h-n2 back to UN (its host and/or Cassandra), then run start_rack" + out.NBSP + "again"
+    assert out.fit([line], 79) == ["WAY OUT  bring h-n2 back to UN (its host and/or Cassandra), then run",
+                                   "  start_rack again"]
+    assert out.fit(["run start_rack" + out.NBSP + "again"], 79) == ["run start_rack again"]
