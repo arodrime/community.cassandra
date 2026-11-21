@@ -1149,16 +1149,6 @@ def _playbook_step(report, text, inventory, hosts):
 CQLSH_SPLIT = "cassandra_cqlsh_command "  # (the start of the read's error when it does not split: its quoting)
 
 
-def _unique_ignoring_case(texts):
-    """texts, each once, the first of those equal but for case kept (as the playbook's | unique did)."""
-    seen, out = set(), []
-    for text in texts:
-        if text.lower() not in seen:
-            seen.add(text.lower())
-            out.append(text)
-    return out
-
-
 def cassandra_import_cqlsh_todo(nodes, hostvars, keep_hand_edits=False):
     """The import's nodes, hostvars, import_keep_hand_edits -> the TO DO steps of the nodes whose cqlsh does not
     start (import_cluster_cqlsh_error, seen at the read): one to make it start (two ways out), one to fix a
@@ -1179,7 +1169,7 @@ def cassandra_import_cqlsh_todo(nodes, hostvars, keep_hand_edits=False):
                 kept.append(name)
     nodes_of = {"broken": broken, "kept": kept, "quoting": quoting}
     rows = []
-    for i, error in enumerate(_unique_ignoring_case([errors[name] for name in broken + quoting]), 1):
+    for i, error in enumerate(out.unique_ignoring_case([errors[name] for name in broken + quoting]), 1):
         nodes_of["e%d" % i] = [name for name in broken + quoting if errors[name] == error]
         rows.append("{nodes:e%d}: %s" % (i, error))
     steps = []

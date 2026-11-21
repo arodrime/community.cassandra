@@ -71,6 +71,12 @@ def test_a_node_known_by_its_address_only_gets_that_address_not_its_rack():
     assert not [line for line in lines if "=r1" in line]
 
 
+def test_a_node_lost_for_good_named_once_whatever_the_case():
+    # the same problem twice but for case: one block, the first kept (as the playbook's | unique did, ignoring case)
+    lines = said(False, ["n4 (10.0.0.4, r1) is DN, seen from n1", "N4 (10.0.0.4, r1) is DN, seen from N1"])
+    assert [line for line in lines if "LOST FOR GOOD" in line] == ["IF n4 IS LOST FOR GOOD"]
+
+
 def test_each_problem_and_the_wait_on_a_line_of_their_own():
     # the stop block says the cause one fact per line under its Why: (80 columns)
     with open(PATH, encoding="utf-8") as f:
