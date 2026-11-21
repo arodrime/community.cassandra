@@ -68,6 +68,9 @@ def test_logback():
         " OFF is a boolean in YAML)"]
     assert logback(series="41x", cql_table=True, cassandra_log_cql_table_level="W--ARN") == [
         "cassandra_log_cql_table: the system_views.system_logs table is 5.0 only: set it to false for Cassandra 41x"]
+    # CQLLOG: the appender cassandra_log_cql_table adds to <root> itself
+    assert logback(["STDOUT", "CQLLOG"], cql_table=True)[-1:] == [
+        "cassandra_logback_root_extra_refs: CQLLOG is named by cassandra_log_cql_table already: remove it from the list"]
 
 
 def test_logback_values_written_as_they_are():
@@ -135,6 +138,10 @@ def test_exporter():
         " -Djava.net.preferIPv4Stack=false to cassandra_jvm_extra_options, or give an IPv4 address or none)",
         "cassandra_prometheus_exporter_port 7199 is also cassandra_jmx_port: give the exporter another port"]
     assert exporter(address="fd00::1", options="-Djava.net.preferIPv4Stack=false") == []
+    # the highest port taken, the next one refused; an exporter dir unset (None) refused as an empty one
+    assert exporter(port=65535) == []
+    assert exporter(port=65536) == ["cassandra_prometheus_exporter_port must be a port number (1 to 65535)"]
+    assert exporter(exporter_dir=None) == ["cassandra_prometheus_exporter_dir must not be empty"]
     assert exporter(exporter_dir="", config_file="rel.yml", tls=2, auth=1) == [
         "cassandra_prometheus_exporter_config_file must be an absolute path without blanks, quotes or =",
         "cassandra_prometheus_exporter_dir must not be empty",
