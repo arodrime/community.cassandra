@@ -452,7 +452,8 @@ def test_java_home_gone_refuses_the_node():
     gone = dict(import_cluster_series="41x", import_cluster_java_home_gone="/usr/lib/jvm/java-11-openjdk-11.0.20")
     assert task_runs(error, **gone)
     assert not task_runs(error, import_cluster_error="its files could not be read", **gone)
-    assert not task_runs(error, import_cluster_series="41x") and not task_runs(error, **dict(gone, import_cluster_java_home_gone=""))
+    assert not task_runs(error, import_cluster_series="41x")
+    assert not task_runs(error, import_cluster_series="41x", import_cluster_java_home_gone="")
     variables = {"import_cluster_java_home_gone": "/usr/lib/jvm/java-11-openjdk-11.0.20",
                  "import_cluster_java_bin": "/usr/lib/jvm/java-11-openjdk-11.0.21/bin/java"}
     text = " ".join(templar_for(variables).template(

@@ -33,7 +33,6 @@ HEADER = "# Managed by Ansible (community.cassandra.cassandra_config): change th
 
 def task(name, tasks_file="main.yml"):
     return find_task(load_tasks(os.path.join(TASKS, tasks_file)), name)
-    raise KeyError(name)
 
 
 def render(template, **variables):
