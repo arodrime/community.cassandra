@@ -49,9 +49,9 @@ def logback(refs=(), levels=None, series="50x", cql_table=False, audit_file=True
         "cassandra_log_audit_max_file_size", "cassandra_log_audit_max_history", "cassandra_log_audit_total_size_cap",
         "cassandra_log_audit_dir", "cassandra_log_system_dir", "cassandra_log_debug_dir", "cassandra_log_cql_table_level"])
     written.update(values)
-    return cassandra_config_logback_refusals(refs if isinstance(refs, (str, dict)) else list(refs), ["SYSTEMLOG", "STDOUT"], ["LATE"], levels or {},
-                                             {"ROOT": "cassandra_log_level"}, ["com.x"], series, cql_table, audit_file,
-                                             overrides or {}, **written)
+    return cassandra_config_logback_refusals(
+        refs if isinstance(refs, (str, dict)) else list(refs), ["SYSTEMLOG", "STDOUT"], ["LATE"], levels or {},
+        {"ROOT": "cassandra_log_level"}, ["com.x"], series, cql_table, audit_file, overrides or {}, **written)
 
 
 def test_logback():
@@ -98,30 +98,39 @@ def test_logback_refs_not_a_list():
         assert logback(refs) == ["cassandra_logback_root_extra_refs: a list of appender names is expected"]
 
 
-# where logback.xml's template writes each value: in an attribute, in a part the audit switch off comments out
-WHERE_WRITTEN = [("cassandra_log_level", True, ""), ("cassandra_log_level_cassandra", True, ""),
-                 ("cassandra_log_system_level", False, ""), ("cassandra_log_pattern", False, "audit"),
-                 ("cassandra_log_system_max_file_size", False, ""), ("cassandra_log_system_max_history", False, ""),
-                 ("cassandra_log_system_total_size_cap", False, ""), ("cassandra_log_debug_max_file_size", False, ""),
-                 ("cassandra_log_debug_max_history", False, ""), ("cassandra_log_debug_total_size_cap", False, ""),
-                 ("cassandra_log_audit_max_file_size", False, "audit"), ("cassandra_log_audit_max_history", False, "audit"),
-                 ("cassandra_log_audit_total_size_cap", False, "audit"), ("cassandra_log_audit_dir", False, "audit"),
-                 ("cassandra_log_system_dir", False, ""), ("cassandra_log_debug_dir", False, "")]
+# where logback.xml's template writes each value: (name, in an attribute, in a part the audit switch off
+# comments out)
+WHERE_WRITTEN = [("cassandra_log_level", True, False),
+                 ("cassandra_log_level_cassandra", True, False),
+                 ("cassandra_log_system_level", False, False),
+                 ("cassandra_log_pattern", False, True),
+                 ("cassandra_log_system_max_file_size", False, False),
+                 ("cassandra_log_system_max_history", False, False),
+                 ("cassandra_log_system_total_size_cap", False, False),
+                 ("cassandra_log_debug_max_file_size", False, False),
+                 ("cassandra_log_debug_max_history", False, False),
+                 ("cassandra_log_debug_total_size_cap", False, False),
+                 ("cassandra_log_audit_max_file_size", False, True),
+                 ("cassandra_log_audit_max_history", False, True),
+                 ("cassandra_log_audit_total_size_cap", False, True),
+                 ("cassandra_log_audit_dir", False, True),
+                 ("cassandra_log_system_dir", False, False),
+                 ("cassandra_log_debug_dir", False, False)]
 
 
 def test_every_value_written_as_it_is_is_checked():
     assert sorted(name for name, dummy, dummy2 in WRITTEN) == sorted(name for name, dummy, dummy2 in WHERE_WRITTEN)
 
 
-@pytest.mark.parametrize("name, attribute, commented", WHERE_WRITTEN)
-def test_each_value_written_as_it_is(name, attribute, commented):
+@pytest.mark.parametrize("name, attribute, commented_without_audit", WHERE_WRITTEN)
+def test_each_value_written_as_it_is(name, attribute, commented_without_audit):
     # a " is refused in an attribute only, a ]]> in a text only; a -- where the audit switch off leaves the value in
     # a comment
     quote = ['%s: a"b has a ", which ends the XML attribute there: write it &quot;' % name]
     end = ["%s: a]]>b has a ]]>, which XML does not take in a text: write it ]]&gt;" % name]
     assert logback(**{name: 'a"b'}) == (quote if attribute else [])
     assert logback(**{name: "a]]>b"}) == ([] if attribute else end)
-    assert bool(logback(audit_file=False, **{name: "a--b"})) == (commented == "audit")
+    assert bool(logback(audit_file=False, **{name: "a--b"})) == commented_without_audit
     assert logback(audit_file=True, **{name: "a--b"}) == []
 
 
