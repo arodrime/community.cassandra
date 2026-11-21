@@ -394,7 +394,8 @@ def _left_out_lines(verdict, dc, rack, command, viewer=()):
     nodes = verdict.get("left_out") or []
     if not nodes:
         return []
-    lines = [out.WARNING + "rack %s (%s), not UN, left out by --limit (not in this run):" % (rack, dc)]
+    lines = [out.WARNING + "rack %s (%s), not UN, left out by --limit (not%sin%sthis%srun):" % (
+        rack, dc, out.NBSP, out.NBSP, out.NBSP)]
     lines += out.table([[n.get("name") or n["address"], "/".join(n["states"])] for n in nodes], indent="  ")
     down = [n for n in nodes if any(s[:1] == "D" for s in n["states"])]
     by_address = [n for n in down if not n.get("name")]
@@ -408,8 +409,11 @@ def _left_out_lines(verdict, dc, rack, command, viewer=()):
     for n in nodes:
         busy = [s for s in n["states"] if s[:1] == "U" and s[1:] in _DOING]
         if n not in down and busy:
-            lines.append("%s is %s (%s): wait for it to finish" % (
-                n.get("name") or n["address"], _DOING[busy[0][1:]], busy[0]))
+            lines.append("%s is %s (%s): wait for%s" % (
+                n.get("name") or n["address"], _DOING[busy[0][1:]], busy[0], out.NBSP.join(["", "it", "to", "finish"])))
+        elif n not in down:  # (another state: "?N", nodetool's own)
+            lines.append("%s is %s: check it with nodetool status on it" % (
+                n.get("name") or n["address"], "/".join(n["states"])))
     return lines
 
 
@@ -448,9 +452,9 @@ def cassandra_rack_outside_lines(verdict, unreached, dc, rack, command, run=None
     "nodetool status failed", verdict's warnings), one for the ring's size, the command.
     e.g. ({outside: [{address: "10.0.0.4", name: "n4", states: ["DN"]}], failed: [], warnings: [], ring_size:
     [[3, 4]], problems: [], rack_seen_un: ["n2", "n3"]}, [], "dc1", "r2", "ansible-playbook x") -> ["Rack r2
-    (dc1): every node is UN (n2, n3).", "WARNING  the rest of the cluster:", "  n4  DN", "WARNING  the ring has 3
-    nodes, the inventory 4", "Check the cluster:", "  ansible-playbook x"]; nothing outside: the first line
-    alone."""
+    (dc1), every node is UN:", "  n2", "  n3", "WARNING  the rest of the cluster:", "  n4  DN", "WARNING  the ring
+    has 3 nodes, the inventory 4", "Check the cluster:", "  ansible-playbook x"]; nothing outside: the first
+    lines alone."""
     facts, order = {}, []  # a node's facts, by its name (else its address)
 
     def add(name, fact):
@@ -471,9 +475,9 @@ def cassandra_rack_outside_lines(verdict, unreached, dc, rack, command, run=None
     if verdict.get("problems"):
         lines = []
     elif not left_out:
-        lines = ["Rack %s (%s): every node is UN%s." % (rack, dc, " (%s)" % out.nodes(up) if up else "")]
+        lines = ["Rack %s (%s), every node is UN%s" % (rack, dc, ":" if up else ".")] + ["  " + h for h in up]
     elif run:
-        lines = ["Rack %s (%s): the nodes of this run are UN (%s)." % (rack, dc, out.nodes([h for h in up if h in run]))]
+        lines = ["Rack %s (%s), the nodes of this run are UN:" % (rack, dc)] + ["  " + h for h in up if h in run]
     else:
         lines = ["Rack %s (%s): nothing started, --limit leaves out all of its nodes." % (rack, dc)]
     views = verdict.get("seen_from_run_only") or []
