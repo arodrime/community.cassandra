@@ -361,7 +361,7 @@ def test_a_node_down_outside_the_rack_is_a_warning_not_a_failure():
         "Rack r2 (dc1), every node is UN:", "  n2", "  n3",
         "WARNING  the rest of the cluster:",
         "  n4  DN",
-        "Check the cluster:",
+        "NEXT  check the cluster:",
         "  ansible-playbook -i hosts.yml community.cassandra.health_check"]
     assert all(len(line) <= 79 for line in said)
 
@@ -510,7 +510,7 @@ def test_only_after_the_wait_the_peer_failing_outside_the_rack_is_said():
     assert peer_of(CHECK, noted(ring(n4="DN"), peer=ring(), play=play)) == "n1"
     problems, said = check(peer=ring(), then=ring(), then_peer=failed, play=play, n4="DN")
     assert problems == []
-    assert said == UP + ["WARNING  the rest of the cluster:", "  n1  nodetool status failed", "Check the cluster:",
+    assert said == UP + ["WARNING  the rest of the cluster:", "  n1  nodetool status failed", "NEXT  check the cluster:",
                          "  ansible-playbook -i hosts.yml community.cassandra.health_check"]
     # a plain run reads again from n3, of the rack: its nodetool failing is a stop
     problems, said = check(peer=ring(), then=ring(), then_peer=failed, n4="DN")
@@ -735,7 +735,7 @@ def test_the_ring_size_is_a_warning_when_the_rack_is_in_the_ring_and_up():
     assert variables["_cassandra_start_rack_first_verdict"]["ring_size"] == [[3, 4]]
     problems, said = check_read(read)
     assert problems == []
-    assert said[3:5] == ["WARNING  the ring has 3 nodes, the inventory 4", "Check the cluster:"]
+    assert said[3:5] == ["WARNING  the ring has 3 nodes, the inventory 4", "NEXT  check the cluster:"]
     # with a node outside the rack down too: each under its own heading
     problems, said = check_read(ring(n1="DN"), count=3)
     assert said[3:6] == ["WARNING  the rest of the cluster:", "  n1  DN", "WARNING  the ring has 4 nodes, the inventory 3"]

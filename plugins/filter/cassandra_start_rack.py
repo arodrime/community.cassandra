@@ -564,7 +564,7 @@ def cassandra_rack_outside_lines(verdict, unreached, dc, rack, command, run=None
     e.g. ({outside: [{address: "10.0.0.4", name: "n4", states: ["DN"]}], failed: [], warnings: [], ring_size:
     [[3, 4]], problems: [], rack_seen_un: ["n2", "n3"]}, [], "dc1", "r2", "ansible-playbook x") -> ["Rack r2
     (dc1), every node is UN:", "  n2", "  n3", "WARNING  the rest of the cluster:", "  n4  DN", "WARNING  the ring
-    has 3 nodes, the inventory 4", "Check the cluster:", "  ansible-playbook x"]; nothing outside: the first
+    has 3 nodes, the inventory 4", "NEXT  check the cluster:", "  ansible-playbook x"]; nothing outside: the first
     lines alone."""
     facts, order = {}, []  # a node's facts, by its name (else its address)
 
@@ -607,7 +607,7 @@ def cassandra_rack_outside_lines(verdict, unreached, dc, rack, command, run=None
     lines += [out.WARNING + "the ring has %s nodes, the inventory %s" % (ring, inventory)
               for ring, inventory in verdict.get("ring_size", [])]
     if rows or verdict.get("ring_size"):
-        lines += ["Check the cluster:", "  " + str(command)]
+        lines += [_NEXT + "check the cluster:", "  " + str(command)]
     return out.fit(lines, WIDTH)
 
 
