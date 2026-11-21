@@ -23,7 +23,6 @@
 # _cassandra_health_prefer_peers: hosts read from first, when they may be.
 # _cassandra_health_stop_on: problems to stop on (or go on, forced), nothing read: the
 # caller's judgment of a report_only check (start_rack: the rack's own problems);
-# _cassandra_health_why: lines the stop says after them (why they are problems);
 # _cassandra_health_again: what the way out ends with (default: resume);
 # _cassandra_health_again_command: the command it runs, said under it.
 # cassandra_service_health_report_only: true only sets cassandra_health_problems
@@ -175,7 +174,7 @@
       {{ _said | community.cassandra.cassandra_fit if _cassandra_health_stop_on is defined else _said }}
   vars:
     cassandra_output: true
-    _said: "{{ _problems + _waited + _not_counted + _cassandra_health_why | default([]) + _way_out }}"
+    _said: "{{ _problems + _waited + _not_counted + _way_out }}"
     _problems: "{{ _cassandra_health_stop_on | default(cassandra_health_problems) }}"
     _waited: >-
       {{ ['waited ' ~ (now().timestamp() | int - _cassandra_health_wait_start | int) | community.cassandra.cassandra_duration

@@ -49,6 +49,7 @@ CHECK = "Check the rack's nodes and the rest of the cluster"
 SAY = "Say the rack's nodes are UN, and the nodes outside the run not UN or not reached"
 AFTER = "Judge the last read"
 STOP = "Stop on the rack's nodes not UN"
+REREAD = "Read the Host ID again of the nodes of the run"
 PROBE = ["Reach each node over ssh", "Stop when a node of the rack is not reached over ssh",
          "Leave out a node outside the rack not reached over ssh", "Gather the network facts"]
 
@@ -123,11 +124,24 @@ def members(groups=None, hostvars=None):
 
 
 def with_ids(hostvars, hosts):
-    """the hostvars with the nodetool info output of hosts (the nodes of the run: the play's task), each giving its
-    Host ID as ring() has it"""
+    """the hostvars with the nodetool info result of hosts (the nodes of the run: the play's task), each giving its
+    Host ID as ring() has it; one with a result already kept"""
     hostvars = dict((n, dict(v)) for n, v in hostvars.items())
     for h in hosts:
-        hostvars[h]["_cassandra_start_rack_info"] = {"stdout": "ID                     : hid-%s\nGossip active  : true" % h}
+        hostvars[h].setdefault("_cassandra_start_rack_info", {"rc": 0, "stdout": "ID  : hid-%s\nGossip  : true" % h})
+    return hostvars
+
+
+# nodetool info failing on a node of the run (its JVM down)
+NO_INFO = {"rc": 1, "stdout": "", "failed": True,
+           "stderr": "nodetool: Failed to connect to '127.0.0.1:7199' - ConnectException: 'Connection refused'."}
+
+
+def without_ids(hostvars, hosts):
+    """the hostvars with nodetool info failing on hosts"""
+    hostvars = dict((n, dict(v)) for n, v in hostvars.items())
+    for h in hosts:
+        hostvars[h]["_cassandra_start_rack_info"] = NO_INFO
     return hostvars
 
 
@@ -139,19 +153,27 @@ def with_addresses(names):
     return hostvars
 
 
+# the nodes of the run's nodetool info, as the filter gets it (the playbook's infos), each giving its Host ID
+INFOS = dict((n, {"rc": 0, "stdout": "ID  : hid-%s" % n}) for n in ("n2", "n3"))
+
+
 def noted(read, peer=None, names=None, unreached=(), groups=None, hostvars=None, schema=None, play=None):
     """the variables after the first read (peer: the result of the node it reads from too, as cluster_health.yml
     picks it, when it differs) and its judgment; play: the hosts of the play (--limit), every node by default; the
-    node the check runs on as the play picks it"""
+    node the check runs on as the play picks it; each node of the run's Host ID read (the normal case: with_ids),
+    unless hostvars has its nodetool info result (without_ids)"""
     names = ADDRESSES if names is None else names
+    play = sorted(RACKS) if play is None else play
+    rack = members(groups)
     variables = dict(groups=GROUPS if groups is None else groups,
                      cassandra_target_rack="r2", cassandra_target_dc="dc1",
                      _cassandra_start_rack_unreached=list(unreached),
-                     _cassandra_start_rack_members=members(groups),
+                     _cassandra_start_rack_members=rack,
                      _cassandra_run_command_args=COMMAND_ARGS,
-                     hostvars=with_addresses(names) if hostvars is None else hostvars,
+                     hostvars=with_ids(with_addresses(names) if hostvars is None else hostvars,
+                                       [h for h in play if h in rack and h not in unreached]),
                      cassandra_health_self=read, cassandra_health_schema=schema or {},
-                     ansible_play_hosts_all=sorted(RACKS) if play is None else play)
+                     ansible_play_hosts_all=play)
     for name in ("_cassandra_start_rack_left_out", "_cassandra_start_rack_not_probed"):
         variables[name] = render(PLAY["vars"][name].replace(NODES, "_nodes"), _nodes=sorted(RACKS), **variables)
     checker = render(PLAY["vars"]["_cassandra_start_rack_checker"], ansible_play_hosts=[
@@ -179,12 +201,12 @@ def check_var(name, variables):
 
 
 def check(unreached=(), peer=None, then=None, then_peer=None, names=None, groups=None, racks=None, hostvars=None,
-          schema=None, play=None, **states):
+          schema=None, play=None, again=None, **states):
     """the first read (peer: the result of the node it reads from too, when it differs), judged, the check again
     with the nodes outside the rack noted not judged (when the first read found a problem; then: the ring read
     then, else the same; then_peer: the result of the node it reads from too, picked again as cluster_health.yml
-    picks it, else then), the last read judged -> (the problems that stop the run, then the lines that say why (the
-    stop's), the lines said or None)"""
+    picks it, else then), the Host IDs read again (again: {node: its nodetool info result}, when the play reads
+    them again), the last read judged -> (the problems that stop the run, the lines said or None)"""
     read = ring(racks, **states)
     variables = noted(read, peer, names, unreached, groups, hostvars, schema, play)
     if cassandra_health_sentences(variables["cassandra_health_findings"]):
@@ -195,13 +217,20 @@ def check(unreached=(), peer=None, then=None, then_peer=None, names=None, groups
                                                             variables["inventory_hostname"], any_ok=any_ok),
                          cassandra_health_self=second, cassandra_health_peer=second_peer,
                          _cassandra_health_peer_host=host)
+    if again is not None:
+        reread, checker = TASKS[REREAD], variables["inventory_hostname"]  # (the first verdict: the checker's fact)
+        variables["hostvars"][checker] = dict(variables["hostvars"][checker], _cassandra_start_rack_first_verdict=(
+            variables["_cassandra_start_rack_first_verdict"]))
+        first = render(reread["vars"]["_first"], **variables)
+        assert render("{{ %s }}" % reread["when"][-1], _first=first)
+        for h, result in again.items():
+            variables["hostvars"][h] = dict(variables["hostvars"][h], _cassandra_start_rack_info_again=result)
     assert all(render("{{ %s }}" % w, ansible_check_mode=False, **variables) for w in TASKS[AFTER]["when"])
     set_facts(AFTER, variables)
     verdict = variables["_cassandra_start_rack_last_verdict"]
     stop = TASKS[STOP]
     if all(render("{{ %s }}" % w, ansible_check_mode=False, **variables) for w in stop["when"]):
-        return render(stop["vars"]["_cassandra_health_stop_on"], **variables) + render(
-            stop["vars"]["_cassandra_health_why"], **variables), None
+        return render(stop["vars"]["_cassandra_health_stop_on"], **variables), None
     assert verdict["problems"] == []
     say = TASKS[SAY]
     variables.update((k, render(v, **variables)) for k, v in say["vars"].items() if k.startswith("_"))
@@ -213,10 +242,6 @@ def check(unreached=(), peer=None, then=None, then_peer=None, names=None, groups
 EVERY = ["Rack r2 (dc1), every node is UN:", "  n2", "  n3"]
 UP = ["Rack r2 (dc1), the nodes of this run are UN:", "  n2"]
 LEFT_OUT = ["WARNING  rack r2 (dc1), not UN, left out by --limit (not in this run):"]
-UNOWNED = ["a node of rack r2 in the ring, no inventory host known by its address:", "  10.0.0.3  UN"]
-# n2 of the run not in the ring at an address its variables give, 10.0.0.2 UN in the rack
-UNPLACED = ["  10.0.0.2  no inventory host is known by this address", "not in the ring at an address its variables give:",
-            "  n2"]
 # its --limit: n1, the node outside the rack this run read from, and n2, of the run, seen UN: the ring read from
 # them again (a node's start leaves a running node running)
 START = ["start n3: run start_rack on it, the ring read from n1 and n2 too",
@@ -310,8 +335,6 @@ def test_a_node_left_out_by_limit_known_by_no_address_is_named_as_the_controller
                                     "  the node left out by --limit, not in the ring at an address of its own:",
                                     "    n3",
                                     "  run start_rack on it, the ring read from n1 and n2 too:"] + START[1:]
-    variables = noted(ring(n3="DN"), names=names, play=["n1", "n2", "n4"])
-    assert variables["_cassandra_start_rack_first_verdict"]["maybe_rack_lines"] == []
     # a node no host is known by that the ring puts in another rack: not taken for the node left out
     names = dict((a, n) for a, n in ADDRESSES.items() if n not in ("n3", "n4"))
     variables = noted(ring(n3="DN", n4="DN"), names=names, play=["n1", "n2"])
@@ -388,32 +411,16 @@ def test_a_node_of_the_rack_not_un_stops_the_run():
         assert problems and all(p.startswith("n2 ") for p in problems)
 
 
-WHY = ["10.0.0.%s (dc1, %s): no inventory host is known by this address,", "  so it is judged as a node of rack r2",
-       "if it is outside rack r2: give its inventory host that address",
-       "  (broadcast_address in cassandra_extra_settings, else",
-       "  cassandra_listen_address or ansible_host), then the command below"]  # (the WAY OUT's)
-# said before the wait: no command under it
-WHY_BEFORE = WHY[:-1] + ["  cassandra_listen_address or ansible_host)"]
-
-
-def test_a_node_no_host_is_known_by_is_one_of_the_rack():
-    # n3 of the rack listens on an address no host has (another NIC): its finding has no name; it is still
-    # judged as a node of the rack, here in another rack as the ring says, and stops the run, saying why
+def test_a_node_of_the_run_no_host_is_known_by_the_address_of_is_placed_by_its_host_id():
+    # n3 of the rack listens on an address no variable of it gives (another NIC): its ring entry was named by no
+    # host, judged as a node of the rack "for want of a host known by its address" (a why said before the wait and
+    # in the stop, to give n3 that address). Now n3 is placed by its Host ID: the stop names it, no why
     names = dict((a, n) for a, n in ADDRESSES.items() if n != "n3")
-    problems, said = check(names=names, n3="DN")
-    assert (problems, said) == (["10.0.0.3 (r2) is DN, seen from n2 and n3"], None)
-    problems, said = check(names=names, racks={"n3": "r9"}, n3="DN")
-    assert problems == ["10.0.0.3 (r9) is DN, seen from n2 and n3", WHY[0] % (3, "r9")] + WHY[1:]
-    assert said is None and all(len(line) <= 79 for line in problems)
-    # said before the wait too
-    variables = noted(ring({"n3": "r9"}, n3="DN"), names=names)
-    say = TASKS["Say the nodes judged as the rack's for want of a host known by their address"]
-    assert render(say["ansible.builtin.debug"]["msg"], **variables) == [WHY_BEFORE[0] % (3, "r9")] + WHY_BEFORE[1:]
-    assert all(render("{{ %s }}" % w, ansible_check_mode=False, **variables) for w in say["when"][1:])
-    assert NAMES.index(NOTE) < NAMES.index(say["name"]) < NAMES.index(CHECK)
-    assert say["vars"]["cassandra_output"] is True
-    # n3 now gives its address: n3 found, the rest as before
-    assert check(racks={"n3": "r9"}, n3="DN")[0] == ["n3 (10.0.0.3, r9) is DN, seen from n1 and n2"]
+    assert check(names=names, n3="DN") == (["n3 (10.0.0.3, r2) is DN, seen from n1 and n2"], None)
+    assert check(names=names, racks={"n3": "r9"}, n3="DN") == (["n3 (10.0.0.3, r9) is DN, seen from n1 and n2"], None)
+    assert check(names=names) == ([], EVERY)
+    assert "Say the nodes judged as the rack's for want of a host known by their address" not in NAMES
+    assert "_cassandra_health_why" not in TASKS[STOP]["vars"]
 
 
 def test_a_node_outside_the_rack_no_host_is_known_by_is_a_warning_when_every_rack_node_is_in_the_ring():
@@ -424,18 +431,13 @@ def test_a_node_outside_the_rack_no_host_is_known_by_is_a_warning_when_every_rac
     assert problems == []
     assert said[3:6] == ["WARNING  the rest of the cluster:", "  10.0.0.4  DN",
                          "  n4        not reached over ssh"]
-    # a node of the rack not in the ring at an address it gives (n3: none known), and no node of the rack in the
-    # ring no host has the address of (the ring puts 10.0.0.3 in r9): 10.0.0.4 may be n3, judged as one of the
-    # rack, why said
+    # n3 (the rack) known by no address either, the ring putting it in r9: 10.0.0.4 was judged as one of the rack
+    # (n3 might be there), a stop on a node outside the rack. n3 is placed by its Host ID: a warning row
     names = dict((a, n) for a, n in ADDRESSES.items() if n not in ("n3", "n4"))
-    problems, said = check(names=names, unreached=["n4"], racks={"n3": "r9"}, n4="DN")
-    assert problems == ["10.0.0.4 (r3) is DN, seen from n2 and n3", WHY[0] % (4, "r3")] + WHY[1:]
-    assert said is None
-    # 10.0.0.3 in r2, no host has its address: n3 may be there, as many such nodes of the rack as nodes of the
-    # rack not placed. It was a stop on 10.0.0.4 (r3), a node outside the rack; now a warning row
-    problems, said = check(names=names, unreached=["n4"], n4="DN")
-    assert problems == [] and said[-5:-2] == ["WARNING  the rest of the cluster:", "  10.0.0.4  DN",
-                                              "  n4        not reached over ssh"]
+    for racks in ({"n3": "r9"}, None):
+        problems, said = check(names=names, unreached=["n4"], racks=racks, n4="DN")
+        assert problems == [] and said[-5:-2] == ["WARNING  the rest of the cluster:", "  10.0.0.4  DN",
+                                                  "  n4        not reached over ssh"]
 
 
 def test_an_ipv6_ring_with_an_ipv4_inventory_judges_a_node_outside_the_rack_down_a_warning():
@@ -447,12 +449,12 @@ def test_an_ipv6_ring_with_an_ipv4_inventory_judges_a_node_outside_the_rack_down
         n["address"] = n["address"].replace("10.0.0.", "2001:db8::")
     variables = noted(read, names={})
     verdict = variables["_cassandra_start_rack_first_verdict"]
-    assert verdict["maybe_rack_lines"] == [] and verdict["problems"] == []
+    assert verdict["problems"] == []
     assert [n["address"] for n in verdict["outside"]] == ["2001:db8::4"]
     # n2 DN there: a stop, as before
     read["cluster_status"]["dc1"]["nodes"][1]["status"] = "D"
     assert noted(read, names={})["_cassandra_start_rack_first_verdict"]["problems"] == [
-        "2001:db8::2 (r2) is DN, seen from n1 and n2"]
+        "n2 (2001:db8::2, r2) is DN, seen from n1 and n2"]
 
 
 def test_a_node_at_an_address_a_node_of_the_rack_gives_is_one_of_the_rack():
@@ -491,7 +493,7 @@ def test_an_outside_node_still_not_un_after_the_wait_is_a_warning():
 def test_after_the_wait_a_nodetool_failing_outside_the_rack_is_a_warning_unless_no_ring_was_read():
     failing = [{"kind": "nodetool", "on": "n1", "error": "x", "text": "nodetool status failed on n1: x"}]
     args = dict(members=["n2", "n3"], dc="dc1", rack="r2", checker="n2", peer="n1",
-                addresses=dict((a, n) for a, n in ADDRESSES.items()), first_verdict={})
+                addresses=dict((a, n) for a, n in ADDRESSES.items()), first_verdict={}, infos=INFOS)
     verdict = cassandra_rack_verdict(failing, reads=[ring()], **args)
     assert (verdict["problems"], verdict["failed"]) == ([], ["n1"])
     # no ring read at all: nothing judged, the failure stops the run
@@ -571,11 +573,9 @@ def test_a_healthy_cluster_reads_once_and_says_the_rack_is_up():
     # its success said (it was not: only each node's start line), the nodes of the rack as the ring has them UN;
     # nothing outside the rack: no warning, no command
     assert check() == ([], EVERY)
-    # a node of the rack by its address when no host is known by it: a row of its own, with its state (it was a
-    # row among the names, as if a host)
-    # (n3 not named: what the ring shows, then n3; test_a_node_of_the_run_not_named_in_the_ring_is_not_said_un)
+    # n3 left out, UN, known by no address: not said (the nodes of this run are)
     names = dict((a, n) for a, n in ADDRESSES.items() if n != "n3")
-    assert check(names=names, play=["n1", "n2", "n4"]) == ([], UP + UNOWNED)
+    assert check(names=names, play=["n1", "n2", "n4"]) == ([], UP)
 
 
 def test_the_nodes_read_from():
@@ -717,14 +717,14 @@ def test_a_rack_node_given_by_an_ipv6_address_written_otherwise_is_found_in_the_
     # nodetool prints IPv6 in full, the inventory compressed: n2, n3 are in the ring, so an unnamed node DN in r3
     # is surely outside (a warning), not judged of the rack for want of a host known by its address
     full = dict(("2001:db8:0:0:0:0:0:%s" % a[-1], n) for a, n in ADDRESSES.items())
-    nodes = [{"address": a, "rack": RACKS[n], "status": "D" if n == "n4" else "U", "state": "N"}
+    nodes = [{"address": a, "rack": RACKS[n], "status": "D" if n == "n4" else "U", "state": "N", "host_id": "hid-" + n}
              for a, n in sorted(full.items())]
     read = {"cluster_status": {"dc1": {"nodes": nodes}}}
     found = cassandra_health_findings([{"from": "n2", "result": read}, {"from": "n1", "result": read}], 4, "n2",
                                       names={}, **OK)
     verdict = cassandra_rack_verdict(found, ["n2", "n3"], "dc1", "r2", "n2", "n1", reads=[read], first_verdict={},
-                                     addresses={"2001:db8::2": "n2", "2001:db8::3": "n3"})
-    assert verdict["problems"] == [] and verdict["maybe_rack_lines"] == []
+                                     addresses={"2001:db8::2": "n2", "2001:db8::3": "n3"}, infos=INFOS)
+    assert verdict["problems"] == []
     assert [n["address"] for n in verdict["outside"]] == ["2001:db8:0:0:0:0:0:4"]
 
 
@@ -747,7 +747,8 @@ def test_the_ring_size_is_a_warning_when_the_rack_is_in_the_ring_and_up():
     problems, said = check_read(read)
     assert problems == ["the ring has 3 nodes, the inventory 4 (seen from n2): a node is missing from the ring, or the"
                         " inventory is incomplete", "the ring has 3 nodes, the inventory 4 (seen from n1): a node is"
-                        " missing from the ring, or the inventory is incomplete"]
+                        " missing from the ring, or the inventory is incomplete",
+                        "n3 (rack r2) is not in the ring read: no node there has its Host ID (nodetool info on it)"]
     # a node of the rack not UN too: the ring's size is not judged the rest of the cluster's either
     read = ring(n3="DN")
     read["cluster_status"]["dc1"]["nodes"] = [n for n in read["cluster_status"]["dc1"]["nodes"] if n["address"] != "10.0.0.4"]
@@ -811,24 +812,11 @@ def test_ccm_like_hosts_at_one_ansible_host_are_judged_by_their_own_address():
     ccm = dict((n, dict(v, ansible_host="127.0.0.1", cassandra_listen_address="127.0.0.%s" % n[1:]))
                for n, v in HOSTVARS.items())
     names = dict(("127.0.0.%s" % n[1:], n) for n in RACKS)
-    nodes = [{"address": a, "rack": RACKS[n], "status": "D" if n == "n1" else "U", "state": "N"}
+    nodes = [{"address": a, "rack": RACKS[n], "status": "D" if n == "n1" else "U", "state": "N", "host_id": "hid-" + n}
              for a, n in sorted(names.items())]
     verdict = noted({"cluster_status": {"dc1": {"nodes": nodes}}}, names=names, hostvars=ccm)[
         "_cassandra_start_rack_first_verdict"]
     assert verdict["problems"] == [] and [n["name"] for n in verdict["outside"]] == ["n1"]
-
-
-def test_why_lines_are_from_the_last_read():
-    # 10.0.0.4 (no host known by it, n3 not at a known address) is DN at first, UN after the wait; n3's own
-    # problem (DN) stops the run: the stop says no why for 10.0.0.4
-    names = dict((a, n) for a, n in ADDRESSES.items() if n not in ("n3", "n4"))
-    problems, said = check(names=names, then=ring(n3="DN"), unreached=["n4"], n4="DN", n3="DN")
-    assert problems == ["10.0.0.3 (r2) is DN, seen from n2 and n3"]
-    # the other way round: UN at first, DN after the wait: said
-    # (the ring puts 10.0.0.3 in r9: no node of r2 n3 may be, 10.0.0.4 may be n3)
-    problems, said = check(names=names, then=ring({"n3": "r9"}, n4="DN"), unreached=["n4"], racks={"n3": "r9"},
-                           n3="DN")
-    assert problems == ["10.0.0.4 (r3) is DN, seen from n2 and n3", WHY[0] % (4, "r3")] + WHY[1:]
 
 
 def test_under_force_the_rack_is_not_said_up():
@@ -977,9 +965,8 @@ def test_the_verdict_s_keys_are_the_ones_its_docstring_gives():
     # its "rack_up" key (the nodes seen UN) shared its name with a boolean of the same function; its example lacked
     # two keys
     verdict = noted(ring())["_cassandra_start_rack_first_verdict"]
-    assert sorted(verdict) == ["failed", "left_out", "maybe_rack_lines", "not_readers", "other_rack", "outside",
-                               "problems", "rack_seen_un", "rack_unowned", "read_from", "ring_size", "run_unplaced",
-                               "seen_from_run_only", "warnings"]
+    assert sorted(verdict) == ["failed", "host_id_unread", "left_out", "not_readers", "other_rack", "outside",
+                               "problems", "rack_seen_un", "read_from", "ring_size", "seen_from_run_only", "warnings"]
     example = cassandra_rack_verdict.__doc__.split("e.g.")[1]
     assert all(key + ":" in example for key in verdict) and verdict["rack_seen_un"] == ["n2", "n3"]
 
@@ -1005,27 +992,25 @@ def test_each_node_left_out_down_gets_the_command_that_starts_it_alone():
 
 
 def test_under_limit_a_node_of_the_run_not_un_in_the_ring_stops_the_run(monkeypatch):
-    # n2 (in the run) and n3 (left out) known by no address in the ring; n2 DN there: its ring entry has no name,
+    # n2 (in the run) and n3 (left out) known by no address in the ring; n2 DN there: its ring entry had no name,
     # so it was taken for n3 left out, a WARNING with the command starting n3, and the run said "the nodes of this
-    # run are UN (n2)", exit 0. Now an unnamed entry is taken for a node left out only while every node of the run
-    # is in the ring at an address it gives: n2's entry DN stops the run, as without --limit
+    # run are UN (n2)", exit 0. n2 is placed by its Host ID: its entry DN stops the run, by its name
     from ansible_collections.community.cassandra.plugins.filter import cassandra_ring
     monkeypatch.setattr(cassandra_ring, "_resolved", lambda name: [])
-    names = dict((a, n) for a, n in ADDRESSES.items() if n not in ("n2", "n3"))
-    assert check(names=names, play=["n1", "n2", "n4"], n2="DN") == (["10.0.0.2 (r2) is DN, seen from n1 and n2"], None)
-    # n2 alone known by no address, DN: its entry is the rack's, a stop
-    names = dict((a, n) for a, n in ADDRESSES.items() if n != "n2")
-    assert check(names=names, play=["n1", "n2", "n4"], n2="DN") == (["10.0.0.2 (r2) is DN, seen from n1 and n2"], None)
-    # n2 at its address: the success line names it, as seen UN; n3's entry UN, no host has its address: its row
+    for names in (dict((a, n) for a, n in ADDRESSES.items() if n not in ("n2", "n3")),
+                  dict((a, n) for a, n in ADDRESSES.items() if n != "n2")):
+        assert check(names=names, play=["n1", "n2", "n4"], n2="DN") == (
+            ["n2 (10.0.0.2, r2) is DN, seen from n1 and n2"], None)
+    # n3's entry UN, no host has its address: the nodes of this run said UN
     names = dict((a, n) for a, n in ADDRESSES.items() if n != "n3")
-    assert check(names=names, play=["n1", "n2", "n4"]) == ([], UP + UNOWNED)
+    assert check(names=names, play=["n1", "n2", "n4"]) == ([], UP)
 
 
-def test_a_name_resolved_on_the_controller_is_not_taken_while_a_node_of_the_run_is_not_placed(monkeypatch):
+def test_a_name_resolved_on_the_controller_never_takes_the_place_of_a_node_of_the_run(monkeypatch):
     # n2 (in the run) known by no address in the ring, DN there; n3 left out, known by h-n3.example only, which the
     # controller resolves (wrongly: a stale /etc/hosts) to 10.0.0.2. n2's entry was taken for n3: the run said the
-    # nodes of this run UN, exit 0, and told to start n3, which runs. Now a name resolved on the controller is
-    # taken only while every node of the run is in the ring at an address it gives: n2's entry DN stops the run
+    # nodes of this run UN, exit 0, and told to start n3, which runs. n2 is placed by its Host ID, before any name
+    # is resolved: its entry DN stops the run
     from ansible_collections.community.cassandra.plugins.filter import cassandra_ring
     monkeypatch.setattr(cassandra_ring, "_resolved", lambda name: ["10.0.0.2"] if name == "h-n3.example" else [])
     hostvars = with_addresses(ADDRESSES)
@@ -1033,8 +1018,8 @@ def test_a_name_resolved_on_the_controller_is_not_taken_while_a_node_of_the_run_
     hostvars["n3"] = dict(hostvars["n3"], ansible_host="h-n3.example")
     names = dict((a, n) for a, n in ADDRESSES.items() if n not in ("n2", "n3"))
     assert check(names=names, hostvars=hostvars, play=["n1", "n2", "n4"], n2="DN") == (
-        ["10.0.0.2 (r2) is DN, seen from n1 and n2"], None)
-    # every node of the run placed: n3 named as the controller resolves it (here rightly, 10.0.0.3)
+        ["n2 (10.0.0.2, r2) is DN, seen from n1 and n2"], None)
+    # n3 named as the controller resolves it (here rightly, 10.0.0.3)
     monkeypatch.setattr(cassandra_ring, "_resolved", lambda name: ["10.0.0.3"] if name == "h-n3.example" else [])
     hostvars["n2"] = with_addresses(ADDRESSES)["n2"]
     names = dict((a, n) for a, n in ADDRESSES.items() if n != "n3")
@@ -1045,60 +1030,28 @@ def test_a_name_resolved_on_the_controller_is_not_taken_while_a_node_of_the_run_
 def test_a_node_of_the_run_on_a_cluster_network_is_a_success_with_and_without_limit(monkeypatch):
     # n2 listens on a host name (h-n2.example) of a cluster network, 10.0.0.2 there; ssh and default_ipv4 on
     # another one (192.168.1.2): no variable of n2 gives its ring address. Every node UN. Under --limit (n3 left
-    # out) the run stopped: "n2 (r2) is not in the ring at an address it gives: not seen UN", give it the address
-    # the ring has it at (never said which); without --limit the same cluster succeeded. Now a success both ways,
-    # the ring's node of the rack no host has the address of a row of its own, with its state
+    # out) the run stopped: "n2 (r2) is not in the ring at an address it gives: not seen UN"; then the success said
+    # "UN in the ring: 10.0.0.2 no inventory host is known by this address", n2 "not in the ring at an address its
+    # variables give". n2 is placed by its Host ID: n2 said UN, both ways
     from ansible_collections.community.cassandra.plugins.filter import cassandra_ring
     hostvars = with_addresses(ADDRESSES)
     hostvars["n2"] = dict(hostvars["n2"], ansible_host="192.168.1.2", cassandra_listen_address="h-n2.example")
     names = dict((a, n) for a, n in ADDRESSES.items() if n != "n2")
     for resolved in ([], ["10.0.0.2"]):  # (h-n2.example resolved on the controller or not: the same)
         monkeypatch.setattr(cassandra_ring, "_resolved", lambda name: resolved if "n2" in name else [])
-        assert check(names=names, hostvars=hostvars) == ([], ["Rack r2 (dc1), UN in the ring:", "  n3"] + UNPLACED)
-        # --limit 'all:!n3', n3 UN: the success (n2 not at an address it gives: what the ring shows)
-        assert check(names=names, hostvars=hostvars, play=["n1", "n2", "n4"]) == (
-            [], ["Rack r2 (dc1), UN in the ring:", "  n3"] + UNPLACED)
+        assert check(names=names, hostvars=hostvars) == ([], EVERY)
+        assert check(names=names, hostvars=hostvars, play=["n1", "n2", "n4"]) == ([], UP)
         # n3 left out DN: the success, n3 a WARNING
         problems, said = check(names=names, hostvars=hostvars, play=["n1", "n2", "n4"], n3="DN")
-        assert problems == [] and said[:4] == ["Rack r2 (dc1), UN in the ring:"] + UNPLACED
-        assert said[4:6] == LEFT_OUT + ["  n3  DN"]
+        assert problems == [] and said[:4] == UP + LEFT_OUT + ["  n3  DN"]
+        # the ring puts 10.0.0.2 in r9 (its rackdc file): n2 said UN, its rack a warning line
+        assert check(names=names, hostvars=hostvars, racks={"n2": "r9"}) == (
+            [], EVERY + ["WARNING  n2 is in rack r9 (dc1) of the ring, r2 in the inventory"])
     # 10.0.0.2 DN: a stop (every ring node of the rack must be UN), with and without --limit
     # (read again from n3, of the rack; under --limit n3 is out of the play: from n1)
     for play, readers in ((None, "n2 and n3"), (["n1", "n2", "n4"], "n1 and n2")):
         assert check(names=names, hostvars=hostvars, play=play, n2="DN") == (
-            ["10.0.0.2 (r2) is DN, seen from %s" % readers], None)
-
-
-def test_a_node_of_the_run_not_named_in_the_ring_is_not_said_un(monkeypatch):
-    # n2 (the run) listens where no variable of it says (h-n2.example, 10.0.0.2 in the ring): "Rack r2 (dc1), the
-    # nodes of this run are UN." with no row, or "every node is UN: n3": a fact about n2 never seen (10.0.0.2 being
-    # n2 is a guess). Now what the ring shows, then n2 as not in the ring at an address its variables give
-    from ansible_collections.community.cassandra.plugins.filter import cassandra_ring
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_start_rack import cassandra_rack_outside_lines
-    hostvars = with_addresses(ADDRESSES)
-    hostvars["n2"] = dict(hostvars["n2"], ansible_host="192.168.1.2", cassandra_listen_address="h-n2.example")
-    names = dict((a, n) for a, n in ADDRESSES.items() if n != "n2")
-    for resolved in ([], ["10.0.0.2"]):
-        monkeypatch.setattr(cassandra_ring, "_resolved", lambda name: resolved)
-        assert check(names=names, hostvars=hostvars) == ([], ["Rack r2 (dc1), UN in the ring:", "  n3"] + UNPLACED)
-        problems, said = check(names=names, hostvars=hostvars, play=["n1", "n2", "n4"], n3="DN")
-        assert said[:4] == ["Rack r2 (dc1), UN in the ring:"] + UNPLACED
-    verdict = {"outside": [], "failed": [], "warnings": [], "problems": [], "rack_seen_un": [],
-               "rack_unowned": [["10.0.0.2", "UN"], ["10.0.0.3", "UN"]], "run_unplaced": ["n2", "n3"]}
-    assert cassandra_rack_outside_lines(verdict, [], "dc1", "r2", "x", run=["n2", "n3"]) == [
-        "Rack r2 (dc1), UN in the ring:", "  10.0.0.2  no inventory host is known by this address",
-        "  10.0.0.3  no inventory host is known by this address", "not in the ring at an address their variables give:",
-        "  n2", "  n3"]
-    # the ring puts 10.0.0.2 in r9 (its rack not the inventory's), UN: n2 in no node of rack r2 it may be. It was
-    # "the nodes of this run are UN." (exit 0, nothing more); now a stop, with the ring's nodes no host is known by
-    stop = ["n2 (rack r2) is not in the ring at an address its variables give",
-            "in rack r2 of the ring, no inventory host known by the address: none",
-            "in the other racks of dc1, no inventory host known by the address:", "  10.0.0.2  r9  UN",
-            "if n2 is at one of these addresses: give it that address",
-            "  (broadcast_address in cassandra_extra_settings, else",
-            "  cassandra_listen_address or ansible_host)"]
-    for play in (None, ["n1", "n2", "n4"]):
-        assert check(names=names, hostvars=hostvars, racks={"n2": "r9"}, play=play) == (stop, None)
+            ["n2 (10.0.0.2, r2) is DN, seen from %s" % readers], None)
 
 
 def test_under_limit_the_nodes_of_the_run_seen_only_from_themselves_are_said_so():
@@ -1108,7 +1061,7 @@ def test_under_limit_the_nodes_of_the_run_seen_only_from_themselves_are_said_so(
     read = ring(n3="DN")
     found = cassandra_health_findings([{"from": "n2", "result": read}], 4, "n2", names=ADDRESSES, **OK)
     verdict = cassandra_rack_verdict(found, ["n2", "n3"], "dc1", "r2", "n2", "n2", addresses=ADDRESSES,
-                                     reads=[read, read], left_out=["n3"])
+                                     reads=[read, read], left_out=["n3"], infos=INFOS)
     assert verdict["problems"] == [] and verdict["seen_from_run_only"] == ["n2"]
     command = "ansible-playbook -i hosts.yml community.cassandra.start_rack -e cassandra_target_dc=dc1" \
               " -e cassandra_target_rack=r2"
@@ -1121,7 +1074,7 @@ def test_under_limit_the_nodes_of_the_run_seen_only_from_themselves_are_said_so(
     found = cassandra_health_findings([{"from": "n3", "result": ring()}, {"from": "n2", "result": ring()}], 4, "n3",
                                       names=ADDRESSES, **OK)
     verdict = cassandra_rack_verdict(found, ["n2", "n3"], "dc1", "r2", "n3", "n2", addresses=ADDRESSES,
-                                     reads=[ring(), ring()], left_out=[])
+                                     reads=[ring(), ring()], left_out=[], infos=INFOS)
     assert cassandra_rack_outside_lines(verdict, [], "dc1", "r2", "x") == [
         "Rack r2 (dc1), every node is UN:", "  n2", "  n3",
         "WARNING  the ring as seen from the nodes of this run only (no other node read)"]
@@ -1151,7 +1104,7 @@ def test_a_node_left_out_known_by_its_address_only_is_said_with_the_nodes_it_may
     found = cassandra_health_findings([{"from": "n2", "result": read}, {"from": "n1", "result": read}], 5, "n2",
                                       names=addresses, **OK)
     verdict = cassandra_rack_verdict(found, ["n2", "n3", "n5"], "dc1", "r2", "n2", "n1", addresses=addresses,
-                                     reads=[read, read], left_out=["n3", "n5"])
+                                     reads=[read, read], left_out=["n3", "n5"], infos=INFOS)
     # n5, left out and UN at its own address, is not one 10.0.0.3 may be
     assert verdict["left_out"] == [{"address": "10.0.0.3", "name": None, "states": ["DN"], "unplaced": ["n3"]}]
     from ansible_collections.community.cassandra.plugins.filter.cassandra_start_rack import cassandra_rack_outside_lines
@@ -1291,11 +1244,10 @@ def mk(entries):
                                                   "host_id": "hid-" + n} for a, r, s, n in entries]}}}
 
 
-def test_a_node_left_out_not_placed_counts_with_the_node_of_the_run_not_placed(monkeypatch):
-    # --limit 'all:!n3': n2 (the run) is in the ring at 10.0.0.29, rack r9 (its rackdc file), no Host ID read; n3,
-    # left out, at 10.0.0.3, known by a DNS name only (out of the play: no facts). n2 was "UN in the ring: 10.0.0.3",
-    # exit 0: 10.0.0.3 counted for n2, n3 left out of the count. Now the nodes of the rack not placed (n2, n3)
-    # outnumber the ring's nodes of the rack no host is known by (10.0.0.3): a stop
+def test_a_node_of_the_run_in_another_rack_of_the_ring_with_a_node_left_out_not_placed(monkeypatch):
+    # --limit 'all:!n3': n2 (the run) is in the ring at 10.0.0.29, rack r9 (its rackdc file); n3, left out, at
+    # 10.0.0.3, known by a DNS name only (out of the play: no facts). n2 was "UN in the ring: 10.0.0.3", exit 0:
+    # 10.0.0.3 counted for n2. n2 is placed by its Host ID at 10.0.0.29: the success, its rack said
     from ansible_collections.community.cassandra.plugins.filter import cassandra_ring
     monkeypatch.setattr(cassandra_ring, "_resolved", lambda name: [])
     names = dict((a, n) for a, n in ADDRESSES.items() if n != "n3")
@@ -1304,17 +1256,6 @@ def test_a_node_left_out_not_placed_counts_with_the_node_of_the_run_not_placed(m
     read = mk([("10.0.0.1", "r1", "UN", "n1"), ("10.0.0.29", "r9", "UN", "n2"), ("10.0.0.3", "r2", "UN", "n3"),
                ("10.0.0.4", "r3", "UN", "n4")])
     variables = noted(read, names=names, hostvars=hostvars, play=["n1", "n2", "n4"])
-    set_facts(AFTER, variables)
-    assert variables["_cassandra_start_rack_last_verdict"]["problems"] == [
-        "n2 (rack r2) is not in the ring at an address its variables give",
-        "n3 (rack r2, left out by --limit) is not in the ring at an address its",
-        "  variables give",
-        "in rack r2 of the ring, no inventory host known by the address:", "  10.0.0.3  UN",
-        "in the other racks of dc1, no inventory host known by the address:", "  10.0.0.29  r9  UN",
-        "if n2 is at one of these addresses: give it that address"] + [
-        "  (broadcast_address in cassandra_extra_settings, else", "  cassandra_listen_address or ansible_host)"]
-    # n2's Host ID read: placed at 10.0.0.29, the success, its rack said
-    variables = noted(read, names=names, hostvars=with_ids(hostvars, ["n2"]), play=["n1", "n2", "n4"])
     set_facts(AFTER, variables)
     assert variables["_cassandra_start_rack_last_verdict"]["problems"] == []
     assert variables["_cassandra_start_rack_last_verdict"]["other_rack"] == [["n2", "dc1", "r9"]]
@@ -1338,25 +1279,6 @@ def test_a_node_outside_the_rack_not_reached_known_by_a_dns_name_is_counted_at_o
                                             "  n4  DN  not reached over ssh"]
 
 
-def test_the_ring_nodes_no_host_is_known_by_are_said_so_those_of_the_rack_s_dc_at_most_five(monkeypatch):
-    # --limit n2,n3 with the other hosts known by DNS names only: every other ring node was listed as one "no
-    # inventory host has the address of" (they have one: not resolved), from every dc. Now "no inventory host known
-    # by the address" (what was seen), the rack's dc only, five at most
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_start_rack import _unplaced_lines
-    unowned = [["10.0.0.1%s" % i, "dc1", "r1", ["UN"]] for i in range(7)] + [["10.1.0.1", "dc2", "r1", ["UN"]]]
-    lines = _unplaced_lines(["n2"], ["n2"], unowned + [["10.0.0.29", "dc1", "r9", ["UN"]]], "dc1", "r2")
-    assert lines[1:9] == ["in rack r2 of the ring, no inventory host known by the address: none",
-                          "in the other racks of dc1, no inventory host known by the address:",
-                          "  10.0.0.10  r1  UN", "  10.0.0.11  r1  UN", "  10.0.0.12  r1  UN", "  10.0.0.13  r1  UN",
-                          "  10.0.0.14  r1  UN", "  and 3 more (nodetool status)"]
-    assert "10.1.0.1" not in " ".join(lines)
-    # no ring node no host is known by: no "if n2 is at one of these addresses" over no address
-    assert _unplaced_lines(["n2"], ["n2"], [], "dc1", "r2") == [
-        "n2 (rack r2) is not in the ring at an address its variables give",
-        "in rack r2 of the ring, no inventory host known by the address: none",
-        "find n2 in the ring: nodetool status, its Host ID in nodetool info on it"]
-
-
 def test_each_node_of_the_run_is_placed_in_the_ring_by_its_host_id():
     # n2 listens on a cluster network (no variable gives its ring address), the ring puts it in r9 (its rackdc
     # file), DN; 10.0.0.9, in r2 and UN, is in no inventory, n4 out of the ring (the size even). 10.0.0.9 was
@@ -1377,7 +1299,7 @@ def test_each_node_of_the_run_is_placed_in_the_ring_by_its_host_id():
     assert variables["_cassandra_start_rack_first_verdict"]["problems"][-1] == (
         "n2 (rack r2) is not in the ring read: no node there has its Host ID (nodetool info on it)")
     # read on each node of the rack in the play, after the probe and its facts, before the first read; not under
-    # --check; failing, the node placed by its addresses
+    # --check
     task = TASKS["Read the Host ID of each node of the run"]
     assert task["ansible.builtin.command"] == "{{ _cassandra_service_nodetool }} info"
     assert task["failed_when"] is False and task["changed_when"] is False
@@ -1385,9 +1307,10 @@ def test_each_node_of_the_run_is_placed_in_the_ring_by_its_host_id():
     assert task["no_log"] == "{{ cassandra_jmx_password | length > 0 }}"
     assert NAMES.index(PROBE[-1]) < NAMES.index(task["name"]) < NAMES.index(READ)
     infos = render(PLAY["vars"]["_cassandra_start_rack_filter_args"]["infos"], _cassandra_start_rack_members=[
-        "n2", "n3"], hostvars={"n2": {"_cassandra_start_rack_info": {"stdout": "ID : x"}},
+        "n2", "n3"], hostvars={"n2": {"_cassandra_start_rack_info": {"rc": 0, "stdout": "ID : x", "cmd": "nodetool"}},
                                "n3": {"_cassandra_start_rack_info": {"skipped": True}}})
-    assert infos == {"n2": "ID : x", "n3": ""}
+    assert infos == {"n2": {"rc": 0, "stdout": "ID : x", "stderr": "", "msg": ""},
+                     "n3": {"rc": None, "stdout": "", "stderr": "", "msg": ""}}
 
 
 def test_with_the_run_placed_by_host_id_a_node_left_out_down_at_no_known_address_is_a_warning():
@@ -1397,9 +1320,7 @@ def test_with_the_run_placed_by_host_id_a_node_left_out_down_at_no_known_address
     read = ring(n3="DN")
     for n in read["cluster_status"]["dc1"]["nodes"]:
         n["address"] = n["address"].replace("10.0.0.", "2001:db8::")
-    assert noted(read, names={}, play=["n1", "n2", "n4"])["_cassandra_start_rack_first_verdict"]["problems"] == [
-        "2001:db8::3 (r2) is DN, seen from n1 and n2"]
-    variables = noted(read, names={}, hostvars=with_ids(with_addresses(ADDRESSES), ["n2"]), play=["n1", "n2", "n4"])
+    variables = noted(read, names={}, play=["n1", "n2", "n4"])
     verdict = variables["_cassandra_start_rack_first_verdict"]
     assert verdict["problems"] == [] and verdict["left_out"] == [
         {"address": "2001:db8::3", "name": None, "states": ["DN"], "unplaced": ["n3"]}]
@@ -1425,3 +1346,116 @@ def test_two_hosts_giving_the_same_address_do_not_stop_the_run():
         start = next(p for p in yaml.safe_load(f) if p.get("name") == "Start the rack")
     assert "Stop when two hosts give the same address" not in [t["name"] for t in start["tasks"]]
     assert not hasattr(cassandra_start_rack, "cassandra_rack_shared_addresses")
+
+
+def stop_said(problems, play=None):
+    """the stop as cluster_health.yml says it (its WAY OUT, the run's command under it)"""
+    from ansible_collections.community.cassandra.tests.unit.roles.test_cluster_health_way_out import said
+    stop = TASKS[STOP]["vars"]
+    again = render(PLAY["vars"]["_cassandra_start_rack_again"], ansible_limit=",".join(play or []),
+                   cassandra_target_dc="dc1", cassandra_target_rack="r2", _cassandra_run_command_args=COMMAND_ARGS)
+    return said(False, [], _cassandra_health_stop_on=problems, _cassandra_health_again=stop["_cassandra_health_again"],
+                _cassandra_health_again_command=again)
+
+
+NOT_READ = ["n2 (rack r2): nodetool info failed on it:",
+            "  nodetool: Failed to connect to '127.0.0.1:7199' - ConnectException: 'Connection refused'.",
+            "the check places each node of the run in the ring by its Host ID"]
+
+
+def test_a_node_of_the_run_whose_host_id_is_not_read_stops_the_run():
+    # n2's JVM died after it joined: its nodetool info fails, so it was placed by its addresses. On a cluster
+    # network (no variable gives 10.0.0.2), the ring putting it in r9 and a node no host has UN in r2, the run said
+    # "UN in the ring: n3, 10.0.0.9", exit 0, with n2 DN. Its Host ID not read is now n2's own problem: a stop, with
+    # the error and the way out (after the wait for the rack's nodes down)
+    hostvars = with_addresses(ADDRESSES)
+    hostvars["n2"] = dict(hostvars["n2"], ansible_host="192.168.1.2", cassandra_listen_address="h-n2.example")
+    names = dict((a, n) for a, n in ADDRESSES.items() if n != "n2")
+    read = mk([("10.0.0.1", "r1", "UN", "n1"), ("10.0.0.2", "r9", "DN", "n2"), ("10.0.0.3", "r2", "UN", "n3"),
+               ("10.0.0.9", "r2", "UN", "x9")])
+    problems, said = check_ring(read, names=names, hostvars=without_ids(hostvars, ["n2"]))
+    assert (problems, said) == (NOT_READ, None)
+    assert stop_said(problems)[4:] == ["WAY OUT  fix it (the lines above say what), then run start_rack again:",
+                                       "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
+                                       "    -e cassandra_target_dc=dc1 -e cassandra_target_rack=r2"]
+    # every node UN, n2's JMX not answering: the same stop
+    assert check(hostvars=without_ids(with_addresses(ADDRESSES), ["n2"])) == (NOT_READ, None)
+    # an answer without an ID line; no answer in time (the task's timeout): what was seen
+    for result, lines in (({"rc": 0, "stdout": "Gossip active  : true"},
+                           ["n2 (rack r2): nodetool info on it gives no ID line"]),
+                          ({"failed": True, "msg": "The command action failed to execute in the expected time frame"
+                                                   " (70) and was terminated"},
+                           ["n2 (rack r2): nodetool info failed on it:", "  The command action failed to execute in"
+                            " the expected time frame (70) and was terminated"])):
+        hostvars = with_addresses(ADDRESSES)
+        hostvars["n2"]["_cassandra_start_rack_info"] = result
+        assert check(hostvars=hostvars) == (lines + NOT_READ[-1:], None)
+    # DN at its own address: that ring node's row too, by its address (n2 is not placed by an address)
+    problems, said = check(hostvars=without_ids(with_addresses(ADDRESSES), ["n2"]), n2="DN")
+    assert problems == ["10.0.0.2 (r2) is DN, seen from n2 and n3"] + NOT_READ
+    assert stop_said(problems)[5].startswith("WAY OUT  bring 10.0.0.2 back to UN")
+
+
+def check_ring(read, names=None, hostvars=None, play=None):
+    """check() with a first read given (the same after the wait)"""
+    variables = noted(read, names=names, hostvars=hostvars, play=play)
+    if cassandra_health_sentences(variables["cassandra_health_findings"]):
+        any_ok = check_var("cassandra_service_health_any_ok", variables)
+        host = peer_of(CHECK, variables)
+        variables.update(cassandra_health_findings=findings(read, read, names, host, variables["inventory_hostname"],
+                                                            any_ok=any_ok), _cassandra_health_peer_host=host)
+    set_facts(AFTER, variables)
+    verdict = variables["_cassandra_start_rack_last_verdict"]
+    return verdict["problems"], None if verdict["problems"] else verdict
+
+
+def test_no_ring_read_says_no_node_of_the_run_not_in_it():
+    # nodetool status failing on both nodes read from, or an empty ring: each node of the run was also "not in the
+    # ring read: no node there has its Host ID", when no ring was read. Now the reads' own lines only
+    failed = {"rc": 1, "msg": "nodetool failed"}
+    assert noted(failed)["_cassandra_start_rack_first_verdict"]["problems"] == [
+        "nodetool status failed on n2: nodetool failed", "nodetool status failed on n1: nodetool failed"]
+    for read in ({"cluster_status": {}}, {"cluster_status": {"dc1": {"nodes": []}}}):
+        problems = noted(read)["_cassandra_start_rack_first_verdict"]["problems"]
+        assert len(problems) == 2 and "not in the ring read" not in " ".join(problems)
+    # a ring read without n2's Host ID, the other read failing: n2 not in it
+    hostvars = with_addresses(ADDRESSES)
+    hostvars["n2"]["_cassandra_start_rack_info"] = {"rc": 0, "stdout": "ID : hid-n9"}
+    problems = noted(ring(), peer=failed, hostvars=hostvars)["_cassandra_start_rack_first_verdict"]["problems"]
+    assert problems[-1] == "n2 (rack r2) is not in the ring read: no node there has its Host ID (nodetool info on it)"
+
+
+def test_a_node_of_the_run_whose_host_id_is_not_read_is_waited_for_then_read_again():
+    # n2 DN at the first read, its nodetool info failing (its JVM restarting): waited for as a node of the rack
+    # down, then its Host ID read again; back UN with its Host ID: the success
+    hostvars = without_ids(with_addresses(ADDRESSES), ["n2"])
+    variables = noted(ring(n2="DN"), hostvars=hostvars)
+    first = variables["_cassandra_start_rack_first_verdict"]
+    assert first["host_id_unread"] == ["n2"] and "10.0.0.2" not in check_var("cassandra_service_health_any_ok",
+                                                                             variables)
+    ok = {"rc": 0, "stdout": "ID  : hid-n2"}
+    assert check(hostvars=hostvars, then=ring(), again={"n2": ok, "n3": {"rc": 0, "stdout": "ID : hid-n3"}},
+                 n2="DN") == ([], EVERY)
+    # still not read: the stop
+    assert check(hostvars=hostvars, then=ring(), again={"n2": NO_INFO}, n2="DN") == (NOT_READ, None)
+    # --limit 'all:!n3', n2 and n3 known by no address: n2's entry DN is the rack's (waited for), not taken for n3
+    names = dict((a, n) for a, n in ADDRESSES.items() if n not in ("n2", "n3"))
+    hostvars = without_ids(with_addresses(names), ["n2"])
+    variables = noted(ring(n2="DN"), names=names, hostvars=hostvars, play=["n1", "n2", "n4"])
+    assert variables["_cassandra_start_rack_first_verdict"]["problems"][0] == "10.0.0.2 (r2) is DN, seen from n1 and n2"
+    assert variables["_cassandra_start_rack_first_verdict"]["left_out"] == []
+    # the play: read again on the nodes of the run after the wait, before the last verdict, only when one is not
+    # read (a skipped read keeps the first one: the filter's infos)
+    task = TASKS[REREAD]
+    assert NAMES.index(CHECK) < NAMES.index(REREAD) < NAMES.index(AFTER)
+    first_read = TASKS["Read the Host ID of each node of the run"]
+    assert task["ansible.builtin.command"] == first_read["ansible.builtin.command"]
+    assert task["register"] == "_cassandra_start_rack_info_again" and task["failed_when"] is False
+    assert task["no_log"] == "{{ cassandra_jmx_password | length > 0 }}"
+    assert task["when"][:2] == ["inventory_hostname in _cassandra_start_rack_members", "not ansible_check_mode"]
+    assert not render("{{ %s }}" % task["when"][-1], _first=noted(ring())["_cassandra_start_rack_first_verdict"])
+    hostvars = {"n2": {"_cassandra_start_rack_info": NO_INFO, "_cassandra_start_rack_info_again": ok},
+                "n3": {"_cassandra_start_rack_info": ok, "_cassandra_start_rack_info_again": {"skipped": True}}}
+    infos = render(PLAY["vars"]["_cassandra_start_rack_filter_args"]["infos"], hostvars=hostvars,
+                   _cassandra_start_rack_members=["n2", "n3"])
+    assert infos["n2"]["stdout"] == infos["n3"]["stdout"] == ok["stdout"]

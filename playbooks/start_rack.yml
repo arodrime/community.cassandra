@@ -236,11 +236,15 @@
       schema: "{{ cassandra_health_schema | default({}) }}"
       left_out: "{{ _cassandra_start_rack_left_out }}"
       unreached: "{{ _cassandra_start_rack_unreached }}"
-      # each node of the run's nodetool info (its Host ID: the node placed in the ring by it), by name
+      # each node of the run's nodetool info, by name (its Host ID: the node placed in the ring by it); read again
+      # after the wait when a Host ID was not read
       infos: >-
         {%- set out = {} -%}
         {%- for h in _cassandra_start_rack_members -%}
-        {%-   set _ = out.update({h: (hostvars[h]._cassandra_start_rack_info | default({})).stdout | default('')}) -%}
+        {%-   set r = hostvars[h]._cassandra_start_rack_info_again | default({'skipped': true}) -%}
+        {%-   set r = hostvars[h]._cassandra_start_rack_info | default({}) if r.skipped | default(false) else r -%}
+        {%-   set _ = out.update({h: {'rc': r.rc | default(none), 'stdout': r.stdout | default(''),
+                                      'stderr': r.stderr | default(''), 'msg': r.msg | default('')}}) -%}
         {%- endfor -%}
         {{ out }}
     # the run's own command again (its inventory, cluster, --limit), for the way out of a stop; the same as
@@ -321,7 +325,7 @@
         ansible_become: false  # an inventory ansible_become beats the become keyword
 
     # what each node of the run says of itself: the check places it in the ring by its Host ID, whatever its
-    # address (nodetool info failing: placed by its addresses)
+    # address (its Host ID not read: a stop, after the wait below)
     - name: Read the Host ID of each node of the run
       ansible.builtin.command: "{{ _cassandra_service_nodetool }} info"
       register: _cassandra_start_rack_info
@@ -360,17 +364,6 @@
         - inventory_hostname == _cassandra_start_rack_checker
         - not ansible_check_mode
 
-    # said before the wait too: why a node the ring puts outside the rack is waited for
-    - name: Say the nodes judged as the rack's for want of a host known by their address
-      ansible.builtin.debug:
-        msg: "{{ _cassandra_start_rack_first_verdict.maybe_rack_lines }}"
-      when:
-        - inventory_hostname == _cassandra_start_rack_checker
-        - not ansible_check_mode
-        - _cassandra_start_rack_first_verdict.maybe_rack_lines | length > 0
-      vars:
-        cassandra_output: true
-
     # the rack's nodes waited for until UN; the first verdict's nodes outside the rack not judged, in any state; read
     # again from another node of the rack when there is one, else from a node outside it; not from a node seen
     # down, in the first verdict, not reached or not probed, nor one whose nodetool failed
@@ -392,6 +385,21 @@
         - not ansible_check_mode
         - cassandra_health_problems | length > 0
 
+    # a node of the run whose Host ID the first verdict has not (nodetool info failing: its JVM down, waited for
+    # above while the ring sees it down): read again on each node of the run, the last verdict judged with it
+    - name: Read the Host ID again of the nodes of the run
+      ansible.builtin.command: "{{ _cassandra_service_nodetool }} info"
+      register: _cassandra_start_rack_info_again
+      changed_when: false
+      failed_when: false
+      no_log: "{{ cassandra_jmx_password | length > 0 }}"
+      when:
+        - inventory_hostname in _cassandra_start_rack_members
+        - not ansible_check_mode
+        - _first.host_id_unread | default([]) | length > 0
+      vars:
+        _first: "{{ hostvars[_cassandra_start_rack_checker]._cassandra_start_rack_first_verdict | default({}) }}"
+
     # the last read (the first one when it found nothing), judged with the first verdict
     - name: Judge the last read
       ansible.builtin.set_fact:
@@ -409,7 +417,6 @@
         tasks_from: cluster_health.yml
       vars:
         _cassandra_health_stop_on: "{{ _cassandra_start_rack_last_verdict.problems }}"
-        _cassandra_health_why: "{{ _cassandra_start_rack_last_verdict.maybe_rack_lines }}"
         _cassandra_health_again: "run start_rack\u00a0again:"  # (a no-break space: "again" never alone on a line)
         _cassandra_health_again_command: "{{ _cassandra_start_rack_again }}"
       when:

@@ -37,15 +37,6 @@ def test_the_way_out_under_check():
     assert said(False, ["the schema differs"])[1] == "WAY OUT  fix it (the lines above say what), then resume"
 
 
-def test_why_a_problem_is_one_said_before_the_way_out():
-    # start_rack: why a node the ring puts outside the rack is judged as one of it (_cassandra_health_why)
-    why = ["10.0.0.4 (dc1, r3): no inventory host has this address,", "  so it is judged as a node of rack r2"]
-    lines = said(False, ["10.0.0.4 (r3) is DN, seen from n1"], _cassandra_health_why=why)
-    assert lines[:4] == ["10.0.0.4 (r3) is DN, seen from n1"] + why + [
-        "WAY OUT  bring 10.0.0.4 back to UN (its host and/or Cassandra), then resume"]
-    assert said(False, ["x"])[1].startswith("WAY OUT")  # (none: as before)
-
-
 def test_a_node_lost_for_good_gets_full_commands():
     # each way out a command to paste, not a playbook's name
     lines = said(False, ["n4 (10.0.0.4, r1) is DN, seen from n1"])
