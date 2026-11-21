@@ -97,7 +97,8 @@ def run(tmp_path, port, nodes, unread=(), *args):
     return proc.returncode, proc.stdout.decode("utf-8", "replace")
 
 
-IN_SYNC = "CLOCKS  in sync: synchronised to a source, offset plus the daemon's error bound within 50 ms (cassandra_clock_max_offset_ms)"
+IN_SYNC = ["CLOCKS  in sync: synchronised to a source, offset plus the daemon's error",
+           "        bound within 50 ms (cassandra_clock_max_offset_ms)"]
 
 
 def test_every_clock_in_sync(tmp_path, port):
@@ -106,7 +107,7 @@ def test_every_clock_in_sync(tmp_path, port):
     assert ruled(output) == [
         CLUSTER,
         "",
-        IN_SYNC,
+    ] + IN_SYNC + [
         u"  node1  ok  chronyd, synchronised to 192.0.2.1, -2.0 ms (±0.7 ms)",
         u"  node2  ok  chronyd, synchronised to 192.0.2.1, +3.0 ms (±0.7 ms)",
         u"  node3  ok  chronyd, synchronised to 192.0.2.1, -0.0 ms (±0.7 ms)",
@@ -126,17 +127,17 @@ def test_a_clock_off_and_one_not_read_are_a_problem(tmp_path, port):
     rc, output = run(tmp_path, port, {"node1": synced(), "node2": synced(0.2, "fast"), "node3": synced()}, unread=["node3"])
     assert rc != 0, output
     lines = ruled(output)
-    assert lines[:5] == [
+    assert lines[:6] == [
         CLUSTER,
         "",
-        IN_SYNC,
+    ] + IN_SYNC + [
         u"  node1  ok        chronyd, synchronised to 192.0.2.1, -2.0 ms (±0.7 ms)",
         u"  node2  OFF       chronyd, synchronised to 192.0.2.1, +200.0 ms (±0.7 ms): ahead of its source by 200.0 ms,"
         " more than 50.0 ms",
     ]
     # then ansible-core's words for the probe's failure (MODULE FAILURE before 2.19)
-    assert lines[5].startswith("  node3  NOT READ  its clock could not be read: ")
-    assert lines[6].startswith("WARNING  node2's clock is AHEAD by about 200.0 ms: the writes it stamped as coordinator")
+    assert lines[6].startswith("  node3  NOT READ  its clock could not be read: ")
+    assert lines[7].startswith("WARNING  node2's clock is AHEAD by about 200.0 ms: the writes it stamped as coordinator")
     verdict = lines.index("NOT HEALTHY  my_cluster  3 nodes checked, 1 problem")
     assert lines[verdict - 3:verdict] == ["", "====", ""]
     assert lines[verdict:] == [

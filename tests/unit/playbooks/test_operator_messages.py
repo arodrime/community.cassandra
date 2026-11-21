@@ -114,3 +114,13 @@ def test_every_warning_marked():
 def test_update_java_says_no_restart_is_needed_before_its_restart():
     t = [t for t in tasks("roles/cassandra_operation/tasks/action_update_java.yml") if t.get("name") == "Write the config"][0]
     assert t["vars"]["_cassandra_config_no_restart_warning"] is True
+
+
+@pytest.mark.parametrize("path", ["playbooks/add_datacenter.yml", "playbooks/start_rack.yml"])
+def test_the_check_line_fits_79_columns(path):
+    # S26 g: "--check: nothing was started, the cluster is not checked (the health_check playbook checks it)." on
+    # one line of 95 columns
+    task = next(t for t in tasks(path) if t.get("name") == "Say the cluster is not checked (--check)")
+    msg = task["ansible.builtin.debug"]["msg"]
+    assert msg == ["--check: nothing was started, the cluster is not checked.", "The health_check playbook checks it."]
+    assert all(len(line) <= 79 for line in msg)

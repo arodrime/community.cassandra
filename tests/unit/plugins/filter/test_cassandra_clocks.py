@@ -518,12 +518,14 @@ def test_health_block_every_clock_in_sync():
     health = cassandra_clock_health(v, command="ansible-playbook -i inv.yml community.cassandra.sync_clocks")
     assert health["finding"] is None
     assert health["lines"] == [
-        "CLOCKS  in sync: synchronised to a source, offset plus the daemon's error bound within 50 ms"
-        " (cassandra_clock_max_offset_ms)",
+        "CLOCKS  in sync: synchronised to a source, offset plus the daemon's error",
+        "        bound within 50 ms (cassandra_clock_max_offset_ms)",
         "  node1  ok  chronyd, synchronised to 192.0.2.1, -0.0 ms (\u00b10.7 ms)",
         "  node2  ok  chronyd, synchronised to 192.0.2.1, -4.0 ms (\u00b10.7 ms)"]
-    assert cassandra_clock_health(cassandra_clock_verdicts([node("node1", probe_text())], max_ms=120))["lines"][0].endswith(
+    assert cassandra_clock_health(cassandra_clock_verdicts([node("node1", probe_text())], max_ms=120))["lines"][1].endswith(
         "within 120 ms (cassandra_clock_max_offset_ms)")
+    # health_check's heading within 79 columns (124 in S28)
+    assert all(len(line) <= 79 for line in health["lines"][:2])
 
 
 def test_health_block_a_clock_off_or_not_read_is_a_finding():
@@ -533,7 +535,7 @@ def test_health_block_a_clock_off_or_not_read_is_a_finding():
                                   node("node3", probe_text(active="", installed=("chronyd",), tracking_text=None))])
     health = cassandra_clock_health(v, unread={"node4": "MODULE FAILURE"},
                                     command="ansible-playbook -i inv.yml community.cassandra.sync_clocks")
-    lines = health["lines"]
+    lines = health["lines"][1:]  # (after the heading's first line)
     assert lines[1] == "  node1  ok            chronyd, synchronised to 192.0.2.1, -0.0 ms (\u00b10.7 ms)"
     assert lines[2] == ("  node2  OFF           chronyd, synchronised to 192.0.2.1, +200.0 ms (\u00b10.7 ms): ahead of its"
                         " source by 200.0 ms, more than 50.0 ms")

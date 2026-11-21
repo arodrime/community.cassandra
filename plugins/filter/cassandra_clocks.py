@@ -769,14 +769,14 @@ def cassandra_clock_health(verdicts, unread=None, command=""):
     and, when a node is not in sync or not read, the finding of its report ({kind: clocks, text, command}: the
     nodes and their verdicts, sync_clocks as the way out; None when every clock is in sync).
     e.g. (verdicts with node1 ok and node2 off, command="ansible-playbook community.cassandra.sync_clocks") ->
-    {lines: ["CLOCKS  in sync: synchronised to a source, offset plus the daemon's error bound within 50 ms
-    (cassandra_clock_max_offset_ms)", "  node1  ok   chronyd, ...", "  node2  OFF  chronyd, ..."],
+    {lines: ["CLOCKS  in sync: synchronised to a source, offset plus the daemon's error", "        bound within 50
+    ms (cassandra_clock_max_offset_ms)", "  node1  ok   chronyd, ...", "  node2  OFF  chronyd, ..."],
     finding: {kind: "clocks", text: "node2 OFF (CLOCKS above says why)", command: "ansible-playbook
     community.cassandra.sync_clocks --check"}}."""
     verdicts = verdicts or {}
     rows = list(verdicts.get("nodes", [])) + _unread_rows(unread)
-    lines = ["CLOCKS  in sync: synchronised to a source, offset plus the daemon's error bound within %g ms"
-             " (cassandra_clock_max_offset_ms)" % verdicts.get("max_ms", 50)]
+    lines = ["CLOCKS  in sync: synchronised to a source, offset plus the daemon's error",  # (within 79 columns)
+             "        bound within %g ms (cassandra_clock_max_offset_ms)" % verdicts.get("max_ms", 50)]
     lines += cassandra_clock_lines({"nodes": rows}, actions=False)
     lines += cassandra_output.warning_lines(verdicts.get("warnings", []))
     bad = [v for v in rows if v["verdict"] != "ok"]

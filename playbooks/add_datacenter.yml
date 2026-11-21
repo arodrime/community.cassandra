@@ -325,7 +325,9 @@
 
     - name: Say the cluster is not checked (--check)
       ansible.builtin.debug:
-        msg: "--check: nothing was started, the cluster is not checked (the health_check playbook checks it)."
+        msg:  # (each line within 79 columns)
+          - "--check: nothing was started, the cluster is not checked."
+          - "The health_check playbook checks it."
       run_once: true
       when: ansible_check_mode
       vars:
