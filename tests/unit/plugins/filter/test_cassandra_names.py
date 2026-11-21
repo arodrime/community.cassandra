@@ -161,3 +161,14 @@ def test_every_name_the_playbooks_read_is_known():
     read = _names_read(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "playbooks"))
     assert cassandra_unknown_names(sorted(read), []) == {}
     assert read - cassandra_help._known_names() == set()
+
+
+def test_every_name_rc1_knew_is_known():
+    # a name 3.0.0-rc1 knew (a variable, or a filter's name its Jinja called) is not reported unknown now
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_help
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_names import cassandra_unknown_names
+    with open(os.path.join(os.path.dirname(__file__), "fixtures", "known_names_rc1.txt"), encoding="utf-8") as f:
+        rows = [line.rstrip("\n").split("\t") for line in f if not line.startswith("#")]
+    assert len(rows) > 1000
+    assert cassandra_unknown_names([name for name, where in rows if where != "help"], []) == {}
+    assert sorted(set(name for name, where in rows if where != "names") - cassandra_help._known_names()) == []

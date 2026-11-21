@@ -13,6 +13,7 @@ variable it is close to (or "")."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import ast
 import difflib
 import functools
 import glob
@@ -26,6 +27,9 @@ from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_role
 
 _ROLES = os.path.join(os.path.dirname(__file__), "..", "..", "roles")
 _PLAYBOOKS = os.path.join(os.path.dirname(__file__), "..", "..", "playbooks")
+_FILTERS = os.path.dirname(__file__)
+# a name prefix a filter builds variable names from ("cassandra_jmx_ssl_%s", "cassandra_linux_" + key)
+_PREFIX = re.compile(r"^(cassandra_\w*_)(?:%s|$)")
 # the names the roles and playbooks use: import_cluster's own facts (import_cluster_*), not every import_ word
 # (import_tasks, import_playbook, a file's name): its options are the playbook variables
 _NAME = re.compile(r"\b(?:cassandra|import_cluster|help)_\w+")
@@ -107,6 +111,23 @@ def _used_names():
     for path in paths:
         with open(path, encoding="utf-8") as f:
             names.update(_NAME.findall(_COMMENT.sub("", f.read())))
+    return frozenset(names | filter_names())
+
+
+@functools.lru_cache(maxsize=None)
+def filter_names():
+    """The names of the collection's filters (what each FilterModule.filters() gives) and the name prefixes the
+    filters build variable names from: names the playbooks' Jinja called before a filter took the Jinja over."""
+    names = set()
+    for path in glob.glob(os.path.join(_FILTERS, "*.py")):
+        with open(path, encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name == "FilterModule":
+                names.update(key.value for item in ast.walk(node) if isinstance(item, ast.Dict)
+                             for key in item.keys if isinstance(key, ast.Constant) and isinstance(key.value, str))
+            elif isinstance(node, ast.Constant) and isinstance(node.value, str) and _PREFIX.match(node.value):
+                names.add(_PREFIX.match(node.value).group(1))
     return frozenset(names)
 
 
