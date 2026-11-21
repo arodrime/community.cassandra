@@ -60,6 +60,14 @@ def cassandra_unit_environment(text):
     return dict(w.split("=", 1) for w in words if "=" in w)
 
 
+class _Reading(object):
+    """What cassandra_config_import is reading (what: a file, a part of the work): an unexpected error names it in its
+    message, which shows nothing else of the node's files. _config_import sets it before each step."""
+
+    def __init__(self, what):
+        self.what = what
+
+
 def cassandra_config_import(live_files, cassandra_version, facts, conf_target="", storage_dir="", jmx_files=None,
                             release="", java="", cmdline="", jvm=None):
     """cassandra_config variables that render a node's files, and what the
@@ -87,19 +95,19 @@ def cassandra_config_import(live_files, cassandra_version, facts, conf_target=""
     -> {"vars": {"cassandra_cluster_name": "Prod", ...}, "hand_edits": [], "normalized": [], ...}."""
     if cassandra_version not in SERIES:
         raise AnsibleFilterError("cassandra_config_import: unsupported series %s" % cassandra_version)
-    where = ["the role defaults"]
+    reading = _Reading("the role defaults")
     # Java's Properties ends a line at \r\n, \r or \n (the other files: as their programs read them)
     live_files = dict((k, re.sub(r"\r\n?", "\n", v) if k.endswith(".properties") and isinstance(v, str) else v)
                       for k, v in live_files.items())
     try:
-        return _config_import(live_files, cassandra_version, facts, where, conf_target, storage_dir, jmx_files, release,
-                              java, cmdline, jvm)
+        return _config_import(live_files, cassandra_version, facts, reading, conf_target, storage_dir, jmx_files,
+                              release, java, cmdline, jvm)
     except AnsibleFilterError:
         raise
     except Exception as exc:  # pylint: disable=broad-except
         if undefined_name(exc):
             raise
-        error = error_without_message("cassandra_config_import", where[0])
+        error = error_without_message("cassandra_config_import", reading.what)
     raise error  # out of the except block: no chained message either
 
 
@@ -263,14 +271,14 @@ def _inventory_vars(changed, found, ctx, live_files, facts, conf_target, series)
     return out
 
 
-def _config_import(live_files, cassandra_version, facts, where, conf_target="", storage_dir="", jmx_files=None,
+def _config_import(live_files, cassandra_version, facts, reading, conf_target="", storage_dir="", jmx_files=None,
                    release="", java="", cmdline="", running=None):
-    """cassandra_config_import's work (where[0]: what it is reading, for its errors) -> its result."""
+    """cassandra_config_import's work (reading.what: the part it is reading, for its errors) -> its result."""
     running = dict(running or {})
     java, cmdline = java or running.get("java") or "", cmdline or running.get("cmdline") or ""
     env, ctx, files = load_role(cassandra_version, facts)
     # the Prometheus exporter's agent: its variables; the node read as without it from here on
-    where[0] = "the Prometheus exporter's agent"
+    reading.what = "the Prometheus exporter's agent"
     live_as_found = live_files
     keep = keep_files_option(running.get("keep", False))
     live_files, cmdline, exporter = _exporter_taken_out(live_files, cmdline, ctx, running, keep, conf_target,
@@ -281,39 +289,39 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
                          running.get("newer"))
     live_files, read_as_notes = _read_as_the_role(env, cassandra_version, ctx, live_files, running, keep, log_dir)
     found, from_shell = {}, set()
-    where[0] = "cassandra-env.sh"
+    reading.what = "cassandra-env.sh"
     earlier = earlier_env(cassandra_version, live_files[jvm_args.ENV], "\n".join(
         render_template(env, cassandra_version, jvm_args.ENV, ctx)[1]), facts) if jvm_args.ENV in live_files else None
     for name in files:  # (in _config_import itself: an error raised below it, outside these files, names this function)
         if name in live_files:
-            where[0] = name
+            reading.what = name
             got = earlier["found"] if earlier and name == jvm_args.ENV else \
                 import_file(env, cassandra_version, name, ctx, live_files[name].split("\n"))
             merge(found, got)
             if name.endswith(".sh"):
                 from_shell.update(got)
     if "logback.xml" in live_files:
-        where[0] = "logback.xml"
+        reading.what = "logback.xml"
         found, logback_note = _logback_found(env, cassandra_version, ctx, found, live_files["logback.xml"])
     else:
         logback_note = []
-    where[0] = "the JVM options files"
+    reading.what = "the JVM options files"
     jvm_notes, jvm_warnings = jvm_options(env, cassandra_version, ctx, found, str(java or ""))
     heap_moved = _heap_moved(env, cassandra_version, ctx, found, java, cmdline, running, keep, live_files)
     jvm_warnings += _later_stock_warnings(env, cassandra_version, ctx, files, live_files)
-    where[0] = "cassandra.yaml"
+    reading.what = "cassandra.yaml"
     changed, render_dirs, rejected = _yaml_changed(env, cassandra_version, ctx, live_files, found, from_shell,
                                                    storage_dir, release)
-    where[0] = "jmxremote.password"
+    reading.what = "jmxremote.password"
     jmx_files, jmx_vars, jmx_note, jmx_unread_note = _jmx_import(env, live_files, jmx_files, running)
     changed.update(jmx_vars)
-    where[0] = "comparing the files with the role's"
+    reading.what = "comparing the files with the role's"
     render = _render_values(ctx, changed, found, live_files, render_dirs)
-    where[0] = "the JVM options"
+    reading.what = "the JVM options"
     moved = jvm_moves(env, cassandra_version, files, ctx, render, live_files, dict(running, jaas=jmx_files["jaas"]),
                       earlier["text"] if earlier else None)
     _take_moved(moved["vars"], ctx, render, changed)
-    where[0] = "comparing the files with the role's"
+    reading.what = "comparing the files with the role's"
     # (the heap shown the same from the running JVM's arguments wherever its file has it: not a hand edit there)
     hand, normalized, comments = leftovers(env, cassandra_version, files, render, live_files, rejected,
                                            moved["shown"], HEAP_OPTIONS if moved["shown"] else (),
