@@ -537,7 +537,7 @@ def cassandra_rack_outside_lines(verdict, unreached, dc, rack, command, run=None
     else:
         lines = ["Rack %s (%s): nothing started, --limit leaves out all of its nodes." % (rack, dc)]
     if lines:
-        lines += [out.WARNING + "%s is in rack %s (%s) of the ring, %s in the inventory" % (h, r, d, rack)
+        lines += [out.WARNING + "%s is in rack %s (%s) of the ring, %s (%s) in the inventory" % (h, r, d, rack, dc)
                   for h, d, r in verdict.get("other_rack") or []]
     views = verdict.get("seen_from_run_only") or []
     if lines and views:

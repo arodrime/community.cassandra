@@ -1046,7 +1046,7 @@ def test_a_node_of_the_run_on_a_cluster_network_is_a_success_with_and_without_li
         assert problems == [] and said[:4] == UP + LEFT_OUT + ["  n3  DN"]
         # the ring puts 10.0.0.2 in r9 (its rackdc file): n2 said UN, its rack a warning line
         assert check(names=names, hostvars=hostvars, racks={"n2": "r9"}) == (
-            [], EVERY + ["WARNING  n2 is in rack r9 (dc1) of the ring, r2 in the inventory"])
+            [], EVERY + ["WARNING  n2 is in rack r9 (dc1) of the ring, r2 (dc1) in the inventory"])
     # 10.0.0.2 DN: a stop (every ring node of the rack must be UN), with and without --limit
     # (read again from n3, of the rack; under --limit n3 is out of the play: from n1)
     for play, readers in ((None, "n2 and n3"), (["n1", "n2", "n4"], "n1 and n2")):
@@ -1330,7 +1330,17 @@ def test_a_node_of_the_rack_in_another_rack_of_the_ring_is_said():
     # the inventory puts n2 in r2, the ring in r9 (its rackdc file): "every node is UN: n2 n3", the disagreement
     # never said (stop_rack's replica count for r2 is then wrong). Now a WARNING line under the success
     problems, said = check(racks={"n2": "r9"})
-    assert problems == [] and said == EVERY + ["WARNING  n2 is in rack r9 (dc1) of the ring, r2 in the inventory"]
+    assert problems == [] and said == EVERY + ["WARNING  n2 is in rack r9 (dc1) of the ring, r2 (dc1) in the inventory"]
+    # another dc too: both dcs said (the inventory's was not)
+    read = ring()
+    nodes = read["cluster_status"]["dc1"]["nodes"]
+    read["cluster_status"]["dc2"] = {"nodes": [dict(n, rack="r1") for n in nodes if n["host_id"] == "hid-n2"]}
+    read["cluster_status"]["dc1"]["nodes"] = [n for n in nodes if n["host_id"] != "hid-n2"]
+    problems, said = check_ring(read)
+    assert problems == [] and said["other_rack"] == [["n2", "dc2", "r1"]]
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_start_rack import cassandra_rack_outside_lines
+    assert cassandra_rack_outside_lines(said, [], "dc1", "r2", "x")[-1] == (
+        "WARNING  n2 is in rack r1 (dc2) of the ring, r2 (dc1) in the inventory")
 
 
 def test_two_hosts_giving_the_same_address_do_not_stop_the_run():
