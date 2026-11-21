@@ -117,3 +117,9 @@ def test_a_limit_from_a_file_is_read_for_the_recap(tmp_path, monkeypatch):
     from ansible_collections.community.cassandra.plugins.filter.cassandra_summary import cassandra_limit_patterns
     assert cassandra_limit_patterns("n3,@retry.txt") == "n3,n1,n2" and cassandra_limit_patterns("") == ""
     assert cassandra_limit_patterns("all:!n3") == "all,!n3"  # (the same patterns)
+    # a file's line is one pattern for Ansible, never split: "n1:n2" matches no host (it took n1 and n2); an
+    # IPv6 host name stays whole; the path as written (Ansible expands no ~)
+    (tmp_path / "odd.txt").write_text("n1:n2\nn3,n4\n2001:db8::5\nn4\n")
+    assert cassandra_limit_patterns("@odd.txt") == "2001:db8::5,n4"
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert cassandra_limit_patterns("@~/retry.txt") == ""

@@ -24,7 +24,6 @@ cassandra_limit_patterns: a --limit (ansible_limit) -> its host patterns, its @f
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
-import os
 import re
 import shlex
 import textwrap
@@ -264,8 +263,9 @@ def cassandra_op_results(hosts, hostvars, play_hosts, play_hosts_all, limited=No
 
 def cassandra_limit_patterns(limit):
     """A --limit as Ansible takes it (ansible_limit) -> its host patterns, comma separated, each @file's lines in
-    its place (as Ansible reads it: from the run's directory); "" without a --limit, or when a file is not read
-    (the inventory_hostnames lookup would match nothing, with a warning in the run).
+    its place (as Ansible reads it: from the run's directory, its path as written, no ~; each line one pattern, so
+    a line the lookup would split, "n1:n2", matches nothing, left out); "" without a --limit, or when a file is
+    not read (the inventory_hostnames lookup would match nothing, with a warning in the run).
     e.g. "n1,@retry.txt" (retry.txt: "n2\nn3\n") -> "n1,n2,n3"."""
     patterns = []
     for pattern in split_host_pattern(str(limit or "")):
@@ -273,10 +273,11 @@ def cassandra_limit_patterns(limit):
             patterns.append(pattern)
             continue
         try:
-            with open(os.path.expanduser(pattern[1:]), encoding="utf-8") as f:
-                patterns += [line.strip() for line in f.read().split("\n") if line.strip()]
+            with open(pattern[1:], encoding="utf-8") as f:
+                lines = [line.strip() for line in f.read().split("\n") if line.strip()]
         except (IOError, OSError, UnicodeDecodeError):
             return ""
+        patterns += [line for line in lines if split_host_pattern(line) == [line]]
     return ",".join(patterns)
 
 
