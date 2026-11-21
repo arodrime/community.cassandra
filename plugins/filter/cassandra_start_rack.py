@@ -489,35 +489,41 @@ _DOING = {"J": "joining", "L": "leaving", "M": "moving"}
 
 def _left_out_lines(verdict, dc, rack, command, viewer=()):
     """The warning on the nodes of the rack left out by --limit not UN (verdict's left_out): a row per node (by its
-    name, else its address), then what to do per state, in the rows' order: down, start it (the start_rack
-    command, command, with --limit that node and viewer: the node outside the rack this run read from and a node
-    of the run seen UN, so that the ring is read from them too; the others left out stay as they are); the nodes
-    known by their address only, together: the nodes left out they may be (not in the ring at an address of their
-    own), --limit those; joining, leaving or moving, wait for it to finish; [] for none."""
+    name, else its address and "no host known by it"), then a WAY OUT per state, in the rows' order: down, start it
+    (the start_rack command, command, with --limit that node and viewer: the node outside the rack this run read
+    from and a node of the run seen UN, so that the ring is read from them too; the others left out stay as they
+    are); the nodes known by their address only, together: a WARNING with the nodes left out they may be (not in
+    the ring at an address of their own) as rows, then the WAY OUT that starts those; joining, leaving or moving,
+    wait for it to finish; [] for none."""
     nodes = verdict.get("left_out") or []
     if not nodes:
         return []
     lines = [out.WARNING + "rack %s (%s), not UN, left out by --limit (not%sin%sthis%srun):" % (
         rack, dc, out.NBSP, out.NBSP, out.NBSP)]
-    lines += out.table([[n.get("name") or n["address"], "/".join(n["states"])] for n in nodes], indent="  ")
+    lines += out.table([[n.get("name") or n["address"], "/".join(n["states"])] + ([] if n.get("name") else [
+        "no host known by it"]) for n in nodes], indent="  ")
     down = [n for n in nodes if any(s[:1] == "D" for s in n["states"])]
     by_address = [n for n in down if not n.get("name")]
     viewer = list(viewer or [])
     for n in down:
         if n.get("name"):
-            lines += ["start %s: run start_rack on it%s" % (n["name"], _seen_too(viewer) if viewer else out.NBSP + "alone"),
-                      "  %s --limit %s" % (command, shlex.quote(",".join(viewer + [n["name"]])))]
+            lines += [_WAY_OUT + "start %s: run start_rack on it%s:" % (
+                n["name"], _seen_too(viewer) if viewer else out.NBSP + "alone"),
+                "  %s --limit %s" % (command, shlex.quote(",".join(viewer + [n["name"]])))]
         elif n is by_address[0]:
             lines += _by_address_lines(by_address, command, viewer)
     for n in nodes:
         busy = [s for s in n["states"] if s[:1] == "U" and s[1:] in _DOING]
         if n not in down and busy:
-            lines.append("%s is %s (%s): wait for%s" % (
+            lines.append(_WAY_OUT + "%s is %s (%s): wait for%s" % (
                 n.get("name") or n["address"], _DOING[busy[0][1:]], busy[0], out.NBSP.join(["", "it", "to", "finish"])))
         elif n not in down:  # (another state: "?N", nodetool's own)
-            lines.append("%s is %s: check it with nodetool status on it" % (
+            lines.append(_WAY_OUT + "%s is %s: check it with nodetool status on it" % (
                 n.get("name") or n["address"], "/".join(n["states"])))
     return lines
+
+
+_WAY_OUT = "WAY OUT  "
 
 
 def _seen_too(viewer):
@@ -526,22 +532,20 @@ def _seen_too(viewer):
 
 
 def _by_address_lines(by_address, command, viewer):
-    """The nodes left out down known by their address only -> the start of the nodes left out they may be: those
-    not in the ring at an address of their own."""
+    """The nodes left out down known by their address only (their rows above say "no host known by it") -> the
+    nodes left out they may be: those not in the ring at an address of their own, a row each, then the WAY OUT
+    that starts them; none: the WAY OUT that checks the addresses."""
     unplaced = by_address[0].get("unplaced") or []
-    start = "start " if unplaced else ""
-    if len(by_address) == 1:
-        lines = ["%s%s: no host known by that address" % (start, by_address[0]["address"])]
-    else:
-        lines = ["%sthe nodes at these addresses, no host known by them:" % start] + [
-            "  " + n["address"] for n in by_address]
     if not unplaced:  # (every node left out is in the ring now)
-        return lines + ["  check %s with nodetool status" % ("it" if len(by_address) == 1 else "them")]
-    lines += ["  %s left out by --limit, not in the ring at an address of %s:" % (
-        "the node" if len(unplaced) == 1 else "the nodes", "its own" if len(unplaced) == 1 else "their own")]
-    lines += ["    " + h for h in unplaced]
-    if viewer:
-        lines.append("  run start_rack on %s%s:" % ("it" if len(unplaced) == 1 else "them", _seen_too(viewer)))
+        return [_WAY_OUT + ("check %s with nodetool status" % by_address[0]["address"] if len(by_address) == 1 else
+                            "check the addresses no host is known by with nodetool status")]
+    one = len(unplaced) == 1
+    lines = [out.WARNING + "left out by --limit, not in the ring at an address of %s:" % (
+        "its own" if one else "their own")]
+    lines += ["  " + h for h in unplaced]
+    lines.append(_WAY_OUT + "start %s: run start_rack on %s%s:" % (
+        "it" if one else "them", "it" if one else "them",
+        _seen_too(viewer) if viewer else (out.NBSP + "alone" if one else "")))
     return lines + ["  %s --limit %s" % (command, shlex.quote(",".join(viewer + unplaced)))]
 
 
