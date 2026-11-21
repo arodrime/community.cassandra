@@ -1,2 +1,2 @@
 bugfixes:
-  - "start_rack playbook - once the rack's nodes are UN, the run says so and names them, one per line (``Rack r2 (dc1), every node is UN:``), then a node of the ring in the rack whose address no inventory host has, a row with its address and state, also when nothing else is said; before, that line came only with a warning about the rest of the cluster."
+  - "start_rack playbook - once the rack's nodes are UN, the run says so and names them, one per line (``Rack r2 (dc1), every node is UN:``), also when nothing else is said; before, that line came only with a warning about the rest of the cluster."

@@ -740,31 +740,24 @@ names them (``cassandra_dc``, ``cassandra_rack``). With RF 2 it warns that
 
 ``start_rack`` starts the rack again and checks the cluster from a node of the rack and from a node outside it, up
 for long; when it waits, it reads again from another node of the rack first. The rack's nodes must be UN; the rest
-of the cluster is only a warning, unless a node could be one of the rack. The tables of the
+of the cluster is only a warning, unless the ring puts a node in the rack. The tables of the
 ``cassandra_start_rack`` filter (``plugins/filter/cassandra_start_rack.py``) give the whole rule; in short:
 
-- before any node is started, two hosts giving the same ring address stop the run (``broadcast_address`` in
-  ``cassandra_extra_settings``, else ``cassandra_listen_address``, else ``ansible_host``; an ``ansible_host`` shared
-  alone, ``127.0.0.1`` on every host with ccm or a jump host, is not one): the check tells the nodes apart by address;
-- each node of the run is placed in the ring by its Host ID (``nodetool info`` on it), whatever its address; any
-  other host by the addresses its variables and facts give, then, while every node of the run is placed, by what its
-  names resolve to on the controller (a host out of the play or not reached has no facts). A node of the run whose
-  ``nodetool info`` fails is placed by its addresses; one whose Host ID no ring read has stops the run;
-- a node of the rack is every node the inventory or the ring puts in it, under ``--limit`` too, and a ring node no
-  host is known by while a node of the run is not placed and the nodes of the rack not placed outnumber the ring's
-  nodes of the rack no host is known by (the stop says why, and to give its host the address the ring shows:
-  ``broadcast_address`` in ``cassandra_extra_settings``, else ``cassandra_listen_address`` or ``ansible_host``);
-- a node of the run not placed is not said UN: the success says what the ring shows (``Rack r2 (dc1), UN in the
-  ring:``, the rack's nodes UN by name, else by address), then that node. When the nodes of the rack not placed (of
-  the run or left out) outnumber the ring's nodes of the rack no host is known by, the run stops, with those ring
-  nodes, the rack's datacenter's (five at most), and the address to give;
-- a node of the rack the ring puts in another rack is a warning line under the success;
+- each node of the run is placed in the ring by its Host ID (``nodetool info`` on it, 70 seconds at most),
+  whatever its address. Any other host (left out by ``--limit``, outside the rack) by the addresses its variables
+  and facts give, then by what its names resolve to on the controller, taken only for a ring node the ring puts in
+  that host's own datacenter and rack (a host out of the play or not reached has no facts). Two hosts outside the
+  run giving one address: the ring node there is named after one of them;
+- a node of the run whose Host ID is not read (``nodetool info`` failing on it, no ``ID`` line in its output, or
+  two nodes of the run giving one) stops the run with what was seen; it is read again after the wait for the
+  rack's nodes down (its JVM down, the ring sees it down too). One whose Host ID no ring read has stops it too;
+- a node of the rack is every node the inventory or the ring puts in it, under ``--limit`` too;
+- a node of the rack the ring puts in another rack is a warning line under the success, with both racks;
 - a node of the rack not reached over ssh stops the run at once; one not UN, or whose ``nodetool status`` fails,
   stops it (a node down: after waiting for it to come back; way out: run ``start_rack`` again);
 - a node of the rack left out by ``--limit`` (this run does not start it) and not UN is not waited for. The run
-  succeeds once the other nodes of the rack in the ring are UN. A node of the ring in the rack no inventory host
-  is known by is said under the success, a row with its address and state. A warning then names the node
-  left out, in its state of the last read, and what to do: down, the ``start_rack`` command that starts it;
+  succeeds once the other nodes of the rack in the ring are UN. A warning then names the node left out, in its
+  state of the last read, and what to do: down, the ``start_rack`` command that starts it;
   joining, leaving or moving, wait for it to finish. Its ``--limit`` is that node, the node outside the rack this
   run read from and a node of the run seen UN: the ring is then read from them too. The other nodes left out stay
   as they are;
