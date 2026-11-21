@@ -361,3 +361,29 @@ def test_an_apply_config_row_says_only_what_was_observed_of_its_config():
     for stage in ("during", "writing", "written"):
         assert outcome("n1", "apply_config FAILED after 3s: x", stage)[0]["touched"] is True
     assert outcome("n1", "apply_config FAILED after 3s: x", "before")[0]["touched"] is False
+
+
+def test_the_checks_notes_said_on_their_own_fit_79_columns():
+    # apply_config --check (no plan to hold them): the seeds warning was one line of 101 columns, its next lines
+    # at column 0; now as in a plan, under its text, within 79 columns, the command whole on a line of its own
+    import os
+    import yaml
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_summary import cassandra_notes_lines
+    note = ("WARNING  Seeds  dc1  h-n1 (r1), h-n3 (r1)  2 seeds on r1, none on r2, r3: put them on different racks\n"
+            "suggested in the group_vars of hostile_cluster: cassandra_seeds: [\"h-n1\", \"h-n4\", \"h-n5\"]\n"
+            "then apply it live: ansible-playbook -i inventories/hostile_cluster.yml community.cassandra.change_seeds")
+    lines = cassandra_notes_lines([note, "h-n2: a note of its own"])
+    assert lines == [
+        "WARNING  Seeds  dc1  h-n1 (r1), h-n3 (r1)  2 seeds on r1, none on r2, r3: put",
+        "         them on different racks",
+        "         suggested in the group_vars of hostile_cluster: cassandra_seeds:",
+        "           [\"h-n1\", \"h-n4\", \"h-n5\"]",
+        "         then apply it live:",
+        "           ansible-playbook -i inventories/hostile_cluster.yml \\",
+        "             community.cassandra.change_seeds",
+        "h-n2: a note of its own"]
+    with open(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "playbooks", "apply_config.yml"),
+              encoding="utf-8") as f:
+        tasks = [t for p in yaml.safe_load(f) for t in p.get("tasks", [])]
+    said = next(t for t in tasks if t.get("name") == "Say the checks' notes")
+    assert "cassandra_notes_lines" in said["ansible.builtin.debug"]["msg"]

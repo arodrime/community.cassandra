@@ -192,6 +192,34 @@ def cassandra_warnings(warnings, width=None):
     return out.fit(out.warning_lines(texts), width or STOP_WIDTH) if texts else []
 
 
+_LABELLED_COMMAND = re.compile(r"^(\s*)(.*: )(ansible-playbook .*)$")
+
+
+def cassandra_notes_lines(notes, width=None):
+    """The checks' notes said on their own (note.yml's _cassandra_notes: no plan to hold them), width columns at most
+    (default 79): a WARNING note's next lines under its text, as in a plan; a command after a label ("then apply it
+    live: ansible-playbook ...") on a line of its own when too long, cut between its arguments; another note as
+    it is, wrapped."""
+    width = width or STOP_WIDTH
+    lines = []
+    for note in notes or []:
+        if out.is_warning(note):
+            said = out.warning(str(note).split("\n"), under=True)
+            first = textwrap.wrap(said[0], width, subsequent_indent=" " * len(out.WARNING), break_long_words=False,
+                                  break_on_hyphens=False) or [said[0]]
+            rest = []
+            for line in said[1:]:
+                labelled = _LABELLED_COMMAND.match(line)
+                if labelled and len(line) > width:
+                    rest += [labelled.group(1) + labelled.group(2).rstrip(), labelled.group(1) + "  " + labelled.group(3)]
+                else:
+                    rest.append(line)
+            lines += first + out.fit(rest, width)
+        else:
+            lines += out.fit(str(note).split("\n"), width)
+    return lines
+
+
 def cassandra_op_recap(results, check=False, cluster="", operation="", action="", seconds=None, warnings=None):
     """results: [{node, result}] in the order of the run, result each node's
     cassandra_op_result. The recap of plugin_utils cassandra_output: the verdict (DONE,
@@ -409,4 +437,5 @@ class FilterModule(object):
             "cassandra_differs": cassandra_differs,
             "cassandra_limits_changed": cassandra_limits_changed,
             "cassandra_warnings": cassandra_warnings,
+            "cassandra_notes_lines": cassandra_notes_lines,
         }

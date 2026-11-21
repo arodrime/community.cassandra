@@ -1216,7 +1216,7 @@
     # JVM options...) are still said
     - name: Say the checks' notes
       ansible.builtin.debug:
-        msg: "{{ _notes | join(_nl) }}"
+        msg: "{{ _notes | community.cassandra.cassandra_notes_lines | join(_nl) }}"
       run_once: true
       when:
         - _todo | length == 0 or ansible_check_mode

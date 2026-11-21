@@ -1,0 +1,2 @@
+bugfixes:
+  - "apply_config playbook - the checks' notes said without a plan (``--check``, nothing to apply), such as the seeds WARNING, are laid out as in a plan: within 79 columns, a WARNING's next lines under its text, the ``change_seeds`` command on a line of its own when too long, no longer one line of 101 columns and its next lines at column 0."
