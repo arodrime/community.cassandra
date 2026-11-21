@@ -251,6 +251,20 @@ def _leaves_if(line):
     return len(parts) == 1 and parts[0] in ("fi", "else")
 
 
+def _plain_options(line):
+    """The options a line adds to JVM_OPTS when each one counts wherever it is set -> [option]; None when the line
+    adds none, a grep of cassandra-env.sh reads it, or one of them adds up, has no name, unlocks others or is read
+    where it is (its place counts)."""
+    append = APPEND.match(line["text"])
+    if not append or not append.group(1).split() or any(g in line["text"] for g in JVM_ENV_GREPS):
+        return None
+    options = append.group(1).split()
+    if any(_jvm_name(o) is None or _jvm_name(o) in LISTS or _jvm_name(o) in JVM_UNLOCK or IN_PLACE.match(o)
+           for o in options):
+        return None
+    return options
+
+
 def _set_again(line, later, in_block):
     """Whether a line in a block adding plain options to JVM_OPTS (each set by its last occurrence) is written again
     the same below it, bash going from one to the other through plain lines only (_plain_line: no command, no loop,
@@ -258,12 +272,7 @@ def _set_again(line, later, in_block):
     branch); without, outside any block, the lines in between leaving its ifs (fi, else) too (the remote JMX
     branch's password file line, the stock one after fi). The later one sets the same values last, the JVM gets the
     same whether the first one is there or not."""
-    append = APPEND.match(line["text"]) if line["depth"] else None
-    if not append or not append.group(1).split() or any(g in line["text"] for g in JVM_ENV_GREPS):
-        return False
-    # (an option adding up, without a name, unlocking others or read where it is: its place counts)
-    if any(_jvm_name(o) is None or _jvm_name(o) in LISTS or _jvm_name(o) in JVM_UNLOCK or IN_PLACE.match(o)
-           for o in append.group(1).split()):
+    if not line["depth"] or _plain_options(line) is None:
         return False
     for other in later:
         if other["text"] == line["text"] and (other["depth"] == line["depth"] if in_block else not other["depth"]):
@@ -340,53 +349,80 @@ def remote_branch_moved(live, role, environment=None, cmdline=""):
     if at_else is None or not _remote_branch_taken(node, at_else, end, environment, cmdline):
         return [], []
     r_start, r_end = tests[1][0], _block_end(ours, tests[1][0])
-    moved_live, moved_role = [], []
     branch = set(line["text"] for line in node[at_else + 1:end] if line["depth"] == 1 and APPEND.match(line["text"]))
+    moved_live, moved_role = [], []
     for i in range(at_else + 1, end):
-        line = node[i]
-        append = APPEND.match(line["text"]) if line["depth"] == 1 else None
-        if not append or not append.group(1).split() or any(g in line["text"] for g in JVM_ENV_GREPS):
-            continue
-        options = append.group(1).split()
-        if any(_jvm_name(o) is None or _jvm_name(o) in LISTS or _jvm_name(o) in JVM_UNLOCK or IN_PLACE.match(o)
-               for o in options):
-            continue
-        theirs = [j for j, other in enumerate(ours) if other["text"] == line["text"]]
-        if len(theirs) != 1 or ours[theirs[0]]["depth"] or [other["text"] for other in node].count(line["text"]) != 1:
-            continue
-        j = theirs[0]
-        names = set(_jvm_name(o) for o in options)
-        if any(_jvm_name(w) in names for lines, k in ((node, i), (ours, j)) for n, other in enumerate(lines) if n != k
-               for w in re.split(r"[\s\"'=]+", other["text"]) if w.startswith("-")):
-            continue  # (set elsewhere too: its place counts)
-        # between the two places: the role's lines from its line to its test's block, the node's own branch lines
-        # from this one to the block's end on that side, and the node's lines from its block to the same anchor
-        # (the anchor: the role's nearest line on the far side of its own, not one of the branch's, found in the
-        # node as the same occurrence of its text counted from the block)
-        if j < r_start:
-            a = next((n for n in range(j - 1, -1, -1) if ours[n]["text"] not in branch), None)
-            count = 0 if a is None else sum(1 for n in range(a, r_start) if ours[n]["text"] == ours[a]["text"])
-            back = [] if a is None else [n for n in range(start) if node[n]["text"] == ours[a]["text"]]
-            if count > len(back):
-                continue
-            between = ours[(a if a is not None else -1) + 1:r_start + 1] + \
-                node[back[-count] + 1 if count else 0:start + 1] + node[at_else:i]
-        elif j >= r_end:
-            a = next((n for n in range(j + 1, len(ours)) if ours[n]["text"] not in branch), None)
-            count = 0 if a is None else sum(1 for n in range(r_end, a + 1) if ours[n]["text"] == ours[a]["text"])
-            ahead = [] if a is None else [n for n in range(end, len(node)) if node[n]["text"] == ours[a]["text"]]
-            if count > len(ahead):
-                continue
-            between = ours[r_end:a if a is not None else len(ours)] + \
-                node[end:ahead[count - 1] if count else len(node)] + node[i + 1:end]
-        else:
-            continue
-        between = [other for other in between if other["text"] not in branch or other["depth"]]
-        if _reads_jvm_opts(between):
-            continue
-        moved_live.append(line["n"])
-        moved_role.append(ours[j]["n"])
+        j = _moved_to(node, ours, i, (start, at_else, end), (r_start, r_end), branch)
+        if j is not None:
+            moved_live.append(node[i]["n"])
+            moved_role.append(ours[j]["n"])
     return moved_live, moved_role
+
+
+def _moved_to(node, ours, i, block, role_block, branch):
+    """The index in ours of the remote branch's line node[i] when the JVM gets the same from it there (see
+    remote_branch_moved), else None. block: (start, at_else, end) of the node's LOCAL_JMX test, role_block: (start,
+    end) of the role's; branch: the texts of the lines adding to JVM_OPTS in the node's remote branch."""
+    line = node[i]
+    options = _plain_options(line) if line["depth"] == 1 else None
+    if options is None:
+        return None
+    theirs = [j for j, other in enumerate(ours) if other["text"] == line["text"]]
+    if len(theirs) != 1 or ours[theirs[0]]["depth"] or [other["text"] for other in node].count(line["text"]) != 1:
+        return None
+    j = theirs[0]
+    if _set_elsewhere(set(_jvm_name(o) for o in options), (node, i), (ours, j)):
+        return None  # (set elsewhere too: its place counts)
+    between = _lines_between(node, ours, i, j, block, role_block, branch)
+    if between is None:
+        return None
+    between = [other for other in between if other["text"] not in branch or other["depth"]]
+    return None if _reads_jvm_opts(between) else j
+
+
+def _set_elsewhere(names, *places):
+    """Whether a line of either file, but the one at each place ((lines, index)), names an option of names."""
+    return any(_jvm_name(w) in names for lines, k in places for n, other in enumerate(lines) if n != k
+               for w in re.split(r"[\s\"'=]+", other["text"]) if w.startswith("-"))
+
+
+def _lines_between(node, ours, i, j, block, role_block, branch):
+    """The lines bash runs between the two places of a moved line (node[i] in the remote branch, ours[j] above or
+    below the role's test): the role's lines from its line to its test's block, the node's own branch lines from this
+    one to the block's end on that side, and the node's lines from its block to the same anchor (the anchor: the
+    role's nearest line on the far side of its own, not one of the branch's, found in the node as the same occurrence
+    of its text counted from the block). None when not found (the anchor's occurrence missing in the node, ours[j]
+    inside the role's test)."""
+    start, at_else, end = block
+    r_start, r_end = role_block
+    if j < r_start:
+        return _lines_above(node, ours, i, j, (start, at_else), r_start, branch)
+    if j >= r_end:
+        return _lines_below(node, ours, i, j, end, r_end, branch)
+    return None
+
+
+def _lines_above(node, ours, i, j, block, r_start, branch):
+    """_lines_between, the role's line above its test (block: the node's (start, at_else))."""
+    start, at_else = block
+    a = next((n for n in range(j - 1, -1, -1) if ours[n]["text"] not in branch), None)
+    count = 0 if a is None else sum(1 for n in range(a, r_start) if ours[n]["text"] == ours[a]["text"])
+    back = [] if a is None else [n for n in range(start) if node[n]["text"] == ours[a]["text"]]
+    if count > len(back):
+        return None
+    return ours[(a if a is not None else -1) + 1:r_start + 1] + \
+        node[back[-count] + 1 if count else 0:start + 1] + node[at_else:i]
+
+
+def _lines_below(node, ours, i, j, end, r_end, branch):
+    """_lines_between, the role's line below its test (end: the node's block end)."""
+    a = next((n for n in range(j + 1, len(ours)) if ours[n]["text"] not in branch), None)
+    count = 0 if a is None else sum(1 for n in range(r_end, a + 1) if ours[n]["text"] == ours[a]["text"])
+    ahead = [] if a is None else [n for n in range(end, len(node)) if node[n]["text"] == ours[a]["text"]]
+    if count > len(ahead):
+        return None
+    return ours[r_end:a if a is not None else len(ours)] + \
+        node[end:ahead[count - 1] if count else len(node)] + node[i + 1:end]
 
 
 def _local_jmx_branches(lines):
