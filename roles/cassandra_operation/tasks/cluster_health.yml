@@ -166,11 +166,15 @@
     # what the check stops on: start_rack's verdict, else this check's problems (the same in the two tasks below)
     _problems: "{{ _cassandra_health_stop_on | default(cassandra_health_problems) }}"
 
+# start_rack's stop (_cassandra_health_stop_on): printed as it is, so fitted to 79 columns here (a command cut
+# between its arguments); the others' through the stop block of node_operation.yml, which fits it
 - name: Stop on an unhealthy cluster
   ansible.builtin.fail:
-    msg: "{{ _problems + _waited + _not_counted + _cassandra_health_why | default([]) + _way_out }}"
+    msg: >-
+      {{ _said | community.cassandra.cassandra_fit if _cassandra_health_stop_on is defined else _said }}
   vars:
     cassandra_output: true
+    _said: "{{ _problems + _waited + _not_counted + _cassandra_health_why | default([]) + _way_out }}"
     _problems: "{{ _cassandra_health_stop_on | default(cassandra_health_problems) }}"
     _waited: >-
       {{ ['waited ' ~ (now().timestamp() | int - _cassandra_health_wait_start | int) | community.cassandra.cassandra_duration

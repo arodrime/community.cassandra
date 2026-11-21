@@ -357,9 +357,16 @@ def cassandra_unit_secret_warnings(hosts, hostvars):
     return [{"label": cassandra_node_list(by_text[text]), "text": text} for text in order]
 
 
+def cassandra_fit(lines, width=79):
+    """Lines no longer than width (cassandra_output's fit: a longer one goes on over lines indented under it, a
+    command cut between its arguments, " \\" at the end of each line but the last)."""
+    return out.fit([str(x) for x in lines or []], int(width))
+
+
 class FilterModule(object):
     def filters(self):
         return {
+            "cassandra_fit": cassandra_fit,
             "cassandra_node_list": cassandra_node_list,
             "cassandra_duration": cassandra_duration,
             "cassandra_progress_line": cassandra_progress_line,

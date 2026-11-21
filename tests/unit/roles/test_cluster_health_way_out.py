@@ -110,8 +110,9 @@ def test_a_check_that_only_stops_reads_nothing_and_stops_on_the_problems_given()
     # not given: every task as before (the first two read, the stop on what they found)
     assert all(runs(t) for t in tasks[:2])
     lines = said(False, ["the ring read before"], _cassandra_health_again="run start_rack again", **given)
-    assert lines[:2] == ["n3 (10.0.0.3, r2) is DN, seen from n2",
-                         "WAY OUT  bring n3 back to UN (its host and/or Cassandra), then run start_rack again"]
+    assert lines[:3] == ["n3 (10.0.0.3, r2) is DN, seen from n2",
+                         "WAY OUT  bring n3 back to UN (its host and/or Cassandra), then run start_rack",
+                         "  again"]  # (start_rack's stop: within 79 columns)
 
 
 def test_forced_after_a_check_that_only_stops_it_does_not_say_a_node_is_taken_down():
@@ -125,3 +126,19 @@ def test_forced_after_a_check_that_only_stops_it_does_not_say_a_node_is_taken_do
     assert msg(_cassandra_health_stop_on=["n3 is DN"]).splitlines() == [
         "WARNING  cassandra_service_health_force is set, going on with an unhealthy cluster:", "  n3 is DN"]
     assert "taking this node down now" in msg()
+
+
+def test_start_rack_s_stop_fits_79_columns():
+    # start_rack prints the stop as it is (no stop block to fit it): its "IF ... IS LOST FOR GOOD" lines were up
+    # to 116 columns; each line within 79 now, a command cut between its arguments (" \" at the end), whole
+    from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
+    load_collection_filters()
+    problems = ["172.18.0.3 (r1) is DN, seen from h-n1"]
+    lines = said(False, problems, _cassandra_health_stop_on=problems, _cassandra_health_again="run start_rack again")
+    assert max(len(line) for line in lines) <= 79
+    joined = " ".join(line.rstrip("\\").strip() for line in lines)
+    assert " ".join(joined.split()).count("ansible-playbook -i hosts.yml community.cassandra.replace_node") == 1
+    at = lines.index("IF 172.18.0.3 IS LOST FOR GOOD")
+    assert lines[at + 3].endswith(" \\") and "-e cassandra_replace_address=172.18.0.3" in " ".join(lines[at + 3:at + 6])
+    # the others' stop: through the stop block of node_operation.yml, which fits it (as it was)
+    assert len(said(False, problems)[-1]) > 79
