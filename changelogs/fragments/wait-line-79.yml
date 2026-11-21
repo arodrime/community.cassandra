@@ -1,2 +1,2 @@
 bugfixes:
-  - "cluster checks - the progress line of a wait for nodes down stays within 79 columns (it is rewritten in place): past it, the nodes are said shorter (``node4 is DN and 2 more not UN``, then ``3 nodes not UN``); the stop still names every node."
+  - "cluster checks - the progress line of a wait for nodes down stays within 79 columns (it is rewritten in place): past it, the nodes are said shorter, the first form that fits (``node4 is DN, node5 is DN`` without ``waiting for them to come back``, then ``node4 is DN and 2 more not UN``, then ``3 nodes not UN``); the stop still names every node."

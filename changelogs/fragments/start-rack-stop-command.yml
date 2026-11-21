@@ -1,0 +1,2 @@
+bugfixes:
+  - "start_rack playbook - a stop on the rack's nodes not UN, or on a node of the rack not reached over ssh, gives the run's own command to run again (its inventory, cluster and ``--limit``) under its way out, no longer only ``run start_rack again``."
