@@ -1323,6 +1323,11 @@ def test_fit_never_breaks_a_no_break_space():
     assert out.fit([line], 79) == ["WAY OUT  bring h-n2 back to UN (its host and/or Cassandra), then run",
                                    "  start_rack again"]
     assert out.fit(["run start_rack" + out.NBSP + "again"], 79) == ["run start_rack again"]
+    # a command cut between its arguments: none kept either (it pastes)
+    command = "ansible-playbook -i hosts.yml community.cassandra.start_rack -e cassandra_target_dc=dc1 -e x=run" + \
+        out.NBSP + "again"
+    lines = out.fit([command], 79)
+    assert not [line for line in lines if out.NBSP in line] and " ".join(lines).endswith("-e x=run again")
 
 
 def test_a_labelled_command_is_read_the_same_for_plans_and_notes():

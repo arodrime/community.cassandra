@@ -750,7 +750,7 @@ def fit(lines, width):
             continue
         command = _COMMAND_LINE.match(line)
         if command:
-            out += _continued(len(command.group(1)), line.strip(), width)
+            out += _continued(len(command.group(1)), line.strip().replace(NBSP, " "), width)
             continue
         lead = re.match(r"^(\s*)(\d+\.\s+)?", line)
         hang = " " * (len(lead.group(0)) if lead.group(2) else len(lead.group(1)) + 2)
