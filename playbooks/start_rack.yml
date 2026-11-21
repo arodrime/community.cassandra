@@ -230,6 +230,11 @@
       reads: "{{ [cassandra_health_self | default({}), cassandra_health_peer | default({})] }}"  # (the rings read)
       schema: "{{ cassandra_health_schema | default({}) }}"
       left_out: "{{ _cassandra_start_rack_left_out }}"
+    # the run's own command again (its inventory, cluster, --limit), for the way out of a stop
+    _cassandra_start_rack_again: >-
+      {{ 'start_rack' | community.cassandra.cassandra_command(
+           extra={'cassandra_target_dc': cassandra_target_dc, 'cassandra_target_rack': cassandra_target_rack},
+           limit=ansible_limit | default(''), **_cassandra_start_rack_command_args) }}
     # the run's inventory and cluster, for the commands said
     _cassandra_start_rack_command_args:
       inventory: "{{ ansible_inventory_sources }}"
@@ -275,11 +280,10 @@
 
     - name: Stop when a node of the rack is not reached over ssh
       ansible.builtin.fail:
-        msg:
-          - "{{ inventory_hostname }} (rack {{ cassandra_target_rack }}) is not reached over ssh"
-          - "all of the error:"
-          - "  {{ inventory_hostname | community.cassandra.cassandra_ping_command(_args.inventory, _args.default_inventory, _args.cwd) }}"
-          - "WAY OUT  reach it, then run start_rack again"
+        msg: >-
+          {{ [inventory_hostname ~ ' (rack ' ~ cassandra_target_rack ~ ') is not reached over ssh', 'all of the error:',
+              '  ' ~ _ping, 'WAY OUT  reach it, then run start_rack again:', '  ' ~ _cassandra_start_rack_again]
+             | community.cassandra.cassandra_fit }}
       any_errors_fatal: true  # the rack is not checked without it
       when:
         - _cassandra_start_rack_ssh.unreachable | default(false)
@@ -287,6 +291,7 @@
       vars:
         cassandra_output: true
         _args: "{{ _cassandra_start_rack_command_args }}"
+        _ping: "{{ inventory_hostname | community.cassandra.cassandra_ping_command(_args.inventory, _args.default_inventory, _args.cwd) }}"
 
     # said in the warning below; nothing more is asked of it
     - name: Leave out a node outside the rack not reached over ssh
@@ -377,7 +382,8 @@
       vars:
         _cassandra_health_stop_on: "{{ _cassandra_start_rack_last_verdict.problems }}"
         _cassandra_health_why: "{{ _cassandra_start_rack_last_verdict.unknown_lines }}"
-        _cassandra_health_again: "run start_rack\u00a0again"  # (a no-break space: "again" never alone on a line)
+        _cassandra_health_again: "run start_rack\u00a0again:"  # (a no-break space: "again" never alone on a line)
+        _cassandra_health_again_command: "{{ _cassandra_start_rack_again }}"
       when:
         - inventory_hostname == _cassandra_start_rack_checker
         - not ansible_check_mode

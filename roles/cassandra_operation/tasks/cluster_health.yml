@@ -24,7 +24,8 @@
 # _cassandra_health_stop_on: problems to stop on (or go on, forced), nothing read: the
 # caller's judgment of a report_only check (start_rack: the rack's own problems);
 # _cassandra_health_why: lines the stop says after them (why they are problems);
-# _cassandra_health_again: what the way out ends with (default: resume).
+# _cassandra_health_again: what the way out ends with (default: resume);
+# _cassandra_health_again_command: the command it runs, said under it.
 # cassandra_service_health_report_only: true only sets cassandra_health_problems
 # and cassandra_health_findings (no failure; it waits as above unless told not to).
 # cassandra_service_health_batch: true for the hosts of a play checked at once:
@@ -185,10 +186,13 @@
           ~ '. Still in the ring? The playbook topology removes them.']
          if _absent and _problems | select('search', '^the ring has ') | list else [] }}
     _absent: "{{ query('community.cassandra.cassandra_nodes', state='absent') }}"
-    _way_out: >-
+    _way_out: "{{ _way_out_line + _again_command + (_lost if _down else []) }}"
+    _way_out_line: >-
       {{ ['WAY OUT  bring ' ~ _down | join(', ') ~ ' back to UN (' ~ ('its' if _down | length == 1 else 'their')
-          ~ ' host and/or Cassandra), then ' ~ _again] + _lost
+          ~ ' host and/or Cassandra), then ' ~ _again]
          if _down else ['WAY OUT  fix it (the lines above say what), then ' ~ _again] }}
+    # the command to run again, on a line of its own (start_rack's: the run's own)
+    _again_command: "{{ ['  ' ~ _cassandra_health_again_command] if _cassandra_health_again_command is defined else [] }}"
     # the cluster's group, where replace_node wants the new host (replace_node.yml)
     _group: >-
       {{ _cassandra_run_command_args.hosts | default('', true) or "the cluster's group" }}

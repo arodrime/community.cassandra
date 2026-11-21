@@ -115,7 +115,31 @@ def test_a_check_that_only_stops_reads_nothing_and_stops_on_the_problems_given()
     # (start_rack's stop: within 79 columns; "again" was alone on the last line)
     assert lines[:3] == ["n3 (10.0.0.3, r2) is DN, seen from n2",
                          "WAY OUT  bring n3 back to UN (its host and/or Cassandra), then run",
-                         "  start_rack again"]
+                         "  start_rack again:"]
+
+
+def test_start_rack_s_stop_gives_its_own_command_again():
+    # its way out said "then run start_rack again" with no command, while its rescue gave the run's own one
+    from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
+    load_collection_filters()
+    command = "ansible-playbook -i hosts.yml community.cassandra.start_rack --limit 'all:!n3' -e cassandra_target_dc=dc1" \
+              " -e cassandra_target_rack=r2"
+    given = dict(_cassandra_health_stop_on=["n2 (10.0.0.2, r2) is DN, seen from n1"], _cassandra_health_again=start_rack_again(),
+                 _cassandra_health_again_command=command)
+    lines = said(False, [], **given)
+    assert lines[:5] == ["n2 (10.0.0.2, r2) is DN, seen from n1",
+                         "WAY OUT  bring n2 back to UN (its host and/or Cassandra), then run",
+                         "  start_rack again:",
+                         "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
+                         "    --limit 'all:!n3' -e cassandra_target_dc=dc1 -e cassandra_target_rack=r2"]
+    assert lines[5] == "IF n2 IS LOST FOR GOOD" and max(len(x) for x in lines) <= 79
+    given["_cassandra_health_stop_on"] = ["n2 (r2) is not in the ring at an address it gives: not seen UN"]
+    assert said(False, [], **given)[1:4] == [
+        "WAY OUT  fix it (the lines above say what), then run start_rack again:",
+        "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
+        "    --limit 'all:!n3' -e cassandra_target_dc=dc1 -e cassandra_target_rack=r2"]
+    # without it, as before
+    assert said(False, ["x"])[1:] == ["WAY OUT  fix it (the lines above say what), then resume"]
 
 
 def start_rack_again():

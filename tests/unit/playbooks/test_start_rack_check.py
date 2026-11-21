@@ -537,7 +537,13 @@ def test_checked_from_a_node_of_the_rack_and_not_under_check():
     assert TASKS[CHECK]["vars"]["cassandra_service_health_report_only"] is True
     assert NAMES.index(CHECK) < NAMES.index(AFTER) < NAMES.index(STOP) < NAMES.index(SAY)
     assert TASKS[STOP]["vars"]["_cassandra_health_stop_on"] == "{{ _cassandra_start_rack_last_verdict.problems }}"
-    assert TASKS[STOP]["vars"]["_cassandra_health_again"].replace(u"\xa0", " ") == "run start_rack again"
+    assert TASKS[STOP]["vars"]["_cassandra_health_again"].replace(u"\xa0", " ") == "run start_rack again:"
+    # the command under it: the run's own (its inventory, cluster, --limit), as the rescue's
+    assert render(TASKS[STOP]["vars"]["_cassandra_health_again_command"], ansible_limit="all:!n3",
+                  cassandra_target_dc="dc1", cassandra_target_rack="r2", _cassandra_start_rack_command_args=COMMAND_ARGS,
+                  _cassandra_start_rack_again=PLAY["vars"]["_cassandra_start_rack_again"]) == (
+        "ansible-playbook -i hosts.yml community.cassandra.start_rack --limit 'all:!n3' -e cassandra_target_dc=dc1"
+        " -e cassandra_target_rack=r2")
     assert TASKS[STOP]["ansible.builtin.include_role"]["tasks_from"] == "cluster_health.yml"
     assert "cassandra_service_health_report_only" not in TASKS[STOP]["vars"]
     # the facts gathered after the probe, before any read; the probe under --check too, without root
@@ -599,7 +605,8 @@ def test_a_host_of_the_rack_not_reached_stops_the_run(tmp_path):
         assert run.returncode != 0
         assert "node3 (rack r2) is not reached over ssh" in run.stdout
         assert "ansible -i hosts.yml node3 -m ping -vvv" in run.stdout  # (the run's inventory)
-        assert "WAY OUT  reach it, then run start_rack again" in run.stdout
+        assert "WAY OUT  reach it, then run start_rack again:" in run.stdout
+        assert "community.cassandra.start_rack" in run.stdout  # (its command again)
         assert "unreached=" not in run.stdout  # any_errors_fatal: nothing after it
 
 
