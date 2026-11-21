@@ -13,8 +13,6 @@ import pytest
 import yaml
 
 from ansible.errors import AnsibleFilterError
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     cassandra_config_import, cassandra_inventory_files, cassandra_inventory_layout)
@@ -23,14 +21,9 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import_che
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
     cassandra_import_self_check_advice)
 
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
-
 from ansible_collections.community.cassandra.tests.unit.import_nodes import node
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
+from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, trust_as_template
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 STOCK = os.path.join(ROOT, "roles", "cassandra_config", "molecule", "default", "files", "stock-5.0.9")
@@ -38,7 +31,7 @@ FACTS = {"os_family": "Debian", "default_ipv4": {"address": "10.0.0.1"}, "hostna
 
 
 def render(template, **variables):
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
+    return render_as_given(template, variables)
 
 
 NOT_IMPORTED = "jmxremote.password (/etc/cassandra/jmxremote.password): its users NOT imported"

@@ -18,15 +18,8 @@ import time
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given as render, trust_as_template
 
 ROLE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_operation")
 
@@ -61,10 +54,6 @@ NOTE = task("config_pending.yml", "Note whether a restart is pending")
 YAML = "/etc/cassandra/conf/cassandra.yaml"
 ENV = "/etc/cassandra/conf/cassandra-env.sh"
 UNIT = "/etc/systemd/system/cassandra.service"
-
-
-def render(template, variables):
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
 JVM = {"pid": "42", "start": "100.50", "exe": "/usr/bin/java"}  # the running JVM, as jvm_started.yml finds it

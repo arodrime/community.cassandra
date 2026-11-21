@@ -9,7 +9,9 @@ import os
 import subprocess
 import sys
 
-COLLECTIONS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", ".."))
+import pytest
+
+from ansible_collections.community.cassandra.tests.unit.helpers import run_playbook
 
 INVENTORY = """all:
   vars:
@@ -35,24 +37,19 @@ INVENTORY = """all:
 def run(tmp_path, *args, **env_extra):
     (tmp_path / "inventories").mkdir(exist_ok=True)
     (tmp_path / "inventories" / "hosts.yml").write_text(INVENTORY)
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_STDOUT_CALLBACK="community.cassandra.ops",
-               ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0", ANSIBLE_RETRY_FILES_ENABLED="0",
-               ANSIBLE_DEPRECATION_WARNINGS="0", ANSIBLE_INVENTORY=str(tmp_path / "inventories"),
-               ANSIBLE_PYTHON_INTERPRETER=sys.executable,
+    env = dict(ANSIBLE_STDOUT_CALLBACK="community.cassandra.ops", ANSIBLE_DEPRECATION_WARNINGS="0",
+               ANSIBLE_INVENTORY=str(tmp_path / "inventories"), ANSIBLE_PYTHON_INTERPRETER=sys.executable,
                PATH=os.pathsep.join(["/usr/bin", "/bin"]))  # no nodetool: the ring read fails on every given node
-    env.pop("ANSIBLE_CONFIG", None)
-    env.pop("CASSANDRA_CLUSTER", None)
     env.update(env_extra)
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()",
-            "community.cassandra.import_cluster", "-e", "import_dir=%s" % (tmp_path / "out")] + list(args)
-    proc = subprocess.run(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                          check=False, cwd=str(tmp_path), timeout=300)
-    return proc.returncode, proc.stdout.decode("utf-8", "replace")
+    unset = [name for name in ("ANSIBLE_CONFIG", "CASSANDRA_CLUSTER") if name not in env_extra]
+    return run_playbook(["community.cassandra.import_cluster", "-e", "import_dir=%s" % (tmp_path / "out")] + list(args),
+                        env, unset, cwd=tmp_path, stdin=subprocess.DEVNULL)
 
 
 NEW = ("give one of its nodes: ansible-playbook -i <node>, community.cassandra.import_cluster. Nothing was written.")
 
 
+@pytest.mark.playbook
 def test_a_cluster_not_in_the_inventory_stops_at_once(tmp_path):
     rc, output = run(tmp_path, CASSANDRA_CLUSTER="new_prod")
     assert rc != 0
@@ -64,6 +61,7 @@ def test_a_cluster_not_in_the_inventory_stops_at_once(tmp_path):
     assert not (tmp_path / "out").exists()
 
 
+@pytest.mark.playbook
 def test_only_the_cluster_named_is_read(tmp_path):
     # by its group or its cluster name: its hosts only are given (the ring read fails on each: listed)
     for env in ({"CASSANDRA_CLUSTER": "old_cluster"}, {"CASSANDRA_CLUSTER": "Old Cluster"}):
@@ -75,6 +73,7 @@ def test_only_the_cluster_named_is_read(tmp_path):
     assert "other1: " in output and "old1" not in output, output
 
 
+@pytest.mark.playbook
 def test_cassandra_cluster_left_out_with_given_nodes(tmp_path):
     # -i <node>,: the nodes of a new cluster, whatever CASSANDRA_CLUSTER says
     rc, output = run(tmp_path, "-i", "new1,", "-c", "local", "-e", "ansible_become=false", CASSANDRA_CLUSTER="new_prod")
@@ -82,6 +81,7 @@ def test_cassandra_cluster_left_out_with_given_nodes(tmp_path):
     assert "not in the inventory" not in output and "new1: " in output, output
 
 
+@pytest.mark.playbook
 def test_no_node_answered_as_plain_text(tmp_path):
     # the refusal as it is: no task header, no JSON
     rc, output = run(tmp_path, CASSANDRA_CLUSTER="old_cluster")
@@ -93,6 +93,7 @@ def test_no_node_answered_as_plain_text(tmp_path):
     assert "TASK [" not in output and "FAILED!" not in output and "{" not in output
 
 
+@pytest.mark.playbook
 def test_the_lookup_error_itself_when_the_cluster_is_there(tmp_path):
     # a cluster in the inventory whose hosts the playbooks can't take: their own error, not a guess
     global INVENTORY  # pylint: disable=global-statement

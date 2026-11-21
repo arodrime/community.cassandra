@@ -15,11 +15,11 @@ import pytest
 import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout_over
+from ansible_collections.community.cassandra.tests.unit.helpers import run_playbook
 from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_import_convergence import (
     SECRETS, fake_node)
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
-COLLECTIONS = os.path.abspath(os.path.join(TOP, "..", "..", ".."))
 with open(os.path.join(TOP, "playbooks", "import_cluster.yml"), encoding="utf-8") as f:
     WRITE = next(p for p in yaml.safe_load(f) if p["name"] == "Write the inventory")
 TASKS = [t for t in WRITE["tasks"] if t["name"] in (
@@ -53,18 +53,13 @@ def playbook(tmp_path, self_check_ok=True):
 
 def run(tmp_path, *extra, **kwargs):
     playbook(tmp_path, **kwargs)
-    environ = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_LOCALHOST_WARNING="0",
-                   ANSIBLE_INVENTORY_UNPARSED_WARNING="0", ANSIBLE_RETRY_FILES_ENABLED="0",
-                   ANSIBLE_PYTHON_INTERPRETER=sys.executable, ANSIBLE_STDOUT_CALLBACK="community.cassandra.ops",
-                   ANSIBLE_NOCOLOR="1")
-    for name in ("ANSIBLE_CONFIG", "ANSIBLE_INVENTORY", "CASSANDRA_CLUSTER", "COLUMNS", "ANSIBLE_FORCE_COLOR"):
-        environ.pop(name, None)
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "summary.yml"] + list(extra)
-    result = subprocess.run(argv, env=environ, cwd=str(tmp_path), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, timeout=300, check=False)
-    return result.returncode, result.stdout.decode(errors="replace")
+    env = dict(ANSIBLE_INVENTORY_UNPARSED_WARNING="0", ANSIBLE_PYTHON_INTERPRETER=sys.executable,
+               ANSIBLE_STDOUT_CALLBACK="community.cassandra.ops")
+    unset = ("ANSIBLE_CONFIG", "ANSIBLE_INVENTORY", "CASSANDRA_CLUSTER", "COLUMNS", "ANSIBLE_FORCE_COLOR")
+    return run_playbook(["summary.yml"] + list(extra), env, unset, cwd=tmp_path, stdin=subprocess.DEVNULL)
 
 
+@pytest.mark.playbook
 @pytest.mark.parametrize("check", [False, True])
 def test_the_report_and_the_end_of_the_run(tmp_path, check):
     rc, out = run(tmp_path, "-e", "import_report_shareable=false", *(["--check"] if check else []))
@@ -90,12 +85,14 @@ def test_the_report_and_the_end_of_the_run(tmp_path, check):
     assert "TASK [" not in out and "fatal:" not in out
 
 
+@pytest.mark.playbook
 def test_the_convergence_on_a_failed_self_check(tmp_path):
     rc, out = run(tmp_path, self_check_ok=False)
     assert rc == 0, out
     assert "The self-check first (SELF-CHECK above)" in (tmp_path / "reports" / "big" / "report.details.txt").read_text()
 
 
+@pytest.mark.playbook
 @pytest.mark.parametrize("check", [False, True])
 def test_the_shareable_copy(tmp_path, check):
     # written on request only (import_report_shareable: true; false by default: none, nor its key)

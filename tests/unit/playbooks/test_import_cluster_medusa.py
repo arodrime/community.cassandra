@@ -14,6 +14,8 @@ import sys
 import pytest
 import yaml
 
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
+
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 
 
@@ -332,16 +334,9 @@ NOTE = find_task(PLAYS, "Note a Medusa without medusa.ini, or an import_medusa_p
     ([], None),
 ])
 def test_note_without_medusa_ini(found, notes):
-    from ansible.parsing.dataloader import DataLoader
-    from ansible.template import Templar
-    try:
-        from ansible.template import trust_as_template
-    except ImportError:
-        def trust_as_template(template):
-            return template
     variables = {"import_cluster_medusa_found": {"stdout_lines": found}}
     variables.update((k, trust_as_template(v)) for k, v in NOTE["vars"].items())
-    templar = Templar(loader=DataLoader(), variables=variables)
+    templar = templar_for(variables)
     when = all(templar.template(trust_as_template("{{ %s }}" % c)) for c in NOTE["when"])
     assert when == (notes is not None)
     if when:

@@ -10,16 +10,9 @@ import os
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
 
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 
 load_collection_filters()
@@ -57,5 +50,5 @@ def test_release_judged(running, package, judged):
     variables = dict((k, trust_as_template(VARS[k]) if isinstance(VARS[k], str) else VARS[k])
                      for k in ("_package", "_release"))
     variables.update(import_cluster_version=running, import_cluster_package=package)
-    templar = Templar(loader=DataLoader(), variables=variables)
+    templar = templar_for(variables)
     assert templar.template(trust_as_template("{{ _release }}")) == judged

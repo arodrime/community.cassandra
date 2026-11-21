@@ -10,17 +10,10 @@ import os
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
 
 from ansible_collections.community.cassandra.tests.unit.roles.config_reader import config_read
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
+from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, templar_for, trust_as_template
 
 TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_config", "tasks", "main.yml")
 READ = "Read the node's config files and directories"
@@ -44,7 +37,7 @@ def on_unmounted(dirs, unmounted):
         "cassandra_config_unmounted": {"stdout_lines": unmounted},
     }
     template = task("Refuse directories on a disk that is not mounted")["vars"]["_on_unmounted"]
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
+    return templar_for(variables).template(trust_as_template(template))
 
 
 @pytest.mark.parametrize("dirs, unmounted, refused", [
@@ -68,7 +61,7 @@ def test_seed_reload_logs_in_to_jmx():
 
 
 def render(template, **variables):
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
+    return render_as_given(template, variables)
 
 
 def test_dirs_whose_owner_and_mode_are_checked(tmp_path):

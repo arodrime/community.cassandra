@@ -11,8 +11,6 @@ import re
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
 
 from ansible.errors import AnsibleFilterError
 
@@ -20,12 +18,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import (
     KEYS, cassandra_import_host_vars, cassandra_import_nodes)
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 
@@ -87,9 +80,9 @@ def test_host_names_option_checked():
     check = next(t for t in FIND["tasks"] if t["name"] == "Check the options")
     assert check["name"] == "Check the options"
     that = trust_as_template("{{ " + check["ansible.builtin.assert"]["that"] + " }}")
-    assert Templar(loader=DataLoader(), variables={}).template(that) is True
+    assert templar_for({}).template(that) is True
     for value, ok in (("fqdn", True), ("ip", True), ("hostname", True), ("FQDN", False), ("name", False)):
-        assert Templar(loader=DataLoader(), variables={"import_host_names": value}).template(that) is ok
+        assert templar_for({"import_host_names": value}).template(that) is ok
 
 
 def test_hostname_given_to_the_layout():
@@ -100,7 +93,7 @@ def test_hostname_given_to_the_layout():
 def test_host_names_message_renders_unset():
     # 2.19+ templates fail_msg even when the assert passes
     msg = trust_as_template(next(t for t in FIND["tasks"] if t["name"] == "Check the options")["ansible.builtin.assert"]["fail_msg"])
-    assert "hostname, fqdn or ip" in Templar(loader=DataLoader(), variables={}).template(msg)
+    assert "hostname, fqdn or ip" in templar_for({}).template(msg)
 
 
 def test_other_connection_address_noted():
@@ -164,7 +157,7 @@ def test_task_gives_the_filter_what_it_reads():
     variables = dict(match["vars"], hostvars=HOSTVARS, _given=GIVEN, _ring=ring, _jmx={},
                      groups={"import_cluster_found": ["10.0.0.3"]}, _java_default=write["vars"]["_java_default"])
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    nodes = Templar(loader=DataLoader(), variables=variables).template(
+    nodes = templar_for(variables).template(
         trust_as_template(match["ansible.builtin.set_fact"]["_nodes"]))
     assert [(n["host"], n["name"]) for n in nodes] == [("node1", "node1"), ("10.0.0.2", "node2"), ("10.0.0.3", "node3")]
 

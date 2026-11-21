@@ -6,28 +6,18 @@ __metaclass__ = type
 
 import datetime
 import os
-import subprocess
 import sys
 import time
 
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
-
 from ansible_collections.community.cassandra.plugins.filter.cassandra_run_report import (
     cassandra_reports_dir, cassandra_run_report, cassandra_run_report_name, cassandra_run_report_old,
     cassandra_run_report_times)
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render, run_playbook, trust_as_template
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
-COLLECTIONS = os.path.abspath(os.path.join(TOP, "..", "..", ".."))
 BUILD = "community.cassandra 3.0.0-rc1, commit 1a2b3c4d5e6f"
 
 
@@ -156,18 +146,14 @@ def run_report(tmp_path, check=False, report_dir=None, keep=None):
                    "vars": {"_cassandra_run_report_operation": "apply_config",
                             "_cassandra_run_report_started": epoch("2026-11-19 23:58:41"),
                             "_cassandra_run_report_sections": [{"title": "RECAP", "lines": ["DONE  apply_config"]}]}}]}]))
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0",
-               ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_INVENTORY_UNPARSED_WARNING="0", PWD=str(tmp_path))
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", str(inventories),
-            "-e", "ansible_python_interpreter=" + sys.executable, "-e", "cassandra_hosts=prod", str(playbook)]
-    argv += ["--check"] if check else []
-    argv += ["-e", "cassandra_run_report_dir=" + report_dir] if report_dir else []
-    argv += ["-e", "cassandra_run_report_keep=%d" % keep] if keep is not None else []
-    result = subprocess.run(argv, env=env, cwd=str(tmp_path), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            timeout=300, check=False)
-    return result.returncode, result.stdout.decode(errors="replace")
+    args = ["-i", inventories, "-e", "ansible_python_interpreter=" + sys.executable, "-e", "cassandra_hosts=prod", playbook]
+    args += ["--check"] if check else []
+    args += ["-e", "cassandra_run_report_dir=" + report_dir] if report_dir else []
+    args += ["-e", "cassandra_run_report_keep=%d" % keep] if keep is not None else []
+    return run_playbook(args, dict(ANSIBLE_INVENTORY_UNPARSED_WARNING="0", PWD=str(tmp_path)), cwd=tmp_path)
 
 
+@pytest.mark.playbook
 def test_run_report_writes_the_report_and_keeps_the_last_ones(tmp_path):
     reports = tmp_path / "reports" / "prod"
     reports.mkdir(parents=True)
@@ -194,6 +180,7 @@ def test_run_report_writes_the_report_and_keeps_the_last_ones(tmp_path):
         "apply_config-2026-11-19-235841.txt", "apply_config-check-2026-11-19-235841.txt"]
 
 
+@pytest.mark.playbook
 @pytest.mark.skipif(os.geteuid() == 0, reason="root writes anywhere")
 def test_a_report_not_written_is_said_and_the_run_goes_on(tmp_path):
     locked = tmp_path / "locked"
@@ -206,11 +193,6 @@ def test_a_report_not_written_is_said_and_the_run_goes_on(tmp_path):
     assert rc == 0, output
     assert "WARNING  the report of this run was not written (" in output and str(locked / "reports") in output
     assert "set cassandra_run_report_dir to a dir you can write." in " ".join(output.split())
-
-
-def render(template, **variables):
-    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
 def find(tasks, name):

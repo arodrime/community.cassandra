@@ -14,14 +14,8 @@ import sys
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 SCRIPT = os.path.join(ROOT, "playbooks", "files", "import_read_files.py")
@@ -113,7 +107,7 @@ def wanted(task, **variables):
     variables = dict(task["vars"], _files=READ["vars"]["_files"], _cassandra_service_config_files=["cassandra.yaml"],
                      **variables)
     variables = dict((k, trusted(v) if k in task["vars"] or k == "_files" else v) for k, v in variables.items())
-    out = Templar(loader=DataLoader(), variables=variables).template(trust_as_template(task["vars"]["_wanted"]))
+    out = templar_for(variables).template(trust_as_template(task["vars"]["_wanted"]))
     return dict((w, (how, items)) for w, how, items in json.loads(json.dumps(out)))  # (as the command gets it)
 
 
@@ -180,7 +174,7 @@ def test_a_read_that_failed_is_the_node_s_error(first, users, reason):
     note = next(t for t in READ["tasks"] if t["name"] == "Note a node whose files could not be read")
     variables = dict(note["vars"], import_cluster_files=first, import_cluster_users_read=users)
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    templar = Templar(loader=DataLoader(), variables=variables)
+    templar = templar_for(variables)
     assert templar.template(trust_as_template("{{ %s }}" % note["when"])) is (reason is not None)
     if reason:
         assert templar.template(trust_as_template(note["ansible.builtin.set_fact"]["import_cluster_error"])) == (

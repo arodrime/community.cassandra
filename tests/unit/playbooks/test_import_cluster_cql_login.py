@@ -18,23 +18,19 @@ import time
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
+from ansible import template as ansible_template
 
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
-    from ansible.utils.unsafe_proxy import wrap_var as fact  # a fact (set_fact's): not templated again
-else:
+if hasattr(ansible_template, "trust_as_template"):  # ansible-core 2.19+
     def fact(value):  # 2.19+: data is never templated again
         return value
+else:
+    from ansible.utils.unsafe_proxy import wrap_var as fact  # a fact (set_fact's): not templated again
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     cassandra_inventory_files, cassandra_inventory_layout, cassandra_inventory_layout_over)
+from ansible_collections.community.cassandra.tests.unit.helpers import (
+    path_with, playbook_command, render_as_given, run_playbook)
 
-COLLECTIONS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", ".."))
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 GOOD, BAD = "S3cr3tGood", "Wr0ngPw"
 
@@ -89,22 +85,13 @@ def env_for(tmp_path, callback="community.cassandra.ops", password=GOOD):
     (bin_dir / "cqlsh").write_text(CQLSH)
     (bin_dir / "cqlsh").chmod(0o755)
     (tmp_path / "login.yml").write_text(LOGIN)
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_STDOUT_CALLBACK=callback, ANSIBLE_NOCOLOR="1",
-               ANSIBLE_LOCALHOST_WARNING="0", ANSIBLE_INVENTORY_UNPARSED_WARNING="0", ANSIBLE_RETRY_FILES_ENABLED="0",
-               ANSIBLE_DEPRECATION_WARNINGS="0", ANSIBLE_PYTHON_INTERPRETER=sys.executable,
-               PATH="%s:%s" % (bin_dir, os.environ.get("PATH", "")))
-    env.pop("ANSIBLE_CONFIG", None)
-    return env
-
-
-def argv(*args):
-    return [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "login.yml"] + list(args)
+    return dict(ANSIBLE_STDOUT_CALLBACK=callback, ANSIBLE_INVENTORY_UNPARSED_WARNING="0", ANSIBLE_DEPRECATION_WARNINGS="0",
+                ANSIBLE_PYTHON_INTERPRETER=sys.executable, PATH=path_with(bin_dir))
 
 
 def run(tmp_path, *args, **kw):  # kw: env_for's
-    proc = subprocess.run(argv(*args), env=env_for(tmp_path, **kw), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                          stdin=subprocess.DEVNULL, check=False, cwd=str(tmp_path), timeout=300)
-    return proc.returncode, proc.stdout.decode("utf-8", "replace")
+    return run_playbook(["login.yml"] + list(args), env_for(tmp_path, **kw), ["ANSIBLE_CONFIG"], cwd=tmp_path,
+                        stdin=subprocess.DEVNULL)
 
 
 def on_a_terminal(tmp_path, answers, timeout=240, password=GOOD):
@@ -115,7 +102,8 @@ def on_a_terminal(tmp_path, answers, timeout=240, password=GOOD):
         os.setsid()
         fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
-    proc = subprocess.Popen(argv(), stdin=slave, stdout=slave, stderr=slave, env=env_for(tmp_path, password=password), cwd=str(tmp_path),
+    argv, env = playbook_command(["login.yml"], env_for(tmp_path, password=password), ["ANSIBLE_CONFIG"])
+    proc = subprocess.Popen(argv, stdin=slave, stdout=slave, stderr=slave, env=env, cwd=str(tmp_path),
                             close_fds=True, preexec_fn=own_terminal)  # pylint: disable=subprocess-popen-preexec-fn
     os.close(slave)
     out, seen, pending, end = b"", 0, list(answers), time.time() + timeout
@@ -145,6 +133,7 @@ def state(output):
     return " ".join(line[line.index("STATE="):].split())
 
 
+@pytest.mark.playbook
 @pytest.mark.parametrize("callback", ["community.cassandra.ops", "default"])
 def test_given_login_checked_not_asked(tmp_path, callback):
     rc, output = run(tmp_path, "-e", "given_user=alice", "-e", "given_password=%s" % GOOD, callback=callback)
@@ -157,6 +146,7 @@ def test_given_login_checked_not_asked(tmp_path, callback):
     assert BAD not in output and "CQL user" not in output  # refused: said in TO DO, not asked
 
 
+@pytest.mark.playbook
 def test_no_terminal_and_not_asked(tmp_path):
     rc, output = run(tmp_path)
     assert rc == 0, output
@@ -165,6 +155,7 @@ def test_no_terminal_and_not_asked(tmp_path):
     assert state(output).startswith("STATE=not_asked") and "CQL user" not in output
 
 
+@pytest.mark.playbook
 def test_asked_on_a_terminal_until_a_login_works(tmp_path):
     rc, output = on_a_terminal(tmp_path, [("CQL user", "alice"), ("Password of the CQL user alice", BAD),
                                           ("refused that login (1 of 3)", "alice"),
@@ -174,6 +165,7 @@ def test_asked_on_a_terminal_until_a_login_works(tmp_path):
     assert GOOD not in output and BAD not in output  # typed without echo, never shown
 
 
+@pytest.mark.playbook
 def test_three_refused_logins_and_none_typed(tmp_path):
     answers = []
     for dummy in range(3):
@@ -191,6 +183,7 @@ NASTY = ["two words", "it's", 'say "hi"', "$HOME$(id)`id`", "back\\slash\\", "#n
          "-starts-with-a-dash", " spaces around ", "pässwörd-€", "%(x)s %% {x}"]
 
 
+@pytest.mark.playbook
 @pytest.mark.parametrize("password", NASTY)
 def test_given_login_with_any_character(tmp_path, password):
     # -e as JSON: the value as is, whatever it holds
@@ -200,6 +193,7 @@ def test_given_login_with_any_character(tmp_path, password):
     assert password.strip() not in output
 
 
+@pytest.mark.playbook
 def test_typed_login_with_any_character(tmp_path):
     password = "it's \"quoted\" $x \\ #1 ;é"
     rc, output = on_a_terminal(tmp_path, [("CQL user", "alice"), ("Password of the CQL user alice", password)],
@@ -217,7 +211,7 @@ WRITE = next(play for play in PLAYS if play["name"] == "Write the inventory")
 
 
 def render(template, **variables):
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
+    return render_as_given(template, variables)
 
 
 def node(name, read=True, **variables):
@@ -408,6 +402,7 @@ FROM_A_NODE = """
 """ % GOOD
 
 
+@pytest.mark.playbook
 @pytest.mark.parametrize("node, expected", [
     # a node with a connection of its own: the login runs there
     ("node1 ansible_connection=local", "STATE=ok"),
@@ -418,10 +413,8 @@ def test_the_login_runs_on_the_node_the_import_names(tmp_path, node, expected):
     env = env_for(tmp_path, callback="default")
     (tmp_path / "from_a_node.yml").write_text(FROM_A_NODE)
     (tmp_path / "hosts").write_text(node + "\n")
-    proc = subprocess.run([sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", "hosts",
-                           "from_a_node.yml"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                          stdin=subprocess.DEVNULL, check=False, cwd=str(tmp_path), timeout=300)
-    output = proc.stdout.decode("utf-8", "replace")
+    dummy, output = run_playbook(["-i", "hosts", "from_a_node.yml"], env, ["ANSIBLE_CONFIG"], cwd=tmp_path,
+                                 stdin=subprocess.DEVNULL)
     assert expected in output, output
     assert "is undefined" not in output and GOOD not in output, output
 
@@ -510,12 +503,12 @@ def run_the_write(tmp_path, stop, callback="community.cassandra.ops", state="ok"
     play = {"name": "Write the inventory", "hosts": "localhost", "connection": "local", "gather_facts": False,
             "vars": {"_cql_on": True}, "tasks": [setup, block]}
     (tmp_path / "stop.yml").write_text(yaml.safe_dump([play], sort_keys=False))
-    proc = subprocess.run([sys.executable, "-c", "from ansible.cli.playbook import main; main()", "stop.yml"],
-                          env=env_for(tmp_path, callback=callback), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                          stdin=subprocess.DEVNULL, check=False, cwd=str(tmp_path), timeout=300)
-    return proc.returncode, " ".join(proc.stdout.decode("utf-8", "replace").split())
+    rc, output = run_playbook(["stop.yml"], env_for(tmp_path, callback=callback), ["ANSIBLE_CONFIG"], cwd=tmp_path,
+                              stdin=subprocess.DEVNULL)
+    return rc, " ".join(output.split())
 
 
+@pytest.mark.playbook
 @pytest.mark.parametrize("callback", ["community.cassandra.ops", "default"])
 @pytest.mark.parametrize("state", ["ok", "unchecked"])
 def test_a_stop_after_the_login_typed_says_it_was_not_saved(tmp_path, callback, state):
@@ -533,12 +526,14 @@ def test_a_stop_after_the_login_typed_says_it_was_not_saved(tmp_path, callback, 
     assert output.index("another cluster's") < output.index("NOT saved")
 
 
+@pytest.mark.playbook
 def test_no_note_once_the_login_is_written(tmp_path):
     rc, output = run_the_write(tmp_path, stop=False)
     assert rc == 0, output
     assert "NOT saved" not in output and GOOD not in output, output
 
 
+@pytest.mark.playbook
 def test_no_note_without_a_login_typed(tmp_path):
     # the import's own login (or one given): nothing typed to lose, the stop alone
     rc, output = run_the_write(tmp_path, stop=True, asked=False)

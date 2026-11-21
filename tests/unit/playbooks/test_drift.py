@@ -10,29 +10,21 @@ __metaclass__ = type
 import glob
 import os
 import subprocess
-import sys
 import warnings
 
+import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
-from ansible.template import Templar
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_drift import cassandra_drift_sync
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given as render, run_playbook, trusted
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
     init_plugin_loader()  # the collection's filters, under plain pytest too
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
-COLLECTIONS = os.path.abspath(os.path.join(TOP, "..", "..", ".."))
 GUARD = "not _cassandra_apply_config_compare_only | default(false) | bool"
 SECRET = "zorglub-s3cr3t"
 
@@ -40,20 +32,6 @@ SECRET = "zorglub-s3cr3t"
 def load(name):
     with open(os.path.join(TOP, "playbooks", name), encoding="utf-8") as f:
         return yaml.safe_load(f)
-
-
-def trust(value):
-    if isinstance(value, str):
-        return trust_as_template(value)
-    if isinstance(value, dict):
-        return dict((k, trust(v)) for k, v in value.items())
-    if isinstance(value, list):
-        return [trust(v) for v in value]
-    return value
-
-
-def render(template, variables):
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
 def whens(task):
@@ -98,19 +76,15 @@ def inventory(tmp_path):
 
 
 def run(tmp_path, *extra):
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0",
-               ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_INVENTORY_UNPARSED_WARNING="0", ANSIBLE_TIMEOUT="3",
-               ANSIBLE_STDOUT_CALLBACK="community.cassandra.ops", COLUMNS="160")
-    for name in ("ANSIBLE_VAULT_PASSWORD_FILE", "ANSIBLE_BECOME", "ANSIBLE_CONFIG", "ANSIBLE_INVENTORY", "ANSIBLE_FORCE_COLOR",
-                 "CASSANDRA_CLUSTER"):
-        env.pop(name, None)
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", "inventories/prod.yml",
-            "community.cassandra.drift"] + list(extra)
-    result = subprocess.run(argv, env=env, cwd=str(tmp_path), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, timeout=300, check=False)
-    return result.returncode, result.stdout.decode(errors="replace")
+    env = dict(ANSIBLE_INVENTORY_UNPARSED_WARNING="0", ANSIBLE_TIMEOUT="3", ANSIBLE_STDOUT_CALLBACK="community.cassandra.ops",
+               COLUMNS="160")
+    unset = ("ANSIBLE_VAULT_PASSWORD_FILE", "ANSIBLE_BECOME", "ANSIBLE_CONFIG", "ANSIBLE_INVENTORY", "ANSIBLE_FORCE_COLOR",
+             "CASSANDRA_CLUSTER")
+    return run_playbook(["-i", "inventories/prod.yml", "community.cassandra.drift"] + list(extra), env, unset,
+                        cwd=tmp_path, stdin=subprocess.DEVNULL)
 
 
+@pytest.mark.playbook
 def test_inventory_alone_renders_and_writes_its_report(tmp_path):
     inventory(tmp_path)
     rc, output = run(tmp_path, "-e", "drift_nodes=false")
@@ -203,7 +177,7 @@ HOSTVARS = {
 
 def test_the_compare_summed_up_in_sync():
     play = next(p for p in load("drift.yml") if p.get("name") == "Drift")
-    variables = dict(trust(play["vars"]), hostvars=HOSTVARS, _nodes=["db1", "db2", "db3"])
+    variables = dict(trusted(play["vars"]), hostvars=HOSTVARS, _nodes=["db1", "db2", "db3"])
     sync = render(play["vars"]["_sync"], variables)
     assert [(n["name"], n["todo"], n["files"], n["os"]) for n in sync] == [
         ("db1", True, ["cassandra.yaml"], []), ("db2", False, [], ["vm.swappiness"]), ("db3", False, [], [])]
@@ -227,7 +201,7 @@ def test_a_node_the_compare_did_not_reach_is_not_in_sync():
     # (unreachable with cassandra_allow_down_nodes, or its compare failed: no facts of the compare)
     play = next(p for p in load("drift.yml") if p.get("name") == "Drift")
     hostvars = dict(HOSTVARS, db1={}, db2={"cassandra_apply_config_todo": False, "_cassandra_apply_config_stops": []})
-    variables = dict(trust(play["vars"]), hostvars=hostvars, _nodes=["db1", "db2", "db3"])
+    variables = dict(trusted(play["vars"]), hostvars=hostvars, _nodes=["db1", "db2", "db3"])
     sync = render(play["vars"]["_sync"], variables)
     assert [(n["name"], n["compared"]) for n in sync] == [("db1", False), ("db2", True), ("db3", True)]
     assert cassandra_drift_sync(sync, [], "CMD")[1:] == [
@@ -251,7 +225,7 @@ def test_a_stop_ends_the_compare_and_is_said_not_in_sync():
     play = next(p for p in load("drift.yml") if p.get("name") == "Drift")
     stops = ["db1, db2: runs Cassandra 4.1.12, the inventory asks for 5.0.9: another series is an upgrade."]
     stopped = dict((n, {"_cassandra_apply_config_stops": stops}) for n in ("db1", "db2"))
-    variables = dict(trust(play["vars"]), hostvars=stopped, _nodes=["db1", "db2"])
+    variables = dict(trusted(play["vars"]), hostvars=stopped, _nodes=["db1", "db2"])
     sync = render(play["vars"]["_sync"], variables)
     assert cassandra_drift_sync(sync, render(play["vars"]["_stops"], variables), "CMD")[1:] == [
         "  db1, db2  not compared (apply_config stops first)",
@@ -270,5 +244,5 @@ def test_in_sync_names_a_unit_that_differs_and_its_command_reads_as_the_others()
                         "cassandra_service_dropin_compare": {"skipped": True, "changed": False}},
                 "db2": {"cassandra_apply_config_todo": False, "cassandra_service_unit_compare": {"skipped": True},
                         "cassandra_service_dropin_compare": {"changed": True}}}
-    sync = render(play["vars"]["_sync"], dict(trust(play["vars"]), hostvars=hostvars, _nodes=["db1", "db2"]))
+    sync = render(play["vars"]["_sync"], dict(trusted(play["vars"]), hostvars=hostvars, _nodes=["db1", "db2"]))
     assert [n["unit"] for n in sync] == [["cassandra.service"], ["zz-ansible-environment.conf"]]

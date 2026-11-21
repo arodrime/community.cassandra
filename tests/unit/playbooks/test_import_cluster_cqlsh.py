@@ -10,14 +10,8 @@ import shlex
 import subprocess
 
 import yaml
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
 
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 with open(PLAYBOOK, encoding="utf-8") as _f:
@@ -158,7 +152,7 @@ def test_the_todo_names_the_nodes_and_the_way(tmp_path):
         variables = {"_nodes": [{"name": h} for h in errors], "hostvars": hostvars, "ansible_check_mode": check}
         if kept:  # (cqlsh kept as it is: -e import_keep_hand_edits=cqlsh, a string or a list)
             variables["import_keep_hand_edits"] = "logback.xml,cqlsh" if kept is True else kept
-        return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
+        return templar_for(variables).template(trust_as_template(template))
     lib = "cqlsh --version: ModuleNotFoundError: No module named 'cqlshlib'"
     assert todo({"n1": "", "n2": ""}) == []
     steps = todo({"n2": lib, "n1": lib, "n3": "", "n4": "cqlsh --version: exits 3 with no output",
@@ -226,7 +220,7 @@ def test_the_python_the_roles_wrapper_names_is_read(tmp_path):
     loop = script[start:script.index("done", start) + 4]
     paths = {}
     for item in task["loop"]:
-        content = Templar(loader=DataLoader(), variables={"_cassandra_cqlsh_python": "/usr/bin/python3.11"}).template(
+        content = templar_for({"_cassandra_cqlsh_python": "/usr/bin/python3.11"}).template(
             trust_as_template(item["content"]))
         path = tmp_path / os.path.basename(item["dest"])
         path.write_text(content)

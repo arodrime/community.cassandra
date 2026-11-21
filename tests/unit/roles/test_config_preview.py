@@ -15,15 +15,7 @@ import warnings
 
 import pytest
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -32,6 +24,7 @@ with warnings.catch_warnings():  # already done under ansible-test
 from ansible_collections.community.cassandra.tests.unit.plugins.plugin_utils.test_cassandra_output import BLOCK_SECRETS_AFTER_AUDIT  # noqa: E402
 from ansible_collections.community.cassandra.tests.unit.roles.config_reader import SCRIPT, compare, config_read, identity_changes, preview  # noqa: E402
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks  # noqa: E402
+from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given
 
 TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_config", "tasks")
 HEADER = "# Managed by Ansible (community.cassandra.cassandra_config): change the role variables, not this file.\n"
@@ -48,7 +41,7 @@ def task(name):
 
 
 def render(template, **variables):
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
+    return render_as_given(template, variables)
 
 
 SYSTEM = "Look for a system keyspace, and into Cassandra's directories"

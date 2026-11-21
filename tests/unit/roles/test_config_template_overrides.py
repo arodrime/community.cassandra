@@ -11,18 +11,11 @@ import xml.etree.ElementTree as ET
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import same_settings
 from ansible_collections.community.cassandra.tests.unit.roles.config_reader import preview
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 ROLE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_config")
 with open(os.path.join(ROLE, "vars", "main.yml"), encoding="utf-8") as f:
@@ -42,8 +35,7 @@ def task(name):
 
 
 def render(template, escape_backslashes=True, **variables):
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template),
-                                                                      escape_backslashes=escape_backslashes)
+    return templar_for(variables).template(trust_as_template(template), escape_backslashes=escape_backslashes)
 
 
 def role_vars(series="5.0", **variables):

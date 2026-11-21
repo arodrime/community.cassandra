@@ -20,6 +20,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     cassandra_inventory_files,
     cassandra_inventory_layout,
 )
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 FACTS = {"os_family": "RedHat"}
 FOUND = {"venv": "/opt/cassandra-medusa", "version": "0.30.1", "link_dir": "/usr/local/bin", "package": "",
@@ -444,17 +445,10 @@ GUARD = next(t for t in yaml.safe_load(open(os.path.join(ROLE, "tasks", "config.
     ("ini", "node1.x", "node1.y", True, True),
 ])
 def test_fqdn_change_refused(current, old, new, change, ok):
-    from ansible.parsing.dataloader import DataLoader
-    from ansible.template import Templar
-    try:
-        from ansible.template import trust_as_template
-    except ImportError:
-        def trust_as_template(template):
-            return template
     variables = {"cassandra_medusa_ini_current": {"content": current} if current else {"failed": True},
                  "_old": old, "_new": new, "cassandra_medusa_fqdn_change": change}
     that = trust_as_template("{{ " + GUARD["ansible.builtin.assert"]["that"] + " }}")
-    assert Templar(loader=DataLoader(), variables=variables).template(that) is ok
+    assert templar_for(variables).template(that) is ok
     # the fqdn of the current file, and the one the template writes
     assert "cassandra_medusa_ini" in GUARD["vars"]["_old"] and "medusa.ini.j2" in GUARD["vars"]["_new"]
 

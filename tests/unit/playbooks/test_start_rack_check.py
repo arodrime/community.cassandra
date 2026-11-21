@@ -18,18 +18,12 @@ import pytest
 import yaml
 
 from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_health import (
     cassandra_health_findings, cassandra_health_sentences)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_start_rack import cassandra_rack_verdict
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
+from ansible_collections.community.cassandra.tests.unit.helpers import playbook_command, render
 
 load_collection_filters()
 
@@ -71,11 +65,6 @@ def no_resolution(monkeypatch):
 def load_tasks(*path):
     with open(os.path.join(TOP, *path), encoding="utf-8") as f:
         return yaml.safe_load(f)
-
-
-def render(template, **variables):
-    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
 def ring(racks=None, **states):
@@ -658,7 +647,6 @@ def test_checked_from_a_node_of_the_rack_and_not_under_check():
 
 
 # the probe run by ansible-playbook: node1 (the rack) and node2 local, node3 an ssh port nothing listens on
-COLLECTIONS = os.path.abspath(os.path.join(TOP, "..", "..", ".."))
 INVENTORY = """
 all:
   children:
@@ -681,16 +669,15 @@ def probe(tmp_path, rack, check=False):
     play = dict(PLAY, hosts="all", become=False, tasks=tasks)
     (tmp_path / "play.yml").write_text(yaml.safe_dump([play]))
     (tmp_path / "hosts.yml").write_text(INVENTORY % rack)
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_NOCOLOR="1", ANSIBLE_HOST_KEY_CHECKING="0", PWD=str(tmp_path),
-               ANSIBLE_LOCALHOST_WARNING="0", ANSIBLE_RETRY_FILES_ENABLED="0",
-               ANSIBLE_SSH_ARGS="-o ConnectTimeout=5 -o BatchMode=yes")
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", str(tmp_path / "hosts.yml"),
-            "-e", "ansible_python_interpreter=" + sys.executable, "-e", "cassandra_hosts=cluster1", "-e", "cassandra_target_dc=dc1",
-            "-e", "cassandra_target_rack=r2", str(tmp_path / "play.yml")] + (["--check"] if check else [])
+    argv, env = playbook_command(
+        ["-i", tmp_path / "hosts.yml", "-e", "ansible_python_interpreter=" + sys.executable, "-e", "cassandra_hosts=cluster1",
+         "-e", "cassandra_target_dc=dc1", "-e", "cassandra_target_rack=r2", tmp_path / "play.yml"] + (["--check"] if check else []),
+        dict(ANSIBLE_HOST_KEY_CHECKING="0", PWD=str(tmp_path), ANSIBLE_SSH_ARGS="-o ConnectTimeout=5 -o BatchMode=yes"))
     return subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120, check=False,
                           cwd=str(tmp_path))
 
 
+@pytest.mark.playbook
 def test_a_host_outside_the_rack_not_reached_leaves_the_run_a_success(tmp_path):
     for check in (False, True):  # (--check: the same probe, the same outcome)
         run = probe(tmp_path, "node1", check)
@@ -700,6 +687,7 @@ def test_a_host_outside_the_rack_not_reached_leaves_the_run_a_success(tmp_path):
         assert "ignored=1" in run.stdout.replace(" ", "")
 
 
+@pytest.mark.playbook
 def test_a_host_of_the_rack_not_reached_stops_the_run(tmp_path):
     for check in (False, True):
         run = probe(tmp_path, "node3", check)

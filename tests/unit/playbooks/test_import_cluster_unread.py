@@ -9,17 +9,10 @@ import os
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
 
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 from ansible_collections.community.cassandra.tests.unit.import_nodes import node
+from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, trust_as_template
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 with open(PLAYBOOK, encoding="utf-8") as f:
@@ -29,7 +22,7 @@ STOP = next(t for t in WRITE["tasks"] if t["name"] == "Stop on a failed self-che
 
 
 def render(template, **variables):
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
+    return render_as_given(template, variables)
 
 
 NODES = [{"address": "10.0.0.1", "read": True}, {"address": "10.0.0.2", "read": False}]

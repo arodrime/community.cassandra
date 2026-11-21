@@ -5,17 +5,16 @@ __metaclass__ = type
 # cassandra unit: the unit file readable by every local user, systemctl show prints it. Said as the inventory's
 # value (the file on the node is not read), never as what the file holds.
 
-import os
 import subprocess
 import sys
 
+import pytest
 import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_unit_secret_warning
 from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import (
     find, load, render)
-
-COLLECTIONS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", ".."))
+from ansible_collections.community.cassandra.tests.unit.helpers import playbook_command
 
 TASKS = [t for p in load("playbooks", "health_check.yml") for t in p.get("tasks") or []]
 SAY = find(TASKS, "Say a secret in the unit's environment")
@@ -106,6 +105,7 @@ def test_a_value_that_cannot_be_read_is_said_not_checked_for_that_node():
                                    "its value could not be read (ValueError)"}]
 
 
+@pytest.mark.playbook
 def test_a_value_that_cannot_be_read_does_not_fail_the_run(tmp_path):
     # the task run by ansible-playbook: a variable the value uses is not in hostvars (2.19+: an error on use;
     # before: the template left as it is, nothing said)
@@ -115,10 +115,8 @@ def test_a_value_that_cannot_be_read_does_not_fail_the_run(tmp_path):
     (tmp_path / "hosts.yml").write_text(yaml.safe_dump({"all": {"hosts": {"node1": {
         "ansible_connection": "local",
         "cassandra_service_environment": {"JVM_EXTRA_OPTS": "-Dx={{ cassandra_data_dir }}/x"}}}}}))
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_NOCOLOR="1", ANSIBLE_RETRY_FILES_ENABLED="0",
-               ANSIBLE_LOCALHOST_WARNING="0")
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", str(tmp_path / "hosts.yml"),
-            "-e", "ansible_python_interpreter=" + sys.executable, str(tmp_path / "play.yml")]
+    argv, env = playbook_command(["-i", tmp_path / "hosts.yml", "-e", "ansible_python_interpreter=" + sys.executable,
+                                  tmp_path / "play.yml"])
     run = subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120,
                          check=False, cwd=str(tmp_path))
     assert run.returncode == 0, run.stdout + run.stderr

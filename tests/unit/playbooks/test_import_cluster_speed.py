@@ -11,14 +11,8 @@ import subprocess
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 with open(PLAYBOOK, encoding="utf-8") as f:
@@ -84,11 +78,11 @@ def test_one_line_per_phase():
     assert all(t["vars"]["cassandra_output"] is True for t in found)
     phase = found[1]
     variables = {"ansible_play_hosts_all": ["n%d" % i for i in range(30)], "_forks": "5"}
-    text = Templar(loader=DataLoader(), variables=variables).template(trust_as_template(phase["ansible.builtin.debug"]["msg"]))
+    text = templar_for(variables).template(trust_as_template(phase["ansible.builtin.debug"]["msg"]))
     assert text == ("Reading 30 nodes: facts, packages, the running Cassandra, its config (5 at a time: forks = 30 in"
                     " ansible.cfg reads them together)...")
     variables["_forks"] = "50"
-    text = Templar(loader=DataLoader(), variables=variables).template(trust_as_template(phase["ansible.builtin.debug"]["msg"]))
+    text = templar_for(variables).template(trust_as_template(phase["ansible.builtin.debug"]["msg"]))
     assert text == "Reading 30 nodes: facts, packages, the running Cassandra, its config..."
 
 

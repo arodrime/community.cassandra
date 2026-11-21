@@ -11,15 +11,9 @@ import warnings
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
-from ansible.template import Templar
 
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import render_with as render
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -34,14 +28,6 @@ READ = next(p for p in PLAYS if p["name"] == "Read every node")
 STAT = next(t for t in READ["tasks"] if t["name"] == "Read the owner and mode of the config files and directories")
 TURN = next(t for t in READ["tasks"] if t["name"] == "Turn them into variables")
 FILES = READ["vars"]["_files"]
-
-
-def render(template, variables):
-    variables = dict(variables)
-    for name, value in list(variables.items()):
-        if isinstance(value, str):
-            variables[name] = trust_as_template(value)
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
 def test_one_stat_per_file_then_the_dirs():

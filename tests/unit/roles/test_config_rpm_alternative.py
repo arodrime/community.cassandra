@@ -9,11 +9,11 @@ __metaclass__ = type
 # task, which stops the run whenever the selection would run.
 
 import os
-import subprocess
-import sys
 
 import pytest
 import yaml
+
+from ansible_collections.community.cassandra.tests.unit.helpers import LOCAL, run_playbook
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_config", "tasks", "main.yml")
@@ -48,16 +48,11 @@ def run(tmp_path, how):
                       "cassandra_config_conf_target": {"stat": {"exists": True, "lnk_source": str(in_use)}}},
              "tasks": [include]}]
     (tmp_path / "play.yml").write_text(yaml.safe_dump(play))
-    env = dict(os.environ, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0", ANSIBLE_RETRY_FILES_ENABLED="0")
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", "localhost,", "-c", "local",
-            "-e", "ansible_python_interpreter=" + sys.executable, str(tmp_path / "play.yml")]
-    if how == "check":
-        argv.append("--check")
-    result = subprocess.run(argv, env=env, cwd=str(tmp_path), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            timeout=300, check=False)
-    return result.returncode, result.stdout.decode(errors="replace")
+    return run_playbook(["-i", "localhost,"] + LOCAL + [tmp_path / "play.yml"] + (["--check"] if how == "check" else []),
+                        cwd=tmp_path)
 
 
+@pytest.mark.playbook
 @pytest.mark.parametrize("how", ["apply", "check"])
 def test_check_mode_seeds_and_selects_nothing(tmp_path, how):
     rc, out = run(tmp_path, how)
@@ -66,6 +61,7 @@ def test_check_mode_seeds_and_selects_nothing(tmp_path, how):
     assert not (tmp_path / "ansible.conf").exists()
 
 
+@pytest.mark.playbook
 def test_a_real_run_seeds_then_selects(tmp_path):
     rc, out = run(tmp_path, "real")
     assert rc != 0 and "SELECTED %s" % (tmp_path / "ansible.conf") in out, out

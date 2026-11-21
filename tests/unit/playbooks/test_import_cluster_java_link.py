@@ -15,21 +15,14 @@ import subprocess
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.parsing.splitter import split_args
-from ansible.template import Templar
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     GENERATED, cassandra_inventory_files, cassandra_inventory_layout, cassandra_inventory_leftovers)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_convergence import (
     cassandra_import_convergence)
 from ansible_collections.community.cassandra.tests.unit.import_nodes import node
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 OFF = {"cassandra_java_set_default": False}
@@ -462,7 +455,7 @@ def test_java_home_gone_refuses_the_node():
     assert "import_cluster_error is not defined" in error["when"]
     variables = {"import_cluster_java_home_gone": "/usr/lib/jvm/java-11-openjdk-11.0.20",
                  "import_cluster_java_bin": "/usr/lib/jvm/java-11-openjdk-11.0.21/bin/java"}
-    text = " ".join(Templar(loader=DataLoader(), variables=variables).template(
+    text = " ".join(templar_for(variables).template(
         trust_as_template(error["ansible.builtin.set_fact"]["import_cluster_error"])).split())
     assert text == ("its unit sets JAVA_HOME=/usr/lib/jvm/java-11-openjdk-11.0.20, the Java removed by an update since"
                     " Cassandra started: the next start would fail. Point JAVA_HOME at its new build"

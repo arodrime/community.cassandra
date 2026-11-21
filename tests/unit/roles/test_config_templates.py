@@ -10,15 +10,8 @@ import re
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_config", "tasks")
 
@@ -35,8 +28,7 @@ def task(name):
 
 def render(template, escape_backslashes=True, **variables):
     # escape_backslashes=False: a line of a .j2 file, where Jinja unescapes its string literals itself
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template),
-                                                                      escape_backslashes=escape_backslashes)
+    return templar_for(variables).template(trust_as_template(template), escape_backslashes=escape_backslashes)
 
 
 TEMPLATES = os.path.join(TASKS, "..", "templates")

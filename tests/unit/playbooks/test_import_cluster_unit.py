@@ -13,21 +13,14 @@ import yaml
 
 import warnings
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
     init_plugin_loader()  # the file lookup, under plain pytest too
 
 from ansible_collections.community.cassandra.tests.unit.import_nodes import node
+from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, templar_for, trust_as_template
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 
@@ -46,7 +39,7 @@ def task(name):
 
 
 def render(template, **variables):
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
+    return render_as_given(template, variables)
 
 
 def unit_env(env, log_dir="/var/log/cassandra", read=True):
@@ -201,8 +194,8 @@ def test_os_baseline_is_the_roles_defaults_not_the_inventory():
     for role in ("cassandra_linux", "cassandra_service"):
         with open(os.path.join(roles, role, "defaults", "main.yml"), encoding="utf-8") as f:
             defaults.update(yaml.safe_load(f))
-    templar = Templar(loader=DataLoader(), variables={"playbook_dir": os.path.dirname(PLAYBOOK),
-                                                      "cassandra_linux_timesync": False})
+    templar = templar_for({"playbook_dir": os.path.dirname(PLAYBOOK),
+                           "cassandra_linux_timesync": False})
     loaded = templar.template(trust_as_template(load["ansible.builtin.set_fact"]["import_cluster_os_defaults"]))
     assert len(used) == 13 and all(v[3:] in loaded for v in used)
     assert loaded == dict((k, v) for k, v in defaults.items() if k in loaded)

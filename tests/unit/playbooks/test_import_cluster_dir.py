@@ -14,14 +14,9 @@ from ansible import constants as C
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
 
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
-
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import GENERATED
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
+from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, trust_as_template
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 
@@ -32,7 +27,7 @@ PICK = [t for play in PLAYS for t in play.get("tasks", []) if t.get("name") == "
 
 
 def render(template, **variables):
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
+    return render_as_given(template, variables)
 
 
 def pick(**variables):

@@ -9,17 +9,10 @@ import os
 
 import pytest
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
 
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 
 load_collection_filters()
@@ -45,7 +38,7 @@ def run(extra, installed, series="4.1"):
     variables = {"inventory_hostname": "node1", "cassandra_extra_settings": extra,
                  "_cassandra_config_installed": installed, "_cassandra_config_series": series}
     variables.update((k, trust_as_template(v)) for k, v in TASK["vars"].items())
-    templar = Templar(loader=DataLoader(), variables=variables)
+    templar = templar_for(variables)
 
     def render(text):
         return templar.template(trust_as_template(text))

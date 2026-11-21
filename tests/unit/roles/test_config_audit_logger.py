@@ -11,17 +11,10 @@ import os
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
 
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 load_collection_filters()
 
@@ -37,8 +30,7 @@ PARAMETERS = {"log_dir": "/srv/audit/node", "max_files": "7", "tag": "yes", "not
 
 def render(text, **variables):
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(text),
-                                                                      escape_backslashes=False)
+    return templar_for(variables).template(trust_as_template(text), escape_backslashes=False)
 
 
 def audit_section(series, **overrides):

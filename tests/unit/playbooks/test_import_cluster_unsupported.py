@@ -9,16 +9,9 @@ import os
 
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
 
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
+from ansible_collections.community.cassandra.tests.unit.helpers import render
 
 load_collection_filters()
 
@@ -38,11 +31,6 @@ SCYLLA = "distribution=scylla\ndistribution_version=5.4.3-0.20240305.c0c3ad4ac5a
 CASSANDRA = "distribution=cassandra\ndistribution_version="
 ONLY = ("  This collection drives Apache Cassandra 4.0, 4.1 and 5.0 only (DSE and ScyllaDB have their own packages,"
         " services and configuration files).")
-
-
-def render(template, **variables):
-    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
 def given(reads):

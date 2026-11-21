@@ -11,18 +11,12 @@ import subprocess
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_import_error
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import cassandra_import_nodes
 from ansible_collections.community.cassandra.tests.unit.import_nodes import node
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 
@@ -52,7 +46,7 @@ def test_failure_shows_each_node_error():
                                        "stderr": "error: Invalid username or password\n-- StackTrace --\n..."}},
     }
     variables = {"import_cluster_given": ["n1", "n2", "n3"], "hostvars": hostvars}
-    templar = Templar(loader=DataLoader(), variables=variables)
+    templar = templar_for(variables)
     errors = templar.template(trust_as_template(stop["vars"]["_errors"]))
     assert errors == ["n1: Unable to determine Cassandra version:  error: ******** (Permission denied)",
                       "n2: unreachable", "n3: JMX login refused (Invalid username or password): check"]
@@ -63,8 +57,8 @@ def test_given_nodes_found_when_a_discovered_node_comes_first():
     # only the given ones have import_cluster_given
     read = next(play for play in PLAYS if play["name"] == "Read every node")
     hostvars = {"10.0.0.2": {}, "node1": {"import_cluster_given": ["node1"]}}
-    templar = Templar(loader=DataLoader(), variables={"groups": {"all": ["10.0.0.2", "node1"], "import_cluster_found": ["10.0.0.2"]},
-                                                      "hostvars": hostvars})
+    templar = templar_for({"groups": {"all": ["10.0.0.2", "node1"], "import_cluster_found": ["10.0.0.2"]},
+                           "hostvars": hostvars})
     assert templar.template(trust_as_template(read["hosts"])) == ["node1", "10.0.0.2"]
     # the play writing the inventory reads them on the controller, kept there once (not the variables of every host)
     keep = task("Keep the given nodes and the ring on the controller")
@@ -91,7 +85,7 @@ def test_node_read_failure_is_reported_without_values():
     # the filter branch of _why (Templar here does not load the collection's filters)
     assert "cassandra_import_error" in block["rescue"][0]["vars"]["_why"]
     variables["_why"] = cassandra_import_error(variables["ansible_failed_result"])
-    templar = Templar(loader=DataLoader(), variables=variables)
+    templar = templar_for(variables)
     assert templar.template(trust_as_template(keep)) == (
         '"Turn them into cassandra_config variables" failed: cassandra_config_import: cassandra.yaml, KeyError in _read_line(), '
         'line 3 (message hidden: it may show a value read from the nodes)')
@@ -105,7 +99,7 @@ def test_node_read_needs_a_supported_series_and_its_cassandra_yaml():
     block = task("Read this node's config")
     variables = {"import_cluster_series": "30x",
                  "import_cluster_slurp": {"skipped": True, "results": [{"skipped": True, "item": "cassandra.yaml"}]}}
-    templar = Templar(loader=DataLoader(), variables=variables)
+    templar = templar_for(variables)
     assert templar.template(trust_as_template("{{ " + block["when"] + " }}")) is False
     # without cassandra.yaml the role defaults (cluster name, seeds) would be imported
     check = block["block"][0]
@@ -113,15 +107,15 @@ def test_node_read_needs_a_supported_series_and_its_cassandra_yaml():
     variables = {"import_cluster_conf_dir": "/etc/cassandra/conf", "import_cluster_slurp": {"results": [
         {"item": "cassandra-env.sh", "content": "eA=="},
         {"item": "cassandra.yaml", "failed": True, "msg": "file not found: /etc/cassandra/conf/cassandra.yaml"}]}}
-    variables["_yaml"] = Templar(loader=DataLoader(), variables=variables).template(trust_as_template(check["vars"]["_yaml"]))
-    templar = Templar(loader=DataLoader(), variables=variables)
+    variables["_yaml"] = templar_for(variables).template(trust_as_template(check["vars"]["_yaml"]))
+    templar = templar_for(variables)
     assert templar.template(trust_as_template("{{ " + check["ansible.builtin.assert"]["that"] + " }}")) is False
     assert templar.template(trust_as_template(check["ansible.builtin.assert"]["fail_msg"])) == (
         "file not found: /etc/cassandra/conf/cassandra.yaml")
     # the reason kept for the report is the assert's message
     rescue = {"ansible_failed_task": {"name": "Check cassandra.yaml was read"},
               "ansible_failed_result": {"failed": True, "msg": "file not found: /etc/cassandra/conf/cassandra.yaml"}}
-    why = Templar(loader=DataLoader(), variables=rescue).template(trust_as_template(block["rescue"][0]["vars"]["_why"]))
+    why = templar_for(rescue).template(trust_as_template(block["rescue"][0]["vars"]["_why"]))
     assert why == "file not found: /etc/cassandra/conf/cassandra.yaml"
 
 
@@ -138,9 +132,9 @@ def test_stops_on_nodes_of_several_clusters():
                 "down": {"import_cluster_ring": {"failed": True}}, "gone": {}}
     for given, apart in ((["a1", "a2", "down", "gone"], []), (["a1", "b1", "a2"], ["b1"]), (["b1", "a1", "a2"], ["a1", "a2"])):
         variables = {"import_cluster_given": given, "hostvars": hostvars}
-        variables["_rings"] = Templar(loader=DataLoader(), variables=variables).template(
+        variables["_rings"] = templar_for(variables).template(
             trust_as_template(stop["vars"]["_rings"]))
-        assert Templar(loader=DataLoader(), variables=variables).template(
+        assert templar_for(variables).template(
             trust_as_template(stop["vars"]["_apart"])) == apart, given
     assert stop["run_once"] is True
 
@@ -158,7 +152,7 @@ def test_limit_refused_and_the_nodes_read():
     read = next(play for play in PLAYS if play["name"] == "Read every node")
     hostvars = {"a1": {"import_cluster_given": ["a1"]}, "b1": {}, "10.0.0.2": {}}
     groups = {"all": ["a1", "b1", "10.0.0.2"], "import_cluster_found": ["10.0.0.2"]}
-    templar = Templar(loader=DataLoader(), variables={"groups": groups, "hostvars": hostvars})
+    templar = templar_for({"groups": groups, "hostvars": hostvars})
     assert templar.template(trust_as_template(read["hosts"])) == ["a1", "10.0.0.2"]
 
 
@@ -198,7 +192,7 @@ def _added(given_vars, getent, given="node2", known=(), usable=None):
                          usable if usable is not None else ["node1", "node3", "node1.example.org"])},
                      "groups": {"all": [given] + list(known)}, "omit": "__omit__"}
         variables.update((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in add["vars"].items())
-        templar = Templar(loader=DataLoader(), variables=variables)
+        templar = templar_for(variables)
         args = dict((k, templar.template(trust_as_template(v))) for k, v in add["ansible.builtin.add_host"].items()
                     if k != "groups")
         out[address] = dict((k, v) for k, v in args.items() if v != "__omit__")

@@ -28,6 +28,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
 from ansible_collections.community.cassandra.plugins.filter import cassandra_import, cassandra_settings
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import _compare, _jmx_entries
 from ansible_collections.community.cassandra.plugins.modules.cassandra_status import cluster_up_down
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "..", "modules", "fixtures")
 FACTS = {"os_family": "Debian", "default_ipv4": {"address": "10.0.0.1"}}
@@ -959,19 +960,12 @@ ACCESS_TEMPLATE = os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."
      "admin readwrite\\\n  create a.B \\\n  unregister\n", False),
 ])
 def test_jmx_access_written_back_as_imported(access, exact):
-    from ansible.parsing.dataloader import DataLoader
-    from ansible.template import Templar
-    try:
-        from ansible.template import trust_as_template
-    except ImportError:
-        def trust_as_template(template):
-            return template
     users = _jmx_users("ops s3cret\nmon m0n\n", access)
     files = {}
     for name in ("access", "password"):
         with open(ACCESS_TEMPLATE.replace("access", name)) as f:
             content = f.read()
-        files[name] = Templar(loader=DataLoader(), variables={"cassandra_jmx_users": users}).template(
+        files[name] = templar_for({"cassandra_jmx_users": users}).template(
             trust_as_template(content))
     # (the role's header line first: a comment, the JVM reads them as properties files)
     header = "# Managed by Ansible (community.cassandra.cassandra_config): change the role variables, not this file.\n"

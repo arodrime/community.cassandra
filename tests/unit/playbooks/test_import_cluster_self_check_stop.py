@@ -14,8 +14,9 @@ import sys
 import pytest
 import yaml
 
+from ansible_collections.community.cassandra.tests.unit.helpers import run_playbook
+
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
-COLLECTIONS = os.path.abspath(os.path.join(TOP, "..", "..", ".."))
 with open(os.path.join(TOP, "playbooks", "import_cluster.yml"), encoding="utf-8") as f:
     WRITE = next(p for p in yaml.safe_load(f) if p["name"] == "Write the inventory")
 STOP = next(t for t in WRITE["tasks"] if t["name"] == "Stop on a failed self-check")
@@ -56,17 +57,11 @@ def playbook(tmp_path):
 
 def run(tmp_path, *extra, **env):
     playbook(tmp_path)
-    environ = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_LOCALHOST_WARNING="0",
-                   ANSIBLE_INVENTORY_UNPARSED_WARNING="0", ANSIBLE_RETRY_FILES_ENABLED="0",
-                   ANSIBLE_PYTHON_INTERPRETER=sys.executable, **env)
-    for name in ("ANSIBLE_CONFIG", "ANSIBLE_INVENTORY", "CASSANDRA_CLUSTER", "COLUMNS"):
-        environ.pop(name, None)
+    unset = ["ANSIBLE_CONFIG", "ANSIBLE_INVENTORY", "CASSANDRA_CLUSTER", "COLUMNS"]
     if "ANSIBLE_NOCOLOR" in env:
-        environ.pop("ANSIBLE_FORCE_COLOR", None)  # (ansible-test --color sets it, which wins)
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "stop.yml"] + list(extra)
-    result = subprocess.run(argv, env=environ, cwd=str(tmp_path), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, timeout=300, check=False)
-    return result.returncode, result.stdout.decode(errors="replace")
+        unset.append("ANSIBLE_FORCE_COLOR")  # (ansible-test --color sets it, which wins)
+    env = dict(ANSIBLE_INVENTORY_UNPARSED_WARNING="0", ANSIBLE_PYTHON_INTERPRETER=sys.executable, **env)
+    return run_playbook(["stop.yml"] + list(extra), env, unset, cwd=tmp_path, stdin=subprocess.DEVNULL)
 
 
 def block(out):
@@ -76,6 +71,7 @@ def block(out):
     return [line for line in lines[at:] if not re.match(r"^\s*(PLAY RECAP|localhost\s+:)", line)]
 
 
+@pytest.mark.playbook
 @pytest.mark.parametrize("check", [False, True])
 def test_the_stop_under_the_ops_callback(tmp_path, check):
     rc, out = run(tmp_path, *(["--check"] if check else []), ANSIBLE_STDOUT_CALLBACK="community.cassandra.ops",
@@ -103,6 +99,7 @@ def test_the_stop_under_the_ops_callback(tmp_path, check):
     assert max(len(line) for line in lines) <= 80
 
 
+@pytest.mark.playbook
 def test_the_stop_in_colour_red_on_its_verdict_only(tmp_path):
     rc, out = run(tmp_path, ANSIBLE_STDOUT_CALLBACK="community.cassandra.ops", ANSIBLE_FORCE_COLOR="1")
     assert rc == 2, out
@@ -114,6 +111,7 @@ def test_the_stop_in_colour_red_on_its_verdict_only(tmp_path):
     assert SECRET not in out
 
 
+@pytest.mark.playbook
 @pytest.mark.parametrize("result_format", ["yaml", "json"])
 def test_the_stop_under_the_default_callback(tmp_path, result_format):
     # one text: plain lines under the yaml result format; ansible-core 2.19+ prints it as is before the result

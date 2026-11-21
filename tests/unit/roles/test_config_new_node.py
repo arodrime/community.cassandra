@@ -10,7 +10,6 @@ __metaclass__ = type
 import os
 import re
 import select
-import sys
 import time
 
 import warnings
@@ -24,13 +23,13 @@ with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
     init_plugin_loader()  # the collection's filters, under plain pytest too
 
+from ansible_collections.community.cassandra.tests.unit.helpers import LOCAL, playbook_command  # noqa: E402
 from ansible_collections.community.cassandra.tests.unit.roles.test_config_preview import (  # noqa: E402
     initialized_facts, render, task, task_vars)
 
 pty = pytest.importorskip("pty")
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
-COLLECTIONS = os.path.abspath(os.path.join(TOP, "..", "..", ".."))
 DATA = "/data/cassandra/data"
 STALE = "/var/lib/cassandra/data"  # the package's default: not one of the inventory's data dirs
 # a node emptied by reset_node: its data dirs empty, a system keyspace left in the package's default dir
@@ -295,10 +294,8 @@ def confirm_tasks():
 def run_in_terminal(tmp_path, answer):
     (tmp_path / "confirm.yml").write_text(yaml.safe_dump(confirm_tasks()))
     (tmp_path / "playbook.yml").write_text(PLAYBOOK)
-    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_NOCOLOR="1", ANSIBLE_HOST_KEY_CHECKING="0",
-               ANSIBLE_LOCALHOST_WARNING="0", ANSIBLE_RETRY_FILES_ENABLED="0")
-    argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", "node1,node2,", "-c", "local",
-            "-e", "ansible_python_interpreter=" + sys.executable, str(tmp_path / "playbook.yml")]
+    argv, env = playbook_command(["-i", "node1,node2,"] + LOCAL + [tmp_path / "playbook.yml"],
+                                 dict(ANSIBLE_HOST_KEY_CHECKING="0"))
     pid, fd = pty.fork()
     if pid == 0:  # the child
         os.chdir(str(tmp_path))
@@ -323,6 +320,7 @@ def run_in_terminal(tmp_path, answer):
     return rc, output.decode(errors="replace")
 
 
+@pytest.mark.playbook
 def test_the_answer_holds_for_every_node_of_the_batch(tmp_path):
     rc, output = run_in_terminal(tmp_path, "yes")
     assert rc == 0, output
@@ -332,6 +330,7 @@ def test_the_answer_holds_for_every_node_of_the_batch(tmp_path):
     assert "not confirmed" not in output
 
 
+@pytest.mark.playbook
 def test_no_stops_every_node_of_the_batch(tmp_path):
     rc, output = run_in_terminal(tmp_path, "no")
     assert rc != 0
