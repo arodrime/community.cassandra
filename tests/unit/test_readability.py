@@ -2,7 +2,8 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 # Readability guardrails of the playbooks and roles: no Jinja string longer than 300 characters (a filter of
-# plugins/filter instead), no inline shell longer than 20 lines (a script in files/ instead). The ones there already
+# plugins/filter instead; a bare expression of when, that, until... too), no inline shell longer than 20 lines (a
+# script in files/ instead; any shell, command or raw task, named or not). The ones there already
 # are listed in readability_allowed.txt with their size: the list may only shrink. A listed string may not
 # grow; once it is short enough (or gone), its line is removed from the list.
 #
@@ -51,29 +52,44 @@ def _strings(node, place, keys):
             yield from _strings(value, place, keys if named else keys + [str(i)])
 
 
+# a bare Jinja expression (no {{ }}): the value of these keys, or an item of their list
+BARE = ("when", "that", "until", "failed_when", "changed_when")
+# a task's inline script: the free form of these modules, their cmd, or the task's args.cmd
+SCRIPT_MODULES = [prefix + module for prefix in ("", "ansible.builtin.", "ansible.legacy.")
+                  for module in ("shell", "command", "raw")]
+
+
+def _kinds(keys, text):
+    """[(kind, size)] of text at keys (the keys under its task) that is over its limit."""
+    sizes = []
+    named = [key for key in keys if not key.isdigit()]  # (an item of a list: the key of the list)
+    bare = bool(named) and named[-1] in BARE
+    if ("{{" in text or "{%" in text or bare) and len(text) > JINJA_MAX:
+        sizes.append(("jinja", len(text)))
+    free_form = bool(keys) and keys[-1] in SCRIPT_MODULES
+    cmd = len(keys) > 1 and keys[-2] in SCRIPT_MODULES + ["args"] and keys[-1] == "cmd"
+    if (free_form or cmd) and len(text.splitlines()) > SHELL_MAX:
+        sizes.append(("shell", len(text.splitlines())))
+    return sizes
+
+
 def measured():
     """{"<file> :: <place> :: <keys> (jinja|shell)": size} of every string over its limit (size: characters for a
-    Jinja string, lines for an inline shell). The same name twice in a file: #2, #3... after it."""
+    Jinja string, lines for an inline shell). The same name twice in a file: #2, #3... after it, numbered among
+    every string of that name, so that the first one going under its limit does not rename the others."""
     over = {}
     for path in _files():
         with open(path, encoding="utf-8") as f:
             data = yaml.load(f, Loader=_Loader)
         rel = os.path.relpath(path, TOP)
+        seen = {}
         for place, keys, text in _strings(data, [], []):
             name = "%s :: %s :: %s" % (rel, " / ".join(place), ".".join(keys))
-            sizes = []
-            if ("{{" in text or "{%" in text) and len(text) > JINJA_MAX:
-                sizes.append(("jinja", len(text)))
-            if keys[:1] in (["shell"], ["ansible.builtin.shell"]) and keys[1:] in ([], ["cmd"]) \
-                    and len(text.splitlines()) > SHELL_MAX:
-                sizes.append(("shell", len(text.splitlines())))
-            for kind, size in sizes:
-                key = "%s (%s)" % (name, kind)
-                n = 2
-                while key in over:
-                    key = "%s #%d (%s)" % (name, n, kind)
-                    n += 1
-                over[key] = size
+            seen[name] = seen.get(name, 0) + 1
+            if seen[name] > 1:
+                name += " #%d" % seen[name]
+            for kind, size in _kinds(keys, text):
+                over["%s (%s)" % (name, kind)] = size
     return over
 
 
