@@ -127,6 +127,13 @@
         name: community.cassandra.cassandra_operation
         tasks_from: root_check.yml
 
+    # the run's command (its inventory and cluster: _cassandra_run_command_args), for the way outs said
+    - name: Load the cassandra_operation defaults
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: defaults.yml
+        public: true
+
     - name: Find the running Cassandra
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_config
@@ -186,12 +193,7 @@
             _again: >-
               {{ 'start_rack' | community.cassandra.cassandra_command(
                    extra={'cassandra_target_dc': cassandra_target_dc, 'cassandra_target_rack': cassandra_target_rack},
-                   limit=ansible_limit | default(''), **_args) }}
-            _args:
-              inventory: "{{ ansible_inventory_sources }}"
-              default_inventory: "{{ lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') }}"
-              hosts: "{{ cassandra_hosts | default('') }}"
-              cwd: "{{ lookup('ansible.builtin.env', 'PWD') }}"
+                   limit=ansible_limit | default(''), **_cassandra_run_command_args) }}
 
 # Run a repair of the rack's nodes afterwards if they were down longer than
 # cassandra_max_hint_window (3 hours by default; cassandra_max_hint_window_in_ms
@@ -234,13 +236,7 @@
     _cassandra_start_rack_again: >-
       {{ 'start_rack' | community.cassandra.cassandra_command(
            extra={'cassandra_target_dc': cassandra_target_dc, 'cassandra_target_rack': cassandra_target_rack},
-           limit=ansible_limit | default(''), **_cassandra_start_rack_command_args) }}
-    # the run's inventory and cluster, for the commands said
-    _cassandra_start_rack_command_args:
-      inventory: "{{ ansible_inventory_sources }}"
-      default_inventory: "{{ lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') }}"
-      hosts: "{{ cassandra_hosts | default('') }}"
-      cwd: "{{ lookup('ansible.builtin.env', 'PWD') }}"
+           limit=ansible_limit | default(''), **_cassandra_run_command_args) }}
   tasks:
     # first: each node its own facts before any run_once task (ansible/ansible#87148)
     - name: Give each node its own facts
@@ -248,6 +244,13 @@
         _cassandra_own_facts: "{{ inventory_hostname }}"
         cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
       tags: [always]  # under --tags too
+
+    # the run's command (its inventory and cluster: _cassandra_run_command_args), for the way outs said
+    - name: Load the cassandra_operation defaults
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: defaults.yml
+        public: true
 
     # every node of the cluster the inventory puts in the rack, under --limit too: a node of the rack this run
     # did not start is still checked as one of the rack
@@ -290,7 +293,7 @@
         - inventory_hostname in _cassandra_start_rack_members
       vars:
         cassandra_output: true
-        _args: "{{ _cassandra_start_rack_command_args }}"
+        _args: "{{ _cassandra_run_command_args }}"
         _ping: "{{ inventory_hostname | community.cassandra.cassandra_ping_command(_args.inventory, _args.default_inventory, _args.cwd) }}"
 
     # said in the warning below; nothing more is asked of it
@@ -407,8 +410,8 @@
         cassandra_output: true
         _verdict: "{{ _cassandra_start_rack_last_verdict }}"
         _run: "{{ _cassandra_start_rack_members | reject('in', _cassandra_start_rack_left_out) | list }}"
-        _check_command: "{{ 'health_check' | community.cassandra.cassandra_command(**_cassandra_start_rack_command_args) }}"
+        _check_command: "{{ 'health_check' | community.cassandra.cassandra_command(**_cassandra_run_command_args) }}"
         _start_command: >-
           {{ 'start_rack' | community.cassandra.cassandra_command(
                extra={'cassandra_target_dc': cassandra_target_dc, 'cassandra_target_rack': cassandra_target_rack},
-               **_cassandra_start_rack_command_args) }}
+               **_cassandra_run_command_args) }}

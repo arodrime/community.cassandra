@@ -40,6 +40,7 @@ TASKS = dict((t["name"], t) for t in PLAY["tasks"])
 NAMES = [t["name"] for t in PLAY["tasks"]]
 
 MEMBERS = "Find the rack's nodes in the inventory"
+LOAD = "Load the cassandra_operation defaults"
 READ = "Read the cluster once from a node of the rack"
 NOTE = "Judge the first read"
 CHECK = "Check the rack's nodes and the rest of the cluster"
@@ -108,7 +109,7 @@ def noted(read, peer=None, names=None, unreached=(), groups=None, hostvars=None,
                      _cassandra_health_peer_host="n1", _cassandra_start_rack_checker="n2",
                      _cassandra_start_rack_unreached=list(unreached),
                      _cassandra_start_rack_members=members(groups), _cassandra_start_rack_not_probed=[],
-                     _cassandra_start_rack_command_args=COMMAND_ARGS,
+                     _cassandra_run_command_args=COMMAND_ARGS,
                      hostvars=with_addresses(names) if hostvars is None else hostvars,
                      cassandra_health_self=read, cassandra_health_peer=peer or read, cassandra_health_schema=schema or {},
                      ansible_play_hosts_all=sorted(RACKS) if play is None else play)
@@ -542,7 +543,7 @@ def test_checked_from_a_node_of_the_rack_and_not_under_check():
     assert TASKS[STOP]["vars"]["_cassandra_health_again"].replace(u"\xa0", " ") == "run start_rack again:"
     # the command under it: the run's own (its inventory, cluster, --limit), as the rescue's
     assert render(TASKS[STOP]["vars"]["_cassandra_health_again_command"], ansible_limit="all:!n3",
-                  cassandra_target_dc="dc1", cassandra_target_rack="r2", _cassandra_start_rack_command_args=COMMAND_ARGS,
+                  cassandra_target_dc="dc1", cassandra_target_rack="r2", _cassandra_run_command_args=COMMAND_ARGS,
                   _cassandra_start_rack_again=PLAY["vars"]["_cassandra_start_rack_again"]) == (
         "ansible-playbook -i hosts.yml community.cassandra.start_rack --limit 'all:!n3' -e cassandra_target_dc=dc1"
         " -e cassandra_target_rack=r2")
@@ -575,7 +576,7 @@ all:
 
 
 def probe(tmp_path, rack, check=False):
-    tasks = [t for t in PLAY["tasks"] if t["name"] in [MEMBERS] + PROBE] + [
+    tasks = [t for t in PLAY["tasks"] if t["name"] in [LOAD, MEMBERS] + PROBE] + [
         {"name": "Say", "ansible.builtin.debug": {"msg": "unreached={{ _cassandra_start_rack_unreached }}"
                                                          " checker={{ _cassandra_start_rack_checker }}"},
          "run_once": True}]
@@ -764,7 +765,7 @@ def start_failed(failed, task):
     stop = start["rescue"][0]
     assert stop["vars"]["cassandra_output"] is True
     variables = dict(inventory_hostname="n2", cassandra_target_dc="dc1", cassandra_target_rack="r2", ansible_limit="n2",
-                     ansible_failed_result=failed, ansible_failed_task={"name": task}, _args=COMMAND_ARGS)
+                     ansible_failed_result=failed, ansible_failed_task={"name": task}, _cassandra_run_command_args=COMMAND_ARGS)
     variables["_again"] = render(stop["vars"]["_again"], **variables)
     return render(stop["ansible.builtin.fail"]["msg"], **variables)
 

@@ -21,7 +21,6 @@ __metaclass__ = type
 import json
 
 from ansible.errors import AnsibleFilterError
-from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_refused
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 
@@ -117,29 +116,11 @@ def cassandra_replication_alter(keyspaces, dc, add=None, remove=False):
     return statements
 
 
-def cassandra_rack_stop_refused(problems, warnings, nodes, dc, rack, cluster, command):
-    """stop_rack's refusal when the rack's stop would take more than one replica of some data down: the problems,
-    the warnings, the rack's nodes, its dc and rack, the cluster's name, the stop_rack command forced (-e
-    cassandra_rack_force=true) -> its REFUSED block (cassandra_refused): the fact, the problems, the nodes as rows,
-    the warnings, what a forced stop does, then the way out with the command.
-    e.g. (["ks has 3 replicas in dc1, which has 2 rack(s): ..."], [], ["n2"], "dc1", "r2", "prod", "ansible-playbook
-    x") -> ["REFUSED  stop_rack  prod  nothing was changed", "  Stopping dc1/r2 would take down more than one replica
-    of some data:", "    ks has 3 ...", "  its nodes:", "    n2", "  Forced, ...", "  WAY OUT  fix that first, or
-    force the stop:", "    ansible-playbook x"]."""
-    lines = ["Stopping %s/%s would take down more than one replica of some data:" % (dc, rack)]
-    lines += ["  " + str(p) for p in problems or []] + ["its nodes:"] + ["  " + str(n) for n in nodes or []]
-    lines += [out.WARNING + str(w) for w in warnings or []]
-    lines += ["Forced, reads and writes needing those replicas fail, and data only on them is unavailable until"
-              " the rack is back.", "WAY OUT  fix that first, or force the stop:", "  " + str(command)]
-    return cassandra_refused("stop_rack  %s" % cluster, lines)
-
-
 class FilterModule(object):
     def filters(self):
         return {
             "cassandra_keyspaces": cassandra_keyspaces,
             "cassandra_replication_problems": cassandra_replication_problems,
             "cassandra_rack_down_problems": cassandra_rack_down_problems,
-            "cassandra_rack_stop_refused": cassandra_rack_stop_refused,
             "cassandra_replication_alter": cassandra_replication_alter,
         }

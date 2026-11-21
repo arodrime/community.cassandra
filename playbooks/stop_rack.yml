@@ -46,12 +46,6 @@
       {%-   set _ = out.update({h: ([a] + more | map('community.cassandra.cassandra_ip') | list) | unique | list}) -%}
       {%- endfor -%}
       {{ out }}
-    # the run's inventory and cluster, for the commands said
-    _cassandra_rack_command_args:
-      inventory: "{{ ansible_inventory_sources }}"
-      default_inventory: "{{ lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') }}"
-      hosts: "{{ cassandra_hosts | default('') }}"
-      cwd: "{{ lookup('ansible.builtin.env', 'PWD') }}"
     # the rack's nodes as the ring has them
     _ring_rack: >-
       {{ (cassandra_rack_ring.cluster_status[cassandra_target_dc] | default({})).nodes | default([])
@@ -183,7 +177,7 @@
         _forced: >-
           {{ 'stop_rack' | community.cassandra.cassandra_command(
                extra={'cassandra_target_dc': cassandra_target_dc, 'cassandra_target_rack': cassandra_target_rack,
-                      'cassandra_rack_force': 'true'}, **_cassandra_rack_command_args) }}
+                      'cassandra_rack_force': 'true'}, **_cassandra_run_command_args) }}
 
     - name: Show the plan and confirm
       ansible.builtin.include_role:
@@ -229,13 +223,6 @@
   gather_facts: false
   become: true
   any_errors_fatal: true
-  vars:
-    # the run's inventory and cluster, for the command said
-    _cassandra_rack_command_args:
-      inventory: "{{ ansible_inventory_sources }}"
-      default_inventory: "{{ lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') }}"
-      hosts: "{{ cassandra_hosts | default('') }}"
-      cwd: "{{ lookup('ansible.builtin.env', 'PWD') }}"
   tasks:
     # first: each node its own facts before any run_once task (ansible/ansible#87148)
     - name: Give each node its own facts
@@ -306,4 +293,4 @@
         _start: >-
           {{ 'start_rack' | community.cassandra.cassandra_command(
                extra={'cassandra_target_dc': cassandra_target_dc, 'cassandra_target_rack': cassandra_target_rack},
-               limit=(ansible_play_hosts_all if _partial | bool else []), **_cassandra_rack_command_args) }}
+               limit=(ansible_play_hosts_all if _partial | bool else []), **_cassandra_run_command_args) }}

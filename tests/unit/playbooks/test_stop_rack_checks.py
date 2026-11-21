@@ -182,13 +182,31 @@ def test_the_rack_nodes_are_told_apart_by_their_ring_address(down, expected):
 COMMAND_ARGS = {"inventory": ["/inv/hosts.yml"], "default_inventory": "/etc/ansible/hosts", "hosts": "prod", "cwd": "/inv"}
 
 
-def test_the_command_args_are_the_run_s():
-    # the run's inventory and cluster, the same in the two plays that say a command
-    with open(os.path.join(TOP, "playbooks", "stop_rack.yml"), encoding="utf-8") as f:
-        plays = yaml.safe_load(f)
-    args = [p["vars"]["_cassandra_rack_command_args"] for p in plays if "_cassandra_rack_command_args" in p.get("vars", {})]
-    assert len(args) == 2 and args[0] == args[1]
-    assert args[0]["hosts"] == "{{ cassandra_hosts | default('') }}"  # (as start_rack's)
+def test_the_command_args_are_the_run_s_written_once():
+    # the run's inventory and cluster: written four times in start_rack and stop_rack (a play var or a task var
+    # each); now the role's _cassandra_run_command_args, every play saying a command loading it first
+    with open(os.path.join(TOP, "roles", "cassandra_operation", "vars", "main.yml"), encoding="utf-8") as f:
+        args = yaml.safe_load(f)["_cassandra_run_command_args"]
+    assert args["hosts"] == "{{ cassandra_hosts | default('') }}"
+    for playbook in ("start_rack.yml", "stop_rack.yml"):
+        with open(os.path.join(TOP, "playbooks", playbook), encoding="utf-8") as f:
+            text = f.read()
+        assert "ansible_inventory_sources" not in text and "DEFAULT_HOST_LIST" not in text
+        for play in yaml.safe_load(text):
+            tasks = play.get("tasks", [])
+            users = [i for i, t in enumerate(tasks) if "_cassandra_run_command_args" in yaml.safe_dump(t)]
+            loads = [i for i, t in enumerate(tasks)
+                     if (t.get("ansible.builtin.include_role") or {}).get("public") is True
+                     and "cassandra_operation" in yaml.safe_dump(t)]  # (its name, or a loop item)
+            if users or "_cassandra_run_command_args" in yaml.safe_dump(play.get("vars", {})):
+                assert loads and loads[0] < min(users + [len(tasks)]), (playbook, play["name"])
+
+
+def test_the_rack_s_start_and_stop_screens_are_in_one_filter_file():
+    # stop_rack's refusal lived with the replication checks, the other screens of a rack in cassandra_start_rack
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_replication, cassandra_start_rack
+    assert "cassandra_rack_stop_refused" in cassandra_start_rack.FilterModule().filters()
+    assert "cassandra_rack_stop_refused" not in cassandra_replication.FilterModule().filters()
 
 
 def test_the_replica_refusal_is_a_refused_block_of_79_columns():
@@ -203,7 +221,7 @@ def test_the_replica_refusal_is_a_refused_block_of_79_columns():
                 " of its replicas"]
     variables = dict(task["vars"], cassandra_target_dc="dc1", cassandra_target_rack="r2", _rack_nodes=["n2", "n3"],
                      _problems=problems, _warnings=["app has 2 replicas in dc1: with one down, (LOCAL_)QUORUM fails"],
-                     hostvars={"localhost": {"_cassandra_cluster_shown": "prod"}}, _cassandra_rack_command_args=COMMAND_ARGS)
+                     hostvars={"localhost": {"_cassandra_cluster_shown": "prod"}}, _cassandra_run_command_args=COMMAND_ARGS)
     lines = render(task["ansible.builtin.assert"]["fail_msg"], **variables).split("\n")
     assert lines == [
         "REFUSED  stop_rack  prod  nothing was changed",
@@ -229,7 +247,7 @@ def test_how_to_start_it_again_is_the_exact_command_within_79_columns():
         say = next(t for p in yaml.safe_load(f) for t in p.get("tasks", []) if t.get("name") == "Say how to start it again")
     rack = {"cassandra_dc": "dc1", "cassandra_rack": "r2"}
     variables = dict(cassandra_target_dc="dc1", cassandra_target_rack="r2", ansible_play_hosts_all=["h-n4", "h-n5"],
-                     ansible_inventory_sources=["/inv/hosts.yml"], _cassandra_rack_command_args=COMMAND_ARGS,
+                     ansible_inventory_sources=["/inv/hosts.yml"], _cassandra_run_command_args=COMMAND_ARGS,
                      _nodes=["h-n1", "h-n4", "h-n5"], hostvars={"h-n1": {"cassandra_rack": "r1"}, "h-n4": rack, "h-n5": rack})
 
     def said(**more):

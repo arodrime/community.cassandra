@@ -53,6 +53,9 @@ cassandra_rack_members: the nodes the inventory puts in a rack (every node of th
 cassandra_rack_verdict: the table above applied to a read of the cluster.
 cassandra_rack_outside_lines: the rack's nodes UN (those of the run under --limit), then the warnings (the nodes
 of the rack left out by --limit not UN, the rest of the cluster), once the rack is UN.
+cassandra_rack_start_failed: a node of the rack that did not start (start_rack's rescue).
+cassandra_rack_stop_refused: stop_rack's refusal (more than one replica down), with the other screens of a rack's
+start and stop.
 """
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -60,6 +63,7 @@ __metaclass__ = type
 import shlex
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_health import cassandra_health_sentences
+from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_refused
 from ansible_collections.community.cassandra.plugins.filter.cassandra_ring import hosts_by_address
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_status import compressed_address as _ip
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
@@ -205,11 +209,10 @@ def _ring_states(reads):
     return states
 
 
-def _left_out_again(first_left_out, reads):
-    """The first verdict's nodes left out by --limit not UN, the reads after the wait (cassandra_service_health_any_ok
-    kept them out of its findings) -> those nodes with their states in these reads: one UN in every read now
-    dropped, one not in them (no ring read) as it was."""
-    states = _ring_states(reads)
+def _left_out_again(first_left_out, states):
+    """The first verdict's nodes left out by --limit not UN, the states of the reads after the wait (_ring_states:
+    cassandra_service_health_any_ok kept them out of its findings) -> those nodes with their states in these
+    reads: one UN in every read now dropped, one not in them (no ring read) as it was."""
     again = []
     for n in first_left_out or []:
         now = states.get(_ip(n["address"]))
@@ -277,12 +280,12 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
     judged, all_in_ring, found = _judge(findings, members, dc, rack, addresses, reads)
     rack_addresses = set(found)
     run = [h for h in members or [] if h not in left_out]
-    left = _left_out_again((first_verdict or {}).get("left_out"), reads)
+    in_ring = _ring_states(reads)
+    left = _left_out_again((first_verdict or {}).get("left_out"), in_ring)
     left_at = dict((n["address"], n) for n in left)
     # a node no host is known by is taken for one left out only while one of them is not in the ring at an
     # address of its own, every node of the run is (else it may be that one), and the ring puts it in the rack
     # (else as before: a ghost entry stays the rack's)
-    in_ring = _ring_states(reads)
     unplaced = set(left_out) - set(h for a, h in known.items() if a in in_ring)
     run_placed = set(run) <= set(found.values())
     for f in findings:
@@ -538,9 +541,27 @@ def cassandra_rack_start_failed(result, task, node, rack, command=""):
         "WAY OUT  fix it, then run start_rack again:"] + again, WIDTH)
 
 
+def cassandra_rack_stop_refused(problems, warnings, nodes, dc, rack, cluster, command):
+    """stop_rack's refusal when the rack's stop would take more than one replica of some data down: the problems,
+    the warnings, the rack's nodes, its dc and rack, the cluster's name, the stop_rack command forced (-e
+    cassandra_rack_force=true) -> its REFUSED block (cassandra_refused): the fact, the problems, the nodes as rows,
+    the warnings, what a forced stop does, then the way out with the command.
+    e.g. (["ks has 3 replicas in dc1, which has 2 rack(s): ..."], [], ["n2"], "dc1", "r2", "prod", "ansible-playbook
+    x") -> ["REFUSED  stop_rack  prod  nothing was changed", "  Stopping dc1/r2 would take down more than one replica
+    of some data:", "    ks has 3 ...", "  its nodes:", "    n2", "  Forced, ...", "  WAY OUT  fix that first, or
+    force the stop:", "    ansible-playbook x"]."""
+    lines = ["Stopping %s/%s would take down more than one replica of some data:" % (dc, rack)]
+    lines += ["  " + str(p) for p in problems or []] + ["its nodes:"] + ["  " + str(n) for n in nodes or []]
+    lines += [out.WARNING + str(w) for w in warnings or []]
+    lines += ["Forced, reads and writes needing those replicas fail, and data only on them is unavailable until"
+              " the rack is back.", "WAY OUT  fix that first, or force the stop:", "  " + str(command)]
+    return cassandra_refused("stop_rack  %s" % cluster, lines)
+
+
 class FilterModule(object):
     def filters(self):
         return {"cassandra_rack_members": cassandra_rack_members,
                 "cassandra_rack_verdict": cassandra_rack_verdict,
                 "cassandra_rack_outside_lines": cassandra_rack_outside_lines,
-                "cassandra_rack_start_failed": cassandra_rack_start_failed}
+                "cassandra_rack_start_failed": cassandra_rack_start_failed,
+                "cassandra_rack_stop_refused": cassandra_rack_stop_refused}
