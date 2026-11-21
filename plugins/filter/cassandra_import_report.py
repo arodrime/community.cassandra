@@ -34,7 +34,7 @@ from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_impo
     KEPT_PART_WORDS, KEPT_PARTS, KEPT_PARTS_VAR, keep_parts_option)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_config import HEAP_MOVED
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_layout import (
-    group_chains, hand_edits_kept, NODE_LEVEL, NOT_READ, PER_NODE, _roles_defaults, _templated, vars_sort_key)
+    group_chains, hand_edits_kept, NODE_LEVEL, NOT_READ, PER_NODE, roles_defaults, templated, vars_sort_key)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import CONFIG_FILE, RESTART_DOES
 from ansible_collections.community.cassandra.plugins.filter.cassandra_os import NO_EFFECT_NOTE
 from ansible_collections.community.cassandra.plugins.filter.cassandra_suspicious import (
@@ -395,11 +395,11 @@ def _is_secret(key, keys, value):
 def plain_default(key):
     """A dict variable's collection default when it is plain (no template) -> {path: (keys, value)} as _leaves gives
     it, else None."""
-    value = _roles_defaults().get(key)
+    value = roles_defaults().get(key)
     if not isinstance(value, dict) or not value:
         return None
     leaves = _leaves(key, value)
-    if any(_templated(v) for dummy, dummy2, v in leaves):
+    if any(templated(v) for dummy, dummy2, v in leaves):
         return None
     return dict((path, (names, v)) for path, names, v in leaves)
 
@@ -1728,19 +1728,19 @@ def _differs_plans(report):
     {path: (the value, what to change, what then happens and its check)}."""
     from ansible_collections.community.cassandra.plugins.filter import cassandra_import_convergence as conv
     data = report_sections(report.layout, {})
-    items, dummy = conv._setting_items(report.layout, data, report.read)  # pylint: disable=protected-access
+    items, dummy = conv.setting_items(report.layout, data, report.read)
     plans = {}
     for item in items:
-        m = _ACTION.match(conv._action(item, report.layout))  # pylint: disable=protected-access
+        m = _ACTION.match(conv.action_text(item, report.layout))
         if not m or not m.group(2):
             continue
-        check = "check first: %s" % unbreakable(conv._check(  # pylint: disable=protected-access
+        check = "check first: %s" % unbreakable(conv.check_command(
             item["changing"], item["kind"], report.inventory, report.hosts, report.cwd)) \
-            if conv._KINDS[item["kind"]][2] else "no check (apply_config does not show it)"  # pylint: disable=protected-access
-        value = conv._shown(m.group(1))  # pylint: disable=protected-access
+            if conv.KINDS[item["kind"]][2] else "no check (apply_config does not show it)"
+        value = conv.named_value(m.group(1))
         # (a dict's key a node does not set: the file gets what it would without the dict, the collection's default)
         plans[item["name"]] = ("the collection's default" if value in ("default", "not set") else value, m.group(2),
-                               "%s; %s" % (conv._then_text(item), check))  # pylint: disable=protected-access
+                               "%s; %s" % (conv.then_text(item), check))
     return plans
 
 

@@ -15,7 +15,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     cassandra_inventory_files, cassandra_inventory_layout)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import IPV4
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_convergence import (
-    _carry, _kind, cassandra_import_convergence)
+    _carry, setting_kind, cassandra_import_convergence)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import cassandra_import_report
 from ansible_collections.community.cassandra.tests.unit.helpers import golden_lines
 
@@ -150,25 +150,25 @@ def test_the_files_kept_by_hand():
 
 
 def test_the_restart_kinds():
-    assert _kind("cassandra_concurrent_reads") == "restart"
-    assert _kind("cassandra_heap_size") == "restart"
-    assert _kind("cassandra_jvm11_extra_options") == "restart"
-    assert _kind("cassandra_config_template_snippets") == "restart"  # (logback.xml or cassandra-env.sh's text)
-    assert _kind("cassandra_jmx_users") == "jmx"  # passwords alone: no restart (read at each JMX login)
-    assert _kind("cassandra_config_file_permissions") == "none"
-    assert _kind("cassandra_seeds") == "seeds"
-    assert _kind("cassandra_data_file_directories") == "move"
-    assert _kind("cassandra_cdc_raw_dir") == "move"
-    assert _kind("cassandra_linux_limits") == "os"
-    assert _kind("cassandra_jmx_password") == "login" and _kind("cassandra_cql_password") == "login"
-    assert _kind("cassandra_server_keystore_password") == "keystore"
-    assert _kind("cassandra_linux_timesync") == "timesync"  # (synced in the restart window: a restart, its reason said)
-    assert _kind("cassandra_rpm_conf_alternative") == "restart"
-    assert _kind("cassandra_internode_encryption") == "switch" and _kind("cassandra_authenticator") == "switch"
-    assert _kind("cassandra_version") == "version"  # (another series: the upgrade)
-    assert _kind("cassandra_package_version") == "release" and _kind("cassandra_java_version") == "java"
-    assert _kind("cassandra_dsbulk_version") == "tool" and _kind("cassandra_medusa_version") == "tool"
-    assert _kind("cassandra_medusa_extra_settings") == "unknown"
+    assert setting_kind("cassandra_concurrent_reads") == "restart"
+    assert setting_kind("cassandra_heap_size") == "restart"
+    assert setting_kind("cassandra_jvm11_extra_options") == "restart"
+    assert setting_kind("cassandra_config_template_snippets") == "restart"  # (logback.xml or cassandra-env.sh's text)
+    assert setting_kind("cassandra_jmx_users") == "jmx"  # passwords alone: no restart (read at each JMX login)
+    assert setting_kind("cassandra_config_file_permissions") == "none"
+    assert setting_kind("cassandra_seeds") == "seeds"
+    assert setting_kind("cassandra_data_file_directories") == "move"
+    assert setting_kind("cassandra_cdc_raw_dir") == "move"
+    assert setting_kind("cassandra_linux_limits") == "os"
+    assert setting_kind("cassandra_jmx_password") == "login" and setting_kind("cassandra_cql_password") == "login"
+    assert setting_kind("cassandra_server_keystore_password") == "keystore"
+    assert setting_kind("cassandra_linux_timesync") == "timesync"  # (synced in the restart window: a restart, its reason said)
+    assert setting_kind("cassandra_rpm_conf_alternative") == "restart"
+    assert setting_kind("cassandra_internode_encryption") == "switch" and setting_kind("cassandra_authenticator") == "switch"
+    assert setting_kind("cassandra_version") == "version"  # (another series: the upgrade)
+    assert setting_kind("cassandra_package_version") == "release" and setting_kind("cassandra_java_version") == "java"
+    assert setting_kind("cassandra_dsbulk_version") == "tool" and setting_kind("cassandra_medusa_version") == "tool"
+    assert setting_kind("cassandra_medusa_extra_settings") == "unknown"
 
 
 @pytest.mark.parametrize("name, line, carried", [
@@ -442,10 +442,10 @@ def test_a_jvm_options_file_the_java_does_not_read_needs_no_restart():
         return {"name": name, "vars": {"cassandra_version": "41x"}, "versions": {"java": java}}
     item = {"key": "cassandra_jvm8_extra_options", "kind": "restart", "changing": ["n9"], "unmanaged": []}
     item["unread"] = convergence._unread(item["key"], [node("n9", "11.0.25")])
-    assert convergence._then_text(item) == "1 node changes, no restart (Java 11 does not read jvm8-server.options)"
+    assert convergence.then_text(item) == "1 node changes, no restart (Java 11 does not read jvm8-server.options)"
     item.update(changing=["n8", "n9"])
     item["unread"] = convergence._unread(item["key"], [node("n9", "11.0.25"), node("n8", "1.8.0_402")])
-    assert convergence._then_text(item) == "2 nodes change, then restart"
+    assert convergence.then_text(item) == "2 nodes change, then restart"
     # (jvm-server.options is read by every Java; the Java not known: a restart)
     assert convergence._unread("cassandra_jvm_extra_options", [node("n9", "11.0.25")]) == ""
     assert convergence._unread("cassandra_jvm8_extra_options", [node("n9", "")]) == ""

@@ -49,9 +49,9 @@ from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_impo
     ADDRESSES, ALWAYS, HOSTNAME, IMPORTED, IMPORTED_FOR, IPV4, KEEP, MISSING, RACKDC, ROLE, SET_UP_BY_THE_ROLES,
     value_shown, values_hidden)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import (
-    _block, BLOCKS, CARRIED, cassandra_inventory_files, _decrypt, KEEP_ORDER, KEPT_PARTS_VAR, _list_secret, old_import,
-    _OWNABLE, SECRET_FILES, SECRET_LISTS, SECRET_MOVED_REF, SECRET_VAR, SNIPPET_LISTS, SNIPPETS, _TagsLoader,
-    TEMPLATE_MARK, _Unsafe, _UserLoader, _vars_dir, _Vaulted, written_for)
+    block_title, BLOCKS, CARRIED, cassandra_inventory_files, decrypt, KEEP_ORDER, KEPT_PARTS_VAR, list_secret, old_import,
+    OWNABLE, SECRET_FILES, SECRET_LISTS, SECRET_MOVED_REF, SECRET_VAR, SNIPPET_LISTS, SNIPPETS, TagsLoader,
+    TEMPLATE_MARK, UserUnsafe, UserLoader, vars_dir, Vaulted, written_for)
 
 
 # Per node by nature: not reported as drift
@@ -111,7 +111,7 @@ def cassandra_import_known_group(groups, texts):
 def _hosts_of(text):
     """A YAML hosts file the import wrote -> (its host names, the ansible_host of its hosts)."""
     try:
-        data = yaml.load(str(text or ""), Loader=_TagsLoader)  # nosec B506: the loader builds no object
+        data = yaml.load(str(text or ""), Loader=TagsLoader)  # nosec B506: the loader builds no object
     except yaml.YAMLError:
         return set(), set()
     names, addresses, seen = set(), set(), set()
@@ -198,7 +198,7 @@ def _is_default(key, value, defaults):
     made of other variables)."""
     if value is MISSING:
         return True
-    return key in defaults and not _templated(defaults[key]) and _same(key, value, defaults[key])
+    return key in defaults and not templated(defaults[key]) and _same(key, value, defaults[key])
 
 
 # a value your file gives a node over the cluster's group_vars (_given): nothing to write for it
@@ -226,7 +226,7 @@ def _writable(value):
     if isinstance(value, list):
         return all(_writable(v) for v in value)
     if isinstance(value, str):
-        return not isinstance(value, _Unsafe) and not TEMPLATE_MARK.search(value)
+        return not isinstance(value, UserUnsafe) and not TEMPLATE_MARK.search(value)
     return value is None or isinstance(value, (bool, int, float))
 
 
@@ -239,7 +239,7 @@ def _place(key, nodes, cluster, group_vars, host_vars, given=None, said=None):
     several nodes share it. said: {"tie": [(key, how)], "per_node": [key]}, filled in place. True when every node
     has the same value (or none)."""
     said = said if said is not None else {}
-    defaults = _roles_defaults()
+    defaults = roles_defaults()
     groups = _value_groups(key, nodes)
     if len(groups) == 1:
         if groups[0][0] is not MISSING:
@@ -352,8 +352,8 @@ def _name_template(key, values):
 def vars_sort_key(key):
     """Keys in the order of the vars files: by block, then as listed there."""
     titles = [title for title, dummy in BLOCKS]
-    order = dict(BLOCKS)[_block(key)]
-    return (titles.index(_block(key)), order.index(key) if key in order else len(order), key)
+    order = dict(BLOCKS)[block_title(key)]
+    return (titles.index(block_title(key)), order.index(key) if key in order else len(order), key)
 
 
 def _differences(keys, read, dcg, rackg):
@@ -714,7 +714,7 @@ def _snippet_of(n, key, name):
     end a raw block): all of them, as the node has them, in a variable of secrets.yml the snippet renders (set in
     n's variables, in place) -> text."""
     lines, trusted = n["vars"][key], n.get("trusted") or ()
-    secret = _list_secret(key, lines, trusted)
+    secret = list_secret(key, lines, trusted)
     if all(isinstance(line, str) and "endraw" not in line for line in lines) and not secret:
         return snippet_text(lines, trusted)
     var = SECRET_VAR + SECRET_FILES[name] + "_lines"
@@ -752,7 +752,7 @@ def _trusted_lines(read):
 
 
 @functools.lru_cache(maxsize=None)
-def _roles_defaults():
+def roles_defaults():
     """Every role's defaults (the variables a host gets when nothing sets them), read once: not to be changed."""
     out = {}
     for role in roles_with_defaults():
@@ -760,11 +760,11 @@ def _roles_defaults():
     return out
 
 
-def _templated(value):
-    return isinstance(value, str) and not isinstance(value, _Unsafe) and re.search(r"\{[{%]", value) is not None
+def templated(value):
+    return isinstance(value, str) and not isinstance(value, UserUnsafe) and re.search(r"\{[{%]", value) is not None
 
 
-def _resolved(key, values, defaults):
+def resolved(key, values, defaults):
     """key's value as the node has it: its value read (never templated), else the collection's default (a
     template of other defaults rendered in a sandbox, a list or number again as Ansible would give it); MISSING
     when unknown (a default made of facts, a filter of Ansible's)."""
@@ -775,7 +775,7 @@ def _resolved(key, values, defaults):
     value = defaults[key]
     env = jinja2.sandbox.SandboxedEnvironment(undefined=jinja2.StrictUndefined)
     for dummy in range(5):  # a default made of other ones
-        if not _templated(value):
+        if not templated(value):
             return value
         try:
             value = env.from_string(value).render(**dict(defaults, **values))
@@ -854,7 +854,7 @@ def _effective(name, chain, layout, user, mine=True):
     <name>.yml, .yaml, .json) -> {key: (value, path)}. mine false: the import's dirs count, not its values."""
     out = {}
     for where in ["group_vars/all"] + ["group_vars/%s" % g for g in chain] + ["host_vars/%s" % name]:
-        files = [(p, data) for p, data in user if _vars_dir(p) == where]
+        files = [(p, data) for p, data in user if vars_dir(p) == where]
         written = (layout.get("group_vars") or {}).get(where.split("/", 1)[1]) if where.startswith("group_vars/") \
             else (layout.get("host_vars") or {}).get(name)
         in_dir = [f for f in files if f[0].count("/") == 2]
@@ -883,16 +883,16 @@ def cassandra_inventory_user_files(read, layout, password=""):
     for path, text in sorted((read or {}).items()):
         if not re.match(r"^(group_vars|host_vars)/[^/]+(/[^/]+)?[.](yml|yaml|json)$", path):
             continue
-        kind, name = _vars_dir(path).split("/", 1)
+        kind, name = vars_dir(path).split("/", 1)
         if name not in (groups if kind == "group_vars" else hosts):
             continue
         if str(text).startswith("$ANSIBLE_VAULT"):
-            text = _decrypt(text, password)
+            text = decrypt(text, password)
             if text is None:  # not read: said in the report
                 out.append({"path": path, "content": None})
                 continue
         # an earlier import's, without its first line (never group_vars/all)
-        earlier = name != "all" and _OWNABLE.match(path) and old_import(text)
+        earlier = name != "all" and OWNABLE.match(path) and old_import(text)
         if written_for(text) is None and not earlier:  # the import's: written again
             out.append({"path": path, "content": text})
     return out
@@ -992,7 +992,7 @@ def _left_to_yours(n, key, name, text):
         % (name, len(lines))]
 
 
-def _user_data(user_files):
+def user_data(user_files):
     """The user's files ([{path, content}]) -> ([(path, data)] of those that are a dict of variables, the paths of
     those not read (no content: vaulted, no password))."""
     user, unread = [], []
@@ -1001,7 +1001,7 @@ def _user_data(user_files):
             unread.append(f["path"])
             continue
         try:
-            data = yaml.load(f["content"], Loader=_UserLoader)  # nosec B506: the loader builds no object
+            data = yaml.load(f["content"], Loader=UserLoader)  # nosec B506: the loader builds no object
         except yaml.YAMLError:
             data = None
         if isinstance(data, dict):
@@ -1019,7 +1019,7 @@ def _live_of(found, n, key):
     the value, MISSING when unknown."""
     if key in (n.get("keep") or {}):  # left as found on the node (host_vars)
         return n["keep"][key]
-    return _resolved(key, found.live_vars[n["name"]], found.defaults)
+    return resolved(key, found.live_vars[n["name"]], found.defaults)
 
 
 def _read_on(found, n, key):
@@ -1037,7 +1037,7 @@ def _for_node(value, name):
     """A template of the user's as it is for the node name, MISSING when the import cannot tell: the import's own
     address and host name templates as they are (a node's value equal to its fact is read as that same template),
     one of the node's name only rendered (in a sandbox), any other not."""
-    if not _templated(value) or value in (IPV4, HOSTNAME):
+    if not templated(value) or value in (IPV4, HOSTNAME):
         return value
     env = jinja2.sandbox.SandboxedEnvironment(undefined=jinja2.StrictUndefined)
     try:
@@ -1054,10 +1054,10 @@ def _comparable(found, key, value, name):
     """A value of the user's as it can be compared with the node name's (a template as it is for that node), key
     added to found.not_compared when it cannot (a template the import cannot render, something vaulted) ->
     the value, MISSING."""
-    if isinstance(value, _Vaulted) or (isinstance(value, (dict, list)) and _Vaulted in [
+    if isinstance(value, Vaulted) or (isinstance(value, (dict, list)) and Vaulted in [
             type(v) for v in (value.values() if isinstance(value, dict) else value)]):
         value = MISSING
-    elif _templated(value):
+    elif templated(value):
         value = _for_node(value, name)
     if value is MISSING and key not in found.not_compared:
         found.not_compared.append(key)
@@ -1078,7 +1078,7 @@ def _left_to_theirs(nodes, layout, user, inventory_dir, found):
             value = theirs[key][0]
             if key == "cassandra_install_url" and isinstance(value, str):  # (the series as the import writes it)
                 value = re.sub(r"\{\{\s*cassandra_version\s*\}\}", SERIES_TOKEN, value)
-            value = value if key == "cassandra_install_url" and not _templated(value) else \
+            value = value if key == "cassandra_install_url" and not templated(value) else \
                 _comparable(found, key, value, name)
             if value is not MISSING and _same(key, value, n["vars"][key]):
                 from_yours.setdefault(name, {})[key] = {"value": n["vars"].pop(key), "path": theirs[key][1]}
@@ -1148,7 +1148,7 @@ def _given(nodes, layout, user):
         chain = chains.get(name, [])
         mine = out.setdefault(name, {})
         for key, (value, path) in _effective(name, chain, layout, user, mine=False).items():
-            where = _vars_dir(path)
+            where = vars_dir(path)
             wins = where.startswith("host_vars/") or where.split("/", 1)[1] in chain[1:] or (
                 chain and where == "group_vars/" + chain[0] and path > where + "/main.yml")
             mine[key] = YOURS_WIN if wins else value
@@ -1163,8 +1163,8 @@ def _layout_over(nodes, cluster_name, user_files, inventory_dir="", group=""):
     of theirs equal to the node's is not written again ('from_yours': {node: {key: {value, path}}}). 'not_compared': the keys
     of theirs not compared (a template, a vaulted value, a default not known here); 'unread_files': theirs not read
     (vaulted, no password); 'theirs_win': [{node, key, path}] a file of theirs still wins over the import's."""
-    user, unread = _user_data(user_files)
-    defaults = _roles_defaults()
+    user, unread = user_data(user_files)
+    defaults = roles_defaults()
     nodes = [dict(n, vars=dict(n.get("vars") or {})) for n in nodes]
     found = _Found(dict((n["name"], dict(n["vars"])) for n in nodes), defaults, [])  # (live_vars: as found)
     yours = []

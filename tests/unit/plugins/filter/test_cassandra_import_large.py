@@ -13,7 +13,7 @@ import pytest
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     cassandra_inventory_files, cassandra_inventory_layout)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import IPV4, MISSING
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_layout import _roles_defaults
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_layout import roles_defaults
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import (
     _trusted, cassandra_inventory_host_vars)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import cassandra_import_report
@@ -120,7 +120,7 @@ def test_report_of_88_nodes():
     assert "        + concurrent_writes: 48" in report[at:at + 60]  # (db111's own)
 
 
-DEFAULTS = _roles_defaults()
+DEFAULTS = roles_defaults()
 
 
 def effective(nodes):

@@ -187,7 +187,7 @@ def _secret_words(text):
                 or cassandra_secrets.mask(text) != text)
 
 
-def _list_secret(key, value, trusted=()):
+def list_secret(key, value, trusted=()):
     """True when a variable goes to secrets.yml: as the output masks it (cassandra_secrets.hidden), the lines of
     the lists of SECRET_LISTS a secret word too; the secrets the import moved out of its own lines (trusted)
     left out."""
@@ -196,7 +196,7 @@ def _list_secret(key, value, trusted=()):
     return cassandra_secrets.hidden(key, value)
 
 
-def _move_secrets(variables):
+def move_secrets(variables):
     """The secrets of the lists of lines a node's variables have (SECRET_LISTS) moved to variables of their own
     (in secrets.yml): (the variables, the lines that refer to them, report lines)."""
     variables, taken, trusted, said = dict(variables), {}, [], []
@@ -352,7 +352,7 @@ SNIPPET_LISTS = ((LOGBACK_END, "logback.xml"), (ENV_END, "cassandra-env.sh"), (A
 SNIPPETS = "cassandra_config_template_snippets"
 
 
-def _vars_dir(path):
+def vars_dir(path):
     """group_vars/x.yml, group_vars/x/y.yml -> group_vars/x (the group or host they are for)."""
     parts = path.split("/")
     return parts[0] + "/" + (os.path.splitext(parts[1])[0] if len(parts) == 2 else parts[1])
@@ -459,7 +459,7 @@ def template_vars(name):
     return frozenset(used)
 
 
-def _block(key):
+def block_title(key):
     for title, keys in BLOCKS:
         if key in keys:
             return title
@@ -541,7 +541,7 @@ def _vars_yaml(variables, templates=None, trusted=(), given=()):
         data["cassandra_install_url"] = _plain(url.replace(SERIES_TOKEN, "{{ cassandra_version }}"))
     grouped = {}
     for key in data:
-        grouped.setdefault(_block(key), []).append(key)
+        grouped.setdefault(block_title(key), []).append(key)
     out = []
     for title, order in BLOCKS:
         keys = grouped.get(title)
@@ -570,7 +570,7 @@ def _note(key, value, given=()):
 def _split_secrets(variables, trusted=()):
     public, secrets = {}, {}
     for key, value in variables.items():
-        (secrets if _list_secret(key, value, trusted) else public)[key] = value
+        (secrets if list_secret(key, value, trusted) else public)[key] = value
     return public, secrets
 
 
@@ -606,7 +606,7 @@ GENERATED_UNNAMED = "# Written by community.cassandra.import_cluster: the next i
 IMPORT_MARK = os.path.commonprefix([GENERATED, GENERATED_UNNAMED])
 # (a template's: in a Jinja comment, {# ... #})
 _HEADER = re.compile(r"\{?# Written by community[.]cassandra[.]import_cluster(?: for ([^\s:]+))?: ")
-_OWNABLE = re.compile(r"^(?:group_vars|host_vars)/[^/]+/(?:main\.yml|secrets\.yml|[^/]+\.j2)$")
+OWNABLE = re.compile(r"^(?:group_vars|host_vars)/[^/]+/(?:main\.yml|secrets\.yml|[^/]+\.j2)$")
 
 
 def cassandra_inventory_generated(content, cluster, path=""):
@@ -672,7 +672,7 @@ def old_import(text):
     return False
 
 
-def _decrypt(text, password):
+def decrypt(text, password):
     """text decrypted with password, or None (no password, another one, damaged)."""
     if not password:
         return None
@@ -683,27 +683,27 @@ def _decrypt(text, password):
         return None
 
 
-class _TagsLoader(yaml.SafeLoader):  # pylint: disable=too-many-ancestors
+class TagsLoader(yaml.SafeLoader):  # pylint: disable=too-many-ancestors
     """A YAML inventory's tags read as nothing (!vault), or as text (!unsafe): only names count here."""
 
 
-class _Unsafe(str):
+class UserUnsafe(str):
     """A value written !unsafe: its text, not a template."""
 
 
-_TagsLoader.add_multi_constructor("!", lambda loader, suffix, node: None)
-_TagsLoader.add_constructor("!unsafe", lambda loader, node: _Unsafe(loader.construct_scalar(node)))
+TagsLoader.add_multi_constructor("!", lambda loader, suffix, node: None)
+TagsLoader.add_constructor("!unsafe", lambda loader, node: UserUnsafe(loader.construct_scalar(node)))
 
 
-class _Vaulted(object):
+class Vaulted(object):
     """An inline !vault value of the user's: not read."""
 
 
-class _UserLoader(_TagsLoader):  # pylint: disable=too-many-ancestors
+class UserLoader(TagsLoader):  # pylint: disable=too-many-ancestors
     pass
 
 
-_UserLoader.add_constructor("!vault", lambda loader, node: _Vaulted())
+UserLoader.add_constructor("!vault", lambda loader, node: Vaulted())
 # the files Ansible reads as inventory in a dir (not its own ignored extensions), other than YAML: INI
 _INVENTORY_IGNORED = re.compile(r"(\.(pyc|pyo|swp|bak|rpm|md|txt|rst|orig|cfg|retry)|~)$")
 _INI_GROUP = re.compile(r"^\[([^:\]\s]+)(?::(\w+))?\]\s*(?:#.*)?$")  # a section, as Ansible's ini plugin reads it
@@ -730,7 +730,7 @@ def _inventory_names(data):
 def _yaml_names(text):
     """A YAML inventory's text -> (its groups but all, its hosts); none when it does not parse."""
     try:
-        return _inventory_names(yaml.load(text, Loader=_TagsLoader))  # nosec B506: the loader builds no object
+        return _inventory_names(yaml.load(text, Loader=TagsLoader))  # nosec B506: the loader builds no object
     except yaml.YAMLError:
         return set(), set()
 
@@ -772,7 +772,7 @@ def _own_names(path, text):
             data = json.loads(text)
         except ValueError:
             try:
-                data = yaml.load(text, Loader=_TagsLoader)  # nosec B506: the loader builds no object
+                data = yaml.load(text, Loader=TagsLoader)  # nosec B506: the loader builds no object
             except yaml.YAMLError:
                 data = None
     groups = _defined_groups(data) if isinstance(data, dict) else _ini_groups(text)
@@ -783,7 +783,7 @@ def _cluster_tree(text, cluster):
     """True when a YAML inventory holds the group cluster alone (and what is under it): this cluster's hosts file,
     without the import's first line (from before that line, or edited by hand)."""
     try:
-        data = yaml.load(text, Loader=_TagsLoader)  # nosec B506: the loader builds no object
+        data = yaml.load(text, Loader=TagsLoader)  # nosec B506: the loader builds no object
     except yaml.YAMLError:
         return False
     if isinstance(data, dict) and list(data) == ["all"] and isinstance(data["all"], dict) and list(data["all"]) == ["children"]:
@@ -802,9 +802,9 @@ def _file_header(path, text, password, old_layout):
     release's file without that line laid out as the import writes it (its path added to old_layout), None for
     none -> the cluster's name, "" or None."""
     if text is not None and text.startswith("$ANSIBLE_VAULT"):  # the import's only if it decrypts to its line
-        text = _decrypt(text, password)
+        text = decrypt(text, password)
     name = written_for(text)
-    if name is None and text is not None and _OWNABLE.match(path) and _vars_dir(path) != "group_vars/all" \
+    if name is None and text is not None and OWNABLE.match(path) and vars_dir(path) != "group_vars/all" \
             and old_import(text):
         old_layout.add(path)
         return ""  # an earlier release's, without its first line
@@ -843,11 +843,11 @@ def _same_group_conflicts(found, headers, cluster, cluster_name):
     if cluster_name is None or found.get(previous) is None or headers[previous] not in (cluster, "", None):
         return []
     try:
-        data = yaml.load(found[previous], Loader=_TagsLoader)  # nosec B506: the loader builds no object
+        data = yaml.load(found[previous], Loader=TagsLoader)  # nosec B506: the loader builds no object
     except yaml.YAMLError:
         data = None
     theirs = data.get("cassandra_cluster_name") if isinstance(data, dict) else None
-    templated = not isinstance(theirs, _Unsafe) and re.search(r"\{[{%]", str(theirs))  # the user's: not told
+    templated = not isinstance(theirs, UserUnsafe) and re.search(r"\{[{%]", str(theirs))  # the user's: not told
     if theirs is not None and str(theirs) != str(cluster_name) and not templated:
         return ["%s: cluster '%s', not '%s' (two clusters, one group %s)" % (previous, theirs, cluster_name, cluster)]
     return []
@@ -905,7 +905,7 @@ def _by_owner(owners, paths):
             if not _named_by(owners, path) - set([cluster]):  # not in another cluster's group_vars or host_vars
                 kept.append(path)
         elif who == cluster:
-            (stale if _OWNABLE.match(path) else kept).append(path)
+            (stale if OWNABLE.match(path) else kept).append(path)
         elif who == "":
             unsure.append(path)
     return stale, kept, unsure, conflicts, adoptable
@@ -985,7 +985,7 @@ def cassandra_inventory_same_secret(existing, content, password):
     "secret") -> True."""
     if not existing or not str(existing).startswith("$ANSIBLE_VAULT"):
         return False
-    return _decrypt(existing, password) == content
+    return decrypt(existing, password) == content
 
 
 @values_hidden
@@ -1000,7 +1000,7 @@ def cassandra_inventory_own_values(read, cluster_group, keys, password=""):
     for name in ("main.yml", "secrets.yml"):
         text = (read or {}).get("group_vars/%s/%s" % (cluster_group, name))
         if text and str(text).startswith("$ANSIBLE_VAULT"):
-            text = _decrypt(text, password)
+            text = decrypt(text, password)
         if not text or written_for(text) != cluster_group:
             continue
         try:
@@ -1050,7 +1050,7 @@ def cassandra_import_kept_ansible_host(nodes, read, hosts_file, cluster_group, n
     if not text or (written_for(text) != cluster_group and not _cluster_tree(text, cluster_group)):
         return nodes
     try:
-        hosts = _host_entries(yaml.load(text, Loader=_TagsLoader))  # nosec B506: the loader builds no object
+        hosts = _host_entries(yaml.load(text, Loader=TagsLoader))  # nosec B506: the loader builds no object
     except yaml.YAMLError:
         return nodes
     if not hosts:
@@ -1060,12 +1060,12 @@ def cassandra_import_kept_ansible_host(nodes, read, hosts_file, cluster_group, n
         if not match or match.group(1) not in hosts:
             continue
         if str(content or "").startswith("$ANSIBLE_VAULT"):
-            content = _decrypt(content, password)
+            content = decrypt(content, password)
             if content is None:
                 hosts[match.group(1)]["ansible_host"] = None  # not read: it may set it
                 continue
         try:
-            variables = yaml.load(content or "", Loader=_TagsLoader)  # nosec B506: the loader builds no object
+            variables = yaml.load(content or "", Loader=TagsLoader)  # nosec B506: the loader builds no object
         except yaml.YAMLError:
             continue
         if isinstance(variables, dict) and "ansible_host" in variables:

@@ -13,8 +13,8 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     cassandra_config_ignored_vars, cassandra_config_import, cassandra_import_error, cassandra_inventory_files,
     cassandra_inventory_layout, cassandra_jmx_files, cassandra_ring_nodes, cassandra_unit_environment)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
-    IPV4, _load_role, _read_line, _render, _same_setting)
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_jvm import _jmx_users
+    IPV4, load_role, _read_line, render_template, _same_setting)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_jvm import jmx_users
 from ansible_collections.community.cassandra.plugins.filter import cassandra_import, cassandra_settings
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_import_read as import_read
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_secrets
@@ -35,9 +35,9 @@ def load_fixture(name):
 
 def node_files(series, facts=None, **changes):
     """The config files cassandra_config writes with these variables."""
-    env, ctx, files = _load_role(series, facts or FACTS)
+    env, ctx, files = load_role(series, facts or FACTS)
     ctx.update(changes)
-    return {name: "\n".join(_render(env, series, name, ctx)[1]) for name in files}
+    return {name: "\n".join(render_template(env, series, name, ctx)[1]) for name in files}
 
 
 def ring(fixture):
@@ -595,7 +595,7 @@ controlRole   readwrite \\
       {"name": "monitorRole", "access": "readonly"}, {"name": "controlRole", "access": "readwrite"}]),
 ])
 def test_jmx_users_parsed(password_file, access_file, users):
-    assert _jmx_users(password_file, access_file) == users
+    assert jmx_users(password_file, access_file) == users
 
 
 @pytest.mark.parametrize("text, env", [
@@ -631,8 +631,8 @@ def test_unexpected_error_hides_its_message(monkeypatch):
     # its message may quote a config line: only the file, the type and where
     def boom(*args):
         raise ValueError("keystore_password: hunter2")
-    monkeypatch.setattr(import_read, "_import_file", boom)
-    monkeypatch.setattr(import_config, "_import_file", boom)
+    monkeypatch.setattr(import_read, "import_file", boom)
+    monkeypatch.setattr(import_config, "import_file", boom)
     with pytest.raises(AnsibleFilterError) as err:
         cassandra_config_import({"cassandra.yaml": "keystore_password: hunter2"}, "41x", FACTS)
     msg = str(err.value)
@@ -955,7 +955,7 @@ ACCESS_TEMPLATE = os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."
      "admin readwrite\\\n  create a.B \\\n  unregister\n", False),
 ])
 def test_jmx_access_written_back_as_imported(access, exact):
-    users = _jmx_users("ops s3cret\nmon m0n\n", access)
+    users = jmx_users("ops s3cret\nmon m0n\n", access)
     files = {}
     for name in ("access", "password"):
         with open(ACCESS_TEMPLATE.replace("access", name)) as f:
@@ -1003,9 +1003,9 @@ def test_seeds_read_however_written(series, line, seeds):
     out = cassandra_config_import({"cassandra.yaml": live}, series, FACTS)
     assert out["vars"]["cassandra_seeds"] == seeds
     # round trip: the role writes back the same seed list
-    env, ctx, dummy = _load_role(series, FACTS)
+    env, ctx, dummy = load_role(series, FACTS)
     ctx.update(out["vars"])
-    written = yaml.safe_load("\n".join(_render(env, series, "cassandra.yaml", ctx)[1]))
+    written = yaml.safe_load("\n".join(render_template(env, series, "cassandra.yaml", ctx)[1]))
     assert [s.strip() for s in written["seed_provider"][0]["parameters"][0]["seeds"].split(",")] == seeds
 
 
@@ -1156,7 +1156,7 @@ def test_password_round_trip(series, password):
     secrets = secret_vars(series)
     live = node_files(series, **dict((v, password) for v in secrets))["cassandra.yaml"]
     out = cassandra_config_import({"cassandra.yaml": live}, series, FACTS)
-    env, ctx, dummy = _load_role(series, FACTS)
+    env, ctx, dummy = load_role(series, FACTS)
     assert dict((v, out["vars"].get(v, ctx[v])) for v in secrets) == dict((v, password) for v in secrets)
     assert (out["hand_edits"], out["normalized"]) == ([], [])
     if password:  # "" leaves the 5.0 ones commented out
@@ -1197,9 +1197,9 @@ def test_cluster_name_round_trip(series, line, name):
     live = re.sub(r"^cluster_name:.*$", line, stock_yaml(series), flags=re.M)
     out = cassandra_config_import({"cassandra.yaml": live}, series, FACTS)
     assert out["vars"]["cassandra_cluster_name"] == name
-    env, ctx, dummy = _load_role(series, FACTS)
+    env, ctx, dummy = load_role(series, FACTS)
     ctx.update(out["vars"])
-    assert yaml.safe_load("\n".join(_render(env, series, "cassandra.yaml", ctx)[1]))["cluster_name"] == name
+    assert yaml.safe_load("\n".join(render_template(env, series, "cassandra.yaml", ctx)[1]))["cluster_name"] == name
 
 
 @pytest.mark.parametrize("line, value", [("auto_snapshot: yes", True), ("auto_snapshot: False", False)])
@@ -2044,7 +2044,7 @@ def test_a_line_the_template_comments_out_is_still_its_own_in_a_pairing():
     # MAX_HEAP_SIZE commented out by the template (no heap set), MAX_DIRECT_MEMORY_SIZE not; the node sets the heap
     # and comments out the other: each line read against its own (paired by the lines that run on both sides, the
     # node's heap would be read against the direct memory line, a false stop)
-    env, ctx, files = _load_role("50x", FACTS)
+    env, ctx, files = load_role("50x", FACTS)
     with open(os.path.join(os.path.dirname(cassandra_import.__file__), "..", "..", "roles", "cassandra_config",
                            "templates", "5.0", "cassandra-env.sh.j2"), encoding="utf-8") as f:
         tpl = [line for line in f.read().split("\n")

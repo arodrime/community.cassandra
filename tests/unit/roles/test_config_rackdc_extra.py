@@ -6,7 +6,7 @@ __metaclass__ = type
 
 import pytest
 
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import _load_role, _render
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import load_role, render_template
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import properties_settings
 from ansible_collections.community.cassandra.tests.unit.roles.test_config_declared import run
 
@@ -16,10 +16,10 @@ CHECK = "Refuse rackdc extra settings the file cannot hold"
 
 @pytest.mark.parametrize("series", ["40x", "41x", "50x"])
 def test_written_after_prefer_local(series):
-    env, ctx, dummy = _load_role(series, FACTS)
+    env, ctx, dummy = load_role(series, FACTS)
     ctx.update(cassandra_rackdc_dc="dc1", cassandra_rackdc_rack="r1",
                cassandra_rackdc_extra_settings={"dc_suffix": "_zorglub", "ec2_naming_scheme": "legacy", "x.y-z": 3})
-    lines = _render(env, series, "cassandra-rackdc.properties", ctx)[1]
+    lines = render_template(env, series, "cassandra-rackdc.properties", ctx)[1]
     at = lines.index("# prefer_local=true")
     assert lines[at + 1:at + 4] == ["dc_suffix=_zorglub", "ec2_naming_scheme=legacy", "x.y-z=3"]
     assert properties_settings("\n".join(lines)) == {"dc": "dc1", "rack": "r1", "dc_suffix": "_zorglub",

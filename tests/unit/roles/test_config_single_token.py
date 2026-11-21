@@ -12,7 +12,7 @@ import pytest
 import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_config_import
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import _load_role, _render
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import load_role, render_template
 
 FACTS = {"os_family": "Debian", "default_ipv4": {"address": "10.0.0.1"}}
 SERIES = ["40x", "41x", "50x"]
@@ -21,14 +21,14 @@ DEFAULTS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "c
 
 
 def cassandra_yaml(series, **changes):
-    env, ctx, dummy = _load_role(series, FACTS)
+    env, ctx, dummy = load_role(series, FACTS)
     ctx.update(changes)
     if "cassandra_num_tokens" in changes and "cassandra_allocate_tokens_for_local_replication_factor" not in changes:
         # the role default follows num_tokens (Ansible templates it lazily)
         with open(DEFAULTS) as f:
             raw = yaml.safe_load(f)["cassandra_allocate_tokens_for_local_replication_factor"]
         ctx["cassandra_allocate_tokens_for_local_replication_factor"] = env.from_string(raw).render(**ctx)
-    return "\n".join(_render(env, series, "cassandra.yaml", ctx)[1])
+    return "\n".join(render_template(env, series, "cassandra.yaml", ctx)[1])
 
 
 def active(text, key):

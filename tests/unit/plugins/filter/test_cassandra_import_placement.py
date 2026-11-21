@@ -18,11 +18,11 @@ from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_impo
     IPV4, LOGBACK_END, MISSING, RACKDC)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import GENERATED
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_layout import (
-    _cluster_group, _dc_group, _place_highest, _rack_group, _roles_defaults)
+    _cluster_group, _dc_group, _place_highest, _rack_group, roles_defaults)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import (
     cassandra_inventory_host_vars)
 
-DEFAULTS = _roles_defaults()
+DEFAULTS = roles_defaults()
 
 
 def node(name, dc, rack, **variables):

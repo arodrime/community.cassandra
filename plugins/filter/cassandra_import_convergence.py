@@ -33,7 +33,7 @@ from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secr
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 
 # the files cassandra_config writes from its series' templates: a change in one is a restart (apply_config's rule);
-# the JMX files' templates are not a series' (cassandra_jmx_users: _kind)
+# the JMX files' templates are not a series' (cassandra_jmx_users: setting_kind)
 TEMPLATES = tuple(f for f in FILES if not f.startswith("jmxremote."))
 # an owner, group or mode only: apply_config writes them without a restart (Cassandra reads them when it starts)
 PERMS = ("cassandra_config_user", "cassandra_config_group", "cassandra_config_mode", "cassandra_config_public_mode",
@@ -63,34 +63,34 @@ SWITCHES = ("cassandra_internode_encryption", "cassandra_client_encryption_enabl
 LIMIT_MOST = 10  # a check --limit to the nodes that change, up to this many (more: the whole cluster)
 # what a change does, by kind: (the order of the actions, the safest first; what the report says; apply_config
 # --check --diff shows it)
-_KINDS = {"none": (0, THEN["none"][0], True),
-          "os": (0, "%s (cassandra_linux, applied live)" % THEN["os"][0], True),
-          "restart": (1, THEN["restart"][0], True),
-          # (apply_config syncs the clock with Cassandra stopped: a step of it under a running Cassandra could reorder
-          # its writes)
-          "timesync": (1, "then restart (apply_config starts time sync in the node's restart window, Cassandra"
-                          " stopped, as a clock step must not happen under it)", True),
-          "seeds": (1, "no restart (change_seeds applies it live)", True),
-          # apply_config's rule: jmxremote.password is read at each JMX login, jmxremote.access at start
-          "jmx": (1, "then restart for a user or a right (jmxremote.access, read at start); passwords only: no restart"
-                     " (jmxremote.password, read at each JMX login)", True),
-          "switch": (2, "then restart, node by node: a cluster-wide switch, its procedure first (its *_optional"
-                        " step, then the switch)", True),
-          "keystore": (2, "then restart, which fails unless the file on the node matches it: check it there first",
-                       True),
-          "unknown": (3, "restart unknown (apply_config does not write it)", False),
-          "login": (4, "none on the nodes: the playbooks' login, which the nodes must accept first (their"
-                       " jmxremote.password, cassandra_jmx_users; their CQL role)", False),
-          # (a newer release of the series, another Java: apply_config, in the node's one restart)
-          "release": (1, "then restart (apply_config updates the package in it), never down", True),
-          "java": (1, "then restart (apply_config moves the Java in it, as update_java)", True),
-          "tool": (0, "no restart (apply_config installs it, live), never down", True),
-          "version": (5, "an upgrade (upgrade, its preflight phase first), never down", False),
-          "move": (5, "moved by hand first, the node stopped (apply_config would restart it on the new path): a data"
-                   " move, for an experienced operator", True)}
+KINDS = {"none": (0, THEN["none"][0], True),
+         "os": (0, "%s (cassandra_linux, applied live)" % THEN["os"][0], True),
+         "restart": (1, THEN["restart"][0], True),
+         # (apply_config syncs the clock with Cassandra stopped: a step of it under a running Cassandra could reorder
+         # its writes)
+         "timesync": (1, "then restart (apply_config starts time sync in the node's restart window, Cassandra"
+                         " stopped, as a clock step must not happen under it)", True),
+         "seeds": (1, "no restart (change_seeds applies it live)", True),
+         # apply_config's rule: jmxremote.password is read at each JMX login, jmxremote.access at start
+         "jmx": (1, "then restart for a user or a right (jmxremote.access, read at start); passwords only: no restart"
+                    " (jmxremote.password, read at each JMX login)", True),
+         "switch": (2, "then restart, node by node: a cluster-wide switch, its procedure first (its *_optional"
+                       " step, then the switch)", True),
+         "keystore": (2, "then restart, which fails unless the file on the node matches it: check it there first",
+                      True),
+         "unknown": (3, "restart unknown (apply_config does not write it)", False),
+         "login": (4, "none on the nodes: the playbooks' login, which the nodes must accept first (their"
+                      " jmxremote.password, cassandra_jmx_users; their CQL role)", False),
+         # (a newer release of the series, another Java: apply_config, in the node's one restart)
+         "release": (1, "then restart (apply_config updates the package in it), never down", True),
+         "java": (1, "then restart (apply_config moves the Java in it, as update_java)", True),
+         "tool": (0, "no restart (apply_config installs it, live), never down", True),
+         "version": (5, "an upgrade (upgrade, its preflight phase first), never down", False),
+         "move": (5, "moved by hand first, the node stopped (apply_config would restart it on the new path): a data"
+                  " move, for an experienced operator", True)}
 
 
-def _kind(key):
+def setting_kind(key):
     """What apply_config does after writing key on a running node: none (an owner or mode), os (cassandra_linux's,
     live), restart (a config file), jmx (the JMX users: a restart unless only passwords change), keystore (a config
     file naming a keystore), seeds (change_seeds' live reload),
@@ -221,7 +221,7 @@ def _unread(key, changing):
     return "" if "" in majors else "Java %s does not read %s" % ("/".join(sorted(majors)), files[0])
 
 
-def _setting_items(layout, data, read):
+def setting_items(layout, data, read):
     """The settings the read nodes do not all share -> [{name, key, values: [(text, [nodes])] most nodes first,
     target, raw (its value), changing: [nodes], without: [the changing nodes without the variable], kind, rank,
     unmanaged: [the changing nodes cassandra_linux leaves as they are]}], the safest change first, then the fewest
@@ -245,7 +245,7 @@ def _setting_items(layout, data, read):
         first = next(n for n in read if n["name"] == keeping[0])
         value = _value_of(layout, first, key)
         changing = [n for n in read if n["name"] in listed and n["name"] not in keeping]
-        kind = _kind(key)
+        kind = setting_kind(key)
         if kind == "release" and len(set(tuple(_version(v[0])[0][:2]) for v in values if _version(v[0])[0])) > 1:
             kind = "version"  # (a release of another series among them: an upgrade, not apply_config's update)
         items.append({"name": path, "key": key, "values": values, "target": target, "kind": kind, "tie": tie,
@@ -258,7 +258,7 @@ def _setting_items(layout, data, read):
         kind = items[-1]["kind"]
         items[-1]["unread"] = _unread(key, changing) if kind == "restart" else ""
         items[-1]["rank"] = 0 if items[-1]["unread"] else \
-            max(_KINDS[kind][0], _KINDS["unknown"][0] if key in HARDWARE else 0)
+            max(KINDS[kind][0], KINDS["unknown"][0] if key in HARDWARE else 0)
     items.sort(key=lambda i: (i["rank"], len(i["changing"]), i["name"]))
     return items, counted
 
@@ -412,15 +412,15 @@ def _kept_parts(kept):
     return parts
 
 
-def _values_text(item, who):
+def values_text(item, who):
     """2 on dc1 (84 nodes); 1 on db101..db105 (5 nodes); 6 on db113 (1 node)."""
-    return "; ".join("%s on %s" % (unbreakable(_shown(text)), who(nodes)) for text, nodes in item["values"])
+    return "; ".join("%s on %s" % (unbreakable(named_value(text)), who(nodes)) for text, nodes in item["values"])
 
 
-def _then_text(item):
+def then_text(item):
     """3 nodes change, then restart; why to take care, too."""
     count = len(item["changing"])
-    then = "no restart (%s)" % item["unread"] if item.get("unread") else _KINDS[item["kind"]][1]
+    then = "no restart (%s)" % item["unread"] if item.get("unread") else KINDS[item["kind"]][1]
     text = "%s %s, %s" % (out.plural(count, "node"), "changes" if count == 1 else "change", then)
     if item["key"] in HARDWARE:
         text += "; sized for the machine: one value only where the machines are alike, else keep it per group"
@@ -429,7 +429,7 @@ def _then_text(item):
     return text
 
 
-def _shown(text):
+def named_value(text):
     """A value as the convergence names it: a secret by its number, a node without it as such, a file of the
     inventory by its path there."""
     text = re.sub(r"[\r\n]+", " ", str(text))  # (a line of its own would be read as another one)
@@ -437,7 +437,7 @@ def _shown(text):
     return {COLLECTION_DEFAULT: "default", "(not set)": "not set"}.get(text, text)
 
 
-def _check(nodes, kind, inventory, hosts, cwd):
+def check_command(nodes, kind, inventory, hosts, cwd):
     """The command that shows what a change does before it is made: apply_config --check --diff, --limit to the nodes
     that change when they are LIMIT_MOST at most; change_seeds --check for the seeds (every node, its own rule)."""
     playbook, extra = ("change_seeds", ["--check"]) if kind == "seeds" else ("apply_config", ["--check", "--diff"])
@@ -459,7 +459,7 @@ def _rest_is_default(key, name, values):
     return True
 
 
-def _action(item, layout):
+def action_text(item, layout):
     """-> 2 for all: the value most nodes have, where to write it: a variable in the cluster's group_vars, removed
     from the files that keep it below; a sub-key of a dict set in the files that keep another value of it (the
     dict whole in the cluster's group_vars for the nodes without it)."""
@@ -473,7 +473,7 @@ def _action(item, layout):
     value = target
     if secret:
         source = _places(layout, item["key"], item["name"], item["raw"], same=True) or [where]
-        value = "%s (its value in %s)" % (_shown(target), source[0])
+        value = "%s (its value in %s)" % (named_value(target), source[0])
     mine = layout.get("from_yours") or {}
     shared = sorted(set(mine[n][item["key"]]["path"] for n in item["changing"]
                         if item["key"] in mine.get(n, {}) and _shared(layout, mine[n][item["key"]]["path"])))
@@ -498,7 +498,7 @@ def _action(item, layout):
         if _rest_is_default(item["key"], item["name"], item["dicts"]):
             what = "remove %s from %s (the rest of it is the collection's default)" % (item["key"], places)
         else:
-            what = "%s: %s (the collection's default) in %s in %s" % (sub, _shown(default_value), item["key"], places)
+            what = "%s: %s (the collection's default) in %s in %s" % (sub, named_value(default_value), item["key"], places)
     else:
         places = ", ".join(_places(layout, item["key"], item["name"], item["raw"]))
         if item["raw"] is _ABSENT:
@@ -516,7 +516,7 @@ def _action(item, layout):
                     " on yours: %s, which every cluster of the inventory reads" % ", ".join(shared) if shared
                     else " on the collection's default")
     tie = " (a tie: any of these values will do)" if item["tie"] else ""
-    return "%s %s for all%s: %s" % (ARROW_RIGHT, _shown(target), tie, what)
+    return "%s %s for all%s: %s" % (ARROW_RIGHT, named_value(target), tie, what)
 
 
 def _kept_lines(kept, layout, read, who, width, inventory, hosts, cwd):
@@ -538,7 +538,7 @@ def _kept_lines(kept, layout, read, who, width, inventory, hosts, cwd):
                                " check first: %s" % (
                                    ARROW_RIGHT, name, "host_vars/%s/" % nodes[0] if len(nodes) == 1 else
                                    "host_vars of %s (%s)" % (out.plural(len(nodes), "node"), out.full_list(nodes)),
-                                   unbreakable(_check(nodes, "restart", inventory, hosts, cwd))),
+                                   unbreakable(check_command(nodes, "restart", inventory, hosts, cwd))),
                                width, "    ", "  ")
             continue
         carried, loose = set(), 0
@@ -580,7 +580,7 @@ def _kept_lines(kept, layout, read, who, width, inventory, hosts, cwd):
                            " apply_config writes it, then restarts the node; check first: %s (what its diff still shows,"
                            " the roles would revert)" % (ARROW_RIGHT, how, name,
                                                          "the same host_vars" if place.startswith(alone) else alone,
-                                                         unbreakable(_check(nodes, "restart", inventory, hosts, cwd))),
+                                                         unbreakable(check_command(nodes, "restart", inventory, hosts, cwd))),
                            width, "    ", "  ")
     return lines
 
@@ -602,7 +602,7 @@ def kept_plan(layout, inventory="", hosts="", cwd=None):
         nodes = [m for dummy, members in variants for m in members]
         if java:
             plans.append({"file": name, "nodes": nodes, "set": [], "per_node": [], "already": [], "loose": 0,
-                          "unread": java, "check": _check(nodes, "restart", inventory, hosts, cwd)})
+                          "unread": java, "check": check_command(nodes, "restart", inventory, hosts, cwd)})
             continue
         values, loose = {}, 0  # {variable: {node: value}}
         for edits, members in variants:
@@ -629,7 +629,7 @@ def kept_plan(layout, inventory="", hosts="", cwd=None):
             else:
                 per_node.append((variable, ", ".join("%s on %s" % (v, m) for m, v in sorted(found.items()))))
         plans.append({"file": name, "nodes": nodes, "set": same, "per_node": per_node, "already": already,
-                      "loose": loose, "unread": "", "check": _check(nodes, "restart", inventory, hosts, cwd)})
+                      "loose": loose, "unread": "", "check": check_command(nodes, "restart", inventory, hosts, cwd)})
     return plans
 
 
@@ -707,13 +707,13 @@ def _differ_lines(items, layout, who, width, inventory, hosts, cwd):
                        " import again: once every node has the value, the import keeps it in group_vars/%s/ and the"
                        " line goes away." % layout["cluster_group"], width, "  ", "  ")
     for item in items:
-        lines += aligned_rows([(item["name"], _values_text(item, who))], "  ", width)
-        lines += fill_text(_action(item, layout), width, "      ", "  ")
+        lines += aligned_rows([(item["name"], values_text(item, who))], "  ", width)
+        lines += fill_text(action_text(item, layout), width, "      ", "  ")
         # (a file of yours named: it reaches other nodes too, the whole cluster checked)
         reach = [] if any(p.startswith("yours: ") for p in _places(layout, item["key"])) else item["changing"]
-        check = unbreakable(_check(reach, item["kind"], inventory, hosts, cwd)) if _KINDS[item["kind"]][2] \
+        check = unbreakable(check_command(reach, item["kind"], inventory, hosts, cwd)) if KINDS[item["kind"]][2] \
             else "none, apply_config does not show it"
-        lines += fill_text("%s; check: %s" % (_then_text(item), check), width, "      ", "  ")
+        lines += fill_text("%s; check: %s" % (then_text(item), check), width, "      ", "  ")
     return lines
 
 
@@ -729,7 +729,7 @@ def _convergence(layout, self_check, inventory, hosts, cwd, width, self_check_ok
     def who(members):
         return who_text(members, data["everyone"], data["groups"])
 
-    items, counted = _setting_items(layout, data, read)
+    items, counted = setting_items(layout, data, read)
     kept = _kept_files(_with_yours(read, layout))
     score = _score(items, counted, kept, self_check_ok, layout["cluster_group"], len(nodes) - len(read))
     lines = _report_head(score, items, layout, data, read, width, self_check_ok)

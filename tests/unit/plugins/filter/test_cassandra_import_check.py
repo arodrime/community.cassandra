@@ -15,7 +15,7 @@ from ansible.errors import AnsibleFilterError
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     cassandra_config_import, cassandra_import_error, cassandra_inventory_files, cassandra_inventory_layout)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
-    IPV4, _load_role, _render, _without_same_logger)
+    IPV4, load_role, render_template, _without_same_logger)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import mask as _mask
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_layout import _same, _show
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_import_read as import_read
@@ -529,9 +529,9 @@ def test_passwords_written_by_the_role_pass_the_check(series, password):
     the passwords themselves, and the roles would write the same settings."""
     files = seeded(stock(series))
     secrets = dict((v, password) for v in secret_vars(series))
-    env, ctx, dummy = _load_role(series, FACTS)
-    default = _render(env, series, "cassandra.yaml", ctx)[1]
-    written = _render(env, series, "cassandra.yaml", dict(ctx, **secrets))[1]
+    env, ctx, dummy = load_role(series, FACTS)
+    default = render_template(env, series, "cassandra.yaml", ctx)[1]
+    written = render_template(env, series, "cassandra.yaml", dict(ctx, **secrets))[1]
     # the role's password lines into the node's file (the stock one: the role's without its header line)
     lines = files["cassandra.yaml"].split("\n")
     assert len(lines) + 1 == len(default) == len(written)
@@ -1011,13 +1011,13 @@ def test_nested_sections_imported_whole(series, case, pattern, replace, extra, m
 
 
 def test_audit_extra_sub_keys_written_in_the_section():
-    env, ctx, dummy = _load_role("50x", FACTS)
+    env, ctx, dummy = load_role("50x", FACTS)
     ctx["cassandra_extra_settings"] = {"audit_logging_options": {"roll_cycle": "DAILY"}, "x": 1}
-    text = "\n".join(_render(env, "50x", "cassandra.yaml", ctx)[1])
+    text = "\n".join(render_template(env, "50x", "cassandra.yaml", ctx)[1])
     assert "    - class_name: BinAuditLogger\n  roll_cycle: DAILY\n" in text
     assert text.endswith("# Settings no variable covers (cassandra_extra_settings)\nx: 1\n")
     ctx["cassandra_extra_settings"] = {"audit_logging_options": {"roll_cycle": "DAILY"}}
-    assert "Settings no variable covers" not in "\n".join(_render(env, "50x", "cassandra.yaml", ctx)[1])
+    assert "Settings no variable covers" not in "\n".join(render_template(env, "50x", "cassandra.yaml", ctx)[1])
 
 
 # --- the audit logger: its class and parameters read into their variables -------
@@ -1060,9 +1060,9 @@ def audit_section(text):
 
 
 def rendered_yaml(series, variables):
-    env, ctx, dummy = _load_role(series, FACTS)
+    env, ctx, dummy = load_role(series, FACTS)
     ctx.update(variables)
-    return "\n".join(_render(env, series, "cassandra.yaml", ctx)[1])
+    return "\n".join(render_template(env, series, "cassandra.yaml", ctx)[1])
 
 
 @pytest.mark.parametrize("series", sorted(VERSIONS))

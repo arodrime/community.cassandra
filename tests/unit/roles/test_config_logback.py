@@ -13,7 +13,7 @@ import pytest
 import yaml
 
 
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import _load_role, _render
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import load_role, render_template
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 from ansible_collections.community.cassandra.tests.unit.task_files import find_task, load_tasks
 from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
@@ -332,31 +332,31 @@ def test_an_appender_named_in_single_quotes_is_known():
 
 def test_a_g1_value_left_empty_comments_its_stock_line_out():
     # the owner's practice: tune G1 by commenting a stock line out, never by deleting it
-    env, ctx, dummy = _load_role("50x", {"os_family": "Debian"})
-    lines = _render(env, "50x", "jvm17-server.options", dict(ctx, cassandra_jvm_g1_new_size_percent="",
-                                                             cassandra_jvm17_max_gc_pause_millis="",
-                                                             cassandra_jvm_g1_rset_updating_pause_time_percent=7))[1]
+    env, ctx, dummy = load_role("50x", {"os_family": "Debian"})
+    lines = render_template(env, "50x", "jvm17-server.options", dict(ctx, cassandra_jvm_g1_new_size_percent="",
+                                                                     cassandra_jvm17_max_gc_pause_millis="",
+                                                                     cassandra_jvm_g1_rset_updating_pause_time_percent=7))[1]
     assert "#-XX:+UnlockExperimentalVMOptions" in lines and "#-XX:G1NewSizePercent=50" in lines
     assert "#-XX:MaxGCPauseMillis=300" in lines and "-XX:G1RSetUpdatingPauseTimePercent=7" in lines
     assert "-XX:MaxTenuringThreshold=2" in lines  # (the others as they are)
 
 
 def test_the_heap_in_the_jvm_options():
-    env, ctx, dummy = _load_role("50x", {"os_family": "Debian"})
+    env, ctx, dummy = load_role("50x", {"os_family": "Debian"})
     on = dict(ctx, cassandra_heap_size="31G", cassandra_heap_in_jvm_options=True, cassandra_jvm_extra_options=["-Dx=1"])
-    assert _render(env, "50x", "jvm-server.options", on)[1][-4:-1] == ["-Xms31G", "-Xmx31G", "-Dx=1"]
-    assert '#MAX_HEAP_SIZE="20G"' in _render(env, "50x", "cassandra-env.sh", on)[1]
-    assert 'MAX_HEAP_SIZE="31G"' in _render(env, "50x", "cassandra-env.sh", dict(on, cassandra_heap_in_jvm_options=False))[1]
+    assert render_template(env, "50x", "jvm-server.options", on)[1][-4:-1] == ["-Xms31G", "-Xmx31G", "-Dx=1"]
+    assert '#MAX_HEAP_SIZE="20G"' in render_template(env, "50x", "cassandra-env.sh", on)[1]
+    assert 'MAX_HEAP_SIZE="31G"' in render_template(env, "50x", "cassandra-env.sh", dict(on, cassandra_heap_in_jvm_options=False))[1]
     # -e cassandra_heap_in_jvm_options=false gives the string "false": off too
     off = dict(on, cassandra_heap_in_jvm_options="false")
-    assert 'MAX_HEAP_SIZE="31G"' in _render(env, "50x", "cassandra-env.sh", off)[1]
-    assert "-Xmx31G" not in _render(env, "50x", "jvm-server.options", off)[1]
+    assert 'MAX_HEAP_SIZE="31G"' in render_template(env, "50x", "cassandra-env.sh", off)[1]
+    assert "-Xmx31G" not in render_template(env, "50x", "jvm-server.options", off)[1]
     # 4.x: its stock heap lines, -Xmn with the young generation
-    env, ctx, dummy = _load_role("41x", {"os_family": "Debian"})
+    env, ctx, dummy = load_role("41x", {"os_family": "Debian"})
     on = dict(ctx, cassandra_heap_size="8G", cassandra_heap_newsize="800M", cassandra_heap_in_jvm_options=True)
-    lines = _render(env, "41x", "jvm-server.options", on)[1]
+    lines = render_template(env, "41x", "jvm-server.options", on)[1]
     assert "-Xms8G" in lines and "-Xmx8G" in lines and "-Xmn800M" in lines and "#-Xms4G" not in lines
-    assert "#-Xms4G" in _render(env, "41x", "jvm-server.options", dict(ctx, cassandra_heap_size="8G"))[1]
+    assert "#-Xms4G" in render_template(env, "41x", "jvm-server.options", dict(ctx, cassandra_heap_size="8G"))[1]
 
 
 def rolled(text):

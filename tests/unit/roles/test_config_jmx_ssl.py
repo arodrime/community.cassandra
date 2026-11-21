@@ -8,7 +8,7 @@ import os
 
 import pytest
 
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import _load_role, _render
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import load_role, render_template
 from ansible_collections.community.cassandra.tests.unit.roles.test_config_declared import run
 
 FACTS = {"os_family": "Debian", "default_ipv4": {"address": "10.0.0.1"}, "hostname": "n1"}
@@ -42,9 +42,9 @@ def test_jmx_tls_checks(changes, wrong):
 
 
 def env_lines(series, **changes):
-    env, ctx, dummy = _load_role(series, FACTS)
+    env, ctx, dummy = load_role(series, FACTS)
     ctx.update(changes)
-    return _render(env, series, "cassandra-env.sh", ctx)[1]
+    return render_template(env, series, "cassandra-env.sh", ctx)[1]
 
 
 @pytest.mark.parametrize("series", ["40x", "41x", "50x"])

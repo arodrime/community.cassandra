@@ -10,7 +10,7 @@ cassandra_drift_sections: those values, the inventory's vars files -> the lines 
     value on a node is not the collection's default: its values and nodes, the default, where it is set, what going
     back costs and the exact edit; the files kept by hand apart) and BETWEEN NODES (the settings not the same on every
     node, as import_cluster's convergence says them). The defaults made of other variables are resolved per node as
-    the import resolves them (cassandra_import's _resolved); secrets are never shown.
+    the import resolves them (cassandra_import_layout's resolved); secrets are never shown.
 cassandra_drift_sync: the nodes as apply_config's compare left them (drift's IN SYNC) -> its lines: in sync, or
     what differs on each node and the command that shows it all.
 """
@@ -29,9 +29,9 @@ from ansible.module_utils.parsing.convert_bool import boolean
 from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import NOT_RUNNING, THEN, not_running
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import MISSING
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_layout import (
-    _resolved, _roles_defaults, _user_data)
+    resolved, roles_defaults, user_data)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_convergence import (
-    _KINDS, _action, _check, _kind, _setting_items, _then_text, _values_text)
+    KINDS, action_text, check_command, setting_kind, setting_items, then_text, values_text)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
     ARROW_RIGHT, DASH, NOT_COUNTED, REPORT_WIDTH, aligned_rows, fill_text, named_groups, report_sections,
     unbreakable, who_text)
@@ -64,7 +64,7 @@ def cassandra_drift_values(hostvars, nodes):
     """hostvars; nodes: the cluster's nodes -> {node: {variable: value}}: each variable of the roles' defaults that
     the node's variables have (the inventory, -e), as Ansible resolves it; one whose template cannot be resolved
     here (a fact of the node) as its text. Read on the controller, no node contacted."""
-    keys = sorted(_roles_defaults())
+    keys = sorted(roles_defaults())
     found = {}
     for name in nodes or []:
         mine = {}
@@ -114,7 +114,7 @@ def _stock(key, values, name, facts):
     context["inventory_hostname"] = name
     if facts:
         context["ansible_facts"] = facts
-    return _resolved(key, context, _roles_defaults())
+    return resolved(key, context, roles_defaults())
 
 
 def _applies(path, name, groups):
@@ -264,14 +264,14 @@ def _edit(path, row, cluster, shared):
 def _cost(key, changing, unmanaged):
     """What going back costs on changing (convergence's words: no restart, then restart...), the coverage map's
     category when convergence has none for key."""
-    kind = _kind(key)
+    kind = setting_kind(key)
     if kind == "unknown":
         cat = category(key)
         if cat:
             count = len(changing)
             return kind, "%s %s, apply_config: %s" % (
                 out.plural(count, "node"), "changes" if count == 1 else "change", CATEGORIES[cat[0]])
-    return kind, _then_text({"changing": changing, "unread": "", "kind": kind, "key": key, "unmanaged": unmanaged})
+    return kind, then_text({"changing": changing, "unread": "", "kind": kind, "key": key, "unmanaged": unmanaged})
 
 
 # a cost line with no command that shows the change before it is made
@@ -282,13 +282,13 @@ def _cost_line(key, kind, cost, changing, commands):
     """What going back costs (cost, of kind: _cost's), then the command that shows it first: apply_config --check
     --diff (change_seeds --check for the seeds) where it shows it, its coverage category too (a setting the import's
     convergence does not know: apply_config writes it), else NO_CHECK -> text."""
-    shown = _KINDS.get(kind, (0, "", False))[2] or (kind == "unknown" and bool(category(key)))
+    shown = KINDS.get(kind, (0, "", False))[2] or (kind == "unknown" and bool(category(key)))
     # every node of the cluster: no --limit naming them all (5 names on each of 20 lines)
     everyone = commands.get("everyone") or []
     if everyone and set(changing) >= set(everyone):
         changing = []
-    check = unbreakable(_check(changing, kind if _KINDS.get(kind, (0, "", False))[2] else "restart",
-                               commands["inventory"], commands["hosts"], commands["cwd"])) if shown else NO_CHECK
+    check = unbreakable(check_command(changing, kind if KINDS.get(kind, (0, "", False))[2] else "restart",
+                                      commands["inventory"], commands["hosts"], commands["cwd"])) if shown else NO_CHECK
     return "%s; check: %s" % (cost, check)
 
 
@@ -303,7 +303,7 @@ def _stock_lines(rows, other, per_node, kept, cluster, shared, who, width, comma
                                     " is set, what going back costs and the edit" % (
                                         out.plural(len(rows), "setting"), out.plural(len(nodes_off), "node")),
                                     width, "  ", "  ")
-    for path in sorted(rows, key=lambda p: (_kind(rows[p]["key"]) not in ("none", "os"), p)):
+    for path in sorted(rows, key=lambda p: (setting_kind(rows[p]["key"]) not in ("none", "os"), p)):
         row = rows[path]
         key = row["key"]
         values = "; ".join("%s on %s" % (unbreakable(text), who(members)) for text, members in _grouped(row, path, "values"))
@@ -376,7 +376,7 @@ def _between_lines(drift, nodes, user, cluster, everyone, who, width, commands):
                                       "keep": {"cassandra_linux_manage": False} if commands["unmanaged"].get(n) else {}}
                                      for n in everyone]}
     data = report_sections(layout, None)
-    items, dummy = _setting_items(layout, data, layout["nodes"])
+    items, dummy = setting_items(layout, data, layout["nodes"])
     title = "BETWEEN NODES %s the settings not the same on every node" % DASH
     if not items:
         return [title] + fill_text("every node has the same value of every setting", width, "  ", "  "), 0
@@ -384,13 +384,13 @@ def _between_lines(drift, nodes, user, cluster, everyone, who, width, commands):
                                 " node the value most of them have" % out.plural(len(items), "setting"),
                                 width, "  ", "  ")
     for item in items:
-        lines += aligned_rows([(item["name"], _secret_text(_values_text(item, who)))], "  ", width)
-        action = _secret_text(_action(item, layout))
+        lines += aligned_rows([(item["name"], _secret_text(values_text(item, who)))], "  ", width)
+        action = _secret_text(action_text(item, layout))
         if action.endswith(":"):  # (no file sets it apart for these nodes)
             action += " no vars file sets it apart for these nodes: a value made of each node's own variables"
         lines += fill_text(action, width, "      ", "  ")
         # (the same words as FROM STOCK's: a setting the convergence does not know by its coverage category)
-        cost = _then_text(item) if item.get("unread") else _cost(
+        cost = then_text(item) if item.get("unread") else _cost(
             item["key"], item["changing"], [n for n in item["changing"] if commands["unmanaged"].get(n)])[1]
         lines += fill_text(_cost_line(item["key"], item["kind"], cost, item["changing"], commands), width, "      ", "  ")
     return lines, len(items)
@@ -455,7 +455,7 @@ def cassandra_drift_sections(values, nodes, files=None, cluster="", shared=None,
     by_name = dict((str(n["name"]), n) for n in nodes)
     everyone = [str(n["name"]) for n in nodes]
     texts = dict(files or {})
-    user, unread = _user_data([{"path": p, "content": t} for p, t in sorted(texts.items()) if VARS_FILE.match(p)])
+    user, unread = user_data([{"path": p, "content": t} for p, t in sorted(texts.items()) if VARS_FILE.match(p)])
     values = dict((str(k), dict(v or {})) for k, v in (values or {}).items() if str(k) in by_name)
     shared = set(shared or []) | set(["all"])
     if default_inventory and _same_sources(inventory, default_inventory):

@@ -2,7 +2,7 @@
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 """The import (import_cluster): a node's config file read against the role's template of it.
 
-_load_role, _render, _import_file, _read_changed_lines: the variables that give the node's lines, the hand edits
+load_role, render_template, import_file, _read_changed_lines: the variables that give the node's lines, the hand edits
 left over, and the settings compared as Cassandra reads them (YAML, shell, properties, XML). Also the constants
 the other import modules share, and the import's error rules (values_hidden, error_without_message): an
 unexpected error never shows its message, which may quote a value read from a node.
@@ -124,7 +124,7 @@ HEAP_OPTIONS = ("-Xms", "-Xmx", "-Xmn")
 MISSING_NAME = re.compile(r"(?:object'?|object of type '\w+') has no attribute '(\w+)'\s*$|^'(\w+)' is undefined\s*$")
 
 
-def _load_role(series, facts):
+def load_role(series, facts):
     ctx = role_file("cassandra_config")
     role_vars = role_file("cassandra_config", "vars")
     files = role_vars["_cassandra_config_files"][SERIES[series]]
@@ -173,7 +173,7 @@ SNIPPET_TEXT = ((APPENDERS, "_cassandra_config_snippet_appenders"), (ENV_END, "_
                 (LOGBACK_END, "_cassandra_config_snippet_logback"))
 
 
-def _render(env, series, name, ctx):
+def render_template(env, series, name, ctx):
     with open(os.path.join(ROLE, "templates", SERIES[series], name + ".j2")) as f:
         src = f.read()
     ctx = dict(ctx)
@@ -346,7 +346,7 @@ def _read_removed(m, e, cap, seen):
         return False
 
 
-def _merge(found, got):
+def merge(found, got):
     """found updated with got, the stock option lines switched off added to found's."""
     for key, value in got.items():
         if REMOVED.match(key) and isinstance(found.get(key), list):
@@ -385,7 +385,7 @@ _LINE_EXPRESSIONS = tuple((re.compile(pattern), reader) for pattern, reader in (
     (r"\('\\n' ~ .*\) if \w+ else ''", _read_newline_list),
     (r"\(\w+ ~ '\\n'\) if \w+ else ''", _read_newline_list),  # (lines before it: a snippet's)
     # the heap in cassandra-env.sh unless in the JVM options (cassandra_heap_in_jvm_options; there: read as extra
-    # options, then as the heap when -Xms and -Xmx are alike, _heap_in_options)
+    # options, then as the heap when -Xms and -Xmx are alike, heap_in_options)
     (r"'' if (\w+) and not \(\w+ \| bool\) else '[^']*'", _read_switch),
     (r"(\w+) if \1 and not \(\w+ \| bool\) else '[^']*'", _read_or_default),
     (r"\('\\n-Xms' ~ .*\) if .* else ''", _read_newline_list),
@@ -452,7 +452,7 @@ def _align(rendered, live):
 def _import_properties(tpl, rendered, live, ctx):
     """A key=value file (the template and its rendering line for line): each templated setting read by its key,
     wherever the node has it -> {variable: value}."""
-    node_kv, found = _properties(live), {}
+    node_kv, found = properties(live), {}
     for t, r in zip(tpl, rendered):
         key = re.match(r"^(?:#\s*)?([\w.-]+)\s*=", r.strip())
         if "{{" not in t or not key:
@@ -508,7 +508,7 @@ def _read_changed_lines(name, tpl, rendered, live, ctx, after):
             for i in gone:
                 m = REMOVED_TOGGLE.match(tpl[i])
                 if m and rendered[i] == m.group(1) and _option_key(m.group(1)) not in options and m.group(1) not in later:
-                    _merge(found, {m.group(2): [m.group(1)]})
+                    merge(found, {m.group(2): [m.group(1)]})
     for op, i1, i2, j1, j2 in ops:
         if op not in ("replace", "insert"):
             continue
@@ -524,7 +524,7 @@ def _read_changed_lines(name, tpl, rendered, live, ctx, after):
             i = pairs.get(j, i1 + k if op == "replace" and i1 + k < i2 else None)
             got = _read_line(tpl[i], live[j], ctx) if i is not None and "{{" in tpl[i] else None
             if got is not None:
-                _merge(found, got)
+                merge(found, got)
             elif name.endswith(".options") and live[j].startswith("-"):
                 # bin/cassandra passes on the lines starting with '-', the last of an option counts:
                 # at the end of the file, it has the same effect (unless a later line sets it again)
@@ -542,10 +542,10 @@ def _read_changed_lines(name, tpl, rendered, live, ctx, after):
     return found, appended, extra
 
 
-def _import_file(env, series, name, ctx, live):
+def import_file(env, series, name, ctx, live):
     """The values of the variables that render the template of the config file name as the node's lines live ->
     {variable: value}."""
-    tpl, rendered = _render(env, series, name, ctx)
+    tpl, rendered = render_template(env, series, name, ctx)
     if name.endswith(".properties") and len(tpl) == len(rendered):
         return _import_properties(tpl, rendered, live, ctx)
     # (the settings the stock file has no line for: written as by the role, however the node writes them)
@@ -583,10 +583,10 @@ def earlier_env(series, live, role, facts):
     JVM_OPTS line outside any block taken from the later series' (role: the role's rendering) in place of its own}.
     None when it is not one."""
     for old in EARLIER_ENV.get(series, ()):
-        env, ctx, dummy = _load_role(old, facts)
-        found = _import_file(env, old, jvm_args.ENV, ctx, live.split("\n"))
-        found = dict((k, v) for k, v in found.items() if not _same_value(v, _default(ctx, k)))
-        lines = _render(env, old, jvm_args.ENV, dict(ctx, **found))[1]
+        env, ctx, dummy = load_role(old, facts)
+        found = import_file(env, old, jvm_args.ENV, ctx, live.split("\n"))
+        found = dict((k, v) for k, v in found.items() if not same_value(v, role_default(ctx, k)))
+        lines = render_template(env, old, jvm_args.ENV, dict(ctx, **found))[1]
         node, later = live.split("\n"), set(line.strip() for line in role.split("\n"))
         matcher = difflib.SequenceMatcher(None, [x.strip() for x in lines], [x.strip() for x in node], autojunk=False)
         for op, i1, i2, j1, j2 in matcher.get_opcodes():
@@ -621,7 +621,7 @@ def env_cmdline(running):
     return "" if jvm_args.ENV in (running.get("newer") or []) else running.get("cmdline") or ""
 
 
-def _without_file_hunks(hand, name):
+def without_file_hunks(hand, name):
     """Hand edits (_difference_lines') without the ones of the file name."""
     out, mine = [], False
     for line in hand:
@@ -696,7 +696,7 @@ def _custom_gc(env, series, name, ctx, tpl, live, found):
         return option in names or bool(re.match(r"^Use\w*GC$", option or "")) or str(option).startswith("(set before")
 
     def differences(variables):
-        role = jvm_options_settings("\n".join(_render(env, series, name, dict(ctx, **variables))[1]))
+        role = jvm_options_settings("\n".join(render_template(env, series, name, dict(ctx, **variables))[1]))
         return set(k for k in set(role) | set(node) if role.get(k) != node.get(k))
     as_read = differences(found)
     if not [k for k in as_read if is_gc(k)]:
@@ -882,9 +882,9 @@ def _indents(lines, indexes):
 def _reindented(rendered, live):
     """The node's cassandra.yaml lines, each section indented as the role's (4.0's stock file indents by 4, 4.1's by
     2: a 4.0 file on a later release) when it has as many levels, and reads the same with them (YAML) -> lines."""
-    role = dict((key, _indents(rendered, indexes)) for key, indexes in _top_blocks(rendered))
+    role = dict((key, _indents(rendered, indexes)) for key, indexes in top_blocks(rendered))
     live = list(live)
-    for key, indexes in _top_blocks(live):
+    for key, indexes in top_blocks(live):
         mine = _indents(live, indexes)
         if key not in role or not mine or mine == role[key] or len(mine) != len(role[key]):
             continue
@@ -908,9 +908,9 @@ def _former_sub_keys_renamed(rendered, live):
     """The node's cassandra.yaml lines, a section's sub-key under its former name (FORMER_SUB_KEYS: 4.0's) under the
     name the role's section writes it (Cassandra reads either), the section having no line of that name -> (lines,
     notes)."""
-    role = dict((key, [rendered[i] for i in indexes]) for key, indexes in _top_blocks(rendered))
+    role = dict((key, [rendered[i] for i in indexes]) for key, indexes in top_blocks(rendered))
     live, notes = list(live), []
-    for key, indexes in _top_blocks(live):
+    for key, indexes in top_blocks(live):
         for old, new in FORMER_SUB_KEYS.get(key, {}).items():
             written = re.compile(r"^\s+%s:" % new)
             at = [i for i in indexes if re.match(r"^\s+%s:" % old, live[i])]
@@ -984,7 +984,7 @@ STORAGE_DIRS = {"data_file_directories": ("cassandra_data_dir", "data"),
                 "hints_directory": ("cassandra_hints_dir", "hints")}
 
 
-def _same_value(value, default):
+def same_value(value, default):
     """The same as the role default: true/false in any case, else exactly
     (a password Cassandra is not cassandra)."""
     def norm(v):
@@ -992,7 +992,7 @@ def _same_value(value, default):
     return norm(value) == norm(default)
 
 
-def _default(ctx, key):
+def role_default(ctx, key):
     return ctx.get(key, ctx.get(re.sub(r"^cassandra_jvm\d+_", "cassandra_jvm_", key), ""))
 
 
@@ -1035,7 +1035,7 @@ def _extra_sections():
 _BLOCK_SCALAR = re.compile(r":\s+[|>][-+0-9]*\s*$")  # "key: |": the lines under it are its text
 
 
-def _top_blocks(lines):
+def top_blocks(lines):
     """[(key, [line indexes])] of cassandra.yaml's active top-level keys: the key's line and the lines under it
     (indented, or a list's "- " at the start of a line), the blank and comment lines among them."""
     blocks, current, pending, scalar = [], None, [], None
@@ -1104,14 +1104,14 @@ def _commented_under(lines, at):
     return found
 
 
-def _extra_settings(tpl, live):
+def extra_settings(tpl, live):
     """Active top-level cassandra.yaml keys the template does not have (uncommented or added by hand), each with
     the whole YAML block under it (a section, a list), and the sub-keys of a section of _extra_sections no
     variable covers: they belong in cassandra_extra_settings."""
     taken = {m.group(1) for m in map(TOP_KEY.match, tpl) if m}
     sections = _extra_sections()
     extras = {}
-    for key, indexes in _top_blocks(live):
+    for key, indexes in top_blocks(live):
         if key in taken and key not in sections:
             continue
         try:  # (its last line ends with a newline: a block scalar "key: |" keeps its own)
@@ -1147,12 +1147,12 @@ def _without_extras(rendered, live, extras, rejected=()):
         for i, line in enumerate(rendered):
             if stock.match(line):
                 drop_rendered.update([i] + _commented_under(rendered, i))
-    for key, indexes in _top_blocks(live):
+    for key, indexes in top_blocks(live):
         if key in top:
             drop_live.update(indexes + _commented_under(live, indexes[-1]))
     for key in [k for k in extras if k in sections and isinstance(extras[k], dict)]:
         for lines, drop in ((rendered, drop_rendered), (live, drop_live)):  # their commented stock lines too
-            for name, indexes in _top_blocks(lines):
+            for name, indexes in top_blocks(lines):
                 if name == key:
                     drop.update(_sub_key_lines(lines, indexes + _commented_under(lines, indexes[-1]),
                                                list(extras[key]), True))
@@ -1199,14 +1199,14 @@ def _without_declared(series, rendered, live):
         end = end - 1 if end < len(rendered) else end  # the extra settings' blank line, where _without_extras cuts
         role = dict((m.group(1), r) for m, r in ((TOP_KEY.match(r), r) for r in rendered[at:end]) if m)
         rendered = rendered[:at] + rendered[end:]
-    in_live = set(key for key, dummy in _top_blocks(live))
+    in_live = set(key for key, dummy in top_blocks(live))
     skipped = [k for k in NOT_COMPARED if any(re.match(r"^#?\s?%s:" % k, r) for r in rendered)]
     for key in skipped:
         role[key] = next((r for r in rendered if r.startswith(key + ":")), None)
         # its commented stock line too, in place of the node's line
         rendered = [r for r in rendered if not re.match(r"^#?\s?%s:" % key if key in in_live else r"^%s:" % key, r)]
     drop, notes = set(), []
-    for key, indexes in _top_blocks(live):
+    for key, indexes in top_blocks(live):
         if key not in role and key not in DEFAULT_WHEN_ABSENT:
             continue
         line = live[indexes[0]]
@@ -1230,7 +1230,7 @@ def _without_former_names(rendered, live):
     """Both sides minus the node's line of a key under its former name (4.0's: 4.1+ reads either), wherever it is,
     and the role's line of the new name, when the role sets the same (as Cassandra converts it); a note for each."""
     role = dict((m.group(1), i) for i, m in enumerate(map(TOP_KEY.match, rendered)) if m)
-    node = dict((key, indexes[0]) for key, indexes in _top_blocks(live) if len(indexes) == 1)
+    node = dict((key, indexes[0]) for key, indexes in top_blocks(live) if len(indexes) == 1)
     drop_rendered, drop_live, notes = set(), set(), []
     for old, new in former_keys():
         if old not in node or new not in role or node[old] in drop_live:
@@ -1249,7 +1249,7 @@ def _without_former_names(rendered, live):
             [n for i, n in enumerate(live) if i not in drop_live], notes)
 
 
-def _snitch_reads_rackdc(snitch):
+def snitch_reads_rackdc(snitch):
     """False for the snitches that take the node's dc and rack from elsewhere than
     cassandra-rackdc.properties' dc= and rack= (the role's list); a snitch of
     another class may read them."""
@@ -1279,7 +1279,7 @@ def _same_settings(name, role, node):
     return pairs if all(comment(n) for n in left + node[at:]) else None
 
 
-def _properties(lines):
+def properties(lines):
     """The settings of a key=value (or key: value) file, comments and blank
     lines left out; a value keeps its trailing spaces, as for Java's Properties
     (prefer_local=true followed by a space is not true). A line ending with an
@@ -1322,7 +1322,7 @@ def _properties_leftovers(name, rendered, live_text):
     """A key=value file: only the settings count, not comments, blank lines or order -> (hand: each setting that
     differs, its values masked; normalized: the file rewritten with the same settings)."""
     hand, normalized = [], []
-    role_kv, node_kv = _properties(rendered), _properties(live_text.split("\n"))
+    role_kv, node_kv = properties(rendered), properties(live_text.split("\n"))
     for key in sorted(set(role_kv) | set(node_kv)):
         if role_kv.get(key) != node_kv.get(key):
             hand.append("%s: %s" % (name, key))
@@ -1336,14 +1336,14 @@ def _properties_leftovers(name, rendered, live_text):
 
 
 @functools.lru_cache(maxsize=None)
-def _parameter_patterns():
+def parameter_patterns():
     """(a key the role writes plain, a character no value may hold) of cassandra_audit_logger_parameters: the role's
     own (_cassandra_config_plain_key, _cassandra_config_unwritable_text), which its checks refuse."""
     role_vars = role_file("cassandra_config", "vars")
     return re.compile(role_vars["_cassandra_config_plain_key"]), re.compile(role_vars["_cassandra_config_unwritable_text"])
 
 
-def _set_parameters(item):
+def set_parameters(item):
     """A mapping of the logger's parameters without its null values (for Cassandra, as if not there)."""
     return dict((k, v) for k, v in item.items() if v is not None) if isinstance(item, dict) else item
 
@@ -1356,7 +1356,7 @@ def _without_null_parameters(logger):
     out = []
     for entry in logger:
         if isinstance(entry, dict) and isinstance(entry.get("parameters"), list):
-            parameters = [_set_parameters(p) for p in entry["parameters"]]
+            parameters = [set_parameters(p) for p in entry["parameters"]]
             gone = parameters == [{}] and entry["parameters"] != [{}]  # (an empty mapping written as such stays)
             entry = dict((k, v) for k, v in entry.items() if k != "parameters")
             if not gone:
@@ -1369,10 +1369,10 @@ def _logger_lines(lines):
     """The indexes of the lines of audit_logging_options' logger, and its value, its scalars as text (Cassandra
     reads its parameters as text: 7 and "7" are the same), the null values of its parameters left out (None: none,
     or not YAML)."""
-    block = next((indexes for key, indexes in _top_blocks(lines) if key == "audit_logging_options"), None)
+    block = next((indexes for key, indexes in top_blocks(lines) if key == "audit_logging_options"), None)
     at = _sub_key_lines(lines, block, ["logger"]) if block else []
     try:
-        data = _as_text(yaml.compose(textwrap.dedent("\n".join(lines[i] for i in at)))) if at else None
+        data = as_text(yaml.compose(textwrap.dedent("\n".join(lines[i] for i in at)))) if at else None
     except yaml.YAMLError:
         data = None
     return at, _without_null_parameters(data.get("logger")) if isinstance(data, dict) else None
@@ -1393,7 +1393,7 @@ def _without_same_logger(rendered, live):
 def _sub_key_values(lines, section, keys):
     """{key: (its value as text, the indexes of its lines and of its commented-out ones)} of the keys set once in
     section's block layout (not YAML: left out)."""
-    block = next((indexes for key, indexes in _top_blocks(lines) if key == section), None)
+    block = next((indexes for key, indexes in top_blocks(lines) if key == section), None)
     block = block + _commented_under(lines, block[-1]) if block else None  # its stock commented lines last
     out = {}
     for key in keys if block else []:
@@ -1401,7 +1401,7 @@ def _sub_key_values(lines, section, keys):
         if len([i for i in active if re.match(r"^\s*%s:" % re.escape(key), lines[i])]) != 1:
             continue
         try:
-            data = _as_text(yaml.compose(textwrap.dedent("\n".join(lines[i] for i in active))))
+            data = as_text(yaml.compose(textwrap.dedent("\n".join(lines[i] for i in active))))
         except yaml.YAMLError:
             continue
         if isinstance(data, dict) and data.get(key) is not None:
@@ -1430,9 +1430,9 @@ def _without_same_sub_keys(rendered, live):
 def _without_stock_when_absent(rendered, live):
     """The role's lines minus its block of each key of STOCK_WHEN_ABSENT the node's file has no line for, when the role
     sets it at the value Cassandra takes without it (the stock line of a later series), a note for each."""
-    in_live = set(key for key, dummy in _top_blocks(live))
+    in_live = set(key for key, dummy in top_blocks(live))
     drop, notes = set(), []
-    for key, indexes in _top_blocks(rendered):
+    for key, indexes in top_blocks(rendered):
         if key in STOCK_WHEN_ABSENT and key not in in_live:
             try:
                 same = stock_when_absent(key, yaml_settings("\n".join(rendered[i] for i in indexes)))
@@ -1559,7 +1559,7 @@ REPEATED_NOTE = ("cassandra-env.sh: %s adding options to JVM_OPTS written again 
                  " last one counts, the same for the JVM")
 
 
-def _leftovers(env, series, files, ctx, live_files, rejected=(), skip=(), proven=(), environment=None, cmdline=""):
+def leftovers(env, series, files, ctx, live_files, rejected=(), skip=(), proven=(), environment=None, cmdline=""):
     """What the role would still change in the node's files, rendered with ctx: rejected: the cassandra.yaml keys
     its Cassandra rejects; skip: files not compared here (the JVM's, its arguments shown to be the same); environment:
     the one cassandra-env.sh gets; cmdline: the running JVM's arguments (none when cassandra-env.sh was written since
@@ -1570,7 +1570,7 @@ def _leftovers(env, series, files, ctx, live_files, rejected=(), skip=(), proven
         if name not in live_files or name in skip:
             continue
         # (a stock line of a later release the node's file predates: not a hand edit, said apart)
-        rendered = without_later_stock(name, "\n".join(_render(env, series, name, ctx)[1]), live_files[name])[0].split("\n")
+        rendered = without_later_stock(name, "\n".join(render_template(env, series, name, ctx)[1]), live_files[name])[0].split("\n")
         if name.endswith(".properties"):
             more_hand, more_normalized = _properties_leftovers(name, rendered, live_files[name])
             hand += more_hand
@@ -1674,13 +1674,13 @@ def error_without_message(name, where):
                               % (name, (where + ", ") if where else "", sys.exc_info()[0].__name__, at))
 
 
-def _as_text(node):
+def as_text(node):
     """A YAML node with each scalar its text, as SnakeYAML reads a String
     setting (cluster_name 0123 is not 83, seeds 010 not 8); plain null/~/empty: None."""
     if isinstance(node, yaml.MappingNode):
-        return dict((_as_text(k), _as_text(v)) for k, v in node.value)
+        return dict((as_text(k), as_text(v)) for k, v in node.value)
     if isinstance(node, yaml.SequenceNode):
-        return [_as_text(v) for v in node.value]
+        return [as_text(v) for v in node.value]
     if node is None or node.style is None and node.value in ("", "~", "null", "Null", "NULL"):
         return None
     return node.value

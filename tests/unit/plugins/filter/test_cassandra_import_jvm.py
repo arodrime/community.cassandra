@@ -12,7 +12,7 @@ import pytest
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     cassandra_config_import, cassandra_inventory_layout)
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import _load_role, _render
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import load_role, render_template
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import _compare_files
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import cassandra_import_report
 from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_jvm_options import STACK_1G
@@ -26,9 +26,9 @@ CMDLINE = "/usr/bin/java\0-ea\0-Xss256k\0-Xms31G\0-Xmx31G\0org.apache.cassandra.
 
 def node_files(series, **changes):
     """The config files cassandra_config writes with these variables."""
-    env, ctx, files = _load_role(series, FACTS)
+    env, ctx, files = load_role(series, FACTS)
     ctx.update(changes)
-    return {name: "\n".join(_render(env, series, name, ctx)[1]) for name in files}
+    return {name: "\n".join(render_template(env, series, name, ctx)[1]) for name in files}
 
 
 def heap_in_jvm11_on_java17():

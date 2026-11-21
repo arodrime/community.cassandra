@@ -1709,10 +1709,10 @@ def test_a_log_dir_its_rolled_files_do_not_share_stays_a_hand_edit(tmp_path):
 
 @pytest.mark.parametrize("series", ["4.0", "4.1", "5.0"])
 def test_the_log_dirs_by_default_render_the_stock_lines(series):
-    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import _load_role, _render
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import load_role, render_template
     key = {"4.0": "40x", "4.1": "41x", "5.0": "50x"}[series]
-    env, ctx, dummy = _load_role(key, FACTS)
-    text = "\n".join(_render(env, key, "logback.xml", ctx)[1])
+    env, ctx, dummy = load_role(key, FACTS)
+    text = "\n".join(render_template(env, key, "logback.xml", ctx)[1])
     for log in ("system", "debug"):
         assert "<file>${cassandra.logdir}/%s.log</file>" % log in text
         assert "<fileNamePattern>${cassandra.logdir}/%s.log.%%d{yyyy-MM-dd}.%%i.zip</fileNamePattern>" % log in text

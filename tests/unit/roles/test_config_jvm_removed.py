@@ -7,7 +7,7 @@ __metaclass__ = type
 
 import pytest
 
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import _load_role, _render
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import load_role, render_template
 from ansible_collections.community.cassandra.tests.unit.roles.test_config_declared import run
 
 FACTS = {"os_family": "Debian", "default_ipv4": {"address": "10.0.0.1"}, "hostname": "n1"}
@@ -17,18 +17,18 @@ CHECK = "Refuse removed JVM options the role does not write"
 @pytest.mark.parametrize("series, name", [("40x", "jvm-server.options"), ("41x", "jvm-server.options"),
                                           ("50x", "jvm-server.options"), ("50x", "jvm17-server.options")])
 def test_written_commented_out(series, name):
-    env, ctx, dummy = _load_role(series, FACTS)
-    tpl, lines = _render(env, series, name, ctx)
+    env, ctx, dummy = load_role(series, FACTS)
+    tpl, lines = render_template(env, series, name, ctx)
     # (a stock line no other rule writes: the first of its file; the GC lines are cassandra_jvm_gc's)
     var = "cassandra_%s_removed_options" % name.split("-")[0]
     options = [line for t, line in zip(tpl, lines) if var in t]
     ctx[var] = [options[0], "-XX:+HeapDumpOnOutOfMemoryError"]
-    after = _render(env, series, name, ctx)[1]
+    after = render_template(env, series, name, ctx)[1]
     assert len(after) == len(lines)
     assert [a for a, b in zip(after, lines) if a != b] == ["#" + o for o in options if o in ctx[var]]
     # (the other files: as they are)
     for other in [n for n in ("jvm-server.options", "jvm11-server.options", "jvm17-server.options") if n != name]:
-        assert _render(env, "50x", other, ctx)[1] == _render(env, "50x", other, dict(ctx, **{var: []}))[1]
+        assert render_template(env, "50x", other, ctx)[1] == render_template(env, "50x", other, dict(ctx, **{var: []}))[1]
 
 
 @pytest.mark.parametrize("version, var, removed, unknown", [

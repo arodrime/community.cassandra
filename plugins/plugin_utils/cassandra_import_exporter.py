@@ -16,10 +16,10 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_settings i
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_secrets
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_prometheus as prometheus
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
-    _default, _render, ROLE, _same_value)
+    role_default, render_template, ROLE, same_value)
 
 
-def _exporter_import(live_files, cmdline, ctx, read=None, conf_dirs=(), java_files=None):
+def exporter_import(live_files, cmdline, ctx, read=None, conf_dirs=(), java_files=None):
     """The Prometheus exporter's agent a node's files give its JVM: a line of a JVM options file, a JVM_OPTS line of
     cassandra-env.sh or a block of it (if ... fi) that only adds it -> (the files without it, the JVM's arguments
     without it, {vars: cassandra_prometheus_exporter_*, moved: report lines, notes, found: the agent and its
@@ -58,7 +58,7 @@ def _exporter_import(live_files, cmdline, ctx, read=None, conf_dirs=(), java_fil
                      " cassandra_prometheus_exporter_checksum to its sha256 (sha256sum %s), or the role takes it"
                      " for another jar and downloads %s's" % (found["jar"], found["jar"], found["version"]))
     carried = _exporter_config(found, read, conf_dirs, variables, notes)
-    variables = dict((k, v) for k, v in variables.items() if not _same_value(v, _default(ctx, k)))
+    variables = dict((k, v) for k, v in variables.items() if not same_value(v, role_default(ctx, k)))
     where = "%s line %d" % (found["file"], found["line"]) if found["lines"] == 1 else "%s lines %d-%d" % (
         found["file"], found["line"], found["line"] + found["lines"] - 1)
     moved = ["%s: %s%s -> cassandra_prometheus_exporter_* (the role writes it in jvm-server.options%s%s)" % (
@@ -134,7 +134,7 @@ def _exporter_config(found, read, conf_dirs, variables, notes):
     return carried
 
 
-def _exporter_rewritten(env, series, render, exporter, live):
+def exporter_rewritten(env, series, render, exporter, live):
     """The JVM's files cassandra_config rewrites for the exporter's agent imported (where it was, and
     jvm-server.options, which ends with it): the ones whose settings differ from the node's."""
     found = exporter.get("found")
@@ -148,6 +148,6 @@ def _exporter_rewritten(env, series, render, exporter, live):
     out_files = []
     for name in [found["file"], jvm_args.COMMON]:
         if name in live and name not in out_files \
-                and not same_settings(name, live[name], "\n".join(_render(env, series, name, variables)[1])):
+                and not same_settings(name, live[name], "\n".join(render_template(env, series, name, variables)[1])):
             out_files.append(name)
     return out_files

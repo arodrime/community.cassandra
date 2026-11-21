@@ -25,7 +25,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_settings i
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_secrets
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
-    APPENDERS, EXPR, HEAP_OPTIONS, LOGBACK_END, REMOVED_TOGGLE, _render, ROLE)
+    APPENDERS, EXPR, HEAP_OPTIONS, LOGBACK_END, REMOVED_TOGGLE, render_template, ROLE)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import keep_files_option
 
 
@@ -40,7 +40,7 @@ JMX_RIGHTS = re.compile(r"^(readonly|readwrite([ \t]+(unregister|create[ \t]+%s(
 def _template_options(env, series, ctx, name):
     """A jvm options template -> (the option lines it always writes as they
     are, the names of the options its other lines set)."""
-    tpl = _render(env, series, name, ctx)[0]
+    tpl = render_template(env, series, name, ctx)[0]
     # (a stock option line on unless switched off, cassandra_jvm_removed_options: as it is while on)
     tpl = [m.group(3) if m and m.group(1) not in (ctx.get(m.group(2)) or []) else line
            for line, m in ((line, REMOVED_TOGGLE.match(line)) for line in tpl)]
@@ -49,7 +49,7 @@ def _template_options(env, series, ctx, name):
     return static, templated - {None}
 
 
-def _jvm_options(env, series, ctx, found, java):
+def jvm_options(env, series, ctx, found, java):
     """The extra options of the files the running Java reads, found changed in place: those the file's template
     writes as they are not carried again (the options of a jvm<N> file it does not read are imported as they are).
     -> (notes, warnings)."""
@@ -78,7 +78,7 @@ def _jvm_options(env, series, ctx, found, java):
     return notes, jvm.set_twice(options, java) + jvm.check(options, java)
 
 
-def _heap_in_options(found, series, java, live_files):
+def heap_in_options(found, series, java, live_files):
     """The heap set in the JVM options files the running Java reads, an -Xms and an -Xmx line of the same size among
     their extra options (an -Xmn line too without G1; none else of the heap there): cassandra_heap_size
     (cassandra_heap_newsize) with cassandra_heap_in_jvm_options, out of the extra options -> found changed in place;
@@ -118,12 +118,12 @@ def _jmx_lines(text):
     return [line.split() for line in text.split("\n") if line.strip() and not line.lstrip().startswith(("#", "!"))]
 
 
-def _jmx_users(password_file, access_file):
+def jmx_users(password_file, access_file):
     """cassandra_jmx_users from jmxremote.password and jmxremote.access (None: no user with rights): the users of
     the password file with a plain password, then the roles with rights only (no password the role can write back:
     none, e.g. the JDK's stock controlRole, or hashed); rights other than the role's readwrite or readonly lines
     kept whole in access. What is left out (a user without rights, rights the JVM refuses): hand edits of the
-    files (_jmx_leftovers)."""
+    files (jmx_leftovers)."""
     rights = dict((words[0], words[1:]) for words in _jmx_lines(access_file) if len(words) >= 2)
     rights = dict((k, v) for k, v in rights.items() if JMX_RIGHTS.match(" ".join(v)))  # (a key's last line: the JVM's)
     passwords = dict((words[0], words[1:]) for words in _jmx_lines(password_file))
@@ -141,7 +141,7 @@ def _jmx_users(password_file, access_file):
     return users or None
 
 
-def _jmx_leftovers(env, users, live_files):
+def jmx_leftovers(env, users, live_files):
     """What the role's JMX files would change on the node with these users (entries as the JVM reads them:
     comments, spacing, line continuations and the order of the rights aside), as hand edits of the file:
     "jmxremote.access: <role>", its line "  - " (the role's) and "  + " (the node's); passwords masked."""
@@ -308,13 +308,13 @@ def cassandra_jmx_files(env_sh, options=None, cmdline="", conf_dir="", cassandra
     return out
 
 
-def _audit_file_default(found):
+def audit_file_default(found):
     """cassandra_log_audit_file's default for the values found: on with FileAuditLogger."""
     return boolean(found.get("cassandra_audit_logging_enabled", False), strict=False) and \
         str(found.get("cassandra_audit_logger_class_name", "")).rsplit(".", maxsplit=1)[-1] == "FileAuditLogger"
 
 
-def _jvm_moves(env, series, files, ctx, render, live_files, running, earlier=None):
+def jvm_moves(env, series, files, ctx, render, live_files, running, earlier=None):
     """cassandra-env.sh's hand edits moved to variables when the JVM gets the same arguments from the role's files
     (cassandra_jvm_args), and the options it does not use -> {vars, moved, rewritten: the JVM's files the role
     rewrites then, cleanup, shown: the JVM's files shown to give the same arguments (left out of the hand edits),
@@ -330,7 +330,7 @@ def _jvm_moves(env, series, files, ctx, render, live_files, running, earlier=Non
         return {"vars": {}, "moved": [], "rewritten": [], "cleanup": [], "shown": [], "not_moved": ""}
 
     def rendered(variables):  # (a stock line of a later release the node's file predates: left out, said apart)
-        return dict((name, without_later_stock(name, "\n".join(_render(env, series, name, variables)[1]),
+        return dict((name, without_later_stock(name, "\n".join(render_template(env, series, name, variables)[1]),
                                                live_files.get(name))[0]) for name in jvm_files)
     if running.get("jaas") and jvm_args.ENV in live_files and jvm_args.ENV in jvm_files \
             and jvm_args.env_has_candidates(live_files[jvm_args.ENV], rendered(render)[jvm_args.ENV]):
@@ -351,7 +351,7 @@ def _jvm_moves(env, series, files, ctx, render, live_files, running, earlier=Non
     role = rendered(dict(render, **found))
     rewritten = [f for f in jvm_files if f in live_files and not same_settings(f, live_files[f], role[f])] \
         if adopted else []
-    others = dict((name, "\n".join(_render(env, series, name, ctx)[1])) for name in files
+    others = dict((name, "\n".join(render_template(env, series, name, ctx)[1])) for name in files
                   if re.match(r"^jvm\d*-server\.options$", name))
     cleanup = adopted["dropped"] if adopted else []
     said = set(": ".join(line.split(": ", 2)[:2]) for line in cleanup)
@@ -368,7 +368,7 @@ def _xml_text(text):
     return text.replace("&", "&amp;").replace("<", "&lt;")
 
 
-def _logback(text):
+def logback(text):
     """cassandra_config's logback.xml variables as logback reads the node's file, whatever its quoting, spacing,
     attribute order or comments (a line written another way is not read by the template's): the root logger's
     level and appenders (debug.log, the console), the org.apache.cassandra logger's level. {} when not XML."""
@@ -495,8 +495,8 @@ LOGBACK_OWN_LOGGERS = ("ROOT", "org.apache.cassandra", "org.apache.cassandra.aud
 SIMPLE_LOGGER = re.compile(r'^\s*<logger\s+name="([^"]+)"\s+level="([^"]+)"\s*/>\s*$')
 
 
-def _logback_carried(env, series, ctx, found, text):
-    """logback.xml's variables found (_logback) taken from the lines the import carries too: the simple loggers of
+def logback_carried(env, series, ctx, found, text):
+    """logback.xml's variables found (logback) taken from the lines the import carries too: the simple loggers of
     cassandra_log_levels out of the end lines, the node's whole <appender> elements before <root> (not a stock one)
     in APPENDERS (its snippet logback.xml:appenders) when nothing else keeps them -> (found (a copy), notes for
     the report)."""
@@ -529,7 +529,7 @@ def _logback_carried(env, series, ctx, found, text):
     # a pattern with -- while the audit appender is commented out: the template writes it in that comment, where
     # XML does not take it (cassandra_config refuses it), so not carried (the lines that differ: hand edits)
     notes = []
-    audit = found["cassandra_log_audit_file"] if "cassandra_log_audit_file" in found else _audit_file_default(found)
+    audit = found["cassandra_log_audit_file"] if "cassandra_log_audit_file" in found else audit_file_default(found)
     if "--" in str(found.get("cassandra_log_pattern", "")) and not audit:
         notes.append("logback.xml: its log pattern (%s) has a --, which the role's template would write in the"
                      " audit appender it leaves commented out (cassandra_log_audit_file: false), where XML does not"

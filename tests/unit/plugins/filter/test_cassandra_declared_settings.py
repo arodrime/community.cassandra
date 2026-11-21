@@ -12,7 +12,7 @@ import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_config_import
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
-    _load_role, _read_line, _render)
+    load_role, _read_line, render_template)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import canonical_quantity, same_settings
 from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_import_check import (
     check, edit, seeded, stock)
@@ -21,9 +21,9 @@ FACTS = {"os_family": "Debian", "default_ipv4": {"address": "10.0.0.1"}, "hostna
 
 
 def rendered(series, name="cassandra.yaml", **changes):
-    env, ctx, dummy = _load_role(series, FACTS)
+    env, ctx, dummy = load_role(series, FACTS)
     ctx.update(changes)
-    return "\n".join(_render(env, series, name, ctx)[1])
+    return "\n".join(render_template(env, series, name, ctx)[1])
 
 
 def settings(series, **changes):
@@ -123,7 +123,7 @@ def test_audit_variable_writes_its_sub_key(series, var, value, key, read):
 @pytest.mark.parametrize("series, var, value, key, read", ZEROS)
 def test_zero_is_written_and_read_back(series, var, value, key, read):
     assert settings(series, **{var: value})[key] == read
-    files = dict((n, rendered(series, n, **{var: value})) for n in _load_role(series, FACTS)[2])
+    files = dict((n, rendered(series, n, **{var: value})) for n in load_role(series, FACTS)[2])
     out = cassandra_config_import(files, series, FACTS)
     assert out["vars"][var] == 0 and out["hand_edits"] == []
 
@@ -133,7 +133,7 @@ def test_variables_read_back_by_the_import(series):
     # all of the series' at once (an import reads the whole files)
     values = dict((var, value) for s, var, value, dummy, dummy2 in CASES if s == series)
     values.update((var, value) for var, value, dummy, dummy2 in AUDIT)
-    files = dict((n, rendered(series, n, **values)) for n in _load_role(series, FACTS)[2])
+    files = dict((n, rendered(series, n, **values)) for n in load_role(series, FACTS)[2])
     out = cassandra_config_import(files, series, FACTS)
     assert dict((k, out["vars"].get(k)) for k in values) == values
     assert "cassandra_extra_settings" not in out["vars"]
@@ -492,8 +492,8 @@ def test_cdc_raw_dir_of_a_tarball_node():
 # (an import before these variables carried every one of them in cassandra_extra_settings)
 
 def template_lines(series):
-    env, ctx, dummy = _load_role(series, FACTS)
-    return _render(env, series, "cassandra.yaml", ctx)[0]
+    env, ctx, dummy = load_role(series, FACTS)
+    return render_template(env, series, "cassandra.yaml", ctx)[0]
 
 
 # {{ '' if x else '# ' }}key: {{ x or 'default' }}
@@ -532,7 +532,7 @@ def test_switched_lines_found():
 
 @pytest.mark.parametrize("var, key, tpl", SWITCHED_50, ids=[c[1] for c in SWITCHED_50])
 def test_switched_line_read_and_rendered_back(var, key, tpl):
-    env, ctx, dummy = _load_role("50x", FACTS)
+    env, ctx, dummy = load_role("50x", FACTS)
     default = OR_FORM.match(tpl).group(3) if OR_FORM.match(tpl) else None
     text, value = hand_written(var, default)
     line = "%s: %s" % (key, text)
