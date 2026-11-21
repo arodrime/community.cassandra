@@ -1,6 +1,7 @@
 # The Jinja strings longer than 300 characters and the inline shells longer than 20 lines there already (tests/unit/test_readability.py):
 # <size: characters, or lines for a shell><TAB><file> :: <plays, blocks, tasks> :: <keys> (<kind>)
-# This list may only shrink. Made shorter: list it at its new size; under its limit, or moved to a filter or a script: remove its line.
+# A line only shrinks or goes: made shorter, list it at its new size; under its limit, or moved to a filter or a script, remove it.
+# A size that grows (an argument named, say) says why in its commit message.
 385	playbooks/add_datacenter.yml :: Check the new datacenter / Check the request :: ansible.builtin.assert.fail_msg (jinja)
 308	playbooks/add_datacenter.yml :: Check the new datacenter / Show the plan and confirm :: vars._blocks (jinja)
 422	playbooks/add_node.yml :: Apply cassandra_seeds now that the new seeds are up / Say what happens to the seed lists :: ansible.builtin.debug.msg (jinja)

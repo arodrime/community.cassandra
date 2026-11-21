@@ -88,7 +88,7 @@ def _kinds(keys, text):
     sizes = []
     named = [key for key in keys if not key.isdigit()]  # (an item of a list: the key of the list)
     debug_var = len(named) > 1 and named[-2] in DEBUG_MODULES and named[-1] == "var"
-    bare = bool(named) and named[-1] in BARE or debug_var
+    bare = (bool(named) and named[-1] in BARE) or debug_var
     size = len(" ".join(text.split()))  # (Jinja: the layout is free, only the content counts)
     if ("{{" in text or "{%" in text or bare) and size > JINJA_MAX:
         sizes.append(("jinja", size))
