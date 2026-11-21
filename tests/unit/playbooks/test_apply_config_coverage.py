@@ -366,7 +366,7 @@ def test_a_package_update_writes_the_limits_file_again():
     assert {"name": "Limits of the cassandra user", "ansible.builtin.import_tasks": "limits.yml"} in os_tasks
 
 
-def test_a_package_update_on_a_node_with_its_own_os_settings_says_a_changed_limits_file():
+def test_a_package_update_on_a_node_with_its_own_os_settings_says_a_changed_limits_file(monkeypatch):
     # cassandra_linux_manage: false (the node's OS settings its own): the RPM's update replaces its limits file with
     # the package's own; left as it is (never written back), said at once and in the recap as a WARNING, its former
     # content kept on the controller
@@ -513,9 +513,17 @@ def test_a_package_update_on_a_node_with_its_own_os_settings_says_a_changed_limi
     said = cassandra_warnings(cassandra_limits_changed(["h-n1"], deep, "/home/ops/clusters/prod"))
     assert said[4] == "    reports/prod/apply_config-2026-11-21-084425-h-n1-limits.conf" and max(len(x) for x in said) <= 79
     assert "/home/ops/clusters/prod/reports" in " ".join(cassandra_warnings(cassandra_limits_changed(["h-n1"], deep, "/x")))
-    assert "cassandra_limits_changed(hostvars, lookup('ansible.builtin.env', 'PWD'))" in now["ansible.builtin.debug"]["msg"]
+    # said from the run's directory (PWD) where it is said: on the node at once, in the recaps (node operations',
+    # apply_config's)
+    monkeypatch.setenv("PWD", "/home/ops/clusters/prod")
+    shown = "    reports/prod/apply_config-2026-11-21-084425-h-n1-limits.conf"
+    assert shown in render(now["ansible.builtin.debug"]["msg"], dict(inventory_hostname="h-n1", hostvars=deep))
     summary = load("roles", "cassandra_operation", "tasks", "summary.yml")[0]
-    assert "cassandra_limits_changed(hostvars, lookup('ansible.builtin.env', 'PWD'))" in summary["vars"]["_warnings"]
+    recap_play = [p for p in load("playbooks", "apply_config.yml") if "_more" in (p.get("vars") or {})][0]
+    for template in (summary["vars"]["_warnings"], recap_play["vars"]["_more"]):
+        warnings = render(template, dict(cassandra_service_summary_hosts=["h-n1"], hostvars=deep, groups={"prod": ["h-n1"]},
+                                         cassandra_hosts="prod", ansible_check_mode=False, _no_return=[]))
+        assert shown in cassandra_warnings(warnings)
     warnings = cassandra_limits_changed(["h-n1", "h-n2", "h-n3", "h-n4"], hostvars)
     said_all = cassandra_warnings(warnings)
     assert max(len(x) for x in said_all) <= 79
@@ -579,9 +587,6 @@ def test_a_package_update_on_a_node_with_its_own_os_settings_says_a_changed_limi
     # every recap of a package update: apply_config's (with its other warnings), the node operations' (upgrade)
     summary = load("roles", "cassandra_operation", "tasks", "summary.yml")[0]
     assert "warnings=_warnings" in summary["ansible.builtin.debug"]["msg"]
-    assert "cassandra_limits_changed(hostvars, lookup('ansible.builtin.env', 'PWD'))" in summary["vars"]["_warnings"]
-    recap_play = [p for p in load("playbooks", "apply_config.yml") if "_more" in (p.get("vars") or {})][0]
-    assert "cassandra_limits_changed(hostvars, lookup('ansible.builtin.env', 'PWD'))" in " ".join(recap_play["vars"]["_more"].split())
 
 
 def test_a_release_with_its_repository_changed_is_looked_for_before_the_stop():
