@@ -1,7 +1,13 @@
 # Copyright: Contributors to the community.cassandra collection
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
-"""What is a secret, in one place: what the output hides (as ****) and what
+"""What is a secret for the controller: what the output hides (as ****) and what
 import_cluster files in secrets.yml. Pure Python, no Ansible.
+
+Two other rules exist, with fewer words (tests/unit/plugins/plugin_utils/
+test_secret_rules_compared.py pins where the three differ):
+- plugin_utils/cassandra_config_read.py (SECRET_NAME, SECRET_WORD, masked): its
+  port that runs on the node (the config diff; apply_config's preview too);
+- plugins/filter/cassandra_medusa.py (SECRET_KEY): medusa.ini's keys.
 
 - the rule: which names are a secret's (SECRET_WORDS and the lists after it);
 - a value: hidden (is it, or does it hold, a secret?), file_mode;
