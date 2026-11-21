@@ -170,9 +170,15 @@ EVERY = ["Rack r2 (dc1), every node is UN:", "  n2", "  n3"]
 UP = ["Rack r2 (dc1), the nodes of this run are UN:", "  n2"]
 LEFT_OUT = ["WARNING  rack r2 (dc1), not UN, left out by --limit (not in this run):"]
 UNOWNED = ["a node of rack r2 in the ring, at an address no inventory host has:", "  10.0.0.3  UN"]
-START = ["start n3: run start_rack on it, seen from n2 too (UN, unchanged)",
+# its --limit: n1, the node outside the rack this run read from, and n2, of the run, seen UN: the ring read from
+# them again (a node's start leaves a running node running)
+START = ["start n3: run start_rack on it, the ring read from n1 and n2 too",
          "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
-         "    -e cassandra_target_dc=dc1 -e cassandra_target_rack=r2 --limit n2,n3"]
+         "    -e cassandra_target_dc=dc1 -e cassandra_target_rack=r2 --limit n1,n2,n3"]
+# no node outside the rack read from: n2 alone
+START_N2 = ["start n3: run start_rack on it, the ring read from n2 too",
+            "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
+            "    -e cassandra_target_dc=dc1 -e cassandra_target_rack=r2 --limit n2,n3"]
 ALONE = ["start n3: run start_rack on it alone",
          "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
          "    -e cassandra_target_dc=dc1 -e cassandra_target_rack=r2 --limit n3"]
@@ -199,6 +205,9 @@ def test_a_node_of_the_rack_left_out_by_limit_is_a_warning_not_waited_for():
     assert problems and all(p.startswith("n2 ") for p in problems) and said is None
     # no --limit: n3 is waited for and stops the run as before
     assert check(n3="DN")[0] == ["n3 (10.0.0.3, r2) is DN, seen from n1 and n2"]
+    # n1, outside the rack, in that --limit: read from, never started (the start play runs on the rack's nodes)
+    start = next(p for p in load_tasks("playbooks", "start_rack.yml") if p["name"] == "Start the rack")
+    assert start["hosts"].endswith(":&cassandra_target_rack_nodes")
 
 
 def test_a_node_left_out_by_limit_is_said_in_its_state_of_the_last_read():
@@ -224,7 +233,9 @@ def test_the_whole_rack_left_out_by_limit_is_not_said_started():
     assert problems == [] and said == ["Rack r2 (dc1): nothing started, --limit leaves out all of its nodes."]
     problems, said = check(play=["n1", "n4"], groups={"cassandra_target_rack_nodes": []}, n3="DN")
     assert said[0] == "Rack r2 (dc1): nothing started, --limit leaves out all of its nodes."
-    assert said[1:] == LEFT_OUT + ["  n3  DN"] + ALONE  # (no node of the run to check it from)
+    # no node of the run to check it from: the node outside the rack read from
+    assert said[1:] == LEFT_OUT + ["  n3  DN", "start n3: run start_rack on it, the ring read from n1 too",
+                                   ALONE[1], ALONE[2].replace("--limit n3", "--limit n1,n3")]
 
 
 def test_under_force_the_nodes_left_out_are_said_too():
@@ -251,7 +262,7 @@ def test_a_node_left_out_by_limit_known_by_no_address_is_named_as_the_controller
     assert said == UP + LEFT_OUT + ["  10.0.0.3  DN", "start 10.0.0.3: no host known by that address",
                                     "  the node left out by --limit, not in the ring at an address of its own:",
                                     "    n3",
-                                    "  run start_rack on it, seen from n2 too (UN, unchanged):"] + START[1:]
+                                    "  run start_rack on it, the ring read from n1 and n2 too:"] + START[1:]
     variables = noted(ring(n3="DN"), names=names, play=["n1", "n2", "n4"])
     assert variables["_cassandra_start_rack_first_verdict"]["unknown_lines"] == []
     # a node no host is known by that the ring puts in another rack: not taken for the node left out
@@ -967,7 +978,7 @@ def test_under_limit_the_nodes_of_the_run_seen_only_from_themselves_are_said_so(
                                          start_command=command)
     # the way out for n3 adds n2, seen UN, to the --limit: the ring is then read from n2 too, a second view of n3
     assert lines == UP + ["WARNING  the ring as seen from n2 only (no node outside this run read)"] + LEFT_OUT + [
-        "  n3  DN"] + START
+        "  n3  DN"] + START_N2
     # that run: n2 and n3, the rest out of the play; read from both (n2 sees n3)
     found = cassandra_health_findings([{"from": "n3", "result": ring()}, {"from": "n2", "result": ring()}], 4, "n3",
                                       names=ADDRESSES, **OK)
@@ -1011,8 +1022,8 @@ def test_a_node_left_out_known_by_its_address_only_is_said_with_the_nodes_it_may
     assert lines[2:] == LEFT_OUT + ["  10.0.0.3  DN", "start 10.0.0.3: no host known by that address",
                                     "  the node left out by --limit, not in the ring at an address of its own:",
                                     "    n3",
-                                    "  run start_rack on it, seen from n2 too (UN, unchanged):",
-                                    "  y --limit n2,n3"]
+                                    "  run start_rack on it, the ring read from n1 and n2 too:",
+                                    "  y --limit n1,n2,n3"]
     # several, in the rows' order: a node by its name, then the ones by their address together
     verdict = {"outside": [], "failed": [], "warnings": [], "problems": [], "rack_seen_un": ["n2"], "left_out": [
         {"address": "10.0.0.6", "name": "n6", "states": ["DN"]},
@@ -1020,14 +1031,14 @@ def test_a_node_left_out_known_by_its_address_only_is_said_with_the_nodes_it_may
         {"address": "10.0.0.9", "name": None, "states": ["DN"], "unplaced": ["n3", "n7"]}]}
     lines = cassandra_rack_outside_lines(verdict, [], "dc1", "r2", "x", run=["n2"], left_out=["n3", "n5", "n6", "n7"],
                                          start_command="y")
-    assert lines[6:] == ["start n6: run start_rack on it, seen from n2 too (UN, unchanged)", "  y --limit n2,n6",
+    assert lines[6:] == ["start n6: run start_rack on it, the ring read from n2 too", "  y --limit n2,n6",
                          "start the nodes at these addresses, no host known by them:",
                          "  10.0.0.3",
                          "  10.0.0.9",
                          "  the nodes left out by --limit, not in the ring at an address of their own:",
                          "    n3",
                          "    n7",
-                         "  run start_rack on them, seen from n2 too (UN, unchanged):",
+                         "  run start_rack on them, the ring read from n2 too:",
                          "  y --limit n2,n3,n7"]
 
 
@@ -1047,8 +1058,8 @@ def test_long_names_one_per_row_no_word_alone_and_a_next_step_for_any_state():
                           "  (not in this run):"]
     assert lines[-3:] == [name % 6 + " is joining (UJ): wait", "  for it to finish",
                           "n7 is ?N: check it with nodetool status on it"]
-    assert lines[8:11] == ["start %s: run start_rack on it," % (name % 3), "  seen from %s" % (name % 2),
-                           "  too (UN, unchanged)"]
+    assert lines[8:10] == ["start %s: run start_rack on it," % (name % 3),
+                           "  the ring read from %s too" % (name % 2)]
     rows = ["  " + name % 2, "  " + name % 5]  # (and the command: an argument never cut)
     assert all(len(line) <= 79 and len(line.split()) > 1 for line in lines
                if line not in rows and not line.startswith(("  y ", "    " + name[:10])))

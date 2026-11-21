@@ -386,10 +386,10 @@ _DOING = {"J": "joining", "L": "leaving", "M": "moving"}
 def _left_out_lines(verdict, dc, rack, command, viewer=()):
     """The warning on the nodes of the rack left out by --limit not UN (verdict's left_out): a row per node (by its
     name, else its address), then what to do per state, in the rows' order: down, start it (the start_rack
-    command, command, with --limit that node and viewer, a node of the run seen UN: the ring is read from it too,
-    a second view; its start leaves it as it is; the others left out stay as they are); the nodes known by their
-    address only, together: the nodes left out they may be (not in the ring at an address of their own), --limit
-    those; joining, leaving or moving, wait for it to finish; [] for none."""
+    command, command, with --limit that node and viewer: the node outside the rack this run read from and a node
+    of the run seen UN, so that the ring is read from them too; the others left out stay as they are); the nodes
+    known by their address only, together: the nodes left out they may be (not in the ring at an address of their
+    own), --limit those; joining, leaving or moving, wait for it to finish; [] for none."""
     nodes = verdict.get("left_out") or []
     if not nodes:
         return []
@@ -417,8 +417,8 @@ def _left_out_lines(verdict, dc, rack, command, viewer=()):
 
 
 def _seen_too(viewer):
-    """A node of the run seen UN, added to a --limit -> what it is there for (its start changes nothing)."""
-    return ", seen from %s too%s" % (viewer[0], out.NBSP.join(["", "(UN,", "unchanged)"]))
+    """The nodes added to a --limit to read the ring from -> what they are there for."""
+    return ", the ring read from %s%stoo" % (" and ".join(viewer), out.NBSP)
 
 
 def _by_address_lines(by_address, command, viewer):
@@ -493,7 +493,8 @@ def cassandra_rack_outside_lines(verdict, unreached, dc, rack, command, run=None
         lines.append(out.WARNING + ("the ring as seen from %s only (no node outside this run read)" % views[0]
                                     if len(views) == 1 else
                                     "the ring as seen from the nodes of this run only (no other node read)"))
-    lines += _left_out_lines(verdict, dc, rack, start_command, up[:1])
+    outside_reader = [h for h in verdict.get("read_from") or [] if h not in (run or []) + (left_out or [])]
+    lines += _left_out_lines(verdict, dc, rack, start_command, outside_reader[:1] + up[:1])
     if rows:
         lines += [out.WARNING + "the rest of the cluster:"] + out.table(rows, indent="  ")
     lines += [out.WARNING + "the ring has %s nodes, the inventory %s" % (ring, inventory)

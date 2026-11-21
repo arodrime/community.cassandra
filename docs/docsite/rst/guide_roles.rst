@@ -755,9 +755,9 @@ of the cluster is only a warning, unless a node could be one of the rack. The ta
   succeeds once the other nodes of the rack in the ring are UN. A node of the ring in the rack whose address no
   inventory host has is said under the success, a row with its address and state. A warning then names the node
   left out, in its state of the last read, and what to do: down, the ``start_rack`` command that starts it;
-  joining, leaving or moving, wait for it to finish. Its ``--limit`` is that node and a node of the run seen UN:
-  the ring is then read from that node too, a second view of the node started (a running node is left as it is:
-  no restart). The other nodes left out stay as they are;
+  joining, leaving or moving, wait for it to finish. Its ``--limit`` is that node, the node outside the rack this
+  run read from and a node of the run seen UN: the ring is then read from them too. The other nodes left out stay
+  as they are;
 - the warning names a node left out by its inventory name when its variables give its address, or its name
   resolves to it on the controller; else by its address. A ring node no host is known by is taken for a node
   left out only when the address of that node is not in the ring and every node of the run is there;
