@@ -12,7 +12,7 @@ bugfixes:
     unreachable host outside the rack is counted ignored, the exit code stays 0, under ``--check`` too). The warning
     lists each node outside the rack not UN (down, joining, leaving, moving or any other state, as ``nodetool status``
     shows it), not reached over ssh, or whose ``nodetool status`` fails, then the ``health_check`` command. A node
-    only the just-started node of the rack sees not UN is waited for first. With every node of the rack in the ring
+    only nodes of the rack (just started) see not UN is waited for first. With every node of the rack in the ring
     and UN, a ring of another size than the inventory is a warning line, and a schema disagreement a warning row per
     node on another version when the rack is on one version held by more than half of the nodes ``describecluster``
     lists, a node outside the rack among them; with ``cassandra_allow_mixed_versions``, a schema disagreement is a

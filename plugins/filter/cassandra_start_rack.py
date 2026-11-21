@@ -24,8 +24,9 @@ at an address it gives:
   a rack node in another state, or nodetool failing on it       STOP
   an outside node not UN for the node outside the rack read     WARNING, not
     from (its read failed, or none read: for the rack node)       waited for
-  an outside node not UN for the rack node alone (just          wait, then
-    started: it may still see a peer down)                        WARNING
+  an outside node not UN for the rack node alone, or for a      wait, then
+    second node of the rack read from (just started: it may       WARNING
+    still see a peer down)
   an outside node not reached over ssh                          WARNING
   nodetool failing on an outside node, a ring read from         WARNING
     another node
@@ -336,7 +337,9 @@ def cassandra_rack_verdict(findings, members, dc, rack, checker, peer, addresses
         else:
             stops.append(f)
     if first_verdict is None:  # before the wait: the nodes the counted view saw not UN; the others are waited for
-        outside = [n for n in outside if counted_view in seen_by[n["address"]]]
+        # (all of them when that view is a second node of the rack: just started, it may still see a peer down)
+        rack_peer = counted_view != checker and counted_view in (members or [])
+        outside = [n for n in outside if counted_view in seen_by[n["address"]] and not rack_peer]
     failed = (first_verdict or {}).get("failed", []) + [h for h in failed_on if ring_read and h not in (members or [])]
     seen_down = [f.get("name") for f in findings if f.get("kind") == "state" and str(f.get("state"))[:1] == "D"]
     names = _names(findings, addresses)

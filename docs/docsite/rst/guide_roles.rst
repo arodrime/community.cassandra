@@ -765,8 +765,8 @@ of the cluster is only a warning, unless a node could be one of the rack. The ta
   node, none is reached, or its ``nodetool status`` fails), the run says so: ``the ring as seen from node2 only``.
   A node always sees itself UN;
 - a node outside the rack not UN for the node outside the rack read from (down, joining, leaving, moving...), not
-  reached over ssh, or whose ``nodetool status`` fails, is a warning row, not waited for; one only the node of the
-  rack, just started, sees not UN is waited for first;
+  reached over ssh, or whose ``nodetool status`` fails, is a warning row, not waited for; one only nodes of the
+  rack see not UN (just started, they may still see it down) is waited for first;
 - with every node of the rack in the ring and UN, a ring of another size than the inventory is a warning line, and
   a schema disagreement a warning row per node on another version, when the rack is on one version held by more
   than half of the nodes ``describecluster`` lists, a node outside the rack among them (the rack alone on its

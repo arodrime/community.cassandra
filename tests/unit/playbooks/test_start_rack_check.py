@@ -1076,3 +1076,17 @@ def test_a_peer_whose_nodetool_failed_is_not_said_read_from():
     variables = noted(ring(), peer=failed)
     verdict = variables["_cassandra_start_rack_first_verdict"]
     assert verdict["read_from"] == ["n2"] and verdict["seen_from_run_only"] == ["n2"]
+
+
+def test_a_second_node_of_the_rack_read_from_is_waited_for_before_any_warning():
+    # start_rack --limit n2,n3 (the per-node command): n2 already UN, n3 just started, read from n2 then n3. n3
+    # still sees n1 DN for a moment: n1 was a WARNING row at once ("the rest of the cluster: n1 DN"), the read
+    # after it seeing n1 UN. Now waited for, as for the rack's node alone
+    variables = noted(ring(), peer=ring(n1="DN"), peer_host="n3", play=["n2", "n3"])
+    assert variables["_cassandra_start_rack_first_verdict"]["outside"] == []
+    problems, said = check(play=["n2", "n3"], peer_host="n3", peer=ring(n1="DN"), then=ring())
+    assert problems == [] and said == EVERY + [
+        "WARNING  the ring as seen from the nodes of this run only (no other node read)"]
+    # n1 DN still after the wait: its row
+    problems, said = check(play=["n2", "n3"], peer_host="n3", peer=ring(n1="DN"), then=ring(n1="DN"))
+    assert problems == [] and said[4:6] == ["WARNING  the rest of the cluster:", "  n1  DN"]
