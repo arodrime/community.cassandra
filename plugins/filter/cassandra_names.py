@@ -42,19 +42,22 @@ _OURS = re.compile(r"(?:cas+andra|import|help|status|drift)_", re.IGNORECASE)
 # a comment: its names are examples (a typo shown, a module), not variables read (text after " #" in a
 # string goes too: a name only there is then unknown, never a typo let through)
 _COMMENT = re.compile(r"(?m)(?:^|\s)#.*$")
-# The names used_names gives stay those 3.0.0-rc1 knew. rc1 read every name its playbooks wrote, the names of the
-# filters they call included (a -e with a filter's name went through). Some of that Jinja has moved into Python since:
-# - names rc1 read that the playbooks no longer write: known still (rc1 let them through)
+# Why the two lists below: the 3.0.0 releases keep the behaviour of the first 3.0.0 release candidate (3.0.0-rc1,
+# "rc1" here), so a -e name it accepted is still accepted and one it refused is still refused (the tests compare
+# with its names: tests/unit/plugins/filter/fixtures/known_names_rc1.txt). rc1 took every name its playbooks wrote for
+# a known name, the names of the filters they call included. Since, some of that Jinja moved into Python and new
+# filters came. The lists can go when a release no longer keeps rc1's behaviour (the fixture and its tests with them).
+# - names rc1 read that the playbooks no longer write: still known, though none is read as a variable (filters rc1's
+#   Jinja called that Python calls now, and cassandra_jmx_ssl_, a prefix rc1 wrote)
 RC1_NAMES_NOW_IN_PYTHON = frozenset((
     "cassandra_clock_lines", "cassandra_import_keep_parts", "cassandra_jmx_ssl_", "cassandra_leading_comments",
     "cassandra_prometheus_config_error", "cassandra_storage_mode_back_stop", "cassandra_storage_mode_given_wrong",
     "cassandra_storage_mode_into_none_stop", "cassandra_storage_mode_jump_stop", "cassandra_storage_mode_kept_stop",
     "cassandra_storage_mode_stopped_unsure", "cassandra_storage_mode_unsure", "cassandra_storage_mode_written"))
-# - names the playbooks write since rc1 that are no variable: the filters added since (cassandra_seed_hosts given on
-#   the command line is refused as a typo of cassandra_seeds, as in rc1; a new filter the playbooks call goes here
-#   too), a file the roles read (plugin_utils/cassandra_config_record.py) and a module a template's comment names
-#   (cassandra_os.py)
+# - names the playbooks write since rc1 that are no variables, so unknown as in rc1 (cassandra_seed_hosts given with
+#   -e is refused as a typo of cassandra_seeds)
 NOT_VARIABLES = frozenset((
+    # the filters added since rc1 that the playbooks call (a new one goes here too: a test says so)
     "cassandra_cleanup_batches", "cassandra_clock_plan", "cassandra_config_audit_parameter_refusals",
     "cassandra_config_exporter_refusals", "cassandra_config_jmx_tls_refusals", "cassandra_config_logback_refusals",
     "cassandra_config_override_refusals", "cassandra_config_rackdc_refusals", "cassandra_config_snippet_refusals",
@@ -65,6 +68,8 @@ NOT_VARIABLES = frozenset((
     "cassandra_staying_node", "cassandra_storage_mode_given_rows", "cassandra_storage_mode_guard",
     "cassandra_too_few_nodes", "cassandra_topology_done", "cassandra_topology_nothing_to_do",
     "cassandra_topology_refusals", "cassandra_upgrade_copy_refusal",
+    # other words: a file the roles read (plugin_utils/cassandra_config_record.py), a module a template's comment
+    # names (cassandra_os.py)
     "cassandra_config_record", "cassandra_os"))
 # former names of the variables: every node an operation targets is cassandra_target_nodes; the others, renamed
 # since the 2.1.0 release candidates (an inventory written for one is refused, not silently ignored)
@@ -128,7 +133,7 @@ def cassandra_close_names(names, known, cutoff=0.9):
 @functools.lru_cache(maxsize=None)
 def used_names(for_help=False):
     """Every cassandra_*, import_cluster_* and help_* name the roles and playbooks (their task files and
-    templates too) use, their own facts and results too, as 3.0.0-rc1 knew them (RC1_NAMES_NOW_IN_PYTHON,
+    templates too) use, their own facts and results too, as rc1 knew them (RC1_NAMES_NOW_IN_PYTHON,
     NOT_VARIABLES). for_help: those help's typo check reads (its files, and the names their comments write too);
     else the unknown-variable check's (comments left out)."""
     names = set()
