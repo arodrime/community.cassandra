@@ -1,0 +1,309 @@
+{#- Copyright: Contributors to the community.cassandra collection
+    GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
+    What import_cluster reads of the running Cassandra on each node (task "Read the running Cassandra"): its JVM
+    (conf dir, version, JMX over TLS, account, environment), its unit, its Java, cqlsh, the repository files,
+    the versions of the packages; key=value lines. A Jinja template (lookup('ansible.builtin.template')), run by
+    the shell module: {{ }} are the playbook's variables. -#}
+# the JVM (its command line is too long for pgrep -f, and a wrapper script may match)
+pid=
+for p in $(pgrep -x java); do
+  tr '\0' '\n' < /proc/$p/cmdline | grep -qx org.apache.cassandra.service.CassandraDaemon && { pid=$p; break; }
+done
+# DataStax Enterprise or ScyllaDB instead (refused by the next task): what runs here, and its version
+{{ lookup('ansible.builtin.file', playbook_dir ~ '/files/import_distribution.sh') }}
+# (nothing known runs here: a DataStax Enterprise build answers nodetool with a four-number ReleaseVersion)
+[ -n "$pid" ] || {
+  [ -z "$dist" ] && echo "release=$({{ _cassandra_service_nodetool }} version 2>/dev/null | sed -n 's/^ReleaseVersion: //p')"
+  exit 3
+}
+cfg=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.config=\(file://\)\?##p' | head -1)
+echo "config=$cfg"
+# (JMX over TLS: nodetool --ssl, for a node of the ring the given nodes did not tell)
+tls=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's/^-Dcom[.]sun[.]management[.]jmxremote[.]ssl=//p' | tail -1)
+[ "$tls" = true ] && tls=' --ssl' || tls=
+# its version from its jar on the classpath (apache-cassandra-4.1.5.jar), else nodetool (a JVM to start:
+# seconds per node)
+ver=$(tr '\0' '\n' < /proc/$pid/cmdline | tr ':' '\n' | sed -n 's#^.*/apache-cassandra-\([0-9][0-9.]*[0-9]\)\.jar$#\1#p' | head -1)
+[ -n "$ver" ] || ver=$({{ _cassandra_service_nodetool }} version$tls | sed -n 's/^ReleaseVersion: //p')
+echo "version=$ver"
+echo "logdir=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.logdir=##p' | head -1)"
+echo "storagedir=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.storagedir=##p' | head -1)"
+# the account it runs as: its effective user and group (a name, else the number)
+uid=$(awk '/^Uid:/ {print $3}' /proc/$pid/status 2>/dev/null)
+gid=$(awk '/^Gid:/ {print $3}' /proc/$pid/status 2>/dev/null)
+[ -n "$uid" ] && echo "run_user=$(getent passwd "$uid" | cut -d: -f1 | grep . || echo "$uid")"
+[ -n "$gid" ] && echo "run_group=$(getent group "$gid" | cut -d: -f1 | grep . || echo "$gid")"
+# how it is started today: the unit (or the init script systemd wraps), its restart policy, at boot or not
+for p in FragmentPath SourcePath Restart UnitFileState Environment EnvironmentFiles DropInPaths; do
+  echo "unit_$p=$(systemctl show cassandra -p $p --value 2>/dev/null)"
+done
+# the unit of an init script is "generated": is-enabled asks the init system
+echo "unit_IsEnabled=$(systemctl is-enabled cassandra 2>/dev/null)"
+# the variables bin/cassandra passes on to cassandra-env.sh as they are, as the JVM has them whatever set them
+# (an EnvironmentFile, /etc/default/cassandra the init script reads), the ones the Java launcher adds options
+# from: as apply_config reads them
+echo "jvm_env=$(tr '\0' '\n' < /proc/$pid/environ 2>/dev/null \
+  | grep -E '^(JVM_EXTRA_OPTS|MX4J_ADDRESS|MX4J_PORT|CASSANDRA_HEAPDUMP_DIR|_JAVA_OPTIONS|JDK_JAVA_OPTIONS|JAVA_TOOL_OPTIONS)=' | base64 -w0)"
+# what the proofs may not take from the JVM: its arguments and environment when not those of the unit, a
+# CASSANDRA_HEAPDUMP_DIR set unexported before cassandra-env.sh (as apply_config reads them)
+{{ lookup('ansible.builtin.file', playbook_dir ~ '/files/jvm_proof.sh') }}
+echo "jvm_untrusted=$(jvm_untrusted "$pid" | tr '\n' ';')"
+echo "heapdump_before=$(heapdump_before "$pid" | tr '\n' ' ')"
+# what the drop-ins of the unit itself (cassandra.service.d) set besides Environment= (the roles carry only
+# that with the init script of the package): their lines, cut, each once
+printf 'unit_dropin_other=%s\n' "$(for d in $(systemctl show cassandra -p DropInPaths --value 2>/dev/null); do
+  case $d in */cassandra.service.d/*) grep -hvE '^[[:space:]]*([#;]|$|\[Service\][[:space:]]*$|Environment=)' "$d" 2>/dev/null ;; esac
+done | cut -c1-120 | sort -u | tr '\n' ';')"
+# an init script: the package it comes from, as installed (its content: rpm -V, dpkg --verify list it with no
+# S size, M mode, 5 digest, L link, ? a test not done, not missing; e.g. .......T. its mtime only), else
+# modified
+src=$(systemctl show cassandra -p SourcePath --value 2>/dev/null)
+if [ -n "$src" ] && [ -f "$src" ]; then
+  pkg=
+  # (not owned by any package: rpm -qf says so, rc 1)
+  if command -v rpm >/dev/null 2>&1 && out=$(rpm -qf --qf '%{NAME}\n' "$src" 2>/dev/null); then
+    pkg=$(echo "$out" | head -1) verify="rpm -V"
+  elif command -v dpkg >/dev/null 2>&1 && out=$(dpkg -S "$src" 2>/dev/null); then
+    pkg=$(echo "$out" | grep -v '^diversion' | head -1 | cut -d: -f1) verify="dpkg --verify"
+  fi
+  if [ -n "$pkg" ]; then
+    # (rpm -V names /etc/rc.d/init.d/x, systemd may say /etc/init.d/x: both, and the file itself)
+    real=$(readlink -f "$src")
+    # (a line: SM5DLUGTP or missing, [c|d|g|l|r], the path, [(an error)])
+    if $verify "$pkg" 2>/dev/null | awk '{ a = $1; sub(/^[^\/]*/, ""); sub(/ [(].*[)]$/, "")
+          if (a == "missing" || a ~ /^(S|.M|..5|....L)/ || a ~ /[?]/) print }' \
+        | grep -qxF -e "$src" -e "$real"; then
+      echo "pkg_script=modified"
+    else
+      echo "pkg_script=$pkg"
+    fi
+  fi
+fi
+# (a java replaced since it started, e.g. a JDK update: "<path> (deleted)", still run from /proc unless its
+# directory went too)
+bin=$(readlink /proc/$pid/exe | sed 's/ (deleted)$//')
+# the Java version in the release file of a java (11.0.20 -> 11, 1.8.0_382 -> 1.8), empty when none
+release() {
+  v=$(sed -n 's/^JAVA_VERSION="\(.*\)"$/\1/p' "${1%/bin/java}/release" "${1%/jre/bin/java}/release" 2>/dev/null | head -1)
+  case $v in 1.*) echo "$v" | cut -d. -f1,2 ;; ?*) echo "${v%%[._+-]*}" ;; esac
+}
+# a Java major as one number (1.8 -> 8), to compare
+major() { case $1 in 1.*) echo "$1" | cut -d. -f2 ;; *) echo "$1" ;; esac; }
+# the package a file comes from, empty when none (a tarball)
+package() {
+  p=$(rpm -qf --qf '%{NAME}\n' "$1" 2>/dev/null) && echo "$p" | head -1 || dpkg -S "$1" 2>/dev/null | cut -d: -f1
+}
+# /usr/bin/java resolved (the one cassandra_install sets), empty when none
+sys=$([ -e /usr/bin/java ] && readlink -f /usr/bin/java)
+# the Java major of a java: its release file, else the java run once
+jmajor() {
+  r=$(release "$1")
+  [ -n "$r" ] || r=$("$1" -XshowSettings:properties -version 2>&1 | sed -n 's/.*java.specification.version = //p')
+  major "$r"
+}
+# its Java updated since it started, its directory gone (e.g. a RHEL JDK update): it cannot be run (its
+# libraries went too), its major is in the name of its directory (java-11-openjdk-11.0.20.0.8-1.el8.x86_64,
+# java-1.8.0-openjdk-..., jdk-17.0.9+9); read as its new build, the Java it runs once restarted, when of
+# that major: its package installed again (RHEL: the name without -<version>-<release>.<arch>; several
+# builds: the one /usr/bin/java is first), else /usr/bin/java when not a package (a tarball replaced by
+# its next one; a package of another vendor is not its build); none: not read (restart it, then import again)
+if [ ! -e "$bin" ]; then
+  home=${bin%/bin/java}; home=${home%/jre}; name=${home##*/}
+  old=$(major "$(echo "$name" | sed -nE 's/^[^0-9]*(1[.][0-9]+|[0-9]+).*/\1/p')"); new=
+  if [ -n "$old" ] && command -v rpm >/dev/null 2>&1; then
+    base=${name%-*}; base=${base%-*}
+    for n in "$base-headless" "$base"; do
+      for j in $(rpm -ql "$n" 2>/dev/null | grep '/bin/java$'); do
+        j=$(readlink -f "$j")
+        [ -n "$j" ] && [ -e "$j" ] && [ "$(jmajor "$j")" = "$old" ] || continue
+        [ -z "$new" ] || [ "$j" = "$sys" ] && new=$j
+      done
+      [ -n "$new" ] && break
+    done
+  fi
+  [ -z "$new" ] && [ -n "$old" ] && [ -n "$sys" ] && [ -z "$(package "$sys")" ] \
+    && [ "$(jmajor "$sys")" = "$old" ] && new=$sys
+  if [ -n "$new" ]; then
+    echo "javaupdated=$bin"
+    bin=$new
+    # JAVA_HOME of the unit the Java gone: the next start fails until it is changed
+    uh=$(systemctl show cassandra -p Environment --value 2>/dev/null | tr ' ' '\n' | sed -n 's/^JAVA_HOME=//p' | head -1)
+    uh=${uh%/}; uh=${uh%/jre}
+    [ -n "$uh" ] && [ "$uh" = "$home" ] && echo "javahomegone=$uh"
+  fi
+fi
+jv=$(release "$bin")
+# else the Java run once (a JVM to start; not one whose directory is gone: it cannot run)
+[ -n "$jv" ] || [ ! -e "$bin" ] || jv=$(/proc/$pid/exe -XshowSettings:properties -version 2>&1 | sed -n 's/.*java.specification.version = //p')
+echo "java=$jv"
+echo "javabin=$bin"
+echo "javapkg=$(package "$bin")"
+# a symlinked directory /usr/bin/java goes through, that leads to the home of the running Java (e.g.
+# /usr/bin/java -> /apps/java/jdk/bin/java, /apps/java/jdk -> jdk-11.0.30): kept pointing at the Java in
+# use (cassandra_java_link)
+p=/usr/bin/java n=0 jl=
+while [ -L "$p" ] && [ $n -lt 20 ]; do
+  t=$(readlink "$p"); case $t in /*) p=$t ;; *) p=${p%/*}/$t ;; esac
+  n=$((n + 1)); d=${p%/bin/java}
+  [ "$d" != "$p" ] || continue
+  d=$(readlink -m "${d%/*}")/${d##*/}
+  if [ -L "$d" ] && [ "$(readlink -f "$d")" = "$(readlink -f "${bin%/bin/java}")" ]; then
+    echo "javalink=$d"
+    jl=$d
+    break
+  fi
+done
+# else the JAVA_HOME Cassandra was started with, when it is a link to that home
+if [ -z "$jl" ]; then
+  d=$(tr '\0' '\n' < /proc/$pid/environ 2>/dev/null | sed -n 's/^JAVA_HOME=//p' | head -1)
+  d=${d%/}
+  [ -n "$d" ] && [ -L "$d" ] && [ "$(readlink -f "$d")" = "$(readlink -f "${bin%/bin/java}")" ] && echo "javalink=$d"
+fi
+echo "sysjava=$sys"
+# where the config really is (/etc/cassandra/conf of the RPM is an alternatives link)
+case $cfg in /*) d=${cfg%/*} ;; *) d=/etc/cassandra/conf ;; esac
+echo "conftarget=$(readlink -f "$d" 2>/dev/null)"
+# the Cassandra packages held (Debian, Ubuntu)
+command -v dpkg >/dev/null 2>&1 && echo "held=$(dpkg --get-selections 'cassandra*' 2>/dev/null | awk '$2 == "hold" {print $1}' | tr '\n' ' ')"
+# dsbulk as cassandra_install puts it: /usr/share/dsbulk-<version> with its marker, linked from
+# /usr/share/dsbulk and /usr/bin/dsbulk
+# (the links as the role writes them: else it would rewrite them)
+dsb=$(readlink /usr/share/dsbulk 2>/dev/null)
+[ "$(readlink /usr/bin/dsbulk 2>/dev/null)" = /usr/share/dsbulk/bin/dsbulk ] && [ -x "$dsb/bin/dsbulk" ] \
+  && [ -f "$dsb/.cassandra_install" ] && echo "dsbulk=$dsb/bin/dsbulk"
+# what the roles set up has their mark; the rest was set up another way, and is left as it is
+grep -qs 'Managed by Ansible (community.cassandra.cassandra_service)' "$(systemctl show cassandra -p FragmentPath --value 2>/dev/null)" \
+  && echo "own_unit=yes"
+# (the limits file's mark only: a sysctl.d/60-cassandra.conf may be the admin's, the sysctl module writes no mark)
+grep -qs 'Managed by Ansible (community.cassandra.cassandra_linux)' /etc/security/limits.d/cassandra.conf \
+  && echo "own_os=yes"
+grep -qs 'Managed by Ansible (cassandra_install)' /usr/local/bin/cqlsh /etc/profile.d/cqlsh.sh && echo "own_cqlsh=yes"
+# (RedHat: the link of the package cqlshlib into python3, alone when python3 is in the range cqlsh supports)
+lib=$(python3 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])" 2>/dev/null)
+[ -n "$lib" ] && [ "$(readlink "$lib/cqlshlib" 2>/dev/null)" = /usr/lib/python3.6/site-packages/cqlshlib ] \
+  && echo "own_cqlsh=yes"
+# cqlsh starts (its version, no connection) as the playbooks run it: cassandra_cqlsh_command, split as the
+# cassandra_cqlsh module splits it (shlex: its program, then its arguments; cqlsh alone: /usr/local/bin first;
+# $VAR and ${VAR} expanded as os.path.expandvars does, with python3, else the platform-python of EL 8, when
+# the node has one), run as root; else what ran and why not (its last error line; not found; not executable;
+# no answer; no output): every case a TO DO
+say() { printf 'cqlsh_error=%s\n' "$(printf %s "$*" | tr '\r\n' '  ')"; }
+cmd={{ cassandra_cqlsh_command | default('cqlsh', true) | quote }}
+set -- {{ cassandra_cqlsh_command | default('cqlsh', true) | community.cassandra.cassandra_cqlsh_words | map('quote') | join(' ') }}
+py=$(command -v python3) || { [ -x /usr/libexec/platform-python ] && py=/usr/libexec/platform-python; } || py=
+if [ $# -gt 0 ] && [ -n "$py" ] && case "$*" in *'$'*) true ;; *) false ;; esac; then
+  n=$#
+  for w in "$@"; do
+    set -- "$@" "$("$py" -I -c 'import os, sys; print(os.path.expandvars(sys.argv[1]))' "$w")"
+  done
+  shift $n
+fi
+if [ $# -eq 0 ]; then
+  case $cmd in
+    *[![:space:]]*) say "cassandra_cqlsh_command ($cmd): an unclosed quote" ;;
+    *) say "cassandra_cqlsh_command is blank" ;;
+  esac
+else
+  c=$1; shift
+  [ "$c" = cqlsh ] && [ $# -eq 0 ] && [ -x /usr/local/bin/cqlsh ] && c=/usr/local/bin/cqlsh
+  if [ "${c#*/}" != "$c" ] && [ ! -e "$c" ]; then
+    say "$c: no such file"
+  elif [ "${c#*/}" != "$c" ] && [ ! -x "$c" ]; then
+    say "$c: not executable"
+  elif ! command -v "$c" >/dev/null 2>&1; then
+    say "$c: not found in the PATH of root"
+  else
+    echo "cqlsh_ran=$(command -v "$c")"
+    # the file each one is, links followed (/bin is a link to usr/bin on EL: /bin/cqlsh is the one of the package)
+    echo "cqlsh_ran_real=$(readlink -f "$(command -v "$c")" 2>/dev/null)"
+    [ -e /usr/bin/cqlsh ] && echo "cqlsh_usr_bin_real=$(readlink -f /usr/bin/cqlsh 2>/dev/null)"
+    [ -e /usr/local/bin/cqlsh ] && echo "cqlsh_usr_local_real=$(readlink -f /usr/local/bin/cqlsh 2>/dev/null)"
+    v=$(timeout 30 "$c" "$@" --version 2>&1); rc=$?
+    last=$(echo "$v" | grep -v '^[[:space:]]*$' | tail -1 | cut -c1-200)
+    if [ $rc = 124 ]; then
+      say "$cmd --version: no answer in 30 s"
+    elif [ $rc != 0 ]; then
+      say "$cmd --version: ${last:-exits $rc with no output}"
+    fi
+  fi
+fi
+# what cassandra_install sets up for the cqlsh of the package (cqlsh_python.yml, cqlsh_links.yml), as the node has it:
+# python3, python3.11, its wrapper and profile.d file (its mark, another file, none; of the role: the Python
+# it names)
+echo "cqlsh_py3=$(python3 -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>/dev/null)"
+[ -x /usr/bin/python3.11 ] && echo "cqlsh_py311=yes"
+for f in /usr/local/bin/cqlsh /etc/profile.d/cqlsh.sh; do
+  if [ ! -e "$f" ]; then s=absent; elif grep -qs 'Managed by Ansible (cassandra_install)' "$f"; then s=role; else s=other; fi
+  case $f in *.sh) k=cqlsh_profile ;; *) k=cqlsh_wrapper ;; esac
+  echo "$k=$s"
+  if [ $s = role ]; then
+    case $f in
+      *.sh) echo "${k}_py=$(sed -n 's/^export CQLSH_PYTHON=//p' "$f" | head -1)" ;;
+      *) echo "${k}_py=$(sed -n 's/.*CQLSH_PYTHON:-\([^}]*\)}.*/\1/p' "$f" | head -1)" ;;
+    esac
+    # (its content and mode, as the copy module compares them)
+    echo "${k}_sum=$(sha1sum < "$f" | cut -d' ' -f1)|$(stat -c %a "$f")"
+  fi
+done
+# each Python the roles may give the package cqlsh (python3; python3.11; the inventory cassandra_cqlsh_python):
+# its site-packages, what cqlshlib is there (a link and its target, another, none), and whether the package
+# cqlsh starts with it (with the cqlshlib link the roles add on RedHat, as a PYTHONPATH of its own when
+# missing): path|site-packages|cqlshlib|ok or its last error line
+n=0
+for p in python3 /usr/bin/python3.11 {{ cassandra_cqlsh_python | default('', true) | quote }}; do
+  [ -n "$p" ] && command -v "$p" >/dev/null 2>&1 || continue
+  n=$((n + 1))
+  pl=$("$p" -c "import sysconfig; print(sysconfig.get_paths()['purelib'])" 2>/dev/null)
+  if [ -z "$pl" ]; then t=; elif [ -L "$pl/cqlshlib" ]; then t=$(readlink "$pl/cqlshlib")
+  elif [ -e "$pl/cqlshlib" ]; then t=other; else t=absent; fi
+  r=
+  if [ -x /usr/bin/cqlsh ]; then
+    d=
+    if [ "$t" = absent ] && [ -d /usr/lib/python3.6/site-packages/cqlshlib ]; then
+      d=$(mktemp -d) && ln -s /usr/lib/python3.6/site-packages/cqlshlib "$d/cqlshlib"
+    fi
+    if out=$(PYTHONPATH="$d" CQLSH_PYTHON=$p timeout 30 /usr/bin/cqlsh --version 2>&1); then r=ok
+    else r=$(echo "$out" | grep -v '^[[:space:]]*$' | tail -1 | tr '|' '/' | cut -c1-200); r=${r:-no output}; fi
+    [ -n "$d" ] && rm -f "$d/cqlshlib" && rmdir "$d"
+  fi
+  echo "cqlsh_python_$n=$p|$pl|$t|$r"
+done
+rf=
+for f in /etc/yum.repos.d/cassandra-*.repo /etc/apt/sources.list.d/cassandra-*.sources /etc/apt/sources.list.d/cassandra-*.list; do
+  [ -e "$f" ] && rf="$rf $f"
+done
+# (each one checked below: the role takes over only files it would write as they are)
+[ -n "$rf" ] && echo "own_repo=yes" && echo "repo_files=${rf# }"
+# a configured repository offers the cassandra package (else it was installed from a file: new nodes
+# need cassandra_install_method packages); apt: a source besides the status of the installed package
+if command -v apt-cache >/dev/null 2>&1; then
+  # (read from the local lists: none, nothing to conclude)
+  ls /var/lib/apt/lists/*_Packages* >/dev/null 2>&1 && echo "pkg_query=ok"
+  apt-cache policy cassandra 2>/dev/null | grep -E '^ +[0-9]+ ' | grep -vq '/var/lib/dpkg/status' && echo "pkg_repo=yes"
+else
+  # a repository skipped (unreachable), other than a cassandra-* one (e.g. a plain directory declared as
+  # one): nothing to conclude
+  # (from the metadata dnf has cached first: no download; else the repositories)
+  bad=x
+  for c in -C ""; do
+    res=$(timeout 180 dnf -q $c repoquery --setopt=skip_if_unavailable=True --qf 'PKG %{name}' cassandra 2>&1); rc=$?
+    bad=$(echo "$res" | sed -n "s/.*repo '\([^']*\)'.*/\1/p; s/.*Ignoring repositories: //p" | tr ', ' '\n\n' | grep . | grep -v '^cassandra-')
+    # (a cached answer that it is offered is enough; that it is not, asked to the repositories)
+    [ $rc = 0 ] && [ -z "$bad" ] && echo "$res" | grep -q '^PKG ' && break
+  done
+  [ $rc = 0 ] && [ -z "$bad" ] && echo "pkg_query=ok"
+  echo "$res" | grep -q '^PKG ' && echo "pkg_repo=yes"
+fi
+# the version of the packages the import looks at, installed ones only, as package_facts gives them (which
+# reads every package: a large fact, worked out again for each later task of each node)
+for p in $IMPORT_CLUSTER_PACKAGES; do
+  if [ "$IMPORT_CLUSTER_OS_FAMILY" = Debian ]; then
+    v=$(dpkg-query -W -f '${db:Status-Status} ${Version}\n' "$p" 2>/dev/null \
+        | awk '$1 ~ /^(installed|half-configured|unpacked|triggers-awaited|triggers-pending)$/ {print $2; exit}')
+  else
+    # (not installed: its message, rc 1)
+    v=$(rpm -q --qf '%{VERSION}\n' "$p" 2>/dev/null) && v=$(echo "$v" | head -1) || v=
+  fi
+  [ -n "$v" ] && echo "installed_$p=$v"
+done
+exit 0
