@@ -15,7 +15,7 @@ import pytest
 import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout_over
-from ansible_collections.community.cassandra.tests.unit.helpers import run_playbook
+from ansible_collections.community.cassandra.tests.unit.helpers import run_playbook, task_runs
 from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_import_convergence import (
     SECRETS, fake_node)
 from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task
@@ -141,7 +141,12 @@ def test_the_tasks_pass_the_section_on():
     assert "_convergence_screen" not in WRITE["vars"]
     shareable = find_task(WRITE, "Write the shareable copy of the report")
     assert [i["mode"] for i in shareable["loop"]] == ["0644", "0600"]
-    assert "import_report_shareable | default(false) | bool" in shareable["when"]
+    # written when asked (default: not)
+    written = dict(_report_args={"report_file": "/p/reports/big/report.txt"}, ansible_check_mode=False,
+                   item={"part": "text"})
+    assert task_runs(shareable, import_report_shareable=True, **written)
+    assert task_runs(shareable, import_report_shareable="yes", **written)
+    assert not task_runs(shareable, **written) and not task_runs(shareable, import_report_shareable="false", **written)
     # the key made 0600 before anything is written in it (no window where it is readable by others)
     names = [t["name"] for t in WRITE["tasks"]]
     touch = WRITE["tasks"][names.index("Make the key of the shareable copy readable by its owner only")]

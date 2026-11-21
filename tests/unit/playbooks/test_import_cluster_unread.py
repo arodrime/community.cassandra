@@ -12,7 +12,7 @@ import yaml
 
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 from ansible_collections.community.cassandra.tests.unit.import_nodes import node
-from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, trust_as_template
+from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, task_runs, trust_as_template
 from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
@@ -65,7 +65,10 @@ def test_report_and_stop_name_them():
     msg = render(STOP["ansible.builtin.fail"]["msg"], **variables).split("\n")
     assert "  --check: the inventory not written" in msg
     assert "allow_unread=_report_args.allow_unread" in WRITE["vars"]["_report"]
-    assert "import_strict | default(true) | bool" in STOP["when"]
+    # the stop runs on a failed self-check, unless import_strict is false (default: strict)
+    assert task_runs(STOP, _self_check_ok=False) and task_runs(STOP, _self_check_ok="false", import_strict="yes")
+    assert not task_runs(STOP, _self_check_ok=False, import_strict=False)
+    assert not task_runs(STOP, _self_check_ok=False, import_strict="false") and not task_runs(STOP, _self_check_ok=True)
 
 
 def test_air_gapped_node_noted():

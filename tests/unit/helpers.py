@@ -9,6 +9,7 @@ Rendering:
   render_as_given(template, variables)   only the template trusted: the variables as given
   trusted(value)                         every string inside value trusted (nested dicts and lists too)
   templar_for(variables)                 a Templar over variables
+  task_runs(task, **variables)           whether the task's when conditions all hold over variables
 
 Running a playbook:
   run_playbook(args, env, ...)           ansible-playbook <args> -> (rc, its output). A test that runs one is
@@ -79,6 +80,14 @@ def render_with(template, variables):
 def render(template, **variables):
     """render_with, the variables given as keywords."""
     return render_with(template, variables)
+
+
+def task_runs(task, **variables):
+    """Whether task runs over variables: each of its when conditions (a string or a list) true, as Ansible
+    evaluates them (each string variable trusted, as a play's vars are)."""
+    when = task.get("when", [])
+    return all(render_with("{{ %s }}" % condition, variables) is True for condition in
+               ([when] if isinstance(when, str) else when))
 
 
 def path_with(bin_dir):

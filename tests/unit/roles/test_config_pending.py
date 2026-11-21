@@ -19,7 +19,7 @@ import pytest
 import yaml
 
 from ansible_collections.community.cassandra.tests.unit.task_files import find_task, load_tasks
-from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given as render, trust_as_template
+from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given as render, task_runs, trust_as_template
 
 ROLE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_operation")
 
@@ -201,7 +201,8 @@ def test_service_seeds_before_changing_the_unit():
     unit = tasks("unit.yml")
     assert unit[plan]["check_mode"] is True
     assert "mode" not in unit[plan]["ansible.builtin.template"]  # a mode change alone records nothing
-    assert "not ansible_check_mode" in unit[plan]["when"]
+    assert task_runs(unit[plan], _cassandra_service_own_unit=True, ansible_check_mode=False)
+    assert not task_runs(unit[plan], _cassandra_service_own_unit=True, ansible_check_mode=True)  # not under --check
     assert unit[seed]["ansible.builtin.include_role"] == {"name": "community.cassandra.cassandra_config", "tasks_from": "config_seed.yml"}
     # (and before its drop-in changes or goes: package_script)
     assert unit[seed]["when"].startswith("cassandra_service_unit_planned is changed or cassandra_service_dropin_planned"
@@ -216,7 +217,9 @@ def test_config_seeds_before_writing():
     seed = names.index("Record the config the running Cassandra started with")
     assert seed < names.index("Template Cassandra config files")
     assert block[seed]["ansible.builtin.include_tasks"] == "config_seed.yml"
-    assert "not ansible_check_mode" in block[seed]["when"]
+    changes = dict(_cassandra_config_changes=["cassandra.yaml"], _cassandra_config_perm_changes=[])
+    assert task_runs(block[seed], ansible_check_mode=False, **changes)
+    assert not task_runs(block[seed], ansible_check_mode=True, **changes)  # not under --check
 
 
 def test_jvm_found_by_its_main_class(tmp_path):
@@ -288,10 +291,12 @@ def test_import_does_not_read_a_node_whose_java_was_removed():
         plays = yaml.safe_load(f)
     found = dict((t.get("name"), t) for p in plays for t in p.get("tasks", []))
     note = found["Note a running Java that cannot be read"]
-    assert "import_cluster_java | default('') == ''" in note["when"]
+    assert task_runs(note, import_cluster_series="41x") and not task_runs(note, import_cluster_series="41x", import_cluster_java="/bin/java")
     assert "rolling_restart" in render(note["ansible.builtin.set_fact"]["import_cluster_error"],
                                        {"import_cluster_java_bin": "/usr/lib/jvm/java-17-openjdk-17.0.9/bin/java"})
-    assert "import_cluster_error is not defined" in found["Read this node's config"]["when"]
+    read = found["Read this node's config"]
+    assert task_runs(read, import_cluster_series="41x")
+    assert not task_runs(read, import_cluster_series="41x", import_cluster_error="its Java cannot run any more")
 
 
 def test_import_lists_the_config_files_written_since_the_start():

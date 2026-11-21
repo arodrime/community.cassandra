@@ -81,9 +81,9 @@ def test_node_read_failure_is_reported_without_values():
                  "ansible_failed_result": {"failed": True, "msg": "templating failed: cassandra_config_import: "
                                            "cassandra.yaml, KeyError in _read_line(), line 3 (message hidden: it may "
                                            "show a value read from the nodes)"}}
-    # the filter branch of _why (Templar here does not load the collection's filters)
-    assert "cassandra_import_error" in block["rescue"][0]["vars"]["_why"]
-    variables["_why"] = cassandra_import_error(variables["ansible_failed_result"])
+    # why: the failure as cassandra_import_error says it (a message that may show a value hidden)
+    variables["_why"] = templar_for(variables).template(trust_as_template(block["rescue"][0]["vars"]["_why"]))
+    assert variables["_why"] == cassandra_import_error(variables["ansible_failed_result"])
     templar = templar_for(variables)
     assert templar.template(trust_as_template(keep)) == (
         '"Turn them into cassandra_config variables" failed: cassandra_config_import: cassandra.yaml, KeyError in _read_line(), '

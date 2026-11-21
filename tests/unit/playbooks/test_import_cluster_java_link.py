@@ -22,7 +22,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_convergence import (
     cassandra_import_convergence)
 from ansible_collections.community.cassandra.tests.unit.import_nodes import node
-from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
+from ansible_collections.community.cassandra.tests.unit.helpers import task_runs, templar_for, trust_as_template
 from ansible_collections.community.cassandra.tests.unit.task_files import find_task
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
@@ -385,7 +385,9 @@ def test_lines_package_of_another_major_is_not_its_build(tmp_path):
     assert "javaupdated" not in found
     assert found["java"] == "" and found["javabin"] == str(old)  # cannot be run any more: the node is not read
     error = task("Note a running Java that cannot be read")
-    assert "import_cluster_java | default('') == ''" in error["when"]
+    # noted on a node whose running Java was not read, and only there
+    assert task_runs(error, import_cluster_series="41x") and task_runs(error, import_cluster_series="41x", import_cluster_java="")
+    assert not task_runs(error, import_cluster_series="41x", import_cluster_java="/usr/lib/jvm/jdk-17/bin/java")
     assert "restart Cassandra (rolling_restart), then import again" in error["ansible.builtin.set_fact"]["import_cluster_error"]
 
 
@@ -446,8 +448,11 @@ def test_lines_unit_java_home_of_the_java_gone(tmp_path, unit_env, gone):
 def test_java_home_gone_refuses_the_node():
     # read as its new build, but its unit would start the Java gone: not imported, the way out said
     error = task("Note a JAVA_HOME of a Java gone")
-    assert "import_cluster_java_home_gone | default('') != ''" in error["when"]
-    assert "import_cluster_error is not defined" in error["when"]
+    # refused on a node whose JAVA_HOME is gone, unless it is not read already (one reason)
+    gone = dict(import_cluster_series="41x", import_cluster_java_home_gone="/usr/lib/jvm/java-11-openjdk-11.0.20")
+    assert task_runs(error, **gone)
+    assert not task_runs(error, import_cluster_error="its files could not be read", **gone)
+    assert not task_runs(error, import_cluster_series="41x") and not task_runs(error, **dict(gone, import_cluster_java_home_gone=""))
     variables = {"import_cluster_java_home_gone": "/usr/lib/jvm/java-11-openjdk-11.0.20",
                  "import_cluster_java_bin": "/usr/lib/jvm/java-11-openjdk-11.0.21/bin/java"}
     text = " ".join(templar_for(variables).template(

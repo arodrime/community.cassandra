@@ -9,7 +9,8 @@ import pytest
 
 from ansible_collections.community.cassandra.tests.unit import helpers
 from ansible_collections.community.cassandra.tests.unit.helpers import (
-    fake_nodetool, golden, golden_lines, path_with, render, render_as_given, render_with, ring_node, run_playbook, trusted, view)
+    fake_nodetool, golden, golden_lines, path_with, render, render_as_given, render_with, ring_node, run_playbook, task_runs,
+    trusted, view)
 
 
 def test_render_trusts_the_string_variables():
@@ -59,3 +60,10 @@ def test_golden_reads_the_file_and_writes_it_only_when_asked(tmp_path, monkeypat
     monkeypatch.setenv("CASSANDRA_GOLDEN_WRITE", "1")  # (pytest --regen)
     assert golden_lines(str(path), ["new", "lines"]) == ["new", "lines"]
     assert path.read_text() == "new\nlines\n"
+
+
+def test_task_runs_when_each_condition_holds():
+    task = {"name": "t", "when": ["a | bool", "b | default('') == ''"]}
+    assert task_runs(task, a="yes") and task_runs(task, a=True, b="")
+    assert not task_runs(task, a=False) and not task_runs(task, a=True, b="x")
+    assert task_runs({"when": "x > 1"}, x=2) and not task_runs({"when": "x > 1"}, x=1) and task_runs({})

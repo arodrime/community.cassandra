@@ -14,7 +14,7 @@ import sys
 import pytest
 import yaml
 
-from ansible_collections.community.cassandra.tests.unit.helpers import run_playbook
+from ansible_collections.community.cassandra.tests.unit.helpers import run_playbook, task_runs
 from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
@@ -138,4 +138,7 @@ def test_the_stop_is_one_text_of_the_filter():
                   "inventory=_report_args.inventory", "hosts=_report_args.hosts", "cwd=_report_args.cwd"):
         assert given in msg
     assert STOP["vars"]["cassandra_output"] is True and STOP["run_once"] is True
-    assert "import_strict | default(true) | bool" in STOP["when"]
+    # the stop runs on a failed self-check, unless import_strict is false (default: strict)
+    assert task_runs(STOP, _self_check_ok=False) and task_runs(STOP, _self_check_ok="false", import_strict="yes")
+    assert not task_runs(STOP, _self_check_ok=False, import_strict=False)
+    assert not task_runs(STOP, _self_check_ok=False, import_strict="false") and not task_runs(STOP, _self_check_ok=True)
