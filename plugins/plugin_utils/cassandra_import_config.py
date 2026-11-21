@@ -272,6 +272,71 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     where[0] = "the Prometheus exporter's agent"
     live_as_found = live_files
     keep = keep_files_option(running.get("keep", False))
+    live_files, cmdline, exporter = _exporter_taken_out(live_files, cmdline, ctx, running, keep, conf_target,
+                                                        cassandra_version, java)
+    running["cmdline"] = cmdline
+    release, rejected = str(release or SERIES[cassandra_version]), []
+    log_dir = log_dir_of(live_files.get("cassandra-env.sh", ""), cmdline, running.get("environment"),
+                         running.get("newer"))
+    live_files, read_as_notes = _read_as_the_role(env, cassandra_version, ctx, live_files, running, keep, log_dir)
+    found, from_shell = {}, set()
+    where[0] = "cassandra-env.sh"
+    earlier = earlier_env(cassandra_version, live_files[jvm_args.ENV], "\n".join(
+        _render(env, cassandra_version, jvm_args.ENV, ctx)[1]), facts) if jvm_args.ENV in live_files else None
+    for name in files:  # (in _config_import itself: an error raised below it, outside these files, names this function)
+        if name in live_files:
+            where[0] = name
+            got = earlier["found"] if earlier and name == jvm_args.ENV else \
+                _import_file(env, cassandra_version, name, ctx, live_files[name].split("\n"))
+            _merge(found, got)
+            if name.endswith(".sh"):
+                from_shell.update(got)
+    if "logback.xml" in live_files:
+        where[0] = "logback.xml"
+        found, logback_note = _logback_found(env, cassandra_version, ctx, found, live_files["logback.xml"])
+    else:
+        logback_note = []
+    where[0] = "the JVM options files"
+    jvm_notes, jvm_warnings = _jvm_options(env, cassandra_version, ctx, found, str(java or ""))
+    heap_moved = _heap_moved(env, cassandra_version, ctx, found, java, cmdline, running, keep, live_files)
+    jvm_warnings += _later_stock_warnings(env, cassandra_version, ctx, files, live_files)
+    where[0] = "cassandra.yaml"
+    changed, render_dirs, rejected = _yaml_changed(env, cassandra_version, ctx, live_files, found, from_shell,
+                                                   storage_dir, release)
+    where[0] = "jmxremote.password"
+    jmx_files, jmx_vars, jmx_note, jmx_unread_note = _jmx_import(env, live_files, jmx_files, running)
+    changed.update(jmx_vars)
+    where[0] = "comparing the files with the role's"
+    render = _render_values(ctx, changed, found, live_files, render_dirs)
+    where[0] = "the JVM options"
+    moved = _jvm_moves(env, cassandra_version, files, ctx, render, live_files, dict(running, jaas=jmx_files["jaas"]),
+                       earlier["text"] if earlier else None)
+    _take_moved(moved["vars"], ctx, render, changed)
+    where[0] = "comparing the files with the role's"
+    # (the heap shown the same from the running JVM's arguments wherever its file has it: not a hand edit there)
+    hand, normalized, comments = _leftovers(env, cassandra_version, files, render, live_files, rejected,
+                                            moved["shown"], HEAP_OPTIONS if moved["shown"] else (),
+                                            running.get("environment"), env_cmdline(running))
+    if earlier:
+        hand = _earlier_env_said(earlier, cassandra_version, moved, cmdline, render, hand, normalized, jvm_warnings)
+    normalized += read_as_notes + jmx_unread_note + _jvm_normalized(heap_moved, moved, earlier)
+    changed.update(exporter["vars"])
+    rewritten = moved["rewritten"] + [f for f in _exporter_rewritten(env, cassandra_version, render, exporter,
+                                                                     live_as_found) if f not in moved["rewritten"]]
+    hand += logback_note + jmx_note
+    out, trusted, secrets = _move_secrets(_inventory_vars(changed, found, ctx, live_files, facts, conf_target,
+                                                          cassandra_version))
+    return {"vars": out, "hand_edits": hand, "normalized": normalized, "comments": comments,
+            "not_settings": {"keys": rejected, "release": release} if rejected else {}, "release": release,
+            "trusted": trusted, "carried": _carried_lines(changed) + secrets,
+            "jvm_notes": jvm_notes + exporter["notes"], "jvm_warnings": jvm_warnings,
+            "moved": moved["moved"] + exporter["moved"], "rewritten": rewritten, "cleanup": moved["cleanup"],
+            "not_moved": moved["not_moved"]}
+
+
+def _exporter_taken_out(live_files, cmdline, ctx, running, keep, conf_target, cassandra_version, java):
+    """The node's files and the JVM's arguments without the Prometheus exporter's agent (_exporter_import), but when
+    the file that gives it is kept as it is (import_keep_hand_edits) -> (live_files, cmdline, exporter)."""
     as_read = (live_files, cmdline)
     live_files, cmdline, exporter = _exporter_import(
         live_files, cmdline, ctx, running.get("exporter"), [ctx.get("cassandra_conf_dir"), conf_target],
@@ -286,10 +351,13 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
                " is (import_keep_hand_edits); %s gives it as it does" % agent_file)
         exporter = {"vars": {}, "moved": [], "found": None,
                     "notes": ["%s: the Prometheus exporter's agent NOT imported: %s" % (agent_file, why)]}
-    running["cmdline"] = cmdline
-    release, rejected = str(release or SERIES[cassandra_version]), []
-    log_dir = log_dir_of(live_files.get("cassandra-env.sh", ""), cmdline, running.get("environment"),
-                         running.get("newer"))
+    return live_files, cmdline, exporter
+
+
+def _read_as_the_role(env, cassandra_version, ctx, live_files, running, keep, log_dir):
+    """The node's files with what the role writes otherwise for the same effect read as the role's: a plain
+    CASSANDRA_HEAPDUMP_DIR, cassandra-env.sh's lines in the JMX branch its JVM does not take, the log dir written as
+    itself in logback.xml -> (live_files, [the notes that say so])."""
     heap_dump_note = []
     if cassandra_version in ("40x", "41x") and "cassandra-env.sh" in live_files:
         text, folder = jvm_args.heap_dump_dir_as_role(live_files["cassandra-env.sh"], running.get("environment"),
@@ -314,30 +382,23 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
                         " same files" % log_dir]
     else:
         log_dir_note = []
-    found, from_shell = {}, set()
-    where[0] = "cassandra-env.sh"
-    earlier = earlier_env(cassandra_version, live_files[jvm_args.ENV], "\n".join(
-        _render(env, cassandra_version, jvm_args.ENV, ctx)[1]), facts) if jvm_args.ENV in live_files else None
-    for name in files:  # (in _config_import itself: an error raised below it, outside these files, names this function)
-        if name in live_files:
-            where[0] = name
-            got = earlier["found"] if earlier and name == jvm_args.ENV else \
-                _import_file(env, cassandra_version, name, ctx, live_files[name].split("\n"))
-            _merge(found, got)
-            if name.endswith(".sh"):
-                from_shell.update(got)
-    if "logback.xml" in live_files:
-        where[0] = "logback.xml"
-        for key, value in _logback(live_files["logback.xml"]).items():
-            if value is None:
-                found.pop(key, None)
-            else:
-                found[key] = value
-        found, logback_note = _logback_carried(env, cassandra_version, ctx, found, live_files["logback.xml"])
-    else:
-        logback_note = []
-    where[0] = "the JVM options files"
-    jvm_notes, jvm_warnings = _jvm_options(env, cassandra_version, ctx, found, str(java or ""))
+    return live_files, log_dir_note + heap_dump_note + branch_note
+
+
+def _logback_found(env, cassandra_version, ctx, found, text):
+    """found with logback.xml's variables (_logback: None drops one), then the ones the carried lines give
+    (_logback_carried) -> (found, [hand edit lines])."""
+    for key, value in _logback(text).items():
+        if value is None:
+            found.pop(key, None)
+        else:
+            found[key] = value
+    return _logback_carried(env, cassandra_version, ctx, found, text)
+
+
+def _heap_moved(env, cassandra_version, ctx, found, java, cmdline, running, keep, live_files):
+    """The heap of the JVM's arguments read as cassandra_config writes it, in the options files
+    (_heap_in_options) -> {file: [its heap options]}; {} when not worked out."""
     # (not with a JVM file kept as it is: cassandra-env.sh, jvm-server.options where the role writes it, the options
     # file the heap is in; not with a heap of cassandra-env.sh's own: a line not the stock file's that sets
     # MAX_HEAP_SIZE or HEAP_NEWSIZE (=, :=), or has an -Xms, -Xmx or -Xmn, however written)
@@ -347,14 +408,24 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
                 and re.search(r"^[^#]*(\b(MAX_HEAP_SIZE|HEAP_NEWSIZE):?=|-Xm[sxn])", line)]
     if cmdline and not set(running.get("newer") or []) & {jvm_args.ENV, jvm_args.COMMON} \
             and not (keep is True or set(keep) & jvm_files) and not env_heap:
-        heap_moved = _heap_in_options(found, cassandra_version, str(java or ""), live_files)
-    else:
-        heap_moved = {}
+        return _heap_in_options(found, cassandra_version, str(java or ""), live_files)
+    return {}
+
+
+def _later_stock_warnings(env, cassandra_version, ctx, files, live_files):
+    """The stock lines of a later release (LATER_STOCK) a node's file predates: one warning each."""
+    warnings = []
     for name in [n for n in LATER_STOCK if n in live_files and n in files]:
         for line in without_later_stock(name, "\n".join(_render(env, cassandra_version, name, ctx)[1]), live_files[name])[1]:
-            jvm_warnings.append("%s (%s): added by apply_config: %s; missing because this file predates it" % (
+            warnings.append("%s (%s): added by apply_config: %s; missing because this file predates it" % (
                 line, name, LATER_STOCK[name][line][0]))
-    where[0] = "cassandra.yaml"
+    return warnings
+
+
+def _yaml_changed(env, cassandra_version, ctx, live_files, found, from_shell, storage_dir, release):
+    """found with cassandra.yaml's settings a node keeps for life, a size, rate or duration in one unit; then the values
+    that differ from the role's, its storage and data dirs and its extra settings among them -> (changed, the data
+    dirs to render the role's file with (None: the role's), the keys its Cassandra rejects)."""
     if "cassandra.yaml" in live_files:
         found.update(_identity(live_files["cassandra.yaml"], cassandra_version))
     if cassandra_version != "40x":
@@ -369,7 +440,7 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
         changed.update(dirs)
         if keep_storage:
             changed["cassandra_config_storage_dir"] = keep_storage
-    render_dirs = None
+    render_dirs, rejected = None, []
     if "cassandra.yaml" in live_files:
         dirs, render_dirs = _data_dirs(live_files["cassandra.yaml"], ctx)
         found.update(dirs)
@@ -378,69 +449,71 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
                                         changed)
         if extras:
             changed["cassandra_extra_settings"] = extras
-    where[0] = "jmxremote.password"
-    jmx_files, jmx_vars, jmx_note, jmx_unread_note = _jmx_import(env, live_files, jmx_files, running)
-    changed.update(jmx_vars)
-    where[0] = "comparing the files with the role's"
+    return changed, render_dirs, rejected
+
+
+def _render_values(ctx, changed, found, live_files, render_dirs):
+    """The variables the role's files are rendered with to compare them with the node's."""
     render = dict(ctx, **changed)
     if "cassandra_log_audit_file" in found:  # (its default made of other values: the node's whatever it is)
         render["cassandra_log_audit_file"] = bool(found["cassandra_log_audit_file"])
     if "cassandra.yaml" in live_files and render_dirs:
         render["cassandra_data_file_directories"] = render_dirs
-    where[0] = "the JVM options"
-    moved = _jvm_moves(env, cassandra_version, files, ctx, render, live_files, dict(running, jaas=jmx_files["jaas"]),
-                       earlier["text"] if earlier else None)
-    for key, value in moved["vars"].items():
+    return render
+
+
+def _take_moved(variables, ctx, render, changed):
+    """The variables cassandra-env.sh's lines moved to (_jvm_moves): rendered with, written when not the default."""
+    for key, value in variables.items():
         render[key] = value
         if _same_value(value, _default(ctx, key)):
             changed.pop(key, None)
         else:
             changed[key] = value
-    where[0] = "comparing the files with the role's"
-    # (the heap shown the same from the running JVM's arguments wherever its file has it: not a hand edit there)
-    hand, normalized, comments = _leftovers(env, cassandra_version, files, render, live_files, rejected,
-                                            moved["shown"], HEAP_OPTIONS if moved["shown"] else (),
-                                            running.get("environment"), env_cmdline(running))
-    if earlier:
-        old = SERIES[earlier["series"]].split(".")[0] + ".x"
-        if jvm_args.ENV in moved["shown"]:
-            normalized.append("cassandra-env.sh: the stock file of %s (kept on upgrade), its values read: cassandra_config"
-                              " writes %s's, which gives the JVM the same arguments (worked out from the running JVM's)"
-                              % (old, SERIES[cassandra_version]))
-            if "-XX:HeapDumpPath=" not in cmdline:
-                jvm_warnings.append("-XX:HeapDumpPath (cassandra-env.sh): added by apply_config: %s's sets it always, in"
-                                    " %s (cassandra_heap_dump_dir), %s's only with CASSANDRA_HEAPDUMP_DIR; missing because"
-                                    " this file predates it" % (SERIES[cassandra_version],
-                                                                render.get("cassandra_heap_dump_dir"), old))
-        else:
-            # one line for the file: its values are read, the JVM's arguments are what is not shown the same
-            hand = _without_file_hunks(hand, jvm_args.ENV) + [earlier_env_not_shown(
-                earlier, cassandra_version, moved["not_moved"] or (NOT_RUNNING_OR_CHANGED if not cmdline
-                                                                   else "not worked out"))]
-            moved["not_moved"] = ""
-    normalized += log_dir_note + heap_dump_note + branch_note + jmx_unread_note
-    normalized += ["%s: %s %s" % (f, "/".join(options), HEAP_MOVED) for f, options in sorted(heap_moved.items())
-                   if f != jvm_args.COMMON]
+
+
+def _earlier_env_said(earlier, cassandra_version, moved, cmdline, render, hand, normalized, jvm_warnings):
+    """cassandra-env.sh the stock file of an earlier series: said once (normalized, a warning), or one hand edit line
+    for the file when the JVM's arguments are not shown the same -> hand (normalized, jvm_warnings and
+    moved["not_moved"] changed in place)."""
+    old = SERIES[earlier["series"]].split(".")[0] + ".x"
+    if jvm_args.ENV in moved["shown"]:
+        normalized.append("cassandra-env.sh: the stock file of %s (kept on upgrade), its values read: cassandra_config"
+                          " writes %s's, which gives the JVM the same arguments (worked out from the running JVM's)"
+                          % (old, SERIES[cassandra_version]))
+        if "-XX:HeapDumpPath=" not in cmdline:
+            jvm_warnings.append("-XX:HeapDumpPath (cassandra-env.sh): added by apply_config: %s's sets it always, in"
+                                " %s (cassandra_heap_dump_dir), %s's only with CASSANDRA_HEAPDUMP_DIR; missing because"
+                                " this file predates it" % (SERIES[cassandra_version],
+                                                            render.get("cassandra_heap_dump_dir"), old))
+        return hand
+    # one line for the file: its values are read, the JVM's arguments are what is not shown the same
+    hand = _without_file_hunks(hand, jvm_args.ENV) + [earlier_env_not_shown(
+        earlier, cassandra_version, moved["not_moved"] or (NOT_RUNNING_OR_CHANGED if not cmdline
+                                                           else "not worked out"))]
+    moved["not_moved"] = ""
+    return hand
+
+
+def _jvm_normalized(heap_moved, moved, earlier):
+    """The JVM's files' layout notes: the heap moved to jvm-server.options, cassandra-env.sh's lines at other
+    places only."""
+    notes = ["%s: %s %s" % (f, "/".join(options), HEAP_MOVED) for f, options in sorted(heap_moved.items())
+             if f != jvm_args.COMMON]
     if jvm_args.ENV in moved["rewritten"] and not moved["moved"] and not earlier:  # its lines at other places only
-        normalized.append("cassandra-env.sh: lines at another place than the role writes them (e.g. in the remote JMX"
-                          " branch): the same arguments for the JVM (worked out from the running JVM's), no effect")
-    changed.update(exporter["vars"])
-    rewritten = moved["rewritten"] + [f for f in _exporter_rewritten(env, cassandra_version, render, exporter,
-                                                                     live_as_found) if f not in moved["rewritten"]]
-    hand += logback_note + jmx_note
+        notes.append("cassandra-env.sh: lines at another place than the role writes them (e.g. in the remote JMX"
+                     " branch): the same arguments for the JVM (worked out from the running JVM's), no effect")
+    return notes
+
+
+def _carried_lines(changed):
+    """The lines carried at the end of a file (END_KEYS) and the appenders before <root>: one note each."""
     carried = ["%s: %d line(s) at its end kept with %s" % (name, len(changed[key]), key)
                for name, key in END_KEYS.items() if changed.get(key)]
     if changed.get(APPENDERS):
         carried.append("logback.xml:appenders: %d line(s) of its own appenders before <root> kept with %s"
                        % (len(changed[APPENDERS]), APPENDERS))
-    out, trusted, secrets = _move_secrets(_inventory_vars(changed, found, ctx, live_files, facts, conf_target,
-                                                          cassandra_version))
-    return {"vars": out, "hand_edits": hand, "normalized": normalized, "comments": comments,
-            "not_settings": {"keys": rejected, "release": release} if rejected else {}, "release": release,
-            "trusted": trusted, "carried": carried + secrets,
-            "jvm_notes": jvm_notes + exporter["notes"], "jvm_warnings": jvm_warnings,
-            "moved": moved["moved"] + exporter["moved"], "rewritten": rewritten, "cleanup": moved["cleanup"],
-            "not_moved": moved["not_moved"]}
+    return carried
 
 
 def _logger_parameters(conf):
