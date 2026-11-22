@@ -14,7 +14,8 @@ cassandra_clock_probe: what the probe (clock_probe.yml) printed on a node ->
     sources, configured, offset (seconds, the node's clock minus its source's:
     positive is ahead), bound (the daemon's error bound, seconds), leap,
     stratum, kernel_synced, container, query (|offset| chronyd -Q measured
-    with no daemon running)}. The daemon's own figures are the measure: chrony
+    with no daemon running), query_ahead (its side: "wrong by -X" is ahead,
+    as apply_config.yml reads it)}. The daemon's own figures are the measure: chrony
     (chronyc tracking and sources), systemd-timesyncd (timedatectl
     timesync-status), ntpd (ntpq -pn).
 cassandra_clock_settled: a probe result -> whether waiting longer can change
@@ -296,9 +297,10 @@ def _makestep(conf):
 
 
 def _query(lines):
-    """chronyd -Q's output -> |the offset it measured| (seconds), None if it did not say."""
+    """chronyd -Q's output -> (|the offset it measured| (seconds), whether the clock is ahead: "wrong by" the
+    correction it needs, negative for a clock ahead), (None, None) if it did not say."""
     query = re.search(r"System clock wrong by (-?[0-9.]+) seconds", "\n".join(lines))
-    return abs(float(query.group(1))) if query else None
+    return (abs(float(query.group(1))), float(query.group(1)) < 0) if query else (None, None)
 
 
 def cassandra_clock_probe(text):
@@ -311,7 +313,7 @@ def cassandra_clock_probe(text):
     out = {"daemon": "", "service": "", "active": False, "installed": False, "enabled": False, "masked": False,
            "synchronised": False, "source": "", "sources": 0, "reachable": 0, "configured": [], "offset": None,
            "bound": None, "skew": None, "leap": "", "stratum": None, "local": False, "kernel_synced": None, "container": "",
-           "query": None, "window": False, "kernel_only": False}
+           "query": None, "query_ahead": None, "window": False, "kernel_only": False}
     name, running = _pick_daemon(units)
     if name:
         unit = units[name]
@@ -326,7 +328,7 @@ def cassandra_clock_probe(text):
         out.update(_daemon_said(out["daemon"], s, out["kernel_synced"], out["configured"]))
     out["window"] = "window" in s
     out["makestep"] = _makestep(s.get("chrony_conf", []))
-    out["query"] = _query(s.get("query", []))
+    out["query"], out["query_ahead"] = _query(s.get("query", []))
     return out
 
 
@@ -455,7 +457,7 @@ def _off(p, running, max_s, step_s):
         v["why"] = "%s's error bound is %s, over %s" % (service, ms(p["bound"], False), ms(max_s, False))
         if p.get("daemon") == "chrony" and (p.get("skew") or 0.0) > CONVERGING_SKEW_PPM:
             v["why"] += "; %s's frequency skew is %.0f ppm (settled: a few ppm)" % (service, p["skew"])
-        # (a wait on cassandra_clock_sync_timeout adds RAISE: a start's refusal, sync_clocks' clock_fix.yml)
+        # (a wait on cassandra_clock_sync_timeout that ran adds RAISE: a start's refusal, sync_clocks' clock_fix.yml)
         v["why"] += "; " + LATER
         v["action"], v["converging"] = "manual", True
     elif (p.get("bound") or 0.0) > max_s:
@@ -514,16 +516,17 @@ def _other_means(p, coarse, referenced, coarse_s):
     return v
 
 
-def _host_clock(p, coarse, referenced, dated, coarse_s):
-    """A container's probe (the host's clock: the host syncs it), its gap to the others by the dates, whether the
-    daemons' offsets gave the reference, how many nodes gave dates -> the verdict's fields."""
+def _host_clock(p, coarse, gap, referenced, dated, coarse_s):
+    """A container's probe (the host's clock: the host syncs it), its gap to the reference by the dates (judged),
+    to the others (said: the warnings' figure), whether the daemons' offsets gave the reference, how many nodes
+    gave dates -> the verdict's fields."""
     v = {"how": "coarse"}
     if coarse is None or not referenced and dated < 2:
         v["verdict"], v["why"] = "ok", "the host's clock (%s container)" % p["container"]
     elif abs(coarse) > coarse_s:
         v["verdict"], v["ahead"] = "off", coarse > 0
         v["why"] = ("the host's clock (%s container), %s the others by about %s (dates over SSH, coarse)"
-                    % (p["container"], "ahead of" if coarse > 0 else "behind", ms(abs(coarse), False)))
+                    % (p["container"], "ahead of" if gap > 0 else "behind", ms(abs(gap), False)))
         v["action"] = "manual"
     elif p.get("kernel_synced") is False:
         v["verdict"], v["action"] = "unsynchronised", "manual"
@@ -567,7 +570,7 @@ def _no_sync(p, n, coarse, referenced, running, step_s):
     return v
 
 
-def _no_daemon(p, n, coarse, referenced, dated, running, coarse_s, step_s):
+def _no_daemon(p, n, coarse, gap, referenced, dated, running, coarse_s, step_s):
     """A node no daemon of the probe reports on (none running, or one it can only ask the kernel about) -> the
     verdict's fields: synchronised by other means, the host's clock (a container), or no time sync."""
     # the kernel synchronised and no daemon of ours installed, or one disabled on a node whose time sync is
@@ -578,15 +581,19 @@ def _no_daemon(p, n, coarse, referenced, dated, running, coarse_s, step_s):
     if other:
         return _other_means(p, coarse, referenced, coarse_s)
     if p.get("container"):
-        return _host_clock(p, coarse, referenced, dated, coarse_s)
+        return _host_clock(p, coarse, gap, referenced, dated, coarse_s)
     return _no_sync(p, n, coarse, referenced, running, step_s)
 
 
-def _node_verdict(n, ref, referenced, dated, max_s, step_s, coarse_s):
-    """One node (probe, skew set), the reference time, whether the daemons' offsets gave it, how many nodes gave
-    dates, the limits (seconds) -> its verdict {node, verdict, ahead, offset, how, text, why, action, ...}."""
+def _node_verdict(n, nodes, ref, referenced, dated, max_s, step_s, coarse_s):
+    """One node (probe, skew set), all of them, the reference time, whether the daemons' offsets gave it, how many
+    nodes gave dates, the limits (seconds) -> its verdict {node, verdict, ahead, offset, how, coarse (its gap to the
+    reference, judged), gap (to the others, said), text, why, action, ...}."""
     p = n["probe"]
     coarse = (n["skew"] - ref) if n["skew"] is not None and ref is not None else None
+    # with no daemon's offset, the reference is the median of every node, itself in it: the figure said is the
+    # gap to the others (as the warnings say it); with one, it is the same
+    gap = coarse if referenced else _dates_gap(n, nodes, any_dated=True)[0]
     v = {"node": n["node"], "daemon": p.get("daemon", ""), "service": p.get("service", ""),
          "active": bool(p.get("active")), "synchronised": bool(p.get("synchronised")), "source": p.get("source", ""),
          "offset": p.get("offset"), "bound": p.get("bound"), "coarse": coarse, "how": "daemon",
@@ -602,7 +609,8 @@ def _node_verdict(n, ref, referenced, dated, max_s, step_s, coarse_s):
     elif why in ("not synchronised", "no offset"):
         v.update(_unsynchronised(p))
     else:
-        v.update(_no_daemon(p, n, coarse, referenced, dated, v["running"], coarse_s, step_s))
+        v.update(_no_daemon(p, n, coarse, gap, referenced, dated, v["running"], coarse_s, step_s))
+    v["gap"] = gap if v["how"] == "coarse" else None
     if p.get("container") and v["action"] in ("step", "window"):
         v["action"] = "manual"
         v["why"] += "; its clock is the host's (%s container): step the host's, never from a container" % (
@@ -625,26 +633,40 @@ def _dates_gap(n, nodes, any_dated=False):
 
 
 def _ahead_by(v, n, nodes, max_s, coarse_s):
-    """A verdict, its node, all of them -> (how far its clock is ahead, the nodes the dates over SSH compared it
-    with: [] by its daemon), None when it is not past what can be told (or Cassandra does not run there: it
-    stamped nothing). A node whose daemon is synchronised: its offset over max_s, by its daemon alone (an error
-    bound over it alone is no clock ahead; the dates include the SSH delay). A daemon not synchronised, or none
-    (ahead by the dates): the dates against the other synchronised nodes, over coarse_s."""
+    """A verdict, its node, all of them -> (how far its clock is ahead, the lines that say how it was told: none
+    by its daemon), None when it is not past what can be told (or Cassandra does not run there: it stamped
+    nothing). A node whose daemon is synchronised: its offset over max_s, by its daemon alone (an error bound over
+    it alone is no clock ahead; the dates include the SSH delay). No daemon running, chronyd -Q measured it: that
+    measure (its side too) over max_s, as a daemon's offset. A container: its row's figure, the dates against the
+    others, over coarse_s whatever its verdict. Else, a daemon not synchronised or none: the dates against the
+    other synchronised nodes, over coarse_s."""
     if not v["running"]:
         return None
     if v["how"] == "daemon" and v["verdict"] in ("ok", "off"):
         return (v["offset"], []) if v["verdict"] == "off" and (v["offset"] or 0.0) > max_s else None
+    query = n["probe"].get("query") if v["verdict"] == "no_sync" else None
+    if query is not None:
+        return (query, ["by chronyd -Q"]) if n["probe"].get("query_ahead") and query > max_s else None
+    if v["container"] and v["how"] == "coarse":
+        gap, against = _dates_gap(n, nodes, any_dated=True)
+        synchronised = any(m["probe"].get("synchronised") and m["probe"].get("offset") is not None
+                           for m in nodes if m["node"] in against)  # (else the other containers)
+        return (gap, [_against(against, synchronised=synchronised)]) if gap is not None and gap > coarse_s else None
     if v["verdict"] != "unsynchronised" and (not v["ahead"] or v["verdict"] == "ok"):
         return None
     gap, against = _dates_gap(n, nodes, any_dated=v["how"] == "coarse")
-    return (gap, against) if gap is not None and gap > coarse_s else None
+    return (gap, [_against(against)]) if gap is not None and gap > coarse_s else None
 
 
-def _against(names):
-    """The nodes the dates over SSH compared a clock with -> the line that says so, within the warnings' width."""
-    line = "by the dates over SSH, against %s" % ", ".join(names)
+def _against(names, synchronised=True):
+    """The nodes the dates over SSH compared a clock with (synchronised ones, else the other containers) -> the
+    line that says so, within the warnings' width: one named; several, their median, named up to 3."""
+    if len(names) == 1:
+        return "by the dates over SSH, against %s" % names[0]
+    line = "by the dates over SSH, against the median of %s" % ", ".join(names)
     if len(names) > 3 or len(line) > WIDTH - len(cassandra_output.WARNING):
-        line = "by the dates over SSH, against %d other nodes" % len(names)
+        line = "by the dates over SSH, against the median of %d %s nodes" % (
+            len(names), "synchronised" if synchronised else "other")
     return line
 
 
@@ -657,10 +679,9 @@ def _ahead_warnings(nodes, out, max_s, coarse_s):
         ahead = _ahead_by(v, n, nodes, max_s, coarse_s)
         if ahead is None:
             continue
-        amount, against = ahead
+        amount, told = ahead
         warnings.append("\n".join(
-            ["%s's clock is AHEAD by about %s" % (v["node"], ms(amount, False))]
-            + ([_against(against)] if against else [])
+            ["%s's clock is AHEAD by about %s" % (v["node"], ms(amount, False))] + told
             + ["the writes it stamped as coordinator carry future timestamps (lightweight transactions, drivers"
                " without client-side timestamps)",
                "an update or a delete of the same data from a correct clock in the next %s loses against them,"
@@ -746,7 +767,7 @@ def cassandra_clock_verdicts(nodes, max_ms=50, step_ms=400, coarse_ms=COARSE_MS)
             addresses[str(a)] = n["node"]
     out, warnings = [], []
     for n in nodes:
-        out.append(_node_verdict(n, ref, referenced, len(skews), max_s, step_s, coarse_s))
+        out.append(_node_verdict(n, nodes, ref, referenced, len(skews), max_s, step_s, coarse_s))
         p = n["probe"]
         if p.get("others"):
             warnings.append("%s runs several time sync daemons (%s and %s): they fight over the clock, keep one"
@@ -773,7 +794,7 @@ def _describe(v, p):
         return v["why"]
     if v["how"] == "coarse":
         return "the host's clock (%s container)%s" % (
-            v["container"], (", %s vs the others (coarse)" % ms(v["coarse"])) if v["coarse"] is not None else "")
+            v["container"], (", %s vs the others (coarse)" % ms(v["gap"])) if v["gap"] is not None else "")
     if not v["active"]:
         if v["estimate"] is None:
             return v["why"]
@@ -802,8 +823,9 @@ def _facts(why):
 
 
 def _wrap(text, first, rest, width=WIDTH):
-    # (a word longer than the line, a node name of 70 characters: cut, the line kept within width)
-    return textwrap.wrap(text, width, initial_indent=first, subsequent_indent=rest, break_long_words=True,
+    # cut between words only, as cassandra_output.fit: a word longer than the room (a path, a URL, a name of 76
+    # characters) stays whole, its line over width
+    return textwrap.wrap(text, width, initial_indent=first, subsequent_indent=rest, break_long_words=False,
                          break_on_hyphens=False) or [first.rstrip()]
 
 
@@ -811,8 +833,9 @@ def cassandra_clock_lines(verdicts, actions=True, width=WIDTH):
     """The verdicts -> the rows within width columns: name, verdict, what its time sync says; under it, from
     the same column, each fact of why the node is not in sync on a line of its own, then (actions) what
     sync_clocks does about it; a line that goes on, 2 columns more. A name too long to leave 40 columns: the
-    name and the verdict alone (the verdict under it, 4 columns in, when both do not fit), the text and the facts
-    on the next lines, 6 columns in; a name longer than a line, cut.
+    name and the verdict alone (the whole verdict on the next line, 4 columns in, when both do not fit), the text
+    and the facts on the next lines, 6 columns in. Words are never cut: a name or a path longer than the room
+    stays whole, its line over width.
     Input: cassandra_clock_verdicts' result; output: [str]. e.g. -> ["  node1  ok   chronyd, synchronised to
     192.0.2.1, +0.0 ms (\u00b10.7 ms)", "  node2  OFF  chronyd, synchronised to 192.0.2.1, +200.0 ms
     (\u00b10.7 ms)", "             ahead of its source by 200.0 ms, more than 50.0 ms", "             \u2192 being
@@ -832,7 +855,8 @@ def cassandra_clock_lines(verdicts, actions=True, width=WIDTH):
     lines = []
     for node, verdict, text, facts in rows:
         if narrow:
-            lines += _wrap("%s  %s" % (node, verdict), "  ", "    ", width)
+            head = "  %s  %s" % (node, verdict)
+            lines += [head] if len(head) <= width else ["  " + node, "    " + verdict]
             facts = [text] + facts
         else:
             lines += _wrap(text, "  %s  %s  " % (node.ljust(widths[0]), verdict.ljust(widths[1])), under + "  ", width)
@@ -854,8 +878,9 @@ def _warning_lines(texts, label=""):
 
 
 def cassandra_clock_warnings(verdicts, label=""):
-    """The verdicts -> the warnings of the cluster within 79 columns (a node name longer than a line, cut), one
-    fact per line: "WARNING  " and the label before the first fact of each.
+    """The verdicts -> the warnings of the cluster within 79 columns (a word longer than the room, a node name
+    of 70 characters, stays whole, its line over 79), one fact per line: "WARNING  " and the label before the
+    first fact of each.
     Input: cassandra_clock_verdicts' result; output: [str]. e.g. (label="clocks: ") -> ["WARNING  clocks: h-n2's
     clock is AHEAD by about 1.20 s", "         the writes it stamped as coordinator carry future timestamps",
     ...]."""
@@ -895,20 +920,22 @@ def cassandra_clock_health(verdicts, unread=None, command=""):
         "command": (command or "ansible-playbook community.cassandra.sync_clocks") + " --check"}}
 
 
-def cassandra_clock_refusal(verdicts, operation="", cluster="", command="", check=False, later_ok=False, unread=None):
+def cassandra_clock_refusal(verdicts, operation="", cluster="", command="", check=False, later_ok=False, unread=None,
+                            waited=False):
     """The verdicts of a start (create_cluster, add_node) -> its REFUSED block (under check: what a real run would refuse),
     the nodes not in sync, why, and the way out; [] when every node is. check (--check started no time sync),
     later_ok (a check before cassandra_linux ran: create_cluster's reset): a node not running with no time sync,
     which cassandra_linux would set up, is left to the check after it. unread: {node: why} of the nodes that
-    answered but whose clock could not be read: refused.
+    answered but whose clock could not be read: refused. waited: a wait on cassandra_clock_sync_timeout ran
+    before (not under --check, nor with later_ok): a daemon still converging then says the longer wait too.
     Output: [str]. e.g. (verdicts with node2 off, cluster="my_cluster") -> ["REFUSED  clocks  my_cluster  nothing
     was started", "  node2  OFF  chronyd, ...", "", ..., "TO DO", ...]."""
     verdicts = verdicts or {}
     bad = [v for v in verdicts.get("nodes", []) if v["verdict"] != "ok"] + _unread_rows(unread)
     later = [v["node"] for v in bad if (check or later_ok) and v["verdict"] == "no_sync" and v["action"] != "manual"
              and (later_ok or not v["running"])]  # (before a wipe: every node stopped, then set up)
-    # a start waits for a time sync converging, up to cassandra_clock_sync_timeout: the longer wait said too
-    bad = [dict(v, why=v["why"] + RAISE) if v.get("converging") else v
+    # a wait for a time sync converging ran out (cassandra_clock_sync_timeout): the longer wait said too
+    bad = [dict(v, why=v["why"] + RAISE) if v.get("converging") and waited else v
            for v in bad if v["node"] not in later]
     if not bad:
         return cassandra_output.fit(
@@ -917,21 +944,24 @@ def cassandra_clock_refusal(verdicts, operation="", cluster="", command="", chec
     limit = ms(verdicts.get("max_ms", 50) / 1000, False)
     head = ["REFUSED" if not check else "NOTE", "clocks", cluster,
             "nothing was started" if not check else "a real run would refuse to start the nodes"]
-    lines = ["  ".join(x for x in head if x)]
+    # (the rows and the warnings laid out already, a word longer than the room whole: not wrapped again)
+    lines = cassandra_output.fit(["  ".join(x for x in head if x)], WIDTH)
     lines += cassandra_clock_lines({"nodes": bad}, actions=False)
-    lines += ["", "Cassandra needs each clock within %s (cassandra_clock_max_offset_ms)" % limit,
-              "each write carries a timestamp, the latest wins"]
+    lines += cassandra_output.fit(
+        ["", "Cassandra needs each clock within %s of true time (cassandra_clock_max_offset_ms)" % limit,
+         "each write carries a timestamp, the latest wins"], WIDTH)
     lines += _warning_lines(verdicts.get("warnings", []))
+    rest = []
     if later:
-        lines += ["NOTE  time sync would be started on %s (cassandra_linux), its clock checked by the real run"
-                  % ", ".join(later)]
-    lines += ["", "TO DO", "  1. bring the clocks in sync (starts a time sync where missing):",
-              "     " + (command or "ansible-playbook community.cassandra.sync_clocks"),
-              "  2. or fix the time sync of these nodes (chrony.conf's server/pool lines, reachable from them),"
-              " then run %s again" % (operation or "it"),
-              "  -e cassandra_clock_check=false skips this check",
-              "  (for clocks kept in sync by other means)"]
-    return cassandra_output.fit(lines, WIDTH)
+        rest += ["NOTE  time sync would be started on %s (cassandra_linux), its clock checked by the real run"
+                 % ", ".join(later)]
+    rest += ["", "TO DO", "  1. bring the clocks in sync (starts a time sync where missing):",
+             "     " + (command or "ansible-playbook community.cassandra.sync_clocks"),
+             "  2. or fix the time sync of these nodes (chrony.conf's server/pool lines, reachable from them),"
+             " then run %s again" % (operation or "it"),
+             "  -e cassandra_clock_check=false skips this check",
+             "  (for clocks kept in sync by other means)"]
+    return lines + cassandra_output.fit(rest, WIDTH)
 
 
 def _flag(v, name, default):

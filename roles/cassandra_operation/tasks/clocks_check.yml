@@ -16,6 +16,9 @@
 # not running with no time sync is left to the check after it.
 - name: Check the clocks before the starts
   when: cassandra_clock_check | bool
+  vars:
+    # --check started no time sync, nor the check before cassandra_linux ran: nothing to wait for
+    _cassandra_clock_wait: "{{ 0 if ansible_check_mode or _cassandra_clock_later_ok | default(false) | bool else cassandra_clock_sync_timeout }}"
   block:
     - name: Note where Cassandra runs
       ansible.builtin.set_fact:
@@ -23,9 +26,6 @@
 
     - name: Read and compare the clocks
       ansible.builtin.include_tasks: clocks_read.yml
-      vars:
-        # --check started no time sync, nor the check before cassandra_linux ran: nothing to wait for
-        _cassandra_clock_wait: "{{ 0 if ansible_check_mode or _cassandra_clock_later_ok | default(false) | bool else cassandra_clock_sync_timeout }}"
 
     - name: Write what a start refused would say
       ansible.builtin.set_fact:
@@ -33,7 +33,7 @@
           {{ _cassandra_clock_verdicts | community.cassandra.cassandra_clock_refusal(
                operation=_cassandra_clock_operation | default(''), check=ansible_check_mode,
                later_ok=_cassandra_clock_later_ok | default(false) | bool, unread=_unread,
-               cluster=_cluster, command=_command) }}
+               cluster=_cluster, command=_command, waited=_cassandra_clock_wait | int > 0) }}
       run_once: true
       vars:
         _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default((_cassandra_preflight | default({})).cassandra_cluster_name | default('')) }}"

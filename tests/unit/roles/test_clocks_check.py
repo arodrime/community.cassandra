@@ -231,6 +231,22 @@ def test_a_bound_that_stays_large_is_refused_once_the_wait_runs_out(tmp_path):
     assert (fake / "node2" / "calls").read_text().strip() == "3"
 
 
+def test_no_wait_ran_no_longer_wait_said(tmp_path):
+    # S28 audit 12 (domain A1, adversarial B2): a daemon converging, but no wait on cassandra_clock_sync_timeout
+    # ran (it is 0, create_cluster's check before the wipe, --check): "run again later" alone
+    fake = setup(tmp_path, {"node1": synced(), "node2": {"active": "chronyd", "tracking": converging(62.04),
+                                                         "sources": SOURCES}})
+    later_ok = [dict(CHECK[0], vars=dict(CHECK[0]["vars"], _cassandra_clock_later_ok=True))]
+    for tasks, args, extra in ((CHECK, (), {}), (later_ok, (), {"cassandra_clock_sync_timeout": 5}),
+                               (CHECK, ("--check",), {"cassandra_clock_sync_timeout": 5})):
+        (fake / "node2" / "calls").write_text("0")
+        rc, out = run(tmp_path, tasks, *args, extra=extra)
+        assert (rc == 0) is ("--check" in args), out
+        assert "chronyd's error bound is 62.04 s, over 50.0 ms" in out and "run again later" in out, out
+        assert "cassandra_clock_sync_timeout" not in out and "waiting up to" not in out, out
+        assert (fake / "node2" / "calls").read_text().strip() == "1"  # one read, no wait
+
+
 def test_a_far_source_is_refused_at_once(tmp_path):
     # an error bound over the threshold but under a second (a far source): no wait can win, refused at once
     far = tracking(0.0001, "fast").replace("Root delay      : 0.000800000", "Root delay      : 0.200000000")
@@ -347,6 +363,6 @@ def test_the_warnings_of_clocks_in_sync_one_fact_per_line():
                                          node("h-n3", probe_text())])
     lines = render(say["ansible.builtin.debug"]["msg"], _cassandra_clock_verdicts=verdicts, _nl=say["vars"]["_nl"]).split("\n")
     assert lines[:2] == ["WARNING  clocks: h-n2's clock is AHEAD by about 5.00 s",
-                         "         by the dates over SSH, against h-n1, h-n3"]
+                         "         by the dates over SSH, against the median of h-n1, h-n3"]
     assert lines[-1] == "         check what was written through it lately"
     assert all(line.startswith(("WARNING  ", "         ")) and len(line) <= 79 for line in lines), lines
