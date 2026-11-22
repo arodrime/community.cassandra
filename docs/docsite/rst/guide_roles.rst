@@ -936,18 +936,21 @@ the cluster checked again. An interrupted run is run again, the same command: th
 left, and a node it left drained or stopped gets its window first, Cassandra started again.
 A node where Cassandra runs whose clock is ahead gets a warning about the writes it stamped meanwhile:
 ahead by more than ``cassandra_clock_max_offset_ms`` as its daemon says when it is synchronised (its error bound
-alone is no clock ahead), or, with no daemon or one not synchronised, by more than a second as the dates collected
-over SSH say against the other synchronised nodes (one of them: the gap to it; several: their median; none: a
-container against the other nodes, any other node no warning), the warning naming them. A node synchronised to a wrong source is not detected by the dates: its daemon
-says it is in sync, and the dates over SSH include the SSH delay. What it
-cannot fix (a source unreachable, a container's clock, a time sync left alone) is said, and the run ends failed. ntpd is only read: a step it needs is left to it (``ntpd -g`` at its start) or to a
-move to chrony; an installed but stopped ntpd is not replaced.
+alone is no clock ahead), or as ``chronyd -Q`` measured it when no daemon runs; otherwise, with no daemon or one not
+synchronised, by more than a second as the dates collected over SSH say against the other synchronised nodes (one of
+them: the gap to it; several: their median), the warning naming them. With no synchronised node, a container is
+compared with the other nodes the same way, whatever its verdict, and its row shows that same figure
+(``+1.60 s vs the others``); any other node gets no warning. A node synchronised to a wrong source is not detected by
+the dates: its daemon says it is in sync, and the dates over SSH include the SSH delay. What it cannot fix (a source
+unreachable, a container's clock, a time sync left alone) is said, and the run ends failed. ntpd is only read: a step
+it needs is left to it (``ntpd -g`` at its start) or to a move to chrony; an installed but stopped ntpd is not replaced.
 ``sync_clocks`` is not monitoring: it schedules nothing and alerts no one.
 
 ``create_cluster`` and ``add_node`` check the clocks the same way before they start any node (after ``cassandra_linux``
 started time sync, waiting up to ``cassandra_clock_sync_timeout`` seconds for it to synchronise), the running nodes too
 for ``add_node``. A node off by more than the threshold, or without a synchronised source, stops the run with nothing
-started, and the way out: ``sync_clocks``, or the NTP configuration of these nodes. ``health_check`` shows the
+started, and the way out: ``sync_clocks``, or the NTP configuration of these nodes (a daemon still converging when
+that wait ran out: run again later, or raise ``cassandra_clock_sync_timeout``). ``health_check`` shows the
 clocks the same way (its ``CLOCKS`` block), a clock not in sync one of its problems. ``-e cassandra_clock_check=false``
 skips the check and the block, for clocks kept in sync by other means.
 
