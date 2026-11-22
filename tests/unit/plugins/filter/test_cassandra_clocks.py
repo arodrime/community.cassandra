@@ -866,9 +866,10 @@ def test_containers_alone_are_compared_with_each_other():
         ["h-n2's clock is AHEAD by about 3.00 s", "by the dates over SSH, against h-n1"]]
     assert [(n["verdict"], n["coarse"]) for n in v["nodes"]] == [("off", -1.5), ("off", 1.5)]  # (judged as before)
     rows = cassandra_clock_lines(v, actions=False)
-    assert rows[4] == "  h-n2  OFF  the host's clock (docker container), +3.00 s vs the others"
-    assert rows[6:8] == ["             the host's clock (docker container), ahead of the others by about",
-                         "               3.00 s (dates over SSH, coarse)"]
+    assert rows[4:8] == ["  h-n2  OFF  the host's clock (docker container), +3.00 s vs the other",
+                         "               containers (coarse)",
+                         "             the host's clock (docker container), ahead of the other containers",
+                         "               by about 3.00 s (dates over SSH, coarse)"]
 
 
 def test_two_containers_over_a_second_apart_get_the_warning():
@@ -879,7 +880,7 @@ def test_two_containers_over_a_second_apart_get_the_warning():
     assert v["ok"] and [n["coarse"] for n in v["nodes"]] == [pytest.approx(-0.8), pytest.approx(0.8)]
     assert [w.split("\n")[:2] for w in v["warnings"]] == [["b's clock is AHEAD by about 1.60 s",
                                                           "by the dates over SSH, against a"]]
-    assert cassandra_clock_lines(v)[1] == "  b  ok  the host's clock (docker container), +1.60 s vs the others (coarse)"
+    assert cassandra_clock_lines(v)[2] == "  b  ok  the host's clock (docker container), +1.60 s vs the other containers"
     # within a second: neither
     near = cassandra_clock_verdicts([node("a", box), node("b", box, skew=0.9)])
     assert near["ok"] and aheads(near) == []
@@ -889,10 +890,49 @@ def test_two_containers_over_a_second_apart_get_the_warning():
     assert [n["gap"] for n in three["nodes"]] == [pytest.approx(-2.0), pytest.approx(-0.5), pytest.approx(2.5)]
     assert [w.split("\n")[:2] for w in three["warnings"]] == [["c's clock is AHEAD by about 2.50 s",
                                                               "by the dates over SSH, against the median of a, b"]]
-    assert "  c  OFF  the host's clock (docker container), +2.50 s vs the others (coarse)" in cassandra_clock_lines(three)
+    assert "  c  OFF  the host's clock (docker container), +2.50 s vs the other containers" in cassandra_clock_lines(three)
     # 5 containers: past 3 names, their count, not called synchronised
     five = cassandra_clock_verdicts([node("h-n%d" % i, box) for i in range(1, 5)] + [node("h-n5", box, skew=3.0)])
     assert five["warnings"][0].split("\n")[1] == "by the dates over SSH, against the median of 4 other nodes"
+
+
+def test_containers_are_never_compared_with_a_node_without_time_sync():
+    # S28 audit 13 (domain B2): no synchronised node, a VM with no time sync 1.6 s slow (or not synchronised) and a
+    # correct container: the container is compared with the other containers only, never with the clock known
+    # to drift: no AHEAD, no figure on its row; its verdict as before (judged against the median of all)
+    box = probe_text(active="", tracking_text=None, virt="docker")
+    stopped = probe_text(active="", installed=("chrony",), tracking_text=None)
+    lost = probe_text(tracking_text=TRACKING_UNSYNCED, sources=SOURCES_NONE_REACHED)
+    for vm in (stopped, lost):
+        v = cassandra_clock_verdicts([node("a", vm, skew=-1.6), node("b", box)])
+        assert aheads(v) == [] and by_node(v)["b"]["verdict"] == "ok" and by_node(v)["b"]["gap"] is None
+        assert by_node(v)["b"]["text"] == "the host's clock (docker container)"
+    # 3 s slow: the container's verdict OFF as before (the median of the two), said with the figure it was
+    # judged by, no warning
+    v = cassandra_clock_verdicts([node("a", stopped, skew=-3.0), node("b", box)])
+    assert by_node(v)["b"]["verdict"] == "off" and by_node(v)["b"]["coarse"] == pytest.approx(1.5) and aheads(v) == []
+    assert by_node(v)["b"]["why"] == ("the host's clock (docker container), ahead of the median of all the nodes by"
+                                      " about 1.50 s (dates over SSH, coarse)")
+    # a VM with no time sync and two containers 1.6 s apart: the warning against the other container alone
+    v = cassandra_clock_verdicts([node("a", stopped), node("b", box, skew=1.6), node("c", box)])
+    assert [w.split("\n")[:2] for w in v["warnings"]] == [["b's clock is AHEAD by about 1.60 s",
+                                                          "by the dates over SSH, against c"]]
+    assert [by_node(v)[n]["gap"] for n in "bc"] == [pytest.approx(1.6), pytest.approx(-1.6)]
+
+
+def test_chronyd_q_and_dates_over_ssh_are_never_cut():
+    # S28 audit 13 (adversarial C1, domain C3): a NO TIME SYNC row cut inside "chronyd -Q" or "dates over SSH"
+    # left "-Q)" or "SSH, coarse)" alone on a line: each kept whole, a normal space in it once wrapped
+    stopped = probe_text(active="", installed=("chrony",), tracking_text=None, query="0.8")
+    lines = cassandra_clock_lines(cassandra_clock_verdicts([node("a", probe_text()), node("c", stopped)]),
+                                  actions=False)
+    assert lines[1:3] == ["  c  NO TIME SYNC  chrony installed, not running (about 800.0 ms off,",
+                          "                     chronyd -Q)"], lines
+    # a long name: the text 6 columns in, "dates over SSH, coarse)" whole on the next line
+    timesyncd = probe_text(active="", installed=("systemd-timesyncd",), tracking_text=None)
+    lines = cassandra_clock_lines(cassandra_clock_verdicts([node("h-n1", probe_text()), node(LONG, probe_text()),
+                                                            node("h-n3", timesyncd, skew=0.15)]), actions=False)
+    assert "        dates over SSH, coarse)" in lines and all(u"\xa0" not in line for line in lines), lines
 
 
 def test_no_time_sync_measured_by_chronyd_q_is_judged_by_that_measure():
@@ -944,8 +984,9 @@ def test_a_long_node_name_puts_the_text_on_the_next_lines():
     lines = cassandra_clock_lines(v)
     assert lines[:3] == ["  h-n1  ok", "      chronyd, synchronised to 192.0.2.1, -0.0 ms (\u00b10.7 ms)",
                          "  %s  OFF" % LONG]
-    assert lines[6:8] == ["  h-n3  NO TIME SYNC",
-                          "      systemd-timesyncd installed, not running (about 0.0 ms off, dates over"]
+    assert lines[6:9] == ["  h-n3  NO TIME SYNC",
+                          "      systemd-timesyncd installed, not running (about 0.0 ms off,",
+                          "        dates over SSH, coarse)"]
     assert all(len(line) <= 77 for line in cassandra_clock_lines(v, width=77))
     every = lines + cassandra_clock_health(v)["lines"] + cassandra_clock_refusal(v, cluster="zorglub")
     assert all(len(line) <= 79 for line in every), [line for line in every if len(line) > 79]

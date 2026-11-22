@@ -525,8 +525,10 @@ def _host_clock(p, coarse, gap, referenced, dated, coarse_s):
         v["verdict"], v["why"] = "ok", "the host's clock (%s container)" % p["container"]
     elif abs(coarse) > coarse_s:
         v["verdict"], v["ahead"] = "off", coarse > 0
-        v["why"] = ("the host's clock (%s container), %s the others by about %s (dates over SSH, coarse)"
-                    % (p["container"], "ahead of" if gap > 0 else "behind", ms(abs(gap), False)))
+        # no other container to say a gap against: the figure it was judged by
+        said, whom = (gap, _others(referenced)) if gap is not None else (coarse, "the median of all the nodes")
+        v["why"] = ("the host's clock (%s container), %s %s by about %s (dates over SSH, coarse)"
+                    % (p["container"], "ahead of" if said > 0 else "behind", whom, ms(abs(said), False)))
         v["action"] = "manual"
     elif p.get("kernel_synced") is False:
         v["verdict"], v["action"] = "unsynchronised", "manual"
@@ -592,7 +594,7 @@ def _node_verdict(n, nodes, ref, referenced, dated, max_s, step_s, coarse_s):
     p = n["probe"]
     coarse = (n["skew"] - ref) if n["skew"] is not None and ref is not None else None
     # with no daemon's offset, the reference is the median of every node, itself in it: the figure said is the
-    # gap to the others (as the warnings say it); with one, it is the same
+    # gap to the other containers (as the warnings say it); with one, it is the same
     gap = coarse if referenced else _dates_gap(n, nodes, any_dated=True)[0]
     v = {"node": n["node"], "daemon": p.get("daemon", ""), "service": p.get("service", ""),
          "active": bool(p.get("active")), "synchronised": bool(p.get("synchronised")), "source": p.get("source", ""),
@@ -615,18 +617,19 @@ def _node_verdict(n, nodes, ref, referenced, dated, max_s, step_s, coarse_s):
         v["action"] = "manual"
         v["why"] += "; its clock is the host's (%s container): step the host's, never from a container" % (
             p["container"])
-    v["text"] = _describe(v, p)
+    v["text"] = _describe(v, p, referenced)
     return v
 
 
 def _dates_gap(n, nodes, any_dated=False):
     """A node (probe, skew set), all of them -> (how far ahead of the other synchronised nodes its clock is by the
     dates over SSH, their names): against the one other directly, else their median; with none of them, any_dated
-    (no daemon on any node: containers), the other nodes with dates; (None, []) with none."""
+    (no daemon synchronised: containers), the other containers with dates (their hosts sync them; never a node with
+    no time sync or not synchronised: the clock known to drift); (None, []) with none."""
     dated = [m for m in nodes if m is not n and m["skew"] is not None]
     others = [m for m in dated if m["probe"].get("synchronised") and m["probe"].get("offset") is not None]
     if not others and any_dated:
-        others = [dict(m, probe={"offset": 0.0}) for m in dated]
+        others = [dict(m, probe={"offset": 0.0}) for m in dated if m["probe"].get("container")]
     if n["skew"] is None or not others:
         return None, []
     return n["skew"] - _median([m["skew"] - m["probe"]["offset"] for m in others]), [m["node"] for m in others]
@@ -638,8 +641,8 @@ def _ahead_by(v, n, nodes, max_s, coarse_s):
     nothing). A node whose daemon is synchronised: its offset over max_s, by its daemon alone (an error bound over
     it alone is no clock ahead; the dates include the SSH delay). No daemon running, chronyd -Q measured it: that
     measure (its side too) over max_s, as a daemon's offset. A container: its row's figure, the dates against the
-    others, over coarse_s whatever its verdict. Else, a daemon not synchronised or none: the dates against the
-    other synchronised nodes, over coarse_s."""
+    other synchronised nodes (none: the other containers), over coarse_s whatever its verdict. Else, a daemon not
+    synchronised or none: the dates against the other synchronised nodes, over coarse_s."""
     if not v["running"]:
         return None
     if v["how"] == "daemon" and v["verdict"] in ("ok", "off"):
@@ -788,13 +791,19 @@ def _start_limit(p, step_s):
     return limit
 
 
-def _describe(v, p):
-    """One node, as the table shows it: daemon, synchronised, source, offset (+/- bound)."""
+def _others(referenced):
+    """Whether the daemons' offsets gave the reference -> what a container's gap is against."""
+    return "the others" if referenced else "the other containers"
+
+
+def _describe(v, p, referenced):
+    """One node, whether the daemons' offsets gave the reference -> the node as the table shows it: daemon,
+    synchronised, source, offset (+/- bound)."""
     if v["how"] == "coarse" and not v["container"]:
         return v["why"]
     if v["how"] == "coarse":
-        return "the host's clock (%s container)%s" % (
-            v["container"], (", %s vs the others (coarse)" % ms(v["gap"])) if v["gap"] is not None else "")
+        return "the host's clock (%s container)%s" % (v["container"], (", %s vs %s (coarse)" % (
+            ms(v["gap"]), _others(referenced))) if v["gap"] is not None else "")
     if not v["active"]:
         if v["estimate"] is None:
             return v["why"]
@@ -822,11 +831,17 @@ def _facts(why):
     return [f for f in re.split(r"; (?![^(]*\))", why or "") if f.strip()]
 
 
+_UNCUT = ("chronyd -Q", "dates over SSH")  # never cut: a no-break space within, a space again once wrapped
+
+
 def _wrap(text, first, rest, width=WIDTH):
     # cut between words only, as cassandra_output.fit: a word longer than the room (a path, a URL, a name of 76
     # characters) stays whole, its line over width
-    return textwrap.wrap(text, width, initial_indent=first, subsequent_indent=rest, break_long_words=False,
-                         break_on_hyphens=False) or [first.rstrip()]
+    for phrase in _UNCUT:
+        text = text.replace(phrase, phrase.replace(" ", u"\xa0"))
+    return [line.replace(u"\xa0", " ") for line in textwrap.wrap(
+        text, width, initial_indent=first, subsequent_indent=rest, break_long_words=False,
+        break_on_hyphens=False)] or [first.rstrip()]
 
 
 def cassandra_clock_lines(verdicts, actions=True, width=WIDTH):
