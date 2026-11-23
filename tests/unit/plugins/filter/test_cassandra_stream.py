@@ -645,6 +645,20 @@ def test_host_addresses():
     assert cassandra_host_addresses(["n4"], {"n4": Broken()}) == {"n4": "n4"}
 
 
+def test_host_addresses_read_each_hosts_variables_once():
+    # hostvars[host] builds all that host's variables (its facts copied in): once per host, not once per address
+    # looked for (on many nodes, each health check called this for every node)
+    class HostVars(dict):
+        reads = []
+
+        def __getitem__(self, host):
+            self.reads.append(host)
+            return dict.__getitem__(self, host)
+    hostvars = HostVars((h, {"ansible_host": "10.0.0.%d" % i}) for i, h in enumerate(["n1", "n2", "n3"], 1))
+    assert cassandra_host_addresses(["n1", "n2", "n3"], hostvars)["10.0.0.2"] == "n2"
+    assert sorted(HostVars.reads) == ["n1", "n2", "n3"]
+
+
 def test_host_addresses_leave_out_a_template_hostvars_could_not_render():
     # an unreachable host (no facts): hostvars gives its listen address template as it is
     hostvars = {"n3": {"cassandra_listen_address": "{{ ansible_facts['default_ipv4']['address'] }}"}}

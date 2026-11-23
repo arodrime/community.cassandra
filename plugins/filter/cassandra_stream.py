@@ -356,13 +356,13 @@ def _stall(state, going):
         _duration(idle), (", stops at %s" % _duration(state.get("limit", 0))) if going else ""))]
 
 
-def _host_var(hostvars, host, *path):
-    """hostvars[host][path[0]][path[1]]... when it is a string, else "" (also
+def _host_var(variables, *path):
+    """variables (hostvars[host])[path[0]][path[1]]... when it is a string, else "" (also
     for a template left as it is: hostvars gives that of a host without facts,
     e.g. "{{ ansible_facts['default_ipv4']['address'] }}" when Ansible did not
     reach it)."""
     try:
-        value = hostvars[host]
+        value = variables
         for key in path:
             value = value.get(key) or {}
     except Exception:  # pylint: disable=broad-except  # an undefined or broken template in that host's variables
@@ -445,13 +445,19 @@ def cassandra_host_addresses(hosts, hostvars):
 def _given_addresses(hosts, hostvars):
     """hosts, their hostvars -> (address, host, 0) for what each one broadcasts or listens on, then (address, host,
     1) for its ansible_host, its default IPv4 fact and its name (cassandra_host_addresses' order)."""
+    variables = {}  # hostvars[host] read once per host: each read builds all its variables
     for level, paths in enumerate(((("cassandra_extra_settings", "broadcast_address"),
                                     ("_cassandra_preflight", "ring_address"), ("_cassandra_preflight", "address"),
                                     ("cassandra_listen_address",)),
                                    (("ansible_host",), ("ansible_facts", "default_ipv4", "address")))):
         for host in hosts:
+            if host not in variables:
+                try:
+                    variables[host] = hostvars[host]
+                except Exception:  # pylint: disable=broad-except  # an undefined or broken template in its variables
+                    variables[host] = None
             for path in paths:
-                address = _host_var(hostvars, host, *path)
+                address = _host_var(variables[host], *path) if variables[host] is not None else ""
                 if address and address != "localhost":
                     yield address, host, level
     for host in hosts:
