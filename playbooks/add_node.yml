@@ -846,13 +846,9 @@
     - name: Say which nodes to move (one token per node, balanced)
       ansible.builtin.debug:
         msg: >-
-          {{ ['TO DO', '  1. even out the ring: move ' ~ _moves | map(attribute='name') | join(', ')
-              ~ ', one at a time (the plan shown at the start):',
-              '     ' ~ 'move_node' | community.cassandra.cassandra_command(
-                              inventory=ansible_inventory_sources,
-                              default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
-                              hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD'))]
-             | join(_nl) }}
+          {{ [{'text': 'even out the ring: move ' ~ _moves | map(attribute='name') | join(', ')
+                       ~ ', one at a time (the plan shown at the start)', 'command': _move_command}]
+             | community.cassandra.cassandra_todo | join(_nl) }}
       run_once: true
       when:
         - _moves | length > 0
@@ -861,6 +857,10 @@
       vars:
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         _moves: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_add_node_tokens.moves | default([]) }}"
+        _move_command: >-
+          {{ 'move_node' | community.cassandra.cassandra_command(
+               inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+               hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD')) }}
         cassandra_output: true
         cassandra_output_gap: true  # a block of its own (ops callback)
 

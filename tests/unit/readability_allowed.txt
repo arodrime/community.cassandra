@@ -15,7 +15,6 @@
 311	playbooks/add_node.yml :: Check the new nodes / Work out what the add means for the cluster :: vars._new_info (jinja)
 437	playbooks/add_node.yml :: Clean up the nodes that handed data over / Say which cleanups to run :: ansible.builtin.debug.msg (jinja)
 402	playbooks/add_node.yml :: Prepare the new nodes, all at once / Prepare this node / Stop here :: vars._rerun (jinja)
-405	playbooks/add_node.yml :: Summary / Say which nodes to move (one token per node, balanced) :: ansible.builtin.debug.msg (jinja)
 310	playbooks/apply_config.yml :: Apply the OS settings, on these nodes at once / Apply the OS settings / Stop here :: ansible.builtin.fail.msg (jinja)
 313	playbooks/apply_config.yml :: Apply the config where nothing is restarted, on these nodes at once / Apply the config on these nodes :: vars._no_login (jinja)
 364	playbooks/apply_config.yml :: Find what each node needs / Keep the plan for the report of the run :: ansible.builtin.set_fact._cassandra_run_report_plan (jinja)

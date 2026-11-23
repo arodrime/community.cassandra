@@ -209,3 +209,17 @@ def test_reset_line_on_the_node_block():
     text = summary(node7={"_cassandra_node_reset_plan": {"line": line, "delete": [], "stop": False, "disable": False}})
     assert "node7 10.0.0.7 dc1 / r1 about" not in flat(text) and "node7 10.0.0.7 dc1 / r1 %s" % line in flat(text)
     assert "will be reset" not in summary()
+
+
+def test_the_nodes_to_move_within_79_columns_but_the_command():
+    task = [t for p in PLAYS for t in p.get("tasks", []) if t.get("name") == "Say which nodes to move (one token per"
+            " node, balanced)"][0]
+    moves = [{"name": "cass-node-%02d.dc1.example.com" % i} for i in range(1, 5)]
+    variables = dict(trusted(task["vars"]), ansible_inventory_sources=["inventory/prod.yml"], cassandra_hosts="orders",
+                     ansible_play_hosts_all=["node7"],
+                     hostvars={"node7": {"cassandra_add_node_tokens": {"moves": moves}}})
+    variables["_nl"] = "\n"
+    lines = templar_for(variables).template(trust_as_template(task["ansible.builtin.debug"]["msg"])).split("\n")
+    assert lines[:2] == ["TO DO", "  1. even out the ring: move cass-node-01.dc1.example.com,"]
+    assert lines[-1] == "     ansible-playbook -i inventory/prod.yml community.cassandra.move_node -e cassandra_hosts=orders"
+    assert all(len(line) <= 79 for line in lines[:-1]) and lines[-2].endswith("(the plan shown at the start):"), lines
