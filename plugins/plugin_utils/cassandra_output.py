@@ -751,14 +751,32 @@ def _where(step):
     return ""
 
 
-def table(rows, indent=""):
-    """Rows of cells, each column as wide as its widest cell, 2 spaces between."""
+def table(rows, indent="", width=None):
+    """Rows of cells, each column as wide as its widest cell, 2 spaces between. width: a row longer than that
+    goes on over lines under its last cell, cut between words; with less room than NARROW there, that cell
+    under the others, 4 columns in (None: rows as long as they are)."""
     rows = [[str(c) for c in row] for row in rows]
     if not rows:
         return []
     widths = [max(len(r[i]) if i < len(r) else 0 for r in rows) for i in range(max(len(r) for r in rows))]
-    return [(indent + "  ".join(c.ljust(widths[i]) for i, c in enumerate(r) if c or i < len(r) - 1)).rstrip()
-            for r in rows]
+    lines = [(indent + "  ".join(c.ljust(widths[i]) for i, c in enumerate(r) if c or i < len(r) - 1)).rstrip()
+             for r in rows]
+    if not width:
+        return lines
+    out = []
+    for row, line in zip(rows, lines):
+        text = row[-1]
+        if len(line) <= width or not text.strip():
+            out.append(line)
+            continue
+        start = len(line) - len(text)
+        first = line[:start]
+        if width - start < NARROW:
+            out.append(first.rstrip())
+            first = " " * (len(indent) + 4)
+        out += textwrap.wrap(text, width, initial_indent=first, subsequent_indent=" " * len(first),
+                             break_long_words=False, break_on_hyphens=False)
+    return out
 
 
 # --- warnings ------------------------------------------------------------------------------

@@ -23,7 +23,7 @@ import shlex
 import textwrap
 
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import (
-    WARNING, command, extra_var, in_git_work_tree, nodes, path_from, plural, table, todo, who)
+    NBSP, WARNING, command, extra_var, in_git_work_tree, nodes, path_from, plural, table, todo, who)
 
 # --- the prepare of new nodes --------------------------------------------------------------
 
@@ -154,10 +154,12 @@ def prepare_lines(hosts, check=False):
     firewall (its change items, off or not managed), medusa (its change items
     or off), seeds (the seeds it joins with)}]."""
     texts = [(h["name"], _prepare_texts(h)) for h in hosts or [] if isinstance(h, dict) and h.get("name")]
-    said = [(", ".join(words[step] for step in PREPARE_STEPS if step in words), name) for name, words in texts]
+    # a step's words kept together (NBSP): a row that goes on past 79 columns, under its text, cut between steps
+    said = [(", ".join(words[step].replace(" ", NBSP) for step in PREPARE_STEPS if step in words), name)
+            for name, words in texts]
     rows = [[who(names, counted=False), "would prepare" if check else "prepared", text]
             for text, names in _grouped(said) if text]
-    return table(rows)
+    return [line.replace(NBSP, " ") for line in table(rows, width=79)]
 
 
 def _wrapped(text, width=110, indent="  "):

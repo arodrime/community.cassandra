@@ -111,8 +111,10 @@ DECOMMISSION NODE  node7, node8 from dc1 of Orders
     streams its data to the nodes that stay (hours on a big node), then
     Cassandra is stopped and disabled on it.
 
-  node7  10.0.0.7  dc1 / rack1  load 47.1 GiB, owns 33.4% -> node1, node4 (the other nodes of rack1)
-  node8  10.0.0.8  dc1 / rack2  load 48.1 GiB, owns 33.4% -> node2, node5 (the other nodes of rack2)
+  node7  10.0.0.7  dc1 / rack1  load 47.1 GiB, owns 33.4% -> node1, node4 (the
+                                other nodes of rack1)
+  node8  10.0.0.8  dc1 / rack2  load 48.1 GiB, owns 33.4% -> node2, node5 (the
+                                other nodes of rack2)
   Afterwards dc1 keeps 6 nodes: node1, node2, node3, node4, node5, node6.
   Then empty node7, node8 (reset_node) before reusing the hosts, and re-import
     the cluster to drop them from the inventory: the commands are printed at
@@ -121,6 +123,8 @@ DECOMMISSION NODE  node7, node8 from dc1 of Orders
 WARNING  this run is not inside tmux or screen: if the SSH session to this
          machine drops, the run stops (the operation itself goes on,
          unwatched). Run it inside tmux or screen."""
+
+UNDER = " " * 32  # a row's next lines: under its text
 
 
 def test_decommission_screen():
@@ -142,15 +146,18 @@ def test_decommission_screen_without_question():
 
 def test_decommission_one_rack_names_the_datacenter_and_the_next_node():
     text = decommission(["rack1"])
-    assert "  node7  10.0.0.7  dc1 / rack1  load 47.1 GiB, owns 33.4% -> 7 nodes: node1..node6, node8; node8 removed later\n" \
-           "  node8  10.0.0.8  dc1 / rack1  load 48.1 GiB, owns 33.4% -> 6 nodes: node1..node6\n" in text
+    # a row past 79 columns goes on under its text
+    assert "  node7  10.0.0.7  dc1 / rack1  load 47.1 GiB, owns 33.4% -> 7 nodes:\n" + UNDER + \
+           "node1..node6, node8; node8 removed later\n" \
+           "  node8  10.0.0.8  dc1 / rack1  load 48.1 GiB, owns 33.4% -> 6 nodes:\n" + UNDER + "node1..node6\n" in text
 
 
 def test_decommission_earlier_run_states():
     text = decommission(["rack1", "rack2", "rack3"], states={"node7": "decommissioned", "node8": "leaving"})
-    assert "  node7  10.0.0.7  dc1 / rack1  already out of the ring (an earlier run): Cassandra stopped and disabled only\n" \
-           "  node8  10.0.0.8  dc1 / rack2  still leaving (an earlier run): waited for; load 48.1 GiB, owns 33.4% -> " \
-           "node2, node5 (the other nodes of rack2)\n" in text
+    assert "  node7  10.0.0.7  dc1 / rack1  already out of the ring (an earlier run):\n" + UNDER + \
+           "Cassandra stopped and disabled only\n" \
+           "  node8  10.0.0.8  dc1 / rack2  still leaving (an earlier run): waited for;\n" + UNDER + \
+           "load 48.1 GiB, owns 33.4% -> node2, node5 (the\n" + UNDER + "other nodes of rack2)\n" in text
 
 
 def test_decommission_forced_replication_warning_shows_under_check_too():
@@ -169,8 +176,8 @@ def test_decommission_simple_strategy_noted():
     rows = ['{"keyspace_name": "orders", "replication": {"class": "org.apache.cassandra.locator.NetworkTopologyStrategy", "dc1": "3"}}',
             '{"keyspace_name": "system_auth", "replication": {"class": "org.apache.cassandra.locator.SimpleStrategy", "replication_factor": "1"}}']
     text = decommission(["rack1", "rack2", "rack3"], keyspaces=rows)
-    assert "  node7  10.0.0.7  dc1 / rack1  load 47.1 GiB, owns 33.4% -> node1, node4 (the other nodes of rack1);" \
-           " SimpleStrategy keyspaces: any node\n" in text
+    assert "  node7  10.0.0.7  dc1 / rack1  load 47.1 GiB, owns 33.4% -> node1, node4 (the\n" + UNDER + \
+           "other nodes of rack1); SimpleStrategy\n" + UNDER + "keyspaces: any node\n" in text
     assert "SimpleStrategy" not in decommission(["rack1"], keyspaces=rows)
 
 

@@ -99,15 +99,15 @@ def _warning(warning):
 
 
 def _table_block(blocks, after):
-    """The node table and the notes under it: a block with a row is a row (its title's fields, then the row);
-    one without is its title, then its lines indented under it."""
+    """The node table and the notes under it: a block with a row is a row (its title's fields, then the row; past
+    79 columns, its next lines under it); one without is its title, then its lines indented under it."""
     rows, lines = [], []
     for block in blocks:
         if "row" in block:
             rows.append([f for f in str(block.get("title") or "").split("  ") if f] + [str(block.get("row") or "")])
         else:
             lines += _wrap(block.get("title") or "", "  ", "    ") + _items(block.get("lines"), "    ")
-    return out.table(rows, "  ") + lines + _items(after, "  ")
+    return out.table(rows, "  ", WIDTH) + lines + _items(after, "  ")
 
 
 def _warnings(spec, session, notes, check):

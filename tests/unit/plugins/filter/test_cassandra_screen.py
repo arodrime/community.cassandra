@@ -84,6 +84,25 @@ def test_rows_and_blocks_notes_and_the_checks_notes():
                                 "  node1", "    a", "    b", "  three", "  four", "  NOTE  y", "", "WARNING  x is set"]
 
 
+def test_a_long_row_goes_on_under_its_text():
+    # add_node's row of a node it resets (hostile S2c: 326 columns): its next lines under its text, cut between
+    # words; a column too far right for 30 columns of text: the text under the title, 4 columns in
+    reset = ("about 398.7 KiB to stream; h-n4 (dc1/r1): has data (64.8 MiB, cluster 'Hostile Cluster', user keyspaces"
+             " app) — will be reset")
+    text = cassandra_screen({"operation": "op", "blocks": [{"title": "h-n4  10.0.0.5  dc1 / r1", "row": reset},
+                                                           {"title": "h-n5  10.0.0.6  dc1 / r1", "row": "short"}]})
+    under = " " * 28
+    assert text.split("\n")[2:] == [
+        "  h-n4  10.0.0.5  dc1 / r1  about 398.7 KiB to stream; h-n4 (dc1/r1): has data",
+        under + "(64.8 MiB, cluster 'Hostile Cluster', user",
+        under + "keyspaces app) — will be reset",
+        "  h-n5  10.0.0.6  dc1 / r1  short"]
+    title = "h-" + "n" * 50 + "  10.0.0.5  dc1 / r1"
+    lines = cassandra_screen({"operation": "op", "blocks": [{"title": title, "row": reset}]}).split("\n")[2:]
+    assert lines[:2] == ["  " + title, "      about 398.7 KiB to stream; h-n4 (dc1/r1): has data (64.8 MiB, cluster"], lines
+    assert all(len(line) <= 79 for line in lines), lines
+
+
 def test_a_lead_in_and_its_table_stay_together():
     text = cassandra_screen({"operation": "op", "intro": ["Check that:", {"pre": []}, {"pre": ["  - a", "  - b"]}, "next"]})
     assert text.split("\n") == ["OP", "  Check that:", "    - a", "    - b", "  next"]

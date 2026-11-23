@@ -72,10 +72,14 @@ Conventions
   ``community.cassandra.cassandra_phase``); ``--check`` says the reading phases only. A restart or a reboot has no
   phase line: its wait line says it.
 - **Prepare of new nodes** (add_node, replace_node, add_datacenter, create_cluster): after its phase line, one line
-  per group of nodes with the same outcome, the steps in short words, in the progress colour::
+  per group of nodes with the same outcome, the steps in short words, in the progress colour (past 79 columns, a
+  line goes on under its steps)::
 
-    node4  prepared  repository, cassandra 5.0.9, java 17.0.12, os tuning (2 changes), config (3 files), seeds 10.0.0.1, 10.0.0.2
-    node5  prepared  repository, cassandra 5.0.9, java 17.0.12, os tuning, config (3 files), seeds 10.0.0.1, 10.0.0.2
+    node4  prepared  repository, cassandra 5.0.9, java 17.0.12,
+                     os tuning (2 changes), config (3 files),
+                     seeds 10.0.0.1, 10.0.0.2
+    node5  prepared  repository, cassandra 5.0.9, java 17.0.12, os tuning,
+                     config (3 files), seeds 10.0.0.1, 10.0.0.2
 
   ``would prepare`` under ``--check`` (``prepare_lines``, filter ``community.cassandra.cassandra_prepare_lines``,
   from each role's change report: the lists per role and node with ``-v`` or in ``cassandra_change_report_dir``).

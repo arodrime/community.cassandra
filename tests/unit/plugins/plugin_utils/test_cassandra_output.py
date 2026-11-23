@@ -294,15 +294,25 @@ def prepared(name, **kw):
     return node
 
 
+def one(lines):
+    """A row's lines as one line (a row that goes on past 79 columns)."""
+    return " ".join(line.strip() for line in lines)
+
+
 def test_prepare_lines_one_line_per_group_of_nodes():
     # the steps in short words; a step off or not managed (firewall, medusa) is not said; the data disks only when
     # set, a warning or a line to act on
     assert texts.prepare_lines([prepared("node4"), prepared("node5", packages=[], os=0)]) == [
-        "node4  prepared  repository, cassandra 5.0.9, java 17.0.12, os tuning (2 changes), config (3 files), seeds 10.0.0.1, 10.0.0.2",
-        "node5  prepared  repository, cassandra 5.0.9, java 17.0.12, os tuning, config (3 files), seeds 10.0.0.1, 10.0.0.2"]
+        "node4  prepared  repository, cassandra 5.0.9, java 17.0.12,",
+        "                 os tuning (2 changes), config (3 files),",
+        "                 seeds 10.0.0.1, 10.0.0.2",
+        "node5  prepared  repository, cassandra 5.0.9, java 17.0.12, os tuning,",
+        "                 config (3 files), seeds 10.0.0.1, 10.0.0.2"]
+    # within 79 columns: a row goes on under its text, cut between steps
     assert texts.prepare_lines([prepared("node4"), prepared("node5")]) == [
-        "node4, node5  prepared  repository, cassandra 5.0.9, java 17.0.12, os tuning (2 changes), config (3 files),"
-        " seeds 10.0.0.1, 10.0.0.2"]
+        "node4, node5  prepared  repository, cassandra 5.0.9, java 17.0.12,",
+        "                        os tuning (2 changes), config (3 files),",
+        "                        seeds 10.0.0.1, 10.0.0.2"]
 
 
 def test_prepare_lines_check_mode_says_would():
@@ -315,8 +325,10 @@ def test_prepare_lines_check_mode_says_would():
                                           medusa=[{"item": "Medusa", "before": "absent", "after": "0.24.1"}])],
                                 check=True)
     assert lines == [
-        "node4  would prepare  repository, cassandra 5.0.9, java 17.0.13, os tuning (2 changes), disks read-ahead 4 KB,"
-        " config (3 files), firewall (1 change), medusa 0.24.1, seeds 10.0.0.1, 10.0.0.2"]
+        "node4  would prepare  repository, cassandra 5.0.9, java 17.0.13,",
+        "                      os tuning (2 changes), disks read-ahead 4 KB,",
+        "                      config (3 files), firewall (1 change), medusa 0.24.1,",
+        "                      seeds 10.0.0.1, 10.0.0.2"]
 
 
 def test_prepare_lines_steps_off_or_not_managed():
@@ -326,8 +338,8 @@ def test_prepare_lines_steps_off_or_not_managed():
                             {"item": "/etc/profile.d/cassandra-medusa.sh", "before": "absent", "after": "PATH"}],
                     seeds="", packages=[{"item": "package cassandra", "before": "absent", "after": "5.0.9"},
                                         {"item": "package libjemalloc2", "before": "absent", "after": "5.3.0-1"}])
-    assert texts.prepare_lines([node]) == [
-        "node7  prepared  cassandra 5.0.9, libjemalloc2, config, medusa 0.24.1 (+1 change)"]  # no seeds: create_cluster's
+    assert texts.prepare_lines([node]) == [  # no seeds: create_cluster's
+        "node7  prepared  cassandra 5.0.9, libjemalloc2, config,", "                 medusa 0.24.1 (+1 change)"]
 
 
 def test_prepare_lines_other_outcomes():
@@ -338,26 +350,28 @@ def test_prepare_lines_other_outcomes():
                                              "after": "not in configured repos yet"},
                                             {"item": "package libjemalloc2", "before": "absent", "after": "5.3.0-1"}])
     assert texts.prepare_lines([node], check=True) == [
-        "node8  would prepare  cassandra (not in configured repos yet), libjemalloc2, java 17.0.12 (/opt/java/jdk-17.0.12),"
-        " os tuning (2 changes), disks (1 warning below), config (8 files templated), seeds 10.0.0.1, 10.0.0.2"]
+        "node8  would prepare  cassandra (not in configured repos yet), libjemalloc2,",
+        "                      java 17.0.12 (/opt/java/jdk-17.0.12),",
+        "                      os tuning (2 changes), disks (1 warning below),",
+        "                      config (8 files templated), seeds 10.0.0.1, 10.0.0.2"]
     perms = [{"item": "/etc/cassandra/cassandra.yaml owner", "before": "root", "after": "cassandra"}]
-    assert "config (2 files, 1 other change)" in texts.prepare_lines([prepared("node8", config=CONFIG[:2] + perms)])[0]
-    assert "config (1 other change)" in texts.prepare_lines([prepared("node8", config=perms)])[0]
+    assert "config (2 files, 1 other change)" in one(texts.prepare_lines([prepared("node8", config=CONFIG[:2] + perms)]))
+    assert "config (1 other change)" in one(texts.prepare_lines([prepared("node8", config=perms)]))
 
 
 def test_prepare_lines_a_pinned_java_installed_now():
     node = prepared("node4", packages=[{"item": "package cassandra", "before": "absent", "after": "5.0.9"},
                                        {"item": "package openjdk-17-jre-headless=17.0.12*", "before": "absent",
                                         "after": "not in configured repos yet"}])  # what the role looks up as is
-    lines = texts.prepare_lines([node])
-    assert "cassandra 5.0.9, java 17.0.12," in lines[0] and "openjdk" not in lines[0]  # not "also openjdk-..."
+    lines = one(texts.prepare_lines([node]))
+    assert "cassandra 5.0.9, java 17.0.12," in lines and "openjdk" not in lines  # not "also openjdk-..."
 
 
 def test_prepare_lines_disks_not_tuned_yet_point_below():
     node = prepared("node4", disks=dict(prepared("node4")["disks"], info=["sdc: not tuned yet (LVM deferred)"]))
-    assert ", disks (see below), " in texts.prepare_lines([node])[0]
+    assert ", disks (see below), " in one(texts.prepare_lines([node]))
     node = prepared("node4", disks=dict(prepared("node4")["disks"], changed="on"))  # a flag as Ansible may give it
-    assert ", disks read-ahead 4 KB, " in texts.prepare_lines([node])[0]
+    assert ", disks read-ahead 4 KB, " in one(texts.prepare_lines([node]))
 
 
 def test_prepare_lines_many_nodes_ranges_and_nothing():

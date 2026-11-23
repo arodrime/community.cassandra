@@ -147,8 +147,10 @@ def test_each_step_of_the_prepare_says_its_line():
         hostvars[h]["_cassandra_prepare_done"] = kept(hostvars[h], hosts)
     # one line for the nodes with the same outcome, the steps in short words (the disk's change on the disks word)
     assert said(SAY, hostvars, hosts) == [
-        "node4, node5  prepared  repository, cassandra 5.0.9, java 17.0.12, os tuning (2 changes), disks read-ahead 4 KB,"
-        " config (2 files), firewall (1 change), medusa 0.24.1, seeds 10.0.0.1, 10.0.0.2"]
+        "node4, node5  prepared  repository, cassandra 5.0.9, java 17.0.12,",
+        "                        os tuning (2 changes), disks read-ahead 4 KB,",
+        "                        config (2 files), firewall (1 change), medusa 0.24.1,",
+        "                        seeds 10.0.0.1, 10.0.0.2"]
     assert SAY["run_once"] is True and SAY["vars"]["cassandra_output"] is True
     assert SAY["vars"]["cassandra_output_info"] is True  # the progress colour (ops callback)
     # --check: what a real run would do
@@ -163,8 +165,8 @@ def test_firewall_and_medusa_off_and_a_step_not_run():
     assert "cassandra_linux" not in done["ran"] and done["firewall"] == "off" and done["medusa"] == "off"
     lines = said(SAY, {"node4": {"_cassandra_prepare_done": done}}, ["node4"])
     # a step off or not managed is not a word of the line
-    assert lines == ["node4  prepared  repository, cassandra 5.0.9, java 17.0.12, disks read-ahead 4 KB, config (2 files),"
-                     " seeds 10.0.0.1, 10.0.0.2"]
+    assert lines == ["node4  prepared  repository, cassandra 5.0.9, java 17.0.12,",
+                     "                 disks read-ahead 4 KB, config (2 files),", "                 seeds 10.0.0.1, 10.0.0.2"]
     # cassandra_manage_firewall on, the role's own switch off: no report of it
     done = kept(dict(roles_ran("node4"), cassandra_manage_firewall=True), ["node4"])
     assert done["firewall"] == "not managed"
