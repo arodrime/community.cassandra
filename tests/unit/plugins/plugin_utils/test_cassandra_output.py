@@ -304,8 +304,8 @@ def test_prepare_lines_one_line_per_group_of_nodes():
     # set, a warning or a line to act on
     assert texts.prepare_lines([prepared("node4"), prepared("node5", packages=[], os=0)]) == [
         "node4  prepared  repository, cassandra 5.0.9, java 17.0.12,",
-        "                 os tuning (2 changes), config (3 files),",
-        "                 seeds 10.0.0.1, 10.0.0.2",
+        "                 os tuning (2 changes), config (3 files), seeds 10.0.0.1,",
+        "                 10.0.0.2",
         "node5  prepared  repository, cassandra 5.0.9, java 17.0.12, os tuning,",
         "                 config (3 files), seeds 10.0.0.1, 10.0.0.2"]
     # within 79 columns: a row goes on under its text, cut between steps
@@ -372,6 +372,16 @@ def test_prepare_lines_disks_not_tuned_yet_point_below():
     assert ", disks (see below), " in one(texts.prepare_lines([node]))
     node = prepared("node4", disks=dict(prepared("node4")["disks"], changed="on"))  # a flag as Ansible may give it
     assert ", disks read-ahead 4 KB, " in one(texts.prepare_lines([node]))
+
+
+def test_prepare_lines_a_long_seeds_list_wraps_between_seeds():
+    seeds = ",".join("cass-node-0%d.dc1.example.com" % i for i in range(1, 7))
+    lines = texts.prepare_lines([prepared("node4", seeds=seeds)])
+    assert max(len(line) for line in lines) <= 79
+    assert one(lines).endswith("seeds " + seeds.replace(",", ", "))
+    # cut between seeds, never inside an item: "seeds" with the first one, each seed whole on a line
+    assert "seeds cass-node-01.dc1.example.com," in one(lines)
+    assert sum(line.count("cass-node-0") for line in lines) == 6
 
 
 def test_prepare_lines_many_nodes_ranges_and_nothing():

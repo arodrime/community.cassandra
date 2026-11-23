@@ -166,7 +166,8 @@ def test_firewall_and_medusa_off_and_a_step_not_run():
     lines = said(SAY, {"node4": {"_cassandra_prepare_done": done}}, ["node4"])
     # a step off or not managed is not a word of the line
     assert lines == ["node4  prepared  repository, cassandra 5.0.9, java 17.0.12,",
-                     "                 disks read-ahead 4 KB, config (2 files),", "                 seeds 10.0.0.1, 10.0.0.2"]
+                     "                 disks read-ahead 4 KB, config (2 files), seeds 10.0.0.1,",
+                     "                 10.0.0.2"]
     # cassandra_manage_firewall on, the role's own switch off: no report of it
     done = kept(dict(roles_ran("node4"), cassandra_manage_firewall=True), ["node4"])
     assert done["firewall"] == "not managed"

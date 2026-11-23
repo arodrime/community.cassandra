@@ -73,11 +73,11 @@ Conventions
   phase line: its wait line says it.
 - **Prepare of new nodes** (add_node, replace_node, add_datacenter, create_cluster): after its phase line, one line
   per group of nodes with the same outcome, the steps in short words, in the progress colour (past 79 columns, a
-  line goes on under its steps)::
+  line goes on under its steps, cut between two steps or two seeds)::
 
     node4  prepared  repository, cassandra 5.0.9, java 17.0.12,
-                     os tuning (2 changes), config (3 files),
-                     seeds 10.0.0.1, 10.0.0.2
+                     os tuning (2 changes), config (3 files), seeds 10.0.0.1,
+                     10.0.0.2
     node5  prepared  repository, cassandra 5.0.9, java 17.0.12, os tuning,
                      config (3 files), seeds 10.0.0.1, 10.0.0.2
 

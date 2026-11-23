@@ -140,6 +140,14 @@ def _switched_text(step, changes):
     return step + (" (%s)" % plural(len(changes), "change") if changes else "")
 
 
+_ITEMS = re.compile(r", (?![^(]*\))")  # ", " between two items, not inside brackets
+
+
+def _kept(words):
+    """A step's words, a line cut only between its items: "seeds a, b" -> "seeds\xa0a, b"."""
+    return ", ".join(item.replace(" ", NBSP) for item in _ITEMS.split(words))
+
+
 def prepare_lines(hosts, check=False):
     """What the prepare of new nodes did (check: would do), one line per group
     of nodes with the same outcome, the steps in their order in short words:
@@ -154,8 +162,9 @@ def prepare_lines(hosts, check=False):
     firewall (its change items, off or not managed), medusa (its change items
     or off), seeds (the seeds it joins with)}]."""
     texts = [(h["name"], _prepare_texts(h)) for h in hosts or [] if isinstance(h, dict) and h.get("name")]
-    # a step's words kept together (NBSP): a row that goes on past 79 columns, under its text, cut between steps
-    said = [(", ".join(words[step].replace(" ", NBSP) for step in PREPARE_STEPS if step in words), name)
+    # an item's words kept together (NBSP): a row that goes on past 79 columns, under its text, cut between
+    # steps or between the items of a step (seeds, packages), never inside one or inside its brackets
+    said = [(", ".join(_kept(words[step]) for step in PREPARE_STEPS if step in words), name)
             for name, words in texts]
     rows = [[who(names, counted=False), "would prepare" if check else "prepared", text]
             for text, names in _grouped(said) if text]
