@@ -388,8 +388,7 @@
     - name: Say which cleanups to run
       ansible.builtin.debug:
         msg:
-          - "NEXT  once the cluster is fine, clean up the nodes that lost ranges (listed in {{ _move_record }} until a move_node
-            run with cassandra_move_cleanup cleans them up):"
+          - "{{ _head }}"
           - "  {{ 'cleanup' | community.cassandra.cassandra_command(
                     inventory=ansible_inventory_sources,
                     default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
@@ -408,6 +407,15 @@
         - _targets | length > 0
         - _mode == 'none'
         - not ansible_check_mode
+      vars:
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        cassandra_output: true  # (without it, the ops callback did not print it)
+        cassandra_output_gap: true  # a block of its own (ops callback)
+        # within 79 columns, as add_node's: its next lines under its text (the command stays whole, to copy)
+        _head: >-
+          NEXT  {{ ('once the cluster is fine, clean up the nodes that lost ranges (listed in ' ~ _move_record
+                    ~ ' until a move_node run with cassandra_move_cleanup cleans them up):')
+                   | wordwrap(73, false, _nl ~ '      ', false) }}
 
     - name: Say which recorded cleanups this run can't reach
       ansible.builtin.debug:

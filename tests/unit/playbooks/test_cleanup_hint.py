@@ -41,14 +41,14 @@ def hint(playbook, **variables):
     for name, value in (task.get("vars") or {}).items():
         if name in ("_hosts_option", "_head", "_options"):
             values[name] = trust_as_template(value) if isinstance(value, str) else value
-    values.update(variables)
+    values.update(variables, _nl="\n")
     templar = templar_for(values)
     msg = task["ansible.builtin.debug"]["msg"]
+    assert (task.get("vars") or {}).get("cassandra_output") is True  # printed under the ops callback
     if isinstance(msg, str):  # one multi-line string (plain text under any callback)
-        assert (task.get("vars") or {}).get("cassandra_output") is True
         templar.available_variables = dict(values, _nl="\n")
         return templar.template(trust_as_template(msg)).split("\n")
-    return [templar.template(trust_as_template(line)) for line in msg]
+    return [part for line in msg for part in templar.template(trust_as_template(line)).split("\n")]  # as ops prints it
 
 
 def test_add_node_prints_both_options_at_their_defaults():
@@ -62,11 +62,17 @@ def test_add_node_prints_both_options_at_their_defaults():
 
 def test_move_node_prints_both_options_and_the_group_given():
     assert hint("move_node.yml", _move_record="/tmp/moves.txt", cassandra_hosts="orders") == [
-        "NEXT  once the cluster is fine, clean up the nodes that lost ranges (listed in /tmp/moves.txt until a move_node"
-        " run with cassandra_move_cleanup cleans them up):",
+        "NEXT  once the cluster is fine, clean up the nodes that lost ranges (listed in",
+        "      /tmp/moves.txt until a move_node run with cassandra_move_cleanup cleans",
+        "      them up):",
         "  ansible-playbook -i inventory/prod.yml community.cassandra.cleanup -e cassandra_hosts=orders"
         " --limit node1,node4 -e cassandra_cleanup_mode=sequential -e cassandra_cleanup_jobs=2",
     ] + OPTIONS
+
+
+def test_move_node_within_79_columns_but_its_command():
+    lines = hint("move_node.yml", _move_record="/var/lib/cassandra/progress/orders-move.cleanup")
+    assert [line for line in lines if len(line) > 79] == [lines[3]] and "ansible-playbook" in lines[3], lines
 
 
 def test_add_node_under_check_says_after_the_real_run_and_the_group_given():
