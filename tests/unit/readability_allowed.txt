@@ -107,7 +107,7 @@
 673	playbooks/import_cluster.yml :: Write the inventory :: vars._report_details (jinja)
 351	playbooks/import_cluster.yml :: Write the inventory :: vars._theirs (jinja)
 338	playbooks/move_node.yml :: Clean up the nodes that lost ranges / Clean up, by batches :: vars._batches (jinja)
-393	playbooks/move_node.yml :: Clean up the nodes that lost ranges / Say which cleanups to run :: ansible.builtin.debug.msg.1 (jinja)
+393	playbooks/move_node.yml :: Clean up the nodes that lost ranges / Say which cleanups to run :: vars._command (jinja)
 330	playbooks/move_node.yml :: Clean up the nodes that lost ranges / Say which recorded cleanups this run can't reach :: ansible.builtin.debug.msg (jinja)
 357	playbooks/move_node.yml :: Plan the moves / Refuse a plan that can't be followed :: vars._problems (jinja)
 317	playbooks/move_node.yml :: Plan the moves / Work out the moves :: ansible.builtin.set_fact.cassandra_move_plan (jinja)

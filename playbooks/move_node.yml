@@ -387,21 +387,7 @@
 
     - name: Say which cleanups to run
       ansible.builtin.debug:
-        msg:
-          - "{{ _head }}"
-          - "  {{ 'cleanup' | community.cassandra.cassandra_command(
-                    inventory=ansible_inventory_sources,
-                    default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
-                    hosts=cassandra_hosts | default(''), limit=_targets, cwd=lookup('ansible.builtin.env', 'PWD'),
-                    extra={'cassandra_cleanup_mode': cassandra_cleanup_mode | default('sequential'),
-                           'cassandra_cleanup_jobs': cassandra_cleanup_jobs}) }}"
-          - ""
-          - "  cassandra_cleanup_mode: sequential (one node at a time, default)"
-          - "                          | rack (a rack at a time)"
-          - "                          | dc (a datacenter at a time)"
-          - "                          | all (every node at once: heavy I/O)"
-          - "  cassandra_cleanup_jobs: compaction threads per node, default 2"
-          - "                          (0 = all compaction threads)"
+        msg: "{{ ([_head, '  ' ~ _command, ''] + _options) | join(_nl) }}"
       run_once: true
       when:
         - _targets | length > 0
@@ -416,6 +402,19 @@
           NEXT  {{ ('once the cluster is fine, clean up the nodes that lost ranges (listed in ' ~ _move_record
                     ~ ' until a move_node run with cassandra_move_cleanup cleans them up):')
                    | wordwrap(73, false, _nl ~ '      ', false) }}
+        _command: >-
+          {{ 'cleanup' | community.cassandra.cassandra_command(
+               inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+               hosts=cassandra_hosts | default(''), limit=_targets, cwd=lookup('ansible.builtin.env', 'PWD'),
+               extra={'cassandra_cleanup_mode': cassandra_cleanup_mode | default('sequential'),
+                      'cassandra_cleanup_jobs': cassandra_cleanup_jobs}) }}
+        _options:
+          - "  cassandra_cleanup_mode: sequential (one node at a time, default)"
+          - "                          | rack (a rack at a time)"
+          - "                          | dc (a datacenter at a time)"
+          - "                          | all (every node at once: heavy I/O)"
+          - "  cassandra_cleanup_jobs: compaction threads per node, default 2"
+          - "                          (0 = all compaction threads)"
 
     - name: Say which recorded cleanups this run can't reach
       ansible.builtin.debug:

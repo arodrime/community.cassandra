@@ -39,7 +39,7 @@ def hint(playbook, **variables):
               "cassandra_cleanup_jobs": play["vars"]["cassandra_cleanup_jobs"],
               "ansible_check_mode": False}
     for name, value in (task.get("vars") or {}).items():
-        if name in ("_hosts_option", "_head", "_options"):
+        if name in ("_hosts_option", "_head", "_command", "_options"):
             values[name] = trust_as_template(value) if isinstance(value, str) else value
     values.update(variables, _nl="\n")
     templar = templar_for(values)
