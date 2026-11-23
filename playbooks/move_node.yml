@@ -397,9 +397,12 @@
                     extra={'cassandra_cleanup_mode': cassandra_cleanup_mode | default('sequential'),
                            'cassandra_cleanup_jobs': cassandra_cleanup_jobs}) }}"
           - ""
-          - "  cassandra_cleanup_mode: sequential (one node at a time, default) | rack (a rack at a time)"
-          - "                          | dc (a datacenter at a time) | all (every node at once: heavy I/O)"
-          - "  cassandra_cleanup_jobs: compaction threads per node, default 2 (0 = all compaction threads)"
+          - "  cassandra_cleanup_mode: sequential (one node at a time, default)"
+          - "                          | rack (a rack at a time)"
+          - "                          | dc (a datacenter at a time)"
+          - "                          | all (every node at once: heavy I/O)"
+          - "  cassandra_cleanup_jobs: compaction threads per node, default 2"
+          - "                          (0 = all compaction threads)"
       run_once: true
       when:
         - _targets | length > 0

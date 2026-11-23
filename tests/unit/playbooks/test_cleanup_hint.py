@@ -21,9 +21,12 @@ PLAYBOOKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks
 
 OPTIONS = [
     "",
-    "  cassandra_cleanup_mode: sequential (one node at a time, default) | rack (a rack at a time)",
-    "                          | dc (a datacenter at a time) | all (every node at once: heavy I/O)",
-    "  cassandra_cleanup_jobs: compaction threads per node, default 2 (0 = all compaction threads)",
+    "  cassandra_cleanup_mode: sequential (one node at a time, default)",
+    "                          | rack (a rack at a time)",
+    "                          | dc (a datacenter at a time)",
+    "                          | all (every node at once: heavy I/O)",
+    "  cassandra_cleanup_jobs: compaction threads per node, default 2",
+    "                          (0 = all compaction threads)",
 ]
 
 
@@ -35,8 +38,9 @@ def hint(playbook, **variables):
     values = {"ansible_inventory_sources": ["inventory/prod.yml"], "_targets": ["node1", "node4"],
               "cassandra_cleanup_jobs": play["vars"]["cassandra_cleanup_jobs"],
               "ansible_check_mode": False}
-    if "_hosts_option" in (task.get("vars") or {}):
-        values["_hosts_option"] = trust_as_template(task["vars"]["_hosts_option"])
+    for name, value in (task.get("vars") or {}).items():
+        if name in ("_hosts_option", "_head", "_options"):
+            values[name] = trust_as_template(value) if isinstance(value, str) else value
     values.update(variables)
     templar = templar_for(values)
     msg = task["ansible.builtin.debug"]["msg"]
@@ -49,7 +53,8 @@ def hint(playbook, **variables):
 
 def test_add_node_prints_both_options_at_their_defaults():
     assert hint("add_node.yml", _scope="dc1: the new nodes' racks only") == [
-        "NEXT  once the cluster is fine, clean up the nodes that handed data over (dc1: the new nodes' racks only):",
+        "NEXT  once the cluster is fine, clean up the nodes that handed data over (dc1:",
+        "      the new nodes' racks only):",
         "  ansible-playbook -i inventory/prod.yml community.cassandra.cleanup --limit node1,node4"
         " -e cassandra_cleanup_mode=sequential -e cassandra_cleanup_jobs=2",
     ] + OPTIONS
@@ -66,11 +71,20 @@ def test_move_node_prints_both_options_and_the_group_given():
 
 def test_add_node_under_check_says_after_the_real_run_and_the_group_given():
     lines = hint("add_node.yml", _scope="dc1: the whole datacenter", ansible_check_mode=True, cassandra_hosts="orders")
-    assert lines[:2] == [
-        "NEXT  after the real run, once the cluster is fine, clean up the nodes that handed data over (dc1: the whole"
-        " datacenter):",
+    assert lines[:3] == [
+        "NEXT  after the real run, once the cluster is fine, clean up the nodes that",
+        "      handed data over (dc1: the whole datacenter):",
         "  ansible-playbook -i inventory/prod.yml community.cassandra.cleanup -e cassandra_hosts=orders"
         " --limit node1,node4 -e cassandra_cleanup_mode=sequential -e cassandra_cleanup_jobs=2"]
+
+
+def test_add_node_within_79_columns_but_its_command():
+    # each line within 79 columns, the heading's next ones under its text; the command whole, to copy
+    lines = hint("add_node.yml", _scope="dc1: the whole datacenter, dc2: the new nodes' racks only",
+                 ansible_check_mode=True)
+    assert [line for line in lines if len(line) > 79] == [lines[3]] and "ansible-playbook" in lines[3], lines
+    assert lines[1:3] == ["      handed data over (dc1: the whole datacenter, dc2: the new nodes' racks",
+                          "      only):"], lines
 
 
 def test_the_nodes_to_clean_up_in_inventory_order():

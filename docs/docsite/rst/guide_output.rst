@@ -130,7 +130,8 @@ Conventions
   ``-e cassandra_hosts`` do.
 - **Next**: what is left to do after a run that went well, under ``NEXT``, with its command::
 
-    NEXT  once the cluster is fine, clean up the nodes that handed data over (dc1: the whole datacenter):
+    NEXT  once the cluster is fine, clean up the nodes that handed data over (dc1:
+          the whole datacenter):
       ansible-playbook community.cassandra.cleanup --limit node1,node2,node3,node4 -e cassandra_cleanup_mode=sequential -e cassandra_cleanup_jobs=2
 
 - **Stop**: a run that stops at a node ends with one block (``cassandra_stop_block``), 79 columns at most: the

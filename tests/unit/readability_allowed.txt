@@ -13,7 +13,7 @@
 579	playbooks/add_node.yml :: Check the new nodes / Show the plan and confirm the add :: vars.cassandra_screen.after.5 (jinja)
 350	playbooks/add_node.yml :: Check the new nodes / Show the plan and confirm the add :: vars.cassandra_screen.intro.0 (jinja)
 311	playbooks/add_node.yml :: Check the new nodes / Work out what the add means for the cluster :: vars._new_info (jinja)
-844	playbooks/add_node.yml :: Clean up the nodes that handed data over / Say which cleanups to run :: ansible.builtin.debug.msg (jinja)
+437	playbooks/add_node.yml :: Clean up the nodes that handed data over / Say which cleanups to run :: ansible.builtin.debug.msg (jinja)
 402	playbooks/add_node.yml :: Prepare the new nodes, all at once / Prepare this node / Stop here :: vars._rerun (jinja)
 405	playbooks/add_node.yml :: Summary / Say which nodes to move (one token per node, balanced) :: ansible.builtin.debug.msg (jinja)
 310	playbooks/apply_config.yml :: Apply the OS settings, on these nodes at once / Apply the OS settings / Stop here :: ansible.builtin.fail.msg (jinja)

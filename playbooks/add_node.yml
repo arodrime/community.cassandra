@@ -900,17 +900,13 @@
     - name: Say which cleanups to run
       ansible.builtin.debug:
         msg: >-
-          {{ ['NEXT  ' ~ ('after the real run, once' if ansible_check_mode else 'once') ~ ' the cluster is fine, clean up the'
-              ~ ' nodes that handed data over (' ~ _scope ~ '):',
-              '  ' ~ 'cleanup' | community.cassandra.cassandra_command(
-                       inventory=ansible_inventory_sources,
-                       default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
-                       hosts=cassandra_hosts | default(''), limit=_targets, cwd=lookup('ansible.builtin.env', 'PWD'),
-                       extra={'cassandra_cleanup_mode': cassandra_cleanup_mode | default('sequential'),
-                              'cassandra_cleanup_jobs': cassandra_cleanup_jobs}), '',
-              '  cassandra_cleanup_mode: sequential (one node at a time, default) | rack (a rack at a time)',
-              '                          | dc (a datacenter at a time) | all (every node at once: heavy I/O)',
-              '  cassandra_cleanup_jobs: compaction threads per node, default 2 (0 = all compaction threads)'] | join(_nl) }}
+          {{ ([_head,
+               '  ' ~ 'cleanup' | community.cassandra.cassandra_command(
+                        inventory=ansible_inventory_sources,
+                        default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+                        hosts=cassandra_hosts | default(''), limit=_targets, cwd=lookup('ansible.builtin.env', 'PWD'),
+                        extra={'cassandra_cleanup_mode': cassandra_cleanup_mode | default('sequential'),
+                               'cassandra_cleanup_jobs': cassandra_cleanup_jobs}), ''] + _options) | join(_nl) }}
       run_once: true
       when:
         - _targets | length > 0
@@ -919,6 +915,17 @@
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         cassandra_output: true
         cassandra_output_gap: true  # a block of its own (ops callback)
+        # within 79 columns: its next lines under its text (the command stays whole, to copy)
+        _head: >-
+          NEXT  {{ (('after the real run, once' if ansible_check_mode else 'once') ~ ' the cluster is fine, clean up'
+                    ~ ' the nodes that handed data over (' ~ _scope ~ '):') | wordwrap(73, false, _nl ~ '      ', false) }}
+        _options:
+          - "  cassandra_cleanup_mode: sequential (one node at a time, default)"
+          - "                          | rack (a rack at a time)"
+          - "                          | dc (a datacenter at a time)"
+          - "                          | all (every node at once: heavy I/O)"
+          - "  cassandra_cleanup_jobs: compaction threads per node, default 2"
+          - "                          (0 = all compaction threads)"
         _scope: >-
           {{ _plan.scope | dict2items | map(attribute='key') | zip(_plan.scope | dict2items | map(attribute='value')
              | map('replace', 'rack', "the new nodes' racks only") | map('replace', 'dc', 'the whole datacenter'))
