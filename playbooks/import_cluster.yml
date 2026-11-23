@@ -847,7 +847,7 @@
               {{ _live | community.cassandra.cassandra_config_import(
                    cassandra_version=import_cluster_series, facts=ansible_facts,
                    conf_target=_conf_target, storage_dir=_storage_dir, jmx_files=_jmx_files, release=_release,
-                   running=_jvm) }}
+                   running_jvm=_jvm) }}
           vars:
             _conf_target: "{{ import_cluster_conf_target | default('') }}"
             _storage_dir: "{{ import_cluster_storage_dir | default('') }}"

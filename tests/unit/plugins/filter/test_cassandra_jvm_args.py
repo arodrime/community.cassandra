@@ -1003,7 +1003,7 @@ def test_the_owner_dev_node_in_full_sync(tmp_path):
     files = node_files("50x", owner_dev_node)
     # the JVM's log dir: the node's (the test's launch gives its own)
     cmdline = launch(files, "17", tmp_path).replace("-Dcassandra.logdir=/run/logs", "-Dcassandra.logdir=/data/cassandra/log")
-    out = cassandra_config_import(files, "50x", FACTS, running={
+    out = cassandra_config_import(files, "50x", FACTS, running_jvm={
         "cmdline": cmdline, "java": "17", "environment": {}, "newer": []})
     assert out["hand_edits"] == [] and out["jvm_notes"] == []
     assert CHRONICLE in out["jvm_warnings"]
@@ -1048,7 +1048,7 @@ def test_the_exporter_s_agent_in_a_file_its_java_does_not_read(tmp_path):
     files = node_files("50x", add_to("jvm11-server.options", AGENT))
     cmdline = launch(files, "17", tmp_path)
     jvm = {"cmdline": cmdline, "java": "17", "environment": {}, "newer": []}
-    out = cassandra_config_import(files, "50x", FACTS, running=jvm)
+    out = cassandra_config_import(files, "50x", FACTS, running_jvm=jvm)
     assert not [k for k in out["vars"] if k.startswith("cassandra_prometheus_exporter")]
     assert out["vars"]["cassandra_jvm11_extra_options"] == [AGENT]
     inventory, layout, node = imported(files, "50x", "17", cmdline)
@@ -2401,7 +2401,7 @@ def test_a_4x_cassandra_env_on_50_giving_the_same_arguments_is_rewritten(tmp_pat
     before, after = settings(cmdline), settings(launch(rendered, "17", tmp_path))
     assert "HeapDumpPath" not in before[0] and after[0].pop("HeapDumpPath").endswith("/cassandra-1700000000-pid0.hprof")
     assert before == after
-    imported_text = cassandra_config_import(files, "50x", FACTS, running={"cmdline": cmdline, "java": "17"})
+    imported_text = cassandra_config_import(files, "50x", FACTS, running_jvm={"cmdline": cmdline, "java": "17"})
     assert any(w.startswith("-XX:HeapDumpPath (cassandra-env.sh): added by apply_config: 5.0's sets it always")
                for w in imported_text["jvm_warnings"])
 

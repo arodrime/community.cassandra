@@ -69,7 +69,7 @@ class _Reading(object):
 
 
 def cassandra_config_import(live_files, cassandra_version, facts, conf_target="", storage_dir="", jmx_files=None,
-                            release="", java="", cmdline="", running=None):
+                            release="", java="", cmdline="", running_jvm=None):
     """cassandra_config variables that render a node's files, and what the role would still change.
     live_files: {file name: text} of the node's config files; facts: the node's.
     conf_target: the resolved dir the node reads its config from; storage_dir: the JVM's -Dcassandra.storagedir;
@@ -77,7 +77,7 @@ def cassandra_config_import(live_files, cassandra_version, facts, conf_target=""
     .access in live_files); release: the node's Cassandra version (4.1.5; '': the keys no release of the series
     accepts are the ones rejected); java: the running Java's major ('': not known), for the options files it reads;
     cmdline: the running JVM's arguments (/proc/<pid>/cmdline), for its heap (java and cmdline: given by the tests;
-    the playbook gives them in running); running: the running JVM, {cmdline:
+    the playbook gives them in running_jvm); running_jvm: the running JVM, {cmdline:
     its /proc/<pid>/cmdline, java: its major version, environment: what the unit gives it, newer: the config files
     written since it started, keep: import_keep_hand_edits, the JVM's files it keeps not moved} (java and cmdline
     from it when not given).
@@ -105,7 +105,7 @@ def cassandra_config_import(live_files, cassandra_version, facts, conf_target=""
                       for k, v in live_files.items())
     try:
         return _config_import(live_files, cassandra_version, facts, reading, conf_target, storage_dir, jmx_files,
-                              release, java, cmdline, running)
+                              release, java, cmdline, running_jvm)
     except AnsibleFilterError:
         raise
     except Exception as exc:  # pylint: disable=broad-except
