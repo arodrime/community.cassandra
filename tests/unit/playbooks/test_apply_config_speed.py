@@ -34,8 +34,7 @@ def tasks(items):
             continue
         inner = [t for key in ("block", "rescue", "always") for t in item.get(key) or []]
         if inner:
-            for task in tasks(inner):
-                yield task
+            yield from tasks(inner)
         else:
             yield item
 
@@ -58,7 +57,6 @@ def test_no_package_or_service_facts_on_the_operations_way():
 def test_task_count_ceiling():
     count = sum(len(found) for path, found in task_files())
     assert count <= TASKS_MAX, "%d tasks, %d allowed" % (count, TASKS_MAX)
-
 
 
 def test_every_named_read_of_packages_is_in_english():
