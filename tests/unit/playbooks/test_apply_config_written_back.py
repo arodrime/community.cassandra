@@ -280,9 +280,9 @@ def test_the_way_out_of_the_jump_guard_and_apply_config_converge():
     # cassandra.yaml has) passes the guards of rolling_restart; apply_config with UPGRADING in the inventory restarts
     # it too; once restarted (UPGRADING logged, the record of that start), apply_config has nothing more to do
     from ansible_collections.community.cassandra.plugins.filter.cassandra_storage_mode import (
-        cassandra_storage_mode_back, cassandra_storage_mode_jump, cassandra_storage_mode_unsure)
+        _mode_back, _mode_jump, cassandra_storage_mode_unsure)
     host = {"inventory_hostname": "n1", "cassandra_storage_mode_read": _mode_read("UPGRADING", logged="CASSANDRA_4")}
-    assert [f(host) for f in (cassandra_storage_mode_back, cassandra_storage_mode_jump, cassandra_storage_mode_unsure)] \
+    assert [f(host) for f in (_mode_back, _mode_jump, cassandra_storage_mode_unsure)] \
         == ["", "", {}]
     ahead = dict(changes=(), pending=True, newer=["cassandra.yaml"], kept=["cassandra.yaml"],
                  new={"cassandra.yaml": UPGRADING}, record={CONF + "/cassandra.yaml": sha1(C4)}, cassandra_version="50x",

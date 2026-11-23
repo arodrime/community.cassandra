@@ -9,7 +9,7 @@ import os
 
 import yaml
 from ansible_collections.community.cassandra.plugins.filter.cassandra_storage_mode import (
-    cassandra_storage_mode_back, cassandra_storage_mode_jump, cassandra_storage_mode_unsure)
+    _mode_back, _mode_jump, cassandra_storage_mode_unsure)
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 from ansible_collections.community.cassandra.tests.unit.helpers import render as _render
 
@@ -35,19 +35,19 @@ def _host(yaml_mode, logged=None, cql=None, more=()):
 
 def test_back_on_evidence_only():
     # it runs NONE (logged, or read over CQL), UPGRADING to be written: back
-    assert cassandra_storage_mode_back(_host("NONE", logged="NONE"), "UPGRADING") == "NONE"
-    assert cassandra_storage_mode_back(_host("NONE", cql="NONE"), "UPGRADING") == "NONE"
+    assert _mode_back(_host("NONE", logged="NONE"), "UPGRADING") == "NONE"
+    assert _mode_back(_host("NONE", cql="NONE"), "UPGRADING") == "NONE"
     # a restart alone (no target): its file edited back to UPGRADING, it runs NONE
-    assert cassandra_storage_mode_back(_host("UPGRADING", logged="NONE")) == "NONE"
-    assert cassandra_storage_mode_back(_host("", cql="UPGRADING")) == "UPGRADING"  # no such line: CASSANDRA_4
+    assert _mode_back(_host("UPGRADING", logged="NONE")) == "NONE"
+    assert _mode_back(_host("", cql="UPGRADING")) == "UPGRADING"  # no such line: CASSANDRA_4
     # forward or the same: nothing
-    assert cassandra_storage_mode_back(_host("CASSANDRA_4", logged="CASSANDRA_4"), "UPGRADING") == ""
-    assert cassandra_storage_mode_back(_host("NONE", logged="NONE"), "NONE") == ""
-    assert cassandra_storage_mode_back(_host("UPGRADING", logged="CASSANDRA_4")) == ""
+    assert _mode_back(_host("CASSANDRA_4", logged="CASSANDRA_4"), "UPGRADING") == ""
+    assert _mode_back(_host("NONE", logged="NONE"), "NONE") == ""
+    assert _mode_back(_host("UPGRADING", logged="CASSANDRA_4")) == ""
     # the mode it runs not known (nothing logged, CQL not read): never refused
-    assert cassandra_storage_mode_back(_host("UPGRADING"), "CASSANDRA_4") == ""
+    assert _mode_back(_host("UPGRADING"), "CASSANDRA_4") == ""
     failed = dict(_host("UPGRADING"), cassandra_storage_mode_cql={"failed": True, "msg": "module execution failed"})
-    assert cassandra_storage_mode_back(failed, "CASSANDRA_4") == ""
+    assert _mode_back(failed, "CASSANDRA_4") == ""
 
 
 GUARD = "roles/cassandra_operation/tasks/storage_mode_guard.yml"
@@ -228,14 +228,14 @@ def test_the_cql_read_asks_the_node_itself_and_says_when_it_could_not():
 
 def test_jump_on_evidence_only():
     # runs CASSANDRA_4 (logged or read over CQL), NONE to be written or in its file: two steps
-    assert cassandra_storage_mode_jump(_host("UPGRADING", logged="CASSANDRA_4"), "NONE") == "CASSANDRA_4"
-    assert cassandra_storage_mode_jump(_host("NONE", cql="CASSANDRA_4")) == "CASSANDRA_4"
-    assert cassandra_storage_mode_jump(_host("NONE", cql="null")) == "CASSANDRA_4"  # no such line at its start
+    assert _mode_jump(_host("UPGRADING", logged="CASSANDRA_4"), "NONE") == "CASSANDRA_4"
+    assert _mode_jump(_host("NONE", cql="CASSANDRA_4")) == "CASSANDRA_4"
+    assert _mode_jump(_host("NONE", cql="null")) == "CASSANDRA_4"  # no such line at its start
     # one step, the same, back (the other check), not known: nothing
-    assert cassandra_storage_mode_jump(_host("UPGRADING", logged="CASSANDRA_4")) == ""
-    assert cassandra_storage_mode_jump(_host("UPGRADING", logged="UPGRADING"), "NONE") == ""
-    assert cassandra_storage_mode_jump(_host("NONE", logged="NONE"), "CASSANDRA_4") == ""
-    assert cassandra_storage_mode_jump(_host("NONE"), "NONE") == ""
+    assert _mode_jump(_host("UPGRADING", logged="CASSANDRA_4")) == ""
+    assert _mode_jump(_host("UPGRADING", logged="UPGRADING"), "NONE") == ""
+    assert _mode_jump(_host("NONE", logged="NONE"), "CASSANDRA_4") == ""
+    assert _mode_jump(_host("NONE"), "NONE") == ""
 
 
 def test_the_jump_says_why_and_the_way_out():
@@ -305,9 +305,9 @@ def test_unsure_refuses_a_move_that_could_be_back():
     # the mode read by hand, given: then the evidence-based checks decide (NONE given, UPGRADING to be written: back)
     given = dict(_host("UPGRADING", more=CHANGED), cassandra_storage_mode_running="n1:NONE,n2:UPGRADING")
     assert cassandra_storage_mode_unsure(given, "UPGRADING") == {}
-    assert cassandra_storage_mode_back(given, "UPGRADING") == "NONE"
-    assert cassandra_storage_mode_back(dict(given, cassandra_storage_mode_running={"n1": "UPGRADING"}), "UPGRADING") == ""
-    assert cassandra_storage_mode_jump(dict(given, cassandra_storage_mode_running="n1:CASSANDRA_4"), "NONE") == "CASSANDRA_4"
+    assert _mode_back(given, "UPGRADING") == "NONE"
+    assert _mode_back(dict(given, cassandra_storage_mode_running={"n1": "UPGRADING"}), "UPGRADING") == ""
+    assert _mode_jump(dict(given, cassandra_storage_mode_running="n1:CASSANDRA_4"), "NONE") == "CASSANDRA_4"
     # given for another node only, or not a mode: still not known (the -e check says why first)
     assert cassandra_storage_mode_unsure(dict(given, cassandra_storage_mode_running="n2:NONE"), "UPGRADING")
     assert cassandra_storage_mode_unsure(dict(given, cassandra_storage_mode_running="n1:NONNE"), "UPGRADING")
@@ -431,7 +431,7 @@ def test_a_mode_given_with_e_is_taken_only_where_nothing_else_tells_it():
     # it runs UPGRADING (logged, over CQL, or its file unchanged since its start): NONE given is refused, not taken
     for host in (_host("UPGRADING", logged="UPGRADING"), _host("UPGRADING", cql="UPGRADING"), _host("UPGRADING")):
         given = dict(host, cassandra_storage_mode_running="n1:NONE")
-        assert cassandra_storage_mode_back(given, "UPGRADING") == ""
+        assert _mode_back(given, "UPGRADING") == ""
         assert cassandra_storage_mode_given_wrong(given).startswith("  n1  -e gives NONE, Cassandra runs UPGRADING (")
     assert cassandra_storage_mode_given_wrong(dict(_host("UPGRADING"), cassandra_storage_mode_running="n1:NONE")) == (
         "  n1  -e gives NONE, Cassandra runs UPGRADING (its cassandra.yaml has it, unchanged since Cassandra started)")
@@ -574,14 +574,14 @@ def test_a_4x_jvm_runs_cassandra_4_and_takes_no_mode_given():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_storage_mode import (
         cassandra_storage_mode_given_wrong)
     jvm4 = _host("NONE", more=("jvm_version=4.1.5",) + CHANGED)
-    assert cassandra_storage_mode_jump(jvm4) == "CASSANDRA_4"
-    assert cassandra_storage_mode_jump(_host("UPGRADING", more=("jvm_version=4.1.5",))) == ""
+    assert _mode_jump(jvm4) == "CASSANDRA_4"
+    assert _mode_jump(_host("UPGRADING", more=("jvm_version=4.1.5",))) == ""
     assert cassandra_storage_mode_given_wrong(dict(jvm4, cassandra_storage_mode_running="n1:NONE")) == (
         "  n1  -e gives NONE: it runs Cassandra 4.1.5 (no storage_compatibility_mode)")
     assert cassandra_storage_mode_given_wrong(dict(jvm4, cassandra_storage_mode_running="n1:CASSANDRA_4")) != ""
     # the -e is not taken for it: no back from a NONE given
-    assert cassandra_storage_mode_back(dict(_host("", more=("jvm_version=4.1.5",)),
-                                            cassandra_storage_mode_running="n1:NONE")) == ""
+    assert _mode_back(dict(_host("", more=("jvm_version=4.1.5",)),
+                           cassandra_storage_mode_running="n1:NONE")) == ""
     ok, msg = guard(JUMP, {"n1": (jvm4, "NONE")})
     assert ok is False and msg[1:] == [
         "  n1  runs CASSANDRA_4 (Cassandra 4.1.5), its cassandra.yaml has NONE",
@@ -597,10 +597,10 @@ def test_a_stopped_node_is_checked_against_the_mode_it_last_ran():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_storage_mode import (
         cassandra_storage_mode_stopped_unsure)
     # logged at its last start: back and jump from it
-    assert cassandra_storage_mode_jump(_stopped("UPGRADING", "last_logged=CASSANDRA_4"), "NONE") == "CASSANDRA_4"
-    assert cassandra_storage_mode_back(_stopped("UPGRADING", "last_logged=NONE")) == "NONE"
+    assert _mode_jump(_stopped("UPGRADING", "last_logged=CASSANDRA_4"), "NONE") == "CASSANDRA_4"
+    assert _mode_back(_stopped("UPGRADING", "last_logged=NONE")) == "NONE"
     # its file unchanged since its last start (the record): its file's mode, no move
-    assert cassandra_storage_mode_jump(_stopped("UPGRADING", "last_same=yes"), "NONE") == ""
+    assert _mode_jump(_stopped("UPGRADING", "last_same=yes"), "NONE") == ""
     ok, msg = guard(JUMP, {"n1": (_stopped("UPGRADING", "last_logged=CASSANDRA_4"), "NONE")},
                     _cassandra_storage_mode_written=True)
     assert ok is False and msg == [
