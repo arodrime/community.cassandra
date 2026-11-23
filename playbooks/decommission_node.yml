@@ -156,11 +156,13 @@
                   else ["The keyspaces' replication could not be read with cqlsh on " ~ _staying[0] ~ ' (' ~ _why
                         ~ '): check that Cassandra runs there and takes CQL connections, then run this again.'])
                  if _err
-                 else _msg if ansible_failed_task.run_once | default(false) | bool
-                                or _msg | first is search('(^|\W)' ~ inventory_hostname | regex_escape ~ '(\W|$)')
+                 else _msg if _once | bool
+                             or _msg | first is search('(^|\W)' ~ inventory_hostname | regex_escape ~ '(\W|$)')
                  else [inventory_hostname ~ ': ' ~ _msg | first] + _msg[1:] }}
           vars:
             _msg: "{{ [ansible_failed_result.msg | default('failed', true)] | flatten }}"
+            # a check of the whole cluster (run_once: none on a task that does not set it)
+            _once: "{{ ansible_failed_task.run_once | default(false, true) | bool }}"
             # cqlsh's own error (reading the replication)
             _err: "{{ ansible_failed_result.err | default('') | trim }}"
             _login_refused: "requires authentication|AuthenticationFailed|Bad credentials|username and/or password are incorrect"

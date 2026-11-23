@@ -6,13 +6,16 @@ __metaclass__ = type
 # under --check or not, each problem on its line, cqlsh's error by its cause
 # (none of its text). Rendered by Ansible.
 
+import json
 import os
+import subprocess
 import warnings
 
+import pytest
 import yaml
 
 from ansible.plugins.loader import init_plugin_loader
-from ansible_collections.community.cassandra.tests.unit.helpers import render
+from ansible_collections.community.cassandra.tests.unit.helpers import LOCAL, render, run_playbook
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -101,3 +104,25 @@ def test_only_the_nodes_that_failed_say_why():
     assert FORGET["ansible.builtin.set_fact"] == {"ansible_failed_result": {}, "ansible_failed_task": {}}
     assert render("{{ %s }}" % RECORD["when"], ansible_failed_result={}) is False
     assert render("{{ %s }}" % RECORD["when"], ansible_failed_result={"msg": "n3 is in cassandra_seeds"}) is True
+
+
+@pytest.mark.playbook
+@pytest.mark.parametrize("run_once, said", [(None, "n3 is in cassandra_seeds: take it out"),
+                                            (True, "dc2 would keep no seed")])
+def test_a_refusal_with_no_deprecation_warning(tmp_path, run_once, said):
+    # ansible-playbook for real: a failed task that does not set run_once has it none in ansible_failed_task
+    # (| bool warned on it from ansible-core 2.19, the seed refusal of decommission_node)
+    check = {"name": "Check", "ansible.builtin.assert": {"that": False, "fail_msg": said, "quiet": True}}
+    if run_once:
+        check["run_once"] = True
+    play = {"hosts": "all", "gather_facts": False,
+            "tasks": [{"name": "Check this node", "block": [check],
+                       "rescue": [RECORD, {"name": "Say it", "ansible.builtin.debug": {
+                           "msg": "SAID {{ _cassandra_decommission_refusal | to_json }}"}}]}]}
+    (tmp_path / "play.yml").write_text(json.dumps([play]))
+    (tmp_path / "hosts.ini").write_text("n3\n")
+    # the deprecation warnings shown (ansible-test turns them off)
+    env = dict(ANSIBLE_STDOUT_CALLBACK="default", ANSIBLE_DEPRECATION_WARNINGS="1")
+    rc, out = run_playbook(["-i", str(tmp_path / "hosts.ini")] + LOCAL + [str(tmp_path / "play.yml")], env,
+                           ["ANSIBLE_CONFIG"], cwd=tmp_path, stdin=subprocess.DEVNULL)
+    assert rc == 0 and "DEPRECATION" not in out and 'SAID [\\"%s\\"]' % said in out, out  # (no node prefix)

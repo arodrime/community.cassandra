@@ -59,7 +59,7 @@
 566	playbooks/create_cluster.yml :: Refuse an identity left to the role defaults :: vars._new_cluster (jinja)
 365	playbooks/create_cluster.yml :: Reset the whole cluster first (cassandra_create_cluster_reset) / Reset the whole cluster / Check the group is the whole cluster :: vars._addresses_of (jinja)
 414	playbooks/create_cluster.yml :: Reset the whole cluster first (cassandra_create_cluster_reset) / Reset the whole cluster / Show what the reset does :: vars._blocks (jinja)
-665	playbooks/decommission_node.yml :: Check the nodes to remove / Check this node / Record the refusal :: ansible.builtin.set_fact._cassandra_decommission_refusal (jinja)
+625	playbooks/decommission_node.yml :: Check the nodes to remove / Check this node / Record the refusal :: ansible.builtin.set_fact._cassandra_decommission_refusal (jinja)
 304	playbooks/decommission_node.yml :: Check the nodes to remove / Show the plan and confirm the removal :: vars._nodes (jinja)
 474	playbooks/decommission_node.yml :: Check the nodes to remove / Show the plan and confirm the removal :: vars.cassandra_screen (jinja)
 450	playbooks/decommission_node.yml :: Remove the nodes, one at a time / Remove this node :: vars._others_in_ring (jinja)
