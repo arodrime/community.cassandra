@@ -174,8 +174,8 @@
         - name: Stop here
           ansible.builtin.fail:
             msg: >-
-              {{ (['REFUSED  decommission_node  ' ~ _cluster_name ~ '  nothing was changed']
-                  + _refusals | flatten | map('regex_replace', '^', '  ') | list) | join(_nl) }}
+              {{ ('decommission_node  ' ~ _cluster_name) | community.cassandra.cassandra_refused(_refusals | flatten)
+                 | join(_nl) }}
           run_once: true
           vars:
             cassandra_output: true  # a verdict: its msg as is

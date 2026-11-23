@@ -59,6 +59,21 @@ def test_a_refusal_is_one_refused_block():
         "  n3 is in cassandra_seeds: ...", "  n4 is in cassandra_seeds: ..."]
 
 
+def test_a_refusal_within_79_columns():
+    # the seed refusal (hostile S9a): its next lines under its text, 79 columns at most
+    seed = render(task_named("A node in cassandra_seeds can't be removed")["ansible.builtin.assert"]["fail_msg"],
+                  inventory_hostname="h-n2")
+    assert block({"h-n2": [seed]}) == [
+        "REFUSED  decommission_node  Prod  nothing was changed",
+        "  h-n2 is in cassandra_seeds: take it out of cassandra_seeds in the inventory;",
+        "    decommission_node then applies the new seed list on the other nodes before",
+        "    it removes it."]
+
+
+def task_named(name):
+    return next(t for t in CHECK["block"] if t.get("name") == name)
+
+
 def test_the_replica_problems_one_per_line():
     problems = ["system_auth needs 3 replicas in dc1, which would keep 2 node(s)",
                 "system_distributed (SimpleStrategy, RF 3) needs 3 nodes, the cluster would keep 2"]
