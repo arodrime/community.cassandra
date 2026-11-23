@@ -378,12 +378,16 @@ The ``community.cassandra.ops`` stdout callback prints:
 
 - the ``msg`` of a marked task that succeeds (each loop item, handlers too); a marked ``assert`` that passes
   prints its ``success_msg``, nothing without one;
-- the ``msg`` of a marked ``assert`` or ``fail`` that fails, as it is (no task header);
+- the ``msg`` of a marked ``assert`` or ``fail`` that fails, as it is (no task header): in red, or coloured by its
+  lines when it is a block of its own (``REFUSED  ...``, ``FAILED  ...``, ``SELF-CHECK FAILED ...``); once for a
+  ``run_once`` task that runs again with the same ``msg`` (a rescue some hosts reach later). A marked task that
+  fails on its own template (the error core gives instead of its ``msg``) is printed as the default callback does;
 - every other failure as the default callback does (the task name, the host, the message, stdout and stderr), a
   failed loop item too; a failure the task ignores (``ignore_errors``) is not printed, one the playbook handles (a
-  task of a block with a ``rescue``) is one line (nothing when the block sets ``cassandra_output_rescued``);
-- an unreachable host as the default callback does; one line when the play goes on without it
-  (``ignore_unreachable``);
+  task of a block with a ``rescue``) is one line, its host, task and the first line of its message (nothing when
+  the block sets ``cassandra_output_rescued``);
+- an unreachable host on one line (``UNREACHABLE  node3  <the first sentence of the error>``), the command that
+  shows all of the error under it (``ansible node3 -m ping -vvv``);
 - the questions (``pause``), and the diffs under ``--diff``;
 - nothing else: no task headers, no ``ok``, ``changed`` or ``skipping`` lines, no retries, no recap.
 
@@ -419,14 +423,15 @@ Task variables the callback reads, each a literal ``true`` in the task's own ``v
 
 Colours (Ansible's, so ``ANSIBLE_NOCOLOR``, ``ANSIBLE_FORCE_COLOR`` and an output that is not a terminal apply):
 
-- **green** (ok): ``DONE``, ``HEALTHY``, ``NOTHING TO DO``, ``READY``, ``IMPORT ... PASSED``, a ``CHECK`` with
+- **green** (ok): ``DONE``, ``HEALTHY``, ``NOTHING TO DO``, ``READY``, ``IMPORT ... PASSED``,
+  ``IMPORT ... nothing to act on``, a ``CHECK`` with
   nothing left to do, ``ALL 5 NODES UP``, the help's operation names;
 - **yellow** (change): a ``CHECK`` that says what a real run would do, ``← differs``, ``will be reset``,
   ``DELETED``, what a node would get, will get or got (``node1  would apply, then restart``, ``node1  will apply``,
   ``node1  applied``), the nodes
   joining, leaving or moving;
-- **red** (error): ``REFUSED``, ``FAILED``, ``NOT HEALTHY``, ``IMPORT ... FAILED``, a progress line that stalled
-  or failed, a line of the other ends with a ``STALLED`` one, ``← down``, a recap's failed node,
+- **red** (error): ``REFUSED``, ``FAILED``, ``STOPPED``, ``NOT HEALTHY``, ``SELF-CHECK FAILED``,
+  ``IMPORT ... FAILED``, a ``CHECK`` with a node that ``failed``, a progress line that stalled or failed, a line of the other ends with a ``STALLED`` one, ``← down``, a recap's failed node,
   ``1 NODE DOWN: ...``, ``1 NODE NOT REACHED: ...``;
 - **cyan** (option ``progress_color``): ``NOTE``, the progress and phase lines, the first line of a plan or a
   screen, an informative summary (``cassandra_output_info``), the help's commands and options;
@@ -435,6 +440,39 @@ Colours (Ansible's, so ``ANSIBLE_NOCOLOR``, ``ANSIBLE_FORCE_COLOR`` and an outpu
   too, as Ansible's own ``[WARNING]`` lines; apart from the yellow of the changes.
 
 The lines indented under a coloured one keep its colour, unless they carry a mark of their own or a ``WARNING``.
+
+The ``status`` playbook's verdict: ``ALL 5 NODES UP`` in green, followed by the nodes joining, leaving or moving
+(``1 JOINING``) in yellow, ``1 NODE DOWN`` and ``1 NODE NOT REACHED`` in red; a ring that differs from the
+inventory, a ``WARNING  ...`` line under the verdict, as a warning; the rows of its table
+(``node1  DN  10.0.0.5 ...``) by the node's state, down in red, joining, leaving or moving in yellow. The rows of a
+``FAILED`` or ``STOPPED`` recap do not keep its colour (the nodes done stay plain). The messages themselves stay
+plain text.
+
+Rules mark the blocks out. A heavy one (``=====``) above a plan or a screen (its first line ``REFUSED  ...``,
+``READY  ...``, ``IMPORT <cluster> ...``, or a plan's title, the operation in capitals: ``ADD NODE  ...``) and
+around a recap (``DONE  ...``, ``FAILED  ...``, ``STOPPED  ...``, ``WAY OUT  ...``, ``CHECK  ...``,
+``NOTHING TO DO  ...``, ``HEALTHY  ...``, ``NOT HEALTHY  ...``), around the ``status`` playbook's verdict, its first
+lines (and the warning under it), and under its tables. A light one (``-----``) for each empty line inside them (the
+blank lines of the status report stay blank), under a plan's first line and above a question; a heavy one for a
+line of ``=`` inside them, with its title (``==== TO REVIEW ====``) when it has one (the sections of the
+``import_cluster`` screen). As wide as the terminal, 100 columns at most, a blank line above and under each one.
+
+A progress line (``[2/5] node2  restart  waiting  node4 is DN, waiting for it to come back  9m52s/10m``, the line
+of a check of a stream with the other ends under it) is rewritten in place on a terminal while the node's step goes
+on, and left as it is once the step is over (``[2/5] node2  restarted  NORMAL after 30s``, ``STALLED``,
+``FAILED``) or another node's line starts. In a log file or a pipe (a CI): the first line of a node, then one every
+5 minutes, and every change of state. The run's first line names the cluster it is on
+(``prod  5 nodes  1 DC (dc1)  Cassandra 5.0.9``), in the progress colour.
+
+A role's argument check that refuses a variable (a value of the wrong type, from the inventory or ``-e``, a required
+one missing) is printed short once its task is over: one block for the nodes refused the same way (the role, each
+variable and why, its value and the type it needs or ansible-core's reason, the nodes, then the way out). With
+``-v``, the default callback's output, the role's whole argument spec included. The warnings of the tasks are
+printed too.
+
+Set it in ``ansible.cfg`` (``[defaults]`` ``stdout_callback = community.cassandra.ops``) or with
+``ANSIBLE_STDOUT_CALLBACK=community.cassandra.ops``. Its options (``ansible-doc -t callback
+community.cassandra.ops``): ``progress_color`` and ``warning_color``.
 
 The callback knows a block by its first words, from one table in ``plugins/callback/ops.py``: the operations
 with a plan (their title, the operation in capitals: a heavy rule above it), the other first words of a plan or a

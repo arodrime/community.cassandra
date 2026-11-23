@@ -14,74 +14,14 @@ description:
     questions, and every failure in full. Nothing for the tasks that go well otherwise (no task headers, no C(ok),
     C(changed) or C(skipping) lines, no retries, no play recap).
   - An operator message is a task with the task variable C(cassandra_output) set to C(true) (a literal, in the
-    task's own C(vars)). Its C(msg) is printed as plain text, a line per list item. When such a task fails (an
-    M(ansible.builtin.assert) or M(ansible.builtin.fail) written as a verdict), its C(msg) is printed the same way,
-    once for a C(run_once) task that runs again with the same C(msg) (a rescue some hosts reach later); in red,
-    or coloured by its lines when it is a block of its own (C(REFUSED  ...), C(FAILED  ...), C(SELF-CHECK FAILED ...)).
-    A marked task that fails on its own template (the error core gives instead of its C(msg)) is printed as the
-    default callback does.
-    A marked M(ansible.builtin.assert) that passes prints its C(success_msg), nothing without one.
-  - A failed task that is not ignored (C(ignore_errors)) is printed as the default callback prints it, task name
-    included; an unreachable host on one line (C(UNREACHABLE  node3  <the first sentence of the error>)), the
-    command that shows all of the error under it (C(ansible node3 -m ping -vvv)). A failure the playbook handles (a task of a block with a C(rescue)) on
-    one line too, its host, task and the first line of its message; nothing when that block sets the variable
-    C(cassandra_output_rescued) to C(true) (its rescue says what failed). Nothing for a failed task with the task
-    variable C(cassandra_output_said) set to C(true), the stop of a run whose verdict was printed just before (a
-    summary C(REFUSED  ...)). Diffs (C(--diff)) too.
-  - A role's argument check that refuses a variable (a value of the wrong type, from the inventory or C(-e), a
-    required one missing) is printed short once its task is over, one block for the nodes refused the same way (the
-    role, each variable and why, its value and the type it needs or ansible-core's reason, the nodes, then the way
-    out). With C(-v), the default callback's output, the role's whole argument spec included.
-  - The warnings of the tasks are printed too.
-  - The operator messages are coloured by the start of their lines (Ansible's colours, so C(ANSIBLE_NOCOLOR),
-    C(ANSIBLE_FORCE_COLOR) and a non-terminal output apply). C(WARNING) in O(warning_color), indented or not; C(DONE), C(HEALTHY),
-    C(NOTHING TO DO), C(READY), C(IMPORT ... nothing to act on) and a C(CHECK) with nothing left to do as ok; a C(CHECK) that
-    says what a real run C(would) do as a change; C(REFUSED), C(FAILED), C(STOPPED), C(NOT HEALTHY),
-    C(IMPORT ... FAILED), C(SELF-CHECK FAILED), a
-    C(CHECK) with a node that C(failed) and a progress line that stalled or failed as an error; C(NOTE), the
-    progress lines (C([1/2] node5 ...), and the waits for nodes down or a node to be NORMAL, C(... waiting for ...  1m30s/10m)),
-    the phase lines (ending with C(...)) and the first line of a plan or a screen (C(ADD NODE  ...), C(REFUSED  ...))
-    in O(progress_color). The lines of an informative summary
-    (a task that also sets the task variable C(cassandra_output_info) to C(true), a literal like C(cassandra_output))
-    in O(progress_color) too, but for its C(WARNING) lines and its lines with a mark of their own. The lines
-    indented under a coloured one keep its colour, but for an indented line with a mark of its own, which colours that line only (a node down
-    (C(← down)), a recap's failed node (C(node5  FAILED)) and a line of the other ends of a stream
-    with a C(STALLED) one (C(from node3   4.2/17.0 GiB   24% STALLED)) as an error, a setting that differs
-    (C(← differs)), a reset (C(will be reset)) and what it
-    deletes (C(DELETED)) as a change, wherever they are; what a node would get or got as a change too, on a line
-    of its own, not indented (apply_config's C(node1  would apply, then restart), C(node1  will apply), C(node1  applied))). The rows of
-    a C(FAILED) or C(STOPPED) recap do not keep its colour (the nodes done stay plain). The C(status)
-    playbook's verdict, C(ALL 5 NODES UP), as ok, followed by nodes joining, leaving or moving (C(1 JOINING))
-    as a change, C(1 NODE DOWN), C(1 NODE NOT REACHED) as an error; a ring that differs from the inventory, a
-    C(WARNING  ...) line under the verdict, as a warning; the rows of its table (C( node1  DN  10.0.0.5 ...)) by the
-    node's state, down as an error, joining, leaving or moving as a change. The messages themselves stay plain text.
-  - Rules mark the blocks out. A heavy one (C(=====)) above a plan or a screen (its first line C(REFUSED  ...),
-    C(READY  ...), C(IMPORT <cluster> ...), or a plan's title, the operation in capitals (C(ADD NODE  ...)))
-    and around a recap (C(DONE  ...), C(FAILED  ...), C(STOPPED  ...), C(WAY OUT  ...), C(CHECK  ...), C(NOTHING TO DO  ...),
-    C(HEALTHY  ...), C(NOT HEALTHY  ...)), around the C(status) playbook's verdict, its first lines (and the
-    warning under it), and under its tables. A light one (C(-----)) for each empty line inside them (the blank lines of the status
-    report stay blank), under a plan's first line and above a question; a heavy one for a line of C(=) inside them,
-    with its title (C(==== TO REVIEW ====)) when it has one (the sections of the C(import_cluster) screen). As wide as the terminal, 100 columns at most, a
-    blank line above and under each one. A line with only a space inside them separates two paragraphs of a block,
-    printed blank (not as a rule).
-  - The text of the C(help) playbook (a message with the task variable C(cassandra_output_help) set to C(true) too)
-    is laid out at the terminal's width (100 columns at most), its sections between rules, each operation's
-    name as ok, its commands (C($ ansible-playbook ...)) and the options of its commands in O(progress_color), what
-    they do plain.
-  - The output goes by blocks, one blank line between two, never two in a row. A phase line (one line ending with
-    C(...)) is a block of its own. A blank line comes before the
-    next operator message after a task with the task variable C(cassandra_output_gap) set to C(true) (a literal,
-    like C(cassandra_output); on an operator message itself, before its own lines; on a question, a
-    M(ansible.builtin.pause), above it), and after the answer to a question (the answer stays shown).
-  - A progress line (C([2/5] node2  restart  waiting  node4 is DN, waiting for it to come back  9m52s/10m), the line of
-    a check of a stream with the other ends under it) is rewritten in place on a terminal while the node's step goes
-    on, and left as it is once the step is over (C([2/5] node2  restarted  NORMAL after 30s), C(STALLED), C(FAILED))
-    or another node's line starts. In a log file or a pipe (a CI), the first line of a node, then one every 5 minutes,
-    and every change of state.
-  - The run's first line, the cluster it is on (C(prod  5 nodes  1 DC (dc1)  Cassandra 5.0.9)), in O(progress_color).
+    task's own C(vars)); its C(msg) is printed as plain text, a line per list item, coloured by the start of its
+    lines (Ansible's colours, so C(ANSIBLE_NOCOLOR), C(ANSIBLE_FORCE_COLOR) and a non-terminal output apply), with
+    rules around the plans, screens and recaps.
   - With C(-v) or more, everything is printed as the default callback does.
   - Set it in C(ansible.cfg) (C([defaults]) C(stdout_callback = community.cassandra.ops)) or with
     C(ANSIBLE_STDOUT_CALLBACK=community.cassandra.ops).
+  - What it prints, the task variables it reads, its colours, rules and progress lines are in the collection's
+    I(Operator output) guide (C(docs/docsite/rst/guide_output.rst)).
 options:
   progress_color:
     description:
