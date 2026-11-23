@@ -57,7 +57,8 @@ def test_decommission_node_says_reset_then_reimport(tmp_path, monkeypatch):
         "  1. empty node3 before reusing the host (its data is left in place):",
         "     ansible-playbook -i inventories community.cassandra.reset_node -e cassandra_hosts=my_cluster"
         " -e cassandra_target_nodes=node3",
-        P, "  2. drop node3 from the inventory: re-import the cluster with its inventory, the changes shown first:",
+        P, "  2. drop node3 from the inventory: re-import the cluster with its inventory,",
+        "     the changes shown first:",
         "     ansible-playbook -i inventories community.cassandra.import_cluster -e cassandra_hosts=my_cluster"
         " -e import_force=true --check --diff",
         P, "  3. then write them:",
@@ -89,7 +90,8 @@ def test_topology_done_then_the_same_todo(tmp_path, monkeypatch):
         "TO DO",
         "  1. empty node3 before reusing the host (its data is left in place):",
         "     ansible-playbook -i inventories community.cassandra.reset_node -e cassandra_target_nodes=node3",
-        P, "  2. drop node3, node9 from the inventory: re-import the cluster with its inventory, the changes shown first:",
+        P, "  2. drop node3, node9 from the inventory: re-import the cluster with its",
+        "     inventory, the changes shown first:",
         "     ansible-playbook -i inventories community.cassandra.import_cluster -e import_force=true --check --diff",
         P, "  3. then write them:",
         "     ansible-playbook -i inventories community.cassandra.import_cluster -e import_force=true"]

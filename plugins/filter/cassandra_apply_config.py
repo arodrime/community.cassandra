@@ -939,7 +939,7 @@ def _read_ahead_todo(nodes, restart_command, width=None):
     live = [str(n["name"]) for n in nodes if n.get("os_done") and READ_AHEAD_LIVE in (n.get("notes") or [])]
     if not live or not restart_command:
         return []
-    lines = out.todo([{
+    lines = out.todo(width=None, items=[{
         "text": "optional, when convenient: restart %s so that Cassandra reads the files it has open with the new"
                 " read-ahead (one node at a time; the new files use it already)" % out.nodes(live),
         "command": "%s --limit %s" % (restart_command, shlex.quote(",".join(live)))}])

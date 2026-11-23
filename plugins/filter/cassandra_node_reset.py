@@ -378,9 +378,10 @@ def _target_names(targets):
 
 def _refusal_lines(refused, op, cluster):
     """The refusal block: "REFUSED  add_node  <cluster>  nothing was changed", a blank line, then a line per node:
-    "node7 (dc1/rack_b): <what it holds> \u2014 <why>"."""
+    "node7 (dc1/rack_b): <what it holds> \u2014 <why>", within 79 columns (its next lines 2 columns in)."""
     return (["  ".join(x for x in ["REFUSED", op, cluster, "nothing was changed"] if x), ""]
-            + ["%s: %s" % (r["title"], " \u2014 ".join(x for x in (r.get("holds"), r.get("why")) if x)) for r in refused])
+            + cassandra_output.fit(["%s: %s" % (r["title"], " \u2014 ".join(x for x in (r.get("holds"), r.get("why")) if x))
+                                    for r in refused], 79))
 
 
 def _add_extra(nodes, asked_by, reset):

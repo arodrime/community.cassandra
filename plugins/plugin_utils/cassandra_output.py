@@ -1542,15 +1542,20 @@ def command(playbook, inventory=None, hosts=None, limit=None, extra=None, option
     return " ".join(parts)
 
 
-def todo(items, title="TO DO"):
+def todo(items, title="TO DO", width=79):
     """items: a string, or {text, command} (the command on its own line under
-    it) -> "TO DO", then "  1. text" numbered; nothing when no item."""
+    it) -> "TO DO", then "  1. text" numbered; nothing when no item. width:
+    an item's text within it, its next lines under the text (its command
+    stays whole, to copy); None: on one line."""
     entries = []
     for item in items or []:
         if not item:
             continue
         text, cmd = (item.get("text", ""), item.get("command", "")) if isinstance(item, dict) else (str(item), "")
         entry = ["  %d. %s%s" % (len(entries) + 1, text, ":" if cmd and text and not text.endswith(":") else "")]
+        if width and len(entry[0]) > width:
+            entry = textwrap.wrap(entry[0], width, subsequent_indent="     ", break_long_words=False,
+                                  break_on_hyphens=False)
         entries.append(entry + (["     " + cmd] if cmd else []))
     # an item on several lines: a blank line between two
     lines = spaced(entries) if any(len(e) > 1 for e in entries) else [line for e in entries for line in e]

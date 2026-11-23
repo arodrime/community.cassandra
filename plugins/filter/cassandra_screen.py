@@ -205,7 +205,9 @@ def cassandra_reset_warnings(plans):
         if plan.get("delete"):
             text = "%s: %s%d entries DELETED for good (no snapshot, no backup), in:" % (
                 item["name"], ", ".join(acts) + ", then " if acts else "", len(plan["delete"]))
-            warnings.append({"label": "data loss", "real_run": True, "text": [text, {"pre": plan.get("dirs") or []}]})
+            # its directories under the text, within 79 columns (a line that goes on, 2 columns more)
+            dirs = out.fit(plan.get("dirs") or [], WIDTH - len(out.WARNING))
+            warnings.append({"label": "data loss", "real_run": True, "text": [text, {"pre": dirs}]})
         elif acts:
             warnings.append({"label": "reset", "real_run": True,
                              "text": "%s: %s first (nothing to delete)" % (item["name"], ", ".join(acts))})

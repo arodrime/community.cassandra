@@ -74,11 +74,13 @@ def test_two_nodes_one_repository_down(tmp_path):
         "  node5, node6  Install python3.11: repository 'epel' unreachable (a repository or mirror problem on the node)",
         "",
         "TO DO",
-        "  1. check the repositories of node5, node6 (a mirror down or unreachable from them):",
+        "  1. check the repositories of node5, node6 (a mirror down or unreachable from",
+        "     them):",
         '     ansible -i %s node5,node6 -b -m ansible.builtin.command -a "dnf -q makecache"' % inventory,
         P, "  2. fix the repository or mirror on the node (or its proxy)",
-        P, "  3. or, when cqlsh gets its Python another way, set cassandra_cqlsh_python_manage: false in the inventory:"
-        " python3.11 only runs cqlsh on the new nodes (the reset check reads the keyspaces with cqlsh on a node of the"
-        " cluster)",
+        P, "  3. or, when cqlsh gets its Python another way, set",
+        "     cassandra_cqlsh_python_manage: false in the inventory: python3.11 only",
+        "     runs cqlsh on the new nodes (the reset check reads the keyspaces with",
+        "     cqlsh on a node of the cluster)",
         P, "  4. run it again once fixed (nothing was started):",
         "     ansible-playbook -i %s community.cassandra.add_node -e cassandra_target_nodes=node5,node6" % inventory]

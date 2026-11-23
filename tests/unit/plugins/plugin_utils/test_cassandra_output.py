@@ -384,11 +384,11 @@ def test_prepare_lines_many_nodes_ranges_and_nothing():
 def test_left_system_warning_once_with_its_nodes():
     hosts = [{"name": n, "left": ["/var/lib/cassandra/data"], "dirs": ["/data/cassandra"]} for n in ("node4", "node5")]
     lines = texts.left_system_warning(hosts + [{"name": "node6", "left": [], "dirs": ["/data/cassandra"]}])
-    assert max(len(line) for line in lines[1:]) <= 110  # wrapped, under the WARNING line (its colour)
+    assert max(len(line) for line in lines) <= 79  # wrapped, under the WARNING line (its colour)
     assert all(line.startswith("  ") for line in lines[1:])
-    text = " ".join(line.strip() for line in lines[1:])
-    assert lines[0] == ("WARNING  node4, node5: an old system keyspace in /var/lib/cassandra/data, not one of the data"
-                        " directories the config uses (/data/cassandra)")
+    assert lines[:2] == ["WARNING  node4, node5: an old system keyspace in /var/lib/cassandra/data, not",
+                         "  one of the data directories the config uses (/data/cassandra)"]
+    text = " ".join(line.strip() for line in lines[2:])
     assert text.startswith("Cassandra does not read it: the node starts empty")  # why: ignored for the run
     # the way out: its keyspace directories, not the whole directory; never another instance's
     assert "if no other Cassandra on node4, node5 uses it: delete by hand the keyspace directories in" in text
@@ -880,7 +880,8 @@ def test_removed_todo_reset_then_reimport_then_commit(tmp_path):
         "TO DO",
         "  1. empty node3 before reusing the host (its data is left in place):",
         "     ansible-playbook community.cassandra.reset_node -e cassandra_target_nodes=node3",
-        P, "  2. drop node3 from the inventory: re-import the cluster with its inventory, the changes shown first:",
+        P, "  2. drop node3 from the inventory: re-import the cluster with its inventory,",
+        "     the changes shown first:",  # (within 79 columns, the command whole)
         "     ansible-playbook community.cassandra.import_cluster -e import_force=true --check --diff",
         P, "  3. then write them:",
         "     ansible-playbook community.cassandra.import_cluster -e import_force=true",
@@ -898,8 +899,8 @@ def test_removed_todo_outside_git_another_dir_and_a_node_not_answering(tmp_path)
         "  1. empty node3, node4 before reusing the hosts (their data is left in place):",
         "     ansible-playbook -i inv/prod community.cassandra.reset_node -e cassandra_hosts=orders"
         " -e cassandra_target_nodes=node3,node4",
-        P, "  2. drop node3, node4, node9 from the inventory: re-import the cluster with its inventory, the changes shown"
-        " first:",
+        P, "  2. drop node3, node4, node9 from the inventory: re-import the cluster with",
+        "     its inventory, the changes shown first:",
         "     ansible-playbook -i inv/prod community.cassandra.import_cluster -e cassandra_hosts=orders"
         " -e import_force=true -e import_dir=inv/prod --check --diff",
         P, "  3. then write them:",
@@ -910,13 +911,13 @@ def test_removed_todo_outside_git_another_dir_and_a_node_not_answering(tmp_path)
     assert texts.removed_todo(["node3"], "node1", imported=False) == [
         "TO DO", "  1. empty node3 before reusing the host (its data is left in place):",
         "     ansible-playbook community.cassandra.reset_node -e cassandra_target_nodes=node3",
-        P, "  2. remove node3 from the inventory (or leave it marked cassandra_node_state: absent)"]
+        P, "  2. remove node3 from the inventory (or leave it marked cassandra_node_state:", "     absent)"]
 
 
 def test_removed_todo_reimport_reads_the_inventory():
     # no -i <node>, nor JMX login: the inventory gives the connection and the logins (vaulted too)
     lines = texts.removed_todo(["node3"], "node1", inventory=["inv"], hosts="", in_git=False, reimport_hosts="orders")
-    assert lines[5] == "     ansible-playbook -i inv community.cassandra.import_cluster -e cassandra_hosts=orders" \
+    assert lines[6] == "     ansible-playbook -i inv community.cassandra.import_cluster -e cassandra_hosts=orders" \
         " -e import_force=true --check --diff"
     text = "\n".join(texts.removed_todo(["node3"], "node1", inventory=["inv"], in_git=False))
     assert "jmx" not in text and "-i node1," not in text
@@ -931,7 +932,7 @@ def test_seeds_todo_first_in_the_removed_todo():
     assert texts.seeds_todo({"auto": [], "new": "x"}) is None
     lines = texts.removed_todo(["node3"], "node1", in_git=False, first=[item], imported=False)
     assert lines[1].startswith("  1. put the seeds the nodes now run with in the inventory (group_vars/prod/")
-    assert lines[3] == P and lines[4].startswith("  2. empty node3")
+    assert lines[4] == P and lines[5].startswith("  2. empty node3")
     # nothing removed: the seeds alone
     assert texts.removed_todo([], "node1", first=[item])[0] == "TO DO"
     assert texts.removed_todo([], "node1", first=[None]) == []

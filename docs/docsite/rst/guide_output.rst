@@ -187,7 +187,7 @@ Conventions
   (owner or mode only, read at start)``, ``node2  write +
   restart``, ``node5  up to date``.
 - **TO DO**: numbered, each with its full command, ready to paste (``-i`` and ``-e cassandra_hosts`` only when the
-  run needed them). An inventory change is followed by its commit only when the inventory is in a git work tree.
+  run needed them). An item's text within 79 columns, its next lines under it; its command whole, on its line. An inventory change is followed by its commit only when the inventory is in a git work tree.
 - The marker ``←`` points at what needs a look (``← down``, ``← differs``, ``← slow``).
 - **Status** (the ``status`` playbook): the verdict first, alone on its line, then the cluster, the node the ring
   is seen from (the node ``nodetool status`` ran on) and when (the controller's clock when it answered, with its time

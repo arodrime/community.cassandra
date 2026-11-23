@@ -222,6 +222,14 @@ def test_reset_warnings_one_per_node_with_something_to_do():
     assert "(A real run would also warn about: data loss, reset.)" in cassandra_screen(
         {"operation": "add_node", "warnings": warnings}, check=True)
     assert cassandra_reset_warnings([]) == []
+    # a directory's line past 79 columns under the warning (hostile S2c): its next lines 2 columns more
+    long_dir = ("/var/lib/cassandra/data (data; from inventory, cassandra.yaml): 6 entries: app, system, system_auth,"
+                " system_distributed, system_schema, system_traces")
+    plans = [{"name": "h-n4", "plan": {"stop": False, "disable": False, "delete": ["/x"], "dirs": [long_dir]}}]
+    lines = cassandra_screen({"operation": "add_node", "warnings": cassandra_reset_warnings(plans)}).split("\n")
+    assert lines[-3:] == ["         /var/lib/cassandra/data (data; from inventory, cassandra.yaml): 6",
+                          "           entries: app, system, system_auth, system_distributed,",
+                          "           system_schema, system_traces"], lines
 
 
 def test_a_step_of_another_playbook_asks_nothing():

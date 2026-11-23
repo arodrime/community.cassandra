@@ -491,13 +491,16 @@ def test_add_node_refusal_one_block_then_what_to_do():
     assert lines == [
         "REFUSED  add_node  my_cluster  nothing was changed",
         "",
-        "node7 (dc1/rack_b): holds 12.0 GiB of cluster 'my_cluster' (keyspaces shop), not in the ring, stopped"
-        " \u2014 a former member of this cluster: the writes only it holds would be lost if wiped",
-        "node8 (dc1/rack_c): holds 3.0 GiB of cluster 'billing', not in the ring, stopped"
-        " \u2014 its data is of cluster 'billing', neither 'my_cluster' nor the package's stock 'Test Cluster'",
+        "node7 (dc1/rack_b): holds 12.0 GiB of cluster 'my_cluster' (keyspaces shop),",  # within 79 columns
+        "  not in the ring, stopped \u2014 a former member of this cluster: the writes only",
+        "  it holds would be lost if wiped",
+        "node8 (dc1/rack_c): holds 3.0 GiB of cluster 'billing', not in the ring,",
+        "  stopped \u2014 its data is of cluster 'billing', neither 'my_cluster' nor the",
+        "  package's stock 'Test Cluster'",
         "",
         "TO DO",
-        "  1. if what node7 holds is not needed (snapshot or copy it first if in doubt), empty it:",
+        "  1. if what node7 holds is not needed (snapshot or copy it first if in doubt),",
+        "     empty it:",
         "     " + reset,
         " ",
         "  2. then run add_node again without node8:",
@@ -506,14 +509,16 @@ def test_add_node_refusal_one_block_then_what_to_do():
         "  3. or both in one run (add_node empties it first):",
         "     " + add + "node7,node9 -e cassandra_add_node_reset=true",
         " ",
-        "  4. node8: a node of another cluster: take it out of cassandra_target_nodes; then run add_node again:",
+        "  4. node8: a node of another cluster: take it out of cassandra_target_nodes;",
+        "     then run add_node again:",
         "     " + add + "node7,node8,node9",
     ]
     # refused for another reason only: the run again, or the others now
     lines = cassandra_add_node_refusal([other], cluster="my_cluster", targets=["node8", "node9"], inventory=["inventory"])
     assert lines[lines.index("TO DO"):] == [
         "TO DO",
-        "  1. node8: a node of another cluster: take it out of cassandra_target_nodes; then run add_node again:",
+        "  1. node8: a node of another cluster: take it out of cassandra_target_nodes;",
+        "     then run add_node again:",
         "     " + add + "node8,node9",
         " ",
         "  2. or add the other nodes now without node8:",
@@ -524,7 +529,8 @@ def test_add_node_refusal_one_block_then_what_to_do():
     assert lines[0] == "REFUSED  topology  nothing was changed"
     assert lines[lines.index("TO DO"):] == [
         "TO DO",
-        "  1. if what node7 holds is not needed (snapshot or copy it first if in doubt), empty it:",
+        "  1. if what node7 holds is not needed (snapshot or copy it first if in doubt),",
+        "     empty it:",
         "     " + reset,
         " ",
         "  2. then run topology again:",

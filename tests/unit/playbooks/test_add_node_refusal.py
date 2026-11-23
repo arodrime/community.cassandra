@@ -93,16 +93,19 @@ def test_former_member_and_node_of_another_cluster_one_block(tmp_path):
         "",
         "----",
         "",
-        "node7 (dc1/rack_b): holds 12.0 GiB of cluster 'my_cluster' (keyspaces shop), not in the ring, stopped"
-        " — a former member of this cluster: the writes only it holds would be lost if wiped",
-        "node8 (dc1/rack_c): holds 3.0 GiB of cluster 'billing', not in the ring, stopped"
-        " — its data is of cluster 'billing', neither 'my_cluster' nor the package's stock 'Test Cluster';"
-        " reset refused: /data: can not be read (without root?)",
+        "node7 (dc1/rack_b): holds 12.0 GiB of cluster 'my_cluster' (keyspaces shop),",
+        "  not in the ring, stopped — a former member of this cluster: the writes only",
+        "  it holds would be lost if wiped",
+        "node8 (dc1/rack_c): holds 3.0 GiB of cluster 'billing', not in the ring,",
+        "  stopped — its data is of cluster 'billing', neither 'my_cluster' nor the",
+        "  package's stock 'Test Cluster'; reset refused: /data: can not be read",
+        "  (without root?)",
         "",
         "----",
         "",
         "TO DO",
-        "  1. if what node7 holds is not needed (snapshot or copy it first if in doubt), empty it:",
+        "  1. if what node7 holds is not needed (snapshot or copy it first if in doubt),",
+        "     empty it:",
         "     ansible-playbook -i inventory community.cassandra.reset_node -e cassandra_target_nodes=node7",
         "",
         "  2. then run add_node again without node8:",
@@ -112,8 +115,9 @@ def test_former_member_and_node_of_another_cluster_one_block(tmp_path):
         "     ansible-playbook -i inventory community.cassandra.add_node -e cassandra_target_nodes=node7"
         " -e cassandra_add_node_reset=true",
         "",
-        "  4. node8: a node of another cluster: take it out of cassandra_target_nodes, or, if nothing it holds is needed,"
-        " empty its directories by hand (reset_node refuses another cluster's node); then run add_node again:",
+        "  4. node8: a node of another cluster: take it out of cassandra_target_nodes,",
+        "     or, if nothing it holds is needed, empty its directories by hand",
+        "     (reset_node refuses another cluster's node); then run add_node again:",
         "     ansible-playbook -i inventory community.cassandra.add_node -e cassandra_target_nodes=node7,node8",
     ]
 
@@ -126,7 +130,8 @@ def test_two_former_members(tmp_path):
     assert "TASK [" not in "\n".join(lines) and "fatal" not in "\n".join(lines)
     assert lines[lines.index("TO DO"):] == [
         "TO DO",
-        "  1. if what node7, node8 hold is not needed (snapshot or copy it first if in doubt), empty them:",
+        "  1. if what node7, node8 hold is not needed (snapshot or copy it first if in",
+        "     doubt), empty them:",
         "     ansible-playbook -i inventory community.cassandra.reset_node -e cassandra_target_nodes=node7,node8",
         "",
         "  2. then run add_node again:",
@@ -161,13 +166,15 @@ def test_a_node_already_in_the_ring_one_block(tmp_path):
         "",
         "----",
         "",
-        "node7 (10.0.0.7, dc1/rack_b): a dead node with this address is in the ring (DN, host ID 1e96). Adding this node would be a"
-        " replace, not an add: run replace_node.",
+        "node7 (10.0.0.7, dc1/rack_b): a dead node with this address is in the ring (DN,",
+        "  host ID 1e96). Adding this node would be a replace, not an add: run",
+        "  replace_node.",
         "",
         "----",
         "",
         "TO DO",
-        "  1. node7: do what its line above says, then run add_node again if still needed:",
+        "  1. node7: do what its line above says, then run add_node again if still",
+        "     needed:",
         "     ansible-playbook -i inventory community.cassandra.add_node -e cassandra_target_nodes=node7,node8",
         "",
         "  2. or add the other nodes now without node7:",
@@ -206,7 +213,7 @@ def test_a_former_member_with_a_directory_problem_gets_no_reset_suggested(tmp_pa
     rc, lines = run(tmp_path, "Refuse the new nodes add_node may not reset", {"node7": both, "node8": dict(
         FORMER, _cassandra_node_reset_plan={"problems": []}, _cassandra_node_reset_check={"problems": []})})
     assert rc != 0
-    text = "\n".join(lines)
+    text = " ".join(line.strip() for line in lines)  # (a line within 79 columns goes on under it)
     assert "reset refused: /data: can not be read (without root?)" in text
     assert "cassandra_add_node_reset=true" not in text and "reset_node" not in text
 

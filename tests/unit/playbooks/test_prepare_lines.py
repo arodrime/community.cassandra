@@ -201,8 +201,8 @@ def test_the_old_system_keyspace_warning_once_for_its_nodes():
         hostvars[h]["_cassandra_prepare_done"] = kept(hostvars[h], hosts)
     lines = said(WARN, hostvars, hosts)
     assert [line for line in lines if line.startswith("WARNING")] == [
-        "WARNING  node4, node5: an old system keyspace in /var/lib/cassandra/data, not one of the data directories the"
-        " config uses (/data/cassandra)"]
+        "WARNING  node4, node5: an old system keyspace in /var/lib/cassandra/data, not"]
+    assert lines[1] == "  one of the data directories the config uses (/data/cassandra)"
     hostvars["node4"]["_cassandra_prepare_done"]["left"] = hostvars["node5"]["_cassandra_prepare_done"]["left"] = []
     assert said(WARN, hostvars, hosts) is None
 

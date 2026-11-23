@@ -163,7 +163,8 @@ def test_health_check_a_node_down(tmp_path, port):
         "NOT HEALTHY  my_cluster  3 nodes checked, 1 problem",
         "  ring:  node2 10.100.100.4 (rack_b) DN   seen from node1..node3",
         "TO DO",
-        "  1. start Cassandra on node2 (its server first if it is down); a node that can't be recovered: replace_node",
+        "  1. start Cassandra on node2 (its server first if it is down); a node that",
+        "     can't be recovered: replace_node",
         "",
         "====",
     ]

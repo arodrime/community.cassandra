@@ -602,8 +602,8 @@ def test_nothing_to_do_lines():
         "WARNING  dc2 has no seed",
         "WARNING  10.0.0.9 is in the ring but in no host of the inventory: never touched",
         "WARNING  w", "NOTE  n", "", "TO DO",
-        "  1. put the seeds the nodes now run with in the inventory (group_vars/c1/, or a re-import writes them),"
-        " else apply_config puts cassandra_seeds back:",
+        "  1. put the seeds the nodes now run with in the inventory (group_vars/c1/, or",
+        "     a re-import writes them), else apply_config puts cassandra_seeds back:",
         '     cassandra_seeds: ["10.0.0.1"]']
     assert cassandra_topology_nothing_to_do(_plan(), "c1", 1) == [
         "NOTHING TO DO  topology  c1  the ring has the 1 node of the inventory, they run with the seeds of cassandra_seeds"]

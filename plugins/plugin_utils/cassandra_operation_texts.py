@@ -162,9 +162,9 @@ def prepare_lines(hosts, check=False):
     return [line.replace(NBSP, " ") for line in table(rows, width=79)]
 
 
-def _wrapped(text, width=110, indent="  "):
-    return textwrap.wrap(text, width, initial_indent=indent, subsequent_indent=indent, break_on_hyphens=False,
-                         break_long_words=False)
+def _wrapped(text, width=79, indent="  ", first=None):
+    return textwrap.wrap(text, width, initial_indent=indent if first is None else first, subsequent_indent=indent,
+                         break_on_hyphens=False, break_long_words=False)
 
 
 def left_system_warning(hosts):
@@ -179,8 +179,8 @@ def left_system_warning(hosts):
     for (left, dirs), names in said:
         where, shown = ", ".join(d.rstrip("/") or "/" for d in left), who(names, counted=False)
         inside = [d for d in dirs if any(d.startswith(x.rstrip("/") + "/") for x in left)]
-        lines.append(WARNING + "%s: an old system keyspace in %s, not one of the data directories the config uses (%s)"
-                     % (shown, where, ", ".join(dirs) or "?"))
+        lines += _wrapped(WARNING + "%s: an old system keyspace in %s, not one of the data directories the config"
+                          " uses (%s)" % (shown, where, ", ".join(dirs) or "?"), first="")
         lines += _wrapped(
             "Cassandra does not read it: the node starts empty in its own data directories, the run goes on. It is"
             " what an earlier install or config left there: disk space taken, and a config pointing there again"
