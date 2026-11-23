@@ -67,8 +67,14 @@
       {{ cassandra_listen_address if cassandra_listen_address | default('') not in ['', 'localhost']
          else ansible_facts['default_ipv4']['address'] | default(inventory_hostname) }}
 
-- name: Read the services
-  ansible.builtin.service_facts:
+# (its unit alone: service_facts would put every service of the node in its facts, copied again for each task)
+- name: Read the state of the Cassandra unit
+  ansible.builtin.command:
+    argv: [systemctl, show, cassandra.service, --property=SubState]
+  register: cassandra_node_facts_unit
+  changed_when: false
+  failed_when: false  # no systemd: not running as a unit
+  check_mode: false  # a read
 
 # the whole file, passwords included: not kept for the rest of the run
 - name: Forget the file
@@ -77,4 +83,4 @@
 
 - name: Is Cassandra running here
   ansible.builtin.set_fact:
-    _cassandra_preflight_running: "{{ ansible_facts.services['cassandra.service'].state | default('') == 'running' }}"
+    _cassandra_preflight_running: "{{ cassandra_node_facts_unit.stdout | default('') == 'SubState=running' }}"

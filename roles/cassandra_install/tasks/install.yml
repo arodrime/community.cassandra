@@ -24,13 +24,18 @@
 - name: Check the Java
   ansible.builtin.import_tasks: java_check.yml
 
+# (the ones the role reads: package_facts would put all in the node's facts, copied again for each task)
 - name: Snapshot installed packages (change report)
-  ansible.builtin.package_facts:
-  check_mode: false
+  ansible.builtin.command:
+    argv: "{{ _cassandra_install_read_names | community.cassandra.cassandra_package_query(ansible_facts['os_family']) }}"
+  register: cassandra_install_packages_read
+  changed_when: false
+  failed_when: false  # a name not installed; nothing read at all: the snapshot below fails
+  check_mode: false  # a read
 
 - name: Keep the snapshot
   ansible.builtin.set_fact:
-    _cassandra_install_before: "{{ ansible_facts['packages'] }}"
+    _cassandra_install_before: "{{ cassandra_install_packages_read | community.cassandra.cassandra_installed_packages }}"
 
 - name: Java, the package or a tarball, as the default java
   ansible.builtin.import_tasks: java.yml

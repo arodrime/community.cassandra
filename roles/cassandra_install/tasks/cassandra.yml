@@ -36,10 +36,6 @@
 - name: Check the installed version against cassandra_package_version
   when: cassandra_package_version != ""
   block:
-    - name: Read the installed packages
-      ansible.builtin.package_facts:
-      check_mode: false
-
     - name: Refuse to change the version of an installed node
       ansible.builtin.assert:
         that: _installed == '' or _installed == cassandra_package_version or _cassandra_install_upgrade | default(false)
@@ -50,7 +46,7 @@
         quiet: true
       vars:
         _installed: >-
-          {{ (ansible_facts.packages['cassandra'] | default([{}]) | first).version | default('')
+          {{ (_cassandra_install_before['cassandra'] | default([{}]) | first).version | default('')
              | regex_replace('^([0-9]+\.[0-9]+\.[0-9]+).*$', '\1') }}
 
 # Another release of an installed node: in the repository it reads, else a stop before the package is changed

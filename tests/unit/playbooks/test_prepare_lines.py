@@ -76,7 +76,7 @@ PACKAGES = {"cassandra": [{"version": "5.0.9"}], "openjdk-17-jre-headless": [{"v
 
 def install_state(**variables):
     """The state cassandra_install's report task gives the change report (rendered)."""
-    variables = dict({"ansible_facts": {"packages": PACKAGES}, "cassandra_install_java": True,
+    variables = dict({"_cassandra_install_now": PACKAGES, "cassandra_install_java": True,
                       "cassandra_java_package": "openjdk-17-jre-headless", "_cassandra_java_home": "",
                       "cassandra_java_version": 17}, **variables)
     return render_all(INSTALL["cassandra_change_report_state"], **dict(INSTALL, **variables))
@@ -276,7 +276,7 @@ def test_the_roles_own_tasks_give_what_the_lines_read():
     assert state["cassandra"] == "5.0.9"
     assert state["java"] == {"managed": True, "package": "openjdk-17-jre-headless", "version": "17.0.12+7-1~deb12u1",
                              "home": "", "series": "17"}
-    assert install_state(ansible_facts={"packages": {}})["cassandra"] == ""  # --check on a blank host
+    assert install_state(_cassandra_install_now={})["cassandra"] == ""  # --check on a blank host
     # cassandra_linux: how many of its items are the disks'
     assert int(render_all(LINUX["cassandra_change_report_state"], _cassandra_disk_items=[{}, {}])["disk_changes"]) == 2
     assert int(render_all(LINUX["cassandra_change_report_state"])["disk_changes"]) == 0

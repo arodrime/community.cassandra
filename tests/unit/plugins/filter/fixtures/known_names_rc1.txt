@@ -51,6 +51,7 @@ cassandra_apply_config_os_done	both
 cassandra_apply_config_os_live	both
 cassandra_apply_config_outcomes	both
 cassandra_apply_config_package	both
+cassandra_apply_config_packages_read	both
 cassandra_apply_config_proven	both
 cassandra_apply_config_read	both
 cassandra_apply_config_recap	both
@@ -386,6 +387,8 @@ cassandra_firewall_install	both
 cassandra_firewall_manage	both
 cassandra_firewall_offline	both
 cassandra_firewall_port_sources	both
+cassandra_firewall_read	both
+cassandra_firewall_read_offline	both
 cassandra_firewall_snapshot	both
 cassandra_firewall_stopped	both
 cassandra_fit	both
@@ -483,6 +486,8 @@ cassandra_install_java	both
 cassandra_install_jemalloc	both
 cassandra_install_method	both
 cassandra_install_package_file	both
+cassandra_install_packages_after	both
+cassandra_install_packages_read	both
 cassandra_install_password	both
 cassandra_install_release	both
 cassandra_install_rpms	both
@@ -769,6 +774,7 @@ cassandra_medusa_nodetool_password_file	both
 cassandra_medusa_nodetool_port	both
 cassandra_medusa_nodetool_ssl	both
 cassandra_medusa_nodetool_username	both
+cassandra_medusa_packages_read	both
 cassandra_medusa_pip	both
 cassandra_medusa_pip_cert	both
 cassandra_medusa_pip_extra_args	both
@@ -867,6 +873,7 @@ cassandra_new_node_url_results	both
 cassandra_new_node_urls	both
 cassandra_node_add_state	both
 cassandra_node_data_dirs	both
+cassandra_node_facts_unit	both
 cassandra_node_facts_yaml	both
 cassandra_node_list	both
 cassandra_node_reset_bootstrap_mark	both
@@ -1311,6 +1318,7 @@ cassandra_tde_keystore	both
 cassandra_tde_keystore_password	both
 cassandra_tde_store_type	both
 cassandra_timesync_install	both
+cassandra_timesync_read	both
 cassandra_timesync_service_result	both
 cassandra_timesync_unit	both
 cassandra_todo	both

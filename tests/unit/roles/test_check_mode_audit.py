@@ -97,7 +97,6 @@ AUDITED = {
     (I, "cqlsh_links.yml", "Link cqlshlib into them (RedHat)", "skipped"): ("report",),
     (I, "cqlsh_links.yml", "Find the cqlsh Python pointers written by this role", "forced"): ("read",),
     (I, "cqlsh_python.yml", "Get the system python3 version", "forced"): ("read",),
-    (I, "cqlsh_python.yml", "Read the installed packages", "forced"): ("read",),
     (I, "cqlsh_python.yml", "Check whether the distro repos have python3.11 (Ubuntu)", "forced"): ("read",),
     (I, "cqlsh_python.yml", "Add the deadsnakes PPA (Ubuntu without python3.11)", "skipped"): ("gap",),
     (I, "cqlsh_python.yml", "Look up python3.11 in the enabled repos (RedHat)", "forced"): ("read",),

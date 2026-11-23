@@ -270,7 +270,7 @@
 730	roles/cassandra_install/tasks/release_check.yml :: Look for the release in the repository :: ansible.builtin.shell (jinja)
 456	roles/cassandra_install/tasks/release_check.yml :: Stop when the release is not in the repository :: ansible.builtin.fail.msg (jinja)
 463	roles/cassandra_install/tasks/release_check.yml :: Stop when the release is not in the repository :: vars._fix (jinja)
-437	roles/cassandra_install/tasks/report.yml :: Build the change list :: ansible.builtin.set_fact._cassandra_install_items (jinja)
+425	roles/cassandra_install/tasks/report.yml :: Build the change list :: ansible.builtin.set_fact._cassandra_install_items (jinja)
 646	roles/cassandra_install/tasks/report.yml :: Keep the candidate versions :: ansible.builtin.set_fact._cassandra_install_candidates (jinja)
 520	roles/cassandra_install/tasks/report.yml :: List the packages this role manages :: ansible.builtin.set_fact._cassandra_install_new (jinja)
 412	roles/cassandra_linux/tasks/disk_state.yml :: Read the devices' read-ahead, scheduler, type and ids :: ansible.builtin.shell (jinja)

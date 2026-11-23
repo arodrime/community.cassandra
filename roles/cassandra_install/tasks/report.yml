@@ -17,9 +17,20 @@
     _cassandra_install_files_pkgs: "{{ _cassandra_packages if cassandra_install_method == 'packages' else [] }}"
 
 - name: Refresh installed packages
-  ansible.builtin.package_facts:
-  check_mode: false
+  ansible.builtin.command:
+    argv: "{{ _cassandra_install_read_names | community.cassandra.cassandra_package_query(ansible_facts['os_family']) }}"
+  register: cassandra_install_packages_after
+  changed_when: false
+  failed_when: false  # as the snapshot's (install.yml)
+  check_mode: false  # a read
   when: _cassandra_install_new | length > 0
+
+# the packages installed now: read again above, else as the snapshot found them
+- name: Keep what is installed now
+  ansible.builtin.set_fact:
+    _cassandra_install_now: >-
+      {{ cassandra_install_packages_after | community.cassandra.cassandra_installed_packages
+         if cassandra_install_packages_after is not skipped else _cassandra_install_before }}
 
 # apt has no module for this (apt-cache policy is read-only)
 - name: Look up candidate versions (check mode, Debian & Ubuntu)
@@ -68,9 +79,9 @@
       {{ _cassandra_install_items | default([]) + [{
            'item': 'package ' ~ item,
            'before': 'absent',
-           'after': (ansible_facts['packages'][item][0].version
-                     ~ (('-' ~ ansible_facts['packages'][item][0].release) if ansible_facts['packages'][item][0].release | default('') else ''))
-                    if (item in ansible_facts['packages'] and not _cassandra_install_check)
+           'after': (_cassandra_install_now[item][0].version
+                     ~ (('-' ~ _cassandra_install_now[item][0].release) if _cassandra_install_now[item][0].release | default('') else ''))
+                    if (item in _cassandra_install_now and not _cassandra_install_check)
                     else (_cassandra_install_candidates[item] | default('') or 'not in configured repos yet')}] }}
   loop: "{{ _cassandra_install_new }}"
 
@@ -104,11 +115,11 @@
     cassandra_change_report_items: "{{ _cassandra_install_items | default([]) }}"
     # what is installed (the step lines of a prepare), from the packages read above
     cassandra_change_report_state:
-      cassandra: "{{ (ansible_facts['packages']['cassandra'] | default([{}]) | first).version | default('') }}"
+      cassandra: "{{ (_cassandra_install_now['cassandra'] | default([{}]) | first).version | default('') }}"
       java:
         managed: "{{ cassandra_install_java | bool }}"
         package: "{{ _java_package }}"
-        version: "{{ (ansible_facts['packages'][_java_package] | default([{}]) | first).version | default('') }}"
+        version: "{{ (_cassandra_install_now[_java_package] | default([{}]) | first).version | default('') }}"
         home: "{{ _cassandra_java_home }}"
         series: "{{ cassandra_java_version | string }}"
     _java_package: "{{ [cassandra_java_package] | flatten | map('regex_replace', '[=<>].*$', '') | first | default('') }}"  # without its version

@@ -77,7 +77,7 @@
     - _cassandra_cqlsh_python != ''
     # offline without python3.11: leave cqlsh as it is rather than point it at nothing
     - not (cassandra_offline | bool and _cassandra_cqlsh_python == '/usr/bin/python3.11'
-           and 'python3.11' not in ansible_facts['packages'] | default({}))
+           and 'python3.11' not in _cassandra_install_before)
 
 # Only the files written by this role (marker), e.g. not a pip-installed cqlsh
 - name: Find the cqlsh Python pointers written by this role

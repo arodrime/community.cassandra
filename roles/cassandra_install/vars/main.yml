@@ -9,6 +9,15 @@ _cassandra_cqlsh_managed: "{{ cassandra_cqlsh_python_manage | bool and cassandra
 _cassandra_packages: >-
   {{ ([cassandra_packages] | flatten + (['cassandra-tools'] if cassandra_install_tools | bool else [])) | unique }}
 
+# the installed packages the role reads (install.yml), by name: package_facts would put every package of the node
+# in its facts, copied again for each task. Its own packages, Java's (as given, and without a version), and every
+# other one its tasks look for in _cassandra_install_before (a unit test checks the list has them)
+_cassandra_install_read_names: >-
+  {{ ([cassandra_java_package] | flatten + [cassandra_java_package] | flatten | map('regex_replace', '[=<>].*$', '') | list
+      + _cassandra_packages + _cassandra_install_read_others) | unique }}
+_cassandra_install_read_others: [cassandra, cassandra-java-tarball, gzip, jemalloc, libjemalloc2, procps-ng, python3,
+                                 python3-debian, python3.11, shadow-utils, tar]
+
 _cassandra_java_tarball_entry: "{{ cassandra_java_tarballs | community.cassandra.cassandra_java_tarball(cassandra_java_version) }}"
 
 _cassandra_java_tarball_from_entry: >-

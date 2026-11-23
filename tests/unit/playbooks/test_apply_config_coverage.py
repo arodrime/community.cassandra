@@ -613,13 +613,14 @@ def test_a_release_with_its_repository_changed_is_looked_for_before_the_stop():
         assert all(render("{{ %s }}" % w, variables) for w in look["when"]) is looked, (release, sections, check)
     repository, read, include = look["block"]
     assert repository["ansible.builtin.include_role"] == {"name": "community.cassandra.cassandra_repository"}
-    assert "ansible.builtin.package_facts" in read and read["check_mode"] is False
+    assert read["ansible.builtin.command"]["argv"].startswith("{{ ['cassandra'] |") and read["check_mode"] is False
     assert include["ansible.builtin.include_role"] == {"name": "community.cassandra.cassandra_install",
                                                        "tasks_from": "release_check.yml"}
     # the release wanted (the inventory's cassandra_package_version, not the installed one the live step kept)
     assert include["vars"]["_cassandra_install_upgrade"] is True and "cassandra_package_version" not in include["vars"]
-    assert render(include["vars"]["_cassandra_install_before"], {"ansible_facts": {"packages": {
-        "cassandra": [{"version": "4.1.11"}]}}}) == {"cassandra": [{"version": "4.1.11"}]}
+    assert render(include["vars"]["_cassandra_install_before"], {"cassandra_apply_config_packages_read": {
+        "rc": 0, "stdout": "installed\tcassandra\t4.1.11\t1\t(none)\tnoarch"}}) == {"cassandra": [
+            {"name": "cassandra", "version": "4.1.11", "release": "1", "epoch": None, "arch": "noarch"}]}
     assert include["vars"]["_cassandra_install_again"] == "resume"
     # what the run changed on the node before its turn: said in the stop (observed: the facts the plays set)
     before = include["vars"]["_cassandra_install_changed_before"]

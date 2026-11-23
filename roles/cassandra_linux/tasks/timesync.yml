@@ -22,8 +22,12 @@
 # installed already: no package manager call (it reads every repository's
 # metadata, and fails when a mirror is down though nothing is to install)
 - name: Read the installed packages (time sync)
-  ansible.builtin.package_facts:
-  check_mode: false
+  ansible.builtin.command:
+    argv: "{{ [_cassandra_timesync_pkg] | community.cassandra.cassandra_package_query(ansible_facts['os_family']) }}"
+  register: cassandra_timesync_read
+  changed_when: false
+  failed_when: false  # not installed; nothing read at all: the task below fails
+  check_mode: false  # a read
   when:
     - cassandra_linux_timesync | bool
     - not cassandra_offline | bool
@@ -43,7 +47,7 @@
   when:
     - cassandra_linux_timesync | bool
     - not cassandra_offline | bool
-    - _cassandra_timesync_pkg not in ansible_facts['packages'] | default({})
+    - _cassandra_timesync_pkg not in cassandra_timesync_read | default({}) | community.cassandra.cassandra_installed_packages
 
 - name: Look for the time sync service (offline)
   ansible.builtin.command:

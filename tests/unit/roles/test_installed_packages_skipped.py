@@ -80,20 +80,25 @@ def test_the_other_install_tasks():
         assert runs(role, file, name, _cassandra_install_before={}, **dict(INSTALL, **extra)), name
         assert not runs(role, file, name, _cassandra_install_before=EL8, **dict(INSTALL, **extra)), name
     linux = {"cassandra_linux_timesync": True, "cassandra_offline": False, "_cassandra_timesync_pkg": "chrony"}
-    assert runs("cassandra_linux", "timesync.yml", "Install time sync package", ansible_facts={"packages": {}}, **linux)
-    assert not runs("cassandra_linux", "timesync.yml", "Install time sync package", ansible_facts={"packages": {"chrony": []}},
+    assert runs("cassandra_linux", "timesync.yml", "Install time sync package", cassandra_timesync_read=read(), **linux)
+    assert not runs("cassandra_linux", "timesync.yml", "Install time sync package", cassandra_timesync_read=read("chrony"),
                     **linux)
     firewall = {"cassandra_offline": False, "firewall_packages": ["python-firewall", "firewalld"]}
-    assert runs("cassandra_firewall", "firewall.yml", "Ensure firewall package is installed", ansible_facts={"packages": {}},
+    assert runs("cassandra_firewall", "firewall.yml", "Ensure firewall package is installed", cassandra_firewall_read=read(),
                 **firewall)
     assert runs("cassandra_firewall", "firewall.yml", "Ensure firewall package is installed",
-                ansible_facts={"packages": {"firewalld": []}}, **firewall)  # its Python bindings missing
+                cassandra_firewall_read=read("firewalld"), **firewall)  # its Python bindings missing
     assert not runs("cassandra_firewall", "firewall.yml", "Ensure firewall package is installed",
-                    ansible_facts={"packages": {"firewalld": [], "python3-firewall": []}}, **firewall)
+                    cassandra_firewall_read=read("firewalld", "python3-firewall"), **firewall)
     assert not runs("cassandra_firewall", "firewall.yml", "Ensure firewall package is installed",
-                    ansible_facts={"packages": {"ufw": []}}, cassandra_offline=False, firewall_packages=["ufw"])
+                    cassandra_firewall_read=read("ufw"), cassandra_offline=False, firewall_packages=["ufw"])
     medusa = {"cassandra_offline": False, "_cassandra_medusa_python_pending": False,
               "_cassandra_medusa_packages": ["python3.11", "python3.11-pip"]}
-    assert runs("cassandra_medusa", "main.yml", "Install them", ansible_facts={"packages": {"python3.11": []}}, **medusa)
+    assert runs("cassandra_medusa", "main.yml", "Install them", cassandra_medusa_packages_read=read("python3.11"), **medusa)
     assert not runs("cassandra_medusa", "main.yml", "Install them",
-                    ansible_facts={"packages": {"python3.11": [], "python3.11-pip": []}}, **medusa)
+                    cassandra_medusa_packages_read=read("python3.11", "python3.11-pip"), **medusa)
+
+
+def read(*names):
+    """The registered result of a read of the installed packages (cassandra_package_query on RedHat): names installed."""
+    return {"rc": 0, "stdout": "\n".join("installed\t%s\t1.0\t1.el9\t(none)\tx86_64" % n for n in names)}
