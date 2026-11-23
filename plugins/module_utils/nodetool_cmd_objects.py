@@ -73,7 +73,7 @@ _JMX_REFUSED = re.compile(r"Invalid username or password|Authentication failed|C
 _JMX_UNREACHED = re.compile(r"Failed to connect to '(?P<where>[^']*)'(?: - (?P<kind>\w+): '?(?P<why>[^'\n]*?)'?\.?)?\s*$", re.M)
 JMX_CAUSES = (
     (re.compile(r"Connection refused", re.I), "Connection refused",
-     "Cassandra is not running there, or its JMX listens on another port (cassandra_jmx_port). "
+     "Cassandra is not running there, or its JMX listens on another port (option port). "
      "Check: systemctl status cassandra, and its system.log"),
     (re.compile(r"timed out|SocketTimeout", re.I), "no answer in time",
      "a firewall, or JMX listening on another address (LOCAL_JMX in cassandra-env.sh)"),
@@ -95,7 +95,7 @@ def version_error(out, err, host=None, port=None):
     first = said[0][len("error:"):].strip() if said else ""
     if _JMX_REFUSED.search(text):
         return ("JMX login refused ({0}): check the JMX user and its password or password file "
-                "(cassandra_jmx_username, cassandra_jmx_password_file or cassandra_jmx_password)").format(
+                "(options username, password_file or password)").format(
                     first or "authentication failed")
     unreached = _JMX_UNREACHED.search(text)
     if unreached:
@@ -105,7 +105,7 @@ def version_error(out, err, host=None, port=None):
             if pattern.search(why or text):
                 return "nodetool gets no answer from JMX on {0} ({1}): {2}".format(where, cause, hint)
         return ("nodetool can't reach JMX on {0}{1}: is Cassandra running there (systemctl status cassandra), "
-                "on that JMX port (cassandra_jmx_port)?").format(where, " ({0})".format(why) if why else "")
+                "on that JMX port (option port)?").format(where, " ({0})".format(why) if why else "")
     errors = [line.strip() for line in (err or "").strip().splitlines() if line.strip()]
     found = first or (out or "").strip() or (errors[0] if errors else "")
     return "nodetool version failed{0}: is Cassandra installed and running?{1}".format(

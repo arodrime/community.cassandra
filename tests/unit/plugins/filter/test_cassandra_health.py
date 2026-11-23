@@ -559,7 +559,7 @@ def test_report_error_that_is_not_text():
 def test_the_jmx_message_is_not_followed_by_nodetool_line():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_health import _error
     msg = ("nodetool gets no answer from JMX on 127.0.0.1:7199 (Connection refused): Cassandra is not running there, or"
-           " its JMX listens on another port (cassandra_jmx_port). Check: systemctl status cassandra, and its system.log")
+           " its JMX listens on another port (option port). Check: systemctl status cassandra, and its system.log")
     err = "nodetool: Failed to connect to '127.0.0.1:7199' - ConnectException: 'Connection refused'.\n"
     assert _error({"failed": True, "msg": msg, "stderr": err}) == msg
 
