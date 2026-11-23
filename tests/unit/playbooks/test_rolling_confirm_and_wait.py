@@ -116,7 +116,8 @@ def test_the_wait_is_for_nodes_down_and_ports_only():
 
 
 REFUSED_JMX = ("nodetool gets no answer from JMX on 10.0.0.2:7199 (Connection refused): Cassandra is not running there, "
-               "or its JMX listens on another port (option port). Check: systemctl status cassandra, and its system.log")
+               "or its JMX listens on another port (module option port; cassandra_jmx_port in the roles). Check:"
+               " systemctl status cassandra, and its system.log")
 TIMED_OUT = "nodetool gets no answer from JMX on 10.0.0.2:7199 (no answer in time): a firewall, or JMX listening on another address"
 NAMES = {"10.0.0.1": "node1", "10.0.0.2": "node2", "10.0.0.4": "node4"}
 

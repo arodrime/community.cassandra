@@ -18,17 +18,19 @@ STACK = "-- StackTrace --\njavax.security.auth.login.FailedLoginException: Inval
 @pytest.mark.parametrize("out, err, msg", [
     ("", "error: Invalid username or password\n" + STACK,
      "JMX login refused (Invalid username or password): check the JMX user and its password or password file"
-     " (options username, password_file or password)"),
+     " (module options username, password_file, password; cassandra_jmx_* in the roles)"),
     ("", "error: Authentication failed! Credentials required\n-- StackTrace --\njava.lang.SecurityException: x\n",
      "JMX login refused (Authentication failed! Credentials required): check the JMX user and its password or"
-     " password file (options username, password_file or password)"),
+     " password file (module options username, password_file, password; cassandra_jmx_* in the roles)"),
     # JMX not reached: where, why in a word, what to look at (not "Unable to determine Cassandra version")
     ("", "nodetool: Failed to connect to '127.0.0.1:7199' - ConnectException: 'Connection refused'.\n",
      "nodetool gets no answer from JMX on 127.0.0.1:7199 (Connection refused): Cassandra is not running there, or its"
-     " JMX listens on another port (option port). Check: systemctl status cassandra, and its system.log"),
+     " JMX listens on another port (module option port; cassandra_jmx_port in the roles). Check: systemctl"
+     " status cassandra, and its system.log"),
     ("", "nodetool: Failed to connect to '127.0.0.1:7199' - ConnectException: 'Connection refused (Connection refused)'.\n",
      "nodetool gets no answer from JMX on 127.0.0.1:7199 (Connection refused): Cassandra is not running there, or its"
-     " JMX listens on another port (option port). Check: systemctl status cassandra, and its system.log"),
+     " JMX listens on another port (module option port; cassandra_jmx_port in the roles). Check: systemctl"
+     " status cassandra, and its system.log"),
     ("", "nodetool: Failed to connect to '10.0.0.9:7199' - SocketTimeoutException: 'connect timed out'.\n",
      "nodetool gets no answer from JMX on 10.0.0.9:7199 (no answer in time): a firewall, or JMX listening on another"
      " address (LOCAL_JMX in cassandra-env.sh)"),
@@ -39,10 +41,10 @@ STACK = "-- StackTrace --\njavax.security.auth.login.FailedLoginException: Inval
      "nodetool gets no answer from JMX on nohost:7199 (unknown host): that host name does not resolve"),
     ("", "nodetool: Failed to connect to '127.0.0.1:7199'\n",
      "nodetool can't reach JMX on 127.0.0.1:7199: is Cassandra running there (systemctl status cassandra), on that JMX"
-     " port (option port)?"),
+     " port (module option port; cassandra_jmx_port in the roles)?"),
     ("", "nodetool: Failed to connect to '127.0.0.1:7199' - IOException: 'something else'.\n",
      "nodetool can't reach JMX on 127.0.0.1:7199 (something else): is Cassandra running there (systemctl status"
-     " cassandra), on that JMX port (option port)?"),
+     " cassandra), on that JMX port (module option port; cassandra_jmx_port in the roles)?"),
     # anything else: nodetool's own line
     ("", "/bin/sh: 1: nodetool: not found\n", "nodetool version failed: is Cassandra installed and running?"
                                               " (/bin/sh: 1: nodetool: not found)"),
