@@ -64,3 +64,10 @@ def test_the_real_dpkg_query():
     done = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
     found = cassandra_installed_packages({"rc": done.returncode, "stdout": done.stdout, "stderr": done.stderr})
     assert list(found) == ["dpkg"] and found["dpkg"][0]["version"]
+
+
+def test_the_reads_run_in_english():
+    # a name not installed is known by rpm's and dpkg-query's English words: the tasks run them with LC_ALL=C;
+    # translated, nothing is understood and the read fails rather than taking every name for missing
+    with pytest.raises(AnsibleFilterError):
+        cassandra_installed_packages({"rc": 1, "stdout": "le paquet chrony n'est pas installé", "stderr": ""})

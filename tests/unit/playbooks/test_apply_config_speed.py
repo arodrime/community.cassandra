@@ -11,8 +11,6 @@ import os
 
 import yaml
 
-from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task
-
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 # the task files that still run package_facts or service_facts, and when: none on the preflight or apply_config's
 # compare (only shrinks)
@@ -27,7 +25,7 @@ FACTS_LEFT = {
 FACTS_MODULES = ("ansible.builtin.package_facts", "ansible.builtin.service_facts", "package_facts", "service_facts")
 # the tasks of the playbooks and roles (each task of a block, the block not counted): a task more costs every node
 # a build of its variables, run or skipped. Raise it with the reason in the commit, or lower it
-TASKS_MAX = 1929
+TASKS_MAX = 1928
 
 
 def tasks(items):
@@ -62,14 +60,20 @@ def test_task_count_ceiling():
     assert count <= TASKS_MAX, "%d tasks, %d allowed" % (count, TASKS_MAX)
 
 
-def test_the_recap_reads_the_nodes_once():
-    # the recap and the report read every node's results: kept as facts first (a fact beats the play's variable of
-    # the same name), each read building every node's variables once, not at each use
-    with open(os.path.join(ROOT, "playbooks", "apply_config.yml"), encoding="utf-8") as f:
-        summary = find_play(yaml.safe_load(f), "Summary")
-    read = find_task(summary, "Read what each node got")
-    kept = read["ansible.builtin.set_fact"]
-    assert read["run_once"] is True and set(kept) <= set(summary["vars"])
-    assert all(value == "{{ %s }}" % name for name, value in kept.items())
-    names = [t["name"] for t in summary["tasks"]]
-    assert names.index("Read what each node got") < names.index("Print the changes") < names.index("Write the report of the run")
+
+def test_every_named_read_of_packages_is_in_english():
+    # cassandra_installed_packages knows a name not installed by rpm's and dpkg-query's English words
+    reads = [task for path, found in task_files() for task in found
+             if "cassandra_package_query" in str(task.get("ansible.builtin.command"))]
+    assert len(reads) == 7
+    assert all((task.get("environment") or {}).get("LC_ALL") == "C" for task in reads)
+
+
+def test_the_preflight_reads_whether_cassandra_runs_from_its_unit():
+    from ansible_collections.community.cassandra.tests.unit.helpers import render
+    with open(os.path.join(ROOT, "roles", "cassandra_operation", "tasks", "node_facts.yml"), encoding="utf-8") as f:
+        found = list(tasks(yaml.safe_load(f)))
+    expr = next(t for t in found if t.get("name") == "Is Cassandra running here")["ansible.builtin.set_fact"]
+    for read, running in (({"rc": 0, "stdout": "SubState=running"}, True), ({"rc": 0, "stdout": "SubState=dead"}, False),
+                          ({"rc": 0, "stdout": "SubState=failed"}, False), ({"rc": 1, "stdout": ""}, False)):
+        assert str(render(expr["_cassandra_preflight_running"], cassandra_node_facts_unit=read)) == str(running)

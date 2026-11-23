@@ -19,6 +19,8 @@
 - name: Refresh installed packages
   ansible.builtin.command:
     argv: "{{ _cassandra_install_read_names | community.cassandra.cassandra_package_query(ansible_facts['os_family']) }}"
+  environment:
+    LC_ALL: C  # "not installed" said in English, as the filter reads it
   register: cassandra_install_packages_after
   changed_when: false
   failed_when: false  # as the snapshot's (install.yml)

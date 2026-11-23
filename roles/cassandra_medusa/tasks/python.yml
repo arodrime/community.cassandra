@@ -135,6 +135,8 @@
     - name: Read the installed packages
       ansible.builtin.command:
         argv: "{{ _cassandra_medusa_packages | community.cassandra.cassandra_package_query(ansible_facts['os_family']) }}"
+      environment:
+        LC_ALL: C  # "not installed" said in English, as the filter reads it
       register: cassandra_medusa_packages_read
       changed_when: false
       failed_when: false  # not installed; nothing read at all: the tasks below fail

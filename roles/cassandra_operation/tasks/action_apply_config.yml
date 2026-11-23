@@ -93,6 +93,8 @@
     - name: Read the installed packages
       ansible.builtin.command:
         argv: "{{ ['cassandra'] | community.cassandra.cassandra_package_query(ansible_facts['os_family']) }}"
+      environment:
+        LC_ALL: C  # "not installed" said in English, as the filter reads it
       register: cassandra_apply_config_packages_read
       changed_when: false
       failed_when: false  # not installed; nothing read at all: the check below fails

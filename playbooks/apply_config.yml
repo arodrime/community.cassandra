@@ -1664,17 +1664,6 @@
         cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
       tags: [always]  # under --tags too
 
-    # read once for the recap and the report (each read of the nodes' results builds every node's variables): a
-    # fact beats the play's variable of the same name
-    - name: Read what each node got
-      ansible.builtin.set_fact:
-        _start: "{{ _start }}"
-        _refused: "{{ _refused }}"
-        _more: "{{ _more }}"
-        _diff: "{{ _diff }}"
-        _nodes: "{{ _nodes }}"
-      run_once: true
-
     - name: Print the changes
       ansible.builtin.debug:
         msg: >-

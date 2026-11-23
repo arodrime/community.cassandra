@@ -24,6 +24,8 @@
 - name: Read the installed packages (time sync)
   ansible.builtin.command:
     argv: "{{ [_cassandra_timesync_pkg] | community.cassandra.cassandra_package_query(ansible_facts['os_family']) }}"
+  environment:
+    LC_ALL: C  # "not installed" said in English, as the filter reads it
   register: cassandra_timesync_read
   changed_when: false
   failed_when: false  # not installed; nothing read at all: the task below fails
