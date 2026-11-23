@@ -189,7 +189,8 @@ def left_system_warning(hosts):
         where, shown = ", ".join(d.rstrip("/") or "/" for d in left), who(names, counted=False)
         inside = [d for d in dirs if any(d.startswith(x.rstrip("/") + "/") for x in left)]
         lines += _wrapped(WARNING + "%s: an old system keyspace in %s, not one of the data directories the config"
-                          " uses (%s)" % (shown, where, ", ".join(dirs) or "?"), first="")
+                          " uses (%s)" % (shown, where, ", ".join(dirs) or "?"), first="",
+                          indent=" " * len(WARNING))  # its next lines under its text, apart from the paragraphs
         lines += _wrapped(
             "Cassandra does not read it: the node starts empty in its own data directories, the run goes on. It is"
             " what an earlier install or config left there: disk space taken, and a config pointing there again"
@@ -265,7 +266,7 @@ def removed_todo(removed, reimport_from, inventory=None, hosts=None, inventory_d
     if shown_dir and os.path.normpath(shown_dir) != "inventories":
         reimport.append(extra_var("import_dir", shown_dir))
     if not imported or not reimport_from:
-        items.append("remove %s from the inventory (or leave %s marked cassandra_node_state: absent)" % (
+        items.append(("remove %s from the inventory (or leave %s marked cassandra_node_state:" + NBSP + "absent)") % (
             names, "it" if len(removed) == 1 else "them"))
     else:
         # read with the inventory: its connection variables and logins (secrets.yml) come with it

@@ -753,7 +753,7 @@ def _where(step):
 
 def table(rows, indent="", width=None):
     """Rows of cells, each column as wide as its widest cell, 2 spaces between. width: a row longer than that
-    goes on over lines under its last cell, cut between words; with less room than NARROW there, that cell
+    goes on over lines under its last cell not empty, cut between words; with less room than NARROW there, that cell
     under the others, 4 columns in (None: rows as long as they are)."""
     rows = [[str(c) for c in row] for row in rows]
     if not rows:
@@ -765,8 +765,9 @@ def table(rows, indent="", width=None):
         return lines
     out = []
     for row, line in zip(rows, lines):
-        text = row[-1]
-        if len(line) <= width or not text.strip():
+        # the cell the line ends with: the last one not empty, as the line shows it (its spaces after it dropped)
+        text = next((c.rstrip() for c in reversed(row) if c.strip()), "")
+        if len(line) <= width or not text:
             out.append(line)
             continue
         start = len(line) - len(text)
@@ -1546,17 +1547,26 @@ def todo(items, title="TO DO", width=79):
     """items: a string, or {text, command} (the command on its own line under
     it) -> "TO DO", then "  1. text" numbered; nothing when no item. width:
     an item's text within it, its next lines under the text (its command
-    stays whole, to copy); None: on one line."""
+    stays whole, to copy); None: on one line. A "\n" in a text starts a line
+    of its own under the text; a NBSP keeps two words on the same line
+    ("name:\xa0value", printed with a space)."""
     entries = []
     for item in items or []:
         if not item:
             continue
         text, cmd = (item.get("text", ""), item.get("command", "")) if isinstance(item, dict) else (str(item), "")
-        entry = ["  %d. %s%s" % (len(entries) + 1, text, ":" if cmd and text and not text.endswith(":") else "")]
-        if width and len(entry[0]) > width:
-            entry = textwrap.wrap(entry[0], width, subsequent_indent="     ", break_long_words=False,
-                                  break_on_hyphens=False)
-        entries.append(entry + (["     " + cmd] if cmd else []))
+        text += ":" if cmd and text and not text.endswith(":") else ""
+        number = "  %d. " % (len(entries) + 1)
+        under = " " * len(number)  # the item's next lines, under its text (item 10 and on: one column more)
+        entry = []
+        for i, part in enumerate(text.split("\n")):
+            first = under if i else number
+            if width and len(first + part) > width:
+                entry += textwrap.wrap(part, width, initial_indent=first, subsequent_indent=under,
+                                       break_long_words=False, break_on_hyphens=False)
+            else:
+                entry.append(first + part)
+        entries.append([line.replace(NBSP, " ") for line in entry] + ([under + cmd] if cmd else []))
     # an item on several lines: a blank line between two
     lines = spaced(entries) if any(len(e) > 1 for e in entries) else [line for e in entries for line in e]
     return [title] + lines if lines else []

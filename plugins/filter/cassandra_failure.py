@@ -137,7 +137,7 @@ def cassandra_failure_report(failures, operation="", cluster="", what="could not
     if by_family:
         items.append("fix the repository or mirror on the node (or its proxy)")
     if python311:
-        items.append("or, when cqlsh gets its Python another way, set cassandra_cqlsh_python_manage: false in the"
+        items.append("or, when cqlsh gets its Python another way, set cassandra_cqlsh_python_manage:" + out.NBSP + "false in the"
                      " inventory: python3.11 only runs cqlsh on the new nodes (the reset check reads the keyspaces with"
                      " cqlsh on a node of the cluster)")
     if rerun:

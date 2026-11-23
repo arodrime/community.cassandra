@@ -397,7 +397,8 @@ def test_left_system_warning_once_with_its_nodes():
     assert max(len(line) for line in lines) <= 79  # wrapped, under the WARNING line (its colour)
     assert all(line.startswith("  ") for line in lines[1:])
     assert lines[:2] == ["WARNING  node4, node5: an old system keyspace in /var/lib/cassandra/data, not",
-                         "  one of the data directories the config uses (/data/cassandra)"]
+                         "         one of the data directories the config uses (/data/cassandra)"]
+    assert lines[2].startswith("  Cassandra does not read it")  # a paragraph: 2 columns in, the head's text 9
     text = " ".join(line.strip() for line in lines[2:])
     assert text.startswith("Cassandra does not read it: the node starts empty")  # why: ignored for the run
     # the way out: its keyspace directories, not the whole directory; never another instance's
@@ -805,6 +806,38 @@ def test_todo():
         "     ansible-playbook x"]
 
 
+def test_todo_item_ten_and_on_under_its_text():
+    items = ["step %d" % i for i in range(1, 10)] + [{"text": "a long step" + " word" * 16, "command": "x y"}]
+    lines = out.todo(items)
+    assert lines[-3:] == ["  10. a long step word word word word word word word word word word word word",
+                          "      word word word word:", "      x y"]
+
+
+def test_todo_a_newline_starts_a_line_under_the_text():
+    assert out.todo(["first line\nsecond line"]) == ["TO DO", "  1. first line", "     second line"]
+    assert out.todo(["first line\nsecond line"], width=None) == ["TO DO", "  1. first line", "     second line"]
+
+
+def test_todo_keeps_a_name_and_its_value_together():
+    # a NBSP between them: never cut there, printed as a space
+    text = "word " * 8 + "abc cassandra_cqlsh_python_manage:%sfalse in the inventory"
+    assert out.todo([text % " "])[1:] == [  # a space: cut between them
+        "  1. " + "word " * 8 + "abc cassandra_cqlsh_python_manage:", "     false in the inventory"]
+    lines = out.todo([text % out.NBSP])
+    assert lines[1:] == ["  1. " + "word " * 8 + "abc", "     cassandra_cqlsh_python_manage: false in the inventory"]
+    assert all(out.NBSP not in line for line in lines)
+
+
+def test_table_cut_under_the_last_cell_not_empty():
+    # the last cell with spaces after it: cut where it starts all the same
+    lines = out.table([["node1", "word " * 20]], width=40)
+    assert lines[1].startswith(" " * 7 + "word") and all(len(line) <= 40 for line in lines)
+    # an empty last cell: the cell before it is the one cut
+    lines = out.table([["node1", "word " * 20, ""], ["node2", "a", "b"]], width=40)
+    assert all(len(line) <= 40 for line in lines), lines
+    assert lines[0].startswith("node1  word") and lines[1].startswith(" " * 7 + "word")
+
+
 def test_inventory_steps_with_and_without_git(tmp_path):
     plain = tmp_path / "plain"
     (plain / "inv").mkdir(parents=True)
@@ -921,7 +954,8 @@ def test_removed_todo_outside_git_another_dir_and_a_node_not_answering(tmp_path)
     assert texts.removed_todo(["node3"], "node1", imported=False) == [
         "TO DO", "  1. empty node3 before reusing the host (its data is left in place):",
         "     ansible-playbook community.cassandra.reset_node -e cassandra_target_nodes=node3",
-        P, "  2. remove node3 from the inventory (or leave it marked cassandra_node_state:", "     absent)"]
+        P, "  2. remove node3 from the inventory (or leave it marked",
+        "     cassandra_node_state: absent)"]
 
 
 def test_removed_todo_reimport_reads_the_inventory():
