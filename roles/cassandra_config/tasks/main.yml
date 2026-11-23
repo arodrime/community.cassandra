@@ -65,9 +65,13 @@
     - name: Remove what the Prometheus exporter's agent no longer needs
       ansible.builtin.include_tasks: prometheus_exporter_cleanup.yml
 
+# (included only when one of its three parts has something to write: a task skipped costs each node a build of
+# its variables)
 - name: JMX users and cqlsh credentials
   ansible.builtin.include_tasks: access.yml
-  when: cassandra_config_pkg_conf.stat.exists
+  when:
+    - cassandra_config_pkg_conf.stat.exists
+    - cassandra_jmx_users | length > 0 or cassandra_cqlsh_credentials | length > 0 or cassandra_jmx_ssl_enabled | bool
 
 - name: Report
   ansible.builtin.include_role:
