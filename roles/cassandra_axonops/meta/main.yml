@@ -1,0 +1,19 @@
+---
+galaxy_info:
+  author: Alain Rodriguez
+  description: Install the AxonOps agent on a Cassandra node and write its axon-agent.yml.
+  platforms:
+    - name: RedHat
+      versions:
+      - all
+    - name: Debian
+      versions:
+      - all
+    - name: Ubuntu
+      versions:
+      - all
+
+  galaxy_tags:
+    - cassandra
+    - database
+    - monitoring

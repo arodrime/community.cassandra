@@ -245,8 +245,9 @@
         _cassandra_medusa_compare: true  # (check mode applied to it, which ansible_check_mode does not tell)
       when: cassandra_medusa_enabled | default(false) | bool
 
-    # The package repository, the packages and tools (cassandra_install: cqlsh's Python, dsbulk, jemalloc), the firewall:
-    # not read by the running Cassandra (jemalloc: at its next start), applied at the node's turn, no restart for them.
+    # The package repository, the packages and tools (cassandra_install: cqlsh's Python, dsbulk, jemalloc), the firewall,
+    # the AxonOps agent (cassandra_axonops_enabled): not read by the running Cassandra (jemalloc, the AxonOps Java agent:
+    # at its next start), applied at the node's turn, no restart for them.
     # Compared as Medusa is (check mode applied to them: _cassandra_compare); never on a node whose version changes by
     # another procedure (stopped before any change); on a newer release of its series, with the release check of its
     # restart window (applied live all the same, its package kept at the release installed). The firewall only with
@@ -258,7 +259,8 @@
           check_mode: true
       loop: >-
         {{ ['cassandra_repository', 'cassandra_install']
-           + (['cassandra_firewall'] if cassandra_manage_firewall | default(false) | bool else []) }}
+           + (['cassandra_firewall'] if cassandra_manage_firewall | default(false) | bool else [])
+           + (['cassandra_axonops'] if cassandra_axonops_enabled | default(false) | bool else []) }}
       loop_control:
         loop_var: _cassandra_compared_role  # their own loops use item (else a warning on screen for each)
       vars:
@@ -553,7 +555,8 @@
         cassandra_apply_config_restart_why: "{{ (([_os_why] if _os_why else []) + _b_why) | join(', ') or _restart_why }}"
         # (the plan and the --check recap) what a real run does to it, in the order it does it: its intentions,
         # never their outcome; [] for a node not restarted nor started (its usual words)
-        cassandra_apply_config_steps: "{{ _steps }}"
+        # (the AxonOps agent set up before the config is written: cassandra-env.sh loads its Java agent)
+        cassandra_apply_config_steps: "{{ _steps | community.cassandra.cassandra_apply_config_axonops_steps(_extras) }}"
         # stopped by an interrupted run in its window for its time sync: its clock let sync before the start
         cassandra_apply_config_resumed_stop: "{{ _stopped | bool and _clock.mark_timesync is defined }}"
         # left stopped by an interrupted run of its own (the mark of its restart window: a resume starts it)
@@ -648,14 +651,23 @@
         # restart for them
         _medusa: "{{ _cassandra_medusa_items | default([]) if cassandra_medusa_enabled | default(false) | bool else [] }}"
         _medusa_live: "Medusa: not read by Cassandra"
-        _extras_live: "the repository, packages, firewall: not read by Cassandra"  # (EXTRAS_LIVE)
+        # (EXTRAS_LIVE; AXONOPS_LIVE when the AxonOps agent alone)
+        _extras_live: >-
+          {{ 'the repository, packages, firewall: not read by Cassandra'
+             if _extras | rejectattr('section', 'eq', 'AxonOps') | list
+             else 'the AxonOps agent: its Java agent and config read at the next start' }}
         # the repository, packages and tools, firewall (compared on a node whose version stays: _cassandra_compare)
         _seen: "{{ _cassandra_change_report_seen | default({}) }}"
         _extras: >-
-          {{ ([] if (cassandra_apply_config_version | default({})).kind | default('') not in ['', 'release'] else
-              _cassandra_repository_items | default([]) | map('combine', {'section': 'Repository'}) | list
-              + _seen.get('cassandra_install', {}).get('items', []) | map('combine', {'section': 'Packages'}) | list
-              + _seen.get('cassandra_firewall', {}).get('items', []) | map('combine', {'section': 'Firewall'}) | list) }}
+          {{ [] if (cassandra_apply_config_version | default({})).kind | default('') not in ['', 'release']
+             else _extras_repository + _extras_others }}
+        _extras_repository: >-
+          {{ _cassandra_repository_items | default([]) | map('combine', {'section': 'Repository'}) | list
+             + _seen.get('cassandra_install', {}).get('items', []) | map('combine', {'section': 'Packages'}) | list }}
+        _extras_others: >-
+          {{ _seen.get('cassandra_firewall', {}).get('items', []) | map('combine', {'section': 'Firewall'}) | list
+             + (_seen.get('cassandra_axonops', {}).get('items', []) | map('combine', {'section': 'AxonOps'}) | list
+                if cassandra_axonops_enabled | default(false) | bool else []) }}
         _java: "{{ cassandra_java_plan_todo | default(false) | bool and cassandra_jvm.pid is defined }}"
         _release: "{{ (cassandra_apply_config_version | default({})).kind | default('') == 'release' }}"
         # a secret in the environment the unit (or the drop-in of the package's init script) is written with: its file

@@ -58,6 +58,33 @@
         _cassandra_config_perm_file: jmx_prometheus.yml  # their owner and group, the config's mode
       when: cassandra_prometheus_exporter_enabled | bool
 
+    # cassandra-env.sh sources it: without it, Cassandra would not start (the playbooks apply cassandra_axonops,
+    # which installs it, before this role). A command: skipped under check mode, apply_config's compare included
+    # (check mode applied to the role, which ansible_check_mode does not tell), where it may come later
+    - name: Look for the AxonOps Java agent's options file
+      ansible.builtin.command:
+        argv: [test, -e, "{{ _cassandra_config_axonops_options }}"]
+      register: cassandra_config_axonops_options
+      changed_when: false
+      failed_when: false
+      when: cassandra_axonops_enabled | default(false) | bool
+
+    - name: Refuse to load an AxonOps Java agent not installed
+      ansible.builtin.fail:
+        msg: "{{ ('cassandra_config  ' ~ inventory_hostname) | community.cassandra.cassandra_refused(_said) | join(_nl) }}"
+      when:
+        - cassandra_axonops_enabled | default(false) | bool
+        - cassandra_config_axonops_options is not skipped
+        - cassandra_config_axonops_options.rc != 0
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _said:
+          - "{{ _cassandra_config_axonops_options }} is missing (cassandra_axonops_enabled)."
+          - "cassandra-env.sh would source it: Cassandra would not start."
+          - "WAY OUT  apply the cassandra_axonops role first (apply_config,"
+          - "create_cluster and add_node do), then run again."
+
     - name: Write the files and directories
       ansible.builtin.import_tasks: apply.yml
 

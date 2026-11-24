@@ -25,7 +25,6 @@
 1202	playbooks/apply_config.yml :: Find what each node needs / Note what this node needs :: ansible.builtin.set_fact.cassandra_apply_config_kept_running (jinja)
 4808	playbooks/apply_config.yml :: Find what each node needs / Note what this node needs :: ansible.builtin.set_fact.cassandra_apply_config_notes (jinja)
 396	playbooks/apply_config.yml :: Find what each node needs / Note what this node needs :: vars._b_why (jinja)
-407	playbooks/apply_config.yml :: Find what each node needs / Note what this node needs :: vars._extras (jinja)
 377	playbooks/apply_config.yml :: Find what each node needs / Note what this node needs :: vars._mode_ahead (jinja)
 1237	playbooks/apply_config.yml :: Find what each node needs / Note what this node needs :: vars._no_effect (jinja)
 518	playbooks/apply_config.yml :: Find what each node needs / Note what this node needs :: vars._restart_items (jinja)

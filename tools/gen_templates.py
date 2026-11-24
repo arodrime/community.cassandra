@@ -337,8 +337,10 @@ ENV_COMMON = [
      'JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file={{ cassandra_jmx_remote_access_file }}"'),
     # remote JMX over TLS (cassandra_jmx_ssl_*): the stock lines of the remote branch, each on with its variable
 ] + JMX_SSL + [
-    # the file's last line: your snippet after it
-    ('JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"', 'JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"' + append_snippet("_cassandra_config_snippet_env")),
+    # the file's last line: the AxonOps Java agent's options file sourced after it (cassandra_axonops_enabled), then
+    # your snippet
+    ('JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"', 'JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"' + append_snippet("_cassandra_config_axonops_line")
+     + append_snippet("_cassandra_config_snippet_env")),
 ]
 
 

@@ -70,6 +70,8 @@ COVERAGE = [
      "the JVM options files and cassandra-env.sh: restart (none when the JVM's arguments are proven the same)"),
     ([r"^cassandra_log_.*$", "cassandra_logback_root_extra_refs", "cassandra_debug_log_enabled"], RESTART,
      "logback.xml: restart (none when logback re-reads it, scan=\"true\")"),
+    (["cassandra_axonops_enabled"], RESTART,
+     "the line loading the AxonOps Java agent at the end of cassandra-env.sh: restart (the agent set up first)"),
     ([r"^cassandra_prometheus_exporter_(?!sources$).*$"], RESTART,
      "the Prometheus exporter's agent (read at start; its rules reloaded at its next scrape)"),
     ([r"^cassandra_jmx_(?!username$|password$|password_file$).*$", "cassandra_local_jmx"], RESTART,
@@ -137,6 +139,9 @@ COVERAGE = [
     ([r"^cassandra_linux_\w+$", r"^cassandra_data_(?!dir$|file_directories$)\w+$", "cassandra_sysfs_block_root"], LIVE,
      "the OS settings (cassandra_linux): live; what is not done under a running Cassandra in its restart window"),
     ([r"^cassandra_medusa_\w+$"], LIVE, "Medusa: not read by Cassandra, live"),
+    ([r"^cassandra_axonops_(?!enabled$)\w+$"], LIVE,
+     "the AxonOps agent (cassandra_axonops): live, axon-agent restarted; Cassandra's Java agent reads its jar and"
+     " axon-agent.yml at its next start (said)"),
 
     # --- not a node setting ---
     (["cassandra_config_confirm", "cassandra_config_backup", "cassandra_config_force_identity_change",

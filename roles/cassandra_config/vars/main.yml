@@ -48,6 +48,13 @@ _cassandra_config_own_loggers:
   org.apache.cassandra.audit: cassandra_log_audit_file
 # the appenders of the stock logback.xml <root> may name (AUDIT: with cassandra_log_audit_file)
 _cassandra_config_stock_appenders: [SYSTEMLOG, DEBUGLOG, ASYNCDEBUGLOG, STDOUT]
+# The AxonOps agent (cassandra_axonops_enabled, role cassandra_axonops): its Java agent package's options file,
+# sourced at the end of cassandra-env.sh (it adds the -javaagent and, on Java 9+, the module flags it needs)
+_cassandra_config_axonops_options: /usr/share/axonops/axonops-jvm.options
+_cassandra_config_axonops_line: "{{ _cassandra_config_axonops_text if cassandra_axonops_enabled | default(false) | bool else '' }}"
+_cassandra_config_axonops_text: |-
+  # AxonOps agent (cassandra_axonops_enabled)
+  . {{ _cassandra_config_axonops_options }}
 _cassandra_config_snippet_env: >-
   {{ (lookup('ansible.builtin.template', cassandra_config_template_snippets['cassandra-env.sh']) | regex_replace('\n+$', ''))
      if 'cassandra-env.sh' in cassandra_config_template_snippets else '' }}

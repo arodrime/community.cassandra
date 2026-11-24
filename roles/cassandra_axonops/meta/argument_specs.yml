@@ -1,0 +1,160 @@
+---
+argument_specs:
+  main:
+    short_description: Install the AxonOps agent on a Cassandra node and write its axon-agent.yml.
+    description:
+      - Installs C(axon-agent) and the AxonOps Java agent package built for the node's Cassandra series and Java,
+        from AxonOps' repository, a mirror of it, or package files; adds the account Cassandra runs as to the
+        C(axonops) group and C(axonops) to Cassandra's group; writes C(/etc/axonops/axon-agent.yml); enables and
+        starts C(axon-agent).
+      - The playbooks of the collection apply it when C(cassandra_axonops_enabled) is true, before
+        C(cassandra_config), which then adds C(. /usr/share/axonops/axonops-jvm.options) at the end of
+        C(cassandra-env.sh) (Cassandra loads the Java agent at its next start).
+      - Never restarts Cassandra.
+    options:
+      cassandra_axonops_enabled:
+        type: bool
+        default: false
+        description:
+          - The playbooks apply the role, and C(cassandra_config) loads the Java agent from C(cassandra-env.sh).
+          - Turned off, the line goes from C(cassandra-env.sh) (a restart); the packages, the config and the
+            service are left as they are.
+      cassandra_axonops_server_host:
+        type: str
+        default: ""
+        description:
+          - The AxonOps server the agent connects to (required).
+      cassandra_axonops_server_port:
+        type: int
+        default: 1888
+        description:
+          - Its agents port.
+      cassandra_axonops_org:
+        type: str
+        default: ""
+        description:
+          - The organisation name the server knows (required).
+      cassandra_axonops_key:
+        type: str
+        default: ""
+        description:
+          - The agent key (AxonOps Cloud or Enterprise); C("") for none. Keep it in a vault.
+      cassandra_axonops_tls_mode:
+        type: str
+        default: disabled
+        choices: [disabled, TLS, mTLS]
+        description:
+          - TLS to the server.
+      cassandra_axonops_tls_skip_verify:
+        type: bool
+        default: false
+        description:
+          - With TLS, do not check the server's certificate.
+      cassandra_axonops_tls_ca_file:
+        type: str
+        default: ""
+        description:
+          - With TLS, the CA file the server's certificate is checked against (C("") for the system's).
+      cassandra_axonops_tls_cert_file:
+        type: str
+        default: ""
+        description:
+          - With mTLS, the agent's certificate.
+      cassandra_axonops_tls_key_file:
+        type: str
+        default: ""
+        description:
+          - With mTLS, its key.
+      cassandra_axonops_ntp_hosts:
+        type: list
+        elements: str
+        default: []
+        description:
+          - NTP servers the agent checks the clock against, e.g. C(["ntp1.example.com:123"]); C([]) to let it
+            find them.
+      cassandra_axonops_extra_settings:
+        type: dict
+        default: {}
+        description:
+          - "More settings, merged into C(axon-agent.yml) section by section (they win), e.g.
+            C({axon-agent: {disable_command_exec: true}})."
+      cassandra_axonops_agent_version:
+        type: str
+        default: ""
+        description:
+          - The C(axon-agent) version, e.g. C(2.0.36). Empty installs the newest when absent and never upgrades it.
+      cassandra_axonops_java_agent_version:
+        type: str
+        default: ""
+        description:
+          - The Java agent package version, e.g. C(1.1.1); 1.1.0 or later, which ships the options file
+            C(cassandra-env.sh) loads. Empty as for O(cassandra_axonops_agent_version).
+      cassandra_axonops_java_agent_package:
+        type: str
+        default: ""
+        description:
+          - Empty picks it from C(cassandra_version) and C(cassandra_java_version)
+            (C(axon-cassandra4.0-agent-jdk8), C(axon-cassandra4.0-agent) on Java 11, the same for 4.1,
+            C(axon-cassandra5.0-agent-jdk11), C(axon-cassandra5.0-agent-jdk17)); another pair is refused.
+          - A Java agent package of another series or Java found installed is removed.
+      cassandra_axonops_package_files:
+        type: list
+        elements: str
+        default: []
+        description:
+          - Package files on the controller (.deb or .rpm) installed instead of a repository (air-gapped
+            hosts), C(axon-agent) and the Java agent package. No repository is added then.
+      cassandra_offline:
+        type: bool
+        default: false
+        description:
+          - Download nothing, no repository added; the packages come from C(cassandra_axonops_package_files) or
+            from a repository the hosts already have.
+      cassandra_axonops_repository_manage:
+        type: bool
+        description:
+          - Add the AxonOps repository (C(false) when the hosts get it otherwise).
+          - Defaults to V(true), V(false) with O(cassandra_offline) or O(cassandra_axonops_package_files).
+      cassandra_axonops_repository_url:
+        type: str
+        description:
+          - AxonOps' repository or a mirror of it (an Artifactory apt or yum repository).
+          - Defaults to C(https://packages.axonops.com/apt) on Debian and Ubuntu, C(https://packages.axonops.com/yum)
+            on the RedHat family.
+      cassandra_axonops_repository_suite:
+        type: str
+        default: axonops-apt
+        description:
+          - apt only, its suite (distribution).
+      cassandra_axonops_repository_component:
+        type: str
+        default: main
+        description:
+          - apt only, its component.
+      cassandra_axonops_repository_key_url:
+        type: str
+        description:
+          - Defaults to C(https://packages.axonops.com/apt/repo-signing-key.gpg) on Debian and Ubuntu, C("") on the
+            RedHat family.
+          - The key the repository is signed with, armored or binary (apt needs one; yum C("") checks no
+            signature, as for AxonOps' own yum repository).
+      cassandra_axonops_repository_username:
+        type: str
+        default: ""
+        description:
+          - Login for the mirror (also sent for the key when it is on the same server).
+      cassandra_axonops_repository_password:
+        type: str
+        default: ""
+        description:
+          - Its password or token. Keep it in a vault.
+      cassandra_axonops_cassandra_user:
+        type: str
+        description:
+          - The account Cassandra runs as, added to the C(axonops) group. Defaults to C(cassandra_service_user),
+            else C(cassandra_user), else C(cassandra).
+      cassandra_axonops_cassandra_group:
+        type: str
+        description:
+          - Cassandra's group, C(axonops) is added to it. Defaults to C(cassandra_service_group), else
+            C(cassandra_group), else C(cassandra).

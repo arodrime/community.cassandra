@@ -1,0 +1,107 @@
+---
+# AxonOps' repository, or a mirror of it (cassandra_axonops_repository_url)
+- name: A password goes with a user
+  ansible.builtin.assert:
+    that: cassandra_axonops_repository_password == "" or cassandra_axonops_repository_username != ""
+    fail_msg: >-
+      cassandra_axonops_repository_password is set without cassandra_axonops_repository_username:
+      set both (with a token, the account it belongs to as the user), then run again.
+    quiet: true
+
+- name: The AxonOps apt repository (Debian & Ubuntu)
+  when: ansible_facts['os_family'] == 'Debian'
+  block:
+    - name: An apt repository needs its signing key
+      ansible.builtin.assert:
+        that: cassandra_axonops_repository_key_url != ''
+        fail_msg: >-
+          cassandra_axonops_repository_key_url is empty: apt needs the key the repository is signed with
+          (AxonOps': https://packages.axonops.com/apt/repo-signing-key.gpg; a mirror that signs with its own
+          key: that key). Set it, or set cassandra_axonops_repository_manage to false when the hosts already
+          have the repository, then run again.
+        quiet: true
+
+    # apt reads credentials from auth.conf.d (apt_auth.conf(5)), not from the sources
+    - name: Credentials of the AxonOps apt repository
+      ansible.builtin.copy:
+        content: |
+          # Managed by Ansible (community.cassandra.cassandra_axonops)
+          machine {{ 'http://' if _url.scheme == 'http' else '' }}{{ _url.hostname }}{{ (':' ~ _url.port) if _url.port else '' }} login {{ cassandra_axonops_repository_username }} password {{ cassandra_axonops_repository_password }}
+        dest: /etc/apt/auth.conf.d/axonops.conf
+        owner: root
+        group: root
+        mode: "0600"
+      vars:
+        _url: "{{ cassandra_axonops_repository_url | urlsplit }}"
+      no_log: true
+      diff: false
+      when: cassandra_axonops_repository_username != ''
+
+    - name: No credentials left for the AxonOps apt repository
+      ansible.builtin.file:
+        path: /etc/apt/auth.conf.d/axonops.conf
+        state: absent
+      when: cassandra_axonops_repository_username == ''
+
+    - name: Download the signing key
+      ansible.builtin.get_url:
+        url: "{{ cassandra_axonops_repository_key_url }}"
+        dest: /etc/apt/keyrings/axonops.key.download
+        mode: "0644"
+        force: true
+        url_username: "{{ cassandra_axonops_repository_username if _same_server else omit }}"
+        url_password: "{{ cassandra_axonops_repository_password if _same_server else omit }}"
+        force_basic_auth: "{{ _same_server }}"
+      vars:
+        # the credentials only to the repository's own server
+        _same_server: >-
+          {{ cassandra_axonops_repository_username != ''
+             and (cassandra_axonops_repository_key_url | urlsplit('netloc'))
+                 == (cassandra_axonops_repository_url | urlsplit('netloc')) }}
+      changed_when: false  # a download: the key put in place below says the change
+      retries: 3
+      register: cassandra_axonops_key_download
+      until: cassandra_axonops_key_download is succeeded
+      no_log: "{{ cassandra_axonops_repository_password != '' }}"
+
+    # apt tells an armored key from a binary one by its file name: .asc or .gpg
+    - name: Put the signing key in place
+      ansible.builtin.shell: |
+        set -e
+        new=/etc/apt/keyrings/axonops.key.download
+        if grep -q 'BEGIN PGP PUBLIC KEY' "$new"; then ext=asc; other=gpg; else ext=gpg; other=asc; fi
+        rm -f "/etc/apt/keyrings/axonops.$other"
+        if cmp -s "$new" "/etc/apt/keyrings/axonops.$ext"; then rm -f "$new"; echo "same $ext"
+        else mv "$new" "/etc/apt/keyrings/axonops.$ext"; echo "changed $ext"; fi
+      register: cassandra_axonops_key
+      changed_when: cassandra_axonops_key.stdout is match('changed')
+
+    - name: The AxonOps apt source
+      ansible.builtin.deb822_repository:
+        name: axonops
+        types: deb
+        uris: "{{ cassandra_axonops_repository_url }}"
+        suites: "{{ cassandra_axonops_repository_suite }}"
+        components: "{{ cassandra_axonops_repository_component }}"
+        signed_by: "/etc/apt/keyrings/axonops.{{ cassandra_axonops_key.stdout.split() | last }}"
+      register: cassandra_axonops_source
+
+    - name: Refresh the apt cache
+      ansible.builtin.apt:
+        update_cache: true
+      retries: 3
+      register: cassandra_axonops_apt_update
+      until: cassandra_axonops_apt_update is succeeded
+      when: cassandra_axonops_source is changed or cassandra_axonops_key is changed
+
+- name: The AxonOps yum repository (RedHat)
+  ansible.builtin.yum_repository:
+    name: axonops
+    description: AxonOps
+    baseurl: "{{ cassandra_axonops_repository_url }}"
+    gpgcheck: "{{ cassandra_axonops_repository_key_url != '' }}"
+    gpgkey: "{{ cassandra_axonops_repository_key_url or omit }}"
+    username: "{{ cassandra_axonops_repository_username or omit }}"
+    password: "{{ cassandra_axonops_repository_password or omit }}"
+  no_log: "{{ cassandra_axonops_repository_password != '' }}"
+  when: ansible_facts['os_family'] == 'RedHat'

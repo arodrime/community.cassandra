@@ -428,3 +428,15 @@
            config_file=cassandra_prometheus_exporter_config_file, path_pattern=_cassandra_config_exporter_path,
            config=_config, tls=_tls | int, auth=_auth | int, **_ports) }}
   when: cassandra_prometheus_exporter_enabled | bool
+
+# The AxonOps agent (cassandra_axonops_enabled): the role sources its options file at the end of cassandra-env.sh;
+# a second loader would load the Java agent twice, and a cassandra-env.sh kept by hand would not get the line
+- name: Refuse a second AxonOps Java agent loader
+  ansible.builtin.assert:
+    that: _wrong | length == 0
+    fail_msg: "{{ _wrong | join('; ') }}. Nothing is changed."
+    quiet: true
+  vars:
+    _options: "{{ (cassandra_jvm_extra_options + [_cassandra_config_snippet_env]) | map('string') | join(' ') }}"
+    _wrong: "{{ _options | community.cassandra.cassandra_axonops_loader_refusals(cassandra_config_keep_files) }}"
+  when: cassandra_axonops_enabled | default(false) | bool

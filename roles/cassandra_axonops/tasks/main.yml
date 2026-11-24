@@ -1,0 +1,119 @@
+---
+# The AxonOps agent: axon-agent and the Java agent package built for the
+# node's Cassandra and Java, from a repository (AxonOps' or a mirror) or from
+# package files; the groups; /etc/axonops/axon-agent.yml; axon-agent enabled
+# and running. What changes is worked out first, from what is read on the
+# node (_cassandra_axonops_items: the plan of apply_config); under check mode,
+# or apply_config's compare (_cassandra_compare), nothing more is done.
+# Cassandra is not restarted here: cassandra_config adds the line loading the
+# Java agent to cassandra-env.sh, and the playbooks restart it for that.
+- name: Gather the settings
+  ansible.builtin.set_fact:
+    _cassandra_axonops_settings:
+      java_agent_package: "{{ cassandra_axonops_java_agent_package }}"
+      series: "{{ _series }}"
+      java: "{{ _java }}"
+      server_host: "{{ cassandra_axonops_server_host }}"
+      server_port: "{{ cassandra_axonops_server_port }}"
+      org: "{{ cassandra_axonops_org }}"
+      key: "{{ cassandra_axonops_key }}"
+      tls_mode: "{{ cassandra_axonops_tls_mode }}"
+      tls_skip_verify: "{{ cassandra_axonops_tls_skip_verify | bool }}"
+      tls_ca_file: "{{ cassandra_axonops_tls_ca_file }}"
+      tls_cert_file: "{{ cassandra_axonops_tls_cert_file }}"
+      tls_key_file: "{{ cassandra_axonops_tls_key_file }}"
+      ntp_hosts: "{{ cassandra_axonops_ntp_hosts }}"
+      extra_settings: "{{ cassandra_axonops_extra_settings }}"
+    _cassandra_axonops_java_package: >-
+      {{ cassandra_axonops_java_agent_package or _series | community.cassandra.cassandra_axonops_java_agent(_java) }}
+    _cassandra_axonops_compare: "{{ ansible_check_mode or _cassandra_compare | default(false) | bool }}"
+  vars:
+    _series: "{{ cassandra_version | default('50x') }}"
+    _java: "{{ cassandra_java_version | default({'40x': '11', '41x': '11'}.get(_series, '17')) }}"
+  no_log: true  # the agent key
+
+- name: Refuse settings the agent cannot work with
+  ansible.builtin.fail:
+    msg: "{{ ('cassandra_axonops  ' ~ inventory_hostname) | community.cassandra.cassandra_refused(_said) | join(_nl) }}"
+  when: _problems | length > 0
+  vars:
+    cassandra_output: true  # a verdict: its msg as is (ops callback)
+    _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+    _problems: "{{ _cassandra_axonops_settings | community.cassandra.cassandra_axonops_problems }}"
+    _said: "{{ _problems + ['WAY OUT  set these variables (cassandra_axonops role), then run again.'] }}"
+
+- name: Read the AxonOps packages, groups, config and service on the node
+  ansible.builtin.shell: "{{ lookup('ansible.builtin.file', 'read.sh', rstrip=false) }}"
+  environment:
+    CASSANDRA_USER: "{{ cassandra_axonops_cassandra_user }}"
+  register: cassandra_axonops_read
+  changed_when: false
+  check_mode: false  # reads only
+
+- name: Work out what changes
+  ansible.builtin.set_fact:
+    _cassandra_axonops_config: "{{ _config }}"
+    _cassandra_axonops_changes: >-
+      {{ cassandra_axonops_read.stdout_lines | community.cassandra.cassandra_axonops_changes(
+           _wanted, _config | hash('sha1'), cassandra_axonops_cassandra_user, cassandra_axonops_cassandra_group,
+           _server) }}
+  vars:
+    _config: "{{ _cassandra_axonops_settings | community.cassandra.cassandra_axonops_config }}"
+    _server: "{{ cassandra_axonops_server_host }}:{{ cassandra_axonops_server_port }}, org {{ cassandra_axonops_org }}"
+    _wanted:
+      - [axon-agent, "{{ cassandra_axonops_agent_version | string }}"]
+      - ["{{ _cassandra_axonops_java_package }}", "{{ cassandra_axonops_java_agent_version | string }}"]
+  no_log: true  # the agent key
+
+# (apply_config shows them in its plan)
+- name: List the changes
+  ansible.builtin.set_fact:
+    _cassandra_axonops_items: "{{ _cassandra_axonops_changes['items'] }}"
+    _cassandra_axonops_removed: "{{ _cassandra_axonops_changes.removed }}"
+
+- name: Install, configure and start the agent
+  when: not _cassandra_axonops_compare | bool
+  block:
+    - name: The repository
+      ansible.builtin.import_tasks: repository.yml
+      when: cassandra_axonops_repository_manage | bool
+
+    - name: The packages
+      ansible.builtin.import_tasks: packages.yml
+
+    - name: The groups
+      ansible.builtin.user:
+        name: "{{ item.user }}"
+        groups: "{{ item.group }}"
+        append: true
+      loop:
+        - {user: "{{ cassandra_axonops_cassandra_user }}", group: axonops}
+        - {user: axonops, group: "{{ cassandra_axonops_cassandra_group }}"}
+
+    # the key: no diff shown
+    - name: Write /etc/axonops/axon-agent.yml
+      ansible.builtin.copy:
+        content: "{{ _cassandra_axonops_config }}"
+        dest: /etc/axonops/axon-agent.yml
+        owner: root
+        group: axonops
+        mode: "0640"
+      diff: false
+      no_log: true
+      register: cassandra_axonops_config_written
+
+    - name: Start axon-agent, or restart it for its new package or config
+      ansible.builtin.systemd_service:
+        name: axon-agent
+        enabled: true
+        state: "{{ 'restarted' if cassandra_axonops_config_written is changed or _changed else 'started' }}"
+        daemon_reload: "{{ _changed }}"
+      vars:
+        _changed: "{{ _cassandra_axonops_packages_changed | bool }}"
+
+- name: Report changes
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_change_report
+  vars:
+    cassandra_change_report_role: cassandra_axonops
+    cassandra_change_report_items: "{{ _cassandra_axonops_items }}"

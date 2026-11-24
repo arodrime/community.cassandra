@@ -1,0 +1,72 @@
+---
+# The AxonOps agent (monitoring, backups, repairs from an AxonOps server) on a
+# Cassandra node. The collection's playbooks apply this role when
+# cassandra_axonops_enabled is true; cassandra_config then adds the line that
+# loads its Java agent to cassandra-env.sh (a restart).
+cassandra_axonops_enabled: false
+
+# ---- /etc/axonops/axon-agent.yml ----
+# The AxonOps server the agent connects to (its agents port: 1888)
+cassandra_axonops_server_host: ""
+cassandra_axonops_server_port: 1888
+# The organisation name the server knows, and the agent key (AxonOps Cloud or
+# Enterprise; "" = none). Keep the key in a vault.
+cassandra_axonops_org: ""
+cassandra_axonops_key: ""
+# TLS to the server: disabled, TLS or mTLS (mTLS: a certificate and its key)
+cassandra_axonops_tls_mode: disabled
+cassandra_axonops_tls_skip_verify: false
+cassandra_axonops_tls_ca_file: ""
+cassandra_axonops_tls_cert_file: ""
+cassandra_axonops_tls_key_file: ""
+# NTP servers the agent checks the clock against, e.g. ["ntp1.example.com:123"]
+# ([] = the agent finds them itself)
+cassandra_axonops_ntp_hosts: []
+# More settings, merged into the file (they win), e.g.
+# {axon-agent: {disable_command_exec: true}}
+cassandra_axonops_extra_settings: {}
+
+# ---- Packages ----
+# axon-agent and the Java agent package. A version "" installs the
+# repository's newest when absent and never upgrades it; a version pins it
+# (installed, upgraded or downgraded to it), e.g. "2.0.36", "1.1.1".
+cassandra_axonops_agent_version: ""
+cassandra_axonops_java_agent_version: ""
+# "" = the package built for the node's series and Java (cassandra_version,
+# cassandra_java_version): axon-cassandra<4.0|4.1>-agent[-jdk8],
+# axon-cassandra5.0-agent-jdk<11|17>
+cassandra_axonops_java_agent_package: ""
+# Package files on the controller to install instead of a repository
+# (air-gapped hosts), e.g. ["files/axon-agent_2.0.36_amd64.deb",
+# "files/axon-cassandra5.0-agent-jdk17_1.1.1_all.deb"]
+cassandra_axonops_package_files: []
+# Download nothing: the packages come from cassandra_axonops_package_files,
+# or from a repository the hosts already have (not added by this role)
+cassandra_offline: false
+
+# ---- Repository ----
+# false: the hosts get the AxonOps packages from a repository configured by
+# other means (e.g. a mirror in their base sources); the role adds none
+cassandra_axonops_repository_manage: "{{ not cassandra_offline | bool and cassandra_axonops_package_files | length == 0 }}"
+# AxonOps' repository, or a mirror of it (e.g. an Artifactory apt or yum repository)
+cassandra_axonops_repository_url: >-
+  {{ 'https://packages.axonops.com/apt' if ansible_facts['os_family'] == 'Debian'
+     else 'https://packages.axonops.com/yum' }}
+# apt only: its suite (distribution) and component
+cassandra_axonops_repository_suite: axonops-apt
+cassandra_axonops_repository_component: main
+# The key the repository is signed with (apt: required; yum: "" = no
+# signature check, as AxonOps' own yum repository is used)
+cassandra_axonops_repository_key_url: >-
+  {{ 'https://packages.axonops.com/apt/repo-signing-key.gpg' if ansible_facts['os_family'] == 'Debian' else '' }}
+# Credentials when the mirror needs them (also sent for the key when it is on
+# the same server). Keep the password in a vault.
+cassandra_axonops_repository_username: ""
+cassandra_axonops_repository_password: ""
+
+# ---- Service ----
+# The account Cassandra runs as: added to the axonops group (its Java agent
+# reads axon-agent.yml and writes its queue), and axonops to its group (the
+# agent reads Cassandra's logs and data)
+cassandra_axonops_cassandra_user: "{{ cassandra_service_user | default(cassandra_user | default('cassandra')) }}"
+cassandra_axonops_cassandra_group: "{{ cassandra_service_group | default(cassandra_group | default('cassandra')) }}"

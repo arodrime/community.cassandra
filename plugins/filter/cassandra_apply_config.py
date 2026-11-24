@@ -99,8 +99,10 @@ MEDUSA_LIVE = "Medusa: not read by Cassandra"
 # and cassandra_apply_config_extras): a section each, in this order, with what it needs
 EXTRA_SECTIONS = OrderedDict([("Java", "Java (restart)"), ("Cassandra", "Cassandra package (restart)"),
                               ("cassandra unit", "cassandra unit (restart)"), ("Repository", "Repository (no restart)"),
-                              ("Packages", "Packages (no restart)"), ("Firewall", "Firewall (no restart)")])
+                              ("Packages", "Packages (no restart)"), ("Firewall", "Firewall (no restart)"),
+                              ("AxonOps", "AxonOps agent (no restart)")])
 EXTRAS_LIVE = "the repository, packages, firewall: not read by Cassandra"
+AXONOPS_LIVE = "the AxonOps agent: its Java agent and config read at the next start"
 READ_AHEAD_LIVE = "read-ahead set live: the files Cassandra has open keep the old one until it restarts"
 
 
@@ -1104,9 +1106,9 @@ def _later(reason):
 def _proven(reason):
     """Whether reason (a node's, why it is not restarted) is one of cassandra_apply_config_no_effect's, or the role's
     header line added (no setting changes), Medusa's changes, the repository, packages and firewall (not read by
-    Cassandra): said in the recap too."""
+    Cassandra), the AxonOps agent: said in the recap too."""
     return reason in (SAME_JVM_ARGUMENTS, SAME_JVM_ARGUMENTS_BUT, LOGBACK_SCANS, HEADER_ADDED, MEDUSA_LIVE,
-                      EXTRAS_LIVE) or bool(
+                      EXTRAS_LIVE, AXONOPS_LIVE) or bool(
         re.match("^%s$" % (re.escape(NOT_READ_BY_JAVA) % (r"\S+", r"\S+")), reason)) or bool(
         re.match("^%s$" % (re.escape(DORMANT_BRANCH) % (r"\d+ lines?", r"\w+", r"\w+")), reason))
 

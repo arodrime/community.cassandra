@@ -25,6 +25,8 @@ Run them in this order:
 6. :ansplugin:`community.cassandra.cassandra_service#role`: systemd unit, start, wait until the node has joined.
 
 Optional: :ansplugin:`community.cassandra.cassandra_medusa#role` installs Cassandra Medusa for backups (see `Backups`_).
+:ansplugin:`community.cassandra.cassandra_axonops#role` installs the AxonOps agent (see
+:ref:`ansible_collections.community.cassandra.docsite.guide_integrations`).
 
 Each role handles the host it runs on. Ordering nodes is up to the playbook.
 

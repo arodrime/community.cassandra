@@ -7,6 +7,7 @@
 #   none: an owner, group or mode alone, read when Cassandra started; the JMX
 #     password file (read at each login, written first by apply_config); the
 #     role's header line alone (a comment); Medusa (not read by Cassandra);
+#     the AxonOps agent (its Java agent read at the next start);
 #   write: stopped on purpose, left stopped.
 # A unit restarting in a loop (Restart=on-failure) or past its start limit
 # would not start again: it is stopped before the write, so that the loop does
@@ -143,6 +144,18 @@
     - cassandra_apply_config_release | default(false) | bool
     - cassandra_apply_config_then | default('restart') in ['start', 'write']
     - not ansible_check_mode
+
+# The AxonOps agent (cassandra_axonops_enabled, its changes found by the plan: section AxonOps): before the config,
+# whose cassandra-env.sh loads its Java agent (the file it sources installed first); not read by the running Cassandra
+# (its Java agent and axon-agent.yml at its next start), no restart for it
+- name: Set up the AxonOps agent
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_axonops
+  vars:
+    _cassandra_change_report_quiet: true  # shown before the run was confirmed, and in its recap at the end
+  when:
+    - not ansible_check_mode
+    - "'AxonOps' in cassandra_apply_config_extras | default([]) | map(attribute='section')"
 
 # (the stop's row says how far it went: its config not written, its write started, its config written)
 - name: Note that the config is being written

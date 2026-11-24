@@ -422,6 +422,9 @@
     - community.cassandra.cassandra_repository
     - community.cassandra.cassandra_install
     - community.cassandra.cassandra_linux
+    # before the config: cassandra-env.sh then loads its Java agent
+    - role: community.cassandra.cassandra_axonops
+      when: cassandra_axonops_enabled | default(false) | bool
     - role: community.cassandra.cassandra_config
       vars:
         _cassandra_config_new_node: "{{ _cassandra_create_cluster_emptied | default(false) }}"
