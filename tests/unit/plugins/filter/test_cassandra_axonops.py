@@ -764,7 +764,9 @@ def test_upgrade_and_update_java_refuse_the_axonops_agent_for_now(playbook, play
     off = dict(variables, _axonops=[])
     assert not task_runs(refuse, **off)
     if operation == "upgrade":
-        assert not task_runs(refuse, **dict(variables, _phase="cleanup"))
+        cleanup = dict(variables)
+        cleanup["_phase"] = "cleanup"
+        assert not task_runs(refuse, **cleanup)
         assert names.index(task) < names.index("An upgrade downloads the new packages")
         assert names.index(task) < names.index("Show the AxonOps agent's changes (nothing is done)")
     else:
