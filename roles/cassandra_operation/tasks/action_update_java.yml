@@ -33,7 +33,10 @@
       vars:
         cassandra_output: true  # a verdict: its msg as is (ops callback)
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
-        _cause: "{{ (ansible_failed_result.msg | default('no cause given') | string).splitlines() | first | default('') }}"
+        # (a stop of the role's own: its fact lines, without its head and way out)
+        _cause: >-
+          {{ (ansible_failed_result.msg | default('no cause given') | string).splitlines()
+             | reject('match', '(STOPPED|REFUSED|WAY OUT)  ') | map('trim') | select | join(' ') }}
         _head:
           - "STOPPED  update_java  {{ inventory_hostname }}"
           - "  Cassandra still runs on its former Java; the config of the new Java is"

@@ -549,12 +549,13 @@ def test_upgrade_downloads_before_the_drain_and_installs_after_the_target():
         names.index("Write the target series' config"))
     assert setup["block"][0]["vars"]["_cassandra_axonops_cached"] is True
     said = _said(setup["rescue"][0], cassandra_package_version="5.0.9", ansible_failed_task={"name": "Install them"},
-                 ansible_failed_result={"msg": "E: no https://u:pw@mirror/x"})
+                 ansible_failed_result={"msg": "E: no https://u:pw@mirror/x"}, _cassandra_axonops_java_package=JDK17)
     assert said == ["STOPPED  upgrade  n1", "  Cassandra is stopped for its upgrade, 5.0.9",
                     "  installed, its config not written", "  the AxonOps agent: Install them:",
                     "    E: no https://****@mirror/x",
-                    "WAY OUT  fix the cause on n1, then run this phase again:",
-                    "  it says how to write the config and start the node"]
+                    "WAY OUT  fix the cause on n1, install",
+                    "  " + JDK17 + " there by hand, then run",
+                    "  this phase again: it says how to write the config and start the node"]
 
 
 def test_update_java_swaps_after_the_config_and_leaves_the_check_to_the_role():
@@ -650,3 +651,25 @@ def test_the_apt_source_without_python3_debian():
     assert not task_runs(install, _cassandra_axonops_compare=True, **missing)
     names = _names(tasks)
     assert names.index("Install python3-debian") < names.index("The AxonOps apt source")
+
+
+def test_a_stop_of_the_role_gives_its_facts_to_the_window_stop():
+    tasks = _tasks("roles", "cassandra_operation", "tasks", "action_upgrade.yml")
+    said = _said(_find(tasks, "Set up the AxonOps agent for the target series")["rescue"][0],
+                 cassandra_package_version="5.0.9", ansible_failed_task={"name": "Stop on the failed write"},
+                 _cassandra_axonops_java_package=JDK17, ansible_failed_result={"msg": "STOPPED  cassandra_axonops  n1\n"
+                 "  /etc/axonops/axon-agent.yml not written:\n    can not use content with a dir as dest\n"
+                 "WAY OUT  fix the cause on the node, then run again"})
+    assert said[4:6] == ["    /etc/axonops/axon-agent.yml not written: can not use content with a dir as",
+                         "      dest"]
+
+
+def test_upgrade_prepares_everything_but_the_java_agent_before_the_drain():
+    tasks = _tasks("roles", "cassandra_axonops", "tasks", "main.yml")
+    block = _find(tasks, "Install, configure and start the agent")
+    assert block["when"] == "not _cassandra_axonops_compare | bool"
+    names = _names(block["block"])
+    assert names.index("Download the Java agent package, install axon-agent") < names.index("The groups")
+    download = _tasks("roles", "cassandra_axonops", "tasks", "download.yml")
+    agent = _find(download, "Install axon-agent (Debian & Ubuntu)")
+    assert "'package axon-agent' in _cassandra_axonops_items | map(attribute='item')" in agent["when"]

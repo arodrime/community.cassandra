@@ -24,8 +24,8 @@
       if cassandra_config_exporter_download | default({}) is changed else '' }}
   when: cassandra_prometheus_exporter_enabled | default(false) | bool
 
-# The AxonOps agent (cassandra_axonops_enabled): its repository and the target's packages downloaded while the node
-# runs (installed in the window below)
+# The AxonOps agent (cassandra_axonops_enabled): its repository, axon-agent, its account, config and service, while
+# the node runs; the target's Java agent package downloaded only (installed in the window below: its one step there)
 - name: Download the AxonOps packages of the target series
   ansible.builtin.include_role:
     name: community.cassandra.cassandra_axonops
@@ -81,15 +81,19 @@
       vars:
         cassandra_output: true  # a verdict: its msg as is (ops callback)
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
-        _cause: "{{ (ansible_failed_result.msg | default('no cause given') | string).splitlines() | first | default('') }}"
+        # (a stop of the role's own: its fact lines, without its head and way out)
+        _cause: >-
+          {{ (ansible_failed_result.msg | default('no cause given') | string).splitlines()
+             | reject('match', '(STOPPED|REFUSED|WAY OUT)  ') | map('trim') | select | join(' ') }}
         _head:
           - "STOPPED  upgrade  {{ inventory_hostname }}"
           - "  Cassandra is stopped for its upgrade, {{ cassandra_package_version | default(cassandra_version) }}"
           - "  installed, its config not written"
           - "  the AxonOps agent: {{ ansible_failed_task.name | default('') }}:"
         _way:
-          - "WAY OUT  fix the cause on {{ inventory_hostname }}, then run this phase again:"
-          - "  it says how to write the config and start the node"
+          - "WAY OUT  fix the cause on {{ inventory_hostname }}, install"
+          - "  {{ _cassandra_axonops_java_package | default('the Java agent package') }} there by hand, then run"
+          - "  this phase again: it says how to write the config and start the node"
         _said: "{{ _head + ['    ' ~ (_cause | community.cassandra.cassandra_url_masked)] | community.cassandra.cassandra_fit + _way }}"
 
 - name: Write the target series' config

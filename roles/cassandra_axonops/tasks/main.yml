@@ -127,20 +127,18 @@
     _cassandra_axonops_latest: "{{ _cassandra_axonops_changes.latest }}"
     _cassandra_axonops_reinstall: "{{ _cassandra_axonops_changes.reinstall }}"
 
-# upgrade, before its drain (_cassandra_axonops_download_only): the packages downloaded only, nothing installed
-- name: Download the packages only
-  ansible.builtin.import_tasks: download.yml
-  when:
-    - not _cassandra_axonops_compare | bool
-    - _cassandra_axonops_download_only | default(false) | bool
-
+# upgrade, before its drain (_cassandra_axonops_download_only): everything but the Java agent package, downloaded only
+# (installed in the node's window: _cassandra_axonops_cached, the rest unchanged then)
 - name: Install, configure and start the agent
-  when:
-    - not _cassandra_axonops_compare | bool
-    - not _cassandra_axonops_download_only | default(false) | bool
+  when: not _cassandra_axonops_compare | bool
   block:
     - name: The packages
       ansible.builtin.import_tasks: packages.yml
+      when: not _cassandra_axonops_download_only | default(false) | bool
+
+    - name: Download the Java agent package, install axon-agent
+      ansible.builtin.import_tasks: download.yml
+      when: _cassandra_axonops_download_only | default(false) | bool
 
     # (Cassandra's account checked before any change; axonops comes with axon-agent: none is created here)
     - name: Look for the account axonops

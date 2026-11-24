@@ -1,8 +1,8 @@
 ---
 # upgrade, before its drain (_cassandra_axonops_download_only): the repository is in place already (main.yml); the
-# packages the plan installs are downloaded into the package manager's cache, nothing installed, so that the
-# install in the node's window (Cassandra stopped, _cassandra_axonops_cached) needs no network. A package file given
-# needs no download.
+# packages the plan installs are downloaded into the package manager's cache, so that the install in the node's window
+# (Cassandra stopped, _cassandra_axonops_cached) needs no network, and axon-agent installed (the running Cassandra
+# does not read it; its account, config and service are set up next). A package file given needs no download.
 - name: Note what to install
   ansible.builtin.import_tasks: wanted.yml
 
@@ -44,3 +44,58 @@
     - ansible_facts['os_family'] == 'RedHat'
     - _cassandra_axonops_files.paths | default([]) | length == 0
     - _cassandra_axonops_package_change | bool or (_cassandra_axonops_latest + _cassandra_axonops_reinstall) | length > 0
+
+- name: Copy the package files
+  when: _cassandra_axonops_files.paths | default([]) | length > 0
+  block:
+    - name: Create the directory of the package files
+      ansible.builtin.file:
+        path: /var/cache/cassandra-axonops
+        state: directory
+        mode: "0755"
+
+    - name: Copy them
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "/var/cache/cassandra-axonops/{{ item | basename }}"
+        mode: "0644"
+      loop: "{{ _cassandra_axonops_files.paths }}"
+
+# (axon-agent's install script runs adduser, absent from minimal images)
+- name: Install adduser (Debian & Ubuntu)
+  ansible.builtin.apt:
+    name: adduser
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - "'package axon-agent' in _cassandra_axonops_items | map(attribute='item')"
+
+# (from the cache, just downloaded, or from its file)
+- name: Install axon-agent (Debian & Ubuntu)
+  ansible.builtin.apt:
+    name: "{{ omit if _files else _cassandra_axonops_wanted[0] }}"
+    deb: "{{ _cassandra_axonops_wanted[0] if _files else omit }}"
+    allow_downgrade: true
+  vars:
+    _files: "{{ _cassandra_axonops_files.paths | default([]) | length > 0 }}"
+  register: cassandra_axonops_packages
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - "'package axon-agent' in _cassandra_axonops_items | map(attribute='item')"
+
+- name: Install axon-agent (RedHat)
+  ansible.builtin.dnf:
+    name: "{{ _cassandra_axonops_wanted[0] }}"
+    allow_downgrade: true
+    cacheonly: "{{ not _files | bool }}"
+    disable_gpg_check: "{{ _files | bool }}"
+  vars:
+    _files: "{{ _cassandra_axonops_files.paths | default([]) | length > 0 }}"
+  register: cassandra_axonops_packages_rpm
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - "'package axon-agent' in _cassandra_axonops_items | map(attribute='item')"
+
+- name: Note whether the packages changed
+  ansible.builtin.set_fact:
+    _cassandra_axonops_packages_changed: >-
+      {{ cassandra_axonops_packages is changed or cassandra_axonops_packages_rpm is changed }}

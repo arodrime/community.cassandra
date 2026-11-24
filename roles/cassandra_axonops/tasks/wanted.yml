@@ -19,4 +19,3 @@
     _java_agent: >-
       {{ _cassandra_axonops_java_package }}{{ (_sep ~ cassandra_axonops_java_agent_version)
       if cassandra_axonops_java_agent_version | string else '' }}
-
