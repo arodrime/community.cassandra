@@ -401,3 +401,9 @@ def test_why_no_restart_names_the_agent(sections, said):
         variables[name] = render_with(task["vars"][name], variables)
     assert variables["_extras_live"] == getattr(plan, said)
     assert plan._proven(variables["_extras_live"])
+
+
+def test_a_planned_package_refreshes_the_apt_cache():
+    # a mirror updated since the last refresh: the pinned version was not found
+    install = _find(_tasks("roles", "cassandra_axonops", "tasks", "packages.yml"), "Install them from the repositories")
+    assert install["ansible.builtin.apt"]["update_cache"] is True
