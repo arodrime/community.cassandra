@@ -1581,8 +1581,9 @@ def todo(items, title="TODO", width=79):
 def _single(item, head, width):
     """One item of todo() -> "<head>  text" (its next lines under the text at 2), then its command at 2."""
     text, cmd = (item.get("text", ""), item.get("command", "")) if isinstance(item, dict) else (str(item), "")
+    text = text.rstrip()
     text += ":" if cmd and text and not text.endswith(":") else ""
-    first, under = head + "  ", "  "
+    first, under = (head + "  " if text else head), "  "
     lines = []
     for i, part in enumerate(text.split("\n")):
         start = under if i else first

@@ -972,7 +972,8 @@ def cassandra_clock_refusal(verdicts, operation="", cluster="", command="", chec
     if later:
         rest += ["NOTE  time sync would be started on %s (cassandra_linux), its clock checked by the real run"
                  % ", ".join(later)]
-    rest += ["", "WAY OUT", "  1. bring the clocks in sync (starts a time sync where missing):",
+    # (--check refuses nothing: what a real run would need first is a NOTE, not a way out of a stop)
+    rest += ["", "NOTE" if check else "WAY OUT", "  1. bring the clocks in sync (starts a time sync where missing):",
              "     " + (command or "ansible-playbook community.cassandra.sync_clocks"),
              "  2. or fix the time sync of these nodes (chrony.conf's server/pool lines, reachable from them),"
              " then run %s again" % (operation or "it"),

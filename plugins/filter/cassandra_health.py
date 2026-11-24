@@ -338,7 +338,7 @@ def _problem_lines(rows, seen):
 
 def _report_todo(rows, names, unreachable, absent, counted, topology_command):
     """The problems' keys, {address: name}, the hosts not reached, the hosts marked absent, whether the ring was
-    counted, the command that removes them -> the TODO items (a node down and not reached: one item)."""
+    counted, the command that removes them -> the WAY OUT items (a node down and not reached: one item)."""
     todo = []
     down = [names.get(_ip(k[1]), k[1]) for k in rows if k[0] == "state" and k[2].startswith("D")]
     # a node down and not reached: one thing to do, its server first

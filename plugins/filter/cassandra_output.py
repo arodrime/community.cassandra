@@ -280,8 +280,10 @@ def cassandra_check_what(present, kind="", targets=None, replacing="", run=None,
 
 
 def cassandra_todo(items, title="TODO"):
-    """[{text, command}] -> the TODO block: [{"text": "restart n1", "command": "ansible-playbook x"}] ->
-    ["TODO", "  1. restart n1:", "     ansible-playbook x"]."""
+    """[{text, command}] -> what is left to do: several items numbered under title (TODO, or WAY OUT on a stop),
+    one alone on its head's line (NEXT for the title TODO): ["restart n1", "check n2"] -> ["TODO", "  1. restart n1",
+    "  2. check n2"]; [{"text": "restart n1", "command": "ansible-playbook x"}] -> ["NEXT  restart n1:",
+    "  ansible-playbook x"]."""
     return out.todo(items, title=title)
 
 

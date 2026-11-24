@@ -628,6 +628,10 @@ def test_the_recap_ends_with_the_optional_restart_for_the_read_ahead_set_live():
     # none under --check (nothing was set), nor without the command, nor for a node whose OS settings were not applied
     assert not said(cassandra_apply_config_recap(nodes, check=True, restart_command=command))
     assert not said(cassandra_apply_config_recap(nodes))
+    # nor under a FAILED recap: the stop said what to do first, an optional restart is no NEXT then
+    failed = nodes[:-1] + [dict(nodes[-1], done=False, result="restart FAILED after 600s: not NORMAL")]
+    assert cassandra_apply_config_recap(failed, restart_command=command)[0].startswith("FAILED  apply_config")
+    assert not said(cassandra_apply_config_recap(failed, restart_command=command))
     for n in nodes:
         n["os_done"] = False
     assert not said(cassandra_apply_config_recap(nodes, restart_command=command))

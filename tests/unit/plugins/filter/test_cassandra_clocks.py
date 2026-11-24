@@ -588,6 +588,9 @@ def test_refusal_under_check():
     assert cassandra_clock_refusal(v)[0] == "REFUSED  clocks  nothing was started"
     off = cassandra_clock_verdicts([node("node1", probe_text(tracking_text=tracking(1.0)))])
     assert cassandra_clock_refusal(off, check=True)[0] == "NOTE  clocks  a real run would refuse to start the nodes"
+    # nothing was refused: its steps under NOTE, never WAY OUT (a real run's refusal keeps WAY OUT)
+    assert "NOTE" in cassandra_clock_refusal(off, check=True) and "WAY OUT" not in cassandra_clock_refusal(off, check=True)
+    assert "WAY OUT" in cassandra_clock_refusal(off)
 
 
 def test_health_block_every_clock_in_sync():

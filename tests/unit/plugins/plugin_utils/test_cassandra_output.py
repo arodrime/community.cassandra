@@ -832,6 +832,9 @@ def test_todo_one_item_is_a_next_or_its_stop_title():
     long = out.todo([{"text": "word " * 20, "command": "c " * 50}])
     assert long[0].startswith("NEXT  word") and long[1].startswith("  word") and long[-1] == "  " + "c " * 50
     assert all(len(line) <= 79 for line in long[:-1])
+    # no trailing space: a text ending with spaces, or no text at all (the head alone, the command under it)
+    assert out.todo(["fix it  "]) == ["NEXT  fix it"]
+    assert out.todo([{"text": "", "command": "ansible-playbook x"}], title="WAY OUT") == ["WAY OUT", "  ansible-playbook x"]
 
 
 def test_todo_keeps_a_name_and_its_value_together():

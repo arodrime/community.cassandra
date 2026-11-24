@@ -630,8 +630,8 @@ def cassandra_rack_outside_lines(verdict, unreached, dc, rack, command, run=None
               for ring, inventory in verdict.get("ring_size", [])]
     if rows or verdict.get("ring_size"):
         items.append({"text": "check the cluster", "command": str(command)})
-    # what is left to do, together at the end: one action a NEXT, several a TODO list
-    return out.fit(lines, WIDTH) + out.todo(items, width=WIDTH)
+    # what is left to do, together at the end: one action a NEXT, several a TODO list; after a stop (problems): WAY OUT
+    return out.fit(lines, WIDTH) + out.todo(items, title="WAY OUT" if verdict.get("problems") else "TODO", width=WIDTH)
 
 
 # the tasks of the cassandra_service role whose failure is the node's start failing: systemd's start fails; the

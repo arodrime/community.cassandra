@@ -307,8 +307,13 @@ def test_under_force_the_nodes_left_out_are_said_too():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_start_rack import cassandra_rack_outside_lines
     verdict = {"outside": [], "failed": [], "warnings": [], "problems": ["n2 (10.0.0.2, r2) is DN, seen from n1"],
                "left_out": [{"address": "10.0.0.3", "name": "n3", "states": ["DN"]}]}
+    # the rack's own problems went on under force: what is left is a WAY OUT, not a NEXT after a success
     assert cassandra_rack_outside_lines(verdict, [], "dc1", "r2", "x", run=["n2"], left_out=["n3"],
-                                        start_command="y") == LEFT_OUT + ["  n3  DN", ALONE[0], "  y --limit n3"]
+                                        start_command="y") == LEFT_OUT + [
+        "  n3  DN", ALONE[0].replace("NEXT  ", "WAY OUT  "), "  y --limit n3"]
+    verdict["outside"] = [{"address": "10.0.0.4", "name": "n4", "states": ["DN"]}]  # several: numbered under WAY OUT
+    lines = cassandra_rack_outside_lines(verdict, [], "dc1", "r2", "x", run=["n2"], left_out=["n3"], start_command="y")
+    assert "WAY OUT" in lines and "TODO" not in lines and not [line for line in lines if line.startswith("NEXT")]
 
 
 def test_a_node_left_out_by_limit_known_by_no_address_is_named_as_the_controller_resolves_it(monkeypatch):
