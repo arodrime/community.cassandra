@@ -83,4 +83,4 @@
 
 - name: Is Cassandra running here
   ansible.builtin.set_fact:
-    _cassandra_preflight_running: "{{ cassandra_node_facts_unit.stdout | default('') == 'SubState=running' }}"
+    _cassandra_preflight_running: "{{ cassandra_node_facts_unit.stdout | default('') | trim == 'SubState=running' }}"
