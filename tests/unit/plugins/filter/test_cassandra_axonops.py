@@ -634,3 +634,19 @@ def test_repository_rows_reach_the_plan_under_check_mode():
         "_cassandra_axonops_items"]
     # (outside the block skipped under check mode)
     assert "The repository" not in _names(_find(tasks, "Install, configure and start the agent")["block"])
+
+
+def test_the_apt_source_without_python3_debian():
+    # --check on a blank host: python3-debian not installed yet (cassandra_repository installs it in a real run),
+    # deb822_repository failed to import; a real run installs it first
+    from ansible_collections.community.cassandra.tests.unit.helpers import task_runs
+    tasks = _tasks("roles", "cassandra_axonops", "tasks", "repository.yml")
+    source = _find(tasks, "The AxonOps apt source")
+    missing = {"cassandra_axonops_python_debian": {"stdout": ""}}
+    assert not task_runs(source, _cassandra_axonops_compare=True, **missing)
+    assert task_runs(source, _cassandra_axonops_compare=False, **missing)
+    install = _find(tasks, "Install python3-debian")
+    assert task_runs(install, _cassandra_axonops_compare=False, **missing)
+    assert not task_runs(install, _cassandra_axonops_compare=True, **missing)
+    names = _names(tasks)
+    assert names.index("Install python3-debian") < names.index("The AxonOps apt source")

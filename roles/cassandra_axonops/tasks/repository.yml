@@ -105,7 +105,25 @@
           check_mode: false
           when: cassandra_axonops_key_tmp.path is defined
 
+    # deb822_repository needs python3-debian (cassandra_repository installs it; --check on a blank host does not):
+    # installed here in a real run; missing under check mode, the source is said to be written
+    - name: Look for python3-debian
+      ansible.builtin.command:
+        argv: [dpkg-query, -W, "-f=${db:Status-Status}", python3-debian]
+      register: cassandra_axonops_python_debian
+      changed_when: false
+      failed_when: false
+      check_mode: false  # reads only
+
+    - name: Install python3-debian
+      ansible.builtin.apt:
+        name: python3-debian
+      when:
+        - not _cassandra_axonops_compare | bool
+        - cassandra_axonops_python_debian.stdout != 'installed'
+
     - name: The AxonOps apt source
+      when: not (_cassandra_axonops_compare | bool and cassandra_axonops_python_debian.stdout != 'installed')
       ansible.builtin.deb822_repository:
         name: axonops
         types: deb
@@ -172,7 +190,10 @@
            cassandra_axonops_repository_key_url | community.cassandra.cassandra_url_masked) }}
   vars:
     _changed:
-      source: "{{ cassandra_axonops_source | default({}) is changed or cassandra_axonops_yum | default({}) is changed }}"
+      source: >-
+        {{ cassandra_axonops_source | default({}) is changed or cassandra_axonops_yum | default({}) is changed
+           or cassandra_axonops_source | default({}) is skipped and _cassandra_axonops_compare | bool
+              and ansible_facts['os_family'] == 'Debian' }}
       key: "{{ cassandra_axonops_signing_key | default({}) is changed }}"
       credentials: "{{ cassandra_axonops_credentials | default({}) is changed }}"
       credentials_removed: "{{ cassandra_axonops_credentials_removed | default({}) is changed }}"

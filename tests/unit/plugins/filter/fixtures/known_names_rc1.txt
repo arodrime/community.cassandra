@@ -131,6 +131,7 @@ cassandra_axonops_packages_removed	both
 cassandra_axonops_packages_removed_rpm	both
 cassandra_axonops_packages_rpm	both
 cassandra_axonops_packages_swap	both
+cassandra_axonops_python_debian	both
 cassandra_axonops_read	both
 cassandra_axonops_repo_probe	both
 cassandra_axonops_repository_component	both
