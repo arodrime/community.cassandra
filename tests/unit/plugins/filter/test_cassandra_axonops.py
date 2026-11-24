@@ -600,15 +600,15 @@ def test_what_the_node_holds_is_refused_before_any_change(check):
                        "x is unpacked (dpkg): its configuration was not finished.",
                        "y is unpacked (dpkg): its configuration was not finished.",
                        "axon-agent is installed, its account axonops is missing."]
-    ways = got[got.index("WAY OUT  on the node: apt-get install --reinstall axon-cassandra4.1-agent"):]
-    # each way once (the dpkg one for x and y), the inventory's apart from the node's, run again last
-    assert ways[1:3] == ["  then on the node: dpkg --force-confdef --force-confold --configure -a",
-                         "  then on the node: apt-get install --reinstall axon-agent (dnf reinstall axon-agent)"]
-    assert ways[-1] == "  then run again."
-    # Cassandra's account: not under --check (no Cassandra installed by it on a blank host)
+    # WAY OUT, its steps numbered under it (each once: the dpkg one for x and y), run again last
+    ways = [x for x in got[got.index("WAY OUT"):] if x.strip()]  # (a blank line between steps of several lines)
+    assert ways[1:4] == ["  1. on the node: apt-get install --reinstall axon-cassandra4.1-agent",
+                         "  2. on the node: dpkg --force-confdef --force-confold --configure -a",
+                         "  3. on the node: apt-get install --reinstall axon-agent (dnf reinstall"]
+    assert ways[-1].endswith(". run again") and all(len(x) <= 77 for x in got)
+    # Cassandra's account: not under --check (no Cassandra installed by it on a blank host); an inventory change
     assert ("no account cass on the node (cassandra_axonops_cassandra_user)." in got) is not check
-    assert ("  then in the inventory: set cassandra_axonops_cassandra_user to the account Cassandra runs as"
-            in got) is not check
+    assert any("in the inventory: set cassandra_axonops_cassandra_user" in x for x in got) is not check
 
 
 def test_the_account_check_follows_check_mode_not_the_compare():

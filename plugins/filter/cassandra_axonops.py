@@ -34,6 +34,7 @@ import re
 import yaml
 
 from ansible.errors import AnsibleFilterError
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import todo
 
 # The Java agent packages of AxonOps (packages.axonops.com), by series and Java major. Every one ships
 # /usr/share/axonops/axonops-jvm.options, which cassandra-env.sh sources (agent packages 1.1.0 and later).
@@ -318,7 +319,8 @@ def cassandra_axonops_read_problems(lines, user, check=False):
     if not facts:
         return []
     ways = [w for i, w in enumerate(ways) if w not in ways[:i]]
-    return facts + ["WAY OUT  " + ways[0]] + ["  then " + w for w in ways[1:]] + ["  then run again."]
+    # (WAY OUT, its steps numbered under it: guide_output's labels; 77 columns, the refusal's block indents by 2)
+    return facts + todo(ways + ["run again"], title="WAY OUT", width=77)
 
 
 def cassandra_axonops_stop_parts(msg):
