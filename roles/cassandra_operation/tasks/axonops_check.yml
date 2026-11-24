@@ -1,7 +1,8 @@
 ---
 # Before Cassandra is stopped to restart, rebooted, or started: on a node with the AxonOps agent on
 # (cassandra_axonops_enabled), the options file its cassandra-env.sh sources must be there, or the start fails (sh
-# stops on a missing sourced file). The node is left as it is when it is not.
+# stops on a missing sourced file). Cassandra is not stopped nor started then (what the run wrote before is not
+# undone).
 - name: Look for the AxonOps Java agent's options file
   ansible.builtin.stat:
     path: /usr/share/axonops/axonops-jvm.options
@@ -18,8 +19,8 @@
   vars:
     cassandra_output: true  # a verdict: its msg as is (ops callback)
     _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
-    _said:
-      - "STOPPED  {{ inventory_hostname }}  nothing was changed on it"
-      - "  /usr/share/axonops/axonops-jvm.options is missing"
-      - "  cassandra-env.sh sources it (cassandra_axonops_enabled): Cassandra would not start"
+    _lines:
+      - "STOPPED  {{ inventory_hostname }}  Cassandra not stopped nor started"
+      - "  /usr/share/axonops/axonops-jvm.options is missing: cassandra-env.sh sources it (cassandra_axonops_enabled), Cassandra would not start"
       - "WAY OUT  run apply_config (it installs the AxonOps Java agent package again), then run this again"
+    _said: "{{ _lines | community.cassandra.cassandra_fit }}"

@@ -712,7 +712,7 @@ def test_start_rack_checks_the_options_file_first():
     assert task_runs(stop, cassandra_axonops_enabled=True, cassandra_operation_axonops_options={"stat": {"exists": False}})
     assert not task_runs(stop, cassandra_axonops_enabled=True, cassandra_operation_axonops_options={"stat": {"exists": True}})
     assert not task_runs(stop, cassandra_axonops_enabled=False)
-    assert stop["vars"]["_said"][-1].startswith("WAY OUT  run apply_config")
+    assert stop["vars"]["_lines"][-1].startswith("WAY OUT  run apply_config")
 
 
 @pytest.mark.parametrize("enabled", [False, "false", None])
@@ -769,3 +769,72 @@ def test_packages_the_repositories_lack_are_refused_before_any_change():
     names = _names(tasks)
     assert names.index("The repository") < names.index("Refuse packages the repositories do not have") < names.index(
         "Install, configure and start the agent")
+
+
+def test_a_rack_restart_checks_the_options_file_of_every_node_before_any_drain():
+    # rolling_restart -e cassandra_rolling_mode=rack: every node of the rack checked, none stopped when one lacks it
+    from ansible_collections.community.cassandra.tests.unit.helpers import render_with, task_runs
+    block = _tasks("roles", "cassandra_operation", "tasks", "restart_batch.yml")[0]["block"]
+    names = _names(block)
+    look = _find(block, "Look for the AxonOps Java agent's options file on the rack's nodes")
+    stop = _find(block, "Stop without the AxonOps Java agent's options file")
+    assert names.index("Look for the AxonOps Java agent's options file on the rack's nodes") < names.index(
+        "Stop without the AxonOps Java agent's options file") < names.index("Drain the rack's nodes")
+    assert look["delegate_to"] == "{{ item }}" and look["check_mode"] is False
+    hostvars = {"n1": {"cassandra_axonops_enabled": True}, "n2": {"cassandra_axonops_enabled": "false"}}
+    assert task_runs(look, item="n1", hostvars=hostvars) and not task_runs(look, item="n2", hostvars=hostvars)
+    results = {"results": [{"item": "n1", "stat": {"exists": False}}, {"item": "n2", "skipped": True},
+                           {"item": "n3", "stat": {"exists": True}}]}
+    missing = render_with(stop["vars"]["_missing"], {"cassandra_restart_axonops_options": results})
+    assert missing == ["n1"]
+    assert task_runs(stop, _missing=missing) and not task_runs(stop, _missing=[])
+    msg = render_with(stop["ansible.builtin.fail"]["msg"], {"_missing": missing})
+    assert msg.startswith("/usr/share/axonops/axonops-jvm.options is missing on n1 (") and "run apply_config" in msg
+
+
+def test_the_restart_check_fits_79_columns_and_claims_only_what_is_sure():
+    from ansible_collections.community.cassandra.tests.unit.helpers import render_with
+    stop = _find(_tasks("roles", "cassandra_operation", "tasks", "axonops_check.yml"),
+                 "Stop without the AxonOps Java agent's options file")
+    host = {"inventory_hostname": "cassandra-node-with-a-long-name-01.example.com"}
+    said = render_with(stop["vars"]["_said"], dict(host, _lines=[render_with(x, host) for x in stop["vars"]["_lines"]]))
+    assert said[0].startswith("STOPPED  cassandra-node-with-a-long-name-01.example.com  Cassandra not stopped")
+    assert all(len(x) <= 79 for x in said)
+    assert [x for x in said if x.startswith("WAY OUT  run apply_config")]
+    # (apply_config wrote the config before its restart: "nothing was changed" would not be true)
+    assert not [x for x in said if "nothing was changed" in x]
+
+
+def test_a_reinstall_is_not_looked_up_in_the_repositories():
+    # dnf 4 lists an installed version as not available: the reinstall of a package whose options file was deleted
+    # would be refused as "no repository of the host has it"
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_axonops import cassandra_axonops_unavailable
+    from ansible_collections.community.cassandra.tests.unit.helpers import render_with
+    items = [{"item": "package " + JDK17, "before": "1.1.1", "after": "reinstalled"}]
+    assert cassandra_axonops_unavailable([], [[JDK17, "1.1.1"]], items) == []
+    look = _find(_tasks("roles", "cassandra_axonops", "tasks", "main.yml"), "Look for the packages in the repositories")
+    planned = render_with(look["vars"]["_planned"], {"_cassandra_axonops_changes": {"items": items + [
+        {"item": "package axon-agent", "before": "absent", "after": "2.0.36"},
+        {"item": "package x", "before": "1", "after": "removed"}]}})
+    assert planned == ["axon-agent"]
+
+
+def test_an_unreadable_repository_is_said_so_not_a_missing_package():
+    # RedHat: the repository is skip_if_unavailable, dnf would list nothing from it; read first, its error said
+    from ansible_collections.community.cassandra.tests.unit.helpers import render_with
+    tasks = _tasks("roles", "cassandra_axonops", "tasks", "main.yml")
+    look = _find(tasks, "Look for the packages in the repositories")
+    script = look["ansible.builtin.shell"]
+    assert script.index("makecache --repo axonops") < script.index("for name in $NAMES")
+    refuse = _find(tasks, "Refuse packages the repositories do not have")
+    variables = {"cassandra_axonops_available": {"stdout_lines": [
+        "unreadable Status code: 401 for https://u:p@m.example.com/yum/repodata/repomd.xml"]},
+        "cassandra_axonops_repository_url": "https://m.example.com/yum", "_cassandra_axonops_changes": {"items": []},
+        "cassandra_axonops_agent_version": "", "cassandra_axonops_java_agent_version": "",
+        "_cassandra_axonops_java_package": JDK17}
+    variables["_wanted"] = [["axon-agent", ""], [JDK17, ""]]
+    for name in ("_lines", "_unreadable", "_url", "_missing", "_said"):
+        variables[name] = render_with(refuse["vars"][name], variables)
+    assert variables["_missing"][0].startswith("the AxonOps repository https://m.example.com/yum cannot be read: ")
+    assert "u:p@" not in variables["_missing"][0]
+    assert variables["_said"][-1].startswith("WAY OUT  check cassandra_axonops_repository_url")

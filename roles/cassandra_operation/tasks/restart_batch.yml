@@ -35,6 +35,28 @@
     - name: Check the cluster before the rack
       ansible.builtin.include_tasks: cluster_health.yml
 
+    # (the AxonOps agent on: the options file cassandra-env.sh sources there on every node of the rack, or Cassandra
+    # would not start; none stopped when one lacks it)
+    - name: Look for the AxonOps Java agent's options file on the rack's nodes
+      ansible.builtin.stat:
+        path: /usr/share/axonops/axonops-jvm.options
+      delegate_to: "{{ item }}"
+      loop: "{{ _todo | select('in', hostvars) | list }}"
+      register: cassandra_restart_axonops_options
+      check_mode: false  # reads only
+      when: hostvars[item].cassandra_axonops_enabled | default(false) | bool
+
+    - name: Stop without the AxonOps Java agent's options file
+      ansible.builtin.fail:
+        msg: >-
+          /usr/share/axonops/axonops-jvm.options is missing on {{ _missing | join(', ') }} (cassandra-env.sh sources
+          it, Cassandra would not start): run apply_config, then run this again
+      when: _missing | length > 0
+      vars:
+        _missing: >-
+          {{ cassandra_restart_axonops_options.results | default([]) | rejectattr('skipped', 'defined')
+             | rejectattr('stat.exists') | map(attribute='item') | list }}
+
     - name: Drain the rack's nodes
       community.cassandra.cassandra_drain:
       module_defaults:

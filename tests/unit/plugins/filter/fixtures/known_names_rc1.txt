@@ -1108,6 +1108,7 @@ cassandra_require_endpoint_verification	both
 cassandra_reset_choice	both
 cassandra_reset_recap	both
 cassandra_reset_warnings	both
+cassandra_restart_axonops_options	both
 cassandra_restart_batch	both
 cassandra_restart_blockers	both
 cassandra_restart_drain	both

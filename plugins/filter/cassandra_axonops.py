@@ -324,7 +324,7 @@ def cassandra_axonops_repository_items(changed, url, key):
 
 
 def cassandra_axonops_unavailable(lines, wanted, items):
-    """The packages to install (items: the plan's rows, "package <name>" not removed) the repositories do not have:
+    """The packages to install (items: the plan's rows, "package <name>" neither removed nor reinstalled) the repositories do not have:
     lines, "available <name> <version>" as the lookup prints them; wanted: [[name, version ("" = any)]] -> one line
     each, [] when every one is there."""
     available = {}
@@ -336,7 +336,7 @@ def cassandra_axonops_unavailable(lines, wanted, items):
     out = []
     for item in items or []:
         name = str(item.get("item", ""))
-        if not name.startswith("package ") or item.get("after") == "removed":
+        if not name.startswith("package ") or item.get("after") in ("removed", "reinstalled"):
             continue
         name = name[len("package "):]
         versions, pin = available.get(name, []), pins.get(name, "")
