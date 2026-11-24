@@ -74,6 +74,8 @@ def test_the_cqlsh_command_may_hold_words(monkeypatch):
     assert args[:2] == ["/usr/bin/python3", "/opt/cassandra/bin/cqlsh.py"]
     monkeypatch.setenv("CASSANDRA_HOME", "/opt/c")
     assert run(monkeypatch, cqlsh_cmd="$CASSANDRA_HOME/bin/cqlsh")[0][0] == "/opt/c/bin/cqlsh"
+    monkeypatch.setenv("HOME", "/home/c")
+    assert run(monkeypatch, cqlsh_cmd="$HOME/bin/cqlsh")[0][0] == "/home/c/bin/cqlsh"
 
 
 def test_the_wrapper_python_option(monkeypatch):

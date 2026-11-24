@@ -1,0 +1,4 @@
+minor_changes:
+  - "nodetool modules - a failed ``nodetool version`` says ``JMX login accepted but this user lacks the rights`` when JMX answers ``Access denied`` (the JDK's ``jmxremote.access``, or Cassandra's own JMX authorizer), and a login refused in nodetool's connection error (``FailedLoginException: '...'``) is said as a refused login with that reason."
+bugfixes:
+  - "nodetool modules - a pre-release Cassandra (``5.0-rc1``, ``5.0-beta2``) is read as its series (``5.0``) for the version checks; a value read with ``nodetool get...`` no longer takes a word of the next line for its unit."

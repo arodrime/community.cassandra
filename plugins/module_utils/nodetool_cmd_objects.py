@@ -31,7 +31,9 @@ def release_series(out):
     """nodetool version's output ("ReleaseVersion: 5.0.7") -> the series of that release ("5.0")."""
     lines = [x for x in out.splitlines() if x.startswith('ReleaseVersion')]
     line = lines[-1] if lines else out
-    return ".".join(line.split(': ')[1].split(".")[:2]).strip()
+    # the leading digits only: "5.0-rc1" -> "5.0", which cassandra_version_at_least can compare
+    match = re.match(r'(\d+)\.(\d+)', line.split(': ')[1].strip())
+    return "{0}.{1}".format(match.group(1), match.group(2)) if match else line.split(': ')[1].strip()
 
 
 def fail_nodetool(module, result, command, rc, out, err, advice):
@@ -94,11 +96,18 @@ def version_error(out, err, host=None, port=None):
     text = "{0}\n{1}".format(out or "", err or "")
     said = [line.strip() for line in text.splitlines() if line.strip().startswith("error:")]
     first = said[0][len("error:"):].strip() if said else ""
+    unreached = _JMX_UNREACHED.search(text)
     if _JMX_REFUSED.search(text):
+        # no error: line: the reason is the one quoted in "Failed to connect to ... - FailedLoginException: '...'"
+        why = unreached.group("why") if unreached else ""
         return ("JMX login refused ({0}): check the JMX user and its password or password file "
                 "(module options username, password_file, password; cassandra_jmx_* in the roles)").format(
-                    first or "authentication failed")
-    unreached = _JMX_UNREACHED.search(text)
+                    first or why or "authentication failed")
+    # "Access denied!" (the JDK's jmxremote.access), "Access Denied" (Cassandra's own JMX authorizer)
+    if re.search(r"Access denied", text, re.I):
+        return ("JMX login accepted but this user lacks the rights (jmxremote.access, "
+                "or GRANT ... ON ALL MBEANS): {0}").format(
+                    first or (unreached.group("why") if unreached else "") or "Access denied")
     if unreached:
         where = unreached.group("where") or ("{0}:{1}".format(host, port) if host else "")
         why = (unreached.group("why") or unreached.group("kind") or "").strip()
@@ -123,7 +132,7 @@ def parse_nodetool_get(out, cast=float):
     is returned as 0. Returns (None, None, None) when no value is found.
     The number is read as Java prints it, exponent included ("1.0E7").
     """
-    match = re.search(r'^[^:\n]+:\s*(unlimited|-?\d+(?:\.\d+)?(?:E-?\d+)?)(?:\s+(\S+))?\s*$',
+    match = re.search(r'^[^:\n]+:[ \t]*(unlimited|-?\d+(?:\.\d+)?(?:E-?\d+)?)(?:[ \t]+(\S+))?[ \t]*$',
                       out, re.MULTILINE)
     if match is None:
         return None, None, None

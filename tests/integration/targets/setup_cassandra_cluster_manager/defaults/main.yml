@@ -5,53 +5,63 @@ pip_packages:
   - psutil==5.7.0
 cassandra_version: 4.0.11  # Released version from http://archive.apache.org/dist/cassandra/
 cassandra_nodes:  # Changes in 4.0 means we need to add nodes to certain DCs for some stuff to work
+  # token: a distinct initial token per node (ccm's balanced tokens for 8 nodes). Left to Cassandra, the seeds
+  # starting together (num_tokens 1) can pick the same token, and nodes then disagree on who owns it.
   - dc: "london"  # 5 seeds because of this https://github.com/ibmcb/cbtool/issues/59
     node: "london1"
     ip: "127.0.0.1"
     port: 7100
     debug_port: 2000
+    token: "-9223372036854775808"
     args: "--seeds"
   - dc: "london"
     node: "london2"
     ip: "127.0.0.2"
     port: 7200
     debug_port: 2001
+    token: "-6917529027641081856"
     args: "--seeds"
   - dc: "paris"
     node: "paris1"
     ip: "127.0.0.3"
     port: 7300
     debug_port: 2002
+    token: "-4611686018427387904"
     args: "--seeds"
   - dc: "newyork"
     node: "newyork1"
     ip: "127.0.0.4"
     port: 7400
     debug_port: 2003
+    token: "-2305843009213693952"
     args: "--seeds"
   - dc: "tokyo"
     node: "tokyo1"
     ip: "127.0.0.5"
     port: 7500
     debug_port: 2004
+    token: "0"
     args: "--seeds"
   - dc: "zurich"
     node: "zurich1"
     ip: "127.0.0.6"
     port: 7600
     debug_port: 2005
+    token: "2305843009213693952"
     args: "--seeds"
   - dc: "amsterdam"
     node: "amsterdam1"
     ip: "127.0.0.7"
     port: 7700
     debug_port: 2006
+    token: "4611686018427387904"
     args: "--seeds"
   - dc: "marlow"
     node: "marlow1"
     ip: "127.0.0.8"
     port: 7800
     debug_port: 2007
+    token: "6917529027641081856"
     args: ""
 cassandra_service: cassandra  # Service from setup_cassandra. We don't want this running for the cluster tests
 required_packages: "{{ ['zip', 'unzip', 'gcc', 'python3-dev', 'dpkg-dev'] if ansible_os_family == 'Debian' else ['zip', 'unzip', 'gcc', 'python3-devel'] if ansible_os_family == 'RedHat' else ['zip', 'unzip', 'gcc', 'python3-dev']}}"

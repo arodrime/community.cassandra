@@ -11,10 +11,11 @@ class Failed(Exception):
 
 
 class FakeModule(object):
-    def __init__(self, **params):
+    def __init__(self, result=(0, "", ""), **params):
         self.params = dict(host="127.0.0.1", port=7199, password=None, password_file=None, username=None,
                            nodetool_path=None, nodetool_flags="", debug=False, cassandra_version="5.0")
         self.params.update(params)
+        self.result = result
         self.commands = []
 
     def fail_json(self, **kwargs):
@@ -22,14 +23,16 @@ class FakeModule(object):
 
     def run_command(self, cmd):
         self.commands.append(cmd)
-        return 0, "", ""
+        return self.result
 
 
 @pytest.mark.parametrize("secret", [{"password_file": "/etc/cassandra/jmxremote.password"}, {"password": "p"}])
 def test_password_without_username_fails(secret):
     # nodetool would run without credentials: "Credentials required"
+    module = FakeModule(**secret)
     with pytest.raises(Failed, match="without username"):
-        NodeToolCmd(FakeModule(**secret))
+        NodeToolCmd(module)
+    assert module.commands == []
 
 
 def test_credentials_passed():
@@ -42,6 +45,19 @@ def test_no_credentials():
     module = FakeModule()
     NodeToolCmd(module).nodetool_cmd("status")
     assert "--username" not in module.commands[0] and "--password" not in module.commands[0]
+
+
+def test_version_detected():
+    module = FakeModule(result=(0, "ReleaseVersion: 4.1.10\n", ""), cassandra_version=None)
+    NodeToolCmd(module)
+    assert module.params["cassandra_version"] == "4.1"
+
+
+def test_version_failure_says_the_login_was_refused():
+    stderr = "error: Invalid username or password\n-- StackTrace --\nFailedLoginException\n"
+    module = FakeModule(result=(1, "", stderr), cassandra_version=None)
+    with pytest.raises(Failed, match=r"^JMX login refused \(Invalid username or password\): check the JMX user"):
+        NodeToolCmd(module)
 
 
 def test_fail_nodetool_says_the_command_its_error_and_the_advice():
@@ -65,6 +81,11 @@ def test_release_series_of_nodetool_version():
     assert release_series("ReleaseVersion: 5.0.7\n") == "5.0"
     assert release_series("Picked up X\nReleaseVersion: 4.1.12") == "4.1"
     assert release_series("ReleaseVersion: 4.0.21-SNAPSHOT") == "4.0"
+    # pre-releases: the series only, which cassandra_version_at_least compares
+    from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import cassandra_version_at_least
+    for printed in ("5.0-rc1", "5.0-beta2", "5.0-SNAPSHOT", "5.0.0-alpha1"):
+        assert release_series("ReleaseVersion: %s\n" % printed) == "5.0"
+        assert cassandra_version_at_least(release_series("ReleaseVersion: %s" % printed), "4.1")
 
 
 @pytest.mark.parametrize("params, ssl", [({}, False), ({"ssl": False}, False), ({"ssl": True}, True)])

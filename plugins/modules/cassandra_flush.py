@@ -45,6 +45,7 @@ error:
   description: What nodetool said went wrong (its error line, else its first line of output).
   returned: failure
   type: str
+  version_added: 3.0.0
 '''
 
 from ansible.module_utils.basic import AnsibleModule

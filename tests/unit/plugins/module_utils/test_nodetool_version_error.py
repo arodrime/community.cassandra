@@ -22,6 +22,20 @@ STACK = "-- StackTrace --\njavax.security.auth.login.FailedLoginException: Inval
     ("", "error: Authentication failed! Credentials required\n-- StackTrace --\njava.lang.SecurityException: x\n",
      "JMX login refused (Authentication failed! Credentials required): check the JMX user and its password or"
      " password file (module options username, password_file, password; cassandra_jmx_* in the roles)"),
+    # in nodetool's connection error, not on an error: line
+    ("", "nodetool: Failed to connect to '127.0.0.1:7199' - FailedLoginException: 'Provided username x are incorrect'.\n",
+     "JMX login refused (Provided username x are incorrect): check the JMX user and its password or password file"
+     " (module options username, password_file, password; cassandra_jmx_* in the roles)"),
+    ("", "nodetool: Failed to connect to '127.0.0.1:7199' - FailedLoginException: 'app is not permitted to log in'.\n",
+     "JMX login refused (app is not permitted to log in): check the JMX user and its password or password file"
+     " (module options username, password_file, password; cassandra_jmx_* in the roles)"),
+    ("", "nodetool: Failed to connect to '127.0.0.1:7199' - FailedLoginException: 'Cannot login as server authentication"
+         " setup is not yet completed'.\n",
+     "JMX login refused (Cannot login as server authentication setup is not yet completed): check the JMX user and its password or password file"
+     " (module options username, password_file, password; cassandra_jmx_* in the roles)"),
+    ("", "nodetool: Failed to connect to '127.0.0.1:7199' - SecurityException: 'Authentication failed'\n",
+     "JMX login refused (Authentication failed): check the JMX user and its password or password file"
+     " (module options username, password_file, password; cassandra_jmx_* in the roles)"),
     # JMX not reached: where, why in a word, what to look at (not "Unable to determine Cassandra version")
     ("", "nodetool: Failed to connect to '127.0.0.1:7199' - ConnectException: 'Connection refused'.\n",
      "nodetool gets no answer from JMX on 127.0.0.1:7199 (Connection refused): Cassandra is not running there, or its"
@@ -45,6 +59,15 @@ STACK = "-- StackTrace --\njavax.security.auth.login.FailedLoginException: Inval
     ("", "nodetool: Failed to connect to '127.0.0.1:7199' - IOException: 'something else'.\n",
      "nodetool can't reach JMX on 127.0.0.1:7199 (something else): is Cassandra running there (systemctl status"
      " cassandra), on that JMX port (module option port; cassandra_jmx_port in the roles)?"),
+    # the login accepted, the user without the rights
+    ("", "error: Access denied! Invalid access level for requested MBeanServer operation.\n",
+     "JMX login accepted but this user lacks the rights (jmxremote.access, or GRANT ... ON ALL MBEANS): Access denied!"
+     " Invalid access level for requested MBeanServer operation."),
+    # Cassandra's own JMX authorizer (GRANT ... ON ALL MBEANS): "Access Denied", on a command or at the connection
+    ("", "error: Access Denied\n-- StackTrace --\njava.lang.SecurityException: Access Denied\n",
+     "JMX login accepted but this user lacks the rights (jmxremote.access, or GRANT ... ON ALL MBEANS): Access Denied"),
+    ("", "nodetool: Failed to connect to '127.0.0.1:7199' - SecurityException: 'Access Denied'.\n",
+     "JMX login accepted but this user lacks the rights (jmxremote.access, or GRANT ... ON ALL MBEANS): Access Denied"),
     # anything else: nodetool's own line
     ("", "/bin/sh: 1: nodetool: not found\n", "nodetool version failed: is Cassandra installed and running?"
                                               " (/bin/sh: 1: nodetool: not found)"),

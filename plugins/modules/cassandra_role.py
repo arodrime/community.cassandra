@@ -261,21 +261,13 @@ except Exception:
 # =========================================
 
 
-# Does the role exist on the cluster?
-def role_exists(session, role):
-    cql = "SELECT role FROM system_auth.roles WHERE role = '{0}'".format(role)
-    roles = session.execute(cql)
-    s = False
-    if len(list(roles)) > 0:
-        s = True
-    return s
-
-
 def get_role_properties(session, role):
+    '''
+    The role's row in system_auth.roles as a dict, None when there is no such role
+    '''
     cql = "SELECT role, can_login, is_superuser, member_of, salted_hash FROM system_auth.roles WHERE role = '{0}'".format(role)
     dict_factory_profile = session.execution_profile_clone_update(EXEC_PROFILE_DEFAULT, row_factory=dict_factory)
-    role_properties = session.execute(cql, execution_profile=dict_factory_profile)
-    return role_properties[0]
+    return session.execute(cql, execution_profile=dict_factory_profile).one()
 
 
 def is_role_changed(role_properties, super_user, login, password,
@@ -755,13 +747,12 @@ def main():
     has_role_changed = False
 
     try:
+        role_properties = get_role_properties(session_r, role)
         if debug:
-            result['role_exists'] = role_exists(session_r, role)
+            result['role_exists'] = role_properties is not None
         if login:  # Standard user
-            if role_exists(session_r, role):
+            if role_properties is not None:
                 # Has the role changed?
-                role_properties = get_role_properties(session_r,
-                                                      role)
                 has_role_changed = is_role_changed(role_properties,
                                                    super_user,
                                                    login,
@@ -818,15 +809,13 @@ def main():
                     elif state == "absent":
                         result['changed'] = False
         else:  # This is a role
-            if role_exists(session_r, role):
+            if role_properties is not None:
                 if module.check_mode:
                     if state == "present":
                         result['changed'] = False
                     elif state == "absent":
-                        cql = drop_role(role)
-                        session_w.execute(cql)
                         result['changed'] = True
-                        result['cql'] = cql
+                        result['cql'] = drop_role(role)
                 else:
                     if state == "present":
                         result['changed'] = False
@@ -838,17 +827,8 @@ def main():
             else:
                 if module.check_mode:
                     if state == "present":
-                        cql = create_alter_role(module,
-                                                role,
-                                                super_user,
-                                                login,
-                                                password,
-                                                options,
-                                                data_centres,
-                                                has_role_changed)
-                        session_w.execute(cql)
                         result['changed'] = True
-                        result['cql'] = cql
+                        result['cql'] = create_role(role)
                     elif state == "absent":
                         result['changed'] = False
                 else:

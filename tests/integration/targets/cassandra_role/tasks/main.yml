@@ -466,6 +466,26 @@
     login_user: "{{ cassandra_admin_user }}"
     login_password: "{{ cassandra_admin_pwd }}"
 
+- name: Create a role without login in check mode
+  community.cassandra.cassandra_role:
+    name: rw_role
+    state: present
+    login: false
+    login_user: "{{ cassandra_admin_user }}"
+    login_password: "{{ cassandra_admin_pwd }}"
+  check_mode: true
+  register: rw_role_check
+
+- name: Get output of list roles after the check mode run
+  ansible.builtin.shell: cqlsh --username "{{ cassandra_admin_user }}" --password "{{ cassandra_admin_pwd }}" --execute "LIST ROLES"
+  register: roles_after_check
+
+- name: Check mode reported the change and created nothing
+  ansible.builtin.assert:
+    that:
+      - rw_role_check.changed
+      - "'rw_role' not in roles_after_check.stdout"
+
 - name: Create a role to assign to users
   community.cassandra.cassandra_role:
     name: rw_role
@@ -488,6 +508,26 @@
       - "'(2 rows)' in rw_role_perms.stdout"
       - "'<all keyspaces> |     SELECT' in rw_role_perms.stdout"
       - "'<all keyspaces> |     MODIFY' in rw_role_perms.stdout"
+
+- name: Drop the role without login in check mode
+  community.cassandra.cassandra_role:
+    name: rw_role
+    state: absent
+    login: false
+    login_user: "{{ cassandra_admin_user }}"
+    login_password: "{{ cassandra_admin_pwd }}"
+  check_mode: true
+  register: rw_role_check
+
+- name: Get output of list roles after the check mode drop
+  ansible.builtin.shell: cqlsh --username "{{ cassandra_admin_user }}" --password "{{ cassandra_admin_pwd }}" --execute "LIST ROLES"
+  register: roles_after_check
+
+- name: Check mode reported the change and dropped nothing
+  ansible.builtin.assert:
+    that:
+      - rw_role_check.changed
+      - "'rw_role' in roles_after_check.stdout"
 
 - name: Create a user and assign rw_role
   community.cassandra.cassandra_role:
