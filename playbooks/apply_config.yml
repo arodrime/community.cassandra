@@ -663,11 +663,13 @@
         _extras: >-
           {{ [] if (cassandra_apply_config_version | default({})).kind | default('') not in ['', 'release']
              else _extras_repository + _extras_others }}
-        # (EXTRAS_LIVE; AXONOPS_LIVE when the AxonOps agent alone)
+        _axonops: "{{ _extras | selectattr('section', 'eq', 'AxonOps') | list }}"
+        _others: "{{ _extras | rejectattr('section', 'eq', 'AxonOps') | list }}"
+        # (EXTRAS_LIVE, AXONOPS_LIVE, both: EXTRAS_AXONOPS_LIVE)
         _extras_live: >-
-          {{ 'the repository, packages, firewall: not read by Cassandra'
-             if _extras | rejectattr('section', 'eq', 'AxonOps') | list
-             else 'the AxonOps agent: its Java agent and config read at the next start' }}
+          {{ ['the repository, packages, firewall: not read by Cassandra' if _others else '',
+              'the AxonOps agent: its Java agent and config read at the next start' if _axonops else '']
+             | select | join('; ') }}
         _java: "{{ cassandra_java_plan_todo | default(false) | bool and cassandra_jvm.pid is defined }}"
         _release: "{{ (cassandra_apply_config_version | default({})).kind | default('') == 'release' }}"
         # a secret in the environment the unit (or the drop-in of the package's init script) is written with: its file

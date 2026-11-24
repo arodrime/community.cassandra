@@ -1,7 +1,8 @@
 ---
-# axon-agent and the Java agent package, from the repositories of the host or
-# from package files (cassandra_axonops_package_files); then the Java agent
-# packages of another series or Java removed (they replace each other)
+# axon-agent and the Java agent package, as the plan says (_cassandra_axonops_items), from the repositories of the
+# host or from package files (cassandra_axonops_package_files). A Java agent package of another series or Java is
+# replaced without a moment where the options file cassandra-env.sh loads is missing: Debian installs the new one
+# first (it takes the files over, Replaces), then removes the old one; RedHat swaps them in one transaction.
 # (Debian: axon-agent's install script runs adduser, absent from minimal images)
 - name: Install adduser (Debian & Ubuntu)
   ansible.builtin.apt:
@@ -10,92 +11,120 @@
 
 - name: Note what to install
   ansible.builtin.set_fact:
-    # the package files as copied to the node, axon-agent's first
-    _cassandra_axonops_files: >-
-      {{ (cassandra_axonops_package_files | map('basename') | select('match', 'axon-agent[-_]') | list
-          + cassandra_axonops_package_files | map('basename') | reject('match', 'axon-agent[-_]') | list)
-         | map('regex_replace', '^', '/var/cache/cassandra-axonops/') | list }}
-    # name=version (apt), name-version (dnf), or the name alone
-    _cassandra_axonops_wanted:
-      - "axon-agent{{ (_sep ~ _agent) if _agent else '' }}"
-      - "{{ _cassandra_axonops_java_package }}{{ (_sep ~ _java_agent) if _java_agent else '' }}"
+    # name=version (apt), name-version (dnf), the name alone, or the package file on the node; axon-agent first
+    _cassandra_axonops_wanted: >-
+      {{ _files | map('basename') | map('regex_replace', '^', '/var/cache/cassandra-axonops/') | list
+         if _files else [_agent, _java_agent] }}
     _cassandra_axonops_package_change: >-
       {{ _cassandra_axonops_items | map(attribute='item')
          | select('in', ['package axon-agent', 'package ' ~ _cassandra_axonops_java_package]) | list | length > 0 }}
   vars:
+    _files: "{{ _cassandra_axonops_files.paths | default([]) }}"
     _sep: "{{ '=' if ansible_facts['os_family'] == 'Debian' else '-' }}"
-    _agent: "{{ cassandra_axonops_agent_version | string }}"
-    _java_agent: "{{ cassandra_axonops_java_agent_version | string }}"
-
-- name: Create the directory of the package files
-  ansible.builtin.file:
-    path: /var/cache/cassandra-axonops
-    state: directory
-    mode: "0755"
-  when: cassandra_axonops_package_files | length > 0
+    _agent: "axon-agent{{ (_sep ~ cassandra_axonops_agent_version) if cassandra_axonops_agent_version | string else '' }}"
+    _java_agent: >-
+      {{ _cassandra_axonops_java_package }}{{ (_sep ~ cassandra_axonops_java_agent_version)
+      if cassandra_axonops_java_agent_version | string else '' }}
 
 - name: Copy the package files
-  ansible.builtin.copy:
-    src: "{{ item }}"
-    dest: "/var/cache/cassandra-axonops/{{ item | basename }}"
-    mode: "0644"
-  loop: "{{ cassandra_axonops_package_files }}"
-
-# (RedHat: before the install, rpm refuses two packages with the same files; Debian: after, the new one takes them
-# over, Replaces)
-- name: Remove the Java agent packages of another series or Java (RedHat)
-  ansible.builtin.dnf:
-    name: "{{ _cassandra_axonops_removed }}"
-    state: absent
   when:
-    - ansible_facts['os_family'] == 'RedHat'
-    - _cassandra_axonops_removed | length > 0
+    - _cassandra_axonops_files.paths | default([]) | length > 0
+    - _cassandra_axonops_package_change | bool
+  block:
+    - name: Create the directory of the package files
+      ansible.builtin.file:
+        path: /var/cache/cassandra-axonops
+        state: directory
+        mode: "0755"
 
-- name: Install the AxonOps packages from the repository (Debian & Ubuntu)
-  ansible.builtin.apt:
-    name: "{{ _cassandra_axonops_wanted }}"
-    allow_downgrade: true
-  retries: 3
-  register: cassandra_axonops_packages
-  until: cassandra_axonops_packages is succeeded
+    - name: Copy them
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "/var/cache/cassandra-axonops/{{ item | basename }}"
+        mode: "0644"
+      loop: "{{ _cassandra_axonops_files.paths }}"
+
+- name: Install the AxonOps packages (Debian & Ubuntu)
   when:
     - ansible_facts['os_family'] == 'Debian'
-    - _cassandra_axonops_files | length == 0
     - _cassandra_axonops_package_change | bool
+  block:
+    # (the cache refreshed: a mirror updated since the last refresh has the pinned version)
+    - name: Install them from the repositories
+      ansible.builtin.apt:
+        name: "{{ _cassandra_axonops_wanted }}"
+        allow_downgrade: true
+        update_cache: true
+      retries: 3
+      register: cassandra_axonops_packages
+      until: cassandra_axonops_packages is succeeded
+      when: _cassandra_axonops_files.paths | default([]) | length == 0
 
-# (one at a time, axon-agent first: the Java agent package depends on it)
-- name: Install the AxonOps package files (Debian & Ubuntu)
-  ansible.builtin.apt:
-    deb: "{{ item }}"
-    allow_downgrade: true
-  loop: "{{ _cassandra_axonops_files }}"
-  register: cassandra_axonops_packages_deb
-  when: ansible_facts['os_family'] == 'Debian'
+    # (one at a time, axon-agent first: the Java agent package depends on it)
+    - name: Install the package files
+      ansible.builtin.apt:
+        deb: "{{ item }}"
+        allow_downgrade: true
+      loop: "{{ _cassandra_axonops_wanted }}"
+      register: cassandra_axonops_packages_deb
+      when: _cassandra_axonops_files.paths | default([]) | length > 0
+
+    - name: Upgrade the Java agent package to the newest
+      ansible.builtin.apt:
+        name: "{{ _cassandra_axonops_latest }}"
+        state: latest
+        update_cache: true
+      register: cassandra_axonops_packages_latest
+      when: _cassandra_axonops_latest | length > 0
 
 - name: Install the AxonOps packages (RedHat)
-  ansible.builtin.dnf:
-    name: "{{ _cassandra_axonops_files or _cassandra_axonops_wanted }}"
-    allow_downgrade: true
-    disable_gpg_check: "{{ _cassandra_axonops_files | length > 0 }}"
-  retries: 3
-  register: cassandra_axonops_packages_rpm
-  until: cassandra_axonops_packages_rpm is succeeded
   when:
     - ansible_facts['os_family'] == 'RedHat'
-    - _cassandra_axonops_files | length > 0 or _cassandra_axonops_package_change | bool
+    - _cassandra_axonops_package_change | bool
+  block:
+    # (the Java agent too, unless it replaces another one: swapped below)
+    - name: Install them
+      ansible.builtin.dnf:
+        name: "{{ _cassandra_axonops_wanted[:1] if _cassandra_axonops_removed else _cassandra_axonops_wanted }}"
+        allow_downgrade: true
+        disable_gpg_check: "{{ _cassandra_axonops_files.paths | default([]) | length > 0 }}"
+      retries: 3
+      register: cassandra_axonops_packages_rpm
+      until: cassandra_axonops_packages_rpm is succeeded
+
+    # rpm refuses two packages with the same files: the old one out and the new one in, in one transaction (a failed
+    # one changes nothing)
+    - name: Replace the Java agent package of another series or Java
+      ansible.builtin.command:
+        argv: >-
+          {{ ['dnf', '-y'] + (['--nogpgcheck'] if _cassandra_axonops_files.paths | default([]) else [])
+             + ['swap', _cassandra_axonops_removed[0], _cassandra_axonops_wanted[1]] }}
+      register: cassandra_axonops_packages_swap
+      changed_when: true
+      when: _cassandra_axonops_removed | length > 0
+
+- name: Upgrade the Java agent package to the newest (RedHat)
+  ansible.builtin.dnf:
+    name: "{{ _cassandra_axonops_latest }}"
+    state: latest
+  register: cassandra_axonops_packages_latest_rpm
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - _cassandra_axonops_latest | length > 0
 
 - name: Note whether the packages changed
   ansible.builtin.set_fact:
     _cassandra_axonops_packages_changed: >-
-      {{ cassandra_axonops_packages is changed or cassandra_axonops_packages_deb is changed
-         or cassandra_axonops_packages_rpm is changed }}
+      {{ [cassandra_axonops_packages, cassandra_axonops_packages_deb, cassandra_axonops_packages_latest,
+          cassandra_axonops_packages_rpm, cassandra_axonops_packages_swap, cassandra_axonops_packages_latest_rpm]
+         | select('changed') | list | length > 0 }}
 
 - name: Check the Java agent package left its options file
   ansible.builtin.stat:
     path: /usr/share/axonops/axonops-jvm.options
   register: cassandra_axonops_jvm_options
 
-# (after the install: said as a stop, what was installed kept)
+# (after the install: a stop, what was installed kept)
 - name: Stop without the options file cassandra-env.sh loads
   ansible.builtin.fail:
     msg: "{{ _said | join(_nl) }}"
@@ -107,9 +136,9 @@
       - "STOPPED  cassandra_axonops  {{ inventory_hostname }}"
       - "  {{ _cassandra_axonops_java_package }} is installed"
       - "  /usr/share/axonops/axonops-jvm.options is missing"
-      - "  cassandra-env.sh is not changed: Cassandra would not start"
-      - "WAY OUT  install a Java agent package 1.1.0 or later"
-      - "  (cassandra_axonops_java_agent_version), then run again"
+      - "  Cassandra does not start while cassandra-env.sh loads it"
+      - "WAY OUT  make {{ _cassandra_axonops_java_package }} 1.1.0 or later"
+      - "  available (pin cassandra_axonops_java_agent_version), then run again"
 
 - name: Remove the Java agent packages of another series or Java (Debian & Ubuntu)
   ansible.builtin.apt:
@@ -118,3 +147,11 @@
   when:
     - ansible_facts['os_family'] == 'Debian'
     - _cassandra_axonops_removed | length > 0
+
+- name: Remove the other Java agent packages (RedHat)
+  ansible.builtin.dnf:
+    name: "{{ _cassandra_axonops_removed[1:] }}"
+    state: absent
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - _cassandra_axonops_removed | length > 1

@@ -48,10 +48,10 @@ and later, the module flags the agent needs. The AxonOps server itself is not se
     cassandra_axonops_org: example
     cassandra_axonops_agent_version: "2.0.36"
     cassandra_axonops_java_agent_version: "1.1.1"
-    # a mirror (an Artifactory apt repository) instead of packages.axonops.com
-    cassandra_axonops_repository_url: https://artifactory.example.com/artifactory/axonops-deb
+    # a mirror (an apt repository of a repository manager) instead of packages.axonops.com
+    cassandra_axonops_repository_url: https://mirror.example.com/axonops-deb
     cassandra_axonops_repository_suite: trixie
-    cassandra_axonops_repository_key_url: https://artifactory.example.com/artifactory/api/gpg/key/public
+    cassandra_axonops_repository_key_url: https://mirror.example.com/keys/axonops-deb.asc
 
 On a running cluster, ``apply_config`` shows the agent's changes (section "AxonOps agent") and the restart the
 ``cassandra-env.sh`` line needs, then, one node at a time: sets up the agent, writes the config, restarts the node.
@@ -65,3 +65,11 @@ On a running cluster, ``apply_config`` shows the agent's changes (section "AxonO
 new nodes. A change of the agent alone (its versions, ``axon-agent.yml``) restarts ``axon-agent``, not Cassandra:
 Cassandra's Java agent reads them at its next start. Air-gapped hosts without a mirror: put the ``.deb`` or
 ``.rpm`` files in ``cassandra_axonops_package_files`` (on the controller).
+
+``upgrade`` and ``update_java`` put the Java agent package of the target series or Java in place at each node's
+turn, before its config is written (``upgrade``: before the drain); their plans show it. A Java agent package older
+than 1.1.0 (without ``axonops-jvm.options``) is upgraded to the newest, unless ``cassandra_axonops_java_agent_version``
+pins another one.
+
+``import_cluster`` does not detect AxonOps yet: on a node already loading the agent from ``cassandra-env.sh``, the
+line stays in the snippet it imports. Remove it from the snippet, then set the ``cassandra_axonops_*`` variables.

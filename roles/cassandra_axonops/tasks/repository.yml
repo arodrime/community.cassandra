@@ -5,7 +5,7 @@
     that: cassandra_axonops_repository_password == "" or cassandra_axonops_repository_username != ""
     fail_msg: >-
       cassandra_axonops_repository_password is set without cassandra_axonops_repository_username:
-      set both (with a token, the account it belongs to as the user), then run again.
+      WAY OUT  set both (with a token, the account it belongs to as the user), then run again.
     quiet: true
 
 - name: The AxonOps apt repository (Debian & Ubuntu)
@@ -17,9 +17,21 @@
         fail_msg: >-
           cassandra_axonops_repository_key_url is empty: apt needs the key the repository is signed with
           (AxonOps': https://packages.axonops.com/apt/repo-signing-key.gpg; a mirror that signs with its own
-          key: that key). Set it, or set cassandra_axonops_repository_manage to false when the hosts already
+          key: that key). WAY OUT  set it, or set cassandra_axonops_repository_manage to false when the hosts already
           have the repository, then run again.
         quiet: true
+
+    # auth.conf separates its tokens with whitespace: one inside a value would break the line
+    - name: Apt credentials without whitespace
+      ansible.builtin.assert:
+        that:
+          - cassandra_axonops_repository_username is not search('\s')
+          - cassandra_axonops_repository_password is not search('\s')
+        fail_msg: >-
+          cassandra_axonops_repository_username and cassandra_axonops_repository_password can't hold whitespace on
+          Debian and Ubuntu (apt auth.conf). WAY OUT  use credentials (or a token) without it, then run again.
+        quiet: true
+      when: cassandra_axonops_repository_username != ''
 
     # apt reads credentials from auth.conf.d (apt_auth.conf(5)), not from the sources
     - name: Credentials of the AxonOps apt repository
@@ -42,6 +54,12 @@
         path: /etc/apt/auth.conf.d/axonops.conf
         state: absent
       when: cassandra_axonops_repository_username == ''
+
+    - name: Create the key directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
 
     - name: Download the signing key
       ansible.builtin.get_url:
@@ -103,5 +121,7 @@
     gpgkey: "{{ cassandra_axonops_repository_key_url or omit }}"
     username: "{{ cassandra_axonops_repository_username or omit }}"
     password: "{{ cassandra_axonops_repository_password or omit }}"
+    mode: "{{ '0600' if cassandra_axonops_repository_username != '' else '0644' }}"  # (the password in it)
+  diff: false
   no_log: "{{ cassandra_axonops_repository_password != '' }}"
   when: ansible_facts['os_family'] == 'RedHat'

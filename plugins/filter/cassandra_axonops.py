@@ -11,6 +11,8 @@ cassandra_axonops_problems: the role's settings -> what is wrong with them,
 cassandra_axonops_changes: what the role read on the node and what it wants
     -> the packages installed, the ones replaced, the changes [{item, before,
     after}] (apply_config's plan).
+cassandra_axonops_files: the package files given -> the packages and versions they
+    hold, or why they do not fit.
 cassandra_axonops_loader_refusals: the JVM options and the cassandra-env.sh
     snippet, the files kept by hand -> why the role could not load the Java
     agent itself ([] when it can).
@@ -37,6 +39,26 @@ JAVA_AGENTS = {
 }
 SERIES = {"40x": "4.0", "41x": "4.1", "50x": "5.0"}
 TLS_MODES = ("disabled", "TLS", "mTLS")
+# the first Java agent package version that ships /usr/share/axonops/axonops-jvm.options
+MIN_JAVA_AGENT = "1.1.0"
+OPTIONS = "/usr/share/axonops/axonops-jvm.options"
+# dpkg states of a package in place (the others: half done, or gone with its config left)
+DPKG_DONE = ("installed", "triggers-awaited", "triggers-pending")
+DPKG_GONE = ("not-installed", "config-files")
+DEB_FILE = re.compile(r"^(?P<name>[^_/]+)_(?P<version>[^_/]+)_(?P<arch>[^_/]+)[.]deb$")
+RPM_FILE = re.compile(r"^(?P<name>[^/]+)-(?P<version>[^-/]+)-(?P<release>[^-/]+)[.](?P<arch>[^./]+)[.]rpm$")
+
+
+def _numbers(version):
+    """"1.1.1-1" -> [1, 1, 1] (the version before its revision; a part that is no number counts 0)."""
+    return [int(p) if p.isdigit() else 0 for p in re.split(r"[.]", str(version).split("-")[0].split(":")[-1])]
+
+
+def _older(version, than):
+    """Whether version is older than than: ("1.0.10", "1.1.0") -> True."""
+    a, b = _numbers(version), _numbers(than)
+    width = max(len(a), len(b))
+    return a + [0] * (width - len(a)) < b + [0] * (width - len(b))
 
 
 def cassandra_axonops_java_agent(series, java):
@@ -68,6 +90,15 @@ def cassandra_axonops_problems(settings):
                        " cassandra_axonops_java_agent_package, or cassandra_java_version to one of them."
                        % (SERIES.get(series, series), settings.get("java"),
                           ", ".join("Java %s" % j for j in sorted(agents, key=int)) or "none"))
+    port = str(settings.get("server_port", "")).strip()
+    if not port.isdigit() or not 1 <= int(port) <= 65535:
+        out.append("cassandra_axonops_server_port is %s: it must be a port number (1 to 65535)." % (port or '""'))
+    if not isinstance(settings.get("ntp_hosts") or [], list):
+        out.append("cassandra_axonops_ntp_hosts must be a list, e.g. [\"ntp1.example.com:123\"].")
+    pinned = str(settings.get("java_agent_version") or "")
+    if pinned and _older(pinned, MIN_JAVA_AGENT):
+        out.append("cassandra_axonops_java_agent_version is %s: %s or later is needed (the first to ship"
+                   " axonops-jvm.options, which cassandra-env.sh loads)." % (pinned, MIN_JAVA_AGENT))
     if not str(settings.get("server_host") or "").strip():
         out.append("cassandra_axonops_server_host is empty: set the AxonOps server's host name or address.")
     if not str(settings.get("org") or "").strip():
@@ -102,7 +133,7 @@ def cassandra_axonops_config(settings):
         tls["certFile"] = str(settings["tls_cert_file"])
         tls["keyFile"] = str(settings["tls_key_file"])
     agent["tls"] = tls
-    config = {"axon-server": {"hosts": str(settings["server_host"]), "port": int(settings.get("server_port") or 1888)},
+    config = {"axon-server": {"hosts": str(settings["server_host"]), "port": int(str(settings["server_port"]).strip())},
               "axon-agent": agent}
     if settings.get("ntp_hosts"):
         config["NTP"] = {"hosts": [str(h) for h in settings["ntp_hosts"]]}
@@ -112,18 +143,29 @@ def cassandra_axonops_config(settings):
 
 
 def _read(lines):
-    """The node's read (files/read.sh's lines) -> ({package: version} of the installed ones, {key: value})."""
-    installed, read = {}, {}
+    """The node's read (files/read.sh's lines) -> ({package: version} of the ones in place, {package: dpkg state}
+    of the ones left half done, {key: value})."""
+    installed, unfinished, read = {}, {}, {}
     for line in lines or []:
         words = str(line).split()
         if not words:
             continue
         if words[0] == "package":
-            if len(words) == 4 and words[2] == "installed":
+            if len(words) == 4 and words[2] in DPKG_DONE:
                 installed[words[1]] = words[3]
+            elif len(words) >= 3 and words[2] not in DPKG_GONE:
+                unfinished[words[1]] = words[2]
         else:
             read[words[0]] = " ".join(words[1:])
-    return installed, read
+    return installed, unfinished, read
+
+
+def _service(active, enabled):
+    """systemctl's words -> the plan's: ("inactive", "disabled") -> "stopped (inactive), not enabled at boot"."""
+    if enabled in ("", "not-found"):
+        return "not installed"
+    state = "running" if active == "active" else "stopped (%s)" % (active or "unknown")
+    return "%s, %s" % (state, "enabled at boot" if enabled == "enabled" else "not enabled at boot (%s)" % enabled)
 
 
 def _differs(have, version):
@@ -135,16 +177,25 @@ def cassandra_axonops_changes(lines, wanted, config_sha1, user, group, server):
     """What the node needs. lines: files/read.sh's output; wanted: [[package, version ("" = any)]], axon-agent then
     the Java agent; config_sha1: the sha1 of the axon-agent.yml to write; user, group: Cassandra's account and group;
     server: "host:port, org" said for the config. -> {installed: {package: version}, removed: [the Java agent packages
-    of another series or Java, installed], items: [{item, before, after}]}."""
-    installed, read = _read(lines)
+    of another series or Java, installed], latest: [the packages to upgrade to the newest: a Java agent older than
+    1.1.0, or without axonops-jvm.options], items: [{item, before, after}]}."""
+    installed, unfinished, read = _read(lines)
     java_package = wanted[-1][0]
     removed = sorted(p for p in installed if p.startswith(("axon-cassandra", "axon-dse")) and p != java_package)
-    items = []
+    items, latest = [], []
     for name, version in wanted:
         version = str(version or "")
-        if _differs(installed.get(name, ""), version):
-            items.append({"item": "package " + name, "before": installed.get(name) or "absent",
+        have = installed.get(name, "")
+        if name in unfinished:
+            items.append({"item": "package " + name, "before": "half installed (%s)" % unfinished[name],
                           "after": version or "installed (newest)"})
+        elif _differs(have, version):
+            items.append({"item": "package " + name, "before": have or "absent", "after": version or "installed (newest)"})
+        elif name == java_package and not version and (_older(have, MIN_JAVA_AGENT) or read.get("options") == "no"):
+            latest.append(name)
+            why = "older than %s" % MIN_JAVA_AGENT if _older(have, MIN_JAVA_AGENT) else "no axonops-jvm.options"
+            items.append({"item": "package " + name, "before": "%s (%s)" % (have, why),
+                          "after": "newest (%s or later)" % MIN_JAVA_AGENT})
     items += [{"item": "package " + p, "before": installed[p], "after": "removed"} for p in removed]
     if "axonops" not in read.get("user_groups", "").split():
         items.append({"item": "%s in group axonops" % user, "before": "no", "after": "yes"})
@@ -158,9 +209,41 @@ def cassandra_axonops_changes(lines, wanted, config_sha1, user, group, server):
                       "after": "root axonops 640"})
     active, enabled = read.get("active", ""), read.get("enabled", "")
     if (active, enabled) != ("active", "enabled"):
-        items.append({"item": "service axon-agent", "before": "%s, %s" % (active or "absent", enabled or "absent"),
-                      "after": "active, enabled"})
-    return {"installed": installed, "removed": removed, "items": items}
+        items.append({"item": "service axon-agent", "before": _service(active, enabled),
+                      "after": "running, enabled at boot"})
+    return {"installed": installed, "removed": removed, "latest": latest, "items": items}
+
+
+def cassandra_axonops_files(files, java_package, agent_version="", java_agent_version=""):
+    """The package files of cassandra_axonops_package_files (paths) -> {wanted: [[package, version]] axon-agent then
+    the Java agent, as the files give them; paths: [the files, axon-agent's first]; problems: [why they do not fit,
+    one line each]}. Each file names its package and version (name_version_arch.deb,
+    name-version-release.arch.rpm); one for axon-agent, one for java_package, pinned versions matching."""
+    found, problems = {}, []
+    for path in files or []:
+        base = str(path).rsplit("/", 1)[-1]
+        m = DEB_FILE.match(base) or RPM_FILE.match(base)
+        if not m:
+            problems.append("%s: not a package file name (name_version_arch.deb or name-version-release.arch.rpm)"
+                            % base)
+        elif m.group("name") not in ("axon-agent", java_package):
+            problems.append("%s: package %s, neither axon-agent nor %s" % (base, m.group("name"), java_package))
+        elif m.group("name") in found:
+            problems.append("%s: a second file for %s" % (base, m.group("name")))
+        else:
+            found[m.group("name")] = (m.group("version"), str(path))
+    for name, pinned in (("axon-agent", agent_version), (java_package, java_agent_version)):
+        if name not in found:
+            problems.append("no file for %s in cassandra_axonops_package_files" % name)
+        elif str(pinned or "") and found[name][0] != str(pinned):
+            problems.append("%s is %s in its file, the inventory pins %s" % (name, found[name][0], pinned))
+        elif name == java_package and _older(found[name][0], MIN_JAVA_AGENT):
+            problems.append("%s %s: %s or later is needed (it ships axonops-jvm.options)"
+                            % (name, found[name][0], MIN_JAVA_AGENT))
+    if problems:
+        return {"wanted": [], "paths": [], "problems": problems}
+    return {"wanted": [["axon-agent", found["axon-agent"][0]], [java_package, found[java_package][0]]],
+            "paths": [found["axon-agent"][1], found[java_package][1]], "problems": []}
 
 
 LOADER = re.compile(r"axonops-jvm[.]options|axon-(cassandra|dse)\S*[.]jar")
@@ -172,7 +255,7 @@ def cassandra_axonops_loader_refusals(options, keep_files):
     out = []
     if "cassandra-env.sh" in (keep_files or []):
         out.append("cassandra-env.sh is in cassandra_config_keep_files: the role could not add the line loading the"
-                   " AxonOps Java agent there (remove it from the list, or load the agent by hand and leave"
+                   " AxonOps Java agent there (or load the agent by hand and leave"
                    " cassandra_axonops_enabled false)")
     if LOADER.search(str(options or "")):
         out.append("the AxonOps Java agent is already loaded by cassandra_jvm_extra_options or your snippet of"
@@ -208,6 +291,7 @@ class FilterModule(object):
             "cassandra_axonops_config": cassandra_axonops_config,
             "cassandra_axonops_problems": cassandra_axonops_problems,
             "cassandra_axonops_changes": cassandra_axonops_changes,
+            "cassandra_axonops_files": cassandra_axonops_files,
             "cassandra_axonops_loader_refusals": cassandra_axonops_loader_refusals,
             "cassandra_apply_config_axonops_steps": cassandra_apply_config_axonops_steps,
         }

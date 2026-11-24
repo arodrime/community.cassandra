@@ -4,7 +4,6 @@ __metaclass__ = type
 import glob
 import os
 
-import pytest
 import yaml
 
 from ansible_collections.community.cassandra.tests.unit.helpers import TOP
@@ -21,18 +20,18 @@ def _registers(node):
             yield from _registers(value)
 
 
-ROLES = sorted(os.path.basename(os.path.dirname(os.path.dirname(p)))
-               for p in glob.glob(os.path.join(TOP, "roles", "*", "defaults", "main.yml")))
-
-
-@pytest.mark.parametrize("role", ROLES)
-def test_no_register_shadows_a_role_variable(role):
+def test_no_register_shadows_a_role_variable():
     # a registered result beats the inventory: a task registering a variable's name would replace its value for the
-    # rest of the play (the AxonOps agent key became a skipped task's result)
-    with open(os.path.join(TOP, "roles", role, "defaults", "main.yml")) as f:
-        variables = set(yaml.safe_load(f) or {})
-    shadowing = set()
-    for path in glob.glob(os.path.join(TOP, "roles", role, "tasks", "*.yml")):
+    # rest of the play (the AxonOps agent key became a skipped task's result). Every role's variables against every
+    # task of the roles and the playbooks: cassandra_operation and the playbooks run the other roles
+    variables = set()
+    for path in glob.glob(os.path.join(TOP, "roles", "*", "defaults", "main.yml")):
         with open(path) as f:
-            shadowing.update(n for n in _registers(yaml.safe_load(f)) if n in variables)
-    assert not shadowing
+            variables.update(yaml.safe_load(f) or {})
+    shadowing = set()
+    for path in glob.glob(os.path.join(TOP, "roles", "*", "tasks", "*.yml")) + glob.glob(
+            os.path.join(TOP, "playbooks", "*.yml")) + glob.glob(os.path.join(TOP, "playbooks", "tasks", "*.yml")):
+        with open(path) as f:
+            shadowing.update("%s: %s" % (os.path.relpath(path, TOP), n) for n in _registers(yaml.safe_load(f))
+                             if n in variables)
+    assert not sorted(shadowing)

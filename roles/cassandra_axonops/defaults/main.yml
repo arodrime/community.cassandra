@@ -48,7 +48,7 @@ cassandra_offline: false
 # false: the hosts get the AxonOps packages from a repository configured by
 # other means (e.g. a mirror in their base sources); the role adds none
 cassandra_axonops_repository_manage: "{{ not cassandra_offline | bool and cassandra_axonops_package_files | length == 0 }}"
-# AxonOps' repository, or a mirror of it (e.g. an Artifactory apt or yum repository)
+# AxonOps' repository, or a mirror of it (e.g. an apt or yum repository of a repository manager)
 cassandra_axonops_repository_url: >-
   {{ 'https://packages.axonops.com/apt' if ansible_facts['os_family'] == 'Debian'
      else 'https://packages.axonops.com/yum' }}

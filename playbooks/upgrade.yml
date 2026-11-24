@@ -590,6 +590,20 @@
         _cassandra_config_target_preview: true  # the former series is still installed
       when: _phase == 'preflight'
 
+    # the AxonOps agent (cassandra_axonops_enabled): the Java agent package of the target series and Java, put in
+    # place at each node's turn before its drain (action_upgrade.yml): what it changes, shown
+    - name: Show the AxonOps agent's changes (nothing is done)
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_axonops
+        apply:
+          check_mode: true
+      vars:
+        cassandra_change_report_dir: ""
+        _cassandra_compare: true  # (check mode applied to it, which ansible_check_mode does not tell)
+      when:
+        - _phase == 'preflight'
+        - cassandra_axonops_enabled | default(false) | bool
+
     - name: Say what the next phase is
       ansible.builtin.debug:
         msg: >-

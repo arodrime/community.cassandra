@@ -98,6 +98,7 @@ cassandra_auto_hints_cleanup_enabled	both
 cassandra_auto_snapshot	both
 cassandra_auto_snapshot_ttl	both
 cassandra_axonops	both
+cassandra_axonops_accounts	both
 cassandra_axonops_agent_version	both
 cassandra_axonops_apt_update	both
 cassandra_axonops_cassandra_group	both
@@ -105,6 +106,7 @@ cassandra_axonops_cassandra_user	both
 cassandra_axonops_config_written	both
 cassandra_axonops_enabled	both
 cassandra_axonops_extra_settings	both
+cassandra_axonops_groups	both
 cassandra_axonops_java_agent_package	both
 cassandra_axonops_java_agent_version	both
 cassandra_axonops_jvm_options	both
@@ -115,7 +117,10 @@ cassandra_axonops_org	both
 cassandra_axonops_package_files	both
 cassandra_axonops_packages	both
 cassandra_axonops_packages_deb	both
+cassandra_axonops_packages_latest	both
+cassandra_axonops_packages_latest_rpm	both
 cassandra_axonops_packages_rpm	both
+cassandra_axonops_packages_swap	both
 cassandra_axonops_read	both
 cassandra_axonops_repository_component	both
 cassandra_axonops_repository_key_url	both

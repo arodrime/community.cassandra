@@ -103,6 +103,7 @@ EXTRA_SECTIONS = OrderedDict([("Java", "Java (restart)"), ("Cassandra", "Cassand
                               ("AxonOps", "AxonOps agent (no restart)")])
 EXTRAS_LIVE = "the repository, packages, firewall: not read by Cassandra"
 AXONOPS_LIVE = "the AxonOps agent: its Java agent and config read at the next start"
+EXTRAS_AXONOPS_LIVE = EXTRAS_LIVE + "; " + AXONOPS_LIVE
 READ_AHEAD_LIVE = "read-ahead set live: the files Cassandra has open keep the old one until it restarts"
 
 
@@ -1108,7 +1109,7 @@ def _proven(reason):
     header line added (no setting changes), Medusa's changes, the repository, packages and firewall (not read by
     Cassandra), the AxonOps agent: said in the recap too."""
     return reason in (SAME_JVM_ARGUMENTS, SAME_JVM_ARGUMENTS_BUT, LOGBACK_SCANS, HEADER_ADDED, MEDUSA_LIVE,
-                      EXTRAS_LIVE, AXONOPS_LIVE) or bool(
+                      EXTRAS_LIVE, AXONOPS_LIVE, EXTRAS_AXONOPS_LIVE) or bool(
         re.match("^%s$" % (re.escape(NOT_READ_BY_JAVA) % (r"\S+", r"\S+")), reason)) or bool(
         re.match("^%s$" % (re.escape(DORMANT_BRANCH) % (r"\d+ lines?", r"\w+", r"\w+")), reason))
 

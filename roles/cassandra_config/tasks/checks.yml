@@ -430,13 +430,21 @@
   when: cassandra_prometheus_exporter_enabled | bool
 
 # The AxonOps agent (cassandra_axonops_enabled): the role sources its options file at the end of cassandra-env.sh;
-# a second loader would load the Java agent twice, and a cassandra-env.sh kept by hand would not get the line
+# a second loader would load the Java agent twice (the JVM options of every Java, the snippet, the unit's
+# JVM_EXTRA_OPTS), and a cassandra-env.sh kept by hand would not get the line
 - name: Refuse a second AxonOps Java agent loader
-  ansible.builtin.assert:
-    that: _wrong | length == 0
-    fail_msg: "{{ _wrong | join('; ') }}. Nothing is changed."
-    quiet: true
+  ansible.builtin.fail:
+    msg: "{{ ('cassandra_config  ' ~ inventory_hostname) | community.cassandra.cassandra_refused(_said) | join(_nl) }}"
+  when:
+    - cassandra_axonops_enabled | default(false) | bool
+    - _wrong | length > 0
   vars:
-    _options: "{{ (cassandra_jvm_extra_options + [_cassandra_config_snippet_env]) | map('string') | join(' ') }}"
+    cassandra_output: true  # a verdict: its msg as is (ops callback)
+    _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+    _lists: "{{ [cassandra_jvm_extra_options, cassandra_jvm8_extra_options, cassandra_jvm11_extra_options] }}"
+    _env: "{{ (cassandra_service_environment | default({})).JVM_EXTRA_OPTS | default('') }}"
+    _options: >-
+      {{ (_lists + [cassandra_jvm17_extra_options]) | flatten | map('string') | join(' ') ~ ' '
+         ~ _cassandra_config_snippet_env ~ ' ' ~ _env }}
     _wrong: "{{ _options | community.cassandra.cassandra_axonops_loader_refusals(cassandra_config_keep_files) }}"
-  when: cassandra_axonops_enabled | default(false) | bool
+    _said: "{{ _wrong + ['WAY OUT  remove the other loader (or the file from the list), then run again.'] }}"

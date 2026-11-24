@@ -7,6 +7,15 @@
 - name: Install the Java this node moves to
   ansible.builtin.include_tasks: java_install.yml
 
+# The AxonOps agent (cassandra_axonops_enabled): the Java agent package of the new Java, before the config that
+# loads it (the running JVM keeps the jar it opened)
+- name: Set up the AxonOps agent for the new Java
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_axonops
+  vars:
+    _cassandra_change_report_quiet: true  # in the plan
+  when: cassandra_axonops_enabled | default(false) | bool
+
 - name: Write the config
   ansible.builtin.include_role:
     name: community.cassandra.cassandra_config

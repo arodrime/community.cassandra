@@ -118,7 +118,7 @@ argument_specs:
       cassandra_axonops_repository_url:
         type: str
         description:
-          - AxonOps' repository or a mirror of it (an Artifactory apt or yum repository).
+          - AxonOps' repository or a mirror of it (an apt or yum repository of a repository manager).
           - Defaults to C(https://packages.axonops.com/apt) on Debian and Ubuntu, C(https://packages.axonops.com/yum)
             on the RedHat family.
       cassandra_axonops_repository_suite:
