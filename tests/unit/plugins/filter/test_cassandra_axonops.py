@@ -731,3 +731,41 @@ def test_the_window_installs_from_files_never_from_the_repositories():
     assert "--disablerepo=*" in _find(packages, "Install the Java agent package again")["vars"]["_no_repo"]
     assert "not _cassandra_axonops_cached | default(false) | bool" in _find(packages, "Copy the package files")["when"]
     assert _find(packages, "Remove the files downloaded")["when"] == "_cassandra_axonops_cached | default(false) | bool"
+
+
+@pytest.mark.parametrize("playbook, play, task, operation", [
+    ("upgrade.yml", "Upgrade checks", "Refuse an upgrade with the AxonOps agent", "upgrade"),
+    ("update_java.yml", "Check the Java change", "Refuse a Java change with the AxonOps agent", "update_java"),
+])
+def test_upgrade_and_update_java_refuse_the_axonops_agent_for_now(playbook, play, task, operation):
+    # not supported yet in this version: refused before any change, --check too, with its way out
+    from ansible_collections.community.cassandra.tests.unit.helpers import render_with, task_runs
+    plays = _tasks("playbooks", playbook)
+    tasks = [p for p in plays if p.get("name") == play][0]["tasks"]
+    names = _names(tasks)
+    refuse = _find(tasks, task)
+    hostvars = {"n1": {"inventory_hostname": "n1", "cassandra_axonops_enabled": True},
+                "n2": {"inventory_hostname": "n2", "cassandra_axonops_enabled": False},
+                "n3": {"inventory_hostname": "n3"}}
+    variables = {"ansible_play_hosts": ["n1", "n2", "n3"], "hostvars": hostvars, "_phase": "canary",
+                 "groups": {"cassandra_update_java_True": ["n1", "n2", "n3"]}, "_cassandra_cluster_shown": "c",
+                 "cassandra_cluster_name": "c", "inventory_hostname": "n1"}
+    for name in ("_nl", "_cluster", "_axonops"):
+        variables[name] = render_with(refuse["vars"][name], variables)
+    assert variables["_axonops"] == ["n1"]
+    variables["_said"] = [render_with(x, variables) for x in refuse["vars"]["_said"]]
+    msg = render_with(refuse["ansible.builtin.fail"]["msg"], variables).split("\n")
+    assert msg[0] == "REFUSED  %s  c  nothing was changed" % operation
+    assert msg[1:3] == ["  n1: cassandra_axonops_enabled is true",
+                        "  %s with the AxonOps agent: not supported yet in this version" % operation]
+    assert msg[3].startswith("  WAY OUT  ") and all(len(x) <= 79 for x in msg)
+    assert task_runs(refuse, **variables) and refuse["run_once"] is True
+    assert "check_mode" not in refuse  # (--check too)
+    off = dict(variables, _axonops=[])
+    assert not task_runs(refuse, **off)
+    if operation == "upgrade":
+        assert not task_runs(refuse, **dict(variables, _phase="cleanup"))
+        assert names.index(task) < names.index("An upgrade downloads the new packages")
+        assert names.index(task) < names.index("Show the AxonOps agent's changes (nothing is done)")
+    else:
+        assert names.index("Group the nodes to do") < names.index(task) < names.index("Compare the AxonOps agent")

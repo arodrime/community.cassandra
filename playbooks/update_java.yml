@@ -135,6 +135,26 @@
         cassandra_op_result: "already on Java {{ cassandra_java_version }}"
       when: not cassandra_java_plan_todo | bool
 
+    # The AxonOps agent (cassandra_axonops_enabled): its Java agent package is built for one Java; a move that swaps it
+    # is not supported yet: refused before any change, --check too
+    - name: Refuse a Java change with the AxonOps agent
+      ansible.builtin.fail:
+        msg: "{{ ('update_java  ' ~ _cluster) | community.cassandra.cassandra_refused(_said) | join(_nl) }}"
+      run_once: true
+      when: _axonops | length > 0
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
+        _axonops: >-
+          {{ groups['cassandra_update_java_True'] | default([]) | map('extract', hostvars)
+             | selectattr('cassandra_axonops_enabled', 'defined') | selectattr('cassandra_axonops_enabled', 'truthy')
+             | map(attribute='inventory_hostname') | list }}
+        _said:
+          - "{{ _axonops | join(', ') }}: cassandra_axonops_enabled is true"
+          - "update_java with the AxonOps agent: not supported yet in this version"
+          - "WAY OUT  move these nodes to the new Java by hand, following AxonOps' agent docs for the Java agent package of the new Java, or wait for the next version of the collection"
+
     # The AxonOps agent (cassandra_axonops_enabled): its Java agent package is built for one Java, replaced at the
     # node's turn once its config is written, before its restart (action_update_java.yml); its changes in the plan
     - name: Compare the AxonOps agent

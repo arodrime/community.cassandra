@@ -42,16 +42,11 @@ is `true` (default `false`):
   A change of the agent alone (versions, `axon-agent.yml`) restarts no
   Cassandra: its Java agent reads them at its next start (said in the plan).
   The repository the role adds is compared too (source, key, login).
-* `upgrade`: its preflight lists the change; at each node's turn, before the
-  drain (Cassandra running): the repository, axon-agent installed, its
-  account, `axon-agent.yml` and service (restarted when they change), and the
-  target's Java agent package downloaded as a file into
-  `/var/cache/cassandra-axonops`; once the target series is installed
-  (Cassandra stopped), before its config: that file installed, no repository
-  read, then removed;
-* `update_java`: its plan shows the change; at each node's turn the package of
-  the new Java replaces the old one once the config is written, before the
-  restart.
+* `upgrade` and `update_java` refuse, for now, a node with
+  `cassandra_axonops_enabled: true` (not supported yet in this version):
+  before any change, `--check` too. Upgrade those nodes, or move them to
+  another Java, by hand, following AxonOps' agent docs for the Java agent
+  package of the new series or Java.
 
 Turned off (`cassandra_axonops_enabled: false`), the line goes from
 `cassandra-env.sh` (a restart); the packages, `axon-agent.yml` and the service
