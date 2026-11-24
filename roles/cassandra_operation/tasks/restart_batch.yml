@@ -48,9 +48,11 @@
 
     - name: Stop without the AxonOps Java agent's options file
       ansible.builtin.fail:
-        msg: >-
-          /usr/share/axonops/axonops-jvm.options is missing on {{ _missing | join(', ') }} (cassandra-env.sh sources
-          it, Cassandra would not start): run apply_config, then run this again
+        msg:  # (through the stop block below: STOPPED, the way out numbered, the resume command its second step)
+          - >-
+            /usr/share/axonops/axonops-jvm.options is missing on {{ _missing | join(', ') }}: cassandra-env.sh sources
+            it (cassandra_axonops_enabled), Cassandra would not start
+          - WAY OUT  run apply_config (it installs the AxonOps Java agent package again), then resume
       when: _missing | length > 0
       vars:
         _missing: >-

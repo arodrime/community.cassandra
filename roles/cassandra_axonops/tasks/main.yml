@@ -150,6 +150,7 @@
   register: cassandra_axonops_available
   changed_when: false
   check_mode: false  # reads only
+  no_log: "{{ cassandra_axonops_repository_username != '' }}"  # (dnf's error may carry the URL with its login)
   when:
     - _planned | length > 0
     - cassandra_axonops_package_files | length == 0
@@ -177,7 +178,8 @@
       - [axon-agent, "{{ cassandra_axonops_agent_version | string }}"]
       - ["{{ _cassandra_axonops_java_package }}", "{{ cassandra_axonops_java_agent_version | string }}"]
     _said: >-
-      {{ _missing + (['WAY OUT  check cassandra_axonops_repository_url and the login, then run again.'] if _unreadable
+      {{ _missing + (['WAY OUT  check cassandra_axonops_repository_url, _username and _password, then run again.']
+                     if _unreadable
                      else ['WAY OUT  put the package on the mirror (on Debian, apt-get update on the node if it is'
                            ~ ' there already), or change the pinned version, then run again.']) }}
 

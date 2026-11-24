@@ -165,6 +165,8 @@
         name: community.cassandra.cassandra_operation
         tasks_from: axonops_check.yml
       when: cassandra_axonops_enabled | default(false) | bool
+      vars:
+        _cassandra_axonops_check_fit: true  # (printed as it is: no stop block here)
 
     # a node that does not start (its unit fails, it stops while it joins, it is not NORMAL in time): its stop
     # said with what the role saw (its journal) and a way out, not the failure of the role's task (the other

@@ -10,17 +10,25 @@
   check_mode: false  # reads only
   when: cassandra_axonops_enabled | default(false) | bool
 
+# start_rack's stop (_cassandra_axonops_check_fit): printed as it is, so fitted to 79 columns here; the others'
+# (rolling_restart, rolling_reboot, apply_config, sync_clocks) through the stop block of node_operation.yml, which
+# says the node and fits it (its way out ends "then resume": numbered there, the resume command its second step)
 - name: Stop without the AxonOps Java agent's options file
   ansible.builtin.fail:
-    msg: "{{ _said | join(_nl) }}"
+    msg: "{{ _start | community.cassandra.cassandra_fit if _cassandra_axonops_check_fit is defined else _block }}"
   when:
     - cassandra_axonops_enabled | default(false) | bool
     - not cassandra_operation_axonops_options.stat.exists | default(true)
   vars:
     cassandra_output: true  # a verdict: its msg as is (ops callback)
-    _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
-    _lines:
-      - "STOPPED  {{ inventory_hostname }}  Cassandra not stopped nor started"
-      - "  /usr/share/axonops/axonops-jvm.options is missing: cassandra-env.sh sources it (cassandra_axonops_enabled), Cassandra would not start"
-      - "WAY OUT  run apply_config (it installs the AxonOps Java agent package again), then run this again"
-    _said: "{{ _lines | community.cassandra.cassandra_fit }}"
+    _cause: >-
+      /usr/share/axonops/axonops-jvm.options is missing: cassandra-env.sh sources it (cassandra_axonops_enabled),
+      Cassandra would not start
+    _apply: run apply_config (it installs the AxonOps Java agent package again)
+    _start:
+      - "STOPPED  {{ inventory_hostname }}  Cassandra not started"
+      - "  {{ _cause }}"
+      - "WAY OUT  {{ _apply }}, then run this again"
+    _block:
+      - "{{ _cause }}"
+      - "WAY OUT  {{ _apply }}, then resume"

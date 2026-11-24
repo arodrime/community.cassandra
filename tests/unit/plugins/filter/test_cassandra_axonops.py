@@ -712,7 +712,7 @@ def test_start_rack_checks_the_options_file_first():
     assert task_runs(stop, cassandra_axonops_enabled=True, cassandra_operation_axonops_options={"stat": {"exists": False}})
     assert not task_runs(stop, cassandra_axonops_enabled=True, cassandra_operation_axonops_options={"stat": {"exists": True}})
     assert not task_runs(stop, cassandra_axonops_enabled=False)
-    assert stop["vars"]["_lines"][-1].startswith("WAY OUT  run apply_config")
+    assert stop["vars"]["_block"][-1] == "WAY OUT  {{ _apply }}, then resume"
 
 
 @pytest.mark.parametrize("enabled", [False, "false", None])
@@ -788,21 +788,57 @@ def test_a_rack_restart_checks_the_options_file_of_every_node_before_any_drain()
     missing = render_with(stop["vars"]["_missing"], {"cassandra_restart_axonops_options": results})
     assert missing == ["n1"]
     assert task_runs(stop, _missing=missing) and not task_runs(stop, _missing=[])
-    msg = render_with(stop["ansible.builtin.fail"]["msg"], {"_missing": missing})
-    assert msg.startswith("/usr/share/axonops/axonops-jvm.options is missing on n1 (") and "run apply_config" in msg
+    msg = [render_with(x, {"_missing": missing}) for x in stop["ansible.builtin.fail"]["msg"]]
+    # through restart_batch.yml's stop block: STOPPED (not FAILED), 1. run apply_config, 2. resume
+    block = _stop_block(msg, "the rack n1, n2")
+    assert block[0].startswith("STOPPED  rolling_restart") and all(len(x) <= 79 for x in block), block
+    text = "\n".join(block)
+    assert "Why:  /usr/share/axonops/axonops-jvm.options is missing on n1:" in text
+    assert "cassandra_axonops_enabled" in text and "fix it" not in text
+    way = block[block.index("WAY OUT"):]
+    assert way[1].startswith("  1. run apply_config") and [x for x in way if x.startswith("  2. resume")]
 
 
-def test_the_restart_check_fits_79_columns_and_claims_only_what_is_sure():
+def _stop_block(failure, node, action="restart", operation="rolling_restart"):
+    # the stop block node_operation.yml and restart_batch.yml print (resume on, a progress file)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_summary import cassandra_stop_block
+    return cassandra_stop_block([{"node": node, "result": "restart FAILED", "stage": "before"}], node, failure,
+                                operation=operation, action=action, cluster="c", resume=True,
+                                progress_file=".cassandra_progress/c-rolling_restart", hosts="c")
+
+
+@pytest.mark.parametrize("operation, action", [("rolling_restart", "restart"), ("rolling_reboot", "reboot"),
+                                               ("apply_config", "apply_config")])
+def test_the_restart_check_reads_right_in_the_stop_block(operation, action):
+    # through node_operation.yml's stop block: STOPPED, the cause once under Why (no STOPPED line of its own), the
+    # way out numbered: 1. run apply_config, 2. the resume command; 79 columns
     from ansible_collections.community.cassandra.tests.unit.helpers import render_with
     stop = _find(_tasks("roles", "cassandra_operation", "tasks", "axonops_check.yml"),
                  "Stop without the AxonOps Java agent's options file")
-    host = {"inventory_hostname": "cassandra-node-with-a-long-name-01.example.com"}
-    said = render_with(stop["vars"]["_said"], dict(host, _lines=[render_with(x, host) for x in stop["vars"]["_lines"]]))
-    assert said[0].startswith("STOPPED  cassandra-node-with-a-long-name-01.example.com  Cassandra not stopped")
-    assert all(len(x) <= 79 for x in said)
-    assert [x for x in said if x.startswith("WAY OUT  run apply_config")]
-    # (apply_config wrote the config before its restart: "nothing was changed" would not be true)
-    assert not [x for x in said if "nothing was changed" in x]
+    variables = {"inventory_hostname": "cassandra-node-with-a-long-name-01.example.com"}
+    for name in ("_cause", "_apply"):
+        variables[name] = render_with(stop["vars"][name], variables)
+    variables["_block"] = [render_with(x, variables) for x in stop["vars"]["_block"]]
+    variables["_start"] = [render_with(x, variables) for x in stop["vars"]["_start"]]
+    msg = render_with(stop["ansible.builtin.fail"]["msg"], variables)
+    assert msg == variables["_block"]
+    block = _stop_block(msg, "cassandra-node-01.example.com", action, operation)  # (the table's row: its own width)
+    assert block[0].startswith("STOPPED  " + operation)
+    assert all(len(x) <= 79 for x in block), block
+    assert not [x for x in block if x.lstrip().startswith("STOPPED  cassandra-node")]
+    assert not [x for x in block if "nothing was changed" in x]
+    text = "\n".join(block)
+    assert "Why:  /usr/share/axonops/axonops-jvm.options is missing" in text
+    way = block[block.index("WAY OUT"):]
+    assert way[1].startswith("  1. run apply_config (it installs the AxonOps Java")
+    assert [x for x in way if x.startswith("  2. resume")]
+    assert [x for x in way if "-e cassandra_rolling_resume=true" in x]
+    # start_rack: no stop block, printed as it is: its own lines fitted
+    start = render_with(stop["ansible.builtin.fail"]["msg"], dict(variables, _cassandra_axonops_check_fit=True))
+    assert start[0] == "STOPPED  cassandra-node-with-a-long-name-01.example.com  Cassandra not started"
+    assert all(len(x) <= 79 for x in start) and [x for x in start if x.startswith("WAY OUT  run apply_config")]
+    rack = [p for p in _tasks("playbooks", "start_rack.yml") if p.get("name") == "Start the rack"][0]["tasks"]
+    assert _find(rack, "Check the AxonOps Java agent can load")["vars"]["_cassandra_axonops_check_fit"] is True
 
 
 def test_a_reinstall_is_not_looked_up_in_the_repositories():
@@ -837,4 +873,4 @@ def test_an_unreadable_repository_is_said_so_not_a_missing_package():
         variables[name] = render_with(refuse["vars"][name], variables)
     assert variables["_missing"][0].startswith("the AxonOps repository https://m.example.com/yum cannot be read: ")
     assert "u:p@" not in variables["_missing"][0]
-    assert variables["_said"][-1].startswith("WAY OUT  check cassandra_axonops_repository_url")
+    assert variables["_said"][-1].startswith("WAY OUT  check cassandra_axonops_repository_url, _username and _password")
