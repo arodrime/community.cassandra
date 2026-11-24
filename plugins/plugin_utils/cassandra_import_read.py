@@ -131,6 +131,9 @@ DERIVED = ("_cassandra_config_logback_refs", "_cassandra_config_log_levels")
 APPENDERS = "(logback.xml:appenders)"
 # the lines a node has at the end of cassandra-env.sh, of logback.xml's <configuration>: their snippets once laid out
 ENV_END = "(cassandra-env.sh)"
+# the role's comment above those lines of cassandra-env.sh (cassandra_config's _cassandra_config_env_marker): its
+# own, not the node's, never in the snippet the import writes
+ENV_MARKER = "# Custom settings"
 LOGBACK_END = "(logback.xml)"
 END_KEYS = {"cassandra-env.sh": ENV_END, "logback.xml": LOGBACK_END}
 # the role's variable each of these renders in (its snippet's)
@@ -520,6 +523,8 @@ def import_file(env, series, name, ctx, live):
     found, appended, extra = _read_changed_lines(name, tpl, rendered, live, ctx, after)
     if appended and _carried(name, series, tpl, appended):
         extra = appended  # all of them or none: a block cut in two would not run (if ... fi) or parse (<root>)
+    if name.endswith(".sh") and extra and extra[0].strip() == ENV_MARKER:
+        extra = extra[1:]  # (the role's marker: written again by it, above whatever follows)
     if tail and extra:
         found[END_KEYS.get(name) or re.search(r"\((cassandra_\w+) \| join", tail[0]).group(1)] = extra
     if name.endswith(".yaml"):

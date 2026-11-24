@@ -437,7 +437,7 @@ Role Variables
   |---|---|
   | `logback.xml` | the end of its `<configuration>`, after the loggers of `cassandra_log_levels` |
   | `logback.xml:appenders` | before `<root>` (logback 1.2 wants an appender before its `appender-ref`) |
-  | `cassandra-env.sh` | its end |
+  | `cassandra-env.sh` | its end, under a `# Custom settings` line (the AxonOps line, when on, first) |
 
   The JVM options files take `cassandra_jvm*_extra_options` (one option an
   item, which the role checks: the heap, a second agent). The file is then

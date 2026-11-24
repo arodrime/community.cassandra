@@ -596,3 +596,13 @@ def test_a_reimport_drops_and_names_the_variables_no_longer_read():
         layout, ["/p/c.yml", "/p"], "/p/reports/c/report.txt", {}, True, cwd="/p", in_git=True, width=200))
     assert "cassandra_env_extra_lines in group_vars/all/local.yml (yours): no longer read" in report
     assert "remove cassandra_env_extra_lines from group_vars/all/local.yml; the playbooks refuse it until then" in report
+
+
+@pytest.mark.parametrize("marker", [True, False])
+def test_the_marker_above_the_end_lines_is_the_roles(marker):
+    # the role's "# Custom settings" above the lines it adds at the end of cassandra-env.sh: never in the snippet
+    # (written again by the role); a file written before the marker imports the same lines
+    files = with_env(*(["# Custom settings"] if marker else []) + ["export MY_AGENT_OPTS=-Dx=1"])
+    out, n = imported(files)
+    assert out["vars"][ENV_END] == ["export MY_AGENT_OPTS=-Dx=1"] and out["hand_edits"] == []
+    assert self_check(files, cassandra_inventory_layout([n], "c"))["differences"] == []

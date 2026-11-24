@@ -771,3 +771,9 @@ def test_upgrade_and_update_java_refuse_the_axonops_agent_for_now(playbook, play
         assert names.index(task) < names.index("Show the AxonOps agent's changes (nothing is done)")
     else:
         assert names.index("Group the nodes to do") < names.index(task) < names.index("Compare the AxonOps agent")
+
+
+def test_the_marker_is_no_loader():
+    # the role's "# Custom settings" above the AxonOps line and the snippet: no second loader, no override refused
+    assert cassandra_axonops_loader_refusals("# Custom settings\nexport X=1", []) == []
+    assert cassandra_axonops_loader_refusals("", [], "x\n# Custom settings\n{{ _cassandra_config_axonops_line }}") == []

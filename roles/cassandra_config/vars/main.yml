@@ -48,6 +48,9 @@ _cassandra_config_own_loggers:
   org.apache.cassandra.audit: cassandra_log_audit_file
 # the appenders of the stock logback.xml <root> may name (AUDIT: with cassandra_log_audit_file)
 _cassandra_config_stock_appenders: [SYSTEMLOG, DEBUGLOG, ASYNCDEBUGLOG, STDOUT]
+# The comment above the lines cassandra-env.sh gets after its last stock line (the AxonOps line, your snippet), only
+# when there are some (the import reads it as the role's, never as a line of the node's: its ENV_MARKER)
+_cassandra_config_env_marker: "# Custom settings"
 # The AxonOps agent (cassandra_axonops_enabled, role cassandra_axonops): its Java agent package's options file,
 # sourced at the end of cassandra-env.sh (it adds the -javaagent and, on Java 9+, the module flags it needs)
 _cassandra_config_axonops_options: /usr/share/axonops/axonops-jvm.options

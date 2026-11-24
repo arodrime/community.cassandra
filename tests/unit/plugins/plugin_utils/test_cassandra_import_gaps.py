@@ -8,7 +8,10 @@
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import os
+
 import pytest
+import yaml
 
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_import_files as files
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_import_jvm as jvm
@@ -69,3 +72,11 @@ def test_each_list_of_lines_moves_its_secrets(key, prefix):
 
 def test_no_other_list_of_lines_moves_its_secrets():
     assert [key for key, dummy in files.SECRET_LISTS] == [key for key, dummy in SECRET_LISTS]
+
+
+def test_the_import_knows_the_roles_env_marker():
+    # the import drops the role's marker from the lines it carries: the same text as the role writes
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import ENV_MARKER
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_config", "vars", "main.yml")
+    with open(path) as f:
+        assert yaml.safe_load(f)["_cassandra_config_env_marker"] == ENV_MARKER

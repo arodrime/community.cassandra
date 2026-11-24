@@ -30,10 +30,13 @@ AxonOps
 :ansplugin:`community.cassandra.cassandra_axonops#role` installs the AxonOps agent (``axon-agent``) and the
 AxonOps Java agent package built for the node's Cassandra series and Java, writes
 ``/etc/axonops/axon-agent.yml``, and keeps ``axon-agent`` running. With ``cassandra_axonops_enabled: true``,
-``cassandra_config`` adds this line at the end of ``cassandra-env.sh``:
+``cassandra_config`` adds this line at the end of ``cassandra-env.sh``, under the ``# Custom settings`` marker that
+heads the collection's additions there (your snippet of ``cassandra_config_template_snippets`` comes after it):
 
 .. code-block:: bash
 
+    JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"
+    # Custom settings
     # AxonOps agent (cassandra_axonops_enabled)
     . /usr/share/axonops/axonops-jvm.options
 

@@ -1813,7 +1813,8 @@ them), and the report says why; files next to a package installed from a file (`
 self-check, with its way out (``-e import_keep_hand_edits=repo``).
 
 The lines a node has at the end of ``cassandra-env.sh`` (an ``export``, a ``JVM_OPTS="$JVM_OPTS -javaagent:..."``)
-or of ``logback.xml``'s ``<configuration>`` (a ``<logger>``) are carried in a template piece next to the inventory,
+or of ``logback.xml``'s ``<configuration>`` (a ``<logger>``) are carried in a template piece next to the inventory
+(the role's ``# Custom settings`` line above them in ``cassandra-env.sh`` is the role's, not carried),
 not in its YAML: ``group_vars/<cluster group>/cassandra-env.sh.snippet.j2`` (``logback.xml.snippet.j2``) for the lines most
 nodes have, else ``host_vars/<node>/``, which ``cassandra_config_template_snippets`` names (the role
 renders it where the lines were). Ansible reads

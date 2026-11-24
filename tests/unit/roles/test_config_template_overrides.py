@@ -131,7 +131,8 @@ def render_file(series, name, **variables):
         text = f.read().split("\n", 1)[1]  # (without the header line)
     ctx = dict(DEFAULTS, cassandra_version=series[0] + series[2] + "x", _cassandra_config_snippet_logback="",
                _cassandra_config_snippet_appenders="", _cassandra_config_snippet_env="", _cassandra_config_logback_refs=[],
-               _cassandra_config_axonops_line="", _cassandra_config_log_levels=[], cassandra_log_pattern=ROLE_VARS["_cassandra_config_log_patterns"][
+               _cassandra_config_axonops_line="", _cassandra_config_env_marker=ROLE_VARS["_cassandra_config_env_marker"],
+               _cassandra_config_log_levels=[], cassandra_log_pattern=ROLE_VARS["_cassandra_config_log_patterns"][
                    series[0] + series[2] + "x"])
     ctx.update(variables)
     return render(text, escape_backslashes=False, **ctx)
@@ -144,7 +145,26 @@ def test_env_snippet_after_the_last_line(series):
     more = render_file(series, "cassandra-env.sh", _cassandra_config_snippet_env="\n".join(lines))
     last = 'JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"'
     assert plain.rstrip("\n").endswith(last)
-    assert more == plain.replace(last + "\n", "\n".join([last] + lines) + "\n")
+    # the marker above the collection's additions, then the snippet
+    assert more == plain.replace(last + "\n", "\n".join([last, "# Custom settings"] + lines) + "\n")
+
+
+@pytest.mark.parametrize("series", ["4.0", "4.1", "5.0"])
+def test_no_marker_without_an_addition(series):
+    # neither the AxonOps line nor a snippet: the file as before the marker (byte for byte: no change planned, no
+    # restart, after an upgrade of the collection)
+    plain = render_file(series, "cassandra-env.sh")
+    assert "Custom settings" not in plain
+    with open(os.path.join(ROLE, "templates", series, "cassandra-env.sh.j2"), encoding="utf-8") as f:
+        text = f.read().split("\n", 1)[1]
+    before = text.replace("{{ ('\\n' ~ _cassandra_config_env_marker) if (_cassandra_config_axonops_line or "
+                          "_cassandra_config_snippet_env) else '' }}", "")
+    assert before != text
+    assert render(before, escape_backslashes=False, **dict(DEFAULTS, cassandra_version=series[0] + series[2] + "x",
+                  _cassandra_config_snippet_logback="", _cassandra_config_snippet_appenders="",
+                  _cassandra_config_snippet_env="", _cassandra_config_logback_refs=[], _cassandra_config_axonops_line="",
+                  _cassandra_config_log_levels=[], cassandra_log_pattern=ROLE_VARS["_cassandra_config_log_patterns"][
+                      series[0] + series[2] + "x"])) == plain
 
 
 @pytest.mark.parametrize("series", ["4.0", "4.1", "5.0"])
@@ -159,7 +179,10 @@ def test_axonops_line_after_the_last_line_before_the_snippet(series, enabled):
                       _cassandra_config_snippet_env="export TEAM=ops")
     last = 'JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"'
     loader = "# AxonOps agent (cassandra_axonops_enabled)\n. /usr/share/axonops/axonops-jvm.options\n"
-    assert env.rstrip("\n").endswith(last + "\n" + (loader if enabled else "") + "export TEAM=ops")
+    assert env.rstrip("\n").endswith(last + "\n# Custom settings\n" + (loader if enabled else "") + "export TEAM=ops")
+    # the AxonOps line alone: the marker above it too
+    alone = render_file(series, "cassandra-env.sh", _cassandra_config_axonops_line=line)
+    assert alone.rstrip("\n").endswith(last + ("\n# Custom settings\n" + loader.rstrip("\n") if enabled else ""))
     assert env.count("axonops-jvm.options") == (1 if enabled else 0)
 
 
@@ -247,7 +270,7 @@ def test_snippets_rendered_at_their_points(tmp_path, series):
     assert logback.rstrip().endswith('"/>\n  <logger name="x" level="WARN"/>\n  <logger name="com.ops" level="WARN"/>\n'
                                      '  <logger name="{{ as.is }}" level="INFO"/>\n</configuration>')
     env = render_file(series, "cassandra-env.sh", **rendered)
-    assert env.rstrip("\n").endswith('JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"\nexport TEAM=ops')
+    assert env.rstrip("\n").endswith('JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"\n# Custom settings\nexport TEAM=ops')
     # none: the role's files as without
     assert snippet_vars({}) == {"_cassandra_config_snippet_logback": "", "_cassandra_config_snippet_appenders": "",
                                 "_cassandra_config_snippet_env": ""}

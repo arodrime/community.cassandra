@@ -158,6 +158,11 @@ def prepend_snippet(var):
     return "{{ (%s ~ '\\n') if %s else '' }}" % (var, var)
 
 
+# The marker line above the lines cassandra-env.sh gets after its last stock line (the AxonOps line, your snippet):
+# rendered only when one follows it (a file with neither: the stock one)
+ENV_MARKER = ("{{ ('\\n' ~ _cassandra_config_env_marker) if (_cassandra_config_axonops_line or _cassandra_config_snippet_env)"
+              " else '' }}")
+
 # The Prometheus exporter's Java agent (cassandra_config's vars), after the extra options of jvm-server.options
 JVM_AGENT = "{{ ('\\n' ~ _cassandra_config_jvm_agent) if _cassandra_config_jvm_agent else '' }}"
 
@@ -337,10 +342,10 @@ ENV_COMMON = [
      'JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file={{ cassandra_jmx_remote_access_file }}"'),
     # remote JMX over TLS (cassandra_jmx_ssl_*): the stock lines of the remote branch, each on with its variable
 ] + JMX_SSL + [
-    # the file's last line: the AxonOps Java agent's options file sourced after it (cassandra_axonops_enabled), then
-    # your snippet
-    ('JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"', 'JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"' + append_snippet("_cassandra_config_axonops_line")
-     + append_snippet("_cassandra_config_snippet_env")),
+    # the file's last line: the marker of the collection's additions when it has some (ENV_MARKER), the AxonOps
+    # Java agent's options file sourced after it (cassandra_axonops_enabled), then your snippet
+    ('JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"', 'JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"' + ENV_MARKER
+     + append_snippet("_cassandra_config_axonops_line") + append_snippet("_cassandra_config_snippet_env")),
 ]
 
 

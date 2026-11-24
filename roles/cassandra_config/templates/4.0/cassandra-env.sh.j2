@@ -304,5 +304,5 @@ if [ "x$MX4J_PORT" != "x" ]; then
     fi
 fi
 
-JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"{{ ('\n' ~ _cassandra_config_axonops_line) if _cassandra_config_axonops_line else '' }}{{ ('\n' ~ _cassandra_config_snippet_env) if _cassandra_config_snippet_env else '' }}
+JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"{{ ('\n' ~ _cassandra_config_env_marker) if (_cassandra_config_axonops_line or _cassandra_config_snippet_env) else '' }}{{ ('\n' ~ _cassandra_config_axonops_line) if _cassandra_config_axonops_line else '' }}{{ ('\n' ~ _cassandra_config_snippet_env) if _cassandra_config_snippet_env else '' }}
 
