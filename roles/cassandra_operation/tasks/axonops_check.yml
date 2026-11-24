@@ -24,11 +24,20 @@
     _cause: >-
       /usr/share/axonops/axonops-jvm.options is missing: cassandra-env.sh sources it (cassandra_axonops_enabled),
       Cassandra would not start
-    _apply: run apply_config (it installs the AxonOps Java agent package again)
+    _again: installs the AxonOps Java agent package again
+    _apply: run apply_config (it {{ _again }})
     _start:
       - "STOPPED  {{ inventory_hostname }}  Cassandra not started"
       - "  {{ _cause }}"
       - "WAY OUT  {{ _apply }}, then run this again"
+    # apply_config: its resume plans the package again (a new apply_config would leave the progress file behind);
+    # a run with its own way out (sync_clocks' hint): the fact, the hint says what to run; else apply_config on this
+    # node only (no other node restarted in the middle of the rolling run), then the resume
+    _limit: apply_config --limit {{ inventory_hostname }}
+    _way: >-
+      {{ 'resume (its plan ' ~ _again ~ ')' if cassandra_service_node_action | default('') == 'apply_config'
+         else (_limit ~ ' ' ~ _again) if cassandra_service_resume_hint | default('') | trim
+         else ('run ' ~ _limit ~ ' (it ' ~ _again ~ '), then resume') }}
     _block:
       - "{{ _cause }}"
-      - "WAY OUT  {{ _apply }}, then resume"
+      - "WAY OUT  {{ _way }}"

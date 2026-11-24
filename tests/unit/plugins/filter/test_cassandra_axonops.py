@@ -712,7 +712,7 @@ def test_start_rack_checks_the_options_file_first():
     assert task_runs(stop, cassandra_axonops_enabled=True, cassandra_operation_axonops_options={"stat": {"exists": False}})
     assert not task_runs(stop, cassandra_axonops_enabled=True, cassandra_operation_axonops_options={"stat": {"exists": True}})
     assert not task_runs(stop, cassandra_axonops_enabled=False)
-    assert stop["vars"]["_block"][-1] == "WAY OUT  {{ _apply }}, then resume"
+    assert stop["vars"]["_block"][-1] == "WAY OUT  {{ _way }}"
 
 
 @pytest.mark.parametrize("enabled", [False, "false", None])
@@ -796,33 +796,40 @@ def test_a_rack_restart_checks_the_options_file_of_every_node_before_any_drain()
     assert "Why:  /usr/share/axonops/axonops-jvm.options is missing on n1:" in text
     assert "cassandra_axonops_enabled" in text and "fix it" not in text
     way = block[block.index("WAY OUT"):]
-    assert way[1].startswith("  1. run apply_config") and [x for x in way if x.startswith("  2. resume")]
+    assert way[1].startswith("  1. run apply_config --limit n1 (it installs") and [x for x in way if x.startswith("  2. resume")]
 
 
-def _stop_block(failure, node, action="restart", operation="rolling_restart"):
+def _stop_block(failure, node, action="restart", operation="rolling_restart", hint=""):
     # the stop block node_operation.yml and restart_batch.yml print (resume on, a progress file)
     from ansible_collections.community.cassandra.plugins.filter.cassandra_summary import cassandra_stop_block
     return cassandra_stop_block([{"node": node, "result": "restart FAILED", "stage": "before"}], node, failure,
-                                operation=operation, action=action, cluster="c", resume=True,
+                                operation=operation, action=action, cluster="c", resume=True, hint=hint,
                                 progress_file=".cassandra_progress/c-rolling_restart", hosts="c")
 
 
+SYNC_CLOCKS_HINT = [p for p in _tasks("playbooks", "sync_clocks.yml") if "cassandra_service_resume_hint" in p.get("vars", {})]
+
+
 @pytest.mark.parametrize("operation, action", [("rolling_restart", "restart"), ("rolling_reboot", "reboot"),
-                                               ("apply_config", "apply_config")])
+                                               ("apply_config", "apply_config"), ("sync_clocks", "sync_clock")])
 def test_the_restart_check_reads_right_in_the_stop_block(operation, action):
-    # through node_operation.yml's stop block: STOPPED, the cause once under Why (no STOPPED line of its own), the
-    # way out numbered: 1. run apply_config, 2. the resume command; 79 columns
+    # through node_operation.yml's stop block: STOPPED, the cause once under Why (no STOPPED line of its own), 79
+    # columns; the way out: apply_config resumes (its plan reinstalls the package: a new apply_config would leave
+    # the progress file behind); sync_clocks says the fact, its hint what to run; the others 1. apply_config on
+    # that node only (no other node restarted mid-run), 2. the resume command
     from ansible_collections.community.cassandra.tests.unit.helpers import render_with
     stop = _find(_tasks("roles", "cassandra_operation", "tasks", "axonops_check.yml"),
                  "Stop without the AxonOps Java agent's options file")
-    variables = {"inventory_hostname": "cassandra-node-with-a-long-name-01.example.com"}
-    for name in ("_cause", "_apply"):
+    hint = SYNC_CLOCKS_HINT[0]["vars"]["cassandra_service_resume_hint"] if action == "sync_clock" else ""
+    variables = {"inventory_hostname": "cassandra-node-01.example.com", "cassandra_service_node_action": action,
+                 "cassandra_service_resume_hint": hint}
+    for name in ("_cause", "_again", "_apply", "_limit", "_way"):
         variables[name] = render_with(stop["vars"][name], variables)
     variables["_block"] = [render_with(x, variables) for x in stop["vars"]["_block"]]
     variables["_start"] = [render_with(x, variables) for x in stop["vars"]["_start"]]
     msg = render_with(stop["ansible.builtin.fail"]["msg"], variables)
     assert msg == variables["_block"]
-    block = _stop_block(msg, "cassandra-node-01.example.com", action, operation)  # (the table's row: its own width)
+    block = _stop_block(msg, "cassandra-node-01.example.com", action, operation, hint)
     assert block[0].startswith("STOPPED  " + operation)
     assert all(len(x) <= 79 for x in block), block
     assert not [x for x in block if x.lstrip().startswith("STOPPED  cassandra-node")]
@@ -830,15 +837,34 @@ def test_the_restart_check_reads_right_in_the_stop_block(operation, action):
     text = "\n".join(block)
     assert "Why:  /usr/share/axonops/axonops-jvm.options is missing" in text
     way = block[block.index("WAY OUT"):]
-    assert way[1].startswith("  1. run apply_config (it installs the AxonOps Java")
-    assert [x for x in way if x.startswith("  2. resume")]
-    assert [x for x in way if "-e cassandra_rolling_resume=true" in x]
+    if action == "apply_config":
+        assert way[1] == "  resume (its plan installs the AxonOps Java agent package again):"
+        assert "2. " not in "\n".join(way) and [x for x in way if "-e cassandra_rolling_resume=true" in x]
+    elif action == "sync_clock":
+        assert way[1].startswith("  apply_config --limit cassandra-node-01.example.com installs the AxonOps")
+        assert [x for x in way if x.startswith("  Once fixed, run sync_clocks again")]
+    else:
+        assert way[1].startswith("  1. run apply_config --limit cassandra-node-01.example.com (it installs")
+        assert [x for x in way if x.startswith("  2. resume")]
+        assert [x for x in way if "-e cassandra_rolling_resume=true" in x]
     # start_rack: no stop block, printed as it is: its own lines fitted
-    start = render_with(stop["ansible.builtin.fail"]["msg"], dict(variables, _cassandra_axonops_check_fit=True))
+    long_name = dict(variables, inventory_hostname="cassandra-node-with-a-long-name-01.example.com")
+    long_name["_apply"] = render_with(stop["vars"]["_apply"], long_name)
+    long_name["_start"] = [render_with(x, long_name) for x in stop["vars"]["_start"]]
+    start = render_with(stop["ansible.builtin.fail"]["msg"], dict(long_name, _cassandra_axonops_check_fit=True))
     assert start[0] == "STOPPED  cassandra-node-with-a-long-name-01.example.com  Cassandra not started"
     assert all(len(x) <= 79 for x in start) and [x for x in start if x.startswith("WAY OUT  run apply_config")]
     rack = [p for p in _tasks("playbooks", "start_rack.yml") if p.get("name") == "Start the rack"][0]["tasks"]
     assert _find(rack, "Check the AxonOps Java agent can load")["vars"]["_cassandra_axonops_check_fit"] is True
+
+
+def test_the_package_lookup_hides_a_login_its_errors_may_show():
+    from ansible_collections.community.cassandra.tests.unit.helpers import render_with
+    look = _find(_tasks("roles", "cassandra_axonops", "tasks", "main.yml"), "Look for the packages in the repositories")
+    for user, url, hidden in (("", "https://m.example.com/yum", False), ("u", "https://m.example.com/yum", True),
+                              ("", "https://u:p@m.example.com/yum", True)):
+        variables = {"cassandra_axonops_repository_username": user, "cassandra_axonops_repository_url": url}
+        assert render_with(look["no_log"], variables) is hidden
 
 
 def test_a_reinstall_is_not_looked_up_in_the_repositories():

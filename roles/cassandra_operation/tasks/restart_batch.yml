@@ -52,7 +52,9 @@
           - >-
             /usr/share/axonops/axonops-jvm.options is missing on {{ _missing | join(', ') }}: cassandra-env.sh sources
             it (cassandra_axonops_enabled), Cassandra would not start
-          - WAY OUT  run apply_config (it installs the AxonOps Java agent package again), then resume
+          - >-
+            WAY OUT  run apply_config --limit {{ _missing | join(',') }} (it installs the AxonOps Java agent package
+            again), then resume
       when: _missing | length > 0
       vars:
         _missing: >-

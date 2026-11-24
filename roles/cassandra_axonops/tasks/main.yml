@@ -150,7 +150,8 @@
   register: cassandra_axonops_available
   changed_when: false
   check_mode: false  # reads only
-  no_log: "{{ cassandra_axonops_repository_username != '' }}"  # (dnf's error may carry the URL with its login)
+  # (dnf's error may carry the URL with its login)
+  no_log: "{{ cassandra_axonops_repository_username != '' or '@' in cassandra_axonops_repository_url }}"
   when:
     - _planned | length > 0
     - cassandra_axonops_package_files | length == 0
