@@ -712,11 +712,16 @@ def test_the_window_installs_from_files_never_from_the_repositories():
     packages = _packages()
     assert _find(packages, "Install them")["ansible.builtin.dnf"]["disablerepo"] == (
         "{{ '*' if _cassandra_axonops_cached | default(false) | bool else omit }}")
-    # (dnf swap refuses to run with no repository: rpm takes the files over, then the old package goes)
+    # (dnf swap refuses to run with no repository, rpm -U refuses the conflicting packages: the file installed with
+    # --allowerasing, the old package erased in the same transaction)
+    from ansible_collections.community.cassandra.tests.unit.helpers import render_with
     swap = _find(packages, "Replace the Java agent package of another series or Java")["ansible.builtin.command"]["argv"]
-    assert "['rpm', '-U', '--replacefiles', _cassandra_axonops_wanted[1]] if _cassandra_axonops_cached" in swap
-    assert _find(packages, "Remove the Java agent package it replaced (upgrade's window)")["ansible.builtin.command"][
-        "argv"] == ["rpm", "-e", "{{ _cassandra_axonops_removed[0] }}"]
+    variables = {"_cassandra_axonops_files": {"paths": ["a", "j"]}, "_cassandra_axonops_removed": ["old"],
+                 "_cassandra_axonops_wanted": ["/c/a.rpm", "/c/j.rpm"]}
+    assert render_with(swap, dict(variables, _cassandra_axonops_cached=True)) == [
+        "dnf", "-y", "--nogpgcheck", "--disablerepo=*", "install", "--allowerasing", "/c/j.rpm"]
+    assert render_with(swap, dict(variables, _cassandra_axonops_cached=False)) == [
+        "dnf", "-y", "--nogpgcheck", "swap", "old", "/c/j.rpm"]
     # dnf download: this arch and noarch only, a checksum prefix taken off the file names
     assert "'--arch', ansible_facts['architecture'], '--arch', 'noarch'" in get["ansible.builtin.command"]["argv"]
     assert "axon-${f#*-axon-}" in _find(download, "Name the files downloaded as their packages")["ansible.builtin.shell"]
