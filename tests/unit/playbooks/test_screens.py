@@ -363,7 +363,7 @@ def test_apply_config_and_update_java_screens(monkeypatch):
         text = screen(dict(cluster, ansible_play_hosts=hosts, hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS,
                            cassandra_apply_config_diff=APPLY_DIFF), t["vars"], play["vars"])
         assert text.split("\n")[0] == head
-    note, _ = task("update_java.yml", "Note the lines of the plan")
+    note = task("update_java.yml", "Note the lines of the plan")[0]
     node2 = {"cassandra_java_plan_running": "Java 11"}
     node2["_cassandra_update_java_lines"] = render_as_given(
         note["ansible.builtin.set_fact"]["_cassandra_update_java_lines"],
