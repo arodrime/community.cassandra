@@ -418,7 +418,7 @@ def _way_out_head(first, command, again_said, progress_file, cwd):
         lines += _wrapped(command, 5, 7)
         indent = 5
     else:
-        lines += _wrapped(first + (":" if command and not first.endswith(":") else ""), 2, 4)
+        lines += _wrapped((first.rstrip(".") + ":") if command and not first.endswith(":") else first, 2, 4)
         lines += _wrapped(command, 4, 6) if command else []
         indent = 4
     if command and progress_file:  # (under the command it is for, before the other ways out)

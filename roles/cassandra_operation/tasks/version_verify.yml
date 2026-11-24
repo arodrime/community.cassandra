@@ -18,7 +18,10 @@
   vars:
     cassandra_output: true  # a verdict: its msg as is (ops callback)
     _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
-    _failed: "{{ cassandra_version_verify | default({}) | community.cassandra.cassandra_nodetool_failure(inventory_hostname, 'version') }}"
+    # (said in node_operation.yml's rolling stop: 1. fix it, 2. resume, its command)
+    _failed: >-
+      {{ cassandra_version_verify | default({})
+         | community.cassandra.cassandra_nodetool_failure(inventory_hostname, 'version', again='resume') }}
 
 - name: Check it runs the target version
   ansible.builtin.assert:

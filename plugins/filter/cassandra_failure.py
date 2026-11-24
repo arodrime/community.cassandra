@@ -78,10 +78,12 @@ def cassandra_failure_cause(result, task=""):
     return line if len(line) <= _WIDTH else line[:_WIDTH - 3].rstrip() + "..."
 
 
-def cassandra_nodetool_failure(result, host, what):
+def cassandra_nodetool_failure(result, host, what, again=""):
     """A nodetool task run with failed_when: false and no_log (its -pw hidden): its failure, the password masked
     -> [] when it did not fail, else the lines of the stop: "<host>: nodetool <what> failed (rc N): <its error's
-    first line>", then the way out. result: the registered result (a loop's: each failed item)."""
+    first line>", then the way out (79 columns). result: the registered result (a loop's: each failed item);
+    again: what goes on once it is fixed, in a rolling run's stop block ("resume": the block numbers the fix and
+    the resume command), else the same command run again."""
     result = result if isinstance(result, dict) else {}
     runs = result.get("results") if isinstance(result.get("results"), list) else [result]
     failed = [r for r in runs if isinstance(r, dict) and not r.get("skipped") and r.get("rc") not in (None, 0)]
@@ -93,7 +95,10 @@ def cassandra_nodetool_failure(result, host, what):
                 if line.strip()]
         lines.append("%s: nodetool %s failed (rc %s): %s" % (host, what, run.get("rc"), _URL_LOGIN.sub(
             r"\1****@", said[0]) if said else "no output"))
-    return lines + ["WAY OUT  fix it (nodetool %s on %s shows it), then run the same command again." % (what, host)]
+    fix = "fix it (nodetool %s on %s shows it)" % (what, host)
+    if again:  # one line: the stop block (cassandra_stop_block) cuts it and adds the command
+        return lines + ["WAY OUT  %s, then %s" % (fix, again)]
+    return lines + out.todo([fix + ", then run the same command again."], title="WAY OUT")
 
 
 def cassandra_failure_report(failures, operation="", cluster="", what="could not be prepared",

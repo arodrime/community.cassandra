@@ -222,6 +222,24 @@ def test_a_task_that_failed_is_failed_with_the_hint_or_the_resume():
         "FAILED  at node2", "  Why:  " + twice, "        other", "  No node after it was touched."]
 
 
+def test_a_nodetool_failure_in_a_rolling_stop_numbers_the_fix_and_the_resume():
+    # version_verify.yml's stop (apply_config, upgrade): 1. the fix, 2. resume and its command, never "again.:"
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_failure import cassandra_nodetool_failure
+    failure = cassandra_nodetool_failure({"rc": 1, "stderr": "Connection refused"}, "node2", "version", again="resume")
+    lines = stop(failure, stage="after")
+    assert lines[1] == "  Why:  node2: nodetool version failed (rc 1): Connection refused"
+    assert lines[-5:] == ["WAY OUT", "  1. fix it (nodetool version on node2 shows it)", "  2. resume (node2 restarts again):",
+                          "     ansible-playbook community.cassandra.rolling_restart \\",
+                          "       -e cassandra_rolling_resume=true"]
+    # outside a rolling run: the same command again, 79 columns
+    alone = cassandra_nodetool_failure({"rc": 1}, "a-rather-long-node-name.example.com", "listsnapshots")
+    assert alone[1:] == ["WAY OUT  fix it (nodetool listsnapshots on a-rather-long-node-name.example.com",
+                         "  shows it), then run the same command again."]
+    # a way out ending with a full stop, a command under it: no ".:"
+    lines = stop(["boom", "WAY OUT  fix the disk first."])
+    assert lines[-4:-2] == ["WAY OUT", "  fix the disk first:"]
+
+
 NODES = [{"node": "node4", "delete": ["a", "b"], "stop": True, "disable": True},
          {"node": "node5", "delete": ["c"], "stop": False, "disable": True},
          {"node": "node6", "delete": [], "stop": False, "disable": False}]
