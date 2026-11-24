@@ -103,8 +103,9 @@ def version_error(out, err, host=None, port=None):
         return ("JMX login refused ({0}): check the JMX user and its password or password file "
                 "(module options username, password_file, password; cassandra_jmx_* in the roles)").format(
                     first or why or "authentication failed")
-    # "Access denied!" (the JDK's jmxremote.access), "Access Denied" (Cassandra's own JMX authorizer)
-    if re.search(r"Access denied", text, re.I):
+    # "Access denied!" (the JDK's jmxremote.access), "Access Denied" (Cassandra's own JMX authorizer); not the
+    # JVM's "access denied (java.io.FilePermission ...)" of an AccessControlException
+    if re.search(r"Access denied!|Access Denied", text):
         return ("JMX login accepted but this user lacks the rights (jmxremote.access, "
                 "or GRANT ... ON ALL MBEANS): {0}").format(
                     first or (unreached.group("why") if unreached else "") or "Access denied")

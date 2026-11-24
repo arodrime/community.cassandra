@@ -84,6 +84,14 @@ def test_version_error_names_the_address_asked():
                                                      " 'Connection refused'.", "127.0.0.1", 7199)
 
 
+def test_a_java_access_control_exception_is_not_a_jmx_right():
+    # the JVM's lower-case "access denied (...)" (a file nodetool may not read): not the JMX user's rights
+    err = ('error: access denied ("java.io.FilePermission" "/etc/cassandra/jmxremote.password" "read")\n'
+           "-- StackTrace --\njava.security.AccessControlException: access denied\n")
+    assert "lacks the rights" not in version_error("", err)
+    assert version_error("", err).startswith("nodetool version failed")
+
+
 def test_health_says_the_login_once_not_gossip_down():
     failed = {"failed": True, "msg": version_error("", "error: Invalid username or password\n" + STACK),
               "stderr": "error: Invalid username or password\n" + STACK}
