@@ -727,7 +727,6 @@ def test_cassandra_config_does_nothing_of_axonops_when_off(enabled):
     assert task_runs(look, cassandra_axonops_enabled=True)
 
 
-
 def test_package_files_as_axonops_serves_them(tmp_path):
     # the owner's air-gapped mirror: the files as AxonOps' apt pool and yum repository name them, a relative path
     # read from the inventory's directory, each one checked on the controller
