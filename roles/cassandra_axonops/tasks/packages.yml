@@ -7,7 +7,9 @@
 - name: Install adduser (Debian & Ubuntu)
   ansible.builtin.apt:
     name: adduser
-  when: ansible_facts['os_family'] == 'Debian'
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - "'package axon-agent' in _cassandra_axonops_items | map(attribute='item')"
 
 - name: Note what to install
   ansible.builtin.import_tasks: wanted.yml
@@ -15,12 +17,10 @@
 - name: Read the AxonOps repository (RedHat)
   ansible.builtin.import_tasks: repository_read.yml
 
-# (upgrade's window: on the node already, copied or downloaded before its drain)
 - name: Copy the package files
   when:
     - _cassandra_axonops_files.paths | default([]) | length > 0
     - _cassandra_axonops_package_change | bool
-    - not _cassandra_axonops_cached | default(false) | bool
   block:
     - name: Create the directory of the package files
       ansible.builtin.file:
@@ -40,13 +40,12 @@
     - ansible_facts['os_family'] == 'Debian'
     - _cassandra_axonops_package_change | bool
   block:
-    # (the cache refreshed: a mirror updated since the last refresh has the pinned version; not in upgrade's window,
-    # _cassandra_axonops_cached: its files, downloaded before its drain, installed from them)
+    # (the cache refreshed: a mirror updated since the last refresh has the pinned version)
     - name: Install them from the repositories
       ansible.builtin.apt:
         name: "{{ _cassandra_axonops_wanted }}"
         allow_downgrade: true
-        update_cache: "{{ not _cassandra_axonops_cached | default(false) | bool }}"
+        update_cache: true
       retries: 3
       register: cassandra_axonops_packages
       until: cassandra_axonops_packages is succeeded
@@ -65,7 +64,7 @@
       ansible.builtin.apt:
         name: "{{ _cassandra_axonops_latest }}"
         state: latest
-        update_cache: "{{ not _cassandra_axonops_cached | default(false) | bool }}"
+        update_cache: true
       register: cassandra_axonops_packages_latest
       when: _cassandra_axonops_latest | length > 0
 
@@ -80,8 +79,6 @@
         name: "{{ _cassandra_axonops_wanted[:1] if _swap else _cassandra_axonops_wanted }}"
         allow_downgrade: true
         disable_gpg_check: "{{ _cassandra_axonops_files.paths | default([]) | length > 0 }}"
-        # (upgrade's window: from the files on the node, no repository read)
-        disablerepo: "{{ '*' if _cassandra_axonops_cached | default(false) | bool else omit }}"
       retries: 3
       register: cassandra_axonops_packages_rpm
       until: cassandra_axonops_packages_rpm is succeeded
@@ -89,15 +86,12 @@
         _swap: "{{ _cassandra_axonops_java_change | bool and _cassandra_axonops_removed | length > 0 }}"
 
     # rpm refuses two packages with the same files (and the packages conflict): the old one out and the new one in,
-    # in one transaction (a failed one changes nothing). Upgrade's window (dnf swap refuses to run without a
-    # repository): its file installed with --allowerasing, the conflicting old package erased in the same transaction
+    # in one transaction (a failed one changes nothing)
     - name: Replace the Java agent package of another series or Java
       ansible.builtin.command:
-        argv: "{{ ['dnf', '-y'] + _gpg + (_offline if _cassandra_axonops_cached | default(false) | bool else _swap) }}"
+        argv: "{{ ['dnf', '-y'] + _gpg + ['swap', _cassandra_axonops_removed[0], _cassandra_axonops_wanted[1]] }}"
       vars:
         _gpg: "{{ ['--nogpgcheck'] if _cassandra_axonops_files.paths | default([]) else [] }}"
-        _offline: "{{ ['--disablerepo=*', 'install', '--allowerasing', _cassandra_axonops_wanted[1]] }}"
-        _swap: "{{ ['swap', _cassandra_axonops_removed[0], _cassandra_axonops_wanted[1]] }}"
       register: cassandra_axonops_packages_swap
       changed_when: true
       when:
@@ -122,11 +116,9 @@
   vars:
     # the files as copied, axon-agent's first: the Java agent's last
     _files: "{{ _cassandra_axonops_wanted if _cassandra_axonops_files.paths | default([]) else [] }}"
-    # (upgrade's window: no repository read)
-    _no_repo: "{{ ['--disablerepo=*'] if _cassandra_axonops_cached | default(false) | bool else [] }}"
     _command: >-
       {{ ['apt-get', '-y', 'install', '--reinstall'] if ansible_facts['os_family'] == 'Debian'
-         else ['dnf', '-y'] + (['--nogpgcheck'] if _files else []) + _no_repo + ['reinstall'] }}
+         else ['dnf', '-y'] + (['--nogpgcheck'] if _files else []) + ['reinstall'] }}
   register: cassandra_axonops_packages_reinstall
   changed_when: true
   when: _cassandra_axonops_reinstall | length > 0
@@ -202,11 +194,3 @@
       - "  removing {{ _cassandra_axonops_removed | join(', ') }} took"
       - "  /usr/share/axonops/axonops-jvm.options with it"
       - "WAY OUT  run this again: it reinstalls {{ _cassandra_axonops_java_package }}"
-
-# upgrade's window: the files downloaded before its drain, installed now: removed
-- name: Remove the files downloaded
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: absent
-  loop: "{{ _cassandra_axonops_downloaded | default([]) if cassandra_axonops_package_files | length == 0 else [] }}"
-  when: _cassandra_axonops_cached | default(false) | bool

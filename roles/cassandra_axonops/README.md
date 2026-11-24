@@ -14,7 +14,7 @@ Cassandra series and Java, writes `/etc/axonops/axon-agent.yml`, and keeps
 
 The package is picked from `cassandra_version` and `cassandra_java_version`
 (`cassandra_axonops_java_agent_package` overrides it). A Java agent package
-of another series or Java found on the node is removed (on a Java change).
+of another series or Java found on the node is removed.
 
 The Java agent runs inside Cassandra's JVM. Every Java agent package from
 1.1.0 on ships `/usr/share/axonops/axonops-jvm.options`, which adds the

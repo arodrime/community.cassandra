@@ -11,11 +11,12 @@ cassandra_axonops_problems: the role's settings -> what is wrong with them,
 cassandra_axonops_changes: what the role read on the node and what it wants
     -> the packages installed, the ones replaced, the changes [{item, before,
     after}] (apply_config's plan).
+cassandra_axonops_enabled_hosts: hosts, hostvars -> the ones with the AxonOps agent on.
 cassandra_axonops_files: the package files given -> the packages and versions they
     hold, or why they do not fit.
 cassandra_axonops_repository_items: what the repository tasks changed -> the
     plan's rows.
-cassandra_axonops_stop_parts: a stop's message -> its cause and its way out.
+cassandra_axonops_unavailable: the packages to install the repositories lack.
 cassandra_axonops_read_problems: what the node read -> what stops the role
     before any change.
 cassandra_axonops_loader_refusals: the JVM options and the cassandra-env.sh
@@ -29,11 +30,13 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import copy
+import os
 import re
 
 import yaml
 
 from ansible.errors import AnsibleFilterError
+from ansible.module_utils.parsing.convert_bool import boolean
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import todo
 
 # The Java agent packages of AxonOps (packages.axonops.com), by series and Java major. Every one ships
@@ -51,8 +54,12 @@ OPTIONS = "/usr/share/axonops/axonops-jvm.options"
 # dpkg states of a package in place (the others: half done, or gone with its config left)
 DPKG_DONE = ("installed", "triggers-awaited", "triggers-pending")
 DPKG_GONE = ("not-installed", "config-files")
-DEB_FILE = re.compile(r"^(?P<name>[^_/]+)_(?P<version>[^_/]+)_(?P<arch>[^_/]+)[.]deb$")
-RPM_FILE = re.compile(r"^(?P<name>[^/]+)-(?P<version>[^-/]+)-(?P<release>[^-/]+)[.](?P<arch>[^./]+)[.]rpm$")
+# a package file's name: name_version_arch.deb (AxonOps' apt pool adds _<md5> before .deb), or
+# name-version-release.arch.rpm (its yum repository puts <sha256>- before it)
+DEB_FILE = re.compile(r"^(?P<name>[^_/]+)_(?P<version>[^_/]+)_(?P<arch>[^_/]+)(?:_[0-9a-f]{32})?[.]deb$")
+RPM_FILE = re.compile(r"^(?:[0-9a-f]{64}-)?(?P<name>[^/]+)-(?P<version>[^-/]+)-(?P<release>[^-/]+)[.](?P<arch>[^./]+)[.]rpm$")
+FILE_FORMS = ("name_version_arch.deb or name-version-release.arch.rpm, as AxonOps' repositories serve them"
+              " (name_version_arch_<md5>.deb, <sha256>-name-version-release.arch.rpm) or renamed so")
 
 
 def _numbers(version):
@@ -65,6 +72,18 @@ def _older(version, than):
     a, b = _numbers(version), _numbers(than)
     width = max(len(a), len(b))
     return a + [0] * (width - len(a)) < b + [0] * (width - len(b))
+
+
+def cassandra_axonops_enabled_hosts(hosts, hostvars, only=None):
+    """The hosts whose cassandra_axonops_enabled is true as Ansible reads a boolean (an INI inventory's "false" or "no"
+    is false), among those whose variable only names true too (e.g. cassandra_java_plan_todo; None: all)."""
+    out = []
+    for host in hosts or []:
+        values = (hostvars or {}).get(host) or {}
+        if boolean(values.get("cassandra_axonops_enabled", False), strict=False) and (
+                only is None or boolean(values.get(only, False), strict=False)):
+            out.append(host)
+    return out
 
 
 def cassandra_axonops_java_agent(series, java):
@@ -243,25 +262,32 @@ def cassandra_axonops_changes(lines, wanted, config_sha1, user, group, server):
     return {"installed": installed, "removed": removed, "latest": latest, "reinstall": reinstall, "items": items}
 
 
-def cassandra_axonops_files(files, java_package, agent_version="", java_agent_version=""):
+def cassandra_axonops_files(files, java_package, agent_version="", java_agent_version="", base_dir="",
+                            on_controller=False):
     """The package files of cassandra_axonops_package_files (paths) -> {wanted: [[package, version]] axon-agent then
-    the Java agent, as the files give them; paths: [the files, axon-agent's first]; problems: [why they do not fit,
-    one line each]}. Each file names its package and version (name_version_arch.deb,
-    name-version-release.arch.rpm); one for axon-agent, one for java_package, pinned versions matching."""
+    the Java agent, as the files give them; paths: [the files, axon-agent's first, a relative one made absolute from
+    base_dir (the inventory's directory)]; problems: [why they do not fit, one line each]}. Each file names its
+    package and version (FILE_FORMS); one for axon-agent, one for java_package, pinned versions matching;
+    on_controller: each one a file there (read on the controller, as the role copies it)."""
     found, problems = {}, []
     for path in files or []:
-        base = str(path).rsplit("/", 1)[-1]
+        path = str(path)
+        if base_dir and not os.path.isabs(path):
+            path = os.path.join(str(base_dir), path)
+        base = path.rsplit("/", 1)[-1]
         m = DEB_FILE.match(base) or RPM_FILE.match(base)
-        if not m:
-            problems.append("%s: not a package file name (name_version_arch.deb or name-version-release.arch.rpm)"
-                            % base)
+        if on_controller and not os.path.isfile(path):
+            problems.append("%s: no such file on the controller (a relative path is read from the inventory's"
+                            " directory)" % path)
+        elif not m:
+            problems.append("%s: not a package file name (%s)" % (base, FILE_FORMS))
         elif m.group("name") not in ("axon-agent", java_package):
             problems.append("%s: package %s, neither axon-agent nor %s" % (base, m.group("name"), java_package))
         elif m.group("name") in found:
             problems.append("%s: a second file for %s" % (base, m.group("name")))
         else:
             version = m.group("version") + ("-" + m.group("release") if "release" in m.groupdict() else "")
-            found[m.group("name")] = (version, str(path))
+            found[m.group("name")] = (version, path)
     for name, pinned in (("axon-agent", agent_version), (java_package, java_agent_version)):
         if name not in found:
             problems.append("no file for %s in cassandra_axonops_package_files" % name)
@@ -297,11 +323,35 @@ def cassandra_axonops_repository_items(changed, url, key):
     return out
 
 
+def cassandra_axonops_unavailable(lines, wanted, items):
+    """The packages to install (items: the plan's rows, "package <name>" not removed) the repositories do not have:
+    lines, "available <name> <version>" as the lookup prints them; wanted: [[name, version ("" = any)]] -> one line
+    each, [] when every one is there."""
+    available = {}
+    for line in lines or []:
+        words = str(line).split()
+        if len(words) == 3 and words[0] == "available":
+            available.setdefault(words[1], []).append(words[2])
+    pins = dict((str(n), str(v or "")) for n, v in wanted or [])
+    out = []
+    for item in items or []:
+        name = str(item.get("item", ""))
+        if not name.startswith("package ") or item.get("after") == "removed":
+            continue
+        name = name[len("package "):]
+        versions, pin = available.get(name, []), pins.get(name, "")
+        if not versions:
+            out.append("%s: no repository of the host has it." % name)
+        elif pin and all(_differs(v, pin) for v in versions):
+            out.append("%s %s: not in the repositories (they have %s)." % (name, pin, ", ".join(versions[:5])))
+    return out
+
+
 def cassandra_axonops_read_problems(lines, user, check=False):
     """What the node read (files/read.sh's lines) holds that the role cannot go on with, every one, then the WAY OUT
     lines ([] when nothing): a package left half done by dpkg; axon-agent installed without its account axonops;
-    Cassandra's account (user) missing, except under --check (check: a blank host, Cassandra not installed by
-    --check)."""
+    Cassandra's account (user) missing, except under --check (check) on a host without the cassandra package (a
+    blank host: --check installs nothing)."""
     installed, unfinished, read = _read(lines)
     facts, ways = [], []
     for name in sorted(unfinished):
@@ -313,7 +363,8 @@ def cassandra_axonops_read_problems(lines, user, check=False):
     if "axon-agent" in installed and read.get("account_axonops") == "no":
         facts.append("axon-agent is installed, its account axonops is missing.")
         ways.append("on the node: apt-get install --reinstall axon-agent (dnf reinstall axon-agent)")
-    if not check and read.get("account_" + str(user)) == "no":
+    blank = check and read.get("cassandra_installed") == "no"
+    if not blank and read.get("account_" + str(user)) == "no":
         facts.append("no account %s on the node (cassandra_axonops_cassandra_user)." % user)
         ways.append("in the inventory: set cassandra_axonops_cassandra_user to the account Cassandra runs as")
     if not facts:
@@ -321,21 +372,6 @@ def cassandra_axonops_read_problems(lines, user, check=False):
     ways = [w for i, w in enumerate(ways) if w not in ways[:i]]
     # (WAY OUT, its steps numbered under it: guide_output's labels; 77 columns, the refusal's block indents by 2)
     return facts + todo(ways + ["run again"], title="WAY OUT", width=77)
-
-
-def cassandra_axonops_stop_parts(msg):
-    """A stop's message (one of the role's: STOPPED or REFUSED head, facts, WAY OUT and its continuation lines; or
-    a module's error) -> {cause: its facts in one line, way_out: its WAY OUT text in one line, "" when none}."""
-    cause, way, in_way = [], [], False
-    for line in str(msg or "").splitlines():
-        text = line.strip()
-        if not text or not in_way and re.match(r"^(STOPPED|REFUSED)  ", text):
-            continue
-        if "WAY OUT  " in text:
-            in_way = True
-            text = text.split("WAY OUT  ", 1)[1].strip()
-        (way if in_way else cause).append(text)
-    return {"cause": " ".join(cause) or "no cause given", "way_out": " ".join(way)}
 
 
 LOADER = re.compile(r"axonops-jvm[.]options|axon-(cassandra|dse)\S*[.]jar")
@@ -394,8 +430,9 @@ class FilterModule(object):
             "cassandra_axonops_problems": cassandra_axonops_problems,
             "cassandra_axonops_changes": cassandra_axonops_changes,
             "cassandra_axonops_files": cassandra_axonops_files,
+            "cassandra_axonops_enabled_hosts": cassandra_axonops_enabled_hosts,
             "cassandra_axonops_read_problems": cassandra_axonops_read_problems,
-            "cassandra_axonops_stop_parts": cassandra_axonops_stop_parts,
+            "cassandra_axonops_unavailable": cassandra_axonops_unavailable,
             "cassandra_axonops_repository_items": cassandra_axonops_repository_items,
             "cassandra_axonops_loader_refusals": cassandra_axonops_loader_refusals,
             "cassandra_apply_config_axonops_steps": cassandra_apply_config_axonops_steps,

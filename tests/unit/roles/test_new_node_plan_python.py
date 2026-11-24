@@ -144,3 +144,31 @@ def test_external_cqlsh_needs_no_python_for_the_package_cqlsh():
     assert "python3.11" in needs(plan("3.14", cassandra_medusa_enabled=False))
     out = plan("3.14", cassandra_medusa_enabled=False, cassandra_cqlsh_source="external")
     assert "python3.11" not in needs(out) and out["problems"] == []
+
+
+AXONOPS = {"cassandra_axonops_enabled": True, "cassandra_axonops_java_agent_package": "",
+           "cassandra_axonops_java_agent_version": "", "cassandra_axonops_agent_version": "", "cassandra_java_version": "17",
+           "cassandra_axonops_server_host": "ax.example.com", "cassandra_axonops_server_port": 1888,
+           "cassandra_axonops_org": "o", "cassandra_axonops_key": "", "cassandra_axonops_tls_mode": "disabled",
+           "cassandra_axonops_tls_skip_verify": False, "cassandra_axonops_tls_ca_file": "",
+           "cassandra_axonops_tls_cert_file": "", "cassandra_axonops_tls_key_file": "", "cassandra_axonops_ntp_hosts": [],
+           "cassandra_axonops_extra_settings": {}, "cassandra_axonops_repository_manage": True,
+           "cassandra_axonops_repository_username": "", "cassandra_axonops_repository_password": "",
+           "cassandra_axonops_repository_key_url": "https://k", "cassandra_axonops_repository_url": "https://m/apt/",
+           "cassandra_axonops_repository_suite": "axonops-apt", "cassandra_axonops_package_files": []}
+
+
+def test_a_new_node_gets_the_axonops_checks_before_anything_is_installed():
+    # add_node / replace_node: "nothing was installed" holds for the AxonOps settings and its repository too
+    out = plan("3.12", cassandra_medusa_enabled=False, **AXONOPS)
+    assert out["problems"] == []
+    assert {"name": "AxonOps repository", "auth": "axonops", "url": "https://m/apt/dists/axonops-apt/InRelease"} in out["urls"]
+    wrong = plan("3.12", cassandra_medusa_enabled=False, **dict(AXONOPS, cassandra_axonops_org="", cassandra_java_version="8"))
+    assert [p for p in wrong["problems"] if p.startswith("AxonOps: cassandra_axonops_org is empty")]
+    assert [p for p in wrong["problems"] if p.startswith("AxonOps: AxonOps has no Java agent package for Cassandra 5.0 on Java 8")]
+    files = plan("3.12", cassandra_medusa_enabled=False, **dict(AXONOPS, cassandra_axonops_package_files=["x.deb"]))
+    assert [p for p in files["problems"] if p.startswith("AxonOps: x.deb: no such file on the controller")]
+    assert not [u for u in files["urls"] if u["name"] == "AxonOps repository"]
+    # off: nothing of it
+    off = plan("3.12", cassandra_medusa_enabled=False, **dict(AXONOPS, cassandra_axonops_enabled=False))
+    assert not [u for u in off["urls"] if u["name"] == "AxonOps repository"]

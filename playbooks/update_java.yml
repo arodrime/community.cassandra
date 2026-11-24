@@ -147,38 +147,11 @@
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
         _axonops: >-
-          {{ groups['cassandra_update_java_True'] | default([]) | map('extract', hostvars)
-             | selectattr('cassandra_axonops_enabled', 'defined') | selectattr('cassandra_axonops_enabled', 'truthy')
-             | map(attribute='inventory_hostname') | list }}
+          {{ groups['cassandra_update_java_True'] | default([]) | community.cassandra.cassandra_axonops_enabled_hosts(hostvars) }}
         _said:
           - "{{ _axonops | join(', ') }}: cassandra_axonops_enabled is true"
           - "update_java with the AxonOps agent: not supported yet in this version"
           - "WAY OUT  move these nodes to the new Java by hand, following AxonOps' agent docs for the Java agent package of the new Java, or wait for the next version of the collection"
-
-    # The AxonOps agent (cassandra_axonops_enabled): its Java agent package is built for one Java, replaced at the
-    # node's turn once its config is written, before its restart (action_update_java.yml); its changes in the plan
-    - name: Compare the AxonOps agent
-      ansible.builtin.include_role:
-        name: community.cassandra.cassandra_axonops
-        apply:
-          check_mode: true
-      vars:
-        cassandra_change_report_dir: ""  # the real run reports
-        _cassandra_change_report_quiet: true  # in the plan
-        _cassandra_compare: true  # (check mode applied to it, which ansible_check_mode does not tell)
-      when:
-        - cassandra_java_plan_todo | bool
-        - cassandra_axonops_enabled | default(false) | bool
-
-    - name: Note the lines of the plan
-      ansible.builtin.set_fact:
-        _cassandra_update_java_lines: >-
-          {%- set out = ['runs ' ~ cassandra_java_plan_running] + _cassandra_java_heap_lines | default([]) -%}
-          {%- for i in _axonops -%}{%- set _ = out.append('AxonOps: ' ~ i.item ~ ' -> ' ~ i.after) -%}{%- endfor -%}
-          {{ out }}
-      vars:
-        _axonops: "{{ _cassandra_axonops_items | default([]) if cassandra_axonops_enabled | default(false) | bool else [] }}"
-      when: cassandra_java_plan_todo | bool
 
     # The Prometheus exporter's port free before anything is done (the agent would make the JVM exit; its jar and
     # config are put in place with the config, checked again before the restart)
@@ -225,7 +198,7 @@
         _blocks: >-
           {%- set l = [] -%}
           {%- for h in _todo -%}
-          {%-   set _ = l.append({'title': h | community.cassandra.cassandra_screen_title(hostvars[h]._cassandra_preflight | default({})), 'lines': hostvars[h]._cassandra_update_java_lines}) -%}
+          {%-   set _ = l.append({'title': h | community.cassandra.cassandra_screen_title(hostvars[h]._cassandra_preflight | default({})), 'lines': ['runs ' ~ hostvars[h].cassandra_java_plan_running] + hostvars[h]._cassandra_java_heap_lines | default([])}) -%}
           {%- endfor -%}
           {{ l }}
         _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default((_cassandra_preflight | default({})).cassandra_cluster_name | default('')) }}"

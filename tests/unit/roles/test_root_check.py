@@ -60,14 +60,15 @@ def test_the_root_check_comes_before_any_node_action():
 def test_a_restart_writes_the_unit_before_draining():
     tasks = load_tasks(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "action_restart.yml"))
     assert [t["name"] for t in tasks] == ["Check the Prometheus exporter's agent can start",
+                                          "Check the AxonOps Java agent can load",
                                           "Install the cassandra systemd unit", "Drain the node",
                                           "Stop when the node did not answer", "Say the drain did not work",
                                           "Apply the OS settings with Cassandra stopped",  # (apply_config's only)
                                           "Do what is done while it is stopped", "Restart it and wait until it has joined",
                                           "Start it on the new release and wait until it has joined"]  # (apply_config's window)
-    assert tasks[1]["ansible.builtin.include_role"] == {"name": "community.cassandra.cassandra_service", "tasks_from": "unit.yml"}
-    assert tasks[7]["vars"]["_cassandra_service_unit_written"] is True
-    assert tasks[8]["block"][0]["vars"]["_cassandra_service_unit_written"] is True
+    assert tasks[2]["ansible.builtin.include_role"] == {"name": "community.cassandra.cassandra_service", "tasks_from": "unit.yml"}
+    assert tasks[8]["vars"]["_cassandra_service_unit_written"] is True
+    assert tasks[9]["block"][0]["vars"]["_cassandra_service_unit_written"] is True
     main = load("roles", "cassandra_service", "tasks", "main.yml")
     unit = [t for t in main if t["name"] == "Install the cassandra systemd unit"][0]
     assert unit["ansible.builtin.include_tasks"] == "unit.yml"

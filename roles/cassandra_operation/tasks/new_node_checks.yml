@@ -17,7 +17,7 @@
     name: "community.cassandra.{{ item }}"
     tasks_from: defaults.yml
     public: true
-  loop: [cassandra_config, cassandra_install, cassandra_repository, cassandra_medusa]
+  loop: [cassandra_config, cassandra_install, cassandra_repository, cassandra_medusa, cassandra_axonops]
 
 - name: Check the host before installing anything
   when: cassandra_new_node_checks | bool

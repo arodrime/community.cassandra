@@ -128,6 +128,7 @@
             components: "{{ cassandra_axonops_repository_component }}"
             signed_by: "/etc/apt/keyrings/axonops.{{ cassandra_axonops_signing_key.stdout.split() | last }}"
           register: cassandra_axonops_source
+          diff: false
           # (under check mode without python3-debian: compared as text below)
           when: not (_cassandra_axonops_compare | bool and cassandra_axonops_python_debian.rc != 0)
 

@@ -147,6 +147,7 @@
 336	playbooks/topology.yml :: Work out the plan and confirm it :: vars._tp_cql_node (jinja)
 689	playbooks/update_java.yml :: Check the Java change / No node of the run is left drained :: ansible.builtin.assert.fail_msg (jinja)
 469	playbooks/update_java.yml :: Check the Java change / Settings that only apply to another Java :: ansible.builtin.debug.msg (jinja)
+313	playbooks/update_java.yml :: Check the Java change / Show the plan and confirm the run :: vars._blocks (jinja)
 335	playbooks/upgrade.yml :: Pick the nodes and their order / Check the canary node :: ansible.builtin.assert.fail_msg (jinja)
 302	playbooks/upgrade.yml :: Prepare / Say the snapshot is already there :: ansible.builtin.debug.msg (jinja)
 314	playbooks/upgrade.yml :: Prepare / Show the plan and confirm :: vars.cassandra_screen.blocks (jinja)

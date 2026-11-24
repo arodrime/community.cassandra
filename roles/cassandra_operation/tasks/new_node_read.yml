@@ -137,6 +137,7 @@
       repository: ["{{ cassandra_install_username }}", "{{ cassandra_install_password }}"]
       java: ["{{ cassandra_java_tarball_username }}", "{{ cassandra_java_tarball_password }}"]
       pip: ["{{ cassandra_medusa_pip_username }}", "{{ cassandra_medusa_pip_password }}"]
+      axonops: ["{{ cassandra_axonops_repository_username }}", "{{ cassandra_axonops_repository_password }}"]
 
 - name: Reach the seeds
   ansible.builtin.wait_for:

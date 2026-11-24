@@ -153,6 +153,41 @@
 {%-   endif -%}
 {%- endif -%}
 
+{#- The AxonOps agent (cassandra_axonops_enabled): its settings as its role checks them (a refusal of the role's
+    would come after the install), its package files, its repository reached -#}
+{%- if cassandra_axonops_enabled | default(false) | bool -%}
+{%-   set ax = {'java_agent_package': cassandra_axonops_java_agent_package,
+                'java_agent_version': cassandra_axonops_java_agent_version | string,
+                'series': cassandra_version, 'java': cassandra_java_version, 'server_host': cassandra_axonops_server_host,
+                'server_port': cassandra_axonops_server_port, 'org': cassandra_axonops_org, 'key': cassandra_axonops_key,
+                'tls_mode': cassandra_axonops_tls_mode, 'tls_skip_verify': cassandra_axonops_tls_skip_verify,
+                'tls_ca_file': cassandra_axonops_tls_ca_file, 'tls_cert_file': cassandra_axonops_tls_cert_file,
+                'tls_key_file': cassandra_axonops_tls_key_file, 'ntp_hosts': cassandra_axonops_ntp_hosts,
+                'extra_settings': cassandra_axonops_extra_settings,
+                'repository_manage': cassandra_axonops_repository_manage | bool,
+                'repository_username': cassandra_axonops_repository_username,
+                'repository_password': cassandra_axonops_repository_password,
+                'repository_key_url': cassandra_axonops_repository_key_url, 'os_family': ansible_facts['os_family']} -%}
+{%-   for p in ax | community.cassandra.cassandra_axonops_problems -%}
+{%-     set _ = problems.append('AxonOps: ' ~ p) -%}
+{%-   endfor -%}
+{%-   set axfiles = cassandra_axonops_package_files | community.cassandra.cassandra_axonops_files(
+                      cassandra_axonops_java_agent_package or cassandra_version
+                      | community.cassandra.cassandra_axonops_java_agent(cassandra_java_version),
+                      cassandra_axonops_agent_version | string, cassandra_axonops_java_agent_version | string,
+                      inventory_dir | default(''), true)
+                    if cassandra_axonops_package_files else {} -%}
+{%-   for p in axfiles.problems | default([]) -%}
+{%-     set _ = problems.append('AxonOps: ' ~ p) -%}
+{%-   endfor -%}
+{%-   if cassandra_axonops_repository_manage | bool and not cassandra_axonops_package_files -%}
+{%-     set axbase = cassandra_axonops_repository_url | regex_replace('/+$', '') -%}
+{%-     set _ = urls.append({'name': 'AxonOps repository', 'auth': 'axonops',
+                             'url': axbase ~ '/dists/' ~ cassandra_axonops_repository_suite ~ '/InRelease' if debian
+                                    else axbase ~ '/repodata/repomd.xml'}) -%}
+{%-   endif -%}
+{%- endif -%}
+
 {#- Network: the seeds' ports from here, and this host's own ports -#}
 {%- set legacy_ssl = cassandra_legacy_ssl_storage_port_enabled | bool and cassandra_internode_encryption != 'none' -%}
 {#- the seeds as listed, with their port when one is given -#}

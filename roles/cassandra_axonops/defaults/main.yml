@@ -37,7 +37,9 @@ cassandra_axonops_java_agent_version: ""
 # axon-cassandra5.0-agent-jdk<11|17>
 cassandra_axonops_java_agent_package: ""
 # Package files on the controller to install instead of a repository
-# (air-gapped hosts), e.g. ["files/axon-agent_2.0.36_amd64.deb",
+# (air-gapped hosts), absolute or relative to the inventory's directory, named
+# as AxonOps' repositories serve them or name_version_arch.deb /
+# name-version-release.arch.rpm, e.g. ["files/axon-agent_2.0.36_amd64.deb",
 # "files/axon-cassandra5.0-agent-jdk17_1.1.1_all.deb"]
 cassandra_axonops_package_files: []
 # Download nothing: the packages come from cassandra_axonops_package_files,

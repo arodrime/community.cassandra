@@ -102,7 +102,7 @@ EXTRA_SECTIONS = OrderedDict([("Java", "Java (restart)"), ("Cassandra", "Cassand
                               ("Packages", "Packages (no restart)"), ("Firewall", "Firewall (no restart)"),
                               ("AxonOps", "AxonOps agent (no restart)")])
 EXTRAS_LIVE = "the repository, packages, firewall: not read by Cassandra"
-AXONOPS_LIVE = "the AxonOps agent and its repository: not read by the running Cassandra"
+AXONOPS_LIVE = "the AxonOps agent: a new Java agent package loads at the next restart of Cassandra"
 EXTRAS_AXONOPS_LIVE = EXTRAS_LIVE + "; " + AXONOPS_LIVE
 READ_AHEAD_LIVE = "read-ahead set live: the files Cassandra has open keep the old one until it restarts"
 

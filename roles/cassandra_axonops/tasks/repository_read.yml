@@ -10,7 +10,6 @@
   when:
     - ansible_facts['os_family'] == 'RedHat'
     - cassandra_axonops_repository_manage | bool
-    - not _cassandra_axonops_cached | default(false) | bool
     - _cassandra_axonops_package_change | bool or (_cassandra_axonops_latest + _cassandra_axonops_reinstall) | length > 0
 
 - name: Stop when the AxonOps repository cannot be read

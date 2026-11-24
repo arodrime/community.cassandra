@@ -71,10 +71,18 @@ Cassandra's Java agent reads them at its next start. ``apply_config`` also compa
 repository files the role wrote are left on the nodes (``/etc/apt/sources.list.d/axonops.sources``,
 ``/etc/apt/keyrings/axonops.*``, ``/etc/apt/auth.conf.d/axonops.conf``, ``/etc/yum.repos.d/axonops.repo``): remove
 them by hand if another source replaces them. Air-gapped hosts without a mirror: put the ``.deb`` or
-``.rpm`` files in ``cassandra_axonops_package_files`` (on the controller).
+``.rpm`` files in ``cassandra_axonops_package_files`` (on the controller; a relative path is read from the
+inventory's directory; named as AxonOps' repositories serve them or ``name_version_arch.deb``,
+``name-version-release.arch.rpm``). A package the host's repositories lack, or a file missing on the controller, is
+refused before any change, ``--check`` too.
 
-``upgrade`` and ``update_java`` refuse, for now, the nodes with ``cassandra_axonops_enabled: true`` (not supported
-yet in this version), before any change and under ``--check`` too: upgrade those nodes, or move them to another Java,
+On a node with ``cassandra_axonops_enabled: true``, ``rolling_restart``, ``rolling_reboot`` and ``start_rack`` stop
+before restarting or starting it when ``/usr/share/axonops/axonops-jvm.options`` is missing (Cassandra would not
+start): ``apply_config`` installs it again.
+
+``upgrade``, ``update_java`` and an ``apply_config`` that moves nodes to another ``cassandra_java_version`` refuse,
+for now, the nodes with ``cassandra_axonops_enabled: true`` (not supported yet in this version), before any change
+and under ``--check`` too: upgrade those nodes, or move them to another Java,
 by hand, following AxonOps' agent docs for the Java agent package of the new series or Java. A Java agent package older
 than 1.1.0 (without ``axonops-jvm.options``) is upgraded to the newest, unless ``cassandra_axonops_java_agent_version``
 pins another one.

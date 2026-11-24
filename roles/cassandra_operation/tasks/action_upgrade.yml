@@ -24,18 +24,6 @@
       if cassandra_config_exporter_download | default({}) is changed else '' }}
   when: cassandra_prometheus_exporter_enabled | default(false) | bool
 
-# The AxonOps agent (cassandra_axonops_enabled): its repository, axon-agent, its account, config and service, while
-# the node runs; the target's Java agent package downloaded only (installed in the window below: its one step there)
-- name: Download the AxonOps packages of the target series
-  ansible.builtin.include_role:
-    name: community.cassandra.cassandra_axonops
-  vars:
-    _cassandra_axonops_download_only: true
-    # (its Java agent rows say what the window installs: shown and reported there, once)
-    _cassandra_change_report_quiet: true
-    cassandra_change_report_dir: ""
-  when: cassandra_axonops_enabled | default(false) | bool
-
 - name: Drain the node
   ansible.builtin.import_tasks: drain.yml
   vars:
@@ -64,40 +52,6 @@
   vars:
     _cassandra_install_changed_before: [Cassandra stopped for its upgrade]
     _cassandra_install_again: run this phase again (it says how to start this node first)
-
-# The AxonOps agent (cassandra_axonops_enabled): the Java agent package of the target series and Java put in place
-# once the target is installed (a failed install leaves the former version with its own agent), from its file
-# downloaded before the drain (the network part: repository, download; a failure there leaves the node running), no
-# repository read; a failure in the window says Cassandra is stopped, the target installed, and the way out
-- name: Set up the AxonOps agent for the target series
-  when: cassandra_axonops_enabled | default(false) | bool
-  block:
-    - name: Install the AxonOps packages of the target series
-      ansible.builtin.include_role:
-        name: community.cassandra.cassandra_axonops
-      vars:
-        _cassandra_axonops_cached: true
-  rescue:
-    - name: Stop on the AxonOps agent, Cassandra stopped for its upgrade
-      ansible.builtin.fail:
-        msg: "{{ _said | join(_nl) }}"
-      vars:
-        cassandra_output: true  # a verdict: its msg as is (ops callback)
-        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
-        # (a stop of the role's own: its facts, its way out apart)
-        _failed: "{{ ansible_failed_result | default({}) }}"
-        _parts: "{{ (_failed.stderr | default('') or _failed.msg | default('')) | community.cassandra.cassandra_axonops_stop_parts }}"
-        _head:
-          - "STOPPED  upgrade  {{ inventory_hostname }}"
-          - "  Cassandra is stopped for its upgrade"
-          - "  {{ cassandra_package_version | default(cassandra_version) }} is installed, its config not written"
-          - "  the AxonOps agent failed: {{ ansible_failed_task.name | default('') }}"
-        _remedy: "{{ _parts.way_out | regex_replace('[,;]? *then run again[.]?$', '') or 'fix the cause' }}"
-        _then: "then run this phase again: it prints the apply_config command that sets up the agent and how to start the node"
-        _lines: >-
-          {{ _head + ['    ' ~ (_parts.cause | community.cassandra.cassandra_url_masked),
-                      'WAY OUT  ' ~ _remedy ~ ', ' ~ _then] }}
-        _said: "{{ _lines | community.cassandra.cassandra_fit }}"
 
 - name: Write the target series' config
   ansible.builtin.include_role:

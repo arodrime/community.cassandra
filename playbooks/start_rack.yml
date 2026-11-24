@@ -159,6 +159,13 @@
         _cassandra_package_unfinished_run: start_rack
         _cassandra_package_unfinished_what: start
 
+    # (the AxonOps agent on: the options file cassandra-env.sh sources there, or Cassandra would not start)
+    - name: Check the AxonOps Java agent can load
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: axonops_check.yml
+      when: cassandra_axonops_enabled | default(false) | bool
+
     # a node that does not start (its unit fails, it stops while it joins, it is not NORMAL in time): its stop
     # said with what the role saw (its journal) and a way out, not the failure of the role's task (the other
     # nodes stop too: any_errors_fatal)

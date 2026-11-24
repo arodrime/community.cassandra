@@ -49,18 +49,15 @@
     _problems: "{{ _cassandra_axonops_settings | community.cassandra.cassandra_axonops_problems }}"
     _said: "{{ _problems + ['WAY OUT  set these variables (cassandra_axonops role), then run again.'] }}"
 
-# (none given: {} and the repositories; upgrade's window, _cassandra_axonops_cached: the files downloaded or copied
-# before its drain, on the node, read as package files)
+# (none given: {} and the repositories)
 - name: Read the package files given
   ansible.builtin.set_fact:
     _cassandra_axonops_files: >-
       {{ _given | community.cassandra.cassandra_axonops_files(
            _cassandra_axonops_java_package, cassandra_axonops_agent_version | string,
-           cassandra_axonops_java_agent_version | string) if _given else {} }}
+           cassandra_axonops_java_agent_version | string, inventory_dir | default(''), true) if _given else {} }}
   vars:
-    _given: >-
-      {{ _cassandra_axonops_downloaded | default([]) if _cassandra_axonops_cached | default(false) | bool
-         else cassandra_axonops_package_files }}
+    _given: "{{ cassandra_axonops_package_files }}"
 
 - name: Refuse package files that do not fit
   ansible.builtin.fail:
@@ -71,8 +68,8 @@
     _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
     _said: >-
       {{ _cassandra_axonops_files.problems
-         + ['WAY OUT  list one file of axon-agent and one of ' ~ _cassandra_axonops_java_package ~ ' in',
-            'cassandra_axonops_package_files (their versions the pinned ones), then run again.'] }}
+         + ['WAY OUT  list one file of axon-agent and one of ' ~ _cassandra_axonops_java_package ~ ' in'
+            ~ ' cassandra_axonops_package_files (on the controller, their versions the pinned ones), then run again.'] }}
 
 - name: Read the AxonOps packages, groups, config and service on the node
   ansible.builtin.shell: "{{ lookup('ansible.builtin.file', 'read.sh', rstrip=false) }}"
@@ -113,37 +110,71 @@
   no_log: true  # the agent key
 
 # under check mode too: what it would change, in the plan
-# (not in upgrade's window, _cassandra_axonops_cached: put in place before its drain)
 - name: The repository
   ansible.builtin.import_tasks: repository.yml
-  when:
-    - cassandra_axonops_repository_manage | bool
-    - not _cassandra_axonops_cached | default(false) | bool
+  when: cassandra_axonops_repository_manage | bool
 
 # (apply_config shows them in its plan)
 - name: List the changes
   ansible.builtin.set_fact:
     _cassandra_axonops_items: >-
-      {{ (_cassandra_axonops_repository_items | default([])
-          if cassandra_axonops_repository_manage | bool and not _cassandra_axonops_cached | default(false) | bool
-          else [])
+      {{ (_cassandra_axonops_repository_items | default([]) if cassandra_axonops_repository_manage | bool else [])
          + _cassandra_axonops_changes['items'] }}
     _cassandra_axonops_removed: "{{ _cassandra_axonops_changes.removed }}"
     _cassandra_axonops_latest: "{{ _cassandra_axonops_changes.latest }}"
     _cassandra_axonops_reinstall: "{{ _cassandra_axonops_changes.reinstall }}"
 
-# upgrade, before its drain (_cassandra_axonops_download_only): everything but the Java agent package, downloaded only
-# (installed in the node's window: _cassandra_axonops_cached, the rest unchanged then)
+# A package to install from the repositories the host has (its own, unchanged by this run: a source written by it is
+# read by apt or dnf only once written): looked up first, --check too, so that a version the mirror lacks is refused
+# before any change. Read-only (the package manager's cache as it is: on Debian, a mirror updated since its last
+# refresh may show an older list)
+- name: Look for the packages in the repositories
+  ansible.builtin.shell: |
+    for name in $NAMES; do
+      if command -v apt-cache >/dev/null 2>&1; then
+        apt-cache madison "$name" 2>/dev/null | awk -v n="$name" '{print "available", n, $3}'
+      else
+        dnf -q --showduplicates list available "$name" 2>/dev/null | awk -v n="$name" 'NF >= 2 && $1 ~ "^" n "[.]" {print "available", n, $2}'
+      fi
+    done
+    exit 0
+  environment:
+    NAMES: "{{ _planned | join(' ') }}"
+  register: cassandra_axonops_available
+  changed_when: false
+  check_mode: false  # reads only
+  when:
+    - _planned | length > 0
+    - cassandra_axonops_package_files | length == 0
+    - _cassandra_axonops_repository_items | default([]) | length == 0 or not cassandra_axonops_repository_manage | bool
+  vars:
+    _planned: >-
+      {{ _cassandra_axonops_changes['items'] | selectattr('after', 'ne', 'removed') | map(attribute='item')
+         | select('match', 'package ') | map('regex_replace', '^package ', '') | list }}
+
+- name: Refuse packages the repositories do not have
+  ansible.builtin.fail:
+    msg: "{{ ('cassandra_axonops  ' ~ inventory_hostname) | community.cassandra.cassandra_refused(_said) | join(_nl) }}"
+  when: _missing | length > 0
+  vars:
+    cassandra_output: true  # a verdict: its msg as is (ops callback)
+    _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+    _missing: >-
+      {{ cassandra_axonops_available.stdout_lines | default([])
+         | community.cassandra.cassandra_axonops_unavailable(_wanted, _cassandra_axonops_changes['items'])
+         if cassandra_axonops_available is not skipped else [] }}
+    _wanted:
+      - [axon-agent, "{{ cassandra_axonops_agent_version | string }}"]
+      - ["{{ _cassandra_axonops_java_package }}", "{{ cassandra_axonops_java_agent_version | string }}"]
+    _said: >-
+      {{ _missing + ['WAY OUT  put the package on the mirror (on Debian, apt-get update on the node if it is there'
+                     ~ ' already), or change the pinned version, then run again.'] }}
+
 - name: Install, configure and start the agent
   when: not _cassandra_axonops_compare | bool
   block:
     - name: The packages
       ansible.builtin.import_tasks: packages.yml
-      when: not _cassandra_axonops_download_only | default(false) | bool
-
-    - name: Download the Java agent package, install axon-agent
-      ansible.builtin.import_tasks: download.yml
-      when: _cassandra_axonops_download_only | default(false) | bool
 
     # (Cassandra's account checked before any change; axonops comes with axon-agent: none is created here)
     - name: Look for the account axonops
@@ -163,7 +194,7 @@
         _said:
           - "STOPPED  cassandra_axonops  {{ inventory_hostname }}"
           - "  axon-agent is installed, its account axonops is missing"
-          - "WAY OUT  reinstall the axon-agent package, then run again"
+          - "WAY OUT  on the node: {{ 'apt-get install --reinstall axon-agent' if ansible_facts['os_family'] == 'Debian' else 'dnf reinstall axon-agent' }}, then run again"
 
     - name: The groups
       ansible.builtin.user:

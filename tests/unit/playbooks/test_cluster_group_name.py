@@ -38,8 +38,8 @@ SITES = [
     ("stop_rack.yml", "_cluster"),  # (the refusal of a rack holding several replicas)
     ("summary.yml", "_cluster"),
     ("topology.yml", "_plan_cluster"), ("update_java.yml", "_cluster"), ("upgrade.yml", "_cluster"),
-    # (their refusal of the AxonOps agent)
-    ("update_java.yml", "_cluster"), ("upgrade.yml", "_cluster"),
+    # (their refusal of the AxonOps agent; apply_config's of a Java move with it)
+    ("update_java.yml", "_cluster"), ("upgrade.yml", "_cluster"), ("apply_config.yml", "_cluster"),
 ]
 
 # cassandra_cluster_name said or used as itself, on purpose: the checks of the name, the data loss texts and the

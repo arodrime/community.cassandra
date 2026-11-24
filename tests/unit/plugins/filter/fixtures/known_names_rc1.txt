@@ -101,14 +101,12 @@ cassandra_axonops	both
 cassandra_axonops_accounts	both
 cassandra_axonops_agent_version	both
 cassandra_axonops_apt_update	both
+cassandra_axonops_available	both
 cassandra_axonops_cassandra_group	both
 cassandra_axonops_cassandra_user	both
 cassandra_axonops_config_written	both
 cassandra_axonops_credentials	both
 cassandra_axonops_credentials_removed	both
-cassandra_axonops_download	both
-cassandra_axonops_download_cache	both
-cassandra_axonops_downloaded_files	both
 cassandra_axonops_enabled	both
 cassandra_axonops_extra_settings	both
 cassandra_axonops_groups	both
@@ -971,6 +969,7 @@ cassandra_op_recap	both
 cassandra_op_result	both
 cassandra_op_results	both
 cassandra_operation	both
+cassandra_operation_axonops_options	both
 cassandra_operation_confirm	both
 cassandra_operation_drain	both
 cassandra_os_import	both

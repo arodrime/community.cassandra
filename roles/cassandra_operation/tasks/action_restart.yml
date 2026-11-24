@@ -4,6 +4,11 @@
 - name: Check the Prometheus exporter's agent can start
   ansible.builtin.include_tasks: exporter_check.yml
 
+# (the AxonOps agent on: the options file cassandra-env.sh sources there)
+- name: Check the AxonOps Java agent can load
+  ansible.builtin.include_tasks: axonops_check.yml
+  when: cassandra_axonops_enabled | default(false) | bool
+
 # The unit written first: a run that can't write it (no root) stops with the
 # node still running, not drained
 - name: Install the cassandra systemd unit

@@ -25,7 +25,7 @@ FACTS_LEFT = {
 FACTS_MODULES = ("ansible.builtin.package_facts", "ansible.builtin.service_facts", "package_facts", "service_facts")
 # the tasks of the playbooks and roles (each task of a block, the block not counted): a task more costs every node
 # a build of its variables, run or skipped. Raise it with the reason in the commit, or lower it
-TASKS_MAX = 2018  # +90: cassandra_axonops (run only with cassandra_axonops_enabled: an include, never loaded otherwise)
+TASKS_MAX = 2000  # +72: cassandra_axonops (run only with cassandra_axonops_enabled: an include, never loaded otherwise)
 
 
 def tasks(items):

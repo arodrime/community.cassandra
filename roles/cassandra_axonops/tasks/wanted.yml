@@ -1,5 +1,5 @@
 ---
-# What to install, from the plan (_cassandra_axonops_items): packages.yml's and download.yml's
+# What to install, from the plan (_cassandra_axonops_items)
 - name: Note what to install
   ansible.builtin.set_fact:
     # name=version (apt), name-version (dnf), the name alone, or the package file on the node; axon-agent first

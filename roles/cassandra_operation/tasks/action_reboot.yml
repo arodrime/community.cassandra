@@ -1,6 +1,11 @@
 ---
 # Drains the node, reboots the host and waits until Cassandra (enabled at boot)
 # has joined again.
+# (the AxonOps agent on: the options file cassandra-env.sh sources there, or Cassandra would not start at boot)
+- name: Check the AxonOps Java agent can load
+  ansible.builtin.include_tasks: axonops_check.yml
+  when: cassandra_axonops_enabled | default(false) | bool
+
 - name: Drain the node
   ansible.builtin.import_tasks: drain.yml
   # a kept unit, or the package's init script, may not drain

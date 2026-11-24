@@ -25,7 +25,7 @@ argument_specs:
         description:
           - The AxonOps server the agent connects to (required).
       cassandra_axonops_server_port:
-        type: int
+        type: raw
         default: 1888
         description:
           - Its agents port.
@@ -36,13 +36,13 @@ argument_specs:
           - The organisation name the server knows (required).
       cassandra_axonops_key:
         type: str
+        no_log: true
         default: ""
         description:
           - The agent key (AxonOps Cloud or Enterprise); C("") for none. Keep it in a vault.
       cassandra_axonops_tls_mode:
         type: str
         default: disabled
-        choices: [disabled, TLS, mTLS]
         description:
           - TLS to the server.
       cassandra_axonops_tls_skip_verify:
@@ -104,6 +104,8 @@ argument_specs:
         description:
           - Package files on the controller (.deb or .rpm) installed instead of a repository (air-gapped
             hosts), C(axon-agent) and the Java agent package. No repository is added then.
+          - A relative path is read from the inventory's directory. Named as AxonOps' repositories serve them
+            (C(name_version_arch_<md5>.deb), C(<sha256>-name-version-release.arch.rpm)) or without those parts.
       cassandra_offline:
         type: bool
         default: false
@@ -146,6 +148,7 @@ argument_specs:
           - Login for the mirror (also sent for the key when it is on the same server).
       cassandra_axonops_repository_password:
         type: str
+        no_log: true
         default: ""
         description:
           - Its password or token. Keep it in a vault.
