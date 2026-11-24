@@ -33,18 +33,18 @@
       vars:
         cassandra_output: true  # a verdict: its msg as is (ops callback)
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
-        # (a stop of the role's own: its fact lines, without its head and way out)
-        _cause: >-
-          {{ (ansible_failed_result.msg | default('no cause given') | string).splitlines()
-             | reject('match', '(STOPPED|REFUSED|WAY OUT)  ') | map('trim') | select | join(' ') }}
+        # (a stop of the role's own: its facts, its way out apart)
+        _parts: "{{ ansible_failed_result.msg | default('') | community.cassandra.cassandra_axonops_stop_parts }}"
         _head:
           - "STOPPED  update_java  {{ inventory_hostname }}"
-          - "  Cassandra still runs on its former Java; the config of the new Java is"
-          - "  written"
-          - "  the AxonOps agent: {{ ansible_failed_task.name | default('') }}:"
-        _said: >-
-          {{ _head + ['    ' ~ (_cause | community.cassandra.cassandra_url_masked)] | community.cassandra.cassandra_fit
-             + ['WAY OUT  fix the cause, then run update_java again'] }}
+          - "  Cassandra still runs on its former Java"
+          - "  the config of the new Java is written"
+          - "  the AxonOps agent failed: {{ ansible_failed_task.name | default('') }}"
+        _remedy: "{{ _parts.way_out | regex_replace('[,;]? *then run again[.]?$', '') or 'fix the cause' }}"
+        _lines: >-
+          {{ _head + ['    ' ~ (_parts.cause | community.cassandra.cassandra_url_masked),
+                      'WAY OUT  ' ~ _remedy ~ ', then run update_java again'] }}
+        _said: "{{ _lines | community.cassandra.cassandra_fit }}"
 
 - name: Drain and restart the node
   ansible.builtin.include_tasks: action_restart.yml

@@ -303,28 +303,6 @@ def test_redhat_swaps_the_java_agent_in_one_transaction():
         "Stop without the options file cassandra-env.sh loads") > names.index("Install the AxonOps packages (Debian & Ubuntu)")
 
 
-def test_repository_secrets_and_keyrings():
-    tasks = _tasks("roles", "cassandra_axonops", "tasks", "repository.yml")
-    yum = _find(tasks, "The AxonOps yum repository (RedHat)")
-    assert yum["diff"] is False and "0600" in yum["ansible.builtin.yum_repository"]["mode"]
-    # a mirror refusing the login broke every dnf run of the node, the collection's compare included
-    assert yum["ansible.builtin.yum_repository"]["skip_if_unavailable"] is True
-    # the key: downloaded to a temporary file outside /etc (check mode too), compared, put in place for real only,
-    # the temporary file always removed; no key directory made under check mode
-    assert "check_mode" not in _find(tasks, "Create the key directory")
-    key = _find(tasks, "Compare the signing key, put it in place when it differs")
-    assert _find(key["block"], "Make a temporary file for the key")["check_mode"] is False
-    assert _find(key["block"], "Download the signing key")["ansible.builtin.get_url"]["dest"] == (
-        "{{ cassandra_axonops_key_tmp.path }}")
-    assert "not _cassandra_axonops_compare | bool" in _find(key["block"], "Put the signing key in place")["when"]
-    assert key["always"][0]["ansible.builtin.file"]["state"] == "absent"
-    assert key["always"][0]["check_mode"] is False
-    # a failure says what and why, the URLs masked, then its way out
-    debian = _find(tasks, "The AxonOps apt repository (Debian & Ubuntu)")
-    assert "cassandra_url_masked" in debian["rescue"][0]["vars"]["_cause"]
-    assert "WAY OUT" in debian["rescue"][0]["vars"]["_said"]
-
-
 def test_no_account_created_and_a_group_change_restarts_the_agent():
     tasks = _tasks("roles", "cassandra_axonops", "tasks", "main.yml")
     names = _names(tasks)
@@ -441,22 +419,27 @@ def _packages():
     return _tasks("roles", "cassandra_axonops", "tasks", "packages.yml")
 
 
-@pytest.mark.parametrize("family, files, argv", [
-    ("Debian", [], ["apt-get", "-y", "install", "--reinstall", JDK17]),
+@pytest.mark.parametrize("family, files, argv, cached", [
+    ("Debian", [], ["apt-get", "-y", "install", "--reinstall", JDK17], False),
     ("Debian", ["/var/cache/cassandra-axonops/a.deb", "/var/cache/cassandra-axonops/j.deb"],
-     ["apt-get", "-y", "install", "--reinstall", "/var/cache/cassandra-axonops/j.deb"]),
-    ("RedHat", [], ["dnf", "-y", "reinstall", JDK17]),
+     ["apt-get", "-y", "install", "--reinstall", "/var/cache/cassandra-axonops/j.deb"], True),
+    ("RedHat", [], ["dnf", "-y", "reinstall", JDK17], False),
     ("RedHat", ["/var/cache/cassandra-axonops/a.rpm", "/var/cache/cassandra-axonops/j.rpm"],
-     ["dnf", "-y", "--nogpgcheck", "reinstall", "/var/cache/cassandra-axonops/j.rpm"]),
+     ["dnf", "-y", "--nogpgcheck", "reinstall", "/var/cache/cassandra-axonops/j.rpm"], False),
+    # upgrade's window: from the file downloaded before the drain, no repository read
+    ("RedHat", ["/var/cache/cassandra-axonops/a.rpm", "/var/cache/cassandra-axonops/j.rpm"],
+     ["dnf", "-y", "--nogpgcheck", "--disablerepo=*", "reinstall", "/var/cache/cassandra-axonops/j.rpm"], True),
 ])
-def test_the_reinstall(family, files, argv):
+def test_the_reinstall(family, files, argv, cached):
     # a package file given (air-gapped): reinstalled from it, the repositories may not have it
     from ansible_collections.community.cassandra.tests.unit.helpers import render_with
     task = _find(_packages(), "Install the Java agent package again")
     variables = {"ansible_facts": {"os_family": family}, "_cassandra_axonops_reinstall": [JDK17],
+                 "_cassandra_axonops_cached": cached,
                  "_cassandra_axonops_wanted": files or ["axon-agent", JDK17],
                  "_cassandra_axonops_files": {"paths": files}}
-    variables["_files"] = render_with(task["vars"]["_files"], variables)
+    for name in ("_files", "_no_repo", "_command"):
+        variables[name] = render_with(task["vars"][name], variables)
     assert render_with(task["ansible.builtin.command"]["argv"], variables) == argv
     assert task["environment"]["DEBIAN_FRONTEND"] == "noninteractive"
     assert task["when"] == "_cassandra_axonops_reinstall | length > 0"
@@ -490,30 +473,6 @@ def test_repository_rows_never_show_a_secret():
                     {"item": "repository credentials", "before": "differs", "after": "set (hidden)"}]
 
 
-@pytest.mark.parametrize("check", [False, True])
-def test_what_the_node_holds_is_refused_before_any_change(check):
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_axonops import cassandra_axonops_read_problems
-    # every problem at once, then their ways out
-    lines = ["account_cass no", "account_axonops no", "package axon-agent installed 2.0.36",
-             "package axon-cassandra4.1-agent half-installed 1.1.1", "package x unpacked 1"]
-    got = cassandra_axonops_read_problems(lines, "cass", check)
-    assert got[:3] == ["axon-cassandra4.1-agent is half-installed (dpkg): its unpack was interrupted.",
-                       "x is unpacked (dpkg): its configuration was not finished.",
-                       "axon-agent is installed, its account axonops is missing."]
-    assert got[-1] == "  then run again."
-    assert "WAY OUT  on the node: apt-get install --reinstall axon-cassandra4.1-agent" in got
-    assert "  then: dpkg --force-confdef --force-confold --configure -a" in got
-    # Cassandra's account: a real run only (--check installs no Cassandra on a blank host)
-    assert ("no account cass on the node (cassandra_axonops_cassandra_user)." in got) is not check
-    assert cassandra_axonops_read_problems(["account_cass no", "account_axonops no"], "cass", True) == []
-    assert cassandra_axonops_read_problems(["account_cass no"], "cass")[0].startswith("no account cass")
-
-
-def test_the_refusal_passes_check_mode():
-    task = _find(_tasks("roles", "cassandra_axonops", "tasks", "main.yml"), "Refuse what the node holds")
-    assert "_cassandra_axonops_compare | bool" in task["vars"]["_said"]
-
-
 def test_read_sh_says_the_options_file_and_the_accounts():
     import subprocess
     script = os.path.join(TOP, "roles", "cassandra_axonops", "files", "read.sh")
@@ -534,44 +493,6 @@ def _said(task, **variables):
         else:
             variables[name] = render_with(value, variables) if isinstance(value, str) else value
     return variables["_said"]
-
-
-def test_upgrade_downloads_before_the_drain_and_installs_after_the_target():
-    tasks = _tasks("roles", "cassandra_operation", "tasks", "action_upgrade.yml")
-    names = _names(tasks)
-    download = _find(tasks, "Download the AxonOps packages of the target series")
-    assert download["vars"]["_cassandra_axonops_download_only"] is True
-    assert names.index("Download the AxonOps packages of the target series") < names.index("Drain the node")
-    setup = _find(tasks, "Set up the AxonOps agent for the target series")
-    # once the target is installed (a failed install never leaves the former version with the target's agent),
-    # before its config; from the packages downloaded before the drain
-    assert names.index("Install the target version") < names.index("Set up the AxonOps agent for the target series") < (
-        names.index("Write the target series' config"))
-    assert setup["block"][0]["vars"]["_cassandra_axonops_cached"] is True
-    said = _said(setup["rescue"][0], cassandra_package_version="5.0.9", ansible_failed_task={"name": "Install them"},
-                 ansible_failed_result={"msg": "E: no https://u:pw@mirror/x"}, _cassandra_axonops_java_package=JDK17)
-    assert said == ["STOPPED  upgrade  n1", "  Cassandra is stopped for its upgrade, 5.0.9",
-                    "  installed, its config not written", "  the AxonOps agent: Install them:",
-                    "    E: no https://****@mirror/x",
-                    "WAY OUT  fix the cause on n1, install",
-                    "  " + JDK17 + " there by hand, then run",
-                    "  this phase again: it says how to write the config and start the node"]
-
-
-def test_update_java_swaps_after_the_config_and_leaves_the_check_to_the_role():
-    tasks = _tasks("roles", "cassandra_operation", "tasks", "action_update_java.yml")
-    names = _names(tasks)
-    assert names.index("Write the config") < names.index("Set up the AxonOps agent for the new Java") < names.index(
-        "Drain and restart the node")
-    # its config check of the options file left to the role (which installs it, then checks it): a deleted options
-    # file, an agent before 1.1.0 or AxonOps newly on converge in one run
-    assert _find(tasks, "Write the config")["vars"]["_cassandra_config_axonops_later"] is True
-    look = _find(_tasks("roles", "cassandra_config", "tasks", "main.yml"), "Look for the AxonOps Java agent's options file")
-    assert "not _cassandra_config_axonops_later | default(false) | bool" in look["when"]
-    said = _said(_find(tasks, "Set up the AxonOps agent for the new Java")["rescue"][0],
-                 ansible_failed_task={"name": "Install them"}, ansible_failed_result={"msg": "boom"})
-    assert said[1] == "  Cassandra still runs on its former Java; the config of the new Java is"
-    assert said[-1] == "WAY OUT  fix the cause, then run update_java again" and all(len(x) <= 79 for x in said)
 
 
 def test_a_planned_package_refreshes_the_apt_cache():
@@ -637,39 +558,158 @@ def test_repository_rows_reach_the_plan_under_check_mode():
     assert "The repository" not in _names(_find(tasks, "Install, configure and start the agent")["block"])
 
 
+def test_repository_secrets_and_keyrings():
+    tasks = _tasks("roles", "cassandra_axonops", "tasks", "repository.yml")
+    yum = _find(tasks, "The AxonOps yum repository (RedHat)")
+    assert yum["diff"] is False and "0600" in yum["ansible.builtin.yum_repository"]["mode"]
+    # a mirror refusing the login broke every dnf run of the node, the collection's compare included
+    assert yum["ansible.builtin.yum_repository"]["skip_if_unavailable"] is True
+    # the key: downloaded to a temporary file outside /etc (check mode too), compared, put in place for real only,
+    # the temporary file always removed; no key directory made under check mode
+    assert "check_mode" not in _find(tasks, "Create the key directory")
+    key = _find(tasks, "Compare the signing key, put it in place when it differs")
+    assert _find(key["block"], "Make a temporary file for the key")["check_mode"] is False
+    assert _find(key["block"], "Download the signing key")["ansible.builtin.get_url"]["dest"] == (
+        "{{ cassandra_axonops_key_tmp.path }}")
+    assert "not _cassandra_axonops_compare | bool" in _find(key["block"], "Put the signing key in place")["when"]
+    assert key["always"][0]["ansible.builtin.file"]["state"] == "absent" and key["always"][0]["check_mode"] is False
+    # the rescue only around what reaches the network; the variable named by the task that failed
+    network = _find(tasks, "The signing key, the source and the cache")
+    assert _names(network["block"])[:3] == ["Compare the signing key, put it in place when it differs",
+                                            "Make a temporary file for the key", "Download the signing key"]
+    debian = _find(tasks, "The AxonOps apt repository (Debian & Ubuntu)")
+    assert "rescue" not in debian
+    said = _said(network["rescue"][0], ansible_failed_task={"name": "Download the signing key"},
+                 ansible_failed_result={"status_code": 401, "msg": "HTTP Error 401: Unauthorized https://u:pw@m/k"})
+    assert said == ["STOPPED  cassandra_axonops  n1", "  Download the signing key failed:",
+                    "    HTTP 401: HTTP Error 401: Unauthorized https://****@m/k",
+                    "WAY OUT  check cassandra_axonops_repository_key_url (and the login), then run",
+                    "  again"]
+    # the other kind of key removed once the source names this one
+    names = _names(tasks)
+    assert names.index("The AxonOps apt source") < names.index("Remove the signing key of the other kind")
+
+
+@pytest.mark.parametrize("check", [False, True])
+def test_what_the_node_holds_is_refused_before_any_change(check):
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_axonops import cassandra_axonops_read_problems
+    lines = ["account_cass no", "account_axonops no", "package axon-agent installed 2.0.36",
+             "package axon-cassandra4.1-agent half-installed 1.1.1", "package x unpacked 1", "package y unpacked 1"]
+    got = cassandra_axonops_read_problems(lines, "cass", check)
+    assert got[:4] == ["axon-cassandra4.1-agent is half-installed (dpkg): its unpack was interrupted.",
+                       "x is unpacked (dpkg): its configuration was not finished.",
+                       "y is unpacked (dpkg): its configuration was not finished.",
+                       "axon-agent is installed, its account axonops is missing."]
+    ways = got[got.index("WAY OUT  on the node: apt-get install --reinstall axon-cassandra4.1-agent"):]
+    # each way once (the dpkg one for x and y), the inventory's apart from the node's, run again last
+    assert ways[1:3] == ["  then on the node: dpkg --force-confdef --force-confold --configure -a",
+                         "  then on the node: apt-get install --reinstall axon-agent (dnf reinstall axon-agent)"]
+    assert ways[-1] == "  then run again."
+    # Cassandra's account: not under --check (no Cassandra installed by it on a blank host)
+    assert ("no account cass on the node (cassandra_axonops_cassandra_user)." in got) is not check
+    assert ("  then in the inventory: set cassandra_axonops_cassandra_user to the account Cassandra runs as"
+            in got) is not check
+
+
+def test_the_account_check_follows_check_mode_not_the_compare():
+    # the compare runs on installed nodes (apply_config, update_java, the upgrade's preflight): an account missing
+    # there is refused in the plan
+    task = _find(_tasks("roles", "cassandra_axonops", "tasks", "main.yml"), "Refuse what the node holds")
+    assert "cassandra_axonops_cassandra_user, ansible_check_mode)" in task["vars"]["_said"]
+
+
+@pytest.mark.parametrize("msg, cause, way", [
+    ("E: boom", "E: boom", ""),
+    ("REFUSED  cassandra_axonops  n1  nothing was changed\n  no account c on the node.\n"
+     "  WAY OUT  in the inventory: set cassandra_axonops_cassandra_user to the\n    account, then run again.",
+     "no account c on the node.", "in the inventory: set cassandra_axonops_cassandra_user to the account, then run again."),
+    ("STOPPED  cassandra_axonops  n1\n  /etc/axonops/axon-agent.yml not written:\n    can not use content with a dir\n"
+     "WAY OUT  fix the cause on the node, then run again",
+     "/etc/axonops/axon-agent.yml not written: can not use content with a dir", "fix the cause on the node, then run again"),
+])
+def test_a_stop_splits_into_its_cause_and_its_way_out(msg, cause, way):
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_axonops import cassandra_axonops_stop_parts
+    assert cassandra_axonops_stop_parts(msg) == {"cause": cause, "way_out": way}
+
+
+def test_upgrade_downloads_before_the_drain_and_installs_after_the_target():
+    tasks = _tasks("roles", "cassandra_operation", "tasks", "action_upgrade.yml")
+    names = _names(tasks)
+    download = _find(tasks, "Download the AxonOps packages of the target series")
+    assert download["vars"]["_cassandra_axonops_download_only"] is True
+    assert download["vars"]["_cassandra_change_report_quiet"] is True  # (said once, by the window)
+    assert names.index("Download the AxonOps packages of the target series") < names.index("Drain the node")
+    setup = _find(tasks, "Set up the AxonOps agent for the target series")
+    assert names.index("Install the target version") < names.index("Set up the AxonOps agent for the target series") < (
+        names.index("Write the target series' config"))
+    assert setup["block"][0]["vars"]["_cassandra_axonops_cached"] is True
+    msg = ("REFUSED  cassandra_axonops  n1  nothing was changed\n  x is unpacked (dpkg).\n"
+           "  WAY OUT  on the node: dpkg --configure -a\n  then run again.")
+    said = _said(setup["rescue"][0], cassandra_package_version="5.0.9", ansible_failed_task={"name": "Refuse"},
+                 ansible_failed_result={"msg": msg})
+    assert said[:5] == ["STOPPED  upgrade  n1", "  Cassandra is stopped for its upgrade",
+                        "  5.0.9 is installed, its config not written", "  the AxonOps agent failed: Refuse",
+                        "    x is unpacked (dpkg)."]
+    way = " ".join(said[5:])
+    # one way out: the role's remedy, then this phase (which prints the apply_config command)
+    assert way.count("WAY OUT") == 1 and way.startswith("WAY OUT  on the node: dpkg --configure -a")
+    assert "then run this phase again" in way and all(len(x) <= 79 for x in said)
+
+
+def test_update_java_swaps_after_the_config_and_leaves_the_check_to_the_role():
+    tasks = _tasks("roles", "cassandra_operation", "tasks", "action_update_java.yml")
+    names = _names(tasks)
+    assert names.index("Write the config") < names.index("Set up the AxonOps agent for the new Java") < names.index(
+        "Drain and restart the node")
+    assert _find(tasks, "Write the config")["vars"]["_cassandra_config_axonops_later"] is True
+    look = _find(_tasks("roles", "cassandra_config", "tasks", "main.yml"), "Look for the AxonOps Java agent's options file")
+    assert "not _cassandra_config_axonops_later | default(false) | bool" in look["when"]
+    said = _said(_find(tasks, "Set up the AxonOps agent for the new Java")["rescue"][0],
+                 ansible_failed_task={"name": "Install them"}, ansible_failed_result={"msg": "boom"})
+    assert said == ["STOPPED  update_java  n1", "  Cassandra still runs on its former Java",
+                    "  the config of the new Java is written", "  the AxonOps agent failed: Install them",
+                    "    boom", "WAY OUT  fix the cause, then run update_java again"]
+
+
 def test_the_apt_source_without_python3_debian():
-    # --check on a blank host: python3-debian not installed yet (cassandra_repository installs it in a real run),
-    # deb822_repository failed to import; a real run installs it first
+    # --check on a blank host: python3-debian not installed yet; looked for as cassandra_repository does
     from ansible_collections.community.cassandra.tests.unit.helpers import task_runs
     tasks = _tasks("roles", "cassandra_axonops", "tasks", "repository.yml")
+    assert _find(tasks, "Look for python3-debian")["ansible.builtin.command"] == 'python3 -c "import debian"'
+    install = _find(tasks, "Install python3-debian")
+    assert install["ansible.builtin.apt"] == {"name": "python3-debian", "update_cache": True}
     source = _find(tasks, "The AxonOps apt source")
-    missing = {"cassandra_axonops_python_debian": {"stdout": ""}}
+    missing = {"cassandra_axonops_python_debian": {"rc": 1}}
     assert not task_runs(source, _cassandra_axonops_compare=True, **missing)
     assert task_runs(source, _cassandra_axonops_compare=False, **missing)
-    install = _find(tasks, "Install python3-debian")
-    assert task_runs(install, _cassandra_axonops_compare=False, **missing)
-    assert not task_runs(install, _cassandra_axonops_compare=True, **missing)
     names = _names(tasks)
     assert names.index("Install python3-debian") < names.index("The AxonOps apt source")
+    # (a plan row for it, as cassandra_repository's)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_axonops import (
+        cassandra_axonops_repository_items)
+    assert cassandra_axonops_repository_items({"python_debian": True, "key_other": True}, "u", "k") == [
+        {"item": "repository signing key of the other kind", "before": "present", "after": "removed"},
+        {"item": "package python3-debian", "before": "absent", "after": "installed"}]
 
 
-def test_a_stop_of_the_role_gives_its_facts_to_the_window_stop():
-    tasks = _tasks("roles", "cassandra_operation", "tasks", "action_upgrade.yml")
-    msg = ("STOPPED  cassandra_axonops  n1\n  /etc/axonops/axon-agent.yml not written:\n"
-           "    can not use content with a dir as dest\nWAY OUT  fix the cause on the node, then run again")
-    said = _said(_find(tasks, "Set up the AxonOps agent for the target series")["rescue"][0],
-                 cassandra_package_version="5.0.9", ansible_failed_task={"name": "Stop on the failed write"},
-                 _cassandra_axonops_java_package=JDK17, ansible_failed_result={"msg": msg})
-    assert said[4:6] == ["    /etc/axonops/axon-agent.yml not written: can not use content with a dir as",
-                         "      dest"]
-
-
-def test_upgrade_prepares_everything_but_the_java_agent_before_the_drain():
-    tasks = _tasks("roles", "cassandra_axonops", "tasks", "main.yml")
-    block = _find(tasks, "Install, configure and start the agent")
-    assert block["when"] == "not _cassandra_axonops_compare | bool"
-    names = _names(block["block"])
-    assert names.index("Download the Java agent package, install axon-agent") < names.index("The groups")
+def test_the_window_installs_from_files_never_from_the_repositories():
+    # dnf keeps a downloaded package only until its next transaction (the Cassandra install of the window is one):
+    # the packages are downloaded as files into the role's own directory before the drain, installed from them
     download = _tasks("roles", "cassandra_axonops", "tasks", "download.yml")
-    agent = _find(download, "Install axon-agent (Debian & Ubuntu)")
-    assert "'package axon-agent' in _cassandra_axonops_items | map(attribute='item')" in agent["when"]
+    get = _find(download, "Download the packages")
+    assert "['dnf', 'download', '--destdir', '/var/cache/cassandra-axonops']" in get["ansible.builtin.command"]["argv"]
+    assert "['apt-get', 'download']" in get["ansible.builtin.command"]["argv"]
+    assert get["ansible.builtin.command"]["chdir"] == "/var/cache/cassandra-axonops"
+    rescue = _find(download, "Download the packages from the repositories")["rescue"][0]
+    assert "Cassandra still runs, not drained" in rescue["vars"]["_said"]
+    # the window reads them as package files, repositories off
+    main = _tasks("roles", "cassandra_axonops", "tasks", "main.yml")
+    assert "_cassandra_axonops_downloaded" in _find(main, "Read the package files given")["vars"]["_given"]
+    packages = _packages()
+    assert _find(packages, "Install them")["ansible.builtin.dnf"]["disablerepo"] == (
+        "{{ '*' if _cassandra_axonops_cached | default(false) | bool else omit }}")
+    assert "--disablerepo=*" in _find(packages, "Replace the Java agent package of another series or Java")[
+        "ansible.builtin.command"]["argv"]
+    assert "--disablerepo=*" in _find(packages, "Install the Java agent package again")["vars"]["_no_repo"]
+    assert "not _cassandra_axonops_cached | default(false) | bool" in _find(packages, "Copy the package files")["when"]
+    assert _find(packages, "Remove the files downloaded")["when"] == "_cassandra_axonops_cached | default(false) | bool"

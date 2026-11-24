@@ -49,13 +49,18 @@
     _problems: "{{ _cassandra_axonops_settings | community.cassandra.cassandra_axonops_problems }}"
     _said: "{{ _problems + ['WAY OUT  set these variables (cassandra_axonops role), then run again.'] }}"
 
-# (none given: {} and the repositories)
+# (none given: {} and the repositories; upgrade's window, _cassandra_axonops_cached: the files downloaded or copied
+# before its drain, on the node, read as package files)
 - name: Read the package files given
   ansible.builtin.set_fact:
     _cassandra_axonops_files: >-
-      {{ cassandra_axonops_package_files | community.cassandra.cassandra_axonops_files(
+      {{ _given | community.cassandra.cassandra_axonops_files(
            _cassandra_axonops_java_package, cassandra_axonops_agent_version | string,
-           cassandra_axonops_java_agent_version | string) if cassandra_axonops_package_files else {} }}
+           cassandra_axonops_java_agent_version | string) if _given else {} }}
+  vars:
+    _given: >-
+      {{ _cassandra_axonops_downloaded | default([]) if _cassandra_axonops_cached | default(false) | bool
+         else cassandra_axonops_package_files }}
 
 - name: Refuse package files that do not fit
   ansible.builtin.fail:
@@ -77,8 +82,8 @@
   changed_when: false
   check_mode: false  # reads only
 
-# (before any change, --check too: a package left half done, axon-agent without its account; Cassandra's account
-# in a real run only: --check installs no Cassandra on a blank host)
+# (before any change, in the plans too: a package left half done, axon-agent without its account, Cassandra's account
+# missing; this one not under --check, which installs no Cassandra on a blank host)
 - name: Refuse what the node holds
   ansible.builtin.fail:
     msg: "{{ ('cassandra_axonops  ' ~ inventory_hostname) | community.cassandra.cassandra_refused(_said) | join(_nl) }}"
@@ -88,7 +93,7 @@
     _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
     _said: >-
       {{ cassandra_axonops_read.stdout_lines | community.cassandra.cassandra_axonops_read_problems(
-           cassandra_axonops_cassandra_user, _cassandra_axonops_compare | bool) }}
+           cassandra_axonops_cassandra_user, ansible_check_mode) }}
 
 - name: Work out what changes
   ansible.builtin.set_fact:

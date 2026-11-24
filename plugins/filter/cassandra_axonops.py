@@ -15,6 +15,7 @@ cassandra_axonops_files: the package files given -> the packages and versions th
     hold, or why they do not fit.
 cassandra_axonops_repository_items: what the repository tasks changed -> the
     plan's rows.
+cassandra_axonops_stop_parts: a stop's message -> its cause and its way out.
 cassandra_axonops_read_problems: what the node read -> what stops the role
     before any change.
 cassandra_axonops_loader_refusals: the JVM options and the cassandra-env.sh
@@ -276,7 +277,8 @@ def cassandra_axonops_files(files, java_package, agent_version="", java_agent_ve
 
 def cassandra_axonops_repository_items(changed, url, key):
     """What the repository tasks would change or changed, as the plan's rows (secrets never shown): changed, a dict
-    {source, key, credentials, credentials_removed} of booleans; url, key: the repository's and its key's URLs (masked).
+    {source, key, key_other, credentials, credentials_removed, python_debian} of booleans; url, key: the
+    repository's and its key's URLs (masked).
     """
     out = []
     if changed.get("source"):
@@ -287,13 +289,17 @@ def cassandra_axonops_repository_items(changed, url, key):
         out.append({"item": "repository credentials", "before": "differs", "after": "set (hidden)"})
     if changed.get("credentials_removed"):
         out.append({"item": "repository credentials", "before": "set", "after": "removed"})
+    if changed.get("key_other"):
+        out.append({"item": "repository signing key of the other kind", "before": "present", "after": "removed"})
+    if changed.get("python_debian"):
+        out.append({"item": "package python3-debian", "before": "absent", "after": "installed"})
     return out
 
 
 def cassandra_axonops_read_problems(lines, user, check=False):
     """What the node read (files/read.sh's lines) holds that the role cannot go on with, every one, then the WAY OUT
     lines ([] when nothing): a package left half done by dpkg; axon-agent installed without its account axonops;
-    Cassandra's account (user) missing, except under check mode (check: a blank host, Cassandra not installed by
+    Cassandra's account (user) missing, except under --check (check: a blank host, Cassandra not installed by
     --check)."""
     installed, unfinished, read = _read(lines)
     facts, ways = [], []
@@ -301,18 +307,33 @@ def cassandra_axonops_read_problems(lines, user, check=False):
         state = unfinished[name]
         facts.append("%s is %s (dpkg): %s." % (name, state, "its unpack was interrupted" if state == "half-installed"
                                                else "its configuration was not finished"))
-        ways.append("apt-get install --reinstall %s" % name if state == "half-installed"
-                    else "dpkg --force-confdef --force-confold --configure -a")
+        ways.append("on the node: apt-get install --reinstall %s" % name if state == "half-installed"
+                    else "on the node: dpkg --force-confdef --force-confold --configure -a")
     if "axon-agent" in installed and read.get("account_axonops") == "no":
         facts.append("axon-agent is installed, its account axonops is missing.")
-        ways.append("apt-get install --reinstall axon-agent (dnf reinstall axon-agent)")
+        ways.append("on the node: apt-get install --reinstall axon-agent (dnf reinstall axon-agent)")
     if not check and read.get("account_" + str(user)) == "no":
         facts.append("no account %s on the node (cassandra_axonops_cassandra_user)." % user)
-        ways.append("set cassandra_axonops_cassandra_user to the account Cassandra runs as")
+        ways.append("in the inventory: set cassandra_axonops_cassandra_user to the account Cassandra runs as")
     if not facts:
         return []
-    return facts + ["WAY OUT  on the node: " + ways[0]] + ["  then: " + w for w in sorted(set(ways[1:]), key=ways.index)] + [
-        "  then run again."]
+    ways = [w for i, w in enumerate(ways) if w not in ways[:i]]
+    return facts + ["WAY OUT  " + ways[0]] + ["  then " + w for w in ways[1:]] + ["  then run again."]
+
+
+def cassandra_axonops_stop_parts(msg):
+    """A stop's message (one of the role's: STOPPED or REFUSED head, facts, WAY OUT and its continuation lines; or
+    a module's error) -> {cause: its facts in one line, way_out: its WAY OUT text in one line, "" when none}."""
+    cause, way, in_way = [], [], False
+    for line in str(msg or "").splitlines():
+        text = line.strip()
+        if not text or not in_way and re.match(r"^(STOPPED|REFUSED)  ", text):
+            continue
+        if "WAY OUT  " in text:
+            in_way = True
+            text = text.split("WAY OUT  ", 1)[1].strip()
+        (way if in_way else cause).append(text)
+    return {"cause": " ".join(cause) or "no cause given", "way_out": " ".join(way)}
 
 
 LOADER = re.compile(r"axonops-jvm[.]options|axon-(cassandra|dse)\S*[.]jar")
@@ -372,6 +393,7 @@ class FilterModule(object):
             "cassandra_axonops_changes": cassandra_axonops_changes,
             "cassandra_axonops_files": cassandra_axonops_files,
             "cassandra_axonops_read_problems": cassandra_axonops_read_problems,
+            "cassandra_axonops_stop_parts": cassandra_axonops_stop_parts,
             "cassandra_axonops_repository_items": cassandra_axonops_repository_items,
             "cassandra_axonops_loader_refusals": cassandra_axonops_loader_refusals,
             "cassandra_apply_config_axonops_steps": cassandra_apply_config_axonops_steps,

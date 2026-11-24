@@ -42,9 +42,13 @@ is `true` (default `false`):
   A change of the agent alone (versions, `axon-agent.yml`) restarts no
   Cassandra: its Java agent reads them at its next start (said in the plan).
   The repository the role adds is compared too (source, key, login).
-* `upgrade`: its preflight lists the change; at each node's turn the
-  repository and the target's packages are downloaded before the drain, and
-  installed once the target series is (Cassandra stopped), before its config;
+* `upgrade`: its preflight lists the change; at each node's turn, before the
+  drain (Cassandra running): the repository, axon-agent installed, its
+  account, `axon-agent.yml` and service (restarted when they change), and the
+  target's Java agent package downloaded as a file into
+  `/var/cache/cassandra-axonops`; once the target series is installed
+  (Cassandra stopped), before its config: that file installed, no repository
+  read, then removed;
 * `update_java`: its plan shows the change; at each node's turn the package of
   the new Java replaces the old one once the config is written, before the
   restart.

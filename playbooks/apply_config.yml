@@ -668,7 +668,7 @@
         # (EXTRAS_LIVE, AXONOPS_LIVE, both: EXTRAS_AXONOPS_LIVE)
         _extras_live: >-
           {{ ['the repository, packages, firewall: not read by Cassandra' if _others else '',
-              'the AxonOps agent, its repository: read by Cassandra at its next start at most' if _axonops else '']
+              'the AxonOps agent and its repository: not read by the running Cassandra' if _axonops else '']
              | select | join('; ') }}
         _java: "{{ cassandra_java_plan_todo | default(false) | bool and cassandra_jvm.pid is defined }}"
         _release: "{{ (cassandra_apply_config_version | default({})).kind | default('') == 'release' }}"

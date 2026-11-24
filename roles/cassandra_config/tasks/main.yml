@@ -58,10 +58,10 @@
         _cassandra_config_perm_file: jmx_prometheus.yml  # their owner and group, the config's mode
       when: cassandra_prometheus_exporter_enabled | bool
 
-    # cassandra-env.sh sources it: without it, Cassandra would not start (create_cluster, add_node, apply_config,
-    # upgrade apply cassandra_axonops, which installs it, before this role; update_java right after it,
-    # _cassandra_config_axonops_later: the role checks it then). A command: skipped under check mode, apply_config's
-    # compare included (check mode applied to the role, which ansible_check_mode does not tell)
+    # cassandra-env.sh sources it: without it, Cassandra would not start (create_cluster, add_node, replace_node,
+    # add_datacenter, apply_config, upgrade apply cassandra_axonops, which installs it, before this role; update_java
+    # right after it, _cassandra_config_axonops_later: the role checks it then). A command: skipped under check mode,
+    # apply_config's compare included (check mode applied to the role, which ansible_check_mode does not tell)
     - name: Look for the AxonOps Java agent's options file
       ansible.builtin.command:
         argv: [test, -e, "{{ _cassandra_config_axonops_options }}"]

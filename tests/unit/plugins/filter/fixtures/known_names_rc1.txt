@@ -108,7 +108,7 @@ cassandra_axonops_credentials	both
 cassandra_axonops_credentials_removed	both
 cassandra_axonops_download	both
 cassandra_axonops_download_cache	both
-cassandra_axonops_download_rpm	both
+cassandra_axonops_downloaded_files	both
 cassandra_axonops_enabled	both
 cassandra_axonops_extra_settings	both
 cassandra_axonops_groups	both
@@ -118,6 +118,7 @@ cassandra_axonops_jvm_options	both
 cassandra_axonops_jvm_options_after	both
 cassandra_axonops_key	both
 cassandra_axonops_key_download	both
+cassandra_axonops_key_other	both
 cassandra_axonops_key_tmp	both
 cassandra_axonops_ntp_hosts	both
 cassandra_axonops_org	both
@@ -132,6 +133,7 @@ cassandra_axonops_packages_removed_rpm	both
 cassandra_axonops_packages_rpm	both
 cassandra_axonops_packages_swap	both
 cassandra_axonops_python_debian	both
+cassandra_axonops_python_debian_install	both
 cassandra_axonops_read	both
 cassandra_axonops_repo_probe	both
 cassandra_axonops_repository_component	both
@@ -145,6 +147,7 @@ cassandra_axonops_server_host	both
 cassandra_axonops_server_port	both
 cassandra_axonops_signing_key	both
 cassandra_axonops_source	both
+cassandra_axonops_source_text	both
 cassandra_axonops_tls_ca_file	both
 cassandra_axonops_tls_cert_file	both
 cassandra_axonops_tls_key_file	both

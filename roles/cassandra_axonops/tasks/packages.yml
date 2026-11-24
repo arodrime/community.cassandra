@@ -15,10 +15,12 @@
 - name: Read the AxonOps repository (RedHat)
   ansible.builtin.import_tasks: repository_read.yml
 
+# (upgrade's window: on the node already, copied or downloaded before its drain)
 - name: Copy the package files
   when:
     - _cassandra_axonops_files.paths | default([]) | length > 0
     - _cassandra_axonops_package_change | bool
+    - not _cassandra_axonops_cached | default(false) | bool
   block:
     - name: Create the directory of the package files
       ansible.builtin.file:
@@ -39,7 +41,7 @@
     - _cassandra_axonops_package_change | bool
   block:
     # (the cache refreshed: a mirror updated since the last refresh has the pinned version; not in upgrade's window,
-    # _cassandra_axonops_cached: downloaded before its drain)
+    # _cassandra_axonops_cached: its files, downloaded before its drain, installed from them)
     - name: Install them from the repositories
       ansible.builtin.apt:
         name: "{{ _cassandra_axonops_wanted }}"
@@ -78,7 +80,8 @@
         name: "{{ _cassandra_axonops_wanted[:1] if _swap else _cassandra_axonops_wanted }}"
         allow_downgrade: true
         disable_gpg_check: "{{ _cassandra_axonops_files.paths | default([]) | length > 0 }}"
-        cacheonly: "{{ _cassandra_axonops_cached | default(false) | bool }}"
+        # (upgrade's window: from the files on the node, no repository read)
+        disablerepo: "{{ '*' if _cassandra_axonops_cached | default(false) | bool else omit }}"
       retries: 3
       register: cassandra_axonops_packages_rpm
       until: cassandra_axonops_packages_rpm is succeeded
@@ -91,7 +94,7 @@
       ansible.builtin.command:
         argv: >-
           {{ ['dnf', '-y'] + (['--nogpgcheck'] if _cassandra_axonops_files.paths | default([]) else [])
-             + (['-C'] if _cassandra_axonops_cached | default(false) | bool else [])
+             + (['--disablerepo=*'] if _cassandra_axonops_cached | default(false) | bool else [])
              + ['swap', _cassandra_axonops_removed[0], _cassandra_axonops_wanted[1]] }}
       register: cassandra_axonops_packages_swap
       changed_when: true
@@ -103,7 +106,6 @@
   ansible.builtin.dnf:
     name: "{{ _cassandra_axonops_latest }}"
     state: latest
-    cacheonly: "{{ _cassandra_axonops_cached | default(false) | bool }}"
   register: cassandra_axonops_packages_latest_rpm
   when:
     - ansible_facts['os_family'] == 'RedHat'
@@ -112,15 +114,17 @@
 # its options file gone (deleted by hand): the package installed again puts it back (its file when given)
 - name: Install the Java agent package again
   ansible.builtin.command:
-    argv: >-
-      {{ (['apt-get', '-y', 'install', '--reinstall'] if ansible_facts['os_family'] == 'Debian'
-          else ['dnf', '-y'] + (['--nogpgcheck'] if _files else []) + ['reinstall'])
-         + ([_files[-1]] if _files else _cassandra_axonops_reinstall) }}
+    argv: "{{ _command + ([_files[-1]] if _files else _cassandra_axonops_reinstall) }}"
   environment:
     DEBIAN_FRONTEND: noninteractive
   vars:
     # the files as copied, axon-agent's first: the Java agent's last
     _files: "{{ _cassandra_axonops_wanted if _cassandra_axonops_files.paths | default([]) else [] }}"
+    # (upgrade's window: no repository read)
+    _no_repo: "{{ ['--disablerepo=*'] if _cassandra_axonops_cached | default(false) | bool else [] }}"
+    _command: >-
+      {{ ['apt-get', '-y', 'install', '--reinstall'] if ansible_facts['os_family'] == 'Debian'
+         else ['dnf', '-y'] + (['--nogpgcheck'] if _files else []) + _no_repo + ['reinstall'] }}
   register: cassandra_axonops_packages_reinstall
   changed_when: true
   when: _cassandra_axonops_reinstall | length > 0
@@ -196,3 +200,11 @@
       - "  removing {{ _cassandra_axonops_removed | join(', ') }} took"
       - "  /usr/share/axonops/axonops-jvm.options with it"
       - "WAY OUT  run this again: it reinstalls {{ _cassandra_axonops_java_package }}"
+
+# upgrade's window: the files downloaded before its drain, installed now: removed
+- name: Remove the files downloaded
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ _cassandra_axonops_downloaded | default([]) if cassandra_axonops_package_files | length == 0 else [] }}"
+  when: _cassandra_axonops_cached | default(false) | bool
