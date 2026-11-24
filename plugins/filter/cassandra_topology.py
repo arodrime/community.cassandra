@@ -26,7 +26,7 @@ cassandra_too_few_nodes: the refusal of a removal that leaves too few nodes
     for the replication (topology, decommission_node).
 cassandra_topology_nothing_to_do: the plan with no step -> the lines that
     say so.
-cassandra_topology_done: the plan once run -> the DONE lines, then the TO DO
+cassandra_topology_done: the plan once run -> the DONE lines, then the TODO
     lines given.
 """
 
@@ -834,7 +834,7 @@ def cassandra_topology_nothing_to_do(plan, cluster, nodes, group="", notes=None)
 
 def cassandra_topology_done(plan, cluster, todo):
     """The plan once run -> "DONE  topology  <cluster>  ring = inventory: added ...; seeds now ...; removed ...",
-    then the TO DO lines given (todo: cassandra_removed_todo's) after a blank line, when there are any."""
+    then the TODO lines given (todo: cassandra_removed_todo's) after a blank line, when there are any."""
     done = []
     if plan["add"]:
         done.append("added " + out.nodes(plan["add"], keep_order=True))

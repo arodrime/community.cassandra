@@ -1,0 +1,3 @@
+---
+minor_changes:
+  - "ops callback, operation screens, import_cluster report - the list of tasks left to the operator is headed ``TODO`` (was ``TO DO``); ``NOTHING TO DO`` and the import report's ``WHAT TO DO NEXT`` are unchanged."

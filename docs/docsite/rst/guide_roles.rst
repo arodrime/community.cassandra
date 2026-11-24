@@ -79,7 +79,7 @@ per task (``import_cluster`` reads every node, ``status`` and ``health_check`` t
 to the node count of the largest cluster (one ssh connection per node from the controller).
 
 ``stdout_callback = community.cassandra.ops`` prints only the collection's operator messages (each verdict, plan,
-progress line, recap and TO DO list), the confirmation questions, and every failure in full (the task, the host,
+progress line, recap and TODO list), the confirmation questions, and every failure in full (the task, the host,
 its message and stderr), instead of a header and a line per host for each of the hundreds of tasks of an
 operation. With ``-v`` or more, the output is the default callback's. Without it (``stdout_callback =
 ansible.builtin.default``), ``callback_result_format = yaml`` shows the same messages as plain text. The
@@ -318,7 +318,7 @@ clock not in sync, or not read, is a problem of the report, with ``sync_clocks``
 
     NOT HEALTHY  my_cluster  2 nodes checked, 1 problem
       clocks:  node2 OFF (CLOCKS above says why)
-    TO DO
+    TODO
       1. bring the clocks in sync with sync_clocks (--check first shows what it
          would do and changes nothing):
          ansible-playbook -i inventory community.cassandra.sync_clocks
@@ -1521,7 +1521,7 @@ The nodes found in the ring are reached as the given one is: by the name the giv
 hosts`` there) when the controller can reach that name (it resolves it, or the ssh configuration gives it a
 ``HostName`` or a jump host; a connection by name such as docker always), else by their address; with its connection variables (``ansible_user``,
 port, key, ssh arguments, become), at their ring address when the given node has an ``ansible_host`` of its own. A node that could not be reached keeps the name it was given, or its address, and is listed in
-TO DO. In the ``group_vars`` and
+TODO. In the ``group_vars`` and
 ``host_vars`` files, the variables are grouped by subject (cluster and topology, versions, directories, network,
 JMX, JVM, ``cassandra.yaml`` settings, logging, service, Medusa), one commented block each.
 
@@ -1687,7 +1687,7 @@ arguments as the ``cassandra_cqlsh`` module splits it, e.g. ``env CQLSH_PYTHON=/
 ``$VAR`` and ``${VAR}`` in it expanded with the node's ``python3`` (else EL 8's ``/usr/libexec/platform-python``) as the
 module does, left as they are without one;
 run as root; ``cqlsh`` alone: ``/usr/local/bin`` first). Where it does not start (its last error line, not found, not
-executable, no answer in 30 seconds, no output), a TO DO step gives two ways out: a cqlsh installed elsewhere on the nodes (a virtualenv), set
+executable, no answer in 30 seconds, no output), a TODO step gives two ways out: a cqlsh installed elsewhere on the nodes (a virtualenv), set
 ``cassandra_cqlsh_command`` to its full path in ``group_vars`` (a file only root can write: the playbooks run it as
 root; the next import writes it with ``cassandra_cqlsh_source: external``); none: import again without ``cqlsh`` in
 ``import_keep_hand_edits`` if you named it there, then ``create_cluster --check --diff`` and ``create_cluster``. The
@@ -1998,7 +1998,7 @@ fileNamePattern``) with the node's value and Ansible's (``absent``, ``present``,
 way out with its option: ``-e import_keep_hand_edits=<files or parts>`` to keep them as the nodes have them, the value
 to set in your file (or the line to remove), ``-e import_allow_unread=true`` for the nodes not read, and
 ``-e import_strict=false`` to take the change (it only writes the inventory: ``apply_config --check --diff`` before
-applying). The report's ``SELF-CHECK`` (under ``TO DO``) has the same; ``report.details.txt``'s ``SELF-CHECK`` has
+applying). The report's ``SELF-CHECK`` (under ``TODO``) has the same; ``report.details.txt``'s ``SELF-CHECK`` has
 each difference as the self-check found it (full XPaths, both values as written), and its ``DETAILS`` the lines of
 the hand edits. The OS tuning of a node left
 as it is (``cassandra_linux_manage: false``), ``/etc/default/cassandra``, ``cassandra-topology.properties`` and the owner
@@ -2035,12 +2035,12 @@ With CQL authentication on (a ``PasswordAuthenticator``), the operations that re
 node gives. They run ``cqlsh`` on a node as root, found in root's ``PATH``; a cqlsh elsewhere (a virtualenv's) is given by
 its full path in ``cassandra_cqlsh_command`` (e.g. ``/opt/cassandra/venv/bin/cqlsh``). When your inventory (any ``group_vars`` or ``host_vars`` file, vaulted or not) or ``-e`` sets them, the
 import checks them with a real CQL login on one node (as the operations log in) and does not ask, nor write them (a
-refused login is a ``TO DO``). A login an earlier import wrote is kept on a re-import (``-i <node>,`` too). Otherwise it asks for them on the terminal (the password not shown), checks each one
+refused login is a ``TODO``). A login an earlier import wrote is kept on a re-import (``-i <node>,`` too). Otherwise it asks for them on the terminal (the password not shown), checks each one
 (3 tries), and writes them with the cluster's variables, the password in ``secrets.yml`` (vaulted as above). Nothing
 before the write needs them (the read runs ``cqlsh --version`` only): it asks once, when it writes the inventory,
 after the self-check. A failed self-check (``import_strict``, the default) writes the inventory marked ``NOT VALID``
 without asking: the import that passes asks. Without a terminal, under ``--check`` or with
-``-e cassandra_operation_confirm=false`` it does not ask: a ``TO DO`` says how to set them (under ``--check``: asked
+``-e cassandra_operation_confirm=false`` it does not ask: a ``TODO`` says how to set them (under ``--check``: asked
 at the real import, then written). A stop after the login is typed and before the inventory is written (another
 cluster's files there, a vaulted ``secrets.yml`` without the vault password) says it was not saved: the next import
 asks again, or it can be given without typing it, from a vaulted file (``ansible-vault create cql_login.yml`` with
@@ -2104,11 +2104,11 @@ hosts files; keep your settings in ``group_vars/all``. Then ``apply_config --che
 
 The import writes two files, for a reader who may be new to Cassandra and to the collection. ``report.txt`` says
 what to do and what is worth a look, by urgency, always in the same order, each section under its title in a rule
-(``==== TO DO ====``). Its head is the verdict with its counts (``IMPORT orders  12 nodes  4 entries to act on: 1 TO DO, 2
+(``==== TODO ====``). Its head is the verdict with its counts (``IMPORT orders  12 nodes  4 entries to act on: 1 TODO, 2
 hand edits, 1 file left as is``; ``3 entries to review: ...`` when there is nothing to do; ``nothing to act on``), the
-self-check (``passed``, or ``not passed yet: TO DO step 2``), the files written and where the report is; then:
+self-check (``passed``, or ``not passed yet: TODO step 2``), the files written and where the report is; then:
 
-- ``TO DO``: what to do before using the inventory, one numbered step each, with why, the command to copy (paths
+- ``TODO``: what to do before using the inventory, one numbered step each, with why, the command to copy (paths
   from the current directory; the import command again with ``-e import_force=true``) and what to check
   after: nodes not read (what importing without them means), settings their Cassandra rejects, a self-check that failed (its ``SELF-CHECK``
   right under it), your files that still win over the import, passwords written in clear,

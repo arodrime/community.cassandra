@@ -22,7 +22,7 @@ docs/docsite/rst/guide_output.rst.
 - what is left to do: command, extra_var, todo, inventory_steps,
   in_git_work_tree.
 
-The texts of one operation each (the prepare of new nodes, the TO DO after a
+The texts of one operation each (the prepare of new nodes, the TODO after a
 removal, the seed rule) are in plugin_utils/cassandra_operation_texts.py.
 """
 
@@ -1543,9 +1543,9 @@ def command(playbook, inventory=None, hosts=None, limit=None, extra=None, option
     return " ".join(parts)
 
 
-def todo(items, title="TO DO", width=79):
+def todo(items, title="TODO", width=79):
     """items: a string, or {text, command} (the command on its own line under
-    it) -> "TO DO", then "  1. text" numbered; nothing when no item. width:
+    it) -> "TODO", then "  1. text" numbered; nothing when no item. width:
     an item's text within it, its next lines under the text (its command
     stays whole, to copy); None: on one line. A "\n" in a text starts a line
     of its own under the text; a NBSP keeps two words on the same line
@@ -1587,7 +1587,7 @@ def in_git_work_tree(path):
 
 
 def inventory_steps(inventory_file, in_git=None, message="", cwd=None):
-    """The TO DO items about an inventory change: "Review the inventory:
+    """The TODO items about an inventory change: "Review the inventory:
     <file>", and only when it is inside a git work tree (in_git, or found
     out from the file) the commit command."""
     shown_path = path_from(str(inventory_file), cwd)

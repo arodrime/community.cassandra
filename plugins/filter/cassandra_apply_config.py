@@ -86,7 +86,7 @@ def not_running(node):
 
 _WRITTEN_BACK = " written back as the running Cassandra started with "  # (apply_config's note)
 # apply_config's notes: a restart pending (said before the run: not after a restart or start of this run), the
-# read-ahead set live with no restart (the recap's TO DO says how to take it)
+# read-ahead set live with no restart (the recap's TODO says how to take it)
 _PENDING = "restart pending ("
 # the files left as they are (same settings) that only get the role's header line: a section of the view, and the
 # reason a node is not restarted for them (apply_config's _header_added)
@@ -932,7 +932,7 @@ def _after_run(node):
 
 
 def _read_ahead_todo(nodes, restart_command, width=None):
-    """The TO DO of the nodes whose read-ahead was set live (their OS settings
+    """The TODO of the nodes whose read-ahead was set live (their OS settings
     applied, Cassandra not restarted): the rolling restart that lets Cassandra
     read its open files with it, optional. [] when none, or no command. Its
     text fits in width, the command stays on one line (to paste)."""
@@ -997,7 +997,7 @@ def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, d
     said here, last. width: the outcome lines and the warnings fit in it
     ("terminal": the terminal's; the diff is laid out already).
     restart_command: the rolling_restart command of this cluster (as the run
-    named it, no --limit): after a real run, a TO DO with it, for the nodes
+    named it, no --limit): after a real run, a TODO with it, for the nodes
     whose read-ahead was set live. more: other warnings to say with the nodes' ([{label, text}], an empty text
     left out: the plan's own, under --check where no plan is shown).
     Under check, the plan said once: the verdict, "nothing was changed (--check)", DIFFERENCES FOUND (the diff's

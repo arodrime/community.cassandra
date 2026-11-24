@@ -5,7 +5,7 @@ Operator output
 
 What the playbooks print, and how a playbook prints it. The text comes from
 ``plugins/plugin_utils/cassandra_output.py`` (filters in ``plugins/filter/cassandra_output.py``): every block is
-written once there, a playbook only fills it. The texts of one operation each (the prepare of new nodes, the TO DO
+written once there, a playbook only fills it. The texts of one operation each (the prepare of new nodes, the TODO
 after a removal, the seed rule) are in ``plugins/plugin_utils/cassandra_operation_texts.py``, the secret rule and the
 masking (``****``) in ``plugins/plugin_utils/cassandra_secrets.py``.
 
@@ -186,7 +186,7 @@ Conventions
   (under the settings' when they do not fit there either). Then what each node gets: ``node1  write, no restart
   (owner or mode only, read at start)``, ``node2  write +
   restart``, ``node5  up to date``.
-- **TO DO**: numbered, each with its full command, ready to paste (``-i`` and ``-e cassandra_hosts`` only when the
+- **TODO**: numbered, each with its full command, ready to paste (``-i`` and ``-e cassandra_hosts`` only when the
   run needed them). An item's text within 79 columns, its next lines under it; its command whole, on its line. An inventory change is followed by its commit only when the inventory is in a git work tree.
 - The marker ``←`` points at what needs a look (``← down``, ``← differs``, ``← slow``).
 - **Status** (the ``status`` playbook): the verdict first, alone on its line, then the cluster, the node the ring
@@ -394,12 +394,12 @@ The ``community.cassandra.ops`` stdout callback prints:
 The output goes by blocks, one blank line between two, never two in a row. A task whose own ``vars`` set
 ``cassandra_output_gap: true`` (a literal, like ``cassandra_output``) starts a block: a blank line before the next
 message (on a message itself, before its own lines; on a question, a ``pause``, above it). The plans, the start of
-each progress wait, the recaps, the TO DO lists and the questions set it. A blank line also follows each answer,
+each progress wait, the recaps, the TODO lists and the questions set it. A blank line also follows each answer,
 shown again (``pause`` clears it), and each phase line. A rule has a blank line above and under it, so text never
 touches it.
 
 Inside a plan, a screen or a recap, an empty line ``""`` separates two blocks; the
-paragraphs of one block (each fact, the items of a TO DO that span several
+paragraphs of one block (each fact, the items of a TODO that span several
 lines) are separated by ``PARAGRAPH`` (``plugins/plugin_utils/cassandra_output.py``, a line with only a space),
 printed as a blank line. Under the default callback (``callback_result_format = yaml``) both show as blank lines in
 a text message.

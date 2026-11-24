@@ -344,7 +344,7 @@ def cassandra_add_node_refusal(refused, cluster="", operation="add_node", target
     inventory, hosts, cwd, default_inventory: as cassandra_command takes
     them; asked_by: the playbook that runs add_node's plays (topology: run
     again as is, no target list). [] when nothing is refused.
-    -> lines: the refusal block, then TO DO with the commands."""
+    -> lines: the refusal block, then TODO with the commands."""
     refused = [r for r in refused or [] if r]
     if not refused:
         return []
@@ -408,7 +408,7 @@ def _without(others, rest, asked_by):
 
 
 def _former_items(former, op, without, reset_command, again_command, both_command):
-    """The TO DO items for former members only refused as such: empty them, then run add_node again; or both in
+    """The TODO items for former members only refused as such: empty them, then run add_node again; or both in
     one run."""
     shown = cassandra_output.nodes(former, keep_order=True)
     empty = "if what %s %s is not needed (snapshot or copy it first if in doubt), empty %s" % (
@@ -419,7 +419,7 @@ def _former_items(former, op, without, reset_command, again_command, both_comman
 
 
 def _other_item(r, op, again_command):
-    """The TO DO item of a node refused for another reason: its way out, then add_node again."""
+    """The TODO item of a node refused for another reason: its way out, then add_node again."""
     return {"text": ("%s: %s; then run %s again" % (r["name"], r["way"], op)) if r.get("way")
             else "%s: do what its line above says, then run %s again if still needed" % (r["name"], op),
             "command": again_command}

@@ -802,7 +802,7 @@ def test_todo():
     assert out.todo([]) == []
     assert out.todo(["remove node7 from the inventory", None,
                      {"text": "cleanup the nodes that gave data", "command": "ansible-playbook x"}]) == [
-        "TO DO", "  1. remove node7 from the inventory", P, "  2. cleanup the nodes that gave data:",
+        "TODO", "  1. remove node7 from the inventory", P, "  2. cleanup the nodes that gave data:",
         "     ansible-playbook x"]
 
 
@@ -814,8 +814,8 @@ def test_todo_item_ten_and_on_under_its_text():
 
 
 def test_todo_a_newline_starts_a_line_under_the_text():
-    assert out.todo(["first line\nsecond line"]) == ["TO DO", "  1. first line", "     second line"]
-    assert out.todo(["first line\nsecond line"], width=None) == ["TO DO", "  1. first line", "     second line"]
+    assert out.todo(["first line\nsecond line"]) == ["TODO", "  1. first line", "     second line"]
+    assert out.todo(["first line\nsecond line"], width=None) == ["TODO", "  1. first line", "     second line"]
 
 
 def test_todo_keeps_a_name_and_its_value_together():
@@ -911,7 +911,7 @@ def test_mask_cqlsh_password_and_block_values():
     assert out.diff_lines({}, {"a": 1}) == ["  + a: 1"] and out.diff_lines(None, {}) == []
 
 
-# --- the TO DO once nodes left the ring ---
+# --- the TODO once nodes left the ring ---
 
 def test_removed_todo_reset_then_reimport_then_commit(tmp_path):
     inventories = tmp_path / "inventories"
@@ -920,7 +920,7 @@ def test_removed_todo_reset_then_reimport_then_commit(tmp_path):
     lines = texts.removed_todo(["node3"], "10.0.0.1", inventory=None, hosts=None, inventory_dir=str(inventories),
                                cwd=str(tmp_path))
     assert lines == [
-        "TO DO",
+        "TODO",
         "  1. empty node3 before reusing the host (its data is left in place):",
         "     ansible-playbook community.cassandra.reset_node -e cassandra_target_nodes=node3",
         P, "  2. drop node3 from the inventory: re-import the cluster with its inventory,",
@@ -938,7 +938,7 @@ def test_removed_todo_outside_git_another_dir_and_a_node_not_answering(tmp_path)
     lines = texts.removed_todo(["node3", "node4", "node9"], "node1", inventory=[str(prod)], hosts="orders",
                                inventory_dir=str(prod), cwd=str(tmp_path), unreachable=["node9"])
     assert lines == [
-        "TO DO",
+        "TODO",
         "  1. empty node3, node4 before reusing the hosts (their data is left in place):",
         "     ansible-playbook -i inv/prod community.cassandra.reset_node -e cassandra_hosts=orders"
         " -e cassandra_target_nodes=node3,node4",
@@ -952,7 +952,7 @@ def test_removed_todo_outside_git_another_dir_and_a_node_not_answering(tmp_path)
     assert texts.removed_todo([], "node1") == []
     # an inventory import_cluster did not write: removed by hand, no re-import
     assert texts.removed_todo(["node3"], "node1", imported=False) == [
-        "TO DO", "  1. empty node3 before reusing the host (its data is left in place):",
+        "TODO", "  1. empty node3 before reusing the host (its data is left in place):",
         "     ansible-playbook community.cassandra.reset_node -e cassandra_target_nodes=node3",
         P, "  2. remove node3 from the inventory (or leave it marked",
         "     cassandra_node_state: absent)"]
@@ -978,7 +978,7 @@ def test_seeds_todo_first_in_the_removed_todo():
     assert lines[1].startswith("  1. put the seeds the nodes now run with in the inventory (group_vars/prod/")
     assert lines[4] == P and lines[5].startswith("  2. empty node3")
     # nothing removed: the seeds alone
-    assert texts.removed_todo([], "node1", first=[item])[0] == "TO DO"
+    assert texts.removed_todo([], "node1", first=[item])[0] == "TODO"
     assert texts.removed_todo([], "node1", first=[None]) == []
 
 
@@ -1040,8 +1040,8 @@ def test_wrap_value_and_fit():
     assert out.wrap_value("short", 20) == ["short"]
     assert out.wrap_value("a b c d e f g h i j k l", 10) == ["a b c d e", "f g h i j", "k l"]
     assert out.wrap_value("x" * 25, 10) == ["x" * 10, "x" * 10, "x" * 5]  # a value may be cut, not a name
-    lines = ["TO DO (1)", "  1. " + " ".join(["word"] * 20), "short"]
-    assert out.fit(lines, 40) == ["TO DO (1)", "  1. word word word word word word word", "     word word word word word word word",
+    lines = ["TODO (1)", "  1. " + " ".join(["word"] * 20), "short"]
+    assert out.fit(lines, 40) == ["TODO (1)", "  1. word word word word word word word", "     word word word word word word word",
                                   "     word word word word word word", "short"]
     assert out.fit(["  " + "y" * 50], 20) == ["  " + "y" * 50]  # one long word: whole
     assert out.fit(lines, None) == lines

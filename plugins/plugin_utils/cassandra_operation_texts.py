@@ -207,7 +207,7 @@ def left_system_warning(hosts):
 
 
 def seeds_todo(change, group=""):
-    """The TO DO item once seeds were picked for a datacenter its
+    """The TODO item once seeds were picked for a datacenter its
     cassandra_seeds left with none (cassandra_seed_change's auto): the line
     to put in the inventory, else apply_config would write the inventory's
     list back. None when nothing was picked."""
@@ -220,7 +220,7 @@ def seeds_todo(change, group=""):
 
 
 def seeds_reload_todo(failed, command_line):
-    """The TO DO item when nodetool reloadseeds failed on nodes after their
+    """The TODO item when nodetool reloadseeds failed on nodes after their
     seed list was written (seeds_apply.yml): command_line (change_seeds)
     reloads it once the cause is fixed. None when none failed."""
     failed = list(failed or [])
@@ -234,7 +234,7 @@ def seeds_reload_todo(failed, command_line):
 
 def removed_todo(removed, reimport_from, inventory=None, hosts=None, inventory_dir=None, cwd=None, in_git=None,
                  unreachable=None, imported=True, reimport_hosts=None, first=None):
-    """The TO DO once nodes left the ring (decommission_node, topology):
+    """The TODO once nodes left the ring (decommission_node, topology):
     empty them (reset_node), then drop them from the inventory by a
     re-import of the cluster from the inventory itself (its connection
     variables and its logins, vaulted ones too), --check --diff first, then

@@ -3,7 +3,7 @@ __metaclass__ = type
 
 # import_cluster and CQL authentication: the login given (inventory, -e) checked with a real login, not asked;
 # none given, asked on the terminal (3 tries), each one checked; no terminal (or --check, or
-# cassandra_operation_confirm false): a TO DO. No password in the output, under the ops and the default callback.
+# cassandra_operation_confirm false): a TODO. No password in the output, under the ops and the default callback.
 
 import fcntl
 import json
@@ -144,7 +144,7 @@ def test_given_login_checked_not_asked(tmp_path, callback):
     rc, output = run(tmp_path, "-e", "given_user=alice", "-e", "given_password=%s" % BAD, callback=callback)
     assert rc == 0, output
     assert "STATE=refused USER=alice ASKED=False WHY= GOOD=False" in " ".join(output.split())
-    assert BAD not in output and "CQL user" not in output  # refused: said in TO DO, not asked
+    assert BAD not in output and "CQL user" not in output  # refused: said in TODO, not asked
 
 
 @pytest.mark.playbook

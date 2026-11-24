@@ -214,7 +214,7 @@ def cassandra_command(playbook, inventory=None, hosts=None, limit=None, extra=No
 def cassandra_removed_todo(removed, reimport_from="", inventory=None, hosts=None, inventory_dir=None, cwd=None,
                            default_inventory=None, in_git=None, unreachable=None, imported=True, reimport_hosts="",
                            first=None):
-    """The nodes removed from the cluster (removed), a node that stays (reimport_from) -> the TO DO lines that
+    """The nodes removed from the cluster (removed), a node that stays (reimport_from) -> the TODO lines that
     take them out of the inventory (a re-import, else by hand), with their commands. default_inventory:
     ansible.cfg's (lookup('config', 'DEFAULT_HOST_LIST')): no -i when the run's inventory is that one.
     reimport_hosts: see cassandra_reimport_hosts."""
@@ -226,13 +226,13 @@ def cassandra_removed_todo(removed, reimport_from="", inventory=None, hosts=None
 
 
 def cassandra_seeds_todo(change, group=""):
-    """cassandra_seed_change's result -> the TO DO item ({text, command}) when it picked seeds the inventory does
+    """cassandra_seed_change's result -> the TODO item ({text, command}) when it picked seeds the inventory does
     not have, None otherwise."""
     return seeds_todo(change, group=group)
 
 
 def cassandra_seeds_reload_todo(failed, command_line):
-    """The nodes whose nodetool reloadseeds failed, its command line -> the TO DO item, None when none:
+    """The nodes whose nodetool reloadseeds failed, its command line -> the TODO item, None when none:
     ["n1"], "nodetool reloadseeds" -> {"text": "reload the seed list on n1: ...", "command": "nodetool reloadseeds"}."""
     return seeds_reload_todo(failed, command_line)
 
@@ -279,9 +279,9 @@ def cassandra_check_what(present, kind="", targets=None, replacing="", run=None,
     return out.check_what(present, kind=kind or "", targets=targets, replacing=replacing or "", run=run, absent=absent)
 
 
-def cassandra_todo(items, title="TO DO"):
-    """[{text, command}] -> the TO DO block: [{"text": "restart n1", "command": "ansible-playbook x"}] ->
-    ["TO DO", "  1. restart n1:", "     ansible-playbook x"]."""
+def cassandra_todo(items, title="TODO"):
+    """[{text, command}] -> the TODO block: [{"text": "restart n1", "command": "ansible-playbook x"}] ->
+    ["TODO", "  1. restart n1:", "     ansible-playbook x"]."""
     return out.todo(items, title=title)
 
 

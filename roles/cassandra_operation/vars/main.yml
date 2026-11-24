@@ -28,7 +28,7 @@ _cassandra_op_limited: >-
   {{ query('ansible.builtin.inventory_hostnames', _cassandra_op_limit) if _cassandra_op_limit else [] }}
 _cassandra_op_limit: "{{ ansible_limit | default('') | community.cassandra.cassandra_limit_patterns }}"
 
-# the command of the run, for the way out of a stop (resume) and the TO DO lines
+# the command of the run, for the way out of a stop (resume) and the TODO lines
 _cassandra_run_command_args:
   inventory: "{{ ansible_inventory_sources }}"
   default_inventory: "{{ lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') }}"

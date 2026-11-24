@@ -234,7 +234,7 @@ def test_reset_node_done_then_add_them():
         " Cassandra disabled on node4, node5",
         "  node6  nothing to do (empty, Cassandra stopped and disabled)",
         "",
-        "TO DO",
+        "TODO",
         "  1. add them back to the cluster:",
         "     " + ADD]
 

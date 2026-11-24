@@ -2,7 +2,7 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 # import_cluster: a node where cqlsh does not start (e.g. the Apache rpm on EL9, cqlshlib for python 3.6 only) is
-# seen at the read (cqlsh --version, its last error line) and gets a TO DO: what makes it start.
+# seen at the read (cqlsh --version, its last error line) and gets a TODO: what makes it start.
 
 import os
 import re
@@ -136,7 +136,7 @@ def test_the_words_are_the_module_s():
 
 
 def test_the_cqlsh_the_inventory_names_is_the_one_read(tmp_path):
-    # cassandra_cqlsh_command set by the operator (a virtualenv's): that one is started, no TO DO back
+    # cassandra_cqlsh_command set by the operator (a virtualenv's): that one is started, no TODO back
     venv = tmp_path / "venv"
     venv.mkdir()
     (venv / "cqlsh").write_text("#!/bin/sh\necho 'cqlsh 6.2.0'\n")

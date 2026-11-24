@@ -273,7 +273,7 @@ OPS_PLAYBOOK = """
 
     - name: Recap
       ansible.builtin.debug:
-        msg: ["DONE  decommission_node", "", "TO DO", "  1. delete node7 from the inventory"]
+        msg: ["DONE  decommission_node", "", "TODO", "  1. delete node7 from the inventory"]
       run_once: true
       vars:
         cassandra_output: true
@@ -296,7 +296,7 @@ def test_ops_callback_blocks_one_blank_line_apart(tmp_path):
     output = read_until(fd, b"", lambda out: prompts(out) > 0, time.time() + 120)
     time.sleep(1)
     os.write(fd, b"yes\r")
-    output = read_until(fd, output, lambda out: b"TO DO" in out and out.rstrip().endswith(b"====="), time.time() + 120).decode()
+    output = read_until(fd, output, lambda out: b"TODO" in out and out.rstrip().endswith(b"====="), time.time() + 120).decode()
     os.waitpid(pid, 0)
     # the screen, the question, the answer, the progress and the recap: one blank line between two blocks
     rules = [re.sub(r"^([-=])\1{3,}$", lambda m: m.group(1) * 4, re.sub(r" -{4,}$", " ----", line))
@@ -330,7 +330,7 @@ def test_ops_callback_blocks_one_blank_line_apart(tmp_path):
         "",
         "----",
         "",
-        "TO DO",
+        "TODO",
         "  1. delete node7 from the inventory",
         "",
         "====",

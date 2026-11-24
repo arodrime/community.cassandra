@@ -187,7 +187,7 @@ lib=$(python3 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])" 2>/
 # cassandra_cqlsh module splits it (shlex: its program, then its arguments; cqlsh alone: /usr/local/bin first;
 # $VAR and ${VAR} expanded as os.path.expandvars does, with python3, else the platform-python of EL 8, when
 # the node has one), run as root; else what ran and why not (its last error line; not found; not executable;
-# no answer; no output): every case a TO DO
+# no answer; no output): every case a TODO
 say() { printf 'cqlsh_error=%s\n' "$(printf %s "$*" | tr '\r\n' '  ')"; }
 cmd={{ cassandra_cqlsh_command | default('cqlsh', true) | quote }}
 set -- {{ cassandra_cqlsh_command | default('cqlsh', true) | community.cassandra.cassandra_cqlsh_words | map('quote') | join(' ') }}

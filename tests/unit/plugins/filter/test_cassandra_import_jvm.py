@@ -206,7 +206,7 @@ def test_the_warnings_to_review_once_for_all_the_nodes():
         entry = import_node({"import_cluster_config": config, "import_cluster_series": "50x",
                              "import_cluster_java": "17"})
         nodes.append(dict(entry, name="node%d" % i, address="10.0.0.%d" % i))
-    assert not [n for n in nodes[0]["notes"] if "WARNING" in n]  # in the TO DO only, as the rejected keys
+    assert not [n for n in nodes[0]["notes"] if "WARNING" in n]  # in the TODO only, as the rejected keys
     layout = cassandra_inventory_layout(nodes, "c")
     lines = cassandra_import_report(layout, ["c.yml", "."], "report.txt", {}, True, width=400, in_git=False)
     option, dummy, why = config["jvm_warnings"][0].partition("): ")

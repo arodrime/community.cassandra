@@ -1175,10 +1175,10 @@
                   | community.cassandra.cassandra_inventory_own_values(cluster_group=_layout.cluster_group,
                       keys=['cassandra_cql_username', 'cassandra_cql_password'], password=_vault_secret | default('')) -%}
       {{ {'user': v.cassandra_cql_username | default('') | string, 'password': v.cassandra_cql_password | default('') | string} }}
-    # cqlsh does not start on some nodes (seen at the read): a TO DO step, the two ways out
+    # cqlsh does not start on some nodes (seen at the read): a TODO step, the two ways out
     _cqlsh_todo: >-
       {{ _nodes | default([]) | community.cassandra.cassandra_import_cqlsh_todo(hostvars, import_keep_hand_edits | default(false)) }}
-    # what is left to do about it (TO DO)
+    # what is left to do about it (TODO)
     _cql_todo: >-
       {{ cassandra_cql_login | default({}) | community.cassandra.cassandra_import_cql_todo(
            cql_on=_cql_on | bool, own=_cql_own, cluster_group=_layout.cluster_group, read_from=_cql_from,
@@ -1232,7 +1232,7 @@
       {%- set out = [] -%}
       {%- for n in _nodes | default([]) if not n.read | bool -%}{%- set _ = out.append(_layout.names[n.address]) -%}{%- endfor -%}
       {{ out }}
-    # report.txt: by urgency, TO DO, WORTH A LOOK... what to do next (cassandra_import_report);
+    # report.txt: by urgency, TODO, WORTH A LOOK... what to do next (cassandra_import_report);
     # report.check.txt under --check (the real one left as it is)
     _report_args:
       written: ["{{ _dir ~ '/' ~ _hosts_file }}", "{{ _dir }}"]

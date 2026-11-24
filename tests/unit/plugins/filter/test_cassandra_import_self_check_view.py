@@ -302,7 +302,7 @@ def test_the_report_has_the_stop_under_todo_and_the_evidence_in_the_details():
     # HAND EDITS: the file and its nodes once, the settings named where they are, the ways out once
     hand = lines[lines.index("==== HAND EDITS " + "=" * 84):]
     assert "    logback.xml (the logging settings)    all - node3" in hand
-    assert "      2 settings no variable carries: SELF-CHECK, under TO DO" in hand
+    assert "      2 settings no variable carries: SELF-CHECK, under TODO" in hand
     details = cassandra_import_report(*args, cwd="/p", in_git=True, details=True)
     evidence = details[details.index([d for d in details if d.startswith("==== SELF-CHECK")][0]):]
     assert "  all - node3 (2 nodes)" in evidence

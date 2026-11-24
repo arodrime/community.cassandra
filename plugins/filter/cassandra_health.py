@@ -338,7 +338,7 @@ def _problem_lines(rows, seen):
 
 def _report_todo(rows, names, unreachable, absent, counted, topology_command):
     """The problems' keys, {address: name}, the hosts not reached, the hosts marked absent, whether the ring was
-    counted, the command that removes them -> the TO DO items (a node down and not reached: one item)."""
+    counted, the command that removes them -> the TODO items (a node down and not reached: one item)."""
     todo = []
     down = [names.get(_ip(k[1]), k[1]) for k in rows if k[0] == "state" and k[2].startswith("D")]
     # a node down and not reached: one thing to do, its server first
@@ -384,11 +384,11 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
     Each problem once, with every node that saw it. Returns {healthy,
     problems (count), lines}: "HEALTHY  my_cluster  6 nodes  6 UN, schema
     agreed, no streams, ports open" or "NOT HEALTHY  my_cluster  6 nodes
-    checked, 2 problems", a line per problem, then a TO DO (a node down
+    checked, 2 problems", a line per problem, then a TODO (a node down
     and not reached: one item), then SETTINGS TO REVIEW.
     e.g. ({node1: [<10.0.0.4 DN>]}, "my_cluster", ["node1", "node4"], unreachable=["node4"]) -> {healthy: False,
     problems: 2, lines: ["NOT HEALTHY  my_cluster  1 node checked, 2 problems", "  ring:  node4 10.0.0.4 (r1) DN   seen
-    from node1", "  ssh:   not reached by Ansible: node4", "TO DO", "  1. bring node4 back (not reached over SSH, down
+    from node1", "  ssh:   not reached by Ansible: node4", "TODO", "  1. bring node4 back (not reached over SSH, down
     in the ring): ..."]}."""
     names = _by_ip(names)  # nodetool prints IPv6 uncompressed
     unreachable = [h for h in hosts if h in (unreachable or [])]

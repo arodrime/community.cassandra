@@ -1622,7 +1622,7 @@
           | map(attribute='_cassandra_apply_config_stops') | first | default([]))
          + (query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('_cassandra_apply_config_refused', 'defined')
             | map(attribute='_cassandra_apply_config_refused') | first | default([])) }}
-    # (the TO DO of the nodes whose read-ahead was set live: the cluster named as this run named it)
+    # (the TODO of the nodes whose read-ahead was set live: the cluster named as this run named it)
     _restart_command: >-
       {{ 'rolling_restart' | community.cassandra.cassandra_command(
            inventory=ansible_inventory_sources | default([]), default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),

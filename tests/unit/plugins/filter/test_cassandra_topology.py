@@ -601,7 +601,7 @@ def test_nothing_to_do_lines():
         "  not answering: node5, node6 (marked absent, out of the ring)",
         "WARNING  dc2 has no seed",
         "WARNING  10.0.0.9 is in the ring but in no host of the inventory: never touched",
-        "WARNING  w", "NOTE  n", "", "TO DO",
+        "WARNING  w", "NOTE  n", "", "TODO",
         "  1. put the seeds the nodes now run with in the inventory (group_vars/c1/, or",
         "     a re-import writes them), else apply_config puts cassandra_seeds back:",
         '     cassandra_seeds: ["10.0.0.1"]']
@@ -613,8 +613,8 @@ def test_done_lines():
     plan = _plan(add=["node5", "node4"], remove=["node2"], seeds={"step": True, "new": "10.0.0.1,10.0.0.5"})
     assert cassandra_topology_done(plan, "c1", []) == [
         "DONE  topology  c1  ring = inventory: added node5, node4; seeds now 10.0.0.1,10.0.0.5; removed node2"]
-    assert cassandra_topology_done(_plan(remove=["node2"]), "c1", ["TO DO", "  1. x"]) == [
-        "DONE  topology  c1  ring = inventory: removed node2", "", "TO DO", "  1. x"]
+    assert cassandra_topology_done(_plan(remove=["node2"]), "c1", ["TODO", "  1. x"]) == [
+        "DONE  topology  c1  ring = inventory: removed node2", "", "TODO", "  1. x"]
 
 
 def test_seed_hosts_from_the_preflight_facts():

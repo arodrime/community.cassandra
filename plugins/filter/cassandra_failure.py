@@ -100,12 +100,12 @@ def cassandra_failure_report(failures, operation="", cluster="", what="could not
                              nothing="nothing was started", rerun="", ad_hoc="", python311=False):
     """failures: [{host, task, result, family}] (family: the OS family, for
     the repository command). The verdict, a line per cause with the nodes
-    that share it, then the TO DO: the repository check (a repository
+    that share it, then the TODO: the repository check (a repository
     problem), the cqlsh Python way out (python311: a python3.11 install
     failed), and the run again (rerun: its command). ad_hoc: the ansible
     command that starts the check (by default the one of rerun: its -i).
     -> lines: "FAILED  add_node  c  node4 could not be prepared: nothing was started", "  node4  Install
-    python3.11: repository 'epel' unreachable (...)", then TO DO."""
+    python3.11: repository 'epel' unreachable (...)", then TODO."""
     ad_hoc = ad_hoc or (re.sub(r"^ansible-playbook", "ansible", rerun.split(" community.cassandra.")[0]) if rerun
                         else "ansible")
     groups = []

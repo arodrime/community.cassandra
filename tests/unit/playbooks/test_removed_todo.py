@@ -53,7 +53,7 @@ def test_decommission_node_says_reset_then_reimport(tmp_path, monkeypatch):
                              "my_cluster_dc1": ["node1", "node3"]})
     msg = render(say["ansible.builtin.debug"]["msg"], **variables)
     assert msg.splitlines() == [
-        "TO DO",
+        "TODO",
         "  1. empty node3 before reusing the host (its data is left in place):",
         "     ansible-playbook -i inventories community.cassandra.reset_node -e cassandra_hosts=my_cluster"
         " -e cassandra_target_nodes=node3",
@@ -87,7 +87,7 @@ def test_topology_done_then_the_same_todo(tmp_path, monkeypatch):
     assert msg.splitlines() == [
         "DONE  topology  my_cluster  ring = inventory: removed node3",
         "",
-        "TO DO",
+        "TODO",
         "  1. empty node3 before reusing the host (its data is left in place):",
         "     ansible-playbook -i inventories community.cassandra.reset_node -e cassandra_target_nodes=node3",
         P, "  2. drop node3, node9 from the inventory: re-import the cluster with its",
@@ -120,7 +120,7 @@ def test_no_dash_i_when_the_inventory_is_ansible_cfgs(tmp_path, monkeypatch):
     for playbook, play in (("decommission_node.yml", "Summary"), ("topology.yml", "Say what is left to do")):
         say = task(playbook, play, "Say what is left to do")
         template = say["ansible.builtin.debug"]["msg"]
-        # the shared rule (cassandra_command's), in the message or in the TO DO it shows
+        # the shared rule (cassandra_command's), in the message or in the TODO it shows
         assert (template + say["vars"].get("_todo", "")).count(config) == 1, playbook
         plan = {"add": [], "remove": ["node3"], "gone": [], "silent": [], "seeds": {"step": False}}
         hostvars = {"node1": {"cassandra_topology_plan": plan, "inventory_dir": str(inventories), "ansible_host": "10.0.0.1",
@@ -144,7 +144,7 @@ def test_the_reimport_reads_the_inventory():
     # its connection variables and logins (secrets.yml, vaulted) come with it: no -i <node>, no JMX login to give
     for playbook, play in (("decommission_node.yml", "Summary"), ("topology.yml", "Say what is left to do")):
         say = task(playbook, play, "Say what is left to do")
-        said = say["ansible.builtin.debug"]["msg"] + say["vars"].get("_todo", "")  # the message, the TO DO it shows
+        said = say["ansible.builtin.debug"]["msg"] + say["vars"].get("_todo", "")  # the message, the TODO it shows
         assert "jmx_user" not in said, playbook
         assert "reimport_hosts=_reimport_hosts" in said, playbook
         expr = say["vars"]["_reimport_hosts"].replace("lookup('community.cassandra.cassandra_hosts')", "'prod'")

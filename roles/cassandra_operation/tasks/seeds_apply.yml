@@ -4,7 +4,7 @@
 # reloadseeds). change_seeds, and add_node, decommission_node and topology
 # when the seeds change with the nodes. A failed reload: a WARNING, the run goes
 # on (the list applies at the next restart; _cassandra_seeds_reload_failed, for
-# the TO DO), except for change_seeds (_cassandra_seeds_reload_required: every
+# the TODO), except for change_seeds (_cassandra_seeds_reload_required: every
 # running node reloaded, a failure fails).
 - name: Load the cassandra_config defaults (the seeds) and cassandra_service's (the conf dir)
   ansible.builtin.include_role:
@@ -143,7 +143,7 @@
           failed_when: false  # left: the next run reloads once more
           when: not _seeds_reload_bad | bool
 
-        # '' once reloaded (the TO DO names the nodes left with an error)
+        # '' once reloaded (the TODO names the nodes left with an error)
         - name: Note how the reload went
           ansible.builtin.set_fact:
             _cassandra_seeds_reload_failed: "{{ cassandra_seeds_reload.error | default(cassandra_seeds_reload.msg, true) if _seeds_reload_bad | bool else '' }}"

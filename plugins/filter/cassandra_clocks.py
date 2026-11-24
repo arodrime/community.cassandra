@@ -946,7 +946,7 @@ def cassandra_clock_refusal(verdicts, operation="", cluster="", command="", chec
     answered but whose clock could not be read: refused. waited: a wait on cassandra_clock_sync_timeout ran
     before (not under --check, nor with later_ok): a daemon still converging then says the longer wait too.
     Output: [str]. e.g. (verdicts with node2 off, cluster="my_cluster") -> ["REFUSED  clocks  my_cluster  nothing
-    was started", "  node2  OFF  chronyd, ...", "", ..., "TO DO", ...]."""
+    was started", "  node2  OFF  chronyd, ...", "", ..., "TODO", ...]."""
     verdicts = verdicts or {}
     bad = [v for v in verdicts.get("nodes", []) if v["verdict"] != "ok"] + _unread_rows(unread)
     later = [v["node"] for v in bad if (check or later_ok) and v["verdict"] == "no_sync" and v["action"] != "manual"
@@ -972,7 +972,7 @@ def cassandra_clock_refusal(verdicts, operation="", cluster="", command="", chec
     if later:
         rest += ["NOTE  time sync would be started on %s (cassandra_linux), its clock checked by the real run"
                  % ", ".join(later)]
-    rest += ["", "TO DO", "  1. bring the clocks in sync (starts a time sync where missing):",
+    rest += ["", "TODO", "  1. bring the clocks in sync (starts a time sync where missing):",
              "     " + (command or "ansible-playbook community.cassandra.sync_clocks"),
              "  2. or fix the time sync of these nodes (chrony.conf's server/pool lines, reachable from them),"
              " then run %s again" % (operation or "it"),

@@ -1,7 +1,7 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-# The import's report and the screen that ends the run: by urgency (a head with the verdict and its counts, TO DO,
+# The import's report and the screen that ends the run: by urgency (a head with the verdict and its counts, TODO,
 # TO REVIEW, FOR INFO, what to do next), for a reader who may be new to Cassandra and to the collection.
 
 import os
@@ -94,7 +94,7 @@ def test_clean_import_nothing_to_act_on():
     # each section: two blank lines, its title in a rule, a blank line; what the report is: in the details
     assert lines[5:9] == ["", "", "==== WHAT TO DO NEXT " + "=" * 76, ""]
     assert lines[heading(lines, "WORDS") - 2:heading(lines, "WORDS") + 2] == ["", "", "==== WORDS " + "=" * 89, ""]
-    assert not has(lines, "TO DO") and not has(lines, "WORTH A LOOK") and not has(lines, "DIFFERENT ON SOME NODES")
+    assert not has(lines, "TODO") and not has(lines, "WORTH A LOOK") and not has(lines, "DIFFERENT ON SOME NODES")
     assert has(report([node(1)], details=True), "WHAT THIS REPORT IS")
     assert not has(report([node(1)], details=False), "WHAT THIS REPORT IS")
     text = "\n".join(lines)
@@ -129,14 +129,14 @@ def test_sections_by_urgency_and_the_counts_in_the_head():
     nodes = [node(1, hand=["cassandra.yaml, line 10:", "  - concurrent_writes: 32", "  + concurrent_writes: 48"]),
              node(2, "16G"), node(3, keep={"cassandra_config_keep_files": ["logback.xml"]}), node(4, read=False)]
     lines = report(nodes, secrets_clear=["group_vars/my_cluster/secrets.yml"])
-    assert lines[0] == ("IMPORT my_cluster  4 nodes (3 read)  5 entries to act on: 2 TO DO, 1 hand-edit entry, 1 file left as is,"
+    assert lines[0] == ("IMPORT my_cluster  4 nodes (3 read)  5 entries to act on: 2 TODO, 1 hand-edit entry, 1 file left as is,"
                         " 1 setting that differs between nodes")
-    order = [heading(lines, title) for title in ("TO DO", "HAND EDITS", "DIFFERENT ON SOME NODES",
+    order = [heading(lines, title) for title in ("TODO", "HAND EDITS", "DIFFERENT ON SOME NODES",
                                                  "LEFT AS THE NODES HAVE THEM", "WHAT TO DO NEXT", "WHAT THIS REPORT IS",
                                                  "FOR INFO", "DETAILS")]
     assert order == sorted(order)
-    # each TO DO a numbered step: what, why, the command to copy, what to check after
-    todo = section(lines, "TO DO")
+    # each TODO a numbered step: what, why, the command to copy, what to check after
+    todo = section(lines, "TODO")
     flat = [" ".join(x.split()) for x in todo]
     assert flat[0] == "1. Let the import read node4 (1 node), then import again"
     joined = " ".join(flat)
@@ -149,8 +149,8 @@ def test_sections_by_urgency_and_the_counts_in_the_head():
     assert "run: ansible-vault encrypt inventories/group_vars/my_cluster/secrets.yml" in joined
     assert "check: head -1 inventories/group_vars/my_cluster/secrets.yml shows $ANSIBLE_VAULT;1.1;AES256" in joined
     assert "ansible-vault asks for a new password (keep it safe): every playbook run" in joined and "cd inventories" not in joined
-    # a short "what to do next" at the end, the TO DO first
-    assert section(lines, "WHAT TO DO NEXT")[0].startswith("  1. Do the TO DO steps above, in their order")
+    # a short "what to do next" at the end, the TODO first
+    assert section(lines, "WHAT TO DO NEXT")[0].startswith("  1. Do the TODO steps above, in their order")
     # the screen: the same head, no FOR INFO details nor DETAILS, the report's path last
     screen = report(nodes, secrets_clear=["group_vars/my_cluster/secrets.yml"], screen=True)
     assert screen[0] == lines[0] and not has(screen, "WHAT THIS REPORT IS")
@@ -213,10 +213,10 @@ def test_things_to_do_and_hand_edits():
                    leftovers={"unsure": ["host_vars/old/main.yml"]},
                    self_check={"node1": {"differences": ["cassandra.yaml: concurrent_writes"], "notes": []}})
     # (a self-check not passed: a step to do, said calmly, not in red)
-    assert lines[0].startswith("IMPORT my_cluster  4 nodes (3 read)  6 entries to act on: 4 TO DO, 2 hand-edit")
+    assert lines[0].startswith("IMPORT my_cluster  4 nodes (3 read)  6 entries to act on: 4 TODO, 2 hand-edit")
     # (a difference found: not in sync, whatever else is not verified)
     assert lines[1] == "  in sync with Ansible: no; apply_config would change 1 setting on 1 node"
-    assert lines[2] == "  self-check not passed yet: TO DO step 2"
+    assert lines[2] == "  self-check not passed yet: TODO step 2"
     titles = [line for line in lines if re.match(r"^  \d\. ", line)]
     assert titles[:4] == ["  1. Let the import read node4 (1 node), then import again", "  2. Make the self-check pass",
                           "  3. Encrypt the passwords file",
@@ -227,7 +227,7 @@ def test_things_to_do_and_hand_edits():
     assert lines[at + 1:at + 3] == [
         "     the inventory does not reproduce 1 node yet; what differs and why: SELF-CHECK, right below",
         "     run:    choose one of the ways out it gives (To pass)"]
-    # the self-check right under the TO DO steps, as the stop says it
+    # the self-check right under the TODO steps, as the stop says it
     at = lines.index(u"  SELF-CHECK \u2014 the inventory does not reproduce 1 node yet")
     assert lines[at + 1:at + 6] == ["    1 setting on this node has no inventory variable: apply_config would change it.",
                                     "", "    cassandra.yaml — 1 node    node1", "      concurrent_writes", ""]
@@ -237,7 +237,7 @@ def test_things_to_do_and_hand_edits():
     at = review.index("    cassandra.yaml (Cassandra's main settings file)    node1, node2")
     assert review[at:at + 5] == [  # (a blank line between entries)
         "    cassandra.yaml (Cassandra's main settings file)    node1, node2",
-        "      1 setting no variable carries: SELF-CHECK, under TO DO", "",
+        "      1 setting no variable carries: SELF-CHECK, under TODO", "",
         "    jvm-server.options (Java's options)    node3", "      -Dcassandra.weird: 1"]
     assert "    to keep them as the nodes have them  -e import_keep_hand_edits=cassandra.yaml,jvm-server.options" in review
     assert "    also 1 edit of the layout only (spacing, order, comments): no effect, listed under DETAILS" in review
@@ -386,7 +386,7 @@ def test_reimport_check_with_nothing_to_change():
     assert not [line for line in screen if "Write the inventory" in line or "git commit" in line]
     # a thing to do still says so
     screen = report([node(1), node(2), node(3, read=False)], check=True, screen=True, changes=unchanged)
-    assert section(screen, "TO DO")[0] == "  1. Let the import read node3 (1 node), then import again"
+    assert section(screen, "TODO")[0] == "  1. Let the import read node3 (1 node), then import again"
 
 
 def test_check_says_what_it_would_write():
@@ -496,7 +496,7 @@ def test_hand_edits_by_file_counted():
         "    logback.xml (the logging settings)    all - node5",
         "      3 edits   node1, node2, node4 (3 nodes)", "      1 edit   node3 (1 node)", "",
         "    jvm11-server.options (Java's options, Java 11 only)    node4", "      1 edit", ""]
-    assert lines[0] == "IMPORT my_cluster  5 nodes  3 entries to review: 3 hand-edit entries"  # (no TO DO)
+    assert lines[0] == "IMPORT my_cluster  5 nodes  3 entries to review: 3 hand-edit entries"  # (no TODO)
     # the ways out once: keep the files as the nodes have them, carry the edits, drop them
     assert "    to keep them as the nodes have them  -e import_keep_hand_edits=cassandra.yaml,logback.xml," \
            "jvm11-server.options" in hand
@@ -616,7 +616,7 @@ def test_keys_cassandra_rejects_a_step_to_do():
     nodes = [node(1, not_settings=rejected), node(2, not_settings=rejected), node(3, not_settings=rejected),
              node(4, not_settings={"keys": ["fake_option", "other_fake"], "release": "4.1.6"}), node(5)]
     lines = report(nodes)
-    todo = section(lines, "TO DO")
+    todo = section(lines, "TODO")
     assert todo[:4] == [
         "  1. Remove fake_option from cassandra.yaml on node1, node2, node3 (3 nodes)",
         "     Cassandra 4.1.5 does not know this setting. It runs fine now, but would not start again with it after a"
@@ -909,7 +909,7 @@ def test_self_check_stop_could_not_run_or_not_read():
 
 
 def test_self_check_report_section():
-    # report.txt (report.check.txt): the stop's lines under TO DO, the node lists whole; each difference as the
+    # report.txt (report.check.txt): the stop's lines under TODO, the node lists whole; each difference as the
     # self-check found it in report.details.txt
     lines = report(failed_nodes(), ok=False, self_check=CHECKS, layout_extra=WINS)
     at = lines.index(u"  SELF-CHECK — the inventory does not reproduce 4 nodes yet")

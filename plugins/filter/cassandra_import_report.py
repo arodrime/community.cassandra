@@ -4,7 +4,7 @@
 
 cassandra_import_report: the import's outcome -> the lines of report.txt, with details true of
     report.details.txt, with screen true the end of the run. report.txt by urgency: a head (the verdict and its
-    counts), TO DO (numbered steps, each with the command to copy and what to check after), WORTH A LOOK, HAND
+    counts), TODO (numbered steps, each with the command to copy and what to check after), WORTH A LOOK, HAND
     EDITS, DIFFERENT ON SOME NODES, LEFT AS THE NODES HAVE THEM (each entry: what and on which nodes, then what
     to do, step by step), WHAT TO DO NEXT. report.details.txt: what the report is, its words, where the settings
     go, FOR INFO (nothing to do), the DETAILS (the lines every node has once, then each node's own). Node lists
@@ -12,7 +12,7 @@ cassandra_import_report: the import's outcome -> the lines of report.txt, with d
     summarised ("20 lines (first: ...)"), whole in the files written. Secrets never shown.
 cassandra_import_self_check_advice: the end of the run on a failed self-check: why the inventory does not reproduce
     the nodes yet, what differs by what the import establishes of its cause, each setting in its file's own words
-    with both values, the ways out with their options (report.txt has the same under TO DO, report.details.txt
+    with both values, the ways out with their options (report.txt has the same under TODO, report.details.txt
     each difference as the self-check found it).
 """
 
@@ -1032,7 +1032,7 @@ def _inventory_changes(changes):
     return changed, removed, changed == [] and removed == []
 
 
-# --- TO DO: numbered steps -------------------------------------------------------------------------------------
+# --- TODO: numbered steps -------------------------------------------------------------------------------------
 
 # a step: what to do, why (in plain words), the command to copy ('' : none), what to check after
 _Step = namedtuple("_Step", "title why run then")
@@ -1040,7 +1040,7 @@ _Step = namedtuple("_Step", "title why run then")
 
 def _todo_steps(report, allow_unread, self_check_ok, self_check_error, check_items, secrets_clear, leftovers,
                 inventory_dir, more, in_git, strict=False):
-    """The TO DO steps, the most urgent first: the nodes not read, the settings their Cassandra rejects, the self-check
+    """The TODO steps, the most urgent first: the nodes not read, the settings their Cassandra rejects, the self-check
     that failed, your files that still win, the secrets written in clear, the files of an earlier import of an
     unknown cluster, the playbook's own (more: the CQL login) -> [_Step]. Paths from the current dir; the import
     command again with the report's inventory and hosts (as the next playbooks are run)."""
@@ -1071,7 +1071,7 @@ def _todo_steps(report, allow_unread, self_check_ok, self_check_error, check_ite
 
 
 def _unread_step(report, again):
-    """The TO DO step of the nodes the import could not read -> [_Step]."""
+    """The TODO step of the nodes the import could not read -> [_Step]."""
     names = [n["name"] for n in report.unread]
     them = "it" if len(names) == 1 else "them"
     return [_Step(
@@ -1086,7 +1086,7 @@ def _unread_step(report, again):
 
 
 def _not_settings_steps(report):
-    """A TO DO step per group of settings their Cassandra rejects (the same keys and release) -> [_Step]."""
+    """A TODO step per group of settings their Cassandra rejects (the same keys and release) -> [_Step]."""
     steps = []
     for (keys, release), members in _not_settings(report.read):
         one = len(keys) == 1
@@ -1102,7 +1102,7 @@ def _not_settings_steps(report):
 
 
 def _self_check_step(report, self_check_error, check_items, strict):
-    """The TO DO step of the self-check that failed -> _Step."""
+    """The TODO step of the self-check that failed -> _Step."""
     where = "SELF-CHECK, right below" if not report.screen else \
         "the SELF-CHECK FAILED block at the end of the run" if strict else "%s, SELF-CHECK" % report.report_name
     return _Step(
@@ -1114,7 +1114,7 @@ def _self_check_step(report, self_check_error, check_items, strict):
 
 
 def _secrets_step(report, secrets_clear, inventory_dir):
-    """The TO DO step of the passwords files written in clear text -> _Step."""
+    """The TODO step of the passwords files written in clear text -> _Step."""
     paths = " ".join(out.path_from(os.path.join(inventory_dir, f), report.cwd) for f in secrets_clear)
     return _Step(
         "Encrypt the passwords file%s" % ("" if len(secrets_clear) == 1 else "s"),
@@ -1146,13 +1146,13 @@ def _playbook_step(report, text):
     return _Step(*[field(text, k) for k in _Step._fields])
 
 
-# --- TO DO steps of the playbook's own (todo, the "more" above): cqlsh, the CQL login ----------------------------
+# --- TODO steps of the playbook's own (todo, the "more" above): cqlsh, the CQL login ----------------------------
 
 CQLSH_SPLIT = "cassandra_cqlsh_command "  # (the start of the read's error when it does not split: its quoting)
 
 
 def cassandra_import_cqlsh_todo(nodes, hostvars, keep_hand_edits=False):
-    """The import's nodes, hostvars, import_keep_hand_edits -> the TO DO steps of the nodes whose cqlsh does not
+    """The import's nodes, hostvars, import_keep_hand_edits -> the TODO steps of the nodes whose cqlsh does not
     start (import_cluster_cqlsh_error, seen at the read): one to make it start (two ways out), one to fix a
     cassandra_cqlsh_command that does not split; [] when it starts everywhere. Node lists as {nodes:<key>}: broken,
     kept (cqlsh kept as it is by import_keep_hand_edits), quoting, and e1, e2... the nodes of each error."""
@@ -1202,7 +1202,7 @@ def cassandra_import_cqlsh_todo(nodes, hostvars, keep_hand_edits=False):
 
 
 def cassandra_import_cql_todo(login, cql_on, own, cluster_group, read_from, check_mode, confirm=True):
-    """What is left to do about the CQL login (TO DO texts, [] for none). login: cassandra_cql_login (state: ok,
+    """What is left to do about the CQL login (TODO texts, [] for none). login: cassandra_cql_login (state: ok,
     refused, unchecked, not_asked, none; asked: typed at this run; user, password, why); cql_on: CQL authentication on
     a node read; own: {user, password} an earlier import of this cluster wrote; cluster_group; read_from: the node it
     was checked on; check_mode; confirm: cassandra_operation_confirm."""
@@ -1241,7 +1241,7 @@ def cassandra_import_cql_todo(login, cql_on, own, cluster_group, read_from, chec
 
 
 def _step_lines(number, step, width):
-    """A TO DO step: its title, why (rows: one each), what to run (several ways out: a row each, (a), (b)...), what
+    """A TODO step: its title, why (rows: one each), what to run (several ways out: a row each, (a), (b)...), what
     to check."""
     lines = fill_text("%d. %s" % (number, step.title), width, "  ", "   ")
     whys = [("", text) for text in (step.why if isinstance(step.why, list) else [step.why])]
@@ -1298,7 +1298,7 @@ def _hand_entries(report, edits, check_items, below):
     lines = []
     for what, members in replace:
         lines += _entry(report, what, members, "a replace flag: remove it, see Settings to review")
-    where = "SELF-CHECK, under TO DO" if not report.screen else "the SELF-CHECK FAILED block, at the end of the run"
+    where = "SELF-CHECK, under TODO" if not report.screen else "the SELF-CHECK FAILED block, at the end of the run"
     for f, members, texts in files:
         found = [i for i in check_items if i["kind"] in (_HAND, _UNREAD_FILE) and _real(i["file"]) == f]
         lines += fill_text("%s    %s" % (_say(report, f), unbreakable(re.sub(r" \(\d+ nodes?\)$", "", _who(report, members)))),
@@ -1971,7 +1971,7 @@ def _head_lines(report, cluster, hosts_file, report_file, self_check_ok, same, s
     written, where the report is -> [line]."""
     acted = len(steps) + sum(n for dummy, n, dummy2 in reviews)
     # (each count kept on one line when the head wraps: never "2" at a line's end, "things worth a look" below)
-    counts = [c.replace(" ", out.NBSP) for c in (["%d TO DO" % len(steps)] if steps else []) + [
+    counts = [c.replace(" ", out.NBSP) for c in (["%d TODO" % len(steps)] if steps else []) + [
         "%d %s" % (n, kind.one if n == 1 else kind.many) for kind, n, dummy in reviews]]
     nodes = out.plural(len(report.read) + len(report.unread), "node") + (
         " (%d read)" % len(report.read) if report.unread else "")
@@ -1984,7 +1984,7 @@ def _head_lines(report, cluster, hosts_file, report_file, self_check_ok, same, s
     check_step = next((i + 1 for i, step in enumerate(steps) if step.title == "Make the self-check pass"), None)
     lines += fill_text("self-check %s" % (
         "passed: the inventory gives every node that was read the settings it has now" if self_check_ok
-        else "not passed yet: TO DO step %d" % check_step if check_step
+        else "not passed yet: TODO step %d" % check_step if check_step
         else "not passed yet: the inventory does not reproduce the nodes"), report.width, "  ", "  ")
     with_vars = sorted(h for h, v in (report.layout.get("host_vars") or {}).items() if v)
     written = ", ".join([out.path_from(hosts_file, report.cwd), "group_vars/%s*/" % cluster]
@@ -2057,7 +2057,7 @@ def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, ch
     show under it -> [line]. "none of it stops you" only when the self-check passed."""
     items = []  # (text, [(command, expected)])
     if steps:
-        items.append(("Do the TO DO steps above, in their order, then import again: the head should say nothing to"
+        items.append(("Do the TODO steps above, in their order, then import again: the head should say nothing to"
                       " act on, or things to review only.", []))
     if reviews:
         items.append(("Read the sections above: each entry says what to do%s." % (
@@ -2187,7 +2187,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     of the run (report.txt shorter: the differences and the files kept without their steps); cwd:
     paths shown relative to it; in_git: the inventory dir is in a git work tree (None: looked for); changes: what
     the run wrote or would write, {changed: [the files written that change], removed: [the files removed],
-    existed: [the files there before]}, paths in the inventory dir (None: not known); todo: more TO DO steps (the
+    existed: [the files there before]}, paths in the inventory dir (None: not known); todo: more TODO steps (the
     CQL login); width: the lines fit in it (default: the terminal's for the screen, REPORT_WIDTH for the report);
     strict: import_strict (the run stops on a failed self-check, its ways out below the
     screen); convergence: the lines of the CONVERGENCE section (cassandra_import_convergence's), under FOR INFO;
@@ -2229,7 +2229,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     sync = _sync_lines(report, data, self_check, self_check_error, moves)
     lines = _head_lines(report, cluster, hosts_file, report_file, self_check_ok, same, steps, reviews, sync)
     if steps:
-        lines += ["", "TO DO"]
+        lines += ["", "TODO"]
         for i, step in enumerate(steps):
             lines += _step_lines(i + 1, step, width)
         if not self_check_ok and not screen:
@@ -2306,7 +2306,7 @@ def _details_report(report, data, layout, self_check, leftovers, convergence, cl
 
 
 def _self_check_section(report, self_check, report_file, self_check_error, allow_unread):
-    """SELF-CHECK (of a failed one, under TO DO): the stop's lines, the node lists whole -> [line]."""
+    """SELF-CHECK (of a failed one, under TODO): the stop's lines, the node lists whole -> [line]."""
     verdict, blocks, evidence = _self_check_lines(
         report.layout, self_check, lambda m: _who(report, m), min(report.width, SELF_CHECK_WIDTH),
         report_file=report_file, error=self_check_error, allow_unread=allow_unread, cwd=report.cwd,

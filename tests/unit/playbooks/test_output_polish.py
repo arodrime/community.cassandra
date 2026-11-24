@@ -89,7 +89,7 @@ def test_reset_node_ends_with_a_verdict_and_the_add_node_command():
     lines = render(t["ansible.builtin.debug"]["msg"], **variables)
     assert lines[0] == "DONE  reset_node  my_cluster  node4 emptied (2 entries deleted), Cassandra stopped and disabled on node4"
     assert lines[1] == "  node5  nothing to do (empty, Cassandra stopped and disabled)"
-    assert lines[-3:] == ["TO DO", "  1. add it back to the cluster:",
+    assert lines[-3:] == ["TODO", "  1. add it back to the cluster:",
                           "     ansible-playbook community.cassandra.add_node -e cassandra_hosts=my_cluster"
                           " -e cassandra_target_nodes=node4"]
     variables["ansible_check_mode"] = True

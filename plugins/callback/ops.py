@@ -10,7 +10,7 @@ type: stdout
 short_description: Only the operator messages of the community.cassandra playbooks
 version_added: 3.0.0
 description:
-  - Prints the plans, progress lines, recaps and TO DO lists of the collection's playbooks, the confirmation
+  - Prints the plans, progress lines, recaps and TODO lists of the collection's playbooks, the confirmation
     questions, and every failure in full. Nothing for the tasks that go well otherwise (no task headers, no C(ok),
     C(changed) or C(skipping) lines, no retries, no play recap).
   - An operator message is a task with the task variable C(cassandra_output) set to C(true) (a literal, in the

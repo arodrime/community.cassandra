@@ -149,7 +149,7 @@ def test_preflight_checks_again_where_limit_skips_localhost():
         "name": "No unknown variable, none under a former name", "ansible.builtin.import_tasks": "variables_check.yml"}
 
 
-# -e name=..., --extra-vars name=..., "-e name" in the help output and the TO DO lines (Python strings too)
+# -e name=..., --extra-vars name=..., "-e name" in the help output and the TODO lines (Python strings too)
 EXTRA_VAR = re.compile(r"""(?:-e|--extra-vars)[ =]+['"]?@?([A-Za-z_]\w*)""")
 # the typos shown on purpose: hosts_check.yml, the guide (and the unit tests', which are not read)
 TYPOS = {"cassandra_host", "import_keep_hand_edit"}

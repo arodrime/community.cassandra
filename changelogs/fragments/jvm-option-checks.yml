@@ -10,7 +10,7 @@ minor_changes:
   - >-
     import_cluster - the extra options of a jvm<N>-server.options the running Java does not read (e.g. a heap in jvm11-server.options on Java 17) are imported as they are: the role writes that file the same, and the JVM keeps not reading it (an exporter agent there is not taken for a second one).
   - >-
-    import_cluster - the report's TO DO has a WARNING for an imported JVM option worth a look (as preflight), the option imported as it is.
+    import_cluster - the report's TODO has a WARNING for an imported JVM option worth a look (as preflight), the option imported as it is.
   - >-
     cassandra_jvm_option_checks, cassandra_jvm_options_file, cassandra_jvm_options_variable filters - the JVM options checks (a table in plugin_utils ``cassandra_jvm_options``), the options file a Java reads.
 bugfixes:

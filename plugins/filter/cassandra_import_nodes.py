@@ -485,7 +485,7 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
         "trusted": config.get("trusted", []) if read else [],
         # cassandra.yaml keys its Cassandra rejects: not imported, the node would not restart with them
         "not_settings": config.get("not_settings") or {},
-        # JVM options worth a look (why, the way out): in the report's TO DO
+        # JVM options worth a look (why, the way out): in the report's TODO
         "jvm_warnings": list(config.get("jvm_warnings") or []) if read else [],
         # cassandra-env.sh's hand edits moved to variables, the files rewritten then, the options the JVM does not use
         "moved": config.get("moved", []),

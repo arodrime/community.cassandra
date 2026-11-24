@@ -48,7 +48,7 @@ def test_the_default_and_its_spec():
 
 
 def test_no_cqlsh_names_the_variable():
-    # the import's TO DO when its login check finds no cqlsh: where to say where it is
+    # the import's TODO when its login check finds no cqlsh: where to say where it is
     why = _why(rc=2, msg="[Errno 2] No such file or directory: b'cqlsh'")
     # (what was observed only: where it was looked for, not a guess of where it is)
     assert why == "no cqlsh in the PATH of root on n1: cassandra_cqlsh_command gives the full path of one"

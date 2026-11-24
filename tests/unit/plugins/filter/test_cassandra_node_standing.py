@@ -527,7 +527,7 @@ def test_each_refusal_says_its_way_out(kwargs, way):
 
 
 def test_the_way_out_of_a_former_member_goes_through():
-    """add_node's TO DO for a former member: -e cassandra_add_node_reset=true (the plan then resets it), or reset_node
+    """add_node's TODO for a former member: -e cassandra_add_node_reset=true (the plan then resets it), or reset_node
     (a former member is RESETTABLE)."""
     former = dict(live_cluster="my_cluster", keyspaces=["system", "shop"], peers=True, cluster_keyspaces={"shop": {}})
     assert _auto(**former)["former"] is True

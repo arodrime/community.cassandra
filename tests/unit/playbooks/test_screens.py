@@ -542,11 +542,11 @@ def test_apply_config_recap():
     lines = recap(False)
     assert lines[-4:] == [
         "",
-        "TO DO",
+        "TODO",
         "  1. optional, when convenient: restart node1, node3 so that Cassandra reads the files it has open with the new"
         " read-ahead (one node at a time; the new files use it already):",
         "     ansible-playbook community.cassandra.rolling_restart -e cassandra_hosts=prod --limit node1,node3"]
-    assert "TO DO" not in recap(True)
+    assert "TODO" not in recap(True)
 
 
 def test_apply_config_reads_every_node_and_puts_the_settings_side_by_side():

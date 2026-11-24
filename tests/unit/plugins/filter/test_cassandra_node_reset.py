@@ -498,7 +498,7 @@ def test_add_node_refusal_one_block_then_what_to_do():
         "  stopped \u2014 its data is of cluster 'billing', neither 'my_cluster' nor the",
         "  package's stock 'Test Cluster'",
         "",
-        "TO DO",
+        "TODO",
         "  1. if what node7 holds is not needed (snapshot or copy it first if in doubt),",
         "     empty it:",
         "     " + reset,
@@ -515,8 +515,8 @@ def test_add_node_refusal_one_block_then_what_to_do():
     ]
     # refused for another reason only: the run again, or the others now
     lines = cassandra_add_node_refusal([other], cluster="my_cluster", targets=["node8", "node9"], inventory=["inventory"])
-    assert lines[lines.index("TO DO"):] == [
-        "TO DO",
+    assert lines[lines.index("TODO"):] == [
+        "TODO",
         "  1. node8: a node of another cluster: take it out of cassandra_target_nodes;",
         "     then run add_node again:",
         "     " + add + "node8,node9",
@@ -527,8 +527,8 @@ def test_add_node_refusal_one_block_then_what_to_do():
     # topology runs add_node's plays: it is run again as is
     lines = cassandra_add_node_refusal([former], targets=["node7"], inventory=["inventory"], asked_by="topology")
     assert lines[0] == "REFUSED  topology  nothing was changed"
-    assert lines[lines.index("TO DO"):] == [
-        "TO DO",
+    assert lines[lines.index("TODO"):] == [
+        "TODO",
         "  1. if what node7 holds is not needed (snapshot or copy it first if in doubt),",
         "     empty it:",
         "     " + reset,

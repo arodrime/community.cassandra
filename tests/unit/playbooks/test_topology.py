@@ -89,7 +89,7 @@ def test_operator_messages_marked_for_the_ops_callback():
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
     msg = templar_for(variables).template(trust_as_template(done["ansible.builtin.debug"]["msg"]))
     assert msg.split("\n") == [
-        "DONE  topology  my_cluster  ring = inventory: added n4; seeds now n1,n4; removed n2", "", "TO DO",
+        "DONE  topology  my_cluster  ring = inventory: added n4; seeds now n1,n4; removed n2", "", "TODO",
         "  1. empty n2 before reusing the host (its data is left in place):",
         "     ansible-playbook community.cassandra.reset_node -e cassandra_target_nodes=n2",
         P, "  2. drop n2 from the inventory: re-import the cluster with its inventory, the",

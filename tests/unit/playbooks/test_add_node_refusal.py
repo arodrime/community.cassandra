@@ -103,7 +103,7 @@ def test_former_member_and_node_of_another_cluster_one_block(tmp_path):
         "",
         "----",
         "",
-        "TO DO",
+        "TODO",
         "  1. if what node7 holds is not needed (snapshot or copy it first if in doubt),",
         "     empty it:",
         "     ansible-playbook -i inventory community.cassandra.reset_node -e cassandra_target_nodes=node7",
@@ -128,8 +128,8 @@ def test_two_former_members(tmp_path):
         FORMER, _cassandra_preflight={"cassandra_dc": "dc1", "cassandra_rack": "rack_c"})})
     assert rc != 0
     assert "TASK [" not in "\n".join(lines) and "fatal" not in "\n".join(lines)
-    assert lines[lines.index("TO DO"):] == [
-        "TO DO",
+    assert lines[lines.index("TODO"):] == [
+        "TODO",
         "  1. if what node7, node8 hold is not needed (snapshot or copy it first if in",
         "     doubt), empty them:",
         "     ansible-playbook -i inventory community.cassandra.reset_node -e cassandra_target_nodes=node7,node8",
@@ -172,7 +172,7 @@ def test_a_node_already_in_the_ring_one_block(tmp_path):
         "",
         "----",
         "",
-        "TO DO",
+        "TODO",
         "  1. node7: do what its line above says, then run add_node again if still",
         "     needed:",
         "     ansible-playbook -i inventory community.cassandra.add_node -e cassandra_target_nodes=node7,node8",

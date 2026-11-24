@@ -745,7 +745,7 @@ def test_the_plan_title_and_the_stop_block_are_blocks_of_their_own():
                  "DONE  rolling_restart  prod  5 restarted  11m30s", "NOT HEALTHY  prod  3 nodes checked, 1 problem"):
         assert _RECAP.match(head) and not _HEADED.match(head), head
     assert colour("STOPPED at node2: node4 is DN") == C.COLOR_ERROR and colour("WAY OUT  start node4") is None
-    for heading in ("TO DO", "SETTINGS TO REVIEW", "CLOCKS  in sync: offset within 50 ms"):
+    for heading in ("TODO", "SETTINGS TO REVIEW", "CLOCKS  in sync: offset within 50 ms"):
         assert colour(heading) is None and not _HEADED.match(heading) and not _RECAP.match(heading), heading
 
     def printed(callback):
@@ -1493,7 +1493,7 @@ def test_a_refusal_block_is_red_on_its_verdict_line_only():
     callback._display = type("D", (), {"verbosity": 0, "columns": 80,
                                        "display": lambda self, line, color=None, **kw: said.append((line, color))})()
     block = ["REFUSED  add_node  my_cluster  nothing was changed", "", "node7 (dc1/rack_b): holds 12.0 GiB", "",
-             "TO DO", "  1. empty it:", "     ansible-playbook community.cassandra.reset_node"]
+             "TODO", "  1. empty it:", "     ansible-playbook community.cassandra.reset_node"]
     callback.v2_runner_on_failed(_Result(_Task(run_once=True), "node7", block))
     coloured = dict((line, color) for line, color in said if line.strip() and not re.match(r"^[-=]{4,}$", line))
     assert coloured == {block[0]: C.COLOR_ERROR, block[2]: None, block[4]: None, block[5]: None, block[6]: None}

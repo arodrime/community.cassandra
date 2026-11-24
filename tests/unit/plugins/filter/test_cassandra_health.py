@@ -463,7 +463,7 @@ def test_report_each_problem_once_with_who_saw_it():
         "  streams:  in progress on n3",
         "  ssh:      not reached by Ansible: n2",
         "  not counted, marked cassandra_node_state: absent: n7, n8",
-        "TO DO",  # n2 down and not reached: one item
+        "TODO",  # n2 down and not reached: one item
         "  1. bring n2 back (not reached over SSH, down in the ring): its server first,",
         "     then Cassandra, then run this again; a node that can't be recovered:",
         "     replace_node",
@@ -474,7 +474,7 @@ def test_report_each_problem_once_with_who_saw_it():
 
 
 def test_report_a_clock_not_in_sync_once_with_the_way_out():
-    # the clocks finding (cassandra_clock_health) set on every node: one row, its command in the TO DO
+    # the clocks finding (cassandra_clock_health) set on every node: one row, its command in the TODO
     ring = [node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.3")]
     clocks = {"kind": "clocks", "text": "n2 OFF, n3 NO TIME SYNC (CLOCKS above says why)",
               "command": "ansible-playbook -i inv.yml community.cassandra.sync_clocks --check"}
@@ -484,7 +484,7 @@ def test_report_a_clock_not_in_sync_once_with_the_way_out():
     assert report["lines"] == [
         "NOT HEALTHY  my_cluster  3 nodes checked, 1 problem",
         "  clocks:  n2 OFF, n3 NO TIME SYNC (CLOCKS above says why)",
-        "TO DO",
+        "TODO",
         "  1. bring the clocks in sync with sync_clocks (--check first shows what it",
         "     would do and changes nothing):",
         "     ansible-playbook -i inv.yml community.cassandra.sync_clocks",
@@ -504,8 +504,8 @@ def test_report_an_unreachable_host_known_by_no_address_taken_for_the_one_node_d
     status = view("n1", *ring)["result"]["cluster_status"]
     lines = cassandra_health_report(per_host, "c", ["n1", "n2", "n3"], unreachable=["n3"], names=names, ring=status)["lines"]
     assert lines[1:3] == ["  ring:  n3? 10.0.0.4 (r1) DN   seen from n1, n2", "  ssh:   not reached by Ansible: n3"]
-    # the TO DO names the host (the guess is the ring line's)
-    assert lines[3:] == ["TO DO", "  1. bring n3 back (not reached over SSH, taken for the node down in the ring):",
+    # the TODO names the host (the guess is the ring line's)
+    assert lines[3:] == ["TODO", "  1. bring n3 back (not reached over SSH, taken for the node down in the ring):",
                          "     its server first, then Cassandra, then run this again; a node that can't",
                          "     be recovered: replace_node"]
     # two such hosts, a host known by an address, or no ring given: no guess
@@ -524,7 +524,7 @@ def test_report_an_unreachable_host_known_by_no_address_taken_for_the_one_node_d
     lines = cassandra_health_report(per_host, "c", ["n1", "n2", "n3"], unreachable=["n3"],
                                     names=dict(names, **{"10.0.0.3": "n3"}), ring=status)["lines"]
     assert "  ring:  10.0.0.4 (r1) DN   seen from n1, n2" in lines
-    assert lines[-5:] == ["TO DO", "  1. start Cassandra on 10.0.0.4 (its server first if it is down); a node that",
+    assert lines[-5:] == ["TODO", "  1. start Cassandra on 10.0.0.4 (its server first if it is down); a node that",
                           "     can't be recovered: replace_node", P, "  2. reach n3 over SSH, then run this again"]
 
 
