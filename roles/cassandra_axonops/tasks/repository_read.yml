@@ -27,5 +27,5 @@
          | community.cassandra.cassandra_url_masked }}
     _url: "{{ cassandra_axonops_repository_url | community.cassandra.cassandra_url_masked }}"
     _head: "{{ ['STOPPED  cassandra_axonops  ' ~ inventory_hostname, '  the AxonOps repository ' ~ _url ~ ' cannot be read:'] }}"
-    _way: ["WAY OUT  check cassandra_axonops_repository_url and the login, then run", "  again"]
+    _way: ["WAY OUT  check cassandra_axonops_repository_url and the login, then run again"]
     _said: "{{ _head + ['    ' ~ _error] | community.cassandra.cassandra_fit + _way }}"

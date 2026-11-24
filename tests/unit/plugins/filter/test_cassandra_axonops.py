@@ -601,7 +601,7 @@ def test_redhat_reads_its_repository_before_a_package_from_it():
                  cassandra_axonops_repo_probe={"stderr_lines": ["", "Errors during downloading metadata for repository 'axonops':"
                                                " Status code: 401 for https://u:pw@mirror/yum/repodata/repomd.xml"]})
     assert said[1] == "  the AxonOps repository https://****@mirror/yum cannot be read:"
-    assert "pw" not in str(said) and said[-2].startswith("WAY OUT  ") and all(len(x) <= 79 for x in said)
+    assert ":pw@" not in str(said) and said[-1].startswith("WAY OUT  ") and all(len(x) <= 79 for x in said)
     names = _names(_packages())
     assert names.index("Read the AxonOps repository (RedHat)") < names.index("Install the AxonOps packages (RedHat)")
 

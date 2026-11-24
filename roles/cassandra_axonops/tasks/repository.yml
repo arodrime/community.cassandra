@@ -160,8 +160,7 @@
           {{ ['STOPPED  cassandra_axonops  ' ~ inventory_hostname,
               '  ' ~ ansible_failed_task.name | default('the AxonOps apt repository') ~ ' failed:']
              + ['    ' ~ _cause] | community.cassandra.cassandra_fit
-             + ['WAY OUT  check cassandra_axonops_repository_url, _key_url and the',
-                '  login, then run again'] }}
+             + ['WAY OUT  check cassandra_axonops_repository_url, _key_url, login; run again'] }}
 
 - name: The AxonOps yum repository (RedHat)
   ansible.builtin.yum_repository:
