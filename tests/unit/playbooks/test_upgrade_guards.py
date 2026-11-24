@@ -118,15 +118,24 @@ def test_prepare_copies_the_config_files_and_checks_the_copy(tmp_path):
 def test_prepare_under_check_says_what_a_real_run_would_do():
     said = task("Prepare", "Say what the next phase is")
     say = said["ansible.builtin.debug"]["msg"]
+    run = {"inventory": ["inv.yml"], "default_inventory": "", "hosts": "", "cwd": None}
     variables = dict(cassandra_upgrade_from="4.1.12", cassandra_conf_dir="/etc/cassandra/conf",
-                     ansible_play_hosts=["n1"], ansible_play_hosts_all=["n1"],
-                     _nl="\n", _next=said["vars"]["_next"])
+                     ansible_play_hosts=["n1"], ansible_play_hosts_all=["n1"], _cassandra_run_command_args=run,
+                     **{k: said["vars"][k] for k in ("_nl", "_canary", "_prepare")})
     assert text(say, ansible_check_mode=True, **variables) == (
         "--check: nothing was done. A real run would take the snapshots pre-upgrade-4.1.12 and copy the config to "
         "/etc/cassandra/conf.pre-upgrade-4.1.12.")
-    assert text(say, ansible_check_mode=False, **variables) == (
-        "Snapshots pre-upgrade-4.1.12 and config copies in /etc/cassandra/conf.pre-upgrade-4.1.12.\n"
-        "NEXT  the canary phase: -e cassandra_upgrade_phase=canary")
+    # the raw render: the NEXT on a line of its own, its whole command under it (to paste)
+    assert str(render(say, ansible_check_mode=False, **variables)).split("\n") == [
+        "Snapshots pre-upgrade-4.1.12 and config copies in /etc/cassandra/conf.pre-upgrade-4.1.12.",
+        "NEXT  the canary phase:",
+        "  ansible-playbook -i inv.yml community.cassandra.upgrade -e cassandra_upgrade_phase=canary"]
+    # a node where the prepare failed: a stop, its WAY OUT and the prepare command
+    variables["ansible_play_hosts"] = []
+    assert str(render(say, ansible_check_mode=False, **variables)).split("\n") == [
+        "Prepare did not go through on n1 (above).",
+        "WAY OUT  fix that, then run the prepare phase again, before the canary phase:",
+        "  ansible-playbook -i inv.yml community.cassandra.upgrade -e cassandra_upgrade_phase=prepare"]
 
 
 LISTED = ("Snapshot Details: \n"
@@ -773,9 +782,10 @@ def test_the_summary_play_reads_with_the_role_defaults_and_lists_every_node_of_t
 def test_prepare_says_where_it_did_not_go_through():
     said = task("Prepare", "Say what the next phase is")
     say = said["ansible.builtin.debug"]["msg"]
+    run = {"inventory": None, "default_inventory": "", "hosts": "", "cwd": None}
     variables = dict(cassandra_upgrade_from="4.1.12", cassandra_conf_dir="/etc/cassandra/conf", ansible_check_mode=False,
-                     _nl="\n", _next=said["vars"]["_next"])
+                     _cassandra_run_command_args=run, **{k: said["vars"][k] for k in ("_nl", "_canary", "_prepare")})
     assert text(say, ansible_play_hosts=["n1", "n3"], ansible_play_hosts_all=["n1", "n2", "n3"], **variables) == (
-        "Prepare did not go through on n2 (above): run the prepare phase again once that is fixed, before the canary"
-        " phase.")
+        "Prepare did not go through on n2 (above). WAY OUT fix that, then run the prepare phase again, before the"
+        " canary phase: ansible-playbook community.cassandra.upgrade -e cassandra_upgrade_phase=prepare")
     assert text(say, ansible_play_hosts=["n1"], ansible_play_hosts_all=["n1"], **variables).startswith("Snapshots")

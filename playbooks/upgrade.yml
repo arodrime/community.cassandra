@@ -776,17 +776,27 @@
           {{ ('--check: nothing was done. A real run would take the snapshots pre-upgrade-' ~ cassandra_upgrade_from
               ~ ' and copy the config to ' ~ cassandra_conf_dir ~ '.pre-upgrade-' ~ cassandra_upgrade_from ~ '.')
              if ansible_check_mode else
-             ('Snapshots pre-upgrade-' ~ cassandra_upgrade_from ~ ' and config copies in ' ~ cassandra_conf_dir
-              ~ '.pre-upgrade-' ~ cassandra_upgrade_from ~ '.' ~ _nl ~ _next)
+             ((['Snapshots pre-upgrade-' ~ cassandra_upgrade_from ~ ' and config copies in ' ~ cassandra_conf_dir
+                ~ '.pre-upgrade-' ~ cassandra_upgrade_from ~ '.']
+               + [{'text': 'the canary phase', 'command': _canary}] | community.cassandra.cassandra_todo)
+              | join(_nl))
              if ansible_play_hosts | length == ansible_play_hosts_all | length else
-             ('Prepare did not go through on ' ~ ansible_play_hosts_all | reject('in', ansible_play_hosts) | join(', ')
-              ~ ' (above): run the prepare phase again once that is fixed, before the canary phase.') }}
+             ((['Prepare did not go through on ' ~ ansible_play_hosts_all | reject('in', ansible_play_hosts) | join(', ')
+                ~ ' (above).']
+               + [{'text': 'fix that, then run the prepare phase again, before the canary phase',
+                   'command': _prepare}] | community.cassandra.cassandra_todo(title='WAY OUT'))
+              | join(_nl)) }}
       run_once: true
       vars:
         cassandra_output: true
         cassandra_output_gap: true
         _nl: "\n"
-        _next: "NEXT  the canary phase: -e cassandra_upgrade_phase=canary"
+        _canary: >-
+          {{ 'upgrade' | community.cassandra.cassandra_command(extra=['-e cassandra_upgrade_phase=canary'],
+                                                                **_cassandra_run_command_args) }}
+        _prepare: >-
+          {{ 'upgrade' | community.cassandra.cassandra_command(extra=['-e cassandra_upgrade_phase=prepare'],
+                                                                **_cassandra_run_command_args) }}
 
 # canary: -e cassandra_target_nodes=<node>, by default the first non-seed by
 # datacenter, rack and name (else the first node). rolling: the others, by
