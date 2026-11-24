@@ -314,6 +314,8 @@ def test_repository_secrets_and_keyrings():
     tasks = _tasks("roles", "cassandra_axonops", "tasks", "repository.yml")
     yum = _find(tasks, "The AxonOps yum repository (RedHat)")
     assert yum["diff"] is False and "0600" in yum["ansible.builtin.yum_repository"]["mode"]
+    # a mirror refusing the login broke every dnf run of the node, the collection's compare included
+    assert yum["ansible.builtin.yum_repository"]["skip_if_unavailable"] is True
     names = _names(tasks)
     assert names.index("Create the key directory") < names.index("Download the signing key")
     # (compared under check mode too: the key downloaded to a file of its own, compared, put in place for real only)
@@ -541,6 +543,6 @@ def test_repository_rows_never_show_a_secret():
         cassandra_axonops_repository_items)
     assert cassandra_axonops_repository_items({}, "u", "k") == []
     rows = cassandra_axonops_repository_items({"source": True, "key": True, "credentials": True}, "https://m/a", "https://m/k")
-    assert rows == [{"item": "repository https://m/a", "before": "absent or other", "after": "added"},
+    assert rows == [{"item": "repository https://m/a", "before": "absent or other", "after": "written"},
                     {"item": "repository signing key", "before": "absent or other", "after": "https://m/k"},
                     {"item": "repository credentials", "before": "absent or other", "after": "set (hidden)"}]

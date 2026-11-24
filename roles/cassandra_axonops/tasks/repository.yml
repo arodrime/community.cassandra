@@ -110,6 +110,9 @@
     username: "{{ cassandra_axonops_repository_username or omit }}"
     password: "{{ cassandra_axonops_repository_password or omit }}"
     mode: "{{ '0600' if cassandra_axonops_repository_username != '' else '0644' }}"  # (the password in it)
+    # (a mirror that does not answer, or refuses the login, must not stop every other dnf run: Cassandra's own
+    # packages, the collection's compare)
+    skip_if_unavailable: true
   diff: false
   no_log: "{{ cassandra_axonops_repository_password != '' }}"
   register: cassandra_axonops_yum

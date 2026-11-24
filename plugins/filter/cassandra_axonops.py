@@ -283,7 +283,7 @@ def cassandra_axonops_repository_items(changed, url, key):
     """
     out = []
     if changed.get("source"):
-        out.append({"item": "repository " + str(url), "before": "absent or other", "after": "added"})
+        out.append({"item": "repository " + str(url), "before": "absent or other", "after": "written"})
     if changed.get("key"):
         out.append({"item": "repository signing key", "before": "absent or other", "after": str(key)})
     if changed.get("credentials"):
