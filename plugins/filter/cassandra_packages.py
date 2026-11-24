@@ -15,11 +15,15 @@ from ansible.errors import AnsibleFilterError
 # one line per installed package, the same fields for both: state, name, version, release, epoch, arch
 _RPM = ["rpm", "-q", "--qf", "installed\t%{NAME}\t%{VERSION}\t%{RELEASE}\t%{EPOCH}\t%{ARCH}\n"]
 _DPKG = ["dpkg-query", "-W", "-f=${db:Status-Status}\t${Package}\t${Version}\t\t\t${Architecture}\n"]
-# dpkg's states of a package that is not installed (removed, its config files left)
+# dpkg's states of a package that is not installed (removed, its config files left); the others
+# (installed, but also half-installed, unpacked, half-configured, triggers-*) count as installed, as
+# package_facts counts them
 _NOT_INSTALLED = ("not-installed", "config-files")
 # a name not installed, as rpm -q (its output) and dpkg-query -W (its errors) say it
 _RPM_ABSENT = re.compile(r"package \S+ is not installed$")
 _DPKG_ABSENT = re.compile(r"dpkg-query: no packages found matching ")
+# a warning rpm or dpkg-query prints with an answer all the same
+_WARNING = re.compile(r"(dpkg-query: )?warning: ", re.I)
 
 
 def cassandra_package_query(names, os_family):
@@ -39,7 +43,8 @@ def cassandra_installed_packages(read):
     release, epoch, arch}, ...]} for the names installed (Debian: name, version, arch), as package_facts gives
     them; the names not installed left out ("package x is not installed", a dpkg state of a removed package,
     "no packages found matching x"). A result skipped (not read) -> {}. Fails, as package_facts would, when the
-    command gave nothing of that (no rpm or dpkg-query, a database that can't be read)."""
+    command failed with nothing of that, or with an error that is neither (no rpm or dpkg-query, a database
+    that can't be read)."""
     if not isinstance(read, dict):
         read = {"stdout": read, "rc": 0}
     if "stdout" not in read and "rc" not in read:
@@ -59,8 +64,12 @@ def cassandra_installed_packages(read):
         if release:  # rpm (a dpkg line has none)
             package.update(release=release, epoch=None if epoch == "(none)" else epoch)
         packages.setdefault(name, []).append(package)
-    understood += len([line for line in str(read.get("stderr") or "").splitlines() if _DPKG_ABSENT.match(line)])
-    if read.get("rc", 0) != 0 and not understood:
+    errors = [line for line in str(read.get("stderr") or "").splitlines() if line.strip()]
+    understood += len([line for line in errors if _DPKG_ABSENT.match(line)])
+    # an error that is neither a name not installed nor a warning (an rpm database error...): the answer may
+    # leave out installed packages
+    unexplained = [line for line in errors if not _DPKG_ABSENT.match(line) and not _WARNING.match(line)]
+    if read.get("rc", 0) != 0 and (not understood or unexplained):
         raise AnsibleFilterError("the installed packages could not be read: %s"
                                  % (str(read.get("stderr") or read.get("msg") or "").strip() or "rc %s" % read.get("rc")))
     return packages

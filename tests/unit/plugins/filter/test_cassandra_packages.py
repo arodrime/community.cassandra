@@ -58,6 +58,20 @@ def test_not_read():
             cassandra_installed_packages(failed)
 
 
+def test_an_error_beside_a_package_not_installed_fails():
+    # rc 1 for the absent name, but also an rpm database error: some installed ones may be missing from stdout
+    read = {"rc": 1, "stdout": "package cassandra-tools is not installed\n",
+            "stderr": "error: rpmdbNextIterator: skipping h#     412 blob size(4280): BAD, 8 + 16 * il(70) + dl(3168)\n"}
+    with pytest.raises(AnsibleFilterError, match="could not be read: error: rpmdbNextIterator"):
+        cassandra_installed_packages(read)
+    # a warning beside it: an answer all the same
+    read = {"rc": 1, "stdout": "installed\tcassandra\t5.0.6\t1\t(none)\tnoarch\npackage cassandra-tools is not installed\n",
+            "stderr": "warning: Found bdb_ro Packages database while attempting sqlite backend: using bdb_ro backend.\n"}
+    assert list(cassandra_installed_packages(read)) == ["cassandra"]
+    read = {"rc": 1, "stdout": "", "stderr": "dpkg-query: no packages found matching cassandra-tools\n"}
+    assert cassandra_installed_packages(read) == {}
+
+
 @pytest.mark.skipif(not shutil.which("dpkg-query"), reason="no dpkg-query here")
 def test_the_real_dpkg_query():
     argv = cassandra_package_query(["dpkg", "zzfake-not-a-package"], "Debian")
