@@ -1015,8 +1015,8 @@ def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, d
         lines = ["", "WOULD DO"] + ["  " + line for line in lines]
     lines = lines + _recap_warnings(nodes, check, refused, planned, width, more)
     # (an optional restart is no NEXT after a FAILED run: its stop said what to do first)
-    return shown + lines + ([] if check or counts.get("failed") else _read_ahead_todo(nodes, restart_command,
-                                                                                         _width(width)))
+    after = [] if check or counts.get("failed") else _read_ahead_todo(nodes, restart_command, _width(width))
+    return shown + lines + after
 
 
 def cassandra_apply_config_nodes(hosts, hostvars, ran=None):

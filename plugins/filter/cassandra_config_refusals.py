@@ -189,11 +189,12 @@ def _xml_value_refusals(var, value, attribute, commented, own_template):
         ways = ["write it without --", "set %s to true%s" % (commented, TURNED_ON[commented]),
                 "add logback.xml to cassandra_config_keep_files: the node keeps its logback.xml as it is",
                 "write logback.xml from your own template (cassandra_config_template_overrides)"]
-        out.append("\n".join(["%s: %s has a --, which XML does not take in a comment, where the template writes it while"
-                               " %s is false. One of:" % (var, text, commented)]
-                              + [line for i, way in enumerate(ways) for line in textwrap.wrap(
-                                  way, 79, initial_indent="  %d. " % (i + 1), subsequent_indent="     ",
-                                  break_long_words=False, break_on_hyphens=False)]))
+        numbered = [line for i, way in enumerate(ways)
+                    for line in textwrap.wrap(way, 79, initial_indent="  %d. " % (i + 1), subsequent_indent="     ",
+                                              break_long_words=False, break_on_hyphens=False)]
+        said = ("%s: %s has a --, which XML does not take in a comment, where the template writes it while %s is false."
+                " One of:" % (var, text, commented))
+        out.append("\n".join([said] + numbered))
     return out
 
 
