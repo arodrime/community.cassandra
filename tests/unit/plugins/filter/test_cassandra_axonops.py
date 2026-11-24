@@ -655,11 +655,11 @@ def test_the_apt_source_without_python3_debian():
 
 def test_a_stop_of_the_role_gives_its_facts_to_the_window_stop():
     tasks = _tasks("roles", "cassandra_operation", "tasks", "action_upgrade.yml")
+    msg = ("STOPPED  cassandra_axonops  n1\n  /etc/axonops/axon-agent.yml not written:\n"
+           "    can not use content with a dir as dest\nWAY OUT  fix the cause on the node, then run again")
     said = _said(_find(tasks, "Set up the AxonOps agent for the target series")["rescue"][0],
                  cassandra_package_version="5.0.9", ansible_failed_task={"name": "Stop on the failed write"},
-                 _cassandra_axonops_java_package=JDK17, ansible_failed_result={"msg": "STOPPED  cassandra_axonops  n1\n"
-                 "  /etc/axonops/axon-agent.yml not written:\n    can not use content with a dir as dest\n"
-                 "WAY OUT  fix the cause on the node, then run again"})
+                 _cassandra_axonops_java_package=JDK17, ansible_failed_result={"msg": msg})
     assert said[4:6] == ["    /etc/axonops/axon-agent.yml not written: can not use content with a dir as",
                          "      dest"]
 
