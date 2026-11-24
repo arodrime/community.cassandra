@@ -1,2 +1,3 @@
-bugfixes:
-  - "import_cluster playbook - the key of the shareable copy lists the forms of a cluster, data center or rack name in a fixed order: an import with nothing changed wrote it in another order, so it moved the copy and its key aside each time (``import_report_shareable=true``)."
+---
+trivial:
+- "import_cluster playbook - the key of the shareable copy lists the forms of a cluster, data center or rack name in a fixed order: an import with nothing changed wrote it in another order, so it moved the copy and its key aside each time (``import_report_shareable=true``)."

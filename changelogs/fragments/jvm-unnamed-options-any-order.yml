@@ -1,3 +1,3 @@
-bugfixes:
-  - >-
-    import_cluster and apply_config - the JVM options without a name are compared in their order, but for ``--add-opens``, ``--add-exports``, ``--add-reads``, ``--add-modules`` and ``--enable-native-access``, which the JVM takes in any order; ``-ea`` written before the stock ``--add-exports`` lines is no longer a self-check difference, and two other options without a name swapped (``--illegal-access``, ``-Xshare``, ``-Xbootclasspath/a``...) still need a restart.
+---
+trivial:
+- "import_cluster and apply_config - the JVM options without a name are compared in their order, but for ``--add-opens``, ``--add-exports``, ``--add-reads``, ``--add-modules`` and ``--enable-native-access``, which the JVM takes in any order; ``-ea`` written before the stock ``--add-exports`` lines is no longer a self-check difference, and two other options without a name swapped (``--illegal-access``, ``-Xshare``, ``-Xbootclasspath/a``...) still need a restart."

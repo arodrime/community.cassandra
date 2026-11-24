@@ -1,2 +1,3 @@
-bugfixes:
-  - "ops callback - a failed command handled by the playbook says ``non-zero return code`` on ansible-core 2.19 and later too."
+---
+trivial:
+- "ops callback - a failed command handled by the playbook says ``non-zero return code`` on ansible-core 2.19 and later too."

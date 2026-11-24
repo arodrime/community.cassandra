@@ -1,4 +1,6 @@
+---
 bugfixes:
-  - "replace_node and add_node playbooks - a refusal ends on its ``REFUSED  replace_node  prod  nothing was changed`` summary, no longer followed by ``node5: Nothing was replaced.`` (the ops callback prints nothing for a task marked ``cassandra_output_said``, the stop of a verdict printed already)."
-  - "cassandra_linux role, apply_config and import_cluster playbooks - a data device and what it sits on are said in words (``/data/c on vg_data-lv_cass on sdb``), no longer with arrows."
-  - "import_cluster playbook - the self-check's way out for a part kept as the node has it reads ``keep the kernel settings as on this node``, no longer ``as this node has it`` for a plural part."
+- "cassandra_linux role, apply_config and import_cluster playbooks - a data device and what it sits on are said in words (``/data/c on vg_data-lv_cass on sdb``), no longer with arrows."
+trivial:
+- "replace_node and add_node playbooks - a refusal ends on its ``REFUSED  replace_node  prod  nothing was changed`` summary, no longer followed by ``node5: Nothing was replaced.`` (the ops callback prints nothing for a task marked ``cassandra_output_said``, the stop of a verdict printed already)."
+- "import_cluster playbook - the self-check's way out for a part kept as the node has it reads ``keep the kernel settings as on this node``, no longer ``as this node has it`` for a plural part."

@@ -1,2 +1,3 @@
-bugfixes:
-  - "add_node, move_node - the cleanup command's ``--limit`` and the cleanup batches list the nodes in inventory order, not in ring order."
+---
+trivial:
+- "add_node, move_node - the cleanup command's ``--limit`` and the cleanup batches list the nodes in inventory order, not in ring order."

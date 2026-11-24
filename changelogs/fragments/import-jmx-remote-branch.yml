@@ -1,3 +1,3 @@
-bugfixes:
-  - >-
-    import_cluster playbook - the ``-Djava.rmi.server.hostname``, JMX password file and access file lines a node has in the remote JMX branch of ``cassandra-env.sh`` (``LOCAL_JMX`` not ``yes``), their stock places commented out, are the role's lines outside it when nothing between reads ``JVM_OPTS`` and the running JVM took that branch: no hand edit, no self-check difference (before, lines moved and a moving ``fi``). Otherwise, or Cassandra not running, they stay hand edits.
+---
+trivial:
+- "import_cluster playbook - the ``-Djava.rmi.server.hostname``, JMX password file and access file lines a node has in the remote JMX branch of ``cassandra-env.sh`` (``LOCAL_JMX`` not ``yes``), their stock places commented out, are the role's lines outside it when nothing between reads ``JVM_OPTS`` and the running JVM took that branch: no hand edit, no self-check difference (before, lines moved and a moving ``fi``). Otherwise, or Cassandra not running, they stay hand edits."

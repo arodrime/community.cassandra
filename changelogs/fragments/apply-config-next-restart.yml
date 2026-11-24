@@ -1,6 +1,3 @@
-minor_changes:
-  - >-
-    apply_config - a file written with no restart, proven to give the running JVM the same arguments, that gives it
-    another option at its next restart says so under the node, in the plan and the recap (``next restart:
-    -XX:HeapDumpPath=... added (no effect now)``): 5.0's ``cassandra-env.sh`` written over 4.x's stock one, the
-    stock JMX password file line written back where the JVM never reads that file.
+---
+trivial:
+- "apply_config - a file written with no restart, proven to give the running JVM the same arguments, that gives it another option at its next restart says so under the node, in the plan and the recap (``next restart: -XX:HeapDumpPath=... added (no effect now)``): 5.0's ``cassandra-env.sh`` written over 4.x's stock one, the stock JMX password file line written back where the JVM never reads that file."

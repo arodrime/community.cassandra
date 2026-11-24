@@ -1,3 +1,5 @@
+---
 minor_changes:
-  - cassandra_config role - ``cassandra_jvm_removed_options`` (``jvm-server.options``) and ``cassandra_jvm8_removed_options``, ``cassandra_jvm11_removed_options``, ``cassandra_jvm17_removed_options`` list stock option lines to write commented out (switched off, e.g. ``-XX:+HeapDumpOnOutOfMemoryError``, ``-XX:+UseNUMA``, ``-Djava.net.preferIPv4Stack=true``); a line the file does not have is refused. The Java checks of the options take them into account (a 4.x stock option an unsupported Java refuses can be switched off).
-  - import_cluster playbook - a stock JVM option line commented out or removed on a node is read into those variables (before, a hand edit).
+- "cassandra_config role - ``cassandra_jvm_removed_options`` (``jvm-server.options``) and ``cassandra_jvm8_removed_options``, ``cassandra_jvm11_removed_options``, ``cassandra_jvm17_removed_options`` list stock option lines to write commented out (switched off, e.g. ``-XX:+HeapDumpOnOutOfMemoryError``, ``-XX:+UseNUMA``, ``-Djava.net.preferIPv4Stack=true``); a line the file does not have is refused. The Java checks of the options take them into account (a 4.x stock option an unsupported Java refuses can be switched off)."
+trivial:
+- "import_cluster playbook - a stock JVM option line commented out or removed on a node is read into those variables (before, a hand edit)."

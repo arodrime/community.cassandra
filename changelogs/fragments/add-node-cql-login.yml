@@ -1,3 +1,4 @@
-bugfixes:
-  - "add_node - a CQL login refused while reading the keyspaces' replication (authentication on) stops the run at once, naming ``cassandra_cql_username`` and ``cassandra_cql_password``, instead of planning without the replication."
-  - "add_node - the failure of a node being prepared is recorded with ``no_log`` (the raw result of a task that has ``no_log`` itself is never shown, even with ``-v``)."
+---
+trivial:
+- "add_node - a CQL login refused while reading the keyspaces' replication (authentication on) stops the run at once, naming ``cassandra_cql_username`` and ``cassandra_cql_password``, instead of planning without the replication."
+- "add_node - the failure of a node being prepared is recorded with ``no_log`` (the raw result of a task that has ``no_log`` itself is never shown, even with ``-v``)."

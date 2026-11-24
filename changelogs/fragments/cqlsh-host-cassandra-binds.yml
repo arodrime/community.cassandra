@@ -1,7 +1,3 @@
-bugfixes:
-  - >-
-    cqlsh calls - cqlsh connects to the address Cassandra binds its native transport to, by Cassandra's own rule, in
-    every playbook that runs it and in import_cluster's CQL login check (one filter, ``cassandra_cql_host``): a blank
-    ``rpc_address`` is the address of the node's own name (it was taken for 127.0.0.1, so the login check failed with
-    connection refused); an ``rpc_interface`` in ``cassandra_extra_settings`` is that interface's address;
-    ``localhost``, ``0.0.0.0`` and ``::`` stay 127.0.0.1.
+---
+trivial:
+- "cqlsh calls - cqlsh connects to the address Cassandra binds its native transport to, by Cassandra's own rule, in every playbook that runs it and in import_cluster's CQL login check (one filter, ``cassandra_cql_host``): a blank ``rpc_address`` is the address of the node's own name (it was taken for 127.0.0.1, so the login check failed with connection refused); an ``rpc_interface`` in ``cassandra_extra_settings`` is that interface's address; ``localhost``, ``0.0.0.0`` and ``::`` stay 127.0.0.1."

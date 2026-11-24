@@ -1,5 +1,3 @@
-bugfixes:
-  - >-
-    import_cluster and apply_config playbooks - 4.1's ``compaction_large_partition_warning_threshold`` is read in any
-    unit as Cassandra reads it (``100MiB`` the same as ``102400KiB``, its 4.0 name ``..._mb`` the same amount), as the
-    other settings 4.1 renamed: no difference between two ways of writing one amount.
+---
+trivial:
+- "import_cluster and apply_config playbooks - 4.1's ``compaction_large_partition_warning_threshold`` is read in any unit as Cassandra reads it (``100MiB`` the same as ``102400KiB``, its 4.0 name ``..._mb`` the same amount), as the other settings 4.1 renamed: no difference between two ways of writing one amount."

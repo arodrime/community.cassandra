@@ -1,2 +1,3 @@
-bugfixes:
-  - "stop_rack playbook - a rack whose stop would take more than one replica of some data down is refused in a REFUSED block within 79 columns, no longer Ansible's assert output: its nodes one per line, then the forced ``stop_rack`` command to paste as the way out."
+---
+trivial:
+- "stop_rack playbook - a rack whose stop would take more than one replica of some data down is refused in a REFUSED block within 79 columns, no longer Ansible's assert output: its nodes one per line, then the forced ``stop_rack`` command to paste as the way out."

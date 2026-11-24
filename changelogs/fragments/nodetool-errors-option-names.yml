@@ -1,2 +1,3 @@
-bugfixes:
-  - "nodetool modules - a JMX login refused or JMX not reached at their first nodetool call names both the module's own options (``username``, ``password_file``, ``password``, ``port``) and the roles' variables (``cassandra_jmx_*``, ``cassandra_jmx_port``), not the roles' variables alone, which a direct module user does not have."
+---
+trivial:
+- "nodetool modules - a JMX login refused or JMX not reached at their first nodetool call names both the module's own options (``username``, ``password_file``, ``password``, ``port``) and the roles' variables (``cassandra_jmx_*``, ``cassandra_jmx_port``), not the roles' variables alone, which a direct module user does not have."

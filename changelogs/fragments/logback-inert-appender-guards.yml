@@ -1,2 +1,3 @@
-bugfixes:
-  - "import_cluster playbook - an inert appender no appender-ref names (5.0's CQLLOG) is no difference in the self-check's element-by-element view either; none is taken for unreferenced when logback.xml has an ``<include>`` or a name or ref of a variable (``${...}``)."
+---
+trivial:
+- "import_cluster playbook - an inert appender no appender-ref names (5.0's CQLLOG) is no difference in the self-check's element-by-element view either; none is taken for unreferenced when logback.xml has an ``<include>`` or a name or ref of a variable (``${...}``)."

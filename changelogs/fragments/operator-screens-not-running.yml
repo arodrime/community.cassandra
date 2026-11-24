@@ -1,14 +1,5 @@
-bugfixes:
-  - >-
-    apply_config - a node with its OS settings alone to apply says it once in the plan (``OS settings, live (no
-    restart)``); a node whose Cassandra is not running says so (``up to date, Cassandra not running``, ``would apply,
-    left stopped``) instead of ``no restart`` or ``up to date`` alone. The note of the files written after Cassandra
-    started with no record of the roles fits in 79 columns and no longer says ``not restarted for them`` above a plan
-    that restarts the node for the inventory's changes.
-  - >-
-    drift - IN SYNC says a node whose Cassandra is not running; a check command for a change of every node has no
-    ``--limit`` naming them all.
-  - >-
-    import_cluster - the head keeps each count on one line when it wraps; the CQL login is checked on (and the
-    question names) a node given with ``-i`` when it was read; ``report.txt`` and ``report.details.txt`` are written
-    with mode 0600, as the run reports.
+---
+trivial:
+- "apply_config - a node with its OS settings alone to apply says it once in the plan (``OS settings, live (no restart)``); a node whose Cassandra is not running says so (``up to date, Cassandra not running``, ``would apply, left stopped``) instead of ``no restart`` or ``up to date`` alone. The note of the files written after Cassandra started with no record of the roles fits in 79 columns and no longer says ``not restarted for them`` above a plan that restarts the node for the inventory's changes."
+- "drift - IN SYNC says a node whose Cassandra is not running; a check command for a change of every node has no ``--limit`` naming them all."
+- "import_cluster - the head keeps each count on one line when it wraps; the CQL login is checked on (and the question names) a node given with ``-i`` when it was read; ``report.txt`` and ``report.details.txt`` are written with mode 0600, as the run reports."

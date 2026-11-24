@@ -1,5 +1,3 @@
-minor_changes:
-  - >-
-    apply_config - a release the node's repository does not list stops the plan in the ``REFUSED`` block of its
-    other stops before any change (``REFUSED  apply_config  <cluster>  nothing was changed``, the package manager's
-    words, the way out), not as a bare failure.
+---
+trivial:
+- "apply_config - a release the node's repository does not list stops the plan in the ``REFUSED`` block of its other stops before any change (``REFUSED  apply_config  <cluster>  nothing was changed``, the package manager's words, the way out), not as a bare failure."

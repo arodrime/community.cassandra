@@ -1,7 +1,3 @@
-minor_changes:
-  - >-
-    cassandra_config role - ``cassandra_rackdc_extra_settings`` writes other settings of
-    ``cassandra-rackdc.properties`` (``key=value`` after ``prefer_local``: the cloud snitches' ``dc_suffix``,
-    ``ec2_naming_scheme``, ``ec2_metadata_type``, ``metadata_url``...); refused for ``dc``, ``rack``,
-    ``prefer_local``, a key or a value the file would not read back. import_cluster reads them (before, any key but
-    ``dc``, ``rack`` and ``prefer_local`` was a hand edit).
+---
+trivial:
+- "cassandra_config role - ``cassandra_rackdc_extra_settings`` writes other settings of ``cassandra-rackdc.properties`` (``key=value`` after ``prefer_local``: the cloud snitches' ``dc_suffix``, ``ec2_naming_scheme``, ``ec2_metadata_type``, ``metadata_url``...); refused for ``dc``, ``rack``, ``prefer_local``, a key or a value the file would not read back. import_cluster reads them (before, any key but ``dc``, ``rack`` and ``prefer_local`` was a hand edit)."

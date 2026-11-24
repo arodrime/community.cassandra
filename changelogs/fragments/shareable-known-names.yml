@@ -1,2 +1,3 @@
-bugfixes:
-  - "import_cluster playbook - the shareable copy of the report shows in clear, wherever they are, the kernel settings cassandra_linux sets or the nodes have (``remove vm.swappiness from cassandra_linux_sysctl``) and the JVM properties of the stock options files (``-Dchronicle.analytics.disable``), no longer masked as domains; real host names and domains stay masked."
+---
+trivial:
+- "import_cluster playbook - the shareable copy of the report shows in clear, wherever they are, the kernel settings cassandra_linux sets or the nodes have (``remove vm.swappiness from cassandra_linux_sysctl``) and the JVM properties of the stock options files (``-Dchronicle.analytics.disable``), no longer masked as domains; real host names and domains stay masked."

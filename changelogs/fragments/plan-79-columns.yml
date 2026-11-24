@@ -1,2 +1,3 @@
-bugfixes:
-  - "operation plans (the screen before a change: stop_rack, sync_clocks, apply_config, decommission_node...) - their text and WARNING lines are wrapped at 79 columns (an 80-column terminal), no longer at 100; a node table's rows are kept whole."
+---
+trivial:
+- "operation plans (the screen before a change: stop_rack, sync_clocks, apply_config, decommission_node...) - their text and WARNING lines are wrapped at 79 columns (an 80-column terminal), no longer at 100; a node table's rows are kept whole."

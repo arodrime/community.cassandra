@@ -1,7 +1,3 @@
-bugfixes:
-  - >-
-    import_cluster - the CQL login (CQL authentication on, none given) is asked once, when the import writes the
-    inventory, after the self-check: an import whose self-check fails (``import_strict``) no longer asks for it. A stop
-    after it is typed and before the inventory is written says it was not saved and how to give it from a vaulted
-    file (``-e @cql_login.yml --ask-vault-pass``), no password shown. Under ``--check``, the ``TODO`` says it is asked
-    at the real import, then written to the inventory (password in ``secrets.yml``).
+---
+trivial:
+- "import_cluster - the CQL login (CQL authentication on, none given) is asked once, when the import writes the inventory, after the self-check: an import whose self-check fails (``import_strict``) no longer asks for it. A stop after it is typed and before the inventory is written says it was not saved and how to give it from a vaulted file (``-e @cql_login.yml --ask-vault-pass``), no password shown. Under ``--check``, the ``TODO`` says it is asked at the real import, then written to the inventory (password in ``secrets.yml``)."

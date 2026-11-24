@@ -1,2 +1,3 @@
-bugfixes:
-  - "half-done Cassandra package refusal - the yum alternative (``package-cleanup --cleandupes``) is a line of its own under the commands, no longer cut across two lines."
+---
+trivial:
+- "half-done Cassandra package refusal - the yum alternative (``package-cleanup --cleandupes``) is a line of its own under the commands, no longer cut across two lines."

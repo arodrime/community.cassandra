@@ -1,2 +1,3 @@
-bugfixes:
-  - "replace_node playbook - taking the replace flag out of the unit once the replacement runs no longer makes ``apply_config`` ask for a restart of that node (``restart pending (cassandra.service changed since the running Cassandra started)``): the running Cassandra read the flag at its first boot only, so the record of the config it started with gets the unit without it."
+---
+trivial:
+- "replace_node playbook - taking the replace flag out of the unit once the replacement runs no longer makes ``apply_config`` ask for a restart of that node (``restart pending (cassandra.service changed since the running Cassandra started)``): the running Cassandra read the flag at its first boot only, so the record of the config it started with gets the unit without it."

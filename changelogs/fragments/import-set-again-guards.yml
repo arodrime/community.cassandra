@@ -1,2 +1,3 @@
-bugfixes:
-  - "import_cluster playbook - a ``cassandra-env.sh`` line in a block, written again below it, is taken as set by the later line only when nothing in between reads ``JVM_OPTS`` (a grep that decides on it) and none of its options unlocks others or is read where it is (``-XX:VMOptionsFile``, ``-XX:Flags``)."
+---
+trivial:
+- "import_cluster playbook - a ``cassandra-env.sh`` line in a block, written again below it, is taken as set by the later line only when nothing in between reads ``JVM_OPTS`` (a grep that decides on it) and none of its options unlocks others or is read where it is (``-XX:VMOptionsFile``, ``-XX:Flags``)."

@@ -1,5 +1,3 @@
-bugfixes:
-  - >-
-    apply_config - the warning that the ``storage_compatibility_mode`` Cassandra runs could not be read over CQL (cqlsh
-    missing or failing) is also in the plan's warnings, the ``--check`` recap and the run's report, as the guide says
-    of every warning, not only on the screen while the compare runs.
+---
+trivial:
+- "apply_config - the warning that the ``storage_compatibility_mode`` Cassandra runs could not be read over CQL (cqlsh missing or failing) is also in the plan's warnings, the ``--check`` recap and the run's report, as the guide says of every warning, not only on the screen while the compare runs."

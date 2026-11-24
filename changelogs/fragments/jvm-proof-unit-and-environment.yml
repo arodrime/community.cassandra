@@ -1,13 +1,5 @@
-bugfixes:
-  - >-
-    import_cluster, apply_config - the running JVM's arguments and environment are no longer used to prove that the
-    roles' files give it the same arguments when that JVM is not the ``cassandra`` unit's (outside its control
-    group: started by hand) or when its environment (``/proc/<pid>/environ``) cannot be read (it was taken as
-    empty). The import says why under the node; apply_config restarts as for any change.
-  - >-
-    import_cluster, apply_config - a plain ``CASSANDRA_HEAPDUMP_DIR`` in ``cassandra-env.sh`` (4.x) is no longer read
-    as ``cassandra_heap_dump_dir`` when a ``cassandra.in.sh`` that ``bin/cassandra`` may source names that variable:
-    set there unexported, it is not in the JVM's environment, and the role's line would take it.
-  - >-
-    import_cluster - the JMX lines of the remote branch of ``cassandra-env.sh`` are no longer proven to be the
-    role's from the running JVM's arguments when that file was written after the JVM started.
+---
+trivial:
+- "import_cluster, apply_config - the running JVM's arguments and environment are no longer used to prove that the roles' files give it the same arguments when that JVM is not the ``cassandra`` unit's (outside its control group: started by hand) or when its environment (``/proc/<pid>/environ``) cannot be read (it was taken as empty). The import says why under the node; apply_config restarts as for any change."
+- "import_cluster, apply_config - a plain ``CASSANDRA_HEAPDUMP_DIR`` in ``cassandra-env.sh`` (4.x) is no longer read as ``cassandra_heap_dump_dir`` when a ``cassandra.in.sh`` that ``bin/cassandra`` may source names that variable: set there unexported, it is not in the JVM's environment, and the role's line would take it."
+- "import_cluster - the JMX lines of the remote branch of ``cassandra-env.sh`` are no longer proven to be the role's from the running JVM's arguments when that file was written after the JVM started."

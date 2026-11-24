@@ -1,2 +1,3 @@
-minor_changes:
-  - "status playbook - the line under the verdict says when the ring was seen, with its date and time zone (``my_cluster  seen from node1 at 2026-11-16 14:02 CET``: the controller's clock when ``nodetool status`` answered on that node), whether the ring and the inventory match on a line of its own; a table wider than the terminal has its Host IDs cut to their first 8 characters, and a line says where they are whole (``Host IDs shortened; full: -e cassandra_status_raw=true``)."
+---
+trivial:
+- "status playbook - the line under the verdict says when the ring was seen, with its date and time zone (``my_cluster  seen from node1 at 2026-11-16 14:02 CET``: the controller's clock when ``nodetool status`` answered on that node), whether the ring and the inventory match on a line of its own; a table wider than the terminal has its Host IDs cut to their first 8 characters, and a line says where they are whole (``Host IDs shortened; full: -e cassandra_status_raw=true``)."

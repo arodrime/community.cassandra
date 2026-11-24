@@ -1,3 +1,4 @@
-bugfixes:
-  - 'import_cluster playbook - ``LOCAL_JMX=no`` written below the stock ``LOCAL_JMX=yes`` line commented out is read (``cassandra_local_jmx: false``; it was read as ``yes``), so are the rmi hostname and the JMX files set in the remote JMX branch when the stock password file line is still on after ``fi``: the JVM gets the same arguments, the self-check passes with a note (the heap moved to ``jvm-server.options`` no longer fails it either on such a node).'
-  - 'import_cluster playbook - the self-check says the differences of a ``jvm<N>-server.options`` the running Java does not read (``jvm11-server.options`` under Java 17) as notes with no effect, naming the Java that would read it, instead of failing.'
+---
+trivial:
+- "import_cluster playbook - ``LOCAL_JMX=no`` written below the stock ``LOCAL_JMX=yes`` line commented out is read (``cassandra_local_jmx: false``; it was read as ``yes``), so are the rmi hostname and the JMX files set in the remote JMX branch when the stock password file line is still on after ``fi``: the JVM gets the same arguments, the self-check passes with a note (the heap moved to ``jvm-server.options`` no longer fails it either on such a node)."
+- "import_cluster playbook - the self-check says the differences of a ``jvm<N>-server.options`` the running Java does not read (``jvm11-server.options`` under Java 17) as notes with no effect, naming the Java that would read it, instead of failing."

@@ -1,34 +1,6 @@
+---
 minor_changes:
-  - >-
-    apply_config - ignores no setting: every variable of the roles has its category (live, a restart, a procedure of
-    its own, refused) in ``plugins/plugin_utils/cassandra_apply_config_coverage.py``, which a unit test keeps complete.
-    The repository, the packages and tools (jemalloc, cqlsh's Python, dsbulk) and the firewall (with
-    ``cassandra_manage_firewall``, as ``create_cluster`` and ``add_node`` run it) are compared in the plan and applied live (jemalloc said for the next restart); a node running another Java than
-    ``cassandra_java_version`` gets it installed and checked in its one restart, as ``update_java`` does (their plan,
-    install and check now shared); what the ``cassandra`` unit gives the running Cassandra (user, limits,
-    environment) is compared with the running JVM's, a difference restarting it, the unit written in that restart
-    (the environment the JVM runs with read from its process when the unit file or a drop-in is newer than the JVM,
-    so that a unit reloaded since its start still owes its restart, while a name the scripts set again, such as
-    ``JMX_PORT``, restarts nothing run after run; an environment value that holds a secret shown masked, and the unit's ``--diff`` then not shown; in a container, a limit above what its systemd may give
-    compared at that cap, so that no restart is planned at every run).
-  - >-
-    apply_config - a newer release of the node's series (``cassandra_package_version``) is applied in the node's one
-    restart: the repository, packages and firewall the plan showed applied live before (its package kept at the
-    release installed, and a Java move installed, Cassandra running), then the package updated with Cassandra stopped
-    (the upgrade's own step; none when that release is installed already), the config written again, the release it
-    runs checked. A package newer than the inventory's release (updated by other means) stops the plan. A failure in
-    the restart starts Cassandra again when its package is unchanged, else leaves it stopped with a mark (written
-    before the stop) that ``-e cassandra_rolling_resume=true`` starts it from. A release the node's repository
-    does not have, as the install reads it (dnf's excludes and versionlock), stops the plan (``--check`` too, and
-    the upgrade's node) with the package manager's own words (a repository it cannot read said as such) and the
-    way out. It stops before any change when the release would not start with the node's settings,
-    or is newer than the releases the collection's notes cover (``-e cassandra_allow_unknown_patch=true`` once its
-    NEWS.txt is read); the notes of the releases a node crosses are said in the plan.
-bugfixes:
-  - >-
-    apply_config - another series than the one a node runs stopped the run at the config compare with "set
-    cassandra_version to the installed series" (and ``--check`` showed the other series' config as differences); it
-    now stops before any change with the upgrade's command (``upgrade -e cassandra_upgrade_phase=preflight``). An
-    older release or series (never the upgrade: the series and release the node runs to set back), a host not in the ring, a host marked absent still in it, and a joined node's
-    ``cassandra_initial_token`` that is not its token (or cannot be checked: the ring's tokens unread) stop it too, with the way out; ``--check`` stops at the same
-    point with the same refusal.
+- "apply_config - a newer release of the node's series (``cassandra_package_version``) is applied in the node's one restart: the repository, packages and firewall the plan showed applied live before (its package kept at the release installed, and a Java move installed, Cassandra running), then the package updated with Cassandra stopped (the upgrade's own step; none when that release is installed already), the config written again, the release it runs checked. A package newer than the inventory's release (updated by other means) stops the plan. A failure in the restart starts Cassandra again when its package is unchanged, else leaves it stopped with a mark (written before the stop) that ``-e cassandra_rolling_resume=true`` starts it from. A release the node's repository does not have, as the install reads it (dnf's excludes and versionlock), stops the plan (``--check`` too, and the upgrade's node) with the package manager's own words (a repository it cannot read said as such) and the way out. It stops before any change when the release would not start with the node's settings, or is newer than the releases the collection's notes cover (``-e cassandra_allow_unknown_patch=true`` once its NEWS.txt is read); the notes of the releases a node crosses are said in the plan."
+trivial:
+- "apply_config - ignores no setting: every variable of the roles has its category (live, a restart, a procedure of its own, refused) in ``plugins/plugin_utils/cassandra_apply_config_coverage.py``, which a unit test keeps complete. The repository, the packages and tools (jemalloc, cqlsh's Python, dsbulk) and the firewall (with ``cassandra_manage_firewall``, as ``create_cluster`` and ``add_node`` run it) are compared in the plan and applied live (jemalloc said for the next restart); a node running another Java than ``cassandra_java_version`` gets it installed and checked in its one restart, as ``update_java`` does (their plan, install and check now shared); what the ``cassandra`` unit gives the running Cassandra (user, limits, environment) is compared with the running JVM's, a difference restarting it, the unit written in that restart (the environment the JVM runs with read from its process when the unit file or a drop-in is newer than the JVM, so that a unit reloaded since its start still owes its restart, while a name the scripts set again, such as ``JMX_PORT``, restarts nothing run after run; an environment value that holds a secret shown masked, and the unit's ``--diff`` then not shown; in a container, a limit above what its systemd may give compared at that cap, so that no restart is planned at every run)."
+- "apply_config - another series than the one a node runs stopped the run at the config compare with \"set cassandra_version to the installed series\" (and ``--check`` showed the other series' config as differences); it now stops before any change with the upgrade's command (``upgrade -e cassandra_upgrade_phase=preflight``). An older release or series (never the upgrade: the series and release the node runs to set back), a host not in the ring, a host marked absent still in it, and a joined node's ``cassandra_initial_token`` that is not its token (or cannot be checked: the ring's tokens unread) stop it too, with the way out; ``--check`` stops at the same point with the same refusal."

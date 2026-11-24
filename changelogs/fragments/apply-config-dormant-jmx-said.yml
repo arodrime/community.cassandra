@@ -1,8 +1,3 @@
-bugfixes:
-  - >-
-    apply_config, import_cluster - a cassandra-env.sh whose lines of a JMX branch the node does not run (or the stock
-    JMX password file line commented out) go when it is written as stock is said so: the plan's reasons name the
-    dormant lines dropped (``cassandra-env.sh as stock: 3 lines of the remote JMX branch it does not run dropped``),
-    ``the same JVM arguments, but for the next restart's option below`` with the option's own effect (the JVM never
-    reads that file, or no effect until a heap dump), and the import report's next step expects that rewrite instead
-    of ``every node up to date``.
+---
+trivial:
+- "apply_config, import_cluster - a cassandra-env.sh whose lines of a JMX branch the node does not run (or the stock JMX password file line commented out) go when it is written as stock is said so: the plan's reasons name the dormant lines dropped (``cassandra-env.sh as stock: 3 lines of the remote JMX branch it does not run dropped``), ``the same JVM arguments, but for the next restart's option below`` with the option's own effect (the JVM never reads that file, or no effect until a heap dump), and the import report's next step expects that rewrite instead of ``every node up to date``."

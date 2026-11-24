@@ -1,2 +1,3 @@
-minor_changes:
-  - "status playbook - the verdict comes first, alone on its line (``1 NODE DOWN: node2 (dc1/rack_b)``), the cluster and the node the ring is seen from under it (``my_cluster  seen from node1``), whether the ring and the inventory match on the next line (``ring and inventory: the same 3 nodes``), then the tables; each node by its inventory name in the first column (``Node``), no longer last."
+---
+trivial:
+- "status playbook - the verdict comes first, alone on its line (``1 NODE DOWN: node2 (dc1/rack_b)``), the cluster and the node the ring is seen from under it (``my_cluster  seen from node1``), whether the ring and the inventory match on the next line (``ring and inventory: the same 3 nodes``), then the tables; each node by its inventory name in the first column (``Node``), no longer last."

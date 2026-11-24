@@ -1,2 +1,3 @@
-bugfixes:
-  - "Operation playbooks - a run without root on the nodes could drain a node in ``rolling_restart`` and then stop on the systemd unit it could not write, leaving the node drained; every playbook that changes nodes now checks for root on all of them in its preflight (``start_rack`` before starting the rack) and stops before any change, and a restart writes the unit before draining."
+---
+trivial:
+- "Operation playbooks - a run without root on the nodes could drain a node in ``rolling_restart`` and then stop on the systemd unit it could not write, leaving the node drained; every playbook that changes nodes now checks for root on all of them in its preflight (``start_rack`` before starting the rack) and stops before any change, and a restart writes the unit before draining."

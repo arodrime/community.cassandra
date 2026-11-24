@@ -1,4 +1,6 @@
+---
 bugfixes:
-  - "rolling_restart and the other rolling operations - the node a resumed run found drained or stopped (its time only the part of this run) is never called slow nor taken into the median the others are compared with."
-  - "apply_config playbook - a node the run did not get to (it stopped first) is ``not done (the run stopped before it)``, no longer ``not reached``, which is said of a host Ansible does not reach; a long row of the plan goes on under its own column, the nodes' column left clear."
-  - "cassandra_linux role - the row of a tuned profile loaded before its last change says states (``loaded before its last change``, ``loaded with its last change``), no longer an action (``loaded again``) in the Inventory column."
+- "cassandra_linux role - the row of a tuned profile loaded before its last change says states (``loaded before its last change``, ``loaded with its last change``), no longer an action (``loaded again``) in the Inventory column."
+trivial:
+- "rolling_restart and the other rolling operations - the node a resumed run found drained or stopped (its time only the part of this run) is never called slow nor taken into the median the others are compared with."
+- "apply_config playbook - a node the run did not get to (it stopped first) is ``not done (the run stopped before it)``, no longer ``not reached``, which is said of a host Ansible does not reach; a long row of the plan goes on under its own column, the nodes' column left clear."

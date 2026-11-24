@@ -1,2 +1,3 @@
-bugfixes:
-  - import_cluster playbook - on 4.x, a plain ``CASSANDRA_HEAPDUMP_DIR=<dir>`` in ``cassandra-env.sh`` is read as ``cassandra_heap_dump_dir`` when the running JVM's environment has no ``CASSANDRA_HEAPDUMP_DIR`` (the same dir); the self-check takes it so (before, a hand edit and a difference).
+---
+trivial:
+- "import_cluster playbook - on 4.x, a plain ``CASSANDRA_HEAPDUMP_DIR=<dir>`` in ``cassandra-env.sh`` is read as ``cassandra_heap_dump_dir`` when the running JVM's environment has no ``CASSANDRA_HEAPDUMP_DIR`` (the same dir); the self-check takes it so (before, a hand edit and a difference)."

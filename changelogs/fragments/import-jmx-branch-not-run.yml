@@ -1,21 +1,5 @@
-bugfixes:
-  - >-
-    import_cluster playbook - a ``JVM_OPTS`` line of ``cassandra-env.sh`` only in the branch of its ``LOCAL_JMX`` test
-    the running JVM did not take has no effect: the remote branch on a node whose JVM took the local one
-    (``-Dcassandra.jmx.local.port``, no ``-Dcassandra.jmx.remote.port``, ``LOCAL_JMX`` not set otherwise by its
-    unit), e.g. ``-Djava.rmi.server.hostname``, or the local branch on a node whose JVM took the remote one. No hand
-    edit, no self-check difference, said in one line; ``apply_config`` writes the stock branch without it with no
-    restart (the same JVM arguments). Cassandra not running, both ports or none in its arguments, or a branch
-    without its own port line (the port may come from elsewhere): as before.
-  - >-
-    import_cluster playbook - the stock ``-Dcom.sun.management.jmxremote.password.file`` line of ``cassandra-env.sh``
-    commented out has no effect when the running JVM never reads that file (JMX authentication off, no
-    ``-Dcom.sun.management.jmxremote.port`` or ``.config.file``, no JAAS login config, no ``cassandra.jmx.authorizer``):
-    no hand edit, no self-check difference, said in one line; ``apply_config`` writes the stock line back with no
-    restart. Not the access file, which the JMX server reads at start whatever the authentication. Not when
-    the JVM may get options its command line does not show (``_JAVA_OPTIONS``, ``JDK_JAVA_OPTIONS`` or
-    ``JAVA_TOOL_OPTIONS`` in its environment, an ``@file`` or ``-XX:VMOptionsFile``).
-  - >-
-    apply_config and import_cluster playbooks - a JVM whose arguments read a file of options where it is (``@file``,
-    ``-XX:VMOptionsFile``, ``-XX:Flags``) is never proven to get the same arguments from the role's files, even when
-    its words are the same: that file may give other options at the next start.
+---
+trivial:
+- "import_cluster playbook - a ``JVM_OPTS`` line of ``cassandra-env.sh`` only in the branch of its ``LOCAL_JMX`` test the running JVM did not take has no effect: the remote branch on a node whose JVM took the local one (``-Dcassandra.jmx.local.port``, no ``-Dcassandra.jmx.remote.port``, ``LOCAL_JMX`` not set otherwise by its unit), e.g. ``-Djava.rmi.server.hostname``, or the local branch on a node whose JVM took the remote one. No hand edit, no self-check difference, said in one line; ``apply_config`` writes the stock branch without it with no restart (the same JVM arguments). Cassandra not running, both ports or none in its arguments, or a branch without its own port line (the port may come from elsewhere): as before."
+- "import_cluster playbook - the stock ``-Dcom.sun.management.jmxremote.password.file`` line of ``cassandra-env.sh`` commented out has no effect when the running JVM never reads that file (JMX authentication off, no ``-Dcom.sun.management.jmxremote.port`` or ``.config.file``, no JAAS login config, no ``cassandra.jmx.authorizer``): no hand edit, no self-check difference, said in one line; ``apply_config`` writes the stock line back with no restart. Not the access file, which the JMX server reads at start whatever the authentication. Not when the JVM may get options its command line does not show (``_JAVA_OPTIONS``, ``JDK_JAVA_OPTIONS`` or ``JAVA_TOOL_OPTIONS`` in its environment, an ``@file`` or ``-XX:VMOptionsFile``)."
+- "apply_config and import_cluster playbooks - a JVM whose arguments read a file of options where it is (``@file``, ``-XX:VMOptionsFile``, ``-XX:Flags``) is never proven to get the same arguments from the role's files, even when its words are the same: that file may give other options at the next start."

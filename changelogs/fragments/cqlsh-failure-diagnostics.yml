@@ -1,12 +1,5 @@
+---
 minor_changes:
-  - >-
-    cassandra_cqlsh module - on a failure, without ``debug`` too, returns the command run (``cmd``, the password
-    masked), its exit code and the last 20 lines of its standard output and error (``out``, ``err``, the password
-    masked); with ``debug``, ``out`` and ``err`` are masked as well.
-bugfixes:
-  - >-
-    cassandra_operation role - the warning said when the ``storage_compatibility_mode`` Cassandra runs could not be
-    read over CQL said only ``cqlsh returned 2`` when cqlsh could not even start (the program, or the interpreter
-    its first line names, missing: Ansible's own error, with no output). It now says, one per line, the command (the
-    password masked), its exit code, that error and what it means, and the last lines of cqlsh's standard error and
-    output.
+- "cassandra_cqlsh module - on a failure, without ``debug`` too, returns the command run (``cmd``, the password masked), its exit code and the last 20 lines of its standard output and error (``out``, ``err``, the password masked); with ``debug``, ``out`` and ``err`` are masked as well."
+trivial:
+- "cassandra_operation role - the warning said when the ``storage_compatibility_mode`` Cassandra runs could not be read over CQL said only ``cqlsh returned 2`` when cqlsh could not even start (the program, or the interpreter its first line names, missing: Ansible's own error, with no output). It now says, one per line, the command (the password masked), its exit code, that error and what it means, and the last lines of cqlsh's standard error and output."

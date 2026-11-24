@@ -1,8 +1,6 @@
+---
 bugfixes:
-  - >-
-    cassandra_service - ``--check`` shows the restart of a unit left active with no Cassandra running (the JVM was
-    not looked for under ``--check``).
-  - >-
-    cassandra_linux - the change report lists the THP defrag setting the unit writes along with ``enabled``.
-  - >-
-    cassandra_install - the change report lists the cqlshlib links it adds on RedHat.
+- "cassandra_linux - the change report lists the THP defrag setting the unit writes along with ``enabled``."
+- "cassandra_install - the change report lists the cqlshlib links it adds on RedHat."
+trivial:
+- "cassandra_service - ``--check`` shows the restart of a unit left active with no Cassandra running (the JVM was not looked for under ``--check``)."

@@ -1,6 +1,3 @@
-bugfixes:
-  - >-
-    start_rack, rolling_reboot, sync_clocks - a Cassandra package left half done (``rpm -q cassandra`` of two
-    packages, a dpkg state ``half-installed``, ``unpacked`` or ``half-configured``) on a node the run starts, reboots
-    or restarts (sync_clocks: a node set in a restart window) is refused before any change (``--check`` too), with the
-    way out of that state, as apply_config, rolling_restart and update_java do.
+---
+trivial:
+- "start_rack, rolling_reboot, sync_clocks - a Cassandra package left half done (``rpm -q cassandra`` of two packages, a dpkg state ``half-installed``, ``unpacked`` or ``half-configured``) on a node the run starts, reboots or restarts (sync_clocks: a node set in a restart window) is refused before any change (``--check`` too), with the way out of that state, as apply_config, rolling_restart and update_java do."

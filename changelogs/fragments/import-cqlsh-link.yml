@@ -1,2 +1,3 @@
-bugfixes:
-  - "import_cluster playbook - a cqlsh found through a link to the package's (``/bin/cqlsh`` on EL, where ``/bin`` is a link to ``usr/bin``, as sudo's ``secure_path`` finds it first) is the package's: the self-check compares the files the paths are on the node, links followed, and no longer stops with ``node has /bin/cqlsh (not the package's)``; another file stays another cqlsh."
+---
+trivial:
+- "import_cluster playbook - a cqlsh found through a link to the package's (``/bin/cqlsh`` on EL, where ``/bin`` is a link to ``usr/bin``, as sudo's ``secure_path`` finds it first) is the package's: the self-check compares the files the paths are on the node, links followed, and no longer stops with ``node has /bin/cqlsh (not the package's)``; another file stays another cqlsh."

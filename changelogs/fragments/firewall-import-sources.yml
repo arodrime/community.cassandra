@@ -1,15 +1,3 @@
-minor_changes:
-  - >-
-    import_cluster - for every port ``cassandra_firewall`` would touch, every rule is read (firewalld: ports, services,
-    rich rules of every active zone, now and after a reload; ufw: every rule, IPv4 and IPv6), and only what the role
-    writes, the same in both, is carried. A port open to some sources only is imported into
-    ``cassandra_firewall_port_sources`` (the Prometheus exporter's port: ``cassandra_prometheus_exporter_sources``):
-    a firewalld rich rule of the default zone ``rule family="ipv4" source address="10.0.9.0/24" port port="7199"
-    protocol="tcp" accept``, or ufw's ``allow from 10.0.9.0/24 to any port 7199 proto tcp``. A source rule, a service
-    (RHEL's ``ssh``) or a ufw ``ALLOW`` that opens only ports open to everyone (protocol by protocol) changes nothing:
-    a note, not carried. When ``firewall-cmd`` or ``ufw`` fails to list rules, the self-check stops (never read as no
-    rule), with the way out. Only the forms the role writes are carried; any other line on these ports (an app profile
-    on them, a source port, a name, a field that does not read) stops the self-check, quoted. ufw app profiles are
-    read by their ports. ufw with ``IPV6=no`` writes IPv4 rules only, the role's too. firewalld direct rules on
-    these ports, zones bound to sources and rich rules letting a source in on every port get a note (not compared). Any other rule stops the self-check, with the way out
-    (``-e import_keep_hand_edits=firewall``).
+---
+trivial:
+- "import_cluster - for every port ``cassandra_firewall`` would touch, every rule is read (firewalld: ports, services, rich rules of every active zone, now and after a reload; ufw: every rule, IPv4 and IPv6), and only what the role writes, the same in both, is carried. A port open to some sources only is imported into ``cassandra_firewall_port_sources`` (the Prometheus exporter's port: ``cassandra_prometheus_exporter_sources``): a firewalld rich rule of the default zone ``rule family=\"ipv4\" source address=\"10.0.9.0/24\" port port=\"7199\" protocol=\"tcp\" accept``, or ufw's ``allow from 10.0.9.0/24 to any port 7199 proto tcp``. A source rule, a service (RHEL's ``ssh``) or a ufw ``ALLOW`` that opens only ports open to everyone (protocol by protocol) changes nothing: a note, not carried. When ``firewall-cmd`` or ``ufw`` fails to list rules, the self-check stops (never read as no rule), with the way out. Only the forms the role writes are carried; any other line on these ports (an app profile on them, a source port, a name, a field that does not read) stops the self-check, quoted. ufw app profiles are read by their ports. ufw with ``IPV6=no`` writes IPv4 rules only, the role's too. firewalld direct rules on these ports, zones bound to sources and rich rules letting a source in on every port get a note (not compared). Any other rule stops the self-check, with the way out (``-e import_keep_hand_edits=firewall``)."

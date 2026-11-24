@@ -1,8 +1,3 @@
-bugfixes:
-  - >-
-    import_cluster playbook - on a node whose running JVM took the local JMX branch and whose arguments name neither
-    ``-Dcom.sun.management.jmxremote.password.file`` nor ``.access.file`` (no ``_JAVA_OPTIONS``, ``JDK_JAVA_OPTIONS``,
-    ``JAVA_TOOL_OPTIONS`` in its environment, no ``@file`` or ``-XX:VMOptionsFile`` in its arguments), the users of
-    ``/etc/cassandra/jmxremote.password`` and ``.access`` are no longer imported (the JVM reads neither file): the
-    stock access file line of ``cassandra-env.sh`` stays commented out (no self-check difference), the files are left
-    as they are, said in one line. Remote JMX nodes as before.
+---
+trivial:
+- "import_cluster playbook - on a node whose running JVM took the local JMX branch and whose arguments name neither ``-Dcom.sun.management.jmxremote.password.file`` nor ``.access.file`` (no ``_JAVA_OPTIONS``, ``JDK_JAVA_OPTIONS``, ``JAVA_TOOL_OPTIONS`` in its environment, no ``@file`` or ``-XX:VMOptionsFile`` in its arguments), the users of ``/etc/cassandra/jmxremote.password`` and ``.access`` are no longer imported (the JVM reads neither file): the stock access file line of ``cassandra-env.sh`` stays commented out (no self-check difference), the files are left as they are, said in one line. Remote JMX nodes as before."

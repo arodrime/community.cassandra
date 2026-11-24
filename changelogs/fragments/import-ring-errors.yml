@@ -1,2 +1,3 @@
-bugfixes:
-  - import_cluster - when nodetool status fails on every given node, the error of each node is shown (JMX login, password file...) instead of a generic message.
+---
+trivial:
+- "import_cluster - when nodetool status fails on every given node, the error of each node is shown (JMX login, password file...) instead of a generic message."

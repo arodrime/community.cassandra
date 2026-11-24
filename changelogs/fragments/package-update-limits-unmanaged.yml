@@ -1,9 +1,3 @@
-minor_changes:
-  - >-
-    apply_config, upgrade - on a node with ``cassandra_linux_manage: false``, a package update that replaces, removes
-    or creates ``/etc/security/limits.d/cassandra.conf`` (the RPM ships it as a plain file; a link is followed) is
-    said as a WARNING on that node right after the update (a later stop of the run keeps it on screen) and again in
-    the recap. Its former content is saved on the controller, mode 0600, next to the run's reports
-    (``<report name>-<node>-limits.conf``, the same time stamp as the run's report), kept when the reports rotate,
-    and the WARNING names that file; a link replaced (by a file of the same content too) is named with the command
-    that puts it back (a link that pointed to no file said so). The node's file is never written back.
+---
+trivial:
+- "apply_config, upgrade - on a node with ``cassandra_linux_manage: false``, a package update that replaces, removes or creates ``/etc/security/limits.d/cassandra.conf`` (the RPM ships it as a plain file; a link is followed) is said as a WARNING on that node right after the update (a later stop of the run keeps it on screen) and again in the recap. Its former content is saved on the controller, mode 0600, next to the run's reports (``<report name>-<node>-limits.conf``, the same time stamp as the run's report), kept when the reports rotate, and the WARNING names that file; a link replaced (by a file of the same content too) is named with the command that puts it back (a link that pointed to no file said so). The node's file is never written back."

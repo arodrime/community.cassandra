@@ -1,6 +1,3 @@
-minor_changes:
-  - >-
-    cassandra_config, cassandra_service - the scripts these roles run on the nodes to read and record the
-    configuration are read from the collection's ``plugins/plugin_utils`` directory (they were in the roles'
-    ``files`` directory): the roles work from the collection only, a copy of them outside it (in a ``roles_path``)
-    is not supported.
+---
+trivial:
+- "cassandra_config, cassandra_service - the scripts these roles run on the nodes to read and record the configuration are read from the collection's ``plugins/plugin_utils`` directory (they were in the roles' ``files`` directory): the roles work from the collection only, a copy of them outside it (in a ``roles_path``) is not supported."

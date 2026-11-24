@@ -1,2 +1,3 @@
-bugfixes:
-  - "apply_config playbook - the plan's head line and its question name the most disruptive effect and its nodes (``Apply changes and restart Cassandra on node1?``, ``Apply changes and start Cassandra on node4?``, else ``no Cassandra restart``), counts instead of names when the question would not fit in 79 columns; they used to say only what is applied."
+---
+trivial:
+- "apply_config playbook - the plan's head line and its question name the most disruptive effect and its nodes (``Apply changes and restart Cassandra on node1?``, ``Apply changes and start Cassandra on node4?``, else ``no Cassandra restart``), counts instead of names when the question would not fit in 79 columns; they used to say only what is applied."

@@ -1,2 +1,3 @@
-bugfixes:
-  - "start_rack playbook - a node of the rack that does not start is said with a way out, no longer the failure of the role's task: the role's message in full (with the last lines of the journal when Cassandra stops, up to 40), and ``not NORMAL after ...`` when the node runs but has not joined in time."
+---
+trivial:
+- "start_rack playbook - a node of the rack that does not start is said with a way out, no longer the failure of the role's task: the role's message in full (with the last lines of the journal when Cassandra stops, up to 40), and ``not NORMAL after ...`` when the node runs but has not joined in time."

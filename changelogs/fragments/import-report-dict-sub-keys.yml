@@ -1,6 +1,3 @@
-bugfixes:
-  - >-
-    import_cluster - a dict variable (``cassandra_linux_sysctl``, ``cassandra_linux_limits``...) that one node sets and
-    the others leave to the collection: DIFFERENT ON SOME NODES lists only its sub-keys whose value differs from the
-    collection's default, and a sub-key the node's dict leaves out; it listed every sub-key of that node as differing,
-    those at the default's value too, and missed the one left out.
+---
+trivial:
+- "import_cluster - a dict variable (``cassandra_linux_sysctl``, ``cassandra_linux_limits``...) that one node sets and the others leave to the collection: DIFFERENT ON SOME NODES lists only its sub-keys whose value differs from the collection's default, and a sub-key the node's dict leaves out; it listed every sub-key of that node as differing, those at the default's value too, and missed the one left out."

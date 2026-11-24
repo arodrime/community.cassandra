@@ -1,15 +1,5 @@
+---
 minor_changes:
-  - >-
-    cassandra_config role, apply_config playbook - a file left as it is because it has the same settings as the
-    role's (e.g. taken over by ``import_cluster``) but lacks the role's header line (``Managed by Ansible
-    (community.cassandra.cassandra_config): change the role variables, not this file.``) gets that line alone on
-    top, the rest of the file kept byte for byte, in place; the JMX users' files left as they are too. No restart
-    for it: the file with it is checked to have the same settings, and is recorded as the one the running Cassandra
-    runs with. ``apply_config`` shows it apart (``Header "Managed by Ansible" (a comment, no restart)``) and says
-    ``the role's header line added: a comment, no setting changes`` for the node, under ``--check`` too. A file kept
-    by hand (``cassandra_config_keep_files``, ``import_keep_hand_edits``), a file changed since it was compared and
-    a link are not touched.
-  - >-
-    cassandra_config role, cassandra_linux role - ``jmxremote.access``, ``jmxremote.password`` and
-    ``disable-thp.service`` start with the role's header line too (a ``#`` comment). A ``disable-thp.service``
-    written by an earlier release is written again once (no Cassandra restart).
+- "cassandra_config role, cassandra_linux role - ``jmxremote.access``, ``jmxremote.password`` and ``disable-thp.service`` start with the role's header line too (a ``#`` comment). A ``disable-thp.service`` written by an earlier release is written again once (no Cassandra restart)."
+trivial:
+- "cassandra_config role, apply_config playbook - a file left as it is because it has the same settings as the role's (e.g. taken over by ``import_cluster``) but lacks the role's header line (``Managed by Ansible (community.cassandra.cassandra_config): change the role variables, not this file.``) gets that line alone on top, the rest of the file kept byte for byte, in place; the JMX users' files left as they are too. No restart for it: the file with it is checked to have the same settings, and is recorded as the one the running Cassandra runs with. ``apply_config`` shows it apart (``Header \"Managed by Ansible\" (a comment, no restart)``) and says ``the role's header line added: a comment, no setting changes`` for the node, under ``--check`` too. A file kept by hand (``cassandra_config_keep_files``, ``import_keep_hand_edits``), a file changed since it was compared and a link are not touched."

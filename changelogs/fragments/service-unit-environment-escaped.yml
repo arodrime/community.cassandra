@@ -1,6 +1,3 @@
-bugfixes:
-  - >-
-    cassandra_service - the unit writes each ``cassandra_service_environment`` value as its drop-in for the package's
-    init script does (quoted, its ``%`` doubled): a value holding ``%`` or a double quote reaches the JVM as the
-    inventory gives it, where systemd took ``%`` for a specifier (another value, and a restart planned by
-    ``apply_config`` at every run).
+---
+trivial:
+- "cassandra_service - the unit writes each ``cassandra_service_environment`` value as its drop-in for the package's init script does (quoted, its ``%`` doubled): a value holding ``%`` or a double quote reaches the JVM as the inventory gives it, where systemd took ``%`` for a specifier (another value, and a restart planned by ``apply_config`` at every run)."
