@@ -94,6 +94,7 @@
     _cassandra_axonops_items: "{{ _cassandra_axonops_changes['items'] }}"
     _cassandra_axonops_removed: "{{ _cassandra_axonops_changes.removed }}"
     _cassandra_axonops_latest: "{{ _cassandra_axonops_changes.latest }}"
+    _cassandra_axonops_reinstall: "{{ _cassandra_axonops_changes.reinstall }}"
 
 - name: Install, configure and start the agent
   when: not _cassandra_axonops_compare | bool

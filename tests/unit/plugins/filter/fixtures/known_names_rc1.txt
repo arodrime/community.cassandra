@@ -119,6 +119,7 @@ cassandra_axonops_packages	both
 cassandra_axonops_packages_deb	both
 cassandra_axonops_packages_latest	both
 cassandra_axonops_packages_latest_rpm	both
+cassandra_axonops_packages_reinstall	both
 cassandra_axonops_packages_rpm	both
 cassandra_axonops_packages_swap	both
 cassandra_axonops_read	both

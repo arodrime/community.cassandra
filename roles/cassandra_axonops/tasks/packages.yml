@@ -112,11 +112,22 @@
     - ansible_facts['os_family'] == 'RedHat'
     - _cassandra_axonops_latest | length > 0
 
+# its options file gone (deleted by hand): the package installed again puts it back
+- name: Install the Java agent package again
+  ansible.builtin.command:
+    argv: >-
+      {{ (['apt-get', '-y', 'install', '--reinstall'] if ansible_facts['os_family'] == 'Debian'
+          else ['dnf', '-y', 'reinstall']) + _cassandra_axonops_reinstall }}
+  register: cassandra_axonops_packages_reinstall
+  changed_when: true
+  when: _cassandra_axonops_reinstall | length > 0
+
 - name: Note whether the packages changed
   ansible.builtin.set_fact:
     _cassandra_axonops_packages_changed: >-
       {{ [cassandra_axonops_packages, cassandra_axonops_packages_deb, cassandra_axonops_packages_latest,
-          cassandra_axonops_packages_rpm, cassandra_axonops_packages_swap, cassandra_axonops_packages_latest_rpm]
+          cassandra_axonops_packages_rpm, cassandra_axonops_packages_swap, cassandra_axonops_packages_latest_rpm,
+          cassandra_axonops_packages_reinstall]
          | select('changed') | list | length > 0 }}
 
 - name: Check the Java agent package left its options file

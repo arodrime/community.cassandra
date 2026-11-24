@@ -178,11 +178,11 @@ def cassandra_axonops_changes(lines, wanted, config_sha1, user, group, server):
     the Java agent; config_sha1: the sha1 of the axon-agent.yml to write; user, group: Cassandra's account and group;
     server: "host:port, org" said for the config. -> {installed: {package: version}, removed: [the Java agent packages
     of another series or Java, installed], latest: [the packages to upgrade to the newest: a Java agent older than
-    1.1.0, or without axonops-jvm.options], items: [{item, before, after}]}."""
+    1.1.0], reinstall: [a Java agent whose axonops-jvm.options is gone], items: [{item, before, after}]}."""
     installed, unfinished, read = _read(lines)
     java_package = wanted[-1][0]
     removed = sorted(p for p in installed if p.startswith(("axon-cassandra", "axon-dse")) and p != java_package)
-    items, latest = [], []
+    items, latest, reinstall = [], [], []
     for name, version in wanted:
         version = str(version or "")
         have = installed.get(name, "")
@@ -191,11 +191,14 @@ def cassandra_axonops_changes(lines, wanted, config_sha1, user, group, server):
                           "after": version or "installed (newest)"})
         elif _differs(have, version):
             items.append({"item": "package " + name, "before": have or "absent", "after": version or "installed (newest)"})
-        elif name == java_package and not version and (_older(have, MIN_JAVA_AGENT) or read.get("options") == "no"):
+        elif name == java_package and not version and _older(have, MIN_JAVA_AGENT):
             latest.append(name)
-            why = "older than %s" % MIN_JAVA_AGENT if _older(have, MIN_JAVA_AGENT) else "no axonops-jvm.options"
-            items.append({"item": "package " + name, "before": "%s (%s)" % (have, why),
+            items.append({"item": "package " + name, "before": "%s (older than %s)" % (have, MIN_JAVA_AGENT),
                           "after": "newest (%s or later)" % MIN_JAVA_AGENT})
+        elif name == java_package and read.get("options") == "no":
+            reinstall.append(name)
+            items.append({"item": "package " + name, "before": "%s (no axonops-jvm.options)" % have,
+                          "after": "reinstalled"})
     items += [{"item": "package " + p, "before": installed[p], "after": "removed"} for p in removed]
     if "axonops" not in read.get("user_groups", "").split():
         items.append({"item": "%s in group axonops" % user, "before": "no", "after": "yes"})
@@ -211,7 +214,7 @@ def cassandra_axonops_changes(lines, wanted, config_sha1, user, group, server):
     if (active, enabled) != ("active", "enabled"):
         items.append({"item": "service axon-agent", "before": _service(active, enabled),
                       "after": "running, enabled at boot"})
-    return {"installed": installed, "removed": removed, "latest": latest, "items": items}
+    return {"installed": installed, "removed": removed, "latest": latest, "reinstall": reinstall, "items": items}
 
 
 def cassandra_axonops_files(files, java_package, agent_version="", java_agent_version=""):

@@ -113,7 +113,7 @@ def changes(lines, wanted=None):
 
 def test_changes_none_when_set_up():
     assert changes(SET_UP) == {"installed": {"axon-agent": "2.0.36", "axon-cassandra5.0-agent-jdk17": "1.1.1-1"},
-                               "removed": [], "latest": [], "items": []}
+                               "removed": [], "latest": [], "reinstall": [], "items": []}
     # a pinned version matches its version-revision
     assert changes(SET_UP, [["axon-agent", "2.0.36"], ["axon-cassandra5.0-agent-jdk17", "1.1.1"]])["items"] == []
 
@@ -205,19 +205,18 @@ def test_the_node_turn_sets_up_the_agent_before_the_config():
                              "'AxonOps' in cassandra_apply_config_extras | default([]) | map(attribute='section')"]
 
 
-@pytest.mark.parametrize("have, options, before", [
-    ("1.0.10", "yes", "1.0.10 (older than 1.1.0)"),
-    ("1.1.1", "no", "1.1.1 (no axonops-jvm.options)"),
+@pytest.mark.parametrize("have, options, key, before, after", [
+    ("1.0.10", "yes", "latest", "1.0.10 (older than 1.1.0)", "newest (1.1.0 or later)"),
+    ("1.1.1", "no", "reinstall", "1.1.1 (no axonops-jvm.options)", "reinstalled"),
 ])
-def test_a_java_agent_without_its_options_file_is_upgraded(have, options, before):
+def test_a_java_agent_without_its_options_file_is_upgraded(have, options, key, before, after):
     # a Java agent from before 1.1.0 (the axonops.axonops collection's default 1.0.10): cassandra-env.sh could not
     # load it; with no version pinned, the plan upgrades it to the newest instead of seeing nothing to do
     lines = [line for line in SET_UP if not line.startswith(("package axon-cassandra", "options"))] + [
         "package axon-cassandra5.0-agent-jdk17 installed " + have, "options " + options]
     out = changes(lines)
-    assert out["latest"] == ["axon-cassandra5.0-agent-jdk17"]
-    assert out["items"] == [{"item": "package axon-cassandra5.0-agent-jdk17", "before": before,
-                             "after": "newest (1.1.0 or later)"}]
+    assert out[key] == ["axon-cassandra5.0-agent-jdk17"]
+    assert out["items"] == [{"item": "package axon-cassandra5.0-agent-jdk17", "before": before, "after": after}]
 
 
 def test_a_half_installed_package_is_said_so():
