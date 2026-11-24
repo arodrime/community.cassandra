@@ -387,7 +387,7 @@
 
     - name: Say which cleanups to run
       ansible.builtin.debug:
-        msg: "{{ ([_head, '  ' ~ _command, ''] + _options) | join(_nl) }}"
+        msg: "{{ ([{'text': _text, 'command': _command}] | community.cassandra.cassandra_todo + [''] + _options) | join(_nl) }}"
       run_once: true
       when:
         - _targets | length > 0
@@ -397,11 +397,10 @@
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         cassandra_output: true  # (without it, the ops callback did not print it)
         cassandra_output_gap: true  # a block of its own (ops callback)
-        # within 79 columns, as add_node's: its next lines under its text (the command stays whole, to copy)
-        _head: >-
-          NEXT  {{ ('once the cluster is fine, clean up the nodes that lost ranges (listed in ' ~ _move_record
-                    ~ ' until a move_node run with cassandra_move_cleanup cleans them up):')
-                   | wordwrap(73, false, _nl ~ '      ', false) }}
+        # NEXT (cassandra_todo), as add_node's: within 79 columns, its next lines under it; the command whole, to copy
+        _text: >-
+          once the cluster is fine, clean up the nodes that lost ranges (listed in {{ _move_record }} until a move_node
+          run with cassandra_move_cleanup cleans them up)
         _command: >-
           {{ 'cleanup' | community.cassandra.cassandra_command(
                inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),

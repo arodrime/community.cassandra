@@ -39,7 +39,7 @@ def hint(playbook, **variables):
               "cassandra_cleanup_jobs": play["vars"]["cassandra_cleanup_jobs"],
               "ansible_check_mode": False}
     for name, value in (task.get("vars") or {}).items():
-        if name in ("_hosts_option", "_head", "_command", "_options"):
+        if name in ("_hosts_option", "_text", "_command", "_options"):
             values[name] = trust_as_template(value) if isinstance(value, str) else value
     values.update(variables, _nl="\n")
     templar = templar_for(values)
@@ -54,7 +54,7 @@ def hint(playbook, **variables):
 def test_add_node_prints_both_options_at_their_defaults():
     assert hint("add_node.yml", _scope="dc1: the new nodes' racks only") == [
         "NEXT  once the cluster is fine, clean up the nodes that handed data over (dc1:",
-        "      the new nodes' racks only):",
+        "  the new nodes' racks only):",
         "  ansible-playbook -i inventory/prod.yml community.cassandra.cleanup --limit node1,node4"
         " -e cassandra_cleanup_mode=sequential -e cassandra_cleanup_jobs=2",
     ] + OPTIONS
@@ -63,8 +63,8 @@ def test_add_node_prints_both_options_at_their_defaults():
 def test_move_node_prints_both_options_and_the_group_given():
     assert hint("move_node.yml", _move_record="/tmp/moves.txt", cassandra_hosts="orders") == [
         "NEXT  once the cluster is fine, clean up the nodes that lost ranges (listed in",
-        "      /tmp/moves.txt until a move_node run with cassandra_move_cleanup cleans",
-        "      them up):",
+        "  /tmp/moves.txt until a move_node run with cassandra_move_cleanup cleans them",
+        "  up):",
         "  ansible-playbook -i inventory/prod.yml community.cassandra.cleanup -e cassandra_hosts=orders"
         " --limit node1,node4 -e cassandra_cleanup_mode=sequential -e cassandra_cleanup_jobs=2",
     ] + OPTIONS
@@ -79,7 +79,7 @@ def test_add_node_under_check_says_after_the_real_run_and_the_group_given():
     lines = hint("add_node.yml", _scope="dc1: the whole datacenter", ansible_check_mode=True, cassandra_hosts="orders")
     assert lines[:3] == [
         "NEXT  after the real run, once the cluster is fine, clean up the nodes that",
-        "      handed data over (dc1: the whole datacenter):",
+        "  handed data over (dc1: the whole datacenter):",
         "  ansible-playbook -i inventory/prod.yml community.cassandra.cleanup -e cassandra_hosts=orders"
         " --limit node1,node4 -e cassandra_cleanup_mode=sequential -e cassandra_cleanup_jobs=2"]
 
@@ -88,9 +88,8 @@ def test_add_node_within_79_columns_but_its_command():
     # each line within 79 columns, the heading's next ones under its text; the command whole, to copy
     lines = hint("add_node.yml", _scope="dc1: the whole datacenter, dc2: the new nodes' racks only",
                  ansible_check_mode=True)
-    assert [line for line in lines if len(line) > 79] == [lines[3]] and "ansible-playbook" in lines[3], lines
-    assert lines[1:3] == ["      handed data over (dc1: the whole datacenter, dc2: the new nodes' racks",
-                          "      only):"], lines
+    assert [line for line in lines if len(line) > 79] == [lines[2]] and "ansible-playbook" in lines[2], lines
+    assert lines[1] == "  handed data over (dc1: the whole datacenter, dc2: the new nodes' racks only):", lines
 
 
 def test_the_nodes_to_clean_up_in_inventory_order():

@@ -135,7 +135,7 @@ Conventions
 - **Next**: what is left to do after a run that went well, under ``NEXT``, with its command::
 
     NEXT  once the cluster is fine, clean up the nodes that handed data over (dc1:
-          the whole datacenter):
+      the whole datacenter):
       ansible-playbook community.cassandra.cleanup --limit node1,node2,node3,node4 -e cassandra_cleanup_mode=sequential -e cassandra_cleanup_jobs=2
 
 - **Stop**: a run that stops at a node ends with one block (``cassandra_stop_block``), 79 columns at most: the
@@ -189,7 +189,8 @@ Conventions
 - **TODO**: several things left to do after a run that went well, numbered, each with its full command, ready to
   paste (``-i`` and ``-e cassandra_hosts`` only when the run needed them). An item's text within 79 columns, its
   next lines under it; its command whole, on its line. An inventory change is followed by its commit only when the
-  inventory is in a git work tree. One thing alone is a ``NEXT`` (above), never a TODO of one item.
+  inventory is in a git work tree. One thing alone is a ``NEXT`` (above), never a TODO of one item; the import report is the exception: its
+  ``TODO`` section keeps its numbered list, even of one step (the report's head counts its steps).
 - **One label per kind**: ``WAY OUT`` for what to do after a stop or a refusal (one action on its line, several
   numbered under it), ``NEXT`` for one action after a run that went well, ``TODO`` for several; ``NOTHING TO DO``
   is a verdict, not a list.
