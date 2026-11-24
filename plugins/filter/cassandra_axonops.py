@@ -213,10 +213,7 @@ def cassandra_axonops_changes(lines, wanted, config_sha1, user, group, server):
     for name, version in wanted:
         version = str(version or "")
         have = installed.get(name, "")
-        if name in unfinished:
-            items.append({"item": "package " + name, "before": "half installed (%s)" % unfinished[name],
-                          "after": version or "installed (newest)"})
-        elif _differs(have, version):
+        if _differs(have, version):
             items.append({"item": "package " + name, "before": have or "absent", "after": version or "installed (newest)"})
         elif name == java_package and not version and _older(have, MIN_JAVA_AGENT):
             latest.append(name)
@@ -283,32 +280,39 @@ def cassandra_axonops_repository_items(changed, url, key):
     """
     out = []
     if changed.get("source"):
-        out.append({"item": "repository " + str(url), "before": "absent or other", "after": "written"})
+        out.append({"item": "repository " + str(url), "before": "differs", "after": "written"})
     if changed.get("key"):
-        out.append({"item": "repository signing key", "before": "absent or other", "after": str(key)})
+        out.append({"item": "repository signing key", "before": "differs", "after": str(key)})
     if changed.get("credentials"):
-        out.append({"item": "repository credentials", "before": "absent or other", "after": "set (hidden)"})
+        out.append({"item": "repository credentials", "before": "differs", "after": "set (hidden)"})
     if changed.get("credentials_removed"):
         out.append({"item": "repository credentials", "before": "set", "after": "removed"})
     return out
 
 
-def cassandra_axonops_read_problems(lines, user):
-    """What the node read (files/read.sh's lines) holds that the role cannot go on with, one line each, a WAY OUT
-    line last ([] when nothing): Cassandra's account (user) missing; a package left half done; axon-agent installed
-    without its axonops account."""
+def cassandra_axonops_read_problems(lines, user, check=False):
+    """What the node read (files/read.sh's lines) holds that the role cannot go on with, every one, then the WAY OUT
+    lines ([] when nothing): a package left half done by dpkg; axon-agent installed without its account axonops;
+    Cassandra's account (user) missing, except under check mode (check: a blank host, Cassandra not installed by
+    --check)."""
     installed, unfinished, read = _read(lines)
-    out = []
-    if read.get("account_" + str(user)) == "no":
-        out += ["no account %s on the node (cassandra_axonops_cassandra_user)." % user,
-                "WAY OUT  set cassandra_axonops_cassandra_user to the account Cassandra runs as, then run again."]
-    elif unfinished:
-        out += ["%s left half done by dpkg (%s)." % (n, unfinished[n]) for n in sorted(unfinished)]
-        out += ["WAY OUT  run dpkg --configure -a on the node, then run again."]
-    elif "axon-agent" in installed and read.get("account_axonops") == "no":
-        out += ["axon-agent is installed, its account axonops is missing.",
-                "WAY OUT  reinstall the axon-agent package (it creates the account), then run again."]
-    return out
+    facts, ways = [], []
+    for name in sorted(unfinished):
+        state = unfinished[name]
+        facts.append("%s is %s (dpkg): %s." % (name, state, "its unpack was interrupted" if state == "half-installed"
+                                               else "its configuration was not finished"))
+        ways.append("apt-get install --reinstall %s" % name if state == "half-installed"
+                    else "dpkg --force-confdef --force-confold --configure -a")
+    if "axon-agent" in installed and read.get("account_axonops") == "no":
+        facts.append("axon-agent is installed, its account axonops is missing.")
+        ways.append("apt-get install --reinstall axon-agent (dnf reinstall axon-agent)")
+    if not check and read.get("account_" + str(user)) == "no":
+        facts.append("no account %s on the node (cassandra_axonops_cassandra_user)." % user)
+        ways.append("set cassandra_axonops_cassandra_user to the account Cassandra runs as")
+    if not facts:
+        return []
+    return facts + ["WAY OUT  on the node: " + ways[0]] + ["  then: " + w for w in sorted(set(ways[1:]), key=ways.index)] + [
+        "  then run again."]
 
 
 LOADER = re.compile(r"axonops-jvm[.]options|axon-(cassandra|dse)\S*[.]jar")
@@ -318,7 +322,8 @@ def cassandra_axonops_loader_refusals(options, keep_files, override=""):
     """Why cassandra_config could not load the AxonOps Java agent itself: options, the JVM options, the
     cassandra-env.sh snippet and the unit's environment (one string); keep_files, cassandra_config_keep_files;
     override, the text of your cassandra-env.sh template (cassandra_config_template_overrides), "" when none: it
-    must write the role's line ({{ _cassandra_config_axonops_line }}) and no loader of its own. [] when it can."""
+    must write the role's line ({{ _cassandra_config_axonops_line }}) and no loader of its own. [] when it can.
+    The texts are read as they are: a mention in a comment counts, a template your template includes is not read."""
     out = []
     if override and "_cassandra_config_axonops_line" not in override:
         out.append("cassandra-env.sh is in cassandra_config_template_overrides and your template does not write"

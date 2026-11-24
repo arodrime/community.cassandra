@@ -58,16 +58,19 @@
         _cassandra_config_perm_file: jmx_prometheus.yml  # their owner and group, the config's mode
       when: cassandra_prometheus_exporter_enabled | bool
 
-    # cassandra-env.sh sources it: without it, Cassandra would not start (the playbooks apply cassandra_axonops,
-    # which installs it, before this role). A command: skipped under check mode, apply_config's compare included
-    # (check mode applied to the role, which ansible_check_mode does not tell), where it may come later
+    # cassandra-env.sh sources it: without it, Cassandra would not start (create_cluster, add_node, apply_config,
+    # upgrade apply cassandra_axonops, which installs it, before this role; update_java right after it,
+    # _cassandra_config_axonops_later: the role checks it then). A command: skipped under check mode, apply_config's
+    # compare included (check mode applied to the role, which ansible_check_mode does not tell)
     - name: Look for the AxonOps Java agent's options file
       ansible.builtin.command:
         argv: [test, -e, "{{ _cassandra_config_axonops_options }}"]
       register: cassandra_config_axonops_options
       changed_when: false
       failed_when: false
-      when: cassandra_axonops_enabled | default(false) | bool
+      when:
+        - cassandra_axonops_enabled | default(false) | bool
+        - not _cassandra_config_axonops_later | default(false) | bool
 
     - name: Refuse to load an AxonOps Java agent not installed
       ansible.builtin.fail:
@@ -82,9 +85,8 @@
         _said:
           - "{{ _cassandra_config_axonops_options }} is missing (cassandra_axonops_enabled)."
           - "cassandra-env.sh would source it: Cassandra would not start."
-          - "WAY OUT  apply the cassandra_axonops role first (create_cluster, add_node,"
-          - "replace_node, add_datacenter, apply_config, upgrade, update_java do),"
-          - "then run again."
+          - "WAY OUT  run apply_config: it sets up the AxonOps agent before the config"
+          - "(its plan shows it), then run this again."
 
     - name: Write the files and directories
       ansible.builtin.import_tasks: apply.yml

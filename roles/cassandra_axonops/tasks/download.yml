@@ -1,0 +1,46 @@
+---
+# upgrade, before its drain (_cassandra_axonops_download_only): the repository is in place already (main.yml); the
+# packages the plan installs are downloaded into the package manager's cache, nothing installed, so that the
+# install in the node's window (Cassandra stopped, _cassandra_axonops_cached) needs no network. A package file given
+# needs no download.
+- name: Note what to install
+  ansible.builtin.import_tasks: wanted.yml
+
+- name: Refresh the apt cache (Debian & Ubuntu)
+  ansible.builtin.apt:
+    update_cache: true
+  retries: 3
+  register: cassandra_axonops_download_cache
+  until: cassandra_axonops_download_cache is succeeded
+  changed_when: false
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - _cassandra_axonops_files.paths | default([]) | length == 0
+    - _cassandra_axonops_package_change | bool or (_cassandra_axonops_latest + _cassandra_axonops_reinstall) | length > 0
+
+- name: Read the AxonOps repository (RedHat)
+  ansible.builtin.import_tasks: repository_read.yml
+
+- name: Download the packages (Debian & Ubuntu)
+  ansible.builtin.command:
+    argv: >-
+      {{ ['apt-get', '-y', '-d', 'install']
+         + (['--reinstall'] if _cassandra_axonops_reinstall else []) + _cassandra_axonops_wanted }}
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  register: cassandra_axonops_download
+  changed_when: "'Download complete' in cassandra_axonops_download.stdout"
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - _cassandra_axonops_files.paths | default([]) | length == 0
+    - _cassandra_axonops_package_change | bool or (_cassandra_axonops_latest + _cassandra_axonops_reinstall) | length > 0
+
+- name: Download the packages (RedHat)
+  ansible.builtin.command:
+    argv: "{{ ['dnf', '-y', 'install', '--downloadonly'] + _cassandra_axonops_wanted }}"
+  register: cassandra_axonops_download_rpm
+  changed_when: false
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - _cassandra_axonops_files.paths | default([]) | length == 0
+    - _cassandra_axonops_package_change | bool or (_cassandra_axonops_latest + _cassandra_axonops_reinstall) | length > 0

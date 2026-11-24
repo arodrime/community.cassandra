@@ -31,7 +31,7 @@ queue in `/var/lib/axonops`), and `axonops` to Cassandra's group.
 `axon-agent` is restarted when its package or `axon-agent.yml` changes.
 
 The playbooks of the collection apply the role when `cassandra_axonops_enabled`
-is `true` (default `false`), before `cassandra_config`:
+is `true` (default `false`):
 
 * `create_cluster` on every node, `add_node`, `replace_node` and
   `add_datacenter` on the new nodes;
@@ -41,6 +41,13 @@ is `true` (default `false`), before `cassandra_config`:
   first, then the config written, then the node restarted (one at a time).
   A change of the agent alone (versions, `axon-agent.yml`) restarts no
   Cassandra: its Java agent reads them at its next start (said in the plan).
+  The repository the role adds is compared too (source, key, login).
+* `upgrade`: its preflight lists the change; at each node's turn the
+  repository and the target's packages are downloaded before the drain, and
+  installed once the target series is (Cassandra stopped), before its config;
+* `update_java`: its plan shows the change; at each node's turn the package of
+  the new Java replaces the old one once the config is written, before the
+  restart.
 
 Turned off (`cassandra_axonops_enabled: false`), the line goes from
 `cassandra-env.sh` (a restart); the packages, `axon-agent.yml` and the service

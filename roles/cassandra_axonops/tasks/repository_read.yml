@@ -1,0 +1,31 @@
+---
+# RedHat: the AxonOps repository is skip_if_unavailable (a failing mirror stops no other dnf run); a package planned
+# from it: the repository read first, its own error said (dnf would only say "no package" then)
+- name: Read the AxonOps repository
+  ansible.builtin.command:
+    argv: [dnf, -q, makecache, --repo, axonops, --setopt=axonops.skip_if_unavailable=False]
+  register: cassandra_axonops_repo_probe
+  changed_when: false
+  failed_when: false
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - cassandra_axonops_repository_manage | bool
+    - not _cassandra_axonops_cached | default(false) | bool
+    - _cassandra_axonops_package_change | bool or (_cassandra_axonops_latest + _cassandra_axonops_reinstall) | length > 0
+
+- name: Stop when the AxonOps repository cannot be read
+  ansible.builtin.fail:
+    msg: "{{ _said | join(_nl) }}"
+  when:
+    - cassandra_axonops_repo_probe is not skipped
+    - cassandra_axonops_repo_probe.rc != 0
+  vars:
+    cassandra_output: true  # a verdict: its msg as is (ops callback)
+    _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+    _error: >-
+      {{ (cassandra_axonops_repo_probe.stderr_lines | default([]) | select | list | last | default('no error given'))
+         | community.cassandra.cassandra_url_masked }}
+    _url: "{{ cassandra_axonops_repository_url | community.cassandra.cassandra_url_masked }}"
+    _head: "{{ ['STOPPED  cassandra_axonops  ' ~ inventory_hostname, '  the AxonOps repository ' ~ _url ~ ' cannot be read:'] }}"
+    _way: ["WAY OUT  check cassandra_axonops_repository_url and the login, then run", "  again"]
+    _said: "{{ _head + ['    ' ~ _error] | community.cassandra.cassandra_fit + _way }}"

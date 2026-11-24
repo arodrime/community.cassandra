@@ -30,55 +30,80 @@
       register: cassandra_axonops_credentials_removed
       when: cassandra_axonops_repository_username == ''
 
-    # (also under check mode: the key is downloaded there to be compared)
+    # (none created under check mode: a key directory missing is a key to put in place)
     - name: Create the key directory
       ansible.builtin.file:
         path: /etc/apt/keyrings
         state: directory
         mode: "0755"
-      check_mode: false
 
-    - name: Download the signing key
-      ansible.builtin.get_url:
-        url: "{{ cassandra_axonops_repository_key_url }}"
-        dest: /etc/apt/keyrings/axonops.key.download
-        mode: "0644"
-        force: true
-        url_username: "{{ cassandra_axonops_repository_username if _same_server else omit }}"
-        url_password: "{{ cassandra_axonops_repository_password if _same_server else omit }}"
-        force_basic_auth: "{{ _same_server }}"
-      vars:
-        # the credentials only to the repository's own server
-        _same_server: >-
-          {{ cassandra_axonops_repository_username != ''
-             and (cassandra_axonops_repository_key_url | urlsplit('netloc'))
-                 == (cassandra_axonops_repository_url | urlsplit('netloc')) }}
-      changed_when: false  # a download: the comparison below says the change
-      check_mode: false
-      retries: 3
-      register: cassandra_axonops_key_download
-      until: cassandra_axonops_key_download is succeeded
-      no_log: "{{ cassandra_axonops_repository_password != '' }}"
+    # The key downloaded to a temporary file outside /etc (under check mode too: to compare it), compared with the one
+    # in place, put in place when it differs (not under check mode), the temporary file always removed
+    - name: Compare the signing key, put it in place when it differs
+      block:
+        - name: Make a temporary file for the key
+          ansible.builtin.tempfile:
+            suffix: .axonops-key
+          register: cassandra_axonops_key_tmp
+          check_mode: false
 
-    # apt tells an armored key from a binary one by its file name: .asc or .gpg
-    - name: Compare the signing key with the one in place
-      ansible.builtin.shell: |
-        new=/etc/apt/keyrings/axonops.key.download
-        if grep -q 'BEGIN PGP PUBLIC KEY' "$new"; then ext=asc; else ext=gpg; fi
-        if cmp -s "$new" "/etc/apt/keyrings/axonops.$ext"; then echo "same $ext"; else echo "changed $ext"; fi
-      register: cassandra_axonops_signing_key
-      changed_when: cassandra_axonops_signing_key.stdout is match('changed')
-      check_mode: false  # reads only
+        - name: Download the signing key
+          ansible.builtin.get_url:
+            url: "{{ cassandra_axonops_repository_key_url }}"
+            dest: "{{ cassandra_axonops_key_tmp.path }}"
+            mode: "0644"
+            force: true
+            url_username: "{{ cassandra_axonops_repository_username if _same_server else omit }}"
+            url_password: "{{ cassandra_axonops_repository_password if _same_server else omit }}"
+            force_basic_auth: "{{ _same_server }}"
+          vars:
+            # the credentials only to the repository's own server
+            _same_server: >-
+              {{ cassandra_axonops_repository_username != ''
+                 and (cassandra_axonops_repository_key_url | urlsplit('netloc'))
+                     == (cassandra_axonops_repository_url | urlsplit('netloc')) }}
+          changed_when: false  # a download: the comparison below says the change
+          check_mode: false
+          retries: 3
+          register: cassandra_axonops_key_download
+          until: cassandra_axonops_key_download is succeeded
+          no_log: "{{ cassandra_axonops_repository_password != '' }}"
 
-    - name: Put the signing key in place
-      ansible.builtin.shell: |
-        set -e
-        ext={{ _ext }}
-        if [ "$ext" = asc ]; then rm -f /etc/apt/keyrings/axonops.gpg; else rm -f /etc/apt/keyrings/axonops.asc; fi
-        mv /etc/apt/keyrings/axonops.key.download "/etc/apt/keyrings/axonops.$ext"
+        # apt tells an armored key from a binary one by its file name: .asc or .gpg
+        - name: Compare the signing key with the one in place
+          ansible.builtin.shell: |
+            if grep -q 'BEGIN PGP PUBLIC KEY' "$NEW"; then ext=asc; else ext=gpg; fi
+            if cmp -s "$NEW" "/etc/apt/keyrings/axonops.$ext"; then echo "same $ext"; else echo "changed $ext"; fi
+          environment:
+            NEW: "{{ cassandra_axonops_key_tmp.path }}"
+          register: cassandra_axonops_signing_key
+          changed_when: cassandra_axonops_signing_key.stdout is match('changed')
+          check_mode: false  # reads only
+
+        - name: Put the signing key in place
+          ansible.builtin.copy:
+            src: "{{ cassandra_axonops_key_tmp.path }}"
+            remote_src: true
+            dest: "/etc/apt/keyrings/axonops.{{ _ext }}"
+            mode: "0644"
+          when:
+            - cassandra_axonops_signing_key is changed
+            - not _cassandra_axonops_compare | bool  # (check mode: its directory may not be there yet)
+
+        # (the other kind of the key, left by an earlier key)
+        - name: Remove the signing key of the other kind
+          ansible.builtin.file:
+            path: "/etc/apt/keyrings/axonops.{{ 'gpg' if _ext == 'asc' else 'asc' }}"
+            state: absent
       vars:
         _ext: "{{ cassandra_axonops_signing_key.stdout.split() | last }}"
-      when: cassandra_axonops_signing_key is changed
+      always:
+        - name: Remove the temporary key file
+          ansible.builtin.file:
+            path: "{{ cassandra_axonops_key_tmp.path }}"
+            state: absent
+          check_mode: false
+          when: cassandra_axonops_key_tmp.path is defined
 
     - name: The AxonOps apt source
       ansible.builtin.deb822_repository:
@@ -99,6 +124,26 @@
       when:
         - not _cassandra_axonops_compare | bool
         - cassandra_axonops_source is changed or cassandra_axonops_signing_key is changed
+
+  # (a download refused, a source apt rejects, a cache refresh failing: what failed and why, the URLs masked)
+  rescue:
+    - name: Stop on the AxonOps apt repository
+      ansible.builtin.fail:
+        msg: "{{ _said | join(_nl) }}"
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _r: "{{ ansible_failed_result | default({}) }}"
+        _cause: >-
+          {{ (('HTTP ' ~ _r.status_code ~ ': ') if _r.status_code | default(-1) | int > 0 else '')
+             ~ (_r.msg | default('no cause given') | string).splitlines() | first | default('')
+             | community.cassandra.cassandra_url_masked }}
+        _said: >-
+          {{ ['STOPPED  cassandra_axonops  ' ~ inventory_hostname,
+              '  ' ~ ansible_failed_task.name | default('the AxonOps apt repository') ~ ' failed:']
+             + ['    ' ~ _cause] | community.cassandra.cassandra_fit
+             + ['WAY OUT  check cassandra_axonops_repository_url, _key_url and the',
+                '  login, then run again'] }}
 
 - name: The AxonOps yum repository (RedHat)
   ansible.builtin.yum_repository:

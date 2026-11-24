@@ -1,0 +1,22 @@
+---
+# What to install, from the plan (_cassandra_axonops_items): packages.yml's and download.yml's
+- name: Note what to install
+  ansible.builtin.set_fact:
+    # name=version (apt), name-version (dnf), the name alone, or the package file on the node; axon-agent first
+    _cassandra_axonops_wanted: >-
+      {{ _files | map('basename') | map('regex_replace', '^', '/var/cache/cassandra-axonops/') | list
+         if _files else [_agent, _java_agent] }}
+    _cassandra_axonops_package_change: >-
+      {{ _cassandra_axonops_items | map(attribute='item')
+         | select('in', ['package axon-agent', 'package ' ~ _cassandra_axonops_java_package]) | list | length > 0 }}
+    # the Java agent itself planned (installed, upgraded, reinstalled): it replaces the other ones in one step
+    _cassandra_axonops_java_change: >-
+      {{ ('package ' ~ _cassandra_axonops_java_package) in _cassandra_axonops_items | map(attribute='item') }}
+  vars:
+    _files: "{{ _cassandra_axonops_files.paths | default([]) }}"
+    _sep: "{{ '=' if ansible_facts['os_family'] == 'Debian' else '-' }}"
+    _agent: "axon-agent{{ (_sep ~ cassandra_axonops_agent_version) if cassandra_axonops_agent_version | string else '' }}"
+    _java_agent: >-
+      {{ _cassandra_axonops_java_package }}{{ (_sep ~ cassandra_axonops_java_agent_version)
+      if cassandra_axonops_java_agent_version | string else '' }}
+

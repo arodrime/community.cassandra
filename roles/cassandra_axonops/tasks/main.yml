@@ -47,7 +47,7 @@
     cassandra_output: true  # a verdict: its msg as is (ops callback)
     _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
     _problems: "{{ _cassandra_axonops_settings | community.cassandra.cassandra_axonops_problems }}"
-    _said: "{{ _problems + ['WAY OUT  set these variables (cassandra_axonops role),', 'then run again.'] }}"
+    _said: "{{ _problems + ['WAY OUT  set these variables (cassandra_axonops role), then run again.'] }}"
 
 # (none given: {} and the repositories)
 - name: Read the package files given
@@ -77,7 +77,8 @@
   changed_when: false
   check_mode: false  # reads only
 
-# (before any change, --check too: Cassandra's account, a package left half done, axon-agent without its account)
+# (before any change, --check too: a package left half done, axon-agent without its account; Cassandra's account
+# in a real run only: --check installs no Cassandra on a blank host)
 - name: Refuse what the node holds
   ansible.builtin.fail:
     msg: "{{ ('cassandra_axonops  ' ~ inventory_hostname) | community.cassandra.cassandra_refused(_said) | join(_nl) }}"
@@ -87,7 +88,7 @@
     _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
     _said: >-
       {{ cassandra_axonops_read.stdout_lines | community.cassandra.cassandra_axonops_read_problems(
-           cassandra_axonops_cassandra_user) }}
+           cassandra_axonops_cassandra_user, _cassandra_axonops_compare | bool) }}
 
 - name: Work out what changes
   ansible.builtin.set_fact:
@@ -107,22 +108,36 @@
   no_log: true  # the agent key
 
 # under check mode too: what it would change, in the plan
+# (not in upgrade's window, _cassandra_axonops_cached: put in place before its drain)
 - name: The repository
   ansible.builtin.import_tasks: repository.yml
-  when: cassandra_axonops_repository_manage | bool
+  when:
+    - cassandra_axonops_repository_manage | bool
+    - not _cassandra_axonops_cached | default(false) | bool
 
 # (apply_config shows them in its plan)
 - name: List the changes
   ansible.builtin.set_fact:
     _cassandra_axonops_items: >-
-      {{ (_cassandra_axonops_repository_items | default([]) if cassandra_axonops_repository_manage | bool else [])
+      {{ (_cassandra_axonops_repository_items | default([])
+          if cassandra_axonops_repository_manage | bool and not _cassandra_axonops_cached | default(false) | bool
+          else [])
          + _cassandra_axonops_changes['items'] }}
     _cassandra_axonops_removed: "{{ _cassandra_axonops_changes.removed }}"
     _cassandra_axonops_latest: "{{ _cassandra_axonops_changes.latest }}"
     _cassandra_axonops_reinstall: "{{ _cassandra_axonops_changes.reinstall }}"
 
+# upgrade, before its drain (_cassandra_axonops_download_only): the packages downloaded only, nothing installed
+- name: Download the packages only
+  ansible.builtin.import_tasks: download.yml
+  when:
+    - not _cassandra_axonops_compare | bool
+    - _cassandra_axonops_download_only | default(false) | bool
+
 - name: Install, configure and start the agent
-  when: not _cassandra_axonops_compare | bool
+  when:
+    - not _cassandra_axonops_compare | bool
+    - not _cassandra_axonops_download_only | default(false) | bool
   block:
     - name: The packages
       ansible.builtin.import_tasks: packages.yml
@@ -178,11 +193,11 @@
             cassandra_output: true  # a verdict: its msg as is (ops callback)
             _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
             # (the module's message, never its arguments: the key)
-            _cause: "{{ (cassandra_axonops_config_written.msg | default('') | string)[:200] }}"
-            _said:
-              - "STOPPED  cassandra_axonops  {{ inventory_hostname }}"
-              - "  /etc/axonops/axon-agent.yml not written: {{ _cause or 'no cause given' }}"
-              - "WAY OUT  fix the cause on the node, then run again"
+            _cause: "{{ (ansible_failed_result.msg | default('') | string).splitlines() | first | default('') }}"
+            _said: >-
+              {{ ['STOPPED  cassandra_axonops  ' ~ inventory_hostname, '  /etc/axonops/axon-agent.yml not written:']
+                 + ['    ' ~ (_cause or 'no cause given')] | community.cassandra.cassandra_fit
+                 + ['WAY OUT  fix the cause on the node, then run again'] }}
 
     - name: Start axon-agent, or restart it for its new package or config
       ansible.builtin.systemd_service:

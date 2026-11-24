@@ -136,7 +136,7 @@
       when: not cassandra_java_plan_todo | bool
 
     # The AxonOps agent (cassandra_axonops_enabled): its Java agent package is built for one Java, replaced at the
-    # node's turn before its config is written (action_update_java.yml); its changes in the plan
+    # node's turn once its config is written, before its restart (action_update_java.yml); its changes in the plan
     - name: Compare the AxonOps agent
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_axonops
