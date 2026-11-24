@@ -89,16 +89,26 @@
         _swap: "{{ _cassandra_axonops_java_change | bool and _cassandra_axonops_removed | length > 0 }}"
 
     # rpm refuses two packages with the same files: the old one out and the new one in, in one transaction (a failed
-    # one changes nothing)
+    # one changes nothing). Upgrade's window (no repository: dnf swap refuses to run without one): rpm takes the
+    # files over from the old package, then the old one goes (a failure between leaves both, the new one's files)
     - name: Replace the Java agent package of another series or Java
       ansible.builtin.command:
         argv: >-
-          {{ ['dnf', '-y'] + (['--nogpgcheck'] if _cassandra_axonops_files.paths | default([]) else [])
-             + (['--disablerepo=*'] if _cassandra_axonops_cached | default(false) | bool else [])
-             + ['swap', _cassandra_axonops_removed[0], _cassandra_axonops_wanted[1]] }}
+          {{ ['rpm', '-U', '--replacefiles', _cassandra_axonops_wanted[1]] if _cassandra_axonops_cached | default(false) | bool
+             else ['dnf', '-y'] + (['--nogpgcheck'] if _cassandra_axonops_files.paths | default([]) else [])
+                  + ['swap', _cassandra_axonops_removed[0], _cassandra_axonops_wanted[1]] }}
       register: cassandra_axonops_packages_swap
       changed_when: true
       when:
+        - _cassandra_axonops_java_change | bool
+        - _cassandra_axonops_removed | length > 0
+
+    - name: Remove the Java agent package it replaced (upgrade's window)
+      ansible.builtin.command:
+        argv: [rpm, -e, "{{ _cassandra_axonops_removed[0] }}"]
+      changed_when: true
+      when:
+        - _cassandra_axonops_cached | default(false) | bool
         - _cassandra_axonops_java_change | bool
         - _cassandra_axonops_removed | length > 0
 

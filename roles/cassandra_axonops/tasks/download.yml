@@ -41,7 +41,7 @@
 
     # (an earlier download's files out first: the ones there are this run's)
     - name: Remove the files of an earlier download
-      ansible.builtin.shell: rm -f /var/cache/cassandra-axonops/axon-*.deb /var/cache/cassandra-axonops/axon-*.rpm
+      ansible.builtin.shell: rm -f /var/cache/cassandra-axonops/*axon-*.deb /var/cache/cassandra-axonops/*axon-*.rpm
       changed_when: false
 
     # dnf download: dnf-plugins-core on dnf 4 (built in on dnf 5)
@@ -54,7 +54,8 @@
       ansible.builtin.command:
         argv: >-
           {{ ['apt-get', 'download'] + _specs if ansible_facts['os_family'] == 'Debian'
-             else ['dnf', 'download', '--destdir', '/var/cache/cassandra-axonops'] + _specs }}
+             else ['dnf', 'download', '--destdir', '/var/cache/cassandra-axonops',
+                   '--arch', ansible_facts['architecture'], '--arch', 'noarch'] + _specs }}
         chdir: /var/cache/cassandra-axonops
       environment:
         DEBIAN_FRONTEND: noninteractive
@@ -70,6 +71,17 @@
       changed_when: true
       retries: 3
       until: cassandra_axonops_download is succeeded
+
+    # (dnf download names a file <its checksum>-<name>.rpm when the repository lists a name twice)
+    - name: Name the files downloaded as their packages
+      ansible.builtin.shell: |
+        cd /var/cache/cassandra-axonops || exit 1
+        for f in *-axon-*.rpm; do
+          case "$f" in axon-*) ;; *) [ -e "$f" ] && mv -f "$f" "axon-${f#*-axon-}" ;; esac
+        done
+        exit 0
+      changed_when: false
+      when: ansible_facts['os_family'] == 'RedHat'
 
     - name: Find the files downloaded
       ansible.builtin.find:

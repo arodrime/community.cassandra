@@ -34,7 +34,8 @@
         cassandra_output: true  # a verdict: its msg as is (ops callback)
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         # (a stop of the role's own: its facts, its way out apart)
-        _parts: "{{ ansible_failed_result.msg | default('') | community.cassandra.cassandra_axonops_stop_parts }}"
+        _failed: "{{ ansible_failed_result | default({}) }}"
+        _parts: "{{ (_failed.stderr | default('') or _failed.msg | default('')) | community.cassandra.cassandra_axonops_stop_parts }}"
         _head:
           - "STOPPED  update_java  {{ inventory_hostname }}"
           - "  Cassandra still runs on its former Java"

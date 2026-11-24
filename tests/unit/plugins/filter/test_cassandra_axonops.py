@@ -645,6 +645,10 @@ def test_upgrade_downloads_before_the_drain_and_installs_after_the_target():
     assert setup["block"][0]["vars"]["_cassandra_axonops_cached"] is True
     msg = ("REFUSED  cassandra_axonops  n1  nothing was changed\n  x is unpacked (dpkg).\n"
            "  WAY OUT  on the node: dpkg --configure -a\n  then run again.")
+    # (a command's failure: its stderr, not "non-zero return code")
+    said = _said(setup["rescue"][0], ansible_failed_task={"name": "Replace"}, cassandra_package_version="5.0.9",
+                 ansible_failed_result={"msg": "non-zero return code", "stderr": "Error: file conflict"})
+    assert said[4] == "    Error: file conflict"
     said = _said(setup["rescue"][0], cassandra_package_version="5.0.9", ansible_failed_task={"name": "Refuse"},
                  ansible_failed_result={"msg": msg})
     assert said[:5] == ["STOPPED  upgrade  n1", "  Cassandra is stopped for its upgrade",
@@ -697,7 +701,7 @@ def test_the_window_installs_from_files_never_from_the_repositories():
     # the packages are downloaded as files into the role's own directory before the drain, installed from them
     download = _tasks("roles", "cassandra_axonops", "tasks", "download.yml")
     get = _find(download, "Download the packages")
-    assert "['dnf', 'download', '--destdir', '/var/cache/cassandra-axonops']" in get["ansible.builtin.command"]["argv"]
+    assert "['dnf', 'download', '--destdir', '/var/cache/cassandra-axonops'," in get["ansible.builtin.command"]["argv"]
     assert "['apt-get', 'download']" in get["ansible.builtin.command"]["argv"]
     assert get["ansible.builtin.command"]["chdir"] == "/var/cache/cassandra-axonops"
     rescue = _find(download, "Download the packages from the repositories")["rescue"][0]
@@ -708,8 +712,14 @@ def test_the_window_installs_from_files_never_from_the_repositories():
     packages = _packages()
     assert _find(packages, "Install them")["ansible.builtin.dnf"]["disablerepo"] == (
         "{{ '*' if _cassandra_axonops_cached | default(false) | bool else omit }}")
-    assert "--disablerepo=*" in _find(packages, "Replace the Java agent package of another series or Java")[
-        "ansible.builtin.command"]["argv"]
+    # (dnf swap refuses to run with no repository: rpm takes the files over, then the old package goes)
+    swap = _find(packages, "Replace the Java agent package of another series or Java")["ansible.builtin.command"]["argv"]
+    assert "['rpm', '-U', '--replacefiles', _cassandra_axonops_wanted[1]] if _cassandra_axonops_cached" in swap
+    assert _find(packages, "Remove the Java agent package it replaced (upgrade's window)")["ansible.builtin.command"][
+        "argv"] == ["rpm", "-e", "{{ _cassandra_axonops_removed[0] }}"]
+    # dnf download: this arch and noarch only, a checksum prefix taken off the file names
+    assert "'--arch', ansible_facts['architecture'], '--arch', 'noarch'" in get["ansible.builtin.command"]["argv"]
+    assert "axon-${f#*-axon-}" in _find(download, "Name the files downloaded as their packages")["ansible.builtin.shell"]
     assert "--disablerepo=*" in _find(packages, "Install the Java agent package again")["vars"]["_no_repo"]
     assert "not _cassandra_axonops_cached | default(false) | bool" in _find(packages, "Copy the package files")["when"]
     assert _find(packages, "Remove the files downloaded")["when"] == "_cassandra_axonops_cached | default(false) | bool"
