@@ -263,14 +263,15 @@ def test_said_when_the_default_moves_the_audit_events(live_audit, in_inventory, 
     # values written as they are that would leave logback.xml unreadable, on every node
     ({"cassandra_log_pattern": "%msg -- %n"}, "cassandra_log_pattern: %msg -- %n has a --, which XML does not take in a"
                                               " comment, where the template writes it while cassandra_log_audit_file is"
-                                              " false.\nWAY OUT  one of:"
-                                              "\n  write it without --"
-                                              "\n  set cassandra_log_audit_file to true: logback.xml then writes the audit"
-                                              " events (FileAuditLogger) to audit/audit.log, no longer to system.log"
-                                              "\n  add logback.xml to cassandra_config_keep_files: the node keeps its"
-                                              " logback.xml as it is"
-                                              "\n  write logback.xml from your own template"
-                                              " (cassandra_config_template_overrides)"),
+                                              " false. One of:"
+                                              "\n  1. write it without --"
+                                              "\n  2. set cassandra_log_audit_file to true: logback.xml then writes the"
+                                              " audit\n     events (FileAuditLogger) to audit/audit.log, no longer to"
+                                              " system.log"
+                                              "\n  3. add logback.xml to cassandra_config_keep_files: the node keeps its"
+                                              "\n     logback.xml as it is"
+                                              "\n  4. write logback.xml from your own template"
+                                              "\n     (cassandra_config_template_overrides)"),
     ({"cassandra_log_pattern": "%msg < %n"}, "cassandra_log_pattern: %msg < %n has a <, which ends the XML value there:"
                                              " write it &lt;"),
     ({"cassandra_log_pattern": "%msg & %n"}, "cassandra_log_pattern: %msg & %n has an & that starts no XML entity"
@@ -282,9 +283,10 @@ def test_said_when_the_default_moves_the_audit_events(live_audit, in_inventory, 
                                                " in a text: write it ]]&gt;"),
     ({"cassandra_log_cql_table_level": "W--ARN"}, "cassandra_log_cql_table_level: W--ARN has a --, which XML does not"
                                                   " take in a comment, where the template writes it while"
-                                                  " cassandra_log_cql_table is false.\nWAY OUT  one of:\n  write it"
-                                                  " without --\n  set cassandra_log_cql_table to true: logback.xml then"
-                                                  " writes the logs to the system_views.system_logs table too\n"),
+                                                  " cassandra_log_cql_table is false. One of:\n  1. write it"
+                                                  " without --\n  2. set cassandra_log_cql_table to true: logback.xml"
+                                                  " then writes the logs to\n     the system_views.system_logs table"
+                                                  " too\n"),
     ({"cassandra_log_levels": {'com."x': "INFO"}}, 'cassandra_log_levels: com."x has a ", which ends the XML attribute'
                                                    " there: write it &quot;"),
     ({"cassandra_log_level": "IN<FO"}, "cassandra_log_level: IN<FO has a <"),

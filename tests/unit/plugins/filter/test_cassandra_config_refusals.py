@@ -81,8 +81,12 @@ def test_logback_values_written_as_they_are():
     assert logback(cassandra_log_audit_dir="a--b") == []
     assert logback(audit_file=False, cassandra_log_audit_dir="a--b")[0].startswith(
         "cassandra_log_audit_dir: a--b has a --, which XML does not take in a comment, where the template writes it while"
-        " cassandra_log_audit_file is false.\nWAY OUT  one of:\n  write it without --\n  set cassandra_log_audit_file to"
-        " true: logback.xml then writes the audit events (FileAuditLogger) to audit/audit.log, no longer to system.log\n")
+        " cassandra_log_audit_file is false. One of:\n  1. write it without --\n  2. set cassandra_log_audit_file to"
+        " true: logback.xml then writes the audit\n     events (FileAuditLogger) to audit/audit.log, no longer to"
+        " system.log\n  3. ")
+    # one refusal of checks.yml's list: no WAY OUT label in it, each alternative line within 79 columns
+    said = logback(audit_file=False, cassandra_log_audit_dir="a--b")[0].split("\n")
+    assert "WAY OUT" not in "\n".join(said) and all(len(line) <= 79 for line in said[1:])
     assert logback(audit_file=False, overrides={"logback.xml": "/t"}, cassandra_log_audit_dir="a--b") == []
     assert logback(series="41x", cassandra_log_cql_table_level="a--b") == []
     assert logback(cassandra_log_level='I"NFO', cassandra_log_pattern='%msg"', cassandra_log_system_max_history=7) == [

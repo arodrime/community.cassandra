@@ -20,6 +20,7 @@ __metaclass__ = type
 
 import os
 import re
+import textwrap
 from collections.abc import Mapping
 from numbers import Number
 
@@ -184,13 +185,15 @@ def _xml_value_refusals(var, value, attribute, commented, own_template):
     if attribute and '"' in text:
         out.append('%s: %s has a ", which ends the XML attribute there: write it &quot;' % (var, text))
     if commented and "--" in text and not own_template:  # (your own template of logback.xml: its comments are yours)
-        out.append("%s: %s has a --, which XML does not take in a comment, where the template writes it while %s is"
-                   " false.\nWAY OUT  one of:"
-                   "\n  write it without --"
-                   "\n  set %s to true%s"
-                   "\n  add logback.xml to cassandra_config_keep_files: the node keeps its logback.xml as it is"
-                   "\n  write logback.xml from your own template (cassandra_config_template_overrides)"
-                   % (var, text, commented, commented, TURNED_ON[commented]))
+        # (one refusal of a list: no WAY OUT label in it, the alternatives numbered, each within 79 columns)
+        ways = ["write it without --", "set %s to true%s" % (commented, TURNED_ON[commented]),
+                "add logback.xml to cassandra_config_keep_files: the node keeps its logback.xml as it is",
+                "write logback.xml from your own template (cassandra_config_template_overrides)"]
+        out.append("\n".join(["%s: %s has a --, which XML does not take in a comment, where the template writes it while"
+                               " %s is false. One of:" % (var, text, commented)]
+                              + [line for i, way in enumerate(ways) for line in textwrap.wrap(
+                                  way, 79, initial_indent="  %d. " % (i + 1), subsequent_indent="     ",
+                                  break_long_words=False, break_on_hyphens=False)]))
     return out
 
 
