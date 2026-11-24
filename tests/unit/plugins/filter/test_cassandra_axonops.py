@@ -1,6 +1,8 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
+import os
+
 import pytest
 import yaml
 
@@ -14,6 +16,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_axonops im
     cassandra_axonops_java_agent,
     cassandra_axonops_problems,
 )
+from ansible_collections.community.cassandra.tests.unit.helpers import TOP
 
 SETTINGS = {"server_host": "axon.example.com", "server_port": 1888, "org": "acme", "key": "", "tls_mode": "disabled",
             "tls_skip_verify": False, "tls_ca_file": "", "tls_cert_file": "", "tls_key_file": "", "ntp_hosts": [],
@@ -185,3 +188,15 @@ RESTART = ["write the config", "drain and restart Cassandra"]
 def test_apply_config_steps(steps, sections, expected):
     extras = [{"section": s, "item": "x"} for s in sections]
     assert cassandra_apply_config_axonops_steps(steps, extras) == expected
+
+
+def test_the_node_turn_sets_up_the_agent_before_the_config():
+    with open(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "action_apply_config.yml")) as f:
+        tasks = yaml.safe_load(f)
+    names = [t["name"] for t in tasks]
+    setup = tasks[names.index("Set up the AxonOps agent")]
+    assert names.index("Set up the AxonOps agent") < names.index("Write the config")
+    assert setup["ansible.builtin.include_role"]["name"] == "community.cassandra.cassandra_axonops"
+    # only where the plan found its changes (section AxonOps), never under check mode
+    assert setup["when"] == ["not ansible_check_mode",
+                             "'AxonOps' in cassandra_apply_config_extras | default([]) | map(attribute='section')"]

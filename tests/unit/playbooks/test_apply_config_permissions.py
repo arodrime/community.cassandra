@@ -197,6 +197,8 @@ def test_the_action_restarts_starts_or_only_writes():
                                                    " runs with",
                                                    # (Medusa: test_apply_config_header_medusa.py)
                                                    "Set up Medusa", "Report what Medusa would get",
+                                                   # (the AxonOps agent: test_cassandra_axonops.py)
+                                                   "Set up the AxonOps agent",
                                                    # (the Java, a release, the extras: test_apply_config_coverage.py)
                                                    "Install the Java this node moves to",
                                                    "Install the Java this node moves to, its Cassandra release kept",
