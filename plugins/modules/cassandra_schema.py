@@ -75,6 +75,7 @@ agreed:
     - "The result of a task run with C(failed_when: false) keeps it, when C(failed) does not."
   returned: always
   type: bool
+  version_added: 3.0.0
 schema_status:
   description: The schema versions of the last successful read, each with its nodes.
   returned: always
@@ -87,6 +88,7 @@ unreachable_nodes:
   returned: when there are some
   type: list
   elements: str
+  version_added: 3.0.0
 iterations:
   description: The number of describecluster calls, when more than one.
   returned: when more than one

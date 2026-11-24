@@ -30,7 +30,7 @@ options:
 '''
 
 EXAMPLES = '''
-- name: Move the node, following the streams meanwhile
+- name: Start the move in the background (its streams can be read meanwhile, e.g. with cassandra_netstats)
   community.cassandra.cassandra_move:
     token: "-3074457345618258603"
   async: 86400
