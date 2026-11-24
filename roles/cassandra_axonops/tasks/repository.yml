@@ -73,8 +73,8 @@
         rm -f "/etc/apt/keyrings/axonops.$other"
         if cmp -s "$new" "/etc/apt/keyrings/axonops.$ext"; then rm -f "$new"; echo "same $ext"
         else mv "$new" "/etc/apt/keyrings/axonops.$ext"; echo "changed $ext"; fi
-      register: cassandra_axonops_key
-      changed_when: cassandra_axonops_key.stdout is match('changed')
+      register: cassandra_axonops_signing_key
+      changed_when: cassandra_axonops_signing_key.stdout is match('changed')
 
     - name: The AxonOps apt source
       ansible.builtin.deb822_repository:
@@ -83,7 +83,7 @@
         uris: "{{ cassandra_axonops_repository_url }}"
         suites: "{{ cassandra_axonops_repository_suite }}"
         components: "{{ cassandra_axonops_repository_component }}"
-        signed_by: "/etc/apt/keyrings/axonops.{{ cassandra_axonops_key.stdout.split() | last }}"
+        signed_by: "/etc/apt/keyrings/axonops.{{ cassandra_axonops_signing_key.stdout.split() | last }}"
       register: cassandra_axonops_source
 
     - name: Refresh the apt cache
@@ -92,7 +92,7 @@
       retries: 3
       register: cassandra_axonops_apt_update
       until: cassandra_axonops_apt_update is succeeded
-      when: cassandra_axonops_source is changed or cassandra_axonops_key is changed
+      when: cassandra_axonops_source is changed or cassandra_axonops_signing_key is changed
 
 - name: The AxonOps yum repository (RedHat)
   ansible.builtin.yum_repository:
