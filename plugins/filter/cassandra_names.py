@@ -58,6 +58,8 @@ RC1_NAMES_NOW_IN_PYTHON = frozenset((
 #   -e is refused as a typo of cassandra_seeds)
 NOT_VARIABLES = frozenset((
     # the filters added since rc1 that the playbooks call (a new one goes here too: a test says so)
+    "cassandra_apply_config_axonops_steps", "cassandra_axonops_changes", "cassandra_axonops_config",
+    "cassandra_axonops_java_agent", "cassandra_axonops_loader_refusals", "cassandra_axonops_problems",
     "cassandra_cleanup_batches", "cassandra_clock_plan", "cassandra_config_audit_parameter_refusals",
     "cassandra_config_exporter_refusals", "cassandra_config_jmx_tls_refusals", "cassandra_config_logback_refusals",
     "cassandra_config_override_refusals", "cassandra_config_rackdc_refusals", "cassandra_config_snippet_refusals",

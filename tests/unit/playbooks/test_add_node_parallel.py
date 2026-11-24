@@ -54,7 +54,8 @@ def test_the_prepare_starts_nothing():
     assert included(prepare[0]) == "join_seeds.yml"  # its cassandra.yaml lists the seeds it joins with
     roles = [included(t) for t in prepare if "ansible.builtin.include_role" in t]
     assert roles == ["community.cassandra.cassandra_repository", "community.cassandra.cassandra_install",
-                     "community.cassandra.cassandra_linux", "community.cassandra.cassandra_config",
+                     "community.cassandra.cassandra_linux", "community.cassandra.cassandra_axonops",
+                     "community.cassandra.cassandra_config",
                      "community.cassandra.cassandra_firewall", "community.cassandra.cassandra_medusa"]
     for t in walk(prepare):
         assert "ansible.builtin.systemd_service" not in t and "ansible.builtin.service" not in t
