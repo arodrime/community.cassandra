@@ -15,12 +15,10 @@ def _registers(node):
         if isinstance(node.get("register"), str):
             yield node["register"]
         for value in node.values():
-            for name in _registers(value):
-                yield name
+            yield from _registers(value)
     elif isinstance(node, list):
         for value in node:
-            for name in _registers(value):
-                yield name
+            yield from _registers(value)
 
 
 ROLES = sorted(os.path.basename(os.path.dirname(os.path.dirname(p)))

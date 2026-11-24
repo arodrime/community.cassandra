@@ -1,3 +1,4 @@
+# shellcheck shell=sh
 # What the cassandra_axonops role reads on the node, one "<key> <value>" line each: the AxonOps packages
 # ("package <name> <state> <version>"), the groups of Cassandra's account ($CASSANDRA_USER) and of axonops, the
 # axon-agent service, the sha1, owner, group and mode of /etc/axonops/axon-agent.yml.
