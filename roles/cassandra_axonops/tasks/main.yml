@@ -171,10 +171,13 @@
     _lines: "{{ cassandra_axonops_available.stdout_lines | default([]) if cassandra_axonops_available is not skipped else [] }}"
     _unreadable: "{{ _lines | select('match', 'unreadable') | map('regex_replace', '^unreadable ?', '') | list }}"
     _url: "{{ cassandra_axonops_repository_url | community.cassandra.cassandra_url_masked }}"
-    _missing: >-
+    _unread: >-
       {{ ['the AxonOps repository ' ~ _url ~ ' cannot be read: '
-          ~ (_unreadable[0] or 'no error given') | community.cassandra.cassandra_url_masked] if _unreadable
-         else _lines | community.cassandra.cassandra_axonops_unavailable(_wanted, _cassandra_axonops_changes['items']) }}
+          ~ (_unreadable[0] or 'no error given') | community.cassandra.cassandra_url_masked] if _unreadable else [] }}
+    # (the lookup skipped: package files, a repository this run writes: nothing refused)
+    _missing: >-
+      {{ [] if cassandra_axonops_available is skipped else _unread
+         or _lines | community.cassandra.cassandra_axonops_unavailable(_wanted, _cassandra_axonops_changes['items']) }}
     _wanted:
       - [axon-agent, "{{ cassandra_axonops_agent_version | string }}"]
       - ["{{ _cassandra_axonops_java_package }}", "{{ cassandra_axonops_java_agent_version | string }}"]

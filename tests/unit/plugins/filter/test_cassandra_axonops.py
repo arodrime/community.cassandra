@@ -895,8 +895,25 @@ def test_an_unreadable_repository_is_said_so_not_a_missing_package():
         "cassandra_axonops_agent_version": "", "cassandra_axonops_java_agent_version": "",
         "_cassandra_axonops_java_package": JDK17}
     variables["_wanted"] = [["axon-agent", ""], [JDK17, ""]]
-    for name in ("_lines", "_unreadable", "_url", "_missing", "_said"):
+    for name in ("_lines", "_unreadable", "_url", "_unread", "_missing", "_said"):
         variables[name] = render_with(refuse["vars"][name], variables)
     assert variables["_missing"][0].startswith("the AxonOps repository https://m.example.com/yum cannot be read: ")
     assert "u:p@" not in variables["_missing"][0]
     assert variables["_said"][-1].startswith("WAY OUT  check cassandra_axonops_repository_url, _username and _password")
+
+
+@pytest.mark.parametrize("skipped", [True, False])
+def test_a_skipped_lookup_refuses_nothing(skipped):
+    # the lookup skipped (package files, a repository this run writes, upgrade's window): no package is said
+    # missing (a regression refused every create_cluster from AxonOps' repository)
+    from ansible_collections.community.cassandra.tests.unit.helpers import render_with, task_runs
+    refuse = _find(_tasks("roles", "cassandra_axonops", "tasks", "main.yml"), "Refuse packages the repositories do not have")
+    result = {"skipped": True, "changed": False} if skipped else {"stdout_lines": [], "changed": False}
+    variables = {"cassandra_axonops_available": result, "cassandra_axonops_repository_url": "https://m.example.com/yum",
+                 "_cassandra_axonops_java_package": JDK17, "_wanted": [["axon-agent", ""], [JDK17, ""]],
+                 "_cassandra_axonops_changes": {"items": [{"item": "package axon-agent", "before": "absent",
+                                                           "after": "2.0.36"}]}}
+    for name in ("_lines", "_unreadable", "_url", "_unread", "_missing"):
+        variables[name] = render_with(refuse["vars"][name], variables)
+    assert (variables["_missing"] == []) is skipped
+    assert task_runs(refuse, **variables) is not skipped
