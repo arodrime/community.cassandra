@@ -82,8 +82,9 @@
         _said:
           - "{{ _cassandra_config_axonops_options }} is missing (cassandra_axonops_enabled)."
           - "cassandra-env.sh would source it: Cassandra would not start."
-          - "WAY OUT  apply the cassandra_axonops role first (apply_config,"
-          - "create_cluster and add_node do), then run again."
+          - "WAY OUT  apply the cassandra_axonops role first (create_cluster, add_node,"
+          - "replace_node, add_datacenter, apply_config, upgrade, update_java do),"
+          - "then run again."
 
     - name: Write the files and directories
       ansible.builtin.import_tasks: apply.yml

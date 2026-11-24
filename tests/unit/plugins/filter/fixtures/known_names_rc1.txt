@@ -104,12 +104,15 @@ cassandra_axonops_apt_update	both
 cassandra_axonops_cassandra_group	both
 cassandra_axonops_cassandra_user	both
 cassandra_axonops_config_written	both
+cassandra_axonops_credentials	both
+cassandra_axonops_credentials_removed	both
 cassandra_axonops_enabled	both
 cassandra_axonops_extra_settings	both
 cassandra_axonops_groups	both
 cassandra_axonops_java_agent_package	both
 cassandra_axonops_java_agent_version	both
 cassandra_axonops_jvm_options	both
+cassandra_axonops_jvm_options_after	both
 cassandra_axonops_key	both
 cassandra_axonops_key_download	both
 cassandra_axonops_ntp_hosts	both
@@ -120,6 +123,8 @@ cassandra_axonops_packages_deb	both
 cassandra_axonops_packages_latest	both
 cassandra_axonops_packages_latest_rpm	both
 cassandra_axonops_packages_reinstall	both
+cassandra_axonops_packages_removed	both
+cassandra_axonops_packages_removed_rpm	both
 cassandra_axonops_packages_rpm	both
 cassandra_axonops_packages_swap	both
 cassandra_axonops_read	both
@@ -139,6 +144,7 @@ cassandra_axonops_tls_cert_file	both
 cassandra_axonops_tls_key_file	both
 cassandra_axonops_tls_mode	both
 cassandra_axonops_tls_skip_verify	both
+cassandra_axonops_yum	both
 cassandra_backups	both
 cassandra_batch_size_fail_threshold	both
 cassandra_batch_size_fail_threshold_in_kb	both

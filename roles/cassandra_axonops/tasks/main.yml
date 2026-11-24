@@ -25,12 +25,18 @@
       tls_key_file: "{{ cassandra_axonops_tls_key_file }}"
       ntp_hosts: "{{ cassandra_axonops_ntp_hosts }}"
       extra_settings: "{{ cassandra_axonops_extra_settings }}"
+      repository_manage: "{{ cassandra_axonops_repository_manage | bool }}"
+      repository_username: "{{ cassandra_axonops_repository_username }}"
+      repository_password: "{{ cassandra_axonops_repository_password }}"
+      repository_key_url: "{{ cassandra_axonops_repository_key_url }}"
+      os_family: "{{ ansible_facts['os_family'] }}"
     _cassandra_axonops_java_package: >-
       {{ cassandra_axonops_java_agent_package or _series | community.cassandra.cassandra_axonops_java_agent(_java) }}
     _cassandra_axonops_compare: "{{ ansible_check_mode or _cassandra_compare | default(false) | bool }}"
   vars:
     _series: "{{ cassandra_version | default('50x') }}"
-    _java: "{{ cassandra_java_version | default({'40x': '11', '41x': '11'}.get(_series, '17')) }}"
+    _java: "{{ cassandra_java_version | default(_by_series[_series] | default('17')) }}"
+    _by_series: "{{ cassandra_java_versions | default({'40x': '11', '41x': '11', '50x': '17'}) }}"
   no_log: true  # the agent key
 
 - name: Refuse settings the agent cannot work with
@@ -41,7 +47,7 @@
     cassandra_output: true  # a verdict: its msg as is (ops callback)
     _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
     _problems: "{{ _cassandra_axonops_settings | community.cassandra.cassandra_axonops_problems }}"
-    _said: "{{ _problems + ['WAY OUT  set these variables (cassandra_axonops role), then run again.'] }}"
+    _said: "{{ _problems + ['WAY OUT  set these variables (cassandra_axonops role),', 'then run again.'] }}"
 
 # (none given: {} and the repositories)
 - name: Read the package files given
@@ -71,6 +77,18 @@
   changed_when: false
   check_mode: false  # reads only
 
+# (before any change, --check too: Cassandra's account, a package left half done, axon-agent without its account)
+- name: Refuse what the node holds
+  ansible.builtin.fail:
+    msg: "{{ ('cassandra_axonops  ' ~ inventory_hostname) | community.cassandra.cassandra_refused(_said) | join(_nl) }}"
+  when: _said | length > 0
+  vars:
+    cassandra_output: true  # a verdict: its msg as is (ops callback)
+    _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+    _said: >-
+      {{ cassandra_axonops_read.stdout_lines | community.cassandra.cassandra_axonops_read_problems(
+           cassandra_axonops_cassandra_user) }}
+
 - name: Work out what changes
   ansible.builtin.set_fact:
     _cassandra_axonops_config: "{{ _config }}"
@@ -88,10 +106,17 @@
       - ["{{ _cassandra_axonops_java_package }}", "{{ cassandra_axonops_java_agent_version | string }}"]
   no_log: true  # the agent key
 
+# under check mode too: what it would change, in the plan
+- name: The repository
+  ansible.builtin.import_tasks: repository.yml
+  when: cassandra_axonops_repository_manage | bool
+
 # (apply_config shows them in its plan)
 - name: List the changes
   ansible.builtin.set_fact:
-    _cassandra_axonops_items: "{{ _cassandra_axonops_changes['items'] }}"
+    _cassandra_axonops_items: >-
+      {{ (_cassandra_axonops_repository_items | default([]) if cassandra_axonops_repository_manage | bool else [])
+         + _cassandra_axonops_changes['items'] }}
     _cassandra_axonops_removed: "{{ _cassandra_axonops_changes.removed }}"
     _cassandra_axonops_latest: "{{ _cassandra_axonops_changes.latest }}"
     _cassandra_axonops_reinstall: "{{ _cassandra_axonops_changes.reinstall }}"
@@ -99,36 +124,28 @@
 - name: Install, configure and start the agent
   when: not _cassandra_axonops_compare | bool
   block:
-    - name: The repository
-      ansible.builtin.import_tasks: repository.yml
-      when: cassandra_axonops_repository_manage | bool
-
     - name: The packages
       ansible.builtin.import_tasks: packages.yml
 
-    # (the accounts are the packages': none is created here)
-    - name: Look for the accounts
+    # (Cassandra's account checked before any change; axonops comes with axon-agent: none is created here)
+    - name: Look for the account axonops
       ansible.builtin.command:
-        argv: [getent, passwd, axonops, "{{ cassandra_axonops_cassandra_user }}"]
+        argv: [getent, passwd, axonops]
       register: cassandra_axonops_accounts
       changed_when: false
       failed_when: false
 
-    - name: Stop without an account to add to a group
+    - name: Stop without the account axonops
       ansible.builtin.fail:
         msg: "{{ _said | join(_nl) }}"
-      when: _missing | length > 0
+      when: cassandra_axonops_accounts.rc != 0
       vars:
         cassandra_output: true  # a verdict: its msg as is (ops callback)
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
-        _found: "{{ cassandra_axonops_accounts.stdout_lines | map('regex_replace', ':.*$', '') | list }}"
-        _missing: "{{ ['axonops', cassandra_axonops_cassandra_user] | reject('in', _found) | list }}"
         _said:
           - "STOPPED  cassandra_axonops  {{ inventory_hostname }}"
-          - "  the AxonOps packages are installed"
-          - "  no account {{ _missing | join(', no account ') }} on the node"
-          - "WAY OUT  axonops comes with axon-agent (reinstall it); Cassandra's is"
-          - "  cassandra_axonops_cassandra_user: fix it, then run again"
+          - "  axon-agent is installed, its account axonops is missing"
+          - "WAY OUT  reinstall the axon-agent package, then run again"
 
     - name: The groups
       ansible.builtin.user:
@@ -140,17 +157,32 @@
         - {user: axonops, group: "{{ cassandra_axonops_cassandra_group }}"}
       register: cassandra_axonops_groups
 
-    # the key: no diff shown
-    - name: Write /etc/axonops/axon-agent.yml
-      ansible.builtin.copy:
-        content: "{{ _cassandra_axonops_config }}"
-        dest: /etc/axonops/axon-agent.yml
-        owner: root
-        group: axonops
-        mode: "0640"
-      diff: false
-      no_log: true
-      register: cassandra_axonops_config_written
+    # the key: no diff shown, nor the content in a failure (its cause said)
+    - name: Write /etc/axonops/axon-agent.yml, or say why not
+      block:
+        - name: Write /etc/axonops/axon-agent.yml
+          ansible.builtin.copy:
+            content: "{{ _cassandra_axonops_config }}"
+            dest: /etc/axonops/axon-agent.yml
+            owner: root
+            group: axonops
+            mode: "0640"
+          diff: false
+          no_log: true
+          register: cassandra_axonops_config_written
+      rescue:
+        - name: Stop on the failed write
+          ansible.builtin.fail:
+            msg: "{{ _said | join(_nl) }}"
+          vars:
+            cassandra_output: true  # a verdict: its msg as is (ops callback)
+            _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+            # (the module's message, never its arguments: the key)
+            _cause: "{{ (cassandra_axonops_config_written.msg | default('') | string)[:200] }}"
+            _said:
+              - "STOPPED  cassandra_axonops  {{ inventory_hostname }}"
+              - "  /etc/axonops/axon-agent.yml not written: {{ _cause or 'no cause given' }}"
+              - "WAY OUT  fix the cause on the node, then run again"
 
     - name: Start axon-agent, or restart it for its new package or config
       ansible.builtin.systemd_service:

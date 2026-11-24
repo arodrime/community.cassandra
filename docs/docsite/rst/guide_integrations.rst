@@ -63,11 +63,17 @@ On a running cluster, ``apply_config`` shows the agent's changes (section "AxonO
 
 ``create_cluster`` sets it up before the first start, ``add_node``, ``replace_node`` and ``add_datacenter`` on the
 new nodes. A change of the agent alone (its versions, ``axon-agent.yml``) restarts ``axon-agent``, not Cassandra:
-Cassandra's Java agent reads them at its next start. Air-gapped hosts without a mirror: put the ``.deb`` or
+Cassandra's Java agent reads them at its next start. ``apply_config`` also compares the repository the role adds
+(its source, signing key and credentials). With ``cassandra_axonops_repository_manage`` turned off later, the
+repository files the role wrote are left on the nodes (``/etc/apt/sources.list.d/axonops.sources``,
+``/etc/apt/keyrings/axonops.*``, ``/etc/apt/auth.conf.d/axonops.conf``, ``/etc/yum.repos.d/axonops.repo``): remove
+them by hand if another source replaces them. Air-gapped hosts without a mirror: put the ``.deb`` or
 ``.rpm`` files in ``cassandra_axonops_package_files`` (on the controller).
 
 ``upgrade`` and ``update_java`` put the Java agent package of the target series or Java in place at each node's
-turn, before its config is written (``upgrade``: before the drain); their plans show it. A Java agent package older
+turn, before Cassandra starts on it (``upgrade``: once the target is installed, before its config is written;
+``update_java``: once the config is written, before the restart). ``upgrade``'s preflight lists the change,
+``update_java``'s plan shows it. A Java agent package older
 than 1.1.0 (without ``axonops-jvm.options``) is upgraded to the newest, unless ``cassandra_axonops_java_agent_version``
 pins another one.
 

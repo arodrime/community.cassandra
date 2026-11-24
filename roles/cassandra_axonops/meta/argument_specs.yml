@@ -115,6 +115,7 @@ argument_specs:
         description:
           - Add the AxonOps repository (C(false) when the hosts get it otherwise).
           - Defaults to V(true), V(false) with O(cassandra_offline) or O(cassandra_axonops_package_files).
+          - Turned off later, the repository files the role wrote are left on the nodes.
       cassandra_axonops_repository_url:
         type: str
         description:

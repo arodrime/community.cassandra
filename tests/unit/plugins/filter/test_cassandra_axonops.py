@@ -246,10 +246,12 @@ def test_package_files_fit():
     assert out == {"wanted": [["axon-agent", "2.0.36"], [JDK17, "1.1.1"]],
                    "paths": ["f/axon-agent_2.0.36_amd64.deb", "f/axon-cassandra5.0-agent-jdk17_1.1.1_all.deb"],
                    "problems": []}
-    rpm = cassandra_axonops_files(["axon-agent-2.0.36-1.x86_64.rpm", JDK17 + "-1.1.1-1.noarch.rpm"], JDK17)
-    assert rpm["wanted"] == [["axon-agent", "2.0.36"], [JDK17, "1.1.1"]]
+    # (rpm: version-release, as read.sh reads an installed one; a pin with or without its release fits)
+    rpm = cassandra_axonops_files(["axon-agent-2.0.36-1.x86_64.rpm", JDK17 + "-1.1.1-1.noarch.rpm"], JDK17,
+                                  "2.0.36", "1.1.1-1")
+    assert rpm["wanted"] == [["axon-agent", "2.0.36-1"], [JDK17, "1.1.1-1"]]
     # their versions are what the plan compares with: installed as they are, nothing to do
-    lines = [line.replace("1.1.1-1", "1.1.1") for line in SET_UP]
+    lines = [line.replace("installed 2.0.36", "installed 2.0.36-1") for line in SET_UP]
     assert cassandra_axonops_changes(lines, rpm["wanted"], "abc", "cassandra", "cassandra", "x")["items"] == []
 
 
@@ -300,7 +302,9 @@ def test_redhat_swaps_the_java_agent_in_one_transaction():
     swap = _find(tasks, "Replace the Java agent package of another series or Java")
     assert "'swap', _cassandra_axonops_removed[0], _cassandra_axonops_wanted[1]" in swap["ansible.builtin.command"]["argv"]
     install = _find(tasks, "Install them")
-    assert install["ansible.builtin.dnf"]["name"].startswith("{{ _cassandra_axonops_wanted[:1] if _cassandra_axonops_removed")
+    assert install["ansible.builtin.dnf"]["name"] == "{{ _cassandra_axonops_wanted[:1] if _swap else _cassandra_axonops_wanted }}"
+    assert "_cassandra_axonops_java_change | bool" in install["vars"]["_swap"]
+    assert "_cassandra_axonops_java_change | bool" in swap["when"]
     # Debian: the old one removed only after the new one is in and its options file checked
     assert names.index("Remove the Java agent packages of another series or Java (Debian & Ubuntu)") > names.index(
         "Stop without the options file cassandra-env.sh loads") > names.index("Install the AxonOps packages (Debian & Ubuntu)")
@@ -312,28 +316,40 @@ def test_repository_secrets_and_keyrings():
     assert yum["diff"] is False and "0600" in yum["ansible.builtin.yum_repository"]["mode"]
     names = _names(tasks)
     assert names.index("Create the key directory") < names.index("Download the signing key")
-    assert names.index("Apt credentials without whitespace") < names.index("Credentials of the AxonOps apt repository")
+    # (compared under check mode too: the key downloaded to a file of its own, compared, put in place for real only)
+    assert _find(tasks, "Create the key directory")["check_mode"] is False
+    assert _find(tasks, "Download the signing key")["check_mode"] is False
+    assert _find(tasks, "Compare the signing key with the one in place")["check_mode"] is False
+    assert "ansible.builtin.shell" in _find(tasks, "Put the signing key in place")  # (skipped under check mode)
 
 
 def test_no_account_created_and_a_group_change_restarts_the_agent():
     tasks = _tasks("roles", "cassandra_axonops", "tasks", "main.yml")
     names = _names(tasks)
-    assert names.index("Look for the accounts") < names.index("Stop without an account to add to a group") < names.index(
+    assert names.index("Look for the account axonops") < names.index("Stop without the account axonops") < names.index(
         "The groups")
+    # Cassandra's account and the rest of what the node holds: refused before any change, --check too
+    assert names.index("Refuse what the node holds") < names.index("The repository") < names.index(
+        "Install, configure and start the agent")
+    assert "repository" not in _names(_find(tasks, "Install, configure and start the agent")["block"])
     start = _find(tasks, "Start axon-agent, or restart it for its new package or config")
     assert "cassandra_axonops_groups is changed" in start["vars"]["_changed"]
 
 
-@pytest.mark.parametrize("path, before", [
-    (("roles", "cassandra_operation", "tasks", "action_upgrade.yml"), "Drain the node"),
-    (("roles", "cassandra_operation", "tasks", "action_update_java.yml"), "Write the config"),
+@pytest.mark.parametrize("path, after, before", [
+    # once the target is installed (node stopped): a failed install never leaves the former version with the
+    # target's agent (its JVM aborts at the way out's start)
+    (("roles", "cassandra_operation", "tasks", "action_upgrade.yml"), "Install the target version",
+     "Write the target series' config"),
+    # once the config is written: its refusals come before any swap
+    (("roles", "cassandra_operation", "tasks", "action_update_java.yml"), "Write the config",
+     "Drain and restart the node"),
 ])
-def test_upgrade_and_java_change_set_up_the_agent_first(path, before):
-    # they wrote the line of the new series or Java with the former Java agent package in place
+def test_upgrade_and_java_change_set_up_the_agent_first(path, after, before):
     tasks = _tasks(*path)
     names = _names(tasks)
     setup = [n for n in names if str(n).startswith("Set up the AxonOps agent")]
-    assert len(setup) == 1 and names.index(setup[0]) < names.index(before)
+    assert len(setup) == 1 and names.index(after) < names.index(setup[0]) < names.index(before)
     assert tasks[names.index(setup[0])]["ansible.builtin.include_role"]["name"] == "community.cassandra.cassandra_axonops"
 
 
@@ -351,21 +367,25 @@ LOADER_LINE = "-javaagent:/usr/share/axonops/axon-cassandra5.0-agent.jar=/etc/ax
 
 
 @pytest.mark.parametrize("where", ["cassandra_jvm_extra_options", "cassandra_jvm8_extra_options",
-                                   "cassandra_jvm11_extra_options", "cassandra_jvm17_extra_options", "env", "snippet"])
+                                   "cassandra_jvm11_extra_options", "cassandra_jvm17_extra_options", "env",
+                                   "env_jvm_opts", "snippet"])
 def test_cassandra_config_reads_every_loader(where):
     # a loader in a jvm<N> list or in the unit's JVM_EXTRA_OPTS was missed: the JVM loaded the agent twice
     from ansible_collections.community.cassandra.tests.unit.helpers import render_with
     task = _find(_tasks("roles", "cassandra_config", "tasks", "checks.yml"), "Refuse a second AxonOps Java agent loader")
     variables = dict(cassandra_jvm_extra_options=[], cassandra_jvm8_extra_options=[], cassandra_jvm11_extra_options=[],
                      cassandra_jvm17_extra_options=[], cassandra_service_environment={}, _cassandra_config_snippet_env="",
-                     cassandra_config_keep_files=[], cassandra_axonops_enabled=True, inventory_hostname="n1")
+                     cassandra_config_keep_files=[], cassandra_axonops_enabled=True, inventory_hostname="n1",
+                     cassandra_config_template_overrides={})
     if where == "env":
         variables["cassandra_service_environment"] = {"JVM_EXTRA_OPTS": LOADER_LINE}
+    elif where == "env_jvm_opts":
+        variables["cassandra_service_environment"] = {"JVM_OPTS": LOADER_LINE}
     elif where == "snippet":
         variables["_cassandra_config_snippet_env"] = 'JVM_OPTS="$JVM_OPTS %s"' % LOADER_LINE
     else:
         variables[where] = [LOADER_LINE]
-    for name in ("_lists", "_env", "_options", "_wrong", "_said"):
+    for name in ("_lists", "_environment", "_env", "_override", "_options", "_wrong", "_said"):
         variables[name] = render_with(task["vars"][name], variables)
     assert variables["_wrong"][0].startswith("the AxonOps Java agent is already loaded")
     assert variables["_said"][-1].startswith("WAY OUT  ")
@@ -381,7 +401,7 @@ def test_cassandra_config_refuses_a_missing_options_file():
     assert look["ansible.builtin.command"]["argv"][:2] == ["test", "-e"]
     assert refuse["when"][1:] == ["cassandra_config_axonops_options is not skipped",
                                   "cassandra_config_axonops_options.rc != 0"]
-    assert refuse["vars"]["_said"][-2].startswith("WAY OUT  ")
+    assert [line for line in refuse["vars"]["_said"] if line.startswith("WAY OUT  ")]
     names = _names(tasks)
     assert names.index("Refuse to load an AxonOps Java agent not installed") < names.index("Write the files and directories")
 
@@ -407,3 +427,120 @@ def test_a_planned_package_refreshes_the_apt_cache():
     # a mirror updated since the last refresh: the pinned version was not found
     install = _find(_tasks("roles", "cassandra_axonops", "tasks", "packages.yml"), "Install them from the repositories")
     assert install["ansible.builtin.apt"]["update_cache"] is True
+
+
+def test_read_sh_says_the_options_file_and_the_accounts(tmp_path):
+    import subprocess
+    script = os.path.join(TOP, "roles", "cassandra_axonops", "files", "read.sh")
+    out = subprocess.run(["sh", script], env=dict(os.environ, CASSANDRA_USER="no-such-user-x1"), check=True,
+                         capture_output=True, text=True).stdout.splitlines()
+    assert "options no" in out or "options yes" in out
+    assert "account_no-such-user-x1 no" in out
+
+
+@pytest.mark.parametrize("lines, said", [
+    (["account_cass no", "account_axonops yes"], ["no account cass on the node (cassandra_axonops_cassandra_user).",
+                                                  "WAY OUT  set cassandra_axonops_cassandra_user to the account"]),
+    (["account_cass yes", "package axon-agent half-configured 2.0.36"],
+     ["axon-agent left half done by dpkg (half-configured).", "WAY OUT  run dpkg --configure -a on the node"]),
+    (["account_cass yes", "account_axonops no", "package axon-agent installed 2.0.36"],
+     ["axon-agent is installed, its account axonops is missing.", "WAY OUT  reinstall the axon-agent package"]),
+    (["account_cass yes", "account_axonops no"], []),
+])
+def test_what_the_node_holds_is_refused_before_any_change(lines, said):
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_axonops import cassandra_axonops_read_problems
+    got = cassandra_axonops_read_problems(lines, "cass")
+    assert [g[:len(s)] for g, s in zip(got, said)] == said and len(got) == len(said)
+
+
+REPO = dict(SETTINGS, repository_manage=True, repository_username="", repository_password="",
+            repository_key_url="https://k", os_family="Debian")
+
+
+@pytest.mark.parametrize("change, said", [
+    ({"repository_password": "p"}, "cassandra_axonops_repository_password is set without"),
+    ({"repository_key_url": ""}, "cassandra_axonops_repository_key_url is empty"),
+    ({"repository_username": "u", "repository_password": "a b"}, "cassandra_axonops_repository_username or _password"),
+])
+def test_repository_settings_refused_in_the_plan(change, said):
+    assert cassandra_axonops_problems(REPO) == []
+    problems = cassandra_axonops_problems(dict(REPO, **change))
+    assert len(problems) == 1 and problems[0].startswith(said), problems
+    # not managed, or yum (no key needed): nothing
+    assert cassandra_axonops_problems(dict(REPO, repository_manage=False, **change)) == []
+
+
+@pytest.mark.parametrize("override, said", [
+    ("", []),
+    ("x\n{{ ('\\n' ~ _cassandra_config_axonops_line) }}", []),
+    ("x\n", ["cassandra-env.sh is in cassandra_config_template_overrides and your template does not write"]),
+    ("x\n{{ _cassandra_config_axonops_line }}\n. /usr/share/axonops/axonops-jvm.options",
+     ["your cassandra-env.sh template (cassandra_config_template_overrides) loads the AxonOps Java agent itself"]),
+])
+def test_a_cassandra_env_template_of_yours_must_write_the_line(override, said):
+    got = cassandra_axonops_loader_refusals("", [], override)
+    assert [g[:len(s)] for g, s in zip(got, said)] == said and len(got) == len(said)
+
+
+def _packages():
+    return _tasks("roles", "cassandra_axonops", "tasks", "packages.yml")
+
+
+@pytest.mark.parametrize("family, files, argv", [
+    ("Debian", [], ["apt-get", "-y", "install", "--reinstall", JDK17]),
+    ("Debian", ["/var/cache/cassandra-axonops/a.deb", "/var/cache/cassandra-axonops/j.deb"],
+     ["apt-get", "-y", "install", "--reinstall", "/var/cache/cassandra-axonops/j.deb"]),
+    ("RedHat", [], ["dnf", "-y", "reinstall", JDK17]),
+    ("RedHat", ["/var/cache/cassandra-axonops/a.rpm", "/var/cache/cassandra-axonops/j.rpm"],
+     ["dnf", "-y", "--nogpgcheck", "reinstall", "/var/cache/cassandra-axonops/j.rpm"]),
+])
+def test_the_reinstall(family, files, argv):
+    # a package file given (air-gapped): reinstalled from it, the repositories may not have it
+    from ansible_collections.community.cassandra.tests.unit.helpers import render_with
+    task = _find(_packages(), "Install the Java agent package again")
+    variables = {"ansible_facts": {"os_family": family}, "_cassandra_axonops_reinstall": [JDK17],
+                 "_cassandra_axonops_wanted": files or ["axon-agent", JDK17],
+                 "_cassandra_axonops_files": {"paths": files}}
+    variables["_files"] = render_with(task["vars"]["_files"], variables)
+    assert render_with(task["ansible.builtin.command"]["argv"], variables) == argv
+    assert task["environment"]["DEBIAN_FRONTEND"] == "noninteractive"
+    assert task["when"] == "_cassandra_axonops_reinstall | length > 0"
+
+
+@pytest.mark.parametrize("name, module", [("Upgrade the Java agent package to the newest", "ansible.builtin.apt"),
+                                          ("Upgrade the Java agent package to the newest (RedHat)",
+                                           "ansible.builtin.dnf")])
+def test_the_upgrade_to_the_newest(name, module):
+    task = _find(_packages(), name)
+    assert task[module] == {"name": "{{ _cassandra_axonops_latest }}", "state": "latest", **(
+        {"update_cache": True} if module.endswith("apt") else {})}
+    when = task["when"] if isinstance(task["when"], list) else [task["when"]]
+    assert "_cassandra_axonops_latest | length > 0" in when
+
+
+@pytest.mark.parametrize("java_change, removed, left", [
+    (True, ["a", "b"], ["b"]),  # the first one swapped already
+    (False, ["a", "b"], ["a", "b"]),  # left over next to the right one: all of them (the plan converges)
+    (True, ["a"], []),
+])
+def test_redhat_removes_every_package_left_over(java_change, removed, left):
+    from ansible_collections.community.cassandra.tests.unit.helpers import render_with, task_runs
+    task = _find(_packages(), "Remove the other Java agent packages (RedHat)")
+    variables = {"_cassandra_axonops_java_change": java_change, "_cassandra_axonops_removed": removed,
+                 "ansible_facts": {"os_family": "RedHat"}}
+    variables["_left"] = render_with(task["vars"]["_left"], variables)
+    assert variables["_left"] == left
+    assert task_runs(task, **variables) is bool(left)
+    deb = _find(_packages(), "Remove the Java agent packages of another series or Java (Debian & Ubuntu)")
+    assert deb["ansible.builtin.apt"]["name"] == "{{ _cassandra_axonops_removed }}"
+    assert "_cassandra_axonops_removed | length > 0" in deb["when"]
+
+
+def test_repository_rows_never_show_a_secret():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_axonops import (
+        cassandra_axonops_repository_items)
+    assert cassandra_axonops_repository_items({}, "u", "k") == []
+    rows = cassandra_axonops_repository_items({"source": True, "key": True, "credentials": True}, "https://m/a", "https://m/k")
+    assert rows == [{"item": "repository https://m/a", "before": "absent or other", "after": "added"},
+                    {"item": "repository signing key", "before": "absent or other", "after": "https://m/k"},
+                    {"item": "repository credentials", "before": "absent or other", "after": "set (hidden)"}]

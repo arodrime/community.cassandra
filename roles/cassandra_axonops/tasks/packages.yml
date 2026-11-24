@@ -18,6 +18,9 @@
     _cassandra_axonops_package_change: >-
       {{ _cassandra_axonops_items | map(attribute='item')
          | select('in', ['package axon-agent', 'package ' ~ _cassandra_axonops_java_package]) | list | length > 0 }}
+    # the Java agent itself planned (installed, upgraded, reinstalled): it replaces the other ones in one step
+    _cassandra_axonops_java_change: >-
+      {{ ('package ' ~ _cassandra_axonops_java_package) in _cassandra_axonops_items | map(attribute='item') }}
   vars:
     _files: "{{ _cassandra_axonops_files.paths | default([]) }}"
     _sep: "{{ '=' if ansible_facts['os_family'] == 'Debian' else '-' }}"
@@ -85,12 +88,14 @@
     # (the Java agent too, unless it replaces another one: swapped below)
     - name: Install them
       ansible.builtin.dnf:
-        name: "{{ _cassandra_axonops_wanted[:1] if _cassandra_axonops_removed else _cassandra_axonops_wanted }}"
+        name: "{{ _cassandra_axonops_wanted[:1] if _swap else _cassandra_axonops_wanted }}"
         allow_downgrade: true
         disable_gpg_check: "{{ _cassandra_axonops_files.paths | default([]) | length > 0 }}"
       retries: 3
       register: cassandra_axonops_packages_rpm
       until: cassandra_axonops_packages_rpm is succeeded
+      vars:
+        _swap: "{{ _cassandra_axonops_java_change | bool and _cassandra_axonops_removed | length > 0 }}"
 
     # rpm refuses two packages with the same files: the old one out and the new one in, in one transaction (a failed
     # one changes nothing)
@@ -101,7 +106,9 @@
              + ['swap', _cassandra_axonops_removed[0], _cassandra_axonops_wanted[1]] }}
       register: cassandra_axonops_packages_swap
       changed_when: true
-      when: _cassandra_axonops_removed | length > 0
+      when:
+        - _cassandra_axonops_java_change | bool
+        - _cassandra_axonops_removed | length > 0
 
 - name: Upgrade the Java agent package to the newest (RedHat)
   ansible.builtin.dnf:
@@ -112,12 +119,18 @@
     - ansible_facts['os_family'] == 'RedHat'
     - _cassandra_axonops_latest | length > 0
 
-# its options file gone (deleted by hand): the package installed again puts it back
+# its options file gone (deleted by hand): the package installed again puts it back (its file when given)
 - name: Install the Java agent package again
   ansible.builtin.command:
     argv: >-
       {{ (['apt-get', '-y', 'install', '--reinstall'] if ansible_facts['os_family'] == 'Debian'
-          else ['dnf', '-y', 'reinstall']) + _cassandra_axonops_reinstall }}
+          else ['dnf', '-y'] + (['--nogpgcheck'] if _files else []) + ['reinstall'])
+         + ([_files[-1]] if _files else _cassandra_axonops_reinstall) }}
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  vars:
+    # the files as copied, axon-agent's first: the Java agent's last
+    _files: "{{ _cassandra_axonops_wanted if _cassandra_axonops_files.paths | default([]) else [] }}"
   register: cassandra_axonops_packages_reinstall
   changed_when: true
   when: _cassandra_axonops_reinstall | length > 0
@@ -155,14 +168,41 @@
   ansible.builtin.apt:
     name: "{{ _cassandra_axonops_removed }}"
     state: absent
+  register: cassandra_axonops_packages_removed
   when:
     - ansible_facts['os_family'] == 'Debian'
     - _cassandra_axonops_removed | length > 0
 
+# (the one swapped already when the Java agent was planned; all of them when only they are left over)
 - name: Remove the other Java agent packages (RedHat)
   ansible.builtin.dnf:
-    name: "{{ _cassandra_axonops_removed[1:] }}"
+    name: "{{ _left }}"
     state: absent
+  register: cassandra_axonops_packages_removed_rpm
+  vars:
+    _left: "{{ _cassandra_axonops_removed[1:] if _cassandra_axonops_java_change | bool else _cassandra_axonops_removed }}"
   when:
     - ansible_facts['os_family'] == 'RedHat'
-    - _cassandra_axonops_removed | length > 1
+    - _left | length > 0
+
+# (a removal that took the options file with it: said now, not at Cassandra's next start)
+- name: Check the options file is still there
+  ansible.builtin.stat:
+    path: /usr/share/axonops/axonops-jvm.options
+  register: cassandra_axonops_jvm_options_after
+  when: cassandra_axonops_packages_removed is changed or cassandra_axonops_packages_removed_rpm is changed
+
+- name: Stop when the removal took the options file
+  ansible.builtin.fail:
+    msg: "{{ _said | join(_nl) }}"
+  when:
+    - cassandra_axonops_jvm_options_after is not skipped
+    - not cassandra_axonops_jvm_options_after.stat.exists
+  vars:
+    cassandra_output: true  # a verdict: its msg as is (ops callback)
+    _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+    _said:
+      - "STOPPED  cassandra_axonops  {{ inventory_hostname }}"
+      - "  removing {{ _cassandra_axonops_removed | join(', ') }} took"
+      - "  /usr/share/axonops/axonops-jvm.options with it"
+      - "WAY OUT  run this again: it reinstalls {{ _cassandra_axonops_java_package }}"

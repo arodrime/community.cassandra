@@ -24,14 +24,6 @@
       if cassandra_config_exporter_download | default({}) is changed else '' }}
   when: cassandra_prometheus_exporter_enabled | default(false) | bool
 
-# The AxonOps agent (cassandra_axonops_enabled): the Java agent package of the target series and Java in place before
-# the drain (the running JVM keeps the jar it opened); a package that cannot be installed stops the run with the node
-# still running
-- name: Set up the AxonOps agent for the target series
-  ansible.builtin.include_role:
-    name: community.cassandra.cassandra_axonops
-  when: cassandra_axonops_enabled | default(false) | bool
-
 - name: Drain the node
   ansible.builtin.import_tasks: drain.yml
   vars:
@@ -60,6 +52,15 @@
   vars:
     _cassandra_install_changed_before: [Cassandra stopped for its upgrade]
     _cassandra_install_again: run this phase again (it says how to start this node first)
+
+# The AxonOps agent (cassandra_axonops_enabled): the Java agent package of the target series and Java, once the
+# target is installed (the node stopped), before the config that loads it. Before: a failed install would leave the
+# former version to start with the target's agent (the JVM aborts); here a failure leaves the target installed,
+# whose way out (apply_config) applies the role again
+- name: Set up the AxonOps agent for the target series
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_axonops
+  when: cassandra_axonops_enabled | default(false) | bool
 
 - name: Write the target series' config
   ansible.builtin.include_role:

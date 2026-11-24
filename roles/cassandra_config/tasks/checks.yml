@@ -442,9 +442,15 @@
     cassandra_output: true  # a verdict: its msg as is (ops callback)
     _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
     _lists: "{{ [cassandra_jvm_extra_options, cassandra_jvm8_extra_options, cassandra_jvm11_extra_options] }}"
-    _env: "{{ (cassandra_service_environment | default({})).JVM_EXTRA_OPTS | default('') }}"
+    _environment: "{{ cassandra_service_environment | default({}) }}"
+    _env: "{{ _environment.JVM_EXTRA_OPTS | default('') ~ ' ' ~ _environment.JVM_OPTS | default('') }}"
+    # your cassandra-env.sh template, if any (read as it is: a loader written in it, the role's line or not)
+    _override: >-
+      {{ lookup('ansible.builtin.file', cassandra_config_template_overrides['cassandra-env.sh'])
+         if 'cassandra-env.sh' in cassandra_config_template_overrides else '' }}
     _options: >-
       {{ (_lists + [cassandra_jvm17_extra_options]) | flatten | map('string') | join(' ') ~ ' '
          ~ _cassandra_config_snippet_env ~ ' ' ~ _env }}
-    _wrong: "{{ _options | community.cassandra.cassandra_axonops_loader_refusals(cassandra_config_keep_files) }}"
-    _said: "{{ _wrong + ['WAY OUT  remove the other loader (or the file from the list), then run again.'] }}"
+    _wrong: >-
+      {{ _options | community.cassandra.cassandra_axonops_loader_refusals(cassandra_config_keep_files, _override) }}
+    _said: "{{ _wrong + ['WAY OUT  fix what these lines say, then run again.'] }}"

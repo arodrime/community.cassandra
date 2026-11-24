@@ -13,6 +13,10 @@ cassandra_axonops_changes: what the role read on the node and what it wants
     after}] (apply_config's plan).
 cassandra_axonops_files: the package files given -> the packages and versions they
     hold, or why they do not fit.
+cassandra_axonops_repository_items: what the repository tasks changed -> the
+    plan's rows.
+cassandra_axonops_read_problems: what the node read -> what stops the role
+    before any change.
 cassandra_axonops_loader_refusals: the JVM options and the cassandra-env.sh
     snippet, the files kept by hand -> why the role could not load the Java
     agent itself ([] when it can).
@@ -78,6 +82,27 @@ def _merged(base, extra):
     return out
 
 
+def _repository_problems(settings):
+    """The repository settings' problems (settings: repository_manage, repository_username, repository_password,
+    repository_key_url, os_family); none when the role adds no repository."""
+    if str(settings.get("repository_manage", False)).lower() not in ("true", "1", "yes"):
+        return []
+    user, password = str(settings.get("repository_username") or ""), str(settings.get("repository_password") or "")
+    out = []
+    if password and not user:
+        out.append("cassandra_axonops_repository_password is set without cassandra_axonops_repository_username (a"
+                   " token: the account it belongs to as the user).")
+    if settings.get("os_family") == "Debian":
+        if not str(settings.get("repository_key_url") or ""):
+            out.append("cassandra_axonops_repository_key_url is empty: apt needs the key the repository is signed"
+                       " with (a mirror that signs with its own key: that key), or set"
+                       " cassandra_axonops_repository_manage to false.")
+        if re.search(r"\s", user + password):
+            out.append("cassandra_axonops_repository_username or _password holds whitespace, which apt's auth.conf"
+                       " cannot hold: use credentials (or a token) without it.")
+    return out
+
+
 def cassandra_axonops_problems(settings):
     """What is wrong with the role's settings (a dict of the cassandra_axonops_* values without their prefix, plus
     series and java: cassandra_version, cassandra_java_version), one line each, [] when nothing."""
@@ -99,6 +124,7 @@ def cassandra_axonops_problems(settings):
     if pinned and _older(pinned, MIN_JAVA_AGENT):
         out.append("cassandra_axonops_java_agent_version is %s: %s or later is needed (the first to ship"
                    " axonops-jvm.options, which cassandra-env.sh loads)." % (pinned, MIN_JAVA_AGENT))
+    out += _repository_problems(settings)
     if not str(settings.get("server_host") or "").strip():
         out.append("cassandra_axonops_server_host is empty: set the AxonOps server's host name or address.")
     if not str(settings.get("org") or "").strip():
@@ -169,7 +195,8 @@ def _service(active, enabled):
 
 
 def _differs(have, version):
-    """Whether installed version have is not version wanted ("" = any): "1.1.1-1" is 1.1.1."""
+    """Whether installed version have is not version wanted ("" = any): "1.1.1-1" (with its revision or release)
+    is 1.1.1 and 1.1.1-1."""
     return not have or bool(version) and have != version and not have.startswith(version + "-")
 
 
@@ -234,11 +261,12 @@ def cassandra_axonops_files(files, java_package, agent_version="", java_agent_ve
         elif m.group("name") in found:
             problems.append("%s: a second file for %s" % (base, m.group("name")))
         else:
-            found[m.group("name")] = (m.group("version"), str(path))
+            version = m.group("version") + ("-" + m.group("release") if "release" in m.groupdict() else "")
+            found[m.group("name")] = (version, str(path))
     for name, pinned in (("axon-agent", agent_version), (java_package, java_agent_version)):
         if name not in found:
             problems.append("no file for %s in cassandra_axonops_package_files" % name)
-        elif str(pinned or "") and found[name][0] != str(pinned):
+        elif str(pinned or "") and _differs(found[name][0], str(pinned)):
             problems.append("%s is %s in its file, the inventory pins %s" % (name, found[name][0], pinned))
         elif name == java_package and _older(found[name][0], MIN_JAVA_AGENT):
             problems.append("%s %s: %s or later is needed (it ships axonops-jvm.options)"
@@ -249,13 +277,56 @@ def cassandra_axonops_files(files, java_package, agent_version="", java_agent_ve
             "paths": [found["axon-agent"][1], found[java_package][1]], "problems": []}
 
 
+def cassandra_axonops_repository_items(changed, url, key):
+    """What the repository tasks would change or changed, as the plan's rows (secrets never shown): changed, a dict
+    {source, key, credentials, credentials_removed} of booleans; url, key: the repository's and its key's URLs (masked).
+    """
+    out = []
+    if changed.get("source"):
+        out.append({"item": "repository " + str(url), "before": "absent or other", "after": "added"})
+    if changed.get("key"):
+        out.append({"item": "repository signing key", "before": "absent or other", "after": str(key)})
+    if changed.get("credentials"):
+        out.append({"item": "repository credentials", "before": "absent or other", "after": "set (hidden)"})
+    if changed.get("credentials_removed"):
+        out.append({"item": "repository credentials", "before": "set", "after": "removed"})
+    return out
+
+
+def cassandra_axonops_read_problems(lines, user):
+    """What the node read (files/read.sh's lines) holds that the role cannot go on with, one line each, a WAY OUT
+    line last ([] when nothing): Cassandra's account (user) missing; a package left half done; axon-agent installed
+    without its axonops account."""
+    installed, unfinished, read = _read(lines)
+    out = []
+    if read.get("account_" + str(user)) == "no":
+        out += ["no account %s on the node (cassandra_axonops_cassandra_user)." % user,
+                "WAY OUT  set cassandra_axonops_cassandra_user to the account Cassandra runs as, then run again."]
+    elif unfinished:
+        out += ["%s left half done by dpkg (%s)." % (n, unfinished[n]) for n in sorted(unfinished)]
+        out += ["WAY OUT  run dpkg --configure -a on the node, then run again."]
+    elif "axon-agent" in installed and read.get("account_axonops") == "no":
+        out += ["axon-agent is installed, its account axonops is missing.",
+                "WAY OUT  reinstall the axon-agent package (it creates the account), then run again."]
+    return out
+
+
 LOADER = re.compile(r"axonops-jvm[.]options|axon-(cassandra|dse)\S*[.]jar")
 
 
-def cassandra_axonops_loader_refusals(options, keep_files):
-    """Why cassandra_config could not load the AxonOps Java agent itself: options, the JVM options and the
-    cassandra-env.sh snippet (one string); keep_files, cassandra_config_keep_files. [] when it can."""
+def cassandra_axonops_loader_refusals(options, keep_files, override=""):
+    """Why cassandra_config could not load the AxonOps Java agent itself: options, the JVM options, the
+    cassandra-env.sh snippet and the unit's environment (one string); keep_files, cassandra_config_keep_files;
+    override, the text of your cassandra-env.sh template (cassandra_config_template_overrides), "" when none: it
+    must write the role's line ({{ _cassandra_config_axonops_line }}) and no loader of its own. [] when it can."""
     out = []
+    if override and "_cassandra_config_axonops_line" not in override:
+        out.append("cassandra-env.sh is in cassandra_config_template_overrides and your template does not write"
+                   " {{ _cassandra_config_axonops_line }}: the line loading the AxonOps Java agent would be left out"
+                   " (add it at the end of your template)")
+    if override and LOADER.search(override):
+        out.append("your cassandra-env.sh template (cassandra_config_template_overrides) loads the AxonOps Java agent"
+                   " itself: remove that, {{ _cassandra_config_axonops_line }} writes it")
     if "cassandra-env.sh" in (keep_files or []):
         out.append("cassandra-env.sh is in cassandra_config_keep_files: the role could not add the line loading the"
                    " AxonOps Java agent there (or load the agent by hand and leave"
@@ -295,6 +366,8 @@ class FilterModule(object):
             "cassandra_axonops_problems": cassandra_axonops_problems,
             "cassandra_axonops_changes": cassandra_axonops_changes,
             "cassandra_axonops_files": cassandra_axonops_files,
+            "cassandra_axonops_read_problems": cassandra_axonops_read_problems,
+            "cassandra_axonops_repository_items": cassandra_axonops_repository_items,
             "cassandra_axonops_loader_refusals": cassandra_axonops_loader_refusals,
             "cassandra_apply_config_axonops_steps": cassandra_apply_config_axonops_steps,
         }
