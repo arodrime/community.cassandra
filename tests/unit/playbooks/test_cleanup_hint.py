@@ -11,7 +11,7 @@ import warnings
 import yaml
 
 from ansible.plugins.loader import init_plugin_loader
-from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
+from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template, trusted
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -39,8 +39,8 @@ def hint(playbook, **variables):
               "cassandra_cleanup_jobs": play["vars"]["cassandra_cleanup_jobs"],
               "ansible_check_mode": False}
     for name, value in (task.get("vars") or {}).items():
-        if name in ("_hosts_option", "_text", "_command", "_options"):
-            values[name] = trust_as_template(value) if isinstance(value, str) else value
+        if name in ("_hosts_option", "_text", "_command", "_options", "_run", "_extra"):
+            values[name] = trusted(value)
     values.update(variables, _nl="\n")
     templar = templar_for(values)
     msg = task["ansible.builtin.debug"]["msg"]

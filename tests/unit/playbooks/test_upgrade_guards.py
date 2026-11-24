@@ -17,7 +17,7 @@ import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_storage_mode import cassandra_storage_mode_nodes
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
-from ansible_collections.community.cassandra.tests.unit.helpers import render
+from ansible_collections.community.cassandra.tests.unit.helpers import render, trusted
 
 load_collection_filters()  # the community.cassandra filters, whatever ran before
 
@@ -121,7 +121,7 @@ def test_prepare_under_check_says_what_a_real_run_would_do():
     run = {"inventory": ["inv.yml"], "default_inventory": "", "hosts": "", "cwd": None}
     variables = dict(cassandra_upgrade_from="4.1.12", cassandra_conf_dir="/etc/cassandra/conf",
                      ansible_play_hosts=["n1"], ansible_play_hosts_all=["n1"], _cassandra_run_command_args=run,
-                     **{k: said["vars"][k] for k in ("_nl", "_canary", "_prepare")})
+                     **{k: trusted(v) for k, v in said["vars"].items() if k.startswith("_")})
     assert text(say, ansible_check_mode=True, **variables) == (
         "--check: nothing was done. A real run would take the snapshots pre-upgrade-4.1.12 and copy the config to "
         "/etc/cassandra/conf.pre-upgrade-4.1.12.")
@@ -784,7 +784,7 @@ def test_prepare_says_where_it_did_not_go_through():
     say = said["ansible.builtin.debug"]["msg"]
     run = {"inventory": None, "default_inventory": "", "hosts": "", "cwd": None}
     variables = dict(cassandra_upgrade_from="4.1.12", cassandra_conf_dir="/etc/cassandra/conf", ansible_check_mode=False,
-                     _cassandra_run_command_args=run, **{k: said["vars"][k] for k in ("_nl", "_canary", "_prepare")})
+                     _cassandra_run_command_args=run, **{k: trusted(v) for k, v in said["vars"].items() if k.startswith("_")})
     assert text(say, ansible_play_hosts=["n1", "n3"], ansible_play_hosts_all=["n1", "n2", "n3"], **variables) == (
         "Prepare did not go through on n2 (above). WAY OUT fix that, then run the prepare phase again, before the"
         " canary phase: ansible-playbook community.cassandra.upgrade -e cassandra_upgrade_phase=prepare")

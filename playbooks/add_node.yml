@@ -914,11 +914,15 @@
           {{ ('after the real run, once' if ansible_check_mode else 'once') }} the cluster is fine, clean up the nodes
           that handed data over ({{ _scope }})
         _command: >-
-          {{ 'cleanup' | community.cassandra.cassandra_command(
-               inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
-               hosts=cassandra_hosts | default(''), limit=_targets, cwd=lookup('ansible.builtin.env', 'PWD'),
-               extra={'cassandra_cleanup_mode': cassandra_cleanup_mode | default('sequential'),
-                      'cassandra_cleanup_jobs': cassandra_cleanup_jobs}) }}
+          {{ 'cleanup' | community.cassandra.cassandra_command(limit=_targets, extra=_extra, **_run) }}
+        _run:
+          inventory: "{{ ansible_inventory_sources }}"
+          default_inventory: "{{ lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') }}"
+          hosts: "{{ cassandra_hosts | default('') }}"
+          cwd: "{{ lookup('ansible.builtin.env', 'PWD') }}"
+        _extra:
+          cassandra_cleanup_mode: "{{ cassandra_cleanup_mode | default('sequential') }}"
+          cassandra_cleanup_jobs: "{{ cassandra_cleanup_jobs }}"
         _options:
           - "  cassandra_cleanup_mode: sequential (one node at a time, default)"
           - "                          | rack (a rack at a time)"
