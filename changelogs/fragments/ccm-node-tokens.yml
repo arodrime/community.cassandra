@@ -1,0 +1,2 @@
+trivial:
+  - Integration tests - give each ccm node its own initial token. Seeds starting together could pick the same token, and nodes then disagreed on which node owned that range, so a role just created was sometimes not found.
