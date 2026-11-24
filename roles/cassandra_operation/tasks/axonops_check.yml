@@ -19,6 +19,8 @@
   when:
     - cassandra_axonops_enabled | default(false) | bool
     - not cassandra_operation_axonops_options.stat.exists | default(true)
+    # (apply_config --check: its real run installs the package again before this restart)
+    - not (ansible_check_mode | default(false) and cassandra_service_node_action | default('') == 'apply_config')
   vars:
     cassandra_output: true  # a verdict: its msg as is (ops callback)
     _cause: >-
@@ -33,7 +35,9 @@
     # apply_config: its resume plans the package again (a new apply_config would leave the progress file behind);
     # a run with its own way out (sync_clocks' hint): the fact, the hint says what to run; else apply_config on this
     # node only (no other node restarted in the middle of the rolling run), then the resume
-    _limit: apply_config --limit {{ inventory_hostname }}
+    _limit: >-
+      apply_config --limit {{ inventory_hostname }}{{ (' -e cassandra_hosts=' ~ cassandra_hosts)
+      if cassandra_hosts | default('') else '' }}
     _way: >-
       {{ 'resume (its plan ' ~ _again ~ ')' if cassandra_service_node_action | default('') == 'apply_config'
          else (_limit ~ ' ' ~ _again) if cassandra_service_resume_hint | default('') | trim

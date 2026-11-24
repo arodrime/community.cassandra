@@ -455,7 +455,7 @@ def test_repository_rows_never_show_a_secret():
     assert cassandra_axonops_repository_items({}, "u", "k") == []
     rows = cassandra_axonops_repository_items({"source": True, "key": True, "credentials": True}, "https://m/a", "https://m/k")
     assert rows == [{"item": "repository https://m/a", "before": "differs", "after": "written"},
-                    {"item": "repository signing key", "before": "differs", "after": "https://m/k"},
+                    {"item": "repository signing key", "before": "differs", "after": "put in place"},
                     {"item": "repository credentials", "before": "differs", "after": "set (hidden)"}]
 
 
@@ -471,7 +471,7 @@ def test_read_sh_says_the_options_file_and_the_accounts():
 
 
 def test_a_planned_package_refreshes_the_apt_cache():
-    # a mirror updated since the last refresh: the pinned version was not found; never in upgrade's window
+    # a mirror updated since the last refresh: the pinned version was not found
     install = _find(_packages(), "Install them from the repositories")
     assert install["ansible.builtin.apt"]["update_cache"] is True
 
@@ -789,14 +789,24 @@ def test_a_rack_restart_checks_the_options_file_of_every_node_before_any_drain()
     assert missing == ["n1"]
     assert task_runs(stop, _missing=missing) and not task_runs(stop, _missing=[])
     msg = [render_with(x, {"_missing": missing}) for x in stop["ansible.builtin.fail"]["msg"]]
-    # through restart_batch.yml's stop block: STOPPED (not FAILED), 1. run apply_config, 2. resume
+    # through restart_batch.yml's stop block: STOPPED (not FAILED), 1. run apply_config, 2. resume; the nodes of the
+    # --limit on a line of their own (one word: FQDNs would make a line far over 79 columns), the cluster named
+    fqdns = ["cassandra-node-%02d.dc1.example.com" % i for i in (1, 2, 3)]
+    long_msg = [render_with(x, {"_missing": fqdns, "cassandra_hosts": "prod"}) for x in stop["ansible.builtin.fail"]["msg"]]
+    long_block = _stop_block(long_msg, "the rack " + ", ".join(fqdns))
+    # (the head and the nodes' table name the rack as the stop block does for any rack)
+    assert ",".join(fqdns) in [x.strip() for x in long_block]
+    assert all(len(x) <= 79 for x in long_block[long_block.index("WAY OUT"):]), long_block
+    assert [x for x in long_block if x.strip() == "apply_config for them: -e cassandra_hosts=prod --limit"]
     block = _stop_block(msg, "the rack n1, n2")
     assert block[0].startswith("STOPPED  rolling_restart") and all(len(x) <= 79 for x in block), block
     text = "\n".join(block)
     assert "Why:  /usr/share/axonops/axonops-jvm.options is missing on n1:" in text
     assert "cassandra_axonops_enabled" in text and "fix it" not in text
     way = block[block.index("WAY OUT"):]
-    assert way[1].startswith("  1. run apply_config --limit n1 (it installs") and [x for x in way if x.startswith("  2. resume")]
+    assert way[1].startswith("  1. run apply_config with that --limit (it installs")
+    assert [x for x in way if x.startswith("  2. resume")]
+    assert [x.strip() for x in block[:block.index("WAY OUT")]].count("n1") == 1
 
 
 def _stop_block(failure, node, action="restart", operation="rolling_restart", hint=""):
@@ -822,7 +832,7 @@ def test_the_restart_check_reads_right_in_the_stop_block(operation, action):
                  "Stop without the AxonOps Java agent's options file")
     hint = SYNC_CLOCKS_HINT[0]["vars"]["cassandra_service_resume_hint"] if action == "sync_clock" else ""
     variables = {"inventory_hostname": "cassandra-node-01.example.com", "cassandra_service_node_action": action,
-                 "cassandra_service_resume_hint": hint}
+                 "cassandra_service_resume_hint": hint, "cassandra_hosts": "prod"}
     for name in ("_cause", "_again", "_apply", "_limit", "_way"):
         variables[name] = render_with(stop["vars"][name], variables)
     variables["_block"] = [render_with(x, variables) for x in stop["vars"]["_block"]]
@@ -841,10 +851,12 @@ def test_the_restart_check_reads_right_in_the_stop_block(operation, action):
         assert way[1] == "  resume (its plan installs the AxonOps Java agent package again):"
         assert "2. " not in "\n".join(way) and [x for x in way if "-e cassandra_rolling_resume=true" in x]
     elif action == "sync_clock":
-        assert way[1].startswith("  apply_config --limit cassandra-node-01.example.com installs the AxonOps")
+        assert way[1].startswith("  apply_config --limit cassandra-node-01.example.com -e cassandra_hosts=prod")
         assert [x for x in way if x.startswith("  Once fixed, run sync_clocks again")]
     else:
-        assert way[1].startswith("  1. run apply_config --limit cassandra-node-01.example.com (it installs")
+        # (the cluster named: the run's own -e cassandra_hosts, as the resume command)
+        assert "1. run apply_config --limit cassandra-node-01.example.com -e cassandra_hosts=prod (it" in " ".join(
+            x.strip() for x in way)
         assert [x for x in way if x.startswith("  2. resume")]
         assert [x for x in way if "-e cassandra_rolling_resume=true" in x]
     # start_rack: no stop block, printed as it is: its own lines fitted
@@ -904,7 +916,7 @@ def test_an_unreadable_repository_is_said_so_not_a_missing_package():
 
 @pytest.mark.parametrize("skipped", [True, False])
 def test_a_skipped_lookup_refuses_nothing(skipped):
-    # the lookup skipped (package files, a repository this run writes, upgrade's window): no package is said
+    # the lookup skipped (package files, a repository this run writes, nothing planned): no package is said
     # missing (a regression refused every create_cluster from AxonOps' repository)
     from ansible_collections.community.cassandra.tests.unit.helpers import render_with, task_runs
     refuse = _find(_tasks("roles", "cassandra_axonops", "tasks", "main.yml"), "Refuse packages the repositories do not have")
@@ -917,3 +929,15 @@ def test_a_skipped_lookup_refuses_nothing(skipped):
         variables[name] = render_with(refuse["vars"][name], variables)
     assert (variables["_missing"] == []) is skipped
     assert task_runs(refuse, **variables) is not skipped
+
+
+@pytest.mark.parametrize("check, action, runs", [(True, "apply_config", False), (False, "apply_config", True),
+                                                 (True, "restart", True)])
+def test_apply_config_under_check_does_not_stop_on_a_missing_options_file(check, action, runs):
+    # apply_config --check: its real run installs the package again before the restart (its plan says so): no
+    # stop there; rolling_restart --check: the restart would fail, said
+    from ansible_collections.community.cassandra.tests.unit.helpers import task_runs
+    stop = _find(_tasks("roles", "cassandra_operation", "tasks", "axonops_check.yml"),
+                 "Stop without the AxonOps Java agent's options file")
+    assert task_runs(stop, cassandra_axonops_enabled=True, ansible_check_mode=check, cassandra_service_node_action=action,
+                     cassandra_operation_axonops_options={"stat": {"exists": False}}) is runs

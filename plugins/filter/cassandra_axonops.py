@@ -305,13 +305,14 @@ def cassandra_axonops_files(files, java_package, agent_version="", java_agent_ve
 def cassandra_axonops_repository_items(changed, url, key):
     """What the repository tasks would change or changed, as the plan's rows (secrets never shown): changed, a dict
     {source, key, key_other, credentials, credentials_removed, python_debian} of booleans; url, key: the
-    repository's and its key's URLs (masked).
+    repository's and its key's URLs (masked; the key's not in its row: a row fits 79 columns, the URL is
+    cassandra_axonops_repository_key_url's).
     """
     out = []
     if changed.get("source"):
         out.append({"item": "repository " + str(url), "before": "differs", "after": "written"})
     if changed.get("key"):
-        out.append({"item": "repository signing key", "before": "differs", "after": str(key)})
+        out.append({"item": "repository signing key", "before": "differs", "after": "put in place"})
     if changed.get("credentials"):
         out.append({"item": "repository credentials", "before": "differs", "after": "set (hidden)"})
     if changed.get("credentials_removed"):
