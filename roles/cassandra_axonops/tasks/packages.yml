@@ -93,11 +93,11 @@
     # repository): its file installed with --allowerasing, the conflicting old package erased in the same transaction
     - name: Replace the Java agent package of another series or Java
       ansible.builtin.command:
-        argv: >-
-          {{ ['dnf', '-y'] + (['--nogpgcheck'] if _cassandra_axonops_files.paths | default([]) else [])
-             + (['--disablerepo=*', 'install', '--allowerasing', _cassandra_axonops_wanted[1]]
-                if _cassandra_axonops_cached | default(false) | bool
-                else ['swap', _cassandra_axonops_removed[0], _cassandra_axonops_wanted[1]]) }}
+        argv: "{{ ['dnf', '-y'] + _gpg + (_offline if _cassandra_axonops_cached | default(false) | bool else _swap) }}"
+      vars:
+        _gpg: "{{ ['--nogpgcheck'] if _cassandra_axonops_files.paths | default([]) else [] }}"
+        _offline: "{{ ['--disablerepo=*', 'install', '--allowerasing', _cassandra_axonops_wanted[1]] }}"
+        _swap: "{{ ['swap', _cassandra_axonops_removed[0], _cassandra_axonops_wanted[1]] }}"
       register: cassandra_axonops_packages_swap
       changed_when: true
       when:

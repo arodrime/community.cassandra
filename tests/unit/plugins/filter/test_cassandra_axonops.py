@@ -293,7 +293,7 @@ def test_redhat_swaps_the_java_agent_in_one_transaction():
     names = _names(tasks)
     assert "Remove the Java agent packages of another series or Java (RedHat)" not in names
     swap = _find(tasks, "Replace the Java agent package of another series or Java")
-    assert "'swap', _cassandra_axonops_removed[0], _cassandra_axonops_wanted[1]" in swap["ansible.builtin.command"]["argv"]
+    assert "'swap', _cassandra_axonops_removed[0], _cassandra_axonops_wanted[1]" in swap["vars"]["_swap"]
     install = _find(tasks, "Install them")
     assert install["ansible.builtin.dnf"]["name"] == "{{ _cassandra_axonops_wanted[:1] if _swap else _cassandra_axonops_wanted }}"
     assert "_cassandra_axonops_java_change | bool" in install["vars"]["_swap"]
@@ -718,6 +718,9 @@ def test_the_window_installs_from_files_never_from_the_repositories():
     swap = _find(packages, "Replace the Java agent package of another series or Java")["ansible.builtin.command"]["argv"]
     variables = {"_cassandra_axonops_files": {"paths": ["a", "j"]}, "_cassandra_axonops_removed": ["old"],
                  "_cassandra_axonops_wanted": ["/c/a.rpm", "/c/j.rpm"]}
+    task = _find(packages, "Replace the Java agent package of another series or Java")
+    for name in ("_gpg", "_offline", "_swap"):
+        variables[name] = render_with(task["vars"][name], variables)
     assert render_with(swap, dict(variables, _cassandra_axonops_cached=True)) == [
         "dnf", "-y", "--nogpgcheck", "--disablerepo=*", "install", "--allowerasing", "/c/j.rpm"]
     assert render_with(swap, dict(variables, _cassandra_axonops_cached=False)) == [
