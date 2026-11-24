@@ -51,12 +51,12 @@
   ansible.builtin.fail:
     # (nothing changed, the caller's head given, its plan: the REFUSED block of a stop before any change)
     msg: >-
-      {{ (_cassandra_install_refused_head | community.cassandra.cassandra_refused([_said, 'Way out: ' ~ _fix ~ ', then run again.'])
+      {{ (_cassandra_install_refused_head | community.cassandra.cassandra_refused([_said, 'WAY OUT  ' ~ _fix ~ ', then run again.'])
           | join(_nl))
          if _cassandra_install_refused_head | default('') | trim and not _written | bool
          else ([_said, _changed] + _before + ['WAY OUT  ' ~ _fix ~ ', then ' ~ _cassandra_install_again]) | join(_nl)
          if _cassandra_install_again | default('') | trim
-         else [_said, _changed, 'Way out: ' ~ _fix ~ ', then run again.'] | join(_nl) }}
+         else [_said, _changed, 'WAY OUT  ' ~ _fix ~ ', then run again.'] | join(_nl) }}
   vars:
     _written: "{{ not _cassandra_install_check and _cassandra_repository_items | default([]) | length > 0 }}"
     cassandra_output: true  # a verdict: its msg as is (ops callback)

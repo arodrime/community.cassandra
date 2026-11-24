@@ -93,7 +93,7 @@ def cassandra_nodetool_failure(result, host, what):
                 if line.strip()]
         lines.append("%s: nodetool %s failed (rc %s): %s" % (host, what, run.get("rc"), _URL_LOGIN.sub(
             r"\1****@", said[0]) if said else "no output"))
-    return lines + ["Way out: fix it (nodetool %s on %s shows it), then run the same command again." % (what, host)]
+    return lines + ["WAY OUT  fix it (nodetool %s on %s shows it), then run the same command again." % (what, host)]
 
 
 def cassandra_failure_report(failures, operation="", cluster="", what="could not be prepared",
@@ -142,7 +142,7 @@ def cassandra_failure_report(failures, operation="", cluster="", what="could not
                      " cqlsh on a node of the cluster)")
     if rerun:
         items.append({"text": "run it again once fixed (%s)" % nothing, "command": rerun})
-    return lines + [""] + out.todo(items) if items else lines
+    return lines + [""] + out.todo(items, title="WAY OUT") if items else lines
 
 
 # the lines of dnf's rpm log (/var/log/dnf.rpm.log): "2026-11-20T03:54:30+0100 INFO error: unpacking of archive ..."

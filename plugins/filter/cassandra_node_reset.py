@@ -367,7 +367,7 @@ def cassandra_add_node_refusal(refused, cluster="", operation="add_node", target
     items += [_other_item(r, op, add(names)) for r in refused if not r.get("former")]
     if others and not former and rest and not asked_by:
         items.append({"text": "or add the other nodes now%s" % without, "command": add(rest)})
-    return _refusal_lines(refused, op, cluster) + [""] + cassandra_output.todo(items)
+    return _refusal_lines(refused, op, cluster) + [""] + cassandra_output.todo(items, title="WAY OUT")
 
 
 def _target_names(targets):

@@ -189,7 +189,7 @@
       {{ ['WARNING  ' ~ inventory_hostname ~ ': Cassandra is set to use ' ~ (_cassandra_firewall_own_unopened | join(', '))
           ~ ', not in open_ports nor among the ports open to some sources.',
           'The firewall role does not open ' ~ _them ~ '.',
-          'Way out: add ' ~ _them ~ ' to open_ports, unless the node reaches ' ~ _them ~ ' by other means.'] }}
+          'NEXT  add ' ~ _them ~ ' to open_ports, unless the node reaches ' ~ _them ~ ' by other means.'] }}
   vars:
     cassandra_output: true
     _them: "{{ 'it' if _cassandra_firewall_own_unopened | length == 1 else 'them' }}"

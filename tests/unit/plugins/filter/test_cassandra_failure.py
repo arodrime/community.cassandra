@@ -63,7 +63,7 @@ def test_the_same_cause_once_with_its_nodes_then_what_to_do():
         "  node7  Install python3.11: repository 'rhel-8-for-x86_64-appstream-rpms' unreachable (a repository or mirror"
         " problem on the node)",
         "",
-        "TODO",
+        "WAY OUT",
         "  1. check the repositories of node5..node7 (a mirror down or unreachable from",
         "     them):",
         '     ansible -i inventories node5,node6,node7 -b -m ansible.builtin.command -a "dnf -q makecache"',
@@ -81,8 +81,8 @@ def test_other_failures_only_the_run_again():
     lines = cassandra_failure_report([{"host": "node5", "task": "Write cassandra.yaml", "result": {"msg": "disk full"}}],
                                      operation="add_node", cluster="c", rerun=RERUN)
     assert lines == ["FAILED  add_node  c  node5 could not be prepared: nothing was started",
-                     "  node5  Write cassandra.yaml: disk full", "", "TODO",
-                     "  1. run it again once fixed (nothing was started):", "     " + RERUN]
+                     "  node5  Write cassandra.yaml: disk full", "",
+                     "WAY OUT  run it again once fixed (nothing was started):", "  " + RERUN]
     # Debian: apt's own check; both families: a command each
     lines = cassandra_failure_report([{"host": "node5", "task": "Install", "result": APT, "family": "Debian"},
                                       {"host": "node6", "task": "Install", "result": EPEL, "family": "RedHat"}])

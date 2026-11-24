@@ -611,22 +611,26 @@ def test_the_recap_ends_with_the_optional_restart_for_the_read_ahead_set_live():
     nodes = [{"name": "node%d" % i, "todo": False, "os": True, "os_done": True, "notes": [READ_AHEAD_LIVE]}
              for i in (2, 3, 5)] + [{"name": "node1", "todo": True, "then": "restart", "done": True}]
     lines = cassandra_apply_config_recap(nodes, restart_command=command)
-    assert lines[-4:] == [
-        "", "TODO",
-        "  1. optional, when convenient: restart node2, node3, node5 so that Cassandra reads the files it has open"
+    assert lines[-3:] == [
+        "",
+        "NEXT  optional, when convenient: restart node2, node3, node5 so that Cassandra reads the files it has open"
         " with the new read-ahead (one node at a time; the new files use it already):",
-        "     " + command + " --limit node2,node3,node5"]
+        "  " + command + " --limit node2,node3,node5"]
     # at a terminal's width: the text wrapped under its number, the command whole (to paste)
     narrow = cassandra_apply_config_recap(nodes, restart_command=command, width=60)
-    todo = narrow[narrow.index("TODO") + 1:]
-    assert todo[-1] == "     " + command + " --limit node2,node3,node5"
-    assert all(len(line) <= 60 for line in todo[:-1]) and todo[1].startswith("     ")
+    todo = [line for line in narrow if line.startswith("NEXT  ")]
+    todo = narrow[narrow.index(todo[0]):]
+    assert todo[-1] == "  " + command + " --limit node2,node3,node5"
+    assert all(len(line) <= 60 for line in todo[:-1]) and todo[1].startswith("  so that")
+
+    def said(lines):
+        return [line for line in lines if line.startswith(("NEXT", "TODO"))]
     # none under --check (nothing was set), nor without the command, nor for a node whose OS settings were not applied
-    assert "TODO" not in cassandra_apply_config_recap(nodes, check=True, restart_command=command)
-    assert "TODO" not in cassandra_apply_config_recap(nodes)
+    assert not said(cassandra_apply_config_recap(nodes, check=True, restart_command=command))
+    assert not said(cassandra_apply_config_recap(nodes))
     for n in nodes:
         n["os_done"] = False
-    assert "TODO" not in cassandra_apply_config_recap(nodes, restart_command=command)
+    assert not said(cassandra_apply_config_recap(nodes, restart_command=command))
 
 
 def test_the_nodes_moving_storage_compatibility_mode_to_none(tmp_path):

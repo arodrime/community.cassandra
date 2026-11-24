@@ -424,7 +424,7 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
                 cluster, out.plural(len(hosts), "node"), size)] + block}
     todo = _report_todo(rows, names, unreachable, absent, counted, topology_command)
     head = "NOT HEALTHY  %s  %s checked, %s" % (cluster, out.plural(len(checked), "node"), out.plural(len(rows), "problem"))
-    return {"healthy": False, "problems": len(rows), "lines": [head] + lines + out.todo(todo) + block}
+    return {"healthy": False, "problems": len(rows), "lines": [head] + lines + out.todo(todo, title="WAY OUT") + block}
 
 
 def _review_lines(settings):

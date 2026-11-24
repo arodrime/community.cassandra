@@ -116,15 +116,17 @@ def test_prepare_copies_the_config_files_and_checks_the_copy(tmp_path):
 
 
 def test_prepare_under_check_says_what_a_real_run_would_do():
-    say = task("Prepare", "Say what the next phase is")["ansible.builtin.debug"]["msg"]
+    said = task("Prepare", "Say what the next phase is")
+    say = said["ansible.builtin.debug"]["msg"]
     variables = dict(cassandra_upgrade_from="4.1.12", cassandra_conf_dir="/etc/cassandra/conf",
-                     ansible_play_hosts=["n1"], ansible_play_hosts_all=["n1"])
+                     ansible_play_hosts=["n1"], ansible_play_hosts_all=["n1"],
+                     _nl="\n", _next=said["vars"]["_next"])
     assert text(say, ansible_check_mode=True, **variables) == (
         "--check: nothing was done. A real run would take the snapshots pre-upgrade-4.1.12 and copy the config to "
         "/etc/cassandra/conf.pre-upgrade-4.1.12.")
     assert text(say, ansible_check_mode=False, **variables) == (
-        "Snapshots pre-upgrade-4.1.12 and config copies in /etc/cassandra/conf.pre-upgrade-4.1.12. "
-        "Next: -e cassandra_upgrade_phase=canary.")
+        "Snapshots pre-upgrade-4.1.12 and config copies in /etc/cassandra/conf.pre-upgrade-4.1.12.\n"
+        "NEXT  the canary phase: -e cassandra_upgrade_phase=canary")
 
 
 LISTED = ("Snapshot Details: \n"
@@ -769,8 +771,10 @@ def test_the_summary_play_reads_with_the_role_defaults_and_lists_every_node_of_t
 
 
 def test_prepare_says_where_it_did_not_go_through():
-    say = task("Prepare", "Say what the next phase is")["ansible.builtin.debug"]["msg"]
-    variables = dict(cassandra_upgrade_from="4.1.12", cassandra_conf_dir="/etc/cassandra/conf", ansible_check_mode=False)
+    said = task("Prepare", "Say what the next phase is")
+    say = said["ansible.builtin.debug"]["msg"]
+    variables = dict(cassandra_upgrade_from="4.1.12", cassandra_conf_dir="/etc/cassandra/conf", ansible_check_mode=False,
+                     _nl="\n", _next=said["vars"]["_next"])
     assert text(say, ansible_play_hosts=["n1", "n3"], ansible_play_hosts_all=["n1", "n2", "n3"], **variables) == (
         "Prepare did not go through on n2 (above): run the prepare phase again once that is fixed, before the canary"
         " phase.")

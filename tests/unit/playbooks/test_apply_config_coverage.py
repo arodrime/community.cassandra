@@ -643,7 +643,7 @@ def test_a_release_with_its_repository_changed_is_looked_for_before_the_stop():
     assert said[:2] == ["n1: dnf did not list Cassandra 4.1.12: Error: No matching Packages to list.",
                         "Its Cassandra package was not changed; its repository file was written by this run."]
     # the plan's own stop and a plain run: the way out with its "run again"
-    assert said[2] == ("Way out: set cassandra_package_version to a release it lists (dnf --showduplicates list cassandra"
+    assert said[2] == ("WAY OUT  set cassandra_package_version to a release it lists (dnf --showduplicates list cassandra"
                        " there), or add that release to the repository, then run again.")
     # apply_config's node turn: one way out, as the stop block takes it (STOPPED, 1. fix it, 2. resume),
     # with what the run changed on it before

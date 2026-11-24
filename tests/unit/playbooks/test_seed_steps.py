@@ -432,10 +432,9 @@ def test_change_seeds_gives_a_datacenter_left_with_no_seed_its_own():
     text = render(say["ansible.builtin.debug"]["msg"].replace("lookup('community.cassandra.cassandra_hosts')", "'prod'"),
                   _cassandra_change_seeds=change, _nl="\n")
     assert text.splitlines() == [
-        "TODO",
-        "  1. put the seeds the nodes now run with in the inventory (group_vars/prod/,",
-        "     or a re-import writes them), else apply_config puts cassandra_seeds back:",
-        '     cassandra_seeds: ["10.0.0.1", "10.0.0.6", "10.0.0.7"]']
+        "NEXT  put the seeds the nodes now run with in the inventory (group_vars/prod/,",
+        "  or a re-import writes them), else apply_config puts cassandra_seeds back:",
+        '  cassandra_seeds: ["10.0.0.1", "10.0.0.6", "10.0.0.7"]']
 
 
 def test_topology_applies_and_says_the_seeds_picked():
@@ -450,11 +449,11 @@ def test_topology_applies_and_says_the_seeds_picked():
                      cassandra_hosts="prod", hostvars={})
     # the seeds picked (no node removed): the line to put in the inventory
     assert render(say["ansible.builtin.debug"]["msg"], **variables).splitlines() == [
-        "DONE  topology  c1  ring = inventory: seeds now 10.0.0.1,10.0.0.7", "", "TODO",
-        "  1. put the seeds the nodes now run with in the inventory (group_vars/prod/,",
-        "     or a re-import writes them), else apply_config puts cassandra_seeds back:",
-        '     cassandra_seeds: ["10.0.0.1", "10.0.0.7"]']
-    # none picked: no TODO
+        "DONE  topology  c1  ring = inventory: seeds now 10.0.0.1,10.0.0.7", "",
+        "NEXT  put the seeds the nodes now run with in the inventory (group_vars/prod/,",
+        "  or a re-import writes them), else apply_config puts cassandra_seeds back:",
+        '  cassandra_seeds: ["10.0.0.1", "10.0.0.7"]']
+    # none picked: no NEXT
     variables["_plan"] = dict(variables["_plan"], seeds=dict(seeds_picked, auto=[], new="10.0.0.1"))
     assert render(say["ansible.builtin.debug"]["msg"], **variables) == "DONE  topology  c1  ring = inventory: seeds now 10.0.0.1"
 
@@ -641,11 +640,10 @@ def test_the_todo_names_the_seed_lists_left_to_reload():
     say = task(play("add_node.yml", "Summary")["tasks"], "Say which seed lists are left to reload")
     text = render(say["ansible.builtin.debug"]["msg"], _reload_failed=["n1"], _reload_command="ansible-playbook x", _nl="\n")
     assert text.splitlines() == [
-        "TODO",
-        "  1. reload the seed list on n1: nodetool reloadseeds failed (the WARNING above",
-        "     says why; a node that cannot load its cassandra.yaml again will not start",
-        "     either: fix the file before any restart), then:",
-        "     ansible-playbook x"]
+        "NEXT  reload the seed list on n1: nodetool reloadseeds failed (the WARNING",
+        "  above says why; a node that cannot load its cassandra.yaml again will not",
+        "  start either: fix the file before any restart), then:",
+        "  ansible-playbook x"]
 
 
 def test_the_reload_verdict_is_the_modules_success_message():

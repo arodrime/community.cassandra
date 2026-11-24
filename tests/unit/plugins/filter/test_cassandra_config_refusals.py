@@ -81,7 +81,7 @@ def test_logback_values_written_as_they_are():
     assert logback(cassandra_log_audit_dir="a--b") == []
     assert logback(audit_file=False, cassandra_log_audit_dir="a--b")[0].startswith(
         "cassandra_log_audit_dir: a--b has a --, which XML does not take in a comment, where the template writes it while"
-        " cassandra_log_audit_file is false. Way out, one of:\n  write it without --\n  set cassandra_log_audit_file to"
+        " cassandra_log_audit_file is false.\nWAY OUT  one of:\n  write it without --\n  set cassandra_log_audit_file to"
         " true: logback.xml then writes the audit events (FileAuditLogger) to audit/audit.log, no longer to system.log\n")
     assert logback(audit_file=False, overrides={"logback.xml": "/t"}, cassandra_log_audit_dir="a--b") == []
     assert logback(series="41x", cassandra_log_cql_table_level="a--b") == []

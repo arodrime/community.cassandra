@@ -432,7 +432,7 @@ def test_report_names_ipv6_nodes_as_the_inventory_writes_them():
     lines = cassandra_health_report(per_host, "c", ["n1", "n4"], unreachable=["n4"],
                                     names={"2001:db8::1": "n1", "2001:db8::4": "n4", "n1": "n1", "n4": "n4"})["lines"]
     assert lines[1] == "  ring:  n4 2001:db8:0:0:0:0:0:4 (r1) DN   seen from n1"
-    assert lines[-3].startswith("  1. bring n4 back (not reached over SSH, down in the ring)")
+    assert lines[-3].startswith("WAY OUT  bring n4 back (not reached over SSH, down in the ring)")
 
 
 def test_report_healthy():
@@ -463,7 +463,7 @@ def test_report_each_problem_once_with_who_saw_it():
         "  streams:  in progress on n3",
         "  ssh:      not reached by Ansible: n2",
         "  not counted, marked cassandra_node_state: absent: n7, n8",
-        "TODO",  # n2 down and not reached: one item
+        "WAY OUT",  # n2 down and not reached: one item
         "  1. bring n2 back (not reached over SSH, down in the ring): its server first,",
         "     then Cassandra, then run this again; a node that can't be recovered:",
         "     replace_node",
@@ -484,10 +484,9 @@ def test_report_a_clock_not_in_sync_once_with_the_way_out():
     assert report["lines"] == [
         "NOT HEALTHY  my_cluster  3 nodes checked, 1 problem",
         "  clocks:  n2 OFF, n3 NO TIME SYNC (CLOCKS above says why)",
-        "TODO",
-        "  1. bring the clocks in sync with sync_clocks (--check first shows what it",
-        "     would do and changes nothing):",
-        "     ansible-playbook -i inv.yml community.cassandra.sync_clocks",
+        "WAY OUT  bring the clocks in sync with sync_clocks (--check first shows what it",
+        "  would do and changes nothing):",
+        "  ansible-playbook -i inv.yml community.cassandra.sync_clocks",
     ]
     # with a node down too: the clocks after the ring, their item last
     per_host["n1"] = findings("n1", [view("n1", node("10.0.0.1"), node("10.0.0.2", status="D"), node("10.0.0.3"))]) + [clocks]
@@ -504,10 +503,10 @@ def test_report_an_unreachable_host_known_by_no_address_taken_for_the_one_node_d
     status = view("n1", *ring)["result"]["cluster_status"]
     lines = cassandra_health_report(per_host, "c", ["n1", "n2", "n3"], unreachable=["n3"], names=names, ring=status)["lines"]
     assert lines[1:3] == ["  ring:  n3? 10.0.0.4 (r1) DN   seen from n1, n2", "  ssh:   not reached by Ansible: n3"]
-    # the TODO names the host (the guess is the ring line's)
-    assert lines[3:] == ["TODO", "  1. bring n3 back (not reached over SSH, taken for the node down in the ring):",
-                         "     its server first, then Cassandra, then run this again; a node that can't",
-                         "     be recovered: replace_node"]
+    # the way out names the host (the guess is the ring line's)
+    assert lines[3:] == ["WAY OUT  bring n3 back (not reached over SSH, taken for the node down in the",
+                         "  ring): its server first, then Cassandra, then run this again; a node that",
+                         "  can't be recovered: replace_node"]
     # two such hosts, a host known by an address, or no ring given: no guess
     names4 = dict(names, n4="n4")
     lines = cassandra_health_report(per_host, "c", ["n1", "n2", "n3", "n4"], unreachable=["n3", "n4"], names=names4,
@@ -524,7 +523,7 @@ def test_report_an_unreachable_host_known_by_no_address_taken_for_the_one_node_d
     lines = cassandra_health_report(per_host, "c", ["n1", "n2", "n3"], unreachable=["n3"],
                                     names=dict(names, **{"10.0.0.3": "n3"}), ring=status)["lines"]
     assert "  ring:  10.0.0.4 (r1) DN   seen from n1, n2" in lines
-    assert lines[-5:] == ["TODO", "  1. start Cassandra on 10.0.0.4 (its server first if it is down); a node that",
+    assert lines[-5:] == ["WAY OUT", "  1. start Cassandra on 10.0.0.4 (its server first if it is down); a node that",
                           "     can't be recovered: replace_node", P, "  2. reach n3 over SSH, then run this again"]
 
 

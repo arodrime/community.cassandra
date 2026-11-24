@@ -142,10 +142,9 @@ def test_a_clock_off_and_one_not_read_are_a_problem(tmp_path, port):
     assert lines[verdict:] == [
         "NOT HEALTHY  my_cluster  3 nodes checked, 1 problem",
         "  clocks:  node2 OFF, node3 NOT READ (CLOCKS above says why)",
-        "TODO",
-        "  1. bring the clocks in sync with sync_clocks (--check first shows what it",
-        "     would do and changes nothing):",
-        "     ansible-playbook -i hosts.ini community.cassandra.sync_clocks",
+        "WAY OUT  bring the clocks in sync with sync_clocks (--check first shows what it",
+        "  would do and changes nothing):",
+        "  ansible-playbook -i hosts.ini community.cassandra.sync_clocks",
         "",
         "====",
     ]

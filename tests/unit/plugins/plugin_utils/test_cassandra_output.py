@@ -814,18 +814,38 @@ def test_todo_item_ten_and_on_under_its_text():
 
 
 def test_todo_a_newline_starts_a_line_under_the_text():
-    assert out.todo(["first line\nsecond line"]) == ["TODO", "  1. first line", "     second line"]
-    assert out.todo(["first line\nsecond line"], width=None) == ["TODO", "  1. first line", "     second line"]
+    assert out.todo(["first line\nsecond line", "x"]) == ["TODO", "  1. first line", "     second line", P, "  2. x"]
+    assert out.todo(["first line\nsecond line", "x"], width=None)[:3] == ["TODO", "  1. first line", "     second line"]
+    # one item alone: a NEXT, its next line under its text at 2
+    assert out.todo(["first line\nsecond line"]) == ["NEXT  first line", "  second line"]
+    assert out.todo(["first line\nsecond line"], width=None) == ["NEXT  first line", "  second line"]
+
+
+def test_todo_one_item_is_a_next_or_its_stop_title():
+    # a single action after a success: NEXT; on a stop (title WAY OUT): WAY OUT, never numbered
+    assert out.todo([{"text": "add n4 back", "command": "ansible-playbook x"}]) == ["NEXT  add n4 back:", "  ansible-playbook x"]
+    assert out.todo([{"text": "fix it", "command": "ansible-playbook x"}], title="WAY OUT") == [
+        "WAY OUT  fix it:", "  ansible-playbook x"]
+    assert out.todo([None, "", "only this"]) == ["NEXT  only this"]
+    assert out.todo(["a", "b"], title="WAY OUT")[:2] == ["WAY OUT", "  1. a"]
+    # wrapped at 79 under the text, the command whole
+    long = out.todo([{"text": "word " * 20, "command": "c " * 50}])
+    assert long[0].startswith("NEXT  word") and long[1].startswith("  word") and long[-1] == "  " + "c " * 50
+    assert all(len(line) <= 79 for line in long[:-1])
 
 
 def test_todo_keeps_a_name_and_its_value_together():
     # a NBSP between them: never cut there, printed as a space
     text = "word " * 8 + "abc cassandra_cqlsh_python_manage:%sfalse in the inventory"
-    assert out.todo([text % " "])[1:] == [  # a space: cut between them
+    assert out.todo([text % " ", "x"])[1:3] == [  # a space: cut between them
         "  1. " + "word " * 8 + "abc cassandra_cqlsh_python_manage:", "     false in the inventory"]
-    lines = out.todo([text % out.NBSP])
-    assert lines[1:] == ["  1. " + "word " * 8 + "abc", "     cassandra_cqlsh_python_manage: false in the inventory"]
+    lines = out.todo([text % out.NBSP, "x"])
+    assert lines[1:3] == ["  1. " + "word " * 8 + "abc", "     cassandra_cqlsh_python_manage: false in the inventory"]
     assert all(out.NBSP not in line for line in lines)
+    # alone (a NEXT): the same
+    text = "word " * 9 + "abc cassandra_cqlsh_python_manage:%sfalse in the inventory"
+    lines = out.todo([text % out.NBSP])
+    assert lines == ["NEXT  " + "word " * 9 + "abc", "  cassandra_cqlsh_python_manage: false in the inventory"]
 
 
 def test_table_cut_under_the_last_cell_not_empty():
@@ -977,8 +997,8 @@ def test_seeds_todo_first_in_the_removed_todo():
     lines = texts.removed_todo(["node3"], "node1", in_git=False, first=[item], imported=False)
     assert lines[1].startswith("  1. put the seeds the nodes now run with in the inventory (group_vars/prod/")
     assert lines[4] == P and lines[5].startswith("  2. empty node3")
-    # nothing removed: the seeds alone
-    assert texts.removed_todo([], "node1", first=[item])[0] == "TODO"
+    # nothing removed: the seeds alone, a NEXT
+    assert texts.removed_todo([], "node1", first=[item])[0].startswith("NEXT  put the seeds")
     assert texts.removed_todo([], "node1", first=[None]) == []
 
 

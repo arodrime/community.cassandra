@@ -49,7 +49,7 @@ def test_a_missing_release_stops_with_the_package_manager_s_words():
                                             "stdout_lines": ["Error: No matching Packages to list"]}) == [
         "n1: dnf did not list Cassandra 4.1.12: Error: No matching Packages to list.",
         "Its Cassandra package was not changed.",
-        "Way out: set cassandra_package_version to a release it lists (dnf --showduplicates list cassandra there), or"
+        "WAY OUT  set cassandra_package_version to a release it lists (dnf --showduplicates list cassandra there), or"
         " add that release to the repository, then run again."]
     assert "cassandra_install_release.rc | default(0) != 0" in STOP["when"]
     # (cassandra.yml runs them before the install)
@@ -75,7 +75,7 @@ def test_apply_config_s_plan_refuses_a_missing_release_in_the_block_of_its_stops
     assert said[:2] == ["REFUSED  apply_config  zorglub  nothing was changed",
                         "  n1: dnf did not list Cassandra 4.1.12: Error: No matching Packages to list."]
     assert " ".join(x.strip() for x in said[2:]) == (
-        "Way out: set cassandra_package_version to a release it lists (dnf --showduplicates list cassandra there), or"
+        "WAY OUT  set cassandra_package_version to a release it lists (dnf --showduplicates list cassandra there), or"
         " add that release to the repository, then run again.")
     assert all(len(x) <= 79 for x in said)
     # its repository written by this run (not the plan's: the window's), or no head given: the plain lines
@@ -90,7 +90,7 @@ def test_a_repository_dnf_cannot_read_is_not_said_missing_the_release():
     said = _said(cassandra_install_release={"rc": 1, "stdout": out, "stdout_lines": [out]})
     assert said == ["n1: dnf did not list Cassandra 4.1.12 (it could not read a repository): " + out + ".",
                     "Its Cassandra package was not changed.",
-                    "Way out: make that repository answer on the node, then run again."]
+                    "WAY OUT  make that repository answer on the node, then run again."]
 
 
 def test_the_check_honours_the_excludes_the_install_honours():
@@ -135,7 +135,7 @@ def test_a_release_the_node_excludes_is_said_excluded(tmp_path):
         "Error: No matching Packages to list",
         "cassandra-4.1.12 is in the repository, excluded on this node (dnf excludepkgs or versionlock)"]
     said = _said(cassandra_install_release={"rc": 1, "stdout": run.stdout, "stdout_lines": run.stdout.splitlines()})
-    assert said[2] == ("Way out: lift the exclusion of cassandra on the node (excludepkgs in dnf.conf or the repository"
+    assert said[2] == ("WAY OUT  lift the exclusion of cassandra on the node (excludepkgs in dnf.conf or the repository"
                        " file, or dnf versionlock delete cassandra), then run again.")
     assert _listed(tmp_path, excluded=False).returncode == 0
 

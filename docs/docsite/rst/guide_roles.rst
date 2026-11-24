@@ -318,10 +318,9 @@ clock not in sync, or not read, is a problem of the report, with ``sync_clocks``
 
     NOT HEALTHY  my_cluster  2 nodes checked, 1 problem
       clocks:  node2 OFF (CLOCKS above says why)
-    TODO
-      1. bring the clocks in sync with sync_clocks (--check first shows what it
-         would do and changes nothing):
-         ansible-playbook -i inventory community.cassandra.sync_clocks
+    WAY OUT  bring the clocks in sync with sync_clocks (--check first shows what it
+      would do and changes nothing):
+      ansible-playbook -i inventory community.cassandra.sync_clocks
 ``status`` only shows the ring as one node sees it (the first that answers, of ``cassandra_target_nodes`` if given), per
 datacenter with the nodes up, down, joining, leaving and moving, the total load, and the hosts the inventory and the
 ring do not share; a down node is shown, not an error. Each node is shown by its name and address (its address

@@ -932,7 +932,7 @@ def _after_run(node):
 
 
 def _read_ahead_todo(nodes, restart_command, width=None):
-    """The TODO of the nodes whose read-ahead was set live (their OS settings
+    """The NEXT of the nodes whose read-ahead was set live (their OS settings
     applied, Cassandra not restarted): the rolling restart that lets Cassandra
     read its open files with it, optional. [] when none, or no command. Its
     text fits in width, the command stays on one line (to paste)."""

@@ -220,6 +220,7 @@ def test_the_nodes_to_move_within_79_columns_but_the_command():
                      hostvars={"node7": {"cassandra_add_node_tokens": {"moves": moves}}})
     variables["_nl"] = "\n"
     lines = templar_for(variables).template(trust_as_template(task["ansible.builtin.debug"]["msg"])).split("\n")
-    assert lines[:2] == ["TODO", "  1. even out the ring: move cass-node-01.dc1.example.com,"]
-    assert lines[-1] == "     ansible-playbook -i inventory/prod.yml community.cassandra.move_node -e cassandra_hosts=orders"
+    assert lines[:2] == ["NEXT  even out the ring: move cass-node-01.dc1.example.com,",
+                         "  cass-node-02.dc1.example.com, cass-node-03.dc1.example.com,"]
+    assert lines[-1] == "  ansible-playbook -i inventory/prod.yml community.cassandra.move_node -e cassandra_hosts=orders"
     assert all(len(line) <= 79 for line in lines[:-1]) and lines[-2].endswith("(the plan shown at the start):"), lines

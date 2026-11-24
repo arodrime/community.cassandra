@@ -515,10 +515,12 @@ def _left_out_lines(verdict, dc, rack, command, viewer=()):
     from and a node of the run seen UN, so that the ring is read from them too; the others left out stay as they
     are); the nodes known by their address only, together: a WARNING with the nodes left out they may be (not in
     the ring at an address of their own) as rows, then the NEXT that starts those; joining, leaving or moving,
-    wait for it to finish; [] for none."""
+    wait for it to finish. -> (the lines, the NEXT items: {text, command} or a text, said together at the end
+    by the caller), ([], []) for none."""
     nodes = verdict.get("left_out") or []
     if not nodes:
-        return []
+        return [], []
+    items = []
     lines = [out.WARNING + "rack %s (%s), not UN, left out by --limit (not%sin%sthis%srun):" % (
         rack, dc, out.NBSP, out.NBSP, out.NBSP)]
     lines += out.table([[n.get("name") or n["address"], "/".join(n["states"])] + ([] if n.get("name") else [
@@ -528,23 +530,22 @@ def _left_out_lines(verdict, dc, rack, command, viewer=()):
     viewer = list(viewer or [])
     for n in down:
         if n.get("name"):
-            lines += [_NEXT + "start %s: run start_rack on it%s:" % (
+            items.append({"text": "start %s: run start_rack on it%s" % (
                 n["name"], _seen_too(viewer) if viewer else out.NBSP + "alone"),
-                "  %s --limit %s" % (command, shlex.quote(",".join(viewer + [n["name"]])))]
+                "command": "%s --limit %s" % (command, shlex.quote(",".join(viewer + [n["name"]])))})
         elif n is by_address[0]:
-            lines += _by_address_lines(by_address, command, viewer)
+            more, item = _by_address_lines(by_address, command, viewer)
+            lines += more
+            items.append(item)
     for n in nodes:
         busy = [s for s in n["states"] if s[:1] == "U" and s[1:] in _DOING]
         if n not in down and busy:
-            lines.append(_NEXT + "%s is %s (%s): wait for%s" % (
+            items.append("%s is %s (%s): wait for%s" % (
                 n.get("name") or n["address"], _DOING[busy[0][1:]], busy[0], out.NBSP.join(["", "it", "to", "finish"])))
         elif n not in down:  # (another state: "?N", nodetool's own)
-            lines.append(_NEXT + "%s is %s: check it with nodetool status on it" % (
+            items.append("%s is %s: check it with nodetool status on it" % (
                 n.get("name") or n["address"], "/".join(n["states"])))
-    return lines
-
-
-_NEXT = "NEXT  "
+    return lines, items
 
 
 def _seen_too(viewer):
@@ -555,19 +556,19 @@ def _seen_too(viewer):
 def _by_address_lines(by_address, command, viewer):
     """The nodes left out down known by their address only (their rows above say "no host known by it") -> the
     nodes left out they may be: those not in the ring at an address of their own, a row each, then the NEXT that
-    starts them; none: the NEXT that checks the addresses."""
+    starts them; none: the NEXT that checks the addresses. -> (the lines, the NEXT item)."""
     unplaced = by_address[0].get("unplaced") or []
     if not unplaced:  # (every node left out is in the ring now)
-        return [_NEXT + ("check %s with nodetool status" % by_address[0]["address"] if len(by_address) == 1 else
-                         "check the addresses no host is known by with nodetool status")]
+        return [], ("check %s with nodetool status" % by_address[0]["address"] if len(by_address) == 1 else
+                    "check the addresses no host is known by with nodetool status")
     one = len(unplaced) == 1
     lines = [out.WARNING + "left out by --limit, not in the ring at an address of %s:" % (
         "its own" if one else "their own")]
     lines += ["  " + h for h in unplaced]
-    lines.append(_NEXT + "start %s: run start_rack on %s%s:" % (
+    return lines, {"text": "start %s: run start_rack on %s%s" % (
         "it" if one else "them", "it" if one else "them",
-        _seen_too(viewer) if viewer else (out.NBSP + "alone" if one else "")))
-    return lines + ["  %s --limit %s" % (command, shlex.quote(",".join(viewer + unplaced)))]
+        _seen_too(viewer) if viewer else (out.NBSP + "alone" if one else "")),
+        "command": "%s --limit %s" % (command, shlex.quote(",".join(viewer + unplaced)))}
 
 
 def cassandra_rack_outside_lines(verdict, unreached, dc, rack, command, run=None, left_out=None, start_command=""):
@@ -621,14 +622,16 @@ def cassandra_rack_outside_lines(verdict, unreached, dc, rack, command, run=None
                                     if len(views) == 1 else
                                     "the ring as seen from the nodes of this run only (no other node read)"))
     outside_reader = [h for h in verdict.get("read_from") or [] if h not in (run or []) + (left_out or [])]
-    lines += _left_out_lines(verdict, dc, rack, start_command, outside_reader[:1] + up[:1])
+    more, items = _left_out_lines(verdict, dc, rack, start_command, outside_reader[:1] + up[:1])
+    lines += more
     if rows:
         lines += [out.WARNING + "the rest of the cluster:"] + out.table(rows, indent="  ")
     lines += [out.WARNING + "the ring has %s nodes, the inventory %s" % (ring, inventory)
               for ring, inventory in verdict.get("ring_size", [])]
     if rows or verdict.get("ring_size"):
-        lines += [_NEXT + "check the cluster:", "  " + str(command)]
-    return out.fit(lines, WIDTH)
+        items.append({"text": "check the cluster", "command": str(command)})
+    # what is left to do, together at the end: one action a NEXT, several a TODO list
+    return out.fit(lines, WIDTH) + out.todo(items, width=WIDTH)
 
 
 # the tasks of the cassandra_service role whose failure is the node's start failing: systemd's start fails; the

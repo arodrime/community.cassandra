@@ -186,8 +186,13 @@ Conventions
   (under the settings' when they do not fit there either). Then what each node gets: ``node1  write, no restart
   (owner or mode only, read at start)``, ``node2  write +
   restart``, ``node5  up to date``.
-- **TODO**: numbered, each with its full command, ready to paste (``-i`` and ``-e cassandra_hosts`` only when the
-  run needed them). An item's text within 79 columns, its next lines under it; its command whole, on its line. An inventory change is followed by its commit only when the inventory is in a git work tree.
+- **TODO**: several things left to do after a run that went well, numbered, each with its full command, ready to
+  paste (``-i`` and ``-e cassandra_hosts`` only when the run needed them). An item's text within 79 columns, its
+  next lines under it; its command whole, on its line. An inventory change is followed by its commit only when the
+  inventory is in a git work tree. One thing alone is a ``NEXT`` (above), never a TODO of one item.
+- **One label per kind**: ``WAY OUT`` for what to do after a stop or a refusal (one action on its line, several
+  numbered under it), ``NEXT`` for one action after a run that went well, ``TODO`` for several; ``NOTHING TO DO``
+  is a verdict, not a list.
 - The marker ``←`` points at what needs a look (``← down``, ``← differs``, ``← slow``).
 - **Status** (the ``status`` playbook): the verdict first, alone on its line, then the cluster, the node the ring
   is seen from (the node ``nodetool status`` ran on) and when (the controller's clock when it answered, with its time

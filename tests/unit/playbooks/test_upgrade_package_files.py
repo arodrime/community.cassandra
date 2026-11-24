@@ -106,6 +106,6 @@ def test_target_not_offered_stops_one_fact_per_line_with_the_way_out():
     lines = available_message("RedHat")
     assert lines[0] == ("n1: their repositories offer no cassandra 5.0.6 (repositories the roles do not manage:"
                         " cassandra_repository_manage false, or cassandra_install_method system). Nothing was done.")
-    assert lines[1].startswith("Way out: add the target series to them (your mirror or Satellite); or let the roles")
+    assert lines[1].startswith("WAY OUT  add the target series to them (your mirror or Satellite); or let the roles")
     # apt answers from its cached lists: refresh them
     assert "then apt-get update on them (apt reads its cached lists)" in available_message("Debian")[1]

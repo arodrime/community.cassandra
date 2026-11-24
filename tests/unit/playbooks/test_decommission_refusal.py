@@ -80,7 +80,7 @@ def test_the_replica_problems_one_per_line():
     msg = render(REPLICAS["ansible.builtin.assert"]["fail_msg"], _leaving=["n3"], _problems=problems)
     # the ways out one per line, the option exactly as typed
     assert msg == ["Removing n3 leaves too few nodes:", "  " + problems[0], "  " + problems[1],
-                   "Way out, either:", "  lower their replication (ALTER KEYSPACE), then repair, then run this again",
+                   "WAY OUT  either:", "  lower their replication (ALTER KEYSPACE), then repair, then run this again",
                    "  -e cassandra_decommission_force=true   (those replicas are then lost, and QUORUM can fail)"]
     assert refusal({"msg": msg}) == msg  # it names the node already
 

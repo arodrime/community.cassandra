@@ -540,13 +540,12 @@ def test_apply_config_recap():
         hostvars[h].update(cassandra_apply_config_os=[{"item": "read_ahead_kb sdb"}], cassandra_apply_config_os_done=True,
                            cassandra_apply_config_notes=[READ_AHEAD_LIVE])
     lines = recap(False)
-    assert lines[-4:] == [
+    assert lines[-3:] == [
         "",
-        "TODO",
-        "  1. optional, when convenient: restart node1, node3 so that Cassandra reads the files it has open with the new"
+        "NEXT  optional, when convenient: restart node1, node3 so that Cassandra reads the files it has open with the new"
         " read-ahead (one node at a time; the new files use it already):",
-        "     ansible-playbook community.cassandra.rolling_restart -e cassandra_hosts=prod --limit node1,node3"]
-    assert "TODO" not in recap(True)
+        "  ansible-playbook community.cassandra.rolling_restart -e cassandra_hosts=prod --limit node1,node3"]
+    assert not [line for line in recap(True) if line.startswith(("NEXT", "TODO"))]
 
 
 def test_apply_config_reads_every_node_and_puts_the_settings_side_by_side():

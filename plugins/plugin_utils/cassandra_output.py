@@ -1545,11 +1545,17 @@ def command(playbook, inventory=None, hosts=None, limit=None, extra=None, option
 
 def todo(items, title="TODO", width=79):
     """items: a string, or {text, command} (the command on its own line under
-    it) -> "TODO", then "  1. text" numbered; nothing when no item. width:
-    an item's text within it, its next lines under the text (its command
-    stays whole, to copy); None: on one line. A "\n" in a text starts a line
-    of its own under the text; a NBSP keeps two words on the same line
-    ("name:\xa0value", printed with a space)."""
+    it) -> "TODO", then "  1. text" numbered; nothing when no item. One item
+    alone is said on its head's line, "NEXT  text" (title "TODO": a single
+    action), else "<title>  text" (e.g. "WAY OUT  text" on a stop), its next
+    lines and command under it at 2. width: an item's text within it, its
+    next lines under the text (its command stays whole, to copy); None: on
+    one line. A "\n" in a text starts a line of its own under the text; a
+    NBSP keeps two words on the same line ("name:\xa0value", printed with a
+    space)."""
+    real = [item for item in items or [] if item]
+    if len(real) == 1:
+        return _single(real[0], "NEXT" if title == "TODO" else title, width)
     entries = []
     for item in items or []:
         if not item:
@@ -1570,6 +1576,22 @@ def todo(items, title="TODO", width=79):
     # an item on several lines: a blank line between two
     lines = spaced(entries) if any(len(e) > 1 for e in entries) else [line for e in entries for line in e]
     return [title] + lines if lines else []
+
+
+def _single(item, head, width):
+    """One item of todo() -> "<head>  text" (its next lines under the text at 2), then its command at 2."""
+    text, cmd = (item.get("text", ""), item.get("command", "")) if isinstance(item, dict) else (str(item), "")
+    text += ":" if cmd and text and not text.endswith(":") else ""
+    first, under = head + "  ", "  "
+    lines = []
+    for i, part in enumerate(text.split("\n")):
+        start = under if i else first
+        if width and len(start + part) > width:
+            lines += textwrap.wrap(part, width, initial_indent=start, subsequent_indent=under,
+                                   break_long_words=False, break_on_hyphens=False)
+        else:
+            lines.append(start + part)
+    return [line.replace(NBSP, " ") for line in lines] + ([under + cmd] if cmd else [])
 
 
 def in_git_work_tree(path):

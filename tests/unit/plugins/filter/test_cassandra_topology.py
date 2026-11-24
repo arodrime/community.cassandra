@@ -601,10 +601,10 @@ def test_nothing_to_do_lines():
         "  not answering: node5, node6 (marked absent, out of the ring)",
         "WARNING  dc2 has no seed",
         "WARNING  10.0.0.9 is in the ring but in no host of the inventory: never touched",
-        "WARNING  w", "NOTE  n", "", "TODO",
-        "  1. put the seeds the nodes now run with in the inventory (group_vars/c1/, or",
-        "     a re-import writes them), else apply_config puts cassandra_seeds back:",
-        '     cassandra_seeds: ["10.0.0.1"]']
+        "WARNING  w", "NOTE  n", "",
+        "NEXT  put the seeds the nodes now run with in the inventory (group_vars/c1/, or",
+        "  a re-import writes them), else apply_config puts cassandra_seeds back:",
+        '  cassandra_seeds: ["10.0.0.1"]']
     assert cassandra_topology_nothing_to_do(_plan(), "c1", 1) == [
         "NOTHING TO DO  topology  c1  the ring has the 1 node of the inventory, they run with the seeds of cassandra_seeds"]
 
@@ -658,6 +658,6 @@ def test_the_staying_node_runs_cassandra_first():
 
 def test_too_few_nodes_then_the_way_out():
     assert cassandra_too_few_nodes(["n3"], ["  dc1: ks"]) == [
-        "Removing n3 leaves too few nodes:", "  dc1: ks", "Way out, either:",
+        "Removing n3 leaves too few nodes:", "  dc1: ks", "WAY OUT  either:",
         "  lower their replication (ALTER KEYSPACE), then repair, then run this again",
         "  -e cassandra_decommission_force=true   (those replicas are then lost, and QUORUM can fail)"]

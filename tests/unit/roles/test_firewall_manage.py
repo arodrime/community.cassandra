@@ -85,7 +85,7 @@ def test_the_node_s_moved_ports_are_said_not_opened():
                     " (cassandra_native_transport_port), 7299/tcp (cassandra_jmx_port), not in open_ports nor among the"
                     " ports open to some sources.",
                     "The firewall role does not open them.",
-                    "Way out: add them to open_ports, unless the node reaches them by other means."]
+                    "NEXT  add them to open_ports, unless the node reaches them by other means."]
 
 
 def test_the_rich_rules_written_offline_are_one_per_line(tmp_path):

@@ -73,7 +73,7 @@ def test_two_nodes_one_repository_down(tmp_path):
         "FAILED  add_node  my_cluster  node5, node6 could not be prepared: nothing was started",
         "  node5, node6  Install python3.11: repository 'epel' unreachable (a repository or mirror problem on the node)",
         "",
-        "TODO",
+        "WAY OUT",
         "  1. check the repositories of node5, node6 (a mirror down or unreachable from",
         "     them):",
         '     ansible -i %s node5,node6 -b -m ansible.builtin.command -a "dnf -q makecache"' % inventory,

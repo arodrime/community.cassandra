@@ -185,7 +185,7 @@ def _xml_value_refusals(var, value, attribute, commented, own_template):
         out.append('%s: %s has a ", which ends the XML attribute there: write it &quot;' % (var, text))
     if commented and "--" in text and not own_template:  # (your own template of logback.xml: its comments are yours)
         out.append("%s: %s has a --, which XML does not take in a comment, where the template writes it while %s is"
-                   " false. Way out, one of:"
+                   " false.\nWAY OUT  one of:"
                    "\n  write it without --"
                    "\n  set %s to true%s"
                    "\n  add logback.xml to cassandra_config_keep_files: the node keeps its logback.xml as it is"

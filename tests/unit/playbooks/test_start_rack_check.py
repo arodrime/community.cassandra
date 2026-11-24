@@ -23,6 +23,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_health imp
     cassandra_health_findings, cassandra_health_sentences)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_start_rack import cassandra_rack_verdict
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import PARAGRAPH as P
 from ansible_collections.community.cassandra.tests.unit.helpers import playbook_command, render
 
 load_collection_filters()
@@ -233,16 +234,17 @@ UP = ["Rack r2 (dc1), the nodes of this run are UN:", "  n2"]
 LEFT_OUT = ["WARNING  rack r2 (dc1), not UN, left out by --limit (not in this run):"]
 # its --limit: n1, the node outside the rack this run read from, and n2, of the run, seen UN: the ring read from
 # them again (a node's start leaves a running node running)
+# (a single action: a NEXT, its command whole, to paste)
 START = ["NEXT  start n3: run start_rack on it, the ring read from n1 and n2 too:",
-         "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
-         "    -e cassandra_target_dc=dc1 -e cassandra_target_rack=r2 --limit n1,n2,n3"]
+         "  ansible-playbook -i hosts.yml community.cassandra.start_rack -e cassandra_target_dc=dc1"
+         " -e cassandra_target_rack=r2 --limit n1,n2,n3"]
 # no node outside the rack read from: n2 alone
 START_N2 = ["NEXT  start n3: run start_rack on it, the ring read from n2 too:",
-            "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
-            "    -e cassandra_target_dc=dc1 -e cassandra_target_rack=r2 --limit n2,n3"]
+            "  ansible-playbook -i hosts.yml community.cassandra.start_rack -e cassandra_target_dc=dc1"
+            " -e cassandra_target_rack=r2 --limit n2,n3"]
 ALONE = ["NEXT  start n3: run start_rack on it alone:",
-         "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
-         "    -e cassandra_target_dc=dc1 -e cassandra_target_rack=r2 --limit n3"]
+         "  ansible-playbook -i hosts.yml community.cassandra.start_rack -e cassandra_target_dc=dc1"
+         " -e cassandra_target_rack=r2 --limit n3"]
 
 
 def test_a_node_of_the_rack_left_out_by_limit_is_a_warning_not_waited_for():
@@ -257,7 +259,7 @@ def test_a_node_of_the_rack_left_out_by_limit_is_a_warning_not_waited_for():
     assert "10.0.0.3" in check_var("cassandra_service_health_any_ok", variables)
     problems, said = check(play=["n1", "n2", "n4"], n3="DN")
     assert problems == [] and said == UP + LEFT_OUT + ["  n3  DN"] + START
-    assert all(len(line) <= 79 for line in said)
+    assert all(len(line) <= 79 for line in said[:-1])  # (the command whole, to paste)
     assert NAMES.index(STOP) < NAMES.index(SAY) and "Stop on the rack's nodes left out by --limit not UN" not in NAMES
     # n3 UN: nothing to warn of, the nodes of the run said UN
     assert check(play=["n1", "n2", "n4"]) == ([], UP)
@@ -296,7 +298,7 @@ def test_the_whole_rack_left_out_by_limit_is_not_said_started():
     assert said[0] == "Rack r2 (dc1): nothing started, --limit leaves out all of its nodes."
     # no node of the run to check it from: the node outside the rack read from
     assert said[1:] == LEFT_OUT + ["  n3  DN", "NEXT  start n3: run start_rack on it, the ring read from n1 too:",
-                                   ALONE[1], ALONE[2].replace("--limit n3", "--limit n1,n3")]
+                                   ALONE[1].replace("--limit n3", "--limit n1,n3")]
 
 
 def test_under_force_the_nodes_left_out_are_said_too():
@@ -967,14 +969,17 @@ def test_each_node_left_out_down_gets_the_command_that_starts_it_alone():
     command = "ansible-playbook -i hosts.yml community.cassandra.start_rack -e cassandra_target_rack=r2"
     lines = cassandra_rack_outside_lines(verdict, [], "dc1", "r2", "x", run=["n2"], left_out=["n3", "n5", "n6", "n7"],
                                          start_command=command)
-    assert lines[5:] == ["NEXT  start n3: run start_rack on it alone:",
-                         "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
-                         "    -e cassandra_target_rack=r2 --limit n3",
-                         "NEXT  start n6: run start_rack on it alone:",
-                         "  ansible-playbook -i hosts.yml community.cassandra.start_rack \\",
-                         "    -e cassandra_target_rack=r2 --limit n6",
-                         "NEXT  n5 is leaving (UL): wait for it to finish"]
-    assert "without --limit" not in " ".join(lines) and max(len(x) for x in lines) <= 79
+    # several actions: one TODO list, each command whole (to paste)
+    assert lines[5:] == ["TODO",
+                         "  1. start n3: run start_rack on it alone:",
+                         "     " + command + " --limit n3",
+                         P,
+                         "  2. start n6: run start_rack on it alone:",
+                         "     " + command + " --limit n6",
+                         P,
+                         "  3. n5 is leaving (UL): wait for it to finish"]
+    assert "without --limit" not in " ".join(lines)
+    assert max(len(x) for x in lines if command not in x) <= 79
 
 
 def test_under_limit_a_node_of_the_run_not_un_in_the_ring_stops_the_run(monkeypatch):
@@ -1111,17 +1116,18 @@ def test_a_node_left_out_known_by_its_address_only_is_said_with_the_nodes_it_may
     assert lines[3:] == ["  n6        DN",
                          "  10.0.0.3  DN  no host known by it",
                          "  10.0.0.9  DN  no host known by it",
-                         "NEXT  start n6: run start_rack on it, the ring read from n2 too:", "  y --limit n2,n6",
                          "WARNING  left out by --limit, not in the ring at an address of their own:",
                          "  n3",
                          "  n7",
-                         "NEXT  start them: run start_rack on them, the ring read from n2 too:",
-                         "  y --limit n2,n3,n7"]
+                         "TODO",
+                         "  1. start n6: run start_rack on it, the ring read from n2 too:", "     y --limit n2,n6", P,
+                         "  2. start them: run start_rack on them, the ring read from n2 too:",
+                         "     y --limit n2,n3,n7"]
     # no node of the run seen UN, none outside the rack read: "alone" for one, nothing for several
     verdict["rack_seen_un"] = []
     lines = cassandra_rack_outside_lines(verdict, [], "dc1", "r2", "x", run=["n2"], left_out=["n3", "n5", "n6", "n7"],
                                          start_command="y")
-    assert lines[-2:] == ["NEXT  start them: run start_rack on them:", "  y --limit n3,n7"]
+    assert lines[-2:] == ["  2. start them: run start_rack on them:", "     y --limit n3,n7"]
 
 
 def test_long_names_one_per_row_no_word_alone_and_a_next_step_for_any_state():
@@ -1138,18 +1144,18 @@ def test_long_names_one_per_row_no_word_alone_and_a_next_step_for_any_state():
     assert lines[:3] == ["Rack eu-west-1a (eu-west-1), the nodes of this run are UN:", "  " + name % 2, "  " + name % 5]
     assert lines[3:5] == ["WARNING  rack eu-west-1a (eu-west-1), not UN, left out by --limit",
                           "  (not in this run):"]
-    assert lines[-3:] == ["NEXT  " + name % 6 + " is joining (UJ): wait", "  for it to finish",
-                          "NEXT  n7 is ?N: check it with nodetool status on it"]
-    assert lines[8:10] == ["NEXT  start %s: run start_rack on" % (name % 3),
-                           "  it, the ring read from %s too:" % (name % 2)]
-    rows = ["  " + name % 2, "  " + name % 5]  # (and the command: an argument never cut)
+    assert lines[-4:] == ["  2. " + name % 6 + " is joining (UJ): wait", "     for it to finish", P,
+                          "  3. n7 is ?N: check it with nodetool status on it"]
+    assert lines[8:12] == ["TODO", "  1. start %s: run start_rack on" % (name % 3), "     it, the ring read from",
+                           "     %s too:" % (name % 2)]
+    rows = ["  " + name % 2, "  " + name % 5, "     " + name % 2 + " too:"]  # (and the command: never cut)
     assert all(len(line) <= 79 and len(line.split()) > 1 for line in lines
-               if line not in rows and not line.startswith(("  y ", "    " + name[:10])))
+               if line not in rows + [P, "TODO"] and not line.startswith("     y "))
     verdict["rack_seen_un"] = []
     lines = cassandra_rack_outside_lines(verdict, [], "eu-west-1", "eu-west-1a", "x", run=[], left_out=[name % 3],
                                          start_command="y")
-    start = lines.index("NEXT  start %s: run start_rack on" % (name % 3))
-    assert lines[start + 1] == "  it alone:"
+    start = lines.index("  1. start %s: run start_rack on" % (name % 3))
+    assert lines[start + 1] == "     it alone:"
 
 
 def test_after_the_wait_the_nodes_read_before_it_still_count():
@@ -1568,7 +1574,7 @@ def test_a_name_resolved_on_the_controller_is_taken_only_in_its_host_s_own_rack(
     problems, said = check(names=names, hostvars=hostvars, play=["n1", "n2", "n4"], unreached=["n4"], n3="DN",
                            n4="DN")
     assert problems == [] and said[2:4] == LEFT_OUT + ["  10.0.0.3  DN  no host known by it"]
-    assert said[-4:-2] == ["  10.0.0.4  DN", "  n4        not reached over ssh"]
+    assert said[said.index("  10.0.0.4  DN") + 1] == "  n4        not reached over ssh"
     # its own rack: taken (n4 at 10.0.0.4, r3)
     monkeypatch.setattr(cassandra_ring, "_resolved", lambda name: {"h-n4.example": ["10.0.0.4"]}.get(name, []))
     problems, said = check(names=names, hostvars=hostvars, play=["n1", "n2", "n4"], unreached=["n4"], n4="DN")
@@ -1606,11 +1612,10 @@ def test_the_nodes_left_out_known_by_their_address_only_are_listed_once_under_a_
                      "  n3",
                      "  n5",
                      "NEXT  start them: run start_rack on them, the ring read from n2 too:",
-                     "  ansible-playbook community.cassandra.start_rack -e cassandra_target_dc=dc1 \\",
-                     "    -e cassandra_target_rack=r2 --limit n2,n3,n5"]
-    # each address and each name once; every block labelled
+                     "  " + command + " --limit n2,n3,n5"]
+    # each address and each name once; every block labelled; the command whole (to paste)
     assert [line.strip() for line in lines].count("n3") == 1 and " ".join(lines).count("10.0.0.3") == 1
-    assert all(line.startswith(("  ", "Rack ", "WARNING  ", "NEXT  ")) and len(line) <= 79 for line in lines)
+    assert all(line.startswith(("  ", "Rack ", "WARNING  ", "NEXT  ")) and len(line) <= 79 for line in lines[:-1])
 
 
 def test_the_rack_s_nodes_seen_un_are_said_in_their_inventory_order():

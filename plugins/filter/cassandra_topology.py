@@ -801,7 +801,7 @@ def cassandra_too_few_nodes(leaving, replication):
     """The nodes to remove, the lines of the datacenters they leave with fewer nodes than replicas -> the refusal
     (topology, decommission_node): what they leave, then the way out."""
     return (["Removing %s leaves too few nodes:" % ", ".join(str(n) for n in leaving)] + list(replication)
-            + ["Way out, either:", "  lower their replication (ALTER KEYSPACE), then repair, then run this again",
+            + ["WAY OUT  either:", "  lower their replication (ALTER KEYSPACE), then repair, then run this again",
                "  -e cassandra_decommission_force=true   (those replicas are then lost, and QUORUM can fail)"])
 
 

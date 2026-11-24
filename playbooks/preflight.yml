@@ -508,7 +508,7 @@
                    ~ '  nothing was changed', '  ' ~ 'Version'.ljust(([7] + _versions | map('split', ': ', 1) | map('first') | map('length') | list) | max) ~ '  Nodes']
                   + _version_rows
                   + ['', '  Adding or removing nodes and schema changes are not supported until every node runs the same version.',
-                     '  Way out, either:',
+                     '  WAY OUT  either:',
                      '    finish the upgrade:  ansible-playbook community.cassandra.upgrade',
                      '    at your own risk:    -e cassandra_allow_mixed_versions=true',
                      '                         (bootstrap streaming between versions can fail or leave the new node incomplete)'])

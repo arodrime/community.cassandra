@@ -57,7 +57,7 @@ def test_a_hidden_nodetool_failure_is_said_with_its_password_masked():
     failed = {"rc": 1, "stderr": "error: nodetool -h 127.0.0.1 -u cassandra -pw zorglub failed: Connection refused\n-- StackTrace --"}
     assert cassandra_nodetool_failure(failed, "n1", "snapshot") == [
         "n1: nodetool snapshot failed (rc 1): error: nodetool -h 127.0.0.1 -u cassandra -pw **** failed: Connection refused",
-        "Way out: fix it (nodetool snapshot on n1 shows it), then run the same command again."]
+        "WAY OUT  fix it (nodetool snapshot on n1 shows it), then run the same command again."]
     loop = {"results": [{"rc": 0, "item": "a"}, {"rc": 2, "stdout": "No space left on device", "item": "b"}]}
     assert cassandra_nodetool_failure(loop, "n1", "clearsnapshot")[0] == \
         "n1: nodetool clearsnapshot failed (rc 2): No space left on device"

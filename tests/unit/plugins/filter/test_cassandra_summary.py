@@ -234,9 +234,8 @@ def test_reset_node_done_then_add_them():
         " Cassandra disabled on node4, node5",
         "  node6  nothing to do (empty, Cassandra stopped and disabled)",
         "",
-        "TODO",
-        "  1. add them back to the cluster:",
-        "     " + ADD]
+        "NEXT  add them back to the cluster:",
+        "  " + ADD]
 
 
 def test_reset_node_check_and_nothing_to_do():
@@ -257,7 +256,7 @@ def test_reset_node_check_and_nothing_to_do():
         "   nothing was changed")
     assert cassandra_reset_recap(NODES[2:], cluster="c") == [
         "NOTHING TO DO  reset_node  c  node6: empty, Cassandra stopped and disabled"]
-    assert cassandra_reset_recap(NODES[:1], cluster="c", add_command=ADD)[-2] == "  1. add it back to the cluster:"
+    assert cassandra_reset_recap(NODES[:1], cluster="c", add_command=ADD)[-2] == "NEXT  add it back to the cluster:"
 
 
 def test_a_setting_that_differs_says_where_to_fix_it():
