@@ -363,13 +363,18 @@ def test_apply_config_and_update_java_screens(monkeypatch):
         text = screen(dict(cluster, ansible_play_hosts=hosts, hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS,
                            cassandra_apply_config_diff=APPLY_DIFF), t["vars"], play["vars"])
         assert text.split("\n")[0] == head
+    note, _ = task("update_java.yml", "Note the lines of the plan")
+    node2 = {"cassandra_java_plan_running": "Java 11"}
+    node2["_cassandra_update_java_lines"] = render_as_given(
+        note["ansible.builtin.set_fact"]["_cassandra_update_java_lines"],
+        dict(node2, _axonops=[{"item": "package axon-cassandra5.0-agent-jdk17", "after": "1.1.1"}]))
     t, play = task("update_java.yml", "Show the plan and confirm the run")
     text = screen(dict(cluster, groups={"cassandra_update_java_True": ["node2"]}, cassandra_java_version=17,
-                       hostvars={"node2": {"cassandra_java_plan_running": "Java 11"}}), t["vars"], play.get("vars"))
+                       hostvars={"node2": node2}), t["vars"], play.get("vars"))
     assert text == ("UPDATE JAVA  node2 of Orders to Java 17\n"
                     "  Moves these nodes to the new Java, one at a time (install, config, drain,\n"
                     "    restart).\n\n"
-                    "  node2\n    runs Java 11")
+                    "  node2\n    runs Java 11\n    AxonOps: package axon-cassandra5.0-agent-jdk17 -> 1.1.1")
 
 
 def test_change_seeds_and_upgrade_screens():

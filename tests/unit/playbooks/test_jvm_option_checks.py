@@ -208,6 +208,12 @@ def test_the_heap_of_jvm11_imported_on_java_17_is_in_the_plan_of_the_move_to_jav
     lines_n1 = render(HEAP_LINE["ansible.builtin.set_fact"]["_cassandra_java_heap_lines"], **switch(IMPORTED))
     hostvars = {"n1": {"_cassandra_java_heap_lines": lines_n1, "cassandra_java_plan_running": "/usr/lib/jvm/java-17/bin/java"},
                 "n2": {"_cassandra_java_heap_lines": [], "cassandra_java_plan_running": "/usr/lib/jvm/java-17/bin/java"}}
+    # (each node's lines: the plan's own task, before it)
+    with open(os.path.join(TOP, "playbooks", "update_java.yml"), encoding="utf-8") as f:
+        note = next(t for p in yaml.safe_load(f) for t in p.get("tasks") or [] if t.get("name") == "Note the lines of the plan")
+    for v in hostvars.values():
+        v["_cassandra_update_java_lines"] = render(note["ansible.builtin.set_fact"]["_cassandra_update_java_lines"],
+                                                   _axonops=[], **v)
     blocks = render(plan["vars"]["_blocks"], _todo=["n1", "n2"], hostvars=hostvars)
     text = cassandra_screen({"operation": "update_java", "summary": "n1, n2 of c to Java 11", "blocks": blocks})
     lines = text.split("\n")

@@ -51,7 +51,7 @@ RPM_FILE = re.compile(r"^(?P<name>[^/]+)-(?P<version>[^-/]+)-(?P<release>[^-/]+)
 
 def _numbers(version):
     """"1.1.1-1" -> [1, 1, 1] (the version before its revision; a part that is no number counts 0)."""
-    return [int(p) if p.isdigit() else 0 for p in re.split(r"[.]", str(version).split("-")[0].split(":")[-1])]
+    return [int(p) if p.isdigit() else 0 for p in str(version).split("-", maxsplit=1)[0].split(":")[-1].split(".")]
 
 
 def _older(version, than):
