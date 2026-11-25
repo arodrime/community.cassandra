@@ -29,6 +29,7 @@ SITES = [
     ("add_node.yml", "_cluster"), ("add_node.yml", "_cluster"), ("add_node.yml", "_cluster"), ("add_node.yml", "_cluster"),
     ("apply_config.yml", "_cluster"), ("apply_config.yml", "_cluster"), ("apply_config.yml", "_cluster"),
     ("apply_config.yml", "_cluster"),  # (the stop before any change)
+    ("apply_config.yml", "_cluster"),  # (the head of the files' diffs, the .diff file)
     ("apply_config.yml", "_cluster"), ("package_unfinished.yml", "_cluster"),  # (a package left half done)
     ("cleanup_batch.yml", "_cluster"), ("clocks_check.yml", "_cluster"),
     ("decommission_node.yml", "_cluster_name"), ("decommission_node.yml", "_cluster_name"),

@@ -316,7 +316,8 @@ APPLY_GROUPS = {"cassandra_apply_config_True": [h for h, v in sorted(APPLY_HOSTV
 # what apply_config notes of every node once, read by its plan (its question, its head)
 APPLY_VIEW = with_apply_config_view({"hostvars": APPLY_HOSTVARS, "ansible_play_hosts": sorted(APPLY_HOSTVARS)})[
     "_cassandra_apply_config_view"]
-APPLY_DIFF = ["cassandra.yaml  concurrent_reads  48 -> 32  node1"]
+# (cassandra_apply_config_changes' lines: its title first)
+APPLY_DIFF = ["WILL CHANGE", "on node1", "  cassandra.yaml  rewritten", "    concurrent_reads  48 -> 32"]
 
 
 def variables_of(t, play, cluster):
@@ -339,10 +340,10 @@ def test_apply_config_and_update_java_screens(monkeypatch):
     text = screen(dict(cluster, ansible_play_hosts=["node1", "node2"], hostvars=APPLY_HOSTVARS, _cassandra_apply_config_view=APPLY_VIEW, groups=APPLY_GROUPS,
                        cassandra_apply_config_diff=APPLY_DIFF), t["vars"], play["vars"])
     assert text == ("APPLY CONFIG  Orders  Cassandra restarts on 1 node, 1 up to date\n"
-                    "  made by:  community.cassandra 3.0.0-rc1, commit 1a2b3c4d5e6f\n"  # (the version and commit)
-                    "  Cassandra restarts one node at a time.\n\n"
-                    "DIFFERENCES FOUND\n  " + APPLY_DIFF[0] + "\n\n"  # titled as --check's, WILL DO a plan's
-                    "WILL DO\n  node1  write + restart\n  node2  up to date")
+                    "  made by:  community.cassandra 3.0.0-rc1, commit 1a2b3c4d5e6f\n\n"  # (the version and commit)
+                    "WILL CHANGE\n  on node1\n    cassandra.yaml  rewritten\n      concurrent_reads  48 -> 32\n\n"
+                    "WHAT HAPPENS\n  one node at a time, the cluster checked before and after each: node1\n"
+                    "  Cassandra restarted: node1\n  node1  write + restart\n  node2  up to date")
     question = templar_for(dict(trusted(t["vars"]), **trusted(play["vars"]), ansible_play_hosts=hosts,
                                 hostvars=APPLY_HOSTVARS, _cassandra_apply_config_view=APPLY_VIEW, groups=APPLY_GROUPS, **cluster))
     # the question names the most disruptive effect, on which nodes: a Cassandra restart, a start
@@ -516,9 +517,13 @@ def test_apply_config_recap():
         "CHECK  apply_config  my_cluster  1 would restart, 1 would apply, 1 up to date, 1 not done, 1 not in this run",
         "  nothing was changed (--check)",
         "",
-        "DIFFERENCES FOUND"] + ["  " + line for line in APPLY_DIFF] + [
+        "WILL CHANGE"] + ["  " + line for line in APPLY_DIFF[1:]] + [
         "",
-        "WOULD DO",
+        "WHAT HAPPENS",
+        "  at once: node1, node4",
+        "  one node at a time, the cluster checked before and after each: node2",
+        "  Cassandra restarted: node2",
+        "  no restart: the running Cassandra keeps what it read until its next restart",
         "  node2  would apply, then restart",
         "    restart pending (jvm11-server.options changed since the running Cassandra started)",
         "  node1  would apply, no restart",
@@ -572,11 +577,11 @@ def test_apply_config_reads_every_node_and_puts_the_settings_side_by_side():
     variables = {"ansible_play_hosts": list(items), "hostvars": hostvars, "ansible_verbosity": 0}
     templar = templar_for(variables)
     assert templar.template(trust_as_template(listed["ansible.builtin.set_fact"]["_cassandra_apply_config_differ"])) == ["cassandra.yaml"]
-    templar = templar_for(dict(variables, **trusted(side["vars"])))
+    templar = templar_for(dict(variables, **dict(trusted(side["vars"]), _diff_path="/p/reports/c/apply_config-x.diff"),
+                               ansible_check_mode=False, ansible_diff_mode=False))
     lines = templar.template(trust_as_template(side["ansible.builtin.set_fact"]["cassandra_apply_config_diff"]))
-    assert lines == ["Item                Node  Inventory",
-                     "cassandra.yaml  on node1",
-                     "  concurrent_reads  48    32"]
+    assert lines == ["WILL CHANGE", "on node1", "  cassandra.yaml  rewritten", "    concurrent_reads  48 -> 32",
+                     "real diffs: /p/reports/c/apply_config-x.diff"]
 
 
 # node_operation.yml and restart_batch.yml: test_check_mode_results.py

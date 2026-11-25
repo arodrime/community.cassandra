@@ -29,6 +29,7 @@ cassandra_apply_config_batch_True	both
 cassandra_apply_config_clock	both
 cassandra_apply_config_coverage	help
 cassandra_apply_config_diff	both
+cassandra_apply_config_diff_path	both
 cassandra_apply_config_disks_window	both
 cassandra_apply_config_down_ok	both
 cassandra_apply_config_extras	both

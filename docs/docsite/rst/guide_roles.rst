@@ -1045,26 +1045,34 @@ no restart)``, each file with its nodes) and in what the node gets (``write, no 
 a comment, no setting changes)``). That line is written in place, in the same file (its owner, mode and SELinux
 context kept), not by a new file renamed over it: a write cut short (a full disk, a crash of the host) may leave the
 file part written, which Cassandra reads at its next start; the plan says the files it goes to. After an import, the
-first ``apply_config`` does only that; the next one finds nothing to do. A file kept by hand (``cassandra_config_keep_files``, ``import_keep_hand_edits``) is not touched. A node where Cassandra is not running gets its config too: started once written when its
+first ``apply_config`` rewrites the files that differ from the role's only where Cassandra reads nothing (the header
+line, comments and layout, the heap in ``jvm-server.options`` rather than the options file of the node's Java), with no
+restart, as ``import_cluster`` says; the next one finds nothing to do. A file kept by hand (``cassandra_config_keep_files``, ``import_keep_hand_edits``) is not touched. A node where Cassandra is not running gets its config too: started once written when its
 unit failed (e.g. Cassandra could not read its config, or it crashed), left stopped when it was stopped (a stop that
 ended in a failed unit too). A Cassandra running outside its ``cassandra`` unit (not in the unit's control group: started by
 hand, or by a script of its own) whose config needs a restart is refused before any change: a restart through the unit
 would start a second Cassandra next to it (``--check`` goes on and says it on the node). Each node's health check needs another node up to read the ring from: a cluster with
-no node running is not handled. The settings that differ come in one table (``Item``, ``Node``, ``Inventory``, ``Nodes``; each
-row labelled by what it is: a file, a setting, ``service chronyd``, ``package chrony``), per file (its nodes on its row when all its settings change on the same ones): ``cassandra.yaml`` keys (a
-nested one as ``parent.key``), the lines of the JVM options files and ``cassandra-env.sh`` (``-Xmx``, ``-Dname``,
-``NAME=``), the owner, group and mode of a file or a directory as one setting, each with the node's value and the
-inventory's in aligned columns (the fixed words ``absent``, ``present``; the read-ahead in KB; passwords as ``****``, a
-changed one ``**** (another)``); a row too wide for the terminal has its nodes on the next line, a value is never cut.
-Then what each node gets, the nodes with the same outcome on one line (``node2, node4  would write the config, drain and restart Cassandra``).
-A real run shows them before its question (which names the most disruptive effect: ``Apply changes and restart
-Cassandra on node1?``) and ends with what each node got; ``--check`` shows no plan: its recap is the plan, said once (the verdict
-with the restarts first, ``nothing was changed (--check)``, ``DIFFERENCES FOUND`` (what was observed), ``WOULD DO`` (what a real run would do), the warnings).
+no node running is not handled. What changes comes under ``WILL CHANGE`` (``WOULD CHANGE`` under ``--check``), 79
+columns at most: the nodes with the same changes together (``the same on all 24 nodes`` on the title line when they
+all are, else ``on 6 nodes: node01..node06``, a group each), each file under them with what it gets (``rewritten``,
+``rewritten: comments and layout only``, its owner and mode), its lines marked ``+`` (added), ``-`` (removed), ``~``
+(kept, at another line: one row, never an added and a removed one), a value changed as ``a -> b`` (a ``cassandra.yaml``
+key, a nested one as ``parent.key``; ``-Dname``, ``NAME=``), with where a line moved from or to between the JVM's files;
+the role's header line added (a comment) and the OS settings (the read-ahead in KB) in blocks of their own, passwords
+as ``****``. With ``--diff``, each file's unified diff under it, once per group of nodes with the same one, 20 lines at
+most (its lines never cut); every diff is in full in ``reports/<cluster group>/apply_config-<stamp>.diff`` (under
+``--check`` too), which the view names without ``--diff``. Ansible's own diffs of each task are not shown. Then
+``WHAT HAPPENS``: the nodes done at once, the ones done one node at a time (a restart, a start, a firewall change),
+the restarts, ``no restart: the running Cassandra keeps what it read until its next restart`` when none, and what each
+node gets, the nodes with the same outcome on one line. A real run shows them before its question (which names the
+most disruptive effect: ``Apply changes and restart Cassandra on node1?``) and ends with what each node got;
+``--check`` shows no plan: its recap is the plan, said once (the verdict with the restarts first, ``nothing was
+changed (--check)``, ``WOULD CHANGE``, ``WHAT HAPPENS``, the warnings).
 
 Each run writes its report on the controller, next to the import's ``report.txt``:
 ``reports/<cluster group>/apply_config-<YYYY-MM-DD-HHMMSS>.txt`` (``apply_config-check-...`` under ``--check``), where
 ``reports`` is next to the inventory's dir (``cassandra_run_report_dir`` gives another dir). It has the collection's
-version and commit, when the run started and ended, a real run's plan (``DIFFERENCES FOUND``, ``WILL DO``, the checks'
+version and commit, when the run started and ended, a real run's plan (``WILL CHANGE``, ``WHAT HAPPENS``, the checks'
 notes), its recap (what each node got, every warning in full), and when each node's turn started and how it ended;
 a run that stopped at a node has its stop as said on the screen instead of the recap. ``--check`` writes its recap
 (the differences, what a real run would do, the warnings). Secrets are masked in it, as on the screen, and the

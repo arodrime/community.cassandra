@@ -575,9 +575,9 @@ def test_a_package_update_on_a_node_with_its_own_os_settings_says_a_changed_limi
     assert cassandra_run_report_old(files, "upgrade", 0) == reports  # (every report, no copy)
     run_report = load("roles", "cassandra_operation", "tasks", "run_report.yml")
     listed = find(run_report, "List the reports of this operation")["ansible.builtin.find"]
-    pattern = render(listed["patterns"], {"_cassandra_run_report_operation": "upgrade"})
-    assert fnmatch.fnmatch(os.path.basename(reports[0]), pattern)
-    assert not [c for c in copies if fnmatch.fnmatch(os.path.basename(c), pattern)]
+    patterns = [render(p, {"_cassandra_run_report_operation": "upgrade"}) for p in listed["patterns"]]
+    assert fnmatch.fnmatch(os.path.basename(reports[0]), patterns[0])
+    assert not [c for c in copies for p in patterns if fnmatch.fnmatch(os.path.basename(c), p)]
     lines = cassandra_op_recap([{"node": "h-n1", "result": "upgrade done in 90s"},
                                 {"node": "h-n2", "result": "upgrade done in 95s"}], cluster="zorglub",
                                operation="upgrade", warnings=cassandra_limits_changed(["h-n1", "h-n2"], hostvars))

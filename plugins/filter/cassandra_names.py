@@ -50,7 +50,8 @@ _COMMENT = re.compile(r"(?m)(?:^|\s)#.*$")
 # - names rc1 read that the playbooks no longer write: still known, though none is read as a variable (filters rc1's
 #   Jinja called that Python calls now, and cassandra_jmx_ssl_, a prefix rc1 wrote)
 RC1_NAMES_NOW_IN_PYTHON = frozenset((
-    "cassandra_apply_config_down_ok", "cassandra_clock_lines", "cassandra_import_keep_parts", "cassandra_jmx_ssl_", "cassandra_leading_comments",
+    "cassandra_apply_config_down_ok", "cassandra_apply_config_outcomes", "cassandra_clock_lines",
+    "cassandra_import_keep_parts", "cassandra_jmx_ssl_", "cassandra_leading_comments",
     "cassandra_prometheus_config_error", "cassandra_storage_mode_back_stop", "cassandra_storage_mode_given_wrong",
     "cassandra_storage_mode_into_none_stop", "cassandra_storage_mode_jump_stop", "cassandra_storage_mode_kept_stop",
     "cassandra_storage_mode_stopped_unsure", "cassandra_storage_mode_unsure", "cassandra_storage_mode_written"))
@@ -62,6 +63,7 @@ NOT_VARIABLES = frozenset((
     "cassandra_axonops_changes", "cassandra_axonops_config",
     "cassandra_axonops_enabled_hosts", "cassandra_axonops_files", "cassandra_axonops_java_agent",
     "cassandra_axonops_loader_refusals", "cassandra_axonops_read_problems", "cassandra_axonops_repository_items",
+    "cassandra_apply_config_changes", "cassandra_apply_config_diff_text", "cassandra_apply_config_happens",
     "cassandra_axonops_problems", "cassandra_axonops_unavailable",
     "cassandra_cleanup_batches", "cassandra_clock_plan", "cassandra_config_audit_parameter_refusals",
     "cassandra_config_exporter_refusals", "cassandra_config_jmx_tls_refusals", "cassandra_config_logback_refusals",

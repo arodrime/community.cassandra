@@ -65,10 +65,11 @@ def terminal_width():
 _PEER_STALL = 60
 
 
-def cassandra_node_list(names, keep_order=False, full=False):
+def cassandra_node_list(names, keep_order=False, full=False, all_nodes=None):
     """Node names -> one text, runs of names as ranges (full: every name; keep_order: as given, else sorted the
-    natural way): ["node1", "node2", "node3", "node5"] -> "node1..node3, node5"."""
-    return out.nodes(names, keep_order=keep_order, full=full)
+    natural way; all_nodes: the run's nodes, "all 6 nodes" when names are all of them): ["node1", "node2", "node3",
+    "node5"] -> "node1..node3, node5"."""
+    return out.nodes(names, keep_order=keep_order, full=full, all_nodes=all_nodes)
 
 
 def cassandra_duration(seconds, short=False):

@@ -317,13 +317,14 @@
         tasks_from: note.yml
       vars:
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _run: "{{ ansible_play_hosts }}"  # (a warning about all of them: "all N nodes")
         _note: >-
           {%- set out = [] -%}
-          {%- for v in ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight_unknown') | map('list') | flatten | unique | sort -%}
+          {%- for v in _run | map('extract', hostvars, '_cassandra_preflight_unknown') | map('list') | flatten | unique | sort -%}
           {%-   set hosts = [] -%}
-          {%-   for h in ansible_play_hosts if v in hostvars[h]._cassandra_preflight_unknown -%}{%- set _ = hosts.append(h) -%}{%- endfor -%}
+          {%-   for h in _run if v in hostvars[h]._cassandra_preflight_unknown -%}{%- set _ = hosts.append(h) -%}{%- endfor -%}
           {%-   set close = hostvars[hosts | first]._cassandra_preflight_unknown[v] -%}
-          {%-   set _ = out.append('WARNING  ' ~ v ~ ' (set for ' ~ hosts | community.cassandra.cassandra_node_list ~ ') is not known to this'
+          {%-   set _ = out.append('WARNING  ' ~ v ~ ' (set for ' ~ hosts | community.cassandra.cassandra_node_list(all_nodes=_run) ~ ') is not known to this'
                                    ~ ' collection: its roles and playbooks do not read it' ~ ((' (did you mean ' ~ close ~ '?)') if close else '')) -%}
           {%- endfor -%}
           {{ out | join(_nl) }}
@@ -354,12 +355,13 @@
         tasks_from: note.yml
       vars:
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _run: "{{ ansible_play_hosts }}"  # (a warning about all of them: "all N nodes")
         _note: >-
           {%- set out = [] -%}
-          {%- for w in ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight_jvm') | flatten | unique -%}
+          {%- for w in _run | map('extract', hostvars, '_cassandra_preflight_jvm') | flatten | unique -%}
           {%-   set hosts = [] -%}
-          {%-   for h in ansible_play_hosts if w in hostvars[h]._cassandra_preflight_jvm -%}{%- set _ = hosts.append(h) -%}{%- endfor -%}
-          {%-   set _ = out.append('WARNING  ' ~ hosts | community.cassandra.cassandra_node_list ~ ': ' ~ w) -%}
+          {%-   for h in _run if w in hostvars[h]._cassandra_preflight_jvm -%}{%- set _ = hosts.append(h) -%}{%- endfor -%}
+          {%-   set _ = out.append('WARNING  ' ~ hosts | community.cassandra.cassandra_node_list(all_nodes=_run) ~ ': ' ~ w) -%}
           {%- endfor -%}
           {{ out | join(_nl) }}
       when: ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight_jvm') | flatten | length > 0

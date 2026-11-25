@@ -48,7 +48,7 @@
     - name: List the reports of this operation
       ansible.builtin.find:
         paths: "{{ _dir }}"
-        patterns: "{{ _cassandra_run_report_operation }}-*.txt"
+        patterns: ["{{ _cassandra_run_report_operation }}-*.txt", "{{ _cassandra_run_report_operation }}-*.diff"]
       register: _cassandra_run_reports
 
     - name: Remove the oldest ones

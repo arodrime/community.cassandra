@@ -289,11 +289,22 @@ def test_preflight_notes_render_one_line_each():
     hostvars = {"n1": {"_cassandra_preflight_unknown": {"cassandra_sedes": "cassandra_seeds", "cassandra_x": ""}},
                 "n2": {"_cassandra_preflight_unknown": {"cassandra_sedes": "cassandra_seeds"}}}
     t = found["Warn about them"]
-    note = render(t["vars"]["_note"], ansible_play_hosts=["n1", "n2"], hostvars=hostvars, _nl="\n")
+    note = render(t["vars"]["_note"], _run=["n1", "n2"], hostvars=hostvars, _nl="\n")
     assert note.split("\n") == [
         "WARNING  cassandra_sedes (set for n1, n2) is not known to this collection: its roles and playbooks do not read it"
         " (did you mean cassandra_seeds?)",
         "WARNING  cassandra_x (set for n1) is not known to this collection: its roles and playbooks do not read it"]
+    assert t["vars"]["_run"] == "{{ ansible_play_hosts }}"
+    # (2026-11-25) every node of the run: "all N nodes" (3 or more), not their names
+    hostvars["n3"] = {"_cassandra_preflight_unknown": {"cassandra_sedes": "cassandra_seeds"}}
+    note = render(t["vars"]["_note"], _run=["n1", "n2", "n3"], hostvars=hostvars, _nl="\n")
+    assert note.split("\n")[0].startswith("WARNING  cassandra_sedes (set for all 3 nodes) is not known")
+    jvm = found["Warn about the JVM options"]
+    assert jvm["vars"]["_run"] == "{{ ansible_play_hosts }}"
+    run = ["node%02d" % i for i in range(1, 25)]
+    note = render(jvm["vars"]["_note"], _run=run, _nl="\n",
+                  hostvars=dict((h, {"_cassandra_preflight_jvm": ["-XX:-UseBiasedLocking (...)"]}) for h in run))
+    assert note == "WARNING  all 24 nodes: -XX:-UseBiasedLocking (...)"
     t = found["Seed layout"]
     layout = {"lines": ["Seeds  dc1  n1 (r1), n2 (r2)  ok", "WARNING  Seeds  dc2  b1 (r1)  1 seed: 2 to 3 per datacenter"],
               "problems": ["dc2: 1 seed: 2 to 3 per datacenter"], "notes": [], "suggested": ["n1", "n2", "b1", "b2"]}

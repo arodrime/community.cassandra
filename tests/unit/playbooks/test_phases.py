@@ -55,6 +55,9 @@ def test_the_words():
     assert out.phase("restart", node="node2") == "Restarting node2..."
     assert out.phase("cleanup", ["node1", "node2", "node3", "node5"]) == "Cleaning up node1..node3, node5..."
     assert out.phase("no such phase") == ""
+    # sorted the natural way, runs merged (2026-11-25: import_cluster's line listed the nodes as the inventory has them)
+    given = ["node%02d" % i for i in (9, 10, 11, 12, 13, 14, 15, 16, 1, 2, 3, 4, 5, 6, 7, 8)]
+    assert out.phase("import_given", given) == "Reading the ring from 16 nodes: node01..node16..."
     # each one in the ops callback's phase colour, a line of its own
     for name in out.PHASES:
         line = out.phase(name, ["node1"], node="node1", what="x", count=1)

@@ -25,7 +25,7 @@ FACTS_LEFT = {
 FACTS_MODULES = ("ansible.builtin.package_facts", "ansible.builtin.service_facts", "package_facts", "service_facts")
 # the tasks of the playbooks and roles (each task of a block, the block not counted): a task more costs every node
 # a build of its variables, run or skipped. Raise it with the reason in the commit, or lower it
-TASKS_MAX = 2005  # +1: the preflight gathers the few hardware facts read on their own (a filtered setup)
+TASKS_MAX = 2006  # +1: apply_config writes the files' diffs next to its report (named in WILL/WOULD CHANGE)
 
 
 def tasks(items):

@@ -208,13 +208,17 @@ def full_list(names, keep_order=False):
     return ", ".join(names if keep_order else sorted(names, key=_natural))
 
 
-def nodes(names, keep_order=False, full=False):
+def nodes(names, keep_order=False, full=False, all_nodes=None):
     """Node names, short: 3 or more consecutive numbered names as a range
     (node1..node5), 2 listed (node1, node2), a gap breaks the range (never a
     node that is not there), "6 nodes: " first when there are more than 5.
     Sorted naturally unless keep_order (a run's order: ranges only where the
-    order follows the numbers). full: every name (see full_list)."""
+    order follows the numbers). full: every name (see full_list). all_nodes:
+    the nodes of the run: "all 6 nodes" when names are all of them (3 or more)."""
     names = [str(n) for n in names or []]
+    every = set(str(n) for n in all_nodes or [])
+    if len(every) > 2 and set(names) == every:
+        return "all %d nodes" % len(every)
     if full:
         return full_list(names, keep_order)
     names = names if keep_order else sorted(set(names), key=_natural)
@@ -931,14 +935,14 @@ PHASES = {
 
 def phase(name, names=None, node="", what="", count=None):
     """The phase line PHASES[name], e.g. "Decommissioning node3...". names:
-    the nodes (one or a list, shown as nodes() does, in the order given);
+    the nodes (one or a list, shown as nodes() does, sorted naturally);
     count: how many nodes (the number of names when not given). "" for a
     name PHASES does not have (a step that says nothing)."""
     if name not in PHASES:
         return ""
     names = [names] if isinstance(names, str) else list(names or [])
     number = len(names) if count is None else int(count)
-    return PHASES[name].format(nodes=nodes(names, keep_order=True), node=node, what=what, count=plural(number, "node"))
+    return PHASES[name].format(nodes=nodes(names), node=node, what=what, count=plural(number, "node"))
 
 
 def check_what(present, kind="", targets=None, replacing="", run=None, absent=None):

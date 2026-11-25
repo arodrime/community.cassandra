@@ -106,11 +106,15 @@ def cassandra_run_report_times(nodes, starts=None):
 
 def cassandra_run_report_old(files, operation, keep=KEEP):
     """files: the dir's files (ansible.builtin.find's: [{path, mtime}]); operation -> the paths of its reports
-    (cassandra_run_report_name's, --check's too) past the keep newest, the oldest first."""
-    mine = re.compile(r"^%s-(check-)?\d{4}-\d{2}-\d{2}-\d{4}(\d{2})?\.txt$" % re.escape(str(operation)))
-    reports = sorted((f for f in files or [] if mine.match(os.path.basename(str(f.get("path", ""))))),
-                     key=lambda f: (float(f.get("mtime") or 0), os.path.basename(str(f["path"]))))
-    return [str(f["path"]) for f in reports[:max(len(reports) - int(keep), 0)]]
+    (cassandra_run_report_name's, --check's too) past the keep newest, the oldest first; the same for the .diff files
+    next to them (apply_config's)."""
+    old = []
+    for ext in ("txt", "diff"):
+        mine = re.compile(r"^%s-(check-)?\d{4}-\d{2}-\d{2}-\d{4}(\d{2})?\.%s$" % (re.escape(str(operation)), ext))
+        reports = sorted((f for f in files or [] if mine.match(os.path.basename(str(f.get("path", ""))))),
+                         key=lambda f: (float(f.get("mtime") or 0), os.path.basename(str(f["path"]))))
+        old += [str(f["path"]) for f in reports[:max(len(reports) - int(keep), 0)]]
+    return old
 
 
 class FilterModule(object):

@@ -236,27 +236,28 @@ def test_swap_left_on_said_under_the_node_once(live, swapoff, said):
     assert "not _cassandra_linux_swap_said | default(false) | bool" in role_says["when"]
 
 
-@pytest.mark.parametrize("todo, os_nodes, restarts, starts, write, said", [
-    (["n1"], [], ["n1"], [], [], "Cassandra restarts one node at a time."),
-    (["n1"], ["n1"], [], [], [], "Live changes, no restart."),
-    (["n1", "n2"], ["n2"], ["n1"], [], [], "Order: live changes at once, then Cassandra restarts one node at a time."),
-    (["n1", "n2"], [], ["n1"], [], [], "Order: live changes at once, then Cassandra restarts one node at a time."),
-    # a start is one node at a time too, never "live"; a Cassandra stopped and left so is no live change
-    (["n1", "n2"], [], ["n1"], ["n2"], [], "Cassandra restarts and starts one node at a time."),
-    (["n2"], [], [], ["n2"], [], "Cassandra starts one node at a time."),
-    (["n3"], [], [], [], ["n3"], "No Cassandra restart; a Cassandra stopped stays stopped.")])
-def test_the_intro_says_the_order_in_one_line(todo, os_nodes, restarts, starts, write, said):
-    # one line, not a paragraph: the table below says what each node gets
+@pytest.mark.parametrize("nodes, said", [
+    ([dict(todo=True, then="restart")], ["one node at a time, the cluster checked before and after each: n1",
+                                         "Cassandra restarted: n1"]),
+    ([dict(todo=False, os=True, then="none")], ["at once: n1"]),  # (live OS settings: no JVM line)
+    ([dict(todo=True, then="none")], ["at once: n1", "no restart: the running Cassandra keeps what it read until its"
+                                                     " next restart"]),
+    # a start is one node at a time too, never "at once"; a Cassandra stopped and left so: said, no JVM line
+    ([dict(todo=True, then="restart"), dict(todo=True, then="start")],
+     ["one node at a time, the cluster checked before and after each: n1, n2", "Cassandra restarted: n1",
+      "Cassandra started (not running now): n2"]),
+    ([dict(todo=True, then="write")], ["at once: n1", "Cassandra stopped, left stopped: n1"]),
+    # a firewall change: one node at a time, the cluster checked around each
+    ([dict(todo=True, then="none", firewall=True)], ["one node at a time, the cluster checked before and after each: n1"]),
+    ([dict(todo=False, then="none")], [])])
+def test_what_happens_says_the_order(nodes, said):
+    # (2026-11-25) WHAT HAPPENS, before the question and in the --check recap: at once or one node at a time, the
+    # restarts, and that a running Cassandra keeps what it read when none
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import _happens_facts
+    assert _happens_facts([dict(n, name="n%d" % (i + 1)) for i, n in enumerate(nodes)]) == said
     screen = FIND["tasks"][TASKS.index("Show the plan and confirm the run")]
-    intro = screen["vars"]["cassandra_screen"]["intro"]
-    variables = {"_todo": todo, "_os_nodes": os_nodes, "_restarts": restarts, "_starts": starts,
-                 "_then_nodes": {"write": write} if write else {}, "hostvars": dict((h, {}) for h in todo)}
-    assert [" ".join(render(i, variables).split()) for i in intro] == [said]
-    # a firewall change: said one node at a time
-    if todo:
-        variables["hostvars"][todo[0]] = {"cassandra_apply_config_extras": [{"section": "Firewall"}]}
-        assert " ".join(render(intro[0], variables).split()) == said + (
-            " The firewall one node at a time, the cluster checked around each.")
+    assert "intro" not in screen["vars"]["cassandra_screen"]
+    assert "cassandra_apply_config_happens" in str(screen["vars"]["cassandra_screen"]["sections"])
 
 
 # time sync (chrony, timesyncd) installed or started under a running Cassandra: a restart, its window

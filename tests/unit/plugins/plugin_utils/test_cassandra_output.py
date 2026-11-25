@@ -133,6 +133,15 @@ def test_nodes_order_and_full():
     assert out.full_list(["node10", "node2"]) == "node2, node10"
 
 
+def test_nodes_all_of_the_run():
+    # (2026-11-25) a warning about every node of the run: "all 24 nodes", not 24 names
+    run = ["node%02d" % i for i in range(1, 25)]
+    assert out.nodes(list(reversed(run)), all_nodes=run) == "all 24 nodes"
+    assert out.nodes(run[:23], all_nodes=run) == "23 nodes: node01..node23"
+    assert out.nodes(["node1", "node2"], all_nodes=["node2", "node1"]) == "node1, node2"  # (two: their names)
+    assert out.nodes(["node1", "node2"], all_nodes=None) == "node1, node2"
+
+
 # --- secrets ---
 
 def test_mask_secret_shown():

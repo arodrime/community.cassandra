@@ -337,7 +337,7 @@ def test_the_nodes_and_the_ring_sentence_are_built_once():
                 "n2": {}}
     plan = cassandra_apply_config_nodes(["n1", "n2"], hostvars)
     assert plan[0]["todo"] is True and plan[0]["os"] is True and plan[0]["result"] == "applied"
-    assert plan[1] == {"name": "n2", "todo": False, "os": False, "why": "", "steps": [], "then": "",
+    assert plan[1] == {"name": "n2", "todo": False, "os": False, "firewall": False, "why": "", "steps": [], "then": "",
                        "result": "nothing to apply", "notes": [], "kept_running": [], "unit_failed": False,
                        "os_done": False, "done": False}
     recap = cassandra_apply_config_nodes(["n1", "n2", "n3"], dict(hostvars, n3={}), ran=["n1", "n2"])

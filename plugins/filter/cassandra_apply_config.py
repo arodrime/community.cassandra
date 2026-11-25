@@ -913,6 +913,47 @@ def cassandra_apply_config_outcomes(nodes, check=False, plan=False, width=None, 
     return _grouped(nodes, check, plan, _width(width, margin))[0]
 
 
+# the section of what the run does to each node (a real run: before its question; --check: in its recap)
+HAPPENS = "WHAT HAPPENS"
+NO_RESTART_FACT = "no restart: the running Cassandra keeps what it read until its next restart"
+
+
+def _happens_facts(nodes):
+    """How the run goes, observed from its plan: the nodes written at once (no restart, a Cassandra stopped left so)
+    and the ones restarted or started one node at a time -> [line]."""
+    todo = [n for n in nodes or [] if n.get("todo") or n.get("os")]
+    every = [str(n["name"]) for n in nodes or []]
+    serial = [str(n["name"]) for n in todo if n.get("then") in ("restart", "start") or n.get("firewall")]
+    at_once = [str(n["name"]) for n in todo if str(n["name"]) not in serial]
+    restarts = [str(n["name"]) for n in todo if n.get("then") == "restart"]
+    starts = [str(n["name"]) for n in todo if n.get("then") == "start"]
+    stopped = [str(n["name"]) for n in todo if n.get("then") == "write"]
+    lines = []
+    if at_once:
+        lines.append("at once: %s" % out.nodes(at_once, all_nodes=every))
+    if serial:
+        lines.append("one node at a time, the cluster checked before and after each: %s" % out.nodes(serial, all_nodes=every))
+    if restarts:
+        lines.append("Cassandra restarted: %s" % out.nodes(restarts, all_nodes=every))
+    if starts:
+        lines.append("Cassandra started (not running now): %s" % out.nodes(starts, all_nodes=every))
+    if stopped:
+        lines.append("Cassandra stopped, left stopped: %s" % out.nodes(stopped, all_nodes=every))
+    if [n for n in at_once if n not in stopped] and not any(n.get("os") for n in todo if str(n["name"]) in at_once):
+        lines.append(NO_RESTART_FACT)
+    return lines
+
+
+def cassandra_apply_config_happens(nodes, check=False, width=None, margin=0):
+    """WHAT HAPPENS: how the run goes (_happens_facts), then what each node gets (cassandra_apply_config_outcomes)
+    -> [line]; [] when nothing is to do."""
+    facts = _happens_facts(nodes)
+    if not facts:
+        return []
+    width = _width(width, margin)
+    return out.fit(facts, width) + _grouped(nodes, check, plan=not check, width=width)[0]
+
+
 def cassandra_apply_config_warnings(nodes):
     """The WARNING notes of the nodes, for the plan's warnings (said there
     only, not under each node): [{label: the nodes, text}], one per text,
@@ -1033,11 +1074,12 @@ def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, d
     nodes = list(nodes or []) if check else [_after_run(n) for n in nodes or []]
     lines, counts = _grouped(nodes, check, width=_width(width, 2) if check else width)
     shown = [_recap_verdict(counts, check, cluster, out.number(seconds))]  # (text before ansible-core 2.19)
-    if check:  # the plan, once: what changes (the settings), then what happens to each node
+    if check:  # the plan, once: what changes (the files), then what happens to each node
         shown += ["  nothing was changed (--check)"]
-        # what was found (each node's value against the inventory's), apart from what a real run would do
-        shown += (["", "DIFFERENCES FOUND"] + ["  " + line if line else "" for line in diff] if diff else [])
-        lines = ["", "WOULD DO"] + ["  " + line for line in lines]
+        # what would change (cassandra_apply_config_changes: its title first), then how a real run would go
+        shown += (["", diff[0]] + ["  " + line if line else "" for line in diff[1:]] if diff else [])
+        facts = _happens_facts(nodes)
+        lines = ["", HAPPENS] + ["  " + line for line in out.fit(facts, _width(width, 2)) + lines]
     lines = lines + _recap_warnings(nodes, check, refused, planned, width, more)
     # (an optional restart is no NEXT after a FAILED run: its stop said what to do first)
     after = [] if check or counts.get("failed") else _read_ahead_todo(nodes, restart_command, _width(width))
@@ -1059,6 +1101,8 @@ def cassandra_apply_config_nodes(hosts, hostvars, ran=None):
             result = "not done (the run stopped before it)" if name in ran else "not in this run (--limit)"
         out.append({"name": name, "todo": boolean(v.get("cassandra_apply_config_todo", False), strict=False),
                     "os": len(v.get("cassandra_apply_config_os") or []) > 0,
+                    # (a firewall change: one node at a time, the cluster checked around each)
+                    "firewall": any(str(e.get("section")) == "Firewall" for e in v.get("cassandra_apply_config_extras") or []),
                     "why": v.get("cassandra_apply_config_restart_why", ""),
                     "steps": v.get("cassandra_apply_config_steps") or [],
                     "then": v.get("cassandra_apply_config_then", ""),
@@ -1270,6 +1314,7 @@ class FilterModule(object):
         return {
             "cassandra_apply_config_diff": cassandra_apply_config_diff,
             "cassandra_apply_config_outcomes": cassandra_apply_config_outcomes,
+            "cassandra_apply_config_happens": cassandra_apply_config_happens,
             "cassandra_apply_config_recap": cassandra_apply_config_recap,
             "cassandra_apply_config_warnings": cassandra_apply_config_warnings,
             "cassandra_apply_config_nodes": cassandra_apply_config_nodes,

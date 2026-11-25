@@ -214,6 +214,7 @@
         public: true  # cassandra_conf_dir for the next task
         apply:
           check_mode: true
+          diff: false  # (the files' diffs: said in WILL/WOULD CHANGE, --diff, and in the .diff file)
       vars:
         cassandra_config_confirm: false
         _cassandra_config_no_question: true  # a preview (apply: check_mode asks anyway), whatever -e cassandra_config_confirm says
@@ -1205,9 +1206,14 @@
     - name: Put the settings that differ side by side
       ansible.builtin.set_fact:
         # laid out at the terminal's width less the plan's indent (2); with -v, a device-mapper device's dm-N too
+        # what changes, the nodes with the same changes together (cassandra_apply_config_changes): its title first;
+        # with --diff the files' diffs under them, else the .diff file named
         cassandra_apply_config_diff: >-
-          {{ _nodes | community.cassandra.cassandra_apply_config_diff(width='terminal', margin=2,
-                                                                    verbose=ansible_verbosity | int > 0) }}
+          {{ _nodes | community.cassandra.cassandra_apply_config_changes(check=ansible_check_mode, width='terminal',
+               margin=2, show_diff=ansible_diff_mode | bool, diff_file=_diff_path, cwd=lookup('ansible.builtin.env', 'PWD')) }}
+        # every file's diff, once per group of nodes with the same one: written next to the run's report (below)
+        cassandra_apply_config_diff_path: "{{ _diff_path }}"
+        cassandra_apply_config_diff_text: "{{ _nodes | community.cassandra.cassandra_apply_config_diff_text(_cluster, ansible_check_mode) }}"
         # 5.0: the nodes the run moves to storage_compatibility_mode NONE (the plan says it is the point of no return):
         # their cassandra.yaml written with it, or at NONE already while Cassandra runs an earlier mode (restarted);
         # not one that runs NONE already (read over CQL or logged at its start: its file written back)
@@ -1217,7 +1223,18 @@
                 | community.cassandra.cassandra_storage_mode_restarts_into_none(hostvars)) | unique
              | reject('in', ansible_play_hosts | community.cassandra.cassandra_storage_mode_running_none(hostvars)) | list }}
       run_once: true
+      no_log: true  # (masked, but the diffs are the files' lines)
       vars:
+        _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
+        _diff_path: >-
+          {{ (ansible_inventory_sources | default([])
+              | community.cassandra.cassandra_reports_dir(lookup('community.cassandra.cassandra_hosts'),
+                                                         cassandra_run_report_dir | default(''),
+                                                         lookup('ansible.builtin.env', 'PWD')))
+             ~ '/' ~ _diff_name }}
+        _diff_name: >-
+          {{ 'apply_config' | community.cassandra.cassandra_run_report_name(ansible_check_mode, _cassandra_apply_config_start)
+             | regex_replace('[.]txt$', '.diff') }}
         # restarted or started by the run (a node left stopped is not moved)
         _moved: >-
           {{ ansible_play_hosts | select('in', _cassandra_apply_config_view)
@@ -1238,6 +1255,25 @@
                                              + v.cassandra_apply_config_extras | default([])}) -%}
           {%- endfor -%}
           {{ out }}
+
+    # always, --check too: the files' diffs the summary names (on the controller, read by its user only)
+    - name: Write the files' diffs next to the report of the run
+      ansible.builtin.copy:
+        content: "{{ cassandra_apply_config_diff_text }}\n"
+        dest: "{{ cassandra_apply_config_diff_path }}"
+        mode: "0600"
+      delegate_to: localhost
+      run_once: true
+      become: false
+      check_mode: false  # (a file on the controller, under --check too)
+      diff: false
+      no_log: true  # (masked, but the files' lines)
+      failed_when: false  # (not written, a dir not writable: the report of the run says so)
+      when:
+        - cassandra_apply_config_diff_text | default('') | length > 0
+        - not _cassandra_apply_config_compare_only | default(false) | bool  # drift's compare: drift reports
+      vars:
+        ansible_become: false
 
     - name: Group the nodes to do
       ansible.builtin.group_by:
@@ -1301,8 +1337,8 @@
         _cassandra_run_report_started: "{{ _cassandra_apply_config_start }}"
         _cassandra_run_report_plan: >-
           {{ [] if ansible_check_mode or _todo | length == 0 else
-             [{'title': 'DIFFERENCES FOUND', 'lines': cassandra_apply_config_diff | default([])},
-              {'title': 'WILL DO', 'lines': _nodes | community.cassandra.cassandra_apply_config_outcomes(plan=true)},
+             [{'title': _diff[0], 'lines': _diff[1:]},
+              {'title': 'WHAT HAPPENS', 'lines': _nodes | community.cassandra.cassandra_apply_config_happens},
               {'title': 'CHECKS', 'lines': hostvars[ansible_play_hosts_all | first]._cassandra_notes | default([]),
                'mask': true}] }}
       delegate_to: localhost
@@ -1313,6 +1349,7 @@
       vars:
         ansible_become: false
         _nodes: "{{ ansible_play_hosts | community.cassandra.cassandra_apply_config_nodes(hostvars) }}"
+        _diff: "{{ cassandra_apply_config_diff | default([]) or ['WILL CHANGE'] }}"  # (WILL CHANGE: its title first)
 
     # a real run: the plan, then its question; --check: none, the recap at the end is the plan, said once
     - name: Show the plan and confirm the run
@@ -1377,27 +1414,13 @@
                               if live else [])
                            + ([_up_to_date | length ~ ' up to date'] if _up_to_date else []) -%}
             {{ _cluster }}  {{ said | join(', ') }}
-          # the order, one line
-          intro:
-            - >-
-              {%- set serial = ('restarts and starts' if _restarts and _starts else 'restarts' if _restarts else 'starts') -%}
-              {%- if (_restarts or _starts) and (_os_nodes or _todo | reject('in', _restarts + _starts) | list) -%}
-                Order: live changes at once, then Cassandra {{ serial }} one node at a time.
-              {%- elif _restarts or _starts -%} Cassandra {{ serial }} one node at a time.
-              {%- elif _then_nodes['write'] | default([]) -%} No Cassandra restart; a Cassandra stopped stays stopped.
-              {%- else -%} Live changes, no restart.
-              {%- endif -%}
-              {%- if _todo | map('extract', hostvars) | map(attribute='cassandra_apply_config_extras', default=[]) | flatten
-                     | selectattr('section', 'equalto', 'Firewall') | list -%}
-                {{ ' ' }}The firewall one node at a time, the cluster checked around each.
-              {%- endif -%}
           # a real run: the settings that differ before its question (--check: in the recap, no question)
           sections:
-            # (titled as --check's recap: what was found, then what the run will do)
-            - "{{ [] if ansible_check_mode else [{'title': 'DIFFERENCES FOUND', 'pre': cassandra_apply_config_diff | default([])}] }}"
-            - - title: WILL DO
-                pre: "{{ _nodes | community.cassandra.cassandra_apply_config_outcomes(plan=true, check=ansible_check_mode,
-                                                                                  width='terminal', margin=2) }}"
+            # (as --check's recap: what changes, then how the run goes, the order in it)
+            - "{{ [] if ansible_check_mode or not cassandra_apply_config_diff | default([])
+                  else [{'title': cassandra_apply_config_diff[0], 'pre': cassandra_apply_config_diff[1:]}] }}"
+            - - title: WHAT HAPPENS
+                pre: "{{ _nodes | community.cassandra.cassandra_apply_config_happens(width='terminal', margin=2) }}"
           # the nodes' warnings, each one once (a real run: --check, which shows no plan, says the refusal in its recap)
           warnings: >-
             {{ _nodes | community.cassandra.cassandra_apply_config_warnings
@@ -1447,6 +1470,8 @@
 - name: Set up the progress file
   hosts: "{{ query('community.cassandra.cassandra_nodes') | select('in', groups['cassandra_apply_config_True'] | default([])) | list }}"
   gather_facts: false
+  # the files' diffs: said once in the plan (WILL CHANGE, --diff) and in the .diff file, not by each task
+  diff: false
   become: true
   vars:
     cassandra_service_node_action: apply_config
@@ -1567,6 +1592,8 @@
 - name: Apply the config where nothing is restarted, on these nodes at once
   hosts: "{{ query('community.cassandra.cassandra_nodes') | select('in', groups['cassandra_apply_config_batch_True'] | default([])) | list }}"
   any_errors_fatal: true
+  # the files' diffs: said once in the plan (WILL CHANGE, --diff) and in the .diff file, not by each task
+  diff: false
   gather_facts: false  # gathered by the preflight
   become: true
   tasks:
@@ -1621,6 +1648,8 @@
   serial: 1
   gather_facts: false  # gathered by the preflight
   any_errors_fatal: true
+  # the files' diffs: said once in the plan (WILL CHANGE, --diff) and in the .diff file, not by each task
+  diff: false
   become: true
   tasks:
     # first: each node its own facts before any run_once task (ansible/ansible#87148)

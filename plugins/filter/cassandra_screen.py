@@ -71,7 +71,7 @@ def _items(items, indent="", hang="  "):
     lines = []
     for item in items or []:
         if isinstance(item, Mapping):
-            pre = [indent + str(line) for line in item.get("pre") or []]
+            pre = [(indent + str(line)) if str(line) else "" for line in item.get("pre") or []]
             lines += ([str(item["title"])] if item.get("title") and pre else []) + pre
         elif str(item).strip():
             lines += _wrap(item, indent, indent + hang)

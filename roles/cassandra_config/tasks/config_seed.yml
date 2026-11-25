@@ -64,6 +64,7 @@
              | combine({'_same_settings': _same} if _same else {}) | to_nice_json }}
         dest: "{{ _cassandra_config_snapshot }}"
         mode: "0600"  # root only: the checksum of the JMX password file
+      diff: false  # (the collection's bookkeeping, not the config: no diff of it on screen)
       vars:
         _files: >-
           {{ (cassandra_seed_files.files + cassandra_seed_units.results | map(attribute='stat') | selectattr('exists') | list)

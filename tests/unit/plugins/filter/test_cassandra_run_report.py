@@ -131,6 +131,10 @@ def test_the_oldest_reports_past_the_kept_ones():
                                     "apply_config")[:5] == old + ["/r/apply_config-2026-11-05-1200.txt"]
     assert cassandra_run_report_old(files, "apply_config", keep=30) == []
     assert cassandra_run_report_old(files, "rolling_restart", keep=0) == ["/r/rolling_restart-2026-11-01-1200.txt"]
+    # (2026-11-25) apply_config's .diff files next to them: kept and removed the same way, apart from the reports
+    diffs = [{"path": "/r/apply_config-2026-11-%02d-120000.diff" % d, "mtime": 1000 + d} for d in range(1, 23)]
+    assert cassandra_run_report_old(files + diffs, "apply_config") == old + [
+        "/r/apply_config-2026-11-01-120000.diff", "/r/apply_config-2026-11-02-120000.diff"]
 
 
 def run_report(tmp_path, check=False, report_dir=None, keep=None):
@@ -243,11 +247,13 @@ def test_apply_config_keeps_its_plan_for_the_report():
     hostvars = {"node1": {"cassandra_apply_config_todo": True, "cassandra_apply_config_then": "restart",
                           "_cassandra_notes": ["WARNING  cassandra_heap_size: 31G"]}}
     variables = dict(trust_as_template_dict(t["vars"]), hostvars=hostvars, ansible_play_hosts=["node1"],
-                     ansible_play_hosts_all=["node1"], _todo=["node1"], cassandra_apply_config_diff=["  x  1 -> 2"],
-                     ansible_check_mode=False)
+                     ansible_play_hosts_all=["node1"], _todo=["node1"],
+                     cassandra_apply_config_diff=["WILL CHANGE", "on node1", "  x  1 -> 2"], ansible_check_mode=False)
+    variables["_diff"] = render(t["vars"]["_diff"], **variables)
     plan = render(facts["_cassandra_run_report_plan"], **variables)
-    assert [s["title"] for s in plan] == ["DIFFERENCES FOUND", "WILL DO", "CHECKS"]
-    assert plan[0]["lines"] == ["  x  1 -> 2"] and plan[1]["lines"][0] == "node1  write + restart"
+    assert [s["title"] for s in plan] == ["WILL CHANGE", "WHAT HAPPENS", "CHECKS"]
+    assert plan[0]["lines"] == ["on node1", "  x  1 -> 2"]
+    assert plan[1]["lines"][-1] == "node1  write + restart"
     assert plan[2]["lines"] == ["WARNING  cassandra_heap_size: 31G"]
     assert render(facts["_cassandra_run_report_plan"], **dict(variables, ansible_check_mode=True)) == []
     assert render(facts["_cassandra_run_report_plan"], **dict(variables, _todo=[])) == []

@@ -330,16 +330,23 @@ def test_the_outcomes_grouped_in_the_plan():
 
 
 def test_the_check_recap_shows_the_settings_then_the_outcomes():
-    diff = ["cassandra.yaml  max_hint_window  6h -> 3h  node2"]
+    # (WOULD CHANGE: cassandra_apply_config_changes' lines, its title first; WHAT HAPPENS: the order, then each node)
+    diff = ["WOULD CHANGE", "on node2", "  cassandra.yaml  rewritten", "    max_hint_window  6h -> 3h"]
     assert cassandra_apply_config_recap(outcome_nodes(), check=True, cluster="my_cluster", seconds=75, diff=diff,
                                         planned=["node1", "node2", "node3", "node4", "node5"]) == [
                                             'CHECK  apply_config  my_cluster  2 would restart, 1 would apply, 2 up to date  1m15s',
                                             '  nothing was changed (--check)',
                                             '',
-                                            'DIFFERENCES FOUND',
-                                            '  cassandra.yaml  max_hint_window  6h -> 3h  node2',
+                                            'WOULD CHANGE',
+                                            '  on node2',
+                                            '    cassandra.yaml  rewritten',
+                                            '      max_hint_window  6h -> 3h',
                                             '',
-                                            'WOULD DO',
+                                            'WHAT HAPPENS',
+                                            '  at once: node3',
+                                            '  one node at a time, the cluster checked before and after each: node2, node4',
+                                            '  Cassandra restarted: node2, node4',
+                                            '  no restart: the running Cassandra keeps what it read until its next restart',
                                             '  node2, node4  would apply, then restart',
                                             '  node3         would apply, no restart',
                                             '  node1, node5  up to date',
@@ -375,7 +382,7 @@ def test_nothing_to_apply_recap():
         'CHECK  apply_config  3 up to date',
         '  nothing was changed (--check)',
         '',
-        'WOULD DO',
+        'WHAT HAPPENS',
         '  node1..node3  up to date']
 
 
@@ -656,17 +663,21 @@ def test_a_service_has_its_own_label_and_check_separates_found_from_would_do():
     # value against the inventory's) apart from what a real run would do; nothing claimed done
     chronyd = {"item": "chronyd", "before": "inactive", "after": "active", "timesync": True, "service": True}
     nodes = [{"name": "h-n2", "items": [], "os": [chronyd]}]
-    diff = cassandra_apply_config_diff(nodes)
-    assert diff == ["Item               Node      Inventory", "OS settings  on h-n2", "  service chronyd  inactive  active"]
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config_changes import (
+        cassandra_apply_config_changes)
+    diff = cassandra_apply_config_changes(nodes, check=True, width=79)
+    assert diff == ["WOULD CHANGE", "on h-n2", "  OS settings", "    service chronyd  inactive -> active"]
     recap = cassandra_apply_config_recap(
         [{"name": "h-n1", "todo": False, "result": "nothing to apply"},
          {"name": "h-n2", "todo": True, "done": True, "then": "restart", "why": "time sync",
           "steps": ["drain and stop Cassandra", "start chronyd", "wait up to 2m for clock sync", "start Cassandra"]}],
         check=True, cluster="c", diff=diff)
     head = ["CHECK  apply_config  c  1 would restart, 1 up to date", "  nothing was changed (--check)", ""]
-    would = ["", "WOULD DO", "  h-n2  would drain and stop Cassandra, start chronyd, wait up to 2m for clock sync, start Cassandra",
+    would = ["", "WHAT HAPPENS", "  one node at a time, the cluster checked before and after each: h-n2",
+             "  Cassandra restarted: h-n2",
+             "  h-n2  would drain and stop Cassandra, start chronyd, wait up to 2m for clock sync, start Cassandra",
              "  h-n1  up to date"]
-    assert recap == head + ["DIFFERENCES FOUND"] + ["  " + line for line in diff] + would
+    assert recap == head + ["WOULD CHANGE"] + ["  " + line for line in diff[1:]] + would
 
 
 def test_the_plan_and_the_check_say_the_steps_the_recap_what_was_done():
