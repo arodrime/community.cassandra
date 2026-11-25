@@ -70,7 +70,7 @@
     - name: Find old progress files
       ansible.builtin.find:
         paths: "{{ cassandra_progress_dir }}"
-        patterns: "*.done"
+        patterns: ["*.done", "*.parts"]  # (*.parts: the parts of an apply_config run, apply_only)
         age: "{{ cassandra_rolling_progress_days }}d"
       register: cassandra_progress_old
       when: cassandra_progress_dir_stat.stat.exists or not ansible_check_mode  # --check made no dir

@@ -1174,7 +1174,9 @@ plan and the recap say the parts left out (``WARNING  not checked (apply_only): 
 the report. A name that is not a part stops the run before any change, with the list of the parts. A part left out
 that a node needs stops it too: a newer release of its series to install (``install``), the AxonOps agent its
 ``cassandra-env.sh`` loads (``axonops``). The running Cassandra is read all the same with ``java`` left out (what its
-unit gave it, a restart pending).
+unit gave it, a restart pending). A resumed run (``-e cassandra_rolling_resume=true``) must give the parts the
+interrupted one did (recorded next to its progress file, ``.parts``): other ones stop it, with the ``apply_only`` to
+resume with.
 
 ``apply_config`` covers the OS settings of ``cassandra_linux`` too (kernel settings, limits, transparent huge pages,
 swap, time sync, the read-ahead and IO scheduler of the data devices), except on a node with ``cassandra_linux_manage:

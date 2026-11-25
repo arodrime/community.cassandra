@@ -501,3 +501,31 @@ def test_a_users_file_to_write_schedules_the_node():
     for name in ("_todo", "_steps", "_stage_other_changes"):
         assert "_jmx + _users + _exporter" in note["vars"][name], name
     assert verdict(_cassandra_config_user_file_changes=[{"path": "x"}]) == ["users' files"]
+
+
+def test_a_resumed_run_keeps_the_parts_of_the_interrupted_one(tmp_path):
+    play = find_play(PLAYBOOK, "Set up the progress file")
+    record = find_task(play, "Record the parts of the run with its progress file")
+    refuse = find_task(play, "Refuse to resume with other parts than the interrupted run")
+    names = [t["name"] for t in play["tasks"]]
+    assert names.index("Set up the progress file") < names.index(refuse["name"]) < names.index(record["name"])
+    done = tmp_path / "c-apply_config-20261125T120000.done"
+    parts = cassandra_apply_only("config,linux")
+    assert render(record["ansible.builtin.copy"]["dest"], cassandra_progress_file=str(done)) == str(
+        tmp_path / "c-apply_config-20261125T120000.parts")
+    assert render(record["ansible.builtin.copy"]["content"], _cassandra_apply_parts=parts) == "config,unit,linux\n"
+    assert render(record["ansible.builtin.copy"]["content"], _cassandra_apply_parts=cassandra_apply_only("")) == "all\n"
+    assert "not cassandra_rolling_resume | default(false) | bool" in record["when"]
+
+    def said(given, recorded):
+        if recorded is not None:
+            (tmp_path / "c-apply_config-20261125T120000.parts").write_text(recorded)
+        variables = dict(cassandra_progress_file=str(done), _cassandra_apply_parts=cassandra_apply_only(given))
+        rec, cur = (render(refuse["vars"][n], **variables) for n in ("_recorded", "_current"))
+        return None if rec == cur else [render(line, _recorded=rec, _current=cur) for line in refuse["vars"]["_said"]]
+    assert said("config,linux", None) == ["the interrupted run applied every part", "this one: apply_only=config,unit,linux",
+                                          "a resumed run applies the parts the interrupted one did",
+                                          "WAY OUT  resume without -e apply_only"]  # (no record: an earlier version's run)
+    assert said("", None) is None
+    assert said("linux,config", "config,unit,linux\n") is None
+    assert said("", "config,unit,linux\n")[-1] == "WAY OUT  resume with -e apply_only=config,unit,linux"
