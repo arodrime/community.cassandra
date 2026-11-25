@@ -1778,8 +1778,8 @@ def test_a_sub_key_of_a_dict_not_merged_with_its_default_is_advised_as_written()
 
 
 def test_a_value_left_as_every_node_has_it_goes_in_the_cluster_s_group():
-    # (2026-11-25, a 24-node import) the packages no node has, the same on all: in host_vars of each node, not in
-    # group_vars/<cluster> (the owner's rule: the cluster's value there, the exceptions in host_vars)
+    # (2026-11-25, a 24-node import put them in every node's host_vars) the packages no node has, the same on all:
+    # in group_vars/<cluster> (the owner's rule: the cluster's value there, the exceptions in host_vars)
     left = {"cassandra_install_jemalloc": False, "cassandra_dsbulk_install": False}
     nodes = [node(i, keep=dict(left)) for i in range(1, 4)]
     layout = cassandra_inventory_layout(nodes, "My Cluster")
