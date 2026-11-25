@@ -9,6 +9,7 @@ __metaclass__ = type
 # apply_verify. A task added to the rest fails here until it is classified.
 
 import glob
+import sys
 import grp
 import os
 import pwd
@@ -370,6 +371,19 @@ NOT_READ = {"cassandra_config": "the role's name", "cassandra_jvm": "cassandra_j
             "_cassandra_config_checked": "", "_cassandra_config_checked_names": ""}
 
 
+def filter_names():
+    """The names of the collection's filters, as their FilterModule gives them (never a word of a docstring or a dict
+    key: a variable of that name would be left out)."""
+    import importlib
+    names = set()
+    for path in glob.glob(os.path.join(TOP, "plugins", "filter", "*.py")):
+        module = importlib.import_module("ansible_collections.community.cassandra.plugins.filter."
+                                         + os.path.basename(path)[:-3])
+        if hasattr(module, "FilterModule"):
+            names |= set(module.FilterModule().filters())
+    return names
+
+
 def checks_read():
     """The variables checks.yml reads: the names it writes (comments left out), those it looks up by name, and the
     role variables they read, recursively (the filters it calls left out)."""
@@ -379,10 +393,7 @@ def checks_read():
         with open(os.path.join(role, part, "main.yml"), encoding="utf-8") as f:
             for name, value in (yaml.safe_load(f) or {}).items():
                 defs[name] = value if isinstance(value, str) else yaml.safe_dump(value)
-    filters = set()
-    for path in glob.glob(os.path.join(TOP, "plugins", "filter", "*.py")):
-        with open(path, encoding="utf-8") as f:
-            filters |= set(re.findall(r'"(cassandra_\w+)":', f.read()))
+    filters = filter_names()
 
     def words(text):
         text = re.sub(r"(?m)^\s*#.*$", "", text)
@@ -428,7 +439,9 @@ def test_the_checks_run_once_for_the_nodes_that_share_their_values():
     assert checks["when"] == "inventory_hostname in _cassandra_config_check_groups"
     # per node elsewhere (a play whose nodes do not all run the plan), once in apply_config's compare
     assert find_task(PLAN, "Check the variables")["when"] == "not _cassandra_config_checks_once | default(false) | bool"
-    assert COMPARE["vars"]["_cassandra_config_checks_once"] is True
+    once = COMPARE["vars"]["_cassandra_config_checks_once"]
+    for full, verify, said in [(False, False, True), (True, False, False), (False, True, False)]:
+        assert render(once, _cassandra_apply_full=full, _cassandra_apply_verify=verify) is said  # (audit B2)
     # the messages name the nodes checked
     with open(os.path.join(TOP, "roles", "cassandra_config", "vars", "main.yml"), encoding="utf-8") as f:
         names = yaml.safe_load(f)["_cassandra_config_checked_names"]
@@ -578,3 +591,123 @@ def test_the_users_files_in_the_differences():
     text = "\n".join(lines)
     assert "cqlshrc" in text and "0644" in text and "0600" in text and "credentials" in text
     assert "points to" not in text
+
+
+# names checks.yml's templates read that are no variable of the node's checks: Ansible's functions and constants
+JINJA_GLOBALS = {"lookup", "query", "q", "now", "range", "dict", "lipsum", "cycler", "joiner", "namespace", "undef",
+                 "role_path", "omit", "true", "false", "none", "True", "False", "None"}
+
+
+EXPRESSIONS = ("when", "that", "failed_when", "changed_when", "until")
+
+
+def template_names(value, expression=False):
+    """The variables a task's value reads (its Jinja parsed, the names it does not set): the strings with Jinja, and
+    the plain ones of its conditions (when, that...), which are expressions."""
+    from jinja2 import Environment, meta
+    if isinstance(value, dict):
+        return set().union(set(), *[template_names(v, k in EXPRESSIONS) for k, v in value.items()])
+    if isinstance(value, list):
+        return set().union(set(), *[template_names(v, expression) for v in value])
+    if not isinstance(value, str) or not ("{{" in value or "{%" in value or expression):
+        return set()
+    text = value if ("{{" in value or "{%" in value) else "{{ %s }}" % value
+    class Any(dict):  # (every filter and test known: Ansible's and the collection's, not parsed here)
+        def __contains__(self, name):
+            return True
+
+        def get(self, name, default=None):
+            return dict.get(self, name) or (lambda *args, **kwargs: None)
+    env = Environment(extensions=["jinja2.ext.do"])
+    env.filters, env.tests = Any(env.filters), Any(env.tests)
+    # (a name a {% set %} of the same string sets, in a loop or a branch: its own, not the node's)
+    return meta.find_undeclared_variables(env.parse(text)) - set(re.findall(r"\{%-?\s*set\s+(\w+)\s*=", text))
+
+
+def test_every_name_the_checks_read_is_in_their_key():
+    # parsed from each task's Jinja (not a grep): a variable a check reads and the key misses would group nodes
+    # whose verdicts differ (audit A1: cassandra_heap_newsize)
+    with open(os.path.join(TOP, "roles", "cassandra_config", "vars", "main.yml"), encoding="utf-8") as f:
+        listed = set(yaml.safe_load(f)["_cassandra_config_check_vars"])
+    keyed = listed | set(CHECKS_BY_NAME)
+    with open(os.path.join(TASKS, "checks.yml"), encoding="utf-8") as f:
+        tasks = yaml.safe_load(f)
+    missing = {}
+    for task in tasks:
+        local = set(task.get("vars") or {}) | {"_cassandra_config_checked_names"}
+        read = template_names({k: v for k, v in task.items() if k not in ("name",)}) - local - JINJA_GLOBALS - {"_", "community"}
+        lost = sorted(n for n in read if n not in keyed and not n.startswith("_"))
+        lost += sorted(n for n in read if n.startswith("_") and n not in keyed)
+        if lost:
+            missing[task["name"]] = lost
+    assert missing == {}
+
+
+@pytest.mark.parametrize("name, value", [("cassandra_heap_newsize", "800M"), ("cassandra_heap_size", "4G"),
+                                         ("cassandra_config_keep_files", ["cassandra.yaml"]),
+                                         ("cassandra_extra_settings", {"x": 1}), ("cassandra_rack", "r2"),
+                                         ("cassandra_logback_root_extra_refs", ["X"]), ("cassandra_version", "41x")])
+def test_two_nodes_differing_in_a_value_the_checks_read_are_two_groups(name, value):
+    with open(os.path.join(TOP, "roles", "cassandra_config", "vars", "main.yml"), encoding="utf-8") as f:
+        listed = yaml.safe_load(f)["_cassandra_config_check_vars"]
+    assert name in listed
+    keys = {"n1": "a", "n2": "a"}  # (as the sha1 of the same values)
+    keys["n2"] = "b" if name in listed else "a"
+    groups = cassandra_check_groups(["n1", "n2"], dict((n, {"_cassandra_config_check_key": k}) for n, k in keys.items()))
+    assert groups == {"n1": ["n1"], "n2": ["n2"]}
+
+
+CHECKS_PLAYBOOK = """
+- hosts: all
+  gather_facts: true
+  tasks:
+    - name: The checks
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+        tasks_from: {tasks}
+"""
+
+
+def run_checks(tmp_path, tasks, hosts):
+    """checks.yml per node, or checks_once.yml, on local hosts with these variables -> (rc, output)."""
+    from ansible_collections.community.cassandra.tests.unit.helpers import run_playbook
+    lines = ["[c]"] + ["%s %s" % (h, " ".join("%s=%s" % kv for kv in v.items())) for h, v in hosts.items()]
+    lines += ["[c:vars]", "ansible_connection=local", "ansible_python_interpreter=" + sys.executable,
+              "cassandra_version=50x"]
+    (tmp_path / "inv.ini").write_text("\n".join(lines) + "\n")
+    (tmp_path / "play.yml").write_text(CHECKS_PLAYBOOK.format(tasks=tasks))
+    return run_playbook(["-i", str(tmp_path / "inv.ini"), str(tmp_path / "play.yml")])
+
+
+def said(out):
+    """(the hosts a check stopped, the hosts a warning names), from the output of either run."""
+    stopped = set(re.findall(r"fatal: \[(n\d)\]", out))
+    named = set()
+    for line in re.findall(r'"msg": "([^"]*)"', out):
+        found = set(re.findall(r"\bn\d\b", line.split(":")[0]))
+        if line.startswith("WARNING"):
+            named |= found
+        elif found:
+            stopped |= found  # (once: the failure of the group names its nodes)
+    return stopped, named
+
+
+@pytest.mark.playbook
+@pytest.mark.parametrize("hosts", [
+    {"n1": {}, "n2": {"cassandra_heap_newsize": "800M"}},  # (audit A1: a warning for n2 only)
+    {"n1": {}, "n2": {"cassandra_disk_access_mode": "bogus"}},  # a refusal for n2 only
+    {"n1": {"cassandra_disk_access_mode": "bogus"}, "n2": {"cassandra_disk_access_mode": "bogus"}},  # for both
+    {"n1": {}, "n2": {}},  # nothing
+])
+def test_once_or_per_node_the_checks_say_the_same(tmp_path, hosts):
+    per_node = said(run_checks(tmp_path, "checks.yml", hosts)[1])
+    once = said(run_checks(tmp_path, "checks_once.yml", hosts)[1])
+    assert once == per_node
+
+
+def test_apply_full_compares_as_before_the_gate():
+    # audit B2: the rest everywhere, the checks per node, the users' files not compared (as before)
+    users = render(COMPARE["vars"]["_cassandra_config_user_files_compare"], _cassandra_apply_full=True)
+    assert users is False
+    block = find_task(load_tasks(os.path.join(TASKS, "access_plan.yml")), "Compare the cqlsh and nodetool files of the users")
+    assert "_cassandra_config_user_files_compare | default(true) | bool" in block["when"]

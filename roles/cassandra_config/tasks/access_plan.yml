@@ -119,8 +119,11 @@
 # The files of OS users' ~/.cassandra the role writes (access.yml): cqlsh's (cassandra_cqlsh_credentials) and nodetool's
 # JMX TLS settings (cassandra_jmx_ssl_enabled: root's and the account Cassandra runs as), rendered here from the same
 # templates (the user's home put in on the node), compared on the node: the ones to write, and why (no content said)
+# (_cassandra_config_user_files_compare false: apply_full, not compared, as before)
 - name: Compare the cqlsh and nodetool files of the users
-  when: cassandra_cqlsh_credentials | length > 0 or cassandra_jmx_ssl_enabled | bool
+  when:
+    - cassandra_cqlsh_credentials | length > 0 or cassandra_jmx_ssl_enabled | bool
+    - _cassandra_config_user_files_compare | default(true) | bool
   block:
     - name: Compare the users' ~/.cassandra files with the role's
       ansible.builtin.command:

@@ -322,7 +322,11 @@
         # the changes once: in the plan of a real run (before its question), in the recap under --check
         _cassandra_config_quiet: true
         _cassandra_change_report_quiet: true
-        _cassandra_config_checks_once: true  # (every node of the play runs the plan: its checks once per set of values)
+        # (every node of the play runs the plan: its checks once per set of values; apply_full, apply_verify: per node,
+        # as before)
+        _cassandra_config_checks_once: "{{ not (_cassandra_apply_full | bool or _cassandra_apply_verify | bool) }}"
+        # (apply_full: the users' ~/.cassandra files not compared, as before)
+        _cassandra_config_user_files_compare: "{{ not _cassandra_apply_full | bool }}"
         _rest: "{{ _cassandra_apply_full | bool or _cassandra_apply_verify | bool or _cassandra_config_plan_writes | length > 0 }}"
         # the facts of cassandra_config this run reads that the rest of the role sets (tests/unit: test_apply_config_gate)
         _gate_facts: [_cassandra_config_items, _cassandra_config_exporter_changes, _cassandra_change_report_seen,

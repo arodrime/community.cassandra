@@ -334,6 +334,7 @@ _cassandra_config_check_vars:
   - _cassandra_config_gc_names
   - _cassandra_config_gcs
   - _cassandra_config_java_major
+  - _cassandra_config_log_patterns
   - _cassandra_config_no_newsize_warning
   - _cassandra_config_old_names
   - _cassandra_config_old_names_of
@@ -373,27 +374,36 @@ _cassandra_config_check_vars:
   - cassandra_compaction_throughput
   - cassandra_conf_dir
   - cassandra_config_confirm
+  - cassandra_config_keep_files
   - cassandra_config_template_overrides
+  - cassandra_config_template_snippets
   - cassandra_counter_cache_size
   - cassandra_counter_write_request_timeout
   - cassandra_credentials_update_interval
   - cassandra_credentials_validity
   - cassandra_data_dir
+  - cassandra_data_file_directories
+  - cassandra_dc
   - cassandra_disk_access_mode
   - cassandra_drop_compact_storage_enabled
   - cassandra_dynamic_snitch_reset_interval
   - cassandra_dynamic_snitch_update_interval
+  - cassandra_endpoint_snitch
+  - cassandra_extra_settings
   - cassandra_file_cache_size
   - cassandra_gc_log_threshold
   - cassandra_gc_warn_threshold
   - cassandra_heap_dump_dir
   - cassandra_heap_in_jvm_options
+  - cassandra_heap_newsize
+  - cassandra_heap_size
   - cassandra_hinted_handoff_throttle
   - cassandra_hints_flush_period
   - cassandra_index_summary_capacity
   - cassandra_index_summary_resize_interval
   - cassandra_inter_dc_stream_throughput_outbound
   - cassandra_internode_streaming_tcp_user_timeout
+  - cassandra_java_version
   - cassandra_java_versions
   - cassandra_jmx_port
   - cassandra_jmx_ssl_cipher_suites
@@ -410,19 +420,27 @@ _cassandra_config_check_vars:
   - cassandra_jvm_gc
   - cassandra_key_cache_size
   - cassandra_local_jmx
+  - cassandra_log_audit_dir
+  - cassandra_log_audit_file
   - cassandra_log_audit_max_file_size
   - cassandra_log_audit_max_history
   - cassandra_log_audit_total_size_cap
+  - cassandra_log_cql_table
   - cassandra_log_cql_table_level
+  - cassandra_log_debug_dir
   - cassandra_log_debug_max_file_size
   - cassandra_log_debug_max_history
   - cassandra_log_debug_total_size_cap
   - cassandra_log_level
   - cassandra_log_level_cassandra
+  - cassandra_log_levels
+  - cassandra_log_pattern
+  - cassandra_log_system_dir
   - cassandra_log_system_level
   - cassandra_log_system_max_file_size
   - cassandra_log_system_max_history
   - cassandra_log_system_total_size_cap
+  - cassandra_logback_root_extra_refs
   - cassandra_materialized_views_enabled
   - cassandra_max_hint_window
   - cassandra_max_hints_file_size
@@ -447,6 +465,7 @@ _cassandra_config_check_vars:
   - cassandra_prometheus_exporter_tls_keystore_password
   - cassandra_prometheus_exporter_username
   - cassandra_prometheus_exporter_version
+  - cassandra_rack
   - cassandra_rackdc_dc
   - cassandra_rackdc_extra_settings
   - cassandra_rackdc_rack
@@ -472,4 +491,5 @@ _cassandra_config_check_vars:
   - cassandra_trickle_fsync_interval
   - cassandra_truncate_request_timeout
   - cassandra_user_defined_functions_enabled
+  - cassandra_version
   - cassandra_write_request_timeout
