@@ -249,7 +249,13 @@ def test_swap_left_on_said_under_the_node_once(live, swapoff, said):
     ([dict(todo=True, then="write")], ["at once: n1", "Cassandra stopped, left stopped: n1"]),
     # a firewall change: one node at a time, the cluster checked around each
     ([dict(todo=True, then="none", firewall=True)], ["one node at a time, the cluster checked before and after each: n1"]),
-    ([dict(todo=False, then="none")], [])])
+    ([dict(todo=False, then="none")], []),
+    # (audit 2026-11-25) a mixed plan names the nodes with no restart, an OS change on one hides it for no other
+    ([dict(todo=True, then="restart"), dict(todo=True, then="none")],
+     ["at once: n2", "one node at a time, the cluster checked before and after each: n1", "Cassandra restarted: n1",
+      "no restart on n2: the running Cassandra keeps what it read until its next restart"]),
+    ([dict(todo=True, then="none", os=True), dict(todo=True, then="none")],
+     ["at once: n1, n2", "no restart on n2: the running Cassandra keeps what it read until its next restart"])])
 def test_what_happens_says_the_order(nodes, said):
     # (2026-11-25) WHAT HAPPENS, before the question and in the --check recap: at once or one node at a time, the
     # restarts, and that a running Cassandra keeps what it read when none

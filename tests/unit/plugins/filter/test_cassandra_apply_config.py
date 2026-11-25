@@ -346,7 +346,7 @@ def test_the_check_recap_shows_the_settings_then_the_outcomes():
                                             '  at once: node3',
                                             '  one node at a time, the cluster checked before and after each: node2, node4',
                                             '  Cassandra restarted: node2, node4',
-                                            '  no restart: the running Cassandra keeps what it read until its next restart',
+                                            '  no restart on node3: the running Cassandra keeps what it read until its next restart',
                                             '  node2, node4  would apply, then restart',
                                             '  node3         would apply, no restart',
                                             '  node1, node5  up to date',
@@ -378,11 +378,10 @@ def test_nothing_to_apply_recap():
     assert cassandra_apply_config_recap(nodes) == [
         'DONE  apply_config  3 up to date',
         'node1..node3  up to date']
+    # (audit 2026-11-25) nothing happens: no WHAT HAPPENS heading over "up to date" alone
     assert cassandra_apply_config_recap(nodes, check=True, diff=[]) == [
         'CHECK  apply_config  3 up to date',
         '  nothing was changed (--check)',
-        '',
-        'WHAT HAPPENS',
         '  node1..node3  up to date']
 
 

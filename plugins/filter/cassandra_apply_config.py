@@ -2,7 +2,8 @@
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 """What apply_config shows: the settings that differ, then what each node gets.
 
-cassandra_apply_config_diff: the nodes' compare data -> the settings that
+cassandra_apply_config_diff (a function, no filter since WILL CHANGE replaced its table:
+    cassandra_apply_config_changes): the nodes' compare data -> the settings that
     differ, a table per file: the setting, its change "from -> to", the nodes
     that change last (one row per live value). The JVM options and
     cassandra-env.sh lines are settings too, the owner and the mode of a file
@@ -939,8 +940,13 @@ def _happens_facts(nodes):
         lines.append("Cassandra started (not running now): %s" % out.nodes(starts, all_nodes=every))
     if stopped:
         lines.append("Cassandra stopped, left stopped: %s" % out.nodes(stopped, all_nodes=every))
-    if [n for n in at_once if n not in stopped] and not any(n.get("os") for n in todo if str(n["name"]) in at_once):
+    # (the nodes written at once with Cassandra running and no OS change: named unless they are all the nodes to do)
+    os_nodes = [str(n["name"]) for n in todo if n.get("os")]
+    kept = [n for n in at_once if n not in stopped and n not in os_nodes]
+    if kept and len(kept) == len(todo):
         lines.append(NO_RESTART_FACT)
+    elif kept:
+        lines.append("no restart on %s: %s" % (out.nodes(kept, all_nodes=every), NO_RESTART_FACT[len("no restart: "):]))
     return lines
 
 
@@ -1079,7 +1085,8 @@ def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, d
         # what would change (cassandra_apply_config_changes: its title first), then how a real run would go
         shown += (["", diff[0]] + ["  " + line if line else "" for line in diff[1:]] if diff else [])
         facts = _happens_facts(nodes)
-        lines = ["", HAPPENS] + ["  " + line for line in out.fit(facts, _width(width, 2)) + lines]
+        # (nothing happens: no WHAT HAPPENS, each node's line under the verdict)
+        lines = (["", HAPPENS] if facts else []) + ["  " + line for line in out.fit(facts, _width(width, 2)) + lines]
     lines = lines + _recap_warnings(nodes, check, refused, planned, width, more)
     # (an optional restart is no NEXT after a FAILED run: its stop said what to do first)
     after = [] if check or counts.get("failed") else _read_ahead_todo(nodes, restart_command, _width(width))
@@ -1312,7 +1319,6 @@ def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", 
 class FilterModule(object):
     def filters(self):
         return {
-            "cassandra_apply_config_diff": cassandra_apply_config_diff,
             "cassandra_apply_config_outcomes": cassandra_apply_config_outcomes,
             "cassandra_apply_config_happens": cassandra_apply_config_happens,
             "cassandra_apply_config_recap": cassandra_apply_config_recap,

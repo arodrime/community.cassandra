@@ -32,6 +32,8 @@ WIDTH = 79
 DIFF_LINES = 20
 LAYOUT_ONLY = "rewritten: comments and layout only"
 HEADER_TITLE = 'header "# Managed by Ansible" added (a comment)'
+# the end of a diff line cut to fit the screen (its next part on the line under it)
+CONTINUED = " \\"
 # the files whose lines make the JVM's arguments: a line moved between two of them is said so
 JVM_FILES = re.compile(r"^(cassandra-env\.sh|jvm\d*-server\.options)$")
 
@@ -212,7 +214,8 @@ def cassandra_apply_config_changes(nodes, check=False, width="terminal", show_di
     they differ, "on node3") 2 columns in; [] when nothing changes.
     show_diff (--diff): under each file its unified diff, once per group of nodes with the same one, DIFF_LINES at
     most (the rest: the .diff file, diff_file); without, a last line names diff_file. width: the lines fit in it
-    ("terminal": the terminal's, WIDTH at most), margin columns less (the caller's indent); a diff line is never cut.
+    ("terminal": the terminal's, WIDTH at most), margin columns less (the caller's indent); a diff line too long is
+    cut (_cut, CONTINUED at the end of each part but its last).
     cwd: diff_file said from it when it is under it."""
     diff_file = out.path_from(diff_file, cwd) if diff_file and cwd else diff_file
     width = min(ac._width(width, margin), WIDTH - margin) if str(width) == "terminal" else ac._width(width, margin)
@@ -240,14 +243,31 @@ def cassandra_apply_config_changes(nodes, check=False, width="terminal", show_di
                 lines += _row_lines(rows, width)
             if show_diff and name in by_name[names[0]]["diffs"]:
                 lines += _diff_lines(name, names, every, by_name, diff_file, width)
-    if not show_diff and diff_file:
+    # (the .diff file is written only when a file has a diff: not for header lines or OS settings alone)
+    if not show_diff and diff_file and any(n["diffs"] for n in prepared):
         lines += out.fit(["real diffs: %s" % diff_file], width)
     return [title] + lines
 
 
+def _cut(line, width):
+    """A diff line on the screen in width: cut, each part but the last ending with CONTINUED, the next ones indented
+    under it (the .diff file has it whole) -> [line]."""
+    if len(line) <= width:
+        return [line]
+    room = max(10, width - len(CONTINUED))
+    parts = [line[:room] + CONTINUED]
+    rest = line[room:]
+    hang = " " * 8
+    while len(hang) + len(rest) > width:
+        cut = max(10, width - len(hang) - len(CONTINUED))
+        parts.append(hang + rest[:cut] + CONTINUED)
+        rest = rest[cut:]
+    return parts + [hang + rest]
+
+
 def _diff_lines(name, names, every, by_name, diff_file, width):
-    """A file's unified diff under it: once per group of its nodes with the same one, DIFF_LINES at most (its lines
-    never cut, the others fit in width)."""
+    """A file's unified diff under it: once per group of its nodes with the same one, DIFF_LINES at most, every line
+    in width (a diff line too long cut, _cut)."""
     by_diff = []
     for n in names:
         diff = _diff_body(by_name[n]["diffs"].get(name, ""))
@@ -261,7 +281,7 @@ def _diff_lines(name, names, every, by_name, diff_file, width):
         said = ("all %d nodes" % len(every)) if len(every) > 2 and sorted(members) == sorted(every) \
             else out.nodes(members)
         lines += out.fit(["    %s diff on %s:" % ("same" if len(members) > 1 else "its", said)], width)
-        lines += ["      " + line for line in body[:DIFF_LINES]]
+        lines += [cut for line in body[:DIFF_LINES] for cut in _cut("      " + line, width)]
         if len(body) > DIFF_LINES:
             lines += out.fit(["      (%d more lines: see %s)" % (len(body) - DIFF_LINES, diff_file or "the .diff file")],
                              width)
