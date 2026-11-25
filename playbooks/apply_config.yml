@@ -19,6 +19,7 @@
     _cassandra_notes_in_plan: true  # the checks' WARNING lines in the plan, before the question
     _cassandra_preflight_seeds_down_ok: true  # a seed of this run not running: written, maybe started
     _cassandra_preflight_release_update: true  # releases of one series, the inventory's among them: its own update
+    _cassandra_preflight_step: true  # its phase line a step of the run (ops callback: nodes counted, time said)
 
 # (a node that fails here would be left out of the plan: nothing done then)
 # _cassandra_apply_config_compare_only (the drift playbook's import): the compare alone, as a real run does it before
@@ -51,6 +52,7 @@
       vars:
         cassandra_output: true  # a phase line (ops callback)
         cassandra_output_gap: true  # a block of its own
+        cassandra_output_step: true  # a step: its nodes counted, its time said
 
     - name: Note when the run started
       ansible.builtin.set_fact:
@@ -1605,6 +1607,16 @@
         cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
       tags: [always]  # under --tags too
 
+    - name: Say what the run does
+      ansible.builtin.debug:
+        msg: "{{ 'apply_os' | community.cassandra.cassandra_phase(count=ansible_play_hosts | length) }}"
+      run_once: true
+      when: not ansible_check_mode
+      vars:
+        cassandra_output: true  # a phase line (ops callback)
+        cassandra_output_gap: true  # a block of its own
+        cassandra_output_step: true  # a step: its nodes counted, its time said
+
     - name: Apply the OS settings
       when: not ansible_check_mode
       block:
@@ -1697,6 +1709,20 @@
         tasks_from: defaults.yml
         public: true
 
+    # a step of the run (node_operation's own phase line left out); under --check, the checks from each node
+    - name: Say what the run does
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'check_from_nodes' | community.cassandra.cassandra_phase(count=_names | length) if ansible_check_mode
+             else 'write_config' | community.cassandra.cassandra_phase(_names) }}
+      run_once: true
+      when: _names | length > 0
+      vars:
+        cassandra_output: true  # a phase line (ops callback)
+        cassandra_output_gap: true  # a block of its own
+        cassandra_output_step: true  # a step: its nodes counted, its time said
+        _names: "{{ ansible_play_hosts | reject('in', cassandra_progress_done | default([])) | list }}"
+
     - name: Apply the config on these nodes
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation
@@ -1704,6 +1730,7 @@
       vars:
         cassandra_service_node_action: apply_config
         cassandra_service_node_batch: true
+        _cassandra_operation_phase_said: true  # (above)
         # --check: a node whose JMX password file is missing or other (a real run writes it first) refuses
         # the JMX login: checked from the others
         _no_login: >-
@@ -1736,6 +1763,17 @@
         _cassandra_own_facts: "{{ inventory_hostname }}"
         cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
       tags: [always]  # under --tags too
+
+    - name: Say what the run does
+      ansible.builtin.debug:
+        msg: "{{ 'stage_config' | community.cassandra.cassandra_phase(count=_names | length) }}"
+      run_once: true
+      when: _names | length > 0
+      vars:
+        cassandra_output: true  # a phase line (ops callback)
+        cassandra_output_gap: true  # a block of its own
+        cassandra_output_step: true  # a step: its nodes counted, its time said
+        _names: "{{ ansible_play_hosts | reject('in', cassandra_progress_done | default([])) | list }}"
 
     - name: Stage the config files
       when: inventory_hostname not in cassandra_progress_done | default([])  # (done by the interrupted run)

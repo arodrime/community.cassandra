@@ -92,6 +92,7 @@
         - not ansible_check_mode
         - _phase | length > 0
         - cassandra_service_node_action not in ['restart', 'reboot']
+        - not _cassandra_operation_phase_said | default(false) | bool  # (the playbook's own step line)
       run_once: "{{ cassandra_service_node_batch | default(false) | bool }}"
       vars:
         cassandra_output: true  # a phase line (ops callback)

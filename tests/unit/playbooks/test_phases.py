@@ -113,14 +113,17 @@ CLUSTER = ["node1", "node2", "node3", "node4", "node5"]
 
 def check_line(present=None, absent=(), run=None, **extra):
     """The check line preflight prints, for a group of CLUSTER + absent hosts (present: those not marked absent)."""
-    say = next(t for t in phases("playbooks", "preflight.yml") if t["name"] == "Say what the run does")
+    # (a block: its variables, its two phase lines, the step's or not)
+    say = next(t for p in load("playbooks", "preflight.yml") for t in walk(p.get("tasks"))
+               if t.get("name") == "Say what the run does" and "block" in t)
+    assert [t["ansible.builtin.debug"]["msg"] for t in say["block"]] == [say["block"][0]["ansible.builtin.debug"]["msg"]] * 2
     present = CLUSTER if present is None else present
     hosts = list(present) + list(absent)
     hostvars = dict((h, {"cassandra_node_state": "absent" if h in absent else "present"}) for h in hosts)
     groups = {"all": hosts + ["other"], "cassandra": hosts, "dc2": ["node4", "node5"], "ungrouped": ["other"]}
     variables = dict(say["vars"], groups=groups, hostvars=hostvars,
                      cassandra_hosts="cassandra", ansible_play_hosts_all=present if run is None else run, **extra)
-    return render(say["ansible.builtin.debug"]["msg"], **variables).strip()
+    return render(say["block"][0]["ansible.builtin.debug"]["msg"], **variables).strip()
 
 
 @pytest.mark.parametrize("extra, absent, run, line", [
@@ -219,4 +222,5 @@ def test_the_first_lines_come_before_the_nodes_are_reached(playbook, play, befor
     assert all(names.index(name) < gather for name in before), names
     # nothing before it reaches a node: no module of its own runs on them (set_fact, assert, debug, includes)
     local = ("ansible.builtin.set_fact", "ansible.builtin.assert", "ansible.builtin.debug", "ansible.builtin.include_role")
-    assert all(any(k in t for k in local) for t in tasks["tasks"][:gather]), names[:gather]
+    assert all(any(k in t for k in local) or t.get("block") and all(any(k in b for k in local) for b in t["block"])
+               for t in tasks["tasks"][:gather]), names[:gather]

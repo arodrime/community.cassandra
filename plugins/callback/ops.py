@@ -63,6 +63,7 @@ import os
 import re
 import sys
 import textwrap
+import threading
 import time
 from collections import namedtuple
 
@@ -77,7 +78,7 @@ from ansible import constants as C
 from ansible.utils.color import parsecolor, stringc
 
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import (
-    BULLET, FLOW, is_command, laid_out)
+    BULLET, FLOW, duration, is_command, laid_out)
 
 MARKER = "cassandra_output"
 GAP = "cassandra_output_gap"  # a blank line before the next operator message
@@ -85,6 +86,7 @@ RESCUED = "cassandra_output_rescued"  # on a block: its rescue says what failed
 SAID = "cassandra_output_said"  # on a task: its failure is the stop of a verdict printed already (nothing printed)
 HELP = "cassandra_output_help"  # the help playbook's text: laid out at the terminal's width, its keys coloured
 INFO = "cassandra_output_info"  # an informative summary: in the progress colour, except its WARNING lines
+STEP = "cassandra_output_step"  # on a phase line: a step of the run, its nodes counted and its time said
 _PAUSES = ("pause", "ansible.builtin.pause", "ansible.legacy.pause")
 # the actions whose failure is the message itself (a verdict)
 _ASSERTS = ("assert", "ansible.builtin.assert", "ansible.legacy.assert")
@@ -506,11 +508,55 @@ def lines(msg):
     return str(msg).split("\n")
 
 
+# A step: a phase line marked cassandra_output_step, until the next phase line, plan, screen, recap, question or
+# play (done then), or until an error, a progress line or the end of a run that failed (its time not said then)
+Step = namedtuple("Step", "phase tint start")
+STEP_WIDTH = 79  # the most of a step's line
+STEP_DRAW_EVERY = 0.2  # seconds between two rewrites of a step's line on a terminal
+
+
+def step_line(phase, through, total, seconds, width=STEP_WIDTH):
+    """The line of a step going on: its phase line, the nodes through the task running out of the play's, the time
+    since it started ("Comparing the config with the inventory (24 nodes)...  4/24  1m12s"); its phase line cut
+    when they do not fit in width."""
+    figures = ("%d/%d  " % (through, total) if total else "") + duration(seconds)
+    if len(phase) + 2 + len(figures) <= width:
+        return "%s  %s" % (phase, figures)
+    room = width - 2 - len(figures) - 3
+    return "%s...  %s" % (phase[:room].rstrip(), figures) if room >= 10 else figures[:width]
+
+
+def step_done(phase, seconds, width=STEP_WIDTH):
+    """The lines of a step done: its phase line and its time ("...  done in 4m12s"), the time on a line of its own
+    when both do not fit in width."""
+    said = "done in " + duration(seconds)
+    if len(phase) + 2 + len(said) <= width:
+        return ["%s  %s" % (phase, said)]
+    return [phase, "  " + said]
+
+
+def play_hosts(play):
+    """The names of the hosts a play runs on (its hosts, --limit applied), None when ansible-core does not say."""
+    try:  # the variable manager's inventory: ansible-core's own, no public API gives the play's hosts
+        inventory = play.get_variable_manager()._inventory  # pylint: disable=protected-access
+        return set(host.get_name() for host in inventory.get_hosts(play.hosts, order=play.order))
+    except Exception:  # pylint: disable=broad-except  # counted from the results then
+        return None
+
+
 class CallbackModule(DefaultCallback):
 
     CALLBACK_VERSION = 2.0
     CALLBACK_TYPE = "stdout"
     CALLBACK_NAME = "community.cassandra.ops"
+
+    _step = None  # the step going on (Step), if any
+    _footer = None  # on a terminal, the step's line drawn under the output: True when a blank row was added above it
+    _hold = False  # a line left open by Ansible (no newline): the step's line drawn again after the next one
+    _paused = False  # a question (pause) may be asked: the step's line not drawn until the next task
+    _step_said = False  # in a log or a pipe: the step's own line is the last printed
+    _drawn = _logged = 0.0  # when the step's line was last drawn on the terminal, last given to the log or the pipe
+    _hosts = None  # the hosts of the play running (None: unknown, those with a result counted)
 
     def __init__(self, *args, **kwargs):
         super(CallbackModule, self).__init__(*args, **kwargs)
@@ -526,7 +572,10 @@ class CallbackModule(DefaultCallback):
         self._progress = PROGRESS_COLOR
         self._warning = C.COLOR_WARN
         self._refused = {}  # the refused role arguments of the task running: {(role, rows): [hosts]}, said after it
+        self._seen, self._gone, self._through = set(), set(), set()  # the play's hosts with a result, out, done
+        self._lock = threading.RLock()  # the step's line and Ansible's output (results and warnings: two threads)
         atexit.register(self._say_refused_at_exit)  # (a run that ends before any next task or its stats)
+        atexit.register(self._footer_at_exit)
 
     def set_options(self, task_keys=None, var_options=None, direct=None):
         super(CallbackModule, self).set_options(task_keys=task_keys, var_options=var_options, direct=direct)
@@ -553,7 +602,7 @@ class CallbackModule(DefaultCallback):
             self._display.display(plain, log_only=True)
         else:
             self._display.display(line, color=color)
-        self._blank, self._ruled, self._live = not line, "", None
+        self._blank, self._ruled, self._live, self._step_said = not line, "", None, False
 
     def _width(self):
         """The width of the rules and the help text: rule_width of the
@@ -575,7 +624,7 @@ class CallbackModule(DefaultCallback):
                 self._display.display("")  # text never touches a rule: a blank line above it, one under it
             self._display.display(line)
             self._display.display("")
-        self._ruled, self._blank, self._live = line, True, None
+        self._ruled, self._blank, self._live, self._step_said = line, True, None, False
 
     def _print_help(self, msg):
         """The help playbook's text: its rules drawn as the other rules, its
@@ -596,16 +645,21 @@ class CallbackModule(DefaultCallback):
                     continue
                 self._line(help_line(line, key if i == 0 else "", self._progress, text.startswith(FLOW)), plain=line)
 
-    def _print(self, msg, color=None, info=False):
+    def _print(self, msg, color=None, info=False, step=False):
         """An operator message: a progress message (_progress_block), the status report (_print_ring), else its
         lines between the rules and blank lines of its _layout. color: the colour of all its lines (a verdict's
-        red), else each line's own; info: an informative summary (its plain lines in the progress colour)."""
+        red), else each line's own; info: an informative summary (its plain lines in the progress colour); step: a
+        phase line that starts a step (_step_start)."""
         texts = lines(msg)
-        if color is None and is_progress(texts):
+        progress = color is None and is_progress(texts)
+        layout = None if progress else _layout(texts)
+        self._step_ends(texts, layout, color)
+        if progress:
             return self._progress_block(texts)
-        layout = _layout(texts)
         if layout.ring:
             return self._print_ring(layout, color, info)
+        if step and layout.phase and self._tty:
+            return self._step_start(layout.first)  # its line under the output until the step is over
         if layout.headed or layout.recap:
             self._rule(heavy=True)
         elif self._gap or layout.phase:
@@ -616,7 +670,153 @@ class CallbackModule(DefaultCallback):
             self._rule(heavy=True)
         elif layout.phase:
             self._gap = True
+            if step:
+                self._step_start(layout.first)
         return None
+
+    # --- steps ---
+
+    def _step_start(self, phase):
+        """A step starts (its phase line printed already in a log or a pipe): on a terminal, its line drawn under
+        the output, the nodes through the task running and its time rewritten in place."""
+        with self._lock:
+            self._step = Step(phase, colour(phase, None, self._progress, self._warning), self._clock())
+            self._through = set()
+            self._drawn = self._logged = self._step.start
+            if not self._tty:
+                self._step_said = True
+                return
+            self._live = None  # a progress block above: left as it is
+            self._hook()
+            self._draw(force=True)
+
+    def _step_ends(self, texts, layout, color):
+        """The step going on, at an operator message: over at a phase line, a plan, a screen or a recap (done), at
+        an error or a progress line (its time not said); any other message is printed above its line."""
+        if self._step is None:
+            return
+        first = next((t for t in texts if t.strip()), "")
+        if layout is None or (color or colour(first, None, self._progress, self._warning)) == C.COLOR_ERROR:
+            self._step_end(done=False)
+        elif layout.phase or layout.headed or layout.recap or layout.ring:
+            self._step_end(done=True)
+
+    def _step_end(self, done):
+        """The step going on is over: done, its phase line with its time (step_done); else its phase line alone on
+        a terminal (as without a step), nothing more in a log or a pipe."""
+        with self._lock:
+            step, self._step = self._step, None
+            if step is None:
+                return
+            if self._tty:
+                self._unhook()
+                self._clear()
+            elif not done:
+                self._step_said = False
+                return
+            if self._tty or not self._step_said:
+                self._line("")
+            for line in step_done(step.phase, self._clock() - step.start) if done else [step.phase]:
+                self._line(line, color=step.tint)
+            self._gap, self._step_said = True, False
+
+    def _counted(self):
+        """(the nodes through the task running, the nodes of the play still in it)."""
+        hosts = (self._hosts if self._hosts is not None else self._seen) - self._gone
+        return len(self._through & hosts), len(hosts)
+
+    def _count(self, result, out=False):
+        """A host's result for the task running (out: the play goes on without that host)."""
+        host = (getattr(result, "host", None) or result._host).get_name()
+        with self._lock:  # (the results and the lines printed: two threads on ansible-core 2.19+)
+            self._seen.add(host)
+            if out:
+                self._gone.add(host)
+            if self._step is None:
+                return
+            if _task(result).run_once is True:  # its one result: the task is over for every node
+                self._through = set(self._hosts if self._hosts is not None else self._seen)
+            else:
+                self._through.add(host)
+            through, total = self._counted()
+            now = self._clock()
+            if self._tty:
+                self._draw(force=through == total)  # (the task over: its count shown until the next one's results)
+            elif now - self._logged >= LOG_EVERY:  # in a log or a pipe: a line every LOG_EVERY seconds
+                self._logged = now
+                if not self._step_said:
+                    self._line("")
+                self._line(step_line(self._step.phase, through, total, now - self._step.start), color=self._step.tint)
+                self._gap, self._step_said = True, True
+
+    def _draw(self, force=False):
+        """On a terminal, the step's line drawn (a blank row above it) or rewritten in place, every STEP_DRAW_EVERY
+        seconds at most unless forced; never two rows (cut to the terminal's width)."""
+        with self._lock:
+            now = self._clock()
+            if self._step is None or self._hold or self._paused or (not force and now - self._drawn < STEP_DRAW_EVERY):
+                return
+            text = step_line(self._step.phase, *self._counted(), seconds=now - self._step.start,
+                             width=min(STEP_WIDTH, self._columns() - 1))
+            text = stringc(text, self._step.tint) if self._step.tint else text
+            if self._footer is None:
+                self._footer = not self._blank
+                sys.stdout.write(("\n" if self._footer else "") + text)
+            else:
+                sys.stdout.write("\r\x1b[K" + text)
+            sys.stdout.flush()
+            self._drawn = now
+
+    def _clear(self):
+        """The step's line cleared, the cursor back where the output goes on (the blank row added above it too)."""
+        with self._lock:
+            if self._footer is not None:
+                sys.stdout.write("\r\x1b[K" + ("\x1b[1A" if self._footer else ""))
+                sys.stdout.flush()
+                self._footer = None
+
+    def _hook(self):
+        """While a step goes on, on a terminal: what Ansible prints (the callback's lines, Ansible's own warnings
+        from any thread) goes above the step's line, cleared first and drawn again under it."""
+        # Ansible prints through its Display (one per process, the callback's _display): its display method,
+        # wrapped on that instance until the step is over (_unhook), as _print_task_banner does for one call.
+        # A line printed without its newline (newline=False: a prompt) holds the step's line until the next one.
+        display = self._display
+        shown = display.display
+
+        def over_the_step(msg="", *args, **kwargs):
+            if kwargs.get("log_only", len(args) > 3 and args[3]):
+                return shown(msg, *args, **kwargs)
+            with self._lock:
+                self._clear()
+                try:
+                    return shown(msg, *args, **kwargs)
+                finally:
+                    text = str(msg)
+                    self._blank, self._ruled, self._live = not text.rstrip("\n").split("\n")[-1].strip(), "", None
+                    self._hold = not text.endswith("\n") and not kwargs.get("newline", len(args) <= 4 or args[4])
+                    self._draw(force=True)
+        over_the_step.own = display.__dict__.get("display")  # (an instance's own display: put back after)
+        display.display = over_the_step
+
+    def _unhook(self):
+        hooked = self._display.__dict__.get("display")
+        if hooked is None or not hasattr(hooked, "own"):
+            return
+        if hooked.own is None:
+            del self._display.display
+        else:
+            self._display.display = hooked.own
+
+    def _footer_at_exit(self):
+        """At the exit of the process, a step's line still drawn kept as it is, the shell's prompt under it."""
+        try:
+            if self._footer is not None:
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+                self._footer = None
+        except (IOError, OSError, ValueError):
+            pass
 
     def _print_ring(self, layout, color, info):
         """The status report: its verdict lines and its tables, in the order of its layout, a heavy rule above,
@@ -726,7 +926,7 @@ class CallbackModule(DefaultCallback):
 
     def _shown(self):
         """Something else printed a line: a blank line may follow, a progress block above is left as it is."""
-        self._blank, self._ruled, self._live = False, "", None
+        self._blank, self._ruled, self._live, self._step_said = False, "", None, False
 
     def _default(self, name, *args):
         """The default callback's output (its task header without a second blank line above)."""
@@ -752,15 +952,21 @@ class CallbackModule(DefaultCallback):
         # of the default callback's banner is kept as it is (its _last_task_banner, which the results read).
         # Should a later ansible-core rename the method, this override is no longer called: the header then has
         # one more blank line above it, nothing else changes.
+        # A step's own wrapper (_hook), if any, is called by this one and put back after.
         display = self._display
+        own = display.__dict__.get("display")
 
         def shown(msg, *args, **kwargs):
-            return type(display).display(display, msg[1:] if msg.startswith("\n") else msg, *args, **kwargs)
+            msg = msg[1:] if msg.startswith("\n") else msg
+            return own(msg, *args, **kwargs) if own is not None else type(display).display(display, msg, *args, **kwargs)
         display.display = shown
         try:
             return super(CallbackModule, self)._print_task_banner(task)
         finally:
-            del display.display
+            if own is None:
+                del display.display
+            else:
+                display.display = own
 
     # --- results ---
 
@@ -768,6 +974,7 @@ class CallbackModule(DefaultCallback):
         if self._verbose():
             return super(CallbackModule, self).v2_runner_on_ok(result)
         task = _task(result)
+        self._count(result)
         self._warned(_result(result))
         if task.action in _PAUSES and "user_input" in _result(result):
             return self._answered(_result(result))
@@ -777,7 +984,7 @@ class CallbackModule(DefaultCallback):
         if marked(task) and not looped and self._says(task):
             if _flag(task, HELP):
                 return self._print_help(_result(result).get("msg"))
-            self._print(_result(result).get("msg"), info=_flag(task, INFO))
+            self._print(_result(result).get("msg"), info=_flag(task, INFO), step=_flag(task, STEP))
 
     def _answered(self, res):
         """pause clears the answer's line once it is read: shown again (not
@@ -801,20 +1008,37 @@ class CallbackModule(DefaultCallback):
         except (IOError, OSError, ValueError):
             pass
 
+    def v2_runner_on_skipped(self, result):
+        if self._verbose():
+            return super(CallbackModule, self).v2_runner_on_skipped(result)
+        self._count(result)
+        return None
+
+    def _task_starts(self, task):
+        """A task starts: no node through it yet (a run_once task: as the task before until its one result)."""
+        if task.run_once is not True:
+            self._through = set()
+
     def v2_playbook_on_handler_task_start(self, task):
         self._say_refused()
+        self._task_starts(task)
         if self._verbose():
             return super(CallbackModule, self).v2_playbook_on_handler_task_start(task)
         return None
 
     def v2_playbook_on_cleanup_task_start(self, task):
         self._say_refused()
+        self._task_starts(task)
         return super(CallbackModule, self).v2_playbook_on_cleanup_task_start(task)
 
     def v2_playbook_on_task_start(self, task, is_conditional):
         self._say_refused()
+        self._task_starts(task)
         if self._verbose():
             return super(CallbackModule, self).v2_playbook_on_task_start(task, is_conditional)
+        self._paused = task.action in _PAUSES  # a question: no step's line under it
+        if self._paused:
+            self._clear()
         if task.action in _PAUSES and _flag(task, GAP):  # a rule above its question (skipped too: one at most)
             self._rule()
         return None
@@ -866,6 +1090,7 @@ class CallbackModule(DefaultCallback):
     def v2_runner_on_failed(self, result, ignore_errors=False):
         if self._verbose():
             return super(CallbackModule, self).v2_runner_on_failed(result, ignore_errors)
+        self._count(result, out=not ignore_errors and not rescued(_task(result)))
         if ignore_errors:
             return None  # the playbook expects it (ignore_errors) and handles it
         if reported(_task(result)):  # its rescue says it (a verdict too: said once, there)
@@ -923,6 +1148,7 @@ class CallbackModule(DefaultCallback):
     def v2_runner_on_unreachable(self, result):
         if self._verbose():
             return self._default("v2_runner_on_unreachable", result)
+        self._count(result, out=True)
         # one form, whether the play goes on without the host or not: the first sentence of Ansible's error, then
         # the command that shows all of it (never Ansible's raw dump, never silent)
         msg = lines(_result(result).get("msg") or "")
@@ -957,7 +1183,6 @@ class CallbackModule(DefaultCallback):
             return None
         return method
 
-    v2_runner_on_skipped = _quiet("v2_runner_on_skipped")
     v2_runner_item_on_skipped = _quiet("v2_runner_item_on_skipped")
     v2_runner_retry = _quiet("v2_runner_retry")
     v2_runner_on_start = _quiet("v2_runner_on_start")
@@ -972,6 +1197,9 @@ class CallbackModule(DefaultCallback):
 
     def v2_playbook_on_play_start(self, play):
         self._say_refused()
+        self._step_end(done=True)  # (its play is over)
+        self._hosts = play_hosts(play)
+        self._seen, self._gone, self._through = set(), set(), set()
         self._verdicts = set()  # a verdict said again by another play is its own
         if self._verbose():
             return super(CallbackModule, self).v2_playbook_on_play_start(play)
@@ -979,6 +1207,7 @@ class CallbackModule(DefaultCallback):
 
     def v2_playbook_on_stats(self, stats):
         self._say_refused()
+        self._step_end(done=not (getattr(stats, "failures", None) or getattr(stats, "dark", None)))
         drop_typeahead()  # the run is over: the shell reads the terminal next
         if self._verbose():
             return super(CallbackModule, self).v2_playbook_on_stats(stats)

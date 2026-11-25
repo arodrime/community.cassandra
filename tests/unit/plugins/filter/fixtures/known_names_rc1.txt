@@ -987,6 +987,7 @@ cassandra_output_help	both
 cassandra_output_info	both
 cassandra_output_rescued	both
 cassandra_output_said	both
+cassandra_output_step	both
 cassandra_package_errors	both
 cassandra_package_hold	both
 cassandra_package_limits_after	both

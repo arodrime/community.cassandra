@@ -71,17 +71,15 @@
       run_once: true
       tags: [always]  # under --tags too
 
-    # the cluster's members (not the hosts being added or reset, nor those marked absent) and the change
+    # the cluster's members (not the hosts being added or reset, nor those marked absent) and the change; a step
+    # of the run when the playbook asks (_cassandra_preflight_step: its nodes counted, its time said by the ops
+    # callback)
     - name: Say what the run does
-      ansible.builtin.debug:
-        msg: >-
-          {{ 'check' | community.cassandra.cassandra_phase(what=query('community.cassandra.cassandra_nodes')
-               | community.cassandra.cassandra_check_what(_kind, _targets, cassandra_replace_address | default(''),
-                                                         ansible_play_hosts_all, _absent)) }}
       run_once: true
       vars:
-        cassandra_output: true  # a phase line (ops callback)
-        cassandra_output_gap: true  # a block of its own
+        _what: >-
+          {{ query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_check_what(
+               _kind, _targets, cassandra_replace_address | default(''), ansible_play_hosts_all, _absent) }}
         # topology (it sets _cassandra_preflight_adding): its plan, read from the ring later
         _kind: "{{ 'plan' if _cassandra_preflight_adding is defined else _cassandra_preflight_target | default('') }}"
         _pattern: "{{ [cassandra_target_nodes | default('', true)] | flatten | select | join(',') }}"
@@ -90,6 +88,23 @@
              else query('ansible.builtin.inventory_hostnames', _pattern) | select('in', groups[lookup('community.cassandra.cassandra_hosts')])
                   | list if _kind in ['add', 'leave', 'reset'] and _pattern else [] }}
         _absent: "{{ query('community.cassandra.cassandra_nodes', state='absent') if _kind == 'plan' else [] }}"
+      block:
+        - name: Say what the run does
+          ansible.builtin.debug:
+            msg: "{{ 'check' | community.cassandra.cassandra_phase(what=_what) }}"
+          when: not _cassandra_preflight_step | default(false) | bool
+          vars:
+            cassandra_output: true  # a phase line (ops callback)
+            cassandra_output_gap: true  # a block of its own
+
+        - name: Say what the run does, a step of it
+          ansible.builtin.debug:
+            msg: "{{ 'check' | community.cassandra.cassandra_phase(what=_what) }}"
+          when: _cassandra_preflight_step | default(false) | bool
+          vars:
+            cassandra_output: true  # a phase line (ops callback)
+            cassandra_output_gap: true  # a block of its own
+            cassandra_output_step: true  # a step: its nodes counted, its time said
 
     # after the phase line: a node that does not answer (ssh waiting on a connection whose host froze) leaves the
     # run on that line, not silent. Not every fact: the ones the collection reads (the OS, the network, the

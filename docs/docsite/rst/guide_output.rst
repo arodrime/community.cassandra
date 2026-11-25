@@ -71,6 +71,18 @@ Conventions
   words are in one place (``PHASES`` in ``plugins/plugin_utils/cassandra_output.py``, filter
   ``community.cassandra.cassandra_phase``); ``--check`` says the reading phases only. A restart or a reboot has no
   phase line: its wait line says it.
+- **Steps** (apply_config): a phase line whose task also sets ``cassandra_output_step: true`` is a step of the
+  run, until the next phase line, plan, screen, recap, question or play. Under the ops callback, on a terminal, its
+  line stays under the output while it goes on, with the nodes through the task running out of the play's nodes
+  and the time since it started, rewritten in place (``Comparing the config with the inventory (24 nodes)...
+  4/24  1m12s``: the play runs each task on every node before the next one, so the count goes up to 24 at each
+  task); once over, ``...  done in 4m12s``. A message printed meanwhile goes above that line. In a log or a pipe:
+  the phase line when it starts, a line with the count every 5 minutes, ``...  done in 4m12s`` once over. A step
+  stopped by an error or a progress line says no time (its phase line alone, as without a step). apply_config's
+  steps: ``Checking the cluster (24 nodes)...``, ``Comparing the config with the inventory (24 nodes)...``, under
+  ``--check`` ``Checking the cluster from each node (24 nodes)...``; in a real run, after the question,
+  ``Applying the OS settings (3 nodes)...``, ``Writing the config (node1, node2)...`` (the nodes not restarted),
+  ``Staging the config of the nodes to restart (22 nodes)...``, then the restarts' own lines.
 - **Prepare of new nodes** (add_node, replace_node, add_datacenter, create_cluster): after its phase line, one line
   per group of nodes with the same outcome, the steps in short words, in the progress colour (past 79 columns, a
   line goes on under its steps, cut between two steps or two seeds)::
@@ -423,6 +435,7 @@ Task variables the callback reads, each a literal ``true`` in the task's own ``v
 - ``cassandra_output_rescued``: on a block, its rescue says what failed (the failure inside is not printed);
 - ``cassandra_output_said``: on a task, its failure is the stop of a verdict printed just before (a summary
   ``REFUSED  ...``): not printed;
+- ``cassandra_output_step``: on a phase line, a step of the run (above);
 - ``cassandra_output_info``: a summary that only informs (``cassandra_linux``'s data disks), its plain lines in
   the progress colour;
 - ``cassandra_output_help``: the help playbook's text, laid out as above.
