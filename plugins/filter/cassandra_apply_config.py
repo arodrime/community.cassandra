@@ -44,6 +44,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_output imp
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import stat_fields
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import DEFAULT_WHEN_ABSENT, BOOLS
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_prometheus as prometheus
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import MASK, mask
 
 # the order of the files in the view (the role's own); any other after them
@@ -1199,6 +1200,8 @@ def cassandra_apply_config_no_effect(changed, live, new, cmdline="", series="", 
             return []
         role = dict((f, new[f] if f in changed else live[f]) for f in group)
         node = dict((f, live[f]) for f in group)
+        # (the Prometheus exporter's block, if ... fi: the line it runs, as the import reads it)
+        node[jvm_args.ENV] = prometheus.block_as_line(node[jvm_args.ENV], cmdline)
         if series in ("40x", "41x"):  # (a plain CASSANDRA_HEAPDUMP_DIR: as the import reads it)
             node[jvm_args.ENV] = jvm_args.heap_dump_dir_as_role(node[jvm_args.ENV], environ, cmdline, heapdump_before)[0]
         earlier = None

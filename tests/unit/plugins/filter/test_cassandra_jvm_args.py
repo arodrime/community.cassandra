@@ -972,6 +972,30 @@ def test_a_node_with_the_files_of_an_older_release(tmp_path):
     assert dict((k, variables.get(k)) for k in TUNED) == TUNED
     assert variables["cassandra_jvm_extra_options"] == ["-Xss1024M", "-XX:-UseBiasedLocking"]
     assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
+    # apply_config's own proof the same (the exporter's block read as its line there too): no restart
+    rendered = role_files(inventory, layout, files)[0]
+    written, why = applied(files, rendered, cmdline)
+    assert "cassandra-env.sh" in written and why
+
+
+def test_the_self_check_puts_the_files_to_apply_config_s_proof(tmp_path):
+    # (2026-11-25, production) the self-check passed while apply_config restarted every node for the files it
+    # wrote: the self-check now makes apply_config's own proof on them (one logic), a JVM argument added fails it
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import _apply_config_restarts
+    files = node_files("50x")
+    cmdline = launch(files, "17", tmp_path)
+    running = {"cmdline": cmdline, "newer": []}
+    rendered = dict(files, **{"jvm-server.options": files["jvm-server.options"] + "-Dzorglub.flag=true\n"})
+    assert _apply_config_restarts(rendered, files, "/var/lib/cassandra", "50x", "17", running, {}) == [
+        "jvm-server.options: apply_config would rewrite it and restart Cassandra: its own proof does not show the"
+        " running JVM keeps its arguments"]
+    # the same arguments (a comment), the JVM not known, or a file written since it started: nothing said
+    rendered = dict(files, **{"jvm-server.options": files["jvm-server.options"] + "# zorglub\n-XX:+UseNUMA\n"})
+    assert _apply_config_restarts(rendered, files, "/var/lib/cassandra", "50x", "17", running, {}) == []
+    rendered = dict(files, **{"jvm-server.options": files["jvm-server.options"] + "-Dzorglub.flag=true\n"})
+    assert _apply_config_restarts(rendered, files, "/var/lib/cassandra", "50x", "17", {}, {}) == []
+    assert _apply_config_restarts(rendered, files, "/var/lib/cassandra", "50x", "17",
+                                  dict(running, newer=["jvm-server.options"]), {}) == []
 
 
 def test_the_way_out_of_an_options_file_hand_edit_keeps_it(tmp_path):

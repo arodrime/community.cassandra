@@ -64,6 +64,7 @@ from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_impo
     error_without_message, undefined_name, value_shown, values_hidden)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import Unsafe
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
+from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import cassandra_apply_config_no_effect
 from ansible_collections.community.cassandra.plugins.filter.cassandra_os import (
     NO_EFFECT, NO_EFFECT_NOTE, cassandra_firewall_changes, cassandra_linux_changes)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import (
@@ -875,6 +876,7 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
                    series="", running=None):
     """running: {cmdline, newer, series} (cassandra_import_self_check's jvm); series: cassandra_version, else running's."""
     series = series or (running or {}).get("series", "")
+    as_written = (rendered, live)
     rendered, live = _both_as_read(rendered, live, node_environment, role_environment, series, running)
     # (not from a JVM started before its cassandra-env.sh was written: its arguments are not that file's)
     environment = dict(node_environment or {}, **((running or {}).get("environment") or {}))
@@ -904,7 +906,32 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
                          k for keys in moved.values() for k in keys))), java))
     differences, heap = _jvm_differences(jvm_rendered, jvm_live, by_file, differences, heap, notes, node_environment,
                                          role_environment, series, java, running)
+    if not differences + heap:
+        differences = _apply_config_restarts(as_written[0], as_written[1], storage_dir, series, java, running,
+                                             node_environment)
     return {"differences": differences + heap, "notes": notes}
+
+
+# the files apply_config's own proof of no restart covers (cassandra_apply_config_no_effect)
+NO_RESTART_PROOF = re.compile(r"^(cassandra-env\.sh|jvm\d*-server\.options|logback\.xml)$")
+
+
+def _apply_config_restarts(rendered, live, storage_dir, series, java, running, node_environment):
+    """The self-check passed: the files of NO_RESTART_PROOF apply_config would write (cassandra_config keeps a file
+    of the same settings) put to apply_config's own proof, the one it makes before writing them; not shown to need
+    no restart -> [one difference]. Nothing without a running JVM whose files are as it started."""
+    running = running or {}
+    if not running.get("cmdline") or not java or set(running.get("newer") or []) & set(live):
+        return []
+    written = sorted(f for f in rendered if f in live and NO_RESTART_PROOF.match(f)
+                     and not same_settings(f, live[f], rendered[f], storage_dir))
+    environ = dict(node_environment or {}, **(running.get("environment") or {}))
+    if not written or cassandra_apply_config_no_effect(written, live, rendered, running["cmdline"], series, java,
+                                                       environ, [], running.get("facts"),
+                                                       running.get("heapdump_before") or ""):
+        return []
+    return ["%s: apply_config would rewrite %s and restart Cassandra: its own proof does not show the running JVM"
+            " keeps its arguments" % (", ".join(written), "it" if len(written) == 1 else "them")]
 
 
 def _both_as_read(rendered, live, node_environment, role_environment, series, running):
