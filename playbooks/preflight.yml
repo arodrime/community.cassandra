@@ -49,6 +49,14 @@
     - name: Check each node has its own facts
       ansible.builtin.import_tasks: tasks/own_facts_check.yml
 
+    # the cluster's nodes read once for the run (query cassandra_nodes reads every node's variables at each call,
+    # several calls per node and per task otherwise); the lookup reads them again if the group's hosts change
+    - name: Note the cluster's nodes for the run
+      ansible.builtin.set_fact:
+        _cassandra_nodes_memo: "{{ lookup('community.cassandra.cassandra_nodes', memo=true) }}"
+      run_once: true
+      tags: [always]  # under --tags too
+
     # also run by the first play, which --limit skips
     # the run's first line, before any check or refusal: the cluster, its nodes and datacenters
     - name: Say which cluster the run is on
@@ -307,6 +315,7 @@
           {%- endfor -%}
           {{ out | join(_nl) }}
       when: ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight_unknown') | map('list') | flatten | length > 0
+      run_once: true  # (its when reads every node: once, not on each node)
 
     # the JVM options the node's Java reads (cassandra_java_version, else the series' default) in the files the role
     # writes: one worth a look (plugin_utils cassandra_jvm_options: -Xss far from the usual range,
@@ -341,6 +350,7 @@
           {%- endfor -%}
           {{ out | join(_nl) }}
       when: ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight_jvm') | flatten | length > 0
+      run_once: true  # (its when reads every node: once, not on each node)
 
     # cassandra_seed_True / cassandra_seed_False, used by the other playbooks
     - name: Group seeds and other nodes
@@ -395,6 +405,7 @@
           {{ ansible_play_hosts | map('extract', hostvars, ['_cassandra_preflight', 'layout']) | list
              | community.cassandra.cassandra_seed_layout(unread=query('community.cassandra.cassandra_nodes') | difference(ansible_play_hosts)) }}
       when: (_layout.problems + _layout.notes) | length > 0
+      run_once: true  # (its when reads every node: once, not on each node)
 
     # Once the cluster exists, every seed must be a live member: a stale seed
     # (decommissioned node, old IP) breaks bootstraps. A host the run adds
@@ -569,6 +580,7 @@
              | community.cassandra.cassandra_restart_blockers(_members) }}
         _note: "{{ _found | join(_nl) }}"
       when: _found | length > 0
+      run_once: true  # (its when reads every node: once, not on each node)
 
     # The token allocator refuses a node that joins a rack already in the ring
     # when the datacenter's ring has more than 1 rack but fewer than its
