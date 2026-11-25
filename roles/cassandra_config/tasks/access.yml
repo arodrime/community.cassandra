@@ -89,12 +89,7 @@
 # their content (passwords)
 - name: Record the users' files to write for the report
   ansible.builtin.set_fact:
-    _cassandra_config_items: >-
-      {%- set out = [] -%}
-      {%- for c in _cassandra_config_user_file_changes -%}
-      {%-   set _ = out.append({'item': c.path, 'before': c.before, 'after': 'written whole', 'whole': true}) -%}
-      {%- endfor -%}
-      {{ _cassandra_config_items | default([]) + out }}
+    _cassandra_config_items: "{{ _cassandra_config_items | default([]) + _cassandra_config_user_file_changes }}"
   when: _cassandra_config_user_file_changes | default([]) | length > 0
 
 # cqlsh for OS users: ~/.cassandra/cqlshrc pointing at this node, with the CQL

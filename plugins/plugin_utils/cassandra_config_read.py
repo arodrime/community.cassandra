@@ -522,30 +522,41 @@ HOME = "@@CASSANDRA_HOME@@"  # in a rendered file: the user's home, known on the
 def step_users(req):
     """req: {users: [{user, files: [{name, text}]}]}: ~<user>/.cassandra (0700, owned by the user) and its files
     (0600, owned by the user, text the rendered one, its HOME the user's home), as the role writes them -> {changes:
-    [{path, before}]}: the directory or file to write, and what it is now (absent, other content, owner and mode)."""
+    [{item, before, after, whole}]}: what to write, as apply_config's items say it: a file absent or with other
+    content written whole (never its content: passwords), else "<path> (owner:group mode)", from -> to."""
     changes = []
+
+    def owner(st):
+        return "%s:%s %s" % (st.get("pw_name", st.get("uid")), st.get("gr_name", st.get("gid")), st.get("mode"))
     for entry in req["users"]:
         try:
             account = pwd.getpwnam(str(entry["user"]))
         except KeyError:
-            changes.append({"path": "~%s/.cassandra" % entry["user"], "before": "no such user"})
+            changes.append({"item": "~%s/.cassandra" % entry["user"], "before": "no such user", "after": "written whole",
+                            "whole": True})
             continue
+        try:
+            group = grp.getgrgid(account.pw_gid).gr_name
+        except (KeyError, AttributeError):
+            group = str(getattr(account, "pw_gid", ""))
         top = os.path.join(account.pw_dir, ".cassandra")
         found = stat_result(top, True).get("stat", {})
-        if not found.get("isdir") or found.get("uid") != account.pw_uid or found.get("mode") != "0700":
-            changes.append({"path": top, "before": "absent" if not found.get("exists") else
-                            "%s %s" % (found.get("pw_name", found.get("uid")), found.get("mode"))})
+        if not found.get("isdir"):
+            changes.append({"item": top, "before": "absent" if not found.get("exists") else "not a directory",
+                            "after": "written whole", "whole": True})
+        elif found.get("uid") != account.pw_uid or found.get("mode") != "0700":
+            changes.append({"item": top + " (owner:group mode)", "before": owner(found),
+                            "after": "%s:%s 0700" % (account.pw_name, found.get("gr_name", group))})
         for f in entry["files"]:
             path = os.path.join(top, f["name"])
             st = stat_result(path).get("stat", {})
             wanted = f["text"].replace(HOME, account.pw_dir).encode("utf-8")
-            sha1 = read_b64_sha1(path)[1]
-            if not st.get("exists"):
-                changes.append({"path": path, "before": "absent"})
-            elif not st.get("isreg") or sha1 != hashlib.sha1(wanted).hexdigest():
-                changes.append({"path": path, "before": "other content"})
+            if not st.get("exists") or not st.get("isreg") or read_b64_sha1(path)[1] != hashlib.sha1(wanted).hexdigest():
+                changes.append({"item": path, "before": "absent" if not st.get("exists") else "other content",
+                                "after": "written whole", "whole": True})
             elif st.get("uid") != account.pw_uid or st.get("mode") != "0600":
-                changes.append({"path": path, "before": "%s %s" % (st.get("pw_name", st.get("uid")), st.get("mode"))})
+                changes.append({"item": path + " (owner:group mode)", "before": owner(st),
+                                "after": "%s:%s 0600" % (account.pw_name, st.get("gr_name", group))})
     return {"changes": changes}
 
 

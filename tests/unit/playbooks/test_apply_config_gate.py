@@ -9,7 +9,9 @@ __metaclass__ = type
 # apply_verify. A task added to the rest fails here until it is classified.
 
 import glob
+import grp
 import os
+import pwd
 import re
 
 import pytest
@@ -441,9 +443,8 @@ def test_the_checks_run_once_for_the_nodes_that_share_their_values():
 def test_the_users_files_are_compared_as_written(tmp_path, monkeypatch):
     import collections
     from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_config_read as reader
-    entry = collections.namedtuple("pw", "pw_name pw_dir pw_uid")
-    uid = os.getuid()
-    accounts = {"ops": entry("ops", str(tmp_path / "ops"), uid)}
+    entry = collections.namedtuple("pw", "pw_name pw_dir pw_uid pw_gid")
+    accounts = {"ops": entry("ops", str(tmp_path / "ops"), os.getuid(), os.getgid())}
 
     def getpwnam(name):
         return accounts[name]  # (KeyError: no such user, as pwd says it)
@@ -451,20 +452,28 @@ def test_the_users_files_are_compared_as_written(tmp_path, monkeypatch):
     text = "credentials = " + reader.HOME + "/.cassandra/credentials\n"
     req = {"users": [{"user": "ops", "files": [{"name": "cqlshrc", "text": text}]}, {"user": "gone", "files": []}]}
     top = tmp_path / "ops" / ".cassandra"
-    assert reader.step_users(req)["changes"] == [{"path": str(top), "before": "absent"},
-                                                 {"path": str(top / "cqlshrc"), "before": "absent"},
-                                                 {"path": "~gone/.cassandra", "before": "no such user"}]
+    group = grp.getgrgid(os.getgid()).gr_name
+    assert reader.step_users(req)["changes"] == [
+        {"item": str(top), "before": "absent", "after": "written whole", "whole": True},
+        {"item": str(top / "cqlshrc"), "before": "absent", "after": "written whole", "whole": True},
+        {"item": "~gone/.cassandra", "before": "no such user", "after": "written whole", "whole": True}]
     top.mkdir(parents=True)
-    top.chmod(0o700)
+    top.chmod(0o755)
     (top / "cqlshrc").write_text("credentials = %s/.cassandra/credentials\n" % (tmp_path / "ops"))
     (top / "cqlshrc").chmod(0o600)
     req["users"].pop()
+    me = pwd.getpwuid(os.getuid()).pw_name
+    assert reader.step_users(req)["changes"] == [{"item": str(top) + " (owner:group mode)",
+                                                  "before": "%s:%s 0755" % (me, group), "after": "ops:%s 0700" % group}]
+    top.chmod(0o700)
     assert reader.step_users(req)["changes"] == []  # (its home put in: the same text)
     (top / "cqlshrc").chmod(0o644)
-    assert reader.step_users(req)["changes"][0]["before"].endswith(" 0644")
+    assert reader.step_users(req)["changes"] == [{"item": str(top / "cqlshrc") + " (owner:group mode)",
+                                                  "before": "%s:%s 0644" % (me, group), "after": "ops:%s 0600" % group}]
     (top / "cqlshrc").write_text("other\n")
     (top / "cqlshrc").chmod(0o600)
-    assert reader.step_users(req)["changes"] == [{"path": str(top / "cqlshrc"), "before": "other content"}]
+    assert reader.step_users(req)["changes"] == [{"item": str(top / "cqlshrc"), "before": "other content",
+                                                  "after": "written whole", "whole": True}]
 
 
 def test_the_plan_and_the_rest_render_the_same_users_files():
@@ -496,7 +505,7 @@ def test_a_users_file_to_write_schedules_the_node():
     play = find_play(PLAYBOOK, "Find what each node needs")
     note = find_task(play, "Note what this node needs")
     users = note["vars"]["_users"]
-    assert render(users, _cassandra_config_user_file_changes=[{"path": "/root/.cassandra/cqlshrc"}]) == [
+    assert render(users, _cassandra_config_user_file_changes=[{"item": "/root/.cassandra/cqlshrc"}]) == [
         "/root/.cassandra/cqlshrc"]
     for name in ("_todo", "_steps", "_stage_other_changes"):
         assert "_jmx + _users + _exporter" in note["vars"][name], name
@@ -529,3 +538,13 @@ def test_a_resumed_run_keeps_the_parts_of_the_interrupted_one(tmp_path):
     assert said("", None) is None
     assert said("linux,config", "config,unit,linux\n") is None
     assert said("", "config,unit,linux\n")[-1] == "WAY OUT  resume with -e apply_only=config,unit,linux"
+
+
+def test_the_users_files_in_the_differences():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import cassandra_apply_config_diff
+    items = [{"item": "/root/.cassandra/cqlshrc (owner:group mode)", "before": "root:root 0644", "after": "root:root 0600"},
+             {"item": "/root/.cassandra/credentials", "before": "absent", "after": "written whole", "whole": True}]
+    lines = cassandra_apply_config_diff([{"name": "n2", "items": items}, {"name": "n1", "items": []}])
+    text = "\n".join(lines)
+    assert "cqlshrc" in text and "0644" in text and "0600" in text and "credentials" in text
+    assert "points to" not in text

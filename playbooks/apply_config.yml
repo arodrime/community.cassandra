@@ -922,7 +922,7 @@
         # back or changed, the rights the running Cassandra has are not known to be these (local JMX logs in no one)
         _jmx: "{{ _cassandra_config_jmx_changes | default([]) | map(attribute='file') | list }}"
         # cqlsh's and nodetool's files of the users' ~/.cassandra (cassandra_config): read by those tools, no restart
-        _users: "{{ _cassandra_config_user_file_changes | default([]) | map(attribute='path') | list }}"
+        _users: "{{ _cassandra_config_user_file_changes | default([]) | map(attribute='item') | list }}"
         _users_live: "the users' ~/.cassandra files: read by cqlsh and nodetool, not by Cassandra"
         _rights: >-
           {{ _jmx | select('equalto', 'jmxremote.access') | list if not cassandra_local_jmx | default(false) | bool else [] }}
