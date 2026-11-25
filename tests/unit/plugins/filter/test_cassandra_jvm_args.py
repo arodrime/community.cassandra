@@ -506,8 +506,19 @@ def test_a_custom_gc_inventory_the_role_takes(tmp_path):
 
 # a file of a release before it: neither the line nor its stock comment
 OLDER_CHRONICLE = "# Disable chronicle analytics. See CASSANDRA-19656\n-Dchronicle.analytics.disable=true\n"
-CHRONICLE = ("-Dchronicle.analytics.disable=true (jvm-server.options): added by apply_config: Cassandra's default since"
-             " CASSANDRA-19656; missing because this file predates it")
+CHRONICLE = ("-Dchronicle.analytics.disable=true (jvm-server.options): absent, kept so (cassandra_jvm_removed_options):"
+             " Cassandra's default since CASSANDRA-19656; missing because this file predates it")
+
+
+def applied(files, rendered, cmdline):
+    """What apply_config does next on the node: the files it writes (a file of the same settings left as it is, as
+    cassandra_config compares them; the role's header line aside: a comment, no restart), and why that needs no
+    restart ([]: a restart)."""
+    def without_header(text):
+        return "\n".join(line for line in text.split("\n") if not line.startswith("# Managed by Ansible"))
+    written = sorted(f for f in rendered if f in files and without_header(rendered[f]) != files[f]
+                     and not cassandra_same_settings(files[f], rendered[f], f, "/var/lib/cassandra"))
+    return written, cassandra_apply_config_no_effect(written, files, rendered, cmdline, "50x", "17", {})
 
 
 @pytest.mark.parametrize("edit, said, differs", [
@@ -559,6 +570,35 @@ def test_the_dev_node_jvm_files(tmp_path):
     cmdline = launch(files, "17", tmp_path)
     assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
     assert CHRONICLE in cassandra_config_import(files, "50x", FACTS, java="17", cmdline=cmdline)["jvm_warnings"]
+    # (2026-11-25, production) imported as it is: apply_config writes what the import said, no restart, and the
+    # JVM keeps its arguments: no chronicle property added, the stack jvm17-server.options gives (256k) last
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    rendered, variables = role_files(inventory, layout, files)
+    assert variables["cassandra_jvm_removed_options"] == ["-Dchronicle.analytics.disable=true"]
+    written, why = applied(files, rendered, cmdline)
+    assert written == sorted(node["rewritten"]) == ["jvm-server.options", "jvm17-server.options"]
+    assert why and why[0] == "the same JVM arguments"
+    after = settings(launch(rendered, "17", tmp_path))
+    assert after == settings(cmdline) and after[0]["ThreadStackSize"] == "256k"
+    assert "-Dchronicle.analytics.disable" not in after[0]
+
+
+@pytest.mark.parametrize("older", [False, True], ids=["5.0's file", "4.1's file"])
+def test_logback_with_the_log_dir_written_as_itself_is_left_as_it_is(tmp_path, older):
+    # (2026-11-25, production) system.log and debug.log under the log dir written as itself, 4.1's file on some
+    # nodes (its pattern and jmxConfigurator, without 5.0's commented-out CQLLOG block): imported as it is, the
+    # next apply_config leaves the file as it is (it rewrote it, the import saying nothing of it)
+    def edit(files):
+        if older:
+            files["logback.xml"] = stock("41x")["logback.xml"]
+        log_dir_as_itself(files)
+    files = node_files("50x", edit)
+    cmdline = running(files, tmp_path)
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    rendered, variables = role_files(inventory, layout, files)
+    assert variables["cassandra_log_system_dir"] == variables["cassandra_log_debug_dir"] == "/var/log/cassandra"
+    assert applied(files, rendered, cmdline) == ([], [])
+    assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
 
 
 def test_the_stock_gc_block_stays_g1(tmp_path):
@@ -1009,18 +1049,21 @@ def test_the_owner_dev_node_in_full_sync(tmp_path):
     assert CHRONICLE in out["jvm_warnings"]
     inventory, layout, node = imported(files, "50x", "17", cmdline)
     rendered, variables = role_files(inventory, layout, files)
-    # bash: the same JVM arguments, but for the chronicle line apply_config adds
-    flags, others = settings(launch(rendered, "17", tmp_path))
-    assert flags.pop("-Dchronicle.analytics.disable") == "true"
-    assert (flags, others) == settings(launch(files, "17", tmp_path))
+    # bash: the same JVM arguments (the chronicle line kept absent: apply_config restarted every node for it)
+    assert settings(launch(rendered, "17", tmp_path)) == settings(launch(files, "17", tmp_path))
     assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
+    # logback.xml's log dir written as itself, imported so: apply_config leaves the file as it is
+    written, why = applied(files, rendered, cmdline)
+    assert "logback.xml" not in written and why
     prefixes = ("cassandra_jvm", "cassandra_heap", "cassandra_log", "cassandra_jmx", "cassandra_local")
     assert dict((k, v) for k, v in node["vars"].items() if k.startswith(prefixes)) == {
-        "cassandra_log_dir": "/data/cassandra/log", "cassandra_local_jmx": False, "cassandra_jmx_rmi_hostname": IPV4,
+        "cassandra_log_dir": "/data/cassandra/log", "cassandra_log_system_dir": "/data/cassandra/log",
+        "cassandra_log_debug_dir": "/data/cassandra/log", "cassandra_local_jmx": False, "cassandra_jmx_rmi_hostname": IPV4,
         "cassandra_jmx_users": [{"name": "monitor", "password": "m0nitor", "access": "readonly"}],
         "cassandra_log_audit_file": True, "cassandra_log_audit_dir": "/data/audit", "cassandra_log_console": True,
         "cassandra_heap_size": "31G", "cassandra_heap_in_jvm_options": True,
         "cassandra_jvm_extra_options": ["-Xss1024M", "-XX:-UseBiasedLocking"],
+        "cassandra_jvm_removed_options": ["-Dchronicle.analytics.disable=true"],
         "cassandra_jvm17_extra_options": ["-Xss256k"], "cassandra_jvm17_max_gc_pause_millis": 500, **TUNED}
 
 
@@ -1549,8 +1592,7 @@ def test_remote_jmx_by_hand_with_the_heap_moved_and_the_log_dir_as_itself(tmp_pa
     inventory, layout, node = imported(files, "50x", "17", cmdline)
     variables = role_files(inventory, layout, files)[1]
     assert variables["cassandra_heap_size"] == "23552m" and variables["cassandra_heap_in_jvm_options"] is True
-    assert variables.get("cassandra_log_system_dir", "${cassandra.logdir}") == "${cassandra.logdir}"  # (as itself)
-    assert [n for n in node["normalized"] if "/var/log/cassandra written as itself" in n]
+    assert variables["cassandra_log_system_dir"] == "/var/log/cassandra"  # (as it is)
     out = check(files, "50x", java="17", cmdline=cmdline)
     assert out["differences"] == []
 
@@ -1655,7 +1697,7 @@ def test_system_and_debug_log_in_a_dir_of_their_own(tmp_path, on):
     inventory, layout, node = imported(files, "50x", "17", cmdline)
     rendered, variables = role_files(inventory, layout, files)
     assert variables["cassandra_log_system_dir"] == variables["cassandra_log_debug_dir"] == "/srv/zorglub/logs"
-    assert "cassandra_log_audit_dir" not in variables  # (the log dir written as itself: the default)
+    assert variables["cassandra_log_audit_dir"] == "/var/log/cassandra/audit"  # (the log dir written as itself)
     assert "<file>/srv/zorglub/logs/system.log</file>" in rendered["logback.xml"]
     assert "<fileNamePattern>/srv/zorglub/logs/debug.log.%d{yyyy-MM-dd}.%i.zip</fileNamePattern>" in rendered["logback.xml"]
     assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []

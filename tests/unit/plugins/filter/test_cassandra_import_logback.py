@@ -12,7 +12,6 @@ import pytest
 import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_config_import
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_jvm import log_dir_of
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import same_settings
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import (
     _compare_files, cassandra_import_self_check)
@@ -462,14 +461,14 @@ def literal(path):
     return edit
 
 
-def test_the_log_dir_written_as_itself_is_the_same_file():
+def test_the_log_dir_written_as_itself_is_imported_as_it_is():
     # (2026-11-13, a 5.0.9 RPM node) system.log and debug.log under the log dir of cassandra-env.sh, written as
-    # itself: what ${cassandra.logdir} is for logback, no hand edit
+    # itself: no hand edit, imported as it is (2026-11-25: read as ${cassandra.logdir}, apply_config rewrote the file)
     files = with_log_dir("/data/cassandra/log", literal("/data/cassandra/log"))
     out = cassandra_config_import(files, "50x", FACTS)
     assert out["hand_edits"] == [] and out["vars"]["cassandra_log_dir"] == "/data/cassandra/log"
-    assert "logback.xml: /data/cassandra/log written as itself, the dir Cassandra gives logback as ${cassandra.logdir}:" \
-           " the same files" in out["normalized"]
+    assert out["vars"]["cassandra_log_system_dir"] == out["vars"]["cassandra_log_debug_dir"] == "/data/cassandra/log"
+    assert not [n for n in out["normalized"] if "written as itself" in n]
     assert imported(files, "50x")[2]["differences"] == []
     # another dir: other files, theirs (cassandra_log_system_dir, cassandra_log_debug_dir; a hand edit before)
     files = with_log_dir("/data/cassandra/log", literal("/srv/logs"))
@@ -492,32 +491,14 @@ def test_the_audit_file_in_a_dir_of_its_own(series):
     variables, snippets, check = imported(files, series)
     assert variables["cassandra_log_audit_dir"] == "/data/audit" and variables["cassandra_log_audit_file"] is True
     assert check["differences"] == []
-    # under the log dir, written as itself: the default
+    # under the log dir, written as itself: as it is
     files = with_log_dir("/data/cassandra/log", lambda text: audit_on(text).replace(
         "${cassandra.logdir}/audit/", "/data/cassandra/log/audit/"))
     out = cassandra_config_import(files, "50x", FACTS)
-    assert out["hand_edits"] == [] and "cassandra_log_audit_dir" not in out["vars"]
+    assert out["hand_edits"] == [] and out["vars"]["cassandra_log_audit_dir"] == "/data/cassandra/log/audit"
 
 
-def test_the_log_dir_the_jvm_gets():
-    env = seeded(stock("50x"))["cassandra-env.sh"]  # (the stock guard: /var/log/cassandra when unset)
-    assert log_dir_of(env) == "/var/log/cassandra"
-    assert log_dir_of(env, environment={"CASSANDRA_LOG_DIR": "/srv/log"}) == "/srv/log"  # the unit's first
-    assert log_dir_of(env + "\nCASSANDRA_LOG_DIR=/top\n", environment={"CASSANDRA_LOG_DIR": "/srv/log"}) == "/top"
-    assert log_dir_of(env + '\nif [ -d /x ]; then\n  CASSANDRA_LOG_DIR=/x\nfi\n') == ""  # another block: not sure
-    # the guard with an else, the dir set empty or unset: not sure either
-    assert log_dir_of(env.replace("    CASSANDRA_LOG_DIR=/var/log/cassandra\n",
-                                  "    CASSANDRA_LOG_DIR=/var/log/cassandra\nelse\n    CASSANDRA_LOG_DIR=/y\n")) == ""
-    assert log_dir_of(env + "\nCASSANDRA_LOG_DIR=\n") == ""
-    assert log_dir_of(env + "\nunset CASSANDRA_LOG_DIR\n") == ""
-    # the running JVM's: the last one (bin/cassandra's own comes after JVM_OPTS); none: not known
-    assert log_dir_of(env, "java\0-Dcassandra.logdir=/a\0-Dcassandra.logdir=/b\0Main") == "/b"
-    assert log_dir_of(env, "java\0Main") == ""
-    # cassandra-env.sh changed since the JVM started: its own
-    assert log_dir_of(env, "java\0-Dcassandra.logdir=/a\0Main", newer=["cassandra-env.sh"]) == "/var/log/cassandra"
-
-
-def test_the_log_dir_written_as_itself_only_when_the_jvm_gets_it():
+def test_a_log_dir_written_as_itself_is_kept_whatever_the_jvm_gets():
     # the first -Dcassandra.logdir the literal dir, the last (the one the JVM uses) another: other files, kept as
     # the node writes them (their dir of their own; a hand edit before)
     files = with_log_dir("/data/cassandra/log", literal("/data/cassandra/log"))
@@ -525,11 +506,12 @@ def test_the_log_dir_written_as_itself_only_when_the_jvm_gets_it():
     out = cassandra_config_import(files, "50x", FACTS, cmdline=cmdline)
     assert out["vars"]["cassandra_log_system_dir"] == "/data/cassandra/log"
     assert not [n for n in out["normalized"] if "written as itself" in n]
-    # the roles' own file with the dir written as itself (a template of yours): read so too
+    # the roles' own file with the dir written as itself (a template of yours): another file than the node's,
+    # which cassandra_config rewrites
     rendered = dict(files)
     rendered["logback.xml"] = files["logback.xml"]
     live = dict(files, **{"logback.xml": seeded(stock("50x"))["logback.xml"]})
-    assert [d for d in _compare_files(rendered, live)["differences"] if d.startswith("logback.xml")] == []
+    assert [d for d in _compare_files(rendered, live)["differences"] if d.startswith("logback.xml")]
 
 
 def test_the_audit_dir_is_listed_with_the_logging():
@@ -605,7 +587,8 @@ def test_the_production_shape_passes_the_self_check():
     assert out["hand_edits"] == []
     variables, snippets, check = imported(files, "50x")
     assert variables["cassandra_log_audit_compress"] is False and variables["cassandra_log_jmx_configurator"] is True
-    assert not [k for k in variables if k in ("cassandra_log_compress", "cassandra_log_audit_dir", "cassandra_log_audit_file")]
+    assert not [k for k in variables if k in ("cassandra_log_compress", "cassandra_log_audit_file")]
+    assert variables["cassandra_log_audit_dir"] == "/var/log/cassandra/audit"  # (the log dir written as itself: as it is)
     assert check["differences"] == []
 
 

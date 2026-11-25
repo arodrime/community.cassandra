@@ -33,7 +33,7 @@ from ansible.plugins.filter.core import regex_replace
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
     DEFAULT_WHEN_ABSENT, FORMER_SUB_KEYS, JVM_UNLOCK, NOT_COMPARED, QUANTITY_KEYS, STOCK_WHEN_ABSENT, former_keys,
-    former_value, jvm_options_settings, quantity, stock_when_absent, without_later_stock, shell_words, xml_settings,
+    former_value, jvm_options_settings, quantity, stock_when_absent, shell_words, xml_settings,
     yaml_settings)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_common import ROLE, SERIES, value_shown
@@ -467,15 +467,17 @@ def _read_changed_lines(name, tpl, rendered, live, ctx, after):
     found, appended, extra = {}, [], []
     ops = difflib.SequenceMatcher(None, rendered, live, autojunk=False).get_opcodes()
     if name.endswith(".options"):
-        # a stock option line the node has removed: switched off, unless the node sets that option elsewhere, or the
-        # file predates it (LATER_STOCK: the role adds it)
+        # a stock option line the node has removed: switched off, unless the node sets that option elsewhere (a
+        # file that predates it, LATER_STOCK, too: as it is, said under WORTH A LOOK)
         options = set(_option_key(line) for line in live if line.startswith("-"))
-        later = without_later_stock(name, "\n".join(rendered), "\n".join(live))[1]
+        # (in a replaced run too, but for a line the node has commented out in that run: read below)
         for op, i1, i2, j1, j2 in ops:
-            gone = range(i1, i2) if op == "delete" else range(i1 + (j2 - j1), i2) if op == "replace" else ()
+            gone = range(i1, i2) if op in ("delete", "replace") else ()
             for i in gone:
                 m = REMOVED_TOGGLE.match(tpl[i])
-                if m and rendered[i] == m.group(1) and _option_key(m.group(1)) not in options and m.group(1) not in later:
+                if op == "replace" and any(line.lstrip("#").strip() == rendered[i] for line in live[j1:j2]):
+                    continue
+                if m and rendered[i] == m.group(1) and _option_key(m.group(1)) not in options:
                     merge(found, {m.group(2): [m.group(1)]})
     for op, i1, i2, j1, j2 in ops:
         if op not in ("replace", "insert"):
@@ -1539,8 +1541,7 @@ def leftovers(env, series, files, ctx, live_files, rejected=(), skip=(), proven=
     for name in files:
         if name not in live_files or name in skip:
             continue
-        # (a stock line of a later release the node's file predates: not a hand edit, said apart)
-        rendered = without_later_stock(name, "\n".join(render_template(env, series, name, ctx)[1]), live_files[name])[0].split("\n")
+        rendered = list(render_template(env, series, name, ctx)[1])
         if name.endswith(".properties"):
             more_hand, more_normalized = _properties_leftovers(name, rendered, live_files[name])
             hand += more_hand

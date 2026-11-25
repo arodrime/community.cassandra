@@ -41,7 +41,7 @@ from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_impo
     keep_files_option, move_secrets)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_jvm import (
     audit_file_default, cassandra_jmx_files, heap_in_options, JMX_FILE_DEFAULTS, jmx_leftovers, jmx_users,
-    jvm_moves, jvm_options, log_dir_of, logback, logback_as_log_dir, logback_carried)
+    jvm_moves, jvm_options, logback, logback_carried)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_exporter import (
     exporter_import, exporter_rewritten)
 
@@ -289,9 +289,7 @@ def _config_import(live_files, cassandra_version, facts, reading, conf_target=""
                                                         cassandra_version, java)
     running["cmdline"] = cmdline
     release, rejected = str(release or SERIES[cassandra_version]), []
-    log_dir = log_dir_of(live_files.get("cassandra-env.sh", ""), cmdline, running.get("environment"),
-                         running.get("newer"))
-    live_files, read_as_notes = _read_as_the_role(env, cassandra_version, ctx, live_files, running, keep, log_dir)
+    live_files, read_as_notes = _read_as_the_role(env, cassandra_version, ctx, live_files, running, keep)
     found, from_shell = {}, set()
     reading.what = "cassandra-env.sh"
     earlier = earlier_env(cassandra_version, live_files[jvm_args.ENV], "\n".join(
@@ -367,10 +365,10 @@ def _exporter_taken_out(live_files, cmdline, ctx, running, keep, conf_target, ca
     return live_files, cmdline, exporter
 
 
-def _read_as_the_role(env, cassandra_version, ctx, live_files, running, keep, log_dir):
+def _read_as_the_role(env, cassandra_version, ctx, live_files, running, keep):
     """The node's files with what the role writes otherwise for the same effect read as the role's: a plain
-    CASSANDRA_HEAPDUMP_DIR, cassandra-env.sh's lines in the JMX branch its JVM does not take, the log dir written as
-    itself in logback.xml -> (live_files, [the notes that say so])."""
+    CASSANDRA_HEAPDUMP_DIR, cassandra-env.sh's lines in the JMX branch its JVM does not take -> (live_files, [the
+    notes that say so])."""
     heap_dump_note = []
     if cassandra_version in ("40x", "41x") and "cassandra-env.sh" in live_files:
         text, folder = jvm_args.heap_dump_dir_as_role(live_files["cassandra-env.sh"], running.get("environment"),
@@ -388,14 +386,9 @@ def _read_as_the_role(env, cassandra_version, ctx, live_files, running, keep, lo
         if count:
             live_files = dict(live_files, **{jvm_args.ENV: text})
             branch_note = [branch_not_run_note(count, runs)]
-    if "logback.xml" in live_files and logback_as_log_dir(live_files["logback.xml"], log_dir) != live_files["logback.xml"]:
-        # the log dir written as itself: the same files as ${cassandra.logdir}, read so (its lines too)
-        live_files = dict(live_files, **{"logback.xml": logback_as_log_dir(live_files["logback.xml"], log_dir)})
-        log_dir_note = ["logback.xml: %s written as itself, the dir Cassandra gives logback as ${cassandra.logdir}: the"
-                        " same files" % log_dir]
-    else:
-        log_dir_note = []
-    return live_files, log_dir_note + heap_dump_note + branch_note
+    # (the log dir written as itself in logback.xml: imported as it is, cassandra_log_system_dir and
+    # cassandra_log_debug_dir, so that cassandra_config writes the file the node has)
+    return live_files, heap_dump_note + branch_note
 
 
 def _logback_found(env, cassandra_version, ctx, found, text):
@@ -430,8 +423,8 @@ def _later_stock_warnings(env, cassandra_version, ctx, files, live_files):
     warnings = []
     for name in [n for n in LATER_STOCK if n in live_files and n in files]:
         for line in without_later_stock(name, "\n".join(render_template(env, cassandra_version, name, ctx)[1]), live_files[name])[1]:
-            warnings.append("%s (%s): added by apply_config: %s; missing because this file predates it" % (
-                line, name, LATER_STOCK[name][line][0]))
+            warnings.append("%s (%s): absent, kept so (%s): %s; missing because this file predates it" % (
+                line, name, "cassandra_%s_removed_options" % name.split("-")[0], LATER_STOCK[name][line][0]))
     return warnings
 
 

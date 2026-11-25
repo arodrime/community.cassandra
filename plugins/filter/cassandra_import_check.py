@@ -63,8 +63,6 @@ from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_impo
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_common import (
     error_without_message, undefined_name, value_shown, values_hidden)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import Unsafe
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_jvm import (
-    log_dir_of, logback_as_log_dir)
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
 from ansible_collections.community.cassandra.plugins.filter.cassandra_os import (
     NO_EFFECT, NO_EFFECT_NOTE, cassandra_firewall_changes, cassandra_linux_changes)
@@ -72,7 +70,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_permission
     cassandra_file_permissions, permission_differences)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
     compared, jvm_options_settings, properties_settings, same_settings, same_yaml_value, shell_lines,
-    without_later_stock, xml_differences, xml_settings, yaml_settings, yaml_rejected)
+    xml_differences, xml_settings, yaml_settings, yaml_rejected)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as _out
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import MASK, mask, mask_lines
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_differences import HEAP_FILE
@@ -910,19 +908,9 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
 
 
 def _both_as_read(rendered, live, node_environment, role_environment, series, running):
-    """Both sides' files as the import reads them: a later release's stock line the node's file predates left out
-    (the import says it under WORTH A LOOK), the log dir written as itself in logback.xml, the exporter's block as the
-    line it runs, a plain CASSANDRA_HEAPDUMP_DIR as the role's -> (rendered, live)."""
-    rendered = dict((name, without_later_stock(name, text, live.get(name))[0] if name in live else text)
-                    for name, text in rendered.items())
-    # the log dir written as itself in logback.xml: ${cassandra.logdir}, each side's (the node's: as its JVM got it)
-    if "logback.xml" in live:
-        live = dict(live, **{"logback.xml": logback_as_log_dir(live["logback.xml"], log_dir_of(
-            live.get("cassandra-env.sh", ""), (running or {}).get("cmdline"), node_environment,
-            (running or {}).get("newer")))})
-    if "logback.xml" in rendered:
-        rendered = dict(rendered, **{"logback.xml": logback_as_log_dir(rendered["logback.xml"], log_dir_of(
-            rendered.get("cassandra-env.sh", ""), "", role_environment))})
+    """Both sides' files as the import reads them: the exporter's block as the line it runs, a plain
+    CASSANDRA_HEAPDUMP_DIR as the role's -> (rendered, live). The roles' files as cassandra_config writes them: a
+    stock line the node's file predates, a log dir written as itself in logback.xml are imported as they are."""
     if "cassandra-env.sh" in live:  # the Prometheus exporter's block: the line it runs (the role writes the agent)
         live = dict(live, **{"cassandra-env.sh": prometheus.block_as_line(live["cassandra-env.sh"],
                                                                           (running or {}).get("cmdline"))})

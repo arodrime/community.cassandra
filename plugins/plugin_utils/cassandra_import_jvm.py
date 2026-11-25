@@ -21,7 +21,7 @@ from xml.parsers import expat
 
 from ansible.module_utils.parsing.convert_bool import boolean
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
-from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import without_later_stock, same_settings
+from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import same_settings
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_secrets
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
@@ -190,53 +190,6 @@ def _shell_value(text, names):
     return None if re.search(r"[$`]", text) or text.startswith("~") else text
 
 
-# the stock guard of cassandra-env.sh's own CASSANDRA_LOG_DIR: the unit's wins over it
-LOG_DIR_GUARD = re.compile(r'^if \[ "x\$CASSANDRA_LOG_DIR" = x \] ?; then$')  # (as env_lines writes it)
-
-
-def log_dir_of(env_sh, cmdline="", environment=None, newer=()):
-    """The dir the JVM gets as cassandra.logdir -> '' when not sure (then nothing is read as it).
-    cmdline: the running JVM's /proc/<pid>/cmdline: its last -Dcassandra.logdir (bin/cassandra adds its own after
-    JVM_OPTS), none there: not known; not used when cassandra-env.sh changed since it started (newer). Else
-    cassandra-env.sh's: its last plain path set outside any block, else the unit's (environment), else the one of
-    the stock guard (CASSANDRA_LOG_DIR unset)."""
-    if cmdline and jvm_args.ENV not in (newer or []):
-        found = [arg for arg in str(cmdline).split("\0") if arg.startswith("-Dcassandra.logdir=")]
-        return found[-1][len("-Dcassandra.logdir="):] if found else ""
-    try:
-        lines = jvm_args.env_lines(str(env_sh or ""))
-    except jvm_args.NotSame:
-        return ""
-    top, guarded, inside = [], [], False
-    for line in lines:
-        m = re.match(r"^(?:export )?CASSANDRA_LOG_DIR=(\S+)$", line["text"])
-        if LOG_DIR_GUARD.match(line["text"]) and not line["depth"]:
-            inside = True
-            continue
-        if inside and line["depth"] == 1 and re.match(r"^(else|elif)\b", line["text"]):
-            return ""  # the guard with another branch: not sure
-        if inside and line["depth"] == 1 and m:
-            guarded.append(m.group(1))
-            continue
-        if not line["depth"]:
-            inside = False
-        if m and not line["depth"]:
-            top.append(m.group(1))
-        elif m or re.search(r"\bCASSANDRA_LOG_DIR=|\bunset\b.*\bCASSANDRA_LOG_DIR\b", line["text"]):
-            return ""  # set in another block, set empty, unset: not sure
-    value = top[-1] if top else (environment or {}).get("CASSANDRA_LOG_DIR") or (guarded[-1] if guarded else "")
-    value = _shell_value(value, {}) if value else ""
-    return value if value and value.startswith("/") else ""
-
-
-def logback_as_log_dir(text, log_dir):
-    """logback.xml with the log dir written as itself at the start of a <file> or <fileNamePattern> as
-    ${cassandra.logdir} (bin/cassandra gives the JVM -Dcassandra.logdir=<it>): the same files for logback."""
-    if not log_dir.startswith("/") or not log_dir.rstrip("/"):
-        return text
-    return re.sub(r"(<(file|fileNamePattern)>\s*)%s/" % re.escape(log_dir.rstrip("/")), r"\1${cassandra.logdir}/", text)
-
-
 def _shell_code(line):
     """A shell line without its comment (a # starting a word, outside quotes)."""
     quote = None
@@ -331,9 +284,8 @@ def jvm_moves(env, series, files, ctx, render, live_files, running, earlier=None
     if kept:  # import_keep_hand_edits: those files left as they are (said with the files kept)
         return {"vars": {}, "moved": [], "rewritten": [], "cleanup": [], "shown": [], "not_moved": ""}
 
-    def rendered(variables):  # (a stock line of a later release the node's file predates: left out, said apart)
-        return dict((name, without_later_stock(name, "\n".join(render_template(env, series, name, variables)[1]),
-                                               live_files.get(name))[0]) for name in jvm_files)
+    def rendered(variables):  # (as cassandra_config writes them)
+        return dict((name, "\n".join(render_template(env, series, name, variables)[1])) for name in jvm_files)
     if running.get("jaas") and jvm_args.ENV in live_files and jvm_args.ENV in jvm_files \
             and jvm_args.env_has_candidates(live_files[jvm_args.ENV], rendered(render)[jvm_args.ENV]):
         # JMX authenticated by JAAS, not imported: cassandra-env.sh to keep as it is (its note), its lines not moved

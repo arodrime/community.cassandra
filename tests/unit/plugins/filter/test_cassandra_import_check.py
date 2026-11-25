@@ -1928,14 +1928,15 @@ JVM11_LATER = ["-XX:-UseBiasedLocking", "--add-exports java.base/jdk.internal.ut
 
 
 def test_a_4x_jvm11_options_file_on_50_lacks_the_lines_50_added():
-    """Java 11: the lines 5.0's stock jvm11-server.options added are no hand edit in a 4.1 file; apply_config adds
-    them, said under WORTH A LOOK."""
+    """Java 11: the lines 5.0's stock jvm11-server.options added are no hand edit in a 4.1 file; kept absent
+    (cassandra_jvm11_removed_options, the JVM's arguments as they are), said under WORTH A LOOK."""
     files = seeded(stock("50x"))
     files["jvm11-server.options"] = stock("41x")["jvm11-server.options"]
     imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra", running_jvm={"java": "11"})
     assert imported["hand_edits"] == []
     assert [w.split(" (jvm11-server.options)")[0] for w in imported["jvm_warnings"]
-            if "(jvm11-server.options): added by apply_config" in w] == JVM11_LATER
+            if "(jvm11-server.options): absent, kept so (cassandra_jvm11_removed_options)" in w] == JVM11_LATER
+    assert imported["vars"]["cassandra_jvm11_removed_options"] == JVM11_LATER
     assert check(files, "50x", java="11")["differences"] == []
 
 
@@ -1945,7 +1946,7 @@ def test_a_later_stock_line_whose_comment_is_there_is_switched_off():
     files["jvm11-server.options"] = stock("41x")["jvm11-server.options"] + \
         "# Disable biased locking as it does not benefit Cassandra.\n"
     imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra", running_jvm={"java": "11"})
-    assert imported["vars"]["cassandra_jvm11_removed_options"] == ["-XX:-UseBiasedLocking"]
+    assert imported["vars"]["cassandra_jvm11_removed_options"] == JVM11_LATER  # (the others: predated, as they are)
     assert not any(w.startswith("-XX:-UseBiasedLocking") for w in imported["jvm_warnings"])
     assert check(files, "50x", java="11")["differences"] == []
 

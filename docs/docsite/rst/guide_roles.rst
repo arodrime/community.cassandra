@@ -1836,7 +1836,7 @@ then is.
 A stock option line a node has commented out (``#``, or ``#`` and a space) or removed, when no other line of the
 file sets that option, is switched off: ``cassandra_jvm_removed_options`` for ``jvm-server.options``,
 ``cassandra_jvm<N>_removed_options`` for ``jvm<N>-server.options`` (``-XX:+HeapDumpOnOutOfMemoryError`` on a small
-disk, ``-Djava.net.preferIPv4Stack=true`` on an IPv6 node); not a stock line of a later release the file predates
+disk, ``-Djava.net.preferIPv4Stack=true`` on an IPv6 node); a stock line of a later release the file predates too
 (said apart, below). Another value in its place (``-XX:-UseNUMA``) is an extra option, as above.
 
 The GC block of a ``jvm<N>-server.options`` file is read as the stock one with its values; a G1 tuning line the
@@ -1857,8 +1857,9 @@ variable); with one, the pair stays in the extra options where the node has it. 
 predates (5.0's ``-Dchronicle.analytics.disable=true`` of ``jvm-server.options``, CASSANDRA-19656; the lines 5.0's
 ``jvm11-server.options`` added to 4.x's: ``-XX:-UseBiasedLocking``, 4.x's in ``jvm-server.options``,
 ``--add-exports java.base/jdk.internal.util=ALL-UNNAMED`` and Netty's former defaults
-``-Dio.netty.allocator.useCacheForAllThreads=true``, ``-Dio.netty.allocator.maxOrder=11``) is no difference:
-``apply_config`` adds it, the report says so under WORTH A LOOK; any other stock line the node lacks is one.
+``-Dio.netty.allocator.useCacheForAllThreads=true``, ``-Dio.netty.allocator.maxOrder=11``) is kept absent, in the
+file's ``removed_options`` (adding it would change the JVM's arguments, a restart); the report says so under WORTH A
+LOOK.
 
 Hand edits of ``cassandra-env.sh`` that add plain options to ``JVM_OPTS`` (``JVM_OPTS="$JVM_OPTS -Xms8G -Xmx8G
 -XX:+AlwaysPreTouch"``, outside any ``if``), and the heap (``MAX_HEAP_SIZE``, ``HEAP_NEWSIZE``,
@@ -1914,8 +1915,8 @@ the files as they are.
 ``system.log`` takes (``cassandra_log_system_level``, its ``ThresholdFilter``), ``debug.log`` and the
 console, the stock ``AUDIT`` appender and its logger uncommented (``cassandra_log_audit_file``, written only when it is
 not its default: on with ``FileAuditLogger``) and the dir of its file (``cassandra_log_audit_dir``), the dirs of ``system.log`` and ``debug.log``
-(``cassandra_log_system_dir``, ``cassandra_log_debug_dir``), the log dir
-written as itself where it is the one Cassandra gives logback (``${cassandra.logdir}``), 5.0's ``CQLLOG`` appender named by ``<root>``
+(``cassandra_log_system_dir``, ``cassandra_log_debug_dir``, as the node writes them: the log dir written as itself
+too), 5.0's ``CQLLOG`` appender named by ``<root>``
 (``cassandra_log_cql_table`` and its level), the rotation of each file (``cassandra_log_<system|debug|audit>_*``), its
 rolled files zipped or not (``cassandra_log_compress`` for ``system.log`` and ``debug.log`` when both agree,
 ``cassandra_log_audit_compress``), logback's JMX MBean (``<jmxConfigurator />``, ``cassandra_log_jmx_configurator``), the
