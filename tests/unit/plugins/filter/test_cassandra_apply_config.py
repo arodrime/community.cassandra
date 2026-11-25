@@ -715,10 +715,38 @@ def test_an_item_too_long_has_its_values_on_the_next_line(tmp_path):
     long_option = "--add-exports java.base/jdk.internal.util=ALL-UNNAMED"
     edited = JVM.replace("-Xss256k", "-Xss512k") + long_option + "\n"
     lines = cassandra_apply_config_diff([Node(tmp_path, "node1", files={"jvm-server.options": edited}).data()], width=50)
-    at = next((i for i, line in enumerate(lines) if line.strip() == long_option), None)
-    assert at is not None, lines
-    assert lines[at + 1].split() == ["present", "absent", "node1"] or lines[at + 1].split()[:2] == ["present", "absent"]
-    assert all(len(line) <= 50 for line in lines if long_option not in line), lines
+    # (the item longer than the line: cut after its space, /, =, the next lines 2 columns further in)
+    at = lines.index("  --add-exports java.base/jdk.internal.util=")
+    assert lines[at + 1:at + 3] == ["    ALL-UNNAMED", "        present  absent"], lines
+    assert all(len(line) <= 50 for line in lines), lines
+
+
+def test_the_table_fits_79_columns_its_long_items_on_rows_of_their_own(tmp_path, monkeypatch):
+    # (owner, rc1, 24 nodes) logback.xml's <fileNamePattern> lines made the table 112 columns wide on a wide terminal;
+    # on a narrower one the Node, Inventory, Nodes went on the next line and "all" on yet another: at the terminal's
+    # width, 79 columns at most; a long item on its own rows (cut between its tags and its text), its Node, Inventory
+    # and Nodes on the row under it, in their columns
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_apply_config
+    pattern = "      <fileNamePattern>%s/system.log.%%d{yyyy-MM-dd}.%%i.zip</fileNamePattern>\n"
+    logback = "<configuration>\n" + pattern + "      <maxFileSize>%s</maxFileSize>\n</configuration>\n"
+    target = logback % ("/var/log/cassandra", "100MB")
+    nodes = [Node(tmp_path, "cass-prod-%02d.dc1.example.net" % i, targets={"logback.xml": target},
+                  files={"logback.xml": logback % ("${cassandra.logdir}", "50MB" if i % 2 else "100MB")}).data()
+             for i in range(1, 25)]
+    monkeypatch.setattr(cassandra_apply_config, "terminal_width", lambda: 200)
+    lines = cassandra_apply_config_diff(nodes, width="terminal", margin=2)
+    assert max(len(line) for line in lines) <= 77, lines  # (the plan's 2 columns in: 79)
+    head = next(i for i, line in enumerate(lines) if line.startswith("Item "))
+    columns = [lines[head].index(word) for word in ("Node", "Inventory", "Nodes")]
+    at = lines.index("  <fileNamePattern>/var/log/cassandra/system.log.%d{yyyy-MM-dd}.%i.zip")
+    assert lines[at + 1] == "    </fileNamePattern>"
+    assert [lines[at + 2].index(word) for word in ("absent", "present", "all")] == columns, lines
+    assert lines[at + 2].split() == ["absent", "present", "all"]
+    short = next(line for line in lines if line.startswith("  <maxFileSize>100MB"))
+    assert short.split()[1:] == ["absent", "present", "G1"]
+    # a narrower terminal: the same, within it
+    monkeypatch.setattr(cassandra_apply_config, "terminal_width", lambda: 70)
+    assert max(len(line) for line in cassandra_apply_config_diff(nodes, width="terminal", margin=2)) <= 68
 
 
 def test_the_recap_says_the_proofs_by_their_own_words():

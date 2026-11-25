@@ -595,12 +595,12 @@ def cassandra_apply_config_diff(nodes, width=None, verbose=False, margin=0):
     each, EXTRA_SECTIONS: the Java, the Cassandra package, the unit, the repository, the packages, the firewall), then
     the OS settings. [] when
     nothing differs. From GROUPS_FROM nodes on (cassandra_output), the node lists by NODE GROUPS defined first.
-    width: the lines fit in it (None: as long as they are; "terminal": the terminal's), margin columns kept for the
-    caller's indent (the plan's: 2). verbose: a device-mapper
+    width: the lines fit in it (None: as long as they are; "terminal": the terminal's, TABLE_WIDTH at most), margin
+    columns kept for the caller's indent (the plan's: 2). verbose: a device-mapper
     device's OS items with its kernel name (dm-N) too, which differs from node to node.
     e.g. node1 on the inventory's cassandra.yaml, node2 live with max_hint_window: 6h ->
     ["cassandra.yaml  max_hint_window  6h -> 3h  node2"]."""
-    width = _width(width, margin)
+    width = min(_width(width, margin), TABLE_WIDTH - margin) if str(width) == "terminal" else _width(width, margin)
     prepared = [_prepare(n, verbose) for n in nodes or []]
     all_nodes = [n["name"] for n in prepared]
     files = set()
@@ -670,6 +670,25 @@ def cassandra_apply_config_diff(nodes, width=None, verbose=False, margin=0):
 
 # (Item: each row's own label says what it is, a file, a setting, a service, a package)
 TABLE_HEAD = ("Item", "Node", "Inventory", "Nodes")
+TABLE_WIDTH = 79  # the table at the terminal's width: 79 columns at most, however wide the terminal
+# where an item longer than the line breaks: between XML tags and their text first, else after a /, a comma, a
+# space or an =
+_ITEM_BREAKS = (re.compile(r"(?<=>)|(?=<)"), re.compile(r"(?<=[/, =])"))
+
+
+def _item_lines(item, width):
+    """An item longer than width on lines of width at most, each next one 2 columns further in, broken at the last
+    of _ITEM_BREAKS that fits (inside a word only when there is none) -> [line].
+    e.g. ("  <a>/var/log/x</a>", 18) -> ["  <a>/var/log/x", "    </a>"]."""
+    indent = " " * (len(item) - len(item.lstrip()) + 2)
+    lines, rest = [], item
+    while len(rest) > width > len(indent):
+        start = len(rest) - len(rest.lstrip()) + 1  # (never before the item's first character)
+        at = next((max(found) for found in ([m.start() for m in pattern.finditer(rest, start, width)]
+                                            for pattern in _ITEM_BREAKS) if found), width)
+        lines.append(rest[:at].rstrip())
+        rest = indent + rest[at:].lstrip()
+    return lines + [rest]
 
 
 def _named(entries, all_nodes, width=None):
@@ -739,7 +758,7 @@ def _table(cells, shown, width):
     # an item too long for the Node and Inventory columns to fit beside it: its values on the next line, under them
     # (the Item column as wide as the others leave, a value never cut)
     room = (width - columns[1] - columns[2] - 4) if width else 0
-    if width and columns[0] > room >= len(head[0]) and any(len(c[0]) <= room for c in cells):
+    if width and columns[0] > room >= len(head[0]):
         columns[0] = max([len(head[0])] + [len(c[0]) for c in cells if len(c[0]) <= room])
     # every file's settings on the same nodes: no Nodes column, each file's nodes on its row ("OS settings  on h-n1")
     by_file = not any(c[3] for c in cells)
@@ -758,10 +777,12 @@ def _table(cells, shown, width):
             if not under:
                 return [(c[0].ljust(max(sum(columns) + 6, len(c[0]) + 2)) + c[3]).rstrip()]
             return [c[0]] + nodes_at(columns[0] + 2, c[3])
-        if len(c[0]) > columns[0]:  # (its values on the next line, in their columns)
-            values = (" " * (columns[0] + 2) + "  ".join(c[i].ljust(columns[i]) for i in (1, 2))).rstrip()
-            return [c[0], values] + (nodes_at(columns[0] + 2, c[3]) if under else
-                                     ([" " * (columns[0] + 2) + c[3]] if c[3] else []))
+        if len(c[0]) > columns[0]:  # (its values, its nodes, on the next line in their columns; the item cut to width)
+            values = " " * (columns[0] + 2) + "  ".join(c[i].ljust(columns[i]) for i in (1, 2))
+            item = _item_lines(c[0], width) if width else [c[0]]
+            if under:
+                return item + [values.rstrip()] + nodes_at(columns[0] + 2, c[3])
+            return item + [(values + "  " + c[3]).rstrip()]
         text = "  ".join(c[i].ljust(columns[i]) for i in range(3))
         if under:
             return [text.rstrip()] + nodes_at(columns[0] + 2, c[3])

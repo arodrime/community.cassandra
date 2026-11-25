@@ -1,0 +1,3 @@
+---
+trivial:
+- "apply_config playbook - the DIFFERENCES FOUND table at the terminal's width is 79 columns wide at most: an item longer than the line goes on rows of its own (cut between its XML tags and their text, else after a /, a comma, a space or an =), its Node, Inventory and Nodes on the row under it, in their columns."
