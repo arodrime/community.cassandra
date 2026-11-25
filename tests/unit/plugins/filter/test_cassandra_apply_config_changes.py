@@ -100,3 +100,16 @@ def test_header_owner_and_mode(tmp_path):
         "    owner:group mode  root:root 0640 -> cassandra:cassandra 0640",
         '  header "# Managed by Ansible" added (a comment)',
         "    cassandra.yaml"]
+
+
+def test_long_node_names_fit_in_79_columns(tmp_path):
+    # (2026-11-25 audit) a group's heading and the diff's "same diff on" line listed every name on one line
+    names = ["cass-prod-dc1-rack%d-node%02d.example.internal" % (i % 3, i) for i in range(0, 24, 2)]
+    reads = [Node(tmp_path, n, files={"cassandra.yaml": YAML.replace("reads: 32", "reads: 48")}) for n in names]
+    files = {"cassandra.yaml": YAML.replace("reads: 32", "reads: 64"), "jvm-server.options": NODE_JVM}
+    others = [Node(tmp_path, "other%d" % i, files=files) for i in (1, 2)]
+    path = "reports/a-long-cluster-group-name/apply_config-check-2026-11-25-120000.diff"
+    for show_diff in (False, True):
+        lines = changes(*(reads + others), show_diff=show_diff, diff_file=path)
+        assert lines[1].startswith("on 12 nodes: cass-prod-dc1-rack0-node00.example.internal,"), lines
+        assert [line for line in lines if len(line) > 79] == [], lines

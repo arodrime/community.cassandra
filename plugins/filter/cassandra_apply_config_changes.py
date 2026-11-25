@@ -231,7 +231,7 @@ def cassandra_apply_config_changes(nodes, check=False, width="terminal", show_di
         if len(groups) == 1 and heading.startswith(("the same", "on all")):
             title += "  " + heading
         else:
-            lines.append(heading)
+            lines += out.fit([heading], width)
         for (name, verdict), by_rows in zip(shape, split):
             lines += out.fit(["  %s  %s" % (name, verdict) if verdict else "  " + name], width)
             for members, rows in by_rows:
@@ -239,14 +239,15 @@ def cassandra_apply_config_changes(nodes, check=False, width="terminal", show_di
                     lines += out.fit(["   on %s:" % out.nodes(members)], width)
                 lines += _row_lines(rows, width)
             if show_diff and name in by_name[names[0]]["diffs"]:
-                lines += _diff_lines(name, names, every, by_name, diff_file)
+                lines += _diff_lines(name, names, every, by_name, diff_file, width)
     if not show_diff and diff_file:
-        lines.append("real diffs: %s" % diff_file)
+        lines += out.fit(["real diffs: %s" % diff_file], width)
     return [title] + lines
 
 
-def _diff_lines(name, names, every, by_name, diff_file):
-    """A file's unified diff under it: once per group of its nodes with the same one, DIFF_LINES at most."""
+def _diff_lines(name, names, every, by_name, diff_file, width):
+    """A file's unified diff under it: once per group of its nodes with the same one, DIFF_LINES at most (its lines
+    never cut, the others fit in width)."""
     by_diff = []
     for n in names:
         diff = _diff_body(by_name[n]["diffs"].get(name, ""))
@@ -259,10 +260,11 @@ def _diff_lines(name, names, every, by_name, diff_file):
     for members, body in by_diff:
         said = ("all %d nodes" % len(every)) if len(every) > 2 and sorted(members) == sorted(every) \
             else out.nodes(members)
-        lines.append("    %s diff on %s:" % ("same" if len(members) > 1 else "its", said))
+        lines += out.fit(["    %s diff on %s:" % ("same" if len(members) > 1 else "its", said)], width)
         lines += ["      " + line for line in body[:DIFF_LINES]]
         if len(body) > DIFF_LINES:
-            lines.append("      (%d more lines: see %s)" % (len(body) - DIFF_LINES, diff_file or "the .diff file"))
+            lines += out.fit(["      (%d more lines: see %s)" % (len(body) - DIFF_LINES, diff_file or "the .diff file")],
+                             width)
     return lines
 
 
