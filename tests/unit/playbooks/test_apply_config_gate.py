@@ -354,8 +354,8 @@ def test_the_report_says_the_compare_in_one_line():
     gates = ["unchanged", "unchanged", "role", ""]
     assert cassandra_apply_gate_lines(gates) == ["config: 2 of 3 nodes found unchanged by its plan, 1 compared by the role"]
     assert cassandra_apply_gate_lines(gates, full=True) == ["config: every node compared by the role (apply_full)"]
-    assert cassandra_apply_gate_lines(gates, ["linux", "install"])[1:] == ["not checked (apply_only):", "  linux",
-                                                                       "  install"]  # (round 2, C4)
+    left_out = cassandra_apply_gate_lines(gates, ["linux", "install"])[1:]
+    assert left_out == ["not checked (apply_only):", "  linux", "  install"]  # (round 2, C4)
     assert cassandra_apply_gate_lines([]) == []
     lines = cassandra_apply_gate_lines(["unchanged"] * 300, list(PARTS[2:]))
     assert all(len(line) <= 79 for line in lines)
