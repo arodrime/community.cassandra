@@ -528,16 +528,24 @@ def _placement_lines(cluster, said):
     return lines
 
 
+# the values left as the nodes have them that the cluster's group takes when every node has the same: the system
+# java, the packages the nodes have none of and their hold, the DSBulk version. The others stay per node, as their
+# notes say: a *_manage switch or a part kept by hand (a node set up another way: a host rebuilt under its name loses
+# it, new nodes get the roles'), a file kept, Medusa's link none on a node (new nodes get one), the log dir of a
+# unit kept
+CLUSTER_KEEP = (JAVA_DEFAULT, "cassandra_install_tools", "cassandra_install_jemalloc", "cassandra_package_hold",
+                "cassandra_dsbulk_install", "cassandra_dsbulk_version")
+
+
 def _grouped_keep(read, nodes):
-    """The values left as the nodes have them that go in the cluster's group: every node read, each with the same
-    value; the system java (cassandra_java_set_default), never another *_manage switch (a node set up another way:
-    a host rebuilt under its name loses it), a file or a part kept -> sorted [variable]."""
+    """The values of CLUSTER_KEEP that go in the cluster's group: every node read, each with the same value, none
+    with the variable among its own (which would beat the group's) -> sorted [variable]."""
     if not read or len(read) != len(nodes):
         return []
     first = read[0].get("keep") or {}
     return sorted(k for k, v in first.items()
-                  if (k == JAVA_DEFAULT or k not in KEEP) and k not in ("cassandra_config_keep_files", KEPT_PARTS_VAR)
-                  and all(k in (n.get("keep") or {}) and n["keep"][k] == v for n in read))
+                  if k in CLUSTER_KEEP and all(k in (n.get("keep") or {}) and n["keep"][k] == v
+                                               and k not in (n.get("vars") or {}) for n in read))
 
 
 def _grouped_keep_lines(read, cluster, grouped):

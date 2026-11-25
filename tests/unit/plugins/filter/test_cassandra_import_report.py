@@ -1778,25 +1778,44 @@ def test_a_sub_key_of_a_dict_not_merged_with_its_default_is_advised_as_written()
 
 
 def test_a_value_left_as_every_node_has_it_goes_in_the_cluster_s_group():
-    # (2026-11-25, a 24-node import) the packages no node has and a value every node has, the same on all: in
-    # host_vars of each node, not in group_vars/<cluster> (the owner's rule: the cluster's value there, the
-    # exceptions in host_vars); a *_manage switch stays per node (a host rebuilt under its name loses it)
-    left = {"cassandra_install_jemalloc": False, "cassandra_dsbulk_install": False, "cassandra_medusa_link_dir": "",
-            "cassandra_linux_manage": False}
+    # (2026-11-25, a 24-node import) the packages no node has, the same on all: in host_vars of each node, not in
+    # group_vars/<cluster> (the owner's rule: the cluster's value there, the exceptions in host_vars)
+    left = {"cassandra_install_jemalloc": False, "cassandra_dsbulk_install": False}
     nodes = [node(i, keep=dict(left)) for i in range(1, 4)]
     layout = cassandra_inventory_layout(nodes, "My Cluster")
     group = layout["group_vars"][layout["cluster_group"]]
-    for k in ("cassandra_install_jemalloc", "cassandra_dsbulk_install", "cassandra_medusa_link_dir"):
-        assert group[k] == left[k] and not [h for h, v in layout["host_vars"].items() if k in v], k
-    assert "cassandra_linux_manage" not in group
-    assert all(v.get("cassandra_linux_manage") is False for v in layout["host_vars"].values())
+    for k in left:
+        assert group[k] is False and not [h for h, v in layout["host_vars"].items() if k in v], k
     assert "LEFT AS EVERY NODE HAS IT, in group_vars/my_cluster/main.yml (nodes added later get it too):" \
         in layout["report"]
     # another value on one node, or a node not read: per node, as before
-    nodes[2]["keep"]["cassandra_medusa_link_dir"] = "/usr/local/bin"
+    nodes[2]["keep"]["cassandra_dsbulk_install"] = True
     layout = cassandra_inventory_layout(nodes, "My Cluster")
-    assert "cassandra_medusa_link_dir" not in layout["group_vars"]["my_cluster"]
-    assert layout["host_vars"]["node1"]["cassandra_medusa_link_dir"] == ""
+    assert "cassandra_dsbulk_install" not in layout["group_vars"]["my_cluster"]
+    assert layout["host_vars"]["node1"]["cassandra_dsbulk_install"] is False
     assert layout["group_vars"]["my_cluster"]["cassandra_install_jemalloc"] is False
     layout = cassandra_inventory_layout(nodes + [node(4, read=False)], "My Cluster")
     assert "cassandra_install_jemalloc" not in layout["group_vars"]["my_cluster"]
+
+
+def test_what_stays_per_node_though_every_node_has_it():
+    # (audit 2026-11-25) a node set up another way keeps it alone, new nodes get the roles': the *_manage switches,
+    # the parts kept by hand and their values (import_keep_hand_edits: no time sync, no sysctl... for new nodes
+    # either, were they grouped), the files kept, Medusa's link none on a node (new nodes get one), the log dir of
+    # a unit kept; and a value of the node's own variables beats the group's (keep wins)
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import KEPT_PARTS
+    per_node = {"cassandra_linux_manage": False, "cassandra_import_kept": ["sysctl", "timesync"],
+                "cassandra_config_keep_files": ["logback.xml"], "cassandra_medusa_link_dir": "",
+                "cassandra_log_dir": "/var/log/cassandra"}
+    for values in KEPT_PARTS.values():
+        per_node.update(values)
+    nodes = [node(i, keep=dict(per_node)) for i in range(1, 4)]
+    layout = cassandra_inventory_layout(nodes, "My Cluster")
+    for k, v in per_node.items():
+        assert k not in layout["group_vars"]["my_cluster"], k
+        assert all(layout["host_vars"]["node%d" % i][k] == v for i in range(1, 4)), k
+    # a node whose own variables set one of the grouped ones: per node, so that its keep is the one it gets
+    nodes = [node(i, keep={"cassandra_install_tools": False}) for i in range(1, 4)]
+    nodes[0]["vars"] = dict(nodes[0]["vars"], cassandra_install_tools=True)
+    layout = cassandra_inventory_layout(nodes, "My Cluster")
+    assert "cassandra_install_tools" not in layout["group_vars"]["my_cluster"]
