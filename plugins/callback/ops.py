@@ -791,7 +791,7 @@ class CallbackModule(DefaultCallback):
                     return shown(msg, *args, **kwargs)
                 finally:
                     text = str(msg)
-                    self._blank, self._ruled, self._live = not text.rstrip("\n").split("\n")[-1].strip(), "", None
+                    self._blank, self._ruled, self._live = not text.rstrip("\n").rsplit("\n", 1)[-1].strip(), "", None
                     self._hold = not text.endswith("\n") and not kwargs.get("newline", len(args) <= 4 or args[4])
                     self._draw(force=True)
         over_the_step.own = display.__dict__.get("display")  # (an instance's own display: put back after)

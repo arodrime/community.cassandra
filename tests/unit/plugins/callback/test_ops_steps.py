@@ -20,7 +20,7 @@ from ansible_collections.community.cassandra.plugins.callback.ops import (
     LOG_EVERY, STEP, CallbackModule, step_done, step_line)
 from ansible_collections.community.cassandra.tests.unit.helpers import playbook_command
 
-from .test_ops import FakeDisplay, quiet_callback, run
+from .test_ops import quiet_callback, run
 
 PHASE = "Comparing the config with the inventory (3 nodes)..."
 
@@ -43,12 +43,16 @@ class Result(object):
         self.host, self.task, self.result = Host(host), task or Task(), {}
 
 
-class TerminalDisplay(FakeDisplay):
-    """A fake display that also prints on the terminal (sys.stdout) what it does not give to the log only."""
+class TerminalDisplay(object):
+    """As FakeDisplay (shown: (line, colour, log_only)), with Ansible's Display.display arguments in its order, and
+    what is not for the log only printed on the terminal (sys.stdout)."""
+    columns = 100
+
+    def __init__(self):
+        self.shown = []
 
     def display(self, line, color=None, stderr=False, screen_only=False, log_only=False, newline=True):
-        """(Ansible's Display.display arguments, in its order)"""
-        FakeDisplay.display(self, line, color, log_only, screen_only)
+        self.shown.append((line, color, log_only))
         if not log_only:
             sys.stdout.write(line + ("\n" if newline else ""))
 
